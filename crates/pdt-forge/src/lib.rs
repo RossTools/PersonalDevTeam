@@ -213,6 +213,11 @@ pub trait Forge: Send + Sync {
     fn login_needed(&self) -> bool {
         false
     }
+    /// When the forge stopped accepting the login it has (Unix ms; PDT-212): the user has to sign in again, and
+    /// nothing is sent to it until they do. [`Forge::login_needed`] is true while it lasts.
+    fn login_rejected_at(&self) -> Option<i64> {
+        None
+    }
     /// Whether the repository has CI, when the forge knows without looking at its files (the local forge: its `[ci]`
     /// command). None: ask [`Forge::ci_dirs`].
     fn has_ci(&self) -> Option<bool> {

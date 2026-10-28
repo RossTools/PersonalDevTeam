@@ -290,6 +290,69 @@ async fn without_a_login_the_inbox_asks_to_connect_github_until_a_token_is_saved
 }
 
 #[tokio::test]
+async fn a_login_github_rejects_asks_once_to_reconnect_and_the_pollers_wait_for_it() {
+    let t = Arc::new(Recorded::new());
+    let g = Arc::new(GithubApi::new(t.clone()));
+    g.set_account(Some(pdt_github::Account {
+        token: "gho_old".into(),
+        api_url: "https://api.github.com".into(),
+        login: "ross".into(),
+    }));
+    let env = setup(None, Some(g.clone())).await;
+    let connects = |inbox: &Value| -> Vec<Value> {
+        inbox["items"].as_array().unwrap().iter().filter(|i| i["kind"] == "connect").cloned().collect()
+    };
+    let (_ticket_session, _branch) = session(&env).await;
+
+    // The PR poller meets GitHub's 401.
+    t.on("POST", "https://api.github.com/graphql", Response::new(401, r#"{"message":"Bad credentials"}"#));
+    pdt_api::refresh_prs(&env.state).await;
+    let sent = t.sent().len();
+    assert_eq!(sent, 1, "{:?}", t.urls());
+    let (_, v) = call(&env.app, "GET", "/api/github/login", None).await;
+    assert_eq!((v["connected"].as_bool(), v["login"].as_str()), (Some(true), Some("ross")), "kept: {v}");
+    let rejected_at = v["rejectedAt"].as_i64().expect("rejected");
+
+    // One "Reconnect GitHub", however often the Inbox or the pollers look; the pollers send GitHub nothing.
+    for _ in 0..2 {
+        pdt_api::refresh_prs(&env.state).await;
+        pdt_api::refresh_issues(&env.state).await;
+        let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+        let items = connects(&inbox);
+        assert_eq!(items.len(), 1, "{inbox}");
+        assert_eq!(items[0]["title"], "Reconnect GitHub");
+        assert_eq!(items[0]["body"]["reason"], "rejected");
+        assert!(items[0]["body"]["text"].as_str().unwrap().contains("no longer accepts"));
+        assert_eq!(items[0]["createdAt"].as_i64(), Some(rejected_at));
+    }
+    assert_eq!(t.sent().len(), sent, "backed off: {:?}", t.urls());
+
+    // It needs the user, like other blocking items.
+    pdt_api::sync_notifications(&env.state).await;
+    let (_, n) = call(&env.app, "GET", "/api/notifications?section=needs_you", None).await;
+    let ours: Vec<&Value> =
+        n["items"].as_array().unwrap().iter().filter(|x| x["inboxItemId"] == "connect:github").collect();
+    assert_eq!(ours.len(), 1, "{n}");
+    assert_eq!((ours[0]["title"].as_str(), ours[0]["severity"].as_str()), (Some("Reconnect GitHub"), Some("warning")));
+
+    // Reconnecting clears it, and the pollers call GitHub again.
+    t.ok("GET", "https://api.github.com/user", r#"{"login":"ross"}"#);
+    let (s, v) = call(&env.app, "POST", "/api/github/login/token", Some(json!({"token": "gho_new"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v["rejectedAt"].is_null(), "{v}");
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    assert!(connects(&inbox).is_empty(), "{inbox}");
+    pdt_api::sync_notifications(&env.state).await;
+    let (_, n) = call(&env.app, "GET", "/api/notifications?section=needs_you", None).await;
+    assert!(!n.to_string().contains("connect:github"), "{n}");
+    let before = t.sent().len();
+    pdt_api::refresh_prs(&env.state).await;
+    let after: Vec<_> = t.sent().into_iter().skip(before).collect();
+    assert!(!after.is_empty(), "the PR poller calls GitHub again");
+    assert!(after.iter().all(|r| r.headers.contains(&("Authorization", "Bearer gho_new".into()))));
+}
+
+#[tokio::test]
 async fn connect_github_enters_a_code_then_signs_in() {
     let t = Arc::new(Recorded::new());
     let g = Arc::new(GithubApi::new(t.clone()));

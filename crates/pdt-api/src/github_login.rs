@@ -63,6 +63,10 @@ pub struct GithubLoginView {
     pub pending: Option<GithubDeviceCode>,
     /// Why the last login failed.
     pub error: Option<String>,
+    /// When GitHub stopped accepting the login (PDT-212): it is kept, but PDT sends GitHub nothing until the user
+    /// connects again.
+    #[ts(type = "number | null")]
+    pub rejected_at: Option<i64>,
 }
 
 pub(crate) fn view(st: &AppState) -> GithubLoginView {
@@ -82,6 +86,7 @@ pub(crate) fn view(st: &AppState) -> GithubLoginView {
             expires_at: p.expires_at,
         }),
         error: s.error.clone(),
+        rejected_at: st.github_api.rejected_at(),
     }
 }
 
@@ -104,8 +109,18 @@ async fn save(st: &AppState, account: Option<Account>) -> Result<(), ApiError> {
     .await
     .map_err(ApiError::internal)?
     .map_err(keychain_error)?;
+    // The pollers waited for a login (none, or one GitHub refused): they look again now, not at their next tick.
+    let waited = st.github_api.rejected_at().is_some() || st.github_api.account().is_none();
+    let signed_in = account.is_some();
     st.github_api.set_account(account);
     crate::notifications::kick(st);
+    if signed_in && waited {
+        let st = st.clone();
+        tokio::spawn(async move {
+            crate::refresh_prs(&st).await;
+            crate::refresh_issues(&st).await;
+        });
+    }
     Ok(())
 }
 

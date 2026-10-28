@@ -28,4 +28,9 @@ pending: GithubDeviceCode | null,
 /**
  * Why the last login failed.
  */
-error: string | null, };
+error: string | null, 
+/**
+ * When GitHub stopped accepting the login (PDT-212): it is kept, but PDT sends GitHub nothing until the user
+ * connects again.
+ */
+rejectedAt: number | null, };

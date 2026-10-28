@@ -102,11 +102,27 @@ async fn sessions_waiting(st: &AppState, project: Option<&str>) -> Result<Vec<In
 }
 
 /// "Connect GitHub" (PDT-177) while the GitHub forge has no login and something (the PR poller, a merge, an agent's
-/// tool) wanted it. Not stored: it goes once the user connects.
-fn connect_forge(st: &AppState) -> Option<InboxItem> {
+/// tool) wanted it; "Reconnect GitHub" while GitHub refuses the login it has (PDT-212). Not stored: one item, which
+/// goes once the user connects.
+pub(crate) fn connect_forge(st: &AppState) -> Option<InboxItem> {
     if !st.github.login_needed() {
         return None;
     }
+    let rejected = st.github.login_rejected_at();
+    let (title, body) = match rejected {
+        Some(_) => (
+            "Reconnect GitHub",
+            json!({"forge": "github", "reason": "rejected", "text": "GitHub no longer accepts PDT's login (the token \
+was revoked or expired). Until you connect again, PDT has stopped calling GitHub: it can't follow pull requests or CI, \
+merge, or let agents read CI logs. Connect GitHub again in Settings › This host › GitHub."}),
+        ),
+        None => (
+            "Connect GitHub",
+            json!({"forge": "github", "text": "PDT reads pull requests, CI and issues, merges and comments on \
+GitHub with your GitHub login, and it has none: until you connect, it can't follow pull requests or CI, merge, or \
+let agents read CI logs. Connect GitHub in Settings › This host › GitHub."}),
+        ),
+    };
     Some(InboxItem {
         id: "connect:github".into(),
         kind: InboxKind::Connect,
@@ -122,13 +138,11 @@ fn connect_forge(st: &AppState) -> Option<InboxItem> {
         step_id: None,
         persona_id: None,
         persona_name: None,
-        title: "Connect GitHub".into(),
-        body: json!({"forge": "github", "text": "PDT reads pull requests, CI and issues, merges and comments on \
-GitHub with your GitHub login, and it has none: until you connect, it can't follow pull requests or CI, merge, or \
-let agents read CI logs. Connect GitHub in Settings › This host › GitHub."}),
+        title: title.into(),
+        body,
         choices: vec![],
         resolution: Value::Null,
-        created_at: now_ms(),
+        created_at: rejected.unwrap_or_else(now_ms),
         resolved_at: None,
     })
 }

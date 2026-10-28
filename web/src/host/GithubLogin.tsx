@@ -62,6 +62,12 @@ export function GithubLogin() {
 
   return (
     <Section label="GitHub" description={DESCRIPTION}>
+      {v.connected && v.rejectedAt != null && (
+        <Alert tone="error" title="GitHub no longer accepts this login.">
+          The token was revoked or expired. PDT has stopped calling GitHub until you connect again: reconnect below, or
+          paste a new token.
+        </Alert>
+      )}
       {v.connected ? (
         <SettingsRow
           label={<span className="flex items-center gap-2">Connected <Badge tone="accent">{v.login}</Badge></span>}
@@ -87,8 +93,8 @@ export function GithubLogin() {
             label={v.connected ? 'Connect again' : 'Connect GitHub'}
             description={`Sign in on GitHub with a code. PDT asks for the ${v.scopes} scope.`}
           >
-            <Button size="sm" variant={v.connected ? 'secondary' : 'primary'} pending={device.isPending} onClick={() => device.mutate()}>
-              Connect GitHub
+            <Button size="sm" variant={v.connected && v.rejectedAt == null ? 'secondary' : 'primary'} pending={device.isPending} onClick={() => device.mutate()}>
+              {v.rejectedAt != null ? 'Reconnect' : 'Connect GitHub'}
             </Button>
           </SettingsRow>
         )

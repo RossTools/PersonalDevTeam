@@ -44,6 +44,53 @@ fn calls_carry_the_token_and_a_rejected_one_asks_to_connect_again() {
 }
 
 #[test]
+fn a_rejected_login_is_kept_and_nothing_more_is_sent_until_the_user_signs_in_again() {
+    let (g, t) = forge();
+    assert_eq!((g.login_needed(), g.login_rejected_at()), (false, None));
+    t.on("POST", GQL, Response::new(401, r#"{"message":"Bad credentials"}"#));
+    let e = g.change_request("o/r", "b").unwrap_err();
+    assert!(matches!(&e, ForgeError::Unavailable(m) if m.contains("connect GitHub again")), "{e:?}");
+    let at = g.login_rejected_at().expect("marked rejected");
+    assert!(g.login_needed(), "the Inbox asks to reconnect");
+    assert_eq!(g.account().unwrap().login, "me", "the login is kept");
+
+    // The pollers back off: every call fails the same way without reaching GitHub.
+    assert!(matches!(g.branch_runs("o/r", "b"), Err(ForgeError::Unavailable(_))));
+    assert!(matches!(g.change_request("o/r", "b"), Err(ForgeError::Unavailable(_))));
+    assert_eq!(t.sent().len(), 1, "one call reached GitHub");
+    assert_eq!(g.login_rejected_at(), Some(at), "the first refusal's time");
+
+    // Signing in again clears it, and calls go out again.
+    g.set_account(Some(Account { token: "gho_new".into(), api_url: API.into(), login: "me".into() }));
+    assert_eq!((g.login_needed(), g.login_rejected_at()), (false, None));
+    t.ok("GET", &format!("{API}/repos/o/r/actions/runs?branch=b&per_page={RUN_LIMIT}"), r#"{"workflow_runs":[]}"#);
+    assert_eq!(g.branch_runs("o/r", "b").unwrap(), vec![]);
+    assert_eq!(t.sent().len(), 2);
+}
+
+#[test]
+fn a_repo_that_refuses_the_login_is_not_a_rejected_login() {
+    let (g, t) = forge();
+    let runs = format!("{API}/repos/o/r/actions/runs?branch=b&per_page={RUN_LIMIT}");
+    t.on("GET", &runs, Response::new(403, r#"{"message":"Resource not accessible by personal access token"}"#));
+    let e = g.branch_runs("o/r", "b").unwrap_err();
+    assert!(matches!(&e, ForgeError::Failed(m) if m.contains("403") && m.contains("not accessible")), "{e:?}");
+    assert_eq!((g.login_needed(), g.login_rejected_at()), (false, None));
+    let _ = g.branch_runs("o/r", "b");
+    assert_eq!(t.sent().len(), 2, "still calling");
+}
+
+#[test]
+fn a_refusal_of_the_old_token_does_not_mark_a_new_login() {
+    let (g, _) = forge();
+    g.set_account(Some(Account { token: "gho_new".into(), api_url: API.into(), login: "me".into() }));
+    g.reject("gho_t");
+    assert_eq!(g.login_rejected_at(), None);
+    g.reject("gho_new");
+    assert!(g.login_rejected_at().is_some());
+}
+
+#[test]
 fn reads_the_branch_pr_preferring_an_open_one() {
     let (g, t) = forge();
     t.ok(

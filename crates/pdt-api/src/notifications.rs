@@ -209,6 +209,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
     // Inbox items, stored and approvals.
     let mut items = st.store.open_inbox_items(None).await?;
     items.extend(approvals);
+    items.extend(crate::inbox::connect_forge(st));
     let fresh: Vec<&InboxItem> = items.iter().filter(|i| !live.contains_key(&inbox_key(&i.id))).collect();
     let mut fresh: Vec<InboxItem> = fresh.into_iter().cloned().collect();
     crate::inbox::decorate(st, &mut fresh).await?;
@@ -224,12 +225,14 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
         let what =
             [Some(label.to_string()), i.persona_name.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
         n.body = with_ticket(&what, i.ticket_key.as_deref());
-        n.severity =
-            if matches!(i.kind, InboxKind::Stalled | InboxKind::TimedOut | InboxKind::LoopLimit | InboxKind::Notice) {
-                Severity::Warning
-            } else {
-                Severity::Info
-            };
+        n.severity = if matches!(
+            i.kind,
+            InboxKind::Stalled | InboxKind::TimedOut | InboxKind::LoopLimit | InboxKind::Notice | InboxKind::Connect
+        ) {
+            Severity::Warning
+        } else {
+            Severity::Info
+        };
         n.project_id = i.project_id.clone();
         n.ticket_id = i.ticket_id.clone();
         n.session_id = i.session_id.clone();
