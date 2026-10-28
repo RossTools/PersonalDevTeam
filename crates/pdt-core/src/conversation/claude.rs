@@ -418,7 +418,7 @@ impl ClaudeMapper {
                 let item = format!("u:cmd-{fallback_id}-{}", self.shown_commands);
                 out.push(self.event(
                     Some(item),
-                    AgentEvent::UserMessage { text: cmd, images: vec![], source: MessageSource::Pdt },
+                    AgentEvent::UserMessage { text: cmd, images: vec![], source: MessageSource::Pdt, pdt: None },
                 ));
             }
         }
@@ -718,7 +718,7 @@ impl ClaudeMapper {
             if let Some(i) = self.sent_commands.iter().position(|c| *c == text.trim()) {
                 self.sent_commands.remove(i);
             }
-            out.push(self.event(item, AgentEvent::UserMessage { text, images, source }));
+            out.push(self.event(item, AgentEvent::UserMessage { text, images, source, pdt: None }));
             return;
         }
         let Value::Array(blocks) = content else {
@@ -1150,7 +1150,12 @@ impl ClaudeMapper {
             _ => Vec::new(),
         };
         let item = (!uuid.is_empty()).then(|| format!("u:{uuid}"));
-        out.push(self.event(item, AgentEvent::UserMessage { text: prompt, images, source: MessageSource::Terminal }));
+        out.push(
+            self.event(
+                item,
+                AgentEvent::UserMessage { text: prompt, images, source: MessageSource::Terminal, pdt: None },
+            ),
+        );
     }
 }
 

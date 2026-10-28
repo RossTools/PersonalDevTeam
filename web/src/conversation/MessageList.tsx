@@ -14,6 +14,7 @@ import {
   Spinner,
   ToolCallRow,
   ToolOutput,
+  relativeTime,
   type ApprovalAnswer,
 } from '@ui';
 import { cn } from '@ui/lib/utils';
@@ -21,6 +22,7 @@ import type { AgentEvent } from '../api/gen/AgentEvent';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
 import type { MessageSource } from '../api/gen/MessageSource';
+import type { PdtMessage } from '../api/gen/PdtMessage';
 import type { PendingMessage } from '../api/gen/PendingMessage';
 import { Markdown } from '../common/Markdown';
 import { blockItemIds, buildBlocks, currentTool, reuseBlocks, turnStartedAt, type Block, type RowNode } from './blocks';
@@ -34,6 +36,27 @@ const SOURCE_META: Partial<Record<MessageSource, string>> = {
   terminal: 'From the terminal',
   notice: 'Sent automatically: news about the pull request',
 };
+
+/** The one line PDT's own messages to a PM conversation collapse to (PDT-211). */
+const PDT_MESSAGE: Record<PdtMessage, string> = {
+  update: 'PDT brought this conversation up to date',
+  checkpoint: 'PDT asked for a journal checkpoint',
+  journal: "PDT asked for this conversation's journal entry",
+};
+
+/** One of PDT's own messages to a PM conversation: a muted line that opens to the full text the PM got. */
+export function PdtMessageRow({ kind, text, when }: { kind: PdtMessage; text: string; when: string }) {
+  return (
+    <details className="px-1 text-meta text-muted-foreground">
+      <summary className="cursor-pointer select-none">
+        {PDT_MESSAGE[kind]} · {when}
+      </summary>
+      <div className="mt-1 border-l border-border pl-2 text-sm text-foreground">
+        <Markdown>{text}</Markdown>
+      </div>
+    </details>
+  );
+}
 
 export interface MessageListProps {
   rows: ConversationEvent[];
@@ -283,6 +306,7 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
   const ev = r.event;
   switch (ev.kind) {
     case 'user_message':
+      if (ev.pdt) return <PdtMessageRow kind={ev.pdt} text={ev.text} when={relativeTime(r.ts)} />;
       return (
         <MessageBubble meta={SOURCE_META[ev.source]} images={ev.images.length ? <Images images={ev.images} /> : undefined}>
           {ev.text || undefined}
@@ -525,7 +549,9 @@ export function MessageList({
               <Markdown>{p.markdown}</Markdown>
             </div>
           ))}
-          {pending.map((p) => (
+          {pending.map((p) => p.pdt ? (
+            <PdtMessageRow key={p.id} kind={p.pdt} text={p.text} when="queued" />
+          ) : (
             <MessageBubble
               key={p.id}
               tone="pending"

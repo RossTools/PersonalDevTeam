@@ -700,6 +700,7 @@ impl LiveConversation for CodexLive {
                     text: msg.text.trim().to_string(),
                     images: vec![],
                     source: pdt_core::conversation::MessageSource::Pdt,
+                    pdt: None,
                 },
                 raw: None,
             });

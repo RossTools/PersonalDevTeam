@@ -220,6 +220,7 @@ async fn seed_conversation(store: &Store, session_id: &str, at: i64) -> anyhow::
                     .into(),
                 images: vec![],
                 source: MessageSource::Pdt,
+                pdt: None,
             },
         ),
         (

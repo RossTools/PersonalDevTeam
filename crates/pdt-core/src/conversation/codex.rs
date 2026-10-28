@@ -352,7 +352,7 @@ impl CodexMapper {
         let event = match kind {
             "userMessage" if done => {
                 let (text, images) = user_text(&item["content"]);
-                AgentEvent::UserMessage { text, images, source }
+                AgentEvent::UserMessage { text, images, source, pdt: None }
             }
             "agentMessage" if done => AgentEvent::AgentMessage {
                 id: id.clone(),

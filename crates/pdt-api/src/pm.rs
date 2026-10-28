@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use pdt_core::conversation::{Answer, PermissionMode, SessionMode};
+use pdt_core::conversation::{Answer, PdtMessage, PermissionMode, SessionMode};
 use pdt_core::pm::{
     self, AskTarget, BriefConversation, BriefEvent, BriefInbox, BriefJournal, BriefNote, BriefProject, BriefTicket,
     BriefingData, NewNote, NoteKind, NotePatch, PmNote, PmSessionInfo, PmSessionPatch, PmState, RotateReason, Rotation,
@@ -251,9 +251,6 @@ pub(crate) async fn write_journal(st: &AppState, s: &Session, body: &str) -> Res
     Ok(n)
 }
 
-/// What a PM conversation's checkpoint requests and daily updates are queued under, so one waits at a time.
-const CHECKPOINT_KEY: &str = "pm:checkpoint";
-
 /// A PM session ended a turn (spec §5.3): one in use gets its daily update when it is due, and one the user closed
 /// ends once the turn that was asked for its journal is over. Neither a full context nor age ends one: the agent
 /// compacts its own context ([`compacted`]).
@@ -279,15 +276,18 @@ pub(crate) async fn turn_ended(st: &AppState, id: &str) {
             {
                 return;
             }
-            let text = match update_data(st, id, &row, now).await {
-                Ok(d) => pm::update_message(&d),
+            let message = match update_data(st, id, &row, now).await {
+                Ok(d) => pm::daily_message(&d),
                 Err(e) => return tracing::warn!(session = %id, error = %e.message(), "could not gather a PM update"),
             };
             if !matches!(st.store.set_pm_caught_up(id, row.caught_up_at, now).await, Ok(true)) {
                 return;
             }
-            tracing::info!(session = %id, "sending a PM conversation its daily update");
-            queue_checkpoint(st, &s, text).await;
+            // A quiet day since a checkpoint newer than the user's last message: nothing to say (PDT-211).
+            let Some((kind, text)) = message else { return };
+            let key = if kind == PdtMessage::Update { pm::UPDATE_KEY } else { pm::CHECKPOINT_KEY };
+            tracing::info!(session = %id, kind = ?kind, "sending a PM conversation its daily update");
+            queue_checkpoint(st, &s, key, text).await;
         }
     }
 }
@@ -301,43 +301,54 @@ pub(crate) async fn compacted(st: &AppState, id: &str) {
     }
     let Ok(Some(s)) = st.store.get_session(id).await else { return };
     tracing::info!(session = %id, "asking a compacted PM conversation for a journal checkpoint");
-    queue_checkpoint(st, &s, pm::checkpoint_request()).await;
+    queue_checkpoint(st, &s, pm::CHECKPOINT_KEY, pm::checkpoint_request()).await;
 }
 
 /// Whether the user (not PDT) wrote to a PM conversation after `since`.
 async fn user_wrote_since(st: &AppState, id: &str, since: i64) -> bool {
+    user_wrote_at(st, id).await.is_some_and(|at| at > since)
+}
+
+/// When the user (not PDT) last wrote to a PM conversation.
+async fn user_wrote_at(st: &AppState, id: &str) -> Option<i64> {
     use pdt_core::conversation::{AgentEvent, MessageSource};
     let events = st.store.session_events_of_kind(id, "user_message").await.unwrap_or_default();
     events
         .iter()
         .rev()
-        .take_while(|e| e.ts > since)
-        .any(|e| matches!(&e.event, AgentEvent::UserMessage { source, .. } if *source != MessageSource::Notice))
+        .find(|e| matches!(&e.event, AgentEvent::UserMessage { source, .. } if *source != MessageSource::Notice))
+        .map(|e| e.ts)
+}
+
+/// Whether a waiting outbox message is a PM conversation's checkpoint request or update.
+fn is_checkpoint(m: &pdt_store::SessionMessage, id: &str) -> bool {
+    m.session_id.as_deref() == Some(id) && matches!(m.dedupe.as_deref(), Some(pm::CHECKPOINT_KEY | pm::UPDATE_KEY))
 }
 
 async fn checkpoint_waiting(st: &AppState, id: &str) -> bool {
     let waiting = st.store.waiting_session_messages().await.unwrap_or_default();
-    waiting.iter().any(|m| m.session_id.as_deref() == Some(id) && m.dedupe.as_deref() == Some(CHECKPOINT_KEY))
+    waiting.iter().any(|m| is_checkpoint(m, id))
 }
 
 /// Drops a PM conversation's checkpoint request or update that is still waiting.
 async fn drop_checkpoints(st: &AppState, id: &str) {
     for m in st.store.waiting_session_messages().await.unwrap_or_default() {
-        if m.session_id.as_deref() == Some(id) && m.dedupe.as_deref() == Some(CHECKPOINT_KEY) {
+        if is_checkpoint(&m, id) {
             let _ = st.store.resolve_session_message(&m.id, None, now_ms()).await;
         }
     }
 }
 
 /// Queues a checkpoint request or update for a running PM conversation (never into a running turn: the outbox waits
-/// for it to be idle, and never wakes a parked one).
-async fn queue_checkpoint(st: &AppState, s: &Session, text: String) {
+/// for it to be idle, and never wakes a parked one). `key` ([`pm::UPDATE_KEY`] or [`pm::CHECKPOINT_KEY`]) is how
+/// the conversation view knows it (PDT-211).
+async fn queue_checkpoint(st: &AppState, s: &Session, key: &str, text: String) {
     let m = pdt_store::SessionMessage {
         id: uuid::Uuid::now_v7().to_string(),
         attempt_id: None,
         session_id: Some(s.id.clone()),
         ticket_id: None,
-        dedupe: Some(CHECKPOINT_KEY.into()),
+        dedupe: Some(key.into()),
         text,
         timeline: serde_json::Value::Null,
         run_id: None,
@@ -373,7 +384,18 @@ async fn update_data(st: &AppState, id: &str, row: &PmSessionRow, now: i64) -> R
         };
         journal.push(pm::BriefConversationJournal { title, at: n.updated_at, body: n.body });
     }
-    Ok(pm::UpdateData { now, since, first: since == row.created_at, events, inbox, journal })
+    let checkpointed_at = st.store.session_journal(id).await?.map(|n| n.updated_at);
+    let user_wrote_at = user_wrote_at(st, id).await.unwrap_or(0);
+    Ok(pm::UpdateData {
+        now,
+        since,
+        first: since == row.created_at,
+        events,
+        inbox,
+        journal,
+        checkpointed_at,
+        user_wrote_at,
+    })
 }
 
 /// Asks a PM conversation the user closed (rotation `journal`) for its journal entry, through the outbox (7a's
@@ -385,7 +407,7 @@ async fn ask_for_journal(st: &AppState, s: &Session, reopens: bool) {
         attempt_id: None,
         session_id: Some(s.id.clone()),
         ticket_id: None,
-        dedupe: None,
+        dedupe: Some(pm::JOURNAL_KEY.into()),
         text: pm::journal_request(),
         timeline: serde_json::Value::Null,
         run_id: None,
@@ -637,20 +659,20 @@ async fn brief_inbox(st: &AppState) -> Result<Vec<BriefInbox>, ApiError> {
 
 /// Events of the log, with their tickets' keys, for a briefing or an update.
 async fn brief_events(st: &AppState, filter: &pdt_store::EventFilter) -> Result<Vec<BriefEvent>, ApiError> {
-    let mut ticket_keys = std::collections::HashMap::new();
+    let mut tickets = std::collections::HashMap::new();
     let mut events = vec![];
     for e in st.store.list_log_events(filter).await? {
-        let ticket = match &e.ticket_id {
+        let (ticket, title) = match &e.ticket_id {
             Some(t) => {
-                if !ticket_keys.contains_key(t) {
-                    let key = st.store.get_ticket(t).await?.map(|t| t.summary.key);
-                    ticket_keys.insert(t.clone(), key);
+                if !tickets.contains_key(t) {
+                    let found = st.store.get_ticket(t).await?.map(|t| (t.summary.key, t.summary.title));
+                    tickets.insert(t.clone(), found);
                 }
-                ticket_keys.get(t).cloned().flatten()
+                tickets.get(t).cloned().flatten().unzip()
             }
-            None => None,
+            None => (None, None),
         };
-        events.push(BriefEvent { at: e.created_at, kind: e.kind, ticket });
+        events.push(BriefEvent { at: e.created_at, kind: e.kind, ticket, title, payload: e.payload });
     }
     Ok(events)
 }
