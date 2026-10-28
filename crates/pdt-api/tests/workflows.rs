@@ -1188,3 +1188,75 @@ async fn a_comment_step_run_again_after_a_restart_comments_once() {
     let comments = events["items"].as_array().unwrap().iter().filter(|e| e["kind"] == "comment").count();
     assert_eq!(comments, 1, "{events}");
 }
+
+/// A Draft ticket made from outside input (PDT-201), as an issue import makes it.
+async fn external_ticket(env: &Env, title: &str) -> String {
+    let t = pdt_core::ticket::NewTicket { title: title.into(), ..Default::default() }.validate().unwrap();
+    let t = pdt_core::ticket::ValidNewTicket { source: pdt_core::ticket::TicketSource::External, ..t };
+    let id = uuid::Uuid::now_v7().to_string();
+    env.state.store.create_ticket(&id, &env.project, &t, 1).await.unwrap();
+    id
+}
+
+#[tokio::test]
+async fn a_workflow_never_puts_an_external_ticket_in_to_do() {
+    let env = setup().await;
+    let t = external_ticket(&env, "From an issue").await;
+    let mover = |stage: &str, instead: Option<&str>| {
+        let mut config = json!({"ticket": "{{trigger.ticket}}", "stage": stage});
+        if let Some(i) = instead {
+            config["externalStage"] = json!(i);
+        }
+        json!({"name": format!("to {stage}"), "nodes": [
+            {"id": "t", "kind": "manual", "version": 1},
+            {"id": "move", "kind": "ticket.move", "version": 1, "config": config}],
+            "edges": [{"from": "t", "to": "move"}]})
+    };
+    // To do and In progress are refused, with why.
+    for stage in ["todo", "in_progress"] {
+        let wf = create(&env, mover(stage, None)).await;
+        let r = settle(&env, &run_now(&env, &wf, json!({"ticket": t})).await).await;
+        assert_eq!(r["status"], "failed", "{r}");
+        assert!(r.to_string().contains("only the user"), "{r}");
+    }
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+    assert_eq!(
+        (v["stage"].as_str(), v["source"].as_str(), v["admitted"].as_bool()),
+        (Some("draft"), Some("external"), Some(false))
+    );
+    // With somewhere else to go (the Pipeline's afterRefine), it goes there instead.
+    let wf = create(&env, mover("todo", Some("ready"))).await;
+    let r = settle(&env, &run_now(&env, &wf, json!({"ticket": t})).await).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+    assert_eq!(v["stage"], "ready");
+
+    // Making one in To do from outside input is refused too; a workflow's own tickets are `workflow`'s.
+    let (_, made) =
+        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "Mine"}))).await;
+    assert_eq!(made["source"], "user");
+    let wf = create(
+        &env,
+        json!({"name": "maker", "nodes": [
+            {"id": "t", "kind": "manual", "version": 1},
+            {"id": "make", "kind": "ticket.create", "version": 1,
+             "config": {"project": env.project, "title": "Follow-up", "stage": "todo"}}],
+            "edges": [{"from": "t", "to": "make"}]}),
+    )
+    .await;
+    let r = settle(&env, &run_now(&env, &wf, json!({})).await).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    let (_, list) = call(&env.app, "GET", &format!("/api/tickets?project={}&q=Follow-up", env.project), None).await;
+    assert_eq!(
+        (list["items"][0]["source"].as_str(), list["items"][0]["stage"].as_str()),
+        (Some("workflow"), Some("todo"))
+    );
+
+    // The user moving it to To do lets it in: from then on workflows move it as any other.
+    let (s, v) = call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
+    assert_eq!((s, v["admitted"].as_bool()), (StatusCode::OK, Some(true)), "{v}");
+    call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "ready"}))).await;
+    let wf = create(&env, mover("todo", None)).await;
+    let r = settle(&env, &run_now(&env, &wf, json!({"ticket": t})).await).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+}

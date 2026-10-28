@@ -542,7 +542,7 @@ fn issue(n: u64, title: &str, body: &str) -> pdt_forge::Issue {
 }
 
 #[tokio::test]
-async fn the_triage_template_has_the_pm_draft_a_ticket_for_a_new_issue() {
+async fn the_triage_template_has_triage_draft_an_external_ticket_for_a_new_issue() {
     let env = setup(None).await;
     let (s, w) = call(
         &env.app,
@@ -561,38 +561,59 @@ async fn the_triage_template_has_the_pm_draft_a_ticket_for_a_new_issue() {
     env.gh.set_issues("o/r", vec![issue(2, "Login fails on Safari", "It spins forever."), issue(1, "Old", "")]);
     pdt_api::refresh_issues(&env.state).await;
 
-    // The PM's step session starts with the issue and where its ticket goes.
+    // The locked-down Triage persona's step session starts with the issue and where its ticket goes (PDT-201).
     let deadline = Instant::now() + Duration::from_secs(20);
     let session = loop {
         pdt_api::run_workflows(&env.state).await;
         let (_, list) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await;
-        if let Some(s) = list.as_array().unwrap().iter().find(|s| s["persona"]["name"] == "PM") {
+        if let Some(s) = list.as_array().unwrap().iter().find(|s| s["persona"]["name"] == "Triage") {
             break s["id"].as_str().unwrap().to_string();
         }
         assert!(Instant::now() < deadline, "no triage session");
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
-    let said = wait_said(&env, &session, 1).await;
+    wait_said(&env, &session, 1).await;
     let first = events(&env, &session).await;
     let prompt = first.iter().find(|e| e["event"]["kind"] == "user_message").unwrap()["event"]["text"].clone();
     let prompt = prompt.as_str().unwrap();
     assert!(prompt.contains("#2 \"Login fails on Safari\"") && prompt.contains("It spins forever."), "{prompt}");
     assert!(prompt.contains("project PX") && prompt.contains("submit_outcome"), "{prompt}");
 
-    // Drafting the ticket asks first; then the outcome ends the run by `drafted`.
-    let n = said.len();
-    send(&env, &session, r#"mcp: create_ticket {"project": "PX", "title": "Login fails on Safari"}"#).await;
-    let req = open_request(&env, &session).await;
-    let url = format!("/api/sessions/{session}/requests/{req}");
-    call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
-    // Waits for the tool's answer itself: a nudge after the first turn can add another message meanwhile.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !wait_said(&env, &session, n + 1).await[n..].iter().any(|m| m.contains("\"created\": true")) {
-        assert!(Instant::now() < deadline, "create_ticket never answered");
-        pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    // Locked down: Claude keeps only its read tools.
+    let n = agent_says(&env, &session).await.len();
+    send(&env, &session, "where").await;
+    let said = tool_answer(&env, &session, n, "tools=").await;
+    assert!(said.contains("tools=\"Read,Grep,Glob\""), "{said}");
+
+    // Asking for To do or the agentic label is refused, even with the user's yes to the call.
+    for call_text in [
+        r#"mcp: create_ticket {"project": "PX", "title": "Login fails on Safari", "stage": "todo"}"#,
+        r#"mcp: create_ticket {"project": "PX", "title": "Login fails on Safari", "labels": ["agentic"]}"#,
+    ] {
+        let n = agent_says(&env, &session).await.len();
+        send(&env, &session, call_text).await;
+        approve_open(&env, &session).await;
+        let said = tool_answer(&env, &session, n, "mcp create_ticket").await;
+        assert!(said.contains("failed") && said.contains("Drafts"), "{said}");
     }
+    // A run_with_secrets is not among its tools, and refused anyway.
+    let n = agent_says(&env, &session).await.len();
+    send(&env, &session, r#"mcp: run_with_secrets {"command": "true", "env": {}}"#).await;
+    assert!(tool_answer(&env, &session, n, "mcp run_with_secrets").await.contains("failed"));
+
+    // Drafting the ticket asks first; then the outcome ends the run by `drafted`.
+    let n = agent_says(&env, &session).await.len();
+    send(&env, &session, r#"mcp: create_ticket {"project": "PX", "title": "Login fails on Safari"}"#).await;
+    approve_open(&env, &session).await;
+    let said = tool_answer(&env, &session, n, "mcp create_ticket").await;
+    assert!(said.contains("\"created\": true"), "{said}");
     assert_eq!(ticket_titles(&env).await, ["Fix the login", "Login fails on Safari"]);
+    let (_, t) = call(&env.app, "GET", "/api/tickets?project=&q=PX-2", None).await;
+    let t = &t["items"][0];
+    assert_eq!(
+        (t["stage"].as_str(), t["source"].as_str(), t["admitted"].as_bool()),
+        (Some("draft"), Some("external"), Some(false))
+    );
     send(&env, &session, r#"mcp: submit_outcome {"outcome": "drafted", "summary": "Drafted PX-2."}"#).await;
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -607,6 +628,69 @@ async fn the_triage_template_has_the_pm_draft_a_ticket_for_a_new_issue() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
+}
+
+/// Approves the session's open request.
+async fn approve_open(env: &Env, session: &str) {
+    let req = open_request(env, session).await;
+    let url = format!("/api/sessions/{session}/requests/{req}");
+    let (s, _) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+}
+
+/// The first thing the agent said after its `n`th message that contains `what` (a nudge after a step's turn can come
+/// in between).
+async fn tool_answer(env: &Env, session: &str, n: usize, what: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(m) = agent_says(env, session).await[n..].iter().find(|m| m.contains(what)) {
+            return m.clone();
+        }
+        assert!(Instant::now() < deadline, "the agent never said {what}");
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// PDT-201: the PM lets an external ticket in only with the user's yes to that very call, even in a project that lets
+/// it act without asking.
+#[tokio::test]
+async fn the_pm_moves_an_external_ticket_to_to_do_only_after_the_users_yes() {
+    let env = setup(None).await;
+    let (s, _) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let t = pdt_core::ticket::NewTicket { title: "From an issue".into(), ..Default::default() }.validate().unwrap();
+    let t = pdt_core::ticket::ValidNewTicket { source: pdt_core::ticket::TicketSource::External, ..t };
+    let made = env.state.store.create_ticket("ext", &env.project, &t, 1).await.unwrap();
+    assert_eq!(made.summary.key, "PX-2");
+    let stage = || async { call(&env.app, "GET", "/api/tickets/ext", None).await.1 };
+
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    // Anything short of the board: PDT answers for the user as the project says.
+    let said = ask(&env, &id, r#"mcp: edit_ticket {"ticket": "PX-2", "stage": "ready", "priority": "high"}"#).await;
+    assert!(said.contains("\"updated\": true"), "{said}");
+
+    // To do: the user is asked all the same, and a no leaves it.
+    let to_do = r#"mcp: edit_ticket {"ticket": "PX-2", "stage": "todo"}"#;
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, to_do).await;
+    let req = open_request(&env, &id).await;
+    let url = format!("/api/sessions/{id}/requests/{req}");
+    call(&env.app, "POST", &url, Some(json!({"answer": {"type": "deny"}}))).await;
+    assert_eq!(wait_said(&env, &id, n + 1).await.pop().unwrap(), "mcp edit_ticket denied");
+    assert_eq!(stage().await["stage"], "ready");
+
+    // A yes lets it in.
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, to_do).await;
+    approve_open(&env, &id).await;
+    let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
+    assert!(said.contains("\"updated\": true") && said.contains("\"stage\": \"todo\""), "{said}");
+    let v = stage().await;
+    assert_eq!((v["stage"].as_str(), v["admitted"].as_bool()), (Some("todo"), Some(true)), "{v}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
 
 #[tokio::test]

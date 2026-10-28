@@ -147,14 +147,16 @@ fn issue_triage() -> Template {
              "description": "owner/name on GitHub (read through PDT's GitHub login)."},
             {"id": "project", "title": "Project for its tickets", "type": "string", "required": true,
              "description": "The key of the project new tickets go in (PDT)."},
-            {"id": "persona", "title": "Persona", "type": "string", "default": "PM",
-             "description": "Who triages: the project manager, or a persona of your own."},
+            {"id": "persona", "title": "Persona", "type": "string", "default": "Triage",
+             "description": "Who triages: the locked-down Triage persona (read only, no shell, web or secrets: the \
+                             issue is untrusted input), or a persona of your own."},
         ])),
         doc(json!({
             "name": "Triage new GitHub issues",
-            "description": "The PM reads each new issue of a GitHub repository and drafts a ticket for it, \
-                            marks it a duplicate, or leaves it. Creating the ticket asks you first unless the \
-                            project lets the PM act. The first look at the repository only records where it is.",
+            "description": "Triage reads each new issue of a GitHub repository and drafts a ticket for it, \
+                            marks it a duplicate, or leaves it. Its tickets are external Drafts: only you move them \
+                            to To do. Creating the ticket asks you first unless the project lets the PM act. The \
+                            first look at the repository only records where it is.",
             "nodes": [
                 {"id": "opened", "kind": "github.issue.opened", "version": 1, "position": {"x": 0, "y": 160},
                  "config": {"repos": ["{{params.repo}}"]}},

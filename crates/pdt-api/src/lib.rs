@@ -47,6 +47,7 @@ mod start;
 mod stop;
 mod tickets;
 mod todos;
+mod untrusted;
 pub mod update;
 pub mod vault;
 mod workflow;

@@ -81,6 +81,58 @@ impl Priority {
     }
 }
 
+/// Where a ticket came from (PDT-201). An `external` one was made from outside input (an imported issue, issue or bug
+/// triage, an issue tracker integration), which may carry prompt injection: it reaches To do only when the user puts it
+/// there (see [`external_gate`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TicketSource {
+    /// Made by the user (and every ticket made before sources were kept).
+    #[default]
+    User,
+    /// Made by the PM in a conversation.
+    Pm,
+    /// Made by a workflow, or by an agent session other than the PM.
+    Workflow,
+    /// Made from outside input.
+    External,
+}
+str_enum!(TicketSource { User => "user", Pm => "pm", Workflow => "workflow", External => "external" });
+
+/// The label that marks a ticket for agents to work on unattended: adding it to an external ticket is gated like To
+/// do (PDT-201).
+pub const AGENTIC_LABEL: &str = "agentic";
+
+/// Whether a change puts a ticket in front of agents (PDT-201): to To do or In progress from a stage before it, or
+/// adding the [`AGENTIC_LABEL`].
+pub fn boards(
+    from: Option<TicketStage>,
+    to: Option<TicketStage>,
+    labels: &[String],
+    new_labels: Option<&[String]>,
+) -> bool {
+    let on_board = |s: TicketStage| matches!(s, TicketStage::Todo | TicketStage::InProgress);
+    let moves = to.is_some_and(|to| on_board(to) && from.is_none_or(|f| f != to && !on_board(f)));
+    let has = |l: &[String]| l.iter().any(|x| x == AGENTIC_LABEL);
+    moves || new_labels.is_some_and(|n| has(n) && !has(labels))
+}
+
+/// The Todo gate (PDT-201): an external ticket the user hasn't let in yet reaches To do (or In progress, or gets the
+/// `agentic` label) only when the user does it, or the PM through a call the user confirmed. `Ok(true)` when this
+/// change lets it in, `Ok(false)` when the gate has nothing to say, Err why it is refused (for the agent or workflow).
+pub fn external_gate(source: TicketSource, admitted: bool, boards: bool, by: &By, key: &str) -> Result<bool, String> {
+    if source != TicketSource::External || admitted || !boards {
+        return Ok(false);
+    }
+    if by.actor == Actor::User || by.confirmed {
+        return Ok(true);
+    }
+    Err(format!(
+        "{key} came from outside PDT (an issue or a report), so only the user can put it in To do, start it or label          it {AGENTIC_LABEL}: they do it on the board, or confirm the PM's edit_ticket. Leave it where it is and tell          the user why it should go ahead."
+    ))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -216,11 +268,13 @@ impl AgentBy {
 pub struct By {
     pub actor: Actor,
     pub agent: Option<AgentBy>,
+    /// The user confirmed this very call (the PM's `edit_ticket`, PDT-201): it may let an external ticket in.
+    pub confirmed: bool,
 }
 
 impl By {
     pub fn agent(a: AgentBy) -> By {
-        By { actor: Actor::Agent, agent: Some(a) }
+        By { actor: Actor::Agent, agent: Some(a), confirmed: false }
     }
 
     /// `data` with the agent added as `agent` (an object, or a new one when there is no data).
@@ -239,7 +293,7 @@ impl By {
 
 impl From<Actor> for By {
     fn from(actor: Actor) -> By {
-        By { actor, agent: None }
+        By { actor, agent: None, confirmed: false }
     }
 }
 
@@ -388,6 +442,12 @@ pub struct TicketSummary {
     /// The issues in other trackers it is linked to (an issue it was imported from).
     #[serde(default)]
     pub external: Vec<ExternalLink>,
+    /// Where it came from (PDT-201).
+    #[serde(default)]
+    pub source: TicketSource,
+    /// An external ticket the user let in (moved to To do, started or labelled `agentic`): the Todo gate is open.
+    #[serde(default)]
+    pub admitted: bool,
 }
 
 /// A ticket's stage in a pipeline workflow (Phase 7c spec §2): the Board splits In progress by it.
@@ -1104,6 +1164,8 @@ pub struct ValidNewTicket {
     pub after: Option<String>,
     pub parent: Option<String>,
     pub blocked_by_previous: bool,
+    /// Who made it: set by the caller, never by a request (`user` from [`NewTicket::validate`]).
+    pub source: TicketSource,
 }
 
 impl NewTicket {
@@ -1120,6 +1182,7 @@ impl NewTicket {
             after: nonblank(&self.after),
             parent: nonblank(&self.parent),
             blocked_by_previous: self.blocked_by_previous.unwrap_or(false),
+            source: TicketSource::User,
         })
     }
 }
@@ -1361,6 +1424,8 @@ mod tests {
             agent: None,
             auto_start_at: None,
             external: vec![],
+            source: TicketSource::External,
+            admitted: false,
         };
         let t = Ticket {
             summary: s,
@@ -1379,6 +1444,44 @@ mod tests {
         assert_eq!(v["description"], "d");
         assert_eq!(v["defaultBranch"], "pdt/PDT-1-t");
         assert_eq!(v["sessions"], serde_json::json!([]));
+        assert_eq!((v["source"].as_str(), v["admitted"].as_bool()), (Some("external"), Some(false)));
+    }
+
+    #[test]
+    fn boarding_is_a_move_onto_the_board_or_the_agentic_label() {
+        let l = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (d, r, t, ip) = (TicketStage::Draft, TicketStage::Ready, TicketStage::Todo, TicketStage::InProgress);
+        assert!(boards(Some(d), Some(t), &[], None));
+        assert!(boards(Some(r), Some(ip), &[], None));
+        assert!(boards(None, Some(t), &[], None), "made in To do");
+        assert!(!boards(None, Some(d), &[], None));
+        assert!(!boards(Some(t), Some(t), &[], None));
+        assert!(!boards(Some(t), Some(ip), &[], None), "already on the board");
+        assert!(!boards(Some(d), Some(r), &[], None));
+        assert!(!boards(Some(d), Some(TicketStage::Done), &[], None));
+        assert!(boards(Some(d), None, &l(&["bug"]), Some(&l(&["bug", "agentic"]))));
+        assert!(!boards(Some(d), None, &l(&["agentic"]), Some(&l(&["agentic", "bug"]))), "had it already");
+        assert!(!boards(Some(d), None, &[], Some(&l(&["bug"]))));
+    }
+
+    #[test]
+    fn only_the_user_or_a_confirmed_call_lets_an_external_ticket_in() {
+        let user: By = Actor::User.into();
+        let system: By = Actor::System.into();
+        let agent = By::agent(coder());
+        let confirmed = By { confirmed: true, ..By::agent(coder()) };
+        let ext = TicketSource::External;
+        assert_eq!(external_gate(ext, false, true, &user, "P-1"), Ok(true));
+        assert_eq!(external_gate(ext, false, true, &confirmed, "P-1"), Ok(true));
+        let refused = external_gate(ext, false, true, &system, "P-1").unwrap_err();
+        assert!(refused.contains("P-1") && refused.contains("only the user"), "{refused}");
+        assert!(external_gate(ext, false, true, &agent, "P-1").is_err());
+        // Let in already, not boarding, or not external: nothing to say.
+        assert_eq!(external_gate(ext, true, true, &system, "P-1"), Ok(false));
+        assert_eq!(external_gate(ext, false, false, &system, "P-1"), Ok(false));
+        for s in [TicketSource::User, TicketSource::Pm, TicketSource::Workflow] {
+            assert_eq!(external_gate(s, false, true, &system, "P-1"), Ok(false));
+        }
     }
 
     fn coder() -> AgentBy {

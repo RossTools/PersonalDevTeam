@@ -28,7 +28,7 @@ structured view) are in [conversations.md](conversations.md). Code: crates/pdt-a
   `change_request_view` (number or branch; state, mergeability, comments and reviews), `change_request_comment`
   (`replyTo`: a review comment's id), `ci_runs` (with failed jobs), `ci_failed_logs` (a run's failed jobs with the
   last 200 lines of each log; the newest failed run when no `runId`), `issue_view`, `issue_comment`. The PM has
-  `issue_view` (bug triage).
+  `issue_view`.
 - A session on an active attempt (Start's session) also gets "This session's ticket" (key, API path, branch;
   follow-up work in its own ticket; Done, the worktree and the branch are PDT's or the user's) and, when enabled
   workflows message the attempt's agent, "Messages from PDT" (PDT-83): which events reach it as `[PDT]` messages, how
@@ -263,8 +263,24 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   conversation shows why it ended (reason `user`; `context` and `age` are from before PDT-167), its journal and New
   conversation in place of its composer; while it writes its closing journal a banner says the user closed it.
 - **As a workflow step.** The PM persona can be an `agent` node's persona; its asking tools still ask (the approval
-  waits in the Inbox's Approvals). The built-in template **Triage new GitHub issues** (`builtin:issue-triage`) runs it
-  on each new issue of a repository: it drafts a ticket in the chosen project, marks a duplicate, or leaves it.
+  waits in the Inbox's Approvals). Triage of outside input runs the **Triage** persona instead (below).
+- **External tickets** (PDT-201, [tickets.md](tickets.md) "Sources and the Todo gate"): the PM's `edit_ticket` that
+  would move an external ticket the user hasn't let in to To do or In progress, or label it `agentic`, always asks the
+  user, even where the project lets the PM act; only that yes lets it through.
+
+## Triage: the locked-down persona (PDT-201)
+
+- The built-in **Triage** persona (role `triage`, pdt-core `TRIAGE_ROLE`; any persona with that role is locked down,
+  pdt-core `persona::locked_down`) reads input from outside PDT. Its tools are `search_tickets`, `get_ticket`,
+  `create_ticket`, `ask_user` and `submit_outcome` (no shell, secret tools, `edit_ticket` or `send_to_session`).
+- Its sessions run in a read-only sandbox: Claude gets `--tools Read,Grep,Glob --strict-mcp-config` (pdt-agents
+  `mcp::CLAUDE_READ_TOOLS`; no shell, web or edits, no MCP servers but PDT's) and permission mode Ask; Codex permission
+  mode Plan (its read-only sandbox) with `web_search="disabled"` and `sandbox_mode="read-only"`; a Devin Triage step
+  fails (PDT can't sandbox it).
+- Its `create_ticket` (and that of any agent step in a run an outside event started) makes `external` Drafts: a stage
+  other than Draft or the `agentic` label is refused, whatever the user answers.
+- The built-in template **Triage new GitHub issues** (`builtin:issue-triage`, its `persona` param defaulting to
+  Triage) and the built-in **PDT bug triage** run it.
 
 ## Activity
 

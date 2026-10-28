@@ -81,6 +81,14 @@ pub(crate) async fn start_ticket(
     }
     let key = ticket.summary.key.clone();
     let parent = ticket.summary.parent.clone();
+    // Only the user starts an external ticket they haven't let in (PDT-201); starting it lets it in.
+    if auto && crate::untrusted::held_back(&ticket.summary) {
+        return Err(ApiError::new(
+            axum::http::StatusCode::FORBIDDEN,
+            "untrusted_ticket",
+            format!("{key} came from outside PDT: only you can start it, or move it to To do"),
+        ));
+    }
     if ticket.summary.stage.is_closed() {
         return Err(conflict("ticket_closed", format!("{key} is closed; move it back to Ready to start it")));
     }

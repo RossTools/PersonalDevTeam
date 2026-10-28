@@ -51,7 +51,10 @@ personas?, value?}`, `DELETE /api/secrets/{id}` (`204`; the keychain entry too),
 
 ## Agents (pdt-mcp)
 
-In the default tool set and the PM's (pdt-core `DEFAULT_TOOLS`; each tool's `pm` flag), never asking:
+In the default tool set and the PM's (pdt-core `DEFAULT_TOOLS`; each tool's `pm` flag), never asking. No secrets near
+untrusted input (PDT-201): a session that triages (the Triage persona, or an agent step of a run an outside event
+started) or whose ticket is external and not let in yet is refused `request_secret`, `run_with_secrets` and
+`write_secret_file` ([tickets.md](tickets.md) "Sources and the Todo gate").
 
 - `list_secrets {}`: names and descriptions of the secrets this session may use.
 - `request_secret {name, purpose}`: one the session may use already answers `{name, stored: true}`; one that exists

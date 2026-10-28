@@ -7,6 +7,7 @@ import type { PipelineStage } from "./PipelineStage";
 import type { Priority } from "./Priority";
 import type { TicketAgent } from "./TicketAgent";
 import type { TicketParent } from "./TicketParent";
+import type { TicketSource } from "./TicketSource";
 import type { TicketStage } from "./TicketStage";
 
 /**
@@ -78,4 +79,12 @@ autoStartAt: number | null,
 /**
  * The issues in other trackers it is linked to (an issue it was imported from).
  */
-external: Array<ExternalLink>, };
+external: Array<ExternalLink>, 
+/**
+ * Where it came from (PDT-201).
+ */
+source: TicketSource, 
+/**
+ * An external ticket the user let in (moved to To do, started or labelled `agentic`): the Todo gate is open.
+ */
+admitted: boolean, };

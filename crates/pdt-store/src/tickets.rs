@@ -12,8 +12,8 @@ use pdt_core::start::attempt_branch;
 use pdt_core::ticket::{
     Actor, AgentBy, AttemptSession, AttemptState, AttemptSummary, By, EventKind, EventPage, ExternalLink,
     LinkDirection, LinkKind, LinkedTicket, MAX_LABELS, OverlapLevel, ParentFilter, PipelineStage, Priority, RankEdge,
-    Ticket, TicketEvent, TicketFilter, TicketPage, TicketSort, TicketStage, TicketSummary, ValidBulk, ValidNewTicket,
-    ValidPatch, format_key, parse_key,
+    Ticket, TicketEvent, TicketFilter, TicketPage, TicketSort, TicketSource, TicketStage, TicketSummary, ValidBulk,
+    ValidNewTicket, ValidPatch, format_key, parse_key,
 };
 use serde_json::json;
 use sqlx::sqlite::SqliteRow;
@@ -41,6 +41,9 @@ pub enum TicketError {
     /// The ticket (by key) has parts, so it can't be deleted.
     #[error("{0} has parts; delete or detach them first")]
     HasParts(String),
+    /// An external ticket can't go on the board this way (PDT-201's Todo gate): why.
+    #[error("{0}")]
+    Untrusted(String),
     #[error(transparent)]
     Store(#[from] StoreError),
 }
@@ -177,7 +180,7 @@ fn summary_select() -> String {
     format!(
         "SELECT t.id, t.project_id, COALESCE(p.key, '') AS pkey, t.number, t.title, t.stage, t.priority, t.rank, \
          t.waiting, t.created_at, t.updated_at, t.closed_at, {BLOCKED_BY} AS blocked_by, {PRIORITY_WEIGHT} AS pw, \
-         t.parent_id, par.number AS parent_number, par.title AS parent_title, t.pipeline_stage{FROM}"
+         t.parent_id, par.number AS parent_number, par.title AS parent_title, t.pipeline_stage, t.source, t.admitted_at{FROM}"
     )
 }
 
@@ -226,6 +229,11 @@ fn to_summary(r: &SqliteRow) -> Result<TicketSummary, StoreError> {
         agent: None,
         auto_start_at: None,
         external: vec![],
+        source: {
+            let s: String = r.try_get("source")?;
+            TicketSource::parse(&s).ok_or_else(|| corrupt("ticket source", &s))?
+        },
+        admitted: r.try_get::<Option<i64>, _>("admitted_at")?.is_some(),
     })
 }
 
@@ -681,6 +689,26 @@ async fn touch(conn: &mut SqliteConnection, id: &str, now: i64) -> Result<(), St
     Ok(())
 }
 
+/// PDT-201's Todo gate on a change to `cur`: refused when it would put an external ticket the user hasn't let in in
+/// front of agents and `by` isn't the user (or a call they confirmed); when it may, the ticket is let in.
+async fn gate(conn: &mut SqliteConnection, cur: &TicketSummary, boards: bool, by: &By, now: i64) -> TResult<()> {
+    let admits = pdt_core::ticket::external_gate(cur.source, cur.admitted, boards, by, &cur.key)
+        .map_err(TicketError::Untrusted)?;
+    if admits {
+        admit(conn, &cur.id, now).await?;
+    }
+    Ok(())
+}
+
+async fn admit(conn: &mut SqliteConnection, id: &str, now: i64) -> Result<(), StoreError> {
+    sqlx::query("UPDATE tickets SET admitted_at = COALESCE(admitted_at, ?) WHERE id = ? AND source = 'external'")
+        .bind(now)
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 async fn replace_set(
     conn: &mut SqliteConnection,
     table: &str,
@@ -818,10 +846,15 @@ async fn insert_ticket(
     };
     let key = rank_for(conn, project_id, None, &place).await?;
     let closed_at = if t.stage.is_closed() { Some(now) } else { None };
+    // An external ticket made on the board is let in only when the user makes it so (PDT-201).
+    let boards = pdt_core::ticket::boards(None, Some(t.stage), &[], Some(&t.labels));
+    let admitted = pdt_core::ticket::external_gate(t.source, false, boards, by, &t.title)
+        .map_err(TicketError::Untrusted)?
+        .then_some(now);
     sqlx::query(
         "INSERT INTO tickets (id, seq, project_id, number, title, description, stage, priority, rank, created_at, \
-         updated_at, closed_at, parent_id) \
-         VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM tickets), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         updated_at, closed_at, parent_id, source, admitted_at) \
+         VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM tickets), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(project_id)
@@ -835,6 +868,8 @@ async fn insert_ticket(
     .bind(now)
     .bind(closed_at)
     .bind(&t.parent)
+    .bind(t.source.as_str())
+    .bind(admitted)
     .execute(&mut *conn)
     .await?;
     replace_set(conn, "ticket_labels", "label", id, &t.labels).await?;
@@ -913,17 +948,19 @@ pub struct StoredExternalLink {
 }
 
 impl Store {
-    /// Adds a ticket linked to an external issue (`link.ticket_id` is ignored), in one transaction. `Ok(Err(id))`
-    /// when a ticket already links that issue (nothing is made): linking is the dedupe, so an issue is never imported
-    /// twice.
+    /// Adds a ticket linked to an external issue (`link.ticket_id` is ignored), in one transaction, on behalf of `by`.
+    /// It is `external` whatever `t.source` says (PDT-201). `Ok(Err(id))` when a ticket already links that issue
+    /// (nothing is made): linking is the dedupe, so an issue is never imported twice.
     pub async fn create_linked_ticket(
         &self,
         id: &str,
         project_id: &str,
         t: &ValidNewTicket,
         link: &StoredExternalLink,
+        by: impl Into<By>,
         now: i64,
     ) -> TResult<Result<Ticket, String>> {
+        let t = &ValidNewTicket { source: TicketSource::External, ..t.clone() };
         let mut tx = self.write_tx().await?;
         let existing: Option<(String,)> = sqlx::query_as(
             "SELECT ticket_id FROM ticket_links_external WHERE system = ? AND connection_id = ? AND key = ?",
@@ -936,7 +973,7 @@ impl Store {
         if let Some((other,)) = existing {
             return Ok(Err(other));
         }
-        insert_ticket(&mut tx, id, project_id, t, &Actor::User.into(), now).await?;
+        insert_ticket(&mut tx, id, project_id, t, &by.into(), now).await?;
         sqlx::query(
             "INSERT INTO ticket_links_external (ticket_id, system, connection_id, key, url, created_at) \
              VALUES (?, ?, ?, ?, ?, ?)",
@@ -1035,6 +1072,7 @@ impl Store {
                 after: None,
                 parent: Some(parent.to_string()),
                 blocked_by_previous: v.blocked_by_previous,
+                source: TicketSource::User,
             };
             insert_ticket(&mut tx, &id, &project_id, &t, &Actor::User.into(), now).await?;
             ids.push(id);
@@ -1247,6 +1285,8 @@ impl Store {
         let by = by.into();
         let mut tx = self.write_tx().await?;
         let Some(cur) = summary(&mut tx, id).await? else { return Ok(None) };
+        let boards = pdt_core::ticket::boards(Some(cur.stage), p.stage, &cur.labels, p.labels.as_deref());
+        gate(&mut tx, &cur, boards, &by, now).await?;
         let (description,): (String,) =
             sqlx::query_as("SELECT description FROM tickets WHERE id = ?").bind(id).fetch_one(&mut *tx).await?;
         let mut fields: Vec<&str> = vec![];
@@ -1412,6 +1452,9 @@ impl Store {
                     }
                 }
                 for (id, (_, _, from)) in &heads {
+                    if pdt_core::ticket::boards(Some(*from), Some(*to), &[], None) {
+                        admit(&mut tx, id, now).await?;
+                    }
                     if from != to {
                         change_stage(&mut tx, id, *from, *to, now).await?;
                         count += 1;
@@ -1449,6 +1492,9 @@ impl Store {
                     .await?;
                     if r.rows_affected() == 0 {
                         continue;
+                    }
+                    if add && label == pdt_core::ticket::AGENTIC_LABEL {
+                        admit(&mut tx, id, now).await?;
                     }
                     if add {
                         let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ticket_labels WHERE ticket_id = ?")
@@ -1589,6 +1635,8 @@ impl Store {
         if stage != TicketStage::InProgress {
             change_stage(&mut tx, ticket_id, stage, TicketStage::InProgress, now).await?;
         }
+        // Started (by the user, or auto-start, which the API holds to tickets already let in): let in (PDT-201).
+        admit(&mut tx, ticket_id, now).await?;
         // Started: no longer waiting (undo_start does not restore it; Wait can be chosen again).
         sqlx::query("UPDATE tickets SET waiting = 0 WHERE id = ?").bind(ticket_id).execute(&mut *tx).await?;
         let mut data = json!({"attemptId": id, "branch": branch, "baseBranch": base_branch});
@@ -1680,8 +1728,10 @@ impl Store {
         extra: Option<&serde_json::Value>,
         now: i64,
     ) -> TResult<Option<Ticket>> {
+        let by = by.into();
         let mut tx = self.write_tx().await?;
         let Some(cur) = summary(&mut tx, id).await? else { return Ok(None) };
+        gate(&mut tx, &cur, pdt_core::ticket::boards(Some(cur.stage), Some(stage), &[], None), &by, now).await?;
         if stage != cur.stage {
             if stage.is_closed() {
                 let open = open_part_keys(&mut tx, id, &HashSet::new()).await?;
@@ -1689,7 +1739,7 @@ impl Store {
                     return Err(TicketError::PartsOpen { key: cur.key.clone(), open });
                 }
             }
-            change_stage_by(&mut tx, id, cur.stage, stage, by, extra, now).await?;
+            change_stage_by(&mut tx, id, cur.stage, stage, &by, extra, now).await?;
         }
         tx.commit().await?;
         Ok(self.get_ticket(id).await?)
@@ -2309,7 +2359,58 @@ mod tests {
             after: None,
             parent: None,
             blocked_by_previous: false,
+            source: TicketSource::User,
         }
+    }
+
+    #[tokio::test]
+    async fn external_tickets_reach_the_board_only_through_the_user() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        let ext = |stage| ValidNewTicket { source: TicketSource::External, stage, ..new("From an issue") };
+        let a = add(&store, "a", ext(TicketStage::Draft)).await;
+        assert_eq!((a.summary.source, a.summary.admitted), (TicketSource::External, false));
+        // Mine default to the user's.
+        assert_eq!(add(&store, "u", new("Mine")).await.summary.source, TicketSource::User);
+        // A workflow or an agent can't make one on the board, move it there or label it agentic.
+        let made = store.create_ticket_by("b", "p", &ext(TicketStage::Todo), Actor::System, 2).await;
+        assert!(matches!(made, Err(TicketError::Untrusted(_))), "{made:?}");
+        let moved = store.move_ticket_by("a", TicketStage::Todo, Actor::System, None, 2).await;
+        assert!(matches!(moved, Err(TicketError::Untrusted(_))), "{moved:?}");
+        let agent = By::agent(AgentBy {
+            session_id: "s".into(),
+            project_id: None,
+            persona: Some("Refiner".into()),
+            from_ticket: None,
+            from_ticket_id: None,
+        });
+        let start = ValidPatch { stage: Some(TicketStage::InProgress), ..Default::default() };
+        assert!(matches!(store.patch_ticket_by("a", &start, &agent, 2).await, Err(TicketError::Untrusted(_))));
+        let label = ValidPatch { labels: Some(vec![pdt_core::ticket::AGENTIC_LABEL.into()]), ..Default::default() };
+        assert!(matches!(store.patch_ticket_by("a", &label, &agent, 2).await, Err(TicketError::Untrusted(_))));
+        let a = store.get_ticket("a").await.unwrap().unwrap();
+        assert_eq!((a.summary.stage, a.summary.labels.len()), (TicketStage::Draft, 0));
+        // Ready is fine.
+        store.move_ticket_by("a", TicketStage::Ready, Actor::System, None, 3).await.unwrap();
+        // A call the user confirmed lets it in.
+        let confirmed = By { confirmed: true, ..agent.clone() };
+        let t = store.patch_ticket_by("a", &label, &confirmed, 4).await.unwrap().unwrap();
+        assert!(t.summary.admitted);
+        // Once let in, workflows move it as any other.
+        store.move_ticket_by("a", TicketStage::Todo, Actor::System, None, 5).await.unwrap();
+        // The user moving one to To do lets it in.
+        add(&store, "c", ext(TicketStage::Draft)).await;
+        let todo = ValidPatch { stage: Some(TicketStage::Todo), ..Default::default() };
+        assert!(store.patch_ticket("c", &todo, 6).await.unwrap().unwrap().summary.admitted);
+        // As do the bulk move and starting it.
+        add(&store, "d", ext(TicketStage::Ready)).await;
+        store.bulk_tickets(&["d".into()], &ValidBulk::Stage(TicketStage::Todo), 7).await.unwrap();
+        assert!(store.get_ticket_summary("d").await.unwrap().unwrap().admitted);
+        add(&store, "e", ext(TicketStage::Draft)).await;
+        store.start_attempt("at-e", "e", None, "b", "main", "", json!({}), 8).await.unwrap();
+        assert!(store.get_ticket_summary("e").await.unwrap().unwrap().admitted);
+        // The user making one in To do lets it in at once.
+        assert!(add(&store, "f", ext(TicketStage::Todo)).await.summary.admitted);
     }
 
     fn part(title: &str, parent: &str) -> ValidNewTicket {
@@ -2347,12 +2448,16 @@ mod tests {
             key: "ABC-1".into(),
             url: "https://s/browse/ABC-1".into(),
         };
-        let t = store.create_linked_ticket("t1", "p", &new("Fix"), &link, 1).await.unwrap().unwrap();
+        let t = store.create_linked_ticket("t1", "p", &new("Fix"), &link, Actor::System, 1).await.unwrap().unwrap();
+        assert_eq!(t.summary.source, TicketSource::External, "what an issue says is outside input");
         assert_eq!(
             t.summary.external,
             [ExternalLink { system: "tracker".into(), key: "ABC-1".into(), url: link.url.clone() }]
         );
-        assert_eq!(store.create_linked_ticket("t2", "p", &new("Again"), &link, 2).await.unwrap(), Err("t1".into()));
+        assert_eq!(
+            store.create_linked_ticket("t2", "p", &new("Again"), &link, Actor::System, 2).await.unwrap(),
+            Err("t1".into())
+        );
         assert!(store.get_ticket("t2").await.unwrap().is_none(), "nothing made the second time");
         assert_eq!(store.ticket_for_external("tracker", "c", "ABC-1").await.unwrap().as_deref(), Some("t1"));
         assert_eq!(store.ticket_for_external("tracker", "other", "ABC-1").await.unwrap(), None);

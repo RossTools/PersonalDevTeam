@@ -126,7 +126,8 @@ pub fn doc() -> WorkflowDoc {
             600,
             0,
             "Move to the queue",
-            json!({"ticket": "{{trigger.ticketId}}", "stage": "{{params.afterRefine}}"}),
+            // An external ticket waits in Ready for the user (PDT-201).
+            json!({"ticket": "{{trigger.ticketId}}", "stage": "{{params.afterRefine}}", "externalStage": "ready"}),
         ),
         node(
             "clarify",

@@ -1534,6 +1534,9 @@ pub(crate) async fn post_answer(
     let Json(body) = payload?;
     let session = conversation_session(&st, &id).await?;
     answer_request(&st, &session, &request_id, &body.answer).await?;
+    // The user's own answer: a yes to a call PDT held for them is good for that call (PDT-201).
+    let approved = matches!(body.answer, pdt_core::conversation::Answer::Approve { .. });
+    st.grants.answered(&session.id, &request_id, approved);
     Ok(StatusCode::NO_CONTENT)
 }
 

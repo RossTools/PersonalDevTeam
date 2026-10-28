@@ -5,10 +5,10 @@
 use super::catalog::{Outcome, StepCx};
 use super::nodes::agent::{AgentConfig, Owner, SessionChoice};
 use crate::routes::{AppState, now_ms};
-use pdt_core::conversation::SessionMode;
+use pdt_core::conversation::{PermissionMode, SessionMode};
 use pdt_core::inbox::{self, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus, Question};
 use pdt_core::persona::{Persona, effective_permission_mode};
-use pdt_core::session::{Session, SessionKind, SessionPersona, SessionStatus, TerminalSize, ValidSession};
+use pdt_core::session::{AgentKind, Session, SessionKind, SessionPersona, SessionStatus, TerminalSize, ValidSession};
 use pdt_core::ticket::{Actor, AttemptState, EventKind};
 use pdt_core::workflow::agent::{
     AgentStep, AgentStepState, OutcomeSpec, STOPPED, SUBMITTED, StepTicket, TIMEOUT, back_because, first_message,
@@ -429,7 +429,22 @@ async fn new_session(
     let settings = st.store.get_project_settings(&project.id).await.map_err(err)?;
     let host = st.store.get_host_settings().await.map_err(err)?;
     let host_default = if t.ticket.is_some() { host.ticket_permission_mode } else { host.session_permission_mode };
-    let mode = effective_permission_mode(settings.agent_permission_mode, persona.setup.permission_mode, host_default);
+    let mut mode =
+        effective_permission_mode(settings.agent_permission_mode, persona.setup.permission_mode, host_default);
+    // A locked-down persona (PDT-201) reads untrusted input: Codex runs read-only, Claude asks (its tools are cut down
+    // at launch), and Devin, which PDT can't sandbox, doesn't run it.
+    if pdt_core::persona::locked_down(&persona.role) {
+        mode = match persona.setup.agent {
+            AgentKind::Codex => PermissionMode::Plan,
+            AgentKind::Claude => PermissionMode::Ask,
+            AgentKind::Devin => {
+                return Err(format!(
+                    "{} reads untrusted input, so it runs on Claude or Codex, not Devin",
+                    persona.name
+                ));
+            }
+        };
+    }
     let worktree_id = t.attempt.as_ref().and_then(|a| a.attempt.worktree_id.clone());
     let cwd = match (&t.ticket, project.is_personal()) {
         (Some((_, key, _)), true) => Some(crate::start::personal_folder(&project, key).map_err(err)?),
@@ -740,7 +755,7 @@ async fn close_after_turn(st: &AppState, session_id: &str, close: Close, after_t
 
 /// The run a session's step belongs to, for its lock: its active binding's, else the step the session was started
 /// for (whose binding doesn't name the session yet while the step is starting it), else its latest binding's.
-async fn session_run(st: &AppState, session_id: &str) -> Option<String> {
+pub(crate) async fn session_run(st: &AppState, session_id: &str) -> Option<String> {
     if let Ok(Some(a)) = st.store.active_agent_step(session_id).await {
         return Some(a.run_id);
     }

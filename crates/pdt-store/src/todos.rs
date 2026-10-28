@@ -241,6 +241,7 @@ mod tests {
             after: None,
             parent: None,
             blocked_by_previous: false,
+            source: Default::default(),
         };
         let k = store.create_ticket("k1", "p", &ticket, 1).await.unwrap();
         let key = store.get_project("p").await.unwrap().unwrap().key;

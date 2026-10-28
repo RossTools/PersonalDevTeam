@@ -5,7 +5,7 @@ import { Badge, OverlapBadge } from '@ui';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 
 type BadgeTicket = Pick<TicketSummary, 'blockedBy' | 'overlap' | 'overlapWith' | 'waiting' | 'clearToStart'> &
-  Partial<Pick<TicketSummary, 'pipelineStage' | 'autoStartAt'>>;
+  Partial<Pick<TicketSummary, 'pipelineStage' | 'autoStartAt' | 'source' | 'admitted'>>;
 
 /** `m:ss` until `at`, never below 0:00. */
 export function countdown(at: number, now: number): string {
@@ -27,18 +27,35 @@ function AutoStartBadge({ at }: { at: number }) {
   );
 }
 
+/** Who made a ticket, when not the user (PDT-201). An external one the user hasn't let in yet is held back. */
+function SourceBadge({ source, admitted }: Pick<TicketSummary, 'source' | 'admitted'>) {
+  if (source === 'pm') return <Badge title="The PM made it">PM</Badge>;
+  if (source === 'workflow') return <Badge title="A workflow or an agent made it">Workflow</Badge>;
+  if (source !== 'external') return null;
+  return admitted ? (
+    <Badge title="Made from outside PDT (an issue or a report); you let it in">External</Badge>
+  ) : (
+    <Badge tone="waiting" title="Made from outside PDT (an issue or a report): only you can move it to To do, start it or label it agentic">
+      External
+    </Badge>
+  );
+}
+
 /**
- * Refining, Merge blocked, Blocked, overlap/conflict, Waiting (or Clear to start) and Auto-starts in for rows, cards
+ * Who made it (unless you did), Refining, Merge blocked, Blocked, overlap/conflict, Waiting (or Clear to start) and Auto-starts in for rows, cards
  * and the ticket header.
  */
 export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; className?: string }) {
   const refining = t.pipelineStage === 'refine';
   const mergeBlocked = t.pipelineStage === 'merge_blocked';
   const autoStartAt = t.autoStartAt ?? null;
-  const any = refining || mergeBlocked || t.blockedBy > 0 || t.overlap !== 'none' || t.waiting || autoStartAt !== null;
+  const source = t.source ?? 'user';
+  const any =
+    source !== 'user' || refining || mergeBlocked || t.blockedBy > 0 || t.overlap !== 'none' || t.waiting || autoStartAt !== null;
   if (!any) return null;
   return (
     <span className={cn('flex min-w-0 shrink items-center gap-1', className)}>
+      <SourceBadge source={source} admitted={t.admitted ?? false} />
       {refining && <Badge title="The pipeline is refining it">Refining</Badge>}
       {mergeBlocked && <Badge tone="failed" title="Its merge was refused; the Inbox asks you">Merge blocked</Badge>}
       {t.blockedBy > 0 && <Badge tone="waiting" title={`${t.blockedBy} open blocker${t.blockedBy === 1 ? '' : 's'}`}>Blocked</Badge>}
