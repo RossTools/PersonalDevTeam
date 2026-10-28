@@ -93,6 +93,26 @@ pub struct ChangeRequest {
     pub created_at: Option<i64>,
 }
 
+/// A change request to open ([`Forge::open_change_request`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewChangeRequest {
+    /// The branch with the change (pushed).
+    pub head: String,
+    /// The branch it merges into.
+    pub base: String,
+    pub title: String,
+    /// Markdown.
+    pub body: String,
+    pub draft: bool,
+}
+
+/// A change request just opened: its number and URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenedChangeRequest {
+    pub number: u32,
+    pub url: String,
+}
+
 /// An issue (not a change request).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Issue {
@@ -198,6 +218,11 @@ pub trait Forge: Send + Sync {
     /// Change request `number`; None when there is none.
     fn change_request_number(&self, _repo: &str, _number: u32) -> Result<Option<ChangeRequest>, ForgeError> {
         unsupported(self.name(), "change requests by number")
+    }
+    /// Opens a change request from `new.head` into `new.base` (PDT-185). A forge that opens them itself (the local one)
+    /// has none to open.
+    fn open_change_request(&self, _repo: &str, _new: &NewChangeRequest) -> Result<OpenedChangeRequest, ForgeError> {
+        unsupported(self.name(), "change requests to open")
     }
     /// Recent CI runs on `branch`.
     fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, ForgeError>;
@@ -317,6 +342,8 @@ pub mod testing {
         pub issue_comments: Mutex<Vec<(String, u64, String)>>,
         /// Labels added to issues: repo, number, labels.
         pub added_labels: Mutex<Vec<(String, u64, Vec<String>)>>,
+        /// Change requests opened, in order (each is also set as its head branch's, numbered from 100).
+        pub opened: Mutex<Vec<NewChangeRequest>>,
         pub calls: Mutex<Vec<String>>,
     }
 
@@ -345,6 +372,7 @@ pub mod testing {
                 change_comments_added: Default::default(),
                 issue_comments: Default::default(),
                 added_labels: Default::default(),
+                opened: Default::default(),
                 calls: Default::default(),
             }
         }
@@ -434,6 +462,32 @@ pub mod testing {
             self.call(format!("pr {repo} #{number}"));
             self.failing()?;
             Ok(self.prs.lock().unwrap().values().find(|p| p.number == number).cloned())
+        }
+        fn open_change_request(&self, repo: &str, new: &NewChangeRequest) -> Result<OpenedChangeRequest, ForgeError> {
+            self.call(format!("open {repo} {} -> {}", new.head, new.base));
+            self.failing()?;
+            let mut opened = self.opened.lock().unwrap();
+            opened.push(new.clone());
+            let number = 99 + opened.len() as u32;
+            let url = format!("https://github.com/{repo}/pull/{number}");
+            let pr = ChangeRequest {
+                number,
+                url: url.clone(),
+                title: new.title.clone(),
+                state: PrState::Open,
+                draft: new.draft,
+                head_sha: String::new(),
+                base_branch: new.base.clone(),
+                mergeable: Mergeable::Unknown,
+                behind: false,
+                auto_merge: false,
+                in_merge_queue: false,
+                queue_position: None,
+                queue_removal: None,
+                created_at: None,
+            };
+            self.prs.lock().unwrap().insert(new.head.clone(), pr);
+            Ok(OpenedChangeRequest { number, url })
         }
         fn failed_logs(&self, repo: &str, run_id: u64) -> Result<Vec<JobLog>, ForgeError> {
             self.call(format!("logs {repo} {run_id}"));

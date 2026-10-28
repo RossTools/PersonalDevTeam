@@ -57,6 +57,8 @@ fn the_tools_are_where_they_were() {
             "send_to_session",
             "change_request_view",
             "change_request_comment",
+            "change_request_open",
+            "change_request_merge",
             "ci_runs",
             "ci_failed_logs",
             "issue_view",
@@ -99,6 +101,8 @@ fn the_tools_are_where_they_were() {
             "update_ticket",
             "change_request_view",
             "change_request_comment",
+            "change_request_open",
+            "change_request_merge",
             "ci_runs",
             "ci_failed_logs",
             "issue_comment",
@@ -112,13 +116,21 @@ fn the_tools_are_where_they_were() {
     let read_only: Vec<&str> = t.all().iter().filter(|d| d.read_only).map(|d| d.name).collect();
     assert_eq!(read_only.len(), 24, "{read_only:?}");
     let open: Vec<&str> = t.all().iter().filter(|d| d.open_world).map(|d| d.name).collect();
-    let forge =
-        ["change_request_view", "change_request_comment", "ci_runs", "ci_failed_logs", "issue_view", "issue_comment"];
+    let forge = [
+        "change_request_view",
+        "change_request_comment",
+        "change_request_open",
+        "change_request_merge",
+        "ci_runs",
+        "ci_failed_logs",
+        "issue_view",
+        "issue_comment",
+    ];
     assert!(
         open.iter()
             .all(|n| n.starts_with("discord_") || n.starts_with("scryer_") || *n == "report_bug" || forge.contains(n))
     );
-    assert_eq!(open.len(), 17);
+    assert_eq!(open.len(), 19);
     let pm = pdt_core::persona::builtin_persona("pm").unwrap().setup(t);
     assert_eq!(pm.tool_set(t).len(), 43);
 }

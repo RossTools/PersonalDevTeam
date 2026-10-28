@@ -16,7 +16,7 @@ const CODE_PROMPT: &str = "Build this ticket on its branch. On a later pass, add
 review and QA outcomes and in the user's newest comments, e.g. why they rejected it at Accept (`get_ticket` lists \
 them, with their line comments). When the project keeps a changelog (its instructions say how), add an entry for \
 the change, written for its users. Run the project's checks, commit, push and open a pull request against the base \
-branch when the project works with them.";
+branch (`change_request_open`) when the project works with them.";
 
 const REVIEW_PROMPT: &str = "Review this attempt's changes against the ticket: the branch's diff against its base. \
 When the project keeps a changelog, check the change's entry is written for its users and says accurately what \

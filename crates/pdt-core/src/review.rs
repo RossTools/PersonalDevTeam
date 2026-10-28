@@ -451,7 +451,7 @@ pub fn conflict_message(branch: &str, base: &str, files: &[String]) -> String {
 pub fn open_pr_message(branch: &str, base: &str) -> String {
     format!(
         "{branch} is ready to merge, and this project merges through pull requests. Commit anything left, push \
-         {branch} and open a pull request against {base}."
+         {branch} and open a pull request against {base} (`change_request_open`)."
     )
 }
 
@@ -557,7 +557,7 @@ mod tests {
         assert_eq!(
             open_pr_message("f", "main"),
             "f is ready to merge, and this project merges through pull requests. Commit anything left, push f and \
-             open a pull request against main."
+             open a pull request against main (`change_request_open`)."
         );
     }
 
