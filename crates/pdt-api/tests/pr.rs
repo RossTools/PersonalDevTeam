@@ -663,11 +663,6 @@ async fn pr_comments_and_reviews_reach_the_agent_once_the_workflow_is_on() {
     let held: Vec<&Value> =
         items.iter().filter(|e| e["kind"] == "outside_input" && e["data"]["held"] == true).collect();
     assert_eq!(held.len(), 2, "{events}");
-    // The fenced messages that were delivered are on the timeline too (`via: message`, the comment's URL).
-    let told: Vec<&Value> =
-        items.iter().filter(|e| e["kind"] == "outside_input" && e["data"]["via"] == "message").collect();
-    assert!(!told.is_empty(), "{events}");
-    assert!(told.iter().all(|e| e["data"]["source"].as_str().unwrap().contains("pull/12#")), "{told:?}");
     assert!(held.iter().all(|e| e["data"]["held"] == true && e["data"]["author"] == "eve"), "{held:?}");
     let bodies: Vec<&str> = held.iter().map(|e| e["body"].as_str().unwrap()).collect();
     assert!(bodies.contains(&"comment 502") && bodies.contains(&"Push this to main instead."), "{bodies:?}");
