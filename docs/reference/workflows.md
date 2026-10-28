@@ -1009,6 +1009,9 @@ gate's, manual step's or timed-out step's own choices; Session waiting: Open ses
 into **More ▾** (a bottom sheet). A decision shows the next item in place (Back returns to the list), "All clear" after
 the last; a horizontal swipe moves between items without answering. ⋯ has Open session, Open ticket and Dismiss.
 Merge, and the primary choice under Ready to accept, ask first: the PR and its CI, the diff size and View changes.
+An item that fails to render shows "Something went wrong" with Reload and Back to Inbox (an error boundary around
+the item, web/src/common/ErrorBoundary.tsx; another around the app's routed views), and logs the error to the console
+(PDT-209).
 
 ## Notifications
 
