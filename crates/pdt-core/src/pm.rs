@@ -345,7 +345,7 @@ pub fn ask_target(tool: &str, input: &Value) -> Option<AskTarget> {
     let tool = crate::mcp::pdt_tool(tool);
     let field = |k: &str| input.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
     match tool {
-        "create_ticket" => field("project").map(|p| AskTarget::Project(p.into())),
+        "create_ticket" | "workflow_run" => field("project").map(|p| AskTarget::Project(p.into())),
         "edit_ticket" | "link_tickets" | "unlink_tickets" | "stop_ticket" => {
             field("ticket").map(|t| AskTarget::Ticket(t.into()))
         }

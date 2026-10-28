@@ -13,9 +13,9 @@ can break on their own: clippy (for `cfg` code) and the Rust tests (paths, proce
 | web (linux) | Namespace `linux-8` | web typecheck, vitest, build | unless docs only | unless docs only | always |
 | build (macos-latest) | Namespace `macos-6` | clippy, nextest, desktop crate clippy + test | `macos` label, or a change under `.github/` | unless docs only | always |
 | build (windows-latest) | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | same | always |
-| bundle (macos-latest, app) | GitHub macOS | the app, signed when the secret is there; a workflow artifact | never | never | with "Build bundles" |
-| bundle (windows-latest, nsis) | GitHub Windows | the installer (also the only Windows compile of the desktop crate); a workflow artifact | never | never | with "Build bundles" |
-| bundle (linux, x86_64) / bundle (linux, aarch64) | GitHub `ubuntu-22.04` / `ubuntu-22.04-arm` (native, no cross-compiling) | the headless tarball and the AppImage (also the only Linux compile of the desktop crate); a workflow artifact | never | never | with "Build bundles" |
+| bundle (macos-latest, app) | GitHub macOS | the app, signed when the secret is there (on the release PR: signed and notarized); a workflow artifact | the release PR only | never | with "Build bundles" |
+| bundle (windows-latest, nsis) | GitHub Windows | the installer (also the only Windows compile of the desktop crate); a workflow artifact | the release PR only | never | with "Build bundles" |
+| bundle (linux, x86_64) / bundle (linux, aarch64) | GitHub `ubuntu-22.04` / `ubuntu-22.04-arm` (native, no cross-compiling) | the headless tarball and the AppImage (also the only Linux compile of the desktop crate); a workflow artifact | the release PR only | never | with "Build bundles" |
 
 **Main runs nothing** (PDT-192): `ci.yml` has no `push` trigger. The merge queue (group size 1, squash) has just run
 the checks on the tree that lands on main, and releases are deliberate, so a merge builds no bundle and publishes no
@@ -27,8 +27,17 @@ every check and builds the macOS app, the Windows installer and the Linux tarbal
 checked-in version, reporting `<version>-local`. They are uploaded as workflow artifacts (`bundle-app`, `bundle-nsis`,
 `bundle-linux-x86_64`, `bundle-linux-aarch64`, kept 5 days) and published
 nowhere: use it to try a packaging change (`desktop/`, `scripts/`, `.github/actions/bundle`) before a release. The
-bundle action's `release: "true"` input is for the release workflow: it reports the version as is, requires the
-signing certificate and notarizes.
+bundle action's `release: "true"` input is for releases: it reports the version as is, requires the signing
+certificate and notarizes.
+
+**Releases** (PDT-194; docs/SDLC.md "Releasing"): `.github/workflows/release.yml`. Run by hand on main, it opens the
+release PR from the `release` branch (version bumped, CHANGELOG.md compiled). `changes` notices that PR (head branch
+`release` in this repository) and runs the bundle jobs on it as release builds (signed and notarized, the version as
+is), so a packaging break blocks the release PR rather than the tag; the merge queue doesn't build them again. When
+the release PR merges, release.yml's `tag` job tags the merge commit and the same workflow builds the bundles from
+it (its own jobs, not ci.yml's checks) and publishes the release. The tag is made with the workflow's token, so it
+starts no other workflow. The PR artifacts are not reused: the queue squash-merges, so the tagged commit is never
+the commit they were built from.
 
 **Windows cache:** GitHub's runners save rust-cache only from main, which no longer runs CI, so Windows check runs
 start from a cold cache unless a dispatch on main warms it.

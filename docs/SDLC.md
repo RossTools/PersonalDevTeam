@@ -13,7 +13,7 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
    Add a changelog fragment for the change (below, "Changelog").
 4. **Push and open a PR** against `main`. CI runs the full checks on Linux on every push (Namespace); the macOS checks
    run in the merge queue, and on a PR only with the `macos` label or a `.github/` change; Windows checks run only
-   with the `windows` label or when the PR touches their files. The bundles never run on a PR (below, "Releases").
+   with the `windows` label or when the PR touches their files. The bundles run on no PR but the release PR (below, "Releases").
    Docs-only PRs skip CI (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
 5. **The user tests it**: Run → `pdt` on the branch gives a dev instance on its own port and data folder (below).
    Feedback comes back in the session; the agent fixes the branch and the run is restarted on the new code.
@@ -105,13 +105,16 @@ The board no longer jumps back to the top when a ticket moves.
 - `scripts/changelog.sh check` checks the fragments (name, front matter, kind, text).
 - **CI** (the `changelog` job, pull requests only) fails a PR that adds no fragment unless it has the `no-changelog`
   label, which is for PRs that only change docs, CI or tests. Adding the label re-runs CI. Docs-only PRs skip the
-  job. It also runs the script's tests (`scripts/changelog.test.sh`).
+  job, and the release PR passes it without one (it compiles them). It also runs the scripts' tests
+  (`scripts/changelog.test.sh`, `scripts/version.test.sh`).
 - In the Pipeline, the Coder writes the fragment (this repo's AGENTS.md says how) and the Reviewer checks that it is
   written for users and accurate.
 - **At release**, `scripts/changelog.sh <version>` adds a `## <version> (<date>)` section to the top of
   `CHANGELOG.md`, grouped Breaking, Added, Changed, Fixed (Internal left out), prints the same notes without the
   heading to stdout (`scripts/changelog.sh 0.2.0 > notes.md` for the release notes), and moves the fragments to
   `.changes/<version>/`. It refuses an existing version folder or an invalid fragment, changing nothing.
+  The release workflow runs it on the release PR (below, "Releasing"), and publishes `scripts/changelog.sh notes
+  <version>` (that version's section, as compiled and perhaps edited since) as the release's notes.
 
 ## Releases
 
@@ -127,11 +130,45 @@ tree), builds no bundle and publishes nothing. There is no edge or pre-release c
 - **Updates** compare versions by SemVer, read GitHub's latest release (never a draft or pre-release), and never
   install an older version than the one running. The update banner shows the notes of every release between the
   installed version and the new one.
-- **Bundles** (the signed macOS app, the Windows installer) are built only for a release, or by hand to try a
-  packaging change: run the `ci` workflow on the branch with "Build bundles" (`gh workflow run ci --ref <branch>`).
-  They are kept as workflow artifacts for a few days and published nowhere.
-- **Cutting a release** (a release PR that sets the version and compiles the changelog, then a tag that publishes it)
-  is the release workflow's job.
+- **Bundles** (the signed macOS app, the Windows installer, the Linux tarball and AppImage) are built only for a
+  release (on the release PR and from the tag), or by hand to try a packaging change: run the `ci` workflow on the
+  branch with "Build bundles" (`gh workflow run ci --ref <branch>`). Those are kept as workflow artifacts for a few
+  days and published nowhere.
+
+### Releasing
+
+The user decides when to release; there is no schedule. `.github/workflows/release.yml` does it in two halves:
+
+1. **Start it**: Actions → release → Run workflow on `main`, with the bump (`patch`, `minor`; `major` only from 1.0.0
+   on) or an exact version (`gh workflow run release.yml -f bump=minor`, or `-f version=1.0.0`). Or ask the PM, which
+   runs PDT's "Cut a release" workflow (below). It refuses while another release PR is open.
+2. **The release PR**: the workflow sets the version in `Cargo.toml`, `Cargo.lock` and `tauri.conf.json`
+   (`scripts/version.sh next` / `set`), compiles the fragments into `CHANGELOG.md`'s new section
+   (`scripts/changelog.sh <version>`), and opens `Release vX.Y.Z` from the `release` branch with those notes as its
+   body. It is a normal PR: CI runs, and on this PR only the bundle jobs build the release bundles (signed and
+   notarized macOS app, Windows installer, Linux packages), so packaging problems show before anything is tagged;
+   the `changelog` check lets it through without a fragment. To change the notes, edit `CHANGELOG.md` on the
+   `release` branch (the PR body is only a copy). Merge it like any PR (`gh pr merge <n> --auto`, the merge queue).
+3. **Tag and publish**: when it merges, the workflow tags `vX.Y.Z` on the merge commit, builds the bundles again from
+   that commit (the PR's were built from a commit the queue squashed away), and publishes the GitHub release with the
+   bundles, `SHA256SUMS` and the version's `CHANGELOG.md` section as its notes (`scripts/changelog.sh notes
+   <version>`). Hosts see it on their next update check. A failed job can be re-run from the Actions page: the tag and
+   the release are reused, and re-uploaded assets replace the old ones.
+
+Setup: the `PDT_RELEASE_TOKEN` secret, a token that may push branches and open pull requests here (fine-grained:
+Contents and Pull requests, read and write). Without it the release PR is opened with the workflow's own token, and
+GitHub starts no CI for that: push a commit to the branch (or close and reopen it) to run it. The bundles use the
+macOS signing and notarizing secrets.
+
+**Dry run**: on a fork with the same secrets, set the repo variable `PDT_RELEASE_TAG_PREFIX` to a test prefix
+(`test-v`) and run it end to end: the tag becomes `test-vX.Y.Z` and the release a pre-release, which no PDT installs.
+"Cut a release" doesn't count pre-releases either, so in such a dry run it waits at the last step and never says the
+release is published.
+
+**"Cut a release"** (a built-in PDT workflow, off by default; Settings → Workflows): the PM starts it with a bump kind
+(only when the user asks for a release). It runs the release workflow, puts the release PR in the Inbox for review,
+and tells the user when the release is published. While an earlier release PR is still open it starts nothing and
+says so in the Inbox: merge or close that one first.
 
 ## Testing a branch in a dev instance
 

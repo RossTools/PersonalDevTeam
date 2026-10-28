@@ -79,6 +79,7 @@ notifications get 202; `GET`/`DELETE` 405).
 - **Per launch, never the user's config** (pdt-agents `mcp.rs`): Claude (conversation and terminal) gets
   `--mcp-config <session dir>/mcp.json` (owner-only; it holds the token) and `--allowedTools mcp__pdt__…` for its set
   less the asking tools (`create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session`,
+  `workflow_run`, `workflow_import`,
   `discord_change`, `discord_webhook`:
   each tool's `asks` flag, pdt-core `integration::ToolDecl`), which Claude
   asks about per call;
@@ -133,6 +134,9 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `list_workflow_runs`, `search_notes`, `save_note`, `delete_note`, `write_journal`, `list_todos` (the user's todo
   list with due dates, `dueOn`/`dueTime`, and repeat rules, `recurrence`; read-only: the PM never changes it), the catalog and workflow tools
   (`workflow_get` by name searches every project; `workflow_save` needs a project), and the asking tools
+  `workflow_run` (`id` or `name`, `project`, `input`: runs an enabled workflow's Run now trigger with `projectId` added
+  to the input; a disabled one is refused. The PM starts the built-in "Cut a release" with it, only when the user asks
+  for a release: [workflows.md](workflows.md) "Workflows", PDT-194),
   `create_ticket` (a draft by default; the timeline gets "Created by the PM.", or by the session's persona), `edit_ticket` (closing ends the
   attempt and moving back to Draft, Ready or To do stops its work, as the API; `parent` takes a key or id, `""`
   detaches; another persona given the tool edits its own ticket freely, but another ticket only by its exact key,

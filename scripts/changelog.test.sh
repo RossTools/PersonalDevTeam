@@ -87,6 +87,15 @@ if "$script" -C "$dir" 0.3.0 >/dev/null 2>&1; then fail "compile with a bad frag
 expect_eq "a refused compile leaves CHANGELOG.md alone" "$before" "$(cat "$dir/CHANGELOG.md")"
 [ -f "$dir/.changes/unreleased/PDT-1.md" ] || fail "a refused compile leaves the fragments in place"
 
+# --- notes: a compiled version's section, as compile printed it
+setup notes PDT-1.md $'---\nkind: fixed\n---\nOne.\n'
+compiled="$(CHANGELOG_DATE=2026-10-27 "$script" -C "$dir" 0.4.0)"
+printf '%s\n' $'---\nkind: added\n---\nTwo.\n' > "$dir/.changes/unreleased/PDT-2.md"
+CHANGELOG_DATE=2026-10-28 "$script" -C "$dir" 0.4.1 >/dev/null
+expect_eq "notes prints an older section" "$compiled" "$("$script" -C "$dir" notes 0.4.0)"
+expect_eq "notes prints the newest section" $'### Added\n\n- Two.' "$("$script" -C "$dir" notes 0.4.1)"
+if "$script" -C "$dir" notes 0.4 >/dev/null 2>&1; then fail "notes for a version with no section should fail"; fi
+
 # --- check
 setup check \
   PDT-1.md $'---\nkind: fixed\n---\nA fix.\n' \

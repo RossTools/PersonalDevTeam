@@ -5,6 +5,7 @@
 pub use pdt_core::forge::{ForgeKind, ForgeNotes};
 pub use pdt_core::github_issue::CloseReason;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
+use std::collections::BTreeMap;
 
 /// What a forge can do beyond reading a branch's change request and CI, so the SDLC skips (or does itself) what it
 /// can't.
@@ -19,15 +20,17 @@ pub struct Capabilities {
     pub issues: bool,
     /// Reviews and comments on change requests.
     pub reviews: bool,
+    /// Releases to read, and CI workflows to start by hand (PDT-194: the release workflow).
+    pub releases: bool,
 }
 
 impl Capabilities {
     /// Everything (GitHub).
     pub const ALL: Capabilities =
-        Capabilities { merge_queue: true, required_checks: true, issues: true, reviews: true };
+        Capabilities { merge_queue: true, required_checks: true, issues: true, reviews: true, releases: true };
     /// Change requests and CI only.
     pub const NONE: Capabilities =
-        Capabilities { merge_queue: false, required_checks: false, issues: false, reviews: false };
+        Capabilities { merge_queue: false, required_checks: false, issues: false, reviews: false, releases: false };
 }
 
 /// How a change request merges into its base.
@@ -168,6 +171,19 @@ pub struct ChangeReview {
     pub collaborator: bool,
 }
 
+/// A published release (never a draft or a pre-release).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Release {
+    /// Its tag (`v0.2.0`).
+    pub tag: String,
+    pub name: String,
+    pub url: String,
+    /// When it was published (the forge's timestamp text), when known.
+    pub published_at: Option<String>,
+    /// Its notes (Markdown).
+    pub notes: String,
+}
+
 /// A failed CI job and the end of its log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobLog {
@@ -305,6 +321,21 @@ pub trait Forge: Send + Sync {
     ) -> Result<(), ForgeError> {
         unsupported(self.name(), "issues")
     }
+    /// Starts CI workflow `workflow` (its file name, `release.yml`) on `git_ref` with `inputs`
+    /// ([`Capabilities::releases`]).
+    fn run_workflow(
+        &self,
+        _repo: &str,
+        _workflow: &str,
+        _git_ref: &str,
+        _inputs: &BTreeMap<String, String>,
+    ) -> Result<(), ForgeError> {
+        unsupported(self.name(), "workflows to run")
+    }
+    /// The release tagged `tag`, or the latest one without it; None when there is none ([`Capabilities::releases`]).
+    fn release(&self, _repo: &str, _tag: Option<&str>) -> Result<Option<Release>, ForgeError> {
+        unsupported(self.name(), "releases")
+    }
 }
 
 pub mod testing {
@@ -349,6 +380,10 @@ pub mod testing {
         pub added_labels: Mutex<Vec<(String, u64, Vec<String>)>>,
         /// Change requests opened, in order (each is also set as its head branch's, numbered from 100).
         pub opened: Mutex<Vec<NewChangeRequest>>,
+        /// Workflows started: repo, workflow, ref, inputs.
+        pub workflow_runs: Mutex<Vec<WorkflowRun>>,
+        /// Releases by repo, newest first (the first is the latest).
+        pub releases: Mutex<HashMap<String, Vec<Release>>>,
         pub calls: Mutex<Vec<String>>,
     }
 
@@ -378,10 +413,15 @@ pub mod testing {
                 issue_comments: Default::default(),
                 added_labels: Default::default(),
                 opened: Default::default(),
+                workflow_runs: Default::default(),
+                releases: Default::default(),
                 calls: Default::default(),
             }
         }
     }
+
+    /// A workflow started ([`Forge::run_workflow`]): repo, workflow, ref, inputs.
+    pub type WorkflowRun = (String, String, String, BTreeMap<String, String>);
 
     /// How an issue was closed: the reason, and the duplicate's canonical issue id.
     pub type Closed = (CloseReason, Option<u64>);
@@ -420,6 +460,10 @@ pub mod testing {
         }
         pub fn set_closed(&self, repo: &str, number: u64, reason: CloseReason) {
             self.closed.lock().unwrap().insert((repo.into(), number), (reason, None));
+        }
+        /// Publishes `release` in `repo`: it becomes the latest.
+        pub fn publish(&self, repo: &str, release: Release) {
+            self.releases.lock().unwrap().entry(repo.into()).or_default().insert(0, release);
         }
         /// Issue `number`'s comments so far.
         pub fn comments_on(&self, repo: &str, number: u64) -> Vec<String> {
@@ -635,6 +679,30 @@ pub mod testing {
             self.closed.lock().unwrap().insert((repo.into(), number), (reason, duplicate_of));
             Ok(())
         }
+        fn run_workflow(
+            &self,
+            repo: &str,
+            workflow: &str,
+            git_ref: &str,
+            inputs: &BTreeMap<String, String>,
+        ) -> Result<(), ForgeError> {
+            self.call(format!("run-workflow {repo} {workflow} {git_ref}"));
+            self.can(|c| c.releases, "workflows to run")?;
+            self.failing()?;
+            self.workflow_runs.lock().unwrap().push((repo.into(), workflow.into(), git_ref.into(), inputs.clone()));
+            Ok(())
+        }
+        fn release(&self, repo: &str, tag: Option<&str>) -> Result<Option<Release>, ForgeError> {
+            self.call(format!("release {repo} {}", tag.unwrap_or("latest")));
+            self.can(|c| c.releases, "releases")?;
+            self.failing()?;
+            let all = self.releases.lock().unwrap();
+            let list = all.get(repo).map(Vec::as_slice).unwrap_or_default();
+            Ok(match tag {
+                Some(t) => list.iter().find(|r| r.tag == t).cloned(),
+                None => list.first().cloned(),
+            })
+        }
     }
 }
 
@@ -658,6 +726,11 @@ mod tests {
         assert!(matches!(f.recent_issues("o/r", None), Err(ForgeError::Unsupported(_))));
         assert!(matches!(f.change_reviews("o/r", 1), Err(ForgeError::Unsupported(_))));
         assert!(matches!(f.queue_runs("o/r"), Err(ForgeError::Unsupported(_))));
+        assert!(matches!(f.release("o/r", None), Err(ForgeError::Unsupported(_))));
+        assert!(matches!(
+            f.run_workflow("o/r", "release.yml", "main", &BTreeMap::new()),
+            Err(ForgeError::Unsupported(_))
+        ));
         assert!(f.change_request("o/r", "b").is_ok(), "change requests and CI are every forge's");
     }
 }

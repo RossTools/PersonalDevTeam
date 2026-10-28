@@ -3,6 +3,7 @@
 #
 #   scripts/changelog.sh check [<fragment>...]   validate fragments (default: every one in .changes/unreleased)
 #   scripts/changelog.sh <version>               compile .changes/unreleased into CHANGELOG.md
+#   scripts/changelog.sh notes <version>         print <version>'s section of CHANGELOG.md (the release notes)
 #
 # A fragment is `.changes/unreleased/<TICKET>.md` (or `<TICKET>-<anything>.md` for a ticket's second note):
 #
@@ -28,7 +29,7 @@ unreleased="$root/.changes/unreleased"
 die() { printf 'changelog: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '3,5p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -154,9 +155,27 @@ EOF
   printf '%s' "$section"
 }
 
+# The notes of a compiled version: its section of CHANGELOG.md without the heading or surrounding blank lines, as
+# compile printed them. The release workflow publishes them with the release.
+notes() {
+  local version="$1" changelog="$root/CHANGELOG.md" out
+  [ -f "$changelog" ] || die "no CHANGELOG.md in $root"
+  out="$(V="$version" awk '
+    /^## / { if (inside) exit; if (index($0, "## " ENVIRON["V"] " (") == 1) { inside = 1; next } }
+    inside { lines[++n] = $0 }
+    END {
+      first = 1; while (first <= n && lines[first] ~ /^[[:space:]]*$/) first++
+      last = n; while (last >= first && lines[last] ~ /^[[:space:]]*$/) last--
+      for (i = first; i <= last; i++) print lines[i]
+    }' "$changelog")"
+  [ -n "$out" ] || die "CHANGELOG.md has no section for $version"
+  printf '%s\n' "$out"
+}
+
 case "${1:-}" in
   ""|-h|--help) usage ;;
   check) shift; check "$@" ;;
+  notes) [ $# -eq 2 ] || usage; notes "$2" ;;
   -*) usage ;;
   *) [ $# -eq 1 ] || usage; compile "$1" ;;
 esac

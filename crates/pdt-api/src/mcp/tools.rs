@@ -114,6 +114,21 @@ struct WorkflowGet {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkflowRun {
+    #[serde(default)]
+    id: Option<String>,
+    /// The workflow's name (`Cut a release`), when you don't know its id.
+    #[serde(default)]
+    name: Option<String>,
+    /// The project it runs in (its key or id): its `projectId` in the run's input.
+    project: String,
+    /// The run's input, read as `{{trigger.x}}` (Cut a release: `bump` patch, minor or major, or `version` X.Y.Z).
+    #[serde(default)]
+    input: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct WorkflowExport {
     /// The workflows' ids.
     #[serde(default)]
@@ -486,6 +501,15 @@ pub(crate) fn defs() -> Vec<Tool> {
             schema: schema::<WorkflowExport>,
         },
         Tool {
+            decl: ToolDecl::new("workflow_run", "Run an enabled workflow now").asks().pm(),
+            title: "Run a workflow",
+            description: "Runs an enabled workflow that has a Run now trigger, in a project, with an input its steps \
+                          read as {{trigger.x}}: e.g. the built-in Cut a release with {\"bump\": \"minor\"}, only when \
+                          the user asks for a release. The user confirms each call. Returns the run's id \
+                          (list_workflow_runs follows it).",
+            schema: schema::<WorkflowRun>,
+        },
+        Tool {
             decl: ToolDecl::new("workflow_import", "Import pasted workflows (disabled)").asks().pm(),
             title: "Import workflows",
             description: "Imports an export text (or a bare workflow document). With `check: true` it only reports \
@@ -761,6 +785,24 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             confirmable(cx, name, &AskTarget::Always).await?;
             let r = crate::workflow::transfer::import(st, &a, Author::Agent).await.map_err(api)?;
             serde_json::to_value(r).map_err(|e| e.to_string())
+        }
+        "workflow_run" => {
+            let a: WorkflowRun = args(a)?;
+            let id = match (a.id, a.name) {
+                (Some(id), _) => id,
+                (None, Some(name)) => workflow_by_name(cx, &name).await?,
+                (None, None) => return Err("give the workflow's id or name".into()),
+            };
+            let w = crate::workflow::routes::load(st, &id).await.map_err(api)?;
+            if !w.enabled {
+                return Err(format!("{} is off: the user turns it on in Workflows first", w.name));
+            }
+            let project = crate::pm::project_id(st, &a.project).await?;
+            confirmable(cx, name, &AskTarget::Project(project.clone())).await?;
+            let mut input = a.input;
+            input.insert("projectId".into(), json!(project));
+            let run = crate::workflow::engine::start_manual(st, &w, Value::Object(input), None).await?;
+            Ok(json!({"runId": run, "workflow": w.name}))
         }
         "workflow_validate" => {
             let a: crate::workflow::routes::ValidateRequest = args(a)?;

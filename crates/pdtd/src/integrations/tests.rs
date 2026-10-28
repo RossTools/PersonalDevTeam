@@ -39,6 +39,7 @@ fn the_tools_are_where_they_were() {
             "workflow_dry_run",
             "workflow_save",
             "workflow_export",
+            "workflow_run",
             "workflow_import",
             "get_overview",
             "search_tickets",
@@ -79,6 +80,7 @@ fn the_tools_are_where_they_were() {
     assert_eq!(
         t.asking_tools(),
         [
+            "workflow_run",
             "workflow_import",
             "create_ticket",
             "edit_ticket",
@@ -132,7 +134,7 @@ fn the_tools_are_where_they_were() {
     );
     assert_eq!(open.len(), 19);
     let pm = pdt_core::persona::builtin_persona("pm").unwrap().setup(t);
-    assert_eq!(pm.tool_set(t).len(), 43);
+    assert_eq!(pm.tool_set(t).len(), 44);
 }
 
 #[test]

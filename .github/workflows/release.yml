@@ -1,0 +1,260 @@
+name: release
+# Cutting a release (docs/SDLC.md "Releases"), in two halves:
+# - Run by hand (or by PDT's "Cut a release" workflow) on main with a bump kind or an exact version, `prepare` opens
+#   the release PR from the `release` branch: the new version in Cargo.toml, Cargo.lock and tauri.conf.json, and
+#   CHANGELOG.md's new section compiled from the fragments (scripts/changelog.sh), which is also the PR's body. It is a
+#   normal PR: CI checks it, and for this PR only ci.yml builds the release bundles too (signed and notarized), so
+#   packaging problems show before anything is tagged. Edit CHANGELOG.md on the branch to change the notes.
+# - Merging it (through the merge queue) runs `tag`, which tags the merge commit <prefix>X.Y.Z, then builds the
+#   bundles again from that commit (the PR's were built from another commit: the queue squashes), and `publish`
+#   makes the GitHub release with them, SHA256SUMS and the version's CHANGELOG.md section as its notes.
+#
+# Secrets: PDT_RELEASE_TOKEN, a token that can push branches and open pull requests on this repository (a
+# fine-grained token with Contents and Pull requests read and write, or a GitHub App's). Pull requests and pushes made
+# with the workflow's own GITHUB_TOKEN start no workflows, so with only that the release PR gets no CI until someone
+# pushes to it. The bundles use the signing secrets ci.yml does (MACOS_SIGNING_P12, MACOS_SIGNING_P12_PASSWORD,
+# MACOS_NOTARY_KEY, MACOS_NOTARY_KEY_ID, MACOS_NOTARY_ISSUER).
+#
+# Repo variable PDT_RELEASE_TAG_PREFIX (default `v`) is for a dry run on a fork: with any other prefix (`test-v`) the
+# release is published as a pre-release, which no PDT installs as an update.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to bump (major only from 1.0.0 on)
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: Or an exact version, X.Y.Z (overrides the bump)
+        type: string
+        default: ""
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  TAG_PREFIX: ${{ vars.PDT_RELEASE_TAG_PREFIX || 'v' }}
+
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch'
+    # One release PR at a time. Concurrency is per job, not per workflow: the workflow runs (and skips every job) for
+    # every PR closed into main, and a workflow-level group would let such a run cancel a pending release run.
+    concurrency:
+      group: release-prepare
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Only from the default branch
+        if: github.ref_name != github.event.repository.default_branch
+        run: |
+          echo "::error::Run the release workflow on ${{ github.event.repository.default_branch }}, not ${{ github.ref_name }}."
+          exit 1
+      - name: Token
+        env:
+          RELEASE_TOKEN: ${{ secrets.PDT_RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::warning title=No PDT_RELEASE_TOKEN::The release PR is opened with the workflow's token, so CI won't start on it: push a commit to the release branch (or close and reopen the PR) to run it."
+          fi
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.PDT_RELEASE_TOKEN || github.token }}
+      - name: No release PR is open
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open="$(gh pr list --repo "$GITHUB_REPOSITORY" --head release --state open --json number,url --jq '.[0].url // ""')"
+          if [ -n "$open" ]; then
+            echo "::error title=A release PR is open::$open is still open: merge or close it before cutting another release."
+            exit 1
+          fi
+      - name: Set the version and compile the changelog
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION" ]; then version="${VERSION#v}"; else version="$(scripts/version.sh next "$BUMP")"; fi
+          scripts/version.sh set "$version"
+          # Cargo.lock carries each workspace crate's version; --workspace updates only those.
+          cargo update --workspace
+          # Writes CHANGELOG.md's new section, moves the fragments to .changes/<version>/ and prints the notes.
+          scripts/changelog.sh "$version" > "$RUNNER_TEMP/notes.md"
+          {
+            echo
+            echo "<!-- Release PR (docs/SDLC.md \"Releases\"). Merging it tags ${TAG_PREFIX}${version} and publishes the release."
+            echo "The release notes are CHANGELOG.md's ${version} section: edit that file on this branch to change them. -->"
+          } >> "$RUNNER_TEMP/notes.md"
+          git status --short
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Open the release PR
+        env:
+          GH_TOKEN: ${{ secrets.PDT_RELEASE_TOKEN || github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          title="Release ${TAG_PREFIX}${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C release
+          git add -A
+          git commit -m "$title"
+          # The branch is the release PR's alone; an old one (a merged or closed release) is replaced.
+          git push --force origin release
+          url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "${{ github.event.repository.default_branch }}" \
+            --head release --title "$title" --body-file "$RUNNER_TEMP/notes.md")"
+          echo "::notice title=Release PR::$url"
+          echo "Release PR: $url" >> "$GITHUB_STEP_SUMMARY"
+
+  tag:
+    # The release PR merged (into main, from this repository's `release` branch).
+    if: >-
+      github.event_name == 'pull_request' && github.event.pull_request.merged &&
+      github.event.pull_request.head.ref == 'release' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    # Its own group, so a dispatch's `prepare` never cancels a tag waiting to run (a newer pending job in a group
+    # cancels the pending one).
+    concurrency:
+      group: release-tag
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      sha: ${{ steps.tag.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+      - name: Tag the merge commit
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          version="$(scripts/version.sh check | sed 's/^version //')"
+          tag="${TAG_PREFIX}${version}"
+          scripts/changelog.sh notes "$version" >/dev/null
+          # A re-run finds its own tag; a tag on any other commit stops the release.
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha' 2>/dev/null || true)"
+          if [ -z "$existing" ]; then
+            # Made with the workflow's token, so it starts no other workflow: this one builds and publishes it.
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$SHA" >/dev/null
+          elif [ "$existing" != "$SHA" ]; then
+            echo "::error title=The tag exists::$tag already points at $existing, not the merge commit $SHA."
+            exit 1
+          fi
+          echo "Tagged $tag at $SHA"
+          { echo "tag=$tag"; echo "version=$version"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
+
+  # The bundles, built from the tagged commit as release builds (the version as is, signed, notarized), as ci.yml's
+  # bundle jobs build them.
+  bundle-macos:
+    name: bundle (macos-latest, app)
+    needs: tag
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - uses: ./.github/actions/bundle
+        with:
+          bundles: app
+          release: "true"
+          signing-p12: ${{ secrets.MACOS_SIGNING_P12 }}
+          signing-password: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
+          notary-key-id: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          notary-issuer: ${{ secrets.MACOS_NOTARY_ISSUER }}
+
+  bundle-windows:
+    name: bundle (windows-latest, nsis)
+    needs: tag
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - uses: ./.github/actions/bundle
+        with:
+          bundles: nsis
+          release: "true"
+
+  bundle-linux:
+    name: bundle (linux, ${{ matrix.arch }})
+    needs: tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - uses: ./.github/actions/bundle
+        with:
+          bundles: linux
+          release: "true"
+
+  publish:
+    needs: [tag, bundle-macos, bundle-windows, bundle-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: bundle-*
+          path: assets
+          merge-multiple: true
+      # GitHub renames uploaded assets with spaces; rename first so SHA256SUMS lists the names hosts will see.
+      - name: Checksums
+        run: |
+          cd assets
+          for f in *; do n="${f// /.}"; if [ "$f" != "$n" ]; then mv "$f" "$n"; fi; done
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+          VERSION: ${{ needs.tag.outputs.version }}
+        run: |
+          scripts/changelog.sh notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+          # Only the real prefix makes a release hosts install; a test prefix's is a pre-release.
+          pre=""; if [ "$TAG_PREFIX" != v ]; then pre="--prerelease"; fi
+          ls -l assets
+          # A re-run of this job finds the release already there: replace its assets instead of failing.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
+              --notes-file "$RUNNER_TEMP/notes.md" $pre
+          fi
+          echo "Published $(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"
