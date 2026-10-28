@@ -115,9 +115,8 @@ function useScrollToSection(section: string | null, page: string) {
 
 const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
 
-/** Keeps the browser tab's title as `(<n>) [dev] <page title>`: n things need the user (the Inbox's Needs you); [dev]
- * on a dev instance. */
-/** What wants the user, in the page title's count and the favicon's dot (PDT-168), and reloading on a new build. */
+/** The page title's `(n)` (the Inbox's items) and the favicon's dot (the most important thing waiting, PDT-207), and
+ * reloading on a new build. */
 function useAttentionTitle(attention: Attention) {
   useDevTitle(attention.count);
   useFaviconBadge(attention.level);

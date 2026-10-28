@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Button } from '@ui/Button';
 import { Toaster } from '@ui/Toaster';
@@ -11,6 +11,7 @@ import { Composer } from '../../common/Composer';
 import { InlineRename } from '../../common/InlineRename';
 import { PlacePicker, type Place } from '../../common/PlacePicker';
 import { useAction } from '../../common/useAction';
+import { badgedSvg, type AttentionLevel } from '../../notifications/attention';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -84,11 +85,31 @@ function ActionDemo() {
   );
 }
 
+const levels: [AttentionLevel, string][] = [['needs_you', 'A session needs you'], ['inbox', 'Inbox items'], ['idle', 'Finished, unseen'], ['none', 'Nothing waiting']];
+
+/** The favicon (PDT-207) at each attention level, drawn by badgedSvg from the page's own icon. */
+function FaviconDemo() {
+  const [svg, setSvg] = useState<string | null>(null);
+  useEffect(() => {
+    void fetch('/favicon.svg').then((r) => (r.ok ? r.text() : null)).then(setSvg).catch(() => setSvg(null));
+  }, []);
+  if (!svg) return <span className="text-meta text-muted-foreground">(favicon not loaded)</span>;
+  return levels.map(([level, label]) => (
+    <span key={level} className="inline-flex items-center gap-1.5 text-xs">
+      <img alt="" className="size-8" src={`data:image/svg+xml,${encodeURIComponent(level === 'none' ? svg : badgedSvg(svg, level))}`} />
+      {label}
+    </span>
+  ));
+}
+
 function render() {
   const values = states.map(([, s]) => agentState(s));
   const ws = rollup(values);
   return (
     <div className="flex flex-col gap-5">
+      <Row label="Favicon dot (the most important thing waiting)">
+        <FaviconDemo />
+      </Row>
       <Row label="AgentState: dot + label">
         {states.map(([title], i) => (
           <span key={title} className="inline-flex items-center gap-1.5 text-xs">
