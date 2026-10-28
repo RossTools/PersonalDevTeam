@@ -1,15 +1,20 @@
 //! The forge tools (PDT-177): agents read their change request, its CI and failed logs, and issues, and comment, through
 //! the session's project forge ([`crate::forge::project_forge`]) instead of a forge's CLI (`gh`). Each is an action
 //! with only a tool face; the change request and CI default to the session's branch (its ticket attempt's, else its
-//! worktree's).
+//! worktree's). PDT-185: an agent opens its branch's change request, and asks for its attempt's merge again once a
+//! merge queue dropped it.
 
 use super::Integration;
 use super::action::{Action, ActionCx, AnyAction, ToolFace};
 use crate::forge::ProjectForge;
 use crate::workflow::catalog::BoxFut;
 use pdt_core::integration::ToolDecl;
+use pdt_core::policy::Merger;
 use pdt_core::pr::CiState;
-use pdt_forge::{ChangeComment, ChangeRequest, Forge, ForgeError};
+use pdt_core::pr::PrState;
+use pdt_core::review::{MergeOutcome, MergeRequest};
+use pdt_forge::{ChangeComment, ChangeRequest, Forge, ForgeError, NewChangeRequest};
+use pdt_store::AttemptInfo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -25,6 +30,8 @@ impl Integration for ForgeTools {
         vec![
             Arc::new(ChangeRequestView),
             Arc::new(ChangeRequestComment),
+            Arc::new(ChangeRequestOpen),
+            Arc::new(ChangeRequestMerge),
             Arc::new(CiRuns),
             Arc::new(CiFailedLogs),
             Arc::new(IssueView),
@@ -33,10 +40,14 @@ impl Integration for ForgeTools {
     }
 }
 
-/// The calling session's project forge and branch.
+/// The calling session's project forge and branch, and its own ticket attempt (not a workflow step's: a Reviewer's
+/// session reads that attempt's CI but opens and merges nothing).
 struct Here {
     forge: ProjectForge,
     branch: Option<String>,
+    /// The branch is the session's own (its attempt's or its worktree's), not a workflow step's attempt's.
+    own_branch: bool,
+    attempt: Option<AttemptInfo>,
 }
 
 async fn here(cx: &ActionCx<'_>) -> Result<Here, String> {
@@ -47,20 +58,20 @@ async fn here(cx: &ActionCx<'_>) -> Result<Here, String> {
         .await
         .ok_or("this project has no forge: its .pdt/project.toml says `forge = \"none\"`, or its origin is on no forge PDT knows")?;
     let attempt = match &s.attempt_id {
-        Some(a) => st.store.get_attempt(a).await.ok().flatten().map(|a| a.attempt.branch),
+        Some(a) => st.store.get_attempt(a).await.ok().flatten(),
         None => None,
     };
-    let branch = match attempt {
-        Some(b) => Some(b),
+    let (branch, own_branch) = match attempt.as_ref().map(|a| a.attempt.branch.clone()) {
+        Some(b) => (Some(b), true),
         None => match crate::workflow::agent::step_attempt_branch(st, s).await {
-            Some(b) => Some(b),
+            Some(b) => (Some(b), false),
             None => match &s.worktree_id {
-                Some(w) => st.store.get_worktree(w).await.ok().flatten().map(|w| w.branch),
-                None => None,
+                Some(w) => (st.store.get_worktree(w).await.ok().flatten().map(|w| w.branch), true),
+                None => (None, true),
             },
         },
     };
-    Ok(Here { forge, branch })
+    Ok(Here { forge, branch, own_branch, attempt })
 }
 
 impl Here {
@@ -294,6 +305,194 @@ impl Action for ChangeRequestComment {
                 None => h.call(move |f, r| f.comment_change_request(r, n, &body)).await?,
             };
             Ok(Posted { url })
+        })
+    }
+}
+
+// ---- change_request_open
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OpenInput {
+    pub title: String,
+    /// Markdown: what changed and why, and how it was checked.
+    #[serde(default)]
+    pub body: String,
+    /// The branch it merges into; the ticket attempt's base when left out.
+    #[serde(default)]
+    pub base: Option<String>,
+    /// Open it as a draft.
+    #[serde(default)]
+    pub draft: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenOutput {
+    pub number: u32,
+    pub url: String,
+    pub branch: String,
+    pub base: String,
+    /// The branch already had an open pull request: that one, nothing new was opened.
+    pub existing: bool,
+}
+
+pub struct ChangeRequestOpen;
+
+impl Action for ChangeRequestOpen {
+    type Input = OpenInput;
+    type Output = OpenOutput;
+
+    fn tool(&self) -> ToolFace {
+        tool(
+            ToolDecl::new("change_request_open", "Open a pull request for the session's branch").open_world(),
+            "Open a pull request",
+            "Opens a pull request from the session's branch (push it first) into the ticket attempt's base branch, or \
+             `base`, with a title and a Markdown body; `draft` opens it as a draft. A branch that already has an open \
+             one gets that one back. It is opened as the user's GitHub login.",
+        )
+    }
+
+    fn check(&self, i: &OpenInput) -> Result<(), String> {
+        if i.title.trim().is_empty() { Err("the pull request needs a title".into()) } else { Ok(()) }
+    }
+
+    fn approval_title(&self, i: &OpenInput) -> String {
+        format!("open a pull request: {}", i.title.trim())
+    }
+
+    fn run<'a>(&'a self, cx: &'a ActionCx<'a>, i: OpenInput) -> BoxFut<'a, Result<OpenOutput, String>> {
+        Box::pin(async move {
+            self.check(&i)?;
+            let h = here(cx).await?;
+            if !h.own_branch {
+                return Err("only the session working on the branch opens its pull request".into());
+            }
+            let branch = h.branch(None)?;
+            let base = i
+                .base
+                .map(|b| b.trim().to_string())
+                .filter(|b| !b.is_empty())
+                .or_else(|| h.attempt.as_ref().map(|a| a.attempt.base_branch.clone()))
+                .ok_or("this session has no ticket attempt: name the `base` branch")?;
+            if base == branch {
+                return Err(format!("{branch} can't merge into itself: name another `base`"));
+            }
+            let on = branch.clone();
+            if let Some(pr) = h.call(move |f, r| f.change_request(r, &on)).await?.filter(|p| p.state == PrState::Open) {
+                return Ok(OpenOutput { number: pr.number, url: pr.url, branch, base: pr.base_branch, existing: true });
+            }
+            let new = NewChangeRequest {
+                head: branch.clone(),
+                base: base.clone(),
+                title: i.title.trim().to_string(),
+                body: i.body,
+                draft: i.draft,
+            };
+            let opened = h.call(move |f, r| f.open_change_request(r, &new)).await?;
+            // PDT tracks it (CI, notices, Merge…) from now, not from the next poll.
+            if let Some(a) = &h.attempt {
+                crate::github::refresh_attempt(cx.st, a).await;
+            }
+            Ok(OpenOutput { number: opened.number, url: opened.url, branch, base, existing: false })
+        })
+    }
+}
+
+// ---- change_request_merge
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MergeInput {}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeOutput {
+    pub number: u32,
+    /// `queued`: set to merge (auto-merge or the merge queue); `merged`; `already`: it was set to merge already;
+    /// `waitingForCi`: CI on its head hasn't passed yet.
+    pub outcome: String,
+    pub message: String,
+}
+
+pub struct ChangeRequestMerge;
+
+impl Action for ChangeRequestMerge {
+    type Input = MergeInput;
+    type Output = MergeOutput;
+
+    fn tool(&self) -> ToolFace {
+        tool(
+            ToolDecl::new(
+                "change_request_merge",
+                "Ask again for the merge of the session's pull request after the merge queue dropped it",
+            )
+            .open_world(),
+            "Merge the pull request again",
+            "Sets the session's ticket attempt's pull request to merge again (auto-merge, or back into the merge \
+             queue) once you have fixed and pushed what made it drop out. Only for a pull request that was already \
+             set to merge: the user or the project's workflow decides the first merge. The project's merge policy \
+             applies (it may wait for CI on the push).",
+        )
+    }
+
+    fn approval_title(&self, _: &MergeInput) -> String {
+        "set the pull request to merge again".into()
+    }
+
+    fn run<'a>(&'a self, cx: &'a ActionCx<'a>, _: MergeInput) -> BoxFut<'a, Result<MergeOutput, String>> {
+        Box::pin(async move {
+            let h = here(cx).await?;
+            let info = h.attempt.as_ref().ok_or("only a ticket attempt's own session can merge its pull request")?;
+            crate::github::refresh_attempt(cx.st, info).await;
+            let pr = crate::github::watched_pr(cx.st, &info.attempt.id)
+                .filter(|p| p.state == PrState::Open)
+                .ok_or(format!("{} has no open pull request", info.attempt.branch))?;
+            // Read again: the refresh may have recorded auto-merge or the queue.
+            let info = cx
+                .st
+                .store
+                .get_attempt(&info.attempt.id)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or("the attempt is gone")?;
+            if !crate::github::merge_requested(&info, &pr) {
+                return Err(format!(
+                    "PR #{} was never set to merge (or someone took it out by hand): the user merges it (Merge… on the \
+                     ticket), or the project's workflow does",
+                    pr.number
+                ));
+            }
+            let n = pr.number;
+            if pr.auto_merge || pr.in_merge_queue {
+                let message = format!("PR #{n} is set to merge already");
+                return Ok(MergeOutput { number: n, outcome: "already".into(), message });
+            }
+            match crate::review::merge_attempt(cx.st, &info.attempt.id, &MergeRequest::default(), Merger::Automated)
+                .await
+                .map_err(|e| e.message().to_string())?
+            {
+                Ok(r) => {
+                    let (outcome, message) = match r.outcome {
+                        MergeOutcome::Merged => ("merged", format!("PR #{n} merged")),
+                        MergeOutcome::Queued => ("queued", format!("PR #{n} is set to merge again")),
+                    };
+                    Ok(MergeOutput { number: n, outcome: outcome.into(), message })
+                }
+                Err(r) if r.code == "ci_pending" => {
+                    // Still set to merge, so CI passing turns auto-merge on (PR notices, PDT-104).
+                    if let Err(e) = cx.st.store.set_attempt_merge_requested(&info.attempt.id).await {
+                        tracing::warn!(attempt = %info.attempt.id, error = %e, "could not record a merge waiting for CI");
+                    }
+                    let message = format!(
+                        "{}. Ask again once CI on the push passes (`ci_runs`); PR notices also turns auto-merge on \
+                         when it passes and no workflow step is on the ticket",
+                        r.reason
+                    );
+                    Ok(MergeOutput { number: n, outcome: "waitingForCi".into(), message })
+                }
+                Err(r) => Err(r.reason),
+            }
         })
     }
 }

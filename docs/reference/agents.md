@@ -28,7 +28,14 @@ structured view) are in [conversations.md](conversations.md). Code: crates/pdt-a
   `change_request_view` (number or branch; state, mergeability, comments and reviews), `change_request_comment`
   (`replyTo`: a review comment's id), `ci_runs` (with failed jobs), `ci_failed_logs` (a run's failed jobs with the
   last 200 lines of each log; the newest failed run when no `runId`), `issue_view`, `issue_comment`. The PM has
-  `issue_view`.
+  `issue_view`. PDT-185, for the session's own ticket attempt or worktree branch only (not a step's
+  attempt, so a Reviewer or QA session opens and merges nothing): `change_request_open` (`title`, `body`, `base`:
+  the attempt's base when left out, `draft`; `Forge::open_change_request`; a branch with an open one gets it back,
+  `existing: true`; the attempt's PR is read at once so PDT tracks it) and `change_request_merge` (the attempt's open
+  PR set to merge again: only when it was set to merge, `merge_requested` as PR notices reads it, else refused; already
+  on auto-merge or queued → `already`; otherwise the automated `attempt.merge` path, policy and CI gate included; a
+  refusal for CI not passed yet keeps it set to merge and answers `waitingForCi`; any other refusal is the tool's
+  error).
 - A session on an active attempt (Start's session) also gets "This session's ticket" (key, API path, branch;
   follow-up work in its own ticket; Done, the worktree and the branch are PDT's or the user's) and, when enabled
   workflows message the attempt's agent, "Messages from PDT" (PDT-83): which events reach it as `[PDT]` messages, how
