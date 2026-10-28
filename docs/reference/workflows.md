@@ -967,12 +967,13 @@ opens, for older ones) its open questions close (`resolution` `{sessionGone: tru
 ([Notifications](#notifications)): not answerable here (Open session, Enter); viewing the session takes it out. `total`
 counts every item, sessions waiting included: the rail badge shows it.
 
-The page title and favicon (PDT-168, web/src/notifications/attention.ts `useAttention`) combine everything that wants
-the user, from the queries the rail already reads (the notification stream refreshes them): the Inbox's open items,
-sessions that need the user or are unseen (the tree's dots), unread PM replies and unread Updates, each session once.
-The title is prefixed with their count (`(3) …`), and the favicon gets a dot: amber (`--pdt-waiting`) while anything
-blocks on the user (every Inbox kind but an unheard notice, a session that needs them), the accent for news only. With
-nothing left the plain icon and title come back.
+The page title and favicon (PDT-168, PDT-207; web/src/notifications/attention.ts `useAttention`) read the queries the
+rail already reads (the notification stream refreshes them). The title is prefixed with the Inbox's open item count
+(`(3) …`, the rail badge's number) and nothing else. The favicon gets a dot coloured by the most important thing
+waiting: red (`--pdt-failed`) while a session needs the user (its `needs_you` activity or its Inbox item), amber
+(`--pdt-waiting`) while the Inbox has any other item, the accent (`--pdt-accent`) while an agent or run has finished
+unseen or a PM reply is unread; the dot is ringed in `--pdt-surface` so it reads on light and dark tab bars. With
+nothing waiting the plain icon and title come back.
 
 Web: the rail's Inbox (web/src/inbox; the open count on its icon, a dot when Updates are unread, `Ctrl+] i`): the list
 has two sections, **Needs you** (the items, grouped by kind) and **Updates** (the notification feed, newest first, unread

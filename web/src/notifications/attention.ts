@@ -1,35 +1,27 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { InboxItem } from '../api/gen/InboxItem';
-import type { InboxKind } from '../api/gen/InboxKind';
 import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
-import { agentState } from '../common/AgentState';
+import { itemState } from '../common/AgentState';
 import { useInbox } from '../inbox/useInbox';
 import { isUnread, usePm } from '../pm/usePm';
 import type { ItemInfo } from '../workspaces/useWorkspaces';
-import { useUpdates } from './queries';
 
 /**
- * How much wants the user (PDT-168): `blocking` when something waits on them (an Inbox item they must answer, a
- * session that needs them), `unseen` when there is only news (an unseen session, an unread PM reply or Update, an
- * unheard notice), else `none`.
+ * The most important thing waiting on the user (PDT-207), most important first: `needs_you` when a session needs them
+ * (an open permission or question request), `inbox` when the Inbox has items, `idle` when an agent or run has finished
+ * and they haven't seen it (or a PM reply is unread), else `none`.
  */
-export type AttentionLevel = 'none' | 'unseen' | 'blocking';
+export type AttentionLevel = 'none' | 'idle' | 'inbox' | 'needs_you';
 
 export interface Attention {
   level: AttentionLevel;
-  /** Distinct things wanting the user, blocking or not: the page title's `(n)`. */
+  /** The Inbox's open items, and nothing else: the page title's `(n)`. */
   count: number;
-  blocking: number;
 }
-
-/** Inbox kinds that are news rather than a wait: everything else blocks a step or a session on the user. */
-const NEWS: ReadonlySet<InboxKind> = new Set<InboxKind>(['notice']);
 
 export interface AttentionSources {
   /** The Inbox's open items (sessions waiting included). */
   inbox: InboxItem[];
-  /** Unread Updates (the Inbox rail's dot). */
-  unreadUpdates: number;
   /** Every project's sessions and runs (the rail's and tree's dots). */
   items: ItemInfo[];
   /** The PM's conversations, and the one on screen (it reads as seen). */
@@ -38,48 +30,40 @@ export interface AttentionSources {
 }
 
 /**
- * Combines every kind of notification the app tracks into one level and count. A session counts once, however many
- * sources name it (its Inbox item and its own `needs_you`), at its most urgent.
+ * The favicon's level and the title's count. A session that needs the user is `needs_you` whether its Inbox item or
+ * its own activity says so; the count is the Inbox's alone.
  */
-export function attentionOf({ inbox, unreadUpdates, items, pm, pmShown }: AttentionSources): Attention {
-  const blocking = new Set<string>();
-  const news = new Set<string>();
-  for (const i of inbox) {
-    if (i.status !== 'open') continue;
-    const key = i.sessionId && i.kind === 'session' ? `session:${i.sessionId}` : `inbox:${i.id}`;
-    (NEWS.has(i.kind) ? news : blocking).add(key);
-  }
-  for (const info of items) {
-    const s = info.session;
-    if (!s) continue;
-    const state = agentState({ kind: s.kind, status: s.status, activity: s.activity, unseen: s.unseen });
-    if (state.label === 'Needs you') blocking.add(`session:${s.id}`);
-    else if (state.unseen) news.add(`session:${s.id}`);
-  }
-  for (const p of pm) if (isUnread(p, pmShown)) news.add(`session:${p.session.id}`);
-  for (const k of blocking) news.delete(k);
-  const count = blocking.size + news.size + Math.max(0, unreadUpdates);
-  const level: AttentionLevel = blocking.size > 0 ? 'blocking' : count > 0 ? 'unseen' : 'none';
-  return { level, count, blocking: blocking.size };
+export function attentionOf({ inbox, items, pm, pmShown }: AttentionSources): Attention {
+  const open = inbox.filter((i) => i.status === 'open');
+  const states = items.map(itemState);
+  const level: AttentionLevel =
+    open.some((i) => i.kind === 'session') || states.some((s) => s.label === 'Needs you') ? 'needs_you'
+    : open.length > 0 ? 'inbox'
+    : states.some((s) => s.unseen) || pm.some((p) => isUnread(p, pmShown)) ? 'idle'
+    : 'none';
+  return { level, count: open.length };
 }
 
 /**
- * [attentionOf] over the queries the rail already reads (the stream refreshes the Inbox's and Updates'; no polling
- * of its own). `items` are the workspaces' session and run infos, `pmShown` the PM conversation on screen.
+ * [attentionOf] over the queries the rail already reads (the stream refreshes the Inbox's; no polling of its own).
+ * `items` are the workspaces' session and run infos, `pmShown` the PM conversation on screen.
  */
 export function useAttention(items: ItemInfo[], pmShown: string | null): Attention {
   const inbox = useInbox().data?.items;
-  const unreadUpdates = useUpdates().data?.unreadUpdates ?? 0;
   const pm = usePm().data?.sessions;
-  const { level, count, blocking } = useMemo(
-    () => attentionOf({ inbox: inbox ?? [], unreadUpdates, items, pm: pm ?? [], pmShown }),
-    [inbox, unreadUpdates, items, pm, pmShown],
+  const { level, count } = useMemo(
+    () => attentionOf({ inbox: inbox ?? [], items, pm: pm ?? [], pmShown }),
+    [inbox, items, pm, pmShown],
   );
-  return useMemo(() => ({ level, count, blocking }), [level, count, blocking]);
+  return useMemo(() => ({ level, count }), [level, count]);
 }
 
-/** The token each level's dot is drawn in: amber for a wait, the accent for news. */
-const DOT_TOKEN: Record<Exclude<AttentionLevel, 'none'>, string> = { blocking: '--pdt-waiting', unseen: '--pdt-accent' };
+/** The token each level's dot is drawn in: red when a session needs the user, amber for the Inbox, the accent for news. */
+export const DOT_TOKEN: Record<Exclude<AttentionLevel, 'none'>, string> = {
+  needs_you: '--pdt-failed',
+  inbox: '--pdt-waiting',
+  idle: '--pdt-accent',
+};
 
 function token(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
