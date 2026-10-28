@@ -45,6 +45,21 @@ pub struct ReleaseSummary {
     /// Every commit from the installed version to this one (PDT-169); None when GitHub could not compare them (the
     /// installed tag is gone, a local build, a failed call), and `notes` is all there is.
     pub changes: Option<ReleaseChanges>,
+    /// Every published release from the installed version (exclusive) up to this one, newest first, with its notes
+    /// (PDT-192); None when GitHub could not list them (a local build, a failed call).
+    pub releases: Option<Vec<ReleaseNotes>>,
+}
+
+/// One release an update brings, and its notes.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReleaseNotes {
+    pub version: String,
+    pub tag: String,
+    pub notes: String,
+    /// As GitHub sends it (ISO 8601 UTC).
+    pub published_at: Option<String>,
 }
 
 /// The commits an update brings, newest first.
@@ -146,6 +161,8 @@ pub struct UpdateService {
     pub(crate) release: Mutex<Option<Release>>,
     /// The last comparison: its base and head, so a check for the same pair does not ask GitHub again.
     changes: Mutex<Option<(String, String, ReleaseChanges)>>,
+    /// The last list of releases an update brings: the installed version and the new tag it was listed for.
+    releases: Mutex<Option<(String, String, Vec<ReleaseNotes>)>>,
     /// Held by the install task from the busy check until the hand-off (or failure).
     running: Arc<tokio::sync::Mutex<()>>,
     /// `requested_at` of the request this pdtd handed to pdt-host, while it shows `installing`.
@@ -189,6 +206,7 @@ impl UpdateService {
             }),
             release: Mutex::new(None),
             changes: Mutex::new(None),
+            releases: Mutex::new(None),
             running: Default::default(),
             handed_off_at: Mutex::new(None),
             first_check_delay: Duration::from_secs(30),
@@ -370,9 +388,11 @@ async fn check_now(st: &AppState) -> UpdateStatus {
         return claimed;
     }
     let result = svc.client.latest(&tok).await;
-    let changes = match &result {
-        Ok(l) if l.release.version.is_newer_than(&current) => release_changes(svc, &tok, &l.release).await,
-        _ => None,
+    let (changes, releases) = match &result {
+        Ok(l) if l.release.version.is_newer_than(&current) => {
+            (release_changes(svc, &tok, &l.release).await, releases_since(svc, &tok, &current, &l.release).await)
+        }
+        _ => (None, None),
     };
     let now = now_ms();
     let mut s = svc.status.lock().unwrap_or_else(|e| e.into_inner());
@@ -384,7 +404,7 @@ async fn check_now(st: &AppState) -> UpdateStatus {
         Ok(l) => {
             s.token = token_state(true, l.token_expires_at, false, now);
             if !busy {
-                set_found(&mut s, svc, &l.release, &current, changes);
+                set_found(&mut s, svc, &l.release, &current, changes, releases);
             }
         }
         Err(e) => {
@@ -419,6 +439,43 @@ async fn release_changes(svc: &UpdateService, tok: &str, release: &Release) -> O
     let since = parse_version(&svc.current).map_or_else(|| svc.current.clone(), |v| v.to_string());
     let out = summarize(&changes, &since, &svc.client.repo());
     *svc.changes.lock().unwrap_or_else(|e| e.into_inner()) = Some((base, release.tag.clone(), out.clone()));
+    Some(out)
+}
+
+/// The releases from the installed version up to `release`, with their notes, from the cache when that pair was
+/// listed before. None when GitHub fails (the commits, or the release's own notes, stand in).
+async fn releases_since(
+    svc: &UpdateService,
+    tok: &str,
+    current: &Version,
+    release: &Release,
+) -> Option<Vec<ReleaseNotes>> {
+    if current.local {
+        return None;
+    }
+    let since = current.to_string();
+    if let Some((c, t, list)) = &*svc.releases.lock().unwrap_or_else(|e| e.into_inner())
+        && (c.as_str(), t.as_str()) == (since.as_str(), release.tag.as_str())
+    {
+        return Some(list.clone());
+    }
+    let list = match svc.client.releases_between(tok, current, &release.version).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!(error = %e, since, head = release.tag, "could not list the releases in the update");
+            return None;
+        }
+    };
+    let out: Vec<ReleaseNotes> = list
+        .into_iter()
+        .map(|r| ReleaseNotes {
+            version: r.version.to_string(),
+            tag: r.tag,
+            notes: r.notes,
+            published_at: r.published_at,
+        })
+        .collect();
+    *svc.releases.lock().unwrap_or_else(|e| e.into_inner()) = Some((since, release.tag.clone(), out.clone()));
     Some(out)
 }
 
@@ -471,6 +528,7 @@ fn set_found(
     release: &Release,
     current: &Version,
     changes: Option<ReleaseChanges>,
+    releases: Option<Vec<ReleaseNotes>>,
 ) {
     let newer = release.version.is_newer_than(current);
     *svc.release.lock().unwrap_or_else(|e| e.into_inner()) = newer.then(|| release.clone());
@@ -481,6 +539,7 @@ fn set_found(
         notes: release.notes.clone(),
         published_at: release.published_at.clone(),
         changes,
+        releases,
     });
     s.state = resting(s);
 }

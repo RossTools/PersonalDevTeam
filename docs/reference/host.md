@@ -41,7 +41,7 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   without a web dir) and `loops` (each background loop's `name`, `everyMs`, `startedAt`, `lastPassAt`,
   `staleAfterMs`, `panics` and `stale`; `status` stays `ok` with a stale loop, so pdt-host does not restart pdtd). The UI shows a `DEV · <port>` badge in the rail and a `[dev]` title prefix when `dev` is true.
   It polls health every 5 s and reloads when `webBuild` changes from the one it loaded with (a dev instance restarted
-  with a rebuilt web/dist; every dev build reports version 0.1.0), held back while a modal is open or a focused text
+  with a rebuilt web/dist; every dev build reports the checked-in version), held back while a modal is open or a focused text
   field holds text (web/src/host/useReloadOnNewBuild.ts).
 - Demo data: `PDT_SEED=demo` (set by the "pdt" run) makes a dev-profile pdtd with no projects create two demo git repos
   in `<data dir>/demo` (branches, a worktree with uncommitted work) and register them with ended sessions, past runs
@@ -95,10 +95,13 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
 
 ## Releases and the stable app
 
-- Every push to main publishes GitHub release `v0.1.<run number>` of the release repository (`RELEASE_REPO` in brand.rs)
-  (`*-setup.exe`, `*.app.tar.gz`), built with that version (`PDT_BUILD_VERSION`, read at compile time). PR and local
-  builds keep the checked-in 0.1.0. A release's notes are its head commit's whole message (a squashed PR's subject
-  and body).
+- Releases are deliberate; merges don't ship (docs/SDLC.md "Releases"). A merge to main builds and publishes nothing.
+  A release is GitHub release `vX.Y.Z` (SemVer, no pre-releases) of the release repository (`RELEASE_REPO` in
+  brand.rs), with `*-setup.exe`, `*.app.tar.gz` and `SHA256SUMS`. Its version is the workspace version in
+  `Cargo.toml`, which `desktop/src-tauri/tauri.conf.json` repeats (`scripts/version.sh check`, run in CI); it changes
+  only in a release PR. A release build reports it as is (`PDT_BUILD_VERSION`, read at compile time); every other
+  build reports `<version>-local`. Until 0.2.0, every push to main published `v0.1.<run number>`, with its head
+  commit's message as notes; installs on those move to 0.2.0 like to any newer release.
 - scripts/release-stable.ps1 (Windows) / scripts/release-stable.sh (macOS) build the installer (Tauri; pdtd and
   pdt-host are sidecars via desktop/src-tauri/tauri.bundle.conf.json). When pdt-host supervises the stable pdtd they
   hand the build to it as an update; otherwise they stop the stable tray app and pdtd, install and launch.
@@ -118,11 +121,21 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   to pdt-host, which installs it, health-checks the new version and rolls back on failure. pdt-host copies the
   database to `update/db-before-update` before installing and restores it on rollback (an old version cannot open a
   database a newer one migrated).
-- Release notes (PDT-169): when a check finds a newer release, pdtd asks GitHub to compare the installed version's
+- Versions compare by SemVer (major, then minor, then patch: 0.2.0 is newer than 0.1.840). A check reads
+  `releases/latest`, which is never a draft or pre-release, and offers it only when it is newer than the running
+  version: an older or equal latest release is never installed (no downgrade).
+- Release notes (PDT-192): when a check finds a newer release, pdtd lists the repository's releases (`releases`,
+  newest first, until it reaches the installed version; 10 pages of 100 at most) and `latest.releases` in
+  `/api/host/update` holds every published release after the installed version up to the new one, newest first
+  (`version`, `tag`, `notes`, `publishedAt`; drafts and pre-releases left out). The list is cached for that pair of
+  versions. A local build, or a failed call (not cached, not an update `error`), leaves it null. The update banner's
+  Release notes show each of those releases with its notes (Markdown), and fall back to the commit list below, then
+  the new release's own `notes`.
+- Commits (PDT-169): when a check finds a newer release, pdtd also asks GitHub to compare the installed version's
   tag (`v0.1.741`, or the commit of a dev build `0.1.741+g<sha>`) with the new tag, and `latest.changes` in
   `/api/host/update` lists every commit between them, newest first (`subject`, `title`, `ticket` key, `pr`, `prUrl`,
   `sha`). The comparison is cached for that pair of versions; each answer looks the ticket keys up on this instance
-  (`ticketHere`). The update banner's Release notes show "N changes since v…" with ticket links (to tickets here)
+  (`ticketHere`). Without release notes, the update banner's Release notes show "N changes since v…" with ticket links (to tickets here)
   and PR links; GitHub sends at most 250 commits, so a longer range has `moreUrl` (its compare page, "…and N more").
   When the comparison fails (the tag is gone, a local build, GitHub errs) `changes` is null and the release's own
   `notes` show as before; a failure is not cached and does not set the update `error`.

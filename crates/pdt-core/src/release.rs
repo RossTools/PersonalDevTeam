@@ -196,6 +196,21 @@ mod tests {
     }
 
     #[test]
+    fn versions_order_by_semver_and_never_downgrade() {
+        let v = |s| parse_version(s).unwrap();
+        // Existing installs on the per-merge 0.1.x numbers move to the first deliberate release.
+        assert!(v("v0.2.0").is_newer_than(&v("0.1.840")));
+        assert!(!v("v0.1.840").is_newer_than(&v("0.2.0")), "never a downgrade");
+        assert!(!v("v0.2.0").is_newer_than(&v("0.2.0")));
+        assert!(v("0.2.1").is_newer_than(&v("0.2.0")));
+        assert!(v("0.10.0").is_newer_than(&v("0.9.99")), "numeric, not lexical");
+        assert!(v("1.0.0").is_newer_than(&v("0.99.99")));
+        assert!(!v("0.99.99").is_newer_than(&v("1.0.0")));
+        // Pre-releases are not ours: GitHub's latest release never is one, and a tag like this is refused.
+        assert_eq!(parse_version("v0.3.0-rc.1"), None);
+    }
+
+    #[test]
     fn asset_selection_matches_ci_names() {
         let names = ["Personal.Dev.Team_0.1.7_x64-setup.exe", "Personal.Dev.Team.app.tar.gz", "SHA256SUMS"];
         assert_eq!(select_asset(&names, HostOs::Windows), Some("Personal.Dev.Team_0.1.7_x64-setup.exe"));
