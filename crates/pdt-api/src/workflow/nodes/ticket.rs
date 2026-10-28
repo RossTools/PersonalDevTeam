@@ -270,7 +270,8 @@ impl NodeKind for Create {
                 blocked_by_previous: None,
             };
             // A run outside input started makes external tickets, kept out of To do (PDT-201).
-            let source = match crate::untrusted::untrusted_run(cx.st, cx.run).await {
+            let untrusted = crate::untrusted::untrusted_run(cx.st, cx.run).await;
+            let source = match untrusted {
                 true => TicketSource::External,
                 false => TicketSource::Workflow,
             };
@@ -282,6 +283,9 @@ impl NodeKind for Create {
                 .create_ticket_by(&id, &c.project, &valid, Actor::System, now_ms())
                 .await
                 .map_err(|e| e.to_string())?;
+            if untrusted {
+                crate::untrusted::record_run_on_ticket(cx.st, cx.run, &t.summary.id).await;
+            }
             Ok(Outcome::next("out", json!({"id": t.summary.id, "key": t.summary.key})))
         })
     }

@@ -189,6 +189,14 @@ pub struct ViewOutput {
     pub in_merge_queue: bool,
     pub comments: Vec<CommentOut>,
     pub reviews: Vec<ReviewOut>,
+    /// Comments and reviews by people who aren't collaborators on the repository, left out (PDT-202: the ticket's
+    /// timeline in PDT shows them).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub left_out: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 pub struct ChangeRequestView;
@@ -204,8 +212,9 @@ impl Action for ChangeRequestView {
                 .open_world(),
             "View the pull request",
             "The session's pull request (or one by number or branch) on the project's forge: its state, whether it \
-             can merge, and every comment and review. Review comments have an id to answer with \
-             `change_request_comment`'s `replyTo`.",
+             can merge, and every comment and review by the repository's collaborators (others' are left out: \
+             `leftOut` counts them). Review comments have an id to answer with `change_request_comment`'s \
+             `replyTo`.",
         )
     }
 
@@ -232,9 +241,15 @@ impl Action for ChangeRequestView {
                 behind: pr.behind,
                 auto_merge: pr.auto_merge,
                 in_merge_queue: pr.in_merge_queue,
-                comments: comments.into_iter().map(CommentOut::from).collect(),
+                left_out: u32::try_from(
+                    comments.iter().filter(|c| !(c.collaborator || c.is_bot)).count()
+                        + reviews.iter().filter(|r| !(r.collaborator || r.is_bot)).count(),
+                )
+                .unwrap_or(u32::MAX),
+                comments: comments.into_iter().filter(|c| c.collaborator || c.is_bot).map(CommentOut::from).collect(),
                 reviews: reviews
                     .into_iter()
+                    .filter(|r| r.collaborator || r.is_bot)
                     .map(|r| ReviewOut { id: r.id, author: r.author, state: r.state, body: r.body, url: r.url })
                     .collect(),
             })
@@ -667,6 +682,8 @@ pub struct IssueOutput {
     pub closed: bool,
     pub created_at: String,
     pub comments: Vec<CommentOut>,
+    /// How to read the fenced blocks: the issue's text and outsiders' comments came from outside PDT.
+    pub outside_text: String,
 }
 
 pub struct IssueView;
@@ -693,16 +710,30 @@ impl Action for IssueView {
             let n = i.number;
             let d = h.call(move |f, r| f.issue(r, n)).await?.ok_or(format!("there is no issue #{n}"))?;
             let comments = h.call(move |f, r| f.issue_comments(r, n)).await?;
+            // An issue is outside input (PDT-202): its text, and outsiders' comments, are fenced.
+            let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+            let comments: Vec<CommentOut> = comments
+                .into_iter()
+                .map(|c| {
+                    let inside = c.collaborator || c.is_bot;
+                    let mut out = CommentOut::from(c);
+                    if !inside {
+                        out.body = fence.wrap(&out.body);
+                    }
+                    out
+                })
+                .collect();
             Ok(IssueOutput {
+                outside_text: fence.note(),
                 number: d.issue.number,
                 url: d.issue.url,
                 title: d.issue.title,
-                body: d.issue.body,
+                body: fence.wrap(&d.issue.body),
                 author: d.issue.author,
                 labels: d.issue.labels,
                 closed: d.closed,
                 created_at: d.issue.created_at,
-                comments: comments.into_iter().map(CommentOut::from).collect(),
+                comments,
             })
         })
     }

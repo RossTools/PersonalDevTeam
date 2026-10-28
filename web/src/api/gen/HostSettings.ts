@@ -42,6 +42,15 @@ updateCheckMinutes: number,
  */
 maxAgentTurns: number, 
 /**
+ * The most triage runs (a workflow with an agent step started by a new issue or a webhook) one issue author
+ * starts an hour; more are skipped (PDT-202). 0: no cap.
+ */
+triagePerAuthorHour: number, 
+/**
+ * The same per repository (or webhook).
+ */
+triagePerRepoHour: number, 
+/**
  * Where "Report a bug" sends reports (PDT-153).
  */
 bugReports: BugReportSetting, 

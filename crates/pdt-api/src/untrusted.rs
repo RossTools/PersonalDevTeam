@@ -1,6 +1,8 @@
 //! Untrusted input (PDT-201): which sessions read it, the PM's confirmed calls that may let an external ticket in, and
 //! the secret tools kept away from it, and the UI token that tells the user's clicks from an agent's curl (PDT-204). The
-//! Todo gate itself is pdt-core's `external_gate`, applied by the store.
+//! Todo gate itself is pdt-core's `external_gate`, applied by the store. PDT-202: the record of outside input reaching
+//! agent sessions (`session.outside_input`, on the ticket's timeline), and what outsiders wrote kept out of them.
+//! Prompts fence outside text in the engine (`engine::fence_input`).
 
 use crate::error::ApiError;
 use crate::routes::AppState;
@@ -9,6 +11,8 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use pdt_core::session::Session;
 use pdt_core::ticket::{TicketSource, TicketSummary};
+use pdt_core::workflow::api::{LogEvent, NewLogEvent};
+use pdt_core::workflow::events::{self as ev, TriageCap};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
@@ -187,6 +191,256 @@ pub(crate) async fn refuse_secrets(st: &AppState, s: &Session) -> Result<(), Str
     Ok(())
 }
 
+/// Where a trigger's outside text came from (PDT-202), with a link: `owner/name#12`, `webhook <name>`, a Jira key.
+/// None for a trigger whose event carries none.
+pub(crate) fn trigger_source(reg: &crate::integrations::Registry, trigger: &Value) -> Option<(String, Option<String>)> {
+    let kind = trigger.get("type").and_then(Value::as_str)?;
+    if reg.event_type(kind).is_none_or(|t| t.outside.is_empty()) {
+        return None;
+    }
+    let s = |k: &str| trigger.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(String::from);
+    let url = s("url");
+    let source = match (s("repo"), trigger.get("number").and_then(Value::as_u64), s("hook"), s("key")) {
+        (Some(repo), Some(n), _, _) => format!("{repo}#{n}"),
+        (_, _, Some(hook), _) => format!("webhook {hook}"),
+        (_, _, _, Some(key)) => key,
+        _ => url.clone().unwrap_or_else(|| kind.to_string()),
+    };
+    Some((source, url))
+}
+
+/// Where an external ticket came from (its first link to another tracker), when it is one.
+pub(crate) fn ticket_source(t: &TicketSummary) -> Option<(String, Option<String>)> {
+    if t.source != TicketSource::External {
+        return None;
+    }
+    Some(match t.external.first() {
+        Some(l) => (l.key.clone(), Some(l.url.clone()).filter(|u| !u.is_empty())),
+        None => (format!("{} (made from outside input)", t.key), None),
+    })
+}
+
+/// Records that outside input went into an agent session (PDT-202): a `session.outside_input` event, and an entry on
+/// the ticket's timeline when there is a ticket.
+pub(crate) async fn record_input(st: &AppState, e: pdt_core::workflow::events::OutsideInput) {
+    use pdt_core::ticket::{Actor, EventKind};
+    use pdt_core::workflow::events::OUTSIDE_INPUT;
+    let now = crate::routes::now_ms();
+    let key = format!("{}:{}:{}:{}", e.session_id, e.via, e.source, e.ticket_id.as_deref().unwrap_or_default());
+    let key = match &e.run_id {
+        Some(r) => format!("{key}:{r}:{now}"),
+        None => format!("{key}:{now}"),
+    };
+    tracing::info!(session = %e.session_id, source = %e.source, via = %e.via, "outside input reached an agent session");
+    let log = NewLogEvent::new(OUTSIDE_INPUT, key, "pdt", &e);
+    if let Err(x) = st.store.emit_event(&log, now).await {
+        tracing::warn!(session = %e.session_id, error = %x, "could not log outside input");
+    }
+    if let Some(ticket) = &e.ticket_id {
+        let data = serde_json::json!({
+            "source": e.source, "url": e.url, "sessionId": e.session_id, "via": e.via, "runId": e.run_id,
+            "workflowName": e.workflow_name,
+        });
+        if let Err(x) =
+            st.store.add_ticket_event(ticket, EventKind::OutsideInput, Actor::System, None, Some(data), now).await
+        {
+            tracing::warn!(ticket = %ticket, error = %x, "could not put outside input on the ticket's timeline");
+        }
+    }
+}
+
+/// [`record_input`] for the sessions a workflow run's agent steps triaged its outside input in, onto the ticket the
+/// run made from it (`ticket.create`, `github.import`).
+pub(crate) async fn record_run_on_ticket(st: &AppState, run: &pdt_core::workflow::api::Run, ticket_id: &str) {
+    let Some((source, url)) = trigger_source(&st.registry(), &run.trigger) else { return };
+    let mut seen = std::collections::HashSet::new();
+    for a in st.store.agent_steps_of_run(&run.id).await.unwrap_or_default() {
+        let Some(session) = a.session_id.filter(|s| seen.insert(s.clone())) else { continue };
+        record_input(
+            st,
+            pdt_core::workflow::events::OutsideInput {
+                project_id: run.project_id.clone(),
+                ticket_id: Some(ticket_id.to_string()),
+                session_id: session,
+                source: source.clone(),
+                url: url.clone(),
+                via: "triage".into(),
+                run_id: Some(run.id.clone()),
+                workflow_name: Some(run.workflow_name.clone()),
+            },
+        )
+        .await;
+    }
+}
+
+/// [`record_input`] for a triage session that made a ticket itself (`create_ticket`): the input it read, onto that
+/// ticket. Its source is its run's trigger, else the session's persona says only that it triages.
+pub(crate) async fn record_triage(st: &AppState, s: &Session, ticket_id: &str) {
+    let run = match crate::workflow::agent::session_run(st, &s.id).await {
+        Some(id) => st.store.get_workflow_run(&id).await.ok().flatten(),
+        None => None,
+    };
+    let (source, url) = run
+        .as_ref()
+        .and_then(|r| trigger_source(&st.registry(), &r.trigger))
+        .unwrap_or_else(|| ("input from outside PDT".into(), None));
+    let e = pdt_core::workflow::events::OutsideInput {
+        project_id: Some(s.project_id.clone()),
+        ticket_id: Some(ticket_id.to_string()),
+        session_id: s.id.clone(),
+        source,
+        url,
+        via: "triage".into(),
+        run_id: run.as_ref().map(|r| r.id.clone()),
+        workflow_name: run.map(|r| r.workflow_name),
+    };
+    record_input(st, e).await;
+}
+
+const HOUR_MS: i64 = 60 * 60 * 1000;
+
+/// The triage cap a new issue (or webhook) is over (PDT-202): its author already started
+/// `triage_per_author_hour` triage runs in the last hour, or its repository (webhook) `triage_per_repo_hour`. None when
+/// it may be triaged. Counted in issues: one that started runs of several workflows is one.
+pub(crate) async fn triage_cap(st: &AppState, e: &LogEvent, trigger: &Value) -> Option<(TriageCap, u32)> {
+    let h = st.store.get_host_settings().await.unwrap_or_default();
+    let since = crate::routes::now_ms() - HOUR_MS;
+    let s = |k: &str| trigger.get(k).and_then(Value::as_str).filter(|v| !v.is_empty());
+    let repo_field = if e.kind == ev::GITHUB_ISSUE_OPENED { "repo" } else { "hook" };
+    let checks = [
+        (TriageCap::Author, "author", s("author"), h.triage_per_author_hour),
+        (TriageCap::Repo, repo_field, s(repo_field), h.triage_per_repo_hour),
+    ];
+    for (cap, field, value, limit) in checks {
+        let Some(value) = value.filter(|_| limit > 0) else { continue };
+        match st.store.events_with_runs_since(&e.kind, field, value, since, &e.id).await {
+            Ok(n) if n >= limit => return Some((cap, limit)),
+            Ok(_) => {}
+            Err(x) => tracing::warn!(error = %x, "could not count the triage runs"),
+        }
+    }
+    None
+}
+
+/// A triage run over the cap is not started (PDT-202): a `triage.skipped` event, and the hour's summary for the
+/// repository in the Inbox.
+pub(crate) async fn skip_triage(
+    st: &AppState,
+    wf: &pdt_core::workflow::api::Workflow,
+    e: &LogEvent,
+    trigger: &Value,
+    (cap, limit): (TriageCap, u32),
+) {
+    let now = crate::routes::now_ms();
+    let s = |k: &str| trigger.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(String::from);
+    let repo = match (s("repo"), s("hook")) {
+        (Some(r), _) => r,
+        (None, Some(h)) => format!("webhook {h}"),
+        _ => e.kind.clone(),
+    };
+    let skipped = ev::TriageSkipped {
+        project_id: e.project_id.clone(),
+        repo: repo.clone(),
+        number: trigger.get("number").and_then(Value::as_u64),
+        url: s("url"),
+        author: s("author"),
+        workflow_id: wf.id.clone(),
+        workflow_name: wf.name.clone(),
+        event_id: e.id.clone(),
+        cap,
+        limit,
+    };
+    tracing::info!(workflow = %wf.name, repo = %repo, author = ?skipped.author, ?cap, limit, "triage skipped: over the hourly cap");
+    let log = NewLogEvent::new(ev::TRIAGE_SKIPPED, format!("{}:{}", e.id, wf.id), "engine", &skipped);
+    match st.store.emit_event(&log, now).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return,
+        Err(x) => return tracing::warn!(error = %x, "could not log a skipped triage"),
+    }
+    // One summary per repository and hour, listing what it skipped.
+    let slot = now - now.rem_euclid(HOUR_MS);
+    let filter = pdt_store::EventFilter {
+        kind: Some(ev::TRIAGE_SKIPPED.into()),
+        since: Some(slot),
+        limit: 1000,
+        ..Default::default()
+    };
+    let all: Vec<ev::TriageSkipped> = st
+        .store
+        .list_log_events(&filter)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|x| serde_json::from_value::<ev::TriageSkipped>(x.payload).ok())
+        .filter(|x| x.repo == repo)
+        .collect();
+    let lines: Vec<String> = all
+        .iter()
+        .map(|x| {
+            let what = match (&x.url, x.number) {
+                (Some(u), Some(n)) => format!("[#{n}]({u})"),
+                (None, Some(n)) => format!("#{n}"),
+                (Some(u), None) => u.clone(),
+                (None, None) => "a delivery".into(),
+            };
+            let why = match x.cap {
+                TriageCap::Author => {
+                    format!("{} reached {} an hour", x.author.as_deref().unwrap_or("its author"), x.limit)
+                }
+                TriageCap::Repo => format!("the repository reached {} an hour", x.limit),
+            };
+            format!("- {what} for {}: {why}", x.workflow_name)
+        })
+        .collect();
+    let n = all.len().max(1);
+    let title = format!("Triage skipped {n} {} on {repo} (over the hourly cap)", if n == 1 { "run" } else { "runs" });
+    let text = format!(
+        "{title}. They were not triaged: run them by hand from the issue if they need it, or raise the caps in \
+         Settings → Host.\n\n{}",
+        lines.join("\n")
+    );
+    let key = format!("triage-cap:{repo}:{slot}");
+    let item = pdt_core::inbox::InboxItem {
+        id: uuid::Uuid::now_v7().to_string(),
+        kind: pdt_core::inbox::InboxKind::Notice,
+        group: pdt_core::inbox::InboxGroup::Notice,
+        status: pdt_core::inbox::InboxStatus::Open,
+        project_id: e.project_id.clone(),
+        ticket_id: None,
+        ticket_key: None,
+        ticket_title: None,
+        attempt_id: None,
+        session_id: None,
+        run_id: None,
+        step_id: None,
+        persona_id: None,
+        persona_name: None,
+        title,
+        body: serde_json::json!({"notice": null, "key": key, "text": text, "workflow": wf.name}),
+        choices: vec![],
+        resolution: Value::Null,
+        created_at: now,
+        resolved_at: None,
+    };
+    match st.store.put_inbox_summary(&item, &key).await {
+        Ok(_) => crate::notifications::kick(st),
+        Err(x) => tracing::warn!(error = %x, "could not sum up skipped triage in the Inbox"),
+    }
+}
+
+/// Why a step of a run started by what an outsider wrote (a pull request comment or review by someone who isn't a
+/// collaborator on the repository, PDT-202) sends nothing into an agent session; None for other runs.
+pub(crate) fn outsider_refusal(ctx: &Value) -> Option<String> {
+    let t = ctx.get("trigger")?;
+    pdt_core::workflow::events::by_outsider(t).then(|| {
+        let who = t.get("author").and_then(Value::as_str).unwrap_or("someone");
+        format!(
+            "{who} isn't a collaborator on the repository, so what they wrote is shown in PDT and never sent into an \
+             agent session"
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +463,24 @@ mod tests {
         g.answered("s", "r2", false);
         g.answered("s", "r3", true);
         assert!(!g.take("s", "edit_ticket", &input));
+    }
+
+    #[test]
+    fn outside_input_names_its_source() {
+        let reg = crate::integrations::test_registry();
+        let issue = json!({"type": "github.issue.opened", "repo": "o/r", "number": 12, "url": "https://x/12"});
+        assert_eq!(trigger_source(reg, &issue), Some(("o/r#12".into(), Some("https://x/12".into()))));
+        let hook = json!({"type": "webhook.received", "hook": "deploys", "body": {}});
+        assert_eq!(trigger_source(reg, &hook), Some(("webhook deploys".into(), None)));
+        assert_eq!(trigger_source(reg, &json!({"type": "ci.run_failed", "url": "u"})), None, "not outside text");
+        assert_eq!(trigger_source(reg, &json!({"repo": "o/r"})), None);
+    }
+
+    #[test]
+    fn what_outsiders_wrote_is_refused() {
+        let by = |outside: bool| json!({"trigger": {"type": "pr.commented", "author": "eve", "outside": outside}});
+        assert!(outsider_refusal(&by(true)).is_some_and(|r| r.starts_with("eve isn't a collaborator")));
+        assert_eq!(outsider_refusal(&by(false)), None);
+        assert_eq!(outsider_refusal(&json!({"trigger": {"type": "pr.commented"}})), None, "older events");
     }
 }

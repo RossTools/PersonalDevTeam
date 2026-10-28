@@ -27,6 +27,8 @@ pub const SCHEDULE_FIRED: &str = "schedule.fired";
 pub const WEBHOOK_RECEIVED: &str = "webhook.received";
 
 pub const AGENT_OUTCOME: &str = "agent.outcome";
+pub const OUTSIDE_INPUT: &str = "session.outside_input";
+pub const TRIAGE_SKIPPED: &str = "triage.skipped";
 pub const TICKET_REFINE_REQUESTED: &str = "ticket.refine_requested";
 
 /// The event types that carry outside input (PDT-201): what someone outside PDT wrote. A run they start triages.
@@ -35,6 +37,12 @@ pub const UNTRUSTED_EVENTS: &[&str] = &[GITHUB_ISSUE_OPENED, WEBHOOK_RECEIVED];
 /// Whether an event of type `kind` carries outside input.
 pub fn untrusted(kind: &str) -> bool {
     UNTRUSTED_EVENTS.contains(&kind)
+}
+
+/// Whether an event's payload (a trigger) was written by someone outside the repository (PDT-202: `outside` on
+/// `pr.commented` and `pr.reviewed`): it is never sent into an agent session.
+pub fn by_outsider(payload: &serde_json::Value) -> bool {
+    payload.get("outside").and_then(serde_json::Value::as_bool) == Some(true)
 }
 
 /// The CI provider of GitHub Actions runs.
@@ -46,6 +54,9 @@ pub struct EventType {
     pub title: &'static str,
     pub description: &'static str,
     pub schema: fn() -> Schema,
+    /// The payload's fields that hold what someone outside PDT wrote (PDT-202): fenced wherever they go to an agent
+    /// (an agent step's prompt, `session.send`'s text). Paths as in references (`issue.body`).
+    pub outside: &'static [&'static str],
 }
 
 /// `T`'s JSON Schema, for an [`EventType`]'s `schema`.
@@ -63,6 +74,7 @@ pub const EVENT_TYPES: &[EventType] = &[
         description: "CI failed on the head commit of an attempt's pull request, or of its branch on a CI \
                       integration (once per set of failed runs).",
         schema: schema_of::<CiEvent>,
+        outside: &[],
     },
     EventType {
         id: CI_RUN_PASSED,
@@ -70,48 +82,56 @@ pub const EVENT_TYPES: &[EventType] = &[
         description: "Every CI run on the head commit of an attempt's pull request (or its branch on a CI integration) \
                       passed.",
         schema: schema_of::<CiEvent>,
+        outside: &[],
     },
     EventType {
         id: PR_CONFLICT,
         title: "Pull request conflicts",
         description: "An attempt's pull request conflicts with its base branch (once per head commit).",
         schema: schema_of::<PrEvent>,
+        outside: &[],
     },
     EventType {
         id: PR_QUEUE_LEFT,
         title: "Dropped from the merge queue",
         description: "The merge queue removed an attempt's pull request without merging it.",
         schema: schema_of::<PrEvent>,
+        outside: &[],
     },
     EventType {
         id: PR_MERGED,
         title: "Pull request merged",
         description: "GitHub reports an attempt's pull request merged.",
         schema: schema_of::<PrEvent>,
+        outside: &[],
     },
     EventType {
         id: PR_BEHIND,
         title: "Base moved while a pull request waits",
         description: "An open pull request with auto-merge on, not in a merge queue, is behind its base branch.",
         schema: schema_of::<PrEvent>,
+        outside: &[],
     },
     EventType {
         id: ATTEMPT_STARTED,
         title: "Ticket started",
         description: "Start made a new attempt (branch and worktree) for a ticket.",
         schema: schema_of::<AttemptEvent>,
+        outside: &[],
     },
     EventType {
         id: ATTEMPT_MERGED,
         title: "Attempt merged",
         description: "An attempt ended as merged: detected by git or GitHub, merged in PDT, or the ticket was closed.",
         schema: schema_of::<AttemptEvent>,
+        outside: &[],
     },
     EventType {
         id: ATTEMPT_ABANDONED,
         title: "Attempt abandoned",
         description: "An attempt was abandoned (by the user, or because its ticket was closed unmerged).",
         schema: schema_of::<AttemptEvent>,
+        outside: &[],
     },
     EventType {
         id: ATTEMPT_LATE_COMMITS,
@@ -119,18 +139,21 @@ pub const EVENT_TYPES: &[EventType] = &[
         description: "An attempt's pull request merged, and its branch has commits the merged pull request doesn't \
                       (pushed after the merge), so the attempt stays open (once per branch head).",
         schema: schema_of::<LateCommitsEvent>,
+        outside: &[],
     },
     EventType {
         id: TICKET_STAGE_CHANGED,
         title: "Ticket moved",
         description: "A ticket moved to another stage.",
         schema: schema_of::<TicketStageChanged>,
+        outside: &[],
     },
     EventType {
         id: TICKET_COMMENTED,
         title: "Ticket commented",
         description: "Someone commented on a ticket: the user, an agent or a workflow (its actor says which).",
         schema: schema_of::<TicketCommented>,
+        outside: &[],
     },
     EventType {
         id: TICKET_OVERLAP_FOUND,
@@ -138,30 +161,37 @@ pub const EVENT_TYPES: &[EventType] = &[
         description: "Two tickets in flight change the same files (once when it starts, then once per newly shared \
                       file or worse level; one event on each ticket).",
         schema: schema_of::<TicketOverlapFound>,
+        outside: &[],
     },
     EventType {
         id: TICKET_OVERLAP_CLEARED,
         title: "Overlap cleared",
         description: "Two tickets that changed the same files no longer do (one finished, or the files were put back).",
         schema: schema_of::<TicketOverlapCleared>,
+        outside: &[],
     },
     EventType {
         id: AGENT_OUTCOME,
         title: "Agent outcome",
         description: "An agent step on a ticket ended with an outcome (submitted by the agent, or taken over by the user).",
         schema: schema_of::<AgentOutcome>,
+        outside: &[],
     },
     EventType {
         id: PR_COMMENTED,
         title: "Pull request commented",
         description: "Someone commented on an attempt's pull request: on the conversation, or on a line in a review.",
         schema: schema_of::<PrCommented>,
+        // Only collaborators' reach agents (`outside`); their text is still fenced where a workflow quotes it.
+        outside: &["body"],
     },
     EventType {
         id: PR_REVIEWED,
         title: "Pull request reviewed",
         description: "Someone submitted a review of an attempt's pull request (approved, changes requested, commented).",
         schema: schema_of::<PrReviewed>,
+        // Only collaborators' reach agents (`outside`); their text is still fenced where a workflow quotes it.
+        outside: &["body"],
     },
     EventType {
         id: GITHUB_ISSUE_OPENED,
@@ -169,24 +199,44 @@ pub const EVENT_TYPES: &[EventType] = &[
         description: "A new issue in a watched GitHub repository (the first look at a repository only records where it \
                       is).",
         schema: schema_of::<GithubIssueOpened>,
+        outside: &["title", "body"],
     },
     EventType {
         id: SCHEDULE_FIRED,
         title: "On a schedule",
         description: "Every interval, or at the times of a cron expression.",
         schema: schema_of::<ScheduleFired>,
+        outside: &[],
     },
     EventType {
         id: WEBHOOK_RECEIVED,
         title: "Webhook",
         description: "Another machine posted to this host's webhook address (POST /api/hooks/<name>), with its secret.",
         schema: schema_of::<WebhookReceived>,
+        outside: &["query", "headers", "body"],
+    },
+    EventType {
+        id: OUTSIDE_INPUT,
+        title: "Outside input reached an agent",
+        description: "Text from outside PDT (an issue, a webhook, an imported ticket's description) went into an agent \
+                      session: its source, the session and the ticket (also on the ticket's timeline).",
+        schema: schema_of::<OutsideInput>,
+        outside: &[],
+    },
+    EventType {
+        id: TRIAGE_SKIPPED,
+        title: "Triage skipped",
+        description: "A new issue (or webhook) was not triaged: its author or repository had reached the hourly cap \
+                      (Settings → Host). The Inbox sums them up.",
+        schema: schema_of::<TriageSkipped>,
+        outside: &[],
     },
     EventType {
         id: TICKET_REFINE_REQUESTED,
         title: "Refine requested",
         description: "Someone asked for a Draft or Ready ticket to be refined (Refine on the ticket).",
         schema: schema_of::<TicketRefineRequested>,
+        outside: &[],
     },
 ];
 
@@ -464,6 +514,10 @@ pub struct PrCommented {
     /// Written by the user themself (the account PDT is logged in to GitHub as).
     pub by_owner: bool,
     pub is_bot: bool,
+    /// Written by someone who isn't a collaborator on the repository (not its owner, a member or a collaborator, nor
+    /// a bot installed on it; PDT-202): shown in PDT, never sent into an agent session.
+    #[serde(default)]
+    pub outside: bool,
     pub notice: Notice,
 }
 
@@ -485,6 +539,9 @@ pub struct PrReviewed {
     pub body: String,
     pub by_owner: bool,
     pub is_bot: bool,
+    /// As on `pr.commented`.
+    #[serde(default)]
+    pub outside: bool,
     pub notice: Notice,
 }
 
@@ -538,6 +595,59 @@ pub struct WebhookReceived {
     /// Parsed JSON, else the text.
     #[ts(type = "unknown")]
     pub body: serde_json::Value,
+}
+
+/// `session.outside_input` (PDT-202): outside text went into an agent session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OutsideInput {
+    pub project_id: Option<String>,
+    /// The ticket the session works on, or the one made from the input; none for a triage that made none.
+    pub ticket_id: Option<String>,
+    pub session_id: String,
+    /// Where the text came from: `owner/name#12`, a comment's URL, `webhook <name>`, `jira ABC-1`.
+    pub source: String,
+    /// A link to it, when there is one.
+    pub url: Option<String>,
+    /// How it went in: `prompt` (an agent step's prompt), `message` (`session.send`), `ticket` (the session works
+    /// on an external ticket, whose description is outside text), `triage` (the triage session that made the
+    /// ticket).
+    pub via: String,
+    pub run_id: Option<String>,
+    pub workflow_name: Option<String>,
+}
+
+/// Why triage skipped an issue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TriageCap {
+    /// Its author had reached the cap per author.
+    Author,
+    /// Its repository (or webhook) had reached the cap per repository.
+    Repo,
+}
+
+/// `triage.skipped` (PDT-202).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TriageSkipped {
+    pub project_id: Option<String>,
+    /// `owner/name`, or `webhook <name>`.
+    pub repo: String,
+    /// The issue's, when it is one.
+    pub number: Option<u64>,
+    pub url: Option<String>,
+    pub author: Option<String>,
+    pub workflow_id: String,
+    pub workflow_name: String,
+    /// The event that would have started the run.
+    pub event_id: String,
+    pub cap: TriageCap,
+    /// The cap reached (runs an hour).
+    pub limit: u32,
 }
 
 /// `ticket.refine_requested`.

@@ -576,7 +576,10 @@ async fn the_triage_template_has_triage_draft_an_external_ticket_for_a_new_issue
     let first = events(&env, &session).await;
     let prompt = first.iter().find(|e| e["event"]["kind"] == "user_message").unwrap()["event"]["text"].clone();
     let prompt = prompt.as_str().unwrap();
-    assert!(prompt.contains("#2 \"Login fails on Safari\"") && prompt.contains("It spins forever."), "{prompt}");
+    assert!(prompt.contains("#2 by") && prompt.contains("It spins forever."), "{prompt}");
+    // The title and text are fenced (PDT-202).
+    assert!(prompt.starts_with("Text between <untrusted id=\""), "{prompt}");
+    assert!(prompt.contains("\">\nLogin fails on Safari\n</untrusted id=\""), "{prompt}");
     assert!(prompt.contains("project PX") && prompt.contains("submit_outcome"), "{prompt}");
 
     // Locked down: Claude keeps only its read tools.

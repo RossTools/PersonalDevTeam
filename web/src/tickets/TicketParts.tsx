@@ -1,7 +1,7 @@
 // The pieces of a ticket's Overview, shared by the ticket tab (TicketView) and the backlog's peek sheet.
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, CircleCheck, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, TriangleAlert } from 'lucide-react';
+import { ArrowRight, CircleCheck, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
   Alert, Badge, Button, Chip, Dialog, IconButton, MenuButton, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm,
@@ -444,6 +444,7 @@ function iconFor(e: TicketEvent) {
   if (e.kind === 'overlap') return (e.data as { cleared?: boolean } | null)?.cleared ? <CircleCheck aria-hidden /> : <TriangleAlert aria-hidden />;
   if (e.kind === 'pr') return <GitPullRequest aria-hidden />;
   if (e.kind === 'parted') return <ListTree aria-hidden />;
+  if (e.kind === 'outside_input') return <ShieldAlert aria-hidden />;
   return undefined;
 }
 
@@ -504,6 +505,17 @@ function toItem(e: TicketEvent): TimelineItem {
     ...(icon ? { icon } : {}),
     ...(e.kind === 'comment' && e.body ? { body: <Markdown>{e.body}</Markdown> } : {}),
     ...(outcome ? { body: outcome } : {}),
+    // What an outsider wrote, held back from the agent (PDT-202): shown here only.
+    ...(e.kind === 'outside_input' && e.body
+      ? {
+          body: (
+            <details>
+              <summary className="cursor-pointer text-xs text-muted-foreground select-none">Show what they wrote</summary>
+              <div className="mt-1"><Markdown>{e.body}</Markdown></div>
+            </details>
+          ),
+        }
+      : {}),
     // The review comments sent (they go with the worktree once it is removed; the timeline keeps them).
     ...(e.kind === 'feedback' && e.body
       ? {

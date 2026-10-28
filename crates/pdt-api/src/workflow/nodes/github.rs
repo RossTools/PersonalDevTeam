@@ -282,6 +282,8 @@ impl NodeKind for GithubImport {
                 out["quiet"] = json!(true);
                 Outcome::Next { port: "exists".into(), output: out }
             } else {
+                // The sessions that triaged the issue read it (PDT-202): on the new ticket's timeline.
+                crate::untrusted::record_run_on_ticket(cx.st, cx.run, &r.output.ticket_id).await;
                 Outcome::next("imported", r.output)
             })
         })

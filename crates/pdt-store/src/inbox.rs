@@ -160,6 +160,30 @@ impl Store {
         self.get_inbox_item(&i.id).await
     }
 
+    /// An item kept up to date per `dedupe_key` (PDT-202's triage summary): an open one with the key gets `i`'s title
+    /// and body, else `i` is added (once per key, as [`Store::add_inbox_item_once`]). None when the key's item was
+    /// answered or closed already.
+    pub async fn put_inbox_summary(&self, i: &InboxItem, dedupe_key: &str) -> Result<Option<InboxItem>, StoreError> {
+        let updated =
+            sqlx::query("UPDATE inbox_items SET title = ?, body = ? WHERE dedupe_key = ? AND status = 'open'")
+                .bind(self.redactor.string(&i.title))
+                .bind(self.redactor.string(&i.body.to_string()))
+                .bind(dedupe_key)
+                .execute(&self.pool)
+                .await?;
+        if updated.rows_affected() > 0 {
+            let id: Option<(String,)> = sqlx::query_as("SELECT id FROM inbox_items WHERE dedupe_key = ?")
+                .bind(dedupe_key)
+                .fetch_optional(&self.pool)
+                .await?;
+            return match id {
+                Some((id,)) => self.get_inbox_item(&id).await,
+                None => Ok(None),
+            };
+        }
+        self.add_inbox_item_once(i, dedupe_key).await
+    }
+
     /// The open items of one kind, oldest first.
     pub async fn open_inbox_items_of(&self, kind: InboxKind) -> Result<Vec<InboxItem>, StoreError> {
         let sql = format!(

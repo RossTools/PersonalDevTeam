@@ -8,7 +8,11 @@ export type PrReviewed = { pr: number, url: string, reviewId: number, author: st
 /**
  * `approved`, `changes_requested` or `commented`.
  */
-state: string, body: string, byOwner: boolean, isBot: boolean, notice: Notice, projectId: string, ticketId: string, 
+state: string, body: string, byOwner: boolean, isBot: boolean, 
+/**
+ * As on `pr.commented`.
+ */
+outside: boolean, notice: Notice, projectId: string, ticketId: string, 
 /**
  * `PDT-42`.
  */

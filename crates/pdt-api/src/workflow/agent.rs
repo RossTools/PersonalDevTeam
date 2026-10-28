@@ -122,6 +122,12 @@ pub(crate) async fn step_persona(st: &AppState, name: &str) -> R<Persona> {
 /// outcome. A step re-run after a restart finds its binding and waits again.
 pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     let st = cx.st;
+    // What an outsider wrote never goes into a session (PDT-202).
+    if c.owner == Owner::Agent
+        && let Some(why) = crate::untrusted::outsider_refusal(cx.ctx)
+    {
+        return Err(why);
+    }
     let now = now_ms();
     // A manual step waits for the user as long as it takes; an agent's has its max runtime.
     let wait = |a: &AgentStep| Outcome::Wait {
@@ -235,6 +241,7 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     {
         message.push_str(&format!("\n\nThis step is back for another pass. {why}"));
     }
+    let fresh = reused.is_none();
     let session_id = match reused {
         Some(s) => {
             // A later pass in the same session: it has the step's role and the ticket already, so only why it is back.
@@ -266,9 +273,39 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     binding.session_id = Some(session_id.clone());
     binding.updated_at = now_ms();
     st.store.put_agent_step(&binding).await.map_err(err)?;
+    record_outside_input(cx, &c, &binding, &session_id, fresh).await;
     tracing::info!(run = %cx.run.id, node = %cx.node.id, persona = %persona.name, session = %session_id,
         "an agent step started");
     Ok(wait(&binding))
+}
+
+/// Records the outside input an agent step put into its session (PDT-202): its prompt's fenced outside text, and an
+/// external ticket's description a new session reads.
+async fn record_outside_input(cx: &StepCx<'_>, c: &AgentConfig, a: &AgentStep, session_id: &str, fresh: bool) {
+    use pdt_core::workflow::events::OutsideInput;
+    let st = cx.st;
+    let record = |source: String, url: Option<String>, via: &str| OutsideInput {
+        project_id: a.project_id.clone(),
+        ticket_id: a.ticket_id.clone(),
+        session_id: session_id.to_string(),
+        source,
+        url,
+        via: via.into(),
+        run_id: Some(cx.run.id.clone()),
+        workflow_name: Some(cx.workflow.name.clone()),
+    };
+    if pdt_core::fence::fenced(&c.prompt)
+        && let Some((source, url)) = crate::untrusted::trigger_source(&st.registry(), &cx.run.trigger)
+    {
+        crate::untrusted::record_input(st, record(source, url, "prompt")).await;
+    }
+    if fresh
+        && let Some(t) = &a.ticket_id
+        && let Ok(Some(t)) = st.store.get_ticket_summary(t).await
+        && let Some((source, url)) = crate::untrusted::ticket_source(&t)
+    {
+        crate::untrusted::record_input(st, record(source, url, "ticket")).await;
+    }
 }
 
 /// The session of the step a resumed step resumes (PDT-123), while it is there and can take a message: a

@@ -52,6 +52,11 @@ pub const DEFAULT_MAX_RUNS: u32 = 4;
 /// How many agents may run a turn at once for PDT's own work (structured agents spec §16); 0 is no cap.
 pub const DEFAULT_MAX_AGENT_TURNS: u32 = 4;
 const MAX_AGENT_TURNS_LIMIT: u32 = 64;
+/// How many triage runs one author's issues start an hour (PDT-202); 0 is no cap.
+pub const DEFAULT_TRIAGE_PER_AUTHOR: u32 = 3;
+/// How many triage runs one repository's issues (or one webhook) start an hour; 0 is no cap.
+pub const DEFAULT_TRIAGE_PER_REPO: u32 = 20;
+const TRIAGE_LIMIT: u32 = 1000;
 const MAX_RUNS_LIMIT: u32 = 32;
 const MAX_PORTS_IN_RANGE: u32 = 1000;
 pub const DEFAULT_UPDATE_CHECK_MINUTES: u32 = 60;
@@ -84,6 +89,11 @@ pub struct HostSettings {
     /// The most agents running a turn at once before PDT's own work (agent steps, workflow messages) waits for a
     /// slot; 0: no cap. What the user does is never held (Phase 7c spec §6.2).
     pub max_agent_turns: u32,
+    /// The most triage runs (a workflow with an agent step started by a new issue or a webhook) one issue author
+    /// starts an hour; more are skipped (PDT-202). 0: no cap.
+    pub triage_per_author_hour: u32,
+    /// The same per repository (or webhook).
+    pub triage_per_repo_hour: u32,
     /// Where "Report a bug" sends reports (PDT-153).
     pub bug_reports: crate::bug_report::BugReportSetting,
     /// The GitHub repository (`owner/name`) to take updates from and file bug reports on instead of the built-in one:
@@ -115,6 +125,8 @@ impl Default for HostSettings {
             session_permission_mode: PermissionMode::Ask,
             update_check_minutes: DEFAULT_UPDATE_CHECK_MINUTES,
             max_agent_turns: DEFAULT_MAX_AGENT_TURNS,
+            triage_per_author_hour: DEFAULT_TRIAGE_PER_AUTHOR,
+            triage_per_repo_hour: DEFAULT_TRIAGE_PER_REPO,
             bug_reports: Default::default(),
             release_repo: None,
         }
@@ -167,6 +179,14 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub max_agent_turns: Option<u32>,
+    /// 0 for no cap.
+    #[serde(default)]
+    #[ts(optional)]
+    pub triage_per_author_hour: Option<u32>,
+    /// 0 for no cap.
+    #[serde(default)]
+    #[ts(optional)]
+    pub triage_per_repo_hour: Option<u32>,
     #[serde(default)]
     #[ts(optional)]
     pub bug_reports: Option<crate::bug_report::BugReportSetting>,
@@ -190,6 +210,8 @@ pub enum HostSettingsError {
     BadUpdateInterval,
     #[error("the most agents running at once must be between 0 (no cap) and 64")]
     BadMaxAgentTurns,
+    #[error("the triage caps must be between 0 (no cap) and 1000 runs an hour")]
+    BadTriageCap,
     #[error("the release repository must be a GitHub owner/name, e.g. RossTools/PersonalDevTeam")]
     BadReleaseRepo,
 }
@@ -265,6 +287,17 @@ impl HostSettings {
                 return Err(HostSettingsError::BadMaxAgentTurns);
             }
             s.max_agent_turns = n;
+        }
+        for (given, field) in [
+            (p.triage_per_author_hour, &mut s.triage_per_author_hour),
+            (p.triage_per_repo_hour, &mut s.triage_per_repo_hour),
+        ] {
+            if let Some(n) = given {
+                if n > TRIAGE_LIMIT {
+                    return Err(HostSettingsError::BadTriageCap);
+                }
+                *field = n;
+            }
         }
         if let Some(b) = p.bug_reports {
             s.bug_reports = b;
@@ -414,6 +447,12 @@ mod tests {
         assert_eq!(s.apply(&turns(0)).unwrap().max_agent_turns, 0, "no cap");
         assert_eq!(s.apply(&turns(65)), Err(HostSettingsError::BadMaxAgentTurns));
         assert_eq!(s.max_agent_turns, 4);
+        let triage = HostSettingsPatch { triage_per_author_hour: Some(0), triage_per_repo_hour: Some(50), ..patch() };
+        let t = s.apply(&triage).unwrap();
+        assert_eq!((t.triage_per_author_hour, t.triage_per_repo_hour), (0, 50));
+        let over = HostSettingsPatch { triage_per_repo_hour: Some(1001), ..patch() };
+        assert_eq!(s.apply(&over), Err(HostSettingsError::BadTriageCap));
+        assert_eq!((s.triage_per_author_hour, s.triage_per_repo_hour), (3, 20));
         let owner = |o: &str| HostSettingsPatch { owner_login: Some(o.into()), ..patch() };
         assert_eq!(s.apply(&owner("two words")), Err(HostSettingsError::BadOwner));
         assert_eq!(s.apply(&owner("a\u{7}b")), Err(HostSettingsError::BadOwner));

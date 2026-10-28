@@ -131,6 +131,7 @@ pub(crate) fn feedback_events(
             in_review: c.in_review,
             by_owner: by_owner(&c.author),
             is_bot: c.is_bot,
+            outside: !(c.collaborator || c.is_bot || by_owner(&c.author)),
             notice,
         };
         out.push(NewLogEvent::new(ev::PR_COMMENTED, format!("{}:comment:{}", a.attempt_id, c.id), "pr_poller", e));
@@ -147,11 +148,31 @@ pub(crate) fn feedback_events(
             body: r.body.clone(),
             by_owner: by_owner(&r.author),
             is_bot: r.is_bot,
+            outside: !(r.collaborator || r.is_bot || by_owner(&r.author)),
             notice,
         };
         out.push(NewLogEvent::new(ev::PR_REVIEWED, format!("{}:review:{}", a.attempt_id, r.id), "pr_poller", e));
     }
     (out, now)
+}
+
+/// A comment or review by someone who isn't a collaborator on the repository (PDT-202) goes on the ticket's timeline,
+/// with its text: it is shown in PDT, never sent into an agent session.
+async fn held_back(st: &AppState, info: &AttemptInfo, payload: &serde_json::Value) {
+    use pdt_core::ticket::{Actor, EventKind};
+    let s = |k: &str| payload.get(k).and_then(serde_json::Value::as_str).unwrap_or_default();
+    let data = serde_json::json!({
+        "held": true, "source": s("url"), "url": s("url"), "author": s("author"), "pr": payload.get("pr"),
+        "review": payload.get("reviewId").is_some(), "attemptId": info.attempt.id,
+    });
+    let body = Some(s("body")).filter(|b| !b.trim().is_empty());
+    if let Err(e) = st
+        .store
+        .add_ticket_event(&info.ticket_id, EventKind::OutsideInput, Actor::System, body, Some(data), now_ms())
+        .await
+    {
+        tracing::warn!(ticket = %info.ticket_key, error = %e, "could not put an outsider's comment on the timeline");
+    }
 }
 
 /// Reads an open PR's comments and reviews and logs what is new.
@@ -190,9 +211,13 @@ async fn refresh_feedback(st: &AppState, info: &AttemptInfo, forge: &ProjectForg
     }
     let (events, now) = feedback_events(info, pr, &comments, &reviews, viewer.as_deref(), seen);
     for e in events {
-        if let Err(x) = st.store.emit_event(&e, now_ms()).await {
+        match st.store.emit_event(&e, now_ms()).await {
+            Ok(Some(_)) if ev::by_outsider(&e.payload) => held_back(st, info, &e.payload).await,
+            Ok(_) => {}
             // The mark stays: the next look logs what is still missing (keys skip what was logged).
-            return tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request comment");
+            Err(x) => {
+                return tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request comment");
+            }
         }
     }
     if seen != Some(now)

@@ -82,7 +82,7 @@ describe('Host settings: Bug reports', () => {
     const settings = { remoteAccess: false, ownerLogin: null, updatePolicy: 'notify', runPorts: { start: 8400, end: 8499 },
       maxConcurrentRuns: 4, agentCredentials: 'subscription', projectsDir: null, defaultAgent: 'claude',
       defaultSessionMode: 'conversation', ticketPermissionMode: 'bypass', sessionPermissionMode: 'ask', updateCheckMinutes: 60,
-      maxAgentTurns: 4, bugReports: 'auto' };
+      maxAgentTurns: 4, triagePerAuthorHour: 3, triagePerRepoHour: 20, bugReports: 'auto' };
     const view = { settings, ownerFromEnv: null, tokenPresent: true, tokenError: null, projectsDir: null,
       remote: { enabled: false, active: false, url: null, dnsName: null, error: null, tailscaleLogin: null } };
     const calls = stubApi({

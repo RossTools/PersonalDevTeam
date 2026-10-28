@@ -394,6 +394,25 @@ async fn resolve(st: &AppState, m: &SessionMessage, session: Option<&str>) {
         Ok(false) => return,
         Err(e) => return tracing::warn!(error = %e, "could not resolve a session message"),
     }
+    // A workflow's message with outside text in it (PDT-202; an agent step's own prompt is recorded by the step).
+    let step_prompt = m.dedupe.as_deref().is_some_and(|d| d.starts_with(super::agent::PROMPT_KEY));
+    if let (Some(sid), Some(run_id), false) = (session, &m.run_id, step_prompt)
+        && pdt_core::fence::fenced(&m.text)
+        && let Ok(Some(run)) = st.store.get_workflow_run(run_id).await
+        && let Some((source, url)) = crate::untrusted::trigger_source(&st.registry(), &run.trigger)
+    {
+        let e = pdt_core::workflow::events::OutsideInput {
+            project_id: run.project_id.clone(),
+            ticket_id: m.ticket_id.clone(),
+            session_id: sid.to_string(),
+            source,
+            url,
+            via: "message".into(),
+            run_id: Some(run.id.clone()),
+            workflow_name: Some(run.workflow_name.clone()),
+        };
+        crate::untrusted::record_input(st, e).await;
+    }
     if let Some(step_id) = &m.step_id
         && let Ok(Some(step)) = st.store.get_step(step_id).await
         && step.status == StepStatus::Waiting

@@ -268,7 +268,36 @@ export function eventTitle(e: TicketEvent): string {
       const d = (e.data ?? {}) as { persona?: string; outcome?: string; by?: string };
       return `${d.persona ?? 'Agent'}: ${d.outcome ?? '?'}${d.by === 'user' ? ' (taken over by you)' : ''}`;
     }
+    case 'outside_input': return outsideInputTitle((e.data ?? {}) as OutsideInputData);
   }
+}
+
+/** What an `outside_input` event records (crates/pdt-api/src/untrusted.rs and github.rs, PDT-202). */
+export interface OutsideInputData {
+  held?: boolean;
+  source?: string;
+  author?: string;
+  pr?: number | null;
+  review?: boolean;
+  via?: string;
+  workflowName?: string | null;
+}
+
+const OUTSIDE_VIA: Record<string, string> = {
+  prompt: 'in a workflow step\'s prompt',
+  message: 'in a workflow\'s message',
+  ticket: 'this ticket\'s description',
+  triage: 'triaged into this ticket',
+};
+
+function outsideInputTitle(d: OutsideInputData): string {
+  if (d.held) {
+    const what = d.review ? 'Review' : 'Comment';
+    const pr = d.pr ? ` on PR #${d.pr}` : '';
+    return `${what} by ${d.author ?? 'someone'}${pr} not sent to the agent: not a collaborator on the repository`;
+  }
+  const via = d.via && d.via in OUTSIDE_VIA ? ` (${OUTSIDE_VIA[d.via]})` : '';
+  return `Outside input from ${d.source ?? 'outside PDT'} reached an agent${via}`;
 }
 
 /** A label typed by hand, as the API stores it: spaces collapsed, lower-case, 1–30 characters, no commas. */

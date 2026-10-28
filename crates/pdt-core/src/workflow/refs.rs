@@ -46,16 +46,18 @@ fn root_of(path: &str) -> &str {
 }
 
 fn resolve_str_keeping(s: &str, ctx: &Value, keep: &[&str]) -> Value {
-    resolve_str_if(s, ctx, &|path| !keep.contains(&root_of(path)))
+    resolve_str_if(s, ctx, &|path| !keep.contains(&root_of(path)), &|_, v| v)
 }
 
-/// `s` with the references `fill` accepts filled in; the others are left as written.
-fn resolve_str_if(s: &str, ctx: &Value, fill: &dyn Fn(&str) -> bool) -> Value {
+/// `s` with the references `fill` accepts filled in, each value passed through `map` (with its path) first; the
+/// others are left as written.
+fn resolve_str_if(s: &str, ctx: &Value, fill: &dyn Fn(&str) -> bool, map: &dyn Fn(&str, Value) -> Value) -> Value {
+    let value = |path: &str| map(path, lookup(ctx, path).cloned().unwrap_or(Value::Null));
     if let Some(path) = whole_ref(s) {
         if !fill(path) {
             return Value::String(s.to_string());
         }
-        return lookup(ctx, path).cloned().unwrap_or(Value::Null);
+        return value(path);
     }
     if !has_ref(s) {
         return Value::String(s.to_string());
@@ -69,7 +71,7 @@ fn resolve_str_if(s: &str, ctx: &Value, fill: &dyn Fn(&str) -> bool) -> Value {
         if !fill(path) {
             out.push_str(&rest[start..start + len + 2]);
         } else {
-            out.push_str(&lookup(ctx, path.trim()).map(text_of).unwrap_or_default());
+            out.push_str(&text_of(&value(path.trim())));
         }
         rest = &rest[start + len + 2..];
     }
@@ -93,11 +95,24 @@ pub fn resolve_keeping(v: &Value, ctx: &Value, keep: &[&str]) -> Value {
     }
 }
 
+/// [`resolve_keeping`], with each filled-in value passed through `map` first, given its reference's path (PDT-202:
+/// outside text fenced where it goes to an agent).
+pub fn resolve_mapped(v: &Value, ctx: &Value, keep: &[&str], map: &dyn Fn(&str, Value) -> Value) -> Value {
+    match v {
+        Value::String(s) => resolve_str_if(s, ctx, &|path| !keep.contains(&root_of(path)), map),
+        Value::Array(a) => Value::Array(a.iter().map(|x| resolve_mapped(x, ctx, keep, map)).collect()),
+        Value::Object(m) => {
+            Value::Object(m.iter().map(|(k, x)| (k.clone(), resolve_mapped(x, ctx, keep, map))).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 /// [`resolve`] for the references under `root` only (`params`: a template's parameters); every other reference is
 /// left as written.
 pub fn resolve_only(v: &Value, ctx: &Value, root: &str) -> Value {
     match v {
-        Value::String(s) => resolve_str_if(s, ctx, &|path| root_of(path) == root),
+        Value::String(s) => resolve_str_if(s, ctx, &|path| root_of(path) == root, &|_, v| v),
         Value::Array(a) => Value::Array(a.iter().map(|x| resolve_only(x, ctx, root)).collect()),
         Value::Object(m) => Value::Object(m.iter().map(|(k, x)| (k.clone(), resolve_only(x, ctx, root))).collect()),
         other => other.clone(),

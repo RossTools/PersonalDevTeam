@@ -17,6 +17,7 @@ const DUMMY_EVENTS: &[EventType] = &[EventType {
     title: "Dummy happened",
     description: "Something happened in Dummy.",
     schema: schema_of::<DummyEvent>,
+    outside: &[],
 }];
 
 struct DummyNode;

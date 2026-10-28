@@ -496,6 +496,31 @@ impl Store {
 
     /// Starts a run with its first steps (the trigger's, and the ones it leads to), unless the workflow has a run
     /// with its key: false then.
+    /// How many events of `kind` whose payload's `field` is `value` started a workflow run since `since`, leaving out
+    /// the event `except` (PDT-202: the triage caps count issues per author and per repository).
+    pub async fn events_with_runs_since(
+        &self,
+        kind: &str,
+        field: &str,
+        value: &str,
+        since: i64,
+        except: &str,
+    ) -> Result<u32, StoreError> {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(DISTINCT trigger_event_id) FROM workflow_runs WHERE started_at >= ? \
+             AND trigger_event_id IS NOT NULL AND trigger_event_id != ? \
+             AND json_extract(trigger, '$.type') = ? AND json_extract(trigger, '$.' || ?) = ?",
+        )
+        .bind(since)
+        .bind(except)
+        .bind(kind)
+        .bind(field)
+        .bind(value)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
     pub async fn start_workflow_run(&self, run: &Run, steps: &[Step]) -> Result<bool, StoreError> {
         let mut tx = self.write_tx().await?;
         let r = sqlx::query(
