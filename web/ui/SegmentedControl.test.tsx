@@ -66,4 +66,13 @@ describe('SegmentedControl', () => {
     await userEvent.tab();
     expect(screen.getByRole('button', { name: 'after' })).toHaveFocus();
   });
+
+  it('stacks its segments when vertical, moving with Up and Down', async () => {
+    const onChange = vi.fn();
+    render(<SegmentedControl aria-label="Source" orientation="vertical" options={[...options]} value="folder" onChange={onChange} />);
+    expect(screen.getByRole('radiogroup', { name: 'Source' })).toHaveAttribute('data-orientation', 'vertical');
+    await userEvent.tab();
+    await userEvent.keyboard('{ArrowDown}');
+    expect(screen.getByRole('radio', { name: 'Clone URL' })).toHaveFocus();
+  });
 });
