@@ -637,7 +637,7 @@ async fn the_triage_template_has_triage_draft_an_external_ticket_for_a_new_issue
 async fn approve_open(env: &Env, session: &str) {
     let req = open_request(env, session).await;
     let url = format!("/api/sessions/{session}/requests/{req}");
-    let (s, _) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    let (s, _) = common::call_as_ui(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
 }
 
@@ -683,6 +683,17 @@ async fn the_pm_moves_an_external_ticket_to_to_do_only_after_the_users_yes() {
     let url = format!("/api/sessions/{id}/requests/{req}");
     call(&env.app, "POST", &url, Some(json!({"answer": {"type": "deny"}}))).await;
     assert_eq!(wait_said(&env, &id, n + 1).await.pop().unwrap(), "mcp edit_ticket denied");
+    assert_eq!(stage().await["stage"], "ready");
+
+    // A yes that isn't the user's click (an agent's curl, without the UI token) grants nothing (PDT-204).
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, to_do).await;
+    let req = open_request(&env, &id).await;
+    let url = format!("/api/sessions/{id}/requests/{req}");
+    let (s, _) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
+    assert!(said.contains("only the user"), "{said}");
     assert_eq!(stage().await["stage"], "ready");
 
     // A yes lets it in.

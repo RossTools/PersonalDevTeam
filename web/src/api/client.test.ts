@@ -48,3 +48,25 @@ describe('api client', () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ projectId: 'p', kind: 'shell', cols: 80, rows: 24 });
   });
 });
+
+describe('the UI token (PDT-204)', () => {
+  it('goes with the user’s own changes, fetched again once after pdtd restarts', async () => {
+    let token = 'first';
+    const seen: (string | null)[] = [];
+    const fetchMock = vi.fn().mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === '/api/ui/token') return new Response(JSON.stringify({ token }), { status: 200 });
+      const sent = new Headers(init?.headers).get('x-ui-token');
+      seen.push(sent);
+      if (sent !== token) return new Response(JSON.stringify({ code: 'stale_ui_token', message: 'stale' }), { status: 403 });
+      return new Response(JSON.stringify({ count: 1 }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await api.bulkTickets({ ids: ['t'], action: 'stage', value: 'todo' });
+    await api.bulkTickets({ ids: ['t'], action: 'stage', value: 'todo' });
+    expect(seen).toEqual(['first', 'first']);
+    expect(fetchMock.mock.calls.filter((c) => c[0] === '/api/ui/token')).toHaveLength(1);
+    token = 'second';
+    await api.bulkTickets({ ids: ['t'], action: 'stage', value: 'todo' });
+    expect(seen.slice(2)).toEqual(['first', 'second']);
+  });
+});

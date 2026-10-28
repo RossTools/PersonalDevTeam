@@ -1253,7 +1253,8 @@ async fn a_workflow_never_puts_an_external_ticket_in_to_do() {
     );
 
     // The user moving it to To do lets it in: from then on workflows move it as any other.
-    let (s, v) = call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
+    let (s, v) =
+        common::call_as_ui(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
     assert_eq!((s, v["admitted"].as_bool()), (StatusCode::OK, Some(true)), "{v}");
     call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "ready"}))).await;
     let wf = create(&env, mover("todo", None)).await;

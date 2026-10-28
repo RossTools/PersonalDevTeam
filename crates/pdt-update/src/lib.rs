@@ -17,6 +17,9 @@ pub const GITHUB_API: &str = "https://api.github.com";
 const MAX_REDIRECTS: usize = 5;
 /// Same-host API redirects followed before giving up (a rename, then a transfer, is two).
 pub const MAX_API_HOPS: usize = 3;
+/// Releases asked for per page, and the pages read at most, when listing the releases an update brings.
+const RELEASES_PER_PAGE: usize = 100;
+const MAX_RELEASE_PAGES: usize = 10;
 /// SHA256SUMS lists a handful of assets; anything bigger is not ours.
 const SUMS_MAX_BYTES: u64 = 64 * 1024;
 
@@ -122,7 +125,25 @@ struct ReleaseJson {
     body: Option<String>,
     published_at: Option<String>,
     #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
     assets: Vec<AssetJson>,
+}
+
+impl ReleaseJson {
+    /// The release, when its tag is a release version (`vX.Y.Z`, not a local build).
+    fn into_release(self) -> Option<Release> {
+        let version = parse_version(&self.tag_name).filter(|v| !v.local)?;
+        Some(Release {
+            tag: self.tag_name,
+            version,
+            notes: self.body.unwrap_or_default(),
+            published_at: self.published_at,
+            assets: self.assets.into_iter().map(|a| Asset { id: a.id, name: a.name, size: a.size }).collect(),
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -416,19 +437,42 @@ impl GitHubClient {
             .and_then(parse_expiry);
         let text = res.text().await.map_err(net)?;
         let r: ReleaseJson = serde_json::from_str(&text).map_err(|e| UpdateError::BadRelease(e.to_string()))?;
-        let version = parse_version(&r.tag_name)
-            .filter(|v| !v.local)
-            .ok_or_else(|| UpdateError::BadRelease(format!("tag {:?} is not vX.Y.Z", r.tag_name)))?;
-        Ok(Latest {
-            release: Release {
-                tag: r.tag_name,
-                version,
-                notes: r.body.unwrap_or_default(),
-                published_at: r.published_at,
-                assets: r.assets.into_iter().map(|a| Asset { id: a.id, name: a.name, size: a.size }).collect(),
-            },
-            token_expires_at,
-        })
+        let tag = r.tag_name.clone();
+        let release = r.into_release().ok_or_else(|| UpdateError::BadRelease(format!("tag {tag:?} is not vX.Y.Z")))?;
+        Ok(Latest { release, token_expires_at })
+    }
+
+    /// The published releases after `after` up to and including `upto`, newest first (PDT-192): what an update from
+    /// `after` brings. Drafts, pre-releases and tags that are not `vX.Y.Z` are left out. GitHub lists releases newest
+    /// first, so the pages stop at the first one with a release no newer than `after` (10 pages at most).
+    pub async fn releases_between(
+        &self,
+        token: &str,
+        after: &Version,
+        upto: &Version,
+    ) -> Result<Vec<Release>, UpdateError> {
+        let mut out: Vec<Release> = Vec::new();
+        for page in 1..=MAX_RELEASE_PAGES {
+            let tail = format!("releases?per_page={RELEASES_PER_PAGE}&page={page}");
+            let res = self.get(&tail, token, Some(Duration::from_secs(30))).await?;
+            let text = res.text().await.map_err(net)?;
+            let list: Vec<ReleaseJson> = serde_json::from_str(&text)
+                .map_err(|e| UpdateError::Http(200, format!("an answer that is not a list of releases: {e}")))?;
+            let full = list.len() >= RELEASES_PER_PAGE;
+            let mut reached = false;
+            for r in list.into_iter().filter(|r| !r.draft && !r.prerelease).filter_map(ReleaseJson::into_release) {
+                if !r.version.is_newer_than(after) {
+                    reached = true;
+                } else if !r.version.is_newer_than(upto) && !out.iter().any(|o| o.version == r.version) {
+                    out.push(r);
+                }
+            }
+            if reached || !full {
+                break;
+            }
+        }
+        out.sort_by_key(|r| std::cmp::Reverse((r.version.major, r.version.minor, r.version.patch)));
+        Ok(out)
     }
 
     /// The commits after `base` up to `head` (tags or commits), newest first (PDT-169). GitHub sends the oldest 250

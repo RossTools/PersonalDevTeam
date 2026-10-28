@@ -1,9 +1,14 @@
 //! Untrusted input (PDT-201): which sessions read it, the PM's confirmed calls that may let an external ticket in, and
-//! the secret tools kept away from it. The Todo gate itself is pdt-core's `external_gate`, applied by the store.
-//! PDT-202: the record of outside input reaching agent sessions (`session.outside_input`, on the ticket's timeline),
-//! and what outsiders wrote kept out of them. Prompts fence outside text in the engine (`engine::fence_input`).
+//! the secret tools kept away from it, and the UI token that tells the user's clicks from an agent's curl (PDT-204). The
+//! Todo gate itself is pdt-core's `external_gate`, applied by the store. PDT-202: the record of outside input reaching
+//! agent sessions (`session.outside_input`, on the ticket's timeline), and what outsiders wrote kept out of them.
+//! Prompts fence outside text in the engine (`engine::fence_input`).
 
+use crate::error::ApiError;
 use crate::routes::AppState;
+use axum::Json;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
 use pdt_core::session::Session;
 use pdt_core::ticket::{TicketSource, TicketSummary};
 use pdt_core::workflow::api::{LogEvent, NewLogEvent};
@@ -63,6 +68,55 @@ fn same_call(a: &Value, b: &Value) -> bool {
         other => other.clone(),
     };
     clean(a) == clean(b)
+}
+
+/// The header PDT's web client sends its UI token in (PDT-204).
+pub(crate) const UI_TOKEN_HEADER: &str = "x-ui-token";
+
+/// This pdtd's UI token (PDT-204), new at every start: PDT's web client fetches it and sends it with its changes, so
+/// the HTTP API can tell the user's clicks from an agent's curl for the changes that let an external ticket in.
+#[derive(Clone)]
+pub(crate) struct UiToken(std::sync::Arc<str>);
+
+impl Default for UiToken {
+    fn default() -> Self {
+        UiToken(uuid::Uuid::new_v4().simple().to_string().into())
+    }
+}
+
+/// `GET /api/ui/token`: only to a browser's same-origin fetch (it sends `Sec-Fetch-Site`; a plain curl doesn't).
+pub(crate) async fn ui_token(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if headers.get("sec-fetch-site").is_none_or(|v| v.as_bytes() != b"same-origin") {
+        return Err(ApiError::new(StatusCode::FORBIDDEN, "not_the_ui", "only PDT's web app gets its UI token"));
+    }
+    Ok(Json(serde_json::json!({ "token": &*st.ui_token.0 })))
+}
+
+/// Whether a request came from PDT's web client: it carries this pdtd's UI token. A token from an earlier pdtd (it
+/// restarted under the open page) is `403 stale_ui_token`, so the client fetches the new one and tries again.
+pub(crate) fn from_ui(st: &AppState, headers: &HeaderMap) -> Result<bool, ApiError> {
+    match headers.get(UI_TOKEN_HEADER) {
+        None => Ok(false),
+        Some(v) if v.as_bytes() == st.ui_token.0.as_bytes() => Ok(true),
+        Some(_) => Err(ApiError::new(StatusCode::FORBIDDEN, "stale_ui_token", "the UI token is from an earlier start")),
+    }
+}
+
+/// The refusal of a change only the user may make to `key`, asked for over the HTTP API but not from PDT's web client
+/// (PDT-204).
+pub(crate) fn refused(key: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "untrusted_ticket",
+        format!(
+            "{key} came from outside PDT (an issue or a report), so only the user can put it in To do, start it or \
+             label it {}, from PDT's board. Leave it where it is and tell the user why it should go ahead.",
+            pdt_core::ticket::AGENTIC_LABEL
+        ),
+    )
 }
 
 /// An external ticket the user hasn't let in yet.

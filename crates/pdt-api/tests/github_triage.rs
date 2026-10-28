@@ -169,7 +169,8 @@ async fn submit(env: &Env, wf: &str, session: &str, outcome: &str, summary: &str
 }
 
 async fn move_ticket(env: &Env, id: &str, stage: &str) {
-    let (s, v) = call(&env.app, "PATCH", &format!("/api/tickets/{id}"), Some(json!({"stage": stage}))).await;
+    let (s, v) =
+        common::call_as_ui(&env.app, "PATCH", &format!("/api/tickets/{id}"), Some(json!({"stage": stage}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     for _ in 0..3 {
         pdt_api::run_workflows(&env.state).await;

@@ -73,6 +73,8 @@ pub struct AppState {
     pub(crate) local_ci: std::sync::Arc<crate::local_forge::LocalCi>,
     /// The user's yes to the PM's calls that may let an external ticket in (PDT-201).
     pub(crate) grants: std::sync::Arc<crate::untrusted::Grants>,
+    /// This pdtd's UI token (PDT-204): PDT's web client sends it, an agent's curl doesn't.
+    pub(crate) ui_token: crate::untrusted::UiToken,
     /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
     /// instance's own port for any other, so a dev instance never takes over the stable one's mapping.
     pub remote_https_port: u16,
@@ -208,6 +210,7 @@ impl AppState {
             pr_watch: Default::default(),
             local_ci: Default::default(),
             grants: Default::default(),
+            ui_token: Default::default(),
             remote_https_port: crate::remote::HOST_HTTPS_PORT,
             tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
             remote: Default::default(),
@@ -278,6 +281,13 @@ impl AppState {
         let lock =
             self.session_locks.lock().unwrap_or_else(|e| e.into_inner()).entry(id.to_string()).or_default().clone();
         lock.lock_owned().await
+    }
+
+    /// The session's lock if nobody holds it now.
+    pub(crate) fn try_lock_session(&self, id: &str) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let lock =
+            self.session_locks.lock().unwrap_or_else(|e| e.into_inner()).entry(id.to_string()).or_default().clone();
+        lock.try_lock_owned().ok()
     }
 
     pub(crate) fn resume_pending(&self, id: &str) -> bool {
@@ -357,6 +367,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/shutdown", axum::routing::post(request_shutdown))
         .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
         .route("/host/whoami", get(crate::identity_guard::whoami))
+        .route("/ui/token", get(crate::untrusted::ui_token))
         .route("/host/checks", get(crate::checks::get_checks))
         .route("/host/checks/refresh", axum::routing::post(crate::checks::refresh_checks))
         .route("/host/remote", get(crate::remote::get_remote))

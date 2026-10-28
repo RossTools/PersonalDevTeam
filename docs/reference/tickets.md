@@ -88,7 +88,7 @@ reaches agents only once the user says so.
   the user can move it on).
 - **The gate** (pdt-core `external_gate`, applied by pdt-store to every create, patch, move and bulk change): an
   external ticket not let in yet can't be made in, or moved to, To do or In progress, nor get the `agentic` label
-  (pdt-core `AGENTIC_LABEL`), except by the user (`Actor::User`: the UI and API, the bulk bar, Start) or a PM call the
+  (pdt-core `AGENTIC_LABEL`), except by the user (`Actor::User`: the UI, the bulk bar, Start) or a PM call the
   user confirmed (`By.confirmed`). Such a change lets it in (`admitted_at`); from then on it moves as any other ticket.
   Anything else is refused with `403 untrusted_ticket` (a workflow step fails with the reason; an agent's tool call
   gets it): `ticket.move`, `ticket.create` with `stage: todo`, the Refiner, Coder, Reviewer, QA and triage sessions,
@@ -100,6 +100,17 @@ reaches agents only once the user says so.
   `untrusted::Grants`) instead of answering for the user, and the user's Approve
   (`POST /api/sessions/{id}/requests/{requestId}`) is good for that one call with those arguments for ten minutes.
   Without it (a Codex PM, a session that bypasses permissions) the store refuses the edit.
+- **The UI token** (PDT-204): agent sessions with a shell can `curl` the HTTP API on 127.0.0.1, which otherwise counts
+  as the user. So `PATCH /api/tickets/{id}`, `POST /api/tickets/bulk`, `POST /api/tickets/{id}/start` and
+  `POST /api/tickets/{id}/stop` (with a `stage`) refuse a change that would let an external ticket in
+  (`403 untrusted_ticket`, pdt-api `untrusted::lets_in`) unless the request carries this pdtd's UI token in
+  `x-ui-token`. The token is random at every start (`untrusted::UiToken`); `GET /api/ui/token` hands it only to a
+  browser's same-origin fetch (`Sec-Fetch-Site: same-origin`, `403 not_the_ui` otherwise). The web client fetches it
+  once and sends it with ticket edits, bulk actions, Start and the answer to a request (`asUser` in
+  web/src/api/client.ts; it doesn't call stop); a token from before a restart is `403 stale_ui_token`, and the client
+  fetches the new one and retries once. The PM's yes counts only with the token too, so an agent can't approve its own
+  call. Everything else over the API is unchanged. This stops an agent's plain curl, not a determined one: an agent
+  runs as the user and could act like a browser.
 - **Secrets**: a session that triages, or whose ticket is external and not let in, is refused `request_secret`,
   `run_with_secrets` and `write_secret_file` ([secrets.md](secrets.md)).
 

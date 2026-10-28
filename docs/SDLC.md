@@ -12,8 +12,8 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
 3. **Build it test-first** in the worktree (TDD for core logic). Run the checks before every push (below).
    Add a changelog fragment for the change (below, "Changelog").
 4. **Push and open a PR** against `main`. CI runs the full checks on Linux on every push (Namespace); the macOS checks
-   run in the merge queue, and on a PR only with the `macos` label or a `.github/` change; Windows checks and the
-   bundles run on a PR only with the `windows` / `bundle` label or when it touches their files, and always on main.
+   run in the merge queue, and on a PR only with the `macos` label or a `.github/` change; Windows checks run only
+   with the `windows` label or when the PR touches their files. The bundles never run on a PR (below, "Releases").
    Docs-only PRs skip CI (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
 5. **The user tests it**: Run → `pdt` on the branch gives a dev instance on its own port and data folder (below).
    Feedback comes back in the session; the agent fixes the branch and the run is restarted on the new code.
@@ -25,8 +25,9 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
    `main`, so write it as one. The queue drops a PR that conflicts with main or fails its queue run: fix the branch
    (merge main in for a conflict), push, and merge again. Don't pass `--delete-branch`: it can't delete a branch
    whose worktree still exists.
-7. **Release is automatic.** Every push to `main` publishes `v0.1.<run number>`. The stable instance installs it when
-   idle, or when the user clicks Update. Agents never update, restart or stop the stable instance.
+7. **Merging ships nothing.** A merge to `main` builds no bundle and publishes no release; releases are deliberate
+   (below, "Releases"). When one is published, the stable instance installs it when idle, or when the user clicks
+   Update. Agents never update, restart or stop the stable instance.
 8. **Clean up**: stop the branch's runs, then remove the worktree and branch (below). Move the ticket to Done (or let the
    merge banner do it) and add tickets for follow-ups the change turned up. Work that takes several PRs is a parent
    ticket with one part per PR (PDT-38): each part has its own branch, worktree and PR, and its merge closes only that
@@ -111,6 +112,26 @@ The board no longer jumps back to the top when a ticket moves.
   `CHANGELOG.md`, grouped Breaking, Added, Changed, Fixed (Internal left out), prints the same notes without the
   heading to stdout (`scripts/changelog.sh 0.2.0 > notes.md` for the release notes), and moves the fragments to
   `.changes/<version>/`. It refuses an existing version folder or an invalid fragment, changing nothing.
+
+## Releases
+
+Releases are deliberate: merges don't ship. A push to `main` runs no CI at all (the merge queue has just checked that
+tree), builds no bundle and publishes nothing. There is no edge or pre-release channel.
+
+- **Versions are SemVer**, `X.Y.Z`. The source of truth is the workspace `version` in `Cargo.toml`;
+  `desktop/src-tauri/tauri.conf.json` carries the same one. `scripts/version.sh` prints it and `scripts/version.sh
+  check` fails when the two differ (CI runs it in `lint (linux)`). Both change only in a release PR. The first
+  deliberate release is 0.2.0, after the per-merge `v0.1.<run number>` releases.
+- **Builds:** a release build reports the version as is; every other build (local, Run, a bundle built by hand)
+  reports `<version>-local`, which never counts as newer than a release.
+- **Updates** compare versions by SemVer, read GitHub's latest release (never a draft or pre-release), and never
+  install an older version than the one running. The update banner shows the notes of every release between the
+  installed version and the new one.
+- **Bundles** (the signed macOS app, the Windows installer) are built only for a release, or by hand to try a
+  packaging change: run the `ci` workflow on the branch with "Build bundles" (`gh workflow run ci --ref <branch>`).
+  They are kept as workflow artifacts for a few days and published nowhere.
+- **Cutting a release** (a release PR that sets the version and compiles the changelog, then a tag that publishes it)
+  is the release workflow's job.
 
 ## Testing a branch in a dev instance
 

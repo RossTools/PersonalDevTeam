@@ -488,7 +488,10 @@ session (`AppState::pending_resume`): its messages wait for it. What the user se
 Nudge) goes to its conversation even when that is stopped or interrupted (a pdtd restart), reopening it as typing
 would. So does a message that `reopens` (`session_messages.reopens`, PDT-144: an agent step's message to its reused
 session, and `session.send` with `reopen`, which with no running agent session for its attempt goes to the attempt's
-newest conversation that wasn't stopped); unlike the user's, the host's cap still holds it. `dedupe` is per attempt (also against `pr` timeline keys from before the event log); an `untold` message does
+newest conversation that wasn't stopped); unlike the user's, the host's cap still holds it. Any other message is sent to a
+conversation only if it is still running when PDT looks under the session's lock (PDT-203): one stopped meanwhile
+(a cancelled run's step session, stopped while an agent step's nudge waited) is not reopened, and the message is
+`untold`. `dedupe` is per attempt (also against `pr` timeline keys from before the event log); an `untold` message does
 not spend its key. Resolving writes the timeline record and resumes the step (`sent` or `untold`).
 
 Honest delivery (PDT-129):

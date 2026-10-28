@@ -1,18 +1,23 @@
 name: ci
 on:
-  # Branches are checked through their pull request; pushing to main (merges) runs CI too.
-  push:
-    branches: [main]
+  # Branches are checked through their pull request and the merge queue. A push to main (a merge) runs nothing: the
+  # queue has just checked that tree, and releases are deliberate (docs/SDLC.md "Releases"), not made per merge.
   pull_request:
-    # `labeled`: adding the `windows` or `bundle` label runs those jobs on the PR.
+    # `labeled`: adding the `windows` or `macos` label runs those jobs on the PR.
     types: [opened, synchronize, reopened, labeled]
   # The merge queue (the "Main" ruleset): each queued PR is checked on main plus the PR before it is merged.
   merge_group:
     types: [checks_requested]
-  workflow_dispatch: {}
+  # Run by hand on a branch: every check, and with `bundles` the macOS app and Windows installer too (kept as workflow
+  # artifacts for a few days, never published), to try a packaging change before a release.
+  workflow_dispatch:
+    inputs:
+      bundles:
+        description: Build bundles (the macOS app and the Windows installer; published nowhere)
+        type: boolean
+        default: true
 
-# A newer commit on the same PR cancels the older run. A running main run is never cancelled, but a main run still
-# queued when a newer push arrives is superseded by it (that only skips a release number).
+# A newer commit on the same PR cancels the older run.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -32,13 +37,14 @@ env:
 # - build (macos-latest): on Namespace's macOS runner (M4 Pro, 6 vCPU), only what macOS can break: clippy, nextest
 #   and the desktop crate. It is most of the Namespace bill (60 units a minute against linux-8's 8), so it runs in
 #   the merge queue, and on a PR only with the `macos` label or a change under `.github/`.
-# - A push to main skips the Linux and macOS checks: the queue just ran them on the same tree (group size 1, squash
-#   merge). Windows checks and the bundles still run there.
+# - A push to main runs nothing: the queue just ran the checks on the same tree (group size 1, squash merge), and
+#   merges are not released (docs/SDLC.md "Releases").
 # - Repo variables PDT_LINUX_RUNNER / PDT_MACOS_RUNNER override those runners (e.g. ubuntu-latest / macos-latest if
 #   Namespace is down); .github/actions/setup picks the cache to match.
-# - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files,
-#   always on main.
-# - bundles: only with the `bundle` label or a change to what they pack; always on main (releases).
+# - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files.
+# - bundles: never on a PR or in the queue; only when run by hand (workflow_dispatch with `bundles`) and in the
+#   release workflow. They publish nothing here.
+# - version: the workspace version in Cargo.toml and desktop/src-tauri/tauri.conf.json agree (in `lint (linux)`).
 # - changelog: on PRs (not docs-only ones), a changelog fragment or the `no-changelog` label (docs/SDLC.md).
 # A skipped job still reports its check, which counts as passing for main's required checks; the job names are
 # those required checks, so they must not change without changing the ruleset.
@@ -64,6 +70,7 @@ jobs:
           QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
           QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          BUNDLES: ${{ inputs.bundles }}
         run: |
           out() { echo "code=$1 linux=$2 macos=$3 windows=$4 bundle=$5"
             { echo "code=$1"; echo "linux=$2"; echo "macos=$3"; echo "windows=$4"; echo "bundle=$5"; } >> "$GITHUB_OUTPUT"; exit 0; }
@@ -80,11 +87,9 @@ jobs:
               n="$(printf '%s' "$QUEUE_REF" | sed -nE 's#.*/pr-([0-9]+)-[0-9a-f]+$#\1#p')"
               LABELS='[]'
               if [ -n "$n" ]; then LABELS="$(gh pr view "$n" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name]')"; fi ;;
-            # A push to main (a merge from the queue) only builds the release: the queue ran the Linux and macOS
-            # checks on this tree. Windows checks run here because PRs and the queue run them only when asked.
-            push) out true false false true true ;;
-            # Dispatches run everything.
-            *) all ;;
+            # A dispatch runs every check, and the bundles when asked.
+            workflow_dispatch) out true true true true "$([ "$BUNDLES" = true ] && echo true || echo false)" ;;
+            *) out true true true true false ;;
           esac
           printf 'Changed files:\n%s\n' "$files"
           has() { printf '%s' "$LABELS" | grep -q "\"$1\""; }
@@ -94,13 +99,13 @@ jobs:
           code=true
           if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^docs/|\.md$' \
             && ! printf '%s\n' "$files" | grep -qE '^docs/(agent-guide\.md|run-config\.md|prompts/)'; then code=false; fi
-          windows=false; bundle=false
+          windows=false
           if has windows || { [ "$code" = true ] && printf '%s\n' "$files" | grep -qiE '(^|/)windows/|\.ps1$|\.cmd$|^\.github/'; }; then windows=true; fi
-          if has bundle || { [ "$code" = true ] && printf '%s\n' "$files" | grep -qE '^(desktop/|scripts/|\.github/)'; }; then bundle=true; fi
           # macOS: always in the queue; on a PR only with the label or a change to CI itself.
           macos=false
           if has macos || { [ "$code" = true ] && { [ "$EVENT" = merge_group ] || printf '%s\n' "$files" | grep -qE '^\.github/'; }; }; then macos=true; fi
-          out "$code" "$code" "$macos" "$windows" "$bundle"
+          # Bundles never run for a PR or the queue (a dispatch builds them).
+          out "$code" "$code" "$macos" "$windows" false
 
   # A pull request adds a changelog fragment, or carries the `no-changelog` label (docs/SDLC.md "Changelog").
   # Docs-only PRs, the merge queue and main skip it (the queue runs main plus a PR that already passed it).
@@ -153,6 +158,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
+      # The version lives in Cargo.toml and tauri.conf.json; a release PR changes both (docs/SDLC.md "Releases").
+      - run: scripts/version.sh check
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       # pdtd builds with no integration at all as well as with all of them (its default; PDT-173).
@@ -234,10 +241,12 @@ jobs:
         with:
           nextest: "true"
       # Only what Windows can break: the web checks, fmt and the generated types run on Linux, and the Windows
-      # bundle compiles the desktop crate.
+      # bundle (run by hand, or in a release) compiles the desktop crate.
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo nextest run --profile ci
 
+  # The bundles keep their names (required checks, skipped on PRs and in the queue). Run by hand they build the app
+  # and installer, signed when the secret is there, and keep them as workflow artifacts; they publish nothing.
   bundle-macos:
     name: bundle (macos-latest, app)
     needs: changes
@@ -253,9 +262,6 @@ jobs:
           bundles: app
           signing-p12: ${{ secrets.MACOS_SIGNING_P12 }}
           signing-password: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
-          notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
-          notary-key-id: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          notary-issuer: ${{ secrets.MACOS_NOTARY_ISSUER }}
 
   bundle-windows:
     name: bundle (windows-latest, nsis)
@@ -270,45 +276,3 @@ jobs:
       - uses: ./.github/actions/bundle
         with:
           bundles: nsis
-
-  release:
-    # Every push to main becomes a GitHub release v0.1.<run number>, with SHA256SUMS; hosts' pdtd checks for it
-    # through the GitHub REST API and pdt-host installs it.
-    needs: [lint-linux, test-linux, web-linux, build-macos, build-windows, bundle-macos, bundle-windows]
-    # A push to main skips the Linux and macOS checks, and a skipped need would skip this job without `always()`;
-    # it still waits for every need and runs only when none failed or was cancelled.
-    if: >-
-      always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
-      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: release-*
-          path: assets
-          merge-multiple: true
-      # GitHub renames uploaded assets with spaces; rename first so SHA256SUMS lists the names hosts will see.
-      - name: Checksums
-        run: |
-          cd assets
-          for f in *; do n="${f// /.}"; if [ "$f" != "$n" ]; then mv "$f" "$n"; fi; done
-          sha256sum * > SHA256SUMS
-          cat SHA256SUMS
-      - name: Create the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
-        run: |
-          tag="v0.1.${{ github.run_number }}"
-          # The notes are the whole head commit message (a squashed PR: its subject and body).
-          notes="$RUNNER_TEMP/release-notes.md"
-          printf '%s\n' "${HEAD_MESSAGE:-$tag}" > "$notes"
-          ls -l assets
-          # A re-run of this job finds the release already there: replace its assets instead of failing.
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" assets/* --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$tag" assets/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$tag" --notes-file "$notes"
-          fi

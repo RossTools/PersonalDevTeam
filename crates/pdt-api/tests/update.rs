@@ -27,6 +27,10 @@ struct Fake {
     hold_assets: Arc<AtomicBool>,
     /// Requests for a comparison of two versions.
     compares: Arc<AtomicUsize>,
+    /// The latest release's tag (v0.1.7 unless a test moves it).
+    latest_tag: Arc<std::sync::Mutex<String>>,
+    /// Requests for the list of releases.
+    release_lists: Arc<AtomicUsize>,
 }
 
 async fn wait_while(flag: &AtomicBool) {
@@ -50,6 +54,8 @@ async fn fake_github() -> (String, Fake) {
         hold_latest: Default::default(),
         hold_assets: Default::default(),
         compares: Default::default(),
+        latest_tag: Arc::new(std::sync::Mutex::new("v0.1.7".into())),
+        release_lists: Default::default(),
     };
     let ok = |h: &HeaderMap| {
         h.get("authorization").and_then(|v| v.to_str().ok()) == Some(format!("Bearer {TOKEN}").as_str())
@@ -63,11 +69,30 @@ async fn fake_github() -> (String, Fake) {
                 if !ok(&h) {
                     return StatusCode::UNAUTHORIZED.into_response();
                 }
-                axum::Json(json!({"tag_name": "v0.1.7", "body": "notes", "published_at": null, "assets": [
+                let tag = f.latest_tag.lock().unwrap().clone();
+                axum::Json(json!({"tag_name": tag, "body": "notes", "published_at": null, "assets": [
                     {"id": 1, "name": "P_0.1.7_x64-setup.exe", "size": 3},
                     {"id": 2, "name": "P.app.tar.gz", "size": 3},
                     {"id": 3, "name": "SHA256SUMS", "size": 1}]}))
                 .into_response()
+            }),
+        )
+        .route(
+            "/repos/o/r/releases",
+            axum::routing::get(|State(f): State<Fake>| async move {
+                f.release_lists.fetch_add(1, Ordering::SeqCst);
+                let r = |tag: &str, draft: bool| {
+                    json!({"tag_name": tag, "body": format!("Notes for {tag}"), "published_at": "2026-10-15T00:00:00Z",
+                           "draft": draft, "prerelease": false, "assets": []})
+                };
+                axum::Json(json!([
+                    r("v0.2.0", false),
+                    r("v0.1.8", true),
+                    r("v0.1.7", false),
+                    r("v0.1.6", false),
+                    r("v0.1.5", false),
+                    r("v0.1.4", false)
+                ]))
             }),
         )
         .route(
@@ -699,6 +724,50 @@ async fn an_update_lists_every_change_since_the_installed_release() {
     let (_, v) = call(&app, "GET", "/api/host/update", None).await;
     assert_eq!(v["latest"]["changes"]["entries"][1]["ticketHere"]["id"], t["id"]);
     assert_eq!(fake.compares.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn an_update_lists_the_notes_of_every_release_since_the_installed_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, fake) = setup_with(tmp.path(), true, "0.1.5").await;
+    store_token(&state);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(
+        v["latest"]["releases"],
+        json!([
+            {"version": "0.1.7", "tag": "v0.1.7", "notes": "Notes for v0.1.7", "publishedAt": "2026-10-15T00:00:00Z"},
+            {"version": "0.1.6", "tag": "v0.1.6", "notes": "Notes for v0.1.6", "publishedAt": "2026-10-15T00:00:00Z"}
+        ]),
+        "newest first, up to the latest release, no drafts: {v}"
+    );
+    // The same pair is not listed again.
+    call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(fake.release_lists.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn the_per_merge_releases_move_to_the_first_deliberate_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, fake) = setup_with(tmp.path(), true, "0.1.840").await;
+    store_token(&state);
+    *fake.latest_tag.lock().unwrap() = "v0.2.0".into();
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!((v["state"].as_str(), v["latest"]["version"].as_str()), (Some("available"), Some("0.2.0")), "{v}");
+    let versions: Vec<_> =
+        v["latest"]["releases"].as_array().unwrap().iter().map(|r| r["version"].as_str().unwrap()).collect();
+    assert_eq!(versions, ["0.2.0"]);
+}
+
+#[tokio::test]
+async fn an_older_latest_release_is_never_offered() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, fake) = setup_with(tmp.path(), true, "0.2.0").await;
+    store_token(&state);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!((v["state"].as_str(), &v["latest"], &v["error"]), (Some("idle"), &Value::Null, &Value::Null), "{v}");
+    let (s, v) = call(&app, "POST", "/api/host/update/install", Some(json!({"force": true}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("no_update")), "no downgrade");
+    assert_eq!(fake.release_lists.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
