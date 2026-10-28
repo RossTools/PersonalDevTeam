@@ -62,6 +62,34 @@ describe('the PM', () => {
     expect(onSelect).toHaveBeenCalledWith('s1');
   });
 
+  it('dots a conversation that finished a turn in the background, and the dot goes once it is opened', async () => {
+    stubApi({ 'GET /api/pm': two });
+    const first = renderWithQuery(<PmList selection="current" onSelect={() => {}} onNew={() => {}} />);
+    let open = await screen.findByRole('grid', { name: 'PM conversations' });
+    await within(open).findByText('A PDT bug');
+    expect(within(within(open).getByRole('row', { name: /CB cutover/ })).getByRole('img', { name: 'New reply' })).toBeInTheDocument();
+    expect(within(within(open).getByRole('row', { name: /A PDT bug/ })).queryByRole('img', { name: 'New reply' })).not.toBeInTheDocument();
+    first.unmount();
+    // Opened: it is on show, so neither bold nor dotted.
+    renderWithQuery(<PmList selection="c1" onSelect={() => {}} onNew={() => {}} />);
+    open = await screen.findByRole('grid', { name: 'PM conversations' });
+    await within(open).findByText('CB cutover');
+    expect(within(open).getByText('CB cutover')).not.toHaveClass('font-semibold');
+    expect(within(open).queryByRole('img', { name: 'New reply' })).not.toBeInTheDocument();
+  });
+
+  it('shows a spinner, not a dot, while a conversation is working', async () => {
+    stubApi({ 'GET /api/pm': { current: live('c2', 'A PDT bug'), sessions: [
+      info(live('c2', 'A PDT bug')), info(live('c1', 'CB cutover', { unseen: true, activity: 'working' })),
+    ] } satisfies PmState });
+    renderWithQuery(<PmList selection="current" onSelect={() => {}} onNew={() => {}} />);
+    const open = await screen.findByRole('grid', { name: 'PM conversations' });
+    const row = await within(open).findByRole('row', { name: /CB cutover/ });
+    expect(row).toHaveTextContent('Working…');
+    expect(row.querySelector('[data-slot="spinner"]')).not.toBeNull();
+    expect(within(row).queryByRole('img', { name: 'New reply' })).not.toBeInTheDocument();
+  });
+
   it('offers a new conversation when none is open', async () => {
     stubApi({ 'GET /api/pm': ended });
     const onNew = vi.fn();

@@ -246,8 +246,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   followed by "From the note [title](<origin>/notes/<id>)." Older descriptions link to `/pm/notes/<id>`, which still
   opens the note (the path is replaced by `/notes/<id>`; `/pm/notes` by `/notes/pm`).
 - **The PM view** (PDT-149). Its list column has the open conversations (the most recently active first; one with an
-  unseen reply in bold; each one's menu has Rename and Close…), New conversation (+), and the five newest ended ones
-  (their journal's first line) with "All ended conversations" when there are more. The conversation's header has its
+  unseen reply in bold with a dot, one working a turn with a spinner, PDT-205; each one's menu has Rename and Close…),
+  New conversation (+), and the five newest ended ones (their journal's first line) with "All ended conversations" when there are more. The conversation's header has its
   title, Rename, Close… (asks first: it writes its journal, then ends) and New conversation; an ended one shows its
   journal and New conversation. Whatever opens the PM (the rail, the palette, Ctrl+] m) goes back to the conversation
   last on screen; Make ticket and the approval cards belong to the conversation they are in.

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
-import { Alert, IconButton, List, ListRow, Skeleton, relativeTime, useMenuAt } from '@ui';
+import { Alert, IconButton, List, ListRow, Skeleton, Spinner, relativeTime, useMenuAt } from '@ui';
 import { InlineRename } from '../common/InlineRename';
 import { RowField } from '../common/RowField';
 import { earlier, firstLine, isUnread, openConversations, REASON_LABEL, shownConversation, usePm, usePmActions, type PmSelection } from './usePm';
@@ -10,9 +10,9 @@ const heading = 'flex items-center px-3 pt-3 pb-1 text-2xs tracking-wider text-m
 const RECENT_ENDED = 5;
 
 /**
- * The PM view's list column (PDT-149): the open conversations (the most recently active first, an unread one in bold;
- * each renamed or closed from its menu), New conversation, then the recently ended ones (their journal's first line).
- * On a phone it is the PM's first screen. The notes have a view of their own (PDT-143).
+ * The PM view's list column (PDT-149): the open conversations (the most recently active first, an unread one in bold
+ * with a dot and a working one with a spinner, PDT-205; each renamed or closed from its menu), New conversation, then
+ * the recently ended ones (their journal's first line). On a phone it is the PM's first screen. The notes have a view of their own (PDT-143).
  */
 export function PmList({ selection, onSelect, onNew }: {
   selection: PmSelection;
@@ -40,8 +40,9 @@ export function PmList({ selection, onSelect, onNew }: {
       {pm.isPending && <Skeleton lines={3} label="Loading the PM" />}
       {pm.isError && <Alert tone="error">The PM could not be loaded: {pm.error.message}</Alert>}
       <List aria-label="PM conversations" onAction={(id) => onSelect(String(id))}>
-        {open.map((info) => (
-          <ListRow
+        {open.map((info) => {
+          const unread = isUnread(info, shown);
+          return <ListRow
             key={info.session.id}
             id={info.session.id}
             textValue={info.title}
@@ -56,15 +57,17 @@ export function PmList({ selection, onSelect, onNew }: {
               </RowField>
             ) : info.title}
             current={shown === info.session.id}
-            bold={isUnread(info, shown)}
+            bold={unread}
+            trailing={unread ? <span role="img" aria-label="New reply" className="size-2 rounded-full bg-primary" />
+              : info.session.activity === 'working' ? <Spinner decorative className="size-3 text-muted-foreground" /> : undefined}
             secondary={info.rotation === 'journal' ? 'Writing its journal…'
               : info.session.activity === 'working' ? 'Working…' : relativeTime(info.lastActivity)}
             onMenu={(at) => openMenu(at, `Conversation ${info.title}`, [
               { label: 'Rename', onSelect: () => setRenaming(info.session.id) },
               { label: 'Close…', onSelect: () => close(info), disabled: info.rotation !== 'none' },
             ])}
-          />
-        ))}
+          />;
+        })}
         {(open.length === 0 || selection === 'new') && (
           <ListRow id="new" title="New conversation" current={selection === 'new' || (!shown && selection === 'current')}
             secondary="Ask something to start one" />
