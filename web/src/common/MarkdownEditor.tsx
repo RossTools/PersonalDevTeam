@@ -1,9 +1,9 @@
 import { useEffect, useImperativeHandle, useRef, type KeyboardEvent, type Ref } from 'react';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { deleteMarkupBackward, insertNewlineContinueMarkupCommand, markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
+import { HighlightStyle, forceParsing, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
-import { Annotation, EditorState, Prec, RangeSetBuilder, Transaction, type Extension } from '@codemirror/state';
+import { Annotation, EditorSelection, EditorState, Prec, RangeSetBuilder, Text, Transaction, type ChangeSpec, type Extension } from '@codemirror/state';
 import {
   Decoration, EditorView, ViewPlugin, drawSelection, keymap, lineNumbers, placeholder as placeholderText,
   type DecorationSet, type ViewUpdate,
@@ -106,9 +106,50 @@ export function MarkdownEditor({ value, onChange, label, placeholder, variant = 
 // Enter continues a list or quote and, on an empty item, ends it (rather than starting a loose list); Backspace after a
 // list marker removes it.
 const listKeys = keymap.of([
-  { key: 'Enter', run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) },
+  { key: 'Enter', run: continueMarkup },
   { key: 'Backspace', run: deleteMarkupBackward },
 ]);
+
+const continueMarkupLoosely = insertNewlineContinueMarkupCommand({ nonTightLists: false });
+
+/**
+ * lang-markdown's Enter, with the next item always on the very next line (PDT-208). Its command puts a blank line before
+ * the new item when the list is loose (its first two items apart), `nonTightLists: false` or not: a list ended with
+ * Enter and started again below counts as one loose list. A continuation inserts one line break, so a second is that
+ * blank line, which is dropped, with the caret moving back by as much. The command sees `\n` as the line break (positions
+ * count any break as one), as with `\r\n` its blank line puts the caret past the end and throws.
+ */
+function continueMarkup(view: EditorView): boolean {
+  // The command reads the syntax tree, which the editor parses a little at a time: a long text may not be parsed down to
+  // the caret yet.
+  forceParsing(view, view.state.doc.lineAt(view.state.selection.main.to).to, 200);
+  const { state } = view;
+  const plain: EditorState = state.lineBreak === '\n' ? state : Object.create(state, { lineBreak: { value: '\n' } });
+  const made: Transaction[] = [];
+  if (!continueMarkupLoosely({ state: plain, dispatch: (tr) => made.push(tr) })) return false;
+  const tr = made[0];
+  const changes: ChangeSpec[] = [];
+  const cuts: { at: number; len: number }[] = [];
+  tr.changes.iterChanges((fromA, toA, _fromB, toB, inserted) => {
+    // A line break is `\n` here, one position as in the text; split on it, as `\r\n` text wouldn't.
+    let text = inserted.toString();
+    const second = text.startsWith('\n') ? text.indexOf('\n', 1) : -1;
+    if (second >= 0) {
+      cuts.push({ at: toB, len: second });
+      text = text.slice(second);
+    }
+    changes.push({ from: fromA, to: toA, insert: Text.of(text.split('\n')) });
+  });
+  const shift = (pos: number) => pos - cuts.reduce((n, c) => (c.at <= pos ? n + c.len : n), 0);
+  const ranges = tr.newSelection.ranges.map((r) => EditorSelection.range(shift(r.anchor), shift(r.head)));
+  view.dispatch({
+    changes,
+    selection: EditorSelection.create(ranges, tr.newSelection.mainIndex),
+    scrollIntoView: true,
+    userEvent: 'input',
+  });
+  return true;
+}
 
 /** Marks a change that came in through `value` (not an edit, so not reported back). */
 const fromValue = Annotation.define<boolean>();

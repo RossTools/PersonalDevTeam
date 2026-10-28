@@ -230,8 +230,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   every briefing" for the PM's), Make a ticket (mine only) and ⋯ Delete… (asks first). Read renders the Markdown as a
   document; Write is the title and the Markdown source in `MarkdownEditor` (web/src/common, CodeMirror, PDT-187):
   styled as it is typed (headings, emphasis, code, links, quotes) with the marks kept visible and dimmed, growing with
-  its text; Enter continues a list (an empty item ends it), Backspace removes an empty item's marker, Tab / Shift-Tab
-  indent. Esc goes back to Read. A double-click on the rendered note (not on a link or a checkbox, nor at the end of
+  its text; Enter continues a list with the next item on the very next line, even in a loose list (an empty item ends
+  it), Backspace removes an empty item's marker, Tab / Shift-Tab indent. Esc goes back to Read. A double-click on the rendered note (not on a link or a checkbox, nor at the end of
   a drag) opens Write with the caret at the start of the block clicked (each block carries `data-source-start`), or on
   the title the title. A note with text opens to Read, an empty or new one to Write with its title focused. It
   saves by itself 800 ms after typing stops, on blur and when the page goes; the text comes from the server once and
