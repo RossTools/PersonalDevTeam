@@ -45,6 +45,8 @@ impl Integration for ForgeTools {
 struct Here {
     forge: ProjectForge,
     branch: Option<String>,
+    /// The branch is the session's own (its attempt's or its worktree's), not a workflow step's attempt's.
+    own_branch: bool,
     attempt: Option<AttemptInfo>,
 }
 
@@ -59,17 +61,17 @@ async fn here(cx: &ActionCx<'_>) -> Result<Here, String> {
         Some(a) => st.store.get_attempt(a).await.ok().flatten(),
         None => None,
     };
-    let branch = match attempt.as_ref().map(|a| a.attempt.branch.clone()) {
-        Some(b) => Some(b),
+    let (branch, own_branch) = match attempt.as_ref().map(|a| a.attempt.branch.clone()) {
+        Some(b) => (Some(b), true),
         None => match crate::workflow::agent::step_attempt_branch(st, s).await {
-            Some(b) => Some(b),
+            Some(b) => (Some(b), false),
             None => match &s.worktree_id {
-                Some(w) => st.store.get_worktree(w).await.ok().flatten().map(|w| w.branch),
-                None => None,
+                Some(w) => (st.store.get_worktree(w).await.ok().flatten().map(|w| w.branch), true),
+                None => (None, true),
             },
         },
     };
-    Ok(Here { forge, branch, attempt })
+    Ok(Here { forge, branch, own_branch, attempt })
 }
 
 impl Here {
@@ -345,7 +347,9 @@ impl Action for ChangeRequestOpen {
         tool(
             ToolDecl::new("change_request_open", "Open a pull request for the session's branch").open_world(),
             "Open a pull request",
-            "Opens a pull request from the session's branch (push it first) into the ticket attempt's base branch, or              `base`, with a title and a Markdown body; `draft` opens it as a draft. A branch that already has an open              one gets that one back. It is opened as the user's GitHub login.",
+            "Opens a pull request from the session's branch (push it first) into the ticket attempt's base branch, or \
+             `base`, with a title and a Markdown body; `draft` opens it as a draft. A branch that already has an open \
+             one gets that one back. It is opened as the user's GitHub login.",
         )
     }
 
@@ -361,6 +365,9 @@ impl Action for ChangeRequestOpen {
         Box::pin(async move {
             self.check(&i)?;
             let h = here(cx).await?;
+            if !h.own_branch {
+                return Err("only the session working on the branch opens its pull request".into());
+            }
             let branch = h.branch(None)?;
             let base = i
                 .base
@@ -422,7 +429,10 @@ impl Action for ChangeRequestMerge {
             )
             .open_world(),
             "Merge the pull request again",
-            "Sets the session's ticket attempt's pull request to merge again (auto-merge, or back into the merge              queue) once you have fixed and pushed what made it drop out. Only for a pull request that was already              set to merge: the user or the project's workflow decides the first merge. The project's merge policy              applies (it may wait for CI on the push).",
+            "Sets the session's ticket attempt's pull request to merge again (auto-merge, or back into the merge \
+             queue) once you have fixed and pushed what made it drop out. Only for a pull request that was already \
+             set to merge: the user or the project's workflow decides the first merge. The project's merge policy \
+             applies (it may wait for CI on the push).",
         )
     }
 
