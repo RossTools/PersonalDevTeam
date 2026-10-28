@@ -24,6 +24,7 @@ pub const PR_FEEDBACK: &str = "pr-feedback";
 pub const LATE_COMMITS: &str = "late-commits";
 pub const PDT_BUG_TRIAGE: &str = "pdt-bug-triage";
 pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
+pub const CUT_RELEASE: &str = "cut-release";
 
 pub const BUILTINS: &[Builtin] = &[
     Builtin { id: PR_NOTICES, enabled: true, doc: pr_notices },
@@ -35,6 +36,8 @@ pub const BUILTINS: &[Builtin] = &[
     // Enabled when installed only on a host with a project whose repository is the release repository (PDT's own).
     Builtin { id: PDT_BUG_TRIAGE, enabled: false, doc: pdt_bug_triage },
     Builtin { id: GITHUB_ISSUE_DONE, enabled: true, doc: github_issue_done },
+    // Off until the user turns it on; the PM starts it (Run now) when the user asks for a release.
+    Builtin { id: CUT_RELEASE, enabled: false, doc: cut_release },
 ];
 
 /// PDT's built-ins, then the enabled integrations' ([`crate::integrations::Integration::builtin_workflows`]).
@@ -670,6 +673,116 @@ fn github_issue_done() -> WorkflowDoc {
     }))
 }
 
+/// The release workflow a project's repository has (PDT-194; docs/SDLC.md "Releases"): run by hand with `bump`
+/// (patch, minor, major) or an exact `version`, it pushes branch [`RELEASE_BRANCH`] and opens the release PR from it.
+pub const RELEASE_WORKFLOW: &str = "release.yml";
+pub const RELEASE_BRANCH: &str = "release";
+
+/// How often "Cut a release" looks, and for how long: the release PR (opened within a minute or two), its merge (the
+/// user reviews the notes; up to two weeks) and the published release (the tag's bundles build for up to an hour).
+const PR_POLL_MS: u64 = 30_000;
+const PR_POLLS: u32 = 40;
+const MERGE_POLL_MS: u64 = 10 * 60_000;
+const MERGE_POLLS: u32 = 14 * 24 * 6;
+const RELEASE_POLL_MS: u64 = 2 * 60_000;
+const RELEASE_POLLS: u32 = 4 * 30;
+
+/// Cut a release (PDT-194): started (Run now, by the PM or the user) in a project with `bump` and optionally
+/// `version`, it runs the project's Release Action, puts the release PR in the Inbox for review, and says when the
+/// tag's release is published. Nothing is merged or tagged by PDT: merging the release PR is the user's.
+fn cut_release() -> WorkflowDoc {
+    // A GitHub read that fails (the network, a rate limit) is tried again before the run fails.
+    let retry = json!({"max": 5, "backoffMs": 60_000});
+    let wait = |id: &str, x: i32, y: i32, title: &str, ms: u64, visits: u32| {
+        json!({"id": id, "kind": "wait", "version": 1, "position": {"x": x, "y": y}, "title": title,
+               "maxVisits": visits, "config": {"ms": ms}})
+    };
+    doc(json!({
+        "name": "Cut a release",
+        "description": format!("Runs the project's release workflow ({RELEASE_WORKFLOW}) with a bump kind (patch, \
+                        minor or major) or an exact version: it opens a release PR that sets the version, compiles \
+                        the changelog and builds the bundles. The release PR goes to the Inbox for review; merging it \
+                        tags the release, which publishes it, and you are told when it is out. Run it (the PM does, \
+                        when you ask for a release) with input {{\"bump\": \"minor\", \"projectId\": …}}."),
+        "nodes": [
+            {"id": "start", "kind": "manual", "version": 1, "position": {"x": 0, "y": 0}, "title": "Cut a release"},
+            {"id": "before", "kind": "github.release", "version": 1, "position": {"x": 260, "y": 0},
+             "title": "Latest release before", "retry": retry, "config": {}},
+            {"id": "dispatch", "kind": "github.workflow.run", "version": 1, "position": {"x": 520, "y": 0},
+             "title": "Run the release workflow", "config": {"workflow": RELEASE_WORKFLOW, "ref": "main",
+                "inputs": {"bump": "{{trigger.bump}}", "version": "{{trigger.version}}"}}},
+            wait("wait_pr", 780, 0, "Wait for the release PR", PR_POLL_MS, PR_POLLS),
+            {"id": "find_pr", "kind": "github.change_request", "version": 1, "position": {"x": 1040, "y": 0},
+             "title": "Release PR opened?", "retry": retry, "maxVisits": PR_POLLS,
+             "config": {"branch": RELEASE_BRANCH}},
+            {"id": "tell_pr", "kind": "inbox.notice", "version": 1, "position": {"x": 1300, "y": 0},
+             "title": "Ask for a review", "config": {
+                "key": "release-pr-{{steps.find_pr.number}}",
+                "title": "Release PR #{{steps.find_pr.number}} is ready for review",
+                "text": "[{{steps.find_pr.title}}]({{steps.find_pr.url}}) sets the version, adds the release's \
+                         section to CHANGELOG.md and builds the bundles as a check. Read the notes (its description; \
+                         edit them in the PR if they need it) and merge it when its checks pass: the merge tags the \
+                         release, which publishes it. You are told when it is out."}},
+            wait("wait_merge", 1560, 0, "Wait for the merge", MERGE_POLL_MS, MERGE_POLLS),
+            {"id": "check_pr", "kind": "github.change_request", "version": 1, "position": {"x": 1820, "y": 0},
+             "title": "Release PR merged?", "retry": retry, "maxVisits": MERGE_POLLS,
+             "config": {"number": "{{steps.find_pr.number}}"}},
+            wait("wait_release", 2080, 0, "Wait for the release", RELEASE_POLL_MS, RELEASE_POLLS),
+            {"id": "published", "kind": "github.release", "version": 1, "position": {"x": 2340, "y": 0},
+             "title": "Release published?", "retry": retry, "maxVisits": RELEASE_POLLS,
+             "config": {"newerThan": "{{steps.before.tag}}"}},
+            {"id": "notify", "kind": "notify", "version": 1, "position": {"x": 2600, "y": 0},
+             "title": "Tell me it is out", "config": {
+                "title": "Release {{steps.published.tag}} is published",
+                "body": "{{steps.published.name}} is out; hosts offer it as an update.",
+                "link": "{{steps.published.url}}"}},
+            {"id": "tell_released", "kind": "inbox.notice", "version": 1, "position": {"x": 2860, "y": 0},
+             "title": "Inbox: published", "config": {
+                "key": "released-{{steps.published.tag}}",
+                "title": "Release {{steps.published.tag}} is published",
+                "text": "[{{steps.published.name}}]({{steps.published.url}}) is published with its notes and \
+                         bundles; hosts offer it as an update."}},
+            {"id": "released", "kind": "end", "version": 1, "position": {"x": 3120, "y": 0}, "title": "Released",
+             "config": {"output": {"tag": "{{steps.published.tag}}", "url": "{{steps.published.url}}"}}},
+            {"id": "dropped", "kind": "notify", "version": 1, "position": {"x": 2080, "y": 200},
+             "title": "Tell me it was closed", "config": {
+                "title": "Release PR #{{steps.find_pr.number}} was closed without merging",
+                "body": "Nothing was released. Run Cut a release again for a new one.",
+                "level": "warning", "link": "{{steps.find_pr.url}}"}},
+            {"id": "not_released", "kind": "end", "version": 1, "position": {"x": 2340, "y": 200},
+             "title": "Not released"},
+        ],
+        "edges": [
+            {"from": "start", "to": "before"},
+            {"from": "before", "port": "found", "to": "dispatch"},
+            {"from": "before", "port": "none", "to": "dispatch"},
+            {"from": "dispatch", "to": "wait_pr"},
+            {"from": "wait_pr", "port": "done", "to": "find_pr"},
+            {"from": "find_pr", "port": "open", "to": "tell_pr"},
+            // Until the new one is open, the branch's newest PR may be the last release's (merged).
+            {"from": "find_pr", "port": "none", "to": "wait_pr"},
+            {"from": "find_pr", "port": "merged", "to": "wait_pr"},
+            {"from": "find_pr", "port": "closed", "to": "wait_pr"},
+            {"from": "tell_pr", "port": "added", "to": "wait_merge"},
+            {"from": "tell_pr", "port": "skipped", "to": "wait_merge"},
+            {"from": "wait_merge", "port": "done", "to": "check_pr"},
+            {"from": "check_pr", "port": "open", "to": "wait_merge"},
+            {"from": "check_pr", "port": "merged", "to": "wait_release"},
+            {"from": "check_pr", "port": "closed", "to": "dropped"},
+            {"from": "check_pr", "port": "none", "to": "dropped"},
+            {"from": "dropped", "to": "not_released"},
+            {"from": "wait_release", "port": "done", "to": "published"},
+            {"from": "published", "port": "found", "to": "notify"},
+            {"from": "published", "port": "none", "to": "wait_release"},
+            {"from": "notify", "to": "tell_released"},
+            {"from": "tell_released", "port": "added", "to": "released"},
+            {"from": "tell_released", "port": "skipped", "to": "released"},
+        ],
+        "settings": {"maxSteps": 2 * (PR_POLLS + MERGE_POLLS + RELEASE_POLLS) + 20,
+                     "maxRuntimeMs": 16_i64 * 24 * 60 * 60 * 1000},
+    }))
+}
+
 /// Whether a project on this host is PDT's own repository (the release repository): where bug triage runs.
 async fn builds_pdt(st: &AppState) -> bool {
     for p in st.store.list_projects().await.unwrap_or_default() {
@@ -750,6 +863,19 @@ mod tests {
             let errors: Vec<_> = issues.iter().filter(|i| i.severity == Severity::Error).collect();
             assert!(errors.is_empty(), "{}: {errors:?}", b.id);
         }
+    }
+
+    /// PDT-194: every port of Cut a release leads somewhere (but a timed wait's event and timeout, which it never
+    /// takes), and every node is reached.
+    #[test]
+    fn cut_release_has_no_open_ports() {
+        let issues = validate(&cut_release(), crate::integrations::test_registry().catalog());
+        let open = |i: &&pdt_core::workflow::validate::Issue| {
+            i.code == "unreachable"
+                || (i.code == "open_port" && !i.node.as_deref().is_some_and(|n| n.starts_with("wait_")))
+        };
+        assert!(!issues.iter().any(|i| open(&i)), "{issues:?}");
+        assert!(!BUILTINS.iter().find(|b| b.id == CUT_RELEASE).unwrap().enabled, "off until the user turns it on");
     }
 
     /// PDT-139: a notice nobody could be told goes on, to the Inbox and the ticket.

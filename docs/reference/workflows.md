@@ -139,6 +139,18 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     commenting "Fixed in <key>; it ships in the next PDT release") or `wont_do` (→ `not_planned`, with a comment),
     both where `githubIssue` exists and with `runKey` `{{trigger.ticketId}}`: once per ticket, so moving it again
     changes nothing on GitHub. The release isn't known when a ticket moves to Done, so the comment doesn't name one.
+  - **Cut a release** (off, PDT-194): `manual` (Run now; the PM's `workflow_run` when the user asks for a release)
+    with input `projectId` and `bump` (`patch`, `minor`, `major`) or `version` (`X.Y.Z`) → `github.release` (the
+    latest before, `before`) → `github.workflow.run` (the project's `release.yml` on `main`, inputs `bump` and
+    `version`; empty ones are left out) → every 30 s (40 times) `github.change_request` on branch `release` until one
+    is `open` (`none`, and the last release's `merged` or `closed` PR, keep looking) → `inbox.notice` (the workflow's,
+    key `release-pr-<n>`: "Release PR #n is ready for review", its link, review the notes and merge it) → every 10
+    minutes (two weeks) `github.change_request` by number: `open` keeps waiting, `closed` or `none` → `notify`
+    (warning: closed without merging, nothing released) → end; `merged` → every 2 minutes (four hours)
+    `github.release` with `newerThan: {{steps.before.tag}}` until the tag's release is published → `notify` and an
+    `inbox.notice` (`released-<tag>`, "Release <tag> is published") → end with `{tag, url}`. The GitHub reads retry 5
+    times a minute apart; `maxRuntimeMs` 16 days. PDT never merges or tags anything here: the release PR is merged by
+    the user, and the merge's tag publishes the release ([SDLC.md](../SDLC.md) "Releases").
 - What the enabled workflows will tell an attempt's agent is also in that agent's instructions (pdt-core
   `workflow/news.rs`, [agents.md](agents.md) "Instructions and guides"), so turning one off changes what new sessions
   are told.
@@ -257,6 +269,9 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `github.import` (`repo`, `number`, `project`: a PDT project, `priority`, `labels`; PDT-154) | `imported`, `exists` |
 | `github.comment` (`repo` + `number`, or `ticket`: its linked issue; `body`) | `out`, `unlinked` |
 | `github.close` (`repo` + `number`, or `ticket`; `reason: completed \| not_planned \| duplicate`, `duplicateOf` with `duplicate`, `comment`, `labels`) | `out`, `unlinked` |
+| `github.workflow.run` (`repo`: default the run's project's, `workflow`: its file, `ref` default `main`, `inputs`; PDT-194) | `out` |
+| `github.change_request` (`repo`, `branch` or `number`; PDT-194; output `number`, `url`, `title`, `state`, `merged`, `headSha`) | `open`, `merged`, `closed`, `none` |
+| `github.release` (`repo`, `tag` or the latest, `newerThan`; PDT-194; output `tag`, `name`, `url`, `publishedAt`) | `found`, `none` |
 | `buildkite.retry` (`connection`, `build`: a build URL, or a number with `pipeline`) | `out` |
 | `buildkite.trigger` (`connection`, `pipeline`, `branch`, `commit` default `HEAD`, `message`, `env`) | `out` |
 | `radarr.search` / `sonarr.search` (`connection`, `term`, `limit`) | `out` |
@@ -313,6 +328,16 @@ notify itself forever.
   `duplicate` reads `duplicateOf` (a number in the same repository, or `owner/name#n`) for its id and sends it as
   `duplicate_issue_id`, which is GitHub's Close as duplicate. Output `{issue, reason, duplicateOf, commentUrl,
   labels}`. Neither is run again on its own.
+- Release actions (`workflow/nodes/release.rs`, PDT-194) go through the GitHub forge too (its `releases` capability
+  for the workflow and release calls). Without `repo` they use the run's project's GitHub repository (its forge; a
+  project not on GitHub is an error), so a host-wide workflow runs them in the project its Run now input names
+  (`projectId`; dry runs take the event's `projectId` as real runs do). `github.workflow.run` sends
+  `workflow_dispatch` with the inputs as text (null and empty ones left out); it is not run again on its own, and
+  GitHub doesn't say which run it started. `github.change_request` reads the branch's newest open pull request (else
+  its newest) or one by number, and leaves by its state (`none`: quiet). `github.release` reads the latest published
+  release or one tag; with `newerThan`, a latest release with that tag, or an older version, is `none` (quiet), so it
+  polls for the next one. Dry runs call nothing: `github.change_request` takes `open` for a branch and `merged` for a
+  number, `github.release` `found`.
 - Buildkite actions (`workflow/nodes/buildkite.rs`, client in `buildkite.rs`; bearer token, the connection's `url`
   or `https://api.buildkite.com`, `config.org`): `buildkite.retry` retries the build's failed retryable jobs (output
   `retried`), else rebuilds it (`rebuilt`, the new build); `buildkite.trigger` starts a build (message default

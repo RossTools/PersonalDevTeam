@@ -359,7 +359,7 @@ impl Forge for LocalForge {
 
     fn capabilities(&self) -> Capabilities {
         // PDT holds the merge until CI passes, as a forge's required checks would.
-        Capabilities { merge_queue: false, required_checks: true, issues: false, reviews: false }
+        Capabilities { merge_queue: false, required_checks: true, issues: false, reviews: false, releases: false }
     }
 
     fn agent_notes(&self) -> ForgeNotes {

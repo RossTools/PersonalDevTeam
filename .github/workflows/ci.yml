@@ -42,8 +42,9 @@ env:
 # - Repo variables PDT_LINUX_RUNNER / PDT_MACOS_RUNNER override those runners (e.g. ubuntu-latest / macos-latest if
 #   Namespace is down); .github/actions/setup picks the cache to match.
 # - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files.
-# - bundles: never on a PR or in the queue; only when run by hand (workflow_dispatch with `bundles`) and in the
-#   release workflow. They publish nothing here. Linux builds the tarball and AppImage on native x86_64 and arm64
+# - bundles: only on the release PR (the `release` branch release.yml opens), as release builds (signed and
+#   notarized), so packaging problems show before anything is tagged; never on another PR or in the queue; and when
+#   run by hand (workflow_dispatch with `bundles`). They publish nothing here: release.yml publishes the tag's. Linux builds the tarball and AppImage on native x86_64 and arm64
 #   runners (bundle (linux, <arch>)); a release's SHA256SUMS lists them with the others.
 # - version: the workspace version in Cargo.toml and desktop/src-tauri/tauri.conf.json agree (in `lint (linux)`).
 # - changelog: on PRs (not docs-only ones), a changelog fragment or the `no-changelog` label (docs/SDLC.md).
@@ -61,6 +62,7 @@ jobs:
       macos: ${{ steps.pick.outputs.macos }}
       windows: ${{ steps.pick.outputs.windows }}
       bundle: ${{ steps.pick.outputs.bundle }}
+      release: ${{ steps.pick.outputs.release }}
     steps:
       - id: pick
         env:
@@ -72,9 +74,13 @@ jobs:
           QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref }}
           BUNDLES: ${{ inputs.bundles }}
+          RELEASE_PR: ${{ github.event.pull_request.head.ref == 'release' && github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
-          out() { echo "code=$1 linux=$2 macos=$3 windows=$4 bundle=$5"
-            { echo "code=$1"; echo "linux=$2"; echo "macos=$3"; echo "windows=$4"; echo "bundle=$5"; } >> "$GITHUB_OUTPUT"; exit 0; }
+          # The release PR (release.yml's) builds the bundles as release builds; nothing else does.
+          release=false
+          if [ "$EVENT" = pull_request ] && [ "$RELEASE_PR" = true ]; then release=true; fi
+          out() { echo "code=$1 linux=$2 macos=$3 windows=$4 bundle=$5 release=$release"
+            { echo "code=$1"; echo "linux=$2"; echo "macos=$3"; echo "windows=$4"; echo "bundle=$5"; echo "release=$release"; } >> "$GITHUB_OUTPUT"; exit 0; }
           all() { out true true true true true; }
           case "$EVENT" in
             pull_request)
@@ -105,8 +111,8 @@ jobs:
           # macOS: always in the queue; on a PR only with the label or a change to CI itself.
           macos=false
           if has macos || { [ "$code" = true ] && { [ "$EVENT" = merge_group ] || printf '%s\n' "$files" | grep -qE '^\.github/'; }; }; then macos=true; fi
-          # Bundles never run for a PR or the queue (a dispatch builds them).
-          out "$code" "$code" "$macos" "$windows" false
+          # Bundles run for the release PR only, never in the queue (the tag builds its own; a dispatch builds them).
+          out "$code" "$code" "$macos" "$windows" "$release"
 
   # A pull request adds a changelog fragment, or carries the `no-changelog` label (docs/SDLC.md "Changelog").
   # Docs-only PRs, the merge queue and main skip it (the queue runs main plus a PR that already passed it).
@@ -120,14 +126,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: scripts/changelog.test.sh
+      - run: scripts/version.test.sh
       - name: The pull request adds a changelog fragment
         env:
           GH_TOKEN: ${{ github.token }}
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           PR: ${{ github.event.pull_request.number }}
+          RELEASE_PR: ${{ needs.changes.outputs.release }}
         run: |
           # Every unreleased fragment is well formed, whoever added it.
           scripts/changelog.sh check
+          # The release PR compiles the fragments into CHANGELOG.md rather than adding one.
+          if [ "$RELEASE_PR" = true ]; then echo "The release PR: it compiles the fragments."; exit 0; fi
           added="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
             --jq '.[] | select(.status != "removed") | .filename' | grep -E '^\.changes/unreleased/[^/]+\.md$' || true)"
           if [ -n "$added" ]; then printf 'Fragments:\n%s\n' "$added"; exit 0; fi
@@ -246,8 +256,9 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo nextest run --profile ci
 
-  # The bundles keep their names (required checks, skipped on PRs and in the queue). Run by hand they build the app
-  # and installer, signed when the secret is there, and keep them as workflow artifacts; they publish nothing.
+  # The bundles keep their names (required checks, skipped on PRs but the release PR, and in the queue). On the release
+  # PR they are release builds (the version as is, signed and notarized); run by hand they build the app and installer,
+  # signed when the secret is there. Either way they are kept as workflow artifacts and publish nothing.
   bundle-macos:
     name: bundle (macos-latest, app)
     needs: changes
@@ -261,8 +272,12 @@ jobs:
       - uses: ./.github/actions/bundle
         with:
           bundles: app
+          release: ${{ needs.changes.outputs.release }}
           signing-p12: ${{ secrets.MACOS_SIGNING_P12 }}
           signing-password: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
+          notary-key-id: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          notary-issuer: ${{ secrets.MACOS_NOTARY_ISSUER }}
 
   bundle-windows:
     name: bundle (windows-latest, nsis)
@@ -277,6 +292,7 @@ jobs:
       - uses: ./.github/actions/bundle
         with:
           bundles: nsis
+          release: ${{ needs.changes.outputs.release }}
 
   # Linux (PDT-197): the headless tarball and the AppImage, each CPU on its own native runner (no cross-compiling).
   # Ubuntu 22.04, so the AppImage and the binaries run on glibc 2.35 and newer.
@@ -301,3 +317,4 @@ jobs:
       - uses: ./.github/actions/bundle
         with:
           bundles: linux
+          release: ${{ needs.changes.outputs.release }}

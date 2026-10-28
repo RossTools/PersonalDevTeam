@@ -385,6 +385,36 @@ fn issues_are_read_commented_labelled_and_closed() {
 }
 
 #[test]
+fn reads_releases_and_starts_workflows() {
+    let (g, t) = forge();
+    t.ok(
+        "GET",
+        &format!("{API}/repos/o/r/releases/latest"),
+        r#"{"tag_name":"v0.2.0","name":"","html_url":"https://github.com/o/r/releases/tag/v0.2.0",
+          "published_at":"2026-10-28T10:00:00Z","body":"Added things","draft":false,"prerelease":false}"#,
+    );
+    let r = g.release("o/r", None).unwrap().unwrap();
+    assert_eq!((r.tag.as_str(), r.name.as_str(), r.notes.as_str()), ("v0.2.0", "v0.2.0", "Added things"));
+    assert_eq!(r.published_at.as_deref(), Some("2026-10-28T10:00:00Z"));
+    t.on("GET", &format!("{API}/repos/o/r/releases/tags/v9.9.9"), Response::new(404, r#"{"message":"Not Found"}"#));
+    assert_eq!(g.release("o/r", Some("v9.9.9")).unwrap(), None, "a 404");
+    t.ok("GET", &format!("{API}/repos/o/r/releases/tags/v1.0.0"), r#"{"tag_name":"v1.0.0","prerelease":true}"#);
+    assert_eq!(g.release("o/r", Some("v1.0.0")).unwrap(), None, "a pre-release is not a release");
+
+    t.on("POST", &format!("{API}/repos/o/r/actions/workflows/release.yml/dispatches"), Response::new(204, ""));
+    let inputs = BTreeMap::from([("bump".to_string(), "minor".to_string())]);
+    g.run_workflow("o/r", "release.yml", "main", &inputs).unwrap();
+    assert_eq!(body_of(t.sent().last().unwrap()), json!({"ref": "main", "inputs": {"bump": "minor"}}));
+    t.on(
+        "POST",
+        &format!("{API}/repos/o/r/actions/workflows/nope.yml/dispatches"),
+        Response::new(404, r#"{"message":"Not Found"}"#),
+    );
+    let e = g.run_workflow("o/r", "nope.yml", "main", &inputs).unwrap_err();
+    assert!(matches!(&e, ForgeError::Failed(m) if m.contains("no workflow nope.yml")), "{e:?}");
+}
+
+#[test]
 fn merges_turn_on_auto_merge_or_merge_a_clean_pr() {
     let (g, t) = forge();
     let id = r#"{"data":{"repository":{"pullRequest":{"id":"PR_7"}}}}"#;

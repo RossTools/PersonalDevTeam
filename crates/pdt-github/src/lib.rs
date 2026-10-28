@@ -1,5 +1,5 @@
 //! The GitHub forge (PDT-176, PDT-177): GitHub's REST and GraphQL APIs for a branch's pull request and its Actions
-//! runs (PDT-25), merges, reviews, comments and issues, signed in with the token of the user's in-app login (Settings
+//! runs (PDT-25), merges, reviews, comments, issues and releases (PDT-194: reading them, starting the release workflow), signed in with the token of the user's in-app login (Settings
 //! › This host › GitHub). No GitHub CLI. Check runs are not read: fine-grained tokens cannot see them, so CI comes from
 //! the Actions runs API. GETs are conditional (ETags: an unchanged answer costs no rate limit), and a used-up rate
 //! limit stops every call until it resets. Blocking; call from `spawn_blocking` in async code.
@@ -11,11 +11,11 @@ use pdt_core::brand::SHORT_NAME;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
 pub use pdt_forge::{
     Capabilities, ChangeComment, ChangeRequest, ChangeReview, CloseReason, Forge, ForgeError, ForgeNotes, Issue,
-    IssueDetail, JobLog, MergeSettings, MergeStrategy, NewChangeRequest, OpenedChangeRequest,
+    IssueDetail, JobLog, MergeSettings, MergeStrategy, NewChangeRequest, OpenedChangeRequest, Release,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use transport::{Request, Response, Transport, encode};
@@ -642,6 +642,24 @@ pub fn parse_reviews(items: &[Value]) -> Vec<ChangeReview> {
 }
 
 /// GraphQL's name for a merge strategy.
+/// A release from `GET /releases/...`; drafts and pre-releases are not releases here.
+pub fn parse_release(v: &Value) -> Result<Option<Release>, GhError> {
+    let tag = s(v, "tag_name");
+    if tag.is_empty() {
+        return Err(GhError::BadAnswer("a release without a tag".into()));
+    }
+    if v["draft"].as_bool() == Some(true) || v["prerelease"].as_bool() == Some(true) {
+        return Ok(None);
+    }
+    Ok(Some(Release {
+        name: Some(s(v, "name")).filter(|n| !n.is_empty()).unwrap_or_else(|| tag.clone()),
+        tag,
+        url: s(v, "html_url"),
+        published_at: v["published_at"].as_str().map(String::from),
+        notes: s(v, "body"),
+    }))
+}
+
 fn merge_method(s: MergeStrategy) -> &'static str {
     match s {
         MergeStrategy::Squash => "SQUASH",
@@ -812,6 +830,34 @@ impl Forge for GithubApi {
         }
         self.send_json("PATCH", &format!("repos/{repo}/issues/{number}"), body)?;
         Ok(())
+    }
+    /// `workflow_dispatch`: the workflow must declare it, and the token needs the Actions write permission.
+    fn run_workflow(
+        &self,
+        repo: &str,
+        workflow: &str,
+        git_ref: &str,
+        inputs: &BTreeMap<String, String>,
+    ) -> Result<(), ForgeError> {
+        let path = format!("repos/{repo}/actions/workflows/{}/dispatches", encode(workflow));
+        match self.send_json("POST", &path, json!({"ref": git_ref, "inputs": inputs})) {
+            Ok(_) => Ok(()),
+            Err(GhError::Status(404, m)) => Err(ForgeError::Failed(format!(
+                "GitHub has no workflow {workflow} in {repo} (or PDT's GitHub login can't start it): {m}"
+            ))),
+            Err(e) => Err(e.into()),
+        }
+    }
+    fn release(&self, repo: &str, tag: Option<&str>) -> Result<Option<Release>, ForgeError> {
+        let path = match tag {
+            Some(t) => format!("repos/{repo}/releases/tags/{}", encode(t)),
+            None => format!("repos/{repo}/releases/latest"),
+        };
+        match self.get(&path) {
+            Ok(v) => Ok(parse_release(&v)?),
+            Err(GhError::Status(404, _)) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 }
 

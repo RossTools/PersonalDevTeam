@@ -1200,7 +1200,12 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
         trigger_event_id: None,
         trigger_node: start.clone(),
         trigger: trigger.clone(),
-        project_id: None,
+        // As a real run's: the event's project, else the workflow's.
+        project_id: trigger
+            .get("projectId")
+            .and_then(|p| p.as_str())
+            .map(String::from)
+            .or_else(|| wf.project_id.clone()),
         ticket_id: trigger.get("ticketId").and_then(|t| t.as_str()).map(String::from),
         attempt_id: None,
         parent_run_id: None,
