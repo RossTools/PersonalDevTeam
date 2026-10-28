@@ -121,10 +121,11 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     `jira.transition` (`ticket`: the project's done mapping). Nothing else is pushed to Jira.
   - **PDT bug triage** (PDT-154; on when installed only where a project's repository is `RELEASE_REPO`, PDT's own;
     off elsewhere): `github.issue.opened` on `RELEASE_REPO` where `labels` contains `from-pdt` (the bug reports other
-    PDT instances file, PDT-153) and `projectId` exists → an `agent` step (the PM, a new session in that project, no
-    ticket) that triages against the code, the tickets and the repository's issues, changing nothing itself, with
+    PDT instances file, PDT-153) and `projectId` exists → an `agent` step (the locked-down Triage persona, PDT-201, a
+    new session in that project, no ticket) that triages against the code and the tickets, changing nothing itself, with
     outcomes `accept` (`data` `{priority, labels}`), `duplicate` (`data` `{ticket, duplicateOf}`) and `reject` (the
-    summary is the reason, for the reporter). `accept` → `github.import` (the suggested priority and labels) → a
+    summary is the reason, for the reporter). `accept` → `github.import` (the suggested priority and labels but
+    `agentic`; an external Draft only the user moves to To do) → a
     `ticket.comment` with the triage notes → `github.comment` with the ticket key. `duplicate` → `github.close`
     `duplicate` of `duplicateOf` (the issue linked to the existing ticket, else the earliest one reporting the same
     bug; a comment names it and the ticket), or `not_planned` naming the ticket when there is none → a
@@ -232,8 +233,8 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `state.set` (`key`, `value`, `ifMissing`; or `add`: a counter, output `value`) | `out` |
 | `session.send` (`attempt` or `session`, `text`, `dedupe`, `timeline: none \| pr`, `reopen`) | `sent`, `untold`, `skipped` |
 | `ticket.finish` (`ticket`, `stopRunning`, `deleteBranch`) | `finished`, `blocked` |
-| `ticket.move` (`ticket`, `stage`), `ticket.comment` (`ticket`: its id or key, `body`) | `out` |
-| `ticket.create` (`project`, `title`, `description`, `stage` default Draft, `labels`; PDT-151; output `id`, `key`; not run again on its own) | `out` |
+| `ticket.move` (`ticket`, `stage`, `externalStage`: where an external ticket the user hasn't let in goes instead of To do or In progress; without it such a move fails, PDT-201), `ticket.comment` (`ticket`: its id or key, `body`) | `out` |
+| `ticket.create` (`project`, `title`, `description`, `stage` default Draft, `labels`; PDT-151; output `id`, `key`; not run again on its own; source `workflow`, or `external` in a run an outside event started, then never in To do) | `out` |
 | `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`, `again`, `pipelineStage`; Phase 7c) | `merged`, `queued`, `refused` |
 | `inbox.notice` (`attempt`, `text`, `key`, `title`; PDT-139): an Inbox item (kind and group `notice`, Unheard notices) on the attempt's ticket, once per attempt and key (`inbox_items.dedupe_key` `notice:<attempt>:<key>`, also once it closed); body `notice` (the trigger's notice kind), `key`, `text`, `pr`, `url`, `workflow`; the default title says what happened and that no agent session is open. Without `attempt` (PDT-154) it is the workflow's notice, in the run's project (and ticket, if any), once per workflow and key (`notice:workflow:<workflow>:<key>`), titled by `title` or the text's first line, open until dismissed | `added`, `skipped` |
 | `attempt.agent_working` (`attempt`, `known`; PDT-104): an agent step on the attempt now (bound, or waiting for a slot, in any other run) | `yes`, `no` |
@@ -530,8 +531,9 @@ Blank, Tell the agent when CI fails, Ask before finishing a merged ticket, Comme
 Pipeline (below), the Hermes jobs of 7e (New GitHub issues to Discord; Health watchdog: a URL on a schedule, Discord
 only on a change, the first check silent; Brief follow-ups and Email processing: a script on a schedule whose
 `{"message": …}` goes to Discord), Triage new GitHub issues (PDT-81: `github.issue.opened` → an `agent` step of the
-PM persona, `{{params.persona}}`, with outcomes `drafted` (it made a draft ticket in `{{params.project}}` with
-`create_ticket`, which asks first unless the project lets the PM act), `duplicate` and `ignored`, the last quiet), and
+locked-down Triage persona by default (PDT-201, [agents.md](agents.md)), `{{params.persona}}`, with outcomes `drafted` (it made a draft ticket in `{{params.project}}` with
+`create_ticket`, which asks first unless the project lets the PM act; an external Draft), `duplicate` and `ignored`,
+the last quiet), and
 the built-in workflows. A required text param with no default is checked as
 the reference itself. The user's are in `workflow_templates`.
 
@@ -852,8 +854,8 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
 versions of agent, model, instructions, permission mode (null: project override, else host default) and tools (pdt-mcp
 tools; empty: the default five). Every save (`PUT /api/personas/{id}`) is a new version; `PATCH` changes name, role,
 description, `archived`; `GET /versions`, `/versions/{v}`, `/diff?from=&to=` (the fields that changed and a unified
-diff). Built-ins Refiner, Coder, Reviewer, QA and PM (the project manager, [agents.md](agents.md#the-pm-pdt-81);
-permission mode `ask`, the PM's tools) (pdt-core `persona.rs`) are installed on the engine's first tick (and
+diff). Built-ins Refiner, Coder, Reviewer, QA, Triage (locked down for untrusted input, PDT-201, [agents.md](agents.md))
+and PM (the project manager, [agents.md](agents.md#the-pm-pdt-81); permission mode `ask`, the PM's tools) (pdt-core `persona.rs`) are installed on the engine's first tick (and
 on `GET /api/personas`) and can be archived, not deleted (`409 builtin_persona`); a persona a workflow names can't be
 deleted (`409 persona_in_use`).
 - **Newer templates** (PDT-100): `personas.builtin_template` records the template PDT applied last (until recorded,
@@ -872,7 +874,8 @@ deleted (`409 persona_in_use`).
 
 - **The Pipeline template** (`builtin:pipeline`, pdt-api `workflow/pipeline.rs`): instantiated per project (off until
   enabled); an untouched instance follows newer versions of it (Templates, above). `ticket.refine_requested` → Refine (agent `{{params.refiner}}`, new session, `pipelineStage: refine`):
-  `ready` → `ticket.move` to `{{params.afterRefine}}` (To do by default); `needs_clarification` → a gate (refine again
+  `ready` → `ticket.move` to `{{params.afterRefine}}` (To do by default; an external ticket the user hasn't let in goes
+  to Ready, `externalStage`, PDT-201); `needs_clarification` → a gate (refine again
   | stop). `attempt.started` → Code (Coder, `session: reuse`, `loopLimit: {{params.loopLimit}}`) → Review (own) → QA
   (own; the Code prompt asks for a changelog entry when the project keeps one, the Review prompt checks it, PDT-193); `changes_requested` and `fail` go back to Code (whose pass lists the Reviewer's or QA's findings first; a PR
   notice for the attempt that comes meanwhile goes in after them, and `submitted` needs the worktree committed and

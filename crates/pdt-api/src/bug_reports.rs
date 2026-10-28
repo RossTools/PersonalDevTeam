@@ -280,7 +280,10 @@ pub(crate) async fn file(
                 parent: None,
                 blocked_by_previous: None,
             };
-            let valid = input.validate()?;
+            let mut valid = input.validate()?;
+            if by_session.is_some() {
+                valid.source = pdt_core::ticket::TicketSource::Workflow;
+            }
             let id = uuid::Uuid::now_v7().to_string();
             let (by, text) = match by_session {
                 Some(s) => (crate::mcp::tools::agent_by(st, s).await, "Filed by an agent with report_bug."),

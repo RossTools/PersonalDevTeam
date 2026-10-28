@@ -13,7 +13,9 @@ use pdt_core::mcp::input_schema;
 use pdt_core::pm::AskTarget;
 use pdt_core::review::{CommentSide, NewReviewComment};
 use pdt_core::session::Session;
-use pdt_core::ticket::{Actor, AgentBy, By, EventKind, TicketEvent, valid_comment};
+use pdt_core::ticket::{
+    AGENTIC_LABEL, Actor, AgentBy, By, EventKind, TicketEvent, TicketSource, TicketStage, valid_comment,
+};
 use pdt_core::workflow::agent::OutcomeComment;
 use pdt_core::workflow::api::{Author, Scope};
 use pdt_core::workflow::doc::WorkflowDoc;
@@ -646,6 +648,10 @@ async fn pm_may_write(st: &AppState, id: &str) -> Result<(), String> {
 /// Runs one of PDT's own tools. Err is a message for the agent.
 pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String> {
     let st = cx.st;
+    // No secrets near untrusted input (PDT-201).
+    if matches!(name, "request_secret" | "run_with_secrets" | "write_secret_file") {
+        crate::untrusted::refuse_secrets(st, cx.session).await?;
+    }
     match name {
         "get_ticket" => {
             let a: GetTicket = args(a)?;
@@ -968,6 +974,21 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 Some(p) => Some(resolve_ticket(st, p, Some(&project)).await?),
                 None => None,
             };
+            let pm = crate::pm::is_pm_session(st, cx.session).await;
+            // A session reading outside input makes external tickets, as Drafts only (PDT-201).
+            let triaging = crate::untrusted::triaging(st, cx.session).await;
+            let agentic = a.labels.iter().flatten().any(|l| l.trim().eq_ignore_ascii_case(AGENTIC_LABEL));
+            if triaging && (a.stage.is_some_and(|s| s != TicketStage::Draft) || agentic) {
+                return Err(format!(
+                    "this session triages input from outside PDT, so its tickets are Drafts without the \
+                     {AGENTIC_LABEL} label: the user decides when they go ahead. Leave out stage and that label."
+                ));
+            }
+            let source = match (triaging, pm) {
+                (true, _) => TicketSource::External,
+                (false, true) => TicketSource::Pm,
+                (false, false) => TicketSource::Workflow,
+            };
             let input = pdt_core::ticket::NewTicket {
                 title: a.title,
                 description: a.description,
@@ -980,14 +1001,14 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 parent,
                 blocked_by_previous: None,
             };
-            let valid = input.validate().map_err(|e| api(e.into()))?;
+            let valid = pdt_core::ticket::ValidNewTicket { source, ..input.validate().map_err(|e| api(e.into()))? };
             let id = uuid::Uuid::now_v7().to_string();
             let t = st
                 .store
                 .create_ticket_by(&id, &project, &valid, agent_by(st, cx.session).await, now_ms())
                 .await
                 .map_err(|e| api(e.into()))?;
-            let by = match crate::pm::is_pm_session(st, cx.session).await {
+            let by = match pm {
                 true => "the PM".to_string(),
                 false => cx.session.persona.as_ref().map_or("an agent".into(), |p| format!("the {}", p.name)),
             };
@@ -996,10 +1017,12 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             Ok(json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage}))
         }
         "edit_ticket" => {
+            let raw = a.clone();
             let a: EditTicket = args(a)?;
             let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
             let current = st.store.get_ticket(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
-            if !crate::pm::is_pm_session(st, cx.session).await {
+            let pm = crate::pm::is_pm_session(st, cx.session).await;
+            if !pm {
                 let rewrites = a.title.as_deref().is_some_and(|t| t.trim() != current.summary.title)
                     || a.description.as_deref().is_some_and(|d| d.trim() != current.description.trim());
                 let edit = pdt_core::ticket::AgentEdit {
@@ -1033,7 +1056,12 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 return Err("give at least one field to change".into());
             }
             let since = now_ms();
-            let by = agent_by(st, cx.session).await;
+            let mut by = agent_by(st, cx.session).await;
+            // Letting an external ticket in (PDT-201): only the PM, with the user's yes to this very call (PDT always
+            // asks it, even where the project lets the PM act). Anyone else is refused by the store.
+            if pm && crate::untrusted::lets_in(&current.summary, &valid) {
+                by.confirmed = st.grants.take(&cx.session.id, name, &raw);
+            }
             let t = st
                 .store
                 .patch_ticket_by(&id, &valid, &by, since)

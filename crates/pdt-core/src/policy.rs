@@ -329,6 +329,8 @@ pub(crate) mod tests {
             agent: None,
             auto_start_at: None,
             external: vec![],
+            source: Default::default(),
+            admitted: false,
         }
     }
 

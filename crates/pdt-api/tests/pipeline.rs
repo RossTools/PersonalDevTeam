@@ -285,6 +285,95 @@ async fn todo(env: &Env, title: &str) -> String {
     t["id"].as_str().unwrap().to_string()
 }
 
+/// A Draft ticket made from outside input (PDT-201), as an issue import makes it.
+async fn external(env: &Env, title: &str) -> String {
+    let t = pdt_core::ticket::NewTicket { title: title.into(), ..Default::default() }.validate().unwrap();
+    let t = pdt_core::ticket::ValidNewTicket { source: pdt_core::ticket::TicketSource::External, ..t };
+    let id = uuid::Uuid::now_v7().to_string();
+    env.state.store.create_ticket(&id, &env.project, &t, 1).await.unwrap();
+    id
+}
+
+/// PDT-201: a refined external ticket waits in Ready (whatever afterRefine says) until the user moves it to To do.
+#[tokio::test]
+async fn a_refined_external_ticket_waits_in_ready_for_the_user() {
+    let env = setup().await;
+    pipeline(&env, json!({}), &[("refine", "ready")]).await;
+    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 2, "startDelaySeconds": 0})).await;
+    let t = external(&env, "From an issue").await;
+    let (s, v) = call(&env.app, "POST", &format!("/api/tickets/{t}/refine"), Some(json!({"by": "user"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let v = tick_until(&env, "the ticket refined", || async {
+        let v = get_ticket(&env, &t).await;
+        (v["stage"] == "ready" && v["pipelineStage"].is_null()).then_some(v)
+    })
+    .await;
+    assert_eq!(v["admitted"], false);
+    for _ in 0..5 {
+        pdt_api::run_workflows(&env.state).await;
+        pdt_api::schedule_tickets(&env.state).await;
+    }
+    assert_eq!(get_ticket(&env, &t).await["stage"], "ready", "auto-start never takes it");
+
+    // The user moves it to To do: let in, auto-start takes it.
+    let (s, v) = call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    tick_until(&env, "the ticket started", || async {
+        let v = get_ticket(&env, &t).await;
+        (v["stage"] == "in_progress").then_some(v)
+    })
+    .await;
+}
+
+/// PDT-201: a session on an external ticket the user hasn't let in gets no secrets.
+#[tokio::test]
+async fn a_session_on_an_external_ticket_gets_no_secrets_until_it_is_let_in() {
+    let env = setup().await;
+    // A Refine step run by the Coder persona, whose tools include the secret ones.
+    let wf = pipeline(&env, json!({"refiner": "Coder"}), &[]).await;
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{wf}"), None).await;
+    let mut doc = w["doc"].clone();
+    let run = r#"mcp: run_with_secrets {"command": "echo hi", "env": {}}"#;
+    for n in doc["nodes"].as_array_mut().unwrap() {
+        if n["id"] == "refine" {
+            n["config"]["prompt"] = json!(run);
+        }
+    }
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/workflows/{wf}"), Some(json!({"doc": doc, "note": "secrets"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let t = external(&env, "From an issue").await;
+    call(&env.app, "POST", &format!("/api/tickets/{t}/refine"), Some(json!({"by": "user"}))).await;
+    let answer = |n: usize| {
+        let env = &env;
+        let t = t.clone();
+        async move {
+            tick_until(env, "run_with_secrets answered", || async {
+                let v = get_ticket(env, &t).await;
+                let s = v["sessions"][0]["id"].as_str()?.to_string();
+                agent_says(env, &s)
+                    .await
+                    .into_iter()
+                    .filter(|m| m.starts_with("mcp run_with_secrets"))
+                    .nth(n)
+                    .map(|m| json!([s, m]))
+            })
+            .await
+        }
+    };
+    let said = answer(0).await;
+    let (session, said) = (said[0].as_str().unwrap().to_string(), said[1].as_str().unwrap().to_string());
+    assert!(said.contains("failed") && said.contains("no secrets"), "{said}");
+
+    // Let in: the same call runs.
+    call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
+    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": run}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let said = answer(1).await;
+    assert!(!said[1].as_str().unwrap().contains("no secrets"), "{said}");
+    call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
+}
+
 #[tokio::test]
 async fn auto_start_waits_until_a_ticket_has_been_quiet_for_the_start_delay() {
     let env = setup().await;

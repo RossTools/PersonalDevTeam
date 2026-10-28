@@ -18,3 +18,16 @@ describe('auto-start countdown', () => {
     expect(screen.queryByText(/Auto-starts in/)).not.toBeInTheDocument();
   });
 });
+
+describe('the source badge', () => {
+  it('says who made a ticket unless the user did, and holds an external one back until let in', () => {
+    const { rerender } = render(<TicketBadges ticket={summary(1, {})} />);
+    expect(screen.queryByText('External')).not.toBeInTheDocument();
+    rerender(<TicketBadges ticket={summary(1, { source: 'pm' })} />);
+    expect(screen.getByText('PM')).toBeInTheDocument();
+    rerender(<TicketBadges ticket={summary(1, { source: 'external', admitted: false })} />);
+    expect(screen.getByText('External')).toHaveAttribute('title', expect.stringContaining('only you can move it to To do'));
+    rerender(<TicketBadges ticket={summary(1, { source: 'external', admitted: true })} />);
+    expect(screen.getByText('External')).toHaveAttribute('title', expect.stringContaining('you let it in'));
+  });
+});

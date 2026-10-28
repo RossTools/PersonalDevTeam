@@ -104,6 +104,7 @@ impl From<TicketError> for ApiError {
             TicketError::InvalidParent(_) => Self::new(StatusCode::CONFLICT, "invalid_parent", e.to_string()),
             TicketError::PartsOpen { .. } => Self::new(StatusCode::CONFLICT, "parts_open", e.to_string()),
             TicketError::HasParts(_) => Self::new(StatusCode::CONFLICT, "ticket_has_parts", e.to_string()),
+            TicketError::Untrusted(_) => Self::new(StatusCode::FORBIDDEN, "untrusted_ticket", e.to_string()),
             TicketError::Store(s) => s.into(),
         }
     }

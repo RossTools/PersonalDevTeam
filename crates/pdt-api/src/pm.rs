@@ -415,6 +415,13 @@ pub(crate) async fn request_opened(
 ) {
     let Some(target) = st.registry().ask_target(tool, input) else { return };
     let Ok(Some(s)) = st.store.get_session(session_id).await else { return };
+    // Letting an external ticket in always asks the user (PDT-201): their yes is kept for the call it allows.
+    let short = tool.strip_prefix(&format!("mcp__{}__", pdt_core::mcp::SERVER_NAME)).unwrap_or(tool);
+    if crate::untrusted::needs_the_user(st, &s, short, input).await {
+        tracing::info!(session = %session_id, tool, "a call that lets an external ticket in: the user answers it");
+        st.grants.hold(session_id, request_id, short, input);
+        return;
+    }
     if !acts_without_asking(st, &target).await {
         return;
     }

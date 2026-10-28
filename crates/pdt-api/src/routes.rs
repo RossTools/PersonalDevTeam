@@ -71,6 +71,8 @@ pub struct AppState {
     pub(crate) pr_watch: crate::github::SharedPrWatch,
     /// The local forge's CI runs in this pdtd (PDT-178).
     pub(crate) local_ci: std::sync::Arc<crate::local_forge::LocalCi>,
+    /// The user's yes to the PM's calls that may let an external ticket in (PDT-201).
+    pub(crate) grants: std::sync::Arc<crate::untrusted::Grants>,
     /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
     /// instance's own port for any other, so a dev instance never takes over the stable one's mapping.
     pub remote_https_port: u16,
@@ -205,6 +207,7 @@ impl AppState {
             github_login: Default::default(),
             pr_watch: Default::default(),
             local_ci: Default::default(),
+            grants: Default::default(),
             remote_https_port: crate::remote::HOST_HTTPS_PORT,
             tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
             remote: Default::default(),

@@ -111,6 +111,12 @@ pub(crate) async fn session_tools(st: &AppState, s: &Session) -> Vec<String> {
     pdt_core::persona::DEFAULT_TOOLS.iter().map(|t| t.to_string()).collect()
 }
 
+/// Whether a session runs a locked-down persona (PDT-201).
+pub(crate) async fn locked_down(st: &AppState, s: &Session) -> bool {
+    let Some(p) = &s.persona else { return false };
+    matches!(st.store.get_persona(&p.id).await, Ok(Some(p)) if pdt_core::persona::locked_down(&p.role))
+}
+
 /// Whether a session can be given pdt-mcp: every agent conversation, and Claude and Codex terminals (Devin keeps MCP
 /// servers in a file of its own, spec §2.3).
 pub(crate) fn offered(s: &Session) -> bool {
@@ -139,6 +145,7 @@ pub(crate) async fn server_for(st: &AppState, s: &Session) -> Option<pdt_agents:
         },
         claude_config: None,
         pm: crate::pm::is_pm_session(st, s).await,
+        locked: locked_down(st, s).await,
     };
     if s.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude {
         let dir: PathBuf = st.data_dir.join("sessions").join(&s.id);

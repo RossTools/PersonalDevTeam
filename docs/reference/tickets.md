@@ -72,6 +72,39 @@ web/src/tickets. Review and merge are in [review.md](review.md).
   `refine_running` while one already refines it.
 - scripts/import-roadmap.mjs imported the old docs/ROADMAP.md as tickets PDT-1…17 (done once; kept for reference).
 
+## Sources and the Todo gate (PDT-201)
+
+Outside input (an issue, a bug report from another instance) can carry prompt injection, so a ticket made from it
+reaches agents only once the user says so.
+
+- **Source**: every ticket has `source` (`tickets.source`, pdt-core `TicketSource`): `user` (the API and UI; every
+  ticket made before PDT-201), `pm` (the PM's `create_ticket` in a conversation), `workflow` (`ticket.create` in a run,
+  an agent other than the PM, an agent's `report_bug`) or `external`: `github.import`, `jira.import` and the Jira
+  sensor (pdt-store `create_linked_ticket` always makes it `external`), `create_ticket` from a session that triages
+  (the Triage persona, or any agent step of a run an outside event started: pdt-core `workflow::events::UNTRUSTED_EVENTS`,
+  `github.issue.opened` and `webhook.received`), and `ticket.create` in such a run. Requests can't set it.
+  `admitted` (`tickets.admitted_at`) says the user let an external ticket in. The card and the ticket page show a
+  badge for every source but `user`: PM, Workflow, External (in the waiting tone until let in, its tooltip says only
+  the user can move it on).
+- **The gate** (pdt-core `external_gate`, applied by pdt-store to every create, patch, move and bulk change): an
+  external ticket not let in yet can't be made in, or moved to, To do or In progress, nor get the `agentic` label
+  (pdt-core `AGENTIC_LABEL`), except by the user (`Actor::User`: the UI and API, the bulk bar, Start) or a PM call the
+  user confirmed (`By.confirmed`). Such a change lets it in (`admitted_at`); from then on it moves as any other ticket.
+  Anything else is refused with `403 untrusted_ticket` (a workflow step fails with the reason; an agent's tool call
+  gets it): `ticket.move`, `ticket.create` with `stage: todo`, the Refiner, Coder, Reviewer, QA and triage sessions,
+  the PM without the user's yes. `ticket.move`'s `externalStage` sends such a ticket somewhere else instead (the
+  Pipeline's afterRefine: Ready). Auto-start never starts one (`403 untrusted_ticket` from `start_ticket(auto)`).
+  `github.import` drops an `agentic` label triage suggests.
+- **The PM's yes**: the PM's `edit_ticket` that would let an external ticket in always opens Claude's approval prompt,
+  even in a project that lets the PM act ([agents.md](agents.md) "The PM"): `pm::request_opened` holds it (pdt-api
+  `untrusted::Grants`) instead of answering for the user, and the user's Approve
+  (`POST /api/sessions/{id}/requests/{requestId}`) is good for that one call with those arguments for ten minutes.
+  Without it (a Codex PM, a session that bypasses permissions) the store refuses the edit.
+- **Secrets**: a session that triages, or whose ticket is external and not let in, is refused `request_secret`,
+  `run_with_secrets` and `write_secret_file` ([secrets.md](secrets.md)).
+- Not here yet: fencing untrusted text in prompts, limits on outside authors, rate limits and an audit of what reached
+  agents (PDT-202).
+
 ## Parts (PDT-38)
 
 A ticket that takes several PRs is a parent whose parts are child tickets (`tickets.parent_id`, one level; no ticket

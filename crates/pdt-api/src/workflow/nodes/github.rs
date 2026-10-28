@@ -5,7 +5,7 @@
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use pdt_core::github_issue::{CloseReason, GITHUB, issue_key, parse_issue, repo_id, valid_repo};
-use pdt_core::ticket::{NewTicket, Priority};
+use pdt_core::ticket::{AGENTIC_LABEL, Actor, NewTicket, Priority};
 use pdt_forge::{Forge, ForgeError, IssueDetail};
 use pdt_store::StoredExternalLink;
 use schemars::JsonSchema;
@@ -191,6 +191,8 @@ pub(crate) async fn import_issue(
         "" => format!("{repo}#{number}"),
         t => t.chars().take(pdt_core::ticket::MAX_TITLE).collect(),
     };
+    // An issue's ticket is external (PDT-201): triage can't hand it to agents with the `agentic` label.
+    let labels: Vec<String> = labels.into_iter().filter(|l| !l.eq_ignore_ascii_case(AGENTIC_LABEL)).collect();
     let mut new = NewTicket {
         title,
         description: Some(description(&d)),
@@ -214,7 +216,7 @@ pub(crate) async fn import_issue(
         url: d.issue.url.clone(),
     };
     let id = uuid::Uuid::now_v7().to_string();
-    match st.store.create_linked_ticket(&id, project_id, &valid, &link, now_ms()).await {
+    match st.store.create_linked_ticket(&id, project_id, &valid, &link, Actor::System, now_ms()).await {
         Ok(Ok(t)) => Ok(Imported {
             output: GithubImportOutput {
                 ticket_id: t.summary.id,

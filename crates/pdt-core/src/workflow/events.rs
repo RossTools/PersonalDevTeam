@@ -29,6 +29,14 @@ pub const WEBHOOK_RECEIVED: &str = "webhook.received";
 pub const AGENT_OUTCOME: &str = "agent.outcome";
 pub const TICKET_REFINE_REQUESTED: &str = "ticket.refine_requested";
 
+/// The event types that carry outside input (PDT-201): what someone outside PDT wrote. A run they start triages.
+pub const UNTRUSTED_EVENTS: &[&str] = &[GITHUB_ISSUE_OPENED, WEBHOOK_RECEIVED];
+
+/// Whether an event of type `kind` carries outside input.
+pub fn untrusted(kind: &str) -> bool {
+    UNTRUSTED_EVENTS.contains(&kind)
+}
+
 /// The CI provider of GitHub Actions runs.
 pub const GITHUB_ACTIONS: &str = "github_actions";
 

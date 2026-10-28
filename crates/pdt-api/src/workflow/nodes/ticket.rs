@@ -4,7 +4,7 @@
 use crate::finish::{FinishOutcome, FinishRequest};
 use crate::routes::now_ms;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
-use pdt_core::ticket::{Actor, TicketStage};
+use pdt_core::ticket::{Actor, TicketSource, TicketStage, ValidNewTicket};
 use pdt_core::workflow::tpl::Tpl;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -88,6 +88,11 @@ pub struct MoveConfig {
     pub ticket: String,
     #[ts(type = "string")]
     pub stage: Tpl<TicketStage>,
+    /// Where an external ticket the user hasn't let in goes instead of To do or In progress (PDT-201: only the user
+    /// puts it there). Without it, such a move fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
+    pub external_stage: Option<Tpl<TicketStage>>,
 }
 
 pub struct Move;
@@ -112,12 +117,21 @@ impl NodeKind for Move {
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: MoveConfig = parse(&input)?;
-            let stage = *c.stage.value().ok_or("stage is not a stage")?;
+            let mut stage = *c.stage.value().ok_or("stage is not a stage")?;
             if cx.dry_run {
                 return Ok(Outcome::next(
                     "out",
                     json!({"would": format!("move ticket {} to {}", c.ticket, stage.as_str())}),
                 ));
+            }
+            if let Some(instead) = &c.external_stage {
+                let instead = *instead.value().ok_or("externalStage is not a stage")?;
+                let cur = cx.st.store.get_ticket_summary(&c.ticket).await.map_err(|e| e.to_string())?;
+                if let Some(cur) = cur.filter(crate::untrusted::held_back)
+                    && pdt_core::ticket::boards(Some(cur.stage), Some(stage), &[], None)
+                {
+                    stage = instead;
+                }
             }
             let data = cx.by().data();
             let t = cx
@@ -255,9 +269,19 @@ impl NodeKind for Create {
                 parent: None,
                 blocked_by_previous: None,
             };
-            let valid = input.validate().map_err(|e| e.to_string())?;
+            // A run outside input started makes external tickets, kept out of To do (PDT-201).
+            let source = match crate::untrusted::untrusted_run(cx.st, cx.run).await {
+                true => TicketSource::External,
+                false => TicketSource::Workflow,
+            };
+            let valid = ValidNewTicket { source, ..input.validate().map_err(|e| e.to_string())? };
             let id = uuid::Uuid::now_v7().to_string();
-            let t = cx.st.store.create_ticket(&id, &c.project, &valid, now_ms()).await.map_err(|e| e.to_string())?;
+            let t = cx
+                .st
+                .store
+                .create_ticket_by(&id, &c.project, &valid, Actor::System, now_ms())
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(Outcome::next("out", json!({"id": t.summary.id, "key": t.summary.key})))
         })
     }

@@ -1,5 +1,5 @@
 //! PDT-154 end to end: bug reports from other PDT instances (issues labelled `from-pdt` on the release repository)
-//! come in through the built-in "PDT bug triage" (the PM's step, played by `fake-agent`), and a linked ticket that
+//! come in through the built-in "PDT bug triage" (the Triage persona's step, played by `fake-agent`), and a linked ticket that
 //! finishes closes its issue (the built-in "Done closes the GitHub issue"). GitHub is `FakeForge`.
 
 mod common;
@@ -102,7 +102,7 @@ async fn look(env: &Env, new: pdt_forge::Issue) {
     pdt_api::run_workflows(&env.state).await;
 }
 
-/// The next PM session a triage step started (one not in `seen`).
+/// The next Triage session a triage step started (one not in `seen`).
 async fn triage_session(env: &Env, seen: &mut HashSet<String>) -> String {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -110,7 +110,7 @@ async fn triage_session(env: &Env, seen: &mut HashSet<String>) -> String {
         let (_, list) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await;
         let found = list.as_array().unwrap().iter().find_map(|s| {
             let id = s["id"].as_str().unwrap().to_string();
-            (s["persona"]["name"] == "PM" && !seen.contains(&id)).then_some(id)
+            (s["persona"]["name"] == "Triage" && !seen.contains(&id)).then_some(id)
         });
         if let Some(id) = found {
             seen.insert(id.clone());
@@ -186,19 +186,20 @@ async fn bug_reports_are_triaged_into_tickets_duplicates_and_rejections() {
     look(&env, issue(1, "Old", &["from-pdt"])).await;
     let mut seen = HashSet::new();
 
-    // A report labelled from-pdt: the PM triages it and accepts it.
+    // A report labelled from-pdt: Triage accepts it (the agentic label it asks for is dropped: PDT-201).
     look(&env, issue(2, "Crash on start", &["from-pdt"])).await;
     let session = triage_session(&env, &mut seen).await;
     let prompt = first_prompt(&env, &session).await;
     assert!(prompt.contains("#2 on") && prompt.contains("\"Crash on start\"") && prompt.contains("Steps for #2."));
     assert!(prompt.contains("`accept`") && prompt.contains("duplicateOf"), "{prompt}");
-    let data = json!({"priority": "high", "labels": ["bug", "crash"]});
+    let data = json!({"priority": "high", "labels": ["bug", "crash", "agentic"]});
     let run = submit(&env, &wf, &session, "accept", "Panics in main.rs when the config is empty.", data).await;
     let t = tickets(&env).await;
     assert_eq!(t.len(), 1, "{t:?}");
     let ticket = &t[0];
     assert_eq!((ticket["title"].as_str(), ticket["stage"].as_str()), (Some("Crash on start"), Some("draft")));
     assert_eq!((ticket["priority"].as_str(), ticket["labels"].clone()), (Some("high"), json!(["bug", "crash"])));
+    assert_eq!((ticket["source"].as_str(), ticket["admitted"].as_bool()), (Some("external"), Some(false)));
     let key = format!("{}#2", RELEASE_REPO.to_ascii_lowercase());
     assert_eq!(ticket["external"], json!([{"system": "github", "key": key, "url": issue(2, "", &[]).url}]));
     let (id, tkey) = (ticket["id"].as_str().unwrap().to_string(), ticket["key"].as_str().unwrap().to_string());

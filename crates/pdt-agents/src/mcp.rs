@@ -23,6 +23,9 @@ pub struct McpServer {
     /// The PM (PDT-100): it researches, so Codex also gets live web search and network access in its sandbox (Claude
     /// and Devin have both already).
     pub pm: bool,
+    /// A locked-down session that reads untrusted input (PDT-201): Claude gets only its read tools and no MCP servers
+    /// but PDT's, Codex no web search and a read-only sandbox (the session's permission mode is Plan).
+    pub locked: bool,
     /// Claude's `--mcp-config` file (written by [`write_claude_config`]).
     pub claude_config: Option<PathBuf>,
 }
@@ -64,8 +67,17 @@ pub fn claude_args(m: &McpServer) -> Vec<String> {
         a.push("--allowedTools".into());
         a.push(m.tools.iter().map(|t| format!("mcp__{SERVER_NAME}__{t}")).collect::<Vec<_>>().join(","));
     }
+    if m.locked {
+        a.extend(["--tools".into(), CLAUDE_READ_TOOLS.into(), "--strict-mcp-config".into()]);
+    }
     a
 }
+
+/// The built-in tools a locked-down Claude session keeps (`--tools`): reading files, no shell, web or edits.
+pub const CLAUDE_READ_TOOLS: &str = "Read,Grep,Glob";
+
+/// A locked-down session's Codex settings: no web search, and a read-only sandbox.
+pub const CODEX_LOCKED_CONFIG: [(&str, &str); 2] = [("web_search", "\"disabled\""), ("sandbox_mode", "\"read-only\"")];
 
 /// A Codex app-server thread's `config` overrides. PDT's tools run without asking (as Claude's `--allowedTools`):
 /// a session only gets the tools its persona allows. The PM also gets [`CODEX_PM_CONFIG`].
@@ -73,12 +85,19 @@ pub fn codex_thread_config(m: &McpServer) -> Value {
     let server = json!({"url": m.url, "http_headers": {"Authorization": m.bearer()},
                         "default_tools_approval_mode": "approve"});
     let mut c = json!({format!("mcp_servers.{SERVER_NAME}"): server});
-    if m.pm {
-        for (k, v) in CODEX_PM_CONFIG {
-            c[k] = serde_json::from_str(v).unwrap_or(Value::Null);
-        }
+    for (k, v) in codex_extra(m) {
+        c[k] = serde_json::from_str(v).unwrap_or(Value::Null);
     }
     c
+}
+
+/// The Codex settings beyond pdt-mcp: the PM's, or a locked-down session's (which wins).
+fn codex_extra(m: &McpServer) -> &'static [(&'static str, &'static str)] {
+    match (m.locked, m.pm) {
+        (true, _) => &CODEX_LOCKED_CONFIG,
+        (false, true) => &CODEX_PM_CONFIG,
+        (false, false) => &[],
+    }
 }
 
 /// The PM's Codex settings (key, TOML/JSON value): live web search, and the network inside the workspace-write sandbox
@@ -97,7 +116,7 @@ pub fn codex_tui_args(m: &McpServer) -> Vec<String> {
         format!("mcp_servers.{SERVER_NAME}.default_tools_approval_mode=\"approve\""),
     ]
     .into_iter()
-    .chain(CODEX_PM_CONFIG.iter().filter(|_| m.pm).flat_map(|(k, v)| ["-c".into(), format!("{k}={v}")]))
+    .chain(codex_extra(m).iter().flat_map(|(k, v)| ["-c".into(), format!("{k}={v}")]))
     .collect()
 }
 
@@ -127,6 +146,7 @@ mod tests {
             tools: vec!["get_ticket".into(), "submit_outcome".into()],
             claude_config: dir.map(|d| d.join(CLAUDE_CONFIG_FILE)),
             pm: false,
+            locked: false,
         }
     }
 
@@ -150,6 +170,19 @@ mod tests {
         assert!(claude_args(&server(None)).is_empty());
         let pm = McpServer { pm: true, ..server(Some(dir.path())) };
         assert_eq!(claude_args(&pm), a, "the PM keeps Claude's own tools");
+        // Triage (PDT-201): Claude's read tools only, and no MCP servers but PDT's.
+        let locked = McpServer { locked: true, ..server(Some(dir.path())) };
+        assert_eq!(claude_args(&locked)[4..], ["--tools", "Read,Grep,Glob", "--strict-mcp-config"]);
+    }
+
+    #[test]
+    fn a_locked_down_codex_session_gets_no_web_and_a_read_only_sandbox() {
+        let m = McpServer { locked: true, pm: true, ..server(None) };
+        let c = codex_thread_config(&m);
+        assert_eq!((c["web_search"].as_str(), c["sandbox_mode"].as_str()), (Some("disabled"), Some("read-only")));
+        assert!(c.get("sandbox_workspace_write.network_access").is_none(), "not the PM's network");
+        let a = codex_tui_args(&m);
+        assert_eq!(a[6..], ["-c", "web_search=\"disabled\"", "-c", "sandbox_mode=\"read-only\""]);
     }
 
     #[test]

@@ -412,7 +412,7 @@ pub(crate) async fn import_issue(
         url: issue.url.clone(),
     };
     let id = uuid::Uuid::now_v7().to_string();
-    match st.store.create_linked_ticket(&id, project_id, &t, &link, now_ms()).await {
+    match st.store.create_linked_ticket(&id, project_id, &t, &link, pdt_core::ticket::Actor::System, now_ms()).await {
         Ok(Ok(t)) => Ok(Import::Imported(t.summary.id)),
         Ok(Err(other)) => Ok(Import::Exists(other)),
         Err(e) => Err(failed(e.to_string())),
