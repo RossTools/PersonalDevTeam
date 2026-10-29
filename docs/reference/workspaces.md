@@ -25,7 +25,8 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   expands it to show each view's name beside its icon (badges beside the names, no tooltips) and collapses it again.
   The state is per browser (localStorage `pdt.rail.expanded`). Above the toggle, a System | Light | Dark theme switch
   (PDT-206; icons, stacked while the rail is collapsed, a row when expanded). The theme is per browser (localStorage
-  `pdt.theme`, the same setting as the command palette's Theme commands).
+  `pdt.theme`, the same setting as the command palette's Theme commands). Open terminals (runs, sessions, the shell
+  panel) recolour as soon as the theme or, on System, the OS colour scheme changes (PDT-222).
 - On phones (< 768px, PDT-112) there is no rail: a top bar has ☰ on a view's top-level screen and ← (Back, or up to
   the view when the screen was opened from a link) on a detail screen, the title, 🔔 Needs you (the Inbox count, opens
   the Inbox), ⌕ (the command palette) and ⋯ (the screen's actions: the shell's, plus any a screen adds with

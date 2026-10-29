@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { terminalTheme } from './theme';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { onThemeChange, terminalTheme } from './theme';
 
 const ANSI = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'] as const;
 
-afterEach(() => document.documentElement.removeAttribute('style'));
+afterEach(() => {
+  document.documentElement.removeAttribute('style');
+  document.documentElement.removeAttribute('data-theme');
+  vi.unstubAllGlobals();
+});
 
 describe('terminalTheme', () => {
   it('maps the base and all 16 ANSI colors to tokens', () => {
@@ -20,5 +24,28 @@ describe('terminalTheme', () => {
       expect(t[n]).toBe(`#0000${i}a`);
       expect(t[`bright${n[0].toUpperCase()}${n.slice(1)}`]).toBe(`#0000${i}b`);
     });
+  });
+});
+
+describe('onThemeChange', () => {
+  it('fires on a theme choice or an OS colour scheme change, until unsubscribed', async () => {
+    const listeners: (() => void)[] = [];
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      media,
+      matches: false,
+      addEventListener: (_: string, cb: () => void) => listeners.push(cb),
+      removeEventListener: (_: string, cb: () => void) => listeners.splice(listeners.indexOf(cb), 1),
+    }));
+    const onChange = vi.fn();
+    const stop = onThemeChange(onChange);
+    document.documentElement.setAttribute('data-theme', 'dark');
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    listeners.forEach((cb) => cb());
+    expect(onChange).toHaveBeenCalledTimes(2);
+    stop();
+    expect(listeners).toEqual([]);
+    document.documentElement.removeAttribute('data-theme');
+    await Promise.resolve();
+    expect(onChange).toHaveBeenCalledTimes(2);
   });
 });

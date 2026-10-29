@@ -152,6 +152,19 @@ describe('TerminalView', () => {
     expect(h.term!.disposed).toBe(true);
   });
 
+  it('recolours an open terminal when the theme changes', async () => {
+    const root = document.documentElement;
+    root.style.setProperty('--pdt-bg', '#ffffff');
+    const { unmount } = render(<TerminalView sessionId="s1" />);
+    expect((h.term!.opts.theme as { background: string }).background).toBe('#ffffff');
+    root.style.setProperty('--pdt-bg', '#000000');
+    root.setAttribute('data-theme', 'dark');
+    await waitFor(() => expect((h.term!.options.theme as { background: string }).background).toBe('#000000'));
+    unmount();
+    root.removeAttribute('data-theme');
+    root.removeAttribute('style');
+  });
+
   it('does not send answers to replayed terminal queries', () => {
     render(<TerminalView sessionId="s1" />);
     h.sock!.handlers.onReset();

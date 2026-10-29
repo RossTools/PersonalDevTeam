@@ -29,3 +29,19 @@ export function terminalTheme(): ITheme {
     brightWhite: cssVar('--pdt-term-bright-white'),
   };
 }
+
+/**
+ * Calls `onChange` whenever the colours `terminalTheme()` reads may have changed: the theme choice (`<html
+ * data-theme>`) or, while on System, the OS colour scheme. Both have applied by the time it is called. Returns the
+ * unsubscribe.
+ */
+export function onThemeChange(onChange: () => void): () => void {
+  const observer = typeof MutationObserver === 'undefined' ? null : new MutationObserver(onChange);
+  observer?.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  const scheme = typeof matchMedia === 'undefined' ? null : matchMedia('(prefers-color-scheme: dark)');
+  scheme?.addEventListener?.('change', onChange);
+  return () => {
+    observer?.disconnect();
+    scheme?.removeEventListener?.('change', onChange);
+  };
+}
