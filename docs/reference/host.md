@@ -133,6 +133,12 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   `X.Y.Z-exp.N` sorts after `X.Y.Z-exp.M` for M below N and before `X.Y.Z` itself). A check reads the newest release
   on the host's update channel (below) and offers it only when it is newer than the running version: an older or
   equal release is never installed (no downgrade).
+- "Check for updates" (PDT-223; Settings → This host → Updates, `POST /api/host/update/check`) answers the status
+  plus `result`, what this check found: `upToDate { version }` (the installed one), `available { version }`, or
+  `cannotCheck { reason, message }` with `reason` one of `disabled`, `noToken`, `tokenRejected`, `keychain`,
+  `network`, `github`, `unknownVersion` or `busy` (an update downloading or installing). The Version row says it
+  ("You're up to date (vX)", "vY is available…", "Couldn't check: …", with a link to the token field for `noToken`
+  and `tokenRejected`) until another check answers. The background check says nothing.
 - Update channel (PDT-210; Host settings → Updates → Update channel, `updateChannel` in host settings, `stable` by
   default):
   - `stable` reads `releases/latest`, which is never a draft or pre-release (a tag `vX.Y.Z-exp.N` there is refused).

@@ -152,6 +152,56 @@ pub struct UpdateStatus {
     pub release_repo: ReleaseRepo,
 }
 
+/// What a check found (PDT-223): the answer to "Check for updates", so the button never seems to do nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum CheckResult {
+    /// The installed version (`version`) is the newest on this host's channel.
+    UpToDate { version: String },
+    /// `version` is newer than the installed one.
+    Available { version: String },
+    /// The check did not ask GitHub, or GitHub did not answer: `message` says why, in words for the user.
+    CannotCheck { reason: CannotCheckReason, message: String },
+}
+
+/// Why a check could not tell whether there is an update (each points at what to fix).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CannotCheckReason {
+    /// Updates are off on this pdtd (`disabled_reason`).
+    Disabled,
+    /// No update token is saved.
+    NoToken,
+    /// GitHub rejected the saved token (expired or revoked).
+    TokenRejected,
+    /// The keychain could not be read.
+    Keychain,
+    /// GitHub could not be reached.
+    Network,
+    /// GitHub answered with an error (no release, the repository is hidden from the token, a server error).
+    Github,
+    /// This build's version is not X.Y.Z, so nothing is compared with it.
+    UnknownVersion,
+    /// An update is downloading or installing.
+    Busy,
+}
+
+fn cannot(reason: CannotCheckReason, message: impl Into<String>) -> CheckResult {
+    CheckResult::CannotCheck { reason, message: message.into() }
+}
+
+/// `POST /api/host/update/check`'s answer: the status, and what this check found.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CheckResponse {
+    #[serde(flatten)]
+    pub status: UpdateStatus,
+    pub result: CheckResult,
+}
+
 /// Why an unsupervised pdtd never updates.
 pub const UNSUPERVISED_REASON: &str = "updates are installed by pdt-host, and this pdtd is not running under it";
 
@@ -354,43 +404,54 @@ pub(crate) async fn refresh_settings(st: &AppState) -> UpdatePolicy {
     p
 }
 
-/// Asks GitHub for the latest release (only with a token). Never fails: problems land in `error` / `token`. Runs in
-/// its own task, so a dropped request cannot leave `checking` behind.
-pub(crate) async fn check(st: &AppState) -> UpdateStatus {
+/// Asks GitHub for the latest release (only with a token). Never fails: problems land in `error` / `token`, and the
+/// result says what the check found. Runs in its own task, so a dropped request cannot leave `checking` behind.
+pub(crate) async fn check(st: &AppState) -> (UpdateStatus, CheckResult) {
     let task = tokio::spawn({
         let st = st.clone();
         async move { check_now(&st).await }
     });
-    task.await.unwrap_or_else(|_| st.update.snapshot())
+    task.await.unwrap_or_else(|e| {
+        let s = st.update.snapshot();
+        (s, cannot(CannotCheckReason::Github, format!("the check failed: {e}")))
+    })
 }
 
-async fn check_now(st: &AppState) -> UpdateStatus {
+async fn check_now(st: &AppState) -> (UpdateStatus, CheckResult) {
     let svc = &st.update;
     refresh_settings(st).await;
     if !svc.enabled {
-        return svc.snapshot();
+        let s = svc.snapshot();
+        let why = s.disabled_reason.clone().unwrap_or_else(|| "updates are off on this host".into());
+        return (s, cannot(CannotCheckReason::Disabled, why));
     }
     let tok = match read_token(st).await {
         Ok(Some(t)) => t,
         Ok(None) => {
-            return svc.edit(|s| {
+            let s = svc.edit(|s| {
                 s.token = TokenState::Missing;
                 if !in_progress(s.state) {
                     s.state = UpdateState::Idle;
                     s.error = None;
                 }
             });
+            return (s, cannot(CannotCheckReason::NoToken, "no GitHub token is saved, so PDT can't read its releases"));
         }
-        Err(e) => return svc.edit(|s| s.error = Some(e.message().to_string())),
+        Err(e) => {
+            let msg = e.message().to_string();
+            return (svc.edit(|s| s.error = Some(msg.clone())), cannot(CannotCheckReason::Keychain, msg));
+        }
     };
     let Some(current) = parse_version(&svc.current) else {
-        return svc.edit(|s| {
-            s.error = Some(format!("this build's version {:?} is not X.Y.Z, so no update is offered", svc.current));
+        let msg = format!("this build's version {:?} is not X.Y.Z, so no update is offered", svc.current);
+        let s = svc.edit(|s| {
+            s.error = Some(msg.clone());
             s.latest = None;
             if !in_progress(s.state) {
                 s.state = UpdateState::Idle;
             }
         });
+        return (s, cannot(CannotCheckReason::UnknownVersion, msg));
     };
     // Claimed under the lock: never over a download or install in progress.
     let claimed = svc.edit(|s| {
@@ -399,7 +460,7 @@ async fn check_now(st: &AppState) -> UpdateStatus {
         }
     });
     if claimed.state != UpdateState::Checking {
-        return claimed;
+        return (claimed, cannot(CannotCheckReason::Busy, "an update is already downloading or installing"));
     }
     // The channel the settings named when this check started (refresh_settings above).
     let channel = claimed.channel;
@@ -416,14 +477,25 @@ async fn check_now(st: &AppState) -> UpdateStatus {
     s.release_repo.moved_to = svc.client.moved_to();
     // An install that started while GitHub was answering keeps its state and release.
     let busy = in_progress(s.state);
-    match result {
+    let found = match result {
         Ok(l) => {
             s.token = token_state(true, l.token_expires_at, false, now);
             if !busy {
                 set_found(&mut s, svc, &l.release, &current, changes, releases);
             }
+            let version = l.release.version.to_string();
+            if l.release.version.is_newer_than(&current) {
+                CheckResult::Available { version }
+            } else {
+                CheckResult::UpToDate { version: current.to_string() }
+            }
         }
         Err(e) => {
+            let reason = match e {
+                UpdateError::Unauthorized => CannotCheckReason::TokenRejected,
+                UpdateError::Network(_) => CannotCheckReason::Network,
+                _ => CannotCheckReason::Github,
+            };
             if e == UpdateError::Unauthorized {
                 s.token = TokenState::Expired;
             }
@@ -431,9 +503,10 @@ async fn check_now(st: &AppState) -> UpdateStatus {
             if !busy {
                 s.state = resting(&s);
             }
+            cannot(reason, e.to_string())
         }
-    }
-    s.clone()
+    };
+    (s.clone(), found)
 }
 
 /// The commits from the installed version to `release`, from the cache when the pair was compared before. None when
@@ -775,7 +848,7 @@ pub async fn run_update_loop(st: AppState) {
         let policy = refresh_settings(&st).await;
         if due && policy != UpdatePolicy::Manual {
             last_check = Some(tokio::time::Instant::now());
-            let s = check(&st).await;
+            let (s, _) = check(&st).await;
             let failed_before = s.latest.as_ref().is_some_and(|l| skipped(&st.data_dir, &l.version));
             if failed_before {
                 tracing::info!("not installing automatically: the last attempt at this version failed");
@@ -826,8 +899,10 @@ pub(crate) async fn get_status(State(st): State<AppState>) -> Json<UpdateStatus>
     Json(link_tickets(&st, st.update.snapshot()).await)
 }
 
-pub(crate) async fn post_check(State(st): State<AppState>) -> Json<UpdateStatus> {
-    Json(link_tickets(&st, check(&st).await).await)
+/// A check the user asked for: the status, and what it found (up to date, an update, or why it could not tell).
+pub(crate) async fn post_check(State(st): State<AppState>) -> Json<CheckResponse> {
+    let (status, result) = check(&st).await;
+    Json(CheckResponse { status: link_tickets(&st, status).await, result })
 }
 
 #[derive(Deserialize)]
@@ -877,7 +952,7 @@ pub(crate) async fn put_token(
     };
     write_token(&st, Some(tok)).await?;
     st.update.edit(|s| s.token = token_state(true, expires_at, false, now_ms()));
-    Ok(Json(link_tickets(&st, check(&st).await).await))
+    Ok(Json(link_tickets(&st, check(&st).await.0).await))
 }
 
 pub(crate) async fn delete_token(State(st): State<AppState>) -> Result<StatusCode, ApiError> {

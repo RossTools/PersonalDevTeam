@@ -917,3 +917,66 @@ async fn the_environment_override_wins_over_the_setting() {
     assert_eq!(v["releaseRepo"], json!({"repo": "o/r", "id": null, "movedTo": null, "overriddenBy": "environment"}));
     assert_eq!(v["latest"]["version"], "0.1.7", "{v}");
 }
+
+#[tokio::test]
+async fn a_check_says_the_host_is_up_to_date() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, _) = setup_with(tmp.path(), true, "0.2.0").await;
+    store_token(&state);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["result"], json!({"kind": "upToDate", "version": "0.2.0"}), "{v}");
+    assert_eq!(v["state"], "idle", "the status is still all there");
+}
+
+#[tokio::test]
+async fn a_check_says_which_update_is_available() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, _) = setup(tmp.path(), true).await;
+    store_token(&state);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["result"], json!({"kind": "available", "version": "0.1.7"}), "{v}");
+    assert_eq!(v["latest"]["version"], "0.1.7");
+}
+
+#[tokio::test]
+async fn a_check_without_a_token_says_so() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, _, fake) = setup(tmp.path(), true).await;
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!((v["result"]["kind"].as_str(), v["result"]["reason"].as_str()), (Some("cannotCheck"), Some("noToken")));
+    assert!(v["result"]["message"].as_str().unwrap().contains("token"), "{v}");
+    assert_eq!(fake.hits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_check_with_a_rejected_token_says_so() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, _) = setup(tmp.path(), true).await;
+    state.secrets.set(&state.update_token_account, "revoked").unwrap();
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["result"]["reason"], "tokenRejected", "{v}");
+    assert_eq!(v["token"]["state"], "expired");
+}
+
+#[tokio::test]
+async fn a_check_that_cannot_reach_github_says_so() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A port nothing listens on: bound, then closed.
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap().port();
+    let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+    let mut state = pdt_api::AppState::new(store, data(tmp.path()));
+    state.update = Arc::new(pdt_api::UpdateService::new(&format!("http://127.0.0.1:{closed}"), "o/r", true, "0.1.0"));
+    let app = pdt_api::router(state.clone(), None);
+    store_token(&state);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["result"]["reason"], "network", "{v}");
+    assert!(v["result"]["message"].as_str().unwrap().contains("could not reach GitHub"), "{v}");
+}
+
+#[tokio::test]
+async fn a_check_with_updates_off_says_why() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, _, _) = setup(tmp.path(), false).await;
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["result"]["reason"], "disabled", "{v}");
+}
