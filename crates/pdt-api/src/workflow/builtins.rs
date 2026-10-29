@@ -6,6 +6,7 @@ use crate::routes::{AppState, now_ms};
 use pdt_core::brand::RELEASE_REPO;
 use pdt_core::workflow::api::{Author, Scope, Source, Workflow};
 use pdt_core::workflow::doc::WorkflowDoc;
+use pdt_core::workflow::template::Category;
 use serde_json::json;
 
 #[derive(Clone, Copy)]
@@ -13,6 +14,8 @@ pub struct Builtin {
     pub id: &'static str,
     /// Enabled when first installed.
     pub enabled: bool,
+    /// Its group in the New workflow gallery (PDT-229).
+    pub category: Category,
     pub doc: fn() -> WorkflowDoc,
 }
 
@@ -27,18 +30,18 @@ pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
 pub const CUT_RELEASE: &str = "cut-release";
 
 pub const BUILTINS: &[Builtin] = &[
-    Builtin { id: PR_NOTICES, enabled: true, doc: pr_notices },
-    Builtin { id: FINISH_MERGED, enabled: true, doc: finish_merged },
-    Builtin { id: LATE_COMMITS, enabled: true, doc: late_commits },
-    Builtin { id: COMMENTS_TO_AGENT, enabled: true, doc: comments_to_agent },
-    Builtin { id: BASE_MOVED, enabled: false, doc: base_moved },
-    Builtin { id: PR_FEEDBACK, enabled: false, doc: pr_feedback },
+    Builtin { id: PR_NOTICES, enabled: true, category: Category::CiPr, doc: pr_notices },
+    Builtin { id: FINISH_MERGED, enabled: true, category: Category::Tickets, doc: finish_merged },
+    Builtin { id: LATE_COMMITS, enabled: true, category: Category::CiPr, doc: late_commits },
+    Builtin { id: COMMENTS_TO_AGENT, enabled: true, category: Category::Tickets, doc: comments_to_agent },
+    Builtin { id: BASE_MOVED, enabled: false, category: Category::CiPr, doc: base_moved },
+    Builtin { id: PR_FEEDBACK, enabled: false, category: Category::CiPr, doc: pr_feedback },
     // Installed (enabled) and offered as a template only on a host with a project whose repository is the release
     // repository, PDT's own (PDT-226).
-    Builtin { id: PDT_BUG_TRIAGE, enabled: true, doc: pdt_bug_triage },
-    Builtin { id: GITHUB_ISSUE_DONE, enabled: true, doc: github_issue_done },
+    Builtin { id: PDT_BUG_TRIAGE, enabled: true, category: Category::Issues, doc: pdt_bug_triage },
+    Builtin { id: GITHUB_ISSUE_DONE, enabled: true, category: Category::Issues, doc: github_issue_done },
     // Off until the user turns it on; the PM starts it (Run now) when the user asks for a release.
-    Builtin { id: CUT_RELEASE, enabled: false, doc: cut_release },
+    Builtin { id: CUT_RELEASE, enabled: false, category: Category::Releases, doc: cut_release },
 ];
 
 /// PDT's built-ins, then the enabled integrations' ([`crate::integrations::Integration::builtin_workflows`]).

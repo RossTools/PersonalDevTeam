@@ -725,3 +725,36 @@ async fn comments_a_search_cut_short_are_read_from_the_issue() {
     assert_eq!(c.len(), 1, "{c:?}");
     assert_eq!(c[0]["payload"]["body"], "Latest");
 }
+
+/// PDT-229: the New workflow gallery lists Jira's built-ins with Jira turned off too, faded (its plugin off, not
+/// usable), and with it on, as built-in workflows marked added once installed; each names its trigger and steps.
+#[tokio::test]
+async fn the_gallery_lists_jiras_built_ins_whether_it_is_on_or_off() {
+    let env = setup().await;
+    let entry = |list: &Value, id: &str| {
+        list.as_array().unwrap().iter().find(|t| t["id"] == format!("builtin:{id}")).cloned().expect(id)
+    };
+    let (_, v) = call(&env.app, "PUT", "/api/integrations", Some(json!({"enabled": []}))).await;
+    assert!(v.is_array(), "{v}");
+    let (s, list) = call(&env.app, "GET", "/api/workflow-templates", None).await;
+    assert_eq!(s, StatusCode::OK, "{list}");
+    let done = entry(&list, "jira-done");
+    assert_eq!(done["plugin"], json!({"id": "jira", "label": "Jira", "on": false}), "{done}");
+    assert_eq!((done["builtinWorkflow"].as_bool(), done["added"].as_bool()), (Some(true), Some(false)));
+    assert_eq!(done["category"], "tickets");
+    assert!(
+        !done["triggers"].as_array().unwrap().is_empty() && !done["steps"].as_array().unwrap().is_empty(),
+        "{done}"
+    );
+    let (s, e) = call(&env.app, "POST", "/api/workflow-templates/builtin:jira-done/instantiate", Some(json!({}))).await;
+    assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("integration_disabled")), "{e}");
+
+    let (s, _) = call(&env.app, "PUT", "/api/integrations", Some(json!({"enabled": ["jira"]}))).await;
+    assert_eq!(s, StatusCode::OK);
+    pdt_api::run_workflows(&env.state).await;
+    let (_, list) = call(&env.app, "GET", "/api/workflow-templates", None).await;
+    let done = entry(&list, "jira-done");
+    assert_eq!((done["plugin"]["on"].as_bool(), done["added"].as_bool()), (Some(true), Some(true)), "{done}");
+    assert_eq!(entry(&list, "jira-import")["category"], "issues");
+    assert_eq!(list.as_array().unwrap().iter().filter(|t| t["id"] == "builtin:jira-done").count(), 1, "once");
+}
