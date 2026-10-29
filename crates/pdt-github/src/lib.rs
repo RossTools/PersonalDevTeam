@@ -11,7 +11,7 @@ use pdt_core::brand::SHORT_NAME;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
 pub use pdt_forge::{
     Capabilities, ChangeComment, ChangeRequest, ChangeReview, CloseReason, Forge, ForgeError, ForgeNotes, Issue,
-    IssueDetail, JobLog, MergeSettings, MergeStrategy, NewChangeRequest, OpenedChangeRequest, Release,
+    IssueDetail, JobLog, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest, Release,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -844,6 +844,14 @@ impl Forge for GithubApi {
     }
     fn issue_comments(&self, repo: &str, number: u64) -> Result<Vec<ChangeComment>, ForgeError> {
         Ok(parse_comments(&self.get_pages(&format!("repos/{repo}/issues/{number}/comments?per_page=100"))?, false))
+    }
+    /// Labels the login can't set (no push access) or the repository lacks are dropped by GitHub, not refused.
+    fn create_issue(&self, repo: &str, new: &NewIssue) -> Result<Issue, ForgeError> {
+        let mut body = json!({"title": new.title, "body": comment_body(&new.body)});
+        if !new.labels.is_empty() {
+            body["labels"] = json!(new.labels);
+        }
+        Ok(parse_issue(&self.send_json("POST", &format!("repos/{repo}/issues"), body)?)?.issue)
     }
     fn comment_issue(&self, repo: &str, number: u64, body: &str) -> Result<String, ForgeError> {
         Ok(self.post_comment(&format!("repos/{repo}/issues/{number}/comments"), body)?)

@@ -11,8 +11,9 @@ use ts_rs::TS;
 /// The pdt-mcp tools a session gets when it runs no persona (spec §2.2). The secret tools (PDT-158) are here so any
 /// agent can use the secrets the user lets it; each secret says which projects and personas may. The forge tools
 /// (PDT-177) read the session's pull request, CI and issues and comment on them, open its pull request and ask for its
-/// merge again after a merge queue drop (PDT-185), instead of a forge's CLI.
-pub const DEFAULT_TOOLS: [&str; 17] = [
+/// merge again after a merge queue drop (PDT-185), instead of a forge's CLI; `issue_create` (PDT-221) files an issue,
+/// asking the user first.
+pub const DEFAULT_TOOLS: [&str; 18] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -30,6 +31,7 @@ pub const DEFAULT_TOOLS: [&str; 17] = [
     "ci_failed_logs",
     "issue_view",
     "issue_comment",
+    "issue_create",
 ];
 
 /// One pdt-mcp tool as the Personas page lists it (`GET /api/personas/tools`).

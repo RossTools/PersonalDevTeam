@@ -34,7 +34,7 @@ import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Workspace } from '../api/gen/Workspace';
 import { looksLikeKey } from '../tickets/model';
-import { useTicketSearch } from '../tickets/queries';
+import { useProjectForge, useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
 import { useBacklog } from '../tickets/useBacklog';
 import { UpdateBanner } from '../host/UpdateBanner';
@@ -127,6 +127,7 @@ function useAttentionTitle(attention: Attention) {
 // The ticket screens (and the Markdown libraries they use) load the first time they're shown.
 const TicketsView = lazy(() => import('../tickets/TicketsView').then((m) => ({ default: m.TicketsView })));
 const NewWorkflowDialog = lazy(() => import('../workflows/NewWorkflowDialog').then((m) => ({ default: m.NewWorkflowDialog })));
+const CreateIssueDialog = lazy(() => import('../tickets/CreateIssueDialog').then((m) => ({ default: m.CreateIssueDialog })));
 const NewTicketDialog = lazy(() => import('../tickets/NewTicketDialog').then((m) => ({ default: m.NewTicketDialog })));
 const TicketView = lazy(() => import('../tickets/TicketView').then((m) => ({ default: m.TicketView })));
 const ChangesView = lazy(() => import('../review/ChangesView').then((m) => ({ default: m.ChangesView })));
@@ -184,6 +185,7 @@ export function AppShell() {
   const [paletteQuery, setPaletteQuery] = useState('');
   // The New ticket form: its project and the title typed so far.
   const [newTicket, setNewTicket] = useState<{ projectId: string | null; title: string } | null>(null);
+  const [newIssue, setNewIssue] = useState<{ projectId: string; repo: string } | null>(null);
   // The Start dialog: the ticket, and where its tabs open (undefined: the end of the project workspace).
   const [starting, setStarting] = useState<{ ticketId: string; placement?: TabPlacement } | null>(null);
   // Phones: the drawer (☰), and the sheet holding the PM's or the Tickets' list.
@@ -533,6 +535,8 @@ export function AppShell() {
     : ws.workspace?.projectId ? { projectId: ws.workspace.projectId, worktreeId: null } : null;
   // New tickets go in the backlog's project in the Tickets view, else the current workspace's project.
   const ticketProjectId = view === 'tickets' ? backlog.projectId : place?.projectId ?? backlog.projectId;
+  const issueForge = useProjectForge(ticketProjectId ?? null).data;
+  const issueRepo = issueForge?.issues ? issueForge.repo : null;
   const handlers: PaletteHandlers = {
     selectWorkspace: (id) => ws.selectWorkspace(id),
     selectTab: (t) => ws.selectTab(t),
@@ -569,6 +573,7 @@ export function AppShell() {
     showPm: () => setView('pm'),
     showNotes: () => setView('notes'),
     newTicket: () => setNewTicket({ projectId: ticketProjectId, title: '' }),
+    newIssue: () => { if (ticketProjectId && issueRepo) setNewIssue({ projectId: ticketProjectId, repo: issueRepo }); },
     openTicket,
     startTicket: (t, here) => startTicket(t, { here }),
     startNextPart: (t) => void runAction(() => startNextPart(startTicket, t)),
@@ -580,6 +585,7 @@ export function AppShell() {
         workspaces: ws.workspaces, infos: [...ws.allInfos, ...ws.ticketInfos], projects: ws.projects, tab: ws.tab, place, theme, handlers,
         tickets: looksLikeKey(keyQuery) ? ticketHits.data?.items ?? [] : [],
         ticketProjectId: view === 'tickets' ? backlog.projectId : null,
+        issueRepo,
         agents: agents.of,
         defaults,
       })
@@ -861,6 +867,9 @@ export function AppShell() {
             title={newTicket.title}
             onClose={() => setNewTicket(null)}
           /></Suspense>
+        )}
+        {newIssue && (
+          <Suspense fallback={null}><CreateIssueDialog projectId={newIssue.projectId} repo={newIssue.repo} onClose={() => setNewIssue(null)} /></Suspense>
         )}
         {starting && (
           <Suspense fallback={null}><StartDialog

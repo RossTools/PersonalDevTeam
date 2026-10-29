@@ -6,7 +6,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{call, git};
+use common::{call, call_as_ui, git};
 use pdt_api::{AppState, router};
 use pdt_forge::JobLog;
 use pdt_forge::testing::FakeForge;
@@ -445,4 +445,130 @@ async fn an_agent_opens_its_pr_and_asks_for_the_merge_again_after_a_queue_drop()
     gh.set_pr(&branch, Some(p));
     let said = say(&env, &s, "mcp: change_request_merge {}").await;
     assert!(said.contains("\"outcome\": \"already\""), "{said}");
+}
+
+/// PDT-221: the user files a ticket as an issue in the project's repository (or a new one), and the ticket links it.
+#[tokio::test]
+async fn the_user_files_a_ticket_as_a_github_issue_and_the_ticket_links_it() {
+    let gh = Arc::new(FakeForge::default());
+    let env = setup(Some(gh.clone()), None).await;
+    let (_, f) = call(&env.app, "GET", &format!("/api/projects/{}/forge", env.project), None).await;
+    assert_eq!(f, json!({"kind": "github", "repo": "o/r", "issues": true}));
+    let (_, t) = call(
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": "Board is slow", "description": "Scrolling lags."})),
+    )
+    .await;
+    let ticket = t["id"].as_str().unwrap().to_string();
+    let issues = format!("/api/projects/{}/issues", env.project);
+    let body =
+        json!({"title": " Board is slow ", "body": "Scrolling lags.", "labels": ["bug", " "], "ticketId": ticket});
+
+    // Only the user's click files one: an agent's curl is refused.
+    let (s, v) = call(&env.app, "POST", &issues, Some(body.clone())).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::FORBIDDEN, Some("not_the_ui")), "{v}");
+    assert!(gh.created_issues.lock().unwrap().is_empty());
+
+    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(body.clone())).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let key = t["key"].as_str().unwrap();
+    assert_eq!(
+        v,
+        json!({"repo": "o/r", "number": 500, "issue": "o/r#500", "url": "https://github.com/o/r/issues/500",
+               "ticketKey": key})
+    );
+    let made = gh.created_issues.lock().unwrap().clone();
+    assert_eq!(made[0].0, "o/r");
+    assert_eq!((made[0].1.title.as_str(), made[0].1.body.as_str()), ("Board is slow", "Scrolling lags."));
+    assert_eq!(made[0].1.labels, ["bug"]);
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{ticket}"), None).await;
+    assert_eq!(
+        t["external"],
+        json!([{"system": "github", "key": "o/r#500", "url": "https://github.com/o/r/issues/500"}])
+    );
+    assert_eq!(t["source"], "user", "filed from the ticket, it is still the user's own (not external)");
+    let (_, ev) = call(&env.app, "GET", &format!("/api/tickets/{ticket}/events"), None).await;
+    let linked = ev["items"].as_array().unwrap().iter().find(|e| e["kind"] == "linked").cloned().unwrap();
+    assert_eq!((linked["actor"].as_str(), linked["data"]["key"].as_str()), (Some("user"), Some("o/r#500")));
+
+    // A ticket links one issue.
+    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(body)).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("already_linked")), "{v}");
+    // A new issue, from no ticket; one without a title is refused.
+    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(json!({"title": "Docs typo"}))).await;
+    assert_eq!((s, v["number"].as_u64(), &v["ticketKey"]), (StatusCode::CREATED, Some(501), &Value::Null), "{v}");
+    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(json!({"title": "  "}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    // GitHub refusing it is the forge's error.
+    *gh.error.lock().unwrap() = Some("GitHub is not connected".into());
+    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(json!({"title": "Later"}))).await;
+    assert_eq!((s, v["message"].as_str()), (StatusCode::BAD_GATEWAY, Some("GitHub is not connected")), "{v}");
+}
+
+#[tokio::test]
+async fn a_forge_without_issues_files_none() {
+    let gh = Arc::new(FakeForge::with(pdt_forge::Capabilities::NONE));
+    let env = setup(Some(gh.clone()), None).await;
+    let (_, f) = call(&env.app, "GET", &format!("/api/projects/{}/forge", env.project), None).await;
+    assert_eq!(f["issues"], false);
+    let issues = format!("/api/projects/{}/issues", env.project);
+    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(json!({"title": "Crash"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("unsupported")), "{v}");
+    assert!(gh.created_issues.lock().unwrap().is_empty());
+}
+
+/// [`say`] for an asking tool: the user approves the call's permission request, then the agent answers.
+async fn say_approved(env: &Env, session: &str, text: &str) -> String {
+    let before = agent_says(env, session).await.len();
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let req = loop {
+        let (_, all) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
+        let open =
+            all.as_array().unwrap().iter().find(|e| e["event"]["kind"] == "request" && e["event"]["state"] == "open");
+        if let Some(e) = open {
+            break e["event"]["id"].as_str().unwrap().to_string();
+        }
+        assert!(Instant::now() < deadline, "no permission request: {all}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let url = format!("/api/sessions/{session}/requests/{req}");
+    let (s, v) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    wait_said(env, session, before + 1).await
+}
+
+#[tokio::test]
+async fn an_agent_files_its_ticket_as_an_issue_with_issue_create() {
+    let gh = Arc::new(FakeForge::default());
+    let env = setup(Some(gh.clone()), None).await;
+    let (s, _) = session(&env).await;
+    wait_said(&env, &s, 1).await;
+    let (_, list) = call(&env.app, "GET", &format!("/api/tickets?project={}", env.project), None).await;
+    let key = list["items"][0]["key"].as_str().unwrap().to_string();
+    // It asks the user first (Claude's permission prompt).
+    let said =
+        say_approved(&env, &s, &format!("mcp: issue_create {{\"ticket\": \"{key}\", \"labels\": [\"ci\"]}}")).await;
+    assert!(said.contains("\"issue\": \"o/r#500\"") && said.contains(&key), "{said}");
+    let made = gh.created_issues.lock().unwrap().clone();
+    assert_eq!(
+        (made[0].1.title.as_str(), made[0].1.labels.clone()),
+        ("Fix CI", vec!["ci".to_string()]),
+        "the ticket's title"
+    );
+    let id = list["items"][0]["id"].as_str().unwrap();
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{id}"), None).await;
+    assert_eq!(t["external"][0]["key"], "o/r#500");
+    let (_, ev) = call(&env.app, "GET", &format!("/api/tickets/{id}/events"), None).await;
+    let linked = ev["items"].as_array().unwrap().iter().find(|e| e["kind"] == "linked").cloned().unwrap();
+    assert_eq!(linked["actor"], "agent", "{linked}");
+    // A new issue in the session's own project.
+    let said = say_approved(&env, &s, "mcp: issue_create {\"title\": \"Flaky test\"}").await;
+    assert!(said.contains("o/r#501") && said.contains("\"ticketKey\": null"), "{said}");
+    let said = say_approved(&env, &s, "mcp: issue_create {}").await;
+    assert!(said.contains("give a title, or a ticket to file"), "{said}");
 }

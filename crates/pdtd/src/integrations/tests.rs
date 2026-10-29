@@ -64,6 +64,7 @@ fn the_tools_are_where_they_were() {
             "ci_failed_logs",
             "issue_view",
             "issue_comment",
+            "issue_create",
             "report_bug",
             "discord_get",
             "discord_change",
@@ -88,6 +89,7 @@ fn the_tools_are_where_they_were() {
             "unlink_tickets",
             "stop_ticket",
             "send_to_session",
+            "issue_create",
             "report_bug",
             "discord_change",
             "discord_webhook",
@@ -127,14 +129,15 @@ fn the_tools_are_where_they_were() {
         "ci_failed_logs",
         "issue_view",
         "issue_comment",
+        "issue_create",
     ];
     assert!(
         open.iter()
             .all(|n| n.starts_with("discord_") || n.starts_with("scryer_") || *n == "report_bug" || forge.contains(n))
     );
-    assert_eq!(open.len(), 19);
+    assert_eq!(open.len(), 20);
     let pm = pdt_core::persona::builtin_persona("pm").unwrap().setup(t);
-    assert_eq!(pm.tool_set(t).len(), 44);
+    assert_eq!(pm.tool_set(t).len(), 45);
 }
 
 #[test]

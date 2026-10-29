@@ -93,7 +93,8 @@ To read CI yourself, use PDT's forge tools on its MCP server: `ci_runs` (your br
 `ci_failed_logs` (the end of each failed job's log), or the ticket's attempt (`pr.ci`: the head commit's state, URL and
 runs, once PDT has seen the pull request). `change_request_view` shows your pull request with its comments and reviews,
 `change_request_comment` answers on it (`replyTo` answers a review comment in its thread), and `issue_view` and
-`issue_comment` read and comment on issues. `change_request_open` opens the pull request for your branch once you have
+`issue_comment` read and comment on issues. `issue_create` files a new issue (from a ticket, which then links it); the
+user approves each one. `change_request_open` opens the pull request for your branch once you have
 pushed it (a title, a Markdown body, `base` and `draft` optional), and `change_request_merge` asks for its merge again
 after the merge queue dropped it and you pushed the fix (only for a pull request already set to merge; the project's
 merge policy applies). They use the user's GitHub login in PDT, so you need no GitHub CLI; you still push with plain

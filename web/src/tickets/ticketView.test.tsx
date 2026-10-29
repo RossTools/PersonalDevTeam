@@ -305,3 +305,52 @@ describe('new ticket form', () => {
     expect(await screen.findByText('title is too long')).toBeInTheDocument();
   });
 });
+
+describe('Create GitHub issue (PDT-221)', () => {
+  const forge = { [`GET /api/projects/${project.id}/forge`]: { kind: 'github', repo: 'o/r', issues: true } };
+  const filed = { repo: 'o/r', number: 12, issue: 'o/r#12', url: 'https://github.com/o/r/issues/12', ticketKey: 'ALP-1' };
+
+  it('files the ticket as an issue from its menu, pre-filled and editable', async () => {
+    const calls = stub({ ...forge, [`POST /api/projects/${project.id}/issues`]: filed });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Ticket actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Create GitHub issue…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Create GitHub issue from ALP-1' });
+    expect(within(dialog).getByText(/Opens an issue in o\/r as your GitHub login/)).toBeInTheDocument();
+    const title = within(dialog).getByRole('textbox', { name: 'Title' });
+    expect(title).toHaveValue('Fix login');
+    expect(within(dialog).getByRole('textbox', { name: 'Description' })).toHaveValue('Steps:\n\n- open');
+    await userEvent.type(title, ' on Safari');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create issue' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
+      title: 'Fix login on Safari', body: 'Steps:\n\n- open', labels: [], ticketId: 't1',
+    });
+  });
+
+  it('is not offered when the forge has no issues or the ticket already links one', async () => {
+    stub({ [`GET /api/projects/${project.id}/forge`]: { kind: 'github', repo: 'o/r', issues: false } });
+    const { unmount } = view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Ticket actions' }));
+    await screen.findByRole('menuitem', { name: 'Move to' });
+    expect(screen.queryByRole('menuitem', { name: 'Create GitHub issue…' })).not.toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    unmount();
+    const linked = { ...base, external: [{ system: 'github', key: 'o/r#3', url: 'https://github.com/o/r/issues/3' }] };
+    stub({ ...forge, 'GET /api/tickets/t1': linked });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Ticket actions' }));
+    await screen.findByRole('menuitem', { name: 'Move to' });
+    expect(screen.queryByRole('menuitem', { name: 'Create GitHub issue…' })).not.toBeInTheDocument();
+  });
+
+  it('shows why GitHub refused it and keeps the form', async () => {
+    stub({ ...forge, [`POST /api/projects/${project.id}/issues`]: new Reply(502, { code: 'forge_error', message: 'GitHub is not connected' }) });
+    view();
+    await userEvent.click(await screen.findByRole('button', { name: 'Ticket actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Create GitHub issue…' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create issue' }));
+    expect(await within(dialog).findByText('GitHub is not connected')).toBeInTheDocument();
+  });
+});
