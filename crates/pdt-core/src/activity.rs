@@ -280,7 +280,7 @@ pub fn program_status_app(agent: crate::session::AgentKind) -> Option<&'static s
     match agent {
         AgentKind::Codex => Some("codex"),
         AgentKind::Devin => Some("devin"),
-        AgentKind::Claude => None,
+        AgentKind::Claude | AgentKind::Acp(_) => None,
     }
 }
 

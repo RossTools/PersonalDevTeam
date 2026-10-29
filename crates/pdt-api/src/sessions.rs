@@ -70,6 +70,9 @@ pub(crate) struct CreateSession {
 pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<Session, ApiError> {
     let valid = req.valid;
     let project = st.store.get_project(&valid.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    if let Some(agent) = valid.agent.filter(|a| a.is_acp()) {
+        crate::conversations::acp_agent(st, agent).await?;
+    }
     let (worktree_id, mut cwd, place) = match &valid.worktree_id {
         Some(wid) => {
             let wt = st.store.get_worktree(wid).await?.filter(|w| w.project_id == project.id).ok_or_else(|| {
@@ -416,8 +419,9 @@ fn start_pty(
                 args.splice(at..at, extra);
             }
             Some(AgentKind::Claude) => args.extend(pdt_agents::instructions::claude_args(&i.file)),
-            // Devin has no instructions flag: its SessionStart hook hands them over (see `with_hook_args`).
-            Some(AgentKind::Devin) | None => {}
+            // Devin has no instructions flag: its SessionStart hook hands them over (see `with_hook_args`). ACP
+            // agents have no terminal.
+            Some(AgentKind::Devin | AgentKind::Acp(_)) | None => {}
         }
     }
     if let Some(m) = mcp.filter(|_| s.kind == SessionKind::AgentTui) {
@@ -427,7 +431,7 @@ fn start_pty(
                 args.splice(at..at, pdt_agents::mcp::codex_tui_args(m));
             }
             Some(AgentKind::Claude) => args.extend(pdt_agents::mcp::claude_args(m)),
-            Some(AgentKind::Devin) | None => {}
+            Some(AgentKind::Devin | AgentKind::Acp(_)) | None => {}
         }
     }
     if let Some(p) = prompt.filter(|_| s.kind == SessionKind::AgentTui) {
@@ -537,7 +541,7 @@ fn with_hook_args(
             all.extend(args);
             Ok(all)
         }
-        None => Ok(args),
+        Some(AgentKind::Acp(_)) | None => Ok(args),
     }
 }
 

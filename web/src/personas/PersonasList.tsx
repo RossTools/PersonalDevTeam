@@ -1,6 +1,7 @@
 import { Plus } from 'lucide-react';
 import { Alert, Badge, EmptyState, IconButton, List, ListRow, Skeleton } from '@ui';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
+import { useAgents } from '../common/agents';
 import { agentLine, sortPersonas, usePersonas } from './model';
 
 /**
@@ -10,6 +11,7 @@ import { agentLine, sortPersonas, usePersonas } from './model';
  */
 export function PersonasList({ selectedId, onSelect }: { selectedId: string | null; onSelect: (id: string) => void }) {
   const personas = usePersonas();
+  const agents = useAgents();
   const list = sortPersonas(personas.data ?? []);
   const phone = useMediaQuery(PHONE_QUERY);
   return (
@@ -37,7 +39,7 @@ export function PersonasList({ selectedId, onSelect }: { selectedId: string | nu
               title={p.name}
               textValue={p.name}
               current={selectedId === p.id}
-              secondary={[p.role, agentLine(p)].filter(Boolean).join(' · ')}
+              secondary={[p.role, agentLine(p, agents.label)].filter(Boolean).join(' · ')}
               trailing={p.archived ? <Badge>Archived</Badge> : undefined}
               className={p.archived ? 'text-muted-foreground' : undefined}
             />

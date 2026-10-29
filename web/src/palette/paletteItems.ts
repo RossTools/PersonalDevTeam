@@ -4,6 +4,8 @@ import type { Tab } from '../api/gen/Tab';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import type { Workspace } from '../api/gen/Workspace';
 import type { AgentKind } from '../api/gen/AgentKind';
+import type { AcpAgentView } from '../api/gen/AcpAgentView';
+import { isAcp, type AcpKind } from '../common/agents';
 import { itemState, type AgentStateValue } from '../common/AgentState';
 import { NOT_LOGGED_IN, type AgentAvailability } from '../common/useAgentAvailability';
 import type { Place } from '../common/PlacePicker';
@@ -17,7 +19,7 @@ export const ACTIONS = 'Actions';
 
 /** Which icon the palette draws for an item (kept as data so this module stays pure). */
 export type PaletteIcon =
-  | 'workspace' | 'tab' | 'agent' | 'settings' | 'host' | 'claude' | 'codex' | 'devin' | 'shell' | 'run' | 'rename' | 'close'
+  | 'workspace' | 'tab' | 'agent' | 'settings' | 'host' | 'claude' | 'codex' | 'devin' | 'acp' | 'shell' | 'run' | 'rename' | 'close'
   | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files' | 'changes' | 'workflows' | 'inbox' | 'personas' | 'pm' | 'notes' | 'bug';
 
 /**
@@ -48,8 +50,9 @@ export interface PaletteItem {
   next?: PaletteStep;
 }
 
-/** `claude`, `codex` and `devin` are conversations, the `_terminal` kinds the agents' own TUIs. */
-export type NewKind = 'claude' | 'claude_terminal' | 'codex' | 'codex_terminal' | 'devin' | 'devin_terminal' | 'shell';
+/** `claude`, `codex` and `devin` are conversations, the `_terminal` kinds the agents' own TUIs; an ACP agent's kind its
+ *  conversation. */
+export type NewKind = 'claude' | 'claude_terminal' | 'codex' | 'codex_terminal' | 'devin' | 'devin_terminal' | 'shell' | AcpKind;
 
 /** What the items do. AppShell implements them with the workspaces API (through runAction). */
 export interface PaletteHandlers {
@@ -111,6 +114,8 @@ export interface PaletteContext {
   agents?: (agent: AgentKind) => AgentAvailability;
   /** The host's default agent and view: their "New … here" comes first. */
   defaults?: Pick<AgentDefaults, 'agent' | 'mode'>;
+  /** The host's ACP agents: each gets a "New … here". */
+  acpAgents?: Pick<AcpAgentView, 'agent' | 'label'>[];
 }
 
 const key = (k: string) => `Ctrl+] ${k}`;
@@ -207,6 +212,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
       ['codex', 'codex_terminal', 'new:codex-terminal', 'New Codex (terminal) here'],
       ['devin', 'devin', 'new:devin', 'New Devin here'],
       ['devin', 'devin_terminal', 'new:devin-terminal', 'New Devin (terminal) here'],
+      ...(ctx.acpAgents ?? []).map((a): [AgentKind, NewKind, string, string] => [a.agent, a.agent as AcpKind, `new:${a.agent}`, `New ${a.label} here`]),
     ];
     const agentItems = byDefault(allAgentItems, ([agent, kind]) => choiceFor(agent, kind.endsWith('_terminal') ? 'terminal' : 'conversation'), ctx.defaults ?? FALLBACK_DEFAULTS);
     for (const [agent, kind, id, label] of agentItems) {
@@ -216,7 +222,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
         id,
         label,
         group: ACTIONS,
-        icon: agent,
+        icon: isAcp(agent) ? 'acp' : agent,
         ...(availability === 'logged_out' ? { detail: NOT_LOGGED_IN } : {}),
         keywords: kind.endsWith('_terminal') ? [...words, 'tui'] : words,
         run: () => h.newSession(kind, place),

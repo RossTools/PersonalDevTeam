@@ -80,6 +80,10 @@ pub struct HostChecks {
     pub devin: ToolCheck,
     pub git: ToolCheck,
     pub tailscale: ToolCheck,
+    /// Each ACP agent's (by agent kind, `acp:<id>`): whether its command is found. PDT can't tell whether one is
+    /// logged in, so a found one is `ok`.
+    #[ts(type = "Record<string, ToolCheck>")]
+    pub acp: std::collections::BTreeMap<String, ToolCheck>,
     #[ts(type = "number")]
     pub checked_at: i64,
 }
@@ -136,13 +140,14 @@ pub(crate) fn devin_logged_in(exit_ok: bool, out: &str) -> bool {
 
 pub async fn run_host_checks(st: &AppState) -> HostChecks {
     // The host's policy: the one agent sessions get unless their project overrides it.
-    let creds = match st.store.get_host_settings().await {
-        Ok(h) => h.agent_credentials,
+    let host = match st.store.get_host_settings().await {
+        Ok(h) => h,
         Err(e) => {
-            tracing::warn!(error = %e, "could not read the host settings; checking under the default credential policy");
-            HostSettings::default().agent_credentials
+            tracing::warn!(error = %e, "could not read the host settings; checking under the defaults");
+            HostSettings::default()
         }
     };
+    let creds = host.agent_credentials;
     let platform = st.agent_platform().await;
     let agent = |program: &str, args: &'static [&'static str]| {
         let program = program.to_string();
@@ -178,7 +183,18 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
         Ok(Err(e)) => ToolCheck::answered(false, e.to_string()),
         Err(e) => ToolCheck::missing(e.to_string()),
     };
-    let c = HostChecks { claude, codex, devin, git, tailscale, checked_at: now_ms() };
+    let acp = crate::host::acp_agent_views(st, &host)
+        .await
+        .into_iter()
+        .map(|v| {
+            let check = match v.found {
+                Some(path) => ToolCheck { path: Some(path), ..ToolCheck::answered(true, "found".into()) },
+                None => ToolCheck::missing(format!("{} was not found", v.def.command)),
+            };
+            (v.agent.as_str().to_string(), check)
+        })
+        .collect();
+    let c = HostChecks { claude, codex, devin, git, tailscale, acp, checked_at: now_ms() };
     *st.checks.lock().unwrap_or_else(|e| e.into_inner()) = Some(c.clone());
     c
 }

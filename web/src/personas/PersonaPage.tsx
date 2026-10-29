@@ -24,12 +24,11 @@ import type { Persona } from '../api/gen/Persona';
 import type { PersonaSetup } from '../api/gen/PersonaSetup';
 import type { PersonaVersion } from '../api/gen/PersonaVersion';
 import { Markdown } from '../common/Markdown';
+import { useAgents } from '../common/agents';
 import { useAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { PERMISSION_LABEL, PERMISSION_MODES } from '../conversation/ConversationComposer';
 import {
-  AGENT_LABEL,
-  AGENTS,
   AUTHOR_LABEL,
   DEFAULT_MODE,
   cleanSetup,
@@ -67,6 +66,9 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
   const [preview, setPreview] = useState<'write' | 'preview'>('write');
   const set = (p: Partial<PersonaSetup>) => onChange({ ...value, ...p });
   const known = usePersonaTools().data;
+  const agents = useAgents();
+  // The persona's agent stays listed even if the host no longer has it (an ACP agent removed since).
+  const agentOptions = agents.all.includes(value.agent) ? agents.all : [...agents.all, value.agent];
   const checked = shownTools(value.tools);
   const toggle = (name: string, on: boolean) =>
     set({ tools: normalTools(orderTools(on ? [...checked, name] : checked.filter((t) => t !== name), known ?? [])) });
@@ -79,7 +81,7 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
           id={agentId}
           aria-label="Agent"
           className="w-40"
-          options={AGENTS.map((a) => ({ value: a, label: AGENT_LABEL[a] }))}
+          options={agentOptions.map((a) => ({ value: a, label: agents.label(a) }))}
           value={value.agent}
           onChange={(agent) => set({ agent })}
         />
@@ -446,6 +448,7 @@ function PersonaDetail({ persona, onSelect, others }: { persona: Persona; onSele
 /** A persona to read (phones, PDT-120: personas are edited on a computer): who it is, its setup and its versions. */
 function PersonaReadOnly({ persona }: { persona: Persona }) {
   const known = usePersonaTools().data;
+  const agents = useAgents();
   const tools = shownTools(persona.tools);
   return (
     <Page
@@ -460,7 +463,7 @@ function PersonaReadOnly({ persona }: { persona: Persona }) {
     >
       <Section label={`Setup · version ${persona.version}`}>
         <SettingsRow label="Role">{persona.role || <span className="text-muted-foreground">None</span>}</SettingsRow>
-        <SettingsRow label="Agent">{AGENT_LABEL[persona.agent]}</SettingsRow>
+        <SettingsRow label="Agent">{agents.label(persona.agent)}</SettingsRow>
         <SettingsRow label="Model"><span className="font-mono break-all">{persona.model || "the agent's default"}</span></SettingsRow>
         <SettingsRow label="Permission mode">{persona.permissionMode ? PERMISSION_LABEL[persona.permissionMode] : 'Project or host default'}</SettingsRow>
         <SettingsRow stacked label="Tools">

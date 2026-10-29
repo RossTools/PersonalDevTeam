@@ -8,11 +8,15 @@
 //! - `who` — says the session id, whether it was loaded, its mode and model, and whether `--config` carries PDT's
 //!   instructions hook.
 //! - `where` — says the session's working folder.
+//! - `mcp: <tool> <json arguments>` (its first line) — asks permission for that pdt-mcp tool (from the session's `mcpServers`), then
+//!   calls it and says `mcp <tool>: <the result's text>` (or `mcp <tool> denied`, `mcp error: …`).
 //! - a prompt with images — says `saw N images (<media types>)`.
 //! - anything else — `echo: <text>`.
 //!
 //! `--plain` makes it a plain ACP agent: no `_meta` or error `data` (Devin's `cognition.ai/*` fields) and no
-//! session-only permission option.
+//! session-only permission option. `--modes` makes `session/new` and `session/load` advertise its modes
+//! (`availableModes`). A prompt's last text block is what it does; text blocks before it are context (PDT's
+//! instructions for an ACP agent, which `who` then reports).
 //!
 //! A session is saved at its first prompt (a marker file in the temp folder), as Devin does: loading one never
 //! prompted fails with -32016. Loading replays its history first, as Devin does.
@@ -24,6 +28,8 @@ use std::time::{Duration, Instant};
 
 /// `--plain`: no Devin fields.
 static PLAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// `--modes`: advertise `availableModes`.
+static MODES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn out(mut v: Value) {
     if PLAIN.load(std::sync::atomic::Ordering::Relaxed) {
@@ -68,6 +74,13 @@ fn rfc3339(ms: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{sec:02}.{milli:03}000+00:00")
 }
 
+/// pdt-mcp from `session/new`'s or `session/load`'s `mcpServers`: its URL and Authorization header.
+fn mcp_server(p: &Value) -> Option<(String, String)> {
+    let s = p["mcpServers"].as_array()?.iter().find(|s| s["name"] == "pdt")?;
+    let auth = s["headers"].as_array()?.iter().find(|h| h["name"] == "Authorization")?;
+    Some((s["url"].as_str()?.to_string(), auth["value"].as_str()?.to_string()))
+}
+
 struct Acp {
     rx: mpsc::Receiver<Option<Value>>,
     queue: Vec<Value>,
@@ -78,6 +91,8 @@ struct Acp {
     hook: bool,
     /// The `cwd` of `session/new` or `session/load`.
     cwd: String,
+    /// pdt-mcp's URL and Authorization header, from the session's `mcpServers`.
+    mcp: Option<(String, String)>,
     next: u64,
     cancelled: bool,
     /// Prompts sent while a turn ran: answered with it.
@@ -101,6 +116,16 @@ impl Acp {
             {"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": self.model,
              "options": [{"value": "fake-1", "name": "Fake One"}, {"value": "fake-2", "name": "Fake Two"}]}
         ])
+    }
+
+    /// `session/new`'s or `session/load`'s answer.
+    fn opened(&self, mut r: Value) -> Value {
+        if MODES.load(std::sync::atomic::Ordering::Relaxed) {
+            r["modes"] = json!({"currentModeId": self.mode, "availableModes": [
+                {"id": "ask", "name": "Ask"}, {"id": "accept-edits", "name": "Code"},
+                {"id": "plan", "name": "Plan"}, {"id": "bypass", "name": "Bypass Permissions"}]});
+        }
+        r
     }
 
     fn announce(&self) {
@@ -143,7 +168,12 @@ impl Acp {
 
     fn prompt(&mut self, id: Value, p: &Value) {
         let blocks = p["prompt"].as_array().cloned().unwrap_or_default();
-        let text: String = blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect();
+        let texts: Vec<&str> =
+            blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect();
+        let text = texts.last().copied().unwrap_or("").to_string();
+        if texts.len() > 1 {
+            self.hook = true;
+        }
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(saved_marker(&self.session)) {
             let _ = writeln!(f, "{}", json!({"text": text, "atMs": now_ms()}));
         }
@@ -218,6 +248,36 @@ impl Acp {
         } else if text == "exit" {
             eprintln!("fake devin: exiting");
             std::process::exit(3);
+        } else if let Some(wanted) = text.lines().next().and_then(|l| l.strip_prefix("mcp:")) {
+            let wanted = wanted.trim();
+            let (tool, args) = wanted.split_once(' ').unwrap_or((wanted, "{}"));
+            let args: Value = serde_json::from_str(args.trim()).unwrap_or(json!({}));
+            let name = format!("mcp__pdt__{tool}");
+            self.tool(&call, &name, "other", &name, args.clone(), json!([]));
+            let rid = format!("perm-{}", self.next);
+            out(json!({"jsonrpc": "2.0", "id": rid, "method": "session/request_permission", "params": {
+                "sessionId": self.session, "toolCall": {"toolCallId": call}, "options": [
+                    {"optionId": "allow_once", "name": "Allow", "kind": "allow_once"},
+                    {"optionId": "reject_once", "name": "Reject", "kind": "reject_once"}]}}));
+            let Some(a) = self.wait_answer(&rid) else { return };
+            let reply = if a["result"]["outcome"]["optionId"] != "allow_once" {
+                format!("mcp {tool} denied")
+            } else {
+                match &self.mcp {
+                    None => "mcp error: no pdt-mcp server".to_string(),
+                    Some(server) => match super::rpc(server, "tools/call", json!({"name": tool, "arguments": args})) {
+                        Ok(r) => format!(
+                            "mcp {tool}{}: {}",
+                            if r["isError"] == true { " failed" } else { "" },
+                            r["content"][0]["text"].as_str().unwrap_or("")
+                        ),
+                        Err(e) => format!("mcp error: {e}"),
+                    },
+                }
+            };
+            self.update(json!({"sessionUpdate": "tool_call_update", "toolCallId": call,
+                "status": "completed"}));
+            self.say(&reply);
         } else if text == "where" {
             self.say(&format!("cwd={}", self.cwd));
         } else if text == "who" {
@@ -239,6 +299,7 @@ impl Acp {
 pub fn serve(args: &[String]) {
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     PLAIN.store(args.iter().any(|a| a == "--plain"), std::sync::atomic::Ordering::Relaxed);
+    MODES.store(args.iter().any(|a| a == "--modes"), std::sync::atomic::Ordering::Relaxed);
     let hook = flag("--config")
         .and_then(|f| std::fs::read_to_string(f).ok())
         .is_some_and(|t| t.contains("hook devin --instructions"));
@@ -269,6 +330,7 @@ pub fn serve(args: &[String]) {
         model: "fake-1".into(),
         hook,
         cwd: String::new(),
+        mcp: None,
         next: 0,
         cancelled: false,
         joined: Vec::new(),
@@ -290,9 +352,10 @@ pub fn serve(args: &[String]) {
                 "promptCapabilities": {"image": true}}, "agentInfo": {"name": "fake", "version": "0.0.0-fake"}})),
             "session/new" => {
                 a.cwd = p["cwd"].as_str().unwrap_or("?").to_string();
+                a.mcp = mcp_server(&p);
                 a.session = format!("fake-{}-{}", std::process::id(), a.next);
                 a.announce();
-                ok(json!({"sessionId": a.session, "configOptions": a.config()}));
+                ok(a.opened(json!({"sessionId": a.session, "configOptions": a.config()})));
             }
             "session/load" => {
                 let sid = p["sessionId"].as_str().unwrap_or("").to_string();
@@ -304,6 +367,7 @@ pub fn serve(args: &[String]) {
                 a.session = sid;
                 a.loaded = true;
                 a.cwd = p["cwd"].as_str().unwrap_or("?").to_string();
+                a.mcp = mcp_server(&p);
                 // The whole conversation again, as Devin replays it (the answers are stand-ins).
                 let saved = std::fs::read_to_string(saved_marker(&a.session)).unwrap_or_default();
                 for (n, line) in saved.lines().enumerate() {
@@ -315,7 +379,7 @@ pub fn serve(args: &[String]) {
                     a.say(&format!("old answer to {text}"));
                 }
                 a.announce();
-                ok(json!({"configOptions": a.config()}));
+                ok(a.opened(json!({"configOptions": a.config()})));
             }
             "session/set_mode" => {
                 a.mode = p["modeId"].as_str().unwrap_or("").to_string();

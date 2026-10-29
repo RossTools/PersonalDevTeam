@@ -2,15 +2,21 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { HostChecks } from '../api/gen/HostChecks';
+import type { ToolCheck } from '../api/gen/ToolCheck';
+import { isAcp } from './agents';
 
-export const AGENT_KINDS: AgentKind[] = ['claude', 'codex', 'devin'];
+export { BUILTIN_AGENTS as AGENT_KINDS } from './agents';
 
 /** What the host checks say about one agent: `missing` (hide it), `logged_out` (offer it with a hint) or `ready`. */
 export type AgentAvailability = 'ready' | 'logged_out' | 'missing';
 
+/** Pure: an agent's check (an ACP agent's under `acp`), when the checks have one. */
+export const checkOf = (checks: HostChecks | undefined, agent: AgentKind): ToolCheck | undefined =>
+  isAcp(agent) ? checks?.acp?.[agent] : checks?.[agent];
+
 /** Pure: an agent's availability from the checks; everything is `ready` until they have loaded. */
 export function availabilityOf(checks: HostChecks | undefined, agent: AgentKind): AgentAvailability {
-  const c = checks?.[agent];
+  const c = checkOf(checks, agent);
   if (!c) return 'ready';
   return !c.found ? 'missing' : c.ok ? 'ready' : 'logged_out';
 }

@@ -18,6 +18,7 @@ const ICONS: Record<PaletteIcon, ReactNode> = {
   claude: <KIND_ICON.claude aria-hidden />,
   codex: <KIND_ICON.codex aria-hidden />,
   devin: <KIND_ICON.devin aria-hidden />,
+  acp: <KIND_ICON.acp aria-hidden />,
   shell: <KIND_ICON.shell aria-hidden />,
   run: <Play aria-hidden />,
   rename: <Pencil aria-hidden />,

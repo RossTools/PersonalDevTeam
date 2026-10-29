@@ -2,6 +2,7 @@
 //! it into normalized events. They know nothing about HTTP or the store.
 
 pub mod acp;
+pub mod acp_agent;
 pub mod claude;
 pub mod codex;
 pub mod devin;

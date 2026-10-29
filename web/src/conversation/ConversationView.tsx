@@ -11,7 +11,7 @@ import { latestUsage } from './blocks';
 import { limitWarning } from './completion';
 import { ConversationComposer } from './ConversationComposer';
 import type { EventsSocketLike } from './eventsSocket';
-import { KIND_LABEL } from '../common/SessionKindIcon';
+import { useAgents } from '../common/agents';
 import { MessageList } from './MessageList';
 import { PinnedApprovalBar } from './PinnedApprovalBar';
 import { useConversation, type ConversationData } from './useConversation';
@@ -67,7 +67,7 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
   const state = conv.state;
   const turnRunning = state?.turnRunning ?? false;
   const agent = session.agent ?? 'claude';
-  const agentName = KIND_LABEL[agent];
+  const agentName = useAgents().label(agent);
   const caps = useQuery({ queryKey: ['agent-capabilities', agent], queryFn: () => api.agentCapabilities(agent), staleTime: 60_000 });
 
   const refreshSessions = () => qc.invalidateQueries({ queryKey: ['sessions', session.projectId] });

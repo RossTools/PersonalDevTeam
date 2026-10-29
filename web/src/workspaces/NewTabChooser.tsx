@@ -7,7 +7,8 @@ import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import { AgentDot, itemState } from '../common/AgentState';
 import { PlacePicker } from '../common/PlacePicker';
-import { KIND_ICON } from '../common/SessionKindIcon';
+import { useAcpAgents } from '../common/agents';
+import { agentIcon } from '../common/SessionKindIcon';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
 import { useAgentDefaults } from '../common/useAgentDefaults';
@@ -16,15 +17,16 @@ import { PermissionModeSelect } from '../conversation/ConversationComposer';
 import { RunBranchForm } from '../runs/RunBranchForm';
 import { choiceLabel, parseChoice, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
-import { agentOf, byDefault, newSession, type Choice } from '../sessions/newSession';
+import { acpChoices, agentOf, byDefault, choiceText, newSession, type Choice } from '../sessions/newSession';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { findTab } from './model';
 import type { WorkspacesApi } from './useWorkspaces';
 
 const KEYS: Record<string, Choice> = { c: 'Claude', t: 'Claude (terminal)', x: 'Codex', o: 'Codex (terminal)', d: 'Devin', e: 'Devin (terminal)', s: 'Shell' };
 const AGENTS: Choice[] = ['Claude', 'Claude (terminal)', 'Codex', 'Codex (terminal)', 'Devin', 'Devin (terminal)', 'Shell'];
-const iconOf = (c: Choice) => KIND_ICON[agentOf(c) ?? 'shell'];
-const keyOf = (c: Choice) => Object.keys(KEYS).find((k) => KEYS[k] === c)!;
+const iconOf = (c: Choice) => agentIcon(agentOf(c));
+/** ACP agents have no key. */
+const keyOf = (c: Choice): string | undefined => Object.keys(KEYS).find((k) => KEYS[k] === c);
 
 /** Where a new session starts: the user's pick, else the current tab's place, else the project workspace's project. */
 function usePlace(ws: WorkspacesApi) {
@@ -67,7 +69,7 @@ function Frame({ anchor, onClose, children }: { anchor?: RefObject<Element | nul
 }
 
 /**
- * The new-tab chooser: one filterable list to launch a Claude, Codex or Devin conversation, an agent's terminal or a
+ * The new-tab chooser: one filterable list to launch a Claude, Codex, Devin or ACP agent conversation, an agent's terminal or a
  * shell (c / t / x / o / d / e / s while the filter is empty), offering only the agents this host has (all of them
  * until the host checks load; a logged-out one says so), the host's default agent and view first,
  * start a configured run or test, run another branch, or bring an existing session or run here. With `anchor` (the
@@ -79,7 +81,10 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
   const offered = (c: Choice) => { const a = agentOf(c); return !a || agents.offered(a); };
   // The host's default agent and view first.
   const defaults = useAgentDefaults();
-  const choicesHere = byDefault(AGENTS.filter(offered), (c) => c, defaults);
+  const acp = useAcpAgents();
+  // The ACP agents' conversations go before Shell.
+  const all = [...AGENTS.slice(0, -1), ...acpChoices(acp), 'Shell' as const];
+  const choicesHere = byDefault(all.filter(offered), (c) => c, defaults);
   const { place, setPicked } = usePlace(ws);
   // The host's default for new sessions (Ask unless changed) until picked here.
   const [pickedBypass, setBypass] = useState<boolean | null>(null);
@@ -118,7 +123,8 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
       ? choicesHere.map((c) => {
           const Icon = iconOf(c);
           const hint = agentOf(c) ? agents.hint(agentOf(c)!) : undefined;
-          return { id: `new:${c}`, label: c, ...(hint ? { detail: hint } : {}), group: 'Start here', shortcut: keyOf(c), icon: <Icon aria-hidden />, disabled: create.isPending };
+          const shortcut = keyOf(c);
+          return { id: `new:${c}`, label: choiceText(c, acp), ...(hint ? { detail: hint } : {}), group: 'Start here', ...(shortcut ? { shortcut } : {}), icon: <Icon aria-hidden />, disabled: create.isPending };
         })
       : []),
     ...(place && workspace ? [{ id: 'ticket', label: 'Ticket…', group: 'Start here', icon: <Ticket aria-hidden /> }] : []),
@@ -217,7 +223,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
         ) : (
           <CommandList
             label="New tab choices"
-            placeholder={`Filter, or press ${choicesHere.map(keyOf).join(', ').replace(/, (\w)$/, ' or $1')}…`}
+            placeholder={`Filter, or press ${choicesHere.flatMap((c) => keyOf(c) ?? []).join(', ').replace(/, (\w)$/, ' or $1')}…`}
             items={items}
             onAction={onAction}
             query={query}

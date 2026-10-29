@@ -10,12 +10,14 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use pdt_agents::adapter::acp_agent::DefinedAdapter;
 use pdt_agents::adapter::claude::ClaudeAdapter;
 use pdt_agents::adapter::codex::{CodexAdapter, CodexServer, CodexServerConfig, TOKEN_ENV};
 use pdt_agents::adapter::devin::DevinAdapter;
 use pdt_agents::adapter::{
     AdapterError, AdapterOutput, AgentAdapter, LiveConversation, OpenSpec, Outgoing, SessionChange,
 };
+use pdt_core::acp_agent::AcpAgentDef;
 use pdt_core::activity::{Activity, needs_attention};
 use pdt_core::conversation::draft::{DRAFT_PROMPT, TicketDraft, draft_schema};
 use pdt_core::conversation::{
@@ -190,8 +192,25 @@ async fn adapter_for(st: &AppState, agent: Option<AgentKind>) -> Result<Box<dyn 
         Some(AgentKind::Claude) => Ok(Box::new(ClaudeAdapter)),
         Some(AgentKind::Codex) => Ok(Box::new(CodexAdapter { server: codex_server(st).await? })),
         Some(AgentKind::Devin) => Ok(Box::new(DevinAdapter)),
+        Some(agent @ AgentKind::Acp(_)) => {
+            let def = acp_agent(st, agent).await?;
+            Ok(Box::new(DefinedAdapter::new(def).ok_or_else(|| unknown_agent(agent))?))
+        }
         None => Err(conflict("not_conversation", "only agent sessions are conversations")),
     }
+}
+
+fn unknown_agent(agent: AgentKind) -> ApiError {
+    ApiError::new(
+        StatusCode::BAD_REQUEST,
+        "unknown_agent",
+        format!("this host has no ACP agent `{}`: add it in Settings → Agents", agent.as_str()),
+    )
+}
+
+/// The ACP agent an agent kind names (a built-in profile or one the user added), or 400 when this host has none.
+pub(crate) async fn acp_agent(st: &AppState, agent: AgentKind) -> Result<AcpAgentDef, ApiError> {
+    st.store.get_host_settings().await?.acp_agent(agent).ok_or_else(|| unknown_agent(agent))
 }
 
 fn conflict(code: &'static str, message: &str) -> ApiError {
@@ -276,6 +295,11 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
         // saved).
         Some(AgentKind::Codex) => (st.agent_platform().await.codex_program, row.external_session_id.is_some()),
         Some(AgentKind::Devin) => (st.agent_platform().await.devin_program, row.external_session_id.is_some()),
+        // An ACP agent resumes its session when it has one (and can load sessions).
+        Some(agent @ AgentKind::Acp(_)) => {
+            let def = acp_agent(st, agent).await?;
+            (crate::host::expand_home(&def.command, st.home_dir.as_deref()), row.external_session_id.is_some())
+        }
         // Claude saves a conversation only after its first turn; resuming one that was never saved fails.
         _ => {
             let saved =
@@ -1580,9 +1604,16 @@ pub(crate) async fn ticket_draft(
     Path(id): Path<String>,
 ) -> Result<Json<TicketDraft>, ApiError> {
     let session = conversation_session(&st, &id).await?;
-    if session.agent == Some(AgentKind::Devin) {
+    if let Some(agent @ (AgentKind::Devin | AgentKind::Acp(_))) = session.agent {
         // ACP has no fork: a side request would land in the conversation itself.
-        return Err(conflict("draft_unsupported", "Make ticket is not available for Devin conversations yet"));
+        let name = match agent {
+            AgentKind::Acp(_) => acp_agent(&st, agent).await.map(|d| d.label).unwrap_or_else(|_| "ACP".into()),
+            _ => agent.label().to_string(),
+        };
+        return Err(conflict(
+            "draft_unsupported",
+            &format!("Make ticket is not available for {name} conversations yet"),
+        ));
     }
     let adapter = adapter_for(&st, session.agent).await?;
     let creds = crate::sessions::credentials_for(&st, &session.project_id).await?;
@@ -1655,7 +1686,7 @@ pub(crate) async fn capabilities(
     let known = st.conversations.caps.lock().unwrap_or_else(|e| e.into_inner()).get(&agent).cloned();
     let known = known.or_else(|| match agent {
         AgentKind::Codex => st.conversations.codex.get().and_then(|s| s.capabilities()),
-        AgentKind::Claude | AgentKind::Devin => None,
+        AgentKind::Claude | AgentKind::Devin | AgentKind::Acp(_) => None,
     });
     Ok(Json(known.unwrap_or_else(|| AgentCapabilities {
         conversation: true,

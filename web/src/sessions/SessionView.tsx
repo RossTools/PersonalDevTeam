@@ -8,6 +8,7 @@ import { agentState, AgentDot, AgentLabel } from '../common/AgentState';
 import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { copyToClipboard } from '../common/clipboard';
 import { KIND_LABEL, SessionKindIcon } from '../common/SessionKindIcon';
+import { isAcp } from '../common/agents';
 import { actionError, useAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { ConversationPane } from '../conversation/ConversationView';
@@ -237,8 +238,9 @@ function SessionBody({ session, onRemoved, branchLink, branch, repo, baseBranch,
 
   // On a phone, Compose sits with the terminal's other actions (terminalEntries).
   const entries = (compose = true): MenuEntry[] => [
-    // Devin cannot draft on the side without touching the conversation (the server says draft_unsupported).
-    ...(scratch && session.agent !== 'devin' ? [{ label: 'Make ticket…', onSelect: () => setMakingTicket(true) }, { separator: true } as const] : []),
+    // Devin and ACP agents cannot draft on the side without touching the conversation (the server says
+    // draft_unsupported).
+    ...(scratch && session.agent !== 'devin' && !isAcp(session.agent) ? [{ label: 'Make ticket…', onSelect: () => setMakingTicket(true) }, { separator: true } as const] : []),
     ...(conversation
       ? [
           ...(terminalOpen ? [{ label: 'Close terminal', onSelect: () => void closeTerminal(), disabled: closingTerminal }] : []),

@@ -36,22 +36,25 @@ impl HostEnv {
             AgentKind::Claude => self.claude_program.as_deref(),
             AgentKind::Codex => self.codex_program.as_deref(),
             AgentKind::Devin => self.devin_program.as_deref(),
+            AgentKind::Acp(_) => None,
         }
     }
 }
 
 const AGENTS: [AgentKind; 3] = [AgentKind::Claude, AgentKind::Codex, AgentKind::Devin];
 
-fn program_slot(p: &mut Platform, agent: AgentKind) -> &mut String {
+/// A built-in agent's program in the platform (ACP agents name theirs in their definition).
+fn program_slot(p: &mut Platform, agent: AgentKind) -> Option<&mut String> {
     match agent {
-        AgentKind::Claude => &mut p.claude_program,
-        AgentKind::Codex => &mut p.codex_program,
-        AgentKind::Devin => &mut p.devin_program,
+        AgentKind::Claude => Some(&mut p.claude_program),
+        AgentKind::Codex => Some(&mut p.codex_program),
+        AgentKind::Devin => Some(&mut p.devin_program),
+        AgentKind::Acp(_) => None,
     }
 }
 
 /// `~/…` in a program setting, in the home folder.
-fn expand_home(path: &str, home: Option<&std::path::Path>) -> String {
+pub(crate) fn expand_home(path: &str, home: Option<&std::path::Path>) -> String {
     match (path.strip_prefix('~'), home) {
         (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with(['/', '\\']) => {
             home.join(rest.trim_start_matches(['/', '\\'])).to_string_lossy().into_owned()
@@ -72,8 +75,9 @@ pub fn with_program_settings(
     for agent in AGENTS {
         if env.program(agent).is_none()
             && let Some(path) = s.program(agent)
+            && let Some(slot) = program_slot(&mut p, agent)
         {
-            *program_slot(&mut p, agent) = expand_home(path, home);
+            *slot = expand_home(path, home);
         }
     }
     p
@@ -149,29 +153,59 @@ fn network_view(st: &AppState) -> NetworkView {
     }
 }
 
+/// Where a program is found on `search` (the login PATH), or None.
+pub(crate) fn found(program: &str, search: Option<&str>) -> Option<String> {
+    pdt_agents::launch::resolve(program, &[], search).ok().map(|(exe, _)| exe.to_string_lossy().into_owned())
+}
+
+/// An ACP agent in Settings → Agents (PDT-234): its definition and where its command was found.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AcpAgentView {
+    pub agent: AgentKind,
+    #[serde(flatten)]
+    pub def: pdt_core::acp_agent::AcpAgentDef,
+    /// Where its command was found, or null when it wasn't.
+    pub found: Option<String>,
+}
+
+/// Every ACP agent this host has, with where each one's command was found.
+pub(crate) async fn acp_agent_views(st: &AppState, s: &HostSettings) -> Vec<AcpAgentView> {
+    let defs = pdt_core::acp_agent::all(&s.acp_agents);
+    let search = st.platform.login_path.clone();
+    let home = st.home_dir.clone();
+    tokio::task::spawn_blocking(move || {
+        defs.into_iter()
+            .filter_map(|def| {
+                let agent = def.kind()?;
+                let found = found(&expand_home(&def.command, home.as_deref()), search.as_deref());
+                Some(AcpAgentView { agent, def, found })
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 async fn program_views(st: &AppState) -> Vec<AgentProgramView> {
     let platform = st.agent_platform().await;
     let search = st.platform.login_path.clone();
     let env = st.host_env.clone();
     tokio::task::spawn_blocking(move || {
+        let mut platform = platform;
         AGENTS
             .iter()
-            .map(|&agent| {
-                let program = match agent {
-                    AgentKind::Claude => &platform.claude_program,
-                    AgentKind::Codex => &platform.codex_program,
-                    AgentKind::Devin => &platform.devin_program,
-                };
-                let found = pdt_agents::launch::resolve(program, &[], search.as_deref())
-                    .ok()
-                    .map(|(exe, _)| exe.to_string_lossy().into_owned());
+            .filter_map(|&agent| {
+                let program = program_slot(&mut platform, agent)?.clone();
+                let found = found(&program, search.as_deref());
                 let env_var = match agent {
                     AgentKind::Claude => "PDT_CLAUDE_PROGRAM",
                     AgentKind::Codex => "PDT_CODEX_PROGRAM",
-                    AgentKind::Devin => "PDT_DEVIN_PROGRAM",
+                    _ => "PDT_DEVIN_PROGRAM",
                 }
                 .to_string();
-                AgentProgramView { agent, env_var, from_env: env.program(agent).map(String::from), found }
+                Some(AgentProgramView { agent, env_var, from_env: env.program(agent).map(String::from), found })
             })
             .collect()
     })
@@ -196,6 +230,8 @@ pub struct HostSettingsView {
     pub projects_dir: Option<String>,
     /// Claude's, Codex's and Devin's programs (Settings → Agents).
     pub programs: Vec<AgentProgramView>,
+    /// The ACP agents: the built-in profiles and the user's.
+    pub acp_agents: Vec<AcpAgentView>,
     pub network: NetworkView,
 }
 
@@ -220,7 +256,9 @@ pub(crate) async fn view(st: &AppState) -> Result<HostSettingsView, ApiError> {
     let projects_dir =
         crate::projects::projects_dir(settings.projects_dir.as_deref()).map(|p| p.to_string_lossy().into_owned());
     let programs = program_views(st).await;
+    let acp_agents = acp_agent_views(st, &settings).await;
     Ok(HostSettingsView {
+        acp_agents,
         projects_dir,
         settings,
         owner_from_env: st.owner_from_env.clone(),
@@ -262,7 +300,11 @@ pub(crate) async fn put_settings(
         crate::setup::confirm_default_agent(&st).await?;
     }
     // Another agent program: what the checks found (logins, the agents offered) is out of date.
-    if patch.claude_program.is_some() || patch.codex_program.is_some() || patch.devin_program.is_some() {
+    if patch.claude_program.is_some()
+        || patch.codex_program.is_some()
+        || patch.devin_program.is_some()
+        || patch.acp_agents.is_some()
+    {
         let st = st.clone();
         tokio::spawn(async move {
             crate::checks::run_host_checks(&st).await;
