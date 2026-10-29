@@ -86,8 +86,8 @@ notifications get 202; `GET`/`DELETE` 405).
   asks about per call;
   Codex conversations a thread `config` `mcp_servers.pdt` with `http_headers` and `default_tools_approval_mode =
   "approve"`, Codex terminals the same through `-c` with the token in `PDT_MCP_TOKEN` (`bearer_token_env_var`); Devin
-  conversations an ACP `mcpServers` entry, and the mapping allows `mcp__pdt__*` permission requests at once (pdt-core
-  `conversation/devin.rs`). Devin terminals get no pdt-mcp (their MCP servers live in a file of Devin's own).
+  conversations an ACP `mcpServers` entry, and the mapping allows `mcp__pdt__*` permission requests at once (Devin's
+  extensions in pdt-core `conversation/devin.rs`). Devin terminals get no pdt-mcp (their MCP servers live in a file of Devin's own).
 - **Instructions.** `agent_context` names the server and the session's tools; a persona's step session also gets
   "Your role: <persona>" ([workflows.md](workflows.md#agent-steps-phase-7b)); a Personal project's session is told it
   works in a folder with no branches.
@@ -416,7 +416,10 @@ a conversation by default like the others (`mode: terminal` for its TUI).
   `additionalContext` and, for a terminal, posts Devin's `session_id` (stored as `external_session_id`, latest wins);
   restart/auto-resume run `--resume <id>`. An unreadable user config means no `--config` (and so no hook).
 - Conversations (PDT-55) run `devin [--config <file>] acp`, one Agent Client Protocol process (JSON-RPC on stdio) per
-  live conversation (pdt-agents `adapter/devin.rs`, mapping in pdt-core `conversation/devin.rs`):
+  live conversation. The process and JSON-RPC are the generic ACP adapter (pdt-agents `adapter/acp.rs`) and the
+  frame mapping the generic ACP mapper (pdt-core `conversation/acp.rs`); what is Devin's own (its arguments, modes and
+  resume fallback in `adapter/devin.rs`'s `DevinProfile`; its `cognition.ai/*` fields, tool and option names, `q0`…
+  question fields and `/private` paths in `conversation/devin.rs`'s `DevinExtensions`) is a profile on top:
   - `session/new` (its id is `external_session_id`) or `session/load` to resume (its history replay is dropped; a
     session Devin never saved, i.e. never prompted, gives -32016 and a new one starts with a notice).
   - A turn is one `session/prompt`; a message sent while it runs joins it (steer); Send now cancels first

@@ -1,6 +1,7 @@
 //! Conversations (structured agents spec §4): the normalized events every agent adapter produces, the requests the
 //! user answers, the WebSocket frames, and activity derived from events. Pure.
 
+pub mod acp;
 pub mod claude;
 pub mod codex;
 pub mod composer;

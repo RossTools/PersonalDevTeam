@@ -1,0 +1,16 @@
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"init","description":"Write AGENTS.md"}]}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"current_mode_update","currentModeId":"code"}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"Read the file, "}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"then change it."}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Run ls","kind":"execute","status":"pending","rawInput":{"command":"ls"}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"in_progress","content":[{"type":"content","content":{"type":"text","text":"a.txt"}}]}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"a.txt\nb.txt"}}]}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call","toolCallId":"t2","title":"Edit a.txt","kind":"edit","status":"pending","rawInput":{"file_path":"/work/repo/a.txt"},"content":[{"type":"diff","path":"/work/repo/a.txt","oldText":"hello\n","newText":"goodbye\n"}]}}}
+{"jsonrpc":"2.0","id":0,"method":"session/request_permission","params":{"sessionId":"sess-1","toolCall":{"toolCallId":"t2"},"options":[{"optionId":"yes","name":"Allow","kind":"allow_once"},{"optionId":"always","name":"Always allow","kind":"allow_always"},{"optionId":"no","name":"Reject","kind":"reject_once"}]}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"t2","status":"completed"}}}
+{"jsonrpc":"2.0","id":1,"method":"elicitation/create","params":{"sessionId":"sess-1","mode":"form","message":"Pick","requestedSchema":{"type":"object","properties":{"color":{"type":"string","title":"Colour","description":"Which colour?","enum":["Red","Blue"]},"note":{"type":"string","description":"Anything else?"}},"required":["color"]}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"plan","entries":[{"content":"Edit a.txt","status":"completed","priority":"high"},{"content":"Tell the user","status":"pending","priority":"low"}]}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Changed "}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"a.txt."}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-1","update":{"sessionUpdate":"usage_update","used":5000,"size":100000}}}
+{"jsonrpc":"2.0","id":2,"result":{"stopReason":"end_turn"}}

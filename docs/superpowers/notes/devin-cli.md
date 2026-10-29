@@ -78,7 +78,8 @@ user's file again. The user chose this over no hooks (no exact resume, no PDT in
 
 Checked against `devin 3000.11.92` on macOS on 2026-10-19 by driving `devin acp` from a script in a scratch repo
 (recorded frames: crates/pdt-core/tests/fixtures/devin) and then through PDT with the real Devin. Mapping: pdt-core
-`conversation/devin.rs`; process: pdt-agents `adapter/devin.rs`; stand-in for tests: `fake-agent acp`.
+`conversation/acp.rs` with Devin's extensions in `conversation/devin.rs`; process: pdt-agents `adapter/acp.rs` with
+Devin's profile in `adapter/devin.rs`; stand-in for tests: `fake-agent acp`.
 
 ### Transport and start
 
