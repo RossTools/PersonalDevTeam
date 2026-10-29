@@ -50,6 +50,8 @@ jobs:
 
   deploy:
     needs: build
+    # The github-pages environment only takes deploys from main: a workflow_dispatch on a branch checks the build.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write
