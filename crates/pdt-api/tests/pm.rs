@@ -781,6 +781,80 @@ async fn the_pm_reports_a_bug_after_a_yes() {
     assert!(issue["body"].as_str().unwrap().contains("PDT version:"), "{issue}");
 }
 
+/// PDT-256: a PM on an agent that can't ask in its own prompt (Codex) has its asking calls wait in the Inbox: only the
+/// user's Allow runs one, and the PM hears the result; a Deny tells it no.
+#[tokio::test]
+async fn a_codex_pm_reports_a_bug_after_the_users_allow_in_the_inbox() {
+    use common::issues::{FakeIssues, TOKEN};
+    let (base, gh) = FakeIssues::serve().await;
+    let env = setup_with(None, |st| {
+        st.update = std::sync::Arc::new(pdt_api::UpdateService::new(&base, "o/r", false, "0.1.0-local"));
+        st.secrets.set(&st.update_token_account, TOKEN).unwrap();
+    })
+    .await;
+    let (_, personas) = call(&env.app, "GET", "/api/personas", None).await;
+    let pm = personas.as_array().unwrap().iter().find(|p| p["builtin"] == "pm").unwrap().clone();
+    let setup = json!({"note": "", "agent": "codex", "model": null, "instructions": pm["instructions"],
+                       "permissionMode": pm["permissionMode"], "tools": pm["tools"]});
+    let (s, v) = call(&env.app, "PUT", &format!("/api/personas/{}", pm["id"].as_str().unwrap()), Some(setup)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    let confirm = || async {
+        let (_, v) = call(&env.app, "GET", "/api/inbox", None).await;
+        v["items"].as_array().unwrap().iter().find(|i| i["kind"] == "confirm").cloned()
+    };
+
+    let report = r#"mcp: report_bug {"title": "The board flickers", "description": "On every poll."}"#;
+    let said = ask(&env, &id, report).await;
+    assert!(said.starts_with("mcp report_bug failed:") && said.contains("in its Inbox"), "{said}");
+    assert_eq!(gh.request_count(), 0, "nothing before the yes");
+    let item = confirm().await.expect("the call waits in the Inbox");
+    assert_eq!((item["group"].as_str(), item["sessionId"].as_str()), (Some("approval"), Some(id.as_str())), "{item}");
+    assert_eq!(item["body"]["tool"], "report_bug");
+    assert_eq!(item["body"]["agent"], "Codex");
+    assert_eq!(item["body"]["input"]["title"], "The board flickers");
+    let url = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
+
+    // An Allow that isn't the user's click (an agent's curl, without the UI token) runs nothing.
+    let (s, v) = call(&env.app, "POST", &url, Some(json!({"choice": "allow"}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert_eq!(gh.request_count(), 0);
+
+    // The user's Allow runs the call as given and tells the PM what came of it.
+    let n = agent_says(&env, &id).await.len();
+    let (s, v) = common::call_as_ui(&env.app, "POST", &url, Some(json!({"choice": "allow"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["allowed"], true, "{v}");
+    assert_eq!(v["result"]["kind"], "issue", "{v}");
+    let issue = gh.created.lock().unwrap()[0].clone();
+    assert_eq!(issue["title"], "The board flickers");
+    let said = tool_answer(&env, &id, n, "The user allowed your report_bug call").await;
+    assert!(said.contains("\"kind\": \"issue\"") || said.contains("\"kind\":\"issue\""), "{said}");
+    assert!(confirm().await.is_none(), "answered");
+    let (s, _) = common::call_as_ui(&env.app, "POST", &url, Some(json!({"choice": "allow"}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "a second click runs nothing");
+    assert_eq!(gh.created.lock().unwrap().len(), 1);
+
+    // A Deny files nothing, and the PM hears it.
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, r#"mcp: report_bug {"title": "Not this one", "description": "No."}"#).await;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let item = loop {
+        if let Some(i) = confirm().await {
+            break i;
+        }
+        assert!(Instant::now() < deadline, "no Inbox item");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let url = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
+    let (s, v) = call(&env.app, "POST", &url, Some(json!({"choice": "deny"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    tool_answer(&env, &id, n, "The user denied your report_bug call").await;
+    assert_eq!(gh.created.lock().unwrap().len(), 1);
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
 /// PDT-159: a ticket the PM creates in To do and links as blocked right after waits out the start delay, so the link
 /// holds it back; `stop_ticket` asks first, then cancels the ticket's work, stops its session, abandons its attempt
 /// and moves it back to To do.

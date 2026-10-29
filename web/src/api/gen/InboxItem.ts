@@ -16,6 +16,6 @@ personaName: string | null, title: string,
 /**
  * Kind-specific: `questions` (question), `question`/`choices` (gate), `outcomes`, `summary`, `turns`
  * (stalled), `passes` (loop limit), `request` (approval), `notice`/`key`/`text`/`pr`/`url` (notice),
- * `summary`/`issue`/`external` (admit).
+ * `summary`/`issue`/`external` (admit), `tool`/`toolTitle`/`input`/`agent`/`sessionTitle` (confirm).
  */
 body: Record<string, unknown>, choices: Array<InboxChoice>, resolution: unknown, createdAt: number, resolvedAt: number | null, };

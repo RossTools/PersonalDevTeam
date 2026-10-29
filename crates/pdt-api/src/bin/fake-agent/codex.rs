@@ -7,6 +7,9 @@
 //! - `where` — says the thread's working folder, its `web_search` config and whether the turn's sandbox has the
 //!   network.
 //! - `exit` — the server exits 3.
+//! - `mcp: <tool> <json arguments>` — calls that pdt-mcp tool (from the thread's `mcp_servers.pdt` config) without
+//!   asking, as Codex does with `default_tools_approval_mode: approve`, and says `mcp <tool>: <text>` (`mcp <tool>
+//!   failed: …` for a tool error).
 //! - anything else — `echo: <text>` (plus `saw N images` when the input has `localImage`s).
 //!
 //! `thread/fork` makes a fork that is never saved; a turn on it answers with a ticket draft naming the thread forked
@@ -457,6 +460,33 @@ async fn run_turn(
         if status == "completed" {
             say(&format!("Finished the slow job. steered={steered:?}"), &mut items);
         }
+    } else if let Some(call) = t.strip_prefix("mcp:") {
+        let opened = conn.opened.lock().unwrap().get(&thread).cloned().unwrap_or_default();
+        let pdt = &opened["config"]["mcp_servers.pdt"];
+        let server = pdt["url"].as_str().zip(pdt.pointer("/http_headers/Authorization").and_then(Value::as_str));
+        let reply = match server.map(|(u, a)| (u.to_string(), a.to_string())) {
+            None => "mcp error: no pdt-mcp server".to_string(),
+            Some(server) => {
+                let call = call.trim().to_string();
+                let (tool, args) = call.split_once(' ').unwrap_or((&call, "{}"));
+                let (tool, args) = (tool.to_string(), serde_json::from_str(args.trim()).unwrap_or(json!({})));
+                let name = tool.clone();
+                let r = tokio::task::spawn_blocking(move || {
+                    crate::rpc(&server, "tools/call", json!({"name": name, "arguments": args}))
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+                match r {
+                    Ok(r) => format!(
+                        "mcp {tool}{}: {}",
+                        if r["isError"] == true { " failed" } else { "" },
+                        r["content"][0]["text"].as_str().unwrap_or("")
+                    ),
+                    Err(e) => format!("mcp error: {e}"),
+                }
+            }
+        };
+        say(&reply, &mut items);
     } else if t == "exit" {
         eprintln!("fake codex: crashing as asked");
         // Let the frames sent so far reach the client first.
