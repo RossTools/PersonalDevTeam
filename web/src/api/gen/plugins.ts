@@ -357,7 +357,7 @@ export const plugins: IntegrationInfo[] = [
   {
     "id": "jira",
     "label": "Jira",
-    "description": "Link projects to a Jira Cloud site: issues assigned to you become tickets, and Done moves the issue.",
+    "description": "Link projects to Jira Cloud or Server / Data Center: issues assigned to you become tickets, Done moves the issue, and the PM and workflows search, edit and move issues, sprints and epics.",
     "category": "dev",
     "icon": {
       "letters": "J",
@@ -373,29 +373,87 @@ export const plugins: IntegrationInfo[] = [
     "connectionKinds": [
       {
         "id": "jira",
-        "label": "Jira Cloud",
-        "plural": "Jira Cloud sites",
-        "setup": "A Jira Cloud site a project links to in its settings: issues assigned to you become tickets, and Done moves the issue.",
-        "description": "A Jira Cloud site (projects link to it; Jira actions).",
+        "label": "Jira",
+        "plural": "Jira sites",
+        "setup": "A Jira Cloud site or a Jira Server / Data Center instance. A project links to it in its settings: issues assigned to you become tickets, and Done moves the issue. The PM and the Jira steps search, create, edit, move and comment on issues, and manage sprints and epics.",
+        "description": "Jira Cloud or Server / Data Center (projects link to it; the PM and the Jira actions).",
         "url": true,
-        "secretLabel": "API token",
-        "secretHint": "At id.atlassian.com → Security → Create and manage API tokens → Create API token.",
+        "secretLabel": "API token or personal access token",
+        "secretHint": "Cloud: at id.atlassian.com → Security → Create and manage API tokens → Create API token. Server / Data Center: your profile → Personal Access Tokens → Create token (sent as a bearer token).",
         "generate": false,
         "auth": false,
         "secretOptional": false,
         "urlPlaceholder": "https://your-site.atlassian.net",
-        "urlHint": "Your Jira Cloud site.",
+        "urlHint": "Your Jira Cloud site, or your Jira server’s address (https://jira.example.com).",
         "urlOptional": false,
         "fields": [
+          {
+            "key": "deployment",
+            "label": "Jira",
+            "type": "choice",
+            "options": [
+              {
+                "value": "cloud",
+                "label": "Jira Cloud"
+              },
+              {
+                "value": "server",
+                "label": "Jira Server / Data Center"
+              }
+            ],
+            "optional": false
+          },
           {
             "key": "email",
             "label": "Email",
             "hint": "The Atlassian account’s email; PDT signs in as it.",
             "placeholder": "you@work.com",
+            "when": {
+              "key": "deployment",
+              "value": "cloud"
+            },
             "optional": false
+          },
+          {
+            "key": "fields",
+            "label": "Field names",
+            "hint": "Names for this site’s custom fields, one name=field id per line; the PM and workflows can use them in place of the ids.",
+            "placeholder": "storyPoints=customfield_10016\nseverity=customfield_10200",
+            "type": "env",
+            "optional": true
+          },
+          {
+            "key": "epicNameField",
+            "label": "Epic Name field",
+            "hint": "The Epic Name field’s id; found by its type when left empty.",
+            "placeholder": "customfield_10011",
+            "optional": true
+          },
+          {
+            "key": "epicLinkField",
+            "label": "Epic Link field",
+            "hint": "The Epic Link field’s id; found by its type when left empty (Cloud without one uses the issue’s parent).",
+            "placeholder": "customfield_10014",
+            "optional": true
+          },
+          {
+            "key": "sprintField",
+            "label": "Sprint field",
+            "hint": "The Sprint field’s id; found by its type when left empty.",
+            "placeholder": "customfield_10020",
+            "optional": true
+          },
+          {
+            "key": "backlogSections",
+            "label": "Backlog sections",
+            "hint": "Sprints that are sections of the backlog rather than sprints, one name per line (* at the end for any name starting so). They are never the active sprint.",
+            "placeholder": "Backlog: *",
+            "type": "lines",
+            "optional": true
           }
         ],
-        "discordBot": false
+        "discordBot": false,
+        "pmActs": "The PM creates, edits, moves and comments on issues, imports them and changes sprints and epics without asking"
       }
     ],
     "nodeKinds": [
@@ -416,6 +474,18 @@ export const plugins: IntegrationInfo[] = [
         "title": "Jira issue commented"
       },
       {
+        "id": "jira.check",
+        "title": "Test Jira"
+      },
+      {
+        "id": "jira.search",
+        "title": "Search Jira"
+      },
+      {
+        "id": "jira.issue",
+        "title": "Read a Jira issue"
+      },
+      {
         "id": "jira.import",
         "title": "Import a Jira issue"
       },
@@ -424,12 +494,40 @@ export const plugins: IntegrationInfo[] = [
         "title": "Create a Jira issue"
       },
       {
-        "id": "jira.transition",
-        "title": "Move a Jira issue"
+        "id": "jira.edit",
+        "title": "Edit a Jira issue"
       },
       {
         "id": "jira.comment",
         "title": "Comment on a Jira issue"
+      },
+      {
+        "id": "jira.transitions",
+        "title": "Jira issue's transitions"
+      },
+      {
+        "id": "jira.transition",
+        "title": "Move a Jira issue"
+      },
+      {
+        "id": "jira.boards",
+        "title": "Jira boards"
+      },
+      {
+        "id": "jira.sprints",
+        "title": "Jira sprints"
+      },
+      {
+        "id": "jira.board",
+        "title": "Jira board"
+      },
+      {
+        "id": "jira.sprint",
+        "title": "Move Jira issues to a sprint"
+      },
+      {
+        "id": "jira.epic",
+        "title": "Set Jira issues' epic"
       }
     ],
     "templates": [],
@@ -443,8 +541,38 @@ export const plugins: IntegrationInfo[] = [
         "title": "Done moves the Jira issue"
       }
     ],
-    "tools": [],
-    "pmTools": [],
+    "tools": [
+      "jira_check",
+      "jira_search",
+      "jira_issue",
+      "jira_import",
+      "jira_create",
+      "jira_edit",
+      "jira_comment",
+      "jira_transitions",
+      "jira_transition",
+      "jira_boards",
+      "jira_sprints",
+      "jira_board",
+      "jira_sprint",
+      "jira_epic"
+    ],
+    "pmTools": [
+      "jira_check",
+      "jira_search",
+      "jira_issue",
+      "jira_import",
+      "jira_create",
+      "jira_edit",
+      "jira_comment",
+      "jira_transitions",
+      "jira_transition",
+      "jira_boards",
+      "jira_sprints",
+      "jira_board",
+      "jira_sprint",
+      "jira_epic"
+    ],
     "projectSettings": "Issues assigned to you in this scope become Draft tickets (checked every minute), and moving a linked ticket to Done moves its issue.",
     "projects": []
   },

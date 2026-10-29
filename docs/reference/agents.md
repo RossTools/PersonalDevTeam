@@ -163,6 +163,18 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   called `name` that `discord.post` uses; the URL goes to the keychain and never into the result; a taken name is
   refused before anything is made, and a webhook that can't be saved is removed). The approval card's title is one
   line per change (crates/pdt-int-discord `core::ask_title`, through the integration's `approval_title` hook).
+- **Jira** (PDT-258; crates/pdt-int-jira `actions.rs`, only while the Jira integration is enabled). Through a `jira`
+  connection (`connection`: its name, or the only one; Cloud or Server / Data Center), the same calls as the `jira.*`
+  nodes ([workflows.md](workflows.md) "Jira actions"), each tool's schema its node's config with `connection`
+  optional. Reading asks nothing: `jira_check` (who the connection signs in as, the deployment and version),
+  `jira_search` (JQL a page at a time; `next` back as `page`), `jira_issue`, `jira_transitions` (each transition's
+  screen fields: required, type, choices), `jira_boards`, `jira_sprints` (active sprints and backlog sections) and
+  `jira_board` (each issue's `placement` by sprint and status). The asking tools wait for the user's yes unless the
+  connection's `pmActs` lets the PM act: `jira_import` (a ticket from an issue, never twice), `jira_create`,
+  `jira_edit`, `jira_comment`, `jira_transition` (with its screen's `fields` in the same request; a required one left
+  out comes back as an error naming it and its choices, for the PM to ask the user), `jira_sprint` (into a sprint or
+  section, or back to the backlog) and `jira_epic`. The approval card's title says what changes ("Jira: move OPS-1 to
+  Resolved with Resolution=Fixed"; pdt-int-jira `actions::approval_title`). The token never reaches the agent.
 - **Scryer** (PDT-147; crates/pdt-int-scryer `actions.rs`, `core.rs`, only while the Scryer integration is enabled). Through a `scryer` connection (`connection`: its
   name, or the only one), the same calls as the `scryer.*` nodes ([workflows.md](workflows.md)), each tool's schema
   its node's config with `connection` optional: `scryer_library` (the library a page at a time: facet, words in the

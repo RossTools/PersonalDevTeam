@@ -28,13 +28,30 @@ describe('Jira and Buildkite', () => {
     expect(within(dialog).getByText(/Create and manage API tokens/)).toBeTruthy();
     await userEvent.type(within(dialog).getByLabelText('Name'), 'work');
     await userEvent.type(within(dialog).getByLabelText('Address'), 'https://acme.atlassian.net');
-    await userEvent.type(within(dialog).getByLabelText('API token'), 'tok');
+    await userEvent.type(within(dialog).getByLabelText('API token or personal access token'), 'tok');
     const save = within(dialog).getByRole('button', { name: 'Save' });
     expect(save.hasAttribute('disabled') || save.getAttribute('aria-disabled') === 'true').toBe(true);
     await userEvent.type(within(dialog).getByLabelText('Email'), 'me@acme.com');
     await userEvent.click(save);
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
-    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'work', kind: 'jira', url: 'https://acme.atlassian.net', config: { email: 'me@acme.com' } });
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'work', kind: 'jira', url: 'https://acme.atlassian.net', config: { deployment: 'cloud', email: 'me@acme.com', pmActs: false } });
+  });
+
+  it('a Jira Server / Data Center connection needs no email (PDT-258)', async () => {
+    const created = { ...conn('ops', 'jira'), hasSecret: false };
+    const calls = stubApi({ 'POST /api/connections': created, 'PUT /api/connections/c-ops/secret': created });
+    renderWithQuery(<ConnectionDialog kind="jira" onClose={() => {}} />);
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /Jira Cloud/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Jira Server / Data Center' }));
+    expect(within(dialog).queryByLabelText('Email')).toBeNull();
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'ops');
+    await userEvent.type(within(dialog).getByLabelText('Address'), 'https://jira.example.com');
+    await userEvent.type(within(dialog).getByLabelText('API token or personal access token'), 'pat');
+    await userEvent.type(within(dialog).getByLabelText('Epic Link field'), 'customfield_10014');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'ops', kind: 'jira', url: 'https://jira.example.com', config: { deployment: 'server', epicLinkField: 'customfield_10014', pmActs: false } });
   });
 
   it('links the project to Jira and Buildkite in its settings, each field saved as it changes', async () => {

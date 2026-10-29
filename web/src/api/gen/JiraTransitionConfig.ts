@@ -14,6 +14,11 @@ key: string | null,
  */
 ticket: string | null, 
 /**
- * A transition's name or the status it leads to; with `ticket`, default its project's done mapping.
+ * A transition's id or name, or the status it leads to; with `ticket`, default its project's done mapping.
  */
-to: string | null, };
+to: string | null, 
+/**
+ * The fields the transition's screen asks for, sent with it: by id, mapped name or name in Jira, with plain
+ * values (`{"Resolution": "Fixed", "Story Points": 3}`) or Jira's form.
+ */
+fields: Record<string, unknown>, };

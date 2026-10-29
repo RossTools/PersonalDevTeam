@@ -183,8 +183,10 @@ async fn the_jira_integration_serves_its_connection_kind_and_triggers() {
     let (s, kinds) = call(&env.app, "GET", "/api/connections/kinds", None).await;
     assert_eq!(s, StatusCode::OK, "{kinds}");
     let jira = kinds.as_array().unwrap().iter().find(|k| k["id"] == "jira").expect("a jira kind").clone();
-    assert_eq!((jira["label"].as_str(), jira["url"].as_bool()), (Some("Jira Cloud"), Some(true)));
-    assert_eq!(jira["fields"][0]["key"], "email");
+    assert_eq!((jira["label"].as_str(), jira["url"].as_bool()), (Some("Jira"), Some(true)));
+    assert_eq!(jira["fields"][0]["key"], "deployment");
+    assert_eq!(jira["fields"][1]["key"], "email");
+    assert_eq!(jira["fields"][1]["when"], json!({"key": "deployment", "value": "cloud"}));
     let (s, catalog) = call(&env.app, "GET", "/api/workflows/catalog", None).await;
     assert_eq!(s, StatusCode::OK);
     let trigger = catalog.as_array().unwrap().iter().find(|k| k["id"] == "jira.issue.created").expect("its trigger");

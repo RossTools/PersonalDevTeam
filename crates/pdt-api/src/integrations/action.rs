@@ -85,6 +85,12 @@ pub trait Action: Send + Sync + 'static {
     /// of the user's approval.
     fn approval_title(&self, input: &Self::Input) -> String;
 
+    /// Whether its node, cut short, may run again on its own ([`NodeKind::rerun_safe`]): not for one whose effect
+    /// can't be told apart from doing it twice (PDT-131).
+    fn rerun_safe(&self) -> bool {
+        true
+    }
+
     /// What an asking tool's call acts on, from its arguments as the agent gave them: by default the connection they
     /// name (or the only one of its kind), whose settings say whether the PM acts without asking.
     fn ask_target(&self, args: &Value) -> AskTarget {
@@ -215,6 +221,10 @@ impl<A: Action> NodeKind for ActionNode<A> {
 
     fn check(&self, config: &Value) -> Result<(), String> {
         self.0.check(&parse(config)?)
+    }
+
+    fn rerun_safe(&self, _input: &Value) -> bool {
+        self.0.rerun_safe()
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {

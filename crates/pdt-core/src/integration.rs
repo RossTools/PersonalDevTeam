@@ -163,7 +163,8 @@ pub const KNOWN: &[KnownIntegration] = &[
     KnownIntegration {
         id: "jira",
         label: "Jira",
-        description: "Link projects to a Jira Cloud site: issues assigned to you become tickets, and Done moves the issue.",
+        description: "Link projects to Jira Cloud or Server / Data Center: issues assigned to you become tickets, Done \
+                      moves the issue, and the PM and workflows search, edit and move issues, sprints and epics.",
         category: PluginCategory::Dev,
         icon: Icon { letters: "J", color: "#2684ff" },
         connection_kinds: &["jira"],
