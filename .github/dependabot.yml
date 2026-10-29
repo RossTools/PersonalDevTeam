@@ -1,0 +1,48 @@
+# Weekly dependency updates (docs/SDLC.md "Dependabot"). Minor and patch updates come as one grouped PR per
+# ecosystem; each major update gets its own PR. Security updates (turned on in the repo settings) use the same labels.
+# The `no-changelog` label lets the PRs pass CI's changelog job.
+version: 2
+updates:
+  # The Cargo workspace (Cargo.toml, Cargo.lock). rust-toolchain.toml is bumped by hand.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, no-changelog]
+    commit-message:
+      prefix: "deps"
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+
+  # The pnpm workspace: the root pnpm-lock.yaml and pnpm-workspace.yaml cover web, desktop and site.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, no-changelog]
+    commit-message:
+      prefix: "deps"
+    groups:
+      pnpm-minor-patch:
+        update-types: [minor, patch]
+
+  # The workflows in .github/workflows (from /) and the local composite actions in .github/actions/*.
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, no-changelog]
+    commit-message:
+      prefix: "deps"
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]

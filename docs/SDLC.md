@@ -116,6 +116,21 @@ The board no longer jumps back to the top when a ticket moves.
   The release workflow runs it on the release PR (below, "Releasing"), and publishes `scripts/changelog.sh notes
   <version>` (that version's section, as compiled and perhaps edited since) as the release's notes.
 
+## Dependabot
+
+`.github/dependabot.yml` has Dependabot check three ecosystems every Monday: the Cargo workspace, the pnpm workspace
+(the root `pnpm-lock.yaml`, covering `web`, `desktop` and `site`) and GitHub Actions (the workflows and the composite
+actions in `.github/actions/`). For each it opens one grouped PR with that week's minor and patch updates, and a PR of
+its own for each major update, at most five open per ecosystem. Security updates, once turned on in the repo's
+settings, arrive the same way. `rust-toolchain.toml` is still bumped by hand.
+
+- Its PRs carry the `dependencies` and `no-changelog` labels (dependency bumps need no release note) and commit
+  messages starting `deps:`.
+- They are outside PRs, not Pipeline attempts: PDT handles them with the external-PR workflow (PDT-269), an agent
+  reviews each, and the user approves and merges it through the merge queue like any other PR. A major update may
+  need code changes; make those on the Dependabot branch or in a ticket of their own.
+- GitHub Actions PRs change `.github/`, so they run the macOS and Windows checks too.
+
 ## Releases
 
 Releases are deliberate: merges don't ship. A push to `main` runs no CI at all (the merge queue has just checked that
