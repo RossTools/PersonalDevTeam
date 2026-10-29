@@ -129,28 +129,26 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
             HostSettings::default().agent_credentials
         }
     };
+    let platform = st.agent_platform().await;
     let agent = |program: &str, args: &'static [&'static str]| {
         let program = program.to_string();
         async move { run(st, &program, args, SessionKind::AgentTui, creds).await }
     };
-    let claude =
-        check(
-            "claude",
-            agent(&st.platform.claude_program, &["auth", "status"]).await,
-            |_, out| match claude_logged_in(&out) {
-                Some(true) => ToolCheck::answered(true, "logged in".into()),
-                Some(false) => ToolCheck::answered(false, "not logged in: run `claude` and log in".into()),
-                None => ToolCheck::answered(false, format!("could not read `claude auth status`: {out}")),
-            },
-        );
-    let codex = check("codex", agent(&st.platform.codex_program, &["login", "status"]).await, |ok, out| {
+    let claude = check("claude", agent(&platform.claude_program, &["auth", "status"]).await, |_, out| {
+        match claude_logged_in(&out) {
+            Some(true) => ToolCheck::answered(true, "logged in".into()),
+            Some(false) => ToolCheck::answered(false, "not logged in: run `claude` and log in".into()),
+            None => ToolCheck::answered(false, format!("could not read `claude auth status`: {out}")),
+        }
+    });
+    let codex = check("codex", agent(&platform.codex_program, &["login", "status"]).await, |ok, out| {
         if ok {
             ToolCheck::answered(true, out)
         } else {
             ToolCheck::answered(false, format!("not logged in: run `codex login` ({out})"))
         }
     });
-    let devin = check("devin", agent(&st.platform.devin_program, &["auth", "status"]).await, |ok, out| {
+    let devin = check("devin", agent(&platform.devin_program, &["auth", "status"]).await, |ok, out| {
         if devin_logged_in(ok, &out) {
             // Its status goes on to list the account and team settings; the first line says it all.
             ToolCheck::answered(true, out.lines().next().unwrap_or_default().trim().to_string())

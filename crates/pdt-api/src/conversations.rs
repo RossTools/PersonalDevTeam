@@ -95,7 +95,7 @@ async fn codex_server(st: &AppState) -> Result<Arc<CodexServer>, ApiError> {
     }
     let creds = st.store.get_host_settings().await?.agent_credentials;
     let config = CodexServerConfig {
-        program: st.platform.codex_program.clone(),
+        program: st.agent_platform().await.codex_program,
         search_path: st.platform.login_path.clone(),
         dir: st.data_dir.join("codex"),
         env: login_path_env(st),
@@ -274,15 +274,15 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
     let (program, resume) = match session.agent {
         // Codex resumes its thread whenever it has one; Devin its session (it starts a new one when that was never
         // saved).
-        Some(AgentKind::Codex) => (st.platform.codex_program.clone(), row.external_session_id.is_some()),
-        Some(AgentKind::Devin) => (st.platform.devin_program.clone(), row.external_session_id.is_some()),
+        Some(AgentKind::Codex) => (st.agent_platform().await.codex_program, row.external_session_id.is_some()),
+        Some(AgentKind::Devin) => (st.agent_platform().await.devin_program, row.external_session_id.is_some()),
         // Claude saves a conversation only after its first turn; resuming one that was never saved fails.
         _ => {
             let saved =
                 st.platform.claude_config_dir.as_deref().is_none_or(|dir| {
                     pdt_agents::launch::claude_conversation_exists(dir, row.claude_conversation_id())
                 });
-            (st.platform.claude_program.clone(), has_history && saved)
+            (st.agent_platform().await.claude_program, has_history && saved)
         }
     };
     // Devin: turns taken in its own terminal since the switch (or, for a session that was always a terminal, all of
@@ -1587,12 +1587,15 @@ pub(crate) async fn ticket_draft(
     let adapter = adapter_for(&st, session.agent).await?;
     let creds = crate::sessions::credentials_for(&st, &session.project_id).await?;
     let (program, saved) = match session.agent {
-        Some(AgentKind::Codex) => (st.platform.codex_program.clone(), session.external_session_id.is_some()),
+        Some(AgentKind::Codex) => (st.agent_platform().await.codex_program, session.external_session_id.is_some()),
         _ => {
             let on_disk = st.platform.claude_config_dir.as_deref().is_none_or(|dir| {
                 pdt_agents::launch::claude_conversation_exists(dir, session.claude_conversation_id())
             });
-            (st.platform.claude_program.clone(), on_disk && st.store.last_session_event_seq(&session.id).await? > 0)
+            (
+                st.agent_platform().await.claude_program,
+                on_disk && st.store.last_session_event_seq(&session.id).await? > 0,
+            )
         }
     };
     if !saved {

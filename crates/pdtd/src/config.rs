@@ -1,6 +1,7 @@
 use anyhow::{Context, bail};
 use pdt_api::remote::HOST_HTTPS_PORT;
 use pdt_core::brand::{DAEMON_BIN, Profile};
+use pdt_core::network::{NetworkSettings, PORT_FROM_SETTING_ENV, network_path};
 use std::path::PathBuf;
 use tokio::net::TcpListener;
 
@@ -10,6 +11,13 @@ const VITE_DEV_PORT: u16 = 5173;
 pub struct Config {
     pub profile: Profile,
     pub port: u16,
+    /// Whether the port is the user's own `PDT_PORT` (not pdt-host passing on the setting or the default): it then
+    /// wins over Settings → Network's (PDT-231).
+    pub port_from_env: bool,
+    /// Settings → Network as it was when pdtd started (`network.json` in the data dir).
+    pub network: NetworkSettings,
+    /// `PDT_ALLOWED_HOSTS`'s hosts, which win over the setting's.
+    pub allowed_hosts_from_env: Option<Vec<String>>,
     pub data_dir: PathBuf,
     pub web_dir: Option<PathBuf>,
     /// Host header values accepted by the API (DNS-rebinding guard).
@@ -70,10 +78,11 @@ impl Config {
         // Empty or whitespace-only values count as unset.
         let lookup = |k: &str| lookup(k).filter(|v| !v.trim().is_empty());
         let profile = Profile::from_env_value(lookup("PDT_PROFILE").as_deref());
-        let port = match lookup("PDT_PORT") {
-            Some(p) => p.parse::<u16>().with_context(|| format!("PDT_PORT is not a valid port: {p:?}"))?,
-            None => profile.port(),
+        let env_port = match lookup("PDT_PORT") {
+            Some(p) => Some(p.parse::<u16>().with_context(|| format!("PDT_PORT is not a valid port: {p:?}"))?),
+            None => None,
         };
+        let port_from_env = env_port.is_some() && lookup(PORT_FROM_SETTING_ENV).as_deref() != Some("1");
         let data_dir = match lookup("PDT_DATA_DIR") {
             Some(d) => PathBuf::from(d),
             None => match &default_data_root {
@@ -81,6 +90,13 @@ impl Config {
                 None => bail!("could not determine a data directory; set PDT_DATA_DIR"),
             },
         };
+        // A rehearsal runs on a copy of a real data dir, whose network settings are the real instance's.
+        let rehearsing = lookup("PDT_REHEARSAL").as_deref() == Some("1");
+        let network = match std::fs::read(network_path(&data_dir)) {
+            Ok(bytes) if !rehearsing => NetworkSettings::parse(&bytes),
+            _ => NetworkSettings::default(),
+        };
+        let port = network.port_for(env_port, profile);
         // Next to the exe (Windows installer, dev layouts), or in a macOS bundle's Contents/Resources.
         let bundled_web =
             |d: PathBuf| [d.join("web"), d.join("..").join("Resources").join("web")].into_iter().find(|w| w.is_dir());
@@ -90,9 +106,10 @@ impl Config {
             // `pnpm --dir web dev` serves the UI on 5173 and proxies /api here with its own Host and Origin.
             allowed_hosts.extend([format!("localhost:{VITE_DEV_PORT}"), format!("127.0.0.1:{VITE_DEV_PORT}")]);
         }
-        if let Some(extra) = lookup("PDT_ALLOWED_HOSTS") {
-            allowed_hosts.extend(extra.split(',').map(str::trim).filter(|h| !h.is_empty()).map(String::from));
-        }
+        let allowed_hosts_from_env = lookup("PDT_ALLOWED_HOSTS").map(|extra| {
+            extra.split(',').map(str::trim).filter(|h| !h.is_empty()).map(String::from).collect::<Vec<_>>()
+        });
+        allowed_hosts.extend(allowed_hosts_from_env.clone().unwrap_or_else(|| network.allowed_hosts.clone()));
         let owner_login = lookup("PDT_OWNER_LOGIN").map(|v| v.trim().to_string());
         let rehearsal = lookup("PDT_REHEARSAL").as_deref() == Some("1");
         if rehearsal {
@@ -125,7 +142,9 @@ impl Config {
             Some(r) if pdt_core::host::is_repo_name(&r) => Some(r),
             Some(r) => bail!("PDT_RELEASE_REPO must be a GitHub owner/name, not {r:?}"),
         };
-        let remote_https_port = if port == Profile::Stable.port() { HOST_HTTPS_PORT } else { port };
+        // The stable instance on a port of its own choosing (Settings → Network) still owns 443.
+        let stable_port = port == Profile::Stable.port() || (profile == Profile::Stable && !port_from_env);
+        let remote_https_port = if stable_port { HOST_HTTPS_PORT } else { port };
         let claude_program = lookup("PDT_CLAUDE_PROGRAM");
         let codex_program = lookup("PDT_CODEX_PROGRAM");
         let devin_program = lookup("PDT_DEVIN_PROGRAM");
@@ -139,6 +158,9 @@ impl Config {
         Ok(Config {
             profile,
             port,
+            port_from_env,
+            network,
+            allowed_hosts_from_env,
             data_dir,
             web_dir,
             allowed_hosts,
@@ -286,6 +308,29 @@ mod tests {
             c.allowed_hosts,
             ["127.0.0.1:9000", "localhost:9000", "[::1]:9000", "box.tail.ts.net:9000", "other:1"]
         );
+    }
+
+    #[test]
+    fn the_network_settings_apply_unless_the_environment_sets_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Some(tmp.path().to_path_buf());
+        let data = tmp.path().join("pdt");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(network_path(&data), r#"{"port": 7500, "allowedHosts": ["pdt.local"]}"#).unwrap();
+        let c = Config::from_lookup(lookup(&[]), root.clone(), None).unwrap();
+        assert_eq!((c.port, c.port_from_env, c.remote_https_port), (7500, false, 443));
+        assert_eq!(c.allowed_hosts, ["127.0.0.1:7500", "localhost:7500", "[::1]:7500", "pdt.local"]);
+        assert_eq!(c.network.port, Some(7500));
+        // The user's own PDT_PORT and PDT_ALLOWED_HOSTS win.
+        let c =
+            Config::from_lookup(lookup(&[("PDT_PORT", "9000"), ("PDT_ALLOWED_HOSTS", "other:1")]), root.clone(), None)
+                .unwrap();
+        assert_eq!((c.port, c.port_from_env, c.remote_https_port), (9000, true, 9000));
+        assert_eq!(c.allowed_hosts, ["127.0.0.1:9000", "localhost:9000", "[::1]:9000", "other:1"]);
+        assert_eq!(c.allowed_hosts_from_env, Some(vec!["other:1".to_string()]));
+        // pdt-host passes the setting's port on: still the setting.
+        let c = Config::from_lookup(lookup(&[("PDT_PORT", "7500"), (PORT_FROM_SETTING_ENV, "1")]), root, None).unwrap();
+        assert_eq!((c.port, c.port_from_env, c.remote_https_port), (7500, false, 443));
     }
 
     #[test]

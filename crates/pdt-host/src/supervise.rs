@@ -432,12 +432,22 @@ fn recover(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool) -> bo
 /// Runs until `stop` is set (tests); in production it runs for the life of the process. `after_install` is called
 /// after a successful install (pdt-host's main uses it to replace itself last).
 pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after_install: &dyn Fn()) {
+    let mut current = cfg.clone();
     let mut failures = 0u32;
     let mut child: Option<Child> = None;
     // Set when a request file cannot be removed: it is then left alone until pdt-host restarts.
     let mut ignore_requests = false;
     let mut recovered = false;
     while !stopped(stop) {
+        // Settings → Network's port, for the next pdtd (PDT-231).
+        if child.is_none() {
+            let before = current.port;
+            current.refresh_port(|p| matches!(probe(p), Probe::Ours { .. }));
+            if current.port != before {
+                log(&current, &format!("pdtd's port is now {} (was {before})", current.port));
+            }
+        }
+        let cfg = &current;
         // Retried after each pdtd exit while a running pdtd blocks it.
         if !recovered {
             recovered = recover(cfg, installer, stop);

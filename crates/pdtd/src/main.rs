@@ -49,6 +49,10 @@ async fn run() -> anyhow::Result<()> {
     {
         tracing::warn!("PDT_PROFILE={p:?} is not 'dev' or 'stable'; treating it as stable");
     }
+    // pdt-host and the tray find this pdtd by it once Settings → Network names another port (PDT-231).
+    if let Err(e) = std::fs::write(pdt_core::network::listening_path(&cfg.data_dir), format!("{}\n", cfg.port)) {
+        tracing::warn!(error = %e, "could not record the port pdtd listens on");
+    }
     if cfg.web_dir.is_none() {
         tracing::warn!("the web UI is not served (no web dir found); set PDT_WEB_DIR to the built web/dist directory");
     }
@@ -90,7 +94,19 @@ async fn run() -> anyhow::Result<()> {
     state.refresh_owner().await;
     (state.secrets, state.secret_store) = secret_store(&cfg).await;
     state.listen_port = cfg.port;
+    state.host_env = std::sync::Arc::new(pdt_api::HostEnv {
+        port: cfg.port_from_env.then_some(cfg.port),
+        allowed_hosts: cfg.allowed_hosts_from_env.clone(),
+        claude_program: cfg.claude_program.clone(),
+        codex_program: cfg.codex_program.clone(),
+        devin_program: cfg.devin_program.clone(),
+        network_at_start: cfg.network.clone(),
+        supervised: cfg.supervised,
+        default_port: cfg.profile.port(),
+    });
     state.instance = pdt_core::instance::InstanceInfo::new(cfg.profile, cfg.port);
+    // A stable instance on the port Settings → Network gives it is still the stable one.
+    state.instance.dev = cfg.profile == pdt_core::brand::Profile::Dev || (cfg.port_from_env && state.instance.dev);
     state.remote_https_port = cfg.remote_https_port;
     // A slow step never holds up the engine's next tick for long: its run goes on in the background.
     state.engine_tick_wait = std::time::Duration::from_secs(1);

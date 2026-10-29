@@ -136,6 +136,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
     let started = match agent_instructions(st, &session).await {
         Ok(instructions) => start_pty(
             st,
+            &st.agent_platform().await,
             &session,
             valid.size,
             &Resume::Fresh,
@@ -391,6 +392,7 @@ async fn bind_codex_with(
 #[allow(clippy::too_many_arguments)]
 fn start_pty(
     st: &AppState,
+    platform: &pdt_core::session::Platform,
     s: &Session,
     size: TerminalSize,
     resume: &Resume,
@@ -400,7 +402,7 @@ fn start_pty(
     mcp: Option<&pdt_agents::mcp::McpServer>,
 ) -> Result<(), PtyError> {
     // Claude: `--resume`/`--session-id` take its conversation id, which `/clear` moves off the session id.
-    let l = launch(s.kind, s.agent, &st.platform, resume, s.claude_conversation_id(), s.bypass_permissions);
+    let l = launch(s.kind, s.agent, platform, resume, s.claude_conversation_id(), s.bypass_permissions);
     let login_path = st.platform.login_path.as_deref();
     let launch_args = with_hook_args(st, s, l.args, instructions.map(|i| i.file.as_path()))?;
     let resolved = pdt_agents::launch::resolve_launch(&l.program, &launch_args, login_path)?;
@@ -684,7 +686,9 @@ pub(crate) async fn restart_locked(
     let mcp = crate::mcp::server_for(st, &session).await;
     // Mark running before spawning, so an instant exit is recorded after (not before) this update.
     st.store.set_session_running(id).await?;
-    if let Err(e) = start_pty(st, &session, size, &resume, creds, None, instructions.as_ref(), mcp.as_ref()) {
+    let platform = st.agent_platform().await;
+    if let Err(e) = start_pty(st, &platform, &session, size, &resume, creds, None, instructions.as_ref(), mcp.as_ref())
+    {
         // AlreadyExists means another run owns the session (it is running), so leave its status alone.
         if !matches!(e, PtyError::AlreadyExists(_)) {
             st.store.end_session(id, SessionStatus::Interrupted, None, now_ms()).await?;

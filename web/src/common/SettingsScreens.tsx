@@ -1,6 +1,6 @@
-import { Fragment, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
-import { EmptyState, List, ListRow, Page } from '@ui';
+import { EmptyState, List, ListRow, Page, SettingsScreen } from '@ui';
 import { sectionSlug } from '../shell/route';
 
 /** One section of a Settings page: its heading (the same as its `Section`'s label) and the section itself. */
@@ -13,30 +13,24 @@ export interface SettingsScreensProps {
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
+  /** Where a section's screen is, above its title on a desktop ("This host", "Projects › PDT"). */
+  crumb?: ReactNode;
   /** Above the sections (and the phone's list of them): a load error. */
   notice?: ReactNode;
   sections: SettingsSection[];
-  /** Phones: a screen per section (PDT-121), the list of them while `section` is null. */
+  /** Phones: the list of sections while `section` is null (PDT-121). */
   drill?: boolean;
-  /** The section on show (its slug, `sectionSlug(label)`), on a phone. */
+  /** The section on show (its slug, `sectionSlug(label)`); on a desktop, null is the first. */
   section?: string | null;
   onSection?: (slug: string) => void;
 }
 
 /**
- * A Settings page with sections. On a desktop, one page of them all (a section in the path is scrolled to). On a phone,
- * iOS-style: the page is a list of its sections, and each section is a screen of its own.
+ * A Settings page with sections, each a screen of its own (PDT-231), reached from the Settings sidebar and by its path.
+ * On a desktop the page's own path shows its first section; on a phone it is the list of its sections, iOS-style.
  */
-export function SettingsScreens({ title, description, actions, notice, sections, drill = false, section = null, onSection }: SettingsScreensProps) {
-  if (!drill) {
-    return (
-      <Page title={title} description={description} actions={actions}>
-        {notice}
-        {sections.map((s) => <Fragment key={s.label}>{s.node}</Fragment>)}
-      </Page>
-    );
-  }
-  if (section === null) {
+export function SettingsScreens({ title, description, actions, crumb, notice, sections, drill = false, section = null, onSection }: SettingsScreensProps) {
+  if (drill && section === null) {
     return (
       <Page title={title} description={description} actions={actions}>
         {notice}
@@ -49,14 +43,20 @@ export function SettingsScreens({ title, description, actions, notice, sections,
       </Page>
     );
   }
-  const shown = sections.find((s) => sectionSlug(s.label) === section);
-  return (
-    <div className="min-h-0 flex-1 overflow-auto">
-      <div className="flex flex-col gap-4 p-4 text-sm">
+  const shown = section === null ? sections[0] : sections.find((s) => sectionSlug(s.label) === section);
+  if (!shown) {
+    return (
+      <Page title={title}>
         {notice}
-        {shown ? shown.node : <EmptyState>This page has no section “{section}”.</EmptyState>}
-      </div>
-    </div>
+        <EmptyState>This page has no section “{section}”.</EmptyState>
+      </Page>
+    );
+  }
+  // A phone's top bar already names the page and section.
+  return (
+    <SettingsScreen key={shown.label} crumb={drill ? undefined : crumb} lead={shown.label} notice={notice}>
+      {shown.node}
+    </SettingsScreen>
   );
 }
 

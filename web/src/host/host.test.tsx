@@ -21,8 +21,20 @@ const settingsView = (over: object = {}) => ({
   tokenPresent: false,
   tokenError: null,
   remote: { enabled: false, active: false, url: null, dnsName: null, error: null, tailscaleLogin: 'me@example.com' },
+  programs: [
+    { agent: 'claude', envVar: 'PDT_CLAUDE_PROGRAM', fromEnv: null, found: '/usr/local/bin/claude' },
+    { agent: 'codex', envVar: 'PDT_CODEX_PROGRAM', fromEnv: null, found: '/usr/local/bin/codex' },
+    { agent: 'devin', envVar: 'PDT_DEVIN_PROGRAM', fromEnv: null, found: null },
+  ],
+  network: network(),
   ...over,
 });
+function network(over: object = {}) {
+  return {
+    settings: { port: null, allowedHosts: [] }, portFromEnv: null, allowedHostsFromEnv: null, listenPort: 7420, defaultPort: 7420,
+    restartNeeded: false, canRestart: true, ...over,
+  };
+}
 const update = (over: object = {}) => ({
   current: '0.1.6', currentExperimental: false, channel: 'stable', state: 'idle', disabledReason: null, policy: 'notify',
   latest: null, lastCheckedAt: null, error: null, token: { state: 'missing' }, lastResult: null,
@@ -43,7 +55,7 @@ describe('HostSettingsPage', () => {
       'GET /api/connections': [],
       'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
     });
-    renderWithQuery(<HostSettingsPage />);
+    renderWithQuery(<HostSettingsPage section="remote-access" />);
     await userEvent.click(await screen.findByRole('button', { name: 'Use me@example.com' }));
     await userEvent.click(screen.getByRole('switch', { name: 'Remote access' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2));
@@ -58,7 +70,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/whoami': { caller: 'tailnet', login: 'phone@example.com' },
       'GET /api/connections': [],
     });
-    renderWithQuery(<HostSettingsPage />);
+    renderWithQuery(<HostSettingsPage section="remote-access" />);
     expect(await screen.findByRole('button', { name: 'Use phone@example.com' })).toBeInTheDocument();
   });
 
@@ -70,11 +82,11 @@ describe('HostSettingsPage', () => {
       'GET /api/host/whoami': local,
       'GET /api/connections': [],
     });
-    renderWithQuery(<HostSettingsPage />);
+    renderWithQuery(<HostSettingsPage section="remote-access" />);
     const owner = await screen.findByLabelText('Owner login');
     expect(owner).toBeDisabled();
     expect(owner).toHaveValue('env@example.com');
-    expect(screen.queryByRole('button', { name: 'Save owner' })).not.toBeInTheDocument();
+    expect(screen.getByText('env')).toBeInTheDocument();
   });
 
   it('shows why remote access could not be turned on', async () => {
@@ -86,7 +98,7 @@ describe('HostSettingsPage', () => {
       'GET /api/connections': [],
       'PUT /api/host/settings': new Reply(400, { code: 'owner_required', message: 'set the owner first' }),
     });
-    renderWithQuery(<HostSettingsPage />);
+    renderWithQuery(<HostSettingsPage section="remote-access" />);
     await userEvent.click(await screen.findByRole('switch', { name: 'Remote access' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('set the owner first');
   });
@@ -120,7 +132,7 @@ describe('HostSettingsPage', () => {
     renderWithQuery(<HostSettingsPage />);
     expect(await screen.findByText(/Token: cannot be read/)).toBeInTheDocument();
     expect(screen.getByText(/Always Allow/)).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: 'Remote access' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Update policy/ })).toBeInTheDocument();
   });
 
   it('saves the update policy at once and says so', async () => {
@@ -203,8 +215,7 @@ describe('HostSettingsPage', () => {
     renderWithQuery(<HostSettingsPage />);
     const input = await screen.findByRole('textbox', { name: 'Release repository' });
     await waitFor(() => expect(input).toHaveAttribute('placeholder', 'RossTools/PersonalDevTeam'));
-    await userEvent.type(input, ' Acme/pdt ');
-    await userEvent.click(screen.getByRole('button', { name: 'Save release repository' }));
+    await userEvent.type(input, ' Acme/pdt {Enter}');
     await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ releaseRepo: 'Acme/pdt' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Use the built-in one' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toContainEqual({ releaseRepo: '' }));
@@ -221,7 +232,7 @@ describe('HostSettingsPage', () => {
     const { unmount } = renderWithQuery(<HostSettingsPage />);
     expect(await screen.findByText('Set by PDT_RELEASE_REPO: Acme/pdt.')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Release repository' })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: 'Save release repository' })).not.toBeInTheDocument();
+    expect(screen.getByText('env')).toBeInTheDocument();
     unmount();
     vi.unstubAllGlobals();
     stubApi({
@@ -244,7 +255,7 @@ describe('HostSettingsPage', () => {
       'GET /api/connections': [],
       'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
     });
-    renderWithQuery(<HostSettingsPage />);
+    renderWithQuery(<HostSettingsPage section="agents" />);
     await userEvent.click(await screen.findByRole('button', { name: /Default agent/ }));
     await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Codex' }));
     await userEvent.click(screen.getByRole('button', { name: /Default view/ }));
@@ -261,7 +272,7 @@ describe('HostSettingsPage', () => {
       'GET /api/connections': [],
       'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
     });
-    renderWithQuery(<HostSettingsPage />);
+    renderWithQuery(<HostSettingsPage section="agents" />);
     expect(await screen.findByRole('button', { name: /Ticket permissions/ })).toHaveTextContent('Bypass (dangerous)');
     expect(screen.getByRole('button', { name: /Session permissions/ })).toHaveTextContent('Ask');
     await userEvent.click(screen.getByRole('button', { name: /Ticket permissions/ }));
@@ -273,28 +284,127 @@ describe('HostSettingsPage', () => {
     );
   });
 
-  it('saves ports and max runs with one Save and shows why it failed', async () => {
+  it('saves each run setting as it is left, and shows why it failed', async () => {
+    let fail = false;
     const calls = stubApi({
       'GET /api/host/settings': settingsView(),
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
       'GET /api/connections': [],
-      'PUT /api/host/settings': new Reply(400, { code: 'invalid_ports', message: 'the port range is empty' }),
+      'PUT /api/host/settings': (c) => fail
+        ? new Reply(400, { code: 'invalid_input', message: 'the port range is empty' })
+        : settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
     });
-    renderWithQuery(<HostSettingsPage />);
+    renderWithQuery(<HostSettingsPage section="runs" />);
     const runs = await screen.findByRole('region', { name: 'Runs' });
-    const save = within(runs).getByRole('button', { name: 'Save run settings' });
-    expect(save).toBeDisabled();
-    const last = within(runs).getByLabelText('Last run port');
-    await userEvent.clear(last);
-    await userEvent.type(last, '8300');
+    expect(within(runs).queryByRole('button', { name: /Save/ })).toBeNull();
     const max = within(runs).getByRole('spinbutton', { name: 'Max concurrent runs' });
     await userEvent.clear(max);
     await userEvent.type(max, '6');
-    await userEvent.click(save);
+    await userEvent.tab();
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ maxConcurrentRuns: 6 }));
+    expect(await within(runs).findByRole('status')).toHaveTextContent('Saved');
+    fail = true;
+    const last = within(runs).getByLabelText('Last run port');
+    await userEvent.clear(last);
+    await userEvent.type(last, '8300{Enter}');
     expect(await within(runs).findByRole('alert')).toHaveTextContent('the port range is empty');
-    expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ runPorts: { start: 8400, end: 8300 }, maxConcurrentRuns: 6 });
+    expect(calls.filter((c) => c.method === 'PUT').at(-1)?.body).toEqual({ runPorts: { start: 8400, end: 8300 } });
+    // The typed value stays, to be fixed.
+    expect(last).toHaveValue('8300');
+  });
+
+  it('saves an agent program path, and shows one set by the environment as read-only', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView({
+        programs: [
+          { agent: 'claude', envVar: 'PDT_CLAUDE_PROGRAM', fromEnv: '/opt/claude', found: '/opt/claude' },
+          { agent: 'codex', envVar: 'PDT_CODEX_PROGRAM', fromEnv: null, found: '/usr/local/bin/codex' },
+          { agent: 'devin', envVar: 'PDT_DEVIN_PROGRAM', fromEnv: null, found: null },
+        ],
+      }),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+      'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
+    });
+    renderWithQuery(<HostSettingsPage section="agents" />);
+    const programs = await screen.findByRole('region', { name: 'Programs' });
+    const claude = within(programs).getByRole('textbox', { name: 'Claude Code program' });
+    expect(claude).toBeDisabled();
+    expect(claude).toHaveValue('/opt/claude');
+    expect(within(programs).getByText('Set by PDT_CLAUDE_PROGRAM, which wins over this setting.')).toBeInTheDocument();
+    expect(within(programs).getAllByText('Found')).toHaveLength(1);
+    expect(within(programs).getByText('Missing')).toBeInTheDocument();
+    await userEvent.type(within(programs).getByRole('textbox', { name: 'Devin program' }), '~/bin/devin{Enter}');
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ devinProgram: '~/bin/devin' }));
+    expect(await within(programs).findByRole('status')).toHaveTextContent('Saved');
+  });
+
+  it('saves the port, then offers to restart, and restarts through the host supervisor', async () => {
+    let view = settingsView();
+    const calls = stubApi({
+      'GET /api/host/settings': () => view,
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+      'PUT /api/host/network': (c) => {
+        view = settingsView({ network: network({ settings: c.body, restartNeeded: true }) });
+        return view;
+      },
+      'POST /api/host/restart': undefined,
+    });
+    renderWithQuery(<HostSettingsPage section="network" />);
+    const net = await screen.findByRole('region', { name: 'Network' });
+    expect(within(net).queryByRole('button', { name: 'Restart now' })).toBeNull();
+    await userEvent.type(within(net).getByRole('textbox', { name: 'Allowed hosts' }), 'pdt.local, box:1{Enter}');
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ port: null, allowedHosts: ['pdt.local', 'box:1'] }));
+    expect(await within(net).findByText(/Restart PDT to use the new settings/)).toBeInTheDocument();
+    await userEvent.click(within(net).getByRole('button', { name: 'Restart now' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/host/restart')).toBe(true));
+    expect(await within(net).findByText('Restarting PDT…')).toBeInTheDocument();
+  });
+
+  it('says to restart by hand without the host supervisor, and shows the environment winning', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView({
+        network: network({ settings: { port: 7500, allowedHosts: [] }, restartNeeded: true, canRestart: false, allowedHostsFromEnv: ['h:1'] }),
+      }),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+    });
+    renderWithQuery(<HostSettingsPage section="network" />);
+    const net = await screen.findByRole('region', { name: 'Network' });
+    expect(await within(net).findByText(/stop it and start it again/)).toBeInTheDocument();
+    expect(within(net).queryByRole('button', { name: 'Restart now' })).toBeNull();
+    expect(within(net).getByRole('textbox', { name: 'Port' })).toHaveValue('7500');
+    const hosts = within(net).getByRole('textbox', { name: 'Allowed hosts' });
+    expect(hosts).toBeDisabled();
+    expect(hosts).toHaveValue('h:1');
+    expect(within(net).getByText('Set by PDT_ALLOWED_HOSTS, which wins over this setting.')).toBeInTheDocument();
+  });
+
+  it('chooses the theme, the same choice as the rail', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+    });
+    renderWithQuery(<HostSettingsPage section="appearance" />);
+    await userEvent.click(await screen.findByRole('button', { name: /Theme/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Light' }));
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    expect(localStorage.getItem('pdt.theme')).toBe('light');
+    expect(await screen.findByRole('status')).toHaveTextContent('Saved');
+    localStorage.clear();
+    document.documentElement.removeAttribute('data-theme');
   });
 
   it('confirms before removing the token', async () => {
@@ -306,11 +416,13 @@ describe('HostSettingsPage', () => {
       'GET /api/connections': [],
       'DELETE /api/host/token': undefined,
     });
-    renderWithQuery(<HostSettingsPage />);
+    const { unmount } = renderWithQuery(<HostSettingsPage />);
     // Only in the Danger zone, never next to Check for updates.
     const updates = await screen.findByRole('region', { name: 'Updates' });
     expect(within(updates).queryByRole('button', { name: /Remove/ })).toBeNull();
-    const danger = screen.getByRole('region', { name: 'Danger zone' });
+    unmount();
+    renderWithQuery(<HostSettingsPage section="danger-zone" />);
+    const danger = await screen.findByRole('region', { name: 'Danger zone' });
     await userEvent.click(within(danger).getByRole('button', { name: 'Remove token…' }));
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
@@ -414,7 +526,18 @@ describe('HostSettingsPage', () => {
     expect(await screen.findByText(/Updates are off: not supervised\./)).toBeInTheDocument();
     expect(screen.getByText('Expired or revoked')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Check for updates' })).not.toBeInTheDocument();
-    const claude = screen.getByText('claude').closest('li')!;
+  });
+
+  it('lists the checks, with Devin optional', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': { ...checks(true), claude: { found: false, ok: false, detail: 'program not found' } },
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+    });
+    renderWithQuery(<HostSettingsPage section="checks" />);
+    const claude = (await screen.findByText('claude')).closest('li')!;
     expect(claude).toHaveTextContent('not found');
     expect(within(claude).getByRole('img', { name: 'not found' })).toHaveAttribute('data-status', 'failed');
     expect(within(screen.getByText('git').closest('li')!).getByRole('img', { name: 'OK' })).toHaveAttribute('data-status', 'running');
