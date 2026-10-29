@@ -400,3 +400,48 @@ async fn the_provider_reads_jobs_and_logs_retries_and_triggers() {
     let (_, _, body) = seen.iter().find(|(m, _, _)| m == "POST").unwrap();
     assert_eq!((body["branch"].clone(), body["env"]["DEPLOY"].clone()), (json!("main"), json!("1")));
 }
+
+/// Buildkite doesn't depend on the forge: with GitHub unreadable (signed out, rate limited), its builds still update
+/// the attempt's CI and tell the agent, on the branch without a PR and on the PR's last head with one.
+#[tokio::test]
+async fn buildkite_reports_while_github_cannot_be_read() {
+    let env = setup().await;
+    *env.gh.error.lock().unwrap() = Some("GitHub is not connected".into());
+    env.bk.lock().unwrap().builds = vec![build(1, "failed", &env.head, 0)];
+    pdt_api::refresh_prs(&env.state).await;
+    assert_eq!(attempt(&env).await["ci"]["state"], "failed");
+    assert_eq!(events(&env, "ci.run_failed").await.len(), 1);
+
+    // A PR seen once, then GitHub goes away: Buildkite's part of its CI keeps moving, marked stale.
+    *env.gh.error.lock().unwrap() = None;
+    let branch = attempt(&env).await["branch"].as_str().unwrap().to_string();
+    env.gh.set_pr(
+        &branch,
+        Some(ChangeRequest {
+            number: 12,
+            url: "https://github.com/o/r/pull/12".into(),
+            title: "Ship it".into(),
+            state: PrState::Open,
+            draft: false,
+            head_sha: env.head.clone(),
+            base_branch: "main".into(),
+            mergeable: Mergeable::Mergeable,
+            behind: false,
+            auto_merge: false,
+            in_merge_queue: false,
+            queue_position: None,
+            queue_removal: None,
+            created_at: None,
+        }),
+    );
+    pdt_api::refresh_prs(&env.state).await;
+    assert_eq!(attempt(&env).await["pr"]["ci"]["state"], "failed");
+    *env.gh.error.lock().unwrap() = Some("GitHub is not connected".into());
+    env.bk.lock().unwrap().builds = vec![build(1, "failed", &env.head, 0), build(2, "passed", &env.head, 0)];
+    pdt_api::refresh_prs(&env.state).await;
+    let a = attempt(&env).await;
+    assert_eq!(a["pr"]["ci"]["state"], "passed", "{a}");
+    assert!(a["pr"]["error"].as_str().unwrap().contains("not connected"), "{a}");
+    let passed = events(&env, "ci.run_passed").await;
+    assert_eq!((passed.len(), passed[0]["payload"]["pr"].clone()), (1, json!(12)));
+}

@@ -374,8 +374,9 @@ pdt-api `forge.rs`, `ci.rs` and `github.rs`, pure rules in pdt-core `pr.rs`.
   Buildkite) is also read without a PR, on `origin/<branch>`, else the local branch (`attempt.ci`). The newest run of
   each provider's workflow rolls up into one status (`CiStatus::of`/`merge`: a failure wins, then running, queued,
   cancelled), the PR badge's `attempt.pr.ci`. A provider whose read fails keeps its last look on that head (logged
-  once) and an automated merge refuses (`ci_unreadable`) until it reads again; a failed read of the PR itself keeps the
-  whole last look (`attempt.pr.error`). Each provider's CI is its own events: `ci.run_failed` (a failure notice naming
+  once) and an automated merge refuses (`ci_unreadable`) until it reads again. A failed read of the PR itself keeps
+  its last look (`attempt.pr.error`), but the providers that build branches are still read (on that PR's last head,
+  else the branch's) and still report: Buildkite doesn't wait for GitHub. Each provider's CI is its own events: `ci.run_failed` (a failure notice naming
   the provider unless it is Actions or the local command, and how to read the log: `ci_failed_logs` with its
   `provider` and `runId`) and `ci.run_passed`, with `provider`; keys `<attempt>:ci_failed:<id>.<attempt>,…` for
   Actions and local CI (as before), `<attempt>:ci_failed:<provider>:<id>.<attempt>,…` for the others.

@@ -393,9 +393,16 @@ impl NodeKind for GithubChangeRequest {
                     queue_cache: None,
                     known: Default::default(),
                     branch_head: None,
+                    last_pr_head: None,
                 };
-                let read =
-                    gh(&forge, false, move |_| crate::github::read_attempt(&args).map(|r| r.pr_with_ci())).await?;
+                let read = gh(&forge, false, move |_| {
+                    let r = crate::github::read_attempt(&args)?;
+                    match r.forge_error.clone() {
+                        Some(e) => Err(ForgeError::Failed(e)),
+                        None => Ok(r.pr_with_ci()),
+                    }
+                })
+                .await?;
                 if let Some(pr) = read.filter(|pr| number.is_none_or(|n| n == pr.number)) {
                     let (port, out) = ci_output(pr);
                     return Ok(Outcome::next(port, out));
