@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The longest one member of the 60 s poll may take (each sensor call has its own, shorter timeout): an overrun is
 /// aborted and logged, and the rest of the poll runs.
@@ -23,18 +23,38 @@ struct Entry {
     last_pass_at: Option<i64>,
     stale_after_ms: i64,
     panics: u64,
+    /// [`Loops::asleep_ms`] at its start or last pass.
+    asleep_at_mark: i64,
 }
 
 /// Every registered loop's liveness, by name.
-#[derive(Default)]
 pub struct Loops {
     map: Mutex<BTreeMap<&'static str, Entry>>,
+    /// The wall clock and the monotonic clock when tracking began: see [`Loops::asleep_ms`].
+    wall_base: i64,
+    mono_base: Instant,
+}
+
+impl Default for Loops {
+    fn default() -> Self {
+        Self { map: Mutex::default(), wall_base: now_ms(), mono_base: Instant::now() }
+    }
 }
 
 impl Loops {
+    /// How long the computer has spent asleep since tracking began (PDT-255): the wall clock's time since then less
+    /// the monotonic clock's, which stands still while macOS or Linux sleeps. (Where it counts sleep too, as on
+    /// Windows, this stays 0 and a long sleep can still read as a stall.) A wall clock set forward counts as sleep
+    /// too, which is right: no loop missed a pass in that time.
+    fn asleep_ms(&self) -> i64 {
+        let mono = i64::try_from(self.mono_base.elapsed().as_millis()).unwrap_or(i64::MAX);
+        (now_ms() - self.wall_base).saturating_sub(mono).max(0)
+    }
+
     /// Starts tracking a loop that runs every `every` (again: a loop already tracked keeps its start). Stale after
     /// `stale_after` without a finished pass, by default [`pdt_core::liveness::stale_after`] of its period.
     pub fn register(&self, name: &'static str, every: Duration, stale_after_ms: Option<i64>) {
+        let asleep = self.asleep_ms();
         let every_ms = i64::try_from(every.as_millis()).unwrap_or(i64::MAX);
         let mut map = self.map.lock().unwrap_or_else(|e| e.into_inner());
         map.entry(name).or_insert_with(|| Entry {
@@ -43,19 +63,30 @@ impl Loops {
             last_pass_at: None,
             stale_after_ms: stale_after_ms.unwrap_or_else(|| stale_after(every_ms)),
             panics: 0,
+            asleep_at_mark: asleep,
         });
     }
 
     /// A pass of `name` ended at `now` (finished, or ended in a panic).
     pub fn passed(&self, name: &str, now: i64, panicked: bool) {
+        self.passed_at(name, now, panicked, self.asleep_ms());
+    }
+
+    fn passed_at(&self, name: &str, now: i64, panicked: bool, asleep: i64) {
         if let Some(e) = self.map.lock().unwrap_or_else(|e| e.into_inner()).get_mut(name) {
             e.last_pass_at = Some(now);
             e.panics += u64::from(panicked);
+            e.asleep_at_mark = asleep;
         }
     }
 
-    /// Every tracked loop at `now`, by name.
+    /// Every tracked loop at `now`, by name. Time asleep since a loop's last pass does not count towards its being
+    /// stale: after a wake, the notifier can look before the engine's first pass.
     pub fn health(&self, now: i64) -> Vec<LoopHealth> {
+        self.health_at(now, self.asleep_ms())
+    }
+
+    fn health_at(&self, now: i64, asleep: i64) -> Vec<LoopHealth> {
         let map = self.map.lock().unwrap_or_else(|e| e.into_inner());
         map.iter()
             .map(|(name, e)| LoopHealth {
@@ -65,7 +96,7 @@ impl Loops {
                 last_pass_at: e.last_pass_at,
                 stale_after_ms: e.stale_after_ms,
                 panics: e.panics,
-                stale: is_stale(e.started_at, e.last_pass_at, e.stale_after_ms, now),
+                stale: is_stale(e.started_at, e.last_pass_at, e.stale_after_ms, now, asleep - e.asleep_at_mark),
             })
             .collect()
     }
@@ -259,5 +290,29 @@ mod tests {
         assert!(st.loops.health(after + 40)[0].stale);
         st.loops.passed("slow", after + 40, false);
         assert!(!st.loops.health(after + 40)[0].stale);
+    }
+
+    #[tokio::test]
+    async fn time_asleep_is_not_a_stall_but_a_stall_after_waking_still_is() {
+        let loops = Loops::default();
+        loops.register("engine", Duration::from_secs(2), Some(1_000));
+        let at = now_ms();
+        loops.passed_at("engine", at, false, 0);
+        // Asleep for ten minutes; the notifier looks the moment the computer wakes, before the engine's next pass.
+        let woke = at + 600_000;
+        assert!(!loops.health_at(woke, 600_000)[0].stale, "the sleep is not counted");
+        // Awake again for longer than the stale window with no pass: a real stall.
+        assert!(loops.health_at(woke + 1_001, 600_000)[0].stale);
+        // A pass after waking marks the sleep as seen; a later sleep counts from there.
+        loops.passed_at("engine", woke + 500, false, 600_000);
+        assert!(!loops.health_at(woke + 1_400, 600_000)[0].stale);
+        assert!(loops.health_at(woke + 1_501, 600_000)[0].stale);
+        assert!(!loops.health_at(woke + 300_000, 900_000)[0].stale);
+    }
+
+    #[test]
+    fn awake_the_clocks_agree() {
+        let loops = Loops::default();
+        assert!(loops.asleep_ms() < 1_000, "{}", loops.asleep_ms());
     }
 }

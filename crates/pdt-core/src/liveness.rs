@@ -15,9 +15,10 @@ pub fn stale_after(every_ms: i64) -> i64 {
 }
 
 /// Whether a loop is stale at `now`: its last finished pass (or, before its first, when it started) is more than
-/// `stale_after_ms` ago.
-pub fn is_stale(started_at: i64, last_pass_at: Option<i64>, stale_after_ms: i64, now: i64) -> bool {
-    now - last_pass_at.unwrap_or(started_at) > stale_after_ms
+/// `stale_after_ms` ago, not counting `slept_ms` the computer spent asleep since then (no loop runs while it sleeps,
+/// so a wake is not a stall; PDT-255).
+pub fn is_stale(started_at: i64, last_pass_at: Option<i64>, stale_after_ms: i64, now: i64, slept_ms: i64) -> bool {
+    now - last_pass_at.unwrap_or(started_at) - slept_ms.max(0) > stale_after_ms
 }
 
 /// One background loop as `/api/health` reports it.
@@ -59,14 +60,21 @@ mod tests {
 
     #[test]
     fn a_loop_is_stale_once_its_last_pass_is_too_old() {
-        assert!(!is_stale(0, Some(1_000), 500, 1_400));
-        assert!(!is_stale(0, Some(1_000), 500, 1_500), "exactly at the limit is not yet stale");
-        assert!(is_stale(0, Some(1_000), 500, 1_501));
+        assert!(!is_stale(0, Some(1_000), 500, 1_400, 0));
+        assert!(!is_stale(0, Some(1_000), 500, 1_500, 0), "exactly at the limit is not yet stale");
+        assert!(is_stale(0, Some(1_000), 500, 1_501, 0));
     }
 
     #[test]
     fn before_its_first_pass_a_loop_counts_from_its_start() {
-        assert!(!is_stale(1_000, None, 500, 1_200));
-        assert!(is_stale(1_000, None, 500, 1_600), "a first pass that never ends is stale too");
+        assert!(!is_stale(1_000, None, 500, 1_200, 0));
+        assert!(is_stale(1_000, None, 500, 1_600, 0), "a first pass that never ends is stale too");
+    }
+
+    #[test]
+    fn time_asleep_does_not_count() {
+        assert!(!is_stale(0, Some(1_000), 500, 20_000, 19_000), "woken just now, after a long sleep");
+        assert!(is_stale(0, Some(1_000), 500, 20_000, 18_000), "awake too long without a pass is still a stall");
+        assert!(is_stale(0, Some(1_000), 500, 1_501, -5_000), "a clock set back never makes it fresher");
     }
 }

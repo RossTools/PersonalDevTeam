@@ -34,7 +34,9 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   limited to 2 minutes (aborted and logged past it), so one hung member never holds up merge detection or pruning;
   the Jira sensor's and Buildkite's calls time out after 30 s each, and the shared HTTP client (nodes, sensors, MCP)
   gives up connecting after 10 s. A loop is stale when its last finished pass (or its start) is more than five
-  periods ago, at least 5 minutes (`poll`: 20 minutes; pdt-core `liveness.rs`); the notifier then raises a
+  periods ago, at least 5 minutes (`poll`: 20 minutes; pdt-core `liveness.rs`), not counting time the computer spent
+  asleep since then (the wall clock's time less the monotonic clock's, which stands still in sleep on macOS and Linux;
+  so a wake is not a stall, PDT-255); the notifier then raises a
   `host.loop_stale` notification per loop ([workflows.md](workflows.md#notifications)), cleared by its next pass. The
   update loop is restarted a minute after a panic. A run's driver that panics fails the run, so its row and Stop
   never hang.
