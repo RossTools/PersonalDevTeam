@@ -532,8 +532,9 @@ pub(crate) async fn end_if_merged(st: &AppState, info: &AttemptInfo) -> bool {
 }
 
 /// Ends the ticket's active attempt because the ticket was closed (callers close it first, so a refused close ends
-/// nothing). Done says the work landed, so the attempt is `merged`; Won't do ends it `merged` if its branch is (git
-/// or GitHub), else `abandoned`.
+/// nothing): `merged` if its branch is (git or the forge), else `abandoned`. Done says the work landed, so it ends
+/// `merged` even when git cannot see the merge, but not while its PR is unmerged (PDT-257: open or closed, read again
+/// first in case it merged since the last look).
 pub(crate) async fn end_for_close(
     st: &AppState,
     ticket_id: &str,
@@ -541,7 +542,13 @@ pub(crate) async fn end_for_close(
     by: impl Into<pdt_core::ticket::By>,
 ) -> Result<(), ApiError> {
     if let Some(info) = st.store.active_attempt(ticket_id).await? {
-        let merged = stage == TicketStage::Done || is_merged(st, &info, false, false).await;
+        let unmerged_pr = || {
+            crate::github::watched_pr(st, &info.attempt.id).is_some_and(|p| p.state != pdt_core::pr::PrState::Merged)
+        };
+        if stage == TicketStage::Done && unmerged_pr() {
+            crate::github::refresh_attempt(st, &info).await;
+        }
+        let merged = is_merged(st, &info, false, false).await || (stage == TicketStage::Done && !unmerged_pr());
         let state = if merged { AttemptState::Merged } else { AttemptState::Abandoned };
         let via = merged.then_some(MergeVia::Closed);
         let pr = crate::github::watched_pr(st, &info.attempt.id).map(|p| p.number);

@@ -428,6 +428,45 @@ async fn opening_a_ticket_finds_its_pr_merged_on_github() {
     env.state.ptys.shutdown().await;
 }
 
+/// Done ends the attempt as merged only when its PR did not stay unmerged (PDT-257): an open PR moved to Done is not
+/// shown merged.
+#[tokio::test]
+async fn moving_a_ticket_with_an_open_pr_to_done_does_not_merge_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let wt = env.repo.join(".worktrees").join("pdt-PDT-1-ship-it");
+    std::fs::write(wt.join("a.txt"), "two\n").unwrap();
+    git(&wt, &["commit", "-q", "-am", "ship"]);
+    let mut open = pr();
+    open.head_sha = rev_parse(&wt, "HEAD");
+    env.gh.set_pr(BRANCH, Some(open));
+    pdt_api::refresh_prs(&env.state).await;
+    let (s, t) = call(&env.app, "PATCH", &format!("/api/tickets/{}", env.ticket), Some(json!({"stage": "done"}))).await;
+    assert_eq!(s, StatusCode::OK, "{t}");
+    assert_eq!((t["stage"].as_str(), t["attempts"][0]["state"].as_str()), (Some("done"), Some("abandoned")), "{t}");
+    env.state.ptys.shutdown().await;
+}
+
+/// A PR last seen open but merged on GitHub since is read again when the ticket moves to Done: merged.
+#[tokio::test]
+async fn moving_a_ticket_to_done_reads_its_pr_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let wt = env.repo.join(".worktrees").join("pdt-PDT-1-ship-it");
+    std::fs::write(wt.join("a.txt"), "two\n").unwrap();
+    git(&wt, &["commit", "-q", "-am", "ship"]);
+    let mut pr = pr();
+    pr.head_sha = rev_parse(&wt, "HEAD");
+    env.gh.set_pr(BRANCH, Some(pr.clone()));
+    pdt_api::refresh_prs(&env.state).await;
+    pr.state = PrState::Merged;
+    env.gh.set_pr(BRANCH, Some(pr));
+    let (s, t) = call(&env.app, "PATCH", &format!("/api/tickets/{}", env.ticket), Some(json!({"stage": "done"}))).await;
+    assert_eq!(s, StatusCode::OK, "{t}");
+    assert_eq!((t["stage"].as_str(), t["attempts"][0]["state"].as_str()), (Some("done"), Some("merged")), "{t}");
+    env.state.ptys.shutdown().await;
+}
+
 async fn conversation_events(env: &Env) -> Vec<Value> {
     let (s, v) = call(&env.app, "GET", &format!("/api/sessions/{}/events?after=0", env.session), None).await;
     assert_eq!(s, StatusCode::OK, "{v}");
