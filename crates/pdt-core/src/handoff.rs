@@ -77,9 +77,76 @@ pub struct UpdateSkip {
     pub at: i64,
 }
 
+/// Written by pdtd at startup: its version and the `PDT_*` variables it was started with (`StartedEnv`). pdt-host
+/// reads it when it adopts a running pdtd, and restarts one started with other variables than it would use (PDT-261:
+/// an older pdt-host started it during an update).
+pub fn started_env_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("pdtd-env.json")
+}
+
+/// What `started_env_path` holds. The values are only fingerprinted: a `PDT_*` variable may hold a token.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartedEnv {
+    /// The version of the pdtd that wrote it (a record left by another version says nothing about the running one).
+    pub version: String,
+    /// The variables' names, sorted.
+    pub names: Vec<String>,
+    /// `env_fingerprint` of the variables.
+    pub fingerprint: String,
+}
+
+impl StartedEnv {
+    pub fn new(version: &str, vars: impl IntoIterator<Item = (String, String)>) -> StartedEnv {
+        let vars: std::collections::BTreeMap<String, String> = vars.into_iter().collect();
+        StartedEnv {
+            version: version.to_string(),
+            names: vars.keys().cloned().collect(),
+            fingerprint: env_fingerprint(vars),
+        }
+    }
+
+    /// Whether the record is of a pdtd of `version` started with exactly `vars`.
+    pub fn matches(&self, version: &str, vars: impl IntoIterator<Item = (String, String)>) -> bool {
+        self.version == version && self.fingerprint == env_fingerprint(vars)
+    }
+}
+
+/// A fingerprint of a set of variables, the same whatever their order (64-bit FNV-1a, stable across builds).
+pub fn env_fingerprint(vars: impl IntoIterator<Item = (String, String)>) -> String {
+    let vars: std::collections::BTreeMap<String, String> = vars.into_iter().collect();
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for (k, v) in &vars {
+        for b in k.bytes().chain(*b"=").chain(v.bytes()).chain(*b"\0") {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    format!("{h:016x}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn a_started_env_matches_only_the_same_version_and_variables() {
+        let rec = StartedEnv::new("0.3.0", vars(&[("PDT_PORT", "7420"), ("PDT_PORT_FROM_SETTING", "1")]));
+        assert_eq!(rec.names, ["PDT_PORT", "PDT_PORT_FROM_SETTING"]);
+        assert!(rec.matches("0.3.0", vars(&[("PDT_PORT_FROM_SETTING", "1"), ("PDT_PORT", "7420")])), "any order");
+        assert!(!rec.matches("0.3.0", vars(&[("PDT_PORT", "7420")])), "a variable missing");
+        assert!(!rec.matches("0.3.0", vars(&[("PDT_PORT", "7421"), ("PDT_PORT_FROM_SETTING", "1")])), "a value");
+        assert!(!rec.matches("0.2.0", vars(&[("PDT_PORT", "7420"), ("PDT_PORT_FROM_SETTING", "1")])), "a version");
+        // Name and value boundaries count: `A=BC` is not `AB=C`.
+        assert_ne!(env_fingerprint(vars(&[("A", "BC")])), env_fingerprint(vars(&[("AB", "C")])));
+        let j = serde_json::to_string(&rec).unwrap();
+        assert!(!j.contains("7420"), "values are not written: {j}");
+        assert_eq!(serde_json::from_str::<StartedEnv>(&j).unwrap(), rec);
+    }
 
     #[test]
     fn paths_live_under_the_data_dir() {

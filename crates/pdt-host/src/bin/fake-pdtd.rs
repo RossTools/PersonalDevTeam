@@ -3,7 +3,7 @@
 //!  "installer": "hang" | "hang_tree" | "fail_partial", "migrate": bool}.
 //! As pdtd: serves /api/health on $PDT_PORT and exits on POST /api/shutdown ("stubborn" answers but keeps running;
 //! "die_soon" exits a second after starting). Beside itself it records $PDT_SUPERVISED in `env.txt`, every `PDT_*`
-//! variable in `env.json`, and the outcome in `<PDT_DATA_DIR>/update/result.json` at startup in `seen-result.txt`.
+//! variable in `env.json` (and, as pdtd does, the record in `<PDT_DATA_DIR>/pdtd-env.json`), and the outcome in `<PDT_DATA_DIR>/update/result.json` at startup in `seen-result.txt`.
 //! With "migrate" it stands in for a version with a new migration: at startup it rewrites `<PDT_DATA_DIR>/pdt.db`
 //! (to `migrated by <version>`) and its `-wal` and `-shm` files.
 //! As an installer (started with `/S /D=<dir>`): "hang" never finishes; "hang_tree" also starts a child that never
@@ -58,6 +58,15 @@ fn main() {
     let env: serde_json::Map<String, serde_json::Value> =
         std::env::vars().filter(|(k, _)| k.starts_with("PDT_")).map(|(k, v)| (k, v.into())).collect();
     let _ = std::fs::write(dir.join("env.json"), serde_json::Value::Object(env).to_string());
+    if let Ok(d) = std::env::var("PDT_DATA_DIR") {
+        let started =
+            pdt_core::handoff::StartedEnv::new(&version, std::env::vars().filter(|(k, _)| k.starts_with("PDT_")));
+        let _ = std::fs::create_dir_all(&d);
+        let _ = std::fs::write(
+            pdt_core::handoff::started_env_path(std::path::Path::new(&d)),
+            serde_json::to_vec(&started).expect("json"),
+        );
+    }
     let seen = std::env::var("PDT_DATA_DIR")
         .ok()
         .and_then(|d| std::fs::read(std::path::Path::new(&d).join("update").join("result.json")).ok())

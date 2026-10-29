@@ -7,7 +7,8 @@ use crate::health::{Probe, probe, request_shutdown};
 use crate::install::Installer;
 use crate::log::{log, log_path};
 use pdt_core::handoff::{
-    UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, request_path, result_path, skip_path, update_dir,
+    StartedEnv, UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, request_path, result_path, skip_path,
+    started_env_path, update_dir,
 };
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
@@ -429,6 +430,31 @@ fn recover(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool) -> bo
     true
 }
 
+/// Whether the running pdtd (answering as `version`) was started with the variables this host starts it with, as it
+/// recorded at startup. No record, or one another version left, counts as not.
+pub fn started_as_expected(cfg: &HostConfig, version: &str) -> bool {
+    let Ok(bytes) = std::fs::read(started_env_path(&cfg.data_dir)) else { return false };
+    serde_json::from_slice::<StartedEnv>(&bytes).is_ok_and(|r| r.matches(version, cfg.pdtd_env()))
+}
+
+/// Restarts an adopted pdtd that was started with other variables than this host would use (PDT-261: an older
+/// pdt-host started it during an update, then this one replaced itself). Gracefully, as Settings' "Restart now"
+/// does. True once it has gone (the caller then starts it again).
+fn restart_if_started_differently(cfg: &HostConfig, version: &str, stop: &AtomicBool) -> bool {
+    if started_as_expected(cfg, version) {
+        return false;
+    }
+    log(cfg, "pdtd was started by an older pdt-host with a different environment; restarting");
+    if let Err(e) = request_shutdown(cfg.port) {
+        log(cfg, &format!("the shutdown request failed: {e}"));
+    }
+    if wait_gone(cfg, &mut None, cfg.stop_timeout, stop) {
+        return true;
+    }
+    log(cfg, "pdtd did not stop; supervising it as it is");
+    false
+}
+
 /// Runs until `stop` is set (tests); in production it runs for the life of the process. `after_install` is called
 /// after a successful install (pdt-host's main uses it to replace itself last).
 pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after_install: &dyn Fn()) {
@@ -438,6 +464,8 @@ pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after
     // Set when a request file cannot be removed: it is then left alone until pdt-host restarts.
     let mut ignore_requests = false;
     let mut recovered = false;
+    // A pdtd found running is checked once per host start (no restart loop).
+    let mut env_checked = false;
     while !stopped(stop) {
         // Settings → Network's port, for the next pdtd (PDT-231).
         if child.is_none() {
@@ -455,6 +483,7 @@ pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after
         let taken = if ignore_requests { TakenRequest::None } else { take_request(&cfg.data_dir) };
         match taken {
             TakenRequest::Request(req) => {
+                env_checked = true;
                 if handle_update(cfg, installer, &mut child, req, stop) == UpdateOutcome::Installed {
                     after_install();
                 }
@@ -475,7 +504,14 @@ pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after
                 continue;
             }
             TakenRequest::None => match probe(cfg.port) {
-                Probe::Ours { .. } => {}
+                Probe::Ours { version } => {
+                    if child.is_none()
+                        && !std::mem::replace(&mut env_checked, true)
+                        && restart_if_started_differently(cfg, &version, stop)
+                    {
+                        continue;
+                    }
+                }
                 Probe::Foreign(why) => {
                     failures += 1;
                     log(cfg, &format!("port {} is held by something else ({why})", cfg.port));
@@ -483,6 +519,7 @@ pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after
                     continue;
                 }
                 Probe::Free => {
+                    env_checked = true;
                     child = match spawn_pdtd(cfg) {
                         Ok(c) => Some(c),
                         Err(e) => {

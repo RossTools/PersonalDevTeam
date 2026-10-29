@@ -173,6 +173,12 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   to pdt-host, which installs it, health-checks the new version and rolls back on failure. pdt-host copies the
   database to `update/db-before-update` before installing and restores it on rollback (an old version cannot open a
   database a newer one migrated).
+- A release that changes pdt-host has the old pdt-host start the new pdtd, then restarts pdt-host last; the new
+  pdt-host adopts that pdtd. pdtd records its version and a fingerprint of the `PDT_*` variables it started with in
+  `<data dir>/pdtd-env.json` (names only, values hashed); a pdt-host that adopts a running pdtd compares it with the
+  variables it would start pdtd with, and when they differ (or there is no record from that version) restarts pdtd
+  gracefully, as "Restart now" does, logging "pdtd was started by an older pdt-host with a different environment"
+  (PDT-261). It checks once per pdt-host start, so it never loops.
 - Versions compare by SemVer (major, then minor, then patch: 0.2.0 is newer than 0.1.840; an experimental build
   `X.Y.Z-exp.N` sorts after `X.Y.Z-exp.M` for M below N and before `X.Y.Z` itself). A check reads the newest release
   on the host's update channel (below) and offers it only when it is newer than the running version: an older or
