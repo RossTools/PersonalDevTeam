@@ -187,9 +187,20 @@ fn issue_triage() -> Template {
     )
 }
 
+/// The templates PDT ships that this host is offered: PDT bug triage only where a project is PDT's own repository
+/// (PDT-226).
+async fn offered_templates(st: &AppState) -> Vec<Template> {
+    let mut out = builtin_templates(&st.registry());
+    if !super::builtins::builds_pdt(st).await {
+        out.retain(|t| !t.id.strip_prefix(BUILTIN_PREFIX).is_some_and(super::builtins::only_for_pdt));
+    }
+    out
+}
+
 async fn find(st: &AppState, id: &str) -> Result<Template, ApiError> {
     if id.starts_with(BUILTIN_PREFIX) {
-        return builtin_templates(&st.registry())
+        return offered_templates(st)
+            .await
             .into_iter()
             .find(|t| t.id == id)
             .ok_or_else(|| ApiError::not_found("template"));
@@ -198,7 +209,7 @@ async fn find(st: &AppState, id: &str) -> Result<Template, ApiError> {
 }
 
 pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Template>>, ApiError> {
-    let mut out = builtin_templates(&st.registry());
+    let mut out = offered_templates(&st).await;
     out.extend(st.store.list_templates().await?);
     Ok(Json(out))
 }
