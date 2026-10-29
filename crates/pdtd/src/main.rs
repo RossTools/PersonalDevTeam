@@ -117,10 +117,8 @@ async fn run() -> anyhow::Result<()> {
         let api = std::sync::Arc::new(pdt_github::GithubApi::new(std::sync::Arc::new(
             pdt_github::transport::ReqwestTransport::current(),
         )));
-        state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_github::plugin::GithubPlugin::new(
-            api.clone(),
-        ))]);
-        state.github_api = api;
+        state.forges =
+            pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_github::plugin::GithubPlugin::new(api))]);
     }
     if let Some(id) = &cfg.github_client_id {
         state.github_client_id = id.clone();
@@ -152,12 +150,13 @@ async fn run() -> anyhow::Result<()> {
         dirs::data_local_dir().map(|root| root.join(pdt_core::brand::Profile::Stable.data_dir_name()));
     state.update_token_account = pdt_api::secrets::update_token_account(&cfg.data_dir, stable_data_dir.as_deref());
     state.github_account = pdt_api::secrets::github_login_account(&cfg.data_dir, stable_data_dir.as_deref());
+    state.forge_logins_account = pdt_api::secrets::forge_logins_account(&cfg.data_dir, stable_data_dir.as_deref());
     // In the background: serving (and pdt-host's health check after an update) never waits on the keychain.
     tokio::spawn({
         let st = state.clone();
         async move {
             pdt_api::update::sync_token_state(&st).await;
-            pdt_api::github_login::load(&st).await;
+            pdt_api::forge_login::load(&st).await;
             // The secrets' values, so they are redacted from the start.
             pdt_api::vault::load_known(&st).await;
         }
@@ -206,13 +205,13 @@ async fn run() -> anyhow::Result<()> {
             run_every(st, "poll", POLL_EVERY, Start::Now, poll_pass).await;
         });
     }
-    // GitHub's login, every 5 minutes (PDT-252).
+    // The forge logins, every 5 minutes (PDT-252).
     tokio::spawn(run_every(
         state.clone(),
-        "github login",
-        pdt_api::github_login::CHECK_EVERY,
+        "forge logins",
+        pdt_api::forge_login::CHECK_EVERY,
         Start::AfterOnePeriod,
-        |st| async move { pdt_api::github_login::check(&st).await },
+        |st| async move { pdt_api::forge_login::check(&st).await },
     ));
     // Each active attempt's changed files and the overlaps they make, every 30 s (tickets spec §7).
     tokio::spawn(run_every(state.clone(), "overlaps", Duration::from_secs(30), Start::Now, |st| async move {

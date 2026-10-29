@@ -105,20 +105,30 @@ async fn sessions_waiting(st: &AppState, project: Option<&str>) -> Result<Vec<In
 /// (the PR poller, a merge, an agent's tool) wanted it; "Reconnect GitHub" while the forge refuses the login it has
 /// (PDT-212). Not stored: one item per forge, which goes once the user connects.
 pub(crate) fn connect_forge(st: &AppState) -> Vec<InboxItem> {
-    st.forge_plugins().iter().filter_map(|p| connect_item(p.kind().as_str(), p.label(), p.forge().as_ref())).collect()
+    st.forge_plugins()
+        .iter()
+        .flat_map(|p| {
+            crate::forge::signed_forges(p.as_ref())
+                .into_iter()
+                .filter_map(|(host, f)| connect_item(p.kind().as_str(), p.label(), host.as_deref(), f.as_ref()))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
-fn connect_item(kind: &str, label: &str, forge: &dyn pdt_forge::Forge) -> Option<InboxItem> {
+/// `host`: an account on another host than the forge's public one (PDT-244), with an item of its own.
+fn connect_item(kind: &str, label: &str, host: Option<&str>, forge: &dyn pdt_forge::Forge) -> Option<InboxItem> {
     if !forge.login_needed() {
         return None;
     }
     let rejected = forge.login_rejected_at();
-    let (title, body) = match rejected {
+    let on = host.map(|h| format!(" on {h}")).unwrap_or_default();
+    let (title, mut body) = match rejected {
         Some(_) => (
-            format!("Reconnect {label}"),
-            json!({"forge": kind, "reason": "rejected", "text": format!("{label} no longer accepts PDT's login (the \
-token was revoked or expired). Until you connect again, PDT has stopped calling {label}: it can't follow pull requests \
-or CI, merge, or let agents read CI logs. Connect {label} again in Settings › Plugins › {label}.")}),
+            format!("Reconnect {label}{on}"),
+            json!({"forge": kind, "reason": "rejected", "text": format!("{label}{on} no longer accepts PDT's login (the \
+token was revoked or expired). Until you connect again, PDT has stopped calling {label}{on}: it can't follow pull \
+requests or CI, merge, or let agents read CI logs. Connect {label} again in Settings › Plugins › {label}.")}),
         ),
         None => (
             format!("Connect {label}"),
@@ -127,8 +137,11 @@ or CI, merge, or let agents read CI logs. Connect {label} again in Settings › 
 let agents read CI logs. Connect {label} in Settings › Plugins › {label}.")}),
         ),
     };
+    if let Some(h) = host {
+        body["host"] = json!(h);
+    }
     Some(InboxItem {
-        id: format!("connect:{kind}"),
+        id: host.map_or_else(|| format!("connect:{kind}"), |h| format!("connect:{kind}:{h}")),
         kind: InboxKind::Connect,
         group: InboxGroup::Notice,
         status: InboxStatus::Open,

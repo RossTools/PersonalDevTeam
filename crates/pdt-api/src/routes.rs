@@ -62,20 +62,20 @@ pub struct AppState {
     pub tailscale: std::sync::Arc<dyn pdt_tailscale::TailscaleApi>,
     /// The forge plugins (PDT-241), which `crate::forge::project_forge` asks for a project's forge (a plugin counts
     /// while the integration that declares its kind is enabled, [`crate::Integration::forge_kind`]). `new` has GitHub
-    /// over `github_api`; pdtd sets the real one, a test a fake (`pdt_forge::HostedForge`).
+    /// with no network ([`pdt_github::GithubApi::offline`]); only pdtd's production wiring installs one that reaches
+    /// GitHub; a test sets a fake (`pdt_forge::HostedForge`). The forge logins sign the plugins in (PDT-244).
     pub forges: pdt_forge::ForgeRegistry,
-    /// The GitHub client (PDT-177) the in-app login signs in, which the GitHub plugin in `forges` opens. `new` makes
-    /// one with no network ([`pdt_github::GithubApi::offline`]); only pdtd's production wiring installs one that
-    /// reaches GitHub. Only the login uses it directly.
-    pub github_api: std::sync::Arc<pdt_github::GithubApi>,
-    /// The keychain account of this instance's GitHub login (see `secrets::github_login_account`), kept apart from
+    /// The keychain account of this instance's forge logins (see `secrets::forge_logins_account`), kept apart from
     /// the stable instance's as `update_token_account` is.
+    pub forge_logins_account: String,
+    /// The keychain account of this instance's GitHub login from before PDT-244 (`secrets::github_login_account`):
+    /// copied into the forge logins on their first read.
     pub github_account: String,
     /// The OAuth App the device flow signs in with ([`pdt_core::brand::GITHUB_OAUTH_CLIENT_ID`], or
     /// `PDT_GITHUB_CLIENT_ID`); empty: only a pasted token.
     pub github_client_id: String,
-    /// The device flow under way, or why the last login failed.
-    pub(crate) github_login: std::sync::Arc<std::sync::Mutex<crate::github_login::LoginState>>,
+    /// Each forge's device flow under way, or why its last login failed.
+    pub(crate) forge_logins: std::sync::Arc<crate::forge_login::ForgeLogins>,
     /// Each attempt's pull request as last seen, and the notices waiting for their agent session.
     pub(crate) pr_watch: crate::github::SharedPrWatch,
     /// The local forge's CI runs in this pdtd (PDT-178).
@@ -190,7 +190,7 @@ impl AppState {
     pub fn new(store: Store, data_dir: std::path::PathBuf) -> Self {
         let update_token_account = crate::secrets::update_token_account(&data_dir, None);
         let github_account = crate::secrets::github_login_account(&data_dir, None);
-        let github_api = std::sync::Arc::new(pdt_github::GithubApi::offline());
+        let forge_logins_account = crate::secrets::forge_logins_account(&data_dir, None);
         Self {
             store,
             ptys: pdt_agents::PtyManager::new(),
@@ -219,12 +219,12 @@ impl AppState {
             allowed_hosts: Default::default(),
             tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
             forges: pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_github::plugin::GithubPlugin::new(
-                github_api.clone(),
+                std::sync::Arc::new(pdt_github::GithubApi::offline()),
             ))]),
-            github_api,
+            forge_logins_account,
             github_account,
             github_client_id: pdt_core::brand::GITHUB_OAUTH_CLIENT_ID.into(),
-            github_login: Default::default(),
+            forge_logins: Default::default(),
             pr_watch: Default::default(),
             local_ci: Default::default(),
             grants: Default::default(),
@@ -398,12 +398,14 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/update/install", axum::routing::post(crate::update::post_install))
         .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
         .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
-        .route("/github/login", axum::routing::get(crate::github_login::get).delete(crate::github_login::disconnect))
-        .route("/github/login/token", axum::routing::post(crate::github_login::put_token))
+        .route("/forges/{kind}/login", get(crate::forge_login::get))
+        .route("/forges/{kind}/login/test", axum::routing::post(crate::forge_login::test_token))
+        .route("/forges/{kind}/login/token", axum::routing::post(crate::forge_login::put_token))
         .route(
-            "/github/login/device",
-            axum::routing::post(crate::github_login::start_device).delete(crate::github_login::cancel_device),
+            "/forges/{kind}/login/device",
+            axum::routing::post(crate::forge_login::start_device).delete(crate::forge_login::cancel_device),
         )
+        .route("/forges/{kind}/login/accounts/{host}", axum::routing::delete(crate::forge_login::disconnect))
         .route("/host/folders", get(crate::folders::list).post(crate::folders::create))
         .route("/bug-reports", axum::routing::post(crate::bug_reports::create))
         .route("/bug-reports/preview", get(crate::bug_reports::preview))

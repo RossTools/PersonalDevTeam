@@ -7,7 +7,7 @@ import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import { ConnectionDialog, connectionsKey } from '../connections/ConnectionDialog';
 import { ConnectionRow } from '../connections/ConnectionRow';
-import { GithubLogin } from './GithubLogin';
+import { ForgeLogin } from './ForgeLogin';
 import { CATEGORY_LABEL, connectionsOf, pluginsKey, type Plugin } from './model';
 import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch, usePlugins } from './parts';
 
@@ -121,7 +121,7 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
       {check.error && <Alert tone="error">{check.error.message}</Alert>}
       {p.status === 'not_built' && <Alert tone="warning">This PDT was built without {p.label}. It can’t be turned on here.</Alert>}
 
-      {p.id === 'github' ? <GithubLogin /> : p.connectionKinds.length > 0 && (
+      {p.id === 'github' ? <ForgeLogin kind="github" label={p.label} /> : p.connectionKinds.length > 0 && (
         <Section
           label="Connections"
           description={p.enabled ? 'Secrets stay in this machine’s keychain.' : `Turn ${p.label} on to add connections. Those it has are kept while it is off.`}

@@ -24,10 +24,20 @@ export function renderWithQuery(ui: ReactNode) {
 }
 
 /** A connected GitHub login (Settings › Plugins › GitHub). */
-const githubConnected = {
-  connected: true, login: 'me', apiUrl: 'https://api.github.com', webUrl: 'https://github.com', deviceFlow: true,
-  scopes: 'repo', pending: null, error: null,
-};
+/** GitHub's forge login (PDT-244), with `accounts`. */
+export const githubLogin = (over: object = {}) => ({
+  kind: 'github', label: 'GitHub', defaultApiUrl: 'https://api.github.com', apiUrlExample: 'https://github.example.com/api/v3',
+  scopes: 'repo', tokenHelp: 'A classic token with the repo scope.', hasDeviceFlow: true, deviceFlow: true, accounts: [],
+  pending: null, error: null, ...over,
+});
+
+/** An account on `host`. */
+export const forgeAccount = (login: string, host = 'github.com', over: object = {}) => ({
+  host, login, apiUrl: host === 'github.com' ? 'https://api.github.com' : `https://${host}/api/v3`, webUrl: `https://${host}`,
+  signedInAt: 1, rejectedAt: null, ...over,
+});
+
+const githubConnected = githubLogin({ accounts: [forgeAccount('me')] });
 
 /** A stub route value that answers with a specific status and JSON body. */
 export class Reply {
@@ -41,12 +51,12 @@ type Route = ((call: Call) => unknown) | object | string | number | boolean | nu
  * Stubs fetch with `"METHOD /path"` routes. `undefined` responds 204; unknown routes respond 404. A request with a query
  * string matches its exact route first, then the route without the query (a function route can read `call.path`).
  * `GET /api/connections/kinds` answers PDT's kinds of connection, `GET /api/integrations/project-settings` its
- * integrations' project settings, and `GET /api/github/login` a connected GitHub login, unless a test stubs them.
+ * integrations' project settings, and `GET /api/forges/github/login` a connected GitHub login, unless a test stubs them.
  */
 export function stubApi(given: Record<string, Route>): Call[] {
   const routes: Record<string, Route> = {
     'GET /api/connections/kinds': connectionKinds,
-    'GET /api/github/login': githubConnected,
+    'GET /api/forges/github/login': githubConnected,
     'GET /api/integrations/project-settings': projectSettingsSchemas,
     ...given,
   };

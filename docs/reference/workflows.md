@@ -794,8 +794,8 @@ or off; turning on one that comes back `needs_setup` opens the add-connection di
 A plugin's page (`/settings/plugins/<id>`; a phone's drill-down): its icon, name, category, description, status and
 switch; a banner for Needs setup (Add a connection), Error (the error, with Test again, `POST
 /api/integrations/{id}/check`, which runs its pollers now and lists the plugins again, and Edit connection) and Not in
-this build; Connections (its own, with Add per kind while it is on, Edit and Delete; GitHub's is its login,
-`GithubLogin.tsx`, moved here from This host); What it adds (workflow steps, agent and PM tools, templates and
+this build; Connections (its own, with Add per kind while it is on, Edit and Delete; GitHub's are its logins,
+one per host, `ForgeLogin.tsx`, moved here from This host); What it adds (workflow steps, agent and PM tools, templates and
 built-ins, project settings with links to the projects using them); and short Setup steps. The Inbox's Connect
 GitHub opens GitHub's page (`/settings/plugins/github`; the old `/settings/host/github` goes there).
 

@@ -16,7 +16,6 @@ pub use pdt_forge::{
     Capabilities, ChangeComment, ChangeRequest, ChangeReview, CloseReason, Forge, ForgeError, ForgeNotes, Issue,
     IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest, Release,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -133,19 +132,8 @@ pub(crate) fn headers(token: &str) -> Vec<(&'static str, String)> {
     ]
 }
 
-/// The login PDT uses: a token and the API it is for.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Account {
-    pub token: String,
-    /// github.com's API, or a GitHub Enterprise Server's (`https://ghe.example.com/api/v3`).
-    pub api_url: String,
-    /// Who the token signs in as.
-    pub login: String,
-    /// When the user signed in (Unix ms); unknown for a login stored before PDT-252.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub signed_in_at: Option<i64>,
-}
+/// The login PDT uses: a token and the API it is for (one per host, PDT-244).
+pub type Account = pdt_forge::ForgeAccount;
 
 /// One call to GitHub, for the log of a refused login: never its token, query or body.
 #[derive(Debug, Clone, PartialEq, Eq)]

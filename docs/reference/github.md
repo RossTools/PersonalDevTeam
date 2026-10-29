@@ -39,23 +39,46 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
 
 ## The login
 
-- GitHub's plugin page, Settings › Plugins › GitHub (PDT-228; its connection is the login: `web/src/plugins/GithubLogin.tsx`;
-  pdt-api `github_login.rs`). The old path `/settings/host/github` goes there. The login is a JSON
-  `Account` (`token`, `apiUrl`, `login`, `signedInAt`; a login saved before PDT-252 has no `signedInAt`) in the OS keychain only, under `github-login` for the stable instance's
-  default data dir and `github-login:<hash of the data dir>` for any other (`secrets::github_login_account`, as the
-  update token's), so a dev instance never reads or replaces the stable one's. pdtd reads it at startup in the
-  background (`github_login::load`). The token never leaves pdtd: the API returns who it signs in as, never the token.
-- **Connect GitHub** (the OAuth device flow; `POST /api/github/login/device`, body `{apiUrl?, clientId?}`): PDT asks
-  GitHub for a code (`<site>/login/device/code`), the page shows it and the link to enter it at, and a background task
-  polls `<site>/login/oauth/access_token` at GitHub's interval (slowing down when told) until the user authorizes,
-  denies, or the code expires (15 minutes). The token is checked with `GET /user` and saved. `DELETE
-  /api/github/login/device` stops waiting; starting again replaces the old flow.
-- **Paste a token** (`POST /api/github/login/token`, body `{token, apiUrl?}`): checked with `GET /user` (a 401 is
-  refused) and saved. `gh auth token` prints the GitHub CLI's, for a user who has one; PDT itself never runs `gh`.
-- `GET /api/github/login`: `connected`, `login`, `apiUrl`, `webUrl`, `deviceFlow` (a client ID is set), `scopes`,
-  `pending` (the code to enter, while waiting), `error` (why the last login failed). `DELETE /api/github/login`
-  disconnects: the keychain entry goes and the forge signs out (GitHub keeps the app's authorization until the user
-  revokes it under Settings › Applications on GitHub).
+- GitHub's plugin page, Settings › Plugins › GitHub (PDT-228; its connections are its logins:
+  `web/src/plugins/ForgeLogin.tsx`; pdt-api `forge_login.rs`). The old path `/settings/host/github` goes there.
+- **An account per host** (PDT-244): PDT keeps one login per forge kind and host, keyed `<kind>:<host>`
+  (`github:github.com`, `github:ghe.example.com`), so github.com and any number of Enterprise Servers are signed in at
+  once. Each is a JSON `ForgeAccount` (`token`, `apiUrl`, `login`, `signedInAt`), and all of them are one
+  `pdt_forge::login::AccountStore` in the OS keychain only, under `forge-logins` for the stable instance's default
+  data dir and `forge-logins:<hash of the data dir>` for any other (`secrets::forge_logins_account`, as the update
+  token's), so a dev instance never reads or replaces the stable one's. pdtd reads it at startup in the background
+  (`forge_login::load`) and signs each forge plugin in for each host (`ForgeLogin::set_account`). The GitHub plugin
+  keeps one `GithubApi` per host (github.com's always; an Enterprise Server's from its first account), each with its
+  own ETag cache, rate limit and refusal; a project uses the account of its `origin`'s host
+  (`ForgePlugin::forge_on`, `ci_on`). The token never leaves pdtd: the API returns who it signs in as, never the token.
+- **The login from before PDT-244** (one GitHub login, under `github-login[:<hash>]`): the first read finds no
+  `forge-logins` entry, copies it in as the account of its API URL's host and writes that, with no new sign-in. The
+  old entry stays, for an older PDT rolled back to, until the user disconnects that host.
+- **Every forge's login** is the plugin's `ForgeLogin` (`ForgePlugin::login`, pdt-forge `login.rs`): what its form asks
+  (`LoginSpec`: the public host's API URL, prefilled; an example of a self-hosted one; the scopes; help on tokens;
+  whether it has a device flow), checking a token (`whoami`), the device flow where it has one, and its accounts. The
+  API is the same for every forge, under `/api/forges/{kind}/login` (an unknown kind, or one without a login, is
+  `404 unknown_forge`):
+  - `GET`: `kind`, `label`, `defaultApiUrl`, `apiUrlExample`, `scopes`, `tokenHelp`, `hasDeviceFlow`, `deviceFlow`
+    (PDT has an OAuth App client ID for the public host), `accounts` (`host`, `apiUrl`, `webUrl`, `login`,
+    `signedInAt`, `rejectedAt`; the public host's first), `pending` (the code to enter and its `apiUrl`, while
+    waiting), `error` (why the last login failed).
+  - **Test** (`POST …/test`, body `{token, apiUrl?}`): who the token signs in as on that host (`host`, `apiUrl`,
+    `webUrl`, `login`, `scopes`), without saving it; a token the forge refuses is `400 invalid_token`.
+  - **Paste a token** (`POST …/token`, same body): checked the same way (GitHub: `GET /user`; a 401 is refused), then
+    saved as the account of the API URL's host, replacing that host's. `gh auth token` prints the GitHub CLI's, for a
+    user who has one; PDT itself never runs `gh`.
+  - **Connect GitHub** (the OAuth device flow; `POST …/device`, body `{apiUrl?, clientId?}`; `400 no_device_flow` on a
+    forge without one): PDT asks GitHub for a code (`<site>/login/device/code`), the page shows it and the link to
+    enter it at, and a background task polls `<site>/login/oauth/access_token` at GitHub's interval (slowing down
+    when told) until the user authorizes, denies, or the code expires (15 minutes). The token is checked with `GET
+    /user` and saved as that host's account. `DELETE …/device` stops waiting; starting again replaces the old flow.
+  - `DELETE …/accounts/{host}` disconnects one host (`404 no_account` without one): its account leaves the keychain
+    and that host's forge signs out (GitHub keeps the app's authorization until the user revokes it under Settings ›
+    Applications on GitHub). The others stay.
+- The page lists each account (who, on which host, Disconnect…), Connect GitHub (the device flow on github.com), and
+  a form for any host: its API URL (github.com's prefilled), a token, Test (who it signs in as, and its scopes) and
+  Save; for another host with the device flow, that host's OAuth App client ID. All connections lists each account.
 - **Scopes**: `repo`. It covers what PDT does in public and private repositories: reading pull requests, reviews,
   comments, issues, Actions runs, jobs and logs, releases; commenting, labelling and closing issues; turning on
   auto-merge and merging; starting a workflow by hand (the built-in "Cut a release", PDT-194). A fine-grained token
@@ -66,7 +89,8 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
   and how long ago it was made. Never the token.
 - **GitHub Enterprise Server**: give the host's API URL (`https://github.example.com/api/v3`). The site is the URL
   without `/api/v3`, GraphQL is `<site>/api/graphql`, and a project whose `origin` is on that host uses the forge
-  (the GitHub forge plugin claims the host, `GithubPlugin::claims_host`). The device flow there needs an OAuth App
+  as that host's account (the GitHub forge plugin claims each host it has an account for,
+  `GithubPlugin::claims_host`; without one the project has no forge). The device flow there needs an OAuth App
   registered on that host (its client ID in the form); PDT's own is github.com's.
 
 ### Registering PDT's OAuth App
@@ -95,12 +119,16 @@ works but that organization's private repositories answer 404.
 - Every forge call without a login fails and marks the forge as wanted (`Forge::login_needed`). While it is, the Inbox
   lists **Connect GitHub** (kind `connect`, id `connect:github`, group Unheard notices; not stored, never dismissed):
   Enter opens Settings › Plugins › GitHub. It goes once a login is saved. Each forge plugin in use gets its own item
-  (`connect:<kind>`, PDT-241), named with its label.
+  (`connect:<kind>`, PDT-241), named with its label, and each account on another host than the public one its own
+  too (PDT-244: `connect:<kind>:<host>`, **Reconnect GitHub on ghe.example.com**, `body.host`), so a refused
+  Enterprise Server login asks for itself while github.com's carries on. The plugin's status is Error while any of
+  its accounts is refused.
 - A login GitHub refuses (it answers **401**: the token was revoked or expired; PDT-212) is kept but marked rejected,
   with the time (`GithubApi::rejected_at`, `Forge::login_rejected_at`; in memory, so a restart finds out again on its
   first call). While it is, no call reaches GitHub: every one fails as "GitHub no longer accepts PDT's login" at once,
-  so the 60 s pollers back off without spending the rate limit. `GET /api/github/login` reports it as `rejectedAt`
-  (still `connected`), Settings › Plugins › GitHub says "GitHub no longer accepts this login" with Reconnect, and
+  so the 60 s pollers back off without spending the rate limit. `GET /api/forges/github/login` reports it as that
+  account's `rejectedAt` (still listed), Settings › Plugins › GitHub says "GitHub on <host> no longer accepts this
+  login" (with Reconnect for github.com), and
   the same single Inbox item reads **Reconnect GitHub** (`body.reason: "rejected"`, created at the refusal). Saving
   a login (device flow or pasted token) clears it, takes the item out of the Inbox and runs the PR and issue checks
   at once. A 403 (missing scopes, or no access to one repository) is not a rejected login: it stays that PR's or
@@ -108,7 +136,8 @@ works but that organization's private repositories answer 404.
 - A 401 marks the login only when GitHub means it (PDT-252): the 401 must come from the API's own host (one from a
   redirect's other host, such as a job log's storage, is that call's error), and `GET /user`, asked at once, must
   answer 401 too. Otherwise the call fails with GitHub's status and message and the login stays.
-- **The login check** (`github_login::check`, the `github login` loop, every 5 minutes; `GithubApi::check_login`):
+- **The login check** (`forge_login::check`, the `forge logins` loop, every 5 minutes, of every account;
+  `ForgeLogin::check_accounts`, GitHub's `GithubApi::check_login` per host):
   `GET /rate_limit` (it costs no rate limit), so the time GitHub stops accepting the login is in the log to within 5
   minutes even when nothing else calls GitHub. While the login is marked rejected it asks `GET /user` instead, and
   when GitHub accepts the login again the mark goes, the Inbox item with it, and the PR and issue checks run at once.

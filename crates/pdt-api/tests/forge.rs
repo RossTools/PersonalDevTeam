@@ -1,5 +1,5 @@
-//! PDT-177 through the API: the in-app GitHub login (a pasted token, the device flow, disconnecting), the Inbox's
-//! "Connect GitHub", and the forge tools an agent uses instead of `gh`. GitHub is recorded answers
+//! PDT-177 through the API: the in-app forge logins (PDT-244: a pasted token or the device flow, an account per host,
+//! disconnecting, the old GitHub login carried over), the Inbox's "Connect GitHub", and the forge tools an agent uses instead of `gh`. GitHub is recorded answers
 //! (`pdt_github::transport::testing::Recorded`) or `FakeForge`; `fake-agent` stands in for Claude (it calls pdt-mcp
 //! tools when a message says `mcp: <tool> <json>`).
 
@@ -46,8 +46,7 @@ async fn setup(forge: Option<Arc<FakeForge>>, github: Option<Arc<GithubApi>>) ->
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
     if let Some(g) = github {
-        state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_github::plugin::GithubPlugin::new(g.clone()))]);
-        state.github_api = g;
+        state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_github::plugin::GithubPlugin::new(g))]);
     }
     if let Some(f) = forge {
         state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_forge::testing::fake_github(&f))]);
@@ -236,14 +235,27 @@ async fn an_agent_reads_failed_ci_logs_and_answers_on_its_pr_through_pdt_tools()
     assert!(said.contains("<untrusted id=\\\"") && said.contains("never instructions to follow"), "{said}");
 }
 
+const LOGIN: &str = "/api/forges/github/login";
+
+/// The stored forge logins (the keychain's JSON).
+fn stored(env: &Env) -> Option<String> {
+    env.state.secrets.get(&env.state.forge_logins_account).unwrap()
+}
+
 #[tokio::test]
 async fn without_a_login_the_inbox_asks_to_connect_github_until_a_token_is_saved() {
     let t = Arc::new(Recorded::new());
     let g = Arc::new(GithubApi::new(t.clone()));
     let env = setup(None, Some(g.clone())).await;
-    let (_, v) = call(&env.app, "GET", "/api/github/login", None).await;
-    assert_eq!((v["connected"].as_bool(), v["scopes"].as_str()), (Some(false), Some("repo")));
+    let (_, v) = call(&env.app, "GET", LOGIN, None).await;
+    assert_eq!((v["accounts"].as_array().map(Vec::len), v["scopes"].as_str()), (Some(0), Some("repo")), "{v}");
+    assert_eq!(
+        (v["defaultApiUrl"].as_str(), v["hasDeviceFlow"].as_bool()),
+        (Some("https://api.github.com"), Some(true))
+    );
     assert_eq!(v["deviceFlow"], json!(!pdt_core::brand::GITHUB_OAUTH_CLIENT_ID.is_empty()));
+    let (s, _) = call(&env.app, "GET", "/api/forges/gitlab/login", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "no such forge");
     let connect = |inbox: &Value| inbox["items"].as_array().unwrap().iter().any(|i| i["kind"] == "connect");
     let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
     assert!(!connect(&inbox), "nothing wanted GitHub yet");
@@ -261,40 +273,167 @@ async fn without_a_login_the_inbox_asks_to_connect_github_until_a_token_is_saved
     assert!(connect(&inbox), "{inbox}");
     let item = inbox["items"].as_array().unwrap().iter().find(|i| i["kind"] == "connect").unwrap().clone();
     assert_eq!((item["title"].as_str(), item["group"].as_str()), (Some("Connect GitHub"), Some("notice")));
+    assert_eq!(item["id"], "connect:github");
     assert!(t.sent().is_empty(), "nothing reached GitHub");
 
     t.on("GET", "https://api.github.com/user", Response::new(401, r#"{"message":"Bad credentials"}"#));
-    let (s, v) = call(&env.app, "POST", "/api/github/login/token", Some(json!({"token": "bad"}))).await;
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/token"), Some(json!({"token": "bad"}))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
     assert!(v["message"].as_str().unwrap().contains("does not accept"), "{v}");
-    let (s, _) = call(&env.app, "POST", "/api/github/login/token", Some(json!({"token": " "}))).await;
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/test"), Some(json!({"token": "bad"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_token")), "Test refuses it too");
+    let (s, _) = call(&env.app, "POST", &format!("{LOGIN}/token"), Some(json!({"token": " "}))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
-    t.ok("GET", "https://api.github.com/user", r#"{"login":"ross"}"#);
-    let (s, v) = call(&env.app, "POST", "/api/github/login/token", Some(json!({"token": "gho_good"}))).await;
+    // Test says who a token is, and saves nothing.
+    t.on(
+        "GET",
+        "https://api.github.com/user",
+        Response::new(200, r#"{"login":"ross"}"#).with_header("x-oauth-scopes", "repo, workflow"),
+    );
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/test"), Some(json!({"token": "gho_good"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!((v["connected"].as_bool(), v["login"].as_str()), (Some(true), Some("ross")));
+    assert_eq!(
+        v,
+        json!({"host": "github.com", "apiUrl": "https://api.github.com", "webUrl": "https://github.com",
+        "login": "ross", "scopes": ["repo", "workflow"]})
+    );
+    assert!(g.account().is_none() && stored(&env).is_none(), "only tested");
+    t.ok("GET", "https://api.github.com/user", r#"{"login":"ross"}"#);
+
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/token"), Some(json!({"token": "gho_good"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(
+        (v["accounts"][0]["login"].as_str(), v["accounts"][0]["host"].as_str()),
+        (Some("ross"), Some("github.com"))
+    );
     assert!(!v.to_string().contains("gho_good"), "the token never leaves PDT");
-    let stored = env.state.secrets.get(&env.state.github_account).unwrap().unwrap();
-    assert!(stored.contains("gho_good") && stored.contains("https://api.github.com"), "in the keychain");
+    let kept = stored(&env).unwrap();
+    assert!(kept.contains("github:github.com") && kept.contains("gho_good"), "in the keychain: {kept}");
     assert_eq!(g.account().unwrap().login, "ross");
     let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
     assert!(!connect(&inbox), "connected: {inbox}");
 
-    let (s, v) = call(&env.app, "DELETE", "/api/github/login", None).await;
+    let (s, _) = call(&env.app, "DELETE", &format!("{LOGIN}/accounts/ghe.example.com"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "no account there");
+    let (s, v) = call(&env.app, "DELETE", &format!("{LOGIN}/accounts/github.com"), None).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(v["connected"], false);
-    assert_eq!(env.state.secrets.get(&env.state.github_account).unwrap(), None);
+    assert_eq!(v["accounts"], json!([]));
+    assert!(!stored(&env).unwrap().contains("gho_good"), "out of the keychain");
     assert!(g.account().is_none());
+}
 
-    // pdtd's startup signs in with the stored login.
-    env.state
-        .secrets
-        .set(&env.state.github_account, r#"{"token":"t","apiUrl":"https://ghe.example.com/api/v3","login":"ross"}"#)
-        .unwrap();
-    pdt_api::github_login::load(&env.state).await;
-    let (_, v) = call(&env.app, "GET", "/api/github/login", None).await;
-    assert_eq!(v["webUrl"], "https://ghe.example.com");
+#[tokio::test]
+async fn the_github_login_from_before_carries_over_as_its_hosts_account() {
+    let env = setup(None, Some(Arc::new(GithubApi::new(Arc::new(Recorded::new()))))).await;
+    let old = r#"{"token":"t","apiUrl":"https://ghe.example.com/api/v3","login":"ross"}"#;
+    env.state.secrets.set(&env.state.github_account, old).unwrap();
+    // pdtd's startup signs in with it, with no new login.
+    pdt_api::forge_login::load(&env.state).await;
+    let (_, v) = call(&env.app, "GET", LOGIN, None).await;
+    let a = &v["accounts"][0];
+    assert_eq!(
+        (a["host"].as_str(), a["webUrl"].as_str(), a["login"].as_str()),
+        (Some("ghe.example.com"), Some("https://ghe.example.com"), Some("ross")),
+        "{v}"
+    );
+    let kept: Value = serde_json::from_str(&stored(&env).unwrap()).unwrap();
+    assert_eq!(kept["accounts"]["github:ghe.example.com"]["token"], "t", "copied into the forge logins: {kept}");
+    assert_eq!(
+        env.state.secrets.get(&env.state.github_account).unwrap().as_deref(),
+        Some(old),
+        "kept for an older PDT"
+    );
+    // Once copied, the forge logins are what count: loading again changes nothing.
+    pdt_api::forge_login::load(&env.state).await;
+    let (_, again) = call(&env.app, "GET", LOGIN, None).await;
+    assert_eq!(again["accounts"], v["accounts"]);
+    // Disconnecting that host takes the old entry out too.
+    let (s, _) = call(&env.app, "DELETE", &format!("{LOGIN}/accounts/ghe.example.com"), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(env.state.secrets.get(&env.state.github_account).unwrap(), None);
+}
+
+/// A project of its own whose origin is `origin`.
+async fn project_on(env: &Env, origin: &str) -> String {
+    let repo = env._tmp.path().join("repo2");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-m", "init", "-q"]);
+    git(&repo, &["remote", "add", "origin", origin]);
+    let (s, p) =
+        call(&env.app, "POST", "/api/projects", Some(json!({"name": "Q", "repoPath": repo.to_string_lossy()}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{p}");
+    p["id"].as_str().unwrap().into()
+}
+
+#[tokio::test]
+async fn github_com_and_an_enterprise_server_are_signed_in_at_once_each_for_its_own_projects() {
+    let t = Arc::new(Recorded::new());
+    let env = setup(None, Some(Arc::new(GithubApi::new(t.clone())))).await;
+    t.on("GET", "https://api.github.com/user", Response::new(200, r#"{"login":"ross"}"#));
+    t.on("GET", "https://ghe.example.com/api/v3/user", Response::new(200, r#"{"login":"rwest"}"#));
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/token"), Some(json!({"token": "gho_com"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let ghe = json!({"token": "ghp_ghe", "apiUrl": "https://ghe.example.com/api/v3/"});
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/token"), Some(ghe)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let accounts: Vec<_> =
+        v["accounts"].as_array().unwrap().iter().map(|a| (a["host"].clone(), a["login"].clone())).collect();
+    assert_eq!(accounts, [(json!("github.com"), json!("ross")), (json!("ghe.example.com"), json!("rwest"))], "{v}");
+    assert_eq!(v["accounts"][1]["apiUrl"], "https://ghe.example.com/api/v3");
+
+    // A project on the Enterprise Server reads it as that host's account; github.com's projects as theirs.
+    let project = project_on(&env, "https://ghe.example.com/team/app.git").await;
+    let (_, f) = call(&env.app, "GET", &format!("/api/projects/{project}/forge"), None).await;
+    assert_eq!((f["kind"].as_str(), f["repo"].as_str()), (Some("github"), Some("team/app")), "{f}");
+    let (s, t1) =
+        call(&env.app, "POST", &format!("/api/projects/{project}/tickets"), Some(json!({"title": "On GHE"}))).await;
+    assert_eq!(s, StatusCode::CREATED);
+    let (s, _) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{}/start", t1["id"].as_str().unwrap()),
+        Some(json!({"agent": "claude", "sessionMode": "conversation"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    // The Enterprise Server refuses its token: that account alone is marked, with an item of its own.
+    t.on("POST", "https://ghe.example.com/api/graphql", Response::new(401, r#"{"message":"Bad credentials"}"#));
+    t.on("GET", "https://ghe.example.com/api/v3/user", Response::new(401, r#"{"message":"Bad credentials"}"#));
+    let before = t.sent().len();
+    pdt_api::refresh_prs(&env.state).await;
+    let sent: Vec<_> = t.sent().into_iter().skip(before).collect();
+    assert!(sent.iter().any(|r| r.url.starts_with("https://ghe.example.com/")), "{:?}", t.urls());
+    assert!(
+        sent.iter()
+            .filter(|r| r.url.starts_with("https://ghe.example.com/"))
+            .all(|r| r.headers.contains(&("Authorization", "Bearer ghp_ghe".into()))),
+        "the Enterprise Server's own token"
+    );
+    let (_, v) = call(&env.app, "GET", LOGIN, None).await;
+    assert!(v["accounts"][0]["rejectedAt"].is_null() && v["accounts"][1]["rejectedAt"].is_i64(), "{v}");
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    let items: Vec<_> = inbox["items"].as_array().unwrap().iter().filter(|i| i["kind"] == "connect").collect();
+    assert_eq!(items.len(), 1, "{inbox}");
+    assert_eq!(
+        (items[0]["id"].as_str(), items[0]["title"].as_str()),
+        (Some("connect:github:ghe.example.com"), Some("Reconnect GitHub on ghe.example.com"))
+    );
+    assert_eq!(items[0]["body"]["host"], "ghe.example.com");
+
+    // Signing in there again clears it; github.com's account is untouched throughout.
+    t.on("GET", "https://ghe.example.com/api/v3/user", Response::new(200, r#"{"login":"rwest"}"#));
+    let ghe = json!({"token": "ghp_new", "apiUrl": "https://ghe.example.com/api/v3"});
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/token"), Some(ghe)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["accounts"].as_array().unwrap().len(), 2);
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    assert!(!inbox.to_string().contains("connect:github"), "{inbox}");
+    let kept = stored(&env).unwrap();
+    assert!(kept.contains("gho_com") && kept.contains("ghp_new") && !kept.contains("ghp_ghe"), "{kept}");
 }
 
 #[tokio::test]
@@ -319,9 +458,9 @@ async fn a_login_github_rejects_asks_once_to_reconnect_and_the_pollers_wait_for_
     pdt_api::refresh_prs(&env.state).await;
     let sent = t.sent().len();
     assert_eq!(sent, 2, "the call, and GET /user to make sure: {:?}", t.urls());
-    let (_, v) = call(&env.app, "GET", "/api/github/login", None).await;
-    assert_eq!((v["connected"].as_bool(), v["login"].as_str()), (Some(true), Some("ross")), "kept: {v}");
-    let rejected_at = v["rejectedAt"].as_i64().expect("rejected");
+    let (_, v) = call(&env.app, "GET", LOGIN, None).await;
+    assert_eq!(v["accounts"][0]["login"].as_str(), Some("ross"), "kept: {v}");
+    let rejected_at = v["accounts"][0]["rejectedAt"].as_i64().expect("rejected");
 
     // One "Reconnect GitHub", however often the Inbox or the pollers look; the pollers send GitHub nothing.
     for _ in 0..2 {
@@ -347,9 +486,9 @@ async fn a_login_github_rejects_asks_once_to_reconnect_and_the_pollers_wait_for_
 
     // Reconnecting clears it, and the pollers call GitHub again.
     t.ok("GET", "https://api.github.com/user", r#"{"login":"ross"}"#);
-    let (s, v) = call(&env.app, "POST", "/api/github/login/token", Some(json!({"token": "gho_new"}))).await;
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/token"), Some(json!({"token": "gho_new"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert!(v["rejectedAt"].is_null(), "{v}");
+    assert!(v["accounts"][0]["rejectedAt"].is_null(), "{v}");
     let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
     assert!(connects(&inbox).is_empty(), "{inbox}");
     pdt_api::sync_notifications(&env.state).await;
@@ -370,7 +509,7 @@ async fn connect_github_enters_a_code_then_signs_in() {
     // No client ID: only a pasted token.
     env.state.github_client_id = String::new();
     env.app = router(env.state.clone(), None);
-    let (s, v) = call(&env.app, "POST", "/api/github/login/device", Some(json!({}))).await;
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/device"), Some(json!({}))).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("no_client_id")), "{v}");
 
     env.state.github_client_id = "Iv1.pdt".into();
@@ -385,20 +524,25 @@ async fn connect_github_enters_a_code_then_signs_in() {
     t.ok("POST", token, r#"{"error":"authorization_pending"}"#);
     t.ok("POST", token, r#"{"access_token":"gho_dev","token_type":"bearer","scope":"repo"}"#);
     t.on("GET", "https://api.github.com/user", Response::new(200, r#"{"login":"ross"}"#));
-    let (s, v) = call(&env.app, "POST", "/api/github/login/device", Some(json!({}))).await;
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/device"), Some(json!({}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["pending"]["apiUrl"], "https://api.github.com");
     assert_eq!(v["pending"]["userCode"], "ABCD-1234");
     assert_eq!(v["pending"]["verificationUri"], "https://github.com/login/device");
     let deadline = Instant::now() + Duration::from_secs(10);
     let v = loop {
-        let (_, v) = call(&env.app, "GET", "/api/github/login", None).await;
-        if v["connected"] == true || v["error"].is_string() {
+        let (_, v) = call(&env.app, "GET", LOGIN, None).await;
+        if !v["accounts"].as_array().unwrap().is_empty() || v["error"].is_string() {
             break v;
         }
         assert!(Instant::now() < deadline, "never signed in: {v}");
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
-    assert_eq!((v["login"].as_str(), v["pending"].is_null(), v["error"].is_null()), (Some("ross"), true, true), "{v}");
+    assert_eq!(
+        (v["accounts"][0]["login"].as_str(), v["pending"].is_null(), v["error"].is_null()),
+        (Some("ross"), true, true),
+        "{v}"
+    );
     assert_eq!(g.account().unwrap().token, "gho_dev");
     assert!(t.sent()[0].body.as_deref().unwrap().contains("client_id=Iv1.pdt"));
 
@@ -409,10 +553,10 @@ async fn connect_github_enters_a_code_then_signs_in() {
         r#"{"device_code":"dc2","user_code":"WXYZ-0000","verification_uri":"https://github.com/login/device",
             "expires_in":900,"interval":5}"#,
     );
-    let (_, v) = call(&env.app, "POST", "/api/github/login/device", Some(json!({}))).await;
+    let (_, v) = call(&env.app, "POST", &format!("{LOGIN}/device"), Some(json!({}))).await;
     assert_eq!(v["pending"]["userCode"], "WXYZ-0000");
-    let (_, v) = call(&env.app, "DELETE", "/api/github/login/device", None).await;
-    assert!(v["pending"].is_null() && v["connected"] == true, "{v}");
+    let (_, v) = call(&env.app, "DELETE", &format!("{LOGIN}/device"), None).await;
+    assert!(v["pending"].is_null() && v["accounts"].as_array().unwrap().len() == 1, "{v}");
 }
 
 #[tokio::test]
