@@ -938,8 +938,8 @@ deleted (`409 persona_in_use`).
   `keep_waiting` → the wait again | `merge` (records the approval, then `attempt.merge`) | `stop`; ends on the merge
   too). The Inbox item of either gate offers Open PR when the attempt has one. `timeout` and `stopped` add a ticket
   comment and end (a timeout is also in the Inbox, and the run can be resumed: PDT-123). Params: the four personas, `refineBy`/`codeBy`/`reviewBy`/`qaBy` (`agent`
-  or `user`: manual), `afterRefine`, `accept`, `autoAcceptLabels` (a list, default none; the labels the ticket had
-  when it started count), `merge`, `loopLimit`. Runs may last 30 days. A ticket accepted by label has no approval,
+  or `user`: manual), `afterRefine`, `accept`, `autoAcceptLabels` (a list, default `["agentic"]`; the labels the ticket had
+  when it started count; a workflow that saved its own list, even `[]`, keeps it, PDT-200), `merge`, `loopLimit`. Runs may last 30 days. A ticket accepted by label has no approval,
   so with `requireApproval` on its merge is refused (Merge blocked asks; Merge again records the approval) unless the
   label is also in `approvalExemptLabels`.
 - **Manual stages**: an `agent` node with `owner: user` starts no session. Its binding's state is `manual` and the Inbox

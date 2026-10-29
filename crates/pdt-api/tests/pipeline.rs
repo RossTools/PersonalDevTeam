@@ -907,6 +907,34 @@ async fn labelled_tickets_merge_once_qa_passes_and_the_rest_wait_at_accept() {
     assert!(files.contains("typo.txt") && files.contains("change.txt"), "both merged into main: {files}");
 }
 
+/// By default the `agentic` label skips Accept; every other ticket still waits there (PDT-200).
+#[tokio::test]
+async fn a_default_pipeline_accepts_agentic_tickets_and_the_rest_wait_at_accept() {
+    let env = setup().await;
+    pipeline(&env, json!({}), &[("code", "submitted"), ("review", "approved"), ("qa", "pass")]).await;
+    let agentic = labelled(&env, "Agentic", &["agentic"]).await;
+    start_with_a_commit(&env, &agentic, "agentic.txt").await;
+    until_done(&env, &agentic).await;
+    assert!(inbox(&env).await.iter().all(|i| i["ticketId"] != agentic.as_str()), "no Inbox item for it");
+
+    let other = ticket(&env, "Unlabelled").await;
+    start_with_a_commit(&env, &other, "other.txt").await;
+    let accept = inbox_item(&env, "gate", &other).await;
+    assert_eq!(accept["group"], "accept");
+}
+
+/// A Pipeline that saved an empty list keeps it: `agentic` tickets wait at Accept too (PDT-200).
+#[tokio::test]
+async fn an_explicit_empty_list_accepts_no_label_automatically() {
+    let env = setup().await;
+    pipeline(&env, json!({"autoAcceptLabels": []}), &[("code", "submitted"), ("review", "approved"), ("qa", "pass")])
+        .await;
+    let t = labelled(&env, "Agentic", &["agentic"]).await;
+    start_with_a_commit(&env, &t, "agentic.txt").await;
+    let accept = inbox_item(&env, "gate", &t).await;
+    assert_eq!(accept["group"], "accept");
+}
+
 #[tokio::test]
 async fn without_the_exemption_a_labelled_tickets_merge_is_blocked_and_the_inbox_asks() {
     let env = setup().await;
