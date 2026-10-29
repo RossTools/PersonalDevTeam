@@ -30,8 +30,10 @@ env:
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 # What a pull request, and its run in the merge queue, waits for (docs/superpowers/notes/ci.md):
-# - nothing but `changes` when it only touches docs (`docs/**` or any `*.md`, except the guides pdtd builds in):
-#   every other job is skipped.
+# - nothing but `changes` and `site` when it only touches docs and the website (`docs/**`, `site/**` or any `*.md`,
+#   except the guides pdtd builds in): every other job is skipped.
+# - site: builds the website (site/, Astro + Starlight) when `site/**` or `docs/**` changes (the site reads docs/ in
+#   place), or the pnpm lockfile or workspace. pages.yml deploys it from main.
 # - Linux does the full check set, split into parallel jobs: lint (fmt, clippy), test (nextest, generated TS types;
 #   pdtd also without its integration features) and web (typecheck, vitest, build), on Namespace (8 vCPU, with a cache volume). None of it depends on the OS.
 # - build (macos-latest): on Namespace's macOS runner (M4 Pro, 6 vCPU), only what macOS can break: clippy, nextest
@@ -63,6 +65,7 @@ jobs:
       windows: ${{ steps.pick.outputs.windows }}
       bundle: ${{ steps.pick.outputs.bundle }}
       release: ${{ steps.pick.outputs.release }}
+      site: ${{ steps.pick.outputs.site }}
     steps:
       - id: pick
         env:
@@ -79,8 +82,10 @@ jobs:
           # The release PR (release.yml's) builds the bundles as release builds; nothing else does.
           release=false
           if [ "$EVENT" = pull_request ] && [ "$RELEASE_PR" = true ]; then release=true; fi
-          out() { echo "code=$1 linux=$2 macos=$3 windows=$4 bundle=$5 release=$release"
-            { echo "code=$1"; echo "linux=$2"; echo "macos=$3"; echo "windows=$4"; echo "bundle=$5"; echo "release=$release"; } >> "$GITHUB_OUTPUT"; exit 0; }
+          # The website builds when it or the docs it reads change; with every check (a dispatch, an unreadable diff).
+          site=true
+          out() { echo "code=$1 linux=$2 macos=$3 windows=$4 bundle=$5 release=$release site=$site"
+            { echo "code=$1"; echo "linux=$2"; echo "macos=$3"; echo "windows=$4"; echo "bundle=$5"; echo "release=$release"; echo "site=$site"; } >> "$GITHUB_OUTPUT"; exit 0; }
           all() { out true true true true true; }
           case "$EVENT" in
             pull_request)
@@ -100,11 +105,15 @@ jobs:
           esac
           printf 'Changed files:\n%s\n' "$files"
           has() { printf '%s' "$LABELS" | grep -q "\"$1\""; }
-          # Docs only: every changed file is under docs/ or a Markdown file, and none is a guide pdtd builds in with
-          # include_str! (crates/pdt-api/src/guides.rs; its tests check them). An empty list (the diff could not be
-          # read) counts as code, so CI never skips by accident.
+          # The website: site/, the docs it reads, its dependencies (the pnpm lockfile and workspace) or its workflows.
+          if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qE '^(site|docs)/|^pnpm-(lock|workspace)\.yaml$|^\.github/workflows/(ci|pages)\.yml$'; then
+            site=false
+          fi
+          # Docs only: every changed file is under docs/ or site/ or a Markdown file, and none is a guide pdtd builds
+          # in with include_str! (crates/pdt-api/src/guides.rs; its tests check them). An empty list (the diff could
+          # not be read) counts as code, so CI never skips by accident.
           code=true
-          if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^docs/|\.md$' \
+          if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^(docs|site)/|\.md$' \
             && ! printf '%s\n' "$files" | grep -qE '^docs/(agent-guide\.md|run-config\.md|prompts/)'; then code=false; fi
           windows=false
           if has windows || { [ "$code" = true ] && printf '%s\n' "$files" | grep -qiE '(^|/)windows/|\.ps1$|\.cmd$|^\.github/'; }; then windows=true; fi
@@ -159,6 +168,23 @@ jobs:
           re-runs CI). See docs/SDLC.md "Changelog".
           EOF
           exit 1
+
+  # The website (site/README.md): it builds, with the docs it reads from docs/. pages.yml deploys it from main.
+  site:
+    needs: changes
+    if: needs.changes.outputs.site == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter site...
+      - run: pnpm --filter site test
+      - run: pnpm --filter site build
 
   lint-linux:
     name: lint (linux)
