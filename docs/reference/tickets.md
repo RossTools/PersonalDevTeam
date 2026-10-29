@@ -370,6 +370,17 @@ pdt-api `forge.rs`, `ci.rs` and `github.rs`, pure rules in pdt-core `pr.rs`.
   wakes `run_local_ci_watch`, which reads the attempt again and runs the merge check for it at once. `attempt.pr` has
   `local: true`; notices and the CI gate name a "change request", point at the log with `curl` and say commit, not
   push. A merge in the read that sees CI pass logs `pr.merged` without a `ci.run_passed`, as auto-merge does on GitHub.
+  With `[push] remote` (PDT-245, a plain git remote on any host) the merge goes by way of the remote:
+  `pdt_git::prepare_merge` makes the commit the base becomes without moving it, `pdt_git::push` pushes it to the
+  remote's base (no prompts, the user's own credentials, two-minute limit), and `pdt_git::advance_branch` moves the
+  local base only after. A push refused as not a fast-forward is recovered (`LocalForge::recover`): fetch the remote's
+  base, fast-forward the local base to it, `merge_local` it into the branch in the attempt's worktree (a system comment
+  on the ticket says so), and wake the CI watch so CI starts on the new head; the merge is tried again once it passes.
+  Up to three recoveries per change request (in memory); past that, or when the bases diverged, the worktree is dirty,
+  the push fails otherwise, or the remote took the merge but the local base can't follow, PDT turns the change
+  request's merge off and opens an Inbox notice on the attempt (once per head and cause; it closes when the attempt
+  ends). `[push] branches` pushes the ticket branch (forced, in the background, failures logged) when the change request
+  opens and on each new head. Project settings shows it (`RunConfig.push`).
 - Every 60 s (before the merge check) and when a ticket is opened (`check-merge`), pdtd reads each active attempt's PR
   from its project's forge and its CI from each of the project's CI providers (`github::read_attempt`); GitHub's goes over GitHub's REST and GraphQL APIs with the in-app GitHub login
   ([github.md](github.md); no `gh`). Without a login every read fails as "GitHub is not connected" and the Inbox asks

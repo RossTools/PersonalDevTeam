@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use ts_rs::TS;
 
 /// The top-level sections (and keys) this PDT understands. Any other is skipped (see [`parse`]).
-const SECTIONS: [&str; 5] = ["run", "test", "area", "forge", "ci"];
+const SECTIONS: [&str; 6] = ["run", "test", "area", "forge", "ci", "push"];
 
 /// Unknown top-level keys are skipped by serde (no `deny_unknown_fields` here, unlike the entries).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -26,6 +26,9 @@ pub struct ConfigFile {
     /// `[ci]`: the command the local forge runs as CI (PDT-178), and the project's CI providers (PDT-242).
     #[serde(default)]
     pub ci: Option<CiFile>,
+    /// `[push]`: the remote the local forge pushes the base branch to after each merge (PDT-245).
+    #[serde(default)]
+    pub push: Option<PushFile>,
     /// Top-level sections this PDT does not know (e.g. written for a newer PDT), skipped rather than refused.
     #[serde(skip)]
     pub ignored: Vec<String>,
@@ -37,6 +40,24 @@ pub struct ConfigFile {
 pub struct CiFile {
     pub command: Option<String>,
     pub providers: Option<Vec<String>>,
+}
+
+/// `[push]` as written: `remote = "origin"`, `branches = true`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PushFile {
+    pub remote: Option<String>,
+    pub branches: Option<bool>,
+}
+
+/// A plain git remote for the local forge (PDT-245): after CI passes and the branch merges into its base, PDT pushes
+/// the base to `remote` with the user's own git credentials; with `branches`, each ticket branch too, as it moves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PushDef {
+    pub remote: String,
+    pub branches: bool,
 }
 
 /// The project's own CI (PDT-178): the command a project on the local forge (`forge = "local"`) runs in an attempt's
@@ -119,6 +140,8 @@ pub struct RunConfig {
     /// `[ci] providers`: the CI providers whose runs are the project's CI, by id (the overrides' list wins); None: its
     /// forge's own CI and every CI integration set up for it.
     pub ci_providers: Option<Vec<String>>,
+    /// `[push]`: the remote the local forge pushes to (the overrides' fields win); None: it pushes nowhere.
+    pub push: Option<PushDef>,
     /// Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
     pub ignored: Vec<String>,
 }
@@ -169,6 +192,8 @@ pub enum RunConfigError {
     BadGlob { area: String, path: String, message: String },
     #[error("\"{0}\" in [ci] providers is not a CI provider id (letters, digits, _ and -)")]
     BadCiProvider(String),
+    #[error("\"{0}\" in [push] remote is not a git remote name")]
+    BadPushRemote(String),
 }
 
 /// Parses a configuration. Unknown top-level sections are skipped and listed in `ignored`, so a file written for a
@@ -318,9 +343,22 @@ pub fn merge(file: Option<ConfigFile>, overrides: Option<ConfigFile>) -> Result<
     };
     let command = |c: Option<CiFile>| c.and_then(|c| c.command).map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
     let ci = command(over.ci).or(command(file.ci)).map(|command| CiDef { command });
+    let push = merge_push(file.push, over.push)?;
     let mut ignored = file.ignored;
     ignored.extend(over.ignored.into_iter().filter(|s| !ignored.contains(s)).collect::<Vec<_>>());
-    Ok(RunConfig { runs, tests, areas, forge, ci, ci_providers, ignored })
+    Ok(RunConfig { runs, tests, areas, forge, ci, ci_providers, push, ignored })
+}
+
+/// `[push]` with the overrides' fields over the file's; None without a remote (a blank one is none).
+fn merge_push(file: Option<PushFile>, over: Option<PushFile>) -> Result<Option<PushDef>, RunConfigError> {
+    let (file, over) = (file.unwrap_or_default(), over.unwrap_or_default());
+    let remote = |r: Option<String>| r.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
+    let Some(remote) = remote(over.remote).or(remote(file.remote)) else { return Ok(None) };
+    // A remote name is one argument to git: no spaces, and never an option.
+    if remote.starts_with('-') || remote.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(RunConfigError::BadPushRemote(remote));
+    }
+    Ok(Some(PushDef { remote, branches: over.branches.or(file.branches).unwrap_or(false) }))
 }
 
 /// `[ci] providers` checked: ids (`[a-z0-9_-]+`), each once, in order.
@@ -585,6 +623,27 @@ command = "cargo run"
         let blank = parse("[ci]\ncommand = \" \"\n", Source::Overrides).unwrap();
         assert_eq!(merge(Some(f), Some(blank)).unwrap().ci.unwrap().command, "cargo test", "a blank one is none");
         assert!(matches!(parse("[ci]\ncmd = \"x\"\n", Source::File), Err(RunConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn the_local_forge_can_push_to_a_remote() {
+        let f = parse("forge = \"local\"\n[push]\nremote = \"origin\"\n", Source::File).unwrap();
+        assert!(f.ignored.is_empty(), "{:?}", f.ignored);
+        let c = merge(Some(f.clone()), None).unwrap();
+        assert_eq!(c.push, Some(PushDef { remote: "origin".into(), branches: false }));
+        let over = parse("[push]\nbranches = true\n", Source::Overrides).unwrap();
+        let c = merge(Some(f.clone()), Some(over)).unwrap();
+        assert_eq!(c.push, Some(PushDef { remote: "origin".into(), branches: true }), "the overrides' fields win");
+        let other = parse("[push]\nremote = \" backup \"\n", Source::Overrides).unwrap();
+        assert_eq!(merge(Some(f.clone()), Some(other)).unwrap().push.unwrap().remote, "backup");
+        assert_eq!(merge(None, None).unwrap().push, None, "no [push]: it pushes nowhere");
+        let branches_only = parse("[push]\nbranches = true\n", Source::File).unwrap();
+        assert_eq!(merge(Some(branches_only), None).unwrap().push, None, "no remote, nowhere to push");
+        for bad in ["--upload-pack=x", "my remote"] {
+            let b = parse(&format!("[push]\nremote = \"{bad}\"\n"), Source::File).unwrap();
+            assert!(matches!(merge(Some(b), None), Err(RunConfigError::BadPushRemote(_))), "{bad}");
+        }
+        assert!(matches!(parse("[push]\nurl = \"x\"\n", Source::File), Err(RunConfigError::Parse { .. })));
     }
 
     #[test]

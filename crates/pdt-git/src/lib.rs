@@ -8,11 +8,13 @@ mod changes;
 mod manage;
 mod merge;
 mod pull;
+mod remote;
 mod review;
 pub use changes::*;
 pub use manage::*;
 pub use merge::*;
 pub use pull::*;
+pub use remote::*;
 pub use review::*;
 
 #[derive(Debug, Clone, PartialEq)]

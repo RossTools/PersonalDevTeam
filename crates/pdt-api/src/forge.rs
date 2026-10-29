@@ -55,11 +55,11 @@ pub(crate) async fn project_forge(st: &AppState, project_id: &str, repo_path: &s
         return None;
     }
     if named == Some(ForgeKind::LOCAL) {
-        let command = config.and_then(|c| c.ci).map(|c| c.command);
+        let (command, push) = config.map(|c| (c.ci.map(|c| c.command), c.push)).unwrap_or_default();
         let ci = command
             .is_some()
             .then(|| Arc::new(crate::local_forge::LocalCi::new(st, project_id)) as Arc<dyn CiProvider>);
-        let api = Arc::new(crate::local_forge::LocalForge::new(st, project_id, repo_path, command));
+        let api = Arc::new(crate::local_forge::LocalForge::new(st, project_id, repo_path, command, push));
         return Some(ProjectForge { kind: ForgeKind::LOCAL, api, repo: repo_path.to_string(), ci });
     }
     let plugins = st.forge_plugins();

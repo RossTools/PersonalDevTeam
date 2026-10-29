@@ -117,6 +117,36 @@ command = "cargo test"                            # optional; run with sh -c (cm
 - No merge queue, issues or forge reviews (PDT's own review only). Agents are told to commit and not push.
 - `[ci] command` is only read with `forge = "local"`; an older PDT skips the section.
 
+#### Pushing to a remote
+
+A repository whose remote is on any host (a plain git server, Gitea, GitLab, a bare repository on a share) can stay on
+the local forge and have PDT push each merge there:
+
+```toml
+forge = "local"
+
+[push]
+remote = "origin"                                 # a git remote of the project's checkout
+branches = true                                   # optional: push ticket branches too, as they move
+```
+
+- **Merge order:** CI passes (the `[ci] command` and every other CI provider of the project, such as Buildkite), PDT
+  makes the merge (a fast-forward or a merge commit) and pushes it to the remote's base, and only once the remote took
+  it does the local base move. Nothing is merged locally that the remote refused.
+- **The remote moved on:** PDT fetches its base, fast-forwards the local base to it and merges it into the ticket's
+  branch (in its worktree, which must be clean). CI runs again on that commit and the merge is tried again once it
+  passes; the ticket notes it. A conflict goes back to the agent as any conflict with the base does.
+- **What PDT can't fix** (the local base and the remote's have diverged, the worktree has uncommitted changes, the
+  remote keeps moving, no access) is a notice in the Inbox; the change request stops waiting to merge until the next
+  Merge….
+- `branches = true` pushes each ticket branch (forced, as the agent may rewrite it) when its change request opens and
+  on each new commit: a backup, or for CI that builds pushed branches. A failure there is only logged.
+- Git pushes with your own credentials (ssh keys, a credential helper); PDT stores none and can't answer a prompt for
+  them, so a push that needs one fails with a notice.
+- `[push]` is only read with `forge = "local"`, and the host overrides' fields win over the file's. Agents are still
+  told not to push. An older PDT skips the section (and merges without pushing).
+- Project settings → Runs on this host shows where the local forge's merges go.
+
 ### CI providers
 
 A project's CI can come from more than one place (PDT-242): its forge's own CI (GitHub Actions on GitHub, the

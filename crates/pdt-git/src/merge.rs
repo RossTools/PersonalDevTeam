@@ -3,10 +3,8 @@
 //! unreferenced commit object, which `git gc` collects).
 
 use crate::{GitError, PDT_COMMIT_CONFIG, git_with_env};
-use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// The commit `rev` names (`<rev>^{commit}`), or None when it names none.
 pub fn rev_parse(repo: &Path, rev: &str) -> Option<String> {
@@ -114,53 +112,16 @@ pub fn start_point(repo: &Path, base: &str) -> String {
 /// `git fetch <remote> <branch>` with no prompts (a credential or host-key question fails it instead), killed after
 /// `timeout`. Updates `<remote>/<branch>`.
 pub fn fetch(repo: &Path, remote: &str, branch: &str, timeout: Duration) -> Result<(), GitError> {
-    let ssh = std::env::var("GIT_SSH_COMMAND")
-        .unwrap_or_else(|_| "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_string());
-    let mut cmd = Command::new("git");
-    cmd.env("LC_ALL", "C")
-        .env("LANGUAGE", "C")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_SSH_COMMAND", ssh)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"] {
-        cmd.env_remove(var);
-    }
-    cmd.arg("-C").arg(repo).args(["fetch", "--quiet", "--no-tags", "--end-of-options", remote, branch]);
-    let mut child = cmd.spawn().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound { GitError::GitMissing } else { GitError::Command(e.to_string()) }
-    })?;
-    // Read stderr on its own thread so a chatty failure can never fill the pipe and stall the wait below.
-    let mut stderr = child.stderr.take();
-    let reader = std::thread::spawn(move || {
-        let mut s = String::new();
-        if let Some(e) = stderr.as_mut() {
-            let _ = e.read_to_string(&mut s);
-        }
-        s
-    });
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(GitError::Command(format!("git fetch {remote} {branch} timed out after {timeout:?}")));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(e) => return Err(GitError::Command(e.to_string())),
-        }
-    };
-    let err = reader.join().unwrap_or_default();
-    if status.success() { Ok(()) } else { Err(GitError::Command(err.trim().to_string())) }
+    let args = ["fetch", "--quiet", "--no-tags", "--end-of-options", remote, branch];
+    let out = crate::remote::run_remote(repo, &args, timeout)?;
+    if out.ok { Ok(()) } else { Err(GitError::Command(out.stderr.trim().to_string())) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::process::Command;
 
     fn git(dir: &Path, args: &[&str]) -> String {
         let out = Command::new("git")

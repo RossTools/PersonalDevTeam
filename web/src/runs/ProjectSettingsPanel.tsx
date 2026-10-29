@@ -16,6 +16,7 @@ import type { TriageApproval } from '../api/gen/TriageApproval';
 import type { MergeBy } from '../api/gen/MergeBy';
 import { PERMISSION_LABEL, PERMISSION_MODES } from '../conversation/ConversationComposer';
 import type { Project } from '../api/gen/Project';
+import type { PushDef } from '../api/gen/PushDef';
 import type { ProjectSettingsInput } from '../api/gen/ProjectSettingsInput';
 import type { ProjectSettingsView } from '../api/gen/ProjectSettingsView';
 import { CodeViewer } from '../files/LazyCodeViewer';
@@ -157,6 +158,7 @@ function RunConfiguration({ project, settings, setUpEntries }: { project: Projec
           {config.data?.error && <Alert tone="error">{config.data.error}</Alert>}
           {ignored && <Alert>{ignored}</Alert>}
         </SettingsRow>
+        {config.data?.effective?.forge === 'local' && <LocalForgeRow push={config.data.effective.push ?? null} />}
         <Field
           label="Host overrides (TOML)"
           hint="Merged over the repository's file, on this host only. Can hold the whole configuration, so nothing needs committing."
@@ -569,6 +571,22 @@ function Integrations({ project, settings, schemas }: { project: Project; settin
 }
 
 /** Sections written for a newer version are skipped, not refused; name them so a missing feature is not a mystery. */
+/** Where the local forge's merges go (PDT-245): only the base here, or pushed on to a remote. */
+function LocalForgeRow({ push }: { push: PushDef | null }) {
+  return push ? (
+    <SettingsRow
+      label="Local forge"
+      description={`PDT merges each ticket into its base once CI passes, then pushes the base to this remote with your own git credentials.${push.branches ? ' Ticket branches are pushed too.' : ''}`}
+    >
+      <span className="font-mono text-xs text-muted-foreground">{push.remote}</span>
+    </SettingsRow>
+  ) : (
+    <SettingsRow label="Local forge" description="PDT merges each ticket into its base once CI passes.">
+      <span className="text-xs text-muted-foreground">Pushes nowhere ([push] remote names a remote)</span>
+    </SettingsRow>
+  );
+}
+
 function ignoredNote(ignored: string[] | undefined): string | null {
   if (!ignored?.length) return null;
   const names = ignored.map((s) => `[${s}]`).join(', ');

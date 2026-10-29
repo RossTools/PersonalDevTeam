@@ -22,7 +22,8 @@ structured view) are in [conversations.md](conversations.md). Code: crates/pdt-a
   fine-grained tokens can't read (PDT-165). The forge also names how to answer a PR comment
   (`change_request_comment`, `replyTo` for a review comment) in "Messages from PDT". Agents still `git push`
   themselves. The local forge's (PDT-178): commit and don't push; PDT runs the `[ci]` command on each commit,
-  merges once it passes, and serves each run's log.
+  merges once it passes, and serves each run's log; with `[push] remote` (PDT-245) it also says PDT pushes the base
+  to that remote, so the agent pushes neither.
 - The forge tools (pdt-api `integrations/forge.rs`, actions with only a tool face, in the default tool set): they use
   the session's project forge and branch (its attempt's, a step's attempt's, else its worktree's).
   `change_request_view` (number or branch; state, mergeability, comments and reviews), `change_request_comment`
