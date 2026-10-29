@@ -1,9 +1,11 @@
 import type { ComponentType, SVGProps } from 'react';
-import { Bot, SquareTerminal } from 'lucide-react';
+import { Bot, Plug, SquareTerminal } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import type { Session } from '../api/gen/Session';
+import { agentLabel, isAcp, useAcpAgents } from './agents';
 
-export type SessionKindName = 'claude' | 'codex' | 'devin' | 'shell';
+/** `acp`: any ACP agent (PDT-234). */
+export type SessionKindName = 'claude' | 'codex' | 'devin' | 'acp' | 'shell';
 
 type IconProps = SVGProps<SVGSVGElement>;
 
@@ -33,28 +35,35 @@ export function CodexLogo(props: IconProps) {
 
 /**
  * One icon per thing a session runs (tabs, agent rows, the palette, the new-tab chooser). Devin has no published
- * icon set entry, so it gets a generic one.
+ * icon set entry, so it gets a generic one; ACP agents share a plug.
  */
-export const KIND_ICON: Record<SessionKindName, ComponentType<IconProps>> = { claude: ClaudeLogo, codex: CodexLogo, devin: Bot, shell: SquareTerminal };
-export const KIND_LABEL: Record<SessionKindName, string> = { claude: 'Claude', codex: 'Codex', devin: 'Devin', shell: 'Shell' };
+export const KIND_ICON: Record<SessionKindName, ComponentType<IconProps>> = { claude: ClaudeLogo, codex: CodexLogo, devin: Bot, acp: Plug, shell: SquareTerminal };
+export const KIND_LABEL: Record<SessionKindName, string> = { claude: 'Claude', codex: 'Codex', devin: 'Devin', acp: 'ACP agent', shell: 'Shell' };
 
 type KindOf = Pick<Session, 'kind' | 'agent'>;
 
 /** What a session runs. Session titles don't name it (PDT-20); this icon and label do. */
 export function sessionKindName(s: KindOf): SessionKindName {
   if (s.kind === 'shell') return 'shell';
+  if (isAcp(s.agent)) return 'acp';
   return s.agent === 'codex' || s.agent === 'devin' ? s.agent : 'claude';
 }
 
 export const sessionKindLabel = (s: KindOf) => KIND_LABEL[sessionKindName(s)];
 
+/** The icon for an agent kind (or a shell, for null). */
+export const agentIcon = (agent: KindOf['agent']) => KIND_ICON[sessionKindName({ kind: agent ? 'agent_tui' : 'shell', agent })];
+
 /** The session's kind as a small icon, labelled for screen readers and on hover. Nothing without a session. */
 export function SessionKindIcon({ session, className }: { session: KindOf | undefined; className?: string }) {
+  const acp = useAcpAgents();
   if (!session) return null;
   const name = sessionKindName(session);
   const Icon = KIND_ICON[name];
+  // An ACP agent is named by its own label.
+  const label = name === 'acp' && session.agent ? agentLabel(session.agent, acp) : KIND_LABEL[name];
   return (
-    <span role="img" aria-label={KIND_LABEL[name]} title={KIND_LABEL[name]} className={cn('inline-flex shrink-0 text-muted-foreground', className)}>
+    <span role="img" aria-label={label} title={label} className={cn('inline-flex shrink-0 text-muted-foreground', className)}>
       <Icon aria-hidden className="size-3.5" />
     </span>
   );

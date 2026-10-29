@@ -8,7 +8,7 @@ import { api } from '../api/client';
 import type { Session } from '../api/gen/Session';
 import type { Ticket } from '../api/gen/Ticket';
 import type { TicketDraft } from '../api/gen/TicketDraft';
-import { KIND_LABEL } from '../common/SessionKindIcon';
+import { useAgents } from '../common/agents';
 import { actionError } from '../common/useAction';
 import { NewTicketDialog } from './NewTicketDialog';
 import { invalidateTickets } from './queries';
@@ -28,7 +28,8 @@ export function MakeTicketDialog({ session, canStartHere, onClose, onCreated }: 
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
   const [phase, setPhase] = useState<Phase>({ step: 'drafting' });
   const [attempt, setAttempt] = useState(0);
-  const agentName = session.agent ? KIND_LABEL[session.agent] : 'Claude';
+  const agents = useAgents();
+  const agentName = session.agent ? agents.label(session.agent) : 'Claude';
 
   useEffect(() => {
     // Asked once per try; closing the dialog stops the request.

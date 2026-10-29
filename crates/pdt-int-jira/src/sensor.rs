@@ -1,4 +1,4 @@
-//! Jira Cloud (Phase 7e spec §6, PDT-85). A project links to Jira in its host settings (a `jira` connection, a JQL
+//! Jira (Phase 7e spec §6, PDT-85; Server / Data Center too, PDT-258). A project links to Jira in its host settings (a `jira` connection, a JQL
 //! scope and the done transition). Every 60 s pdtd reads the issues of each linked project updated since its last look
 //! and logs `jira.issue.created`, `.updated`, `.transitioned` and `.commented` (the first look only records the time,
 //! `sensor.jira.<project>`). Event keys name the project, so two projects whose scopes overlap on one connection each
@@ -8,16 +8,16 @@
 //! through [`import_issue`], which `POST /api/projects/{id}/jira/import` also calls; linking is the dedupe, so an
 //! issue is never imported twice.
 
+use crate::client::JiraClient;
 use crate::core::{
     self as ev, JiraIssueCommented, JiraIssueCreated, JiraIssueRef, JiraIssueTransitioned, JiraIssueUpdated,
 };
-use crate::core::{FIELDS, IssueNews, JIRA, JiraIssue, issue_key, news, parse_issue, poll_jql, site, text_to_adf};
+use crate::core::{IssueNews, JIRA, JiraIssue, issue_key, news, parse_issue, poll_jql};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_api::sdk::ApiError;
-use pdt_api::sdk::http::{client, read_body, send_error};
 use pdt_api::sdk::{AppState, now_ms};
 use pdt_core::ticket::{NewTicket, Ticket};
 use pdt_core::workflow::api::{Connection, NewLogEvent};
@@ -28,171 +28,6 @@ use ts_rs::TS;
 
 /// How far back each poll reads before its last one (clocks differ; event keys make re-reads harmless).
 const MARGIN_MS: i64 = 60 * 1000;
-
-/// The most pages one poll reads (of [`PAGE`] issues); the next poll reads on from where it stopped.
-const MAX_PAGES: usize = 5;
-const PAGE: usize = 100;
-
-/// A `jira` connection ready to call: its site, and the email and API token it signs in with.
-pub(crate) struct JiraClient {
-    pub conn: Connection,
-    email: String,
-    token: String,
-    /// The longest one call may take (`AppState::sensor_timeout`).
-    timeout: std::time::Duration,
-}
-
-impl JiraClient {
-    /// The client of the connection called `name`, or why not.
-    pub(crate) async fn named(st: &AppState, name: &str) -> Result<JiraClient, String> {
-        let (conn, secret) = pdt_api::sdk::connections::connection_with_secret(st, name).await?;
-        if conn.kind != JIRA {
-            return Err(format!("{} is a {} connection, not {JIRA}", conn.name, conn.kind));
-        }
-        if site(&conn.url).is_empty() {
-            return Err(format!("{} has no site address (https://<site>.atlassian.net)", conn.name));
-        }
-        let email = conn.config.get("email").and_then(|e| e.as_str()).unwrap_or_default().trim().to_string();
-        if email.is_empty() {
-            return Err(format!("{} names no email to sign in with", conn.name));
-        }
-        let token = secret.filter(|s| !s.trim().is_empty()).ok_or_else(|| format!("{} has no API token", conn.name))?;
-        Ok(JiraClient { conn, email, token, timeout: st.sensor_timeout })
-    }
-
-    pub(crate) fn site(&self) -> &str {
-        site(&self.conn.url)
-    }
-
-    /// One REST call: the JSON answer (`Null` for an empty one), `Ok(None)` for a 404.
-    async fn call(&self, method: reqwest::Method, path: &str, body: Option<&Value>) -> Result<Option<Value>, String> {
-        let url = format!("{}{path}", self.site());
-        let mut req = client()
-            .request(method.clone(), &url)
-            .basic_auth(&self.email, Some(&self.token))
-            .header("accept", "application/json")
-            .timeout(self.timeout);
-        if let Some(b) = body {
-            req = req.json(b);
-        }
-        let resp = req.send().await.map_err(|e| format!("Jira {method} {path}: {}", send_error(e)))?;
-        let status = resp.status().as_u16();
-        let bytes = read_body(resp, 8 * 1024 * 1024).await?;
-        if status == 404 {
-            return Ok(None);
-        }
-        let v: Value =
-            if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap_or(Value::Null) };
-        if !(200..300).contains(&status) {
-            let msg = v["errorMessages"]
-                .as_array()
-                .and_then(|m| m.first())
-                .and_then(|m| m.as_str())
-                .map(String::from)
-                .or_else(|| {
-                    v["errors"].as_object().filter(|o| !o.is_empty()).map(|o| Value::Object(o.clone()).to_string())
-                })
-                .unwrap_or_else(|| String::from_utf8_lossy(&bytes).chars().take(300).collect());
-            return Err(format!("Jira answered {status} to {method} {path}: {msg}"));
-        }
-        Ok(Some(v))
-    }
-
-    async fn found(&self, method: reqwest::Method, path: &str, body: Option<&Value>) -> Result<Value, String> {
-        self.call(method, path, body).await?.ok_or_else(|| format!("Jira has no {path}"))
-    }
-
-    /// The account the connection signs in as (its `accountId`).
-    pub(crate) async fn myself(&self) -> Result<String, String> {
-        let v = self.found(reqwest::Method::GET, "/rest/api/3/myself", None).await?;
-        v["accountId"].as_str().map(String::from).ok_or_else(|| "Jira did not say who the account is".into())
-    }
-
-    /// The issues `jql` finds, with their changelog (up to [`MAX_PAGES`] pages), and whether there were more.
-    pub(crate) async fn search(&self, jql: &str) -> Result<(Vec<Value>, bool), String> {
-        let mut out = vec![];
-        let mut token: Option<String> = None;
-        for _ in 0..MAX_PAGES {
-            let mut body = json!({"jql": jql, "fields": FIELDS, "expand": "changelog", "maxResults": PAGE});
-            if let Some(t) = &token {
-                body["nextPageToken"] = json!(t);
-            }
-            let v = self.found(reqwest::Method::POST, "/rest/api/3/search/jql", Some(&body)).await?;
-            out.extend(v["issues"].as_array().cloned().unwrap_or_default());
-            token = v["nextPageToken"].as_str().map(String::from);
-            if token.is_none() || v["isLast"].as_bool() == Some(true) {
-                return Ok((out, false));
-            }
-        }
-        Ok((out, true))
-    }
-
-    /// Fills in the newest changelog entries and comments of a search result whose lists Jira cut short (a search
-    /// returns at most 100 of each, oldest first), so recent ones are never missed.
-    async fn complete(&self, v: &mut Value) -> Result<(), String> {
-        let key = v["key"].as_str().unwrap_or_default().to_string();
-        let short = |list: &Value, total: &Value| {
-            total.as_u64().is_some_and(|t| t > list.as_array().map_or(0, |l| l.len()) as u64)
-        };
-        if short(&v["changelog"]["histories"], &v["changelog"]["total"]) {
-            let total = v["changelog"]["total"].as_u64().unwrap_or(0);
-            let start = total.saturating_sub(PAGE as u64);
-            let path = format!("/rest/api/3/issue/{key}/changelog?startAt={start}&maxResults={PAGE}");
-            if let Some(page) = self.call(reqwest::Method::GET, &path, None).await? {
-                v["changelog"]["histories"] = page["values"].clone();
-            }
-        }
-        if short(&v["fields"]["comment"]["comments"], &v["fields"]["comment"]["total"]) {
-            let path = format!("/rest/api/3/issue/{key}/comment?orderBy=-created&maxResults={PAGE}");
-            if let Some(page) = self.call(reqwest::Method::GET, &path, None).await? {
-                v["fields"]["comment"]["comments"] = page["comments"].clone();
-            }
-        }
-        Ok(())
-    }
-
-    /// One issue by key (None: no such issue, or the account can't see it).
-    pub(crate) async fn issue(&self, key: &str) -> Result<Option<JiraIssue>, String> {
-        let path = format!("/rest/api/3/issue/{key}?fields={}", FIELDS.join(","));
-        Ok(self.call(reqwest::Method::GET, &path, None).await?.and_then(|v| parse_issue(self.site(), &v)))
-    }
-
-    /// The transitions open to an issue now: `(id, name, the status it leads to)`.
-    pub(crate) async fn transitions(&self, key: &str) -> Result<Vec<(String, String, String)>, String> {
-        let v = self.found(reqwest::Method::GET, &format!("/rest/api/3/issue/{key}/transitions"), None).await?;
-        Ok(v["transitions"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|t| {
-                (
-                    t["id"].as_str().unwrap_or_default().to_string(),
-                    t["name"].as_str().unwrap_or_default().to_string(),
-                    t["to"]["name"].as_str().unwrap_or_default().to_string(),
-                )
-            })
-            .collect())
-    }
-
-    pub(crate) async fn do_transition(&self, key: &str, id: &str) -> Result<(), String> {
-        let body = json!({"transition": {"id": id}});
-        self.found(reqwest::Method::POST, &format!("/rest/api/3/issue/{key}/transitions"), Some(&body)).await?;
-        Ok(())
-    }
-
-    /// Adds a comment (text, sent as ADF); returns its id.
-    pub(crate) async fn comment(&self, key: &str, text: &str) -> Result<String, String> {
-        let body = json!({"body": text_to_adf(text)});
-        let v = self.found(reqwest::Method::POST, &format!("/rest/api/3/issue/{key}/comment"), Some(&body)).await?;
-        Ok(v["id"].as_str().unwrap_or_default().to_string())
-    }
-
-    /// Creates an issue from `fields` (REST v3's); returns its key.
-    pub(crate) async fn create(&self, fields: Value) -> Result<String, String> {
-        let v = self.found(reqwest::Method::POST, "/rest/api/3/issue", Some(&json!({"fields": fields}))).await?;
-        v["key"].as_str().map(String::from).ok_or_else(|| "Jira made the issue but did not say its key".into())
-    }
-}
 
 /// The event payload's issue fields.
 fn issue_ref(

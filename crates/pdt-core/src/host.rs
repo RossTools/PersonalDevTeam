@@ -120,6 +120,8 @@ pub struct HostSettings {
     pub claude_program: Option<String>,
     pub codex_program: Option<String>,
     pub devin_program: Option<String>,
+    /// The ACP agents the user added (Settings → Agents → Add ACP agent; PDT-234), agent kinds `acp:<id>`.
+    pub acp_agents: Vec<crate::acp_agent::AcpAgentConfig>,
 }
 
 /// A GitHub `owner/name`: two non-empty parts of letters, digits, `-`, `_` and `.`, neither `.` nor `..`.
@@ -154,6 +156,7 @@ impl Default for HostSettings {
             claude_program: None,
             codex_program: None,
             devin_program: None,
+            acp_agents: Vec::new(),
         }
     }
 }
@@ -232,6 +235,10 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub devin_program: Option<String>,
+    /// The whole list of the user's ACP agents.
+    #[serde(default)]
+    #[ts(optional)]
+    pub acp_agents: Option<Vec<crate::acp_agent::AcpAgentConfig>>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -254,6 +261,10 @@ pub enum HostSettingsError {
     BadReleaseRepo,
     #[error("an agent program must be a full path (or start with ~ for your home folder)")]
     BadProgram,
+    #[error("that agent isn't one this host has")]
+    UnknownAgent,
+    #[error("{0}")]
+    BadAcpAgent(#[from] crate::acp_agent::AcpAgentError),
 }
 
 impl HostSettings {
@@ -365,6 +376,17 @@ impl HostSettings {
                 *field = (!path.is_empty()).then(|| path.to_string());
             }
         }
+        if let Some(agents) = &p.acp_agents {
+            s.acp_agents = crate::acp_agent::validate(agents)?;
+        }
+        // The default agent is one the host has: naming a missing ACP agent fails, and removing the default one goes
+        // back to Claude.
+        if s.default_agent.is_acp() && s.acp_agent(s.default_agent).is_none() {
+            if p.default_agent.is_some() {
+                return Err(HostSettingsError::UnknownAgent);
+            }
+            s.default_agent = AgentKind::Claude;
+        }
         Ok(s)
     }
 }
@@ -381,7 +403,14 @@ impl HostSettings {
             AgentKind::Claude => self.claude_program.as_deref(),
             AgentKind::Codex => self.codex_program.as_deref(),
             AgentKind::Devin => self.devin_program.as_deref(),
+            // Its command is in its definition (`acp_agent`).
+            AgentKind::Acp(_) => None,
         }
+    }
+
+    /// The ACP agent an agent kind names, when it is one this host has (a built-in profile or the user's).
+    pub fn acp_agent(&self, agent: AgentKind) -> Option<crate::acp_agent::AcpAgentDef> {
+        crate::acp_agent::find(&self.acp_agents, agent.acp_id()?)
     }
 }
 
@@ -533,6 +562,30 @@ mod tests {
         assert_eq!(effective_credentials(Subscription, None), Subscription);
         assert_eq!(effective_credentials(Subscription, Some(PassThrough)), PassThrough);
         assert_eq!(effective_credentials(PassThrough, Some(Subscription)), Subscription);
+    }
+
+    #[test]
+    fn acp_agents_are_checked_and_the_default_agent_stays_one_the_host_has() {
+        use crate::acp_agent::AcpAgentConfig;
+        let agent = |id: &str| AcpAgentConfig {
+            id: id.into(),
+            label: "Fake".into(),
+            command: "fake-acp".into(),
+            args: vec![],
+            env: vec![],
+        };
+        let kind = AgentKind::parse("acp:fake").unwrap();
+        let unknown = HostSettingsPatch { default_agent: Some(kind), ..patch() };
+        assert_eq!(HostSettings::default().apply(&unknown).unwrap_err(), HostSettingsError::UnknownAgent);
+        let added = HostSettings::default()
+            .apply(&HostSettingsPatch { acp_agents: Some(vec![agent("fake")]), default_agent: Some(kind), ..patch() })
+            .unwrap();
+        assert_eq!(added.default_agent, kind);
+        assert_eq!(added.acp_agent(kind).unwrap().command, "fake-acp");
+        let removed = added.apply(&HostSettingsPatch { acp_agents: Some(vec![]), ..patch() }).unwrap();
+        assert_eq!(removed.default_agent, AgentKind::Claude);
+        let bad = HostSettingsPatch { acp_agents: Some(vec![agent("Bad id")]), ..patch() };
+        assert!(matches!(HostSettings::default().apply(&bad), Err(HostSettingsError::BadAcpAgent(_))));
     }
 
     #[test]

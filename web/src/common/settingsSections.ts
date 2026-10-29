@@ -17,7 +17,7 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
     terms: [
       'Default agent', 'Default view', 'Ticket permissions', 'Session permissions', 'Agents running at once', 'Triage per author',
       'Triage per repository', 'Credentials', 'Programs', 'Claude Code', 'Codex', 'Devin', 'Program path', 'PDT_CLAUDE_PROGRAM',
-      'PDT_CODEX_PROGRAM', 'PDT_DEVIN_PROGRAM',
+      'PDT_CODEX_PROGRAM', 'PDT_DEVIN_PROGRAM', 'ACP agents', 'Add ACP agent', 'Agent Client Protocol',
     ],
   },
   { label: 'Network', terms: ['Port', 'Allowed hosts', 'Restart', 'PDT_PORT', 'PDT_ALLOWED_HOSTS'] },

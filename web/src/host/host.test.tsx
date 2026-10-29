@@ -27,6 +27,7 @@ const settingsView = (over: object = {}) => ({
     { agent: 'devin', envVar: 'PDT_DEVIN_PROGRAM', fromEnv: null, found: null },
   ],
   network: network(),
+  acpAgents: [],
   ...over,
 });
 function network(over: object = {}) {

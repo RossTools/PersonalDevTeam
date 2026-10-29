@@ -13,7 +13,8 @@ import type { Ticket } from '../api/gen/Ticket';
 import { TicketKey } from '../common/TicketKey';
 import { actionError } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
-import { AGENT_KINDS, useAgentAvailability } from '../common/useAgentAvailability';
+import { useAgentAvailability } from '../common/useAgentAvailability';
+import { isAcp, useAgents } from '../common/agents';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { INITIAL_SIZE } from '../sessions/status';
 import { isClosed, linkRole } from './model';
@@ -22,7 +23,6 @@ import { AreaChips } from './Areas';
 import { useProjectAreas, useTicket } from './queries';
 import { SharedFiles } from './TicketParts';
 
-const AGENT_LABEL: Record<AgentKind, string> = { claude: 'Claude', codex: 'Codex', devin: 'Devin' };
 
 /** The tickets that block this one and aren't Done or Won't do. */
 export const openBlockers = (t: Pick<Ticket, 'links'>) => t.links.filter((l) => linkRole(l) === 'blockedBy' && !isClosed(l.stage));
@@ -56,15 +56,17 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const [pickedAgent, setAgent] = useState<AgentKind | null>(null);
   const chosenAgent = pickedAgent ?? defaults.agent;
   const availability = useAgentAvailability();
+  const agents = useAgents();
   // A host with none of them still lists them all (starting one then says what is missing).
-  const offeredAgents = AGENT_KINDS.some(availability.offered) ? AGENT_KINDS.filter(availability.offered) : AGENT_KINDS;
+  const offeredAgents = agents.all.some(availability.offered) ? agents.all.filter(availability.offered) : agents.all;
   // The chosen agent unless this host lacks it (then the first it has); every agent until the checks load.
   const agent: AgentKind = offeredAgents.includes(chosenAgent) ? chosenAgent : offeredAgents[0] ?? chosenAgent;
   // 'none': no agent session (PDT-72), only the branch, worktree and the ticket's tab.
   const [pickedMode, setMode] = useState<SessionMode | 'none' | null>(null);
-  const view = pickedMode ?? defaults.mode;
+  // An ACP agent has only its conversation.
+  const view = pickedMode === 'terminal' && isAcp(agent) ? 'conversation' : pickedMode ?? (isAcp(agent) && defaults.mode === 'terminal' ? 'conversation' : defaults.mode);
   const noSession = view === 'none';
-  const sessionMode: SessionMode = view === 'none' ? defaults.mode : view;
+  const sessionMode: SessionMode = isAcp(agent) ? 'conversation' : view === 'none' ? defaults.mode : view;
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
   // The host's default for tickets (Bypass unless changed) until this dialog picks another.
@@ -235,7 +237,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
           >
             <SegmentedControl<SessionMode | 'none'>
               aria-label="Session"
-              options={[{ value: 'conversation', label: 'Conversation' }, { value: 'terminal', label: 'Terminal' }, { value: 'none', label: 'No session' }]}
+              options={[{ value: 'conversation', label: 'Conversation' }, { value: 'terminal', label: 'Terminal', disabled: isAcp(agent) }, { value: 'none', label: 'No session' }]}
               value={view}
               onChange={setMode}
             />
@@ -244,7 +246,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
             <Field label="Agent">
               <SegmentedControl
                 aria-label="Agent"
-                options={offeredAgents.map((a) => ({ value: a, label: availability.hint(a) ? `${AGENT_LABEL[a]} · ${availability.hint(a)}` : AGENT_LABEL[a] }))}
+                options={offeredAgents.map((a) => ({ value: a, label: availability.hint(a) ? `${agents.label(a)} · ${availability.hint(a)}` : agents.label(a) }))}
                 value={agent}
                 onChange={setAgent}
               />

@@ -45,7 +45,7 @@ describe('plugins: the catalog’s filters', () => {
     expect(categoryCounts(ps, NO_FILTER)).toEqual({ all: 10, dev: 3, chat: 1, media: 3, general: 3 });
     expect(categoryCounts(ps, { ...NO_FILTER, tab: 'attention' })).toEqual({ all: 2, dev: 0, chat: 0, media: 2, general: 0 });
     expect(labels(filterPlugins(ps, { ...NO_FILTER, category: 'media' }))).toEqual(['arr', 'scryer', 'plex']);
-    expect(groupPlugins(filterPlugins(ps, { ...NO_FILTER, q: 'workflows' })).map(([c]) => c)).toEqual(['chat', 'media', 'general']);
+    expect(groupPlugins(filterPlugins(ps, { ...NO_FILTER, q: 'workflows' })).map(([c]) => c)).toEqual(['dev', 'chat', 'media', 'general']);
   });
 
   it('enables the optional plugins that are on, changed by one; PDT’s own are never sent', () => {
@@ -128,7 +128,7 @@ describe('plugins: Settings → Plugins', () => {
     });
     renderWithQuery(<PluginsPage onOpen={() => {}} />);
     await userEvent.click(await screen.findByRole('switch', { name: 'Use Jira' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Add Jira Cloud' });
+    const dialog = await screen.findByRole('dialog', { name: 'Add Jira' });
     expect(within(dialog).getByText(/Jira is on\. Add a connection/)).toBeInTheDocument();
     expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ enabled: ['discord', 'jira', 'arr', 'scryer'] });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Later' }));
@@ -170,7 +170,7 @@ describe('plugins: a plugin’s page', () => {
     renderWithQuery(<PluginPage id="jira" onBack={() => {}} />);
     expect(await screen.findByText(/Jira is on but has no connection yet/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Add a connection' }));
-    expect(await screen.findByRole('dialog', { name: 'Add Jira Cloud' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Add Jira' })).toBeInTheDocument();
   });
 
   it('shows what is failing, and tests again or edits the connection', async () => {

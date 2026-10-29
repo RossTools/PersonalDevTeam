@@ -23,6 +23,7 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   secret: 'Secret request',
   connect: 'Connect',
   admit: 'Triaged ticket',
+  confirm: 'Agent call',
 };
 
 /** The items of each group that has any, in the API's order. */
@@ -108,6 +109,17 @@ export function triageOf(item: InboxItem): { summary: string | null; issue: stri
     summary: typeof b.summary === 'string' ? b.summary : null,
     issue: typeof b.issue === 'string' ? b.issue : null,
     external: b.external === true,
+  };
+}
+
+/** An asking tool call's tool, agent, session and arguments (pretty JSON) (PDT-256). */
+export function confirmOf(item: InboxItem): { tool: string; agent: string | null; session: string | null; input: string } {
+  const b = item.body;
+  return {
+    tool: typeof b.tool === 'string' ? b.tool : item.title,
+    agent: typeof b.agent === 'string' ? b.agent : null,
+    session: typeof b.sessionTitle === 'string' && b.sessionTitle ? b.sessionTitle : null,
+    input: JSON.stringify(b.input ?? {}, null, 2),
   };
 }
 

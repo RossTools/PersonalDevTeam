@@ -1,4 +1,4 @@
-# Agent sessions: terminals, instructions, activity, restart, Devin
+# Agent sessions: terminals, instructions, activity, restart, Devin, ACP agents
 
 How PDT launches and resumes Claude, Codex and Devin sessions and the terminals they run in. Conversations (the
 structured view) are in [conversations.md](conversations.md). Code: crates/pdt-agents (PTYs, `adapter/`,
@@ -163,6 +163,18 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   called `name` that `discord.post` uses; the URL goes to the keychain and never into the result; a taken name is
   refused before anything is made, and a webhook that can't be saved is removed). The approval card's title is one
   line per change (crates/pdt-int-discord `core::ask_title`, through the integration's `approval_title` hook).
+- **Jira** (PDT-258; crates/pdt-int-jira `actions.rs`, only while the Jira integration is enabled). Through a `jira`
+  connection (`connection`: its name, or the only one; Cloud or Server / Data Center), the same calls as the `jira.*`
+  nodes ([workflows.md](workflows.md) "Jira actions"), each tool's schema its node's config with `connection`
+  optional. Reading asks nothing: `jira_check` (who the connection signs in as, the deployment and version),
+  `jira_search` (JQL a page at a time; `next` back as `page`), `jira_issue`, `jira_transitions` (each transition's
+  screen fields: required, type, choices), `jira_boards`, `jira_sprints` (active sprints and backlog sections) and
+  `jira_board` (each issue's `placement` by sprint and status). The asking tools wait for the user's yes unless the
+  connection's `pmActs` lets the PM act: `jira_import` (a ticket from an issue, never twice), `jira_create`,
+  `jira_edit`, `jira_comment`, `jira_transition` (with its screen's `fields` in the same request; a required one left
+  out comes back as an error naming it and its choices, for the PM to ask the user), `jira_sprint` (into a sprint or
+  section, or back to the backlog) and `jira_epic`. The approval card's title says what changes ("Jira: move OPS-1 to
+  Resolved with Resolution=Fixed"; pdt-int-jira `actions::approval_title`). The token never reaches the agent.
 - **Scryer** (PDT-147; crates/pdt-int-scryer `actions.rs`, `core.rs`, only while the Scryer integration is enabled). Through a `scryer` connection (`connection`: its
   name, or the only one), the same calls as the `scryer.*` nodes ([workflows.md](workflows.md)), each tool's schema
   its node's config with `connection` optional: `scryer_library` (the library a page at a time: facet, words in the
@@ -213,8 +225,13 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `ask_target`); for an integration's tools the setting is their connection's `config.pmActs` (a Discord server is in
   no project): the Discord bot's for the Discord tools, the Scryer connection's for `scryer_add` and `scryer_mutate`
   (`AskTarget::Connection` with the connection's kind; `AskTarget::Always`, for the calls that always ask, is never
-  answered for the user). Codex and Devin can't ask per tool, so
-  there the asking tools are refused unless the project (or the connection) lets the PM act.
+  answered for the user). Codex and Devin can't ask per tool, so there an asking tool runs at once where the
+  project (or the connection) lets the PM act; anywhere else, and for `AskTarget::Always` (`report_bug`,
+  `workflow_import`), PDT asks in its Inbox instead (PDT-256, `mcp::tools::confirmable`): the call becomes a `confirm`
+  item (group Approvals) with the tool, its arguments, the agent and the session, and the tool answers with an error
+  telling the agent to end its turn. The user's **Allow** (from PDT's web client only: without the UI token it is
+  `409`) runs the call as given, as the session's call with the user's yes (`Cx::confirmed`), and the agent gets a
+  message with its result or error; **Deny** sends it a message saying no. A second click runs nothing.
 - **Briefing.** Built by pdtd when the session's instructions are first written and kept in
   `<session dir>/briefing.md` (a restart sends the same text): projects with open tickets per stage and whether the PM
   may act, tickets in progress, the Inbox, events since the previous PM session started (counts and the latest
@@ -302,8 +319,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `create_ticket`, `ask_user` and `submit_outcome` (no shell, secret tools, `edit_ticket` or `send_to_session`).
 - Its sessions run in a read-only sandbox: Claude gets `--tools Read,Grep,Glob --strict-mcp-config` (pdt-agents
   `mcp::CLAUDE_READ_TOOLS`; no shell, web or edits, no MCP servers but PDT's) and permission mode Ask; Codex permission
-  mode Plan (its read-only sandbox) with `web_search="disabled"` and `sandbox_mode="read-only"`; a Devin Triage step
-  fails (PDT can't sandbox it).
+  mode Plan (its read-only sandbox) with `web_search="disabled"` and `sandbox_mode="read-only"`; a Devin or ACP agent
+  Triage step fails (PDT can't sandbox it).
 - Its `create_ticket` (and that of any agent step in a run an outside event started) makes `external` Drafts: a stage
   other than Draft or the `agentic` label is refused, whatever the user answers.
 - The built-in template **Triage new GitHub issues** (`builtin:issue-triage`, its `persona` param defaulting to
@@ -442,3 +459,40 @@ a conversation by default like the others (`mode: terminal` for its TUI).
   missing Devin as fine.
 - Web: new-tab "Devin" (d) and "Devin (terminal)" (e), palette "New Devin here" / "New Devin (terminal) here", ticket
   Start's agent choice, Set up / Write instructions with an agent.
+
+## ACP agents (PDT-234)
+
+Any other agent that speaks the Agent Client Protocol on stdio is an agent kind `acp:<id>` (pdt-core `AgentKind::Acp`;
+the id is 1–32 lowercase letters, digits and `-`, interned so `AgentKind` stays `Copy`). The generated TS type adds
+the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the built-in names are unchanged.
+
+- Definitions (pdt-core `acp_agent`): profiles that ship with PDT (`builtin_profiles()`: id, label, icon, command,
+  arguments, environment and a mode map; none yet, each harness's ticket adds its own) and the user's, in host
+  settings `acpAgents` (`[{id, label, command, args, env: [{name, value}]}]`, the whole list per `PUT
+  /api/host/settings`; up to 32). Settings → This host → Agents → ACP agents adds, edits and removes them ("Add ACP
+  agent": name, command, arguments one per line, `NAME=value` lines; the id comes from the name and never changes).
+  The view lists each with where its command was found (`acpAgents[].found`); the host checks report each under
+  `acp["acp:<id>"]` (found is ok: PDT can't tell whether one is logged in). A session, persona or default agent naming
+  an ACP agent the host doesn't have is refused (400 `unknown_agent`); removing the default one puts it back on Claude.
+- Conversations only: `mode: terminal` is refused, they don't switch to a terminal, and they have no TUI hooks,
+  background tasks or Make ticket (409 `draft_unsupported`). The UI offers them as conversations wherever an agent is
+  offered (new tab, palette "New <label> here", ticket Start, personas, Settings' default agent) with a plug icon.
+- They run through the generic ACP adapter as plain ACP (pdt-agents `adapter/acp_agent.rs`, `DefinedProfile`): the
+  command (`~` expanded, looked up on the login PATH) with its arguments and environment in the session's folder,
+  pdt-mcp in `mcpServers`, and PDT's instructions as a text block in front of a new session's first prompt (logged
+  without it). Resume is `session/load` when the agent advertises `loadSession`; otherwise a new session starts with a
+  notice.
+- Modes: a profile's mode map, else the `availableModes` the agent advertises in `session/new`/`session/load`
+  (matched to PDT's by id or name: `default`/`ask`, `acceptEdits`/`code`, `plan`, `bypass`/`yolo`, …,
+  `acp_agent::advertised_modes`), set with `session/set_mode`. Every PDT mode is offered: one the agent has no mode
+  for (all of them for an agent that advertises none; Bypass for OpenCode's build/plan), PDT keeps itself, at start
+  and on a change, with the agent back in the mode it started in when that is none of PDT's
+  (pdt-agents `AcpLive::apply_mode`). Keeping a mode is answering `session/request_permission`
+  (`acp_agent::enforced_answer`, by the tool call's ACP kind): Bypass allows everything; reads, searches and thinking
+  are allowed in every mode; Accept edits allows edits, deletes and moves; Plan rejects those and commands; the rest
+  go to the user.
+- Ids are interned (at most 1024 from outside input; values read from the store are never refused,
+  `AgentKind::parse_stored`), and `GET /api/agents/acp:<id>/capabilities` answers 404 for an id the host doesn't
+  have before parsing it.
+- Tests: `fake-agent --plain acp` (with `--modes` it advertises its modes, with `--partial-modes` only `build` and
+  `plan`; `mcp: <tool> <json>` calls pdt-mcp after asking) in pdt-api `tests/acp_plain.rs` and `tests/acp_agents.rs`.

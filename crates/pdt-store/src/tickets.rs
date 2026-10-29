@@ -1294,7 +1294,7 @@ impl Store {
                 id: r.try_get("id")?,
                 title: r.try_get("title")?,
                 status: SessionStatus::parse(&status).ok_or_else(|| corrupt("session status", &status))?,
-                agent: agent.map(|a| AgentKind::parse(&a).ok_or_else(|| corrupt("session agent", &a))).transpose()?,
+                agent: agent.map(|a| AgentKind::parse_stored(&a).ok_or_else(|| corrupt("session agent", &a))).transpose()?,
                 attempt_id: r.try_get("attempt_id")?,
                 persona: r.try_get("persona")?,
                 mode: SessionMode::parse(&mode).ok_or_else(|| corrupt("session mode", &mode))?,

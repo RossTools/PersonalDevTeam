@@ -5,4 +5,9 @@ export type HostChecks = { claude: ToolCheck, codex: ToolCheck,
 /**
  * Optional: most hosts never install Devin, so a missing one is no problem.
  */
-devin: ToolCheck, git: ToolCheck, tailscale: ToolCheck, checkedAt: number, };
+devin: ToolCheck, git: ToolCheck, tailscale: ToolCheck, 
+/**
+ * Each ACP agent's (by agent kind, `acp:<id>`): whether its command is found. PDT can't tell whether one is
+ * logged in, so a found one is `ok`.
+ */
+acp: Record<string, ToolCheck>, checkedAt: number, };

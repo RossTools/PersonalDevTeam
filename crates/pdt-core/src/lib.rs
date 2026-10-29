@@ -1,5 +1,6 @@
 //! Pure domain types for Personal Dev Team. No I/O lives in this crate.
 
+pub mod acp_agent;
 pub mod activity;
 pub mod agent_context;
 pub mod brand;

@@ -212,7 +212,7 @@ pub fn parse_issue(site_url: &str, v: &Value) -> Option<JiraIssue> {
                 .map(|c| JiraComment {
                     id: c["id"].as_str().map(String::from).unwrap_or_else(|| c["id"].to_string()),
                     author: text(c, &["author", "displayName"]).unwrap_or_default(),
-                    author_id: text(c, &["author", "accountId"]),
+                    author_id: text(c, &["author", "accountId"]).or_else(|| text(c, &["author", "name"])),
                     body: adf_to_text(&c["body"]),
                     created: c["created"].as_str().and_then(parse_time).unwrap_or(0),
                 })
@@ -227,7 +227,7 @@ pub fn parse_issue(site_url: &str, v: &Value) -> Option<JiraIssue> {
         description: adf_to_text(&f["description"]),
         status: text(f, &["status", "name"]).unwrap_or_default(),
         assignee: text(f, &["assignee", "displayName"]),
-        assignee_id: text(f, &["assignee", "accountId"]),
+        assignee_id: text(f, &["assignee", "accountId"]).or_else(|| text(f, &["assignee", "name"])),
         reporter: text(f, &["reporter", "displayName"]),
         issue_type: text(f, &["issuetype", "name"]).unwrap_or_default(),
         priority: text(f, &["priority", "name"]),

@@ -10,10 +10,13 @@ import type { SetupView } from '../api/gen/SetupView';
 import type { StepState } from '../api/gen/StepState';
 import type { AddProjectMode } from '../projects/AddProjectForm';
 import { useAction } from '../common/useAction';
+import type { AcpAgentView } from '../api/gen/AcpAgentView';
+import { agentLabel, isAcp, useAcpAgents, type BuiltinAgent } from '../common/agents';
+import { checkOf } from '../common/useAgentAvailability';
 
 export type StepId = 'agents' | 'github' | 'project' | 'defaultAgent';
 
-const AGENTS: { id: AgentKind; name: string; install: string; env: string }[] = [
+const AGENTS: { id: BuiltinAgent; name: string; install: string; env: string }[] = [
   { id: 'claude', name: 'Claude Code', install: 'https://code.claude.com/docs/en/setup', env: 'PDT_CLAUDE_PROGRAM' },
   { id: 'codex', name: 'Codex', install: 'https://developers.openai.com/codex/cli', env: 'PDT_CODEX_PROGRAM' },
   { id: 'devin', name: 'Devin', install: 'https://cli.devin.ai', env: 'PDT_DEVIN_PROGRAM' },
@@ -21,7 +24,7 @@ const AGENTS: { id: AgentKind; name: string; install: string; env: string }[] = 
 /** Each agent's program in the host settings (Settings › This host › Agents › Programs). */
 const PROGRAM = { claude: 'claudeProgram', codex: 'codexProgram', devin: 'devinProgram' } as const;
 const GIT_INSTALL = 'https://git-scm.com/downloads';
-const agentName = (a: AgentKind) => AGENTS.find((x) => x.id === a)!.name;
+const agentName = (a: AgentKind, acp?: AcpAgentView[]) => AGENTS.find((x) => x.id === a)?.name ?? agentLabel(a, acp);
 
 /** Pure: the step to open first: the first one not done, in page order. */
 export function firstOpenStep(v: SetupView): StepId | null {
@@ -29,7 +32,7 @@ export function firstOpenStep(v: SetupView): StepId | null {
 }
 
 /** Pure: the agents the checks found, in page order. */
-export function foundAgents(checks: HostChecks | undefined): AgentKind[] {
+export function foundAgents(checks: HostChecks | undefined): BuiltinAgent[] {
   return AGENTS.map((a) => a.id).filter((a) => checks?.[a].found);
 }
 
@@ -183,9 +186,9 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
   const found = foundAgents(checks);
   const summary = loading ? 'Looking for git and the agents…'
     : found.length > 0
-      ? `Found ${found.map(agentName).join(' and ')}. PDT needs at least one, and git.`
+      ? `Found ${found.map((a) => agentName(a)).join(' and ')}. PDT needs at least one, and git.`
       : 'No agent found yet. PDT needs at least one (Claude Code, Codex or Devin), and git.';
-  const rows: { id: 'git' | AgentKind; name: string; install: string }[] = [{ id: 'git', name: 'git', install: GIT_INSTALL }, ...AGENTS];
+  const rows: { id: 'git' | BuiltinAgent; name: string; install: string }[] = [{ id: 'git', name: 'git', install: GIT_INSTALL }, ...AGENTS];
   return (
     <Step {...step} title="Agents on this machine" summary={checks && !checks.git.found ? 'git is missing. PDT needs it, and at least one agent.' : summary}>
       {loading ? <Skeleton lines={4} label="Loading checks" /> : (
@@ -224,8 +227,8 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
 function ProgramPathForm({ onSaved }: { onSaved: () => void }) {
   const qc = useQueryClient();
   const host = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
-  const stored = (a: AgentKind) => host.data?.settings[PROGRAM[a]] ?? '';
-  const [agent, setAgent] = useState<AgentKind>('claude');
+  const stored = (a: BuiltinAgent) => host.data?.settings[PROGRAM[a]] ?? '';
+  const [agent, setAgent] = useState<BuiltinAgent>('claude');
   const [path, setPath] = useState<string | null>(null);
   const shown = path ?? stored(agent);
   const save = useMutation({
@@ -331,7 +334,9 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
   const qc = useQueryClient();
   const found = foundAgents(checks);
   // The preset one, unless it isn't installed and another is.
-  const preset = found.length > 0 && !found.includes(v.defaultAgent) ? found[0] : v.defaultAgent;
+  const acp = useAcpAgents();
+  // An ACP agent the user made the default stays it.
+  const preset = found.length > 0 && !isAcp(v.defaultAgent) && !found.some((a) => a === v.defaultAgent) ? found[0] : v.defaultAgent;
   const [picked, setPicked] = useState<AgentKind | null>(null);
   const agent = picked ?? preset;
   const save = useMutation({
@@ -341,7 +346,7 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
       void qc.invalidateQueries({ queryKey: ['host-setup'] });
     },
   });
-  const summary = step.state === 'done' ? `${agentName(v.defaultAgent)} works on tickets unless a persona says otherwise.`
+  const summary = step.state === 'done' ? `${agentName(v.defaultAgent, acp)} works on tickets unless a persona says otherwise.`
     : 'Which agent works on tickets by default. You can change it per persona later.';
   return (
     <Step {...step} title="Pick a default agent" summary={summary}>
@@ -362,8 +367,8 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
         })}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="primary" pending={save.isPending} disabled={checks !== undefined && !checks[agent].found} onClick={() => save.mutate()}>
-          Use {agentName(agent)}
+        <Button size="sm" variant="primary" pending={save.isPending} disabled={checks !== undefined && !checkOf(checks, agent)?.found} onClick={() => save.mutate()}>
+          Use {agentName(agent, acp)}
         </Button>
       </div>
       {save.error && <Alert tone="error">{save.error.message}</Alert>}

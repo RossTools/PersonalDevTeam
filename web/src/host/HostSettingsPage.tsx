@@ -20,6 +20,8 @@ import { SettingsScreens } from '../common/SettingsScreens';
 import { useAction } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
 import { navigate } from '../shell/router';
+import { useAgents } from '../common/agents';
+import { AcpAgents } from './AcpAgents';
 import { BugReportDialog } from './BugReportDialog';
 
 /** The stored token's state as a badge (never the token itself). */
@@ -352,7 +354,13 @@ function Agents({ v }: { v: HostSettingsView }) {
     <Section label="Agents">
       <SettingsRow label="Default agent" description="Picked first when you start a ticket, and listed first for a new tab and in the palette.">
         <SaveNote s={agent} />
-        <Select aria-label="Default agent" className="w-40" options={agentChoices} value={v.settings.defaultAgent} onChange={(a) => void agent.save({ defaultAgent: a })} />
+        <Select
+          aria-label="Default agent"
+          className="w-40"
+          options={[...agentChoices, ...v.acpAgents.map((a) => ({ value: a.agent, label: a.label }))]}
+          value={v.settings.defaultAgent}
+          onChange={(a) => void agent.save({ defaultAgent: a })}
+        />
       </SettingsRow>
       <SettingsRow label="Default view" description="Whether a new agent session is a conversation or the agent's own terminal. You can switch a session later.">
         <SaveNote s={view} />
@@ -638,6 +646,7 @@ function ProjectsFolder({ v }: { v: HostSettingsView }) {
 
 function Checks() {
   const qc = useQueryClient();
+  const agents = useAgents();
   const checks = useQuery({ queryKey: ['host-checks'], queryFn: api.hostChecks });
   const [refresh, refreshing] = useAction(async () => qc.setQueryData(['host-checks'], await api.refreshChecks()));
   return (
@@ -649,15 +658,17 @@ function Checks() {
       {checks.isPending && <Skeleton lines={4} label="Loading checks" />}
       {checks.data && (
         <ul className="flex flex-col gap-1.5">
-          {(['claude', 'codex', 'devin', 'git', 'tailscale'] as const).map((k) => {
-            const c = checks.data[k];
-            // Devin is optional: a host without it is fine.
-            const optional = k === 'devin' && !c.found;
+          {[
+            ...(['claude', 'codex', 'devin', 'git', 'tailscale'] as const).map((k) => ({ key: k, name: k, c: checks.data[k], optional: k === 'devin' })),
+            ...Object.entries(checks.data.acp ?? {}).map(([k, c]) => ({ key: k, name: agents.label(k as AgentKind), c, optional: true })),
+          ].map(({ key: k, name, c, optional: canLack }) => {
+            // Devin and ACP agents are optional: a host without them is fine.
+            const optional = canLack && !c.found;
             const [status, text]: [Status, string] = c.ok ? ['running', 'OK'] : c.found ? ['waiting', 'needs attention'] : optional ? ['idle', 'not installed (optional)'] : ['failed', 'not found'];
             return (
               <li key={k} className="flex min-w-0 items-center gap-2">
                 <StatusDot status={status} label={text} />
-                <span className="w-20 shrink-0 font-medium">{k}</span>
+                <span className="w-20 shrink-0 truncate font-medium" title={name}>{name}</span>
                 <span className={c.ok || optional ? 'text-muted-foreground' : status === 'failed' ? 'text-destructive' : 'text-waiting'}>{text}</span>
                 {!optional && <span className="min-w-0 truncate text-xs text-muted-foreground" title={c.detail}>{c.detail}</span>}
               </li>
@@ -784,7 +795,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
   const nodes: Record<string, ReactNode> = {
     'Setup': <Setup />,
     'Updates': <Updates v={v} />,
-    'Agents': <><Agents v={v} /><Programs v={v} /></>,
+    'Agents': <><Agents v={v} /><Programs v={v} /><AcpAgents v={v} /></>,
     'Network': <Network v={v} />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,
     'Runs': <Runs v={v} />,

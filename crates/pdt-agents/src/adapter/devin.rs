@@ -33,7 +33,7 @@ impl AcpProfile for DevinProfile {
         AgentKind::Devin
     }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "Devin"
     }
 
@@ -49,7 +49,7 @@ impl AcpProfile for DevinProfile {
         DEVIN_MODES.to_vec()
     }
 
-    fn mode_id(&self, mode: PermissionMode) -> Option<&'static str> {
+    fn mode_id(&self, mode: PermissionMode) -> Option<&str> {
         Some(devin_mode(mode))
     }
 

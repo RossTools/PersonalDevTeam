@@ -15,14 +15,85 @@ pub enum SessionKind {
     AgentTui,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, TS)]
+#[ts(export, type = "\"claude\" | \"codex\" | \"devin\" | `acp:${string}`")]
 pub enum AgentKind {
     Claude,
     Codex,
     /// Devin for Terminal (`devin`); conversations go through `devin acp`.
     Devin,
+    /// An ACP agent (`acp:<id>`, PDT-234): a built-in profile or one the user added (`crate::acp_agent`). Only ever a
+    /// conversation.
+    Acp(AcpAgentId),
+}
+
+/// An ACP agent's id, as its agent kind's text (`acp:<id>`). Interned so `AgentKind` stays `Copy` and its
+/// `as_str` stays `&'static str`: a host has a handful of these.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AcpAgentId(&'static str);
+
+/// The most distinct ACP agent ids interned from outside input (a bound on what bad input can leak). Ids read back
+/// from the store don't count against it (`AgentKind::parse_stored`), so junk can't make stored rows unreadable.
+const MAX_INTERNED: usize = 1024;
+static INTERNED: std::sync::Mutex<std::collections::BTreeSet<&'static str>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+impl AcpAgentId {
+    pub const PREFIX: &'static str = "acp:";
+
+    /// The id for `id` (without `acp:`), or None when it is not a valid one (`crate::acp_agent::valid_id`) or too
+    /// many ids were interned already.
+    pub fn new(id: &str) -> Option<Self> {
+        Self::intern(id, true)
+    }
+
+    fn intern(id: &str, capped: bool) -> Option<Self> {
+        let mut set = INTERNED.lock().unwrap_or_else(|e| e.into_inner());
+        Self::intern_in(&mut set, id, capped.then_some(MAX_INTERNED))
+    }
+
+    /// Interns `id` in `set`, refusing a new one once `set` holds `cap` ids.
+    fn intern_in(set: &mut std::collections::BTreeSet<&'static str>, id: &str, cap: Option<usize>) -> Option<Self> {
+        if !crate::acp_agent::valid_id(id) {
+            return None;
+        }
+        let kind = format!("{}{id}", Self::PREFIX);
+        if let Some(k) = set.get(kind.as_str()) {
+            return Some(AcpAgentId(k));
+        }
+        if cap.is_some_and(|cap| set.len() >= cap) {
+            return None;
+        }
+        let k: &'static str = Box::leak(kind.into_boxed_str());
+        set.insert(k);
+        Some(AcpAgentId(k))
+    }
+
+    /// The id, without `acp:`.
+    pub fn id(self) -> &'static str {
+        &self.0[Self::PREFIX.len()..]
+    }
+}
+
+impl std::fmt::Debug for AcpAgentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl Serialize for AgentKind {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentKind {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = std::borrow::Cow::<'de, str>::deserialize(d)?;
+        AgentKind::parse(&s).ok_or_else(|| {
+            serde::de::Error::custom(format!("unknown agent `{s}`: expected claude, codex, devin or acp:<id>"))
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -52,12 +123,39 @@ impl AgentKind {
             AgentKind::Claude => "claude",
             AgentKind::Codex => "codex",
             AgentKind::Devin => "devin",
+            AgentKind::Acp(id) => id.0,
         }
     }
+    /// A built-in agent's name, or `acp:<id>` with a valid id (whether or not such an agent is defined).
     pub fn parse(s: &str) -> Option<Self> {
-        AgentKind::ALL.into_iter().find(|k| k.as_str() == s)
+        match s.strip_prefix(AcpAgentId::PREFIX) {
+            Some(id) => AcpAgentId::new(id).map(AgentKind::Acp),
+            None => AgentKind::ALL.into_iter().find(|k| k.as_str() == s),
+        }
     }
+    /// `parse` for a value PDT stored itself (valid when written, so never refused for the interner's cap).
+    pub fn parse_stored(s: &str) -> Option<Self> {
+        match s.strip_prefix(AcpAgentId::PREFIX) {
+            Some(id) => AcpAgentId::intern(id, false).map(AgentKind::Acp),
+            None => AgentKind::parse(s),
+        }
+    }
+    /// The agents built into PDT (ACP agents are defined per host).
     pub const ALL: [AgentKind; 3] = [AgentKind::Claude, AgentKind::Codex, AgentKind::Devin];
+    /// The ACP agent's id, for an ACP agent.
+    pub fn acp_id(self) -> Option<&'static str> {
+        match self {
+            AgentKind::Acp(id) => Some(id.id()),
+            _ => None,
+        }
+    }
+    pub fn is_acp(self) -> bool {
+        matches!(self, AgentKind::Acp(_))
+    }
+    /// It runs only as a conversation: no terminal, hooks, background tasks or Make ticket (an ACP agent).
+    pub fn conversation_only(self) -> bool {
+        self.is_acp()
+    }
     /// The permission mode a new conversation starts in. Devin has no mode that asks before edits, so it starts in
     /// Accept edits (its "Code" mode).
     pub fn default_permission_mode(self) -> crate::conversation::PermissionMode {
@@ -66,12 +164,14 @@ impl AgentKind {
             _ => crate::conversation::PermissionMode::Ask,
         }
     }
-    /// The agent's name in messages: "Claude", "Codex" or "Devin".
+    /// The agent's name in messages: "Claude", "Codex" or "Devin"; an ACP agent's id (its label is in its
+    /// definition, `crate::acp_agent`).
     pub fn label(self) -> &'static str {
         match self {
             AgentKind::Claude => "Claude",
             AgentKind::Codex => "Codex",
             AgentKind::Devin => "Devin",
+            AgentKind::Acp(id) => id.id(),
         }
     }
 }
@@ -260,6 +360,8 @@ pub enum SessionValidationError {
     ConversationForShell,
     #[error("a model name must be 1 to 100 characters with no spaces")]
     BadModel,
+    #[error("an ACP agent runs only as a conversation")]
+    TerminalForAcp,
 }
 
 impl NewSession {
@@ -291,6 +393,9 @@ impl NewSession {
                 return Err(SessionValidationError::ConversationForShell);
             }
             (SessionKind::Shell, _, _) => SessionMode::Terminal,
+            (_, Some(a), Some(SessionMode::Terminal)) if a.conversation_only() => {
+                return Err(SessionValidationError::TerminalForAcp);
+            }
             (_, _, m) => m.unwrap_or(SessionMode::Conversation),
         };
         let conversation = mode == SessionMode::Conversation;
@@ -407,6 +512,10 @@ pub fn launch(
                 a.extend(args(&["--permission-mode", "dangerous"]));
             }
             Launch { program: platform.devin_program.clone(), args: a }
+        }
+        // ACP agents have no terminal (`NewSession::validate` refuses one): a shell is the harmless answer.
+        (SessionKind::AgentTui, Some(AgentKind::Acp(_))) => {
+            launch(SessionKind::Shell, None, platform, resume, session_id, bypass_permissions)
         }
         (SessionKind::AgentTui, _) => {
             let mut a = args(&[if *resume == Resume::Claude { "--resume" } else { "--session-id" }, session_id]);
@@ -574,6 +683,46 @@ mod tests {
         }
         assert_eq!(SessionKind::AgentTui.as_str(), "agent_tui");
         assert_eq!(SessionKind::parse("bogus"), None);
+    }
+
+    #[test]
+    fn acp_agent_kinds_round_trip_as_acp_and_their_id() {
+        let k = AgentKind::parse("acp:open-code").unwrap();
+        assert_eq!((k.as_str(), k.acp_id(), k.label()), ("acp:open-code", Some("open-code"), "open-code"));
+        assert_eq!(k, AgentKind::parse("acp:open-code").unwrap(), "the same id is the same kind");
+        assert_eq!(serde_json::to_string(&k).unwrap(), "\"acp:open-code\"");
+        assert_eq!(serde_json::from_str::<AgentKind>("\"acp:open-code\"").unwrap(), k);
+        assert_eq!(serde_json::from_str::<AgentKind>("\"claude\"").unwrap(), AgentKind::Claude);
+        assert!(k.conversation_only() && !AgentKind::Devin.conversation_only());
+        for bad in ["acp:", "acp:Open", "acp:a b", "opencode", "ACP:x"] {
+            assert_eq!(AgentKind::parse(bad), None, "{bad}");
+            assert!(serde_json::from_str::<AgentKind>(&format!("\"{bad}\"")).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_full_interner_refuses_new_ids_from_outside_but_never_stored_ones() {
+        let mut set = std::collections::BTreeSet::new();
+        let cap = Some(2);
+        assert!(
+            AcpAgentId::intern_in(&mut set, "a", cap).is_some() && AcpAgentId::intern_in(&mut set, "b", cap).is_some()
+        );
+        assert_eq!(AcpAgentId::intern_in(&mut set, "c", cap), None, "full");
+        assert_eq!(AcpAgentId::intern_in(&mut set, "a", cap).unwrap().id(), "a", "an interned one still parses");
+        assert_eq!(AcpAgentId::intern_in(&mut set, "c", None).unwrap().id(), "c", "a stored one is never refused");
+        assert_eq!(AgentKind::parse_stored("acp:x").unwrap().as_str(), "acp:x");
+        assert_eq!(AgentKind::parse_stored("claude"), Some(AgentKind::Claude));
+    }
+
+    #[test]
+    fn acp_agents_are_conversations_only() {
+        use crate::conversation::{PermissionMode, SessionMode};
+        let acp = AgentKind::parse("acp:x");
+        let v = new(SessionKind::AgentTui, acp, 80, 24).validate().unwrap();
+        assert_eq!((v.mode, v.permission_mode), (SessionMode::Conversation, Some(PermissionMode::Ask)));
+        let mut term = new(SessionKind::AgentTui, acp, 80, 24);
+        term.mode = Some(SessionMode::Terminal);
+        assert_eq!(term.validate().unwrap_err(), SessionValidationError::TerminalForAcp);
     }
 
     #[test]

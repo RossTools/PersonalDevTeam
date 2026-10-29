@@ -132,6 +132,18 @@ describe('paletteItems', () => {
     expect(c.handlers.newSession).toHaveBeenCalledWith('devin', { projectId: 'p1', worktreeId: 'wt1' });
   });
 
+  it("starts the host's ACP agents as conversations, after the built-in agents", () => {
+    const c = ctx({ acpAgents: [{ agent: 'acp:fake', label: 'Fake' }], agents: (a) => (a === 'acp:gone' ? 'missing' : 'ready') });
+    const items = paletteItems(c);
+    expect(byId(items, 'new:acp:fake').label).toBe('New Fake here');
+    expect(byId(items, 'new:acp:fake').icon).toBe('acp');
+    expect(ids(items).filter((i) => i.startsWith('new:')).slice(-2)).toEqual(['new:acp:fake', 'new:shell']);
+    byId(items, 'new:acp:fake').run!();
+    expect(c.handlers.newSession).toHaveBeenCalledWith('acp:fake', { projectId: 'p1', worktreeId: 'wt1' });
+    const missing = paletteItems(ctx({ acpAgents: [{ agent: 'acp:gone', label: 'Gone' }], agents: (a) => (a === 'acp:gone' ? 'missing' : 'ready') }));
+    expect(ids(missing)).not.toContain('new:acp:gone');
+  });
+
   it('leaves out agents the host lacks and marks a logged-out one', () => {
     const items = paletteItems(ctx({ agents: (a) => (a === 'devin' ? 'missing' : a === 'codex' ? 'logged_out' : 'ready') }));
     expect(ids(items).some((i) => i.startsWith('new:devin'))).toBe(false);

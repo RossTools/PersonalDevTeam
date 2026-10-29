@@ -6,7 +6,7 @@ export type JiraCreateConfig = { connection: string,
  */
 project: string, 
 /**
- * Default `Task`.
+ * Default `Task`; `Epic` makes an epic (its Epic Name is `epicName`, else the summary).
  */
 issueType: string, summary: string, 
 /**
@@ -14,6 +14,27 @@ issueType: string, summary: string,
  */
 description: string, 
 /**
- * More fields, as Jira's REST API names them (`{"labels": ["pdt"]}`).
+ * Who it is assigned to: `me`, a username or account id, an email or a name.
+ */
+assignee: string | null, 
+/**
+ * A priority's name (`High`).
+ */
+priority: string | null, labels: Array<string>, 
+/**
+ * Components' names.
+ */
+components: Array<string>, 
+/**
+ * The epic it goes in (`ABC-10`).
+ */
+epic: string | null, 
+/**
+ * An epic's Epic Name (default its summary).
+ */
+epicName: string | null, 
+/**
+ * More fields: by id (`customfield_10016`), by a name the connection maps, or by their name in Jira, with plain
+ * values (`{"Story Points": 3, "Severity": "Sev 2"}`) or Jira's own form.
  */
 fields: Record<string, unknown>, };
