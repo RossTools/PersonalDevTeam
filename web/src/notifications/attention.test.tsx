@@ -116,6 +116,12 @@ describe('favicon badge', () => {
     expect(badgedSvg(plain, 'idle')).toContain('fill="blue"');
   });
 
+  it('places and sizes the dot by the icon\'s viewBox', () => {
+    const big = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64"/></svg>';
+    expect(badgedSvg(big, 'inbox')).toContain('<circle cx="50" cy="14" r="16" fill="paper"/><circle cx="50" cy="14" r="12" fill="amber"/>');
+    expect(badgedSvg(plain, 'inbox')).toContain('<circle cx="25" cy="7" r="8" fill="paper"/><circle cx="25" cy="7" r="6" fill="amber"/>');
+  });
+
   it('swaps the icon while something wants the user and restores the plain one', async () => {
     const calls = stubApi({ 'GET /favicon.svg': () => new Response(plain) });
     const { rerender, unmount } = renderHook(({ level }) => useFaviconBadge(level), {

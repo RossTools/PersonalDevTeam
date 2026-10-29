@@ -87,6 +87,11 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   browser window) at every start, unless the "Start at login" item was turned off (that leaves
   `<data dir>/tray-login-off`). See "pdt-host at login". Not offered for dev, outside an app bundle on macOS, or from a
   misplaced bundle.
+- Icons (PDT-199): the app icon set in desktop/src-tauri/icons is generated from desktop/app-icon.svg
+  (`pnpm --dir desktop tauri icon <path to app-icon.svg> -o <scratch dir>`, then copy over the files tauri.conf.json
+  lists and icon.png). On macOS the tray shows icons/tray-template.png instead, a template image (the system tints it
+  for light and dark menu bars) rendered from desktop/tray-template.svg at 60×36 (18 pt high at 2×); elsewhere it shows
+  the app icon. The web UI's favicon is web/public/favicon.svg.
 - Open (also left-click on Windows) opens `http://127.0.0.1:<port>/` in the default browser. Restart daemon posts
   /api/shutdown and pdt-host starts pdtd again. The version item shows pdtd's version. Quit exits only the tray;
   pdt-host and pdtd keep running.
