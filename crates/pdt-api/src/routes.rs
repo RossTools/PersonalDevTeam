@@ -46,8 +46,14 @@ pub struct AppState {
     pub owner_from_env: Option<String>,
     /// Serializes read-modify-write of host settings and the side effects applied with them.
     pub(crate) settings_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Serializes read-modify-write of Get started's state (`crate::setup`).
+    pub(crate) setup_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// The effective owner (`PDT_OWNER_LOGIN`, else the stored setting) the identity guard checks; see `refresh_owner`.
     pub(crate) owner_cache: std::sync::Arc<std::sync::RwLock<Option<String>>>,
+    /// `PDT_CLAUDE_PROGRAM` and its kin: they win over the paths set in the host settings.
+    pub programs_from_env: pdt_core::host::AgentPrograms,
+    /// The agent programs set in the host settings (Get started's "Set a path by hand"); see `refresh_programs`.
+    pub(crate) host_programs: std::sync::Arc<std::sync::RwLock<pdt_core::host::AgentPrograms>>,
     /// The port pdtd listens on (0 in tests that do not serve). Tailscale maps 443 to it.
     pub listen_port: u16,
     /// The live Host/Origin allowlist (the guard and remote access share it).
@@ -205,7 +211,10 @@ impl AppState {
             },
             owner_from_env: None,
             settings_lock: Default::default(),
+            setup_lock: Default::default(),
             owner_cache: Default::default(),
+            programs_from_env: Default::default(),
+            host_programs: Default::default(),
             listen_port: 0,
             allowed_hosts: Default::default(),
             tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
@@ -277,6 +286,41 @@ impl AppState {
     pub async fn refresh_owner(&self) {
         let stored = self.store.get_host_settings().await.ok().and_then(|s| s.owner_login);
         *self.owner_cache.write().unwrap_or_else(|e| e.into_inner()) = self.owner_from_env.clone().or(stored);
+    }
+
+    /// Reads the agent programs set in the host settings again (at startup and after they change).
+    pub async fn refresh_programs(&self) {
+        let stored = self.store.get_host_settings().await.map(|s| s.agent_programs).unwrap_or_default();
+        *self.host_programs.write().unwrap_or_else(|e| e.into_inner()) = stored;
+    }
+
+    /// The program an agent is launched with: the environment's, else the host settings', else the platform's.
+    pub(crate) fn agent_program(&self, agent: pdt_core::session::AgentKind) -> String {
+        use pdt_core::session::AgentKind;
+        if let Some(p) = self.programs_from_env.get(agent) {
+            return p.to_string();
+        }
+        if let Some(p) = self.host_programs.read().unwrap_or_else(|e| e.into_inner()).get(agent) {
+            // `~/…` from the user's home; the setting was checked to be a full path when it was saved.
+            return pdt_core::project::resolve_folder(p, std::env::home_dir().as_deref())
+                .map_or_else(|_| p.to_string(), |p| p.to_string_lossy().into_owned());
+        }
+        match agent {
+            AgentKind::Claude => self.platform.claude_program.clone(),
+            AgentKind::Codex => self.platform.codex_program.clone(),
+            AgentKind::Devin => self.platform.devin_program.clone(),
+        }
+    }
+
+    /// The platform sessions launch on, with the agent programs in effect now.
+    pub(crate) fn launch_platform(&self) -> pdt_core::session::Platform {
+        use pdt_core::session::AgentKind;
+        pdt_core::session::Platform {
+            claude_program: self.agent_program(AgentKind::Claude),
+            codex_program: self.agent_program(AgentKind::Codex),
+            devin_program: self.agent_program(AgentKind::Devin),
+            ..self.platform.clone()
+        }
     }
 
     pub(crate) fn owner(&self) -> Option<String> {
@@ -375,6 +419,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
         .route("/host/whoami", get(crate::identity_guard::whoami))
         .route("/ui/token", get(crate::untrusted::ui_token))
+        .route("/host/setup", get(crate::setup::get_setup).put(crate::setup::put_setup))
         .route("/host/checks", get(crate::checks::get_checks))
         .route("/host/checks/refresh", axum::routing::post(crate::checks::refresh_checks))
         .route("/host/remote", get(crate::remote::get_remote))

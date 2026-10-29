@@ -35,6 +35,7 @@ pub mod run;
 pub mod runconfig;
 pub mod secret;
 pub mod session;
+pub mod setup;
 pub mod start;
 pub mod ticket;
 pub mod todo;

@@ -115,6 +115,47 @@ pub struct HostSettings {
     /// The GitHub repository (`owner/name`) to take updates from and file bug reports on instead of the built-in one:
     /// an emergency override for a move redirects cannot cover (PDT-195). `PDT_RELEASE_REPO` overrides it.
     pub release_repo: Option<String>,
+    /// The agent programs to launch instead of the ones found on the search path (Get started's "Set a path by
+    /// hand", PDT-230). `PDT_CLAUDE_PROGRAM` and its kin override them.
+    pub agent_programs: AgentPrograms,
+}
+
+/// A program path per agent; none: the one on the search path.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct AgentPrograms {
+    pub claude: Option<String>,
+    pub codex: Option<String>,
+    pub devin: Option<String>,
+}
+
+impl AgentPrograms {
+    pub fn get(&self, agent: AgentKind) -> Option<&str> {
+        match agent {
+            AgentKind::Claude => self.claude.as_deref(),
+            AgentKind::Codex => self.codex.as_deref(),
+            AgentKind::Devin => self.devin.as_deref(),
+        }
+    }
+
+    pub fn set(&mut self, agent: AgentKind, path: Option<String>) {
+        let slot = match agent {
+            AgentKind::Claude => &mut self.claude,
+            AgentKind::Codex => &mut self.codex,
+            AgentKind::Devin => &mut self.devin,
+        };
+        *slot = path;
+    }
+}
+
+/// One agent's program path; blank clears it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentProgramPatch {
+    pub agent: AgentKind,
+    pub path: String,
 }
 
 /// A GitHub `owner/name`: two non-empty parts of letters, digits, `-`, `_` and `.`, neither `.` nor `..`.
@@ -146,6 +187,7 @@ impl Default for HostSettings {
             triage_per_repo_hour: DEFAULT_TRIAGE_PER_REPO,
             bug_reports: Default::default(),
             release_repo: None,
+            agent_programs: AgentPrograms::default(),
         }
     }
 }
@@ -214,6 +256,9 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub release_repo: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub agent_program: Option<AgentProgramPatch>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -234,6 +279,8 @@ pub enum HostSettingsError {
     BadTriageCap,
     #[error("the release repository must be a GitHub owner/name, e.g. RossTools/PersonalDevTeam")]
     BadReleaseRepo,
+    #[error("an agent's program must be a full path (or start with ~ for your home folder)")]
+    BadAgentProgram,
 }
 
 impl HostSettings {
@@ -332,6 +379,13 @@ impl HostSettings {
             }
             s.release_repo = (!r.is_empty()).then(|| r.to_string());
         }
+        if let Some(a) = &p.agent_program {
+            let path = a.path.trim();
+            if !path.is_empty() && !path.starts_with('~') && !std::path::Path::new(path).is_absolute() {
+                return Err(HostSettingsError::BadAgentProgram);
+            }
+            s.agent_programs.set(a.agent, (!path.is_empty()).then(|| path.to_string()));
+        }
         Ok(s)
     }
 }
@@ -409,6 +463,29 @@ mod tests {
             assert_eq!(set(bad), Err(HostSettingsError::BadReleaseRepo), "{bad}");
         }
         assert!(is_repo_name(crate::brand::RELEASE_REPO));
+    }
+
+    #[test]
+    fn an_agent_program_is_a_full_path_and_blank_clears_it() {
+        let set = |agent, path: &str| {
+            HostSettings::default().apply(&HostSettingsPatch {
+                agent_program: Some(AgentProgramPatch { agent, path: path.into() }),
+                ..patch()
+            })
+        };
+        let full = std::env::temp_dir().join("bin").join("codex").to_string_lossy().into_owned();
+        let s = set(AgentKind::Codex, &format!(" {full} ")).unwrap();
+        assert_eq!(s.agent_programs.get(AgentKind::Codex), Some(full.as_str()));
+        assert_eq!(s.agent_programs.get(AgentKind::Claude), None);
+        assert_eq!(set(AgentKind::Devin, "~/bin/devin").unwrap().agent_programs.devin.as_deref(), Some("~/bin/devin"));
+        assert_eq!(set(AgentKind::Claude, "claude"), Err(HostSettingsError::BadAgentProgram));
+        let cleared = s
+            .apply(&HostSettingsPatch {
+                agent_program: Some(AgentProgramPatch { agent: AgentKind::Codex, path: " ".into() }),
+                ..patch()
+            })
+            .unwrap();
+        assert_eq!(cleared.agent_programs, AgentPrograms::default());
     }
 
     /// The dev instance's runs default to their own port range, so they never collide with (or take over the

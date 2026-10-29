@@ -15,6 +15,7 @@ import { FolderField } from '../common/FolderField';
 import { SettingsScreens } from '../common/SettingsScreens';
 import { useAction } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
+import { navigate } from '../shell/router';
 import { BugReportDialog } from './BugReportDialog';
 import { GithubLogin } from './GithubLogin';
 
@@ -506,6 +507,22 @@ function Checks() {
   );
 }
 
+/** Get started (PDT-230): reopens the first-run checklist. */
+function Setup() {
+  const setup = useQuery({ queryKey: ['host-setup'], queryFn: api.hostSetup });
+  const v = setup.data;
+  const where = !v ? undefined
+    : v.done === 4 ? 'Every step is done.'
+      : `${v.done} of 4 steps done.${v.state.dismissed ? ' Dismissed: it no longer opens on its own.' : ''}`;
+  return (
+    <Section label="Setup" description="The Get started checklist: agents, GitHub, a first project and the default agent.">
+      <SettingsRow label="Get started" description={where}>
+        <Button size="sm" onClick={() => navigate('/setup')}>Open Get started</Button>
+      </SettingsRow>
+    </Section>
+  );
+}
+
 const bugReportChoices: { value: BugReportSetting; label: string }[] = [
   { value: 'auto', label: 'Automatic' },
   { value: 'github', label: 'GitHub issue' },
@@ -572,7 +589,7 @@ function DangerZone({ v }: { v: HostSettingsView }) {
 }
 
 /** This host's sections, in page order (their `Section` labels): the phone's list of them and its top bar titles. */
-export const HOST_SECTIONS = ['Updates', 'GitHub', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Bug reports', 'Checks', 'Danger zone'] as const;
+export const HOST_SECTIONS = ['Setup', 'Updates', 'GitHub', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Bug reports', 'Checks', 'Danger zone'] as const;
 
 export interface HostSettingsPageProps {
   /** A phone: one screen per section, the list of them while `section` is null. */
@@ -605,6 +622,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
   // The device being used when it is on the tailnet; otherwise the login this host's Tailscale is signed in as.
   const me = whoami.data?.caller === 'tailnet' && whoami.data.login ? whoami.data.login : v.remote.tailscaleLogin;
   const nodes: Record<(typeof HOST_SECTIONS)[number], ReactNode> = {
+    'Setup': <Setup />,
     'Updates': <Updates v={v} />,
     'GitHub': <GithubLogin />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,

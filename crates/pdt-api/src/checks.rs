@@ -5,7 +5,7 @@ use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::State;
 use pdt_core::host::{CredentialPolicy, HostSettings};
-use pdt_core::session::{SessionKind, is_scrubbed};
+use pdt_core::session::{AgentKind, SessionKind, is_scrubbed};
 use serde::Serialize;
 use std::time::Duration;
 use ts_rs::TS;
@@ -16,6 +16,8 @@ pub struct ToolCheck {
     pub found: bool,
     pub ok: bool,
     pub detail: String,
+    /// Where the program was found.
+    pub path: Option<String>,
     /// The program is there but its check did not finish (timed out, could not start): worth running again.
     #[serde(skip)]
     #[ts(skip)]
@@ -24,16 +26,22 @@ pub struct ToolCheck {
 
 impl ToolCheck {
     fn missing(detail: String) -> Self {
-        ToolCheck { found: false, ok: false, detail, inconclusive: false }
+        ToolCheck { found: false, ok: false, detail, path: None, inconclusive: false }
     }
 
     fn answered(ok: bool, detail: String) -> Self {
-        ToolCheck { found: true, ok, detail, inconclusive: false }
+        ToolCheck { found: true, ok, detail, path: None, inconclusive: false }
     }
 
     /// Found, but its check said nothing: never reported as missing, so the agent stays offered.
     fn unanswered(program: &str, error: String) -> Self {
-        ToolCheck { found: true, ok: false, detail: format!("could not check {program}: {error}"), inconclusive: true }
+        ToolCheck {
+            found: true,
+            ok: false,
+            detail: format!("could not check {program}: {error}"),
+            path: None,
+            inconclusive: true,
+        }
     }
 }
 
@@ -41,21 +49,25 @@ impl ToolCheck {
 enum RunError {
     /// Not on the search path.
     NotFound(String),
-    /// Found, but it timed out or could not be started.
-    Failed(String),
+    /// Found (at the path), but it timed out or could not be started.
+    Failed(String, String),
+}
+
+/// What a check's program said: whether it succeeded, its output, and where it was found.
+struct Ran {
+    ok: bool,
+    out: String,
+    path: String,
 }
 
 /// The check for a program that ran: `answer` reads its (success, output).
-fn check(
-    program: &str,
-    r: Result<(bool, String), RunError>,
-    answer: impl FnOnce(bool, String) -> ToolCheck,
-) -> ToolCheck {
-    match r {
-        Err(RunError::NotFound(e)) => ToolCheck::missing(e),
-        Err(RunError::Failed(e)) => ToolCheck::unanswered(program, e),
-        Ok((ok, out)) => answer(ok, out),
-    }
+fn check(program: &str, r: Result<Ran, RunError>, answer: impl FnOnce(bool, String) -> ToolCheck) -> ToolCheck {
+    let (c, path) = match r {
+        Err(RunError::NotFound(e)) => return ToolCheck::missing(e),
+        Err(RunError::Failed(e, path)) => (ToolCheck::unanswered(program, e), path),
+        Ok(Ran { ok, out, path }) => (answer(ok, out), path),
+    };
+    ToolCheck { path: Some(path), ..c }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, TS)]
@@ -81,12 +93,14 @@ async fn run(
     args: &[&str],
     kind: SessionKind,
     creds: CredentialPolicy,
-) -> Result<(bool, String), RunError> {
+) -> Result<Ran, RunError> {
     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-    let (exe, args) = pdt_agents::launch::resolve(program, &args, st.platform.login_path.as_deref())
+    let l = pdt_agents::launch::resolve_launch(program, &args, st.platform.login_path.as_deref())
         .map_err(|e| RunError::NotFound(e.to_string()))?;
-    let mut cmd = tokio::process::Command::new(exe);
-    cmd.args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
+    // A Windows shim runs through cmd.exe: the program found is its third argument (`/d /c <shim>`).
+    let path = if l.via_cmd { l.args[2].clone() } else { l.program.to_string_lossy().into_owned() };
+    let mut cmd = tokio::process::Command::new(&l.program);
+    cmd.args(&l.args).stdin(std::process::Stdio::null()).kill_on_drop(true);
     if let Some(p) = &st.platform.login_path {
         cmd.env("PATH", p);
     }
@@ -99,10 +113,10 @@ async fn run(
     }
     let out = tokio::time::timeout(RUN_TIMEOUT, cmd.output())
         .await
-        .map_err(|_| RunError::Failed(format!("timed out after {} s", RUN_TIMEOUT.as_secs())))?
-        .map_err(|e| RunError::Failed(e.to_string()))?;
+        .map_err(|_| RunError::Failed(format!("timed out after {} s", RUN_TIMEOUT.as_secs()), path.clone()))?
+        .map_err(|e| RunError::Failed(e.to_string(), path.clone()))?;
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    Ok((out.status.success(), text.trim().to_string()))
+    Ok(Ran { ok: out.status.success(), out: text.trim().to_string(), path })
 }
 
 /// How long one check may take. A CLI's first launch can be slow (it updates itself, or the OS scans a new binary),
@@ -129,28 +143,24 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
             HostSettings::default().agent_credentials
         }
     };
-    let agent = |program: &str, args: &'static [&'static str]| {
-        let program = program.to_string();
+    let agent = |kind: AgentKind, args: &'static [&'static str]| {
+        let program = st.agent_program(kind);
         async move { run(st, &program, args, SessionKind::AgentTui, creds).await }
     };
     let claude =
-        check(
-            "claude",
-            agent(&st.platform.claude_program, &["auth", "status"]).await,
-            |_, out| match claude_logged_in(&out) {
-                Some(true) => ToolCheck::answered(true, "logged in".into()),
-                Some(false) => ToolCheck::answered(false, "not logged in: run `claude` and log in".into()),
-                None => ToolCheck::answered(false, format!("could not read `claude auth status`: {out}")),
-            },
-        );
-    let codex = check("codex", agent(&st.platform.codex_program, &["login", "status"]).await, |ok, out| {
+        check("claude", agent(AgentKind::Claude, &["auth", "status"]).await, |_, out| match claude_logged_in(&out) {
+            Some(true) => ToolCheck::answered(true, "logged in".into()),
+            Some(false) => ToolCheck::answered(false, "not logged in: run `claude` and log in".into()),
+            None => ToolCheck::answered(false, format!("could not read `claude auth status`: {out}")),
+        });
+    let codex = check("codex", agent(AgentKind::Codex, &["login", "status"]).await, |ok, out| {
         if ok {
             ToolCheck::answered(true, out)
         } else {
             ToolCheck::answered(false, format!("not logged in: run `codex login` ({out})"))
         }
     });
-    let devin = check("devin", agent(&st.platform.devin_program, &["auth", "status"]).await, |ok, out| {
+    let devin = check("devin", agent(AgentKind::Devin, &["auth", "status"]).await, |ok, out| {
         if devin_logged_in(ok, &out) {
             // Its status goes on to list the account and team settings; the first line says it all.
             ToolCheck::answered(true, out.lines().next().unwrap_or_default().trim().to_string())

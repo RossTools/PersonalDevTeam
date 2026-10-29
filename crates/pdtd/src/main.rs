@@ -77,15 +77,13 @@ async fn run() -> anyhow::Result<()> {
     pdt_api::load_enabled_integrations(&state).await?;
     tracing::info!(built = ?state.integrations.built().iter().map(|i| i.id()).collect::<Vec<_>>(),
                    enabled = ?state.integrations.enabled(), "integrations");
-    if let Some(p) = &cfg.claude_program {
-        state.platform.claude_program = p.clone();
-    }
-    if let Some(p) = &cfg.codex_program {
-        state.platform.codex_program = p.clone();
-    }
-    if let Some(p) = &cfg.devin_program {
-        state.platform.devin_program = p.clone();
-    }
+    // They win over the paths set in the host settings.
+    state.programs_from_env = pdt_core::host::AgentPrograms {
+        claude: cfg.claude_program.clone(),
+        codex: cfg.codex_program.clone(),
+        devin: cfg.devin_program.clone(),
+    };
+    state.refresh_programs().await;
     state.owner_from_env = cfg.owner_login.clone();
     state.refresh_owner().await;
     (state.secrets, state.secret_store) = secret_store(&cfg).await;

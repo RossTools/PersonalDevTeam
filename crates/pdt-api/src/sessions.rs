@@ -400,7 +400,7 @@ fn start_pty(
     mcp: Option<&pdt_agents::mcp::McpServer>,
 ) -> Result<(), PtyError> {
     // Claude: `--resume`/`--session-id` take its conversation id, which `/clear` moves off the session id.
-    let l = launch(s.kind, s.agent, &st.platform, resume, s.claude_conversation_id(), s.bypass_permissions);
+    let l = launch(s.kind, s.agent, &st.launch_platform(), resume, s.claude_conversation_id(), s.bypass_permissions);
     let login_path = st.platform.login_path.as_deref();
     let launch_args = with_hook_args(st, s, l.args, instructions.map(|i| i.file.as_path()))?;
     let resolved = pdt_agents::launch::resolve_launch(&l.program, &launch_args, login_path)?;

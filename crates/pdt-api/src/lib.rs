@@ -42,6 +42,7 @@ mod scheduler;
 pub mod sdk;
 pub mod secrets;
 mod sessions;
+mod setup;
 mod slow;
 mod start;
 mod stop;

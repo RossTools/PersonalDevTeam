@@ -70,9 +70,17 @@ pub(crate) async fn put_settings(
     }
     st.store.put_host_settings(&next).await?;
     st.refresh_owner().await;
+    if patch.agent_program.is_some() {
+        st.refresh_programs().await;
+        // The checks looked for the old program: the next look runs them again.
+        *st.checks.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
     if patch.remote_access.is_some() {
         crate::remote::apply_locked(&st).await;
     }
     drop(guard);
+    if patch.default_agent.is_some() {
+        crate::setup::confirm_default_agent(&st).await?;
+    }
     Ok(Json(view(&st).await?))
 }

@@ -8,7 +8,7 @@ import { AGENT_KINDS, availabilityOf, useAgentAvailability } from './useAgentAva
 
 afterEach(() => vi.unstubAllGlobals());
 
-const tool = (found: boolean, ok: boolean) => ({ found, ok, detail: '' });
+const tool = (found: boolean, ok: boolean) => ({ found, ok, detail: '', path: null });
 const checks = (devinFound: boolean) =>
   ({ claude: tool(true, true), codex: tool(true, false), devin: tool(devinFound, false), git: tool(true, true), tailscale: tool(true, true), checkedAt: 1 });
 
