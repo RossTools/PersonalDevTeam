@@ -15,7 +15,7 @@ pub use pdt_forge::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use transport::{Request, Response, Transport, encode};
@@ -26,6 +26,8 @@ const RUN_LIMIT: u32 = 30;
 const MAX_PAGES: usize = 10;
 /// The most GET answers kept for conditional requests.
 const ETAG_CACHE: usize = 500;
+/// The most recent calls kept, for the log of a refused login (PDT-252).
+const RECENT_CALLS: usize = 50;
 
 const PR_FIELDS: &str = "number url title state createdAt isDraft headRefOid baseRefName mergeable \
 mergeStateStatus isInMergeQueue mergeQueueEntry{position} autoMergeRequest{enabledAt} \
@@ -137,6 +139,33 @@ pub struct Account {
     pub api_url: String,
     /// Who the token signs in as.
     pub login: String,
+    /// When the user signed in (Unix ms); unknown for a login stored before PDT-252.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_in_at: Option<i64>,
+}
+
+/// One call to GitHub, for the log of a refused login: never its token, query or body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallRecord {
+    /// Unix ms.
+    pub at: i64,
+    pub method: &'static str,
+    pub path: String,
+    /// None: no answer (a network failure).
+    pub status: Option<u16>,
+}
+
+/// What [`GithubApi::check_login`] found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoginCheck {
+    /// GitHub accepts the login.
+    Ok,
+    /// GitHub accepts a login it had refused: the mark is cleared.
+    Recovered,
+    /// GitHub refuses the login.
+    Rejected,
+    /// No answer, or one that says nothing about the login.
+    Failed(String),
 }
 
 /// The GitHub forge. With no [`Account`] every call fails as [`GhError::NotConnected`].
@@ -151,6 +180,12 @@ pub struct GithubApi {
     wanted: AtomicBool,
     /// When GitHub refused the login (401, Unix ms): it is kept, but no call is sent until the user signs in again.
     rejected_at: Mutex<Option<i64>>,
+    /// The last [`RECENT_CALLS`] calls, oldest first.
+    recent: Mutex<VecDeque<CallRecord>>,
+    /// When GitHub last accepted the login (Unix ms).
+    last_ok_at: Mutex<Option<i64>>,
+    /// The recent calls were logged for this login's first 401.
+    logged_calls: AtomicBool,
 }
 
 impl GithubApi {
@@ -162,6 +197,9 @@ impl GithubApi {
             limited_until: Mutex::default(),
             wanted: AtomicBool::new(false),
             rejected_at: Mutex::default(),
+            recent: Mutex::default(),
+            last_ok_at: Mutex::default(),
+            logged_calls: AtomicBool::new(false),
         }
     }
 
@@ -184,7 +222,129 @@ impl GithubApi {
         self.etags.lock().unwrap_or_else(|e| e.into_inner()).clear();
         *self.limited_until.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.rejected_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.last_ok_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.logged_calls.store(false, Ordering::SeqCst);
         self.wanted.store(false, Ordering::SeqCst);
+    }
+
+    /// The last calls to GitHub, oldest first.
+    pub fn recent_calls(&self) -> Vec<CallRecord> {
+        self.recent.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
+    }
+
+    /// Sends one request and keeps a record of it.
+    fn send(&self, req: &Request) -> Result<Response, String> {
+        let res = self.transport.send(req);
+        let status = res.as_ref().ok().map(|r| r.status);
+        let mut recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
+        if recent.len() >= RECENT_CALLS {
+            recent.pop_front();
+        }
+        recent.push_back(CallRecord { at: now_ms(), method: req.method, path: path_of(&req.url), status });
+        drop(recent);
+        if matches!(status, Some(200..=299 | 304)) {
+            *self.last_ok_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(now_ms());
+        }
+        res
+    }
+
+    /// Logs a 401 or 403 (PDT-252): the call, GitHub's answer and the login's age; never the token. The first 401 of
+    /// a login also logs the recent calls.
+    fn log_refusal(&self, a: &Account, req: &Request, res: &Response) {
+        let h = |name| res.header(name).unwrap_or("-").to_string();
+        let now = now_ms();
+        let ago = |t: Option<i64>| t.map_or_else(|| "unknown".into(), |t| minutes(now - t));
+        let last_ok = *self.last_ok_at.lock().unwrap_or_else(|e| e.into_inner());
+        let fields = format!(
+            "method={} endpoint={} final_url={} message={:?} request_id={} sso={:?} www_authenticate={:?} \
+             scopes={:?} login={} login_age={} last_worked={}",
+            req.method,
+            bare_url(&req.url),
+            if res.url.is_empty() { bare_url(&req.url) } else { res.url.clone() },
+            message(res),
+            h("x-github-request-id"),
+            h("x-github-sso"),
+            h("www-authenticate"),
+            h("x-oauth-scopes"),
+            a.login,
+            ago(a.signed_in_at),
+            last_ok.map_or_else(
+                || "never (since pdtd started or the login was made)".into(),
+                |t| format!("{} ago", minutes(now - t))
+            ),
+        );
+        if res.status == 403 {
+            tracing::info!("GitHub answered 403: {fields}");
+            return;
+        }
+        tracing::warn!("GitHub answered 401: {fields}");
+        if !self.logged_calls.swap(true, Ordering::SeqCst) {
+            let calls: Vec<String> = self
+                .recent_calls()
+                .iter()
+                .map(|c| {
+                    let status = c.status.map_or_else(|| "no answer".into(), |s| s.to_string());
+                    format!("{} {} {} {}", clock_ms(c.at), c.method, c.path, status)
+                })
+                .collect();
+            tracing::warn!("the last {} GitHub calls before the first 401:\n{}", calls.len(), calls.join("\n"));
+        }
+    }
+
+    /// After a 401: whether GitHub really refuses the login, asked again with `GET /user`. Only a 401 from the API's
+    /// own host counts; no answer doesn't (the login check asks again later).
+    fn confirm_refused(&self, a: &Account) -> bool {
+        let req = Request {
+            method: "GET",
+            url: format!("{}/user", login::api_url(&a.api_url)),
+            headers: headers(&a.token),
+            body: None,
+        };
+        match self.send(&req) {
+            Ok(res) if res.status == 401 && same_host(&res.url, &req.url) => true,
+            Ok(res) => {
+                tracing::warn!(status = res.status, "GitHub refused one call, but accepts the login when asked again");
+                false
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "GitHub refused one call, and could not be asked again");
+                false
+            }
+        }
+    }
+
+    /// The light login check (PDT-252), every few minutes: `GET /rate_limit` (it costs no rate limit), so the time
+    /// GitHub stops accepting the login is known to the minute. While the login is marked rejected, `GET /user`
+    /// instead, and the mark goes when GitHub accepts it again. None without a login.
+    pub fn check_login(&self) -> Option<LoginCheck> {
+        let a = self.account()?;
+        if self.rejected_at().is_none() {
+            return Some(match self.call("GET", "rate_limit", None, false) {
+                Ok(_) => LoginCheck::Ok,
+                Err(GhError::Rejected) => LoginCheck::Rejected,
+                Err(e) => LoginCheck::Failed(e.to_string()),
+            });
+        }
+        let req = Request {
+            method: "GET",
+            url: format!("{}/user", login::api_url(&a.api_url)),
+            headers: headers(&a.token),
+            body: None,
+        };
+        Some(match self.send(&req) {
+            Ok(res) if (200..300).contains(&res.status) => {
+                let account = self.account.read().unwrap_or_else(|e| e.into_inner());
+                if account.as_ref().is_some_and(|x| x.token == a.token) {
+                    *self.rejected_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                    self.logged_calls.store(false, Ordering::SeqCst);
+                }
+                tracing::info!(login = %a.login, "GitHub accepts the login it had refused again");
+                LoginCheck::Recovered
+            }
+            Ok(res) if res.status == 401 => LoginCheck::Rejected,
+            Ok(res) => LoginCheck::Failed(format!("GitHub answered {}: {}", res.status, message(&res))),
+            Err(e) => LoginCheck::Failed(e),
+        })
     }
 
     /// When GitHub stopped accepting the stored login (Unix ms), until the user signs in again.
@@ -209,6 +369,9 @@ impl GithubApi {
         let account = self.account.read().unwrap_or_else(|e| e.into_inner());
         if account.as_ref().is_some_and(|a| a.token == token) {
             let mut at = self.rejected_at.lock().unwrap_or_else(|e| e.into_inner());
+            if at.is_none() {
+                tracing::warn!(login = %account.as_ref().map_or("", |a| a.login.as_str()), "GitHub refuses the login: no more calls until it accepts it again or the user signs in again");
+            }
             at.get_or_insert_with(now_ms);
         }
     }
@@ -264,7 +427,7 @@ impl GithubApi {
             headers.push(("Content-Type", "application/json".into()));
         }
         let req = Request { method, url: url.clone(), headers, body: body.map(Value::to_string) };
-        let mut res = self.transport.send(&req).map_err(GhError::Network)?;
+        let mut res = self.send(&req).map_err(GhError::Network)?;
         self.note_limit(&res)?;
         if res.status == 304
             && let Some((_, body)) = cached
@@ -273,20 +436,17 @@ impl GithubApi {
             res.body = body;
             return Ok(res);
         }
-        if res.status == 401 {
+        if matches!(res.status, 401 | 403) {
+            self.log_refusal(&a, &req, &res);
+        }
+        // Only a 401 from the API's host whose `GET /user` is refused too marks the login: not one from a redirect's
+        // other host (a log's storage), nor one GitHub takes back when asked again (PDT-252).
+        if res.status == 401 && same_host(&res.url, &url) && self.confirm_refused(&a) {
             self.reject(&a.token);
             return Err(GhError::Rejected);
         }
         if !(200..300).contains(&res.status) {
-            let v: Value = serde_json::from_str(&res.body).unwrap_or(Value::Null);
-            let mut m = v["message"].as_str().unwrap_or("no message").to_string();
-            if let Some(e) = v["errors"].as_array().and_then(|e| e.first()) {
-                let more = e["message"].as_str().or(e["code"].as_str()).unwrap_or_default();
-                if !more.is_empty() {
-                    m = format!("{m} ({more})");
-                }
-            }
-            return Err(GhError::Status(res.status, m));
+            return Err(GhError::Status(res.status, message(&res)));
         }
         if cache
             && method == "GET"
@@ -368,6 +528,53 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
+}
+
+/// An answer's message (and its first error's), for errors and logs.
+fn message(res: &Response) -> String {
+    let v: Value = serde_json::from_str(&res.body).unwrap_or(Value::Null);
+    let mut m = v["message"].as_str().unwrap_or("no message").to_string();
+    if let Some(e) = v["errors"].as_array().and_then(|e| e.first()) {
+        let more = e["message"].as_str().or(e["code"].as_str()).unwrap_or_default();
+        if !more.is_empty() {
+            m = format!("{m} ({more})");
+        }
+    }
+    m
+}
+
+/// A URL without its query or fragment (a signed link's signature).
+fn bare_url(url: &str) -> String {
+    url.split(['?', '#']).next().unwrap_or_default().to_string()
+}
+
+/// A URL's path, without host or query.
+fn path_of(url: &str) -> String {
+    let u = bare_url(url);
+    let rest = u.split_once("://").map_or(u.as_str(), |(_, r)| r);
+    rest.find('/').map_or_else(|| "/".into(), |i| rest[i..].to_string())
+}
+
+/// A URL's scheme, host and port.
+fn origin(url: &str) -> &str {
+    let start = url.find("://").map_or(0, |i| i + 3);
+    url[start..].find('/').map_or(url, |i| &url[..start + i])
+}
+
+/// Whether the answer came from the request's own host (an empty answer URL is the request's).
+fn same_host(answered: &str, asked: &str) -> bool {
+    answered.is_empty() || origin(answered).eq_ignore_ascii_case(origin(asked))
+}
+
+/// A duration in ms, for logs: `95 min`.
+fn minutes(ms: i64) -> String {
+    format!("{} min", ms.max(0) / 60_000)
+}
+
+/// A time in Unix ms, for logs: `HH:MM:SS UTC`.
+fn clock_ms(ms: i64) -> String {
+    let day = (ms / 1000).rem_euclid(86_400);
+    format!("{:02}:{:02}:{:02} UTC", day / 3600, (day % 3600) / 60, day % 60)
 }
 
 /// A reset time for a message: `HH:MM UTC`.

@@ -204,6 +204,14 @@ async fn run() -> anyhow::Result<()> {
             run_every(st, "poll", POLL_EVERY, Start::Now, poll_pass).await;
         });
     }
+    // GitHub's login, every 5 minutes (PDT-252).
+    tokio::spawn(run_every(
+        state.clone(),
+        "github login",
+        pdt_api::github_login::CHECK_EVERY,
+        Start::AfterOnePeriod,
+        |st| async move { pdt_api::github_login::check(&st).await },
+    ));
     // Each active attempt's changed files and the overlaps they make, every 30 s (tickets spec §7).
     tokio::spawn(run_every(state.clone(), "overlaps", Duration::from_secs(30), Start::Now, |st| async move {
         refresh_overlaps(&st).await

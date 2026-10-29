@@ -38,7 +38,7 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
 
 - GitHub's plugin page, Settings › Plugins › GitHub (PDT-228; its connection is the login: `web/src/plugins/GithubLogin.tsx`;
   pdt-api `github_login.rs`). The old path `/settings/host/github` goes there. The login is a JSON
-  `Account` (`token`, `apiUrl`, `login`) in the OS keychain only, under `github-login` for the stable instance's
+  `Account` (`token`, `apiUrl`, `login`, `signedInAt`; a login saved before PDT-252 has no `signedInAt`) in the OS keychain only, under `github-login` for the stable instance's
   default data dir and `github-login:<hash of the data dir>` for any other (`secrets::github_login_account`, as the
   update token's), so a dev instance never reads or replaces the stable one's. pdtd reads it at startup in the
   background (`github_login::load`). The token never leaves pdtd: the API returns who it signs in as, never the token.
@@ -58,6 +58,9 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
   auto-merge and merging; starting a workflow by hand (the built-in "Cut a release", PDT-194). A fine-grained token
   instead needs, on the repositories PDT works with: Pull requests, Issues and Contents read and write, Actions read
   (and write to start a workflow) and Metadata read.
+- Every sign-in is logged at info (PDT-252): the instance (its keychain account and data dir), how (device flow or
+  pasted token), the OAuth App's client ID, who, the API and the token's scopes; pdtd's startup logs the stored login
+  and how long ago it was made. Never the token.
 - **GitHub Enterprise Server**: give the host's API URL (`https://github.example.com/api/v3`). The site is the URL
   without `/api/v3`, GraphQL is `<site>/api/graphql`, and a project whose `origin` is on that host uses the forge
   (`git_url::github_repo_on`). The device flow there needs an OAuth App registered on that host (its client ID in the
@@ -98,6 +101,17 @@ works but that organization's private repositories answer 404.
   a login (device flow or pasted token) clears it, takes the item out of the Inbox and runs the PR and issue checks
   at once. A 403 (missing scopes, or no access to one repository) is not a rejected login: it stays that PR's or
   project's error.
+- A 401 marks the login only when GitHub means it (PDT-252): the 401 must come from the API's own host (one from a
+  redirect's other host, such as a job log's storage, is that call's error), and `GET /user`, asked at once, must
+  answer 401 too. Otherwise the call fails with GitHub's status and message and the login stays.
+- **The login check** (`github_login::check`, the `github login` loop, every 5 minutes; `GithubApi::check_login`):
+  `GET /rate_limit` (it costs no rate limit), so the time GitHub stops accepting the login is in the log to within 5
+  minutes even when nothing else calls GitHub. While the login is marked rejected it asks `GET /user` instead, and
+  when GitHub accepts the login again the mark goes, the Inbox item with it, and the PR and issue checks run at once.
+- **Diagnosing a refusal**: every 401 (warn) and 403 (info) is logged with the method, the endpoint, the URL that
+  answered after redirects (no query), GitHub's message, `x-github-request-id`, `x-github-sso`, `www-authenticate`,
+  `x-oauth-scopes`, the login's age and when GitHub last accepted it. The forge keeps its last 50 calls in memory
+  (method, path, status, time; `GithubApi::recent_calls`) and logs them at a login's first 401. Never the token.
 - The Connect item is a needs-you notification (Unheard notice, warning) like other blocking items, so it shows
   as the user's notification settings say; it clears when the item goes.
 
