@@ -120,29 +120,7 @@ pub(crate) async fn apply(st: &AppState, id: &str, sig: Signal) -> Result<(), Ap
 async fn apply_ordered(st: &AppState, id: &str, sig: Signal) -> Result<(), ApiError> {
     let tracked = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
-        map.get_mut(id).map(|t| {
-            if matches!(sig, Signal::ProgramStatus(_)) {
-                t.program_status_seen = true;
-            } else if t.program_status_seen {
-                // Includes a Busy task queued by input before the first explicit state was observed.
-                return (t.activity, t.activity);
-            }
-            if sig == Signal::Interrupted {
-                if !t.interrupt_pending {
-                    return (t.activity, t.activity);
-                }
-                t.interrupt_pending = false;
-                t.interrupted = true;
-                t.watch.enter_at_ms = None;
-            } else if matches!(sig, Signal::Busy | Signal::NeedsYou) && t.interrupted {
-                return (t.activity, t.activity);
-            } else if sig == Signal::TurnEnded {
-                t.interrupt_pending = false;
-            }
-            let prev = t.activity;
-            t.activity = next(prev, sig);
-            (prev, t.activity)
-        })
+        map.get_mut(id).map(|t| transition(t, sig))
     };
     let (prev, now) = match tracked {
         Some(p) => p,
@@ -157,13 +135,44 @@ async fn apply_ordered(st: &AppState, id: &str, sig: Signal) -> Result<(), ApiEr
         }
     };
     if prev != now {
-        st.store.update_activity(id, Some(now), needs_attention(prev, now).then(now_ms)).await?;
-        crate::notifications::kick(st);
-        if now == Activity::Idle {
-            // A terminal agent's turn ended: an agent step running in it may have stalled (Phase 7b spec §4.4).
-            let (st2, id) = (st.clone(), id.to_string());
-            tokio::spawn(async move { crate::workflow::agent::turn_ended(&st2, &id).await });
+        persist(st, id, prev, now).await?;
+    }
+    Ok(())
+}
+
+/// Moves a tracked session's activity on by a signal: (before, after).
+fn transition(t: &mut Tracker, sig: Signal) -> (Activity, Activity) {
+    if matches!(sig, Signal::ProgramStatus(_)) {
+        t.program_status_seen = true;
+    } else if t.program_status_seen {
+        // Includes Busy from input typed before the first explicit state was observed.
+        return (t.activity, t.activity);
+    }
+    if sig == Signal::Interrupted {
+        if !t.interrupt_pending {
+            return (t.activity, t.activity);
         }
+        t.interrupt_pending = false;
+        t.interrupted = true;
+        t.watch.enter_at_ms = None;
+    } else if matches!(sig, Signal::Busy | Signal::NeedsYou) && t.interrupted {
+        return (t.activity, t.activity);
+    } else if sig == Signal::TurnEnded {
+        t.interrupt_pending = false;
+    }
+    let prev = t.activity;
+    t.activity = next(prev, sig);
+    (prev, t.activity)
+}
+
+/// Stores a transition and acts on it (call in the session's order).
+async fn persist(st: &AppState, id: &str, prev: Activity, now: Activity) -> Result<(), ApiError> {
+    st.store.update_activity(id, Some(now), needs_attention(prev, now).then(now_ms)).await?;
+    crate::notifications::kick(st);
+    if now == Activity::Idle {
+        // A terminal agent's turn ended: an agent step running in it may have stalled (Phase 7b spec §4.4).
+        let (st2, id) = (st.clone(), id.to_string());
+        tokio::spawn(async move { crate::workflow::agent::turn_ended(&st2, &id).await });
     }
     Ok(())
 }
@@ -353,7 +362,7 @@ pub(crate) async fn type_message(st: &AppState, id: &str, text: &str) -> Result<
 /// Called with every chunk the user types into a terminal (no-op for terminals without a tracker).
 pub(crate) fn on_input(st: &AppState, id: &str, bytes: &[u8]) {
     let enter = is_enter(bytes);
-    let sig = {
+    let (prev, now) = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
         let Some(t) = map.get_mut(id) else { return };
         // What the terminal answers by itself (a focus change, a query's reply) is not someone typing (PDT-129).
@@ -374,21 +383,29 @@ pub(crate) fn on_input(st: &AppState, id: &str, bytes: &[u8]) {
             t.watch.enter_at_ms = Some(now_ms());
             t.watch.output_since_enter = false;
         }
-        match t.agent {
+        let sig = match t.agent {
             // Legacy Codex fallback. Once OSC 7501 is seen, Enter can also be trust, menus, or empty input.
             AgentKind::Codex if !t.program_status_seen && (enter || answered) => {
                 t.clear_screen = true;
-                Some(Signal::Busy)
+                Signal::Busy
             }
             // Claude reports its own turns, but answering a permission prompt sends no hook until its next tool.
-            AgentKind::Claude if answered => Some(Signal::Busy),
-            _ => None,
-        }
+            AgentKind::Claude if answered => Signal::Busy,
+            _ => return,
+        };
+        // Applied now, before any output the input causes is scanned: a task applying it later could land after
+        // the agent's next prompt and undo it (PDT-259). Only the store write waits for the session's order.
+        transition(t, sig)
     };
-    if let Some(sig) = sig {
+    if prev != now {
         let (st, id) = (st.clone(), id.to_string());
         tokio::spawn(async move {
-            let _ = apply(&st, &id, sig).await;
+            let order = order_lock(&st, &id);
+            let _in_order = order.lock().await;
+            // A later transition already stored (or will store) the newer state.
+            if activity_of(&st, &id) == Some(now) {
+                let _ = persist(&st, &id, prev, now).await;
+            }
         });
     }
 }
@@ -501,7 +518,89 @@ pub(crate) async fn post_view(State(st): State<AppState>, Path(id): Path<String>
 
 #[cfg(test)]
 mod tests {
-    use super::{Screen, is_answer, is_enter, is_terminal_reply};
+    use super::{
+        Screen, Tracker, activity_of, apply_ordered, is_answer, is_enter, is_terminal_reply, on_input, order_lock,
+    };
+    use crate::routes::AppState;
+    use pdt_core::activity::{Activity, Signal};
+    use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
+
+    /// PDT-259: answering Codex's prompt and its next prompt arriving while the session's ordering point is busy
+    /// (a store write, a loaded machine) must not end with the answer applied last, undoing the new prompt.
+    #[tokio::test]
+    async fn input_is_applied_before_the_output_it_causes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+        let st = AppState::new(store.clone(), tmp.path().join("data"));
+        let repo = tmp.path().join("repo");
+        let project = pdt_core::project::Project {
+            id: "p".into(),
+            name: "P".into(),
+            repo_path: repo.to_string_lossy().into(),
+            base_branch: "main".into(),
+            created_at: 1,
+            key: String::new(),
+            forge: None,
+            kind: Default::default(),
+        };
+        store.insert_project(&project).await.unwrap();
+        store
+            .insert_session(&Session {
+                id: "c".into(),
+                project_id: project.id.clone(),
+                worktree_id: None,
+                kind: SessionKind::AgentTui,
+                agent: Some(AgentKind::Codex),
+                bypass_permissions: false,
+                title: "t".into(),
+                cwd: repo.to_string_lossy().into(),
+                status: SessionStatus::Running,
+                exit_code: None,
+                created_at: 1,
+                ended_at: None,
+                external_session_id: None,
+                fresh_started_at: None,
+                activity: Some(Activity::NeedsYou),
+                attention_at: None,
+                last_viewed_at: None,
+                unseen: false,
+                attempt_id: None,
+                ticket: None,
+                mode: pdt_core::conversation::SessionMode::Terminal,
+                model: None,
+                permission_mode: None,
+                persona: None,
+            })
+            .await
+            .unwrap();
+        st.activity.lock().unwrap().insert(
+            "c".into(),
+            Tracker {
+                agent: AgentKind::Codex,
+                activity: Activity::NeedsYou,
+                watch: Default::default(),
+                program_status_seen: false,
+                interrupt_pending: false,
+                interrupted: false,
+                clear_screen: false,
+                generation: 0,
+                last_input_ms: 0,
+            },
+        );
+        let order = order_lock(&st, "c");
+        let busy = order.lock().await;
+        on_input(&st, "c", b"y\r");
+        assert_eq!(activity_of(&st, "c"), Some(Activity::Working), "the answer counts at once");
+        // The output task gets the ordering point first and sees the next prompt.
+        apply_ordered(&st, "c", Signal::NeedsYou).await.unwrap();
+        drop(busy);
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(activity_of(&st, "c"), Some(Activity::NeedsYou));
+        assert_eq!(store.get_session("c").await.unwrap().unwrap().activity, Some(Activity::NeedsYou));
+    }
 
     #[test]
     fn terminal_replies_are_not_typing() {
