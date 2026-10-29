@@ -14,7 +14,7 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
 4. **Push and open a PR** against `main`. CI runs the full checks on Linux on every push (Namespace); the macOS checks
    run in the merge queue, and on a PR only with the `macos` label or a `.github/` change; Windows checks run only
    with the `windows` label or when the PR touches their files. The bundles run on no PR but the release PR (below, "Releases").
-   Docs-only PRs skip CI (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
+   Docs-only PRs (docs, the website under `site/`, Markdown) skip CI but the website build (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
 5. **The user tests it**: Run → `pdt` on the branch gives a dev instance on its own port and data folder (below).
    Feedback comes back in the session; the agent fixes the branch and the run is restarted on the new code.
 6. **Merge when the user says so**, with auto-merge: `gh pr merge <n> --auto`, with no merge-method flag (the queue

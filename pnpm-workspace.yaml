@@ -1,6 +1,7 @@
 packages:
   - web
   - desktop
+  - site
 # These entries bypass pnpm 12's release-age guard for versions pinned by the spec.
 # Remove them once those versions are older than the guard window.
 minimumReleaseAgeExclude:
