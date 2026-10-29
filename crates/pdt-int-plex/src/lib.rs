@@ -15,10 +15,6 @@ impl Integration for Plex {
         "plex"
     }
 
-    fn description(&self) -> &'static str {
-        "Search a Plex server, list what it added lately and refresh its libraries from workflows."
-    }
-
     fn connection_kinds(&self) -> Vec<ConnectionKind> {
         vec![ConnectionKind {
             id: PLEX.into(),

@@ -4,12 +4,29 @@ use super::Integration;
 use crate::workflow::catalog::NodeKind;
 use crate::workflow::nodes::webhook::{WEBHOOK_CONNECTION, WebhookTrigger};
 use pdt_core::integration::ConnectionKind;
+use pdt_core::integration::{Icon, PluginCategory};
 
 pub struct Webhook;
 
 impl Integration for Webhook {
     fn id(&self) -> &'static str {
         "webhook"
+    }
+
+    fn label(&self) -> &'static str {
+        "Incoming webhooks"
+    }
+
+    fn description(&self) -> &'static str {
+        "Addresses other machines post to, to start workflows."
+    }
+
+    fn category(&self) -> Option<PluginCategory> {
+        Some(PluginCategory::General)
+    }
+
+    fn icon(&self) -> Icon {
+        Icon { letters: "WH", color: "#6b7080" }
     }
 
     fn connection_kinds(&self) -> Vec<ConnectionKind> {

@@ -221,7 +221,7 @@ function RemoveProject({ project, onRemoved }: { project: Project; onRemoved: ()
 
 /** A project's sections, in page order (their `Section` labels): its top bar titles on a phone. */
 export const PROJECT_SECTIONS = [
-  'Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Integrations', 'Danger zone',
+  'Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Danger zone',
 ] as const;
 
 export interface ProjectPageProps {

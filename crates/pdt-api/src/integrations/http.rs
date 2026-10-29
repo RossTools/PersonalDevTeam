@@ -3,12 +3,29 @@
 use super::Integration;
 use crate::workflow::catalog::NodeKind;
 use pdt_core::integration::ConnectionKind;
+use pdt_core::integration::{Icon, PluginCategory};
 
 pub struct Http;
 
 impl Integration for Http {
     fn id(&self) -> &'static str {
         "http"
+    }
+
+    fn label(&self) -> &'static str {
+        "HTTP services"
+    }
+
+    fn description(&self) -> &'static str {
+        "Any HTTP API with a token, for HTTP request steps."
+    }
+
+    fn category(&self) -> Option<PluginCategory> {
+        Some(PluginCategory::General)
+    }
+
+    fn icon(&self) -> Icon {
+        Icon { letters: "{}", color: "#6b7080" }
     }
 
     fn connection_kinds(&self) -> Vec<ConnectionKind> {

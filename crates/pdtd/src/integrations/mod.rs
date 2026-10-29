@@ -1,5 +1,5 @@
 //! The integrations this pdtd was built with (PDT-173): one cargo feature each, in the order of
-//! `pdt_core::integration::KNOWN`. Which of them an instance uses is its own setting (Settings → Integrations).
+//! `pdt_core::integration::KNOWN`. Which of them an instance uses is its own setting (Settings → Plugins).
 
 use pdt_api::Integration;
 use std::sync::Arc;

@@ -344,7 +344,7 @@ pub enum NotificationTarget {
     Todo {
         id: String,
     },
-    /// Settings → Connections.
+    /// Settings → Plugins.
     Connections,
     None,
 }

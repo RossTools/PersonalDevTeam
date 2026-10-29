@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { page, summary, ticket } from '../tickets/fixtures';
 import { applyThemePref } from '@ui';
+import { plugins } from '../api/gen/plugins';
 import { AppShell } from './AppShell';
 
 vi.mock('../terminal/TerminalView', () => ({
@@ -724,16 +725,24 @@ describe('settings page', () => {
     expect(within(dialog).getByRole('radio', { name: 'Clone URL' })).toBeInTheDocument();
   });
 
-  it('has a Connections page beside This host', async () => {
-    stubWorkspaces({ 'GET /api/connections': [] });
+  it('has Plugins and All connections beside This host, and a plugin opens its page (PDT-228)', async () => {
+    const here = () => window.location.pathname;
+    stubWorkspaces({ 'GET /api/connections': [], 'GET /api/integrations': plugins });
     renderWithQuery(<AppShell />);
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
-    await userEvent.click(within(nav).getByRole('row', { name: /Connections/ }));
+    expect(within(nav).queryByRole('row', { name: 'Integrations' })).toBeNull();
+    await userEvent.click(within(nav).getByRole('row', { name: /Plugins/ }));
     const main = screen.getByRole('main');
-    expect(await within(main).findByRole('heading', { name: 'Connections' })).toBeInTheDocument();
-    expect(await within(main).findByRole('region', { name: 'Discord webhooks' })).toBeInTheDocument();
+    expect(here()).toBe('/settings/plugins');
+    await userEvent.click(await within(main).findByRole('button', { name: 'Discord' }));
+    expect(here()).toBe('/settings/plugins/discord');
+    expect(await within(main).findByRole('region', { name: 'Connections' })).toBeInTheDocument();
+    await userEvent.click(within(nav).getByRole('row', { name: /All connections/ }));
+    expect(here()).toBe('/settings/connections');
+    expect(await within(main).findByRole('heading', { name: 'All connections' })).toBeInTheDocument();
   });
+
 
   it('lays a project page out in sections', async () => {
     stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
@@ -744,7 +753,7 @@ describe('settings page', () => {
     const main = screen.getByRole('main');
     await within(main).findByRole('region', { name: 'Project' });
     expect(within(main).getAllByRole('region').map((r) => r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)?.textContent))
-      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Integrations', 'Danger zone']);
+      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Danger zone']);
     expect(within(main).queryByText(/settings on this host/)).not.toBeInTheDocument();
   });
 });
@@ -1060,13 +1069,13 @@ describe('phone', () => {
     expect(here()).toBe('/settings/projects/ALP');
     const sections = await within(main).findByRole('grid', { name: 'Sections' });
     expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual([
-      'Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Integrations', 'Danger zone',
+      'Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Danger zone',
     ]);
     expect(topBar).toHaveTextContent('Alpha');
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(here()).toBe('/settings');
     const list = await within(main).findByRole('navigation', { name: 'Settings sections' });
-    expect(within(list).getAllByRole('row').map((r) => r.textContent)).toEqual(expect.arrayContaining(['This host', 'Connections', 'Notifications', 'Add project']));
+    expect(within(list).getAllByRole('row').map((r) => r.textContent)).toEqual(expect.arrayContaining(['This host', 'Plugins', 'All connections', 'Notifications', 'Add project']));
     // Drilling in pushes a screen per level, and Back pops them.
     await userEvent.click(within(list).getByRole('row', { name: /Alpha/ }));
     expect(here()).toBe('/settings/projects/ALP');
@@ -1086,7 +1095,7 @@ describe('phone', () => {
     renderWithQuery(<AppShell />);
     const main = screen.getByRole('main');
     const sections = await within(main).findByRole('grid', { name: 'Sections' });
-    expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual(['Updates', 'GitHub', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Bug reports', 'Checks', 'Danger zone']);
+    expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual(['Updates', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Bug reports', 'Checks', 'Danger zone']);
     await userEvent.click(within(sections).getByRole('row', { name: /Runs/ }));
     expect(here()).toBe('/settings/host/runs');
     expect(screen.getByRole('banner', { name: 'Top bar' })).toHaveTextContent('Runs');
@@ -1612,6 +1621,14 @@ describe('routes (PDT-111)', () => {
     expect(await screen.findByRole('dialog', { name: 'ALP-1 · Fix login' })).toBeInTheDocument();
   });
 
+  it('sends the old Integrations page and This host’s GitHub section to the plugins (PDT-228)', async () => {
+    stubWorkspaces({ 'GET /api/connections': [], 'GET /api/integrations': plugins });
+    at('/settings/host/github');
+    renderWithQuery(<AppShell />);
+    await waitFor(() => expect(here()).toBe('/settings/plugins/github'));
+    expect(await within(screen.getByRole('main')).findByRole('region', { name: 'GitHub login' })).toBeInTheDocument();
+  });
+
   it('opens Settings pages from their paths, and puts the page chosen in the path', async () => {
     stubWorkspaces({
       'GET /api/connections': [],
@@ -1623,13 +1640,13 @@ describe('routes (PDT-111)', () => {
     const main = screen.getByRole('main');
     expect(await within(main).findByRole('region', { name: 'Project' })).toBeInTheDocument();
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    await userEvent.click(within(nav).getByRole('row', { name: /Connections/ }));
+    await userEvent.click(within(nav).getByRole('row', { name: /All connections/ }));
     expect(here()).toBe('/settings/connections');
-    expect(await within(main).findByRole('region', { name: 'Discord webhooks' })).toBeInTheDocument();
+    expect(await within(main).findByRole('heading', { name: 'All connections' })).toBeInTheDocument();
     await userEvent.click(within(nav).getByRole('row', { name: /This host/ }));
     expect(here()).toBe('/settings/host');
     await back();
-    expect(await within(main).findByRole('region', { name: 'Discord webhooks' })).toBeInTheDocument();
+    expect(await within(main).findByRole('heading', { name: 'All connections' })).toBeInTheDocument();
   });
 
   it('shows the file in /files/<path>', async () => {

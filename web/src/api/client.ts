@@ -417,6 +417,8 @@ export const api = {
   listIntegrations: () => request<IntegrationInfo[]>('/api/integrations'),
   setIntegrations: (enabled: string[]) =>
     request<IntegrationInfo[]>('/api/integrations', { method: 'PUT', body: JSON.stringify({ enabled }) }),
+  /** Runs an enabled plugin's checks now (Test again), then lists the plugins. */
+  checkIntegration: (id: string) => request<IntegrationInfo[]>(`/api/integrations/${enc(id)}/check`, { method: 'POST' }),
   createConnection: (c: ConnectionInput) => request<Connection>('/api/connections', { method: 'POST', body: JSON.stringify(c) }),
   updateConnection: (id: string, c: Partial<ConnectionInput>) =>
     request<Connection>(`/api/connections/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(c) }),

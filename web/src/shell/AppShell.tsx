@@ -23,9 +23,11 @@ import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
 import { HOST_SECTIONS, HostSettingsPage } from '../host/HostSettingsPage';
 import { sectionLabel } from '../common/SettingsScreens';
-import { ConnectionsPage } from '../connections/ConnectionsPage';
 import { SecretsPage } from '../secrets/SecretsPage';
-import { IntegrationsPage } from '../integrations/IntegrationsPage';
+import { AllConnectionsPage } from '../plugins/AllConnectionsPage';
+import { PluginPage } from '../plugins/PluginPage';
+import { PluginsPage } from '../plugins/PluginsPage';
+import { pluginsKey } from '../plugins/model';
 import { WorkflowsList, type WorkflowTarget } from '../workflows/WorkflowsList';
 import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
@@ -76,7 +78,7 @@ import { VIEWS, type ViewId } from './views';
 import { TicketKeysContext } from '../common/ticketKeys';
 import type { TicketPeekState } from '../tickets/TicketsView';
 import type { TicketsMode } from '../tickets/useBacklog';
-import { isDetail, parseLocation, routePath, sectionSlug, upRoute, viewRoute, type Route, type SettingsPage } from './route';
+import { isDetail, isOldPath, parseLocation, routePath, sectionSlug, upRoute, viewRoute, type Route, type SettingsPage } from './route';
 import { currentLocation, goBack, navigate, useAppLinks, useLocation } from './router';
 import { PhoneDrawer } from './PhoneDrawer';
 import { PhoneTopBar, TopBarActionsContext, TopBarEditContext, type TopBarActions, type TopBarEdit } from './PhoneTopBar';
@@ -87,9 +89,9 @@ const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Cl
  * in a sheet instead: from ⋯ (earlier sessions) and from the title (projects and filters). */
 const PHONE_LIST_SCREENS: readonly ViewId[] = ['pm', 'sessions', 'inbox', 'notes', 'workflows', 'personas', 'files', 'settings'];
 
-/** The Settings page of integrations (PDT-173). */
-const INTEGRATIONS = 'integrations';
-/** The Settings page of connections (in place of a project id). */
+/** The Settings page of plugins (PDT-228). */
+const PLUGINS = 'plugins';
+/** The Settings page of all connections (in place of a project id). */
 const CONNECTIONS = 'connections';
 /** The Settings page of notifications. */
 const NOTIFICATIONS = 'notifications';
@@ -156,10 +158,18 @@ export function AppShell() {
     if (route.view) lastPath.current[route.view] = loc;
   }, [route.view, loc]);
   useAppLinks();
+  // An old path (the Integrations page, This host's GitHub section) shows its new page under the new path.
+  useEffect(() => {
+    if (isOldPath(loc.split('?')[0])) navigate(routePath(route), { replace: true });
+  }, [loc, route]);
   // The Workflows view: the workflow or template shown (with its tab and run).
   const workflowTarget: WorkflowTarget = route.view === 'workflows' ? route.target : null;
   const setWorkflowTarget = useCallback((target: WorkflowTarget) => go({ view: 'workflows', target }), []);
   const settingsPage: SettingsPage = route.view === 'settings' ? route.page : { kind: 'index' };
+  const openPlugin = useCallback((id: string) => go({ view: 'settings', page: { kind: 'plugins', id } }), []);
+  // A plugin page's name, for a phone's top bar.
+  const shownPlugins = useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations, enabled: settingsPage.kind === 'plugins' && settingsPage.id !== null });
+  const pluginTitle = (id: string) => shownPlugins.data?.find((p) => p.id === id)?.label ?? 'Plugin';
   const [bottomOpen, setBottomOpen] = useState(false);
   const [bottomMax, setBottomMax] = useState(false);
   // The New workflow dialog.
@@ -448,7 +458,7 @@ export function AppShell() {
   const settingsProject = settingsPage.kind === 'project' ? ws.projects.find((p) => p.key === settingsPage.key) ?? null : null;
   // The Settings list's current row: a project's id, connections, or null (this host).
   const settingsProjectId = settingsProject?.id
-    ?? (settingsPage.kind === 'integrations' ? INTEGRATIONS : settingsPage.kind === 'connections' ? CONNECTIONS : settingsPage.kind === 'secrets' ? SECRETS
+    ?? (settingsPage.kind === 'plugins' ? PLUGINS : settingsPage.kind === 'connections' ? CONNECTIONS : settingsPage.kind === 'secrets' ? SECRETS
       : settingsPage.kind === 'notifications' ? NOTIFICATIONS : null);
   const section = settingsPage.kind === 'host' || settingsPage.kind === 'project' ? settingsPage.section : null;
   // On a phone a section is a screen of its own; on a desktop the page scrolls to it.
@@ -487,12 +497,12 @@ export function AppShell() {
     if (folder.file) setSheetOpen(false);
   }, [folder.file]);
 
-  /** Settings for a project (by id), integrations, connections, secrets, notifications, or this host (null). */
+  /** Settings for a project (by id), plugins, all connections, secrets, notifications, or this host (null). */
   const showProjectSettings = (id: string | null) => {
     const key = ws.projects.find((p) => p.id === id)?.key;
     go({
       view: 'settings',
-      page: id === INTEGRATIONS ? { kind: 'integrations' } : id === CONNECTIONS ? { kind: 'connections' } : id === SECRETS ? { kind: 'secrets' } : id === NOTIFICATIONS ? { kind: 'notifications' }
+      page: id === PLUGINS ? { kind: 'plugins', id: null } : id === CONNECTIONS ? { kind: 'connections' } : id === SECRETS ? { kind: 'secrets' } : id === NOTIFICATIONS ? { kind: 'notifications' }
         : key ? { kind: 'project', key, section: null } : { kind: 'host', section: null },
     });
     setSheetOpen(false);
@@ -635,11 +645,11 @@ export function AppShell() {
   ) : (
     <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
       <h2 className={listHeading}>{label}</h2>
-      <List aria-label="Host" onAction={(id) => showProjectSettings(id === INTEGRATIONS || id === CONNECTIONS || id === SECRETS || id === NOTIFICATIONS ? id : null)}>
+      <List aria-label="Host" onAction={(id) => showProjectSettings(id === PLUGINS || id === CONNECTIONS || id === SECRETS || id === NOTIFICATIONS ? id : null)}>
         <ListRow id="host" title="This host" current={!phone && settingsProjectId === null} />
         <ListRow id={NOTIFICATIONS} title="Notifications" current={settingsProjectId === NOTIFICATIONS} />
-        <ListRow id={INTEGRATIONS} title="Integrations" current={settingsProjectId === INTEGRATIONS} />
-        <ListRow id={CONNECTIONS} title="Connections" current={settingsProjectId === CONNECTIONS} />
+        <ListRow id={PLUGINS} title="Plugins" current={settingsProjectId === PLUGINS} />
+        <ListRow id={CONNECTIONS} title="All connections" current={settingsProjectId === CONNECTIONS} />
         <ListRow id={SECRETS} title="Secrets" current={settingsProjectId === SECRETS} />
       </List>
       <h3 className="flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">
@@ -735,8 +745,8 @@ export function AppShell() {
     switch (settingsPage.kind) {
       case 'host': return (section && sectionLabel(HOST_SECTIONS, section)) || 'This host';
       case 'project': return (section && sectionLabel(PROJECT_SECTIONS, section)) || (settingsProject?.name ?? settingsPage.key);
-      case 'integrations': return 'Integrations';
-      case 'connections': return 'Connections';
+      case 'plugins': return settingsPage.id ? pluginTitle(settingsPage.id) : 'Plugins';
+      case 'connections': return 'All connections';
       case 'secrets': return 'Secrets';
       case 'notifications': return 'Notifications';
       case 'index': return label;
@@ -950,8 +960,11 @@ export function AppShell() {
                 settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => (phone ? go(viewRoute('settings'), { replace: true }) : showProjectSettings(null))}
                   drill={phone} section={section} onSection={showSection} />
                   : ws.projectsLoaded ? <EmptyState>No project has the key {settingsPage.key}.</EmptyState> : <Skeleton lines={8} className="p-4" />
-              ) : settingsPage.kind === 'integrations' ? <IntegrationsPage />
-                : settingsPage.kind === 'connections' ? <ConnectionsPage />
+              ) : settingsPage.kind === 'plugins' ? (
+                settingsPage.id
+                  ? <PluginPage key={settingsPage.id} id={settingsPage.id} phone={phone} onBack={() => go({ view: 'settings', page: { kind: 'plugins', id: null } })} />
+                  : <PluginsPage phone={phone} onOpen={openPlugin} />
+              ) : settingsPage.kind === 'connections' ? <AllConnectionsPage onOpen={openPlugin} />
                 : settingsPage.kind === 'secrets' ? <SecretsPage />
                 : settingsPage.kind === 'notifications' ? <NotificationSettingsPage /> : <HostSettingsPage drill={phone} section={section} onSection={showSection} />
             ) : ws.tab?.ticketId ? (

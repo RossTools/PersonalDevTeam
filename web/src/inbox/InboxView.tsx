@@ -188,7 +188,7 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
               It goes away once GitHub is connected{item.body.reason === 'rejected' ? ' again' : ''}.
             </p>
             <div>
-              <Button variant="primary" onClick={doPrimary}>Open GitHub settings <Kbd>↵</Kbd></Button>
+              <Button variant="primary" onClick={doPrimary}>Open GitHub's page <Kbd>↵</Kbd></Button>
             </div>
           </section>
         )}

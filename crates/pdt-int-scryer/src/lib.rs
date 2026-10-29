@@ -24,11 +24,6 @@ impl Integration for Scryer {
         "scryer"
     }
 
-    fn description(&self) -> &'static str {
-        "Films, series and anime from a Scryer media manager: workflow actions, and the PM's tools for its library and \
-         settings."
-    }
-
     fn approval_title(&self, tool: &str, input: &Value) -> Option<String> {
         let title = match tool {
             "scryer_add" => core::ask_title(input),
@@ -92,5 +87,5 @@ API. Find what you need with `scryer_schema` (`search` words, then an `operation
 (a query document and variables; no yes needed), and change with `scryer_mutate` (one mutation, its arguments and an \
 optional selection), which waits for the user's yes unless the connection lets you act; deleting, resetting and other \
 high-impact changes always ask. Never ask the user to paste a password or API key into the chat: they save it as a PDT \
-connection's secret (Settings → Connections, e.g. an HTTP service), and you pass `{\"$secret\": \"<connection>\"}` \
+connection's secret (on its plugin's page in Settings → Plugins, e.g. an HTTP service), and you pass `{\"$secret\": \"<connection>\"}` \
 where the value goes; PDT fills it in.";
