@@ -21,11 +21,13 @@ pub struct Response {
     /// Names lowercased.
     pub headers: Vec<(String, String)>,
     pub body: String,
+    /// The URL that answered, after any redirects, without its query (empty: the request's own).
+    pub url: String,
 }
 
 impl Response {
     pub fn new(status: u16, body: impl Into<String>) -> Self {
-        Self { status, headers: vec![], body: body.into() }
+        Self { status, headers: vec![], body: body.into(), url: String::new() }
     }
     pub fn with_header(mut self, name: &str, value: &str) -> Self {
         self.headers.push((name.to_ascii_lowercase(), value.into()));
@@ -89,13 +91,14 @@ impl Transport for ReqwestTransport {
         self.handle.block_on(async move {
             let res = b.send().await.map_err(|e| e.without_url().to_string())?;
             let status = res.status().as_u16();
+            let url = bare(res.url());
             let headers = res
                 .headers()
                 .iter()
                 .filter_map(|(k, v)| Some((k.as_str().to_ascii_lowercase(), v.to_str().ok()?.to_string())))
                 .collect();
             let body = res.text().await.map_err(|e| e.without_url().to_string())?;
-            Ok(Response { status, headers, body })
+            Ok(Response { status, headers, body, url })
         })
     }
 }
@@ -196,7 +199,11 @@ pub mod testing {
             match hit {
                 Some((_, _, res, used)) => {
                     *used = true;
-                    Ok(res.clone())
+                    let mut res = res.clone();
+                    if res.url.is_empty() {
+                        res.url = req.url.split('?').next().unwrap_or_default().to_string();
+                    }
+                    Ok(res)
                 }
                 None => Ok(Response::new(404, r#"{"message":"Not Found"}"#)),
             }
@@ -311,7 +318,12 @@ mod tests {
 
         fn forge(api: &str) -> crate::GithubApi {
             let g = crate::GithubApi::new(Arc::new(ReqwestTransport::current()));
-            g.set_account(Some(crate::Account { token: "gho_t".into(), api_url: api.into(), login: "me".into() }));
+            g.set_account(Some(crate::Account {
+                token: "gho_t".into(),
+                api_url: api.into(),
+                login: "me".into(),
+                signed_in_at: None,
+            }));
             g
         }
 

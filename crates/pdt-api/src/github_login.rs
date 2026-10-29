@@ -129,7 +129,11 @@ pub async fn load(st: &AppState) {
     let (secrets, name) = (st.secrets.clone(), st.github_account.clone());
     match tokio::task::spawn_blocking(move || secrets.get(&name)).await {
         Ok(Ok(Some(v))) => match serde_json::from_str::<Account>(&v) {
-            Ok(a) => st.github_api.set_account(Some(a)),
+            Ok(a) => {
+                let age = a.signed_in_at.map(|t| (now_ms() - t) / 60_000);
+                tracing::info!(login = %a.login, api = %a.api_url, signed_in_min_ago = ?age, "using the stored GitHub login");
+                st.github_api.set_account(Some(a));
+            }
             Err(e) => tracing::warn!(error = %e, "the stored GitHub login could not be read"),
         },
         Ok(Ok(None)) => {}
@@ -138,14 +142,49 @@ pub async fn load(st: &AppState) {
     }
 }
 
+/// How the user signed in, for the log.
+enum How<'a> {
+    Pasted,
+    DeviceFlow { client_id: &'a str },
+}
+
 /// Checks `token` with GitHub and saves the login.
-async fn sign_in(st: &AppState, token: String, api_url: String) -> Result<(), String> {
+async fn sign_in(st: &AppState, token: String, api_url: String, how: How<'_>) -> Result<(), String> {
     let t = st.github_api.transport();
     let (tok, api) = (token.clone(), api_url.clone());
     let who = tokio::task::spawn_blocking(move || login::whoami(t.as_ref(), &api, &tok))
         .await
         .map_err(|e| e.to_string())??;
-    save(st, Some(Account { token, api_url, login: who.login })).await.map_err(|e| e.message().to_string())
+    // Every sign-in is logged (PDT-252): which instance, how, and with which OAuth App. Never the token.
+    let (how, client_id) = match how {
+        How::Pasted => ("pasted token", ""),
+        How::DeviceFlow { client_id } => ("device flow", client_id),
+    };
+    tracing::info!(
+        instance = %st.github_account, data_dir = %st.data_dir.display(), how, client_id, login = %who.login,
+        api = %api_url, scopes = %who.scopes.join(","), "signed in to GitHub"
+    );
+    let account = Account { token, api_url, login: who.login, signed_in_at: Some(now_ms()) };
+    save(st, Some(account)).await.map_err(|e| e.message().to_string())
+}
+
+/// How often [`check`] runs.
+pub const CHECK_EVERY: Duration = Duration::from_secs(5 * 60);
+
+/// The light login check (PDT-252), every [`CHECK_EVERY`]: tells when GitHub stops accepting the login, to the
+/// minute, and clears a refused login's mark once GitHub accepts it again (then the pollers look at once).
+pub async fn check(st: &AppState) {
+    let g = st.github_api.clone();
+    let found = tokio::task::spawn_blocking(move || g.check_login()).await.ok().flatten();
+    match found {
+        Some(pdt_github::LoginCheck::Recovered) => {
+            crate::notifications::kick(st);
+            crate::refresh_prs(st).await;
+            crate::refresh_issues(st).await;
+        }
+        Some(pdt_github::LoginCheck::Failed(e)) => tracing::debug!(error = %e, "the GitHub login check got no answer"),
+        _ => {}
+    }
 }
 
 fn bad(code: &'static str, m: impl Into<String>) -> ApiError {
@@ -177,7 +216,7 @@ pub(crate) async fn put_token(
         return Err(bad("invalid_token", "the token is empty"));
     }
     let api = login::api_url(b.api_url.as_deref().unwrap_or_default());
-    sign_in(&st, token, api).await.map_err(|e| bad("invalid_token", e))?;
+    sign_in(&st, token, api, How::Pasted).await.map_err(|e| bad("invalid_token", e))?;
     cancel(&st);
     Ok(Json(view(&st)))
 }
@@ -265,7 +304,7 @@ async fn poll(st: AppState, flow: u64, api: String, client_id: String, device_co
             DevicePoll::Pending => {}
             DevicePoll::SlowDown(s) => interval = Duration::from_secs(s),
             DevicePoll::Token(token) => {
-                let r = sign_in(&st, token, api.clone()).await;
+                let r = sign_in(&st, token, api.clone(), How::DeviceFlow { client_id: &client_id }).await;
                 return end(&st, r.err());
             }
             DevicePoll::Expired => {

@@ -297,6 +297,7 @@ async fn a_login_github_rejects_asks_once_to_reconnect_and_the_pollers_wait_for_
         token: "gho_old".into(),
         api_url: "https://api.github.com".into(),
         login: "ross".into(),
+        signed_in_at: None,
     }));
     let env = setup(None, Some(g.clone())).await;
     let connects = |inbox: &Value| -> Vec<Value> {
@@ -306,9 +307,10 @@ async fn a_login_github_rejects_asks_once_to_reconnect_and_the_pollers_wait_for_
 
     // The PR poller meets GitHub's 401.
     t.on("POST", "https://api.github.com/graphql", Response::new(401, r#"{"message":"Bad credentials"}"#));
+    t.on("GET", "https://api.github.com/user", Response::new(401, r#"{"message":"Bad credentials"}"#));
     pdt_api::refresh_prs(&env.state).await;
     let sent = t.sent().len();
-    assert_eq!(sent, 1, "{:?}", t.urls());
+    assert_eq!(sent, 2, "the call, and GET /user to make sure: {:?}", t.urls());
     let (_, v) = call(&env.app, "GET", "/api/github/login", None).await;
     assert_eq!((v["connected"].as_bool(), v["login"].as_str()), (Some(true), Some("ross")), "kept: {v}");
     let rejected_at = v["rejectedAt"].as_i64().expect("rejected");

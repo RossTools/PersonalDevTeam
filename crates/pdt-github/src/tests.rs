@@ -10,7 +10,7 @@ const GQL: &str = "https://api.github.com/graphql";
 fn forge() -> (GithubApi, Arc<Recorded>) {
     let t = Arc::new(Recorded::new());
     let g = GithubApi::new(t.clone());
-    g.set_account(Some(Account { token: "gho_t".into(), api_url: API.into(), login: "me".into() }));
+    g.set_account(Some(Account { token: "gho_t".into(), api_url: API.into(), login: "me".into(), signed_in_at: None }));
     (g, t)
 }
 
@@ -27,7 +27,7 @@ fn without_a_login_nothing_is_sent_and_the_inbox_is_asked() {
     assert!(matches!(&e, ForgeError::Unavailable(m) if m.contains("GitHub is not connected")), "{e:?}");
     assert!(g.login_needed());
     assert!(t.sent().is_empty());
-    g.set_account(Some(Account { token: "x".into(), api_url: API.into(), login: "me".into() }));
+    g.set_account(Some(Account { token: "x".into(), api_url: API.into(), login: "me".into(), signed_in_at: None }));
     assert!(!g.login_needed());
     assert_eq!(GithubApi::offline().change_request("o/r", "b"), Err(GhError::NotConnected.into()));
 }
@@ -35,6 +35,7 @@ fn without_a_login_nothing_is_sent_and_the_inbox_is_asked() {
 #[test]
 fn calls_carry_the_token_and_a_rejected_one_asks_to_connect_again() {
     let (g, t) = forge();
+    t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
     t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
     let e = g.viewer_login().unwrap_err();
     assert!(matches!(&e, ForgeError::Unavailable(m) if m.contains("connect GitHub again")), "{e:?}");
@@ -48,8 +49,10 @@ fn a_rejected_login_is_kept_and_nothing_more_is_sent_until_the_user_signs_in_aga
     let (g, t) = forge();
     assert_eq!((g.login_needed(), g.login_rejected_at()), (false, None));
     t.on("POST", GQL, Response::new(401, r#"{"message":"Bad credentials"}"#));
+    t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
     let e = g.change_request("o/r", "b").unwrap_err();
     assert!(matches!(&e, ForgeError::Unavailable(m) if m.contains("connect GitHub again")), "{e:?}");
+    assert_eq!(t.urls(), [format!("POST {GQL}"), format!("GET {API}/user")], "GET /user made sure");
     let at = g.login_rejected_at().expect("marked rejected");
     assert!(g.login_needed(), "the Inbox asks to reconnect");
     assert_eq!(g.account().unwrap().login, "me", "the login is kept");
@@ -57,15 +60,99 @@ fn a_rejected_login_is_kept_and_nothing_more_is_sent_until_the_user_signs_in_aga
     // The pollers back off: every call fails the same way without reaching GitHub.
     assert!(matches!(g.branch_runs("o/r", "b"), Err(ForgeError::Unavailable(_))));
     assert!(matches!(g.change_request("o/r", "b"), Err(ForgeError::Unavailable(_))));
-    assert_eq!(t.sent().len(), 1, "one call reached GitHub");
+    assert_eq!(t.sent().len(), 2, "no more calls reached GitHub");
     assert_eq!(g.login_rejected_at(), Some(at), "the first refusal's time");
 
     // Signing in again clears it, and calls go out again.
-    g.set_account(Some(Account { token: "gho_new".into(), api_url: API.into(), login: "me".into() }));
+    g.set_account(Some(Account {
+        token: "gho_new".into(),
+        api_url: API.into(),
+        login: "me".into(),
+        signed_in_at: None,
+    }));
     assert_eq!((g.login_needed(), g.login_rejected_at()), (false, None));
     t.ok("GET", &format!("{API}/repos/o/r/actions/runs?branch=b&per_page={RUN_LIMIT}"), r#"{"workflow_runs":[]}"#);
     assert_eq!(g.branch_runs("o/r", "b").unwrap(), vec![]);
-    assert_eq!(t.sent().len(), 2);
+    assert_eq!(t.sent().len(), 3);
+}
+
+#[test]
+fn a_401_github_takes_back_when_asked_again_does_not_mark_the_login() {
+    let (g, t) = forge();
+    t.on("POST", GQL, Response::new(401, r#"{"message":"Bad credentials"}"#));
+    t.ok("GET", &format!("{API}/user"), r#"{"login":"me"}"#);
+    let e = g.change_request("o/r", "b").unwrap_err();
+    assert!(matches!(&e, ForgeError::Failed(m) if m.contains("401") && m.contains("Bad credentials")), "{e:?}");
+    assert_eq!((g.login_needed(), g.login_rejected_at()), (false, None));
+}
+
+#[test]
+fn a_401_from_a_redirect_to_another_host_does_not_mark_the_login() {
+    let (g, t) = forge();
+    let logs = format!("{API}/repos/o/r/actions/runs/7/jobs");
+    t.ok("GET", &logs, r#"{"jobs":[{"id":3,"name":"test","conclusion":"failure","html_url":"h"}]}"#);
+    let mut storage = Response::new(401, "<Error>no auth</Error>");
+    storage.url = "https://results-receiver.actions.githubusercontent.com/logs/3".into();
+    t.on("GET", &format!("{API}/repos/o/r/actions/jobs/3/logs"), storage);
+    assert!(g.failed_logs("o/r", 7).is_err());
+    assert_eq!(g.login_rejected_at(), None);
+    assert!(!t.urls().iter().any(|u| u.ends_with("/user")), "nothing asked again: {:?}", t.urls());
+}
+
+#[test]
+fn the_last_calls_are_kept_without_queries() {
+    let (g, t) = forge();
+    t.ok("GET", &format!("{API}/repos/o/r/actions/runs"), r#"{"workflow_runs":[]}"#);
+    let _ = g.branch_runs("o/r", "b");
+    let _ = g.viewer_login();
+    let calls: Vec<_> = g.recent_calls().into_iter().map(|c| (c.method, c.path, c.status)).collect();
+    assert_eq!(
+        calls,
+        [("GET", "/repos/o/r/actions/runs".to_string(), Some(200)), ("GET", "/user".to_string(), Some(404))]
+    );
+    for _ in 0..RECENT_CALLS {
+        let _ = g.viewer_login();
+    }
+    assert_eq!(g.recent_calls().len(), RECENT_CALLS);
+}
+
+#[test]
+fn the_login_check_finds_a_refused_login_and_clears_the_mark_once_github_accepts_it_again() {
+    let (g, t) = forge();
+    assert_eq!(GithubApi::new(t.clone()).check_login(), None, "no login, no check");
+    t.ok("GET", &format!("{API}/rate_limit"), r#"{"resources":{}}"#);
+    assert_eq!(g.check_login(), Some(LoginCheck::Ok));
+
+    t.on("GET", &format!("{API}/rate_limit"), Response::new(401, r#"{"message":"Bad credentials"}"#));
+    t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
+    assert_eq!(g.check_login(), Some(LoginCheck::Rejected));
+    assert!(g.login_rejected_at().is_some());
+
+    // While marked, the check asks `GET /user`.
+    t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
+    assert_eq!(g.check_login(), Some(LoginCheck::Rejected));
+    assert!(g.login_rejected_at().is_some());
+    t.ok("GET", &format!("{API}/user"), r#"{"login":"me"}"#);
+    assert_eq!(g.check_login(), Some(LoginCheck::Recovered));
+    assert_eq!((g.login_needed(), g.login_rejected_at()), (false, None));
+    let paths: Vec<_> = t.urls().into_iter().map(|u| u.replace(API, "")).collect();
+    assert_eq!(paths, ["GET /rate_limit", "GET /rate_limit", "GET /user", "GET /user", "GET /user"]);
+}
+
+#[test]
+fn urls_for_logs() {
+    assert_eq!(path_of("https://api.github.com/repos/o/r?x=1"), "/repos/o/r");
+    assert_eq!(path_of("https://api.github.com"), "/");
+    assert!(same_host("", "https://api.github.com/x"));
+    assert!(same_host("https://API.github.com/y", "https://api.github.com/x"));
+    assert!(!same_host("https://blob.core.windows.net/y", "https://api.github.com/x"));
+    assert_eq!(clock_ms(90_061_000), "01:01:01 UTC");
+}
+
+#[test]
+fn a_stored_login_without_a_sign_in_time_still_reads() {
+    let a: Account = serde_json::from_str(r#"{"token":"t","apiUrl":"u","login":"me"}"#).unwrap();
+    assert_eq!(a.signed_in_at, None);
 }
 
 #[test]
@@ -83,7 +170,12 @@ fn a_repo_that_refuses_the_login_is_not_a_rejected_login() {
 #[test]
 fn a_refusal_of_the_old_token_does_not_mark_a_new_login() {
     let (g, _) = forge();
-    g.set_account(Some(Account { token: "gho_new".into(), api_url: API.into(), login: "me".into() }));
+    g.set_account(Some(Account {
+        token: "gho_new".into(),
+        api_url: API.into(),
+        login: "me".into(),
+        signed_in_at: None,
+    }));
     g.reject("gho_t");
     assert_eq!(g.login_rejected_at(), None);
     g.reject("gho_new");
@@ -535,6 +627,7 @@ fn enterprise_calls_go_to_its_api() {
         token: "t".into(),
         api_url: "https://ghe.example.com/api/v3".into(),
         login: "me".into(),
+        signed_in_at: None,
     }));
     let _ = g.viewer_login();
     let _ = g.change_request("o/r", "b");
