@@ -6,7 +6,8 @@
 //!
 //! The PR poller reads it like any forge; each read of a change request also moves it on (opens it, starts CI on a new
 //! head, merges it once it is set to merge and CI passed). A run that ends wakes [`run_local_ci_watch`], which reads
-//! the attempt again at once rather than at the next 60 s poll.
+//! the attempt again at once rather than at the next 60 s poll. Its runs are read as a CI provider, [`LocalCi`]
+//! (PDT-242), the local forge's own CI.
 
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
@@ -15,8 +16,10 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::forge::ForgeNotes;
-use pdt_core::pr::{CiRun, CiState, Mergeable, PrState};
-use pdt_forge::{Capabilities, ChangeRequest, Forge, ForgeError, MergeSettings, MergeStrategy};
+use pdt_core::pr::{CiJob, CiRun, CiState, LOCAL_CI, Mergeable, PrState};
+use pdt_forge::{
+    Capabilities, ChangeRequest, CiCapabilities, CiConfig, CiProvider, Forge, ForgeError, MergeSettings, MergeStrategy,
+};
 use pdt_store::{LocalChange, Store};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -27,7 +30,7 @@ use std::time::Duration;
 const CI_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
 
 /// What every local-forge project shares: the CI runs going on in this pdtd, and the wake-up when one ends.
-pub(crate) struct LocalCi {
+pub(crate) struct LocalCiState {
     /// Each running CI process by run id, with the signal that stops it.
     live: Mutex<HashMap<i64, Arc<tokio::sync::Notify>>>,
     /// One change request moves on at a time (two reads at once would open two, or start CI twice).
@@ -37,14 +40,14 @@ pub(crate) struct LocalCi {
     ended_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<(String, String)>>>,
 }
 
-impl Default for LocalCi {
+impl Default for LocalCiState {
     fn default() -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        LocalCi { live: Default::default(), step: Default::default(), ended: tx, ended_rx: Mutex::new(Some(rx)) }
+        LocalCiState { live: Default::default(), step: Default::default(), ended: tx, ended_rx: Mutex::new(Some(rx)) }
     }
 }
 
-impl LocalCi {
+impl LocalCiState {
     fn live(&self) -> std::sync::MutexGuard<'_, HashMap<i64, Arc<tokio::sync::Notify>>> {
         self.live.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -54,7 +57,7 @@ impl LocalCi {
 pub(crate) struct LocalForge {
     store: Store,
     rt: tokio::runtime::Handle,
-    ci: Arc<LocalCi>,
+    ci: Arc<LocalCiState>,
     project_id: String,
     repo: PathBuf,
     /// The `[ci]` command; None: no CI, so a change request merges as soon as it is set to.
@@ -236,7 +239,7 @@ impl LocalForge {
         let run = self.store.add_local_ci_run(change.id, head, command, now_ms()).await.map_err(failed)?;
         let stop = Arc::new(tokio::sync::Notify::new());
         self.ci.live().insert(run.id, stop.clone());
-        let job = CiJob {
+        let job = CiProcess {
             store: self.store.clone(),
             ci: self.ci.clone(),
             id: run.id,
@@ -253,9 +256,9 @@ impl LocalForge {
 }
 
 /// One CI run going on.
-struct CiJob {
+struct CiProcess {
     store: Store,
-    ci: Arc<LocalCi>,
+    ci: Arc<LocalCiState>,
     id: i64,
     command: String,
     dir: PathBuf,
@@ -265,7 +268,7 @@ struct CiJob {
     project_id: String,
 }
 
-impl CiJob {
+impl CiProcess {
     async fn run(self, stop: Arc<tokio::sync::Notify>) {
         let (state, code) = self.execute(&stop).await;
         if let Err(e) = self.store.finish_local_ci_run(self.id, state, code, now_ms()).await {
@@ -378,10 +381,6 @@ impl Forge for LocalForge {
         ForgeNotes { ci: Some(ci), reply: None, watch: None }
     }
 
-    fn has_ci(&self) -> Option<bool> {
-        Some(self.command.is_some())
-    }
-
     fn change_request(&self, _repo: &str, branch: &str) -> Result<Option<ChangeRequest>, ForgeError> {
         let Some(s) = self.block(self.step(branch))? else { return Ok(None) };
         let c = s.change;
@@ -403,35 +402,6 @@ impl Forge for LocalForge {
         }))
     }
 
-    fn branch_runs(&self, _repo: &str, branch: &str) -> Result<Vec<CiRun>, ForgeError> {
-        self.block(async {
-            let Some(c) = self.store.local_change_for_branch(&self.project_id, branch).await.map_err(failed)? else {
-                return Ok(vec![]);
-            };
-            let runs = self.store.local_ci_runs(c.id).await.map_err(failed)?;
-            Ok(runs
-                .into_iter()
-                .map(|r| CiRun {
-                    id: r.id as u64,
-                    attempt: 1,
-                    workflow: "ci".into(),
-                    state: r.state,
-                    url: log_url(self.port, r.id),
-                    head_sha: r.head_sha,
-                    head_branch: branch.to_string(),
-                    // Ordered as text: fixed width.
-                    created_at: format!("{:020}", r.created_at),
-                    failed_jobs: vec![],
-                })
-                .collect())
-        })
-    }
-
-    fn failed_jobs(&self, _repo: &str, run_id: u64, _attempt: u32) -> Result<Vec<String>, ForgeError> {
-        let run = self.block(async { self.store.local_ci_run(run_id as i64).await.map_err(failed) })?;
-        Ok(run.map(|r| vec![r.command]).unwrap_or_default())
-    }
-
     fn merge_settings(&self, _repo: &str, _base: &str) -> Result<MergeSettings, ForgeError> {
         Ok(MergeSettings { squash: false, merge: true, rebase: false, queue: false })
     }
@@ -445,6 +415,106 @@ impl Forge for LocalForge {
             self.store.set_local_change_auto_merge(c.id, true).await.map_err(failed)?;
             self.step(&c.branch).await.map(|_| ())
         })
+    }
+}
+
+/// The local forge's CI (PDT-242): the runs of the `[ci]` command on a branch's change request, which the local forge
+/// starts as it moves the change request on. Each run has one job, the command, whose log is PDT's.
+pub(crate) struct LocalCi {
+    store: Store,
+    rt: tokio::runtime::Handle,
+    project_id: String,
+    logs: PathBuf,
+    port: u16,
+}
+
+impl LocalCi {
+    pub(crate) fn new(st: &AppState, project_id: &str) -> Self {
+        LocalCi {
+            store: st.store.clone(),
+            rt: tokio::runtime::Handle::current(),
+            project_id: project_id.to_string(),
+            logs: st.data_dir.join("local-ci"),
+            port: st.listen_port,
+        }
+    }
+
+    fn block<T>(&self, f: impl Future<Output = Result<T, ForgeError>>) -> Result<T, ForgeError> {
+        self.rt.block_on(f)
+    }
+}
+
+/// The last `lines` lines of `text`.
+fn tail(text: &str, lines: usize) -> String {
+    let all: Vec<&str> = text.lines().collect();
+    let skipped = all.len().saturating_sub(lines);
+    let mut out: String = all[skipped..].iter().map(|l| format!("{l}\n")).collect();
+    if skipped > 0 {
+        out = format!("… ({skipped} earlier lines)\n{out}");
+    }
+    out
+}
+
+impl CiProvider for LocalCi {
+    fn id(&self) -> &str {
+        LOCAL_CI
+    }
+
+    fn label(&self) -> &str {
+        "Local CI"
+    }
+
+    fn capabilities(&self) -> CiCapabilities {
+        CiCapabilities { logs: true, ..CiCapabilities::NONE }
+    }
+
+    /// It is the project's `[ci]` command: there when there is one.
+    fn config_paths(&self) -> CiConfig {
+        CiConfig::Known(true)
+    }
+
+    fn runs(&self, _repo: &str, branch: &str, _sha: Option<&str>) -> Result<Vec<CiRun>, ForgeError> {
+        self.block(async {
+            let Some(c) = self.store.local_change_for_branch(&self.project_id, branch).await.map_err(failed)? else {
+                return Ok(vec![]);
+            };
+            let runs = self.store.local_ci_runs(c.id).await.map_err(failed)?;
+            Ok(runs
+                .into_iter()
+                .map(|r| CiRun {
+                    provider: LOCAL_CI.into(),
+                    id: r.id.to_string(),
+                    attempt: 1,
+                    name: "ci".into(),
+                    state: r.state,
+                    url: log_url(self.port, r.id),
+                    head_sha: r.head_sha,
+                    branch: branch.to_string(),
+                    // Ordered as text: fixed width.
+                    created_at: format!("{:020}", r.created_at),
+                    failed_jobs: if r.state == CiState::Failed { vec![r.command] } else { vec![] },
+                })
+                .collect())
+        })
+    }
+
+    fn jobs(&self, _repo: &str, run: &CiRun) -> Result<Vec<CiJob>, ForgeError> {
+        let Ok(id) = run.id.parse::<i64>() else { return Ok(vec![]) };
+        let found = self.block(async { self.store.local_ci_run(id).await.map_err(failed) })?;
+        Ok(found
+            .map(|r| {
+                vec![CiJob { id: r.id.to_string(), name: r.command, state: r.state, url: log_url(self.port, r.id) }]
+            })
+            .unwrap_or_default())
+    }
+
+    fn job_log_tail(&self, _repo: &str, _run: &CiRun, job: &CiJob, lines: usize) -> Result<String, ForgeError> {
+        let id = job.id.parse::<i64>().map_err(|_| ForgeError::Failed(format!("{} is not a local CI run", job.id)))?;
+        match std::fs::read(log_path(&self.logs, id)) {
+            Ok(b) => Ok(tail(&String::from_utf8_lossy(&b), lines)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(e) => Err(failed(e)),
+        }
     }
 }
 

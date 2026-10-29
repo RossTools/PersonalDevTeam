@@ -1,8 +1,9 @@
 //! The GitHub forge plugin (PDT-241): what registers GitHub in PDT's forge registry. It claims remotes on github.com and
-//! on the GitHub Enterprise Server the login is for, and opens the one [`GithubApi`] the in-app login signs in.
+//! on the GitHub Enterprise Server the login is for, and opens the one [`GithubApi`] the in-app login signs in. GitHub
+//! Actions ([`GithubActions`]) is its CI (PDT-242).
 
-use crate::GithubApi;
-use pdt_forge::{Forge, ForgeKind, ForgePlugin};
+use crate::{GithubActions, GithubApi};
+use pdt_forge::{CiProvider, Forge, ForgeKind, ForgePlugin};
 use std::sync::Arc;
 
 pub struct GithubPlugin {
@@ -37,6 +38,10 @@ impl ForgePlugin for GithubPlugin {
 
     fn forge(&self) -> Arc<dyn Forge> {
         self.api.clone()
+    }
+
+    fn ci(&self) -> Option<Arc<dyn CiProvider>> {
+        Some(Arc::new(GithubActions::new(self.api.clone())))
     }
 }
 

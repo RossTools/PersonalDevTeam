@@ -34,9 +34,8 @@ pub mod connections {
     };
 }
 
-/// Attempts' pull requests and CI, for a CI integration.
+/// Attempts' pull requests and CI, for a CI integration (which reports its CI as a [`pdt_forge::CiProvider`],
+/// [`crate::Integration::ci_provider`]).
 pub mod ci {
-    pub use crate::github::{
-        attempt_ref, keep_other_ci, merge_refused, merge_requested, run_refs, set_other_ci, watched_pr,
-    };
+    pub use crate::github::{attempt_ref, merge_refused, merge_requested, run_refs, watched_pr};
 }

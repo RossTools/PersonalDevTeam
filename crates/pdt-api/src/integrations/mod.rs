@@ -150,9 +150,15 @@ pub trait Integration: Send + Sync {
         Ok(())
     }
 
-    /// The CI provider it is for a project with these settings (its label), if it is one: an automated merge waits
-    /// for its report on the pull request's head ([`crate::ci`]).
-    fn project_ci(&self, _settings: &pdt_store::ProjectSettings) -> Option<&'static str> {
+    /// The CI provider it is for project `project_id` with these settings, if it is one and the project has it set
+    /// up (PDT-242): the PR poller reads its runs with the forge's own CI's, the badge and an automated merge combine
+    /// them ([`crate::ci`]).
+    fn ci_provider(
+        &self,
+        _st: &AppState,
+        _project_id: &str,
+        _settings: &pdt_store::ProjectSettings,
+    ) -> Option<Arc<dyn pdt_forge::CiProvider>> {
         None
     }
 
@@ -446,11 +452,6 @@ impl Registry {
         let Some(out) = schema.apply(input, current)? else { return Ok(None) };
         self.integrations[*i].check_project_settings(&out)?;
         Ok(Some((schema, out)))
-    }
-
-    /// The CI providers a project with these settings has besides its forge's ([`Integration::project_ci`]).
-    pub fn project_ci(&self, settings: &pdt_store::ProjectSettings) -> Vec<&'static str> {
-        self.integrations.iter().filter_map(|i| i.project_ci(settings)).collect()
     }
 
     /// The enabled integrations' members of the poll.

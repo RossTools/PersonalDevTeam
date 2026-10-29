@@ -30,9 +30,10 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   becomes `agent.outcome` (`outcome`, `summary`, `persona`, `personaVersion`, `by`, `sessionId`, `runId`). Phase 7e
   adds the PR poller's `pr.commented` and `pr.reviewed`, the issues sensor's `github.issue.opened`, the scheduler's
   `schedule.fired` and webhooks' `webhook.received` ("Sensors and webhooks"); 7e-2 the
-  Jira sensor's `jira.issue.created`, `.updated`, `.transitioned` and `.commented`, and the Buildkite sensor's
+  Jira sensor's `jira.issue.created`, `.updated`, `.transitioned` and `.commented`, and Buildkite's (a CI provider since PDT-242)
   `ci.run_failed` / `ci.run_passed`. Payload types: pdt-core `workflow/events.rs` (PDT's own types in `EVENT_TYPES`; Jira's in its crate, pdt-int-jira `core.rs`, registered by the Jira integration: "Integrations"). CI events carry
-  `provider` (`github_actions`, or the CI integration's id: `buildkite`) and the PR's `autoMerge` and `inMergeQueue`; CI and `pr.*` events
+  `provider` (the CI provider: `github_actions`, `local`, or the CI integration's id: `buildkite`; each run in `runs`
+  names it too, with a text `id` and `name`) and the PR's `autoMerge` and `inMergeQueue`; CI and `pr.*` events
   carry `mergeRequested` (the open PR was set to merge and hasn't merged, PDT-104: [tickets.md](tickets.md)) and
   `agentWorking` (an agent step is open on the attempt); CI events also `mergeWaiting` (a workflow's merge waits for
   this CI, PDT-151). The merge check logs `attempt.late_commits` (key `<attempt>:late_commits:<head>`, PDT-151:
@@ -723,15 +724,15 @@ opening the first workflow. The workflow page shows the reference warnings in a 
   issue (`projectId`, `connection`, `key`, `url`, `summary`, `description` as text, `status`, `assignee`,
   `assignedToMe` against `GET /rest/api/3/myself`, `reporter`, `issueType`, `priority`, `labels`) and `ticketId` when
   a ticket links it.
-- **Buildkite** (`buildkite.rs` `refresh_buildkite`, pdtd every 60 s after the PR check): for each active attempt of
-  a project whose settings name a `buildkite` connection and pipelines, the head is its open PR's head, else
-  `origin/<branch>`, else the local branch. Each pipeline's builds for that branch and commit become CI runs (pdt-core
-  `buildkite.rs`: `workflow` the pipeline, `id` the build number, `attempt` 1 plus the jobs' retries, so a retried
-  build is news again; `failing` counts as running, `blocked` as queued; failed jobs are the hard-failed script jobs),
-  rolled up per pipeline as GitHub's are. Kept in memory: merged into `attempt.pr.ci` while the PR is open at that
-  head (one badge for both providers), else `attempt.ci`. Events `ci.run_failed` (key `<attempt>:bk_failed:<pipeline>
-  #<number>.<attempt>,…`, a CI-failed `notice` naming the build) and `ci.run_passed` (`…:bk_passed:…`), `provider:
-  buildkite`, `pr` when there is one, so the built-in PR notices tell the agent.
+- **Buildkite** (crates/pdt-int-buildkite `ci.rs` `BuildkiteCi`, a CI provider, PDT-242): a project whose settings name
+  a `buildkite` connection and pipelines has it as a CI provider, which the PR poller reads every 60 s with the rest
+  (tickets.md "Pull requests and CI"): on the open PR's head, else `origin/<branch>`, else the local branch. Each
+  pipeline's builds for that branch and commit become CI runs (`core.rs`: `name` the pipeline, `id`
+  `<pipeline>/<number>`, `attempt` 1 plus the jobs' retries, so a retried build is news again; `failing` counts as
+  running, `blocked` as queued; failed jobs are the hard-failed script jobs), rolled up per pipeline. Events
+  `ci.run_failed` (key `<attempt>:ci_failed:buildkite:<pipeline>/<number>.<attempt>,…`, a notice naming Buildkite) and
+  `ci.run_passed` (`…:ci_passed:buildkite:…`), `provider: buildkite`, `pr` when there is one. Each read reports the
+  connection's health.
 - **Notify** (`workflow/nodes/notify.rs`): a `workflow.notify` notification (PDT-108, [Notifications](#notifications)):
   `title`, `body` plus "From <workflow>", `level` as its severity, `link` as its target (a ticket key opens the ticket,
   else the URL); dedupe key `notify:<step>`; output `{notificationId}` (null when the kind is turned down below Inbox).
@@ -1163,7 +1164,7 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
   reads its rows (`POST /api/sessions/{id}/view`).
 - **Event causes** (`notify` where they happen): a terminal agent session's process exiting non-zero without PDT
   killing it (Stop, close, restart: `AppState::kill_pty`/`remove_pty` mark it) or shutdown (`session.exited`); the PR
-  poller's and Buildkite's `ci.run_failed`, `pr.conflict`, `pr.queue_left`, `pr.merged` as they are logged
+  poller's `ci.run_failed` (every CI provider's), `pr.conflict`, `pr.queue_left`, `pr.merged` as they are logged
   (`ci.run_passed` clears `ci_failed`; `pr.merged` clears the attempt's other three); a run ending failed
   (`workflow.failed`); `notify` steps; a sensor's connection starting to fail (`connection.failed`, cleared when it
   works again or is saved); a message given up on (`session.undelivered`, severity warning, default `toast`, key

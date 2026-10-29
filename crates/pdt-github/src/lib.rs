@@ -4,19 +4,21 @@
 //! the Actions runs API. GETs are conditional (ETags: an unchanged answer costs no rate limit), and a used-up rate
 //! limit stops every call until it resets. Blocking; call from `spawn_blocking` in async code.
 
+pub mod actions;
 pub mod login;
 pub mod plugin;
 pub mod transport;
 
+pub use actions::GithubActions;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
 pub use pdt_forge::{
     Capabilities, ChangeComment, ChangeRequest, ChangeReview, CloseReason, Forge, ForgeError, ForgeNotes, Issue,
-    IssueDetail, JobLog, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest, Release,
+    IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest, Release,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use transport::{Request, Response, Transport, encode};
@@ -718,13 +720,14 @@ pub fn parse_runs(v: &Value) -> Result<Vec<CiRun>, GhError> {
         .iter()
         .filter_map(|r| {
             Some(CiRun {
-                id: r["id"].as_u64()?,
+                provider: pdt_core::pr::GITHUB_ACTIONS.into(),
+                id: r["id"].as_u64()?.to_string(),
                 attempt: r["run_attempt"].as_u64().and_then(|a| u32::try_from(a).ok()).unwrap_or(1),
-                workflow: s(r, "name"),
+                name: s(r, "name"),
                 state: CiRun::state_of(r["status"].as_str().unwrap_or(""), r["conclusion"].as_str().unwrap_or("")),
                 url: s(r, "html_url"),
                 head_sha: s(r, "head_sha"),
-                head_branch: s(r, "head_branch"),
+                branch: s(r, "head_branch"),
                 created_at: s(r, "created_at"),
                 failed_jobs: vec![],
             })
@@ -736,17 +739,26 @@ fn failed(job: &Value) -> bool {
     matches!(job["conclusion"].as_str(), Some("failure" | "timed_out" | "startup_failure"))
 }
 
+/// A jobs answer (`GET …/jobs`): its jobs.
+pub fn job_list(v: &Value) -> Result<&Vec<Value>, GhError> {
+    v["jobs"].as_array().ok_or_else(|| GhError::BadAnswer("no jobs in the answer".into()))
+}
+
 /// A jobs answer (`GET …/jobs`): the jobs that failed.
 pub fn failed_job_list(v: &Value) -> Result<Vec<Value>, GhError> {
-    let jobs = v["jobs"].as_array().ok_or_else(|| GhError::BadAnswer("no jobs in the answer".into()))?;
-    Ok(jobs.iter().filter(|j| failed(j)).cloned().collect())
+    Ok(job_list(v)?.iter().filter(|j| failed(j)).cloned().collect())
 }
 
 /// The end of a job's log: its last [`LOG_LINES`] lines (at most [`LOG_CHARS`] characters), without Actions'
 /// timestamps and terminal colours.
 pub fn log_tail(raw: &str) -> String {
+    log_tail_lines(raw, LOG_LINES)
+}
+
+/// [`log_tail`] of the last `keep` lines.
+pub fn log_tail_lines(raw: &str, keep: usize) -> String {
     let lines: Vec<&str> = raw.lines().collect();
-    let skipped = lines.len().saturating_sub(LOG_LINES);
+    let skipped = lines.len().saturating_sub(keep);
     let mut out: String = lines[skipped..].iter().map(|l| format!("{}\n", clean_line(l))).collect();
     let chars = out.chars().count();
     if chars > LOG_CHARS {
@@ -923,9 +935,6 @@ impl Forge for GithubApi {
     fn agent_notes(&self) -> ForgeNotes {
         agent_notes()
     }
-    fn ci_dirs(&self) -> &'static [&'static str] {
-        CI_DIRS
-    }
     fn login_needed(&self) -> bool {
         (self.account().is_none() && self.wanted.load(Ordering::SeqCst)) || self.rejected_at().is_some()
     }
@@ -962,32 +971,6 @@ impl Forge for GithubApi {
             ))),
             Err(e) => Err(e.into()),
         }
-    }
-    fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, ForgeError> {
-        let path = format!("repos/{repo}/actions/runs?branch={}&per_page={RUN_LIMIT}", encode(branch));
-        Ok(parse_runs(&self.get(&path)?)?)
-    }
-    fn queue_runs(&self, repo: &str) -> Result<Vec<CiRun>, ForgeError> {
-        Ok(parse_runs(&self.get(&format!("repos/{repo}/actions/runs?event=merge_group&per_page={RUN_LIMIT}"))?)?)
-    }
-    fn failed_jobs(&self, repo: &str, run_id: u64, attempt: u32) -> Result<Vec<String>, ForgeError> {
-        let v = self.get(&format!("repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100"))?;
-        Ok(failed_job_list(&v)?.iter().map(|j| s(j, "name")).collect())
-    }
-    fn failed_logs(&self, repo: &str, run_id: u64) -> Result<Vec<JobLog>, ForgeError> {
-        let v = self.get(&format!("repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100"))?;
-        let mut out = vec![];
-        for j in failed_job_list(&v)? {
-            let Some(id) = j["id"].as_u64() else { continue };
-            let log = match self.call("GET", &format!("repos/{repo}/actions/jobs/{id}/logs"), None, false) {
-                Ok(res) => log_tail(&res.body),
-                // Logs expire (and a job that never started has none): say so instead of failing the rest.
-                Err(GhError::Status(404 | 410, _)) => "(no log: GitHub has none for this job)".into(),
-                Err(e) => return Err(e.into()),
-            };
-            out.push(JobLog { name: s(&j, "name"), url: s(&j, "html_url"), log });
-        }
-        Ok(out)
     }
     fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, ForgeError> {
         let (owner, name) = owner_name(repo)?;
@@ -1086,23 +1069,6 @@ impl Forge for GithubApi {
         }
         self.send_json("PATCH", &format!("repos/{repo}/issues/{number}"), body)?;
         Ok(())
-    }
-    /// `workflow_dispatch`: the workflow must declare it, and the token needs the Actions write permission.
-    fn run_workflow(
-        &self,
-        repo: &str,
-        workflow: &str,
-        git_ref: &str,
-        inputs: &BTreeMap<String, String>,
-    ) -> Result<(), ForgeError> {
-        let path = format!("repos/{repo}/actions/workflows/{}/dispatches", encode(workflow));
-        match self.send_json("POST", &path, json!({"ref": git_ref, "inputs": inputs})) {
-            Ok(_) => Ok(()),
-            Err(GhError::Status(404, m)) => Err(ForgeError::Failed(format!(
-                "GitHub has no workflow {workflow} in {repo} (or PDT's GitHub login can't start it): {m}"
-            ))),
-            Err(e) => Err(e.into()),
-        }
     }
     fn release(&self, repo: &str, tag: Option<&str>) -> Result<Option<Release>, ForgeError> {
         let path = match tag {

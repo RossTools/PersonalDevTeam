@@ -1,7 +1,7 @@
 //! Buildkite CI (Phase 7e spec §6.4, PDT-85): builds as the REST API returns them, as provider-neutral CI runs
-//! ([`CiRun`]), and the notice PDT tells the agent when they fail. Pure: pdt-api reads Buildkite and logs the events.
+//! ([`CiRun`]) and jobs ([`CiJob`]). Pure: [`crate::ci::BuildkiteCi`] reads Buildkite.
 
-use pdt_core::pr::{CiRun, CiState, CiStatus, Notice, NoticeKind};
+use pdt_core::pr::{CiJob, CiRun, CiState};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
@@ -66,8 +66,31 @@ pub fn parse_build_url(url: &str) -> Option<(String, u64)> {
     }
 }
 
-/// The builds of `pipeline` as CI runs: `id` the build number, `attempt` 1 plus its jobs' retries (so a retried build
-/// is news again), `workflow` the pipeline.
+/// A build's job, if it is one that runs (a script step).
+pub fn job_of(j: &Value) -> Option<CiJob> {
+    if j["type"].as_str() != Some("script") || j["retried"].as_bool() == Some(true) {
+        return None;
+    }
+    let state = match j["state"].as_str().unwrap_or_default() {
+        _ if failed_job(j) => CiState::Failed,
+        "passed" => CiState::Passed,
+        // Soft failures don't fail the build.
+        "failed" | "broken" | "timed_out" => CiState::Passed,
+        "running" | "assigned" | "accepted" | "canceling" | "timing_out" => CiState::Running,
+        "canceled" | "skipped" | "not_run" | "expired" => CiState::Cancelled,
+        _ => CiState::Queued,
+    };
+    let name = j["name"].as_str().or(j["label"].as_str()).or(j["step_key"].as_str()).unwrap_or("job").to_string();
+    Some(CiJob {
+        id: j["id"].as_str()?.to_string(),
+        name,
+        state,
+        url: j["web_url"].as_str().unwrap_or_default().into(),
+    })
+}
+
+/// The builds of `pipeline` as CI runs: `id` `pipeline/number`, `attempt` 1 plus its jobs' retries (so a retried build
+/// is news again), `name` the pipeline.
 pub fn runs_of(pipeline: &str, builds: &[Value]) -> Vec<CiRun> {
     builds
         .iter()
@@ -86,50 +109,19 @@ pub fn runs_of(pipeline: &str, builds: &[Value]) -> Vec<CiRun> {
                 vec![]
             };
             Some(CiRun {
-                id: number,
+                provider: BUILDKITE.into(),
+                id: format!("{pipeline}/{number}"),
                 attempt: u32::try_from(1 + retries).unwrap_or(u32::MAX),
-                workflow: pipeline.to_string(),
+                name: pipeline.to_string(),
                 state,
                 url: b["web_url"].as_str().unwrap_or_default().to_string(),
                 head_sha: b["commit"].as_str().unwrap_or_default().to_string(),
-                head_branch: b["branch"].as_str().unwrap_or_default().to_string(),
+                branch: b["branch"].as_str().unwrap_or_default().to_string(),
                 created_at: b["created_at"].as_str().unwrap_or_default().to_string(),
                 failed_jobs,
             })
         })
         .collect()
-}
-
-/// The ids in a Buildkite event's key: `<pipeline>#<number>.<attempt>` per run.
-pub fn run_ids(runs: &[&CiRun]) -> String {
-    runs.iter().map(|r| format!("{}#{}.{}", r.workflow, r.id, r.attempt)).collect::<Vec<_>>().join(",")
-}
-
-/// What to tell the agent when Buildkite CI failed on `head` of `branch` (and its PR, if it has one).
-pub fn failed_notice(ci: &CiStatus, branch: &str, pr: Option<u32>, head: &str) -> Option<Notice> {
-    if ci.state != CiState::Failed {
-        return None;
-    }
-    let failed: Vec<&CiRun> = ci.failed().collect();
-    let jobs: Vec<String> = failed.iter().flat_map(|r| r.failed_jobs.iter().cloned()).collect();
-    let short = &head[..head.len().min(7)];
-    let on = match pr {
-        Some(n) => format!("PR #{n} ({branch})"),
-        None => branch.to_string(),
-    };
-    let mut text = format!("[PDT] Buildkite CI failed on {on} at {short}");
-    if !jobs.is_empty() {
-        text.push_str(&format!(": {}", jobs.join(", ")));
-    }
-    text.push_str(&format!(". Build: {}. Read the failed jobs' logs there, fix it, run the checks and push.", ci.url));
-    Some(Notice {
-        kind: NoticeKind::CiFailed,
-        key: format!("bk_failed:{}", run_ids(&failed)),
-        pr,
-        url: Some(ci.url.clone()),
-        jobs,
-        text,
-    })
 }
 
 #[cfg(test)]
@@ -153,30 +145,28 @@ mod tests {
             {"type": "script", "name": "build", "state": "passed"}]);
         let runs = runs_of("app", &[build(3, "failed", "h", jobs), build(2, "passed", "h", json!([]))]);
         assert_eq!(runs.len(), 2);
-        assert_eq!((runs[0].id, runs[0].attempt, runs[0].workflow.as_str()), (3, 2, "app"));
+        assert_eq!((runs[0].id.as_str(), runs[0].attempt, runs[0].name.as_str()), ("app/3", 2, "app"));
+        assert_eq!((runs[0].provider.as_str(), runs[0].branch.as_str()), ("buildkite", "b"));
         assert_eq!(runs[0].failed_jobs, ["test"]);
         assert_eq!(runs[1].state, CiState::Passed);
-        let ci = CiStatus::of(&runs, "h").unwrap();
+        let ci = pdt_core::pr::CiStatus::of(&runs, "h").unwrap();
         assert_eq!((ci.state, ci.runs.len()), (CiState::Failed, 1), "the newest build of the pipeline");
-        let n = failed_notice(&ci, "b", Some(4), "abcdef1234").unwrap();
-        assert_eq!(n.key, "bk_failed:app#3.2");
-        assert!(
-            n.text.contains("PR #4 (b) at abcdef1: test. Build: https://buildkite.com/acme/app/builds/3"),
-            "{}",
-            n.text
-        );
-        assert!(failed_notice(&ci, "b", None, "h").unwrap().text.contains("failed on b at h"));
     }
 
     #[test]
-    fn providers_merge_into_one_status() {
-        let bk = CiStatus::of(&runs_of("app", &[build(1, "failed", "h", json!([]))]), "h");
-        let gh = CiStatus::of(&runs_of("gh", &[build(9, "passed", "h", json!([]))]), "h");
-        let both = CiStatus::merge(gh.clone(), bk.clone()).unwrap();
-        assert_eq!((both.state, both.runs.len()), (CiState::Failed, 2));
-        assert!(both.url.ends_with("/builds/1"));
-        assert_eq!(CiStatus::merge(None, bk.clone()), bk);
-        assert_eq!(CiStatus::merge(gh.clone(), None), gh);
+    fn a_builds_jobs_are_its_script_steps() {
+        let jobs = [
+            json!({"id": "j1", "type": "script", "name": "test", "state": "failed", "web_url": "u1"}),
+            json!({"id": "j2", "type": "script", "label": "lint", "state": "failed", "soft_failed": true}),
+            json!({"id": "j3", "type": "script", "name": "old", "state": "failed", "retried": true}),
+            json!({"id": "j4", "type": "waiter"}),
+            json!({"id": "j5", "type": "script", "name": "deploy", "state": "scheduled"}),
+        ];
+        let got: Vec<CiJob> = jobs.iter().filter_map(job_of).collect();
+        assert_eq!(got.iter().map(|j| j.id.as_str()).collect::<Vec<_>>(), ["j1", "j2", "j5"]);
+        assert_eq!((got[0].state, got[0].url.as_str()), (CiState::Failed, "u1"));
+        assert_eq!((got[1].name.as_str(), got[1].state), ("lint", CiState::Passed), "a soft failure passes");
+        assert_eq!(got[2].state, CiState::Queued);
     }
 
     #[test]

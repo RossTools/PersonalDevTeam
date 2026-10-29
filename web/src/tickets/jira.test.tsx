@@ -116,7 +116,7 @@ describe('Jira and Buildkite', () => {
     const { unmount } = renderWithQuery(<ExternalKeys links={links} linked />);
     expect(screen.getByRole('link', { name: /ABC-1/ }).getAttribute('href')).toBe(links[0].url);
     unmount();
-    renderWithQuery(<><ExternalKeys links={links} /><CiBadge ci={{ state: 'failed', url: 'u', runs: [{ id: 3, attempt: 1, workflow: 'app', state: 'failed', url: 'u', failedJobs: ['test'] }] }} /></>);
+    renderWithQuery(<><ExternalKeys links={links} /><CiBadge ci={{ state: 'failed', url: 'u', runs: [{ provider: 'buildkite', id: 'app/3', attempt: 1, name: 'app', state: 'failed', url: 'u', failedJobs: ['test'] }] }} /></>);
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.getByText('ABC-1')).toBeTruthy();
     expect(screen.getByText('CI failed').closest('[title]')?.getAttribute('title')).toBe('Failed: test');

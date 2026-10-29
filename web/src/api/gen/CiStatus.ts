@@ -3,7 +3,8 @@ import type { CiRun } from "./CiRun";
 import type { CiState } from "./CiState";
 
 /**
- * CI on one commit: the newest run of each workflow, rolled up (a failure wins, then running, queued, cancelled).
+ * CI on one commit: the newest run of each provider's workflow (or pipeline), rolled up (a failure wins, then
+ * running, queued, cancelled). One status can hold several providers' runs ([`CiStatus::merge`]).
  */
 export type CiStatus = { state: CiState, 
 /**

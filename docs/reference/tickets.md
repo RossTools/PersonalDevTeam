@@ -322,10 +322,10 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
 
 ## Pull requests and CI (PDT-25)
 
-crates/pdt-forge (the `Forge` trait), crates/pdt-github (the GitHub forge), pdt-api `forge.rs` and `github.rs`, pure
-rules in pdt-core `pr.rs`.
+crates/pdt-forge (the `Forge` and `CiProvider` traits), crates/pdt-github (the GitHub forge and GitHub Actions),
+pdt-api `forge.rs`, `ci.rs` and `github.rs`, pure rules in pdt-core `pr.rs`.
 
-- A project's **forge** (PDT-176) is where its PRs, CI, reviews and issues live: the one `.pdt/project.toml` names
+- A project's **forge** (PDT-176) is where its PRs, reviews and issues live: the one `.pdt/project.toml` names
   (`forge = "github"`, `"local"` or `"none"`, docs/run-config.md "Forge"), else the forge whose plugin claims its
   `origin`'s host, else none (no PR, CI or feedback is read and Merge is local). Forges are plugins (PDT-241): each
   registers a `pdt_forge::ForgePlugin` (its kind, the hosts it claims, the `Forge` it opens) in the
@@ -340,6 +340,19 @@ rules in pdt-core `pr.rs`.
   `github.*` issue actions without issues, and without required checks a workflow's or agent's merge always waits
   for green CI (Review "Merge"). Each forge also writes its part of agents' instructions (docs/reference/agents.md).
   GitHub can do all of it.
+- A project's **CI providers** (PDT-242, `pdt_forge::CiProvider`, pdt-api `ci.rs`) are apart from its forge: GitHub
+  Actions (`pdt_github::GithubActions`, the GitHub plugin's own CI, `ForgePlugin::ci`), the local CI command
+  (`local_forge::LocalCi`, the local forge's) and Buildkite (`pdt_int_buildkite::BuildkiteCi`, from
+  `Integration::ci_provider` once the project's settings name a connection and pipelines). By default a project has its
+  forge's own CI and every CI integration set up for it; `[ci] providers` in `.pdt/project.toml` picks and orders them
+  (docs/run-config.md "CI providers"). A provider reads a branch's runs (`runs`), a run's jobs (`jobs`) and a job's log
+  (`job_log_tail`), and may retry a run, start a workflow (`trigger`) and read merge-queue runs, as its
+  `capabilities` say; `config_paths` says whether the repository has its CI (Actions: files under `.github/workflows`;
+  the others: set up, so yes). A run (`pdt_core::pr::CiRun`) names its `provider`, has a text `id` (an Actions run's
+  number, a Buildkite build's `pipeline/number`, a local run's number), its `attempt`, `name` (workflow or pipeline),
+  `state`, `url`, head, branch and `failedJobs`. CI events logged before PDT-242 were rewritten to that shape (migration
+  `…_ci_run_providers.sql`). Tests use `pdt_forge::testing::FakeCi` (`FakeForge::ci` is a fake Actions;
+  `testing::fake_github` registers both).
 - The **local forge** (PDT-178, pdt-api `local_forge.rs`, store `local_changes` / `local_ci_runs`) is PDT itself, for
   repositories with no remote: change requests, CI and merges with required checks only. Each read of a branch's
   change request (the poller's, Merge's) also moves it on: opens one once the active attempt's branch has commits its
@@ -352,13 +365,22 @@ rules in pdt-core `pr.rs`.
   `local: true`; notices and the CI gate name a "change request", point at the log with `curl` and say commit, not
   push. A merge in the read that sees CI pass logs `pr.merged` without a `ci.run_passed`, as auto-merge does on GitHub.
 - Every 60 s (before the merge check) and when a ticket is opened (`check-merge`), pdtd reads each active attempt's PR
-  from its project's forge; GitHub's goes over GitHub's REST and GraphQL APIs with the in-app GitHub login
+  from its project's forge and its CI from each of the project's CI providers (`github::read_attempt`); GitHub's goes over GitHub's REST and GraphQL APIs with the in-app GitHub login
   ([github.md](github.md); no `gh`). Without a login every read fails as "GitHub is not connected" and the Inbox asks
   the user to connect. Tests get `GithubApi::offline()` (no network, no login) or `pdt_forge::testing::FakeForge`
-  registered as GitHub through the registry (`pdt_forge::HostedForge::github`), whose capabilities a test can turn off, and pdtd's own tests set `PDT_GITHUB_OFFLINE=1`. Only projects with a
-  forge (a GitHub Enterprise Server's origin counts once the login is for that host).
-- One GraphQL query reads state, draft, mergeable, `BEHIND`, auto-merge, merge-queue entry and newest merge-queue
-  event; then the Actions runs API (`…/actions/runs?branch=`) gives CI on the PR head (the newest run of each workflow;
+  registered as GitHub through the registry (`pdt_forge::testing::fake_github`), whose capabilities a test can turn off, and pdtd's own tests set `PDT_GITHUB_OFFLINE=1`. Only projects with a
+  forge or a CI provider (a GitHub Enterprise Server's origin counts once the login is for that host).
+- **CI** is read on the open PR's head from every provider; a provider that builds branches (`capabilities().branches`:
+  Buildkite) is also read without a PR, on `origin/<branch>`, else the local branch (`attempt.ci`). The newest run of
+  each provider's workflow rolls up into one status (`CiStatus::of`/`merge`: a failure wins, then running, queued,
+  cancelled), the PR badge's `attempt.pr.ci`. A provider whose read fails keeps its last look on that head (logged
+  once) and an automated merge refuses (`ci_unreadable`) until it reads again; a failed read of the PR itself keeps the
+  whole last look (`attempt.pr.error`). Each provider's CI is its own events: `ci.run_failed` (a failure notice naming
+  the provider unless it is Actions or the local command, and how to read the log: `ci_failed_logs` with its
+  `provider` and `runId`) and `ci.run_passed`, with `provider`; keys `<attempt>:ci_failed:<id>.<attempt>,…` for
+  Actions and local CI (as before), `<attempt>:ci_failed:<provider>:<id>.<attempt>,…` for the others.
+- On GitHub, one GraphQL query reads state, draft, mergeable, `BEHIND`, auto-merge, merge-queue entry and newest
+  merge-queue event; then GitHub Actions' runs API (`…/actions/runs?branch=`) gives CI on the PR head (the newest run of each workflow;
   fine-grained tokens cannot read check runs) and, while queued or just out of the queue, `…/actions/runs?event=
   merge_group` gives the runs on `gh-readonly-queue/<base>/pr-<n>-…`; failed job names come from the run attempt's
   jobs (cached per run attempt). The GETs are conditional (ETags), so an unchanged answer costs no rate limit.
@@ -442,9 +464,10 @@ crates/pdt-int-jira and crates/pdt-int-buildkite (each on only when enabled, [wo
   ticket page show it as `#12` (titled "GitHub issue owner/name#12", the page linking it), and `get_ticket` lists it
   in `external`. Moving a linked ticket to Done or Won't do closes the issue once (built-in "Done closes the GitHub
   issue", [workflows.md](workflows.md) "Built-in workflows").
-- **Buildkite CI** shows on the attempt like GitHub's: with an open PR at the same head, in `attempt.pr.ci` (the PR
-  badge rolls up both providers); without a PR, as `attempt.ci` (board card `CiBadge`, Attempt section `CiDetails`).
-  Failures are `ci.run_failed` with `provider: buildkite`, so "PR notices" tells the agent.
+- **Buildkite CI** is a CI provider (PDT-242, "Pull requests and CI"): with an open PR at the same head, in
+  `attempt.pr.ci` (the PR badge rolls up every provider); without a PR, as `attempt.ci` (board card `CiBadge`, Attempt
+  section `CiDetails`). Failures are `ci.run_failed` with `provider: buildkite`, so "PR notices" tells the agent, and
+  `ci_failed_logs` reads its failed jobs' logs (`GET …/builds/<n>/jobs/<id>/log`).
 
 ## Areas and overlap (Phase 4c)
 

@@ -28,7 +28,7 @@ pub async fn setup(integrations: Vec<Arc<dyn pdt_api::Integration>>) -> Env {
     state.integrations = Arc::new(pdt_api::Integrations::new(integrations));
     state.integrations.enable(&ids);
     let gh = Arc::new(FakeForge::default());
-    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::HostedForge::github(gh.clone()))]);
+    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::testing::fake_github(&gh))]);
     let app = router(state.clone(), None);
     Env { app, state, gh, tmp }
 }

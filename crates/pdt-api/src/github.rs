@@ -7,16 +7,21 @@
 //! 7e): `pr.commented`,
 //! `pr.reviewed`, after a silent first look (the baseline in `host_settings`), moved on only once every new one is
 //! logged. A read that fails keeps the last look, marked with the error (`attempt.pr.error`), and is logged once.
+//!
+//! CI comes from the project's CI providers (PDT-242, `crate::ci`), not the forge: each is read on the open PR's head
+//! (a provider that builds branches, such as Buildkite, on the branch's head before there is a PR), rolled up into one
+//! status for the badge, and logged as `ci.run_failed` / `ci.run_passed` per provider (`provider` in the event). A
+//! provider whose read fails keeps its last look on that head, and an automated merge refuses until it reads again.
 
 use crate::forge::ProjectForge;
 use crate::routes::{AppState, now_ms};
 use pdt_core::pr::{
-    CiRun, CiState, CiStatus, Notice, NoticeKind, PrState, PullRequestStatus, notices, queue_branch_prefix,
+    CiRun, CiSource, CiState, CiStatus, Notice, NoticeKind, PrState, PullRequestStatus, notices, queue_branch_prefix,
 };
 use pdt_core::ticket::{AttemptSummary, Ticket, TicketSummary};
 use pdt_core::workflow::api::NewLogEvent;
 use pdt_core::workflow::events::{self as ev, AttemptRef, CiEvent, CiRunRef, PrEvent};
-use pdt_forge::{ChangeComment, ChangeReview, Forge, ForgeError};
+use pdt_forge::{ChangeComment, ChangeReview, CiProvider, Forge, ForgeError};
 use pdt_store::AttemptInfo;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -31,15 +36,24 @@ pub(crate) struct PrWatch {
     /// an hour after the attempt ended).
     by_attempt: HashMap<String, PullRequestStatus>,
     /// The failed jobs of each run attempt already asked for, while a watched PR still shows that run.
-    jobs: HashMap<(u64, u32), Vec<String>>,
+    jobs: HashMap<JobKey, Vec<String>>,
     /// The last error per read (`pr:<project>`, `issues:<repo>`, `feedback:<attempt>`), so a broken GitHub login is logged
     /// once rather than every minute.
     errors: HashMap<String, String>,
     /// The account PDT is logged in to GitHub as (comments by it are the user's own).
     viewer: Option<String>,
-    /// The CI integrations report for each active attempt's head (Phase 7e), by attempt and then by
-    /// integration id; shown with its PR's CI or on its own.
-    other_ci: HashMap<String, BTreeMap<String, CiStatus>>,
+    /// The CI of each active attempt without an open PR, from the providers that build branches (Buildkite):
+    /// `attempt.ci`.
+    branch_ci: HashMap<String, CiStatus>,
+    /// Why each provider's last read of an attempt's CI failed, by attempt and then by provider.
+    ci_errors: HashMap<String, BTreeMap<String, String>>,
+}
+
+/// A run attempt: its provider, id and attempt.
+pub(crate) type JobKey = (String, String, u32);
+
+fn job_key(r: &CiRun) -> JobKey {
+    (r.provider.clone(), r.id.clone(), r.attempt)
 }
 
 /// The newest comment and review ids a PR's feedback was read up to (`sensor.pr_comments.<attempt>`).
@@ -54,11 +68,12 @@ fn feedback_key(attempt_id: &str) -> String {
     format!("sensor.pr_comments.{attempt_id}")
 }
 
-/// A GitHub read failed: logged when that is news (the first failure, or a new reason).
+/// A forge's (or a CI provider's, `ci:<provider>:<project>`) read failed: logged when that is news (the first failure,
+/// or a new reason).
 pub(crate) fn gh_failed(st: &AppState, what: &str, error: &str) {
     let mut w = watch(st);
     if w.errors.get(what).map(String::as_str) != Some(error) {
-        tracing::warn!(read = what, error, "could not read from GitHub");
+        tracing::warn!(read = what, error, "could not read from the forge or CI");
         w.errors.insert(what.to_string(), error.to_string());
     }
 }
@@ -66,7 +81,7 @@ pub(crate) fn gh_failed(st: &AppState, what: &str, error: &str) {
 /// A GitHub read worked (logged when it had been failing).
 pub(crate) fn gh_worked(st: &AppState, what: &str) {
     if watch(st).errors.remove(what).is_some() {
-        tracing::info!(read = what, "reading from GitHub works again");
+        tracing::info!(read = what, "reading from the forge or CI works again");
     }
 }
 
@@ -237,56 +252,21 @@ impl PrWatch {
     /// Forgets the failed jobs of runs no watched PR shows any more (a new push, a merged PR), so `jobs` holds only
     /// what the next read can use.
     fn forget_unseen_jobs(&mut self) {
-        let shown: HashSet<(u64, u32)> = self
+        let shown: HashSet<JobKey> = self
             .by_attempt
             .values()
             .flat_map(|p| p.ci.iter().chain(p.queue_ci.iter()))
-            .flat_map(|c| c.runs.iter().map(|r| (r.id, r.attempt)))
+            .chain(self.branch_ci.values())
+            .flat_map(|c| c.runs.iter().map(job_key))
             .collect();
         self.jobs.retain(|k, _| shown.contains(k));
     }
 }
 
-/// Every integration's CI of an attempt as one (None: none reported).
-fn other_ci(w: &PrWatch, attempt_id: &str, head: Option<&str>) -> Option<CiStatus> {
-    let on_head = |c: &&CiStatus| head.is_none_or(|h| c.runs.iter().all(|r| r.head_sha == h));
-    w.other_ci.get(attempt_id)?.values().filter(on_head).cloned().fold(None, |all, c| CiStatus::merge(all, Some(c)))
-}
-
 fn decorate_attempt(w: &PrWatch, a: &mut AttemptSummary) {
     a.pr = w.by_attempt.get(&a.id).cloned();
-    match a.pr.as_mut().filter(|p| p.state == PrState::Open) {
-        // On the PR's head: one badge for every provider.
-        Some(pr) => {
-            if let Some(ci) = other_ci(w, &a.id, Some(&pr.head_sha)) {
-                pr.ci = CiStatus::merge(pr.ci.take(), Some(ci));
-            }
-        }
-        None => a.ci = other_ci(w, &a.id, None),
-    }
-}
-
-/// Keeps (or with None, drops) the CI integration `provider` reports for an attempt's head.
-pub fn set_other_ci(st: &AppState, provider: &str, attempt_id: &str, ci: Option<CiStatus>) {
-    let mut w = watch(st);
-    match ci {
-        Some(c) => {
-            w.other_ci.entry(attempt_id.to_string()).or_default().insert(provider.to_string(), c);
-        }
-        None => {
-            if let Some(m) = w.other_ci.get_mut(attempt_id) {
-                m.remove(provider);
-            }
-        }
-    }
-}
-
-/// Drops the CI `provider` reported for attempts no longer active.
-pub fn keep_other_ci(st: &AppState, provider: &str, active: &HashSet<String>) {
-    for (id, m) in watch(st).other_ci.iter_mut() {
-        if !active.contains(id) {
-            m.remove(provider);
-        }
+    if a.pr.as_ref().is_none_or(|p| p.state != PrState::Open) {
+        a.ci = w.branch_ci.get(&a.id).cloned();
     }
 }
 
@@ -349,31 +329,51 @@ pub async fn refresh_prs(st: &AppState) {
             Err(e) => tracing::warn!(attempt = %id, error = %e, "the PR check could not read an ended attempt"),
         }
     }
-    let mut forges: HashMap<String, Option<ProjectForge>> = HashMap::new();
+    let mut projects: HashMap<String, (Option<ProjectForge>, Providers)> = HashMap::new();
     let mut tick = Tick::new(st).await;
     let ended = settling.into_iter().map(|i| (i, false));
     for (info, tell) in active.into_iter().map(|i| (i, true)).chain(ended) {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
-        let forge = match forges.get(&info.project_id) {
+        let (forge, ci) = match projects.get(&info.project_id) {
             Some(f) => f.clone(),
             None => {
-                let f = crate::forge::project_forge(st, &info.project_id, &info.repo_path).await;
-                forges.insert(info.project_id.clone(), f.clone());
+                let f = forge_and_ci(st, &info).await;
+                projects.insert(info.project_id.clone(), f.clone());
                 f
             }
         };
-        let Some(forge) = forge else { continue };
-        refresh_one(st, &info, &forge, &mut tick, tell).await;
+        if forge.is_none() && ci.is_empty() {
+            forget(st, &info.attempt.id);
+            continue;
+        }
+        refresh_one(st, &info, forge.as_ref(), &ci, &mut tick, tell).await;
     }
+}
+
+type Providers = Vec<Arc<dyn CiProvider>>;
+
+/// The attempt's project's forge and CI providers.
+async fn forge_and_ci(st: &AppState, info: &AttemptInfo) -> (Option<ProjectForge>, Providers) {
+    let forge = crate::forge::project_forge(st, &info.project_id, &info.repo_path).await;
+    let ci = crate::ci::project_ci(st, &info.project_id, &info.repo_path, forge.as_ref()).await;
+    (forge, ci)
+}
+
+/// Drops what the watch has of an attempt whose project has neither forge nor CI any more.
+fn forget(st: &AppState, attempt_id: &str) {
+    let mut w = watch(st);
+    w.by_attempt.remove(attempt_id);
+    w.branch_ci.remove(attempt_id);
+    w.ci_errors.remove(attempt_id);
 }
 
 /// What one pass over the attempts shares: each repo's merge-queue runs, the failed jobs known (read once a pass, not
 /// once an attempt), and whether a workflow listens for PR comments.
 struct Tick {
     queue_runs: HashMap<String, Vec<CiRun>>,
-    jobs: Arc<HashMap<(u64, u32), Vec<String>>>,
+    jobs: Arc<HashMap<JobKey, Vec<String>>>,
     feedback: bool,
 }
 
@@ -388,10 +388,24 @@ impl Tick {
 /// Reads one active attempt's PR now (the ticket was opened). False when the forge couldn't be read (the watch keeps
 /// the last look); true too for a project on no forge.
 pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) -> bool {
-    match crate::forge::project_forge(st, &info.project_id, &info.repo_path).await {
-        Some(forge) => refresh_one(st, info, &forge, &mut Tick::new(st).await, true).await,
-        None => true,
+    let (forge, ci) = forge_and_ci(st, info).await;
+    if forge.is_none() && ci.is_empty() {
+        return true;
     }
+    refresh_one(st, info, forge.as_ref(), &ci, &mut Tick::new(st).await, true).await
+}
+
+/// The commit a branch's CI builds before it has a pull request: the pushed branch's head, else the local one.
+async fn branch_head(info: &AttemptInfo) -> Option<String> {
+    let repo = std::path::PathBuf::from(&info.repo_path);
+    let branch = info.attempt.branch.clone();
+    tokio::task::spawn_blocking(move || {
+        pdt_git::rev_parse(&repo, &format!("refs/remotes/origin/{branch}"))
+            .or_else(|| pdt_git::rev_parse(&repo, &format!("refs/heads/{branch}")))
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// The project's GitHub repository (`owner/name`) from its `origin`, as project responses report it.
@@ -403,21 +417,38 @@ pub(crate) async fn github_repo(repo_path: &str) -> Option<String> {
         .flatten()
 }
 
-/// Reads one attempt's PR into the watch; with `tell`, queues its news. False when the read failed.
-async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, tick: &mut Tick, tell: bool) -> bool {
-    let repo = forge.repo.as_str();
-    let prev = watch(st).by_attempt.get(&info.attempt.id).cloned();
-    let was_queued = prev.as_ref().is_some_and(|p| p.in_merge_queue);
-    let cached_queue = tick.queue_runs.get(repo).cloned();
-    let known_jobs = tick.jobs.clone();
-    let (gh, repo_s, branch) = (forge.api.clone(), repo.to_string(), info.attempt.branch.clone());
-    let since = info.attempt.created_at;
-    let local = forge.kind == pdt_core::forge::ForgeKind::LOCAL;
-    let read = tokio::task::spawn_blocking(move || {
-        read_pr(gh.as_ref(), &repo_s, &branch, since, was_queued, cached_queue, &known_jobs)
-            .map(|(pr, q, j)| (pr.map(|p| PullRequestStatus { local, ..p }), q, j))
-    })
-    .await;
+/// Reads one attempt's PR and CI into the watch; with `tell`, queues their news. False when the read failed.
+async fn refresh_one(
+    st: &AppState,
+    info: &AttemptInfo,
+    forge: Option<&ProjectForge>,
+    ci: &[Arc<dyn CiProvider>],
+    tick: &mut Tick,
+    tell: bool,
+) -> bool {
+    let repo = forge.map(|f| f.repo.clone()).unwrap_or_default();
+    let id = info.attempt.id.clone();
+    let (prev, prev_branch_ci) = {
+        let w = watch(st);
+        (w.by_attempt.get(&id).cloned(), w.branch_ci.get(&id).cloned())
+    };
+    let branch_head = match ci.iter().any(|p| p.capabilities().branches) {
+        true => branch_head(info).await,
+        false => None,
+    };
+    let local = forge.is_some_and(|f| f.kind == pdt_core::forge::ForgeKind::LOCAL);
+    let args = ReadArgs {
+        forge: forge.map(|f| f.api.clone()),
+        ci: ci.to_vec(),
+        repo: repo.clone(),
+        branch: info.attempt.branch.clone(),
+        since: info.attempt.created_at,
+        was_queued: prev.as_ref().is_some_and(|p| p.in_merge_queue),
+        queue_cache: tick.queue_runs.get(&repo).cloned(),
+        known: tick.jobs.clone(),
+        branch_head,
+    };
+    let read = tokio::task::spawn_blocking(move || read_attempt(&args)).await;
     let read = match read {
         Ok(r) => r,
         Err(e) => {
@@ -426,7 +457,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, ti
         }
     };
     let what = format!("pr:{}", info.project_id);
-    let (found, queue, jobs) = match read {
+    let read = match read {
         Ok(r) => {
             gh_worked(st, &what);
             r
@@ -435,28 +466,74 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, ti
             let msg = e.to_string();
             gh_failed(st, &what, &msg);
             // The badge keeps the last look, saying it is stale and why.
-            if let Some(p) = watch(st).by_attempt.get_mut(&info.attempt.id) {
+            if let Some(p) = watch(st).by_attempt.get_mut(&id) {
                 p.error = Some(msg);
             }
             return false;
         }
     };
-    if let Some(q) = queue {
-        tick.queue_runs.insert(repo.to_string(), q);
+    if let Some(q) = read.queue {
+        tick.queue_runs.insert(repo.clone(), q);
     }
-    if !jobs.is_empty() {
-        Arc::make_mut(&mut tick.jobs).extend(jobs.clone());
+    if !read.jobs.is_empty() {
+        Arc::make_mut(&mut tick.jobs).extend(read.jobs.clone());
     }
-    let Some(mut now) = found else {
-        watch(st).by_attempt.remove(&info.attempt.id);
-        return true;
+    // Each provider's part on the head; one that couldn't be read keeps its last look there.
+    let prev_ci = match prev.as_ref().filter(|p| p.state == PrState::Open) {
+        Some(p) => p.ci.clone(),
+        None => prev_branch_ci,
     };
-    now.checked_at = now_ms();
+    let head = read.head.clone();
+    let on_head = |c: &CiStatus| head.as_ref().is_some_and(|h| c.runs.iter().all(|r| &r.head_sha == h));
+    let mut parts: Vec<CiStatus> = vec![];
+    let mut errors = BTreeMap::new();
+    for (provider, got) in read.ci {
+        let key = format!("ci:{provider}:{}", info.project_id);
+        match got {
+            Ok(c) => {
+                gh_worked(st, &key);
+                parts.extend(c);
+            }
+            Err(e) => {
+                gh_failed(st, &key, &e);
+                parts.extend(prev_ci.as_ref().and_then(|c| c.of_provider(&provider)).filter(on_head));
+                errors.insert(provider, e);
+            }
+        }
+    }
+    let all = CiStatus::combine(parts.clone());
+    let found = read.pr.map(|p| PullRequestStatus { local, ..p });
     {
         let mut w = watch(st);
-        w.jobs.extend(jobs);
-        w.by_attempt.insert(info.attempt.id.clone(), now.clone());
+        w.jobs.extend(read.jobs);
+        if errors.is_empty() {
+            w.ci_errors.remove(&id);
+        } else {
+            w.ci_errors.insert(id.clone(), errors);
+        }
+        match (&found, &all) {
+            (None, Some(c)) => w.branch_ci.insert(id.clone(), c.clone()),
+            _ => w.branch_ci.remove(&id),
+        };
     }
+    let sources: HashMap<&str, CiSource> = ci.iter().map(|p| (p.id(), crate::ci::source(p.as_ref()))).collect();
+    let Some(mut now) = found else {
+        watch(st).by_attempt.remove(&id);
+        if tell && let Some(h) = &head {
+            let (agent_working, merge_waiting) = busy(st, &id).await;
+            let events = parts.iter().flat_map(|c| {
+                let s = sources.get(c.runs[0].provider.as_str());
+                s.map(|s| ci_events(info, s, c, None, h, agent_working, merge_waiting)).unwrap_or_default()
+            });
+            emit(st, info, events.collect()).await;
+        }
+        return true;
+    };
+    if now.state == PrState::Open {
+        now.ci = all;
+    }
+    now.checked_at = now_ms();
+    watch(st).by_attempt.insert(id.clone(), now.clone());
     if tell {
         let mut info = info.clone();
         if (now.auto_merge || now.in_merge_queue) && !info.merge_requested {
@@ -470,24 +547,46 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, ti
             info.merge_requested = false;
             info.merge_refused = false;
             if let Err(e) = st.store.clear_attempt_merge_requested(&info.attempt.id).await {
-                tracing::warn!(ticket = %info.ticket_key, error = %e, "could not forget that a PR was set to merge");
+                tracing::warn!(ticket = %info.ticket_key, error = %e, "could not forget that a PR is set to merge");
             }
         }
-        let agent_working = st.store.attempt_has_open_agent_step(&info.attempt.id).await.unwrap_or(false);
-        let merge_waiting = st.store.attempt_merge_waits_for_ci(&info.attempt.id).await.unwrap_or(false);
+        let (agent_working, merge_waiting) = busy(st, &id).await;
         let info = &info;
-        for e in news_events(info, &now, agent_working, merge_waiting) {
-            match st.store.emit_event(&e, now_ms()).await {
-                Ok(Some(logged)) => crate::notifications::on_event(st, &logged).await,
-                Ok(None) => {}
-                Err(x) => tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request event"),
+        let mut events = news_events(info, &now, agent_working);
+        if now.state == PrState::Open {
+            for c in &parts {
+                if let Some(s) = sources.get(c.runs[0].provider.as_str()) {
+                    events.extend(ci_events(info, s, c, Some(&now), &now.head_sha, agent_working, merge_waiting));
+                }
             }
         }
-        if now.state == PrState::Open && tick.feedback && forge.caps().reviews {
-            refresh_feedback(st, info, forge, &now).await;
+        emit(st, info, events).await;
+        if now.state == PrState::Open
+            && tick.feedback
+            && let Some(f) = forge.filter(|f| f.caps().reviews)
+        {
+            refresh_feedback(st, info, f, &now).await;
         }
     }
     true
+}
+
+/// Whether an agent step works on the attempt now, and whether a workflow's merge of it waits for its CI.
+async fn busy(st: &AppState, attempt_id: &str) -> (bool, bool) {
+    let agent_working = st.store.attempt_has_open_agent_step(attempt_id).await.unwrap_or(false);
+    let merge_waiting = st.store.attempt_merge_waits_for_ci(attempt_id).await.unwrap_or(false);
+    (agent_working, merge_waiting)
+}
+
+/// Logs `events` (each once: its key), telling the notifications of each that is new.
+async fn emit(st: &AppState, info: &AttemptInfo, events: Vec<NewLogEvent>) {
+    for e in events {
+        match st.store.emit_event(&e, now_ms()).await {
+            Ok(Some(logged)) => crate::notifications::on_event(st, &logged).await,
+            Ok(None) => {}
+            Err(x) => tracing::warn!(ticket = %info.ticket_key, error = %x, "could not log a pull request event"),
+        }
+    }
 }
 
 pub fn attempt_ref(info: &AttemptInfo) -> AttemptRef {
@@ -505,9 +604,10 @@ pub fn run_refs(ci: &CiStatus) -> Vec<CiRunRef> {
     ci.runs
         .iter()
         .map(|r| CiRunRef {
-            id: r.id,
+            provider: r.provider.clone(),
+            id: r.id.clone(),
             attempt: r.attempt,
-            workflow: r.workflow.clone(),
+            name: r.name.clone(),
             state: r.state,
             url: r.url.clone(),
             failed_jobs: r.failed_jobs.clone(),
@@ -544,14 +644,9 @@ pub fn merge_refused(info: &AttemptInfo, pr: &PullRequestStatus) -> bool {
     info.merge_refused && pr.state == PrState::Open
 }
 
-/// The events a look at the PR gives (each logged once: its key is the attempt and the notice's key).
-/// `agent_working`: an agent step works on the attempt now; `merge_waiting`: a workflow's merge waits for its CI.
-pub(crate) fn news_events(
-    info: &AttemptInfo,
-    now: &PullRequestStatus,
-    agent_working: bool,
-    merge_waiting: bool,
-) -> Vec<NewLogEvent> {
+/// The events a look at the PR gives, CI aside ([`ci_events`]): each logged once (its key is the attempt and the
+/// notice's key). `agent_working`: an agent step works on the attempt now.
+pub(crate) fn news_events(info: &AttemptInfo, now: &PullRequestStatus, agent_working: bool) -> Vec<NewLogEvent> {
     let a = attempt_ref(info);
     let key = |k: &str| format!("{}:{k}", a.attempt_id);
     let merge_requested = merge_requested(info, now);
@@ -574,131 +669,180 @@ pub(crate) fn news_events(
     for n in all {
         let k = key(&n.key);
         let e = match n.kind {
-            NoticeKind::CiFailed => {
-                let ci = now.ci.as_ref();
-                NewLogEvent::new(
-                    ev::CI_RUN_FAILED,
-                    k,
-                    "pr_poller",
-                    CiEvent {
-                        attempt: a.clone(),
-                        provider: ev::GITHUB_ACTIONS.into(),
-                        pr: Some(now.number),
-                        head_sha: now.head_sha.clone(),
-                        url: ci.map(|c| c.url.clone()).unwrap_or_default(),
-                        runs: ci.map(run_refs).unwrap_or_default(),
-                        jobs: n.jobs.clone(),
-                        notice: Some(n),
-                        auto_merge: now.auto_merge,
-                        in_merge_queue: now.in_merge_queue,
-                        merge_requested,
-                        merge_refused,
-                        agent_working,
-                        merge_waiting,
-                    },
-                )
-            }
             NoticeKind::Conflict => NewLogEvent::new(ev::PR_CONFLICT, k, "pr_poller", pr_event(n)),
             NoticeKind::QueueLeft => NewLogEvent::new(ev::PR_QUEUE_LEFT, k, "pr_poller", pr_event(n)),
             NoticeKind::Merged => NewLogEvent::new(ev::PR_MERGED, k, "pr_poller", pr_event(n)),
             NoticeKind::Behind => NewLogEvent::new(ev::PR_BEHIND, k, "pr_poller", pr_event(n)),
-            NoticeKind::Commented | NoticeKind::Reviewed => continue,
+            NoticeKind::CiFailed | NoticeKind::Commented | NoticeKind::Reviewed => continue,
         };
         out.push(e);
-    }
-    if now.state == PrState::Open
-        && let Some(ci) = now.ci.as_ref().filter(|c| c.state == CiState::Passed)
-    {
-        let ids: Vec<String> = ci.runs.iter().map(|r| format!("{}.{}", r.id, r.attempt)).collect();
-        out.push(NewLogEvent::new(
-            ev::CI_RUN_PASSED,
-            key(&format!("ci_passed:{}", ids.join(","))),
-            "pr_poller",
-            CiEvent {
-                attempt: a.clone(),
-                provider: ev::GITHUB_ACTIONS.into(),
-                pr: Some(now.number),
-                head_sha: now.head_sha.clone(),
-                url: ci.url.clone(),
-                runs: run_refs(ci),
-                jobs: vec![],
-                notice: None,
-                auto_merge: now.auto_merge,
-                in_merge_queue: now.in_merge_queue,
-                merge_requested,
-                merge_refused,
-                agent_working,
-                merge_waiting,
-            },
-        ));
     }
     out
 }
 
-pub(crate) type Read = (Option<PullRequestStatus>, Option<Vec<CiRun>>, HashMap<(u64, u32), Vec<String>>);
+/// The `ci.*` events of one provider's CI (`ci`, its runs only) on `head`, each once (its key names the runs and their
+/// attempts). `pr`: the branch's open pull request, if it has one; `merge_waiting`: a workflow's merge waits for its CI.
+pub(crate) fn ci_events(
+    info: &AttemptInfo,
+    source: &CiSource,
+    ci: &CiStatus,
+    pr: Option<&PullRequestStatus>,
+    head: &str,
+    agent_working: bool,
+    merge_waiting: bool,
+) -> Vec<NewLogEvent> {
+    let a = attempt_ref(info);
+    let merge_requested = pr.is_some_and(|p| merge_requested(info, p));
+    let merge_refused = pr.is_some_and(|p| merge_refused(info, p));
+    let event = |notice: Option<Notice>| CiEvent {
+        attempt: a.clone(),
+        provider: source.id.clone(),
+        pr: pr.map(|p| p.number),
+        head_sha: head.to_string(),
+        url: ci.url.clone(),
+        runs: run_refs(ci),
+        jobs: notice.as_ref().map(|n| n.jobs.clone()).unwrap_or_default(),
+        notice,
+        auto_merge: pr.is_some_and(|p| p.auto_merge),
+        in_merge_queue: pr.is_some_and(|p| p.in_merge_queue),
+        merge_requested,
+        merge_refused,
+        agent_working,
+        merge_waiting,
+    };
+    let key = |k: &str| format!("{}:{k}", a.attempt_id);
+    let mut out = vec![];
+    if let Some(n) = pdt_core::pr::ci_failed_notice(source, ci, pr, &info.attempt.branch, head) {
+        out.push(NewLogEvent::new(ev::CI_RUN_FAILED, key(&n.key), "pr_poller", event(Some(n))));
+    }
+    if ci.state == CiState::Passed {
+        let k = key(&pdt_core::pr::ci_passed_key(source, ci));
+        out.push(NewLogEvent::new(ev::CI_RUN_PASSED, k, "pr_poller", event(None)));
+    }
+    out
+}
 
-/// The PR of `branch` for the attempt started at `since` (ms) with its CI and merge-queue CI, failed jobs filled in
-/// (from `known` where already asked). A closed or merged PR opened before the attempt started is an earlier
-/// attempt's on the same branch name, not this one's; an open one is the branch's, whoever opened it.
-/// Merge-queue runs are read only while the PR is queued, just left the queue (`was_queued`) or was removed from it
-/// for failed checks and not handled yet, once per repo, and only from a forge with merge queues.
-pub(crate) fn read_pr(
-    gh: &dyn Forge,
+/// What [`read_attempt`] reads with.
+pub(crate) struct ReadArgs {
+    pub forge: Option<Arc<dyn Forge>>,
+    pub ci: Vec<Arc<dyn CiProvider>>,
+    pub repo: String,
+    pub branch: String,
+    /// When the attempt started (ms).
+    pub since: i64,
+    /// The PR was in the merge queue at the last look.
+    pub was_queued: bool,
+    /// The repo's merge-queue runs, when this pass read them already.
+    pub queue_cache: Option<Vec<CiRun>>,
+    /// The failed jobs already known.
+    pub known: Arc<HashMap<JobKey, Vec<String>>>,
+    /// The branch's head without a PR, for providers that build branches.
+    pub branch_head: Option<String>,
+}
+
+/// What one look at an attempt found.
+pub(crate) struct Read {
+    /// Its PR, without its CI (`ci` is that).
+    pub pr: Option<PullRequestStatus>,
+    /// The commit CI was read on: the open PR's head, else (without a PR) the branch's.
+    pub head: Option<String>,
+    /// Each provider's CI on `head` (None: no runs there), or why it couldn't be read.
+    pub ci: Vec<(String, Result<Option<CiStatus>, String>)>,
+    /// Merge-queue runs read now.
+    pub queue: Option<Vec<CiRun>>,
+    /// Failed jobs asked for now.
+    pub jobs: HashMap<JobKey, Vec<String>>,
+}
+
+impl Read {
+    /// Its PR with the CI read on its head, every provider's together.
+    pub fn pr_with_ci(self) -> Option<PullRequestStatus> {
+        let ci = CiStatus::combine(self.ci.into_iter().filter_map(|(_, c)| c.ok().flatten()));
+        self.pr.map(|p| PullRequestStatus { ci: if p.state == PrState::Open { ci } else { None }, ..p })
+    }
+}
+
+/// Fills in the failed jobs of `ci`'s failed runs (from `known` or `fetched` where already asked).
+fn fill_jobs(
+    p: &dyn CiProvider,
     repo: &str,
-    branch: &str,
-    since: i64,
-    was_queued: bool,
-    queue_cache: Option<Vec<CiRun>>,
-    known: &HashMap<(u64, u32), Vec<String>>,
-) -> Result<Read, ForgeError> {
-    let pr = gh.change_request(repo, branch)?;
-    // The forge gives the newest open PR, else the newest: when that one is too old, every other is too.
-    let Some(pr) = pr.filter(|p| p.state == PrState::Open || p.created_at.is_none_or(|c| c >= since)) else {
-        return Ok((None, None, HashMap::new()));
-    };
-    let mut fetched_jobs = HashMap::new();
-    let mut fill = |ci: &mut CiStatus| {
-        for r in ci.runs.iter_mut().filter(|r| r.state == CiState::Failed) {
-            let k = (r.id, r.attempt);
-            if let Some(j) = known.get(&k).or_else(|| fetched_jobs.get(&k)) {
-                r.failed_jobs = j.clone();
-            } else if let Ok(j) = gh.failed_jobs(repo, r.id, r.attempt) {
-                fetched_jobs.insert(k, j.clone());
-                r.failed_jobs = j;
-            }
+    ci: &mut CiStatus,
+    known: &HashMap<JobKey, Vec<String>>,
+    fetched: &mut HashMap<JobKey, Vec<String>>,
+) {
+    for r in ci.runs.iter_mut().filter(|r| r.state == CiState::Failed && r.failed_jobs.is_empty()) {
+        let k = job_key(r);
+        if let Some(j) = known.get(&k).or_else(|| fetched.get(&k)) {
+            r.failed_jobs = j.clone();
+        } else if let Ok(j) = pdt_forge::ci::failed_job_names(p, repo, r) {
+            fetched.insert(k, j.clone());
+            r.failed_jobs = j;
         }
+    }
+}
+
+/// The PR of the branch for the attempt started at `since` (ms), and each CI provider's runs on its head (on the
+/// branch's head without a PR, from providers that build branches), failed jobs filled in. A closed or merged PR
+/// opened before the attempt started is an earlier attempt's on the same branch name, not this one's; an open one is
+/// the branch's, whoever opened it. Merge-queue runs are read only while the PR is queued, just left the queue
+/// (`was_queued`) or was removed from it for failed checks and not handled yet, once per repo, and only from a forge
+/// with merge queues and a provider that runs them. A provider's failed read is its own (`ci`); the forge's fails it.
+pub(crate) fn read_attempt(a: &ReadArgs) -> Result<Read, ForgeError> {
+    let repo = a.repo.as_str();
+    let pr = match &a.forge {
+        Some(f) => f.change_request(repo, &a.branch)?,
+        None => None,
     };
-    let mut ci =
-        if pr.state == PrState::Open { CiStatus::of(&gh.branch_runs(repo, branch)?, &pr.head_sha) } else { None };
-    if let Some(c) = ci.as_mut() {
-        fill(c);
+    // The forge gives the newest open PR, else the newest: when that one is too old, every other is too.
+    let pr = pr.filter(|p| p.state == PrState::Open || p.created_at.is_none_or(|c| c >= a.since));
+    let head = match &pr {
+        Some(p) if p.state == PrState::Open => Some(p.head_sha.clone()),
+        Some(_) => None,
+        None => a.branch_head.clone(),
+    };
+    let mut fetched = HashMap::new();
+    let mut ci = vec![];
+    if let Some(h) = &head {
+        for p in a.ci.iter().filter(|p| pr.is_some() || p.capabilities().branches) {
+            let got = p.runs(repo, &a.branch, Some(h)).map(|runs| {
+                let mut c = CiStatus::of(&runs, h);
+                if let Some(c) = c.as_mut() {
+                    fill_jobs(p.as_ref(), repo, c, &a.known, &mut fetched);
+                }
+                c
+            });
+            ci.push((p.id().to_string(), got.map_err(|e| e.to_string())));
+        }
     }
     let mut fresh_queue = None;
     let mut queue_ci = None;
-    let removed_for_checks = pr.queue_removal.as_ref().is_some_and(|r| r.reason == "failed_checks") && !pr.auto_merge;
-    let queues = gh.capabilities().merge_queue;
-    if queues && pr.state == PrState::Open && (pr.in_merge_queue || was_queued || removed_for_checks) {
-        let runs = match queue_cache {
-            Some(r) => r,
-            None => {
-                let r = gh.queue_runs(repo)?;
-                fresh_queue = Some(r.clone());
-                r
-            }
-        };
-        let prefix = queue_branch_prefix(&pr.base_branch, pr.number);
-        let newest = runs
-            .iter()
-            .filter(|r| r.head_branch.starts_with(&prefix))
-            .max_by(|a, b| (a.created_at.as_str(), a.id).cmp(&(b.created_at.as_str(), b.id)));
-        if let Some(sha) = newest.map(|r| r.head_sha.clone()) {
-            queue_ci = CiStatus::of(&runs, &sha);
-            if let Some(c) = queue_ci.as_mut() {
-                fill(c);
+    let queues = a.forge.as_ref().is_some_and(|f| f.capabilities().merge_queue);
+    let queue_provider = a.ci.iter().find(|p| p.capabilities().merge_queue);
+    if let (Some(pr), Some(q)) = (pr.as_ref().filter(|_| queues), queue_provider) {
+        let removed_for_checks =
+            pr.queue_removal.as_ref().is_some_and(|r| r.reason == "failed_checks") && !pr.auto_merge;
+        if pr.state == PrState::Open && (pr.in_merge_queue || a.was_queued || removed_for_checks) {
+            let runs = match a.queue_cache.clone() {
+                Some(r) => r,
+                None => {
+                    let r = q.queue_runs(repo)?;
+                    fresh_queue = Some(r.clone());
+                    r
+                }
+            };
+            let prefix = queue_branch_prefix(&pr.base_branch, pr.number);
+            let newest = runs.iter().filter(|r| r.branch.starts_with(&prefix)).max_by(|a, b| {
+                (a.created_at.as_str(), a.id.len(), &a.id).cmp(&(b.created_at.as_str(), b.id.len(), &b.id))
+            });
+            if let Some(sha) = newest.map(|r| r.head_sha.clone()) {
+                queue_ci = CiStatus::of(&runs, &sha);
+                if let Some(c) = queue_ci.as_mut() {
+                    fill_jobs(q.as_ref(), repo, c, &a.known, &mut fetched);
+                }
             }
         }
     }
-    let status = PullRequestStatus {
+    let status = pr.map(|pr| PullRequestStatus {
         number: pr.number,
         url: pr.url,
         title: pr.title,
@@ -711,14 +855,14 @@ pub(crate) fn read_pr(
         auto_merge: pr.auto_merge,
         in_merge_queue: pr.in_merge_queue,
         queue_position: pr.queue_position,
-        ci,
+        ci: None,
         queue_ci,
         queue_removal: pr.queue_removal,
         checked_at: 0,
         error: None,
         local: false,
-    };
-    Ok((Some(status), fresh_queue, fetched_jobs))
+    });
+    Ok(Read { pr: status, head, ci, queue: fresh_queue, jobs: fetched })
 }
 
 /// Logs `attempt.late_commits` (once per branch head, PDT-151): the attempt's PR merged, and `commits` (newest first, as
@@ -762,21 +906,12 @@ pub(crate) async fn log_late_commits(
     }
 }
 
-/// The attempt's open PR as last seen, with the CI on its head from the forge and the CI integrations together (as
-/// its badge shows it), and the integrations that have reported on that head (a last look may be of an older one).
-pub(crate) fn head_ci(st: &AppState, attempt_id: &str) -> Option<(PullRequestStatus, Option<CiStatus>, Vec<String>)> {
+/// The attempt's open PR as last seen, with every provider's CI on its head together (as its badge shows it), and why
+/// a provider's last read of it failed, by provider.
+pub(crate) fn head_ci(st: &AppState, attempt_id: &str) -> Option<(PullRequestStatus, BTreeMap<String, String>)> {
     let w = watch(st);
     let pr = w.by_attempt.get(attempt_id).filter(|p| p.state == PrState::Open).cloned()?;
-    let reported: Vec<String> = w
-        .other_ci
-        .get(attempt_id)
-        .map(|m| {
-            let on_head = |c: &CiStatus| c.runs.iter().all(|r| r.head_sha == pr.head_sha);
-            m.iter().filter(|(_, c)| on_head(c)).map(|(p, _)| p.clone()).collect()
-        })
-        .unwrap_or_default();
-    let ci = CiStatus::merge(pr.ci.clone(), other_ci(&w, attempt_id, Some(&pr.head_sha)));
-    Some((pr, ci, reported))
+    Some((pr, w.ci_errors.get(attempt_id).cloned().unwrap_or_default()))
 }
 
 /// The attempt's PR as last seen (None when it has none, or the project has no forge).
@@ -789,7 +924,54 @@ mod tests {
     use super::*;
     use pdt_core::pr::{CiState, Mergeable, NoticeKind};
     use pdt_forge::ChangeRequest as PullRequest;
-    use pdt_forge::testing::FakeForge;
+    use pdt_forge::testing::{FakeCi, FakeForge};
+    use pdt_forge::{CiCapabilities, CiConfig};
+
+    /// What the poller reads of branch `b` on `gh` (as GitHub, with its fake Actions) and `more` providers.
+    fn read(
+        gh: &Arc<FakeForge>,
+        more: &[Arc<dyn CiProvider>],
+        since: i64,
+        was_queued: bool,
+        queue_cache: Option<Vec<CiRun>>,
+        known: &HashMap<JobKey, Vec<String>>,
+        branch_head: Option<&str>,
+    ) -> Read {
+        let mut ci: Vec<Arc<dyn CiProvider>> = vec![gh.ci.clone()];
+        ci.extend(more.iter().cloned());
+        read_attempt(&ReadArgs {
+            forge: Some(gh.clone()),
+            ci,
+            repo: "o/r".into(),
+            branch: "b".into(),
+            since,
+            was_queued,
+            queue_cache,
+            known: Arc::new(known.clone()),
+            branch_head: branch_head.map(String::from),
+        })
+        .unwrap()
+    }
+
+    fn read_pr(gh: &Arc<FakeForge>, since: i64, was_queued: bool, queue_cache: Option<Vec<CiRun>>) -> Read {
+        read(gh, &[], since, was_queued, queue_cache, &HashMap::new(), None)
+    }
+
+    fn buildkite() -> Arc<FakeCi> {
+        let caps = CiCapabilities { branches: true, logs: true, ..CiCapabilities::NONE };
+        Arc::new(FakeCi::new("buildkite", "Buildkite", caps, CiConfig::Known(true)))
+    }
+
+    fn calls(gh: &FakeForge) -> Vec<String> {
+        let mut all = gh.calls.lock().unwrap().clone();
+        all.extend(gh.ci.calls.lock().unwrap().iter().cloned());
+        all
+    }
+
+    fn clear(gh: &FakeForge) {
+        gh.calls.lock().unwrap().clear();
+        gh.ci.calls.lock().unwrap().clear();
+    }
 
     fn pr(queued: bool) -> PullRequest {
         PullRequest {
@@ -812,13 +994,14 @@ mod tests {
 
     fn run(id: u64, branch: &str, sha: &str, state: CiState) -> CiRun {
         CiRun {
-            id,
+            provider: pdt_core::pr::GITHUB_ACTIONS.into(),
+            id: id.to_string(),
             attempt: 1,
-            workflow: "ci".into(),
+            name: "ci".into(),
             state,
             url: format!("r{id}"),
             head_sha: sha.into(),
-            head_branch: branch.into(),
+            branch: branch.into(),
             created_at: format!("2026-10-18T00:00:{id:02}Z"),
             failed_jobs: vec![],
         }
@@ -850,10 +1033,11 @@ mod tests {
             local: false,
         };
         w.by_attempt.insert("a".into(), status(vec![failed.clone()]));
-        w.jobs.insert((1, 1), vec!["test".into()]);
-        w.jobs.insert((7, 1), vec!["old push".into()]);
+        let k = |id: &str| ("github_actions".to_string(), id.to_string(), 1);
+        w.jobs.insert(k("1"), vec!["test".into()]);
+        w.jobs.insert(k("7"), vec!["old push".into()]);
         w.forget_unseen_jobs();
-        assert_eq!(w.jobs.keys().collect::<Vec<_>>(), [&(1, 1)]);
+        assert_eq!(w.jobs.keys().collect::<Vec<_>>(), [&k("1")]);
         w.by_attempt.insert("a".into(), status(vec![run(2, "b", "h", CiState::Passed)]));
         w.forget_unseen_jobs();
         assert!(w.jobs.is_empty(), "the next push's run passed");
@@ -861,51 +1045,161 @@ mod tests {
 
     #[test]
     fn reads_ci_and_failed_jobs_once() {
-        let gh = FakeForge::default();
-        assert_eq!(read_pr(&gh, "o/r", "b", 0, false, None, &HashMap::new()).unwrap().0, None);
+        let gh = Arc::new(FakeForge::default());
+        assert!(read_pr(&gh, 0, false, None).pr.is_none());
         gh.set_pr("b", Some(pr(false)));
         gh.set_runs("b", vec![run(1, "b", "h", CiState::Failed), run(2, "b", "old", CiState::Passed)]);
         gh.set_jobs(1, &["test (linux)"]);
-        let (status, queue, jobs) = read_pr(&gh, "o/r", "b", 0, false, None, &HashMap::new()).unwrap();
-        let status = status.unwrap();
+        let r = read_pr(&gh, 0, false, None);
+        let (queue, jobs) = (r.queue.clone(), r.jobs.clone());
+        assert_eq!(r.head.as_deref(), Some("h"));
+        let status = r.pr_with_ci().unwrap();
         let ci = status.ci.unwrap();
         assert_eq!(ci.state, CiState::Failed);
         assert_eq!(ci.runs[0].failed_jobs, vec!["test (linux)".to_string()]);
         assert_eq!(queue, None, "not queued: merge-queue runs are not read");
         assert!(status.queue_ci.is_none());
         // Known jobs are not asked for again.
-        gh.calls.lock().unwrap().clear();
-        read_pr(&gh, "o/r", "b", 0, false, None, &jobs).unwrap();
-        assert_eq!(*gh.calls.lock().unwrap(), vec!["pr o/r b".to_string(), "runs o/r b".to_string()]);
+        clear(&gh);
+        read(&gh, &[], 0, false, None, &jobs, None);
+        assert_eq!(calls(&gh), vec!["pr o/r b".to_string(), "runs o/r b".to_string()]);
+    }
+
+    /// PDT-242: two providers' runs on the head roll up into the PR's CI; one that can't be read is its own error.
+    #[test]
+    fn every_providers_ci_on_the_head_is_read_and_rolled_up() {
+        let gh = Arc::new(FakeForge::default());
+        let bk = buildkite();
+        gh.set_pr("b", Some(pr(false)));
+        gh.set_runs("b", vec![run(1, "b", "h", CiState::Passed)]);
+        let mut build = bk.run("app/3", "app", "b", "h", CiState::Failed, "t");
+        build.failed_jobs = vec!["test".into()];
+        bk.set_runs("b", vec![build, bk.run("app/2", "app", "b", "old", CiState::Passed, "t")]);
+        let more: Vec<Arc<dyn CiProvider>> = vec![bk.clone()];
+        let r = read(&gh, &more, 0, false, None, &HashMap::new(), None);
+        assert_eq!(r.ci.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["github_actions", "buildkite"]);
+        assert!(r.jobs.is_empty(), "the build named its failed jobs: none asked for");
+        let ci = r.pr_with_ci().unwrap().ci.unwrap();
+        assert_eq!((ci.state, ci.providers()), (CiState::Failed, vec!["buildkite", "github_actions"]));
+        assert_eq!(ci.url, "https://ci.example/buildkite/runs/app/3");
+        *bk.error.lock().unwrap() = Some("Buildkite is down".into());
+        let r = read(&gh, &more, 0, false, None, &HashMap::new(), None);
+        assert!(r.pr.is_some(), "the PR is read all the same");
+        assert_eq!(r.ci[1], ("buildkite".to_string(), Err("Buildkite is down".to_string())));
+    }
+
+    /// A provider that builds branches (Buildkite) is read on the branch's head before there is a PR; the forge's
+    /// own CI isn't.
+    #[test]
+    fn without_a_pr_only_providers_that_build_branches_are_read() {
+        let gh = Arc::new(FakeForge::default());
+        let bk = buildkite();
+        bk.set_runs("b", vec![bk.run("app/1", "app", "b", "pushed", CiState::Running, "t")]);
+        let more: Vec<Arc<dyn CiProvider>> = vec![bk.clone()];
+        let r = read(&gh, &more, 0, false, None, &HashMap::new(), Some("pushed"));
+        assert!(r.pr.is_none());
+        assert_eq!(r.head.as_deref(), Some("pushed"));
+        assert_eq!(r.ci.len(), 1);
+        let ci = r.ci[0].1.clone().unwrap().unwrap();
+        assert_eq!((ci.state, ci.runs[0].provider.as_str()), (CiState::Running, "buildkite"));
+        assert!(gh.ci.calls.lock().unwrap().is_empty(), "Actions waits for a pull request");
+        assert!(read(&gh, &more, 0, false, None, &HashMap::new(), None).ci.is_empty(), "no head: nothing to read");
+    }
+
+    #[test]
+    fn ci_events_name_their_provider_and_are_news_once_per_run() {
+        let info = AttemptInfo {
+            attempt: pdt_core::ticket::AttemptSummary {
+                id: "a1".into(),
+                branch: "b".into(),
+                base_branch: "main".into(),
+                worktree_id: None,
+                state: pdt_core::ticket::AttemptState::Active,
+                created_at: 0,
+                ended_at: None,
+                last_head: None,
+                workspace_id: None,
+                pr: None,
+                ci: None,
+            },
+            ticket_id: "t".into(),
+            ticket_key: "P-1".into(),
+            project_id: "p".into(),
+            repo_path: String::new(),
+            base_commit: String::new(),
+            own_commits: false,
+            worktree_path: None,
+            finish_on_merge: false,
+            finish_delete_branch: false,
+            merge_requested: false,
+            merge_refused: false,
+        };
+        let bk = buildkite();
+        let mut build = bk.run("app/3", "app", "b", "h", CiState::Failed, "t");
+        build.failed_jobs = vec!["test".into()];
+        let ci = CiStatus::of(&[build], "h").unwrap();
+        let source = crate::ci::source(bk.as_ref());
+        let e = ci_events(&info, &source, &ci, None, "h", false, true);
+        assert_eq!(
+            (e.len(), e[0].kind.as_str(), e[0].key.as_str()),
+            (1, ev::CI_RUN_FAILED, "a1:ci_failed:buildkite:app/3.1")
+        );
+        assert_eq!((e[0].payload["provider"].as_str(), e[0].payload["pr"].as_u64()), (Some("buildkite"), None));
+        assert_eq!(e[0].payload["runs"][0]["id"], "app/3");
+        assert_eq!(e[0].payload["mergeWaiting"], true);
+        let p = PullRequestStatus {
+            number: 12,
+            url: "u".into(),
+            title: "t".into(),
+            state: PrState::Open,
+            draft: false,
+            base_branch: "main".into(),
+            head_sha: "h".into(),
+            mergeable: Mergeable::Mergeable,
+            behind: false,
+            auto_merge: true,
+            in_merge_queue: false,
+            queue_position: None,
+            ci: None,
+            queue_ci: None,
+            queue_removal: None,
+            checked_at: 0,
+            error: None,
+            local: false,
+        };
+        let gh = CiStatus::of(&[run(7, "b", "h", CiState::Passed)], "h").unwrap();
+        let actions = CiSource { id: "github_actions".into(), label: "GitHub Actions".into(), logs: true };
+        let e = ci_events(&info, &actions, &gh, Some(&p), "h", false, false);
+        assert_eq!((e[0].kind.as_str(), e[0].key.as_str()), (ev::CI_RUN_PASSED, "a1:ci_passed:7.1"));
+        assert_eq!(e[0].payload["pr"], 12);
     }
 
     #[test]
     fn reads_the_newest_merge_queue_run_of_the_pr() {
-        let gh = FakeForge::default();
+        let gh = Arc::new(FakeForge::default());
         gh.set_pr("b", Some(pr(true)));
-        *gh.queue.lock().unwrap() = vec![
+        *gh.ci.queue.lock().unwrap() = vec![
             run(5, "gh-readonly-queue/main/pr-12-aaa", "q1", CiState::Failed),
             run(6, "gh-readonly-queue/main/pr-12-bbb", "q2", CiState::Running),
             run(7, "gh-readonly-queue/main/pr-120-ccc", "q3", CiState::Failed),
         ];
-        let (status, queue, _) = read_pr(&gh, "o/r", "b", 0, false, None, &HashMap::new()).unwrap();
-        let q = status.unwrap().queue_ci.unwrap();
+        let r = read_pr(&gh, 0, false, None);
+        let q = r.pr.unwrap().queue_ci.unwrap();
         assert_eq!((q.state, q.url.as_str()), (CiState::Running, "r6"));
-        assert_eq!(queue.unwrap().len(), 3, "handed back for the repo's other attempts");
+        assert_eq!(r.queue.unwrap().len(), 3, "handed back for the repo's other attempts");
         // A repo's runs read for one attempt are reused for the next.
-        gh.calls.lock().unwrap().clear();
-        let (_, queue, _) = read_pr(&gh, "o/r", "b", 0, false, Some(vec![]), &HashMap::new()).unwrap();
-        assert_eq!(queue, None);
-        assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("queue")));
+        clear(&gh);
+        assert_eq!(read_pr(&gh, 0, false, Some(vec![])).queue, None);
+        assert!(!calls(&gh).iter().any(|c| c.starts_with("queue")));
     }
 
     #[test]
     fn a_forge_without_merge_queues_reads_no_queue_runs() {
-        let gh = FakeForge::with(pdt_forge::Capabilities::NONE);
+        let gh = Arc::new(FakeForge::with(pdt_forge::Capabilities::NONE));
         gh.set_pr("b", Some(pr(true)));
-        let (status, queue, _) = read_pr(&gh, "o/r", "b", 0, true, None, &HashMap::new()).unwrap();
-        assert_eq!((status.unwrap().queue_ci, queue), (None, None));
-        assert_eq!(*gh.calls.lock().unwrap(), vec!["pr o/r b".to_string(), "runs o/r b".to_string()]);
+        let r = read_pr(&gh, 0, true, None);
+        assert_eq!((r.pr.unwrap().queue_ci, r.queue), (None, None));
+        assert_eq!(calls(&gh), vec!["pr o/r b".to_string(), "runs o/r b".to_string()]);
     }
 
     #[test]
@@ -946,27 +1240,26 @@ mod tests {
 
     #[test]
     fn a_merged_pr_has_no_ci_reads() {
-        let gh = FakeForge::default();
+        let gh = Arc::new(FakeForge::default());
         let mut p = pr(false);
         p.state = PrState::Merged;
         gh.set_pr("b", Some(p));
-        let (status, ..) = read_pr(&gh, "o/r", "b", 0, true, None, &HashMap::new()).unwrap();
-        let status = status.unwrap();
+        let status = read_pr(&gh, 0, true, None).pr_with_ci().unwrap();
         assert!(status.ci.is_none());
         assert_eq!(notices(&status, "b")[0].kind, NoticeKind::Merged);
-        assert_eq!(gh.calls.lock().unwrap().len(), 1);
+        assert_eq!(calls(&gh).len(), 1);
     }
 
     /// A ticket started again on its old branch name: the earlier attempt's merged PR is not this attempt's, an open
     /// one or one opened since is.
     #[test]
     fn a_pr_closed_before_the_attempt_started_is_not_its() {
-        let gh = FakeForge::default();
+        let gh = Arc::new(FakeForge::default());
         let mut p = pr(false);
         p.state = PrState::Merged;
         p.created_at = Some(100);
         gh.set_pr("b", Some(p.clone()));
-        let read = |since| read_pr(&gh, "o/r", "b", since, false, None, &HashMap::new()).unwrap().0;
+        let read = |since| read_pr(&gh, since, false, None).pr;
         assert_eq!(read(200), None, "an earlier attempt's");
         assert_eq!(read(100).map(|s| s.number), Some(12), "opened as this attempt started");
         p.state = PrState::Open;

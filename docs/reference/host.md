@@ -27,11 +27,12 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   resolved outbox messages, ended Inbox items and notifications after 30 days, and conversation frames after 7
   ([workflows.md](workflows.md), [conversations.md](conversations.md)).
 - Background loops (PDT-127, pdt-api `loops.rs`): `poll` (every 60 s, after the startup resume of runs and sessions:
-  gone runs, PRs and CI, Buildkite, merges, watched issues, Jira, workflow upkeep, in that order), `engine` (2 s),
+  gone runs, PRs and CI (every CI provider's, Buildkite's too, PDT-242), merges, watched issues, Jira, workflow upkeep,
+  in that order), `engine` (2 s),
   `overlaps` (30 s), `activity` (5 s), `notifier` (2 s), `scheduler` (10 s), `conversations` (30 s). Each pass runs in
   its own task: a panic ends that pass only, logged at error level, and the loop goes on. Each member of `poll` is
   limited to 2 minutes (aborted and logged past it), so one hung member never holds up merge detection or pruning;
-  the Jira and Buildkite sensors' calls time out after 30 s each, and the shared HTTP client (nodes, sensors, MCP)
+  the Jira sensor's and Buildkite's calls time out after 30 s each, and the shared HTTP client (nodes, sensors, MCP)
   gives up connecting after 10 s. A loop is stale when its last finished pass (or its start) is more than five
   periods ago, at least 5 minutes (`poll`: 20 minutes; pdt-core `liveness.rs`); the notifier then raises a
   `host.loop_stale` notification per loop ([workflows.md](workflows.md#notifications)), cleared by its next pass. The

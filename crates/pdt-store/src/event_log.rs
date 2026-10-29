@@ -357,4 +357,54 @@ mod tests {
 
         assert_eq!(store.prune_events(100).await.unwrap(), 1, "only processed events go");
     }
+
+    /// PDT-242: CI events logged before CI providers get text run ids, `name` for `workflow`, and their provider.
+    #[tokio::test]
+    async fn the_ci_providers_migration_rewrites_old_ci_events() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old = tmp.path().join("m");
+        std::fs::create_dir_all(&old).unwrap();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        for e in std::fs::read_dir(&src).unwrap() {
+            let e = e.unwrap();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !name.ends_with("_ci_run_providers.sql") {
+                std::fs::copy(e.path(), old.join(&name)).unwrap();
+            }
+        }
+        let (db, backups) = (tmp.path().join("pdt.db"), tmp.path().join("backups"));
+        let migrator = sqlx::migrate::Migrator::new(old.as_path()).await.unwrap();
+        let store = Store::open_with(&db, &migrator, &backups).await.unwrap();
+        let runs =
+            json!([{"id": 391, "attempt": 2, "workflow": "ci", "state": "failed", "url": "u", "failedJobs": ["t"]}]);
+        for (kind, key, provider) in [("ci.run_failed", "k1", "github_actions"), ("ci.run_passed", "k2", "buildkite")] {
+            let payload = json!({"provider": provider, "runs": runs, "headSha": "h"});
+            store.emit_event(&NewLogEvent::new(kind, key, "test", payload), 1).await.unwrap();
+        }
+        store.emit_event(&NewLogEvent::new("pr.conflict", "k3", "test", json!({"runs": runs})), 1).await.unwrap();
+        store.close().await;
+
+        let store = Store::open_with(&db, &crate::migrate::MIGRATOR, &backups).await.unwrap();
+        let pool = store.pool.clone();
+        let payload = |key: &'static str| {
+            let pool = pool.clone();
+            async move {
+                let (p,): (String,) = sqlx::query_as("SELECT payload FROM events WHERE key = ?")
+                    .bind(key)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+                serde_json::from_str::<serde_json::Value>(&p).unwrap()
+            }
+        };
+        let p = payload("k1").await;
+        assert_eq!(
+            p["runs"],
+            json!([{"provider": "github_actions", "id": "391", "attempt": 2, "name": "ci", "state": "failed",
+                "url": "u", "failedJobs": ["t"]}])
+        );
+        assert_eq!(p["headSha"], "h", "the rest stays");
+        assert_eq!(payload("k2").await["runs"][0]["provider"], "buildkite");
+        assert_eq!(payload("k3").await["runs"][0]["id"], 391, "other events are left alone");
+    }
 }

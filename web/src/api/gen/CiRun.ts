@@ -2,13 +2,25 @@
 import type { CiState } from "./CiState";
 
 /**
- * One GitHub Actions workflow run.
+ * One CI run of a provider (PDT-242): a GitHub Actions workflow run, a Buildkite build, a local CI command's run.
  */
-export type CiRun = { id: number, 
+export type CiRun = { 
 /**
- * Re-running a workflow keeps its id and bumps this.
+ * The CI provider's id (`github_actions`, `buildkite`, `local`).
  */
-attempt: number, workflow: string, state: CiState, url: string, 
+provider: string, 
+/**
+ * The provider's id for it (an Actions run's number, a Buildkite build's `pipeline/number`).
+ */
+id: string, 
+/**
+ * Re-running keeps its id and bumps this.
+ */
+attempt: number, 
+/**
+ * What it runs: an Actions workflow, a Buildkite pipeline.
+ */
+name: string, state: CiState, url: string, 
 /**
  * The jobs that failed (filled in for failed runs only).
  */

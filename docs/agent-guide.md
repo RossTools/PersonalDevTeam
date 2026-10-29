@@ -89,8 +89,9 @@ with that step's message, after the review and QA findings: address the findings
 which messages to expect, how to act on each, and, when PDT watches the pull request for it, not to watch CI in a
 shell.
 
-To read CI yourself, use PDT's forge tools on its MCP server: `ci_runs` (your branch's runs, with the failed jobs) and
-`ci_failed_logs` (the end of each failed job's log), or the ticket's attempt (`pr.ci`: the head commit's state, URL and
+To read CI yourself, use PDT's forge tools on its MCP server: `ci_runs` (your branch's runs from each of the project's
+CI providers, with the failed jobs) and `ci_failed_logs` (the end of each failed job's log; give the run's `provider`
+and `runId` from `ci_runs` or the failure message), or the ticket's attempt (`pr.ci`: the head commit's state, URL and
 runs, once PDT has seen the pull request). `change_request_view` shows your pull request with its comments and reviews,
 `change_request_comment` answers on it (`replyTo` answers a review comment in its thread), and `issue_view` and
 `issue_comment` read and comment on issues. `issue_create` files a new issue (from a ticket, which then links it); the

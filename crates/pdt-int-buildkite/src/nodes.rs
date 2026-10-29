@@ -1,8 +1,8 @@
 //! Buildkite actions (Phase 7e spec §6.4): `buildkite.retry` (a build's failed jobs, else the whole build) and
 //! `buildkite.trigger` (a new build), through a `buildkite` connection (pdt-api `buildkite.rs`).
 
+use crate::ci::BuildkiteClient;
 use crate::core::{parse_build_url, retryable_jobs};
-use crate::sensor::BuildkiteClient;
 use pdt_api::sdk::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

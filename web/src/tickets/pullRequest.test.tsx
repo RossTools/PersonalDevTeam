@@ -15,7 +15,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const failed: CiStatus = {
   state: 'failed', url: 'https://gh/runs/2',
-  runs: [{ id: 2, attempt: 1, workflow: 'ci', state: 'failed', url: 'https://gh/runs/2', failedJobs: ['test (linux)'] }],
+  runs: [{ provider: 'github_actions', id: '2', attempt: 1, name: 'ci', state: 'failed', url: 'https://gh/runs/2', failedJobs: ['test (linux)'] }],
 };
 const passed: CiStatus = { state: 'passed', url: 'https://gh/runs/1', runs: [] };
 
@@ -70,7 +70,7 @@ describe('pull request status', () => {
 
   it('shows a local change request (PDT-178) with its CI log on this origin', () => {
     const log = 'http://127.0.0.1:7420/api/local-ci/runs/7/log';
-    const ci: CiStatus = { state: 'failed', url: log, runs: [{ id: 7, attempt: 1, workflow: 'ci', state: 'failed', url: log, failedJobs: ['cargo test'] }] };
+    const ci: CiStatus = { state: 'failed', url: log, runs: [{ provider: 'local', id: '7', attempt: 1, name: 'ci', state: 'failed', url: log, failedJobs: ['cargo test'] }] };
     render(<PrDetails pr={pr({ local: true, number: 3, url: log, ci })} />);
     expect(screen.getByRole('link', { name: /Change #3/ })).toHaveAttribute('href', '/api/local-ci/runs/7/log');
     expect(screen.getByText(/Merges when CI passes/)).toBeInTheDocument();

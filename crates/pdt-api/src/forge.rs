@@ -6,7 +6,7 @@
 
 use crate::routes::AppState;
 use pdt_core::forge::ForgeKind;
-use pdt_forge::{Capabilities, Forge, ForgePlugin};
+use pdt_forge::{Capabilities, CiProvider, Forge, ForgePlugin};
 use std::sync::Arc;
 
 /// A project's forge and the forge's name for its repository.
@@ -16,6 +16,8 @@ pub(crate) struct ProjectForge {
     pub api: Arc<dyn Forge>,
     /// GitHub's `owner/name`; the local forge's, the project's checkout.
     pub repo: String,
+    /// The forge's own CI (PDT-242): GitHub Actions, the local forge's `[ci]` command.
+    pub ci: Option<Arc<dyn CiProvider>>,
 }
 
 impl ProjectForge {
@@ -54,8 +56,11 @@ pub(crate) async fn project_forge(st: &AppState, project_id: &str, repo_path: &s
     }
     if named == Some(ForgeKind::LOCAL) {
         let command = config.and_then(|c| c.ci).map(|c| c.command);
+        let ci = command
+            .is_some()
+            .then(|| Arc::new(crate::local_forge::LocalCi::new(st, project_id)) as Arc<dyn CiProvider>);
         let api = Arc::new(crate::local_forge::LocalForge::new(st, project_id, repo_path, command));
-        return Some(ProjectForge { kind: ForgeKind::LOCAL, api, repo: repo_path.to_string() });
+        return Some(ProjectForge { kind: ForgeKind::LOCAL, api, repo: repo_path.to_string(), ci });
     }
     let plugins = st.forge_plugins();
     // A forge no plugin in use provides is left to the origin, as a project that names none.
@@ -76,7 +81,7 @@ pub(crate) async fn project_forge(st: &AppState, project_id: &str, repo_path: &s
         }
         None => plugins.iter().find_map(|p| p.repo_of(&remote).map(|r| (p.clone(), r)))?,
     };
-    Some(ProjectForge { kind: plugin.kind(), api: plugin.forge(), repo })
+    Some(ProjectForge { kind: plugin.kind(), api: plugin.forge(), repo, ci: plugin.ci() })
 }
 
 /// The forge a flow on `kind`'s repositories uses (a forge's workflow node): the project's, when the run has a project
@@ -86,12 +91,23 @@ pub(crate) async fn forge_for(
     kind: &ForgeKind,
     project_id: Option<&str>,
 ) -> Result<Arc<dyn Forge>, String> {
+    Ok(forge_and_ci_for(st, kind, project_id).await?.0)
+}
+
+/// [`forge_for`] with the CI it reads: the project's CI providers ([`crate::ci::project_ci`]), else the forge's own CI.
+pub(crate) async fn forge_and_ci_for(
+    st: &AppState,
+    kind: &ForgeKind,
+    project_id: Option<&str>,
+) -> Result<(Arc<dyn Forge>, Vec<Arc<dyn CiProvider>>), String> {
     if let Some(id) = project_id
         && let Ok(Some(p)) = st.store.get_project(id).await
         && let Some(f) = project_forge(st, id, &p.repo_path).await
         && f.kind == *kind
     {
-        return Ok(f.api);
+        let ci = crate::ci::project_ci(st, id, &p.repo_path, Some(&f)).await;
+        return Ok((f.api, ci));
     }
-    st.forge_account(kind)
+    let plugin = st.forge_plugin(kind).ok_or_else(|| format!("PDT has no {kind} forge"))?;
+    Ok((plugin.forge(), plugin.ci().into_iter().collect()))
 }

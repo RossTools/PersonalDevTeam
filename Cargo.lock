@@ -3553,7 +3553,6 @@ dependencies = [
  "pdt-api",
  "pdt-core",
  "pdt-forge",
- "pdt-git",
  "pdt-store",
  "reqwest",
  "schemars 1.2.3",

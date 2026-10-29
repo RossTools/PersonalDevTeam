@@ -2,14 +2,27 @@
 
 use super::*;
 use pdt_core::pr::CiState;
+use pdt_forge::CiProvider;
+use std::collections::BTreeMap;
 use transport::testing::Recorded;
+
+/// The Actions calls of a forge's login, as tests make them.
+trait Actions {
+    fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, ForgeError>;
+}
+
+impl Actions for Arc<GithubApi> {
+    fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, ForgeError> {
+        GithubActions::new(self.clone()).runs(repo, branch, None)
+    }
+}
 
 const API: &str = "https://api.github.com";
 const GQL: &str = "https://api.github.com/graphql";
 
-fn forge() -> (GithubApi, Arc<Recorded>) {
+fn forge() -> (Arc<GithubApi>, Arc<Recorded>) {
     let t = Arc::new(Recorded::new());
-    let g = GithubApi::new(t.clone());
+    let g = Arc::new(GithubApi::new(t.clone()));
     g.set_account(Some(Account { token: "gho_t".into(), api_url: API.into(), login: "me".into(), signed_in_at: None }));
     (g, t)
 }
@@ -21,7 +34,7 @@ fn body_of(r: &Request) -> Value {
 #[test]
 fn without_a_login_nothing_is_sent_and_the_inbox_is_asked() {
     let t = Arc::new(Recorded::new());
-    let g = GithubApi::new(t.clone());
+    let g = Arc::new(GithubApi::new(t.clone()));
     assert!(!g.login_needed(), "nothing wanted GitHub yet");
     let e = g.branch_runs("o/r", "b").unwrap_err();
     assert!(matches!(&e, ForgeError::Unavailable(m) if m.contains("GitHub is not connected")), "{e:?}");
@@ -89,12 +102,26 @@ fn a_401_github_takes_back_when_asked_again_does_not_mark_the_login() {
 #[test]
 fn a_401_from_a_redirect_to_another_host_does_not_mark_the_login() {
     let (g, t) = forge();
-    let logs = format!("{API}/repos/o/r/actions/runs/7/jobs");
-    t.ok("GET", &logs, r#"{"jobs":[{"id":3,"name":"test","conclusion":"failure","html_url":"h"}]}"#);
     let mut storage = Response::new(401, "<Error>no auth</Error>");
     storage.url = "https://results-receiver.actions.githubusercontent.com/logs/3".into();
     t.on("GET", &format!("{API}/repos/o/r/actions/jobs/3/logs"), storage);
-    assert!(g.failed_logs("o/r", 7).is_err());
+    let job = pdt_core::pr::CiJob { id: "3".into(), name: "test".into(), state: CiState::Failed, url: "h".into() };
+    let run = GithubActions::new(g.clone());
+    let r = run.runs("o/r", "b", None);
+    assert!(r.is_err(), "nothing recorded for it");
+    let some = CiRun {
+        provider: String::new(),
+        id: "7".into(),
+        attempt: 1,
+        name: String::new(),
+        state: CiState::Failed,
+        url: String::new(),
+        head_sha: String::new(),
+        branch: String::new(),
+        created_at: String::new(),
+        failed_jobs: vec![],
+    };
+    assert!(run.job_log_tail("o/r", &some, &job, 10).is_err());
     assert_eq!(g.login_rejected_at(), None);
     assert!(!t.urls().iter().any(|u| u.ends_with("/user")), "nothing asked again: {:?}", t.urls());
 }
@@ -260,49 +287,70 @@ fn reads_runs_and_failed_jobs_from_actions() {
           {"id":392,"run_attempt":1,"name":"bench","status":"in_progress","conclusion":null,"head_sha":"abc",
            "head_branch":"pdt/x","html_url":"https://r/392","created_at":"2026-10-19T02:01:10Z"}]}"#,
     );
-    let runs = g.branch_runs("o/r", "pdt/x").unwrap();
+    let ci = GithubActions::new(g.clone());
+    let runs = ci.runs("o/r", "pdt/x", Some("abc")).unwrap();
     assert_eq!(runs.len(), 2);
-    assert_eq!((runs[0].id, runs[0].attempt, runs[0].state), (391, 2, CiState::Failed));
+    assert_eq!((runs[0].provider.as_str(), runs[0].id.as_str()), ("github_actions", "391"));
+    assert_eq!((runs[0].attempt, runs[0].state), (2, CiState::Failed));
     assert_eq!(
-        (runs[0].workflow.as_str(), runs[0].head_sha.as_str(), runs[0].url.as_str()),
-        ("ci", "abc", "https://r/391")
+        (runs[0].name.as_str(), runs[0].head_sha.as_str(), runs[0].url.as_str(), runs[0].branch.as_str()),
+        ("ci", "abc", "https://r/391", "pdt/x")
     );
     assert_eq!(runs[1].state, CiState::Running);
 
     t.ok(
         "GET",
         &format!("{API}/repos/o/r/actions/runs/391/attempts/2/jobs"),
-        r#"{"jobs":[{"name":"changes","conclusion":"success"},{"name":"test (linux)","conclusion":"failure"},
-          {"name":"release","conclusion":"skipped"}]}"#,
+        r#"{"jobs":[{"id":1,"name":"changes","status":"completed","conclusion":"success"},
+          {"id":2,"name":"test (linux)","status":"completed","conclusion":"failure","html_url":"j2"},
+          {"id":3,"name":"release","status":"completed","conclusion":"skipped"},
+          {"id":4,"name":"approve","status":"completed","conclusion":"action_required"}]}"#,
     );
-    assert_eq!(g.failed_jobs("o/r", 391, 2).unwrap(), vec!["test (linux)".to_string()]);
+    let jobs = ci.jobs("o/r", &runs[0]).unwrap();
+    assert_eq!(jobs.len(), 4);
+    assert_eq!((jobs[1].id.as_str(), jobs[1].state, jobs[1].url.as_str()), ("2", CiState::Failed, "j2"));
+    assert_eq!(jobs[3].state, CiState::Cancelled, "only real failures are failures");
     t.ok("GET", &format!("{API}/repos/o/r/actions/runs?event=merge_group"), r#"{"workflow_runs":[]}"#);
-    assert!(g.queue_runs("o/r").unwrap().is_empty());
+    assert!(ci.queue_runs("o/r").unwrap().is_empty());
+    t.on("POST", &format!("{API}/repos/o/r/actions/runs/391/rerun-failed-jobs"), Response::new(201, "{}"));
+    ci.retry("o/r", &runs[0], true).unwrap();
+    t.on("POST", &format!("{API}/repos/o/r/actions/runs/391/rerun"), Response::new(201, "{}"));
+    ci.retry("o/r", &runs[0], false).unwrap();
+    assert_eq!(ci.config_paths(), pdt_forge::CiConfig::Paths(&[".github/workflows"]));
 }
 
 #[test]
 fn failed_logs_are_the_tails_of_the_failed_jobs() {
     let (g, t) = forge();
-    t.ok(
-        "GET",
-        &format!("{API}/repos/o/r/actions/runs/391/jobs?filter=latest"),
-        r#"{"jobs":[{"id":1,"name":"fmt","conclusion":"success","html_url":"j1"},
-          {"id":2,"name":"test","conclusion":"failure","html_url":"j2"},
-          {"id":3,"name":"old","conclusion":"timed_out","html_url":"j3"}]}"#,
-    );
+    let ci = GithubActions::new(g.clone());
+    let job =
+        |id: &str| pdt_core::pr::CiJob { id: id.into(), name: "test".into(), state: CiState::Failed, url: "j".into() };
+    let run = CiRun {
+        provider: "github_actions".into(),
+        id: "391".into(),
+        attempt: 1,
+        name: "ci".into(),
+        state: CiState::Failed,
+        url: String::new(),
+        head_sha: String::new(),
+        branch: String::new(),
+        created_at: String::new(),
+        failed_jobs: vec![],
+    };
     let log: String = (1..=250).map(|i| format!("2026-10-19T02:00:10.1234567Z line {i}\n")).collect();
     t.ok(
         "GET",
         &format!("{API}/repos/o/r/actions/jobs/2/logs"),
         &format!("{log}2026-10-19T02:00:11.0Z \u{1b}[31merror\u{1b}[0m: boom\n"),
     );
-    let logs = g.failed_logs("o/r", 391).unwrap();
-    assert_eq!(logs.len(), 2, "the failed and the timed-out job");
-    assert_eq!((logs[0].name.as_str(), logs[0].url.as_str()), ("test", "j2"));
-    assert!(logs[0].log.starts_with("… (51 earlier lines)\nline 52\n"), "{}", &logs[0].log[..60]);
-    assert!(logs[0].log.ends_with("line 250\nerror: boom\n"), "timestamps and colours dropped");
-    assert!(logs[1].log.contains("no log"), "job 3's log is gone (404)");
-    assert!(!t.sent()[1].headers.iter().any(|(k, _)| *k == "If-None-Match"), "logs are not cached");
+    let lines = format!("{log}2026-10-19T02:00:11.0Z \u{1b}[31merror\u{1b}[0m: boom\n");
+    t.ok("GET", &format!("{API}/repos/o/r/actions/jobs/2/logs"), &lines);
+    let log = ci.job_log_tail("o/r", &run, &job("2"), 200).unwrap();
+    assert!(log.starts_with("… (51 earlier lines)\nline 52\n"), "{}", &log[..60]);
+    assert!(log.ends_with("line 250\nerror: boom\n"), "timestamps and colours dropped");
+    assert!(ci.job_log_tail("o/r", &run, &job("2"), 10).unwrap().starts_with("… (241 earlier lines)"));
+    assert!(ci.job_log_tail("o/r", &run, &job("3"), 200).unwrap().contains("no log"), "job 3's log is gone (404)");
+    assert!(!t.sent()[0].headers.iter().any(|(k, _)| *k == "If-None-Match"), "logs are not cached");
 }
 
 #[test]
@@ -559,14 +607,15 @@ fn reads_releases_and_starts_workflows() {
 
     t.on("POST", &format!("{API}/repos/o/r/actions/workflows/release.yml/dispatches"), Response::new(204, ""));
     let inputs = BTreeMap::from([("bump".to_string(), "minor".to_string())]);
-    g.run_workflow("o/r", "release.yml", "main", &inputs).unwrap();
+    let ci = GithubActions::new(g.clone());
+    ci.trigger("o/r", "main", "release.yml", &inputs).unwrap();
     assert_eq!(body_of(t.sent().last().unwrap()), json!({"ref": "main", "inputs": {"bump": "minor"}}));
     t.on(
         "POST",
         &format!("{API}/repos/o/r/actions/workflows/nope.yml/dispatches"),
         Response::new(404, r#"{"message":"Not Found"}"#),
     );
-    let e = g.run_workflow("o/r", "nope.yml", "main", &inputs).unwrap_err();
+    let e = ci.trigger("o/r", "main", "nope.yml", &inputs).unwrap_err();
     assert!(matches!(&e, ForgeError::Failed(m) if m.contains("no workflow nope.yml")), "{e:?}");
 }
 

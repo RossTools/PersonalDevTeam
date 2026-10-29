@@ -36,16 +36,19 @@ pub enum CiState {
     Failed,
 }
 
-/// One GitHub Actions workflow run.
+/// One CI run of a provider (PDT-242): a GitHub Actions workflow run, a Buildkite build, a local CI command's run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct CiRun {
-    #[ts(type = "number")]
-    pub id: u64,
-    /// Re-running a workflow keeps its id and bumps this.
+    /// The CI provider's id (`github_actions`, `buildkite`, `local`).
+    pub provider: String,
+    /// The provider's id for it (an Actions run's number, a Buildkite build's `pipeline/number`).
+    pub id: String,
+    /// Re-running keeps its id and bumps this.
     pub attempt: u32,
-    pub workflow: String,
+    /// What it runs: an Actions workflow, a Buildkite pipeline.
+    pub name: String,
     pub state: CiState,
     pub url: String,
     #[serde(skip)]
@@ -53,13 +56,25 @@ pub struct CiRun {
     pub head_sha: String,
     #[serde(skip)]
     #[ts(skip)]
-    pub head_branch: String,
-    /// RFC 3339; orders runs of one workflow.
+    pub branch: String,
+    /// RFC 3339 (or fixed-width text that orders the same way); orders runs of one name.
     #[serde(skip)]
     #[ts(skip)]
     pub created_at: String,
     /// The jobs that failed (filled in for failed runs only).
     pub failed_jobs: Vec<String>,
+}
+
+/// One job of a CI run ([`CiRun`]): what `ci_failed_logs` reads the log of.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CiJob {
+    /// The provider's id for it.
+    pub id: String,
+    pub name: String,
+    pub state: CiState,
+    pub url: String,
 }
 
 impl CiRun {
@@ -75,9 +90,25 @@ impl CiRun {
             _ => CiState::Queued,
         }
     }
+
+    /// Orders runs of one name: by start, then id (numbers as numbers), then attempt.
+    fn order(&self, other: &CiRun) -> std::cmp::Ordering {
+        let id = |r: &CiRun| (r.id.len(), r.id.clone());
+        let ids = match (self.id.parse::<u64>(), other.id.parse::<u64>()) {
+            (Ok(a), Ok(b)) => a.cmp(&b),
+            _ => id(self).cmp(&id(other)),
+        };
+        self.created_at.cmp(&other.created_at).then(ids).then(self.attempt.cmp(&other.attempt))
+    }
+
+    /// `id.attempt`, what an event's key names it by.
+    pub fn key(&self) -> String {
+        format!("{}.{}", self.id, self.attempt)
+    }
 }
 
-/// CI on one commit: the newest run of each workflow, rolled up (a failure wins, then running, queued, cancelled).
+/// CI on one commit: the newest run of each provider's workflow (or pipeline), rolled up (a failure wins, then
+/// running, queued, cancelled). One status can hold several providers' runs ([`CiStatus::merge`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -93,37 +124,163 @@ impl CiStatus {
     pub fn of(runs: &[CiRun], head_sha: &str) -> Option<CiStatus> {
         let mut newest: Vec<&CiRun> = vec![];
         for r in runs.iter().filter(|r| r.head_sha == head_sha) {
-            match newest.iter_mut().find(|n| n.workflow == r.workflow) {
-                Some(n) if (r.created_at.as_str(), r.id, r.attempt) > (n.created_at.as_str(), n.id, n.attempt) => {
-                    *n = r
-                }
+            match newest.iter_mut().find(|n| n.provider == r.provider && n.name == r.name) {
+                Some(n) if r.order(n).is_gt() => *n = r,
                 Some(_) => {}
                 None => newest.push(r),
             }
         }
-        newest.sort_by(|a, b| a.workflow.cmp(&b.workflow));
-        let state = newest.iter().map(|r| r.state).max()?;
-        let url = newest.iter().find(|r| r.state == state).map(|r| r.url.clone()).unwrap_or_default();
-        Some(CiStatus { state, url, runs: newest.into_iter().cloned().collect() })
+        Self::rolled_up(newest.into_iter().cloned().collect())
+    }
+
+    /// Runs as one status, sorted by provider and name; None without runs.
+    fn rolled_up(mut runs: Vec<CiRun>) -> Option<CiStatus> {
+        runs.sort_by(|a, b| (&a.provider, &a.name).cmp(&(&b.provider, &b.name)));
+        let state = runs.iter().map(|r| r.state).max()?;
+        let url = runs.iter().find(|r| r.state == state).map(|r| r.url.clone()).unwrap_or_default();
+        Some(CiStatus { state, url, runs })
     }
 
     pub fn failed(&self) -> impl Iterator<Item = &CiRun> {
         self.runs.iter().filter(|r| r.state == CiState::Failed)
     }
 
-    /// Two providers' CI on one commit as one (the forge's and a CI integration's): their runs together, rolled up the
-    /// same way.
+    /// Two providers' CI on one commit as one: their runs together, rolled up the same way.
     pub fn merge(a: Option<CiStatus>, b: Option<CiStatus>) -> Option<CiStatus> {
         match (a, b) {
             (Some(mut a), Some(b)) => {
                 a.runs.extend(b.runs);
-                a.state = a.runs.iter().map(|r| r.state).max().unwrap_or(a.state);
-                a.url = a.runs.iter().find(|r| r.state == a.state).map(|r| r.url.clone()).unwrap_or_default();
-                Some(a)
+                Self::rolled_up(a.runs)
             }
             (a, b) => a.or(b),
         }
     }
+
+    /// Every provider's CI as one ([`CiStatus::merge`]).
+    pub fn combine(all: impl IntoIterator<Item = CiStatus>) -> Option<CiStatus> {
+        all.into_iter().fold(None, |acc, c| Self::merge(acc, Some(c)))
+    }
+
+    /// The providers that have runs here, in order.
+    pub fn providers(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = vec![];
+        for r in &self.runs {
+            if !out.contains(&r.provider.as_str()) {
+                out.push(&r.provider);
+            }
+        }
+        out
+    }
+
+    /// One provider's runs here, rolled up on their own; None when it has none.
+    pub fn of_provider(&self, provider: &str) -> Option<CiStatus> {
+        Self::rolled_up(self.runs.iter().filter(|r| r.provider == provider).cloned().collect())
+    }
+
+    /// Each provider's part ([`CiStatus::of_provider`]).
+    pub fn by_provider(&self) -> Vec<CiStatus> {
+        self.providers().into_iter().filter_map(|p| self.of_provider(p)).collect()
+    }
+}
+
+/// A CI provider as notices name it: its id, its name for people, and how an agent reads a failure's log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CiSource {
+    pub id: String,
+    /// `GitHub Actions`, `Buildkite`.
+    pub label: String,
+    /// `ci_failed_logs` reads its jobs' logs.
+    pub logs: bool,
+}
+
+impl CiSource {
+    /// A provider's runs in event and notice keys keep the form they had before providers (PDT-242): GitHub Actions'
+    /// and the local forge's runs bare, the others' named by provider.
+    fn key_part(&self) -> String {
+        if self.native() { String::new() } else { format!("{}:", self.id) }
+    }
+
+    /// GitHub Actions or the local CI command: notices call it plain "CI".
+    fn native(&self) -> bool {
+        self.id == GITHUB_ACTIONS || self.id == LOCAL_CI
+    }
+
+    /// How `ci_failed_logs` names run `id` of this provider.
+    pub fn logs_call(&self, run: &str) -> String {
+        if self.id == GITHUB_ACTIONS {
+            format!("`ci_failed_logs` (runId {run})")
+        } else {
+            format!("`ci_failed_logs` (provider {}, runId {run})", self.id)
+        }
+    }
+}
+
+/// The CI provider id of GitHub Actions.
+pub const GITHUB_ACTIONS: &str = "github_actions";
+/// The CI provider id of the local CI command (`[ci] command`, PDT-178).
+pub const LOCAL_CI: &str = "local";
+
+/// The `ci_passed` key part of one provider's green CI (each run and its attempt).
+pub fn ci_passed_key(source: &CiSource, ci: &CiStatus) -> String {
+    let ids: Vec<String> = ci.runs.iter().map(CiRun::key).collect();
+    format!("ci_passed:{}{}", source.key_part(), ids.join(","))
+}
+
+/// What to tell the agent when `source`'s CI (`ci`, its runs only) failed on `head` of `branch`: on `pr`, when the
+/// branch has an open one (`local`: the local forge's change request).
+pub fn ci_failed_notice(
+    source: &CiSource,
+    ci: &CiStatus,
+    pr: Option<&PullRequestStatus>,
+    branch: &str,
+    head: &str,
+) -> Option<Notice> {
+    if ci.state != CiState::Failed {
+        return None;
+    }
+    let failed: Vec<&CiRun> = ci.failed().collect();
+    let ids: Vec<String> = failed.iter().map(|r| r.key()).collect();
+    let jobs: Vec<String> = failed.iter().flat_map(|r| r.failed_jobs.iter().cloned()).collect();
+    let local = pr.is_some_and(|p| p.local);
+    let what = if source.native() { "CI".to_string() } else { format!("{} CI", source.label) };
+    let on = match pr {
+        Some(p) => format!("{} ({branch})", p.name()),
+        None => branch.to_string(),
+    };
+    let mut text = format!("[PDT] {what} failed on {on} at {}", short(head));
+    if !jobs.is_empty() {
+        text.push_str(&format!(": {}", jobs.join(", ")));
+    }
+    text.push_str(&format!(". Run: {}.", ci.url));
+    if local && source.id == LOCAL_CI {
+        // No remote: the log is PDT's, and a commit on the branch is what runs CI again.
+        text.push_str(&format!(" Read its log with `curl -s {}`, fix it, run the checks and commit.", ci.url));
+    } else {
+        match failed.first() {
+            Some(r) if source.logs => text.push_str(&format!(" Read the failure with {},", source.logs_call(&r.id))),
+            _ => text.push_str(" Read the failed jobs' logs there,"),
+        }
+        text.push_str(if local { " fix it, run the checks and commit." } else { " fix it, run the checks and push." });
+    }
+    // A merge in flight (PDT-151): the fix is what it merges.
+    match pr {
+        Some(p) if p.local && p.auto_merge => text.push_str(" It is set to merge, so it merges once the fix passes."),
+        Some(p) if p.in_merge_queue => {
+            text.push_str(" The pull request is in the merge queue, so it merges once the fix passes.")
+        }
+        Some(p) if p.auto_merge => {
+            text.push_str(" Auto-merge is on for the pull request, so it merges once the fix passes.")
+        }
+        _ => {}
+    }
+    Some(Notice {
+        kind: NoticeKind::CiFailed,
+        key: format!("ci_failed:{}{}", source.key_part(), ids.join(",")),
+        pr: pr.map(|p| p.number),
+        url: Some(ci.url.clone()),
+        jobs,
+        text,
+    })
 }
 
 /// An attempt's pull request, as pdtd last saw it.
@@ -232,7 +389,7 @@ pub struct Notice {
     pub text: String,
 }
 
-/// What `now` gives the agent to act on.
+/// What `now` gives the agent to act on, CI failures aside (each provider's: [`ci_failed_notice`]).
 pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
     let n = now.number;
     let base = &now.base_branch;
@@ -247,44 +404,6 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
     }
     if now.state != PrState::Open {
         return out;
-    }
-    if let Some(ci) = &now.ci
-        && ci.state == CiState::Failed
-    {
-        let failed: Vec<&CiRun> = ci.failed().collect();
-        let ids: Vec<String> = failed.iter().map(|r| format!("{}.{}", r.id, r.attempt)).collect();
-        let jobs: Vec<String> = failed.iter().flat_map(|r| r.failed_jobs.iter().cloned()).collect();
-        let first = failed.first().map(|r| r.id);
-        let mut text = format!("[PDT] CI failed on {} ({branch}) at {}", now.name(), short(&now.head_sha));
-        if !jobs.is_empty() {
-            text.push_str(&format!(": {}", jobs.join(", ")));
-        }
-        text.push_str(&format!(". Run: {}.", ci.url));
-        if now.local {
-            // No remote: the log is PDT's, and a commit on the branch is what runs CI again.
-            text.push_str(&format!(" Read its log with `curl -s {}`, fix it, run the checks and commit.", ci.url));
-        } else {
-            if let Some(id) = first {
-                text.push_str(&format!(" Read the failure with `ci_failed_logs` (runId {id}),"));
-            }
-            text.push_str(" fix it, run the checks and push.");
-        }
-        // A merge in flight (PDT-151): the fix is what it merges.
-        if now.local && now.auto_merge {
-            text.push_str(" It is set to merge, so it merges once the fix passes.");
-        } else if now.in_merge_queue {
-            text.push_str(" The pull request is in the merge queue, so it merges once the fix passes.");
-        } else if now.auto_merge {
-            text.push_str(" Auto-merge is on for the pull request, so it merges once the fix passes.");
-        }
-        out.push(Notice {
-            kind: NoticeKind::CiFailed,
-            key: format!("ci_failed:{}", ids.join(",")),
-            pr: Some(n),
-            url: Some(ci.url.clone()),
-            jobs,
-            text,
-        });
     }
     if now.mergeable == Mergeable::Conflicting {
         out.push(Notice {
@@ -322,7 +441,8 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
                 }
                 why.push_str(&format!(": {}", q.url));
                 if let Some(first) = q.failed().next() {
-                    why.push_str(&format!(". Read it with `ci_failed_logs` (runId {})", first.id));
+                    let source = CiSource { id: first.provider.clone(), label: String::new(), logs: true };
+                    why.push_str(&format!(". Read it with {}", source.logs_call(&first.id)));
                 }
                 (why, q.url.clone(), jobs)
             }
@@ -507,8 +627,9 @@ pub fn ci_gate(pr: &PullRequestStatus, ci: Option<&CiStatus>, has_ci: bool) -> C
             why.push_str(&format!(": {}", ci.url));
             if pr.local {
                 why.push_str(&format!(". Read its log with `curl -s {}`", ci.url));
-            } else if let Some(r) = failed.iter().find(|r| r.url.contains("github.com")) {
-                why.push_str(&format!(". Read it with `ci_failed_logs` (runId {})", r.id));
+            } else if let Some(r) = failed.iter().find(|r| r.provider != LOCAL_CI) {
+                let source = CiSource { id: r.provider.clone(), label: String::new(), logs: true };
+                why.push_str(&format!(". Read it with {}", source.logs_call(&r.id)));
             }
             CiGate::Failed(why)
         }
@@ -581,16 +702,21 @@ pub(crate) mod tests {
 
     fn run(id: u64, workflow: &str, sha: &str, at: &str, state: CiState) -> CiRun {
         CiRun {
-            id,
+            provider: GITHUB_ACTIONS.into(),
+            id: id.to_string(),
             attempt: 1,
-            workflow: workflow.into(),
+            name: workflow.into(),
             state,
             url: format!("https://gh/runs/{id}"),
             head_sha: sha.into(),
-            head_branch: "b".into(),
+            branch: "b".into(),
             created_at: at.into(),
             failed_jobs: vec![],
         }
+    }
+
+    fn actions() -> CiSource {
+        CiSource { id: GITHUB_ACTIONS.into(), label: "GitHub Actions".into(), logs: true }
     }
 
     #[test]
@@ -716,11 +842,14 @@ pub(crate) mod tests {
         p.local = true;
         p.number = 3;
         let mut failed = run(7, "ci", "abcdef0123", "t", CiState::Failed);
+        failed.provider = LOCAL_CI.into();
         failed.url = "http://127.0.0.1:7420/api/local-ci/runs/7/log".into();
         failed.failed_jobs = vec!["cargo test".into()];
         p.ci = CiStatus::of(&[failed], "abcdef0123");
-        let n = notices(&p, "b");
-        let t = &n[0].text;
+        let local = CiSource { id: LOCAL_CI.into(), label: "Local CI".into(), logs: true };
+        let n = ci_failed_notice(&local, p.ci.as_ref().unwrap(), Some(&p), "b", &p.head_sha).unwrap();
+        assert_eq!(n.key, "ci_failed:7.1", "as before CI providers");
+        let t = &n.text;
         assert!(t.contains("CI failed on change request #3 (b) at abcdef0: cargo test"), "{t}");
         assert!(
             t.contains("`curl -s http://127.0.0.1:7420/api/local-ci/runs/7/log`") && t.contains("and commit."),
@@ -762,7 +891,7 @@ pub(crate) mod tests {
         let ci = CiStatus::of(&runs, "h").unwrap();
         assert_eq!(ci.state, CiState::Running, "the failed run was superseded");
         assert_eq!(ci.url, "https://gh/runs/2");
-        assert_eq!(ci.runs.iter().map(|r| r.id).collect::<Vec<_>>(), vec![2, 3]);
+        assert_eq!(ci.runs.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["2", "3"]);
         let runs = [
             run(2, "ci", "h", "2026-01-01T00:05:00Z", CiState::Passed),
             run(3, "lint", "h", "2026-01-01T00:00:00Z", CiState::Failed),
@@ -779,16 +908,67 @@ pub(crate) mod tests {
         let mut failed = run(7, "ci", "abcdef0123", "t", CiState::Failed);
         failed.failed_jobs = vec!["test (linux)".into()];
         p.ci = CiStatus::of(&[failed.clone()], "abcdef0123");
-        let n = notices(&p, "pdt/x");
-        assert_eq!(n.len(), 1);
-        assert_eq!(n[0].kind, NoticeKind::CiFailed);
-        assert_eq!(n[0].key, "ci_failed:7.1");
-        assert_eq!(n[0].jobs, vec!["test (linux)".to_string()]);
-        assert!(n[0].text.contains("CI failed on PR #12 (pdt/x) at abcdef0: test (linux)"), "{}", n[0].text);
-        assert!(n[0].text.contains("`ci_failed_logs` (runId 7)"));
+        assert!(notices(&p, "pdt/x").is_empty(), "CI is each provider's notice");
+        let n = ci_failed_notice(&actions(), p.ci.as_ref().unwrap(), Some(&p), "pdt/x", &p.head_sha).unwrap();
+        assert_eq!(n.kind, NoticeKind::CiFailed);
+        assert_eq!(n.key, "ci_failed:7.1");
+        assert_eq!(n.jobs, vec!["test (linux)".to_string()]);
+        assert!(n.text.contains("[PDT] CI failed on PR #12 (pdt/x) at abcdef0: test (linux)"), "{}", n.text);
+        assert!(n.text.contains("`ci_failed_logs` (runId 7)") && n.text.contains("Auto-merge is on"), "{}", n.text);
         failed.attempt = 2;
-        p.ci = CiStatus::of(&[failed], "abcdef0123");
-        assert_eq!(notices(&p, "b")[0].key, "ci_failed:7.2", "a re-run that fails again is news");
+        let ci = CiStatus::of(&[failed], "abcdef0123").unwrap();
+        assert_eq!(ci_failed_notice(&actions(), &ci, Some(&p), "b", "h").unwrap().key, "ci_failed:7.2", "a re-run");
+        assert!(
+            ci_failed_notice(
+                &actions(),
+                &CiStatus::of(&[run(8, "ci", "h", "t", CiState::Passed)], "h").unwrap(),
+                Some(&p),
+                "b",
+                "h"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn another_providers_failure_names_it_and_works_without_a_pull_request() {
+        let bk = CiSource { id: "buildkite".into(), label: "Buildkite".into(), logs: true };
+        let mut r = run(0, "app", "abcdef0123", "t", CiState::Failed);
+        (r.provider, r.id, r.attempt, r.failed_jobs) = ("buildkite".into(), "app/3".into(), 2, vec!["test".into()]);
+        let ci = CiStatus::of(&[r], "abcdef0123").unwrap();
+        let n = ci_failed_notice(&bk, &ci, None, "b", "abcdef0123").unwrap();
+        assert_eq!((n.key.as_str(), n.pr), ("ci_failed:buildkite:app/3.2", None));
+        assert!(
+            n.text.starts_with("[PDT] Buildkite CI failed on b at abcdef0: test. Run: https://gh/runs/0."),
+            "{}",
+            n.text
+        );
+        assert!(n.text.contains("`ci_failed_logs` (provider buildkite, runId app/3)"), "{}", n.text);
+        let quiet = CiSource { logs: false, ..bk };
+        assert!(ci_failed_notice(&quiet, &ci, Some(&pr()), "b", "h").unwrap().text.contains("PR #12 (b)"));
+        assert!(
+            ci_failed_notice(&quiet, &ci, None, "b", "h").unwrap().text.contains("Read the failed jobs' logs there")
+        );
+        assert_eq!(ci_passed_key(&quiet, &ci), "ci_passed:buildkite:app/3.2");
+    }
+
+    #[test]
+    fn providers_roll_up_together_and_apart() {
+        let mut bk = run(0, "ci", "h", "t", CiState::Failed);
+        (bk.provider, bk.id) = ("buildkite".into(), "app/1".into());
+        let gh = run(9, "ci", "h", "t", CiState::Passed);
+        let both = CiStatus::of(&[gh.clone(), bk.clone()], "h").unwrap();
+        assert_eq!((both.state, both.runs.len()), (CiState::Failed, 2), "same name, two providers: both kept");
+        assert_eq!(both.providers(), ["buildkite", GITHUB_ACTIONS]);
+        assert_eq!(both.of_provider(GITHUB_ACTIONS).unwrap().state, CiState::Passed);
+        assert_eq!(both.by_provider().len(), 2);
+        let merged = CiStatus::merge(CiStatus::of(std::slice::from_ref(&gh), "h"), CiStatus::of(&[bk], "h")).unwrap();
+        assert_eq!(merged, both);
+        assert_eq!(CiStatus::combine([]), None);
+        // Numeric ids order as numbers.
+        let (mut a, mut b) = (gh.clone(), gh);
+        (a.id, a.state, b.id) = ("10".into(), CiState::Failed, "9".into());
+        assert_eq!(CiStatus::of(&[a, b], "h").unwrap().state, CiState::Failed);
     }
 
     #[test]

@@ -463,7 +463,7 @@ export const plugins: IntegrationInfo[] = [
     "status": "needs_setup",
     "error": null,
     "errorConnection": null,
-    "checkable": true,
+    "checkable": false,
     "connectionKinds": [
       {
         "id": "buildkite",

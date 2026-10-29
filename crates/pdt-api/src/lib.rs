@@ -2,6 +2,7 @@ mod activity;
 mod attachments;
 mod bug_reports;
 mod checks;
+mod ci;
 mod connection_health;
 mod conversations;
 mod error;
