@@ -11,7 +11,7 @@ afterEach(() => {
 
 const login = (over: object = {}) => ({
   connected: false, login: null, apiUrl: 'https://api.github.com', webUrl: 'https://github.com', deviceFlow: true,
-  scopes: 'repo', pending: null, error: null, ...over,
+  scopes: 'repo', pending: null, error: null, rejectedAt: null, ...over,
 });
 
 describe('GithubLogin', () => {
@@ -31,6 +31,20 @@ describe('GithubLogin', () => {
     expect(calls.filter((c) => c.method === 'POST')[0].body).toEqual({});
     entered = true;
     expect(await screen.findByText('ross', {}, { timeout: 4000 })).toBeInTheDocument();
+  });
+
+  it('says when GitHub no longer accepts the login, and reconnects', async () => {
+    let rejected = true;
+    const calls = stubApi({
+      'GET /api/github/login': () => login({ connected: true, login: 'ross', rejectedAt: rejected ? 1 : null }),
+      'POST /api/github/login/device': () => { rejected = false; return login({ connected: true, login: 'ross', pending: { userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device', expiresAt: 1 } }); },
+    });
+    renderWithQuery(<GithubLogin />);
+    expect(await screen.findByText('GitHub no longer accepts this login.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+    expect(await screen.findByText('ABCD-1234')).toBeInTheDocument();
+    expect(screen.queryByText('GitHub no longer accepts this login.')).toBeNull();
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/github/login/device')).toBe(true);
   });
 
   it('saves a pasted token, and says why GitHub refused one', async () => {

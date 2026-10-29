@@ -149,6 +149,8 @@ pub struct GithubApi {
     limited_until: Mutex<Option<u64>>,
     /// A call wanted GitHub while it was not connected.
     wanted: AtomicBool,
+    /// When GitHub refused the login (401, Unix ms): it is kept, but no call is sent until the user signs in again.
+    rejected_at: Mutex<Option<i64>>,
 }
 
 impl GithubApi {
@@ -159,6 +161,7 @@ impl GithubApi {
             etags: Mutex::default(),
             limited_until: Mutex::default(),
             wanted: AtomicBool::new(false),
+            rejected_at: Mutex::default(),
         }
     }
 
@@ -175,19 +178,39 @@ impl GithubApi {
         self.account.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// Signs in (or out, with None). Cached answers belong to the old login, so they go.
+    /// Signs in (or out, with None). Cached answers belong to the old login, so they go, and so does a refusal.
     pub fn set_account(&self, account: Option<Account>) {
         *self.account.write().unwrap_or_else(|e| e.into_inner()) = account;
         self.etags.lock().unwrap_or_else(|e| e.into_inner()).clear();
         *self.limited_until.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.rejected_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.wanted.store(false, Ordering::SeqCst);
     }
 
+    /// When GitHub stopped accepting the stored login (Unix ms), until the user signs in again.
+    pub fn rejected_at(&self) -> Option<i64> {
+        *self.rejected_at.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The login to call with: none, or one GitHub refused, sends nothing.
     fn signed_in(&self) -> Result<Account, GhError> {
-        self.account().ok_or_else(|| {
+        let a = self.account().ok_or_else(|| {
             self.wanted.store(true, Ordering::SeqCst);
             GhError::NotConnected
-        })
+        })?;
+        if self.rejected_at().is_some() {
+            return Err(GhError::Rejected);
+        }
+        Ok(a)
+    }
+
+    /// GitHub answered 401 to `token`. A call in flight when the user signed in again doesn't mark the new login.
+    fn reject(&self, token: &str) {
+        let account = self.account.read().unwrap_or_else(|e| e.into_inner());
+        if account.as_ref().is_some_and(|a| a.token == token) {
+            let mut at = self.rejected_at.lock().unwrap_or_else(|e| e.into_inner());
+            at.get_or_insert_with(now_ms);
+        }
     }
 
     fn url(a: &Account, path: &str) -> String {
@@ -251,6 +274,7 @@ impl GithubApi {
             return Ok(res);
         }
         if res.status == 401 {
+            self.reject(&a.token);
             return Err(GhError::Rejected);
         }
         if !(200..300).contains(&res.status) {
@@ -336,6 +360,14 @@ impl GithubApi {
 /// Unix seconds.
 fn now_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Unix milliseconds.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
 /// A reset time for a message: `HH:MM UTC`.
@@ -682,7 +714,10 @@ impl Forge for GithubApi {
         CI_DIRS
     }
     fn login_needed(&self) -> bool {
-        self.account().is_none() && self.wanted.load(Ordering::SeqCst)
+        (self.account().is_none() && self.wanted.load(Ordering::SeqCst)) || self.rejected_at().is_some()
+    }
+    fn login_rejected_at(&self) -> Option<i64> {
+        self.rejected_at()
     }
     fn change_request(&self, repo: &str, branch: &str) -> Result<Option<ChangeRequest>, ForgeError> {
         let (owner, name) = owner_name(repo)?;

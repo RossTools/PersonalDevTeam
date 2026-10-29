@@ -184,7 +184,9 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
         {item.kind === 'connect' && (
           <section aria-label="Connect GitHub" className="flex flex-col gap-3">
             <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
-            <p className="text-sm text-muted-foreground">It goes away once GitHub is connected.</p>
+            <p className="text-sm text-muted-foreground">
+              It goes away once GitHub is connected{item.body.reason === 'rejected' ? ' again' : ''}.
+            </p>
             <div>
               <Button variant="primary" onClick={doPrimary}>Open GitHub settings <Kbd>↵</Kbd></Button>
             </div>

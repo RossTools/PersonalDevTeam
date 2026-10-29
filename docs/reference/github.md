@@ -87,6 +87,17 @@ works but that organization's private repositories answer 404.
 - Every forge call without a login fails and marks the forge as wanted (`Forge::login_needed`). While it is, the Inbox
   lists **Connect GitHub** (kind `connect`, group Unheard notices; not stored, never dismissed): Enter opens Settings
   › This host › GitHub. It goes once a login is saved.
+- A login GitHub refuses (it answers **401**: the token was revoked or expired; PDT-212) is kept but marked rejected,
+  with the time (`GithubApi::rejected_at`, `Forge::login_rejected_at`; in memory, so a restart finds out again on its
+  first call). While it is, no call reaches GitHub: every one fails as "GitHub no longer accepts PDT's login" at once,
+  so the 60 s pollers back off without spending the rate limit. `GET /api/github/login` reports it as `rejectedAt`
+  (still `connected`), Settings › This host › GitHub says "GitHub no longer accepts this login" with Reconnect, and
+  the same single Inbox item reads **Reconnect GitHub** (`body.reason: "rejected"`, created at the refusal). Saving
+  a login (device flow or pasted token) clears it, takes the item out of the Inbox and runs the PR and issue checks
+  at once. A 403 (missing scopes, or no access to one repository) is not a rejected login: it stays that PR's or
+  project's error.
+- The Connect item is a needs-you notification (Unheard notice, warning) like other blocking items, so it shows
+  as the user's notification settings say; it clears when the item goes.
 
 ## The forge tools
 
