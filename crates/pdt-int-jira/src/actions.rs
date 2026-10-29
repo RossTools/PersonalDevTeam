@@ -1279,7 +1279,14 @@ impl Action for JiraTransition {
                 });
             };
             let fields = meta::coerce_fields(&c.fields, &client.mappings, &t.fields, client.deployment)?;
-            let missing: Vec<MissingField> = meta::missing_required(&t.fields, &fields);
+            let mut missing: Vec<MissingField> = meta::missing_required(&t.fields, &fields);
+            // Jira marks a field required whenever its configuration does, even when the issue has a value already,
+            // and takes the transition without it then: only the ones still empty are missing.
+            if !missing.is_empty() {
+                let ids: Vec<String> = missing.iter().map(|m| m.id.clone()).collect();
+                let now = client.issue_raw(&key, &ids).await?.unwrap_or(Value::Null);
+                missing.retain(|m| !meta::has_value(&now["fields"][&m.id]));
+            }
             if !missing.is_empty() {
                 return Err(format!(
                     "{key}: the transition {} needs {}. Give them in `fields` (by name or id) and try again.",

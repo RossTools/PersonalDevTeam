@@ -385,6 +385,17 @@ pub fn missing_required(meta: &[FieldMeta], given: &Map<String, Value>) -> Vec<M
         .collect()
 }
 
+/// Whether an issue's field has a value (not null, nor an empty text, list or object).
+pub fn has_value(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::String(s) => !s.trim().is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
+        _ => true,
+    }
+}
+
 /// What the user (or the agent) needs to give, in a line: `Resolution (one of Fixed, Won't Fix), Story Points (a
 /// number)`.
 pub fn describe_missing(missing: &[MissingField]) -> String {
@@ -656,6 +667,8 @@ mod tests {
         assert_eq!(missing.len(), 1, "assignee has a default: {missing:?}");
         assert_eq!(missing[0].id, "resolution");
         assert_eq!(missing[0].allowed, ["Fixed", "Won't Fix"]);
+        assert!(has_value(&json!(0)) && has_value(&json!({"id": "1"})) && has_value(&json!(["a"])));
+        assert!(!has_value(&Value::Null) && !has_value(&json!(" ")) && !has_value(&json!([])));
         assert_eq!(describe_missing(&missing), "Resolution [resolution] (one of Fixed, Won't Fix)");
         let list = parse_transitions(&json!({"transitions": [
             {"id": "11", "name": "Resolve", "to": {"name": "Resolved"}, "fields": {

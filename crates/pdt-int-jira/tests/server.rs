@@ -405,7 +405,9 @@ async fn assigned_issues_are_imported_from_a_server_once() {
 #[tokio::test]
 async fn a_transition_sends_its_required_fields_in_the_same_request() {
     let env = setup().await;
-    env.jira.lock().unwrap().issues.push(issue("OPS-1", "Fix", None));
+    let mut unpointed = issue("OPS-1", "Fix", None);
+    unpointed["fields"][POINTS] = Value::Null;
+    env.jira.lock().unwrap().issues.push(unpointed);
     let o = out(&env, "jira.transitions", json!({"connection": "ops-jira", "key": "OPS-1"})).await;
     let resolve = o["transitions"].as_array().unwrap().iter().find(|t| t["id"] == "51").unwrap().clone();
     assert!(resolve["fields"].as_array().unwrap().iter().any(|f| f["id"] == "resolution" && f["required"] == true));
@@ -427,6 +429,21 @@ async fn a_transition_sends_its_required_fields_in_the_same_request() {
     assert_eq!((o["transition"].as_str(), o["status"].as_str()), (Some("Resolve Issue"), Some("Resolved")));
     let body = sent(&env, "POST", "/jira/rest/api/2/issue/OPS-1/transitions");
     assert_eq!(body, json!({"transition": {"id": "51"}, "fields": {"resolution": {"id": "1"}, POINTS: 5}}));
+    // A required field the issue has already (Story Points) is left to Jira; only the empty one is asked for.
+    env.jira.lock().unwrap().issues.push(issue("OPS-2", "Pointed", None));
+    let r = run(&env, "jira.transition", json!({"connection": "ops-jira", "key": "OPS-2", "to": "Resolved"})).await;
+    let text = r.to_string();
+    assert!(text.contains("Resolution [resolution]") && !text.contains("Story Points"), "{text}");
+    let o = out(
+        &env,
+        "jira.transition",
+        json!({"connection": "ops-jira", "key": "OPS-2", "to": "Resolved",
+        "fields": {"resolution": "Fixed"}}),
+    )
+    .await;
+    assert_eq!(o["status"], "Resolved");
+    let body = sent(&env, "POST", "/jira/rest/api/2/issue/OPS-2/transitions");
+    assert_eq!(body, json!({"transition": {"id": "51"}, "fields": {"resolution": {"id": "1"}}}));
     // A bad choice says which ones there are.
     let r = run(
         &env,

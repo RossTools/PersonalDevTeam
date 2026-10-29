@@ -348,7 +348,8 @@ notify itself forever.
   options, priorities, resolutions, components and versions matched by name or id (a value that matches none fails,
   listing the ones there are), users by id, rich text per deployment, lists split on commas; a value in Jira's own
   form (an object) goes as it is. A required field (without a default) the call leaves out fails `jira.create` and
-  `jira.transition` before anything is sent, naming each with its type or choices, so the PM asks the user for it.
+  `jira.transition` before anything is sent (for a transition, only one the issue has no value for yet: Jira takes
+  the move without a required field that is already set), naming each with its type or choices, so the PM asks the user for it.
   `jira.import` makes a Draft ticket (title the summary, description the issue's text) linked to the issue, or leaves
   by `exists` (quiet) when a ticket already links it. `jira.transition` counts an issue already in `to` as done
   (quiet), picks the transition with that id or name or the one leading to that status, sends the screen's `fields`
