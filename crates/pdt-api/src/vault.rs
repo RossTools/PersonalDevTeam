@@ -28,9 +28,12 @@ fn keychain_failed(e: impl std::fmt::Display) -> ApiError {
     ApiError::new(StatusCode::BAD_GATEWAY, "keychain_failed", e.to_string())
 }
 
-async fn keychain_get(st: &AppState, id: &str) -> Result<Option<String>, String> {
-    let (secrets, acct) = (st.secrets.clone(), account(id));
-    tokio::task::spawn_blocking(move || secrets.get(&acct)).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())
+async fn keychain_get(st: &AppState, s: &Secret) -> Result<Option<String>, String> {
+    let (secrets, acct, what) = (st.secrets.clone(), account(&s.id), format!("the secret {}", s.name));
+    tokio::task::spawn_blocking(move || secrets.get(&acct).map_err(|e| e.naming(&acct, &what)))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 async fn keychain_set(st: &AppState, id: &str, value: &str) -> Result<(), ApiError> {
@@ -60,7 +63,7 @@ pub async fn load_known(st: &AppState) {
         }
     };
     for s in list {
-        match keychain_get(st, &s.id).await {
+        match keychain_get(st, &s).await {
             Ok(Some(v)) => st.store.redactor().set(&s.name, &v),
             Ok(None) => tracing::warn!(secret = %s.name, "a secret has no value in the keychain"),
             Err(e) => tracing::warn!(secret = %s.name, error = %e, "could not read a secret from the keychain"),
@@ -73,7 +76,7 @@ async fn value(st: &AppState, s: &Secret) -> Result<String, String> {
     if let Some(v) = st.store.redactor().value(&s.name) {
         return Ok(v);
     }
-    let v = keychain_get(st, &s.id)
+    let v = keychain_get(st, s)
         .await?
         .ok_or_else(|| format!("the secret {} has no value: set it in Settings → Secrets", s.name))?;
     st.store.redactor().set(&s.name, &v);
