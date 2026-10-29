@@ -246,7 +246,12 @@ pdtd (built with `cargo build -p pdtd`, or `--bin`) against a copy of a real dat
   the instance PDT is developed on, where it is `local`. `GET /api/bug-reports/preview` says which (`setting`,
   `route`, `repo`, `project`, `tokenPresent`) and returns the diagnostics as they would be sent; the form says where
   the report goes before it is sent.
-- **Filing.** `POST /api/bug-reports {title, description?, includeDiagnostics?, nonce?}`. `github`: an issue on the
+- **Filing.** `POST /api/bug-reports {title, description?, expected?, steps?, includeDiagnostics?, nonce?}`. The body
+  (`bug_report::body`) has the sections of the GitHub bug form (`.github/ISSUE_TEMPLATE/bug.yml`; a test keeps the
+  labels in step): `### What happened` (`description`), `### What you expected`, `### How to reproduce`, `### PDT
+  version`, `### OS` (only with the diagnostics, else `_Not shared_`; an empty one is `_No response_`, as GitHub
+  writes it), then the diagnostics. The repository's issue forms don't add `from-pdt`, so triage sees only reports
+  filed from PDT. `github`: an issue on the
   release repository with labels `bug` and `from-pdt`, filed with the update token (pdt-update `create_issue`; the
   token goes only to the API host and is never logged) → `{kind: "issue", number, url}`. `local`: a Draft ticket
   labelled `bug` in that project (diagnostics in its description), with no GitHub request → `{kind: "ticket", key, id,
