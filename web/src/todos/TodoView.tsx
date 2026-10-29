@@ -8,7 +8,8 @@ import { Button, Checkbox, EmptyState, Input, MenuButton, StatusDot, type MenuEn
 import type { Project } from '../api/gen/Project';
 import type { Todo } from '../api/gen/Todo';
 import type { TodoPatch } from '../api/gen/TodoPatch';
-import { MarkdownEditor } from '../common/LazyMarkdownEditor';
+import { EndOfText } from '../common/EndOfText';
+import { MarkdownEditor, type MarkdownEditorHandle } from '../common/LazyMarkdownEditor';
 import type { SaveState } from '../notes/useNoteDraft';
 import { DuePicker } from './DuePicker';
 import { dueState, formatDay, repeatText } from './model';
@@ -33,6 +34,7 @@ export function TodoView({ todo: t, now, projects, onBack, onPatch, onDelete, on
   const [picking, setPicking] = useState(false);
   const dueRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<MarkdownEditorHandle>(null);
 
   // Opening a todo moves the focus into it (to Back, so Tab reaches the title and the notes next).
   useEffect(() => {
@@ -86,7 +88,7 @@ export function TodoView({ todo: t, now, projects, onBack, onPatch, onDelete, on
         <MenuButton label={`Actions for ${t.title}`} size="sm" entries={actions} className="text-muted-foreground" />
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
-        <article aria-label={`Todo: ${t.title}`} className="mx-auto flex max-w-[680px] flex-col gap-3 px-4 pt-2 pb-16">
+        <article aria-label={`Todo: ${t.title}`} className="mx-auto flex min-h-full max-w-[680px] flex-col gap-3 px-4 pt-2">
           <div className="flex items-start gap-2.5">
             <Checkbox
               aria-label={t.done ? `Not done: ${t.title}` : `Done: ${t.title}`}
@@ -159,6 +161,7 @@ export function TodoView({ todo: t, now, projects, onBack, onPatch, onDelete, on
           </div>
           <div className="mt-2">
             <MarkdownEditor
+              ref={bodyRef}
               label="Notes"
               placeholder="Write notes in Markdown…"
               value={draft.body}
@@ -166,6 +169,7 @@ export function TodoView({ todo: t, now, projects, onBack, onPatch, onDelete, on
               onBlur={() => void draft.flush()}
             />
           </div>
+          <EndOfText onTap={() => bodyRef.current?.focus('end')} />
         </article>
       </div>
       {picking && (

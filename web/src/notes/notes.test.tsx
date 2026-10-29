@@ -152,6 +152,17 @@ describe('notes: a note', () => {
     expect(caretIn(box)).toBe(body.indexOf('## Layout'));
   });
 
+  it('in Write, a tap below the text puts the caret at its end (PDT-264)', async () => {
+    stubApi({ 'GET /api/pm/notes/a': note('a', { title: 'Plan', body: 'Short' }), 'GET /api/projects': [] });
+    renderWithQuery(<NoteScreen {...screenProps()} />);
+    await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
+    const box = await screen.findByRole('textbox', { name: 'Note' });
+    await userEvent.click(screen.getByRole('textbox', { name: 'Title' }));
+    await userEvent.click(screen.getByTestId('end-of-text'));
+    await waitFor(() => expect(box).toHaveFocus());
+    expect(caretIn(box)).toBe('Short'.length);
+  });
+
   it('opens the title on a double-click on it; not on a link or after a drag', async () => {
     stubApi({ 'GET /api/pm/notes/a': note('a', { title: 'Plan', body: 'See [the spec](https://x.test).' }), 'GET /api/projects': [] });
     renderWithQuery(<NoteScreen {...screenProps()} />);
