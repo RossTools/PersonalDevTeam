@@ -9,7 +9,7 @@ import {
   DialogTrigger,
 } from './primitives/dialog';
 
-export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'gallery';
+export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'full' | 'gallery';
 
 const sizes: Record<DialogSize, string> = {
   sm: 'sm:max-w-sm',
@@ -17,6 +17,8 @@ const sizes: Record<DialogSize, string> = {
   lg: 'sm:max-w-2xl',
   /** Wide content: a diff. */
   xl: 'sm:max-w-6xl',
+  /** Most of the screen, at its full height: a long text being edited. */
+  full: 'h-[calc(100dvh-4rem)] sm:max-w-[calc(100vw-4rem)]',
   /** A large picker of fixed height whose body lays out its own scrolling columns (the New workflow gallery). */
   gallery: 'sm:max-w-5xl h-[min(42.5rem,calc(100dvh-2rem))]',
 };

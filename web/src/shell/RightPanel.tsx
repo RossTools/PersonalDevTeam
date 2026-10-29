@@ -72,7 +72,7 @@ export function useRightPanelKey(onToggle: () => void) {
 }
 
 /** The right panel's content (the todo list), shared by the desktop panel and the phone's sheet. */
-export function RightPanelContent({ projectId, projects, focusTodo, onTodoFocused, focusAddSeq, trailing }: {
+export function RightPanelContent({ projectId, projects, focusTodo, onTodoFocused, focusAddSeq, trailing, onTodoOpen }: {
   projectId: string | null;
   projects: readonly Project[];
   /** A todo to show (a due reminder was opened). */
@@ -83,8 +83,10 @@ export function RightPanelContent({ projectId, projects, focusTodo, onTodoFocuse
   focusAddSeq?: number;
   /** At the end of the header (the desktop's collapse button). */
   trailing?: ReactNode;
+  /** A todo was opened, or the list is back (a phone's sheet goes full screen for an open todo). */
+  onTodoOpen?: (open: boolean) => void;
 }) {
-  return <TodoList projectId={projectId} projects={projects} focus={focusTodo} onFocused={onTodoFocused} focusAddSeq={focusAddSeq} trailing={trailing} />;
+  return <TodoList projectId={projectId} projects={projects} focus={focusTodo} onFocused={onTodoFocused} focusAddSeq={focusAddSeq} trailing={trailing} onOpenChange={onTodoOpen} />;
 }
 
 export function RightPanel({ open, onOpenChange, projectId, projects, focusTodo, onTodoFocused, focusAddSeq }: {

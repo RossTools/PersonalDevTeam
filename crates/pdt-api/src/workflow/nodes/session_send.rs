@@ -30,6 +30,7 @@ pub struct SessionSendConfig {
     /// …or to this session.
     #[serde(default)]
     pub session: Option<String>,
+    #[schemars(extend("x-format" = "markdown"))]
     pub text: String,
     /// A key already sent to the attempt is not sent again (`{{trigger.notice.key}}`).
     #[serde(default)]

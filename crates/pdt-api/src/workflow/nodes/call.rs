@@ -15,6 +15,7 @@ pub struct CallConfig {
     pub workflow: String,
     #[serde(default)]
     #[ts(type = "unknown")]
+    #[schemars(extend("x-format" = "code", "x-language" = "json"))]
     pub input: Value,
 }
 

@@ -1,10 +1,12 @@
 // A node's config form, generated from its kind's JSON Schema (schemars): text, numbers, switches, choices, lists of
 // text and of objects, optional fields and Tpl fields (a literal or a `{{reference}}`). What it can't draw is a JSON
-// field (Phase 7d spec §3.4).
+// field (Phase 7d spec §3.4), edited as code. A schema's `x-format` (PDT-250) picks the editor for long text:
+// `markdown`, `code` (in `x-language`) or `multiline`.
 import { useEffect, useState } from 'react';
 import { Braces, Plus, Trash2 } from 'lucide-react';
 import { Button, Field, IconButton, Input, MenuButton, Select, Switch, Textarea } from '@ui';
 import { deref } from './model';
+import { CodeField, MarkdownField } from './TextEditors';
 import { ConnectionPicker } from '../connections/ConnectionPicker';
 
 type Schema = Record<string, unknown>;
@@ -21,6 +23,10 @@ const isRef = (v: Value) => typeof v === 'string' && /\{\{.*\}\}/.test(v);
 /** What a schema is, as far as the form cares. */
 export type FieldKind =
   | { kind: 'string'; multiline: boolean }
+  /** `x-format: markdown`. */
+  | { kind: 'markdown' }
+  /** `x-format: code` on text: a script, in `x-language` (`sh`, `js`, …). */
+  | { kind: 'code'; language: string }
   /** A connection's name (`x-connection-kind`: the kind it must be, or `any`). */
   | { kind: 'connection'; connectionKind: string }
   | { kind: 'number'; integer: boolean }
@@ -30,6 +36,7 @@ export type FieldKind =
   | { kind: 'objects'; item: Schema }
   | { kind: 'object'; schema: Schema }
   | { kind: 'any' }
+  /** Any JSON value (also `x-format: code` with `x-language: json`), edited as JSON. */
   | { kind: 'json' };
 
 export interface Classified {
@@ -40,7 +47,8 @@ export interface Classified {
   description?: string;
 }
 
-const LONG = new Set(['text', 'body', 'question', 'description', 'message']);
+/** An `x-*` extension's text, from the field's schema or what it refers to. */
+const extension = (raw: Schema, s: Schema, key: string) => [raw[key], s[key]].find((k) => typeof k === 'string') as string | undefined;
 
 function enumOptions(s: Schema, root: Schema): { value: string; description?: string }[] | null {
   if (Array.isArray(s.enum) && s.enum.every((x) => typeof x === 'string')) return (s.enum as string[]).map((value) => ({ value }));
@@ -56,7 +64,7 @@ function enumOptions(s: Schema, root: Schema): { value: string; description?: st
   return out;
 }
 
-export function classify(raw: Schema | boolean | undefined, root: Schema, key = ''): Classified {
+export function classify(raw: Schema | boolean | undefined, root: Schema): Classified {
   if (raw === true || raw === undefined) return { field: { kind: 'any' }, nullable: true, tpl: false };
   if (raw === false) return { field: { kind: 'json' }, nullable: true, tpl: false };
   let s = deref(raw, root);
@@ -86,13 +94,19 @@ export function classify(raw: Schema | boolean | undefined, root: Schema, key = 
     const t = type.filter((x) => x !== 'null');
     type = t.length === 1 ? t[0] : undefined;
   }
-  const connectionKind = [raw['x-connection-kind'], s['x-connection-kind']].find((k) => typeof k === 'string') as string | undefined;
+  const connectionKind = extension(raw, s, 'x-connection-kind');
   if (connectionKind) return { field: { kind: 'connection', connectionKind }, nullable, tpl, description };
   const options = enumOptions(s, root);
   if (options) return { field: { kind: 'enum', options }, nullable, tpl, description };
   const base = { nullable, tpl, description };
+  const format = extension(raw, s, 'x-format');
+  const language = extension(raw, s, 'x-language') ?? '';
+  if (format === 'code' && (type !== 'string' || language === 'json')) return { field: { kind: 'json' }, ...base };
   switch (type) {
-    case 'string': return { field: { kind: 'string', multiline: LONG.has(key) }, ...base };
+    case 'string':
+      if (format === 'markdown') return { field: { kind: 'markdown' }, ...base };
+      if (format === 'code') return { field: { kind: 'code', language }, ...base };
+      return { field: { kind: 'string', multiline: format === 'multiline' }, ...base };
     case 'integer': return { field: { kind: 'number', integer: true }, ...base };
     case 'number': return { field: { kind: 'number', integer: false }, ...base };
     case 'boolean': return { field: { kind: 'boolean' }, ...base };
@@ -134,8 +148,8 @@ function RefPicker({ paths, onPick }: { paths: string[]; onPick: (ref: string) =
   );
 }
 
-/** JSON in a text area: kept as typed until it parses. */
-function JsonField({ value, onChange, label }: { value: Value; onChange: (v: Value) => void; label: string }) {
+/** JSON in a code editor: kept as typed until it parses. */
+function JsonField({ value, onChange, label, readOnly }: { value: Value; onChange: (v: Value) => void; label: string; readOnly?: boolean }) {
   const [text, setText] = useState(() => (value === undefined ? '' : JSON.stringify(value, null, 2)));
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -149,16 +163,19 @@ function JsonField({ value, onChange, label }: { value: Value; onChange: (v: Val
   }, [value]);
   return (
     <>
-      <Textarea
-        mono
-        aria-label={label}
-        rows={3}
+      <CodeField
+        label={label}
+        language="json"
         value={text}
-        onChange={(e) => {
-          setText(e.target.value);
-          if (!e.target.value.trim()) return onChange(undefined);
+        readOnly={readOnly}
+        onChange={(t) => {
+          setText(t);
+          if (!t.trim()) {
+            setError(null);
+            return onChange(undefined);
+          }
           try {
-            onChange(JSON.parse(e.target.value));
+            onChange(JSON.parse(t));
             setError(null);
           } catch (err) {
             setError((err as Error).message);
@@ -183,8 +200,10 @@ interface ControlProps {
 function Control({ c, value, onChange, label, root, refs, readOnly }: ControlProps) {
   const f = c.field;
   const clear = (v: Value) => onChange(v === '' && c.nullable ? undefined : v);
+  // Text fields take references inside the text.
+  const isText = f.kind === 'string' || f.kind === 'markdown' || f.kind === 'code';
   // A Tpl field holding a reference shows it as text, with a button back to the literal.
-  if (c.tpl && isRef(value) && f.kind !== 'string') {
+  if (c.tpl && isRef(value) && !isText) {
     return (
       <div className="flex items-center gap-1">
         <Input mono aria-label={label} value={String(value)} readOnly={readOnly} onChange={(e) => onChange(e.target.value)} className="flex-1" />
@@ -192,7 +211,7 @@ function Control({ c, value, onChange, label, root, refs, readOnly }: ControlPro
       </div>
     );
   }
-  const refButton = c.tpl && !readOnly && f.kind !== 'string' && (
+  const refButton = c.tpl && !readOnly && !isText && (
     <MenuButton label={`Use a reference for ${label}`} size="sm" entries={() => refs.map((p) => ({ label: p, onSelect: () => onChange(`{{${p}}}`) }))}>
       <IconButton label={`Use a reference for ${label}`} size="sm"><Braces aria-hidden /></IconButton>
     </MenuButton>
@@ -215,6 +234,14 @@ function Control({ c, value, onChange, label, root, refs, readOnly }: ControlPro
           {!readOnly && <RefPicker paths={refs} onPick={(r) => onChange(text + r)} />}
         </div>
       );
+    }
+    case 'markdown':
+    case 'code': {
+      const text = typeof value === 'string' ? value : value == null ? '' : String(value);
+      const refPicker = !readOnly && <RefPicker paths={refs} onPick={(r) => onChange(text + r)} />;
+      return f.kind === 'markdown'
+        ? <MarkdownField label={label} value={text} readOnly={readOnly} onChange={clear} extra={refPicker} />
+        : <CodeField label={label} language={f.language} value={text} readOnly={readOnly} onChange={clear} extra={refPicker} />;
     }
     case 'number':
       return (
@@ -299,7 +326,7 @@ function Control({ c, value, onChange, label, root, refs, readOnly }: ControlPro
         </div>
       );
     default:
-      return <JsonField value={value} onChange={onChange} label={label} />;
+      return <JsonField value={value} onChange={onChange} label={label} readOnly={readOnly} />;
   }
 }
 
@@ -308,7 +335,7 @@ function objectDefault(schema: Schema, root: Schema): Record<string, Value> {
   const props = (s.properties ?? {}) as Record<string, Schema>;
   const required = (s.required ?? []) as string[];
   return Object.fromEntries(required.map((k) => {
-    const c = classify(props[k], root, k);
+    const c = classify(props[k], root);
     const v = c.field.kind === 'boolean' ? false : c.field.kind === 'number' ? 0 : c.field.kind === 'strings' || c.field.kind === 'objects' ? []
       : c.field.kind === 'enum' ? c.field.options[0]?.value : '';
     return [k, v];
@@ -344,7 +371,7 @@ export function SchemaForm({ schema, root = schema, value, onChange, refs = [], 
   return (
     <>
       {keys.map((k) => {
-        const c = classify(props[k], root, k);
+        const c = classify(props[k], root);
         const name = humanize(k);
         const full = label ? `${label} ${name.toLowerCase()}` : name;
         return (

@@ -68,10 +68,10 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   projects** or the project on screen (which new todos then join), kept as `pdt.todos.filter`. Opening the panel with
   Ctrl+] t focuses the add box; ⌘. only toggles it.
 - Rows (TodoRow.tsx; in the gallery): an 18px round checkbox (web/ui `Checkbox shape="round"`, its border red when
-  overdue), the title (click to edit) and a muted meta line: the due day where the group heading doesn't already say
+  overdue), the title (click to open the todo, below), the first line of its notes, and a muted meta line: the due day where the group heading doesn't already say
   it (red when overdue; a time today in amber), the repeat rule ("Every Sat", "Mon, Thu"), the linked ticket's key
-  (opens it) and, in All, the project key when there's no ticket. Hairlines separate rows from the title on. On
-  hover a row fills and shows a calendar button (the due picker) and ⋯ (Edit, Due date…, Repeat…, Stop repeating,
+  (opens it), in All the project key when there's no ticket, and a notes icon. Hairlines separate rows from the title on. On
+  hover a row fills and shows a calendar button (the due picker) and ⋯ (Open, Edit, Due date…, Repeat…, Stop repeating,
   Link to a ticket… / Unlink, Project, Delete). Rows drag (with a fine pointer; on touch from a grip handle) or
   Alt+↑/↓ to reorder within their group; a drop from another group does nothing.
 - Completing: a ticked row is PATCHed at once but stays in its place for 800 ms, struck through on a faint green
@@ -102,16 +102,25 @@ Spec: docs/superpowers/specs/2026-10-17-workspaces-design.md. Code: pdt-api `wor
   Project and Ticket. Enter adds the todo with the parsed title (or the whole text if nothing is left), date, time,
   repeat, project and ticket.
 - When an open todo comes due (local midnight on its day, or its time) pdtd makes one `todo.due` notification
-  ([workflows.md](workflows.md) "Notifications"); opening it opens the panel (the phone's sheet) and rings
-  the row, switching the filter to All if it hid it. The list uses each such request once (AppShell drops it), so
-  reopening the panel later doesn't ring the row or change the filter again. Done, deleted or re-dated clears it; a new date reminds again.
+  ([workflows.md](workflows.md) "Notifications"); opening it opens the panel (the phone's sheet) with that todo
+  open (below), switching the list's filter to All if it hid it, so Back finds its row (with a ring). The list uses
+  each such request once (AppShell drops it), so reopening the panel later doesn't open it or change the filter again. Done, deleted or re-dated clears it; a new date reminds again.
   pdtd works out the moment in the host's own time zone.
+- A todo's notes (PDT-227, TodoView.tsx, useTodoDraft.ts): a todo has a Markdown `body` (empty when none; at most
+  64 KB, pdt-core `valid_body`; `body` in POST and PATCH, `""` clears it). A click on a row's title (or ⋯ Open) opens
+  the todo in place of the list, with ← Todos back to it; on a phone the sheet goes full screen while one is open. The
+  open view has the done box, the title (an emptied title comes back), Due date (the picker), Repeat, Link a ticket
+  (or the linked ticket's key, which opens it), Project, ⋯ (Stop repeating, Unlink, Delete) and the notes in the
+  Markdown editor (PDT-187's `MarkdownEditor`). Title and notes save the way notes do: 800 ms after typing stops, on
+  blur, Enter (title), Esc or Back; a poll never overwrites an unsaved edit. Renaming in place is ⋯ Edit. A row with
+  notes shows their first line, muted (Markdown marks dropped), and a notes icon in its meta line. A repeating todo's
+  next one keeps the body, and `list_todos` returns it.
 - Repeating todos (PDT-141): a todo with a due date can repeat: every N days (daily), every weekday (Mon–Fri), every
   N weeks on chosen days (weekly), or each month on a day (1–31; a shorter month uses its last day, and the next month
   goes back to the rule's day). The rule is `recurrence` (`{rule: {every: "day", interval} | {every: "weekday"} |
   {every: "week", interval, days: [1–7, Monday first]} | {every: "month", day}, from: "due" | "done"}`), stored as
   JSON on the todo and validated and computed in pdt-core `todo.rs`. Checking it off marks it done and makes the next
-  todo (same title, time, project, ticket, rule and place in the list), due on the rule's next day: from the due date
+  todo (same title, notes, time, project, ticket, rule and place in the list), due on the rule's next day: from the due date
   (the default) the series keeps its schedule but skips days already past, so the next one is never due today or
   earlier; from when it's done, it counts from the day it was checked off. A todo makes its next one once (the store
   remembers it as `next_id`, in the same transaction), so two checks at once, or un-checking and checking it again,

@@ -797,7 +797,7 @@ describe('phone', () => {
   it('opens the todo list in a sheet from the top bar, with no right panel', async () => {
     stubPhone();
     stubWorkspaces({ 'GET /api/todos': [{ id: 'a', title: 'Call Sam', position: 0, done: false, projectId: null, ticketId: null,
-      createdAt: 1, updatedAt: 1, doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null }] });
+      createdAt: 1, updatedAt: 1, doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null, body: '' }] });
     renderWithQuery(<AppShell />);
     expect(screen.queryByRole('complementary', { name: 'Right panel' })).not.toBeInTheDocument();
     await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Todos' }));

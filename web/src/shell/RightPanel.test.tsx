@@ -9,7 +9,7 @@ import { RIGHT_PANEL_OPEN_KEY, RIGHT_PANEL_WIDTH, RIGHT_PANEL_WIDTH_KEY, RightPa
 const projects = [{ id: 'p1', key: 'PX', name: 'P' }] as Project[];
 const todo = (id: string, done = false, projectId: string | null = null): Todo => ({
   id, title: `Todo ${id}`, position: 0, done, projectId, ticketId: null, createdAt: 1, updatedAt: 1,
-  doneAt: done ? 2 : null, projectKey: null, ticketKey: null, ticketTitle: null, dueOn: null, dueTime: null, recurrence: null,
+  doneAt: done ? 2 : null, projectKey: null, ticketKey: null, ticketTitle: null, body: '', dueOn: null, dueTime: null, recurrence: null,
 });
 
 /** The panel as AppShell holds it: its open state from storage, ⌘. toggling it. */

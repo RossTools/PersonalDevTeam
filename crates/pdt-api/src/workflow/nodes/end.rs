@@ -14,6 +14,7 @@ pub struct EndConfig {
     pub quiet: bool,
     /// The run's output (a sub-workflow's result).
     #[ts(type = "unknown")]
+    #[schemars(extend("x-format" = "code", "x-language" = "json"))]
     pub output: Value,
 }
 
