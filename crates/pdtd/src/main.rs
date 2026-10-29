@@ -53,6 +53,16 @@ async fn run() -> anyhow::Result<()> {
     if let Err(e) = std::fs::write(pdt_core::network::listening_path(&cfg.data_dir), format!("{}\n", cfg.port)) {
         tracing::warn!(error = %e, "could not record the port pdtd listens on");
     }
+    // pdt-host restarts an adopted pdtd started with other variables than it would use (PDT-261).
+    let started = pdt_core::handoff::StartedEnv::new(
+        pdt_core::BUILD_VERSION,
+        std::env::vars().filter(|(k, _)| k.starts_with("PDT_")),
+    );
+    if let Err(e) =
+        std::fs::write(pdt_core::handoff::started_env_path(&cfg.data_dir), serde_json::to_vec(&started).expect("json"))
+    {
+        tracing::warn!(error = %e, "could not record the variables pdtd started with");
+    }
     if cfg.web_dir.is_none() {
         tracing::warn!("the web UI is not served (no web dir found); set PDT_WEB_DIR to the built web/dist directory");
     }

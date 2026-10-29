@@ -128,13 +128,18 @@ struct Outside(std::process::Child);
 
 impl Outside {
     fn start(install: &Path, port: u16) -> Outside {
+        Outside::start_with(install, vec![("PDT_PORT".into(), port.to_string())])
+    }
+
+    /// Started with exactly `env` as its `PDT_*` variables.
+    fn start_with(install: &Path, env: Vec<(String, String)>) -> Outside {
         let mut cmd = std::process::Command::new(install.join(format!("pdtd{EXE}")));
         for (k, _) in std::env::vars() {
             if k.starts_with("PDT_") {
                 cmd.env_remove(k);
             }
         }
-        Outside(cmd.env("PDT_PORT", port.to_string()).spawn().unwrap())
+        Outside(cmd.envs(env).spawn().unwrap())
     }
 }
 
@@ -596,19 +601,54 @@ fn with_nothing_to_run_it_keeps_trying() {
     wait_version(port, "0.1.5", Duration::from_secs(20));
 }
 
+/// A pdtd started with the variables this host would use is adopted as it is (PDT-261).
 #[test]
 fn adopts_a_running_pdtd_and_takes_over_when_it_stops() {
     let tmp = tempfile::tempdir().unwrap();
     let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
     let port = free_port();
-    let mut outside = Outside::start(&install, port);
+    let cfg = config(&install, &tmp.path().join("data"), port);
+    let mut outside = Outside::start_with(&install, cfg.pdtd_env());
     wait_version(port, "0.1.5", Duration::from_secs(30));
-    let _h = supervise(config(&install, &tmp.path().join("data"), port), tmp.path().join("backup"));
-    std::thread::sleep(Duration::from_secs(1));
-    assert_eq!(read(&install.join("env.txt")), "", "the running pdtd was adopted, not replaced");
+    std::fs::remove_file(install.join("env.json")).unwrap();
+    let _h = supervise(cfg.clone(), tmp.path().join("backup"));
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(outside.0.try_wait().unwrap().is_none(), "the running pdtd was adopted, not restarted");
+    assert!(!install.join("env.json").exists(), "no pdtd was started");
+    assert!(!read(&log_path(&cfg)).contains("different environment"), "{}", read(&log_path(&cfg)));
     request_shutdown(port).unwrap();
     let _ = outside.0.wait();
     wait_version(port, "0.1.5", Duration::from_secs(20));
+}
+
+/// PDT-261: a pdtd an older pdt-host started (during an update, before this one replaced itself) with other variables
+/// than this host uses is restarted once, gracefully, with this host's.
+#[test]
+fn restarts_an_adopted_pdtd_started_with_other_variables() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
+    let port = free_port();
+    let mut cfg = config(&install, &tmp.path().join("data"), port);
+    let older = cfg.pdtd_env();
+    cfg.forward_env = vec![("PDT_WEB_DIR".into(), "/web".into())];
+    let mut outside = Outside::start_with(&install, older);
+    wait_version(port, "0.1.5", Duration::from_secs(30));
+    let _h = supervise(cfg.clone(), tmp.path().join("backup"));
+    wait_log(&cfg, "pdtd was started by an older pdt-host with a different environment; restarting");
+    assert!(outside.0.wait().unwrap().success(), "asked to stop, not killed");
+    wait_version(port, "0.1.5", Duration::from_secs(20));
+    let end = Instant::now() + Duration::from_secs(20);
+    loop {
+        let env: HashMap<String, String> = serde_json::from_str(&read(&install.join("env.json"))).unwrap_or_default();
+        if env.get("PDT_WEB_DIR").map(String::as_str) == Some("/web") {
+            break;
+        }
+        assert!(Instant::now() < end, "pdtd was never started with this host's variables: {env:?}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Once: the restarted pdtd is this host's own and is left alone.
+    std::thread::sleep(Duration::from_secs(1));
+    assert_eq!(read(&log_path(&cfg)).matches("different environment").count(), 1, "{}", read(&log_path(&cfg)));
 }
 
 /// Review round 2: a dismissed result is not written again when the new version passes its watch window.
