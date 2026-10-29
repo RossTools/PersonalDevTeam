@@ -8,6 +8,12 @@ name: release
 # - Merging it (through the merge queue) runs `tag`, which tags the merge commit <prefix>X.Y.Z, then builds the
 #   bundles again from that commit (the PR's were built from another commit: the queue squashes), and `publish`
 #   makes the GitHub release with them, SHA256SUMS and the version's CHANGELOG.md section as its notes.
+# - Run by hand with channel `experimental` (PDT-210), `experimental` makes no PR and commits nothing: it picks
+#   X.Y.Z-exp.N (X.Y.Z the next version for the bump, or the exact version; N one more than the highest such tag) and
+#   tags the head of main with it. The bundles are built from that commit with the version set only in their checkout,
+#   and `publish` makes a GitHub pre-release, which only hosts on the experimental update channel install. Its notes
+#   preview the unreleased fragments (scripts/changelog.sh preview). Re-running failed jobs reuses the tag; re-running
+#   every job makes the next -exp.N.
 #
 # Secrets: PDT_RELEASE_TOKEN, a token that can push branches and open pull requests on this repository (a
 # fine-grained token with Contents and Pull requests read and write, or a GitHub App's). Pull requests and pushes made
@@ -29,6 +35,11 @@ on:
         description: Or an exact version, X.Y.Z (overrides the bump)
         type: string
         default: ""
+      channel:
+        description: stable (a release PR) or experimental (a pre-release of main's head, X.Y.Z-exp.N; nothing committed)
+        type: choice
+        options: [stable, experimental]
+        default: stable
   pull_request:
     types: [closed]
     branches: [main]
@@ -41,7 +52,7 @@ env:
 
 jobs:
   prepare:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.channel != 'experimental'
     # One release PR at a time. Concurrency is per job, not per workflow: the workflow runs (and skips every job) for
     # every PR closed into main, and a workflow-level group would let such a run cancel a pending release run.
     concurrency:
@@ -156,16 +167,59 @@ jobs:
           echo "Tagged $tag at $SHA"
           { echo "tag=$tag"; echo "version=$version"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
 
+  experimental:
+    if: github.event_name == 'workflow_dispatch' && inputs.channel == 'experimental'
+    # One at a time, so two runs never pick the same -exp.N; its own group, so it never waits on a release PR.
+    concurrency:
+      group: release-experimental
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      sha: ${{ steps.tag.outputs.sha }}
+    steps:
+      - name: Only from the default branch
+        if: github.ref_name != github.event.repository.default_branch
+        run: |
+          echo "::error::Run the release workflow on ${{ github.event.repository.default_branch }}, not ${{ github.ref_name }}."
+          exit 1
+      - uses: actions/checkout@v7
+      - name: Tag the head of main X.Y.Z-exp.N
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ -n "$VERSION" ]; then base="${VERSION#v}"; else base="$(scripts/version.sh next "$BUMP")"; fi
+          version="$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/${TAG_PREFIX}${base}-exp." --jq '.[].ref' |
+            sed 's#^refs/tags/##' | scripts/version.sh next-exp "$base")"
+          # Refuses a version that is not newer than main's (in this checkout only: nothing is committed), and
+          # fragments that the notes could not be made from.
+          scripts/version.sh set "$version"
+          scripts/changelog.sh check
+          tag="${TAG_PREFIX}${version}"
+          # Made with the workflow's token, so it starts no other workflow: this one builds and publishes it.
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$SHA" >/dev/null
+          echo "Tagged $tag at $SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          { echo "tag=$tag"; echo "version=$version"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
+
   # The bundles, built from the tagged commit as release builds (the version as is, signed, notarized), as ci.yml's
-  # bundle jobs build them.
+  # bundle jobs build them. An experimental release sets its version in their checkout. Each runs after `tag` (a
+  # stable release) or `experimental`, whichever ran.
   bundle-macos:
     name: bundle (macos-latest, app)
-    needs: tag
+    needs: [tag, experimental]
+    if: ${{ !cancelled() && (needs.tag.result == 'success' || needs.experimental.result == 'success') }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.tag.outputs.sha }}
+          ref: ${{ needs.tag.outputs.sha || needs.experimental.outputs.sha }}
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: false
@@ -173,6 +227,7 @@ jobs:
         with:
           bundles: app
           release: "true"
+          version: ${{ needs.experimental.outputs.version }}
           signing-p12: ${{ secrets.MACOS_SIGNING_P12 }}
           signing-password: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
           notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
@@ -181,12 +236,13 @@ jobs:
 
   bundle-windows:
     name: bundle (windows-latest, nsis)
-    needs: tag
+    needs: [tag, experimental]
+    if: ${{ !cancelled() && (needs.tag.result == 'success' || needs.experimental.result == 'success') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.tag.outputs.sha }}
+          ref: ${{ needs.tag.outputs.sha || needs.experimental.outputs.sha }}
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: false
@@ -194,10 +250,12 @@ jobs:
         with:
           bundles: nsis
           release: "true"
+          version: ${{ needs.experimental.outputs.version }}
 
   bundle-linux:
     name: bundle (linux, ${{ matrix.arch }})
-    needs: tag
+    needs: [tag, experimental]
+    if: ${{ !cancelled() && (needs.tag.result == 'success' || needs.experimental.result == 'success') }}
     strategy:
       fail-fast: false
       matrix:
@@ -210,7 +268,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.tag.outputs.sha }}
+          ref: ${{ needs.tag.outputs.sha || needs.experimental.outputs.sha }}
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: false
@@ -218,16 +276,20 @@ jobs:
         with:
           bundles: linux
           release: "true"
+          version: ${{ needs.experimental.outputs.version }}
 
   publish:
-    needs: [tag, bundle-macos, bundle-windows, bundle-linux]
+    needs: [tag, experimental, bundle-macos, bundle-windows, bundle-linux]
+    if: >-
+      ${{ !cancelled() && needs.bundle-macos.result == 'success' && needs.bundle-windows.result == 'success' &&
+      needs.bundle-linux.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.tag.outputs.sha }}
+          ref: ${{ needs.tag.outputs.sha || needs.experimental.outputs.sha }}
       - uses: actions/download-artifact@v8
         with:
           pattern: bundle-*
@@ -243,12 +305,25 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.tag.outputs.tag }}
-          VERSION: ${{ needs.tag.outputs.version }}
+          TAG: ${{ needs.tag.outputs.tag || needs.experimental.outputs.tag }}
+          VERSION: ${{ needs.tag.outputs.version || needs.experimental.outputs.version }}
+          SHA: ${{ needs.tag.outputs.sha || needs.experimental.outputs.sha }}
+          EXPERIMENTAL: ${{ needs.experimental.result == 'success' }}
         run: |
-          scripts/changelog.sh notes "$VERSION" > "$RUNNER_TEMP/notes.md"
-          # Only the real prefix makes a release hosts install; a test prefix's is a pre-release.
-          pre=""; if [ "$TAG_PREFIX" != v ]; then pre="--prerelease"; fi
+          # Only the real prefix makes a release hosts install; a test prefix's is a pre-release. An experimental
+          # release is always one: only hosts on the experimental channel take it.
+          pre=""; if [ "$TAG_PREFIX" != v ] || [ "$EXPERIMENTAL" = true ]; then pre="--prerelease"; fi
+          if [ "$EXPERIMENTAL" = true ]; then
+            {
+              echo "Experimental build of main at \`$SHA\`: it may carry database migrations no stable release has yet."
+              echo
+              echo "Not yet released:"
+              echo
+              scripts/changelog.sh preview
+            } > "$RUNNER_TEMP/notes.md"
+          else
+            scripts/changelog.sh notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+          fi
           ls -l assets
           # A re-run of this job finds the release already there: replace its assets instead of failing.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

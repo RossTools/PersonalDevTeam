@@ -9,6 +9,7 @@ import type { HostSettingsPatch } from '../api/gen/HostSettingsPatch';
 import type { HostSettingsView } from '../api/gen/HostSettingsView';
 import type { SessionMode } from '../api/gen/SessionMode';
 import type { TokenState } from '../api/gen/TokenState';
+import type { UpdateChannel } from '../api/gen/UpdateChannel';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { FolderField } from '../common/FolderField';
 import { SettingsScreens } from '../common/SettingsScreens';
@@ -32,6 +33,10 @@ const updatePolicies: { value: UpdatePolicy; label: string }[] = [
   { value: 'auto_when_idle', label: 'Install automatically when idle' },
   { value: 'notify', label: 'Notify only' },
   { value: 'manual', label: 'Manual (no checks)' },
+];
+const updateChannels: { value: UpdateChannel; label: string }[] = [
+  { value: 'stable', label: 'Stable releases' },
+  { value: 'experimental', label: 'Experimental builds too' },
 ];
 /** How often the host checks for updates, in minutes. */
 const checkIntervals: { value: number; label: string }[] = [
@@ -177,6 +182,7 @@ function Updates({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
   const update = useQuery({ queryKey: ['host-update'], queryFn: api.updateStatus });
   const policy = useSaveSettings();
+  const channel = useSaveSettings();
   const interval = useSaveSettings();
   const repoSave = useSaveSettings();
   const [repo, setRepo] = useState(v.settings.releaseRepo ?? '');
@@ -203,23 +209,40 @@ function Updates({ v }: { v: HostSettingsView }) {
   const repoNote = fromEnv ? `Set by PDT_RELEASE_REPO: ${where.repo}.`
     : where?.movedTo ? `GitHub says it moved (to ${where.movedTo}); PDT follows it.`
       : 'Where updates come from and bug reports go. PDT follows GitHub\'s redirects when it is renamed or moved: set another one only if it can\'t find it.';
+  // Never a downgrade: back on stable, an experimental build stays until a newer stable release exists.
+  const channelNote = v.settings.updateChannel === 'experimental'
+    ? 'Pre-releases of main (vX.Y.Z-exp.N), published by hand between releases, and every stable release. They can carry database migrations no stable release has yet, so this host can\'t go back to an older stable release.'
+    : u?.currentExperimental
+      ? `This host stays on the experimental build v${u.current} until a newer stable release exists.`
+      : 'Full releases only.';
   const saveRepo = (r: string) => repoSave.mutate({ releaseRepo: r }, { onSuccess: () => void qc.invalidateQueries({ queryKey: ['host-update'] }) });
   return (
     <Section label="Updates" description="New releases of PDT, from GitHub.">
       <SettingsRow
-        label={`Version ${u?.current ?? '…'}`}
+        label={<span className="flex items-center gap-2">Version {u?.current ?? '…'} {u?.currentExperimental && <Badge>Experimental</Badge>}</span>}
         description={
           updatesOff ? `Updates are off: ${u.disabledReason ?? 'updates apply to the installed app'}.`
             : u?.error ? <span className="text-destructive">{u.error}</span>
               : checked
         }
       >
-        {u?.state === 'available' && u.latest && <Badge tone="accent">v{u.latest.version} available</Badge>}
+        {u?.state === 'available' && u.latest && <Badge tone="accent">v{u.latest.version} available{u.latest.experimental ? ' (experimental)' : ''}</Badge>}
         {!updatesOff && <Button size="sm" pending={checking || u?.state === 'checking'} onClick={() => void check()}>Check for updates</Button>}
       </SettingsRow>
       <SettingsRow label="Install updates">
         <SaveNote s={policy} />
         <Select aria-label="Update policy" className="w-64" options={updatePolicies} value={v.settings.updatePolicy} onChange={(p) => policy.mutate({ updatePolicy: p })} />
+      </SettingsRow>
+      <SettingsRow label="Update channel" description={channelNote}>
+        <SaveNote s={channel} />
+        <Select
+          aria-label="Update channel"
+          className="w-64"
+          options={updateChannels}
+          value={v.settings.updateChannel}
+          // Checks again at once, so an update the other channel offered isn't left showing.
+          onChange={(c) => channel.mutate({ updateChannel: c }, { onSuccess: () => { if (!updatesOff) void check(); } })}
+        />
       </SettingsRow>
       <SettingsRow label="Check for updates" description={v.settings.updatePolicy === 'manual' ? 'Off while updates are manual.' : undefined}>
         <SaveNote s={interval} />

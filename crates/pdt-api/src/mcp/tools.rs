@@ -122,7 +122,8 @@ struct WorkflowRun {
     name: Option<String>,
     /// The project it runs in (its key or id): its `projectId` in the run's input.
     project: String,
-    /// The run's input, read as `{{trigger.x}}` (Cut a release: `bump` patch, minor or major, or `version` X.Y.Z).
+    /// The run's input, read as `{{trigger.x}}` (Cut a release: `bump` patch, minor or major, or `version` X.Y.Z;
+    /// `channel` stable or experimental).
     #[serde(default)]
     input: serde_json::Map<String, Value>,
 }

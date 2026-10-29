@@ -1,5 +1,6 @@
 //! Releases and updates (remote-host spec §3): versions, assets, checksums, token warnings. Pure.
 
+use crate::host::UpdateChannel;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use ts_rs::TS;
@@ -11,36 +12,78 @@ pub struct Version {
     pub patch: u64,
     /// A local build (`X.Y.Z-local`): older than every release.
     pub local: bool,
+    /// An experimental build's number (`X.Y.Z-exp.N`, PDT-210): a pre-release of `X.Y.Z`, older than `X.Y.Z` itself
+    /// and newer than `X.Y.Z-exp.M` for every M below N.
+    pub exp: Option<u64>,
 }
 
 impl Version {
+    /// The order between releases (SemVer for the versions PDT makes): `X.Y.Z-exp.N` before `X.Y.Z`.
+    pub fn key(&self) -> (u64, u64, u64, u64) {
+        (self.major, self.minor, self.patch, self.exp.unwrap_or(u64::MAX))
+    }
+
     pub fn is_newer_than(&self, current: &Version) -> bool {
         if self.local {
             return false;
         }
-        current.local || (self.major, self.minor, self.patch) > (current.major, current.minor, current.patch)
+        current.local || self.key() > current.key()
+    }
+
+    /// An experimental build (`X.Y.Z-exp.N`).
+    pub fn is_experimental(&self) -> bool {
+        self.exp.is_some()
     }
 }
 
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}{}", self.major, self.minor, self.patch, if self.local { "-local" } else { "" })
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)?;
+        if let Some(n) = self.exp {
+            write!(f, "-exp.{n}")?;
+        }
+        if self.local {
+            f.write_str("-local")?;
+        }
+        Ok(())
     }
 }
 
-/// `X.Y.Z`, `vX.Y.Z` or `X.Y.Z-local`, with an optional `+build` suffix. Other pre-releases are not ours.
+/// `X.Y.Z`, `vX.Y.Z`, `X.Y.Z-exp.N` (an experimental build) or `X.Y.Z-local`, with an optional `+build` suffix. Other
+/// pre-releases are not ours.
 pub fn parse_version(s: &str) -> Option<Version> {
     let s = s.trim();
     let s = s.strip_prefix('v').unwrap_or(s);
     let s = s.split('+').next()?;
-    let (core, local) = match s.split_once('-') {
-        Some((c, "local")) => (c, true),
-        Some(_) => return None,
-        None => (s, false),
+    let number = |p: &str| p.bytes().all(|b| b.is_ascii_digit()).then(|| p.parse::<u64>().ok()).flatten();
+    let (core, local, exp) = match s.split_once('-') {
+        Some((c, "local")) => (c, true, None),
+        Some((c, pre)) => (c, false, Some(number(pre.strip_prefix("exp.")?)?)),
+        None => (s, false, None),
     };
     let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
-    let v = Version { major: parts.next()??, minor: parts.next()??, patch: parts.next()??, local };
+    let v = Version { major: parts.next()??, minor: parts.next()??, patch: parts.next()??, local, exp };
     parts.next().is_none().then_some(v)
+}
+
+/// Whether a host on `channel` takes a published release (PDT-210): the stable channel only full releases, the
+/// experimental one full releases and experimental pre-releases (`-exp.N`). Other pre-releases (a fork's test
+/// prefix) never count.
+pub fn on_channel(channel: UpdateChannel, version: &Version, prerelease: bool) -> bool {
+    matches!(
+        (channel, prerelease, version.is_experimental()),
+        (_, false, false) | (UpdateChannel::Experimental, true, true)
+    )
+}
+
+/// The newest of `releases` (version, pre-release) a host on `channel` takes, by SemVer: its index.
+pub fn newest_on_channel(channel: UpdateChannel, releases: &[(Version, bool)]) -> Option<usize> {
+    releases
+        .iter()
+        .enumerate()
+        .filter(|(_, (v, pre))| !v.local && on_channel(channel, v, *pre))
+        .max_by_key(|(_, (v, _))| v.key())
+        .map(|(i, _)| i)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,9 +254,9 @@ mod tests {
     #[test]
     fn versions_and_local_builds() {
         let v = |s| parse_version(s).unwrap();
-        assert_eq!(v("v0.1.42"), Version { major: 0, minor: 1, patch: 42, local: false });
-        assert_eq!(v("0.1.0-local"), Version { major: 0, minor: 1, patch: 0, local: true });
-        assert_eq!(v("0.1.3+abc"), Version { major: 0, minor: 1, patch: 3, local: false });
+        assert_eq!(v("v0.1.42"), Version { major: 0, minor: 1, patch: 42, local: false, exp: None });
+        assert_eq!(v("0.1.0-local"), Version { major: 0, minor: 1, patch: 0, local: true, exp: None });
+        assert_eq!(v("0.1.3+abc"), Version { major: 0, minor: 1, patch: 3, local: false, exp: None });
         for bad in ["", "v", "1.2", "1.2.3.4", "0.1.0-rc.1", "latest", "0.x.1"] {
             assert_eq!(parse_version(bad), None, "{bad}");
         }
@@ -239,6 +282,44 @@ mod tests {
         assert!(!v("0.99.99").is_newer_than(&v("1.0.0")));
         // Pre-releases are not ours: GitHub's latest release never is one, and a tag like this is refused.
         assert_eq!(parse_version("v0.3.0-rc.1"), None);
+    }
+
+    #[test]
+    fn experimental_builds_sort_before_their_release() {
+        let v = |s| parse_version(s).unwrap();
+        assert_eq!(v("v0.2.1-exp.3"), Version { major: 0, minor: 2, patch: 1, local: false, exp: Some(3) });
+        assert_eq!(v("v0.2.1-exp.3").to_string(), "0.2.1-exp.3");
+        assert!(v("0.2.1-exp.3").is_experimental() && !v("0.2.1").is_experimental());
+        for bad in ["0.2.1-exp", "0.2.1-exp.", "0.2.1-exp.x", "0.2.1-exp.-1", "0.2.1-exp.1.2", "0.2.1-exp.1-local"] {
+            assert_eq!(parse_version(bad), None, "{bad}");
+        }
+        assert!(v("0.2.1-exp.1").is_newer_than(&v("0.2.0")));
+        assert!(v("0.2.1-exp.10").is_newer_than(&v("0.2.1-exp.9")), "numeric, not lexical");
+        assert!(!v("0.2.1-exp.1").is_newer_than(&v("0.2.1-exp.1")));
+        // The release ships: an experimental host moves to it.
+        assert!(v("0.2.1").is_newer_than(&v("0.2.1-exp.3")));
+        assert!(!v("0.2.1-exp.3").is_newer_than(&v("0.2.1")), "never a downgrade");
+        assert!(v("0.2.2-exp.1").is_newer_than(&v("0.2.1")));
+        assert!(v("0.2.1-exp.1").is_newer_than(&v("0.2.1-local")));
+    }
+
+    #[test]
+    fn each_channel_takes_its_releases() {
+        use UpdateChannel::{Experimental, Stable};
+        let v = |s| parse_version(s).unwrap();
+        let list = [(v("0.2.0"), false), (v("0.2.1-exp.2"), true), (v("0.2.1-exp.1"), true), (v("0.1.9"), false)];
+        assert_eq!(newest_on_channel(Stable, &list), Some(0));
+        assert_eq!(newest_on_channel(Experimental, &list), Some(1));
+        // The stable release sorts above its experimental builds: the experimental channel moves to it.
+        let shipped = [(v("0.2.1-exp.2"), true), (v("0.2.1"), false)];
+        assert_eq!(newest_on_channel(Experimental, &shipped), Some(1));
+        // A pre-release that is not an experimental build (a fork's test prefix, an rc) is never taken, nor an
+        // experimental tag published as a full release on the stable channel.
+        assert!(!on_channel(Experimental, &v("0.3.0"), true));
+        assert!(!on_channel(Stable, &v("0.2.1-exp.1"), true));
+        assert!(!on_channel(Stable, &v("0.2.1-exp.1"), false));
+        assert_eq!(newest_on_channel(Stable, &[(v("0.2.1-exp.1"), true)]), None);
+        assert_eq!(newest_on_channel(Experimental, &[]), None);
     }
 
     #[test]

@@ -5,13 +5,19 @@ import type { CredentialPolicy } from "./CredentialPolicy";
 import type { PermissionMode } from "./PermissionMode";
 import type { PortRange } from "./PortRange";
 import type { SessionMode } from "./SessionMode";
+import type { UpdateChannel } from "./UpdateChannel";
 import type { UpdatePolicy } from "./UpdatePolicy";
 
 export type HostSettings = { remoteAccess: boolean, 
 /**
  * The Tailscale login allowed to use this host remotely. `PDT_OWNER_LOGIN` overrides it.
  */
-ownerLogin: string | null, updatePolicy: UpdatePolicy, runPorts: PortRange, maxConcurrentRuns: number, agentCredentials: CredentialPolicy, 
+ownerLogin: string | null, updatePolicy: UpdatePolicy, 
+/**
+ * Stable or experimental releases. Never a downgrade: back on stable, a host stays on its experimental build
+ * until a newer stable release exists.
+ */
+updateChannel: UpdateChannel, runPorts: PortRange, maxConcurrentRuns: number, agentCredentials: CredentialPolicy, 
 /**
  * Where "clone by URL" puts new repositories by default; `~/work` when unset.
  */

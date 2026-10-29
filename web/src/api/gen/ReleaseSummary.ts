@@ -2,7 +2,11 @@
 import type { ReleaseChanges } from "./ReleaseChanges";
 import type { ReleaseNotes } from "./ReleaseNotes";
 
-export type ReleaseSummary = { version: string, tag: string, notes: string, 
+export type ReleaseSummary = { version: string, tag: string, 
+/**
+ * An experimental build (`X.Y.Z-exp.N`, a GitHub pre-release; PDT-210).
+ */
+experimental: boolean, notes: string, 
 /**
  * GitHub's `published_at` as GitHub sends it (an ISO 8601 UTC string, e.g. `2026-10-15T00:00:00Z`), not Unix
  * ms: it is only displayed (ruling F17).

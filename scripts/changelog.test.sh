@@ -96,6 +96,17 @@ expect_eq "notes prints an older section" "$compiled" "$("$script" -C "$dir" not
 expect_eq "notes prints the newest section" $'### Added\n\n- Two.' "$("$script" -C "$dir" notes 0.4.1)"
 if "$script" -C "$dir" notes 0.4 >/dev/null 2>&1; then fail "notes for a version with no section should fail"; fi
 
+# --- preview: the notes compile would print, changing nothing (an experimental release's notes)
+setup preview PDT-1.md $'---\nkind: fixed\n---\nOne.\n' PDT-2.md $'---\nkind: added\n---\nTwo.\n'
+before="$(cat "$dir/CHANGELOG.md")"
+expect_eq "preview prints the notes" $'### Added\n\n- Two.\n\n### Fixed\n\n- One.' "$("$script" -C "$dir" preview)"
+expect_eq "preview leaves CHANGELOG.md alone" "$before" "$(cat "$dir/CHANGELOG.md")"
+[ -f "$dir/.changes/unreleased/PDT-1.md" ] || fail "preview leaves the fragments in place"
+expect_eq "preview matches compile" "$("$script" -C "$dir" preview)" "$(CHANGELOG_DATE=2026-10-27 "$script" -C "$dir" 0.5.0)"
+expect_eq "preview with no fragments" "No changes since the last release." "$("$script" -C "$dir" preview)"
+printf 'no front matter\n' > "$dir/.changes/unreleased/PDT-3.md"
+if "$script" -C "$dir" preview >/dev/null 2>&1; then fail "preview with a bad fragment should fail"; fi
+
 # --- check
 setup check \
   PDT-1.md $'---\nkind: fixed\n---\nA fix.\n' \

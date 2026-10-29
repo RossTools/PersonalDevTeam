@@ -643,11 +643,16 @@ pub fn parse_reviews(items: &[Value]) -> Vec<ChangeReview> {
 
 /// A release from `GET /releases/...`; drafts and pre-releases are not releases here.
 pub fn parse_release(v: &Value) -> Result<Option<Release>, GhError> {
+    parse_release_or_pre(v, false)
+}
+
+/// A release, or with `prereleases` a pre-release too; never a draft.
+fn parse_release_or_pre(v: &Value, prereleases: bool) -> Result<Option<Release>, GhError> {
     let tag = s(v, "tag_name");
     if tag.is_empty() {
         return Err(GhError::BadAnswer("a release without a tag".into()));
     }
-    if v["draft"].as_bool() == Some(true) || v["prerelease"].as_bool() == Some(true) {
+    if v["draft"].as_bool() == Some(true) || (!prereleases && v["prerelease"].as_bool() == Some(true)) {
         return Ok(None);
     }
     Ok(Some(Release {
@@ -858,6 +863,16 @@ impl Forge for GithubApi {
             Err(GhError::Status(404, _)) => Ok(None),
             Err(e) => Err(e.into()),
         }
+    }
+    /// GitHub lists releases newest first; drafts are skipped.
+    fn newest_release(&self, repo: &str) -> Result<Option<Release>, ForgeError> {
+        let list = self.get(&format!("repos/{repo}/releases?per_page=10"))?;
+        for v in list.as_array().into_iter().flatten() {
+            if let Some(r) = parse_release_or_pre(v, true)? {
+                return Ok(Some(r));
+            }
+        }
+        Ok(None)
     }
 }
 

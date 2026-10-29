@@ -37,7 +37,10 @@ is), so a packaging break blocks the release PR rather than the tag; the merge q
 the release PR merges, release.yml's `tag` job tags the merge commit and the same workflow builds the bundles from
 it (its own jobs, not ci.yml's checks) and publishes the release. The tag is made with the workflow's token, so it
 starts no other workflow. The PR artifacts are not reused: the queue squash-merges, so the tagged commit is never
-the commit they were built from.
+the commit they were built from. Run with `channel: experimental` (PDT-210), its `experimental` job instead tags the
+head of main `vX.Y.Z-exp.N`, and the same bundle jobs build that commit with the version set in their checkout (the
+bundle action's `version` input; nothing is committed) for `publish` to make a GitHub pre-release. Each job has its
+own concurrency group, so stable and experimental runs never cancel or hold up each other.
 
 **Windows cache:** GitHub's runners save rust-cache only from main, which no longer runs CI, so Windows check runs
 start from a cold cache unless a dispatch on main warms it.

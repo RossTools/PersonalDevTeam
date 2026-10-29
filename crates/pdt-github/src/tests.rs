@@ -400,6 +400,14 @@ fn reads_releases_and_starts_workflows() {
     assert_eq!(g.release("o/r", Some("v9.9.9")).unwrap(), None, "a 404");
     t.ok("GET", &format!("{API}/repos/o/r/releases/tags/v1.0.0"), r#"{"tag_name":"v1.0.0","prerelease":true}"#);
     assert_eq!(g.release("o/r", Some("v1.0.0")).unwrap(), None, "a pre-release is not a release");
+    t.ok(
+        "GET",
+        &format!("{API}/repos/o/r/releases?per_page=10"),
+        r#"[{"tag_name":"v0.3.0","draft":true},{"tag_name":"v0.2.1-exp.2","prerelease":true,"draft":false},
+            {"tag_name":"v0.2.0"}]"#,
+    );
+    let r = g.newest_release("o/r").unwrap().unwrap();
+    assert_eq!(r.tag, "v0.2.1-exp.2", "the newest, a pre-release too, never a draft");
 
     t.on("POST", &format!("{API}/repos/o/r/actions/workflows/release.yml/dispatches"), Response::new(204, ""));
     let inputs = BTreeMap::from([("bump".to_string(), "minor".to_string())]);

@@ -31,6 +31,8 @@ struct Fake {
     latest_tag: Arc<std::sync::Mutex<String>>,
     /// Requests for the list of releases.
     release_lists: Arc<AtomicUsize>,
+    /// Releases listed before the others (newest first): `(tag, prerelease)`.
+    newer: Arc<std::sync::Mutex<Vec<(String, bool)>>>,
 }
 
 async fn wait_while(flag: &AtomicBool) {
@@ -56,6 +58,7 @@ async fn fake_github() -> (String, Fake) {
         compares: Default::default(),
         latest_tag: Arc::new(std::sync::Mutex::new("v0.1.7".into())),
         release_lists: Default::default(),
+        newer: Default::default(),
     };
     let ok = |h: &HeaderMap| {
         h.get("authorization").and_then(|v| v.to_str().ok()) == Some(format!("Bearer {TOKEN}").as_str())
@@ -81,18 +84,20 @@ async fn fake_github() -> (String, Fake) {
             "/repos/o/r/releases",
             axum::routing::get(|State(f): State<Fake>| async move {
                 f.release_lists.fetch_add(1, Ordering::SeqCst);
-                let r = |tag: &str, draft: bool| {
+                let r = |tag: &str, draft: bool, prerelease: bool| {
                     json!({"tag_name": tag, "body": format!("Notes for {tag}"), "published_at": "2026-10-15T00:00:00Z",
-                           "draft": draft, "prerelease": false, "assets": []})
+                           "draft": draft, "prerelease": prerelease, "assets": []})
                 };
-                axum::Json(json!([
-                    r("v0.2.0", false),
-                    r("v0.1.8", true),
-                    r("v0.1.7", false),
-                    r("v0.1.6", false),
-                    r("v0.1.5", false),
-                    r("v0.1.4", false)
-                ]))
+                let mut list: Vec<Value> = f.newer.lock().unwrap().iter().map(|(t, pre)| r(t, false, *pre)).collect();
+                list.extend([
+                    r("v0.2.0", false, false),
+                    r("v0.1.8", true, false),
+                    r("v0.1.7", false, false),
+                    r("v0.1.6", false, false),
+                    r("v0.1.5", false, false),
+                    r("v0.1.4", false, false),
+                ]);
+                axum::Json(list)
             }),
         )
         .route(
@@ -735,8 +740,10 @@ async fn an_update_lists_the_notes_of_every_release_since_the_installed_one() {
     assert_eq!(
         v["latest"]["releases"],
         json!([
-            {"version": "0.1.7", "tag": "v0.1.7", "notes": "Notes for v0.1.7", "publishedAt": "2026-10-15T00:00:00Z"},
-            {"version": "0.1.6", "tag": "v0.1.6", "notes": "Notes for v0.1.6", "publishedAt": "2026-10-15T00:00:00Z"}
+            {"version": "0.1.7", "tag": "v0.1.7", "experimental": false, "notes": "Notes for v0.1.7",
+             "publishedAt": "2026-10-15T00:00:00Z"},
+            {"version": "0.1.6", "tag": "v0.1.6", "experimental": false, "notes": "Notes for v0.1.6",
+             "publishedAt": "2026-10-15T00:00:00Z"}
         ]),
         "newest first, up to the latest release, no drafts: {v}"
     );
@@ -768,6 +775,62 @@ async fn an_older_latest_release_is_never_offered() {
     let (s, v) = call(&app, "POST", "/api/host/update/install", Some(json!({"force": true}))).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("no_update")), "no downgrade");
     assert_eq!(fake.release_lists.load(Ordering::SeqCst), 0);
+}
+
+async fn set_channel(app: &axum::Router, channel: &str) {
+    let (s, v) = call(app, "PUT", "/api/host/settings", Some(json!({"updateChannel": channel}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+}
+
+#[tokio::test]
+async fn only_an_experimental_host_is_offered_an_experimental_build_until_its_release_ships() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, fake) = setup_with(tmp.path(), true, "0.2.0").await;
+    store_token(&state);
+    *fake.latest_tag.lock().unwrap() = "v0.2.0".into();
+    fake.newer.lock().unwrap().push(("v0.2.1-exp.1".into(), true));
+
+    // A stable host ignores it.
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(
+        (v["channel"].as_str(), v["state"].as_str(), &v["latest"]),
+        (Some("stable"), Some("idle"), &Value::Null)
+    );
+
+    // An experimental host offers it, with its own notes.
+    set_channel(&app, "experimental").await;
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!((v["state"].as_str(), v["latest"]["version"].as_str()), (Some("available"), Some("0.2.1-exp.1")), "{v}");
+    assert_eq!(v["latest"]["experimental"], true);
+    let notes: Vec<_> = v["latest"]["releases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["tag"].as_str(), r["experimental"].as_bool()))
+        .collect();
+    assert_eq!(notes, [(Some("v0.2.1-exp.1"), Some(true))]);
+
+    // Then the stable 0.2.1 once it exists: it sorts above its experimental builds.
+    fake.newer.lock().unwrap().insert(0, ("v0.2.1".into(), false));
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!((v["latest"]["version"].as_str(), v["latest"]["experimental"].as_bool()), (Some("0.2.1"), Some(false)));
+}
+
+#[tokio::test]
+async fn back_on_stable_an_experimental_build_stays_until_a_newer_stable_release() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, fake) = setup_with(tmp.path(), true, "0.2.1-exp.3").await;
+    store_token(&state);
+    *fake.latest_tag.lock().unwrap() = "v0.2.0".into();
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!((v["currentExperimental"].as_bool(), v["channel"].as_str()), (Some(true), Some("stable")));
+    assert_eq!((v["state"].as_str(), &v["latest"], &v["error"]), (Some("idle"), &Value::Null, &Value::Null), "{v}");
+    let (s, v) = call(&app, "POST", "/api/host/update/install", Some(json!({"force": true}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("no_update")), "never a downgrade to 0.2.0");
+
+    *fake.latest_tag.lock().unwrap() = "v0.2.1".into();
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!((v["state"].as_str(), v["latest"]["version"].as_str()), (Some("available"), Some("0.2.1")), "{v}");
 }
 
 #[tokio::test]

@@ -675,6 +675,8 @@ fn github_issue_done() -> WorkflowDoc {
 
 /// The release workflow a project's repository has (PDT-194; docs/SDLC.md "Releases"): run by hand with `bump`
 /// (patch, minor, major) or an exact `version`, it pushes branch [`RELEASE_BRANCH`] and opens the release PR from it.
+/// With `channel: experimental` (PDT-210) it opens no PR: it tags main's head `vX.Y.Z-exp.N` and publishes a
+/// pre-release.
 pub const RELEASE_WORKFLOW: &str = "release.yml";
 pub const RELEASE_BRANCH: &str = "release";
 
@@ -689,7 +691,9 @@ const RELEASE_POLLS: u32 = 4 * 30;
 
 /// Cut a release (PDT-194): started (Run now, by the PM or the user) in a project with `bump` and optionally
 /// `version`, it runs the project's Release Action, puts the release PR in the Inbox for review, and says when the
-/// tag's release is published. Nothing is merged or tagged by PDT: merging the release PR is the user's.
+/// tag's release is published. Nothing is merged or tagged by PDT: merging the release PR is the user's. With
+/// `channel: experimental` (PDT-210) there is no release PR to review: it runs the Action and says when the
+/// pre-release is published.
 fn cut_release() -> WorkflowDoc {
     // A GitHub read that fails (the network, a rate limit) is tried again before the run fails.
     let retry = json!({"max": 5, "backoffMs": 60_000});
@@ -702,10 +706,43 @@ fn cut_release() -> WorkflowDoc {
         "description": format!("Runs the project's release workflow ({RELEASE_WORKFLOW}) with a bump kind (patch, \
                         minor or major) or an exact version: it opens a release PR that sets the version, compiles \
                         the changelog and builds the bundles. The release PR goes to the Inbox for review; merging it \
-                        tags the release, which publishes it, and you are told when it is out. Run it (the PM does, \
-                        when you ask for a release) with input {{\"bump\": \"minor\", \"projectId\": …}}."),
+                        tags the release, which publishes it, and you are told when it is out. With channel \
+                        experimental there is no release PR: it publishes a pre-release of main's head \
+                        (X.Y.Z-exp.N) that only hosts on the experimental update channel install, and you are told \
+                        when it is out. Run it (the PM does, when you ask for a release) with input \
+                        {{\"bump\": \"minor\", \"channel\": \"stable\", \"projectId\": …}}."),
         "nodes": [
-            {"id": "start", "kind": "manual", "version": 1, "position": {"x": 0, "y": 0}, "title": "Cut a release"},
+            {"id": "start", "kind": "manual", "version": 1, "position": {"x": -260, "y": 0}, "title": "Cut a release"},
+            {"id": "channel", "kind": "condition", "version": 1, "position": {"x": 0, "y": 0},
+             "title": "Experimental?", "config": {"conditions": [
+                {"left": "{{trigger.channel}}", "op": "eq", "right": "experimental"}]}},
+            // Experimental (PDT-210): no release PR; the Action tags main's head and publishes a pre-release.
+            {"id": "exp_before", "kind": "github.release", "version": 1, "position": {"x": 260, "y": -260},
+             "title": "Newest release before", "retry": retry, "config": {"prereleases": true}},
+            {"id": "exp_dispatch", "kind": "github.workflow.run", "version": 1, "position": {"x": 520, "y": -260},
+             "title": "Run the release workflow (experimental)", "config": {"workflow": RELEASE_WORKFLOW,
+                "ref": "main", "inputs": {"bump": "{{trigger.bump}}", "version": "{{trigger.version}}",
+                "channel": "experimental"}}},
+            wait("wait_exp", 780, -260, "Wait for the pre-release", RELEASE_POLL_MS, RELEASE_POLLS),
+            {"id": "exp_published", "kind": "github.release", "version": 1, "position": {"x": 1040, "y": -260},
+             "title": "Pre-release published?", "retry": retry, "maxVisits": RELEASE_POLLS,
+             "config": {"prereleases": true, "newerThan": "{{steps.exp_before.tag}}"}},
+            {"id": "exp_notify", "kind": "notify", "version": 1, "position": {"x": 1300, "y": -260},
+             "title": "Tell me it is out", "config": {
+                "title": "Experimental release {{steps.exp_published.tag}} is published",
+                "body": "{{steps.exp_published.name}} is out as a pre-release; hosts on the experimental update \
+                         channel offer it.",
+                "link": "{{steps.exp_published.url}}"}},
+            {"id": "exp_tell", "kind": "inbox.notice", "version": 1, "position": {"x": 1560, "y": -260},
+             "title": "Inbox: published", "config": {
+                "key": "released-{{steps.exp_published.tag}}",
+                "title": "Experimental release {{steps.exp_published.tag}} is published",
+                "text": "[{{steps.exp_published.name}}]({{steps.exp_published.url}}) is published as a pre-release \
+                         of main, with its bundles: hosts on the experimental update channel (Settings → Updates) \
+                         offer it, stable hosts ignore it."}},
+            {"id": "exp_released", "kind": "end", "version": 1, "position": {"x": 1820, "y": -260},
+             "title": "Released (experimental)",
+             "config": {"output": {"tag": "{{steps.exp_published.tag}}", "url": "{{steps.exp_published.url}}"}}},
             {"id": "before", "kind": "github.release", "version": 1, "position": {"x": 260, "y": 0},
              "title": "Latest release before", "retry": retry, "config": {}},
             // The Action refuses while a release PR is open, and that PR isn't the release asked for: say so instead.
@@ -766,7 +803,18 @@ fn cut_release() -> WorkflowDoc {
              "title": "Not released"},
         ],
         "edges": [
-            {"from": "start", "to": "before"},
+            {"from": "start", "to": "channel"},
+            {"from": "channel", "port": "false", "to": "before"},
+            {"from": "channel", "port": "true", "to": "exp_before"},
+            {"from": "exp_before", "port": "found", "to": "exp_dispatch"},
+            {"from": "exp_before", "port": "none", "to": "exp_dispatch"},
+            {"from": "exp_dispatch", "to": "wait_exp"},
+            {"from": "wait_exp", "port": "done", "to": "exp_published"},
+            {"from": "exp_published", "port": "found", "to": "exp_notify"},
+            {"from": "exp_published", "port": "none", "to": "wait_exp"},
+            {"from": "exp_notify", "to": "exp_tell"},
+            {"from": "exp_tell", "port": "added", "to": "exp_released"},
+            {"from": "exp_tell", "port": "skipped", "to": "exp_released"},
             {"from": "before", "port": "found", "to": "open_already"},
             {"from": "before", "port": "none", "to": "open_already"},
             {"from": "open_already", "port": "open", "to": "still_open"},

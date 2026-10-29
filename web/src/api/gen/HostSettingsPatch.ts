@@ -5,12 +5,13 @@ import type { CredentialPolicy } from "./CredentialPolicy";
 import type { PermissionMode } from "./PermissionMode";
 import type { PortRange } from "./PortRange";
 import type { SessionMode } from "./SessionMode";
+import type { UpdateChannel } from "./UpdateChannel";
 import type { UpdatePolicy } from "./UpdatePolicy";
 
 /**
  * A partial update. `owner_login: Some("")` (or blank) clears the owner.
  */
-export type HostSettingsPatch = { remoteAccess?: boolean, ownerLogin?: string, updatePolicy?: UpdatePolicy, runPorts?: PortRange, maxConcurrentRuns?: number, agentCredentials?: CredentialPolicy, 
+export type HostSettingsPatch = { remoteAccess?: boolean, ownerLogin?: string, updatePolicy?: UpdatePolicy, updateChannel?: UpdateChannel, runPorts?: PortRange, maxConcurrentRuns?: number, agentCredentials?: CredentialPolicy, 
 /**
  * Blank clears it (back to `~/work`).
  */

@@ -4,7 +4,10 @@
 //! 13). The repository is pinned by its numeric id when it has one, which survives renames and transfers.
 
 use futures_util::StreamExt;
-use pdt_core::release::{Change, HostOs, SUMS_ASSET, Version, parse_change, parse_sums, parse_version, select_asset};
+use pdt_core::host::UpdateChannel;
+use pdt_core::release::{
+    Change, HostOs, SUMS_ASSET, Version, newest_on_channel, parse_change, parse_sums, parse_version, select_asset,
+};
 use reqwest::header::{ACCEPT, LOCATION};
 use serde::Deserialize;
 use sha2::Digest;
@@ -34,6 +37,8 @@ pub struct Asset {
 pub struct Release {
     pub tag: String,
     pub version: Version,
+    /// Published as a GitHub pre-release (an experimental build, PDT-210).
+    pub prerelease: bool,
     pub notes: String,
     /// GitHub's `published_at`, unchanged (an ISO 8601 UTC string).
     pub published_at: Option<String>,
@@ -133,12 +138,13 @@ struct ReleaseJson {
 }
 
 impl ReleaseJson {
-    /// The release, when its tag is a release version (`vX.Y.Z`, not a local build).
+    /// The release, when its tag is a release version (`vX.Y.Z` or `vX.Y.Z-exp.N`, not a local build).
     fn into_release(self) -> Option<Release> {
         let version = parse_version(&self.tag_name).filter(|v| !v.local)?;
         Some(Release {
             tag: self.tag_name,
             version,
+            prerelease: self.prerelease,
             notes: self.body.unwrap_or_default(),
             published_at: self.published_at,
             assets: self.assets.into_iter().map(|a| Asset { id: a.id, name: a.name, size: a.size }).collect(),
@@ -151,6 +157,11 @@ struct AssetJson {
     id: u64,
     name: String,
     size: u64,
+}
+
+/// When the token expires, from GitHub's `GitHub-Authentication-Token-Expiration` header.
+fn expiry_of(res: &reqwest::Response) -> Option<i64> {
+    res.headers().get("github-authentication-token-expiration").and_then(|v| v.to_str().ok()).and_then(parse_expiry)
 }
 
 /// `YYYY-MM-DD HH:MM:SS UTC` or `YYYY-MM-DD HH:MM:SS ±HHMM` → Unix ms.
@@ -430,20 +441,41 @@ impl GitHubClient {
 
     pub async fn latest(&self, token: &str) -> Result<Latest, UpdateError> {
         let res = self.get("releases/latest", token, None).await?;
-        let token_expires_at = res
-            .headers()
-            .get("github-authentication-token-expiration")
-            .and_then(|v| v.to_str().ok())
-            .and_then(parse_expiry);
+        let token_expires_at = expiry_of(&res);
         let text = res.text().await.map_err(net)?;
         let r: ReleaseJson = serde_json::from_str(&text).map_err(|e| UpdateError::BadRelease(e.to_string()))?;
         let tag = r.tag_name.clone();
-        let release = r.into_release().ok_or_else(|| UpdateError::BadRelease(format!("tag {tag:?} is not vX.Y.Z")))?;
+        let release = r
+            .into_release()
+            .filter(|r| !r.version.is_experimental())
+            .ok_or_else(|| UpdateError::BadRelease(format!("tag {tag:?} is not vX.Y.Z")))?;
         Ok(Latest { release, token_expires_at })
     }
 
+    /// The release a host on `channel` updates to (PDT-210): on stable GitHub's latest release; on experimental the
+    /// newest by SemVer among the full releases and the experimental pre-releases (`vX.Y.Z-exp.N`) on the first page
+    /// of releases (GitHub lists them newest first), so a stable `X.Y.Z` wins over its own `-exp.N` builds.
+    pub async fn newest(&self, token: &str, channel: UpdateChannel) -> Result<Latest, UpdateError> {
+        if channel == UpdateChannel::Stable {
+            return self.latest(token).await;
+        }
+        let tail = format!("releases?per_page={RELEASES_PER_PAGE}");
+        let res = self.get(&tail, token, Some(Duration::from_secs(30))).await?;
+        let token_expires_at = expiry_of(&res);
+        let text = res.text().await.map_err(net)?;
+        let list: Vec<ReleaseJson> = serde_json::from_str(&text)
+            .map_err(|e| UpdateError::Http(200, format!("an answer that is not a list of releases: {e}")))?;
+        let mut found: Vec<Release> =
+            list.into_iter().filter(|r| !r.draft).filter_map(ReleaseJson::into_release).collect();
+        let keys: Vec<(Version, bool)> = found.iter().map(|r| (r.version, r.prerelease)).collect();
+        let i = newest_on_channel(channel, &keys).ok_or(UpdateError::NotFound)?;
+        Ok(Latest { release: found.swap_remove(i), token_expires_at })
+    }
+
     /// The published releases after `after` up to and including `upto`, newest first (PDT-192): what an update from
-    /// `after` brings. Drafts, pre-releases and tags that are not `vX.Y.Z` are left out. GitHub lists releases newest
+    /// `after` brings. Drafts, pre-releases and tags that are not `vX.Y.Z` are left out, except `upto` itself when it
+    /// is an experimental build (its notes preview everything since the last release, so earlier ones would repeat
+    /// them). GitHub lists releases newest
     /// first, so the pages stop at the first one with a release no newer than `after` (10 pages at most).
     pub async fn releases_between(
         &self,
@@ -460,7 +492,8 @@ impl GitHubClient {
                 .map_err(|e| UpdateError::Http(200, format!("an answer that is not a list of releases: {e}")))?;
             let full = list.len() >= RELEASES_PER_PAGE;
             let mut reached = false;
-            for r in list.into_iter().filter(|r| !r.draft && !r.prerelease).filter_map(ReleaseJson::into_release) {
+            let listed = list.into_iter().filter(|r| !r.draft).filter_map(ReleaseJson::into_release);
+            for r in listed.filter(|r| r.version == *upto || (!r.prerelease && !r.version.is_experimental())) {
                 if !r.version.is_newer_than(after) {
                     reached = true;
                 } else if !r.version.is_newer_than(upto) && !out.iter().any(|o| o.version == r.version) {
@@ -471,7 +504,7 @@ impl GitHubClient {
                 break;
             }
         }
-        out.sort_by_key(|r| std::cmp::Reverse((r.version.major, r.version.minor, r.version.patch)));
+        out.sort_by_key(|r| std::cmp::Reverse(r.version.key()));
         Ok(out)
     }
 
