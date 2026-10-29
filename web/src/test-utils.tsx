@@ -34,7 +34,7 @@ export const githubLogin = (over: object = {}) => ({
 /** An account on `host`. */
 export const forgeAccount = (login: string, host = 'github.com', over: object = {}) => ({
   host, login, apiUrl: host === 'github.com' ? 'https://api.github.com' : `https://${host}/api/v3`, webUrl: `https://${host}`,
-  signedInAt: 1, rejectedAt: null, ...over,
+  signedInAt: 1, rejectedAt: null, expiresAt: null, renews: false, ...over,
 });
 
 const githubConnected = githubLogin({ accounts: [forgeAccount('me')] });

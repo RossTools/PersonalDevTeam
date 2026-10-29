@@ -43,7 +43,8 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
   `web/src/plugins/ForgeLogin.tsx`; pdt-api `forge_login.rs`). The old path `/settings/host/github` goes there.
 - **An account per host** (PDT-244): PDT keeps one login per forge kind and host, keyed `<kind>:<host>`
   (`github:github.com`, `github:ghe.example.com`), so github.com and any number of Enterprise Servers are signed in at
-  once. Each is a JSON `ForgeAccount` (`token`, `apiUrl`, `login`, `signedInAt`), and all of them are one
+  once. Each is a JSON `ForgeAccount` (`token`, `apiUrl`, `login`, `signedInAt`; `expiresAt` and `refresh` for a token
+  that expires, see "Expiring tokens"), and all of them are one
   `pdt_forge::login::AccountStore` in the OS keychain only, under `forge-logins` for the stable instance's default
   data dir and `forge-logins:<hash of the data dir>` for any other (`secrets::forge_logins_account`, as the update
   token's), so a dev instance never reads or replaces the stable one's. pdtd reads it at startup in the background
@@ -61,7 +62,7 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
   `404 unknown_forge`):
   - `GET`: `kind`, `label`, `defaultApiUrl`, `apiUrlExample`, `scopes`, `tokenHelp`, `hasDeviceFlow`, `deviceFlow`
     (PDT has an OAuth App client ID for the public host), `accounts` (`host`, `apiUrl`, `webUrl`, `login`,
-    `signedInAt`, `rejectedAt`; the public host's first), `pending` (the code to enter and its `apiUrl`, while
+    `signedInAt`, `rejectedAt`, `expiresAt`, `renews`; the public host's first), `pending` (the code to enter and its `apiUrl`, while
     waiting), `error` (why the last login failed).
   - **Test** (`POST …/test`, body `{token, apiUrl?}`): who the token signs in as on that host (`host`, `apiUrl`,
     `webUrl`, `login`, `scopes`), without saving it; a token the forge refuses is `400 invalid_token`.
@@ -76,7 +77,7 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
   - `DELETE …/accounts/{host}` disconnects one host (`404 no_account` without one): its account leaves the keychain
     and that host's forge signs out (GitHub keeps the app's authorization until the user revokes it under Settings ›
     Applications on GitHub). The others stay.
-- The page lists each account (who, on which host, Disconnect…), Connect GitHub (the device flow on github.com), and
+- The page lists each account (who, on which host, when its token expires if it does, Disconnect…), Connect GitHub (the device flow on github.com), and
   a form for any host: its API URL (github.com's prefilled), a token, Test (who it signs in as, and its scopes) and
   Save; for another host with the device flow, that host's OAuth App client ID. All connections lists each account.
 - **Scopes**: `repo`. It covers what PDT does in public and private repositories: reading pull requests, reviews,
@@ -110,9 +111,39 @@ fork, or an Enterprise host):
 5. At the cutover each host's user opens Settings › Plugins › GitHub, clicks Connect GitHub, enters the code on
    GitHub and authorizes the app.
 
+PDT's app has **token expiration off** (the app's token expiration setting on GitHub, under Optional features;
+turned off on 2026-10-29, PDT-260), so its tokens don't expire: a login on it stores no expiry and is never
+renewed. Before that, every device-flow login died 8 hours after sign-in (PDT-252). An app registered with expiration
+on (GitHub's default for new apps on some accounts) still works: see "Expiring tokens".
+
 Private repositories of an organization: the organization has to grant the app access (Organization settings › Third-
 party access › OAuth app policy), or an owner approves it when a member asks at first sign-in. Until then the token
 works but that organization's private repositories answer 404.
+
+### Expiring tokens
+
+An OAuth App with token expiration on (an app of your own, or one on an Enterprise Server) issues tokens that expire
+after 8 hours, with a refresh token good for about 6 months. PDT-260 keeps them working:
+
+- The device flow's answer (`expires_in`, `refresh_token`, `refresh_token_expires_in`) is kept with the account in the
+  keychain: `expiresAt` (Unix ms) and `refresh` (`token`, `clientId`, the app it came from; `expiresAt`). Settings ›
+  Plugins › GitHub shows when the token expires and that PDT renews it. A pasted token never renews.
+- Within 15 minutes of expiry the next call first asks `<site>/login/oauth/access_token` with
+  `grant_type=refresh_token` (client ID only, as the device flow) for a new token (`GithubApi::renew`). The 5-minute
+  login check makes that call even when nothing else does, so an idle PDT renews in time, and one that slept past the
+  expiry renews on waking. GitHub issues a new refresh token each time and the old one stops working, so the new
+  account is stored in the keychain at once (`ForgeLogin::on_renewed`, set by pdt-api `forge_login`; only over the
+  account it renewed, never over a newer sign-in). One renewal runs at a time per host; a call that waited for it
+  uses its token.
+- A 401 on a login that renews gets one renewal and one more try before it counts as a refusal.
+- A refresh token GitHub refuses (`bad_refresh_token`: revoked, already used, or the app's authorization withdrawn),
+  or one past its own expiry, marks the login rejected: **Reconnect GitHub**, as for any refused login. No answer (a
+  network failure, a 5xx) marks nothing: the old token serves until it expires, and the next try waits a minute.
+- Each renewal is logged at info (who, the host, the client ID, when the new token and refresh token expire), each
+  failure at warn. Never the tokens.
+- To check an app of your own: on GitHub, Settings › Developer settings › OAuth Apps › the app › Optional features, its
+  **token expiration** setting. On, its tokens expire and PDT renews them as above; off, they don't. Changing it
+  affects new logins only: connect again afterwards.
 
 ## Not connected
 

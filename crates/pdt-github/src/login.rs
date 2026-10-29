@@ -2,7 +2,7 @@
 //! OAuth device flow ("Connect GitHub": the user enters a code on GitHub) and checking a token.
 
 use crate::transport::{Request, Transport, form};
-pub use pdt_forge::login::{DeviceCode, DevicePoll, Whoami};
+pub use pdt_forge::login::{DeviceCode, DevicePoll, TokenGrant, Whoami};
 use serde_json::Value;
 
 /// github.com's API.
@@ -102,8 +102,8 @@ pub fn poll_device_flow(t: &dyn Transport, api: &str, client_id: &str, device_co
         Ok(v) => v,
         Err(e) => return DevicePoll::Failed(e),
     };
-    if let Some(token) = v["access_token"].as_str() {
-        return DevicePoll::Token(token.into());
+    if let Some(g) = grant(&v) {
+        return DevicePoll::Token(g);
     }
     match v["error"].as_str() {
         Some("authorization_pending") => DevicePoll::Pending,
@@ -113,6 +113,63 @@ pub fn poll_device_flow(t: &dyn Transport, api: &str, client_id: &str, device_co
         Some(e) => DevicePoll::Failed(v["error_description"].as_str().unwrap_or(e).to_string()),
         None => DevicePoll::Failed("no token in GitHub's answer".into()),
     }
+}
+
+/// The token in an answer of `login/oauth/access_token`, with its expiry and refresh token when the OAuth App issues
+/// expiring tokens (PDT-260).
+fn grant(v: &Value) -> Option<TokenGrant> {
+    let token = v["access_token"].as_str().filter(|t| !t.is_empty())?;
+    let refresh_token = v["refresh_token"].as_str().filter(|t| !t.is_empty()).map(String::from);
+    Some(TokenGrant {
+        token: token.into(),
+        expires_in: v["expires_in"].as_u64().filter(|s| *s > 0),
+        refresh_token_expires_in: refresh_token.as_ref().and(v["refresh_token_expires_in"].as_u64()),
+        refresh_token,
+    })
+}
+
+/// Why a refresh got no new token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshError {
+    /// GitHub refused the refresh token (revoked, expired or already used): only signing in again helps.
+    Refused(String),
+    /// No answer, or a server error: ask again later.
+    Failed(String),
+}
+
+/// Swaps refresh token `refresh_token` of OAuth App `client_id` for a new token and a new refresh token (the old one
+/// stops working). Client ID only, as the device flow asks.
+pub fn refresh_token(
+    t: &dyn Transport,
+    api: &str,
+    client_id: &str,
+    refresh_token: &str,
+) -> Result<TokenGrant, RefreshError> {
+    let req = Request {
+        method: "POST",
+        url: format!("{}/login/oauth/access_token", web_url(api)),
+        headers: vec![
+            ("Accept", "application/json".into()),
+            ("Content-Type", "application/x-www-form-urlencoded".into()),
+        ],
+        body: Some(form(&[
+            ("client_id", client_id),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+        ])),
+    };
+    let res = t.send(&req).map_err(RefreshError::Failed)?;
+    if res.status >= 500 || res.status == 429 {
+        return Err(RefreshError::Failed(format!("GitHub answered {}", res.status)));
+    }
+    let v: Value = serde_json::from_str(&res.body).unwrap_or(Value::Null);
+    if let Some(e) = v["error"].as_str() {
+        return Err(RefreshError::Refused(v["error_description"].as_str().unwrap_or(e).to_string()));
+    }
+    if !(200..300).contains(&res.status) {
+        return Err(RefreshError::Refused(format!("GitHub answered {}", res.status)));
+    }
+    grant(&v).ok_or_else(|| RefreshError::Failed("no token in GitHub's answer".into()))
 }
 
 /// Checks `token` against GitHub: who it is.
@@ -177,7 +234,8 @@ mod tests {
         let poll = || poll_device_flow(&t, GITHUB_API, "Iv1.x", "dc");
         assert_eq!(poll(), DevicePoll::Pending);
         assert_eq!(poll(), DevicePoll::SlowDown(10));
-        assert_eq!(poll(), DevicePoll::Token("gho_x".into()));
+        let plain = TokenGrant { token: "gho_x".into(), ..Default::default() };
+        assert_eq!(poll(), DevicePoll::Token(plain), "PDT's own app: a token that doesn't expire");
         assert_eq!(poll(), DevicePoll::Expired);
         assert_eq!(poll(), DevicePoll::Denied);
         assert!(t.sent()[1].body.as_deref().unwrap().contains("grant_type=urn%3Aietf%3Aparams%3Aoauth"));
@@ -187,6 +245,40 @@ mod tests {
         t.ok("POST", "https://ghe.example.com/login/device/code", r#"{"error":"device_flow_disabled"}"#);
         let e = start_device_flow(&t, "https://ghe.example.com/api/v3", "c").unwrap_err();
         assert!(e.contains("device flow is off"), "{e}");
+    }
+
+    #[test]
+    fn an_expiring_token_comes_with_a_refresh_token_which_renews_it() {
+        let t = Recorded::new();
+        let token = "https://ghe.example.com/login/oauth/access_token";
+        t.ok(
+            "POST",
+            token,
+            r#"{"access_token":"ghu_1","expires_in":28800,"refresh_token":"ghr_1",
+                "refresh_token_expires_in":15724799,"token_type":"bearer","scope":""}"#,
+        );
+        let api = "https://ghe.example.com/api/v3";
+        let want = TokenGrant {
+            token: "ghu_1".into(),
+            expires_in: Some(28800),
+            refresh_token: Some("ghr_1".into()),
+            refresh_token_expires_in: Some(15_724_799),
+        };
+        assert_eq!(poll_device_flow(&t, api, "Iv1.own", "dc"), DevicePoll::Token(want));
+
+        t.ok("POST", token, r#"{"access_token":"ghu_2","expires_in":28800,"refresh_token":"ghr_2"}"#)
+            .ok("POST", token, r#"{"error":"bad_refresh_token","error_description":"The refresh token passed is incorrect or expired."}"#)
+            .on("POST", token, Response::new(502, "<html>"));
+        let g = refresh_token(&t, api, "Iv1.own", "ghr_1").unwrap();
+        assert_eq!((g.token.as_str(), g.refresh_token.as_deref()), ("ghu_2", Some("ghr_2")));
+        assert_eq!(
+            t.sent()[1].body.as_deref(),
+            Some("client_id=Iv1.own&grant_type=refresh_token&refresh_token=ghr_1"),
+            "client ID only, no secret"
+        );
+        let e = refresh_token(&t, api, "Iv1.own", "ghr_1").unwrap_err();
+        assert!(matches!(&e, RefreshError::Refused(m) if m.contains("incorrect or expired")), "{e:?}");
+        assert!(matches!(refresh_token(&t, api, "Iv1.own", "ghr_2"), Err(RefreshError::Failed(_))), "a 502: later");
     }
 
     #[test]

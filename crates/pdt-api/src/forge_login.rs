@@ -11,7 +11,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use pdt_forge::login::{AccountStore, DevicePoll};
+use pdt_forge::login::{AccountStore, DevicePoll, TokenGrant};
 use pdt_forge::{ForgeAccount, ForgeKind, ForgeLogin, ForgePlugin};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -74,6 +74,11 @@ pub struct ForgeAccountView {
     /// in again.
     #[ts(type = "number | null")]
     pub rejected_at: Option<i64>,
+    /// When its token expires (PDT-260): None for one that doesn't.
+    #[ts(type = "number | null")]
+    pub expires_at: Option<i64>,
+    /// PDT renews the token before it expires (it has a refresh token).
+    pub renews: bool,
 }
 
 /// `GET /api/forges/{kind}/login`: a forge's accounts and how to add one.
@@ -153,6 +158,8 @@ pub(crate) fn view(st: &AppState, p: &dyn ForgePlugin) -> ForgeLoginView {
             login: a.account.login,
             signed_in_at: a.account.signed_in_at,
             rejected_at: a.rejected_at,
+            expires_at: a.account.expires_at,
+            renews: a.account.refresh.is_some(),
         })
         .collect();
     let flows = flows(st);
@@ -251,6 +258,33 @@ async fn store_account(
     .map_err(keychain_error)
 }
 
+/// Has every forge store the accounts it renews itself (PDT-260), as soon as it has: the old refresh token no longer
+/// works, so a new one lost is a login lost at the next start. Only over the account it renewed, not over one the user
+/// signed in with meanwhile.
+fn watch_renewals(st: &AppState) {
+    for p in st.forges.plugins() {
+        let Some(l) = p.login() else { continue };
+        let (secrets, name, legacy, logins) =
+            (st.secrets.clone(), st.forge_logins_account.clone(), st.github_account.clone(), st.forge_logins.clone());
+        let kind = p.kind();
+        l.on_renewed(Arc::new(move |host: &str, old: &str, a: &ForgeAccount| {
+            let _held = logins.keychain.lock().unwrap_or_else(|e| e.into_inner());
+            let saved = read_store(secrets.as_ref(), &name, &legacy).and_then(|mut store| {
+                if store.get(&kind, host).is_none_or(|x| x.token != old) {
+                    tracing::info!(forge = %kind, host, "a renewed login was replaced meanwhile: not stored");
+                    return Ok(());
+                }
+                store.put(&kind, host, a.clone());
+                let json = serde_json::to_string(&store).map_err(|e| crate::secrets::SecretError(e.to_string()))?;
+                secrets.set(&name, &json)
+            });
+            if let Err(e) = saved {
+                tracing::warn!(forge = %kind, host, error = %e, "the renewed login could not be stored: it lasts until pdtd restarts");
+            }
+        }));
+    }
+}
+
 /// Stores or removes the account of `host`, then signs that host's forge in (or out).
 async fn save(
     st: &AppState,
@@ -259,6 +293,7 @@ async fn save(
     account: Option<ForgeAccount>,
 ) -> Result<(), ApiError> {
     store_account(st, &p.kind(), host, account.clone()).await?;
+    watch_renewals(st);
     let l = login_of(p.as_ref());
     // The pollers waited for this host's login (none, or one the forge refused): they look again now.
     let waited = l.accounts().into_iter().find(|a| a.host == host).is_none_or(|a| a.rejected_at.is_some());
@@ -289,11 +324,13 @@ pub async fn load(st: &AppState) {
         Ok(Err(e)) => return tracing::warn!(error = %e, "the forge logins could not be read from the keychain"),
         Err(e) => return tracing::warn!(error = %e, "reading the forge logins failed"),
     };
+    watch_renewals(st);
     for p in st.forges.plugins() {
         let Some(l) = p.login() else { continue };
         for (host, a) in store.of_kind(&p.kind()) {
             let age = a.signed_in_at.map(|t| (now_ms() - t) / 60_000);
-            tracing::info!(forge = %p.kind(), host, login = %a.login, api = %a.api_url, signed_in_min_ago = ?age, "using the stored forge login");
+            let expires_in_min = a.expires_at.map(|t| (t - now_ms()) / 60_000);
+            tracing::info!(forge = %p.kind(), host, login = %a.login, api = %a.api_url, signed_in_min_ago = ?age, ?expires_in_min, renews = a.refresh.is_some(), "using the stored forge login");
             l.set_account(host, Some(a.clone()));
         }
     }
@@ -331,26 +368,32 @@ async fn whoami(p: &Arc<dyn ForgePlugin>, api_url: &str, token: &str) -> Result<
     tokio::task::spawn_blocking(move || login_of(p.as_ref()).whoami(&api, &tok)).await.map_err(|e| e.to_string())?
 }
 
-/// Checks `token` with the forge and saves it as the account of `api_url`'s host.
+/// Checks `grant`'s token with the forge and saves it as the account of `api_url`'s host, with its expiry and refresh
+/// token when it has them (PDT-260).
 async fn sign_in(
     st: &AppState,
     p: &Arc<dyn ForgePlugin>,
-    token: String,
+    grant: TokenGrant,
     api_url: String,
     how: How<'_>,
 ) -> Result<(), String> {
-    let who = whoami(p, &api_url, &token).await?;
+    let who = whoami(p, &api_url, &grant.token).await?;
     let host = login_of(p.as_ref()).host_of(&api_url);
     // Every sign-in is logged (PDT-252): which instance, how, and with which OAuth App. Never the token.
     let (how, client_id) = match how {
         How::Pasted => ("pasted token", ""),
         How::DeviceFlow { client_id } => ("device flow", client_id),
     };
+    let now = now_ms();
+    let (expires_at, refresh) = grant.renewal(now, client_id);
+    let expires_in_min = expires_at.map(|t| (t - now) / 60_000);
     tracing::info!(
         instance = %st.forge_logins_account, data_dir = %st.data_dir.display(), forge = %p.kind(), host, how,
-        client_id, login = %who.login, api = %api_url, scopes = %who.scopes.join(","), "signed in to a forge"
+        client_id, login = %who.login, api = %api_url, scopes = %who.scopes.join(","), ?expires_in_min,
+        renews = refresh.is_some(), "signed in to a forge"
     );
-    let account = ForgeAccount { token, api_url, login: who.login, signed_in_at: Some(now_ms()) };
+    let account =
+        ForgeAccount { token: grant.token, api_url, login: who.login, signed_in_at: Some(now), expires_at, refresh };
     save(st, p, &host, Some(account)).await.map_err(|e| e.message().to_string())
 }
 
@@ -413,7 +456,9 @@ pub(crate) async fn put_token(
     let p = plugin(&st, &kind)?;
     let Json(b) = payload?;
     let (token, api) = b.parts(login_of(p.as_ref()))?;
-    sign_in(&st, &p, token, api, How::Pasted).await.map_err(|e| bad("invalid_token", e))?;
+    sign_in(&st, &p, TokenGrant { token, ..TokenGrant::default() }, api, How::Pasted)
+        .await
+        .map_err(|e| bad("invalid_token", e))?;
     cancel(&st, &p.kind());
     Ok(Json(view(&st, p.as_ref())))
 }
@@ -520,8 +565,8 @@ async fn poll(
         match got {
             DevicePoll::Pending => {}
             DevicePoll::SlowDown(s) => interval = Duration::from_secs(s),
-            DevicePoll::Token(token) => {
-                let r = sign_in(&st, &p, token, api.clone(), How::DeviceFlow { client_id: &client_id }).await;
+            DevicePoll::Token(grant) => {
+                let r = sign_in(&st, &p, grant, api.clone(), How::DeviceFlow { client_id: &client_id }).await;
                 return end(&st, r.err());
             }
             DevicePoll::Expired => return end(&st, expired()),

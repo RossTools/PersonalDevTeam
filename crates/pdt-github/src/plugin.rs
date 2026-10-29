@@ -6,7 +6,7 @@
 use crate::login::{self, GITHUB_HOST};
 use crate::{GithubActions, GithubApi, LoginCheck};
 use pdt_core::git_url::Remote;
-use pdt_forge::login::{AccountState, DeviceCode, DevicePoll, LoginSpec, Whoami};
+use pdt_forge::login::{AccountState, DeviceCode, DevicePoll, LoginSpec, RenewHook, Whoami};
 use pdt_forge::{CiProvider, Forge, ForgeAccount, ForgeKind, ForgeLinks, ForgeLogin, ForgePlugin};
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
@@ -16,6 +16,8 @@ pub struct GithubPlugin {
     api: Arc<GithubApi>,
     /// Each Enterprise Server's with an account, by web host.
     servers: RwLock<BTreeMap<String, Arc<GithubApi>>>,
+    /// Stores an account a client renewed (PDT-260).
+    renewed: Arc<RwLock<Option<RenewHook>>>,
 }
 
 /// `www.github.com` is github.com.
@@ -27,7 +29,21 @@ fn host_key(host: &str) -> String {
 impl GithubPlugin {
     /// The plugin with `api` as github.com's client; Enterprise Servers' share its transport.
     pub fn new(api: Arc<GithubApi>) -> Self {
-        Self { api, servers: RwLock::default() }
+        let p = Self { api, servers: RwLock::default(), renewed: Arc::default() };
+        p.wire(&p.api, GITHUB_HOST);
+        p
+    }
+
+    /// Hands the accounts `api` renews for `host` to the hook [`ForgeLogin::on_renewed`] set.
+    fn wire(&self, api: &GithubApi, host: &str) {
+        let (hook, host) = (self.renewed.clone(), host.to_string());
+        api.on_renewed(Some(Arc::new(move |old: &str, a: &ForgeAccount| {
+            let hook = hook.read().unwrap_or_else(|e| e.into_inner()).clone();
+            match hook {
+                Some(h) => h(&host, old, a),
+                None => tracing::warn!(host, "a renewed GitHub login has nowhere to be stored"),
+            }
+        })));
     }
 
     /// github.com's client.
@@ -149,9 +165,14 @@ impl ForgeLogin for GithubPlugin {
         }
         let mut servers = self.servers.write().unwrap_or_else(|e| e.into_inner());
         match account {
-            Some(a) => {
-                servers.entry(h).or_insert_with(|| Arc::new(GithubApi::new(self.api.transport()))).set_account(Some(a))
-            }
+            Some(a) => servers
+                .entry(h.clone())
+                .or_insert_with(|| {
+                    let api = Arc::new(GithubApi::new(self.api.transport()));
+                    self.wire(&api, &h);
+                    api
+                })
+                .set_account(Some(a)),
             None => {
                 servers.remove(&h);
             }
@@ -165,6 +186,10 @@ impl ForgeLogin for GithubPlugin {
                 api.account().map(|account| AccountState { host, account, rejected_at: api.rejected_at() })
             })
             .collect()
+    }
+
+    fn on_renewed(&self, hook: RenewHook) {
+        *self.renewed.write().unwrap_or_else(|e| e.into_inner()) = Some(hook);
     }
 
     fn check_accounts(&self) -> bool {
@@ -207,7 +232,7 @@ mod tests {
     }
 
     fn account(login: &str, api: &str) -> crate::Account {
-        crate::Account { token: format!("t-{login}"), api_url: api.into(), login: login.into(), signed_in_at: None }
+        crate::Account { token: format!("t-{login}"), api_url: api.into(), login: login.into(), ..Default::default() }
     }
 
     #[test]

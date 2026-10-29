@@ -323,6 +323,7 @@ mod tests {
                 api_url: api.into(),
                 login: "me".into(),
                 signed_in_at: None,
+                ..Default::default()
             }));
             g
         }

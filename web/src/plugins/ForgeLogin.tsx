@@ -86,7 +86,7 @@ export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
           )}
           <SettingsRow
             label={<span className="flex items-center gap-2">Connected <Badge tone="accent">{a.login}</Badge></span>}
-            description={`On ${a.host}.`}
+            description={`On ${a.host}.${expiry(a)}`}
           >
             <Button size="sm" variant="danger" aria-label={`Disconnect ${a.host}`} pending={disconnect.isPending && disconnect.variables === a.host} onClick={() => void onDisconnect(a)}>Disconnect…</Button>
           </SettingsRow>
@@ -147,4 +147,13 @@ export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
       {error && <Alert tone="error">{error.message}</Alert>}
     </Section>
   );
+}
+
+/** When an account's token expires (PDT-260), if it does: one PDT renews, or one to replace in time. */
+function expiry(a: { expiresAt: number | null; renews: boolean }): string {
+  if (a.expiresAt == null) return '';
+  const at = new Date(a.expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return a.renews
+    ? ` Its token expires ${at}; PDT renews it before then.`
+    : ` Its token expires ${at}: connect again before then.`;
 }
