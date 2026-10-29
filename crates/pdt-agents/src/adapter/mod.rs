@@ -1,6 +1,7 @@
 //! Structured agent adapters (structured agents spec §3.1): each owns an agent's process and protocol framing and turns
 //! it into normalized events. They know nothing about HTTP or the store.
 
+pub mod acp;
 pub mod claude;
 pub mod codex;
 pub mod devin;

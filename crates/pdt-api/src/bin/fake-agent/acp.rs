@@ -11,6 +11,9 @@
 //! - a prompt with images — says `saw N images (<media types>)`.
 //! - anything else — `echo: <text>`.
 //!
+//! `--plain` makes it a plain ACP agent: no `_meta` or error `data` (Devin's `cognition.ai/*` fields) and no
+//! session-only permission option.
+//!
 //! A session is saved at its first prompt (a marker file in the temp folder), as Devin does: loading one never
 //! prompted fails with -32016. Loading replays its history first, as Devin does.
 
@@ -19,7 +22,21 @@ use std::io::{BufRead, Write};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-fn out(v: Value) {
+/// `--plain`: no Devin fields.
+static PLAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn out(mut v: Value) {
+    if PLAIN.load(std::sync::atomic::Ordering::Relaxed) {
+        if let Some(u) = v.pointer_mut("/params/update").and_then(Value::as_object_mut) {
+            u.remove("_meta");
+        }
+        if let Some(e) = v.get_mut("error").and_then(Value::as_object_mut) {
+            e.remove("data");
+        }
+        if let Some(o) = v.pointer_mut("/params/options").and_then(Value::as_array_mut) {
+            o.retain(|o| o["optionId"] != "allow_session");
+        }
+    }
     let mut o = std::io::stdout().lock();
     let _ = writeln!(o, "{v}");
     let _ = o.flush();
@@ -221,6 +238,7 @@ impl Acp {
 
 pub fn serve(args: &[String]) {
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    PLAIN.store(args.iter().any(|a| a == "--plain"), std::sync::atomic::Ordering::Relaxed);
     let hook = flag("--config")
         .and_then(|f| std::fs::read_to_string(f).ok())
         .is_some_and(|t| t.contains("hook devin --instructions"));
