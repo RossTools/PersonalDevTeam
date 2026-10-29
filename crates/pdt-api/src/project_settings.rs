@@ -6,7 +6,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::host::{CredentialPolicy, effective_credentials};
 use pdt_core::integration::IntegrationSettings;
-use pdt_core::policy::{AutoStart, MergeBy, ProjectPolicy};
+use pdt_core::policy::{AutoStart, AutoStartOrder, MergeBy, ProjectPolicy};
 use pdt_store::ProjectSettings;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -70,6 +70,10 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub auto_start: Option<AutoStart>,
+    /// `priority` (most urgent first, then rank) or `rank` (PDT-218).
+    #[serde(default)]
+    #[ts(optional)]
+    pub auto_start_order: Option<AutoStartOrder>,
     /// Tickets with any of these labels skip `requireApproval` ([] clears them).
     #[serde(default)]
     #[ts(optional)]
@@ -190,6 +194,7 @@ pub(crate) async fn put_settings(
         require_approval: input.require_approval.unwrap_or(current.policy.require_approval),
         max_running_attempts,
         auto_start: input.auto_start.unwrap_or(current.policy.auto_start),
+        auto_start_order: input.auto_start_order.unwrap_or(current.policy.auto_start_order),
         approval_exempt_labels,
         pm_acts: input.pm_acts.unwrap_or(current.policy.pm_acts),
         start_delay_seconds: input.start_delay_seconds.unwrap_or(current.policy.start_delay_seconds),

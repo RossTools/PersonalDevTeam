@@ -1344,10 +1344,13 @@ async fn overview(cx: &Cx<'_>, project: Option<&str>) -> Result<Value, String> {
         let q = pdt_core::ticket::TicketQuery {
             project: Some(p.id.clone()),
             stage: Some("todo,ready".into()),
+            sort: Some(policy.auto_start_order.ticket_sort()),
             limit: Some(100),
             ..Default::default()
         };
-        let Json(page) = crate::tickets::list(State(st.clone()), Ok(axum::extract::Query(q))).await.map_err(api)?;
+        let Json(mut page) = crate::tickets::list(State(st.clone()), Ok(axum::extract::Query(q))).await.map_err(api)?;
+        // In the order auto-start takes them (PDT-218): To do before Ready, each in the project's order.
+        page.items.sort_by_key(|t| t.stage != pdt_core::ticket::TicketStage::Todo);
         auto_starting.extend(page.items.iter().filter_map(|t| {
             let at = t.auto_start_at?;
             Some(json!({"key": t.key, "id": t.id, "title": t.title, "project": p.key,

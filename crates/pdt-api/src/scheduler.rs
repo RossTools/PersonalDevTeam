@@ -102,6 +102,7 @@ pub async fn schedule_tickets(st: &AppState) {
             project: Some(p.id.clone()),
             stage: Some("todo,ready".into()),
             has_parts: Some(false),
+            sort: Some(policy.auto_start_order.ticket_sort()),
             limit: Some(200),
             ..Default::default()
         };

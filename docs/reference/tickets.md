@@ -208,7 +208,7 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   (`overCap` on the `started` event).
 - **Auto-start** (project settings `autoStart`: `off`, `todo`, `ready`; pdt-api `scheduler.rs`, every 10 s in pdtd,
   `schedule_tickets` in tests): while a project is under its cap (one when it has none) it starts its next To do
-  ticket by rank (then Ready with `ready`), skipping parents, tickets with an active attempt (an abandoned or merged one doesn't count, PDT-159: a ticket
+  ticket (then Ready with `ready`) in the project's order, skipping parents, tickets with an active attempt (an abandoned or merged one doesn't count, PDT-159: a ticket
   stopped and moved back to To do starts again once clear), blocked ones, `conflict`
   overlaps and waiting tickets that aren't clear (pdt-core `policy::pick_next`). It starts in a new workspace with the
   host's default agent, view and ticket permission mode, or with no session when an enabled workflow for the project
@@ -216,6 +216,12 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
   then the Reviewer's and QA's); the `started`
   event has `auto: true`. A failed start is logged and skipped until the ticket changes; a start with its own session
   waits for a slot under the host's cap.
+- **Auto-start order** (project settings `autoStartOrder`: `priority`, the default for new and existing projects, or
+  `rank`; PDT-218; Web: "Auto-start picks by"): `priority` takes the most urgent candidate first (urgent, high,
+  medium, low, none), then backlog rank, then id; `rank` takes them in backlog rank only. Either way To do comes
+  before Ready, and the skips above, the quiet period and the failed-start skip still apply. The scheduler queries
+  candidates in that order (`TicketSort::Priority` or `Rank`) and `pick_next` picks by it; `get_overview`'s
+  `autoStarting` lists To do then Ready, each in that order.
 - **Quiet period** (project settings `startDelaySeconds`, default 120, 0 at once, at most a day; PDT-146): auto-start
   takes a ticket only once it has gone that long unchanged, measured from the later of `createdAt` and `updatedAt`
   (pdt-core `policy::settles_at`), so tickets created and then linked to their blockers never start early. Anything

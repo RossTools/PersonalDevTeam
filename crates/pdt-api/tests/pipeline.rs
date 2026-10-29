@@ -430,6 +430,61 @@ async fn auto_start_waits_until_a_ticket_has_been_quiet_for_the_start_delay() {
     assert_eq!(get_ticket(&env, &d).await["stage"], "in_progress");
 }
 
+async fn todo_at(env: &Env, title: &str, priority: &str) -> String {
+    let (s, t) = call(
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": title, "stage": "todo", "priority": priority})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    t["id"].as_str().unwrap().to_string()
+}
+
+/// PDT-218: auto-start takes the most urgent To do ticket first (rank within a priority), unless the project keeps to
+/// backlog rank.
+#[tokio::test]
+async fn auto_start_takes_the_most_urgent_ticket_first_unless_the_project_says_rank() {
+    let env = setup().await;
+    let (_, v) = call(&env.app, "GET", &format!("/api/projects/{}/settings", env.project), None).await;
+    assert_eq!(v["policy"]["autoStartOrder"], "priority", "most urgent first unless the project says otherwise");
+    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 10, "startDelaySeconds": 0})).await;
+    // No host cap on agents running a turn: each start's session keeps working.
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"maxAgentTurns": 0}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let stage = |id: String| {
+        let env = &env;
+        async move { get_ticket(env, &id).await["stage"].as_str().unwrap().to_string() }
+    };
+    // A new To do ticket goes to the top: the medium ones rank above the high one, `medium` first.
+    let high = todo_at(&env, "High", "high").await;
+    let medium_later = todo_at(&env, "Medium later", "medium").await;
+    let medium = todo_at(&env, "Medium", "medium").await;
+    pdt_api::schedule_tickets(&env.state).await;
+    assert_eq!(stage(high.clone()).await, "in_progress", "the high-priority ticket first");
+    assert_eq!(stage(medium.clone()).await, "todo");
+    pdt_api::schedule_tickets(&env.state).await;
+    assert_eq!(stage(medium.clone()).await, "in_progress", "then rank within a priority");
+    assert_eq!(stage(medium_later.clone()).await, "todo");
+    pdt_api::schedule_tickets(&env.state).await;
+    assert_eq!(stage(medium_later).await, "in_progress");
+
+    // By rank: today's order, whatever the priority.
+    settings(&env, json!({"autoStartOrder": "rank"})).await;
+    let (_, v) = call(&env.app, "GET", &format!("/api/projects/{}/settings", env.project), None).await;
+    assert_eq!(v["policy"]["autoStartOrder"], "rank");
+    let urgent = todo_at(&env, "Urgent", "urgent").await;
+    let low = todo_at(&env, "Low", "low").await;
+    pdt_api::schedule_tickets(&env.state).await;
+    assert_eq!(stage(low).await, "in_progress", "the first in rank");
+    assert_eq!(stage(urgent).await, "todo");
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"autoStartOrder": "x"})))
+            .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+}
+
 #[tokio::test]
 async fn every_step_session_on_a_ticket_opens_a_tab_and_belongs_to_the_ticket() {
     let env = setup().await;
@@ -515,7 +570,8 @@ async fn a_strict_project_is_other_parameters_and_policies() {
     assert_eq!(
         s["policy"],
         json!({"mergeBy": "user", "requireApproval": true, "approvalExemptLabels": [], "maxRunningAttempts": 1,
-               "autoStart": "off", "pmActs": false, "startDelaySeconds": 120, "requireGreenCi": true})
+               "autoStart": "off", "autoStartOrder": "priority", "pmActs": false, "startDelaySeconds": 120,
+               "requireGreenCi": true})
     );
 
     let (s, started) =
