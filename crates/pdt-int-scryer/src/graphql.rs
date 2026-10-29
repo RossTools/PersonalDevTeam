@@ -342,7 +342,6 @@ pub struct ScryerQueryConfig {
     pub connection: String,
     /// A GraphQL query document (`query { indexers { id name isEnabled } }`): checked against Scryer's schema
     /// first. No mutations or subscriptions.
-    #[schemars(extend("x-format" = "code", "x-language" = "graphql"))]
     pub query: String,
     /// Its variables.
     #[serde(default)]
