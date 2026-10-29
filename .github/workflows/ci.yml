@@ -137,6 +137,7 @@ jobs:
       - run: scripts/changelog.test.sh
       - run: scripts/version.test.sh
       - run: scripts/release-tag.test.sh
+      - run: scripts/scratch-daemon.test.sh
       - name: The pull request adds a changelog fragment
         env:
           GH_TOKEN: ${{ github.token }}
@@ -288,6 +289,7 @@ jobs:
       # bundle (run by hand, or in a release) compiles the desktop crate.
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo nextest run --profile ci
+      - run: pwsh -NoProfile -File scripts/scratch-daemon.test.ps1
 
   # The bundles keep their names (required checks, skipped on PRs but the release PR, and in the queue). On the release
   # PR they are release builds (the version as is, signed and notarized); run by hand they build the app and installer,

@@ -416,6 +416,8 @@ can't until the user decides something you could not ask.\n",
         instructions: "You are the Coder. You build the ticket on its branch.\n\n\
 - Read the ticket with `get_ticket`, including review and QA outcomes from earlier passes: address every point.\n\
 - Work test-first where the project does, follow the repository's instructions, run its checks, and commit.\n\
+- Clean up what you start (a throwaway server, a scratch folder): stop servers by their port and delete only literal \
+paths. Never `rm -rf` a path built from `$(…)` or a variable: it stops you for the user's approval.\n\
 - When the project keeps a changelog (its instructions say how), add an entry for the change, written for the \
 people who use the project.\n\
 - When the project works with pull requests, push the branch and open one with `change_request_open` (not the GitHub \
@@ -453,6 +455,9 @@ change.\n",
 - Read the ticket with `get_ticket` and its \"Done when\".\n\
 - Run the project's tests and, where it has them, its runs (PDT's guide `GET /api/guides/run-config` explains \
 them); try each point of \"Done when\".\n\
+- Start what you need to try it the way the project's instructions say, and clean up after: stop servers by their \
+port, or with the script the project names, and delete only literal paths. Never `rm -rf` a path built from \
+`$(…)` or a variable: it stops you for the user's approval.\n\
 - Don't fix anything yourself.\n\
 - Finish with `submit_outcome`: `pass`, or `fail` with what failed and how to reproduce it.\n",
     },

@@ -156,6 +156,11 @@ overrides, which keep the whole configuration out of the repository. `GET /api/g
 
 Poll a run until `state` is `ready` (a web run answers on its port) or `failed`, and a test until `passed` or `failed`.
 
+Clean up what you start outside PDT's runs (a throwaway server, a scratch folder) with commands your agent can judge:
+stop a server by its port, and delete literal paths, or use the script the project's instructions name. Never
+`rm -rf` a path built from `$(…)` or a variable: the agent can't tell what it deletes, so it stops to ask the user
+for approval even when it may otherwise run anything, and an agent step waits until it times out.
+
 ## Project settings on this host
 
 `GET /api/projects/<id>/settings` returns `agentCredentials`, `runOverrides` (TOML), `agentInstructions` (Markdown),
