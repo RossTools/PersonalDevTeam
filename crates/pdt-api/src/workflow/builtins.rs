@@ -33,8 +33,9 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin { id: COMMENTS_TO_AGENT, enabled: true, doc: comments_to_agent },
     Builtin { id: BASE_MOVED, enabled: false, doc: base_moved },
     Builtin { id: PR_FEEDBACK, enabled: false, doc: pr_feedback },
-    // Enabled when installed only on a host with a project whose repository is the release repository (PDT's own).
-    Builtin { id: PDT_BUG_TRIAGE, enabled: false, doc: pdt_bug_triage },
+    // Installed (enabled) and offered as a template only on a host with a project whose repository is the release
+    // repository, PDT's own (PDT-226).
+    Builtin { id: PDT_BUG_TRIAGE, enabled: true, doc: pdt_bug_triage },
     Builtin { id: GITHUB_ISSUE_DONE, enabled: true, doc: github_issue_done },
     // Off until the user turns it on; the PM starts it (Run now) when the user asks for a release.
     Builtin { id: CUT_RELEASE, enabled: false, doc: cut_release },
@@ -872,13 +873,19 @@ fn cut_release() -> WorkflowDoc {
 }
 
 /// Whether a project on this host is PDT's own repository (the release repository): where bug triage runs.
-async fn builds_pdt(st: &AppState) -> bool {
+pub(crate) async fn builds_pdt(st: &AppState) -> bool {
     for p in st.store.list_projects().await.unwrap_or_default() {
         if crate::github::github_repo(&p.repo_path).await.is_some_and(|r| r.eq_ignore_ascii_case(RELEASE_REPO)) {
             return true;
         }
     }
     false
+}
+
+/// Whether a built-in (and its template) is only for a host that builds PDT itself (PDT-226). One installed before
+/// that stays as it is.
+pub(crate) fn only_for_pdt(id: &str) -> bool {
+    id == PDT_BUG_TRIAGE
 }
 
 /// Installs or updates the built-ins (once per pdtd; callers hold the engine lock).
@@ -888,7 +895,11 @@ pub(crate) async fn ensure_installed(st: &AppState) {
         return;
     }
     let mut ok = true;
+    let pdt_own = builds_pdt(st).await;
     for b in &all(&st.registry()) {
+        if !pdt_own && only_for_pdt(b.id) {
+            continue;
+        }
         if let Err(e) = install(st, b).await {
             ok = false;
             tracing::warn!(builtin = b.id, error = %e, "could not install a built-in workflow");
@@ -907,7 +918,7 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
     let now = now_ms();
     match st.store.workflow_by_builtin(b.id).await? {
         None => {
-            let enabled = b.enabled || (b.id == PDT_BUG_TRIAGE && builds_pdt(st).await);
+            let enabled = b.enabled;
             let w = Workflow {
                 id: uuid::Uuid::now_v7().to_string(),
                 name: template.name.clone(),
