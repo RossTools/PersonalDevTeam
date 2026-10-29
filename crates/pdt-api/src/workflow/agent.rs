@@ -818,7 +818,7 @@ pub(crate) async fn submit_outcome(st: &AppState, s: &Session, input: crate::mcp
     handed_in(st, &a, &input.outcome).await?;
     let step = waiting_step(st, &a).await?;
     if !input.comments.is_empty() {
-        let cx = crate::mcp::tools::Cx { st, session: s };
+        let cx = crate::mcp::tools::Cx { st, session: s, input: &crate::mcp::tools::NO_INPUT, confirmed: false };
         for c in &input.comments {
             crate::mcp::tools::add_review_comment(&cx, c).await?;
         }
@@ -913,7 +913,7 @@ async fn late_outcome(st: &AppState, s: &Session, input: crate::mcp::tools::Subm
     };
     st.store.put_agent_step(&a).await.map_err(err)?;
     if !input.comments.is_empty() {
-        let cx = crate::mcp::tools::Cx { st, session: s };
+        let cx = crate::mcp::tools::Cx { st, session: s, input: &crate::mcp::tools::NO_INPUT, confirmed: false };
         for c in &input.comments {
             crate::mcp::tools::add_review_comment(&cx, c).await?;
         }
@@ -936,8 +936,60 @@ pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question
               "message": "Your questions are in the user's Inbox. Their answers will come as a message; end your turn now."}))
 }
 
-/// Opens an item a session waits on the user for (a question, a secret request), replacing its step's open one of
-/// that kind; the step is asking until it is answered.
+/// An asking tool's call from an agent that can't ask in its own prompt (PDT-256): an Inbox item with Allow and Deny,
+/// which [`answer_confirm`] answers.
+pub(crate) async fn ask_confirm(st: &AppState, s: &Session, tool: &str, input: &Value) -> R<InboxItem> {
+    let info = st.registry().tool_infos().into_iter().find(|t| t.name == tool);
+    let title = info.map(|t| t.title).filter(|t| !t.is_empty()).unwrap_or_else(|| tool.to_string());
+    let agent = s.agent.map(|a| a.label());
+    let body = json!({"tool": tool, "toolTitle": title, "input": st.store.redactor().json(input), "agent": agent,
+                      "sessionTitle": s.title});
+    ask(st, s, InboxKind::Confirm, title, body).await
+}
+
+/// The user's Allow or Deny of an asking tool's call (PDT-256): Allow runs it as the session's call with the user's
+/// yes; the session hears the result either way.
+pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str) -> R<Value> {
+    let s = asker(st, item).await?;
+    let tool = item.body.get("tool").and_then(Value::as_str).ok_or("the item names no tool")?;
+    let title = item.body.get("toolTitle").and_then(Value::as_str).unwrap_or(tool);
+    let allowed = match choice {
+        inbox::ALLOW => true,
+        inbox::DENY => false,
+        other => return Err(format!("{other} is not a choice here")),
+    };
+    // Ended first, so a second click runs nothing.
+    end_item(st, item, json!({"choice": choice})).await?;
+    let (text, out) = if allowed {
+        let input = item.body.get("input").cloned().unwrap_or_else(|| json!({}));
+        let cx = crate::mcp::tools::Cx { st, session: &s, input: &input, confirmed: true };
+        let r = st.store.redactor();
+        match st.registry().call_tool(&cx, tool, input.clone()).await {
+            Ok(v) => {
+                let v = r.json(&v);
+                (
+                    format!("[PDT] The user allowed your {tool} call ({title}). PDT ran it; its result:\n{v}"),
+                    json!({"allowed": true, "result": v}),
+                )
+            }
+            Err(e) => {
+                let e = r.string(&e);
+                (
+                    format!("[PDT] The user allowed your {tool} call ({title}), but it failed: {e}"),
+                    json!({"allowed": true, "error": e}),
+                )
+            }
+        }
+    } else {
+        (format!("[PDT] The user denied your {tool} call ({title}): don't make it."), json!({"allowed": false}))
+    };
+    let _locked = super::engine::lock_run(st, item.run_id.as_deref()).await;
+    tell(st, item, &s, &text).await?;
+    Ok(out)
+}
+
+/// Opens an item a session waits on the user for (a question, a secret request, an asking tool's call), replacing its
+/// step's open one of that kind; the step is asking until it is answered.
 pub(crate) async fn ask(st: &AppState, s: &Session, kind: InboxKind, title: String, body: Value) -> R<InboxItem> {
     let run = session_run(st, &s.id).await;
     let _locked = super::engine::lock_run(st, run.as_deref()).await;
@@ -957,7 +1009,7 @@ pub(crate) async fn ask(st: &AppState, s: &Session, kind: InboxKind, title: Stri
     let item = InboxItem {
         id: uuid::Uuid::now_v7().to_string(),
         kind,
-        group: InboxGroup::Question,
+        group: if kind == InboxKind::Confirm { InboxGroup::Approval } else { InboxGroup::Question },
         status: InboxStatus::Open,
         project_id: Some(s.project_id.clone()),
         ticket_id,
@@ -971,7 +1023,12 @@ pub(crate) async fn ask(st: &AppState, s: &Session, kind: InboxKind, title: Stri
         persona_name: None,
         title,
         body,
-        choices: vec![],
+        choices: match kind {
+            InboxKind::Confirm => {
+                vec![InboxChoice::new(inbox::ALLOW, "Allow", true), InboxChoice::new(inbox::DENY, "Deny", false)]
+            }
+            _ => vec![],
+        },
         resolution: Value::Null,
         created_at: now_ms(),
         resolved_at: None,
@@ -1373,6 +1430,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         InboxKind::Connect => Err("connect GitHub in Settings › Plugins › GitHub".into()),
         // Answered by `inbox::answer`, which knows whether the user's own click sent it.
         InboxKind::Admit => Err("approve or reject a triaged ticket from PDT's Inbox".into()),
+        InboxKind::Confirm => Err("allow or deny an agent's call from PDT's Inbox".into()),
     }
 }
 
@@ -1397,7 +1455,12 @@ pub(crate) async fn reply(st: &AppState, item: &InboxItem, text: &str, resolutio
     let s = asker(st, item).await?;
     let _locked = super::engine::lock_run(st, item.run_id.as_deref()).await;
     end_item(st, item, resolution).await?;
-    queue_message(st, &s, text, None, item.ticket_id.clone(), USER).await?;
+    tell(st, item, &s, text).await
+}
+
+/// Sends the asking session `text` about its ended item; its step works again. The caller holds the run's lock.
+async fn tell(st: &AppState, item: &InboxItem, s: &Session, text: &str) -> R<()> {
+    queue_message(st, s, text, None, item.ticket_id.clone(), USER).await?;
     if let Some(step) = &item.step_id
         && let Ok(Some(mut a)) = st.store.get_agent_step(step).await
         && a.state == AgentStepState::Asking

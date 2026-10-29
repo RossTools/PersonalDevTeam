@@ -232,6 +232,24 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/inbox/a/answer').map((c) => c.body)).toContainEqual({ choice: 'reject' }));
   });
 
+  it('shows a Codex PM\'s call with its arguments: Enter allows it, Deny denies it (PDT-256)', async () => {
+    const call = item('c', {
+      kind: 'confirm', group: 'approval', runId: null, stepId: null, title: 'Report a bug in PDT',
+      body: { tool: 'report_bug', toolTitle: 'Report a bug in PDT', agent: 'Codex', sessionTitle: 'PM', input: { title: 'The board flickers' } },
+      choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+    });
+    expect(dismissable(call)).toBe(false);
+    const calls = stubApi({ 'POST /api/inbox/c/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[call]} selectedId="c" onSelect={() => {}} />);
+    const region = screen.getByRole('region', { name: 'Agent call' });
+    expect(region).toHaveTextContent('PM (Codex) wants to call report_bug');
+    expect(screen.getByLabelText("The call's arguments")).toHaveTextContent('"title": "The board flickers"');
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/inbox/c/answer')?.body).toEqual({ choice: 'allow' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    await waitFor(() => expect(calls.filter((c) => c.path === '/api/inbox/c/answer').map((c) => c.body)).toContainEqual({ choice: 'deny' }));
+  });
+
   it('asks to connect GitHub: Enter opens GitHub’s plugin page, and it is not dismissed', async () => {
     const connect = item('connect:github', {
       kind: 'connect', group: 'notice', projectId: null, ticketId: null, runId: null, stepId: null, title: 'Connect GitHub',

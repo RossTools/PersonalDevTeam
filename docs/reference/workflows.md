@@ -1095,7 +1095,9 @@ group `gate` or `accept` from its `inbox`), `stalled`, `loop_limit`, `manual` (a
 `timed_out` (group Stalled, PDT-123), `notice` (group Unheard notices, after Loop limit, PDT-139: made by
 `inbox.notice`, with no step, so it outlives its run), `secret` (group Questions, `request_secret`, PDT-158:
 answered `{secret}` in a masked field, [secrets.md](secrets.md#agents-pdt-mcp)), `admit` (group Triaged tickets,
-after Unheard notices, PDT-225: made by `inbox.admit`, with no step; notified as `inbox.gate`); one
+after Unheard notices, PDT-225: made by `inbox.admit`, with no step; notified as `inbox.gate`), `confirm` (group
+Approvals, PDT-256: a Codex or Devin agent's call to an asking tool, answered `{choice: allow | deny}`; Allow needs the
+UI token and runs the call, [agents.md](agents.md#the-pm-pdt-81)); one
 open item per step and kind. An `admit` item is answered `{choice: approve | reject}`: Approve moves its ticket to To
 do and Reject to Won't do, both as the user's move (`moved` data `via: inbox`; Won't do ends an attempt as any close
 does, and "Done closes the GitHub issue" closes a linked issue as not planned). Approving a ticket not let in yet

@@ -24,11 +24,18 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-/// What a tool call knows: PDT and the calling session.
+/// What a tool call knows: PDT, the calling session and the call's arguments.
 pub struct Cx<'a> {
     pub st: &'a AppState,
     pub session: &'a Session,
+    /// The arguments as the agent gave them: an asking tool's Inbox item shows them (PDT-256).
+    pub input: &'a Value,
+    /// The user allowed this very call in the Inbox: an asking tool goes ahead without asking again.
+    pub confirmed: bool,
 }
+
+/// What a call PDT makes itself (not an agent's tool call) has as arguments.
+pub(crate) static NO_INPUT: Value = Value::Null;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1106,7 +1113,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             // Letting an external ticket in (PDT-201): only the PM, with the user's yes to this very call (PDT always
             // asks it, even where the project lets the PM act). Anyone else is refused by the store.
             if pm && crate::untrusted::lets_in(&current.summary, &valid) {
-                by.confirmed = st.grants.take(&cx.session.id, name, &raw);
+                by.confirmed = cx.confirmed || st.grants.take(&cx.session.id, name, &raw);
             }
             let t = st
                 .store
@@ -1245,18 +1252,25 @@ async fn workflow_by_name(cx: &Cx<'_>, name: &str) -> Result<String, String> {
 }
 
 /// An asking tool from an agent that can't ask the user per call (Codex, Devin: PDT's tools run without asking
-/// there) runs only where the project lets the PM act. Claude asks through its permission prompt (spec §4).
+/// there) runs where the project lets the PM act; elsewhere PDT asks in its Inbox (PDT-256): the call waits there, and
+/// the user's Allow runs it and tells the agent the result. Claude asks through its permission prompt (spec §4).
 pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) -> Result<(), String> {
     use pdt_core::session::AgentKind;
-    if !cx.st.registry().tool_table().asks(tool) || cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude {
+    if cx.confirmed
+        || !cx.st.registry().tool_table().asks(tool)
+        || cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude
+    {
         return Ok(());
     }
     if crate::pm::acts_without_asking(cx.st, target).await {
         return Ok(());
     }
+    let item = crate::workflow::agent::ask_confirm(cx.st, cx.session, tool, cx.input).await?;
     Err(format!(
-        "{tool} needs the user's yes, and PDT can only ask for it in a Claude session. Tell the user what you would \
-         do so they can do it, or ask them to let the PM act (the project's settings, or the connection the tool uses)."
+        "{tool} needs the user's yes, so PDT put this call in its Inbox for them to Allow or Deny (item {}). Don't call \
+         it again: if they allow it, PDT runs it as you gave it and sends you a message with the result; if they deny \
+         it, you hear that instead. End your turn now.",
+        item.id
     ))
 }
 

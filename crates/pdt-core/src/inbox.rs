@@ -37,6 +37,9 @@ pub enum InboxKind {
     /// A ticket triage drafted waits for the user's Approve (to To do) or Reject (to Won't do) (PDT-225). It closes
     /// once the ticket moves past Ready some other way.
     Admit,
+    /// A call to one of PDT's asking tools from an agent that can't ask in its own prompt (Codex, Devin; PDT-256):
+    /// Allow runs the call as the user's yes, Deny tells the agent no. Either way the agent hears the result.
+    Confirm,
 }
 
 impl InboxKind {
@@ -54,6 +57,7 @@ impl InboxKind {
             InboxKind::Secret => "secret",
             InboxKind::Connect => "connect",
             InboxKind::Admit => "admit",
+            InboxKind::Confirm => "confirm",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -70,6 +74,7 @@ impl InboxKind {
             Self::Secret,
             Self::Connect,
             Self::Admit,
+            Self::Confirm,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -212,6 +217,10 @@ pub const RESEND: &str = "resend";
 pub const APPROVE: &str = "approve";
 /// A triaged ticket's Reject: to Won't do.
 pub const REJECT: &str = "reject";
+/// An asking tool call's Allow (PDT-256): PDT runs it.
+pub const ALLOW: &str = "allow";
+/// An asking tool call's Deny.
+pub const DENY: &str = "deny";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -236,7 +245,7 @@ pub struct InboxItem {
     pub title: String,
     /// Kind-specific: `questions` (question), `question`/`choices` (gate), `outcomes`, `summary`, `turns`
     /// (stalled), `passes` (loop limit), `request` (approval), `notice`/`key`/`text`/`pr`/`url` (notice),
-    /// `summary`/`issue`/`external` (admit).
+    /// `summary`/`issue`/`external` (admit), `tool`/`toolTitle`/`input`/`agent`/`sessionTitle` (confirm).
     #[ts(type = "Record<string, unknown>")]
     pub body: Value,
     pub choices: Vec<InboxChoice>,

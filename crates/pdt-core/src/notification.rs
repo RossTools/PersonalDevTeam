@@ -281,7 +281,7 @@ impl NotificationKind {
     pub fn of_inbox(kind: InboxKind, group: InboxGroup) -> Self {
         match (kind, group) {
             (InboxKind::Question | InboxKind::Secret, _) => K::InboxQuestion,
-            (InboxKind::Approval, _) => K::InboxApproval,
+            (InboxKind::Approval | InboxKind::Confirm, _) => K::InboxApproval,
             (InboxKind::Stalled | InboxKind::TimedOut, _) => K::InboxStalled,
             (InboxKind::LoopLimit, _) => K::InboxLoopLimit,
             (InboxKind::Notice | InboxKind::Connect, _) => K::InboxNotice,

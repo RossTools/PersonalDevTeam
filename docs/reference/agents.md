@@ -225,8 +225,13 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `ask_target`); for an integration's tools the setting is their connection's `config.pmActs` (a Discord server is in
   no project): the Discord bot's for the Discord tools, the Scryer connection's for `scryer_add` and `scryer_mutate`
   (`AskTarget::Connection` with the connection's kind; `AskTarget::Always`, for the calls that always ask, is never
-  answered for the user). Codex and Devin can't ask per tool, so
-  there the asking tools are refused unless the project (or the connection) lets the PM act.
+  answered for the user). Codex and Devin can't ask per tool, so there an asking tool runs at once where the
+  project (or the connection) lets the PM act; anywhere else, and for `AskTarget::Always` (`report_bug`,
+  `workflow_import`), PDT asks in its Inbox instead (PDT-256, `mcp::tools::confirmable`): the call becomes a `confirm`
+  item (group Approvals) with the tool, its arguments, the agent and the session, and the tool answers with an error
+  telling the agent to end its turn. The user's **Allow** (from PDT's web client only: without the UI token it is
+  `409`) runs the call as given, as the session's call with the user's yes (`Cx::confirmed`), and the agent gets a
+  message with its result or error; **Deny** sends it a message saying no. A second click runs nothing.
 - **Briefing.** Built by pdtd when the session's instructions are first written and kept in
   `<session dir>/briefing.md` (a restart sends the same text): projects with open tickets per stage and whether the PM
   may act, tickets in progress, the Inbox, events since the previous PM session started (counts and the latest
