@@ -112,6 +112,18 @@ impl Integration for Dummy {
     fn id(&self) -> &'static str {
         "dummy"
     }
+    fn category(&self) -> Option<PluginCategory> {
+        Some(PluginCategory::Chat)
+    }
+    fn project_settings(&self) -> Option<ProjectSettingsSchema> {
+        Some(ProjectSettingsSchema {
+            integration: "dummy".into(),
+            label: "Dummy".into(),
+            description: "Each project can poke its own Dummy.".into(),
+            connection_kind: "dummy".into(),
+            fields: vec![],
+        })
+    }
     fn connection_kinds(&self) -> Vec<ConnectionKind> {
         vec![ConnectionKind { id: "dummy".into(), label: "Dummy".into(), ..Default::default() }]
     }
@@ -235,12 +247,12 @@ fn a_disabled_integration_registers_nothing() {
     assert!(ints.registry().tool_table().contains("get_ticket"), "PDT's own are always on");
 }
 
-/// PDT-179: Settings → Integrations names each integration's tools and the PM's among them, enabled or not, so the
+/// PDT-179: Settings → Plugins names each integration's tools and the PM's among them, enabled or not, so the
 /// upgrade rehearsal can check the tool lists.
 #[test]
 fn the_integrations_list_names_their_tools() {
     let ints = Integrations::new(vec![Arc::new(Dummy)]);
-    let list = infos(&ints);
+    let list = infos(&ints, &PluginFacts::default());
     let dummy = list.iter().find(|i| i.id == "dummy").unwrap();
     assert!(!dummy.enabled);
     assert_eq!(dummy.tools, ["dummy_blink", "dummy_wink", "dummy_poke"]);
@@ -278,4 +290,107 @@ fn a_turned_off_integrations_node_names_it() {
     assert!(e.iter().any(|(c, m)| c == "integration_missing" && m.contains("built without")), "{e:?}");
     let node = doc.node("j").unwrap();
     assert!(built.catalog().current_config(node).unwrap_err().contains("turned off"));
+}
+
+fn connection(name: &str, kind: &str, last_error: Option<&str>) -> pdt_core::workflow::api::Connection {
+    pdt_core::workflow::api::Connection {
+        id: format!("c-{name}"),
+        name: name.into(),
+        kind: kind.into(),
+        url: String::new(),
+        config: json!({}),
+        has_secret: true,
+        created_at: 0,
+        updated_at: 0,
+        last_error: last_error.map(String::from),
+        last_error_at: last_error.map(|_| 1),
+    }
+}
+
+fn find<'a>(list: &'a [IntegrationInfo], id: &str) -> &'a IntegrationInfo {
+    list.iter().find(|i| i.id == id).unwrap_or_else(|| panic!("no plugin {id}"))
+}
+
+/// PDT-228: Settings → Plugins lists PDT's own plugins (GitHub and the general ones, built in) but not its core, then
+/// the built ones and the known ones this build lacks, each with its category, icon and what it adds.
+#[test]
+fn the_plugins_list_says_what_each_adds() {
+    let ints = Integrations::new(vec![Arc::new(Dummy)]);
+    let list = infos(&ints, &PluginFacts::default());
+    let ids: Vec<&str> = list.iter().map(|i| i.id.as_str()).collect();
+    assert_eq!(&ids[..5], ["webhook", "github", "http", "mcp", "dummy"]);
+    assert!(!ids.contains(&"core") && !ids.contains(&"forge") && !ids.contains(&"bug_reports"));
+    let github = find(&list, "github");
+    assert!(github.core && github.enabled && github.built);
+    assert_eq!(github.category, PluginCategory::Dev);
+    assert_eq!(github.icon.letters, "GH");
+    assert!(github.node_kinds.iter().any(|k| k.id == "github.import"), "{:?}", github.node_kinds);
+    let http = find(&list, "http");
+    assert_eq!((http.category, http.connection_kinds[0].id.as_str()), (PluginCategory::General, "http"));
+    assert_eq!(http.node_kinds.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["http.request"]);
+    let dummy = find(&list, "dummy");
+    assert!(!dummy.core && !dummy.enabled);
+    assert_eq!(dummy.category, PluginCategory::Chat);
+    assert_eq!(dummy.connection_kinds.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["dummy"]);
+    // Its trigger, its own node kind, then its action's.
+    assert_eq!(
+        dummy.node_kinds.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(),
+        ["dummy.happened", "dummy.poke", "dummy.blink"]
+    );
+    assert_eq!(dummy.project_settings.as_deref(), Some("Each project can poke its own Dummy."));
+    // A known plugin this build lacks still has its category, icon and description.
+    let plex = find(&list, "plex");
+    assert_eq!((plex.status, plex.category, plex.built), (PluginStatus::NotBuilt, PluginCategory::Media, false));
+    assert!(!plex.description.is_empty() && plex.icon.letters == "P");
+    assert_eq!(find(&list, "jira").category, PluginCategory::Dev);
+    assert_eq!(find(&list, "discord").category, PluginCategory::Chat);
+}
+
+/// PDT-228: a plugin's status: Off, Needs setup (on without a connection of its kinds), Error (a connection failing),
+/// On; GitHub's follows its login. The general built-in plugins never need setup.
+#[test]
+fn a_plugins_status_comes_from_its_connections() {
+    let ints = Integrations::new(vec![Arc::new(Dummy)]);
+    let status = |facts: &PluginFacts, id: &str| {
+        let list = infos(&ints, facts);
+        let i = find(&list, id);
+        (i.status, i.error.clone())
+    };
+    let none = PluginFacts::default();
+    assert_eq!(status(&none, "dummy"), (PluginStatus::Off, None));
+    ints.enable(&["dummy".into()]);
+    assert_eq!(status(&none, "dummy"), (PluginStatus::NeedsSetup, None));
+    assert_eq!(status(&none, "webhook"), (PluginStatus::On, None));
+    assert_eq!(status(&none, "github"), (PluginStatus::On, None));
+    let ok = PluginFacts { connections: vec![connection("d1", "dummy", None)], ..Default::default() };
+    assert_eq!(status(&ok, "dummy"), (PluginStatus::On, None));
+    let failing = PluginFacts {
+        connections: vec![connection("d1", "dummy", None), connection("d2", "dummy", Some("connection refused"))],
+        ..Default::default()
+    };
+    assert_eq!(status(&failing, "dummy"), (PluginStatus::Error, Some("d2: connection refused".into())));
+    assert_eq!(find(&infos(&ints, &failing), "dummy").error_connection.as_deref(), Some("c-d2"));
+    let hook = PluginFacts { connections: vec![connection("h", "webhook", Some("bad"))], ..Default::default() };
+    assert_eq!(status(&hook, "webhook").0, PluginStatus::Error);
+    let wanted = PluginFacts { github_needed: true, ..Default::default() };
+    assert_eq!(status(&wanted, "github"), (PluginStatus::NeedsSetup, None));
+    let rejected = PluginFacts { github_needed: true, github_rejected: true, ..Default::default() };
+    assert_eq!(status(&rejected, "github").0, PluginStatus::Error);
+    ints.enable(&[]);
+    assert_eq!(status(&failing, "dummy"), (PluginStatus::Off, None));
+}
+
+/// PDT-228: a plugin's page links the projects that have settings for it.
+#[test]
+fn a_plugin_names_the_projects_linked_to_it() {
+    let ints = Integrations::new(vec![Arc::new(Dummy)]);
+    let p = |key: &str| PluginProject { id: format!("id-{key}"), key: key.into(), name: format!("Project {key}") };
+    let facts = PluginFacts {
+        projects: vec![(p("A"), vec!["dummy".into()]), (p("B"), vec![]), (p("C"), vec!["jira".into(), "dummy".into()])],
+        ..Default::default()
+    };
+    let list = infos(&ints, &facts);
+    assert_eq!(find(&list, "dummy").projects.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(), ["A", "C"]);
+    // One without project settings links none.
+    assert!(find(&list, "http").projects.is_empty());
 }

@@ -1,4 +1,4 @@
-//! The in-app GitHub login (PDT-177): Settings › This host › GitHub. "Connect GitHub" runs GitHub's OAuth device
+//! The in-app GitHub login (PDT-177): Settings › Plugins › GitHub. "Connect GitHub" runs GitHub's OAuth device
 //! flow (the user enters a code on GitHub; PDT polls for the token), or the user pastes a token. The login (token, API
 //! URL, who it is) lives in the OS keychain only, under this instance's own account
 //! (`secrets::github_login_account`), and the GitHub forge ([`pdt_github::GithubApi`]) signs in with it. Without

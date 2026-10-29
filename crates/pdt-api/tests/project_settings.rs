@@ -64,7 +64,7 @@ async fn agent_instructions_are_kept_unless_sent() {
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
 }
 
-/// PDT-173: Settings → Integrations lists the integrations PDT knows; one this build lacks can't be enabled, and a
+/// PDT-173: Settings → Plugins lists the integrations PDT knows; one this build lacks can't be enabled, and a
 /// connection of its kind is refused, naming it.
 #[tokio::test]
 async fn integrations_this_build_lacks_are_listed_and_refused() {
@@ -73,12 +73,23 @@ async fn integrations_this_build_lacks_are_listed_and_refused() {
     let (s, v) = call(&app, "GET", "/api/integrations", None).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let list = v.as_array().unwrap();
-    assert_eq!(list.len(), pdt_core::integration::KNOWN.len(), "{v}");
-    assert!(list.iter().all(|i| i["built"] == false && i["enabled"] == false), "{v}");
+    // PDT's own plugins (PDT-228), always on, then every known one, not built.
+    let (own, known): (Vec<&Value>, Vec<&Value>) = list.iter().partition(|i| i["core"] == true);
+    let own_ids: Vec<&str> = own.iter().map(|i| i["id"].as_str().unwrap()).collect();
+    assert_eq!(own_ids, ["webhook", "github", "http", "mcp"], "{v}");
+    assert!(own.iter().all(|i| i["enabled"] == true && i["status"] == "on"), "{v}");
+    assert_eq!(known.len(), pdt_core::integration::KNOWN.len(), "{v}");
+    assert!(known.iter().all(|i| i["built"] == false && i["enabled"] == false && i["status"] == "not_built"), "{v}");
     let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": ["jira"]}))).await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
     assert!(v["message"].as_str().unwrap().contains("built without the Jira integration"), "{v}");
-    let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": []}))).await;
+    // "Test again" runs an enabled plugin's checks; one that is off or unknown has none to run.
+    let (s, v) = call(&app, "POST", "/api/integrations/webhook/check", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, _) = call(&app, "POST", "/api/integrations/jira/check", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    // PDT's own are always on: naming them changes nothing.
+    let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": ["github"]}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let (s, v) = call(&app, "GET", "/api/integrations/project-settings", None).await;
     assert_eq!((s, v), (StatusCode::OK, json!([])));

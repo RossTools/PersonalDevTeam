@@ -6,12 +6,13 @@ import type { ViewId } from './views';
 
 /**
  * A Settings page: the index (`/settings`: this host on desktop, the list of pages on a phone), this host (and a
- * section of it), integrations, connections, secrets, notifications, or a project by key.
+ * section of it), the plugins (their catalog, or one plugin's page; PDT-228), all connections, secrets, notifications,
+ * or a project by key.
  */
 export type SettingsPage =
   | { kind: 'index' }
   | { kind: 'host'; section: string | null }
-  | { kind: 'integrations' }
+  | { kind: 'plugins'; id: string | null }
   | { kind: 'connections' }
   | { kind: 'secrets' }
   | { kind: 'notifications' }
@@ -85,7 +86,10 @@ export function parseRoute(pathname: string, search = ''): Route {
         worktree: q.get('worktree'),
       };
     case 'settings':
-      if (a === 'integrations') return { view: 'settings', page: { kind: 'integrations' } };
+      if (a === 'plugins') return { view: 'settings', page: { kind: 'plugins', id: b } };
+      // The old Integrations page (PDT-228), and GitHub's login, which was a section of This host.
+      if (a === 'integrations') return { view: 'settings', page: { kind: 'plugins', id: null } };
+      if (a === 'host' && b === 'github') return { view: 'settings', page: { kind: 'plugins', id: 'github' } };
       if (a === 'connections') return { view: 'settings', page: { kind: 'connections' } };
       if (a === 'secrets') return { view: 'settings', page: { kind: 'secrets' } };
       if (a === 'notifications') return { view: 'settings', page: { kind: 'notifications' } };
@@ -133,7 +137,7 @@ export function routePath(r: Route): string {
       switch (p.kind) {
         case 'index': return '/settings';
         case 'host': return p.section ? `/settings/host/${enc(p.section)}` : '/settings/host';
-        case 'integrations': return '/settings/integrations';
+        case 'plugins': return p.id ? `/settings/plugins/${enc(p.id)}` : '/settings/plugins';
         case 'connections': return '/settings/connections';
         case 'secrets': return '/settings/secrets';
         case 'notifications': return '/settings/notifications';
@@ -185,6 +189,8 @@ export function upRoute(r: Route): Route {
   if (r.view === 'workflows' && r.target?.kind === 'workflow' && r.target.runId) return { view: 'workflows', target: { kind: 'workflow', id: r.target.id, tab: 'runs' } };
   // A file or folder goes up to the folder it is in.
   if (r.view === 'files') return { ...r, path: parentFolder(r.path) };
+  // A plugin's page goes up to the catalog.
+  if (r.view === 'settings' && r.page.kind === 'plugins' && r.page.id !== null) return { view: 'settings', page: { kind: 'plugins', id: null } };
   // A Settings section (a phone's screen of its own) goes up to its page.
   if (r.view === 'settings' && (r.page.kind === 'host' || r.page.kind === 'project') && r.page.section !== null) {
     return { view: 'settings', page: { ...r.page, section: null } };
@@ -200,6 +206,9 @@ export function parentFolder(path: string | null): string | null {
 
 /** A Settings section's name in a path: its heading in lower case, words joined by `-` ("Danger zone" → `danger-zone`). */
 export const sectionSlug = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+/** Whether a path is an old one that now shows another (PDT-228's plugins): the app replaces it with the route's own. */
+export const isOldPath = (pathname: string) => /^\/settings\/(integrations|host\/github)\/?$/.test(pathname);
 
 /** Reads a location (path and query string, as `useLocation` gives it) as a route. */
 export function parseLocation(loc: string): Route {

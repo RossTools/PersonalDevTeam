@@ -103,7 +103,7 @@ export function useProjectSettingsSections(project: Project): { notice: ReactNod
     { label: 'Agents', node: <Agents project={project} settings={settings.data} /> },
     !personal && { label: 'Review', node: <Merging project={project} settings={settings.data} /> },
     { label: 'Pipeline and policies', node: <Pipeline project={project} settings={settings.data} personal={personal} /> },
-    !personal && { label: 'Integrations', node: <Integrations project={project} settings={settings.data} schemas={schemas} /> },
+    !personal && { label: 'Plugins', node: <Integrations project={project} settings={settings.data} schemas={schemas} /> },
   ];
   return {
     notice: settings.isError ? <Alert tone="error">Project settings could not be loaded: {settings.error.message}</Alert> : null,
@@ -536,7 +536,7 @@ function Integrations({ project, settings, schemas }: { project: Project; settin
   return (
     <form onSubmit={(e) => { e.preventDefault(); submit(); }}>
       <Section
-        label="Integrations"
+        label="Plugins"
         dirty={dirty}
         description="Link this project to the services its issues and CI live in. Kept on this host, never written to the repository."
         footer={

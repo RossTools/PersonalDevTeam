@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 /// The param of a Discord webhook connection.
 fn discord_param() -> Value {
     json!({"id": "discord", "title": "Discord channel", "type": "connection", "connectionKind": "discord_webhook",
-        "required": true, "description": "Where it posts: a Discord webhook connection (Settings → Connections)."})
+        "required": true, "description": "Where it posts: a Discord webhook connection (Settings → Plugins)."})
 }
 
 /// A schedule's `every`.

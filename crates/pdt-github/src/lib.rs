@@ -1,6 +1,6 @@
 //! The GitHub forge (PDT-176, PDT-177): GitHub's REST and GraphQL APIs for a branch's pull request and its Actions
 //! runs (PDT-25), merges, reviews, comments, issues and releases (PDT-194: reading them, starting the release workflow), signed in with the token of the user's in-app login (Settings
-//! › This host › GitHub). No GitHub CLI. Check runs are not read: fine-grained tokens cannot see them, so CI comes from
+//! › Plugins › GitHub). No GitHub CLI. Check runs are not read: fine-grained tokens cannot see them, so CI comes from
 //! the Actions runs API. GETs are conditional (ETags: an unchanged answer costs no rate limit), and a used-up rate
 //! limit stops every call until it resets. Blocking; call from `spawn_blocking` in async code.
 
@@ -58,7 +58,7 @@ const ENQUEUE: &str = "mutation($id:ID!){enqueuePullRequest(input:{pullRequestId
 
 /// The text of a call made before the user connected GitHub.
 pub fn not_connected() -> String {
-    format!("GitHub is not connected: connect it in {SHORT_NAME}'s Settings › This host › GitHub")
+    format!("GitHub is not connected: connect it in {SHORT_NAME}'s Settings › Plugins › GitHub")
 }
 
 /// What went wrong talking to GitHub.
@@ -66,7 +66,7 @@ pub fn not_connected() -> String {
 pub enum GhError {
     #[error("{}", not_connected())]
     NotConnected,
-    #[error("GitHub no longer accepts {SHORT_NAME}'s login: connect GitHub again in Settings › This host › GitHub")]
+    #[error("GitHub no longer accepts {SHORT_NAME}'s login: connect GitHub again in Settings › Plugins › GitHub")]
     Rejected,
     #[error("GitHub answered {0}: {1}")]
     Status(u16, String),

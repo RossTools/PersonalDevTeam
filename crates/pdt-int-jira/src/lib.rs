@@ -30,10 +30,6 @@ impl Integration for Jira {
         "jira"
     }
 
-    fn description(&self) -> &'static str {
-        "Link projects to a Jira Cloud site: issues assigned to you become tickets, and Done moves the issue."
-    }
-
     fn pollers(&self) -> Vec<Poller> {
         fn run(st: AppState) -> BoxFut<'static, ()> {
             Box::pin(async move { refresh_jira(&st).await })

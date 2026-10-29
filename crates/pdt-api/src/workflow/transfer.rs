@@ -148,8 +148,7 @@ fn secret_warnings(requires: &Requires, here: &Local, renamed: &HashMap<String, 
         .filter_map(|c| {
             let name = renamed.get(&c.name).unwrap_or(&c.name);
             let l = here.connection(name)?;
-            (!l.has_secret)
-                .then(|| format!("the webhook {} has no secret yet: set it in Settings → Connections", l.name))
+            (!l.has_secret).then(|| format!("the webhook {} has no secret yet: set it in Settings → Plugins", l.name))
         })
         .collect()
 }
@@ -349,10 +348,7 @@ pub(crate) async fn reference_issues(st: &AppState, doc: &WorkflowDoc) -> Vec<Is
                     NeedStatus::Missing => out.push(warn(
                         "missing_connection",
                         &r.node,
-                        format!(
-                            "{}: no connection here is called {} (add it in Settings → Connections)",
-                            r.node, r.name
-                        ),
+                        format!("{}: no connection here is called {} (add it in Settings → Plugins)", r.node, r.name),
                     )),
                     NeedStatus::KindMismatch => out.push(warn(
                         "connection_kind",
@@ -371,7 +367,7 @@ pub(crate) async fn reference_issues(st: &AppState, doc: &WorkflowDoc) -> Vec<Is
                                 "hook_secret",
                                 &r.node,
                                 format!(
-                                    "{}: the webhook {} has no secret yet: set it in Settings → Connections",
+                                    "{}: the webhook {} has no secret yet: set it in Settings → Plugins",
                                     r.node, c.name
                                 ),
                             ));

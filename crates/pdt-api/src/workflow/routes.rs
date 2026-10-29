@@ -601,7 +601,7 @@ fn check_config(st: &AppState, kind: &str, config: &Value) -> Result<(), ApiErro
         && !reg.connection_kinds().iter().any(|k| k.id == kind)
     {
         let why = if st.integrations.built().iter().any(|b| b.id() == i.id) {
-            "which is turned off (Settings → Integrations)".to_string()
+            "which is turned off (Settings → Plugins)".to_string()
         } else {
             format!("which this {} was built without", pdt_core::brand::SHORT_NAME)
         };
@@ -808,7 +808,7 @@ pub async fn connection_of_kind(st: &AppState, kind: &str, name: Option<&str>) -
         None => match <[Connection; 1]>::try_from(all) {
             Ok([one]) => Ok(one),
             Err(all) if all.is_empty() => {
-                Err(format!("there is no {label} connection: the user adds one in Settings → Connections"))
+                Err(format!("there is no {label} connection: the user adds one in Settings → Plugins"))
             }
             Err(all) => Err(format!(
                 "there are several {label} connections; name one (`connection`): {}",
@@ -873,6 +873,7 @@ pub(crate) fn router() -> axum::Router<AppState> {
         .route("/connections/kinds", get(crate::integrations::connection_kinds))
         .route("/integrations/project-settings", get(crate::integrations::project_settings))
         .route("/integrations", get(crate::integrations::list).put(crate::integrations::put))
+        .route("/integrations/{id}/check", post(crate::integrations::check))
         .route("/connections/{id}", get(get_connection).patch(patch_connection).delete(delete_connection))
         .route("/connections/{id}/secret", put(put_secret).delete(delete_secret))
         .route("/connections/{id}/tools", get(connection_tools).post(refresh_connection_tools))

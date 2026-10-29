@@ -187,11 +187,11 @@ discord (webhooks, the bot and its tools, the templates that post to Discord), j
 built-ins), buildkite (its CI sensor), arr (Radarr and Sonarr), scryer (with its tools and GraphQL schema) and plex.
 pdtd has a cargo feature per crate (all on by default, so releases have them all; `--no-default-features --features
 jira,…` leaves the rest out) and hands those it was built with to `Integrations::new` (pdtd `src/integrations/`).
-pdt-core `integration::KNOWN` is the one list naming them outside their crates (id, label, connection kinds, node-kind
+pdt-core `integration::KNOWN` is the one list naming them outside their crates (id, label, description, category, icon, connection kinds, node-kind
 prefixes). Which of them an instance uses is the host value `integrations.enabled` (a JSON list of ids):
-Settings → Integrations (`GET /api/integrations`: each known one with `enabled`, `built`, its pdt-mcp `tools` and the
-PM's among them, `pmTools`, PDT-179; `PUT /api/integrations
-{enabled}` sets exactly those, 422 for one this build lacks). A disabled integration registers nothing (no connection
+Settings → Plugins (the UI calls an integration a plugin, PDT-228; see [Plugins](#plugins-in-settings)). `PUT
+/api/integrations {enabled}` sets exactly those (422 for one this build lacks; PDT's own ids are ignored: they are
+always on). A disabled integration registers nothing (no connection
 kinds, node kinds, triggers, tools, PM instructions, project settings, pollers, routes or built-ins); its connections,
 project links and workflows are kept. A connection of a turned-off integration's kind is refused (400, naming it), a
 project's settings leave its section out, and a workflow node of its kinds fails validation (and a run) with
@@ -666,8 +666,8 @@ opening the first workflow. The workflow page shows the reference warnings in a 
   it again; event keys make what was already logged harmless.
 - **Failing connections** (`connection_health.rs`): when the Jira or Buildkite sensor cannot use its connection (a
   revoked token, the service down, no such connection), the connection gets `lastError` / `lastErrorAt` (shown on its
-  row in Settings → Connections) and one `connection.failed` notification (dedupe key `connection:<name>`, opening
-  Settings → Connections), however many polls fail; the first poll that works clears both. A pass in which any use of
+  row on its plugin's page) and one `connection.failed` notification (dedupe key `connection:<name>`, opening
+  Settings → All connections), however many polls fail; the first poll that works clears both. A pass in which any use of
   a connection failed counts as failing. A failing GitHub read (issues, PR comments, PRs) is logged once per read until it
   works again; a PR it can't read keeps its last look with `error` set (`attempt.pr.error`, [tickets.md](tickets.md)).
 - **GitHub issues** (`github_issues.rs` `refresh_issues`, pdtd every 60 s): the repos enabled `github.issue.opened`
@@ -719,12 +719,38 @@ opening the first workflow. The workflow page shows the reference warnings in a 
 
 ## Web
 
-Connections (`web/src/connections/`): Settings → Connections (its own page, under This host in the Settings list)
-has a section per kind (Discord webhooks, Discord bots, Incoming webhooks, Jira Cloud sites, Buildkite organizations,
-HTTP services, Radarr, Sonarr, Scryer, Plex servers, MCP servers, and Other for kinds no action uses), each saying how to set
-one up, with Add, and each connection's Edit and Delete (a missing secret and a webhook's address `/api/hooks/<name>`
-show on its row, and why a sensor's last use of it failed, and since when; an MCP server's row shows its tools, or why
-listing them failed, with List again). The dialog asks
+### Plugins in Settings
+
+PDT-228 (`web/src/plugins/`). Settings → **Plugins** (`/settings/plugins`; the old `/settings/integrations` goes
+there) is the catalog of `GET /api/integrations`: PDT's own plugins (GitHub, Incoming webhooks, HTTP services, MCP
+servers: `core`, always on, "Built in" instead of a switch; PDT's core, forge tools and bug reports are not listed),
+then each optional integration this build has, then the known ones it lacks. Each has its `category` (`dev`, `chat`,
+`media`, `general`: from pdt-core `KNOWN`, or the own integration's `Integration::category`; one without is not a
+plugin), `icon` (letters on a colour), `description`, `connectionKinds` (enabled or not), `nodeKinds` (its triggers,
+steps and actions' steps), `templates`, `workflows` (its built-ins), `tools`/`pmTools`, `projectSettings` (its project
+settings' description) and `projects` (those with settings for it), whether it is `checkable` (has pollers), and a
+computed `status`: `off`, `not_built`, `error` (one of its connections has `lastError`: `error` names it,
+`errorConnection` is its id; GitHub: its login is rejected), `needs_setup` (an optional one that is on with no
+connection of any of its kinds; GitHub: `Forge::login_needed`), else `on`. The page has a search (name and
+description), tabs All · On · Needs attention (with its count), category chips with counts, and Cards or List
+(localStorage `pdt.plugins.layout`; a phone always lists), grouped by category. A card's switch turns the plugin on
+or off; turning on one that comes back `needs_setup` opens the add-connection dialog for its first kind at once
+(Later closes it, leaving it in Needs setup). A dashed note leaves room for plugins installed from outside PDT.
+
+A plugin's page (`/settings/plugins/<id>`; a phone's drill-down): its icon, name, category, description, status and
+switch; a banner for Needs setup (Add a connection), Error (the error, with Test again, `POST
+/api/integrations/{id}/check`, which runs its pollers now and lists the plugins again, and Edit connection) and Not in
+this build; Connections (its own, with Add per kind while it is on, Edit and Delete; GitHub's is its login,
+`GithubLogin.tsx`, moved here from This host); What it adds (workflow steps, agent and PM tools, templates and
+built-ins, project settings with links to the projects using them); and short Setup steps. The Inbox's Connect
+GitHub opens GitHub's page (`/settings/plugins/github`; the old `/settings/host/github` goes there).
+
+Settings → **All connections** (`/settings/connections`) is one searchable table of every connection (and GitHub's
+login): name, plugin, details, OK or Failing; a row opens its plugin's page.
+
+Connections (`web/src/connections/`): each plugin's page lists its connections (`ConnectionRow.tsx`: a missing
+secret and a webhook's address `/api/hooks/<name>` show on its row, and why a sensor's last use of it failed, and since
+when; an MCP server's row shows its tools, or why listing them failed, with List again). The dialog asks
 what the kind needs (`GET /api/connections/kinds`, from the integrations; `kinds.ts` reads it: its address, and its own settings: Jira's email, Buildkite's organization, Radarr's
 default quality profile and root folder, an MCP server's transport, program, arguments, environment and secret
 variable; a setting shown is required unless marked optional) and
@@ -1107,6 +1133,6 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
   the focused tab or the open Inbox item) or desktop notification (Show `desktop`, page hidden, this device allowed
   them, this tab holds the `navigator.locks` lock so one tab per browser shows them; `tag` = dedupe key, closed when
   the row clears); rows older than 2 minutes on arrival show neither. Clicking opens the target (session, ticket,
-  ticket key, Inbox item, workflow, URL, Settings → Connections). Settings → Notifications: This device (Desktop notifications, localStorage
+  ticket key, Inbox item, workflow, URL, Settings → All connections). Settings → Notifications: This device (Desktop notifications, localStorage
   `pdt.desktopNotifications` and the browser's permission, with Test) and What shows (a Show per kind, Needs you and
   Updates, Reset to defaults).
