@@ -301,6 +301,28 @@ describe('workspaces', () => {
     await userEvent.click(d);
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces/wa/tabs', body: { sessionId: 'd' } }));
   });
+  it('leaves ended workflow step sessions with no ticket out of the agents list, unless a tab holds them', async () => {
+    const step = (id: string, title: string, status: string) =>
+      sess(id, title, { kind: 'agent_tui', agent: 'claude', status, persona: { id: 'tr', name: 'Triage', version: 1, stepId: `st-${id}` } });
+    stubWorkspaces({
+      [`GET /api/projects/${project.id}/sessions`]: [
+        sess('a', 'Claude A', { kind: 'agent_tui', agent: 'claude', activity: 'working' }),
+        step('t1', 'Triage done', 'finished'),
+        step('t2', 'Triage stopped', 'interrupted'),
+        step('t3', 'Triage running', 'running'),
+        step('t4', 'Triage in a tab', 'finished'),
+      ],
+      'GET /api/workspaces': [
+        { id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [tabOf('ta', 'wa', 'a', 0), tabOf('t4', 'wa', 't4', 1)] },
+      ],
+    });
+    renderWithQuery(<AppShell />);
+    const agents = await screen.findByRole('region', { name: 'Agents' });
+    await within(agents).findByRole('row', { name: /Triage running/ });
+    expect(within(agents).getByRole('row', { name: /Triage in a tab/ })).toBeInTheDocument();
+    expect(within(agents).queryByRole('row', { name: /Triage done/ })).not.toBeInTheDocument();
+    expect(within(agents).queryByRole('row', { name: /Triage stopped/ })).not.toBeInTheDocument();
+  });
   it('shows each agent\'s branch, and its workspace only when it is not the current one', async () => {
     stubWorkspaces({
       [`GET /api/projects/${project.id}/worktrees`]: [{ id: 'wt1', projectId: project.id, branch: 'feat/login', path: '/r/.worktrees/feat-login', baseCommit: 'x', createdAt: 2 }],

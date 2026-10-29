@@ -315,9 +315,15 @@ export function AppShell() {
       return;
     }
     void runAction(async () => {
-      if (await ws.focusItem({ kind: 'session', id: s.id }, s.projectId)) setView('sessions');
+      const item = { kind: 'session', id: s.id } as const;
+      if (await ws.focusItem(item, s.projectId)) setView('sessions');
+      // A session whose project has no workspace (a host-project workflow step's) opens in the workspace on screen.
+      else if (ws.workspace) {
+        await ws.openIn(item, ws.workspace.id);
+        setView('sessions');
+      }
     });
-  }, [ws.focusItem, pmSessions, setPmSelection, setView]);
+  }, [ws.focusItem, ws.openIn, ws.workspace, pmSessions, setPmSelection, setView]);
   // A new PM conversation starts beside the open ones (PDT-149): its first message starts it.
   const newPmSession = useCallback(() => {
     setSheetOpen(false);

@@ -12,7 +12,7 @@ import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Workspace } from '../api/gen/Workspace';
 import type { Worktree } from '../api/gen/Worktree';
 import { isActive, runDot } from '../runs/runState';
-import { toDot } from '../sessions/status';
+import { hiddenStepSession, toDot } from '../sessions/status';
 import { useSameList } from '../common/useSameList';
 import { findTab, itemOf, openTabBody, resolveCurrent, type CurrentChoice, type Item } from './model';
 
@@ -154,7 +154,11 @@ export function useWorkspaces(routed?: RoutedChoice) {
           : infos.get(`${item.kind}:${item.id}`) ?? null,
     [infos, ticketInfos, changesInfos],
   );
-  const allInfos = useMemo(() => [...infos.values()], [infos]);
+  // The lists' sessions and runs: an ended step session with no ticket only while a tab holds it (PDT-263).
+  const allInfos = useMemo(
+    () => [...infos.values()].filter((i) => !i.session || !hiddenStepSession(i.session) || findTab(workspaces, i.item)),
+    [infos, workspaces],
+  );
 
   const [stored, setChoiceState] = useState<CurrentChoice>(loadChoice);
   const setChoice = useCallback((f: (c: CurrentChoice) => CurrentChoice) => {
