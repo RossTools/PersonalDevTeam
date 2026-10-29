@@ -6,9 +6,17 @@ export type NewBugReport = {
  */
 title: string, 
 /**
- * What happened, what you expected, and how to make it happen again (Markdown).
+ * What happened (Markdown).
  */
 description?: string, 
+/**
+ * What you expected to happen instead (Markdown).
+ */
+expected?: string, 
+/**
+ * How to make it happen again: the steps (Markdown).
+ */
+steps?: string, 
 /**
  * Add this instance's diagnostics (version, OS, update state, the end of the pdtd log), redacted.
  */

@@ -24,7 +24,8 @@ impl Integration for BugReports {
             title: "Report a bug in PDT",
             description: "Reports a bug in PDT itself (not in the project you work on), as Host settings route it: an \
                               issue on PDT's GitHub repository, or a Draft bug ticket on the instance PDT is developed on. \
-                              includeDiagnostics adds this instance's version, OS, update state and the end of its log, \
+                              Its body has the sections of PDT's bug form: description (what happened), expected and \
+                              steps (how to reproduce), then the version and OS. includeDiagnostics adds this instance's version, OS, update state and the end of its log, \
                               redacted. The user confirms each call.",
             schema: schema::<crate::bug_reports::NewBugReport>,
         }]

@@ -94,7 +94,8 @@ reaches agents only once the user says so.
   gets it): `ticket.move`, `ticket.create` with `stage: todo`, the Refiner, Coder, Reviewer, QA and triage sessions,
   the PM without the user's yes. `ticket.move`'s `externalStage` sends such a ticket somewhere else instead (the
   Pipeline's afterRefine: Ready). Auto-start never starts one (`403 untrusted_ticket` from `start_ticket(auto)`).
-  `github.import` drops an `agentic` label triage suggests.
+  `github.import` drops an `agentic` label triage suggests. A ticket filed as a GitHub issue (PDT-221, pdt-store
+  `link_external`) links it but keeps its source: the issue came from the ticket.
 - **The PM's yes**: the PM's `edit_ticket` that would let an external ticket in always opens Claude's approval prompt,
   even in a project that lets the PM act ([agents.md](agents.md) "The PM"): `pm::request_opened` holds it (pdt-api
   `untrusted::Grants`) instead of answering for the user, and the user's Approve

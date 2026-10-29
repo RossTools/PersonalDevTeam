@@ -76,7 +76,7 @@ export function Section({ label, description, actions, footer, dirty, danger = f
         data-slot="section-card"
         className={cn(
           // clip, not hidden: a hidden overflow would be the sticky Save bar's scroller.
-          'flex flex-col overflow-clip rounded-lg border bg-card',
+          'flex flex-col overflow-clip rounded-lg border bg-card shadow-card',
           danger ? 'border-destructive/40' : 'border-border',
         )}
       >

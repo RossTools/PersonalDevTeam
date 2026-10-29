@@ -28,12 +28,15 @@ export interface BugReportDialogProps {
   onOpenSettings: () => void;
 }
 
-/** "Report a bug" (PDT-153): title, description, optional diagnostics with their preview; then a link to what it filed. */
+/** "Report a bug" (PDT-153): title, the bug form's sections (what happened, expected, how to reproduce; the same as
+ *  the GitHub issue form), optional diagnostics with their preview; then a link to what it filed. */
 export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProps) {
   const openTicket = useContext(OpenTicketContext);
   const preview = useQuery({ queryKey: ['bug-report-preview'], queryFn: api.bugReportPreview });
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [expected, setExpected] = useState('');
+  const [steps, setSteps] = useState('');
   const [diagnostics, setDiagnostics] = useState(true);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [error, setError] = useState<{ message: string; settings: boolean } | null>(null);
@@ -49,7 +52,7 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
     setPending(true);
     setError(null);
     try {
-      setFiled(await api.reportBug({ title: title.trim(), description, includeDiagnostics: diagnostics, nonce: nonce.current }));
+      setFiled(await api.reportBug({ title: title.trim(), description, expected, steps, includeDiagnostics: diagnostics, nonce: nonce.current }));
     } catch (e) {
       setError({ message: actionError(e), settings: e instanceof ApiError && SETTINGS_CODES.includes(e.code) });
       requestAnimationFrame(() => document.getElementById('bug-report-error')?.focus());
@@ -79,9 +82,9 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
     <Dialog
       open
       onOpenChange={(o) => !o && onClose()}
-      dismissable={!title.trim() && !description.trim()}
+      dismissable={![title, description, expected, steps].some((t) => t.trim())}
       title="Report a bug"
-      description="A bug in PDT itself. Say what happened, what you expected, and how to make it happen again."
+      description="A bug in PDT itself. The version, and the OS with the diagnostics, are added for you."
       size="lg"
       footer={
         <>
@@ -107,13 +110,25 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
         <Field label="Title">
           <Input autoFocus value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="What went wrong, in one line" />
         </Field>
-        <Field label="Description">
+        <Field label="What happened">
           <Textarea
-            rows={6}
+            rows={4}
             value={description}
-            placeholder="Markdown: what happened, what you expected, steps to repeat it"
+            placeholder="Markdown: what you saw, error messages as they appear"
             onChange={(e) => setDescription(e.target.value)}
-            className="min-h-28 resize-y"
+            className="min-h-20 resize-y"
+          />
+        </Field>
+        <Field label="What you expected">
+          <Textarea rows={2} value={expected} onChange={(e) => setExpected(e.target.value)} className="min-h-12 resize-y" />
+        </Field>
+        <Field label="How to reproduce">
+          <Textarea
+            rows={3}
+            value={steps}
+            placeholder={'1. Open a project.\n2. …'}
+            onChange={(e) => setSteps(e.target.value)}
+            className="min-h-16 resize-y"
           />
         </Field>
         <div className="flex flex-col gap-1.5">

@@ -34,10 +34,6 @@ impl Integration for Arr {
         "arr"
     }
 
-    fn description(&self) -> &'static str {
-        "Search Radarr and Sonarr, add films and series, and read their download queues from workflows."
-    }
-
     fn connection_kinds(&self) -> Vec<ConnectionKind> {
         vec![
             ConnectionKind {

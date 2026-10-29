@@ -21,10 +21,6 @@ impl Integration for Buildkite {
         "buildkite"
     }
 
-    fn description(&self) -> &'static str {
-        "CI of tickets' branches from Buildkite pipelines, shown and acted on like the pull request's CI."
-    }
-
     fn pollers(&self) -> Vec<Poller> {
         fn run(st: AppState) -> BoxFut<'static, ()> {
             Box::pin(async move { refresh_buildkite(&st).await })

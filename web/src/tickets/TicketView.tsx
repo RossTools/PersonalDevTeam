@@ -23,7 +23,8 @@ import { ChangesView } from '../review/ChangesView';
 import { MergeDialog } from '../review/MergeDialog';
 import { useOpenChanges } from '../review/open';
 import { useDiffSize } from '../review/queries';
-import { useCheckMerge, useTicket } from './queries';
+import { useCheckMerge, useProjectForge, useTicket } from './queries';
+import { CreateIssueDialog } from './CreateIssueDialog';
 import { ExternalKeys } from './ExternalKeys';
 import {
   LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
@@ -101,6 +102,10 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
   const attempt = ticket.attempt;
   const [making, setMaking] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [filing, setFiling] = useState(false);
+  const forge = useProjectForge(ticket.projectId).data;
+  // A ticket links one GitHub issue (PDT-221).
+  const canFile = !!forge?.issues && !ticket.external.some((l) => l.system === 'github');
   const openChanges = useOpenChanges();
   return (
     <>
@@ -149,6 +154,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
                 : []),
               ...(canMakeParts(ticket) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
               ...(attempt?.state === 'active' ? [{ label: 'Merge…', onSelect: () => setMerging(true) }] : []),
+              ...(canFile ? [{ label: 'Create GitHub issue…', onSelect: () => setFiling(true) }] : []),
               ...(attempt?.state === 'active'
                 ? [{ label: 'Abandon attempt…', onSelect: () => void runAction(() => abandonAttempt(confirm, qc, ticket, attempt)) }]
                 : []),
@@ -165,6 +171,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
     />
     {making && <MakePartsDialog ticket={ticket} onClose={() => setMaking(false)} />}
     {merging && attempt && <MergeDialog ticket={ticket} attemptId={attempt.id} onClose={() => setMerging(false)} />}
+    {filing && forge && <CreateIssueDialog projectId={ticket.projectId} repo={forge.repo} ticket={ticket} onClose={() => setFiling(false)} />}
     </>
   );
 }

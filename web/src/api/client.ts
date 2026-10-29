@@ -34,6 +34,9 @@ import type { PullBranch } from './gen/PullBranch';
 import type { PullResult } from './gen/PullResult';
 import type { ProjectSettingsInput } from './gen/ProjectSettingsInput';
 import type { JiraImportResult } from './gen/JiraImportResult';
+import type { FiledIssue } from './gen/FiledIssue';
+import type { NewForgeIssue } from './gen/NewForgeIssue';
+import type { ProjectForgeInfo } from './gen/ProjectForgeInfo';
 import type { ProjectSettingsView } from './gen/ProjectSettingsView';
 import type { RemoteStatus } from './gen/RemoteStatus';
 import type { Run } from './gen/Run';
@@ -45,6 +48,7 @@ import type { Todo } from './gen/Todo';
 import type { TodoPatch } from './gen/TodoPatch';
 import type { SessionMode } from './gen/SessionMode';
 import type { TerminalSize } from './gen/TerminalSize';
+import type { CheckResponse } from './gen/CheckResponse';
 import type { UpdateStatus } from './gen/UpdateStatus';
 import type { WhoAmI } from './gen/WhoAmI';
 import type { Worktree } from './gen/Worktree';
@@ -329,6 +333,11 @@ export const api = {
   /** One Jira issue as a ticket linked to it (or the ticket that already links it). */
   importJiraIssue: (projectId: string, key: string) =>
     request<JiraImportResult>(`/api/projects/${enc(projectId)}/jira/import`, { method: 'POST', body: JSON.stringify({ key }) }),
+  /** The project's forge (null: none), and whether issues can be filed there (PDT-221). */
+  projectForge: (projectId: string) => request<ProjectForgeInfo | null>(`/api/projects/${enc(projectId)}/forge`),
+  /** Files an issue in the project's repository as the user's login; with `ticketId`, that ticket links it. */
+  createIssue: (projectId: string, issue: NewForgeIssue) =>
+    request<FiledIssue>(`/api/projects/${enc(projectId)}/issues`, { method: 'POST', body: JSON.stringify(issue) }, { asUser: true }),
   getTicket: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}`),
   updateTicket: (id: string, p: TicketPatch) =>
     request<Ticket>(`/api/tickets/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }, { asUser: true }),
@@ -410,6 +419,8 @@ export const api = {
   listIntegrations: () => request<IntegrationInfo[]>('/api/integrations'),
   setIntegrations: (enabled: string[]) =>
     request<IntegrationInfo[]>('/api/integrations', { method: 'PUT', body: JSON.stringify({ enabled }) }),
+  /** Runs an enabled plugin's checks now (Test again), then lists the plugins. */
+  checkIntegration: (id: string) => request<IntegrationInfo[]>(`/api/integrations/${enc(id)}/check`, { method: 'POST' }),
   createConnection: (c: ConnectionInput) => request<Connection>('/api/connections', { method: 'POST', body: JSON.stringify(c) }),
   updateConnection: (id: string, c: Partial<ConnectionInput>) =>
     request<Connection>(`/api/connections/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(c) }),
@@ -475,7 +486,7 @@ export const api = {
   refreshRemote: () => request<RemoteStatus>('/api/host/remote/refresh', { method: 'POST' }),
   whoami: () => request<WhoAmI>('/api/host/whoami'),
   updateStatus: () => request<UpdateStatus>('/api/host/update'),
-  checkUpdate: () => request<UpdateStatus>('/api/host/update/check', { method: 'POST' }),
+  checkUpdate: () => request<CheckResponse>('/api/host/update/check', { method: 'POST' }),
   installUpdate: (force: boolean) =>
     request<UpdateStatus>('/api/host/update/install', { method: 'POST', body: JSON.stringify({ force }) }),
   dismissUpdateResult: () => request<void>('/api/host/update/dismiss', { method: 'POST' }),

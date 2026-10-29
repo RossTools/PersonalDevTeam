@@ -36,7 +36,8 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
 
 ## The login
 
-- Settings › This host › GitHub (`web/src/host/GithubLogin.tsx`; pdt-api `github_login.rs`). The login is a JSON
+- GitHub's plugin page, Settings › Plugins › GitHub (PDT-228; its connection is the login: `web/src/plugins/GithubLogin.tsx`;
+  pdt-api `github_login.rs`). The old path `/settings/host/github` goes there. The login is a JSON
   `Account` (`token`, `apiUrl`, `login`) in the OS keychain only, under `github-login` for the stable instance's
   default data dir and `github-login:<hash of the data dir>` for any other (`secrets::github_login_account`, as the
   update token's), so a dev instance never reads or replaces the stable one's. pdtd reads it at startup in the
@@ -76,7 +77,7 @@ fork, or an Enterprise host):
    (the device flow never calls it), e.g. the homepage.
 3. Register it, then tick **Enable Device Flow** and save. No client secret is needed: the device flow doesn't use one.
 4. Put the Client ID in `GITHUB_OAUTH_CLIENT_ID` (crates/pdt-core/src/brand.rs) and release (done for PDT's app).
-5. At the cutover each host's user opens Settings › This host › GitHub, clicks Connect GitHub, enters the code on
+5. At the cutover each host's user opens Settings › Plugins › GitHub, clicks Connect GitHub, enters the code on
    GitHub and authorizes the app.
 
 Private repositories of an organization: the organization has to grant the app access (Organization settings › Third-
@@ -87,12 +88,12 @@ works but that organization's private repositories answer 404.
 
 - Every forge call without a login fails and marks the forge as wanted (`Forge::login_needed`). While it is, the Inbox
   lists **Connect GitHub** (kind `connect`, group Unheard notices; not stored, never dismissed): Enter opens Settings
-  › This host › GitHub. It goes once a login is saved.
+  › Plugins › GitHub. It goes once a login is saved.
 - A login GitHub refuses (it answers **401**: the token was revoked or expired; PDT-212) is kept but marked rejected,
   with the time (`GithubApi::rejected_at`, `Forge::login_rejected_at`; in memory, so a restart finds out again on its
   first call). While it is, no call reaches GitHub: every one fails as "GitHub no longer accepts PDT's login" at once,
   so the 60 s pollers back off without spending the rate limit. `GET /api/github/login` reports it as `rejectedAt`
-  (still `connected`), Settings › This host › GitHub says "GitHub no longer accepts this login" with Reconnect, and
+  (still `connected`), Settings › Plugins › GitHub says "GitHub no longer accepts this login" with Reconnect, and
   the same single Inbox item reads **Reconnect GitHub** (`body.reason: "rejected"`, created at the refusal). Saving
   a login (device flow or pasted token) clears it, takes the item out of the Inbox and runs the PR and issue checks
   at once. A 403 (missing scopes, or no access to one repository) is not a rejected login: it stays that PR's or
@@ -107,4 +108,29 @@ Agents read and answer on GitHub through PDT's tools instead of `gh` ([agents.md
 /repos/{repo}/pulls`; GitHub's 422 for an unpushed head, or one with nothing new, names that), `change_request_merge`
 (auto-merge or the queue again after a queue drop, PDT-185), `ci_runs`, `ci_failed_logs`, `issue_view` and
 `issue_comment`, on the session's project forge and branch. They are in the default tool set, so the
-Coder, Reviewer and QA have them; the PM has `issue_view`. Agents still push with plain `git`.
+Coder, Reviewer and QA have them; the PM has `issue_view`. Agents still push with plain `git`. `issue_create` files an
+issue (below); it asks the user first.
+
+## Filing issues (PDT-221)
+
+`Forge::create_issue` (title, body, labels; `Capabilities::issues`) opens an issue as the forge's login: GitHub's
+`POST /repos/{repo}/issues` (labels the login can't set, or the repository lacks, are dropped by GitHub; a body over
+65536 characters is cut), and `FakeForge` in tests (numbered from 500). pdt-api `issues.rs` files one in a project's
+repository through its project forge (only GitHub's: the link is `owner/name#12`), and with a ticket links the new
+issue to it (pdt-store `link_external`: a `linked` event `{system, key, url}`). The ticket keeps its source: the
+issue came from it, so it does not become `external` ([tickets.md](tickets.md) "Sources and the Todo gate"). A
+ticket links one GitHub issue (`409 already_linked`).
+
+- `GET /api/projects/{id}/forge`: `{kind, repo, issues}` (null without a forge); `issues` says whether issues can be
+  filed there.
+- `POST /api/projects/{id}/issues` (`{title, body, labels, ticketId}` → `{repo, number, issue, url, ticketKey}`):
+  only from PDT's web app (its UI token, PDT-204; `403 not_the_ui` otherwise), since it publishes as the user. A forge
+  error is `502 forge_error` (`503 forge_unavailable` when it can't be reached).
+- The UI: **Create GitHub issue…** in a ticket's actions menu (when the project's forge has issues and the ticket
+  links none) opens a form with its title and description, editable; the command palette's **New issue** files one in
+  the current project's repository.
+- The `github.create_issue` node and the `issue_create` tool are one action (pdt-api `integrations/github.rs`):
+  `ticket` (its project's repository; its title and description unless `title`/`body` are given) or `project`
+  (an agent's own project when left out), `title`, `body`, `labels`. The node leaves by `filed` with `{repo, number,
+  issue, url, ticketKey}`. The tool asks before each call (the PM: unless the ticket's or project's policy lets it act);
+  it is in the default tool set and the PM's.

@@ -182,6 +182,8 @@ async fn bug_reports_are_triaged_into_tickets_duplicates_and_rejections() {
     let env = setup().await;
     let triage = builtin(&env, "pdt-bug-triage").await;
     assert_eq!(triage["enabled"], true, "enabled where a project is the release repository");
+    let (s, _) = call(&env.app, "GET", "/api/workflow-templates/builtin:pdt-bug-triage", None).await;
+    assert_eq!(s, StatusCode::OK, "offered as a template there too (PDT-226)");
     let wf = triage["id"].as_str().unwrap().to_string();
     // Four reports by one author: no triage cap here (PDT-202's has a test of its own).
     call(&env.app, "PUT", "/api/host/settings", Some(json!({"triagePerAuthorHour": 0}))).await;
@@ -323,6 +325,43 @@ async fn run_now(env: &Env, wf: &str, input: Value) -> Value {
 
 fn step<'a>(run: &'a Value, node: &str) -> &'a Value {
     run["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == node).unwrap_or_else(|| panic!("{run}"))
+}
+
+#[tokio::test]
+async fn a_workflow_files_a_ticket_as_an_issue() {
+    let env = setup().await;
+    let (s, t) = call(
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": "Crash on start", "description": "It falls over."})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    let file = action(
+        &env,
+        json!({"id": "act", "kind": "github.create_issue", "version": 1, "config": {
+            "ticket": "{{trigger.ticket}}", "labels": ["bug"]}}),
+    )
+    .await;
+    let r = run_now(&env, &file, json!({"ticket": t["key"]})).await;
+    let s = step(&r, "act");
+    assert_eq!(s["port"], "filed", "{r}");
+    assert_eq!(s["output"]["issue"], format!("{}#500", RELEASE_REPO.to_ascii_lowercase()));
+    assert_eq!(s["output"]["ticketKey"], t["key"]);
+    let made = env.gh.created_issues.lock().unwrap().clone();
+    assert_eq!((made[0].1.title.as_str(), made[0].1.body.as_str()), ("Crash on start", "It falls over."));
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{}", t["id"].as_str().unwrap()), None).await;
+    assert_eq!(t["external"][0]["url"], format!("https://github.com/{RELEASE_REPO}/issues/500"));
+    assert_eq!(t["source"], "user");
+
+    // A config with neither a title nor a ticket doesn't validate.
+    let doc = json!({"name": "Bad", "nodes": [
+        {"id": "start", "kind": "manual", "version": 1},
+        {"id": "act", "kind": "github.create_issue", "version": 1, "config": {"project": "PX"}}],
+      "edges": [{"from": "start", "to": "act"}]});
+    let (_, v) = call(&env.app, "POST", "/api/workflows/validate", Some(json!({"doc": doc}))).await;
+    assert!(v.to_string().contains("give a title, or a ticket to file"), "{v}");
 }
 
 #[tokio::test]

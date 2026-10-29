@@ -1,22 +1,25 @@
 :root {
-  --pdt-bg: #f7f7f9;
+  --pdt-bg: #f2f3f6;
   --pdt-surface: #ffffff;
-  --pdt-surface-2: #ebebef;
+  --pdt-surface-2: #e6e8ed;
   --pdt-band: rgba(15, 16, 20, 0.02);
-  --pdt-border: #e2e3e8;
+  --pdt-border: #d5d8df;
+  /* Control edges: the off switch's track, outline buttons, checkboxes, fields. 2.38:1 on white, below WCAG's 3:1 for
+     controls on purpose (the user picked the softer setting, PDT-249). */
+  --pdt-input: #a3a8b4;
   --pdt-fg: #17181d;
-  --pdt-muted: #6b7080;
+  --pdt-muted: #565b6a;
   --pdt-accent: #2563eb;
   --pdt-on-accent: #ffffff;
-  --pdt-accent-soft: #e6eefe;
+  --pdt-accent-soft: #dfe8fd;
   --pdt-ring: rgba(37, 99, 235, 0.25);
   --pdt-running: #15803d;
   --pdt-waiting: #b45309;
   --pdt-failed: #dc2626;
-  --pdt-idle: #6b7080;
-  --pdt-running-soft: rgba(21, 128, 61, 0.1);
-  --pdt-waiting-soft: rgba(180, 83, 9, 0.1);
-  --pdt-failed-soft: rgba(220, 38, 38, 0.08);
+  --pdt-idle: #565b6a;
+  --pdt-running-soft: rgba(21, 128, 61, 0.12);
+  --pdt-waiting-soft: rgba(180, 83, 9, 0.12);
+  --pdt-failed-soft: rgba(220, 38, 38, 0.1);
   --pdt-brand-claude: #c15f3c;
   /* Diffs and code in the review: GitHub's pull request colours (Primer). */
   --pdt-diff-add: #e6ffec;
@@ -41,6 +44,8 @@
   --pdt-backdrop: rgba(15, 16, 20, 0.25);
   --pdt-shadow-popover: 0 4px 16px rgba(15, 16, 20, 0.1);
   --pdt-shadow-dialog: 0 12px 40px rgba(15, 16, 20, 0.18);
+  /* Cards on the page (Section cards, board tickets): light only, so white cards stand off the page. */
+  --pdt-shadow-card: 0 1px 2px rgba(15, 16, 20, 0.06), 0 0 0 1px rgba(15, 16, 20, 0.02);
   /* Not per theme: layers, control heights, motion. */
   --pdt-z-popover: 30;
   --pdt-z-dialog: 40;
@@ -57,11 +62,11 @@
   --pdt-term-black: #17181d;
   --pdt-term-red: #c9302c;
   --pdt-term-green: #15803d;
-  --pdt-term-yellow: #a16207;
+  --pdt-term-yellow: #92400e;
   --pdt-term-blue: #2563eb;
   --pdt-term-magenta: #a21caf;
   --pdt-term-cyan: #0e7490;
-  --pdt-term-white: #6b7080;
+  --pdt-term-white: #565b6a;
   --pdt-term-bright-black: #4b5063;
   --pdt-term-bright-red: #dc2626;
   --pdt-term-bright-green: #16a34a;
@@ -82,6 +87,7 @@
     --pdt-surface-2: #1f2026;
   --pdt-band: rgba(255, 255, 255, 0.022);
     --pdt-border: #26282f;
+    --pdt-input: #26282f;
     --pdt-fg: #e7e8ec;
     --pdt-muted: #8a8f9c;
     --pdt-accent: #3561b8;
@@ -118,6 +124,7 @@
     --pdt-backdrop: rgba(0, 0, 0, 0.5);
     --pdt-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
     --pdt-shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.6);
+    --pdt-shadow-card: none;
     --pdt-term-black: #3a3d47;
     --pdt-term-red: #f87171;
     --pdt-term-green: #34d399;
@@ -144,6 +151,7 @@
   --pdt-surface-2: #1f2026;
   --pdt-band: rgba(255, 255, 255, 0.022);
   --pdt-border: #26282f;
+  --pdt-input: #26282f;
   --pdt-fg: #e7e8ec;
   --pdt-muted: #8a8f9c;
   --pdt-accent: #3561b8;
@@ -180,6 +188,7 @@
   --pdt-backdrop: rgba(0, 0, 0, 0.5);
   --pdt-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45);
   --pdt-shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --pdt-shadow-card: none;
   --pdt-term-black: #3a3d47;
   --pdt-term-red: #f87171;
   --pdt-term-green: #34d399;

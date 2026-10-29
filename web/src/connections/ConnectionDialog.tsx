@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Dialog, Field, Input, Link, Select, Switch, Textarea } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
+import { pluginsKey } from '../plugins/model';
 import {
   AUTH_MODES, discordInviteUrl, fieldShown, fieldText, fieldsConfig, hookUrl, kindOf, randomSecret, useConnectionKinds, type ConnectionKind,
 } from './kinds';
@@ -25,6 +26,10 @@ interface DialogProps {
   kind?: string;
   onClose: () => void;
   onSaved?: (c: Connection) => void;
+  /** Under the title, in place of the usual line (turning a plugin on: why it asks now). */
+  description?: string;
+  /** The Cancel button's label ("Later"). */
+  cancelLabel?: string;
 }
 
 /** Opens once the kinds are loaded (the Connections page and pickers have them already). */
@@ -41,7 +46,7 @@ export function ConnectionDialog(props: DialogProps) {
 }
 
 /** The dialog's form, once the kinds are loaded. */
-function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, kinds }: DialogProps & { kinds: ConnectionKind[] }) {
+function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, description, cancelLabel = 'Cancel', kinds }: DialogProps & { kinds: ConnectionKind[] }) {
   const qc = useQueryClient();
   const [name, setName] = useState(connection?.name ?? '');
   const [kind, setKind] = useState(connection?.kind ?? fixedKind ?? 'discord_webhook');
@@ -85,6 +90,8 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, kinds }
     },
     onSuccess: (c) => {
       void qc.invalidateQueries({ queryKey: connectionsKey });
+      // A plugin's status follows its connections.
+      void qc.invalidateQueries({ queryKey: pluginsKey });
       onSaved?.(c);
       onClose();
     },
@@ -98,9 +105,9 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, kinds }
       open
       onOpenChange={(o) => { if (!o) onClose(); }}
       dismissable={false}
-      title={connection ? `Edit ${connection.name}` : 'New connection'}
-      description="A service workflows use by name. Its secret is kept in this machine's keychain."
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!ready} pending={save.isPending} onClick={() => save.mutate()}>Save</Button></>}
+      title={connection ? `Edit ${connection.name}` : k ? `Add ${k.label}` : 'New connection'}
+      description={description ?? "A service workflows use by name. Its secret is kept in this machine's keychain."}
+      footer={<><Button variant="secondary" onClick={onClose}>{cancelLabel}</Button><Button variant="primary" disabled={!ready} pending={save.isPending} onClick={() => save.mutate()}>Save</Button></>}
     >
       <div className="flex flex-col gap-3">
         <Field label="Kind" hint={k?.description}>

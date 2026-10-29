@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isDetail, parseLocation, parseRoute, routePath, sectionSlug, upRoute, viewRoute, type Route } from './route';
+import { isDetail, isOldPath, parseLocation, parseRoute, routePath, sectionSlug, upRoute, viewRoute, type Route } from './route';
 import { VIEWS } from './views';
 
 describe('routes', () => {
@@ -43,6 +43,8 @@ describe('routes', () => {
     ['/settings/host', { view: 'settings', page: { kind: 'host', section: null } }],
     ['/settings/host/updates', { view: 'settings', page: { kind: 'host', section: 'updates' } }],
     ['/settings/connections', { view: 'settings', page: { kind: 'connections' } }],
+    ['/settings/plugins', { view: 'settings', page: { kind: 'plugins', id: null } }],
+    ['/settings/plugins/jira', { view: 'settings', page: { kind: 'plugins', id: 'jira' } }],
     ['/settings/secrets', { view: 'settings', page: { kind: 'secrets' } }],
     ['/settings/notifications', { view: 'settings', page: { kind: 'notifications' } }],
     ['/settings/projects/PDT', { view: 'settings', page: { kind: 'project', key: 'PDT', section: null } }],
@@ -56,6 +58,10 @@ describe('routes', () => {
   });
 
   it('reads paths the app writes no other way', () => {
+    // PDT-228: the old Integrations page and This host's GitHub section are the plugins'.
+    expect(parseRoute('/settings/integrations')).toEqual({ view: 'settings', page: { kind: 'plugins', id: null } });
+    expect(parseRoute('/settings/host/github')).toEqual({ view: 'settings', page: { kind: 'plugins', id: 'github' } });
+    expect(isOldPath('/settings/integrations') && isOldPath('/settings/host/github') && !isOldPath('/settings/host/updates')).toBe(true);
     expect(parseRoute('/settings/nonsense')).toEqual({ view: 'settings', page: { kind: 'index' } });
     expect(parseRoute('/workflows/wf/nonsense')).toEqual({ view: 'workflows', target: { kind: 'workflow', id: 'wf' } });
     expect(parseRoute('/nowhere/at/all')).toEqual({ view: null });
@@ -85,6 +91,8 @@ describe('routes', () => {
       // A Settings section goes up to its page, the page to the list of them.
       ['/settings/projects/PDT/danger-zone', '/settings/projects/PDT'], ['/settings/projects/PDT', '/settings'],
       ['/settings/host/updates', '/settings/host'], ['/settings/host', '/settings'], ['/settings/notifications', '/settings'],
+      // A plugin's page goes up to the catalog.
+      ['/settings/plugins/jira', '/settings/plugins'], ['/settings/plugins', '/settings'],
     ];
     for (const [p, to] of up) {
       expect(isDetail(parseLocation(p)), p).toBe(true);

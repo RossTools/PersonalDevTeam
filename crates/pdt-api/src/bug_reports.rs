@@ -24,10 +24,18 @@ use ts_rs::TS;
 pub struct NewBugReport {
     /// One line saying what went wrong.
     pub title: String,
-    /// What happened, what you expected, and how to make it happen again (Markdown).
+    /// What happened (Markdown).
     #[serde(default)]
     #[ts(optional)]
     pub description: Option<String>,
+    /// What you expected to happen instead (Markdown).
+    #[serde(default)]
+    #[ts(optional)]
+    pub expected: Option<String>,
+    /// How to make it happen again: the steps (Markdown).
+    #[serde(default)]
+    #[ts(optional)]
+    pub steps: Option<String>,
     /// Add this instance's diagnostics (version, OS, update state, the end of the pdtd log), redacted.
     #[serde(default)]
     #[ts(optional)]
@@ -231,8 +239,10 @@ pub(crate) async fn file(
     r: NewBugReport,
     by_session: Option<&pdt_core::session::Session>,
 ) -> Result<BugReportFiled, ApiError> {
-    let (title, description) = br::validate(&r.title, r.description.as_deref().unwrap_or(""))
-        .map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m))?;
+    let text = |s: &Option<String>| s.clone().unwrap_or_default();
+    let report = br::Report { what_happened: text(&r.description), expected: text(&r.expected), steps: text(&r.steps) };
+    let (title, report) =
+        br::validate(&r.title, &report).map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m))?;
     let nonce = r.nonce.as_deref().map(str::trim).filter(|n| !n.is_empty()).map(String::from);
     let mut nonces = st.bug_report_nonces.lock().await;
     let now = now_ms();
@@ -247,7 +257,9 @@ pub(crate) async fn file(
         true => Some(diagnostics(st).await),
         false => None,
     };
-    let body = br::body(&description, diagnostics.as_deref(), pdt_core::BUILD_VERSION);
+    // The OS is part of the diagnostics: shared only with them.
+    let os = diagnostics.as_ref().map(|_| format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH));
+    let body = br::body(&report, diagnostics.as_deref(), pdt_core::BUILD_VERSION, os.as_deref());
     let filed = match setting.route(project.is_some()) {
         BugReportRoute::Off => {
             return Err(ApiError::new(

@@ -8,8 +8,8 @@ const GITHUB_API = 'https://api.github.com';
 const DESCRIPTION = 'The login PDT reads pull requests, CI and issues with, and merges and comments as.';
 
 /**
- * Settings › This host › GitHub (PDT-177): the login PDT reads pull requests, CI and issues with, merges and comments
- * as. Connect GitHub (the device flow: enter a code on GitHub), or paste a token; a GitHub Enterprise Server by its API URL.
+ * GitHub's connection, on its plugin page (Settings › Plugins › GitHub; PDT-177, PDT-228): the login PDT reads pull
+ * requests, CI and issues with, merges and comments as. Connect GitHub (the device flow: enter a code on GitHub), or paste a token; a GitHub Enterprise Server by its API URL.
  */
 export function GithubLogin() {
   const qc = useQueryClient();
@@ -39,7 +39,7 @@ export function GithubLogin() {
   const v = view.data;
   if (!v) {
     return (
-      <Section label="GitHub" description={DESCRIPTION}>
+      <Section label="GitHub login" description={DESCRIPTION}>
         {view.error ? <Alert tone="error">The GitHub login could not be read: {view.error.message}</Alert> : <Skeleton label="Loading the GitHub login" className="h-16" />}
       </Section>
     );
@@ -61,7 +61,7 @@ export function GithubLogin() {
   const error = device.error ?? paste.error ?? disconnect.error;
 
   return (
-    <Section label="GitHub" description={DESCRIPTION}>
+    <Section label="GitHub login" description={DESCRIPTION}>
       {v.connected && v.rejectedAt != null && (
         <Alert tone="error" title="GitHub no longer accepts this login.">
           The token was revoked or expired. PDT has stopped calling GitHub until you connect again: reconnect below, or

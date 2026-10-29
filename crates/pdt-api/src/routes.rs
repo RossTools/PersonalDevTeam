@@ -481,6 +481,8 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/projects/{id}/tickets", axum::routing::post(crate::tickets::create))
         .route("/projects/{id}/labels", get(crate::tickets::labels))
         .route("/projects/{id}/areas", get(crate::overlap::areas))
+        .route("/projects/{id}/forge", get(crate::issues::forge))
+        .route("/projects/{id}/issues", axum::routing::post(crate::issues::create))
         .route("/tickets", get(crate::tickets::list))
         .route("/tickets/bulk", axum::routing::post(crate::tickets::bulk))
         .route(

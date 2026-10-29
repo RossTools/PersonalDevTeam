@@ -409,6 +409,15 @@ fn issues_are_read_commented_labelled_and_closed() {
     t.ok("POST", &format!("{API}/repos/o/r/issues/12/comments"), r#"{"html_url":"https://c/1"}"#);
     assert_eq!(g.comment_issue("o/r", 12, "@here: hi").unwrap(), "https://c/1");
 
+    t.ok("POST", &format!("{API}/repos/o/r/issues"), &one.replace("\"closed\"", "\"open\""));
+    let new = NewIssue { title: "Crash".into(), body: "It fell over".into(), labels: vec!["bug".into()] };
+    let made = g.create_issue("o/r", &new).unwrap();
+    assert_eq!((made.number, made.url.as_str()), (12, "https://github.com/o/r/issues/12"));
+    assert_eq!(body_of(t.sent().last().unwrap()), json!({"title": "Crash", "body": "It fell over", "labels": ["bug"]}));
+    t.ok("POST", &format!("{API}/repos/o/r/issues"), one);
+    g.create_issue("o/r", &NewIssue { labels: vec![], ..new }).unwrap();
+    assert_eq!(body_of(t.sent().last().unwrap()), json!({"title": "Crash", "body": "It fell over"}), "no labels");
+
     t.ok("POST", &format!("{API}/repos/o/r/issues/12/labels"), "[]");
     g.add_labels("o/r", 12, &["bug".into(), "p1".into()]).unwrap();
     g.add_labels("o/r", 12, &[]).unwrap();

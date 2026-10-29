@@ -291,7 +291,7 @@ function GithubStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
             {g?.deviceFlow && !g.pending && (
               <Button size="sm" variant="primary" pending={device.isPending} onClick={() => device.mutate()}>Connect GitHub</Button>
             )}
-            {g && !g.deviceFlow && <span className="text-xs text-muted-foreground">Paste a token in Settings › This host › GitHub.</span>}
+            {g && !g.deviceFlow && <span className="text-xs text-muted-foreground">Paste a token in Settings › Plugins › GitHub.</span>}
             {step.state !== 'skipped' && (
               <Button size="sm" pending={skip.isPending} onClick={() => skip.mutate()}>Skip, my projects aren’t on GitHub</Button>
             )}

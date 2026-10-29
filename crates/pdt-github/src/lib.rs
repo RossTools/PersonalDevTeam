@@ -1,6 +1,6 @@
 //! The GitHub forge (PDT-176, PDT-177): GitHub's REST and GraphQL APIs for a branch's pull request and its Actions
 //! runs (PDT-25), merges, reviews, comments, issues and releases (PDT-194: reading them, starting the release workflow), signed in with the token of the user's in-app login (Settings
-//! › This host › GitHub). No GitHub CLI. Check runs are not read: fine-grained tokens cannot see them, so CI comes from
+//! › Plugins › GitHub). No GitHub CLI. Check runs are not read: fine-grained tokens cannot see them, so CI comes from
 //! the Actions runs API. GETs are conditional (ETags: an unchanged answer costs no rate limit), and a used-up rate
 //! limit stops every call until it resets. Blocking; call from `spawn_blocking` in async code.
 
@@ -11,7 +11,7 @@ use pdt_core::brand::SHORT_NAME;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
 pub use pdt_forge::{
     Capabilities, ChangeComment, ChangeRequest, ChangeReview, CloseReason, Forge, ForgeError, ForgeNotes, Issue,
-    IssueDetail, JobLog, MergeSettings, MergeStrategy, NewChangeRequest, OpenedChangeRequest, Release,
+    IssueDetail, JobLog, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest, Release,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -58,7 +58,7 @@ const ENQUEUE: &str = "mutation($id:ID!){enqueuePullRequest(input:{pullRequestId
 
 /// The text of a call made before the user connected GitHub.
 pub fn not_connected() -> String {
-    format!("GitHub is not connected: connect it in {SHORT_NAME}'s Settings › This host › GitHub")
+    format!("GitHub is not connected: connect it in {SHORT_NAME}'s Settings › Plugins › GitHub")
 }
 
 /// What went wrong talking to GitHub.
@@ -66,7 +66,7 @@ pub fn not_connected() -> String {
 pub enum GhError {
     #[error("{}", not_connected())]
     NotConnected,
-    #[error("GitHub no longer accepts {SHORT_NAME}'s login: connect GitHub again in Settings › This host › GitHub")]
+    #[error("GitHub no longer accepts {SHORT_NAME}'s login: connect GitHub again in Settings › Plugins › GitHub")]
     Rejected,
     #[error("GitHub answered {0}: {1}")]
     Status(u16, String),
@@ -844,6 +844,14 @@ impl Forge for GithubApi {
     }
     fn issue_comments(&self, repo: &str, number: u64) -> Result<Vec<ChangeComment>, ForgeError> {
         Ok(parse_comments(&self.get_pages(&format!("repos/{repo}/issues/{number}/comments?per_page=100"))?, false))
+    }
+    /// Labels the login can't set (no push access) or the repository lacks are dropped by GitHub, not refused.
+    fn create_issue(&self, repo: &str, new: &NewIssue) -> Result<Issue, ForgeError> {
+        let mut body = json!({"title": new.title, "body": comment_body(&new.body)});
+        if !new.labels.is_empty() {
+            body["labels"] = json!(new.labels);
+        }
+        Ok(parse_issue(&self.send_json("POST", &format!("repos/{repo}/issues"), body)?)?.issue)
     }
     fn comment_issue(&self, repo: &str, number: u64, body: &str) -> Result<String, ForgeError> {
         Ok(self.post_comment(&format!("repos/{repo}/issues/{number}/comments"), body)?)

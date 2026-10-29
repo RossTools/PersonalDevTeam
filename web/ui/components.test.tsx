@@ -15,7 +15,7 @@ describe('Button', () => {
     const b = screen.getByRole('button', { name: 'Approve' });
     expect(b).toBeDisabled();
     expect(b).toHaveAttribute('type', 'submit');
-    expect(b.className).toContain('border-border');
+    expect(b.className).toContain('border-input');
   });
 
   it('ghost Button renders with its label', () => {

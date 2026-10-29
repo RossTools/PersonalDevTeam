@@ -4,12 +4,29 @@ use super::Integration;
 use crate::workflow::catalog::NodeKind;
 use crate::workflow::nodes::mcp_tool::McpToolKind;
 use pdt_core::integration::{ConfigField, ConnectionKind, FieldOption, FieldType, FieldWhen};
+use pdt_core::integration::{Icon, PluginCategory};
 
 pub struct Mcp;
 
 impl Integration for Mcp {
     fn id(&self) -> &'static str {
         "mcp"
+    }
+
+    fn label(&self) -> &'static str {
+        "MCP servers"
+    }
+
+    fn description(&self) -> &'static str {
+        "Tools from MCP servers, as workflow actions."
+    }
+
+    fn category(&self) -> Option<PluginCategory> {
+        Some(PluginCategory::General)
+    }
+
+    fn icon(&self) -> Icon {
+        Icon { letters: "M", color: "#6b7080" }
     }
 
     fn connection_kinds(&self) -> Vec<ConnectionKind> {
