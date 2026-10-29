@@ -9,6 +9,7 @@ import { ProjectKey } from '../common/BranchChip';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
+import { isAcp, useAcpAgents, type AcpKind } from '../common/agents';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { useKeyboardBox } from '../common/viewport';
@@ -87,7 +88,7 @@ import { currentLocation, goBack, navigate, useAppLinks, useLocation } from './r
 import { PhoneDrawer } from './PhoneDrawer';
 import { PhoneTopBar, TopBarActionsContext, TopBarEditContext, type TopBarActions, type TopBarEdit } from './PhoneTopBar';
 
-const CHOICE: Record<NewKind, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
+const CHOICE: Record<Exclude<NewKind, AcpKind>, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
 
 /** On a phone, the views whose list column is their top-level screen (PDT-112). The PM's and the Tickets' lists open
  * in a sheet instead: from ⋯ (earlier sessions) and from the title (projects and filters). */
@@ -553,7 +554,7 @@ export function AppShell() {
       // Like the new-tab chooser: right after the current tab.
       const tab = w ? { workspaceId: w.id, position: ws.tab ? ws.tab.position + 1 : w.tabs.length } : undefined;
       void runAction(async () => {
-        const s = await api.createSession({ ...newSession(at.projectId, at.worktreeId, CHOICE[kind]), ...(tab ? { tab } : {}) });
+        const s = await api.createSession({ ...newSession(at.projectId, at.worktreeId, isAcp(kind) ? kind : CHOICE[kind]), ...(tab ? { tab } : {}) });
         void qc.invalidateQueries({ queryKey: ['sessions', s.projectId] });
         await ws.refresh();
         await ws.focusItem({ kind: 'session', id: s.id }, s.projectId);
@@ -585,6 +586,7 @@ export function AppShell() {
   };
   const agents = useAgentAvailability();
   const defaults = useAgentDefaults();
+  const acpAgents = useAcpAgents();
   const items = paletteOpen
     ? paletteItems({
         workspaces: ws.workspaces, infos: [...ws.allInfos, ...ws.ticketInfos], projects: ws.projects, tab: ws.tab, place, theme, handlers,
@@ -593,6 +595,7 @@ export function AppShell() {
         issueRepo,
         agents: agents.of,
         defaults,
+        acpAgents,
       })
     : [];
 

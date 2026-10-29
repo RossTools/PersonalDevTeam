@@ -42,6 +42,7 @@ pub(crate) async fn create(
     let Json(n) = payload?;
     let name = valid_name(&n.name).map_err(invalid)?;
     let setup = n.setup.validate(st.registry().tool_table()).map_err(invalid)?;
+    known_agent(&st, setup.agent).await?;
     let now = now_ms();
     let p = Persona {
         id: uuid::Uuid::now_v7().to_string(),
@@ -59,6 +60,14 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(load(&st, &p.id).await?)))
 }
 
+/// A persona's ACP agent is one this host has (a built-in agent always is).
+async fn known_agent(st: &AppState, agent: pdt_core::session::AgentKind) -> Result<(), ApiError> {
+    if agent.is_acp() {
+        crate::conversations::acp_agent(st, agent).await?;
+    }
+    Ok(())
+}
+
 pub(crate) async fn get_one(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Persona>, ApiError> {
     Ok(Json(load(&st, &id).await?))
 }
@@ -72,6 +81,9 @@ pub(crate) async fn save(
     let Json(s) = payload?;
     let current = load(&st, &id).await?;
     let setup = s.setup.validate(st.registry().tool_table()).map_err(invalid)?;
+    if setup.agent != current.setup.agent {
+        known_agent(&st, setup.agent).await?;
+    }
     if setup == current.setup {
         return Ok(Json(current));
     }

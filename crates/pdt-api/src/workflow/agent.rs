@@ -469,15 +469,16 @@ async fn new_session(
     let mut mode =
         effective_permission_mode(settings.agent_permission_mode, persona.setup.permission_mode, host_default);
     // A locked-down persona (PDT-201) reads untrusted input: Codex runs read-only, Claude asks (its tools are cut down
-    // at launch), and Devin, which PDT can't sandbox, doesn't run it.
+    // at launch), and Devin or an ACP agent, which PDT can't sandbox, doesn't run it.
     if pdt_core::persona::locked_down(&persona.role) {
         mode = match persona.setup.agent {
             AgentKind::Codex => PermissionMode::Plan,
             AgentKind::Claude => PermissionMode::Ask,
-            AgentKind::Devin => {
+            agent @ (AgentKind::Devin | AgentKind::Acp(_)) => {
                 return Err(format!(
-                    "{} reads untrusted input, so it runs on Claude or Codex, not Devin",
-                    persona.name
+                    "{} reads untrusted input, so it runs on Claude or Codex, not {}",
+                    persona.name,
+                    agent.label()
                 ));
             }
         };

@@ -152,6 +152,8 @@ impl AcpExtensions for PlainAcp {}
 #[derive(Debug, Clone, PartialEq)]
 struct Tool {
     tool: String,
+    /// The call's ACP kind (`read`, `edit`, `execute`, …), when the agent gave one.
+    kind: Option<String>,
     title: String,
     input: Value,
     status: ToolStatus,
@@ -222,6 +224,9 @@ pub struct AcpMapper<P> {
     import_after: Option<i64>,
     /// The replayed turn being imported (its prompt's id).
     importing: Option<String>,
+    /// The session's permission mode, when PDT keeps it by answering permission requests itself (an agent with no
+    /// modes of its own, PDT-234).
+    enforce: Option<PermissionMode>,
 }
 
 fn s(v: &Value, k: &str) -> Option<String> {
@@ -284,7 +289,14 @@ impl<P: AcpExtensions> AcpMapper<P> {
             loading: false,
             import_after: None,
             importing: None,
+            enforce: None,
         }
+    }
+
+    /// PDT keeps the session in `mode` by answering the agent's permission requests itself where the mode decides
+    /// them (`crate::acp_agent::enforced_answer`); None: every request goes to the user.
+    pub fn enforce_mode(&mut self, mode: Option<PermissionMode>) {
+        self.enforce = mode;
     }
 
     /// The agent's extensions.
@@ -725,6 +737,7 @@ impl<P: AcpExtensions> AcpMapper<P> {
         let before = self.tools.get(id).cloned();
         let mut t = before.clone().unwrap_or_else(|| Tool {
             tool: name.clone().or_else(|| s(u, "kind")).unwrap_or_else(|| "tool".into()),
+            kind: None,
             title: String::new(),
             input: Value::Null,
             status: ToolStatus::Running,
@@ -737,6 +750,9 @@ impl<P: AcpExtensions> AcpMapper<P> {
         });
         if new && let Some(n) = name {
             t.tool = n;
+        }
+        if let Some(k) = s(u, "kind") {
+            t.kind = Some(k);
         }
         if let Some(input) = u.get("rawInput") {
             t.input = input.clone();
@@ -869,6 +885,21 @@ impl<P: AcpExtensions> AcpMapper<P> {
                         return vec![AcpOut::Respond {
                             id: rpc_id,
                             result: json!({"outcome": {"outcome": "selected", "optionId": once}}),
+                        }];
+                    }
+                    // An agent with no modes: PDT answers what the session's mode decides.
+                    let kind = p
+                        .get("toolCall")
+                        .and_then(|t| s(t, "kind"))
+                        .or_else(|| tool.as_ref().and_then(|t| t.kind.clone()))
+                        .unwrap_or_default();
+                    if let Some(allow) = self.enforce.and_then(|m| crate::acp_agent::enforced_answer(m, &kind))
+                        && let Some((option, _)) =
+                            options.iter().find(|(_, k)| k == if allow { "allow_once" } else { "reject_once" })
+                    {
+                        return vec![AcpOut::Respond {
+                            id: rpc_id,
+                            result: json!({"outcome": {"outcome": "selected", "optionId": option}}),
                         }];
                     }
                     OpenRequest {
@@ -1167,6 +1198,41 @@ mod tests {
         let end = events(&m.end_prompt(Ok(&json!({"stopReason": "max_tokens"}))));
         assert!(matches!(end.last().unwrap(),
             AgentEvent::Turn { status: Some(TurnStatus::Failed), reason: Some(r), .. } if r == "The agent hit its output limit"));
+    }
+
+    #[test]
+    fn with_no_modes_pdt_answers_what_the_session_mode_decides() {
+        let mut m = mapper();
+        m.begin_prompt("go");
+        let options = json!([{"optionId": "y", "kind": "allow_once"}, {"optionId": "n", "kind": "reject_once"}]);
+        let ask = |m: &mut AcpMapper<PlainAcp>, id: u64, kind: &str| {
+            let call = format!("c{id}");
+            m.on_update(&json!({"sessionUpdate": "tool_call", "toolCallId": call, "title": "t", "kind": kind}));
+            m.on_request(
+                json!(id),
+                "session/request_permission",
+                &json!({"toolCall": {"toolCallId": call}, "options": options}),
+            )
+        };
+        // Not enforced: every request goes to the user.
+        assert!(matches!(&ask(&mut m, 1, "read")[..], [AcpOut::Event { .. }]));
+        m.enforce_mode(Some(PermissionMode::Plan));
+        assert_eq!(
+            ask(&mut m, 2, "edit"),
+            vec![AcpOut::Respond {
+                id: json!(2),
+                result: json!({"outcome": {"outcome": "selected", "optionId": "n"}})
+            }]
+        );
+        assert!(matches!(&ask(&mut m, 3, "fetch")[..], [AcpOut::Event { .. }]), "Plan asks about a fetch");
+        m.enforce_mode(Some(PermissionMode::Bypass));
+        assert_eq!(
+            ask(&mut m, 4, "execute"),
+            vec![AcpOut::Respond {
+                id: json!(4),
+                result: json!({"outcome": {"outcome": "selected", "optionId": "y"}})
+            }]
+        );
     }
 
     #[test]

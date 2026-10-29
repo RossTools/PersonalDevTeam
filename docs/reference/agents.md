@@ -1,4 +1,4 @@
-# Agent sessions: terminals, instructions, activity, restart, Devin
+# Agent sessions: terminals, instructions, activity, restart, Devin, ACP agents
 
 How PDT launches and resumes Claude, Codex and Devin sessions and the terminals they run in. Conversations (the
 structured view) are in [conversations.md](conversations.md). Code: crates/pdt-agents (PTYs, `adapter/`,
@@ -314,8 +314,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   `create_ticket`, `ask_user` and `submit_outcome` (no shell, secret tools, `edit_ticket` or `send_to_session`).
 - Its sessions run in a read-only sandbox: Claude gets `--tools Read,Grep,Glob --strict-mcp-config` (pdt-agents
   `mcp::CLAUDE_READ_TOOLS`; no shell, web or edits, no MCP servers but PDT's) and permission mode Ask; Codex permission
-  mode Plan (its read-only sandbox) with `web_search="disabled"` and `sandbox_mode="read-only"`; a Devin Triage step
-  fails (PDT can't sandbox it).
+  mode Plan (its read-only sandbox) with `web_search="disabled"` and `sandbox_mode="read-only"`; a Devin or ACP agent
+  Triage step fails (PDT can't sandbox it).
 - Its `create_ticket` (and that of any agent step in a run an outside event started) makes `external` Drafts: a stage
   other than Draft or the `agentic` label is refused, whatever the user answers.
 - The built-in template **Triage new GitHub issues** (`builtin:issue-triage`, its `persona` param defaulting to
@@ -454,3 +454,40 @@ a conversation by default like the others (`mode: terminal` for its TUI).
   missing Devin as fine.
 - Web: new-tab "Devin" (d) and "Devin (terminal)" (e), palette "New Devin here" / "New Devin (terminal) here", ticket
   Start's agent choice, Set up / Write instructions with an agent.
+
+## ACP agents (PDT-234)
+
+Any other agent that speaks the Agent Client Protocol on stdio is an agent kind `acp:<id>` (pdt-core `AgentKind::Acp`;
+the id is 1–32 lowercase letters, digits and `-`, interned so `AgentKind` stays `Copy`). The generated TS type adds
+the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the built-in names are unchanged.
+
+- Definitions (pdt-core `acp_agent`): profiles that ship with PDT (`builtin_profiles()`: id, label, icon, command,
+  arguments, environment and a mode map; none yet, each harness's ticket adds its own) and the user's, in host
+  settings `acpAgents` (`[{id, label, command, args, env: [{name, value}]}]`, the whole list per `PUT
+  /api/host/settings`; up to 32). Settings → This host → Agents → ACP agents adds, edits and removes them ("Add ACP
+  agent": name, command, arguments one per line, `NAME=value` lines; the id comes from the name and never changes).
+  The view lists each with where its command was found (`acpAgents[].found`); the host checks report each under
+  `acp["acp:<id>"]` (found is ok: PDT can't tell whether one is logged in). A session, persona or default agent naming
+  an ACP agent the host doesn't have is refused (400 `unknown_agent`); removing the default one puts it back on Claude.
+- Conversations only: `mode: terminal` is refused, they don't switch to a terminal, and they have no TUI hooks,
+  background tasks or Make ticket (409 `draft_unsupported`). The UI offers them as conversations wherever an agent is
+  offered (new tab, palette "New <label> here", ticket Start, personas, Settings' default agent) with a plug icon.
+- They run through the generic ACP adapter as plain ACP (pdt-agents `adapter/acp_agent.rs`, `DefinedProfile`): the
+  command (`~` expanded, looked up on the login PATH) with its arguments and environment in the session's folder,
+  pdt-mcp in `mcpServers`, and PDT's instructions as a text block in front of a new session's first prompt (logged
+  without it). Resume is `session/load` when the agent advertises `loadSession`; otherwise a new session starts with a
+  notice.
+- Modes: a profile's mode map, else the `availableModes` the agent advertises in `session/new`/`session/load`
+  (matched to PDT's by id or name: `default`/`ask`, `acceptEdits`/`code`, `plan`, `bypass`/`yolo`, …,
+  `acp_agent::advertised_modes`), set with `session/set_mode`. Every PDT mode is offered: one the agent has no mode
+  for (all of them for an agent that advertises none; Bypass for OpenCode's build/plan), PDT keeps itself, at start
+  and on a change, with the agent back in the mode it started in when that is none of PDT's
+  (pdt-agents `AcpLive::apply_mode`). Keeping a mode is answering `session/request_permission`
+  (`acp_agent::enforced_answer`, by the tool call's ACP kind): Bypass allows everything; reads, searches and thinking
+  are allowed in every mode; Accept edits allows edits, deletes and moves; Plan rejects those and commands; the rest
+  go to the user.
+- Ids are interned (at most 1024 from outside input; values read from the store are never refused,
+  `AgentKind::parse_stored`), and `GET /api/agents/acp:<id>/capabilities` answers 404 for an id the host doesn't
+  have before parsing it.
+- Tests: `fake-agent --plain acp` (with `--modes` it advertises its modes, with `--partial-modes` only `build` and
+  `plan`; `mcp: <tool> <json>` calls pdt-mcp after asking) in pdt-api `tests/acp_plain.rs` and `tests/acp_agents.rs`.

@@ -14,6 +14,7 @@ const checks = (o: { claude?: boolean; codex?: boolean; devin?: boolean; git?: b
   codex: tool(o.codex ?? false),
   devin: tool(o.devin ?? false),
   tailscale: tool(false),
+  acp: {},
   checkedAt: 1,
 });
 

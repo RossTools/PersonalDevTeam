@@ -10,7 +10,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const tool = (found: boolean, ok: boolean) => ({ found, ok, detail: '', path: null });
 const checks = (devinFound: boolean) =>
-  ({ claude: tool(true, true), codex: tool(true, false), devin: tool(devinFound, false), git: tool(true, true), tailscale: tool(true, true), checkedAt: 1 });
+  ({ claude: tool(true, true), codex: tool(true, false), devin: tool(devinFound, false), git: tool(true, true), tailscale: tool(true, true), acp: {}, checkedAt: 1 });
 
 /** Lists the offered agents; the button does what Host settings' "Run checks again" does. */
 function Probe() {
@@ -30,6 +30,10 @@ describe('agent availability', () => {
     expect(availabilityOf(checks(false), 'devin')).toBe('missing');
     expect(availabilityOf(checks(true), 'devin')).toBe('logged_out');
     expect(availabilityOf(checks(true), 'claude')).toBe('ready');
+    // An ACP agent's check is under `acp`; one without a check (just added) is offered.
+    const acp = { ...checks(true), acp: { 'acp:fake': { found: false, ok: false, detail: '', path: null } } };
+    expect(availabilityOf(acp, 'acp:fake')).toBe('missing');
+    expect(availabilityOf(acp, 'acp:new')).toBe('ready');
   });
 
   it('offers every agent when the checks fail', async () => {

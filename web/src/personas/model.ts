@@ -20,9 +20,6 @@ export function usePersonas() {
   return useQuery({ queryKey: personaKeys.all, queryFn: api.listPersonas });
 }
 
-export const AGENT_LABEL: Record<AgentKind, string> = { claude: 'Claude', codex: 'Codex', devin: 'Devin' };
-export const AGENTS: AgentKind[] = ['claude', 'codex', 'devin'];
-
 export const AUTHOR_LABEL: Record<PersonaAuthor, string> = { user: 'You', builtin: 'PDT (built in)', agent: 'An agent' };
 
 /** Every pdt-mcp tool a persona may pick, from the server (every integration's), in pdt-mcp's order. */
@@ -54,8 +51,9 @@ export const orderTools = (tools: string[], known: PersonaTool[]) => [
 export const DEFAULT_MODE = 'default';
 export type ModeChoice = PermissionMode | typeof DEFAULT_MODE;
 
-/** "Claude · opus" — the current version's agent and model, for list rows. */
-export const agentLine = (p: Pick<Persona, 'agent' | 'model'>) => (p.model ? `${AGENT_LABEL[p.agent]} · ${p.model}` : AGENT_LABEL[p.agent]);
+/** "Claude · opus" — the current version's agent (named by `label`, `useAgents().label`) and model, for list rows. */
+export const agentLine = (p: Pick<Persona, 'agent' | 'model'>, label: (a: AgentKind) => string) =>
+  p.model ? `${label(p.agent)} · ${p.model}` : label(p.agent);
 
 /** Active personas by name, then archived ones by name. */
 export function sortPersonas(list: Persona[]): Persona[] {

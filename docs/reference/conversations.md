@@ -3,10 +3,10 @@
 Phase 5. Spec: docs/superpowers/specs/2026-10-18-structured-agents-design.md; protocol facts:
 docs/superpowers/notes/phase-5-agent-protocols.md; plans: docs/superpowers/plans/2026-10-18-phase-5a…,
 2026-10-18-phase-5b…, 2026-10-19-phase-5c… and 2026-10-19-phase-5d…. Devin's conversations are in
-[agents.md](agents.md#devin-pdt-54-pdt-55).
+[agents.md](agents.md#devin-pdt-54-pdt-55), other ACP agents' in [agents.md](agents.md#acp-agents-pdt-234).
 
 An agent session (Claude, Codex or Devin) is `mode: conversation` by default (`mode: terminal` for the TUI; ticket
-Start too).
+Start too). An ACP agent (`acp:<id>`) is only ever a conversation.
 
 ## Runtime and API (5a)
 
