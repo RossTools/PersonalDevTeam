@@ -94,12 +94,20 @@ export const plugins: IntegrationInfo[] = [
       {
         "id": "github.release",
         "title": "Read a GitHub release"
+      },
+      {
+        "id": "github.create_issue",
+        "title": "Create a GitHub issue"
       }
     ],
     "templates": [],
     "workflows": [],
-    "tools": [],
-    "pmTools": [],
+    "tools": [
+      "issue_create"
+    ],
+    "pmTools": [
+      "issue_create"
+    ],
     "projectSettings": null,
     "projects": []
   },

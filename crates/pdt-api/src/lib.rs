@@ -19,6 +19,7 @@ mod host_guard;
 mod identity_guard;
 mod inbox;
 mod integrations;
+mod issues;
 mod local_forge;
 mod local_network;
 pub mod loops;

@@ -204,7 +204,7 @@ export function linkCall(selfId: string, otherId: string, role: LinkRole): { fro
   return { from: selfId, to: otherId, kind: role === 'blocks' ? 'blocks' : 'relates' };
 }
 
-interface LinkData { kind?: string; direction?: string; key?: string }
+interface LinkData { kind?: string; direction?: string; key?: string; system?: string }
 interface MovedData { from?: string; to?: string }
 interface EditedData { fields?: string[] }
 interface WaitingData { waiting?: boolean }
@@ -236,6 +236,8 @@ export function eventTitle(e: TicketEvent): string {
     case 'edited': return data.fields?.length ? `Edited ${data.fields.join(', ')}` : 'Edited';
     case 'linked':
     case 'unlinked': {
+      // A GitHub issue the ticket was filed as (PDT-221): `{system, key, url}`.
+      if (data.system) return `Linked: ${data.system === 'github' ? 'GitHub issue' : 'issue'} ${data.key ?? ''}`.trimEnd();
       const role = data.kind === 'relates' ? 'related to' : data.direction === 'incoming' ? 'blocked by' : 'blocks';
       return `${e.kind === 'linked' ? 'Linked' : 'Unlinked'}: ${role} ${data.key ?? 'a ticket'}`;
     }

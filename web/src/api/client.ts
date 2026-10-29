@@ -32,6 +32,9 @@ import type { PullBranch } from './gen/PullBranch';
 import type { PullResult } from './gen/PullResult';
 import type { ProjectSettingsInput } from './gen/ProjectSettingsInput';
 import type { JiraImportResult } from './gen/JiraImportResult';
+import type { FiledIssue } from './gen/FiledIssue';
+import type { NewForgeIssue } from './gen/NewForgeIssue';
+import type { ProjectForgeInfo } from './gen/ProjectForgeInfo';
 import type { ProjectSettingsView } from './gen/ProjectSettingsView';
 import type { RemoteStatus } from './gen/RemoteStatus';
 import type { Run } from './gen/Run';
@@ -328,6 +331,11 @@ export const api = {
   /** One Jira issue as a ticket linked to it (or the ticket that already links it). */
   importJiraIssue: (projectId: string, key: string) =>
     request<JiraImportResult>(`/api/projects/${enc(projectId)}/jira/import`, { method: 'POST', body: JSON.stringify({ key }) }),
+  /** The project's forge (null: none), and whether issues can be filed there (PDT-221). */
+  projectForge: (projectId: string) => request<ProjectForgeInfo | null>(`/api/projects/${enc(projectId)}/forge`),
+  /** Files an issue in the project's repository as the user's login; with `ticketId`, that ticket links it. */
+  createIssue: (projectId: string, issue: NewForgeIssue) =>
+    request<FiledIssue>(`/api/projects/${enc(projectId)}/issues`, { method: 'POST', body: JSON.stringify(issue) }, { asUser: true }),
   getTicket: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}`),
   updateTicket: (id: string, p: TicketPatch) =>
     request<Ticket>(`/api/tickets/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }, { asUser: true }),

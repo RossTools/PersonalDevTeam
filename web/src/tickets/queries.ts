@@ -25,6 +25,7 @@ export const ticketKeys = {
   events: (id: string) => ['ticketEvents', id] as const,
   labels: (projectId: string) => ['labels', projectId] as const,
   areas: (projectId: string) => ['areas', projectId] as const,
+  forge: (projectId: string) => ['forge', projectId] as const,
 };
 
 /** After a write: every list, and the tickets it touched (their view, timeline). Labels may have changed too. */
@@ -88,6 +89,16 @@ export function useLabels(projectId: string | null) {
     queryFn: () => api.projectLabels(projectId!),
     enabled: !!projectId,
     staleTime: 10_000,
+  });
+}
+
+/** The project's forge (null: none); it changes rarely (its origin or `.pdt/project.toml`). */
+export function useProjectForge(projectId: string | null) {
+  return useQuery({
+    queryKey: ticketKeys.forge(projectId ?? ''),
+    queryFn: () => api.projectForge(projectId!),
+    enabled: !!projectId,
+    staleTime: 60_000,
   });
 }
 

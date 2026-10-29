@@ -16,7 +16,7 @@ pub struct Capabilities {
     /// The forge holds an auto-merge until the base branch's required checks pass. Without it, PDT's own merges wait
     /// for green CI.
     pub required_checks: bool,
-    /// Issues: listing, reading, commenting, labelling, closing.
+    /// Issues: listing, reading, opening, commenting, labelling, closing.
     pub issues: bool,
     /// Reviews and comments on change requests.
     pub reviews: bool,
@@ -126,6 +126,16 @@ pub struct Issue {
     pub author: String,
     pub labels: Vec<String>,
     pub created_at: String,
+}
+
+/// An issue to open ([`Forge::create_issue`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewIssue {
+    pub title: String,
+    /// Markdown.
+    pub body: String,
+    /// Labels to put on it (a forge may drop ones the repository doesn't have).
+    pub labels: Vec<String>,
 }
 
 /// One issue with what closing it needs.
@@ -303,6 +313,10 @@ pub trait Forge: Send + Sync {
     fn issue(&self, _repo: &str, _number: u64) -> Result<Option<IssueDetail>, ForgeError> {
         unsupported(self.name(), "issues")
     }
+    /// Opens an issue in `repo`, as the forge's login; the issue as opened.
+    fn create_issue(&self, _repo: &str, _new: &NewIssue) -> Result<Issue, ForgeError> {
+        unsupported(self.name(), "issues")
+    }
     /// The comments on issue `number`, oldest first.
     fn issue_comments(&self, _repo: &str, _number: u64) -> Result<Vec<ChangeComment>, ForgeError> {
         unsupported(self.name(), "issues")
@@ -386,6 +400,8 @@ pub mod testing {
         pub change_comments_added: Mutex<Vec<(u32, Option<u64>, String)>>,
         /// Comments added to issues: repo, number, body.
         pub issue_comments: Mutex<Vec<(String, u64, String)>>,
+        /// Issues opened: repo and what was asked (each is also added to [`FakeForge::issues`], numbered from 500).
+        pub created_issues: Mutex<Vec<(String, NewIssue)>>,
         /// Labels added to issues: repo, number, labels.
         pub added_labels: Mutex<Vec<(String, u64, Vec<String>)>>,
         /// Change requests opened, in order (each is also set as its head branch's, numbered from 100).
@@ -421,6 +437,7 @@ pub mod testing {
                 logs: Default::default(),
                 change_comments_added: Default::default(),
                 issue_comments: Default::default(),
+                created_issues: Default::default(),
                 added_labels: Default::default(),
                 opened: Default::default(),
                 workflow_runs: Default::default(),
@@ -661,6 +678,25 @@ pub mod testing {
                 change_request: false,
             }))
         }
+        fn create_issue(&self, repo: &str, new: &NewIssue) -> Result<Issue, ForgeError> {
+            self.call(format!("create-issue {repo}"));
+            self.can(|c| c.issues, "issues")?;
+            self.failing()?;
+            let mut created = self.created_issues.lock().unwrap();
+            created.push((repo.into(), new.clone()));
+            let number = 499 + created.len() as u64;
+            let issue = Issue {
+                number,
+                title: new.title.clone(),
+                body: new.body.clone(),
+                url: format!("https://github.com/{repo}/issues/{number}"),
+                author: self.viewer_login()?,
+                labels: new.labels.clone(),
+                created_at: String::new(),
+            };
+            self.issues.lock().unwrap().entry(repo.into()).or_default().insert(0, issue.clone());
+            Ok(issue)
+        }
         fn comment_issue(&self, repo: &str, number: u64, body: &str) -> Result<String, ForgeError> {
             self.call(format!("comment-issue {repo} {number}"));
             self.can(|c| c.issues, "issues")?;
@@ -743,10 +779,22 @@ mod tests {
         assert!(matches!(f.change_reviews("o/r", 1), Err(ForgeError::Unsupported(_))));
         assert!(matches!(f.queue_runs("o/r"), Err(ForgeError::Unsupported(_))));
         assert!(matches!(f.release("o/r", None), Err(ForgeError::Unsupported(_))));
+        let new = NewIssue { title: "Crash".into(), body: String::new(), labels: vec![] };
+        assert!(matches!(f.create_issue("o/r", &new), Err(ForgeError::Unsupported(_))));
         assert!(matches!(
             f.run_workflow("o/r", "release.yml", "main", &BTreeMap::new()),
             Err(ForgeError::Unsupported(_))
         ));
         assert!(f.change_request("o/r", "b").is_ok(), "change requests and CI are every forge's");
+    }
+
+    #[test]
+    fn the_fake_opens_issues_it_can_then_read() {
+        let f = testing::FakeForge::default();
+        let new = NewIssue { title: "Crash".into(), body: "It fell over".into(), labels: vec!["bug".into()] };
+        let i = f.create_issue("o/r", &new).unwrap();
+        assert_eq!((i.number, i.url.as_str(), i.author.as_str()), (500, "https://github.com/o/r/issues/500", "me"));
+        assert_eq!(f.issue("o/r", 500).unwrap().unwrap().issue, i);
+        assert_eq!(*f.created_issues.lock().unwrap(), [("o/r".to_string(), new)]);
     }
 }

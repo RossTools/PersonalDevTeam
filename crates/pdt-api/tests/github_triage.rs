@@ -326,6 +326,43 @@ fn step<'a>(run: &'a Value, node: &str) -> &'a Value {
 }
 
 #[tokio::test]
+async fn a_workflow_files_a_ticket_as_an_issue() {
+    let env = setup().await;
+    let (s, t) = call(
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": "Crash on start", "description": "It falls over."})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    let file = action(
+        &env,
+        json!({"id": "act", "kind": "github.create_issue", "version": 1, "config": {
+            "ticket": "{{trigger.ticket}}", "labels": ["bug"]}}),
+    )
+    .await;
+    let r = run_now(&env, &file, json!({"ticket": t["key"]})).await;
+    let s = step(&r, "act");
+    assert_eq!(s["port"], "filed", "{r}");
+    assert_eq!(s["output"]["issue"], format!("{}#500", RELEASE_REPO.to_ascii_lowercase()));
+    assert_eq!(s["output"]["ticketKey"], t["key"]);
+    let made = env.gh.created_issues.lock().unwrap().clone();
+    assert_eq!((made[0].1.title.as_str(), made[0].1.body.as_str()), ("Crash on start", "It falls over."));
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{}", t["id"].as_str().unwrap()), None).await;
+    assert_eq!(t["external"][0]["url"], format!("https://github.com/{RELEASE_REPO}/issues/500"));
+    assert_eq!(t["source"], "user");
+
+    // A config with neither a title nor a ticket doesn't validate.
+    let doc = json!({"name": "Bad", "nodes": [
+        {"id": "start", "kind": "manual", "version": 1},
+        {"id": "act", "kind": "github.create_issue", "version": 1, "config": {"project": "PX"}}],
+      "edges": [{"from": "start", "to": "act"}]});
+    let (_, v) = call(&env.app, "POST", "/api/workflows/validate", Some(json!({"doc": doc}))).await;
+    assert!(v.to_string().contains("give a title, or a ticket to file"), "{v}");
+}
+
+#[tokio::test]
 async fn an_issue_is_imported_once_and_wont_do_closes_it_as_not_planned() {
     let env = setup().await;
     let slow = pdt_forge::Issue { url: "https://github.com/o/r/issues/9".into(), ..issue(9, "Slow board", &[]) };

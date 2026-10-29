@@ -282,6 +282,7 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `github.import` (`repo`, `number`, `project`: a PDT project, `priority`, `labels`; PDT-154) | `imported`, `exists` |
 | `github.comment` (`repo` + `number`, or `ticket`: its linked issue; `body`) | `out`, `unlinked` |
 | `github.close` (`repo` + `number`, or `ticket`; `reason: completed \| not_planned \| duplicate`, `duplicateOf` with `duplicate`, `comment`, `labels`) | `out`, `unlinked` |
+| `github.create_issue` (`ticket`, or `project`; `title`, `body`, `labels`; PDT-221) | `filed` |
 | `github.workflow.run` (`repo`: default the run's project's, `workflow`: its file, `ref` default `main`, `inputs`; PDT-194) | `out` |
 | `github.change_request` (`repo`, `branch` or `number`, `dryRunPort`; PDT-194; output `number`, `url`, `title`, `state`, `merged`, `headSha`) | `open`, `merged`, `closed`, `none` |
 | `github.release` (`repo`, `tag` or the latest, `newerThan`, `prereleases`; PDT-194; output `tag`, `name`, `url`, `publishedAt`) | `found`, `none` |
@@ -340,7 +341,9 @@ notify itself forever.
   keeps its others), posts `comment`, then closes it with REST's `state_reason` (`PATCH /repos/{repo}/issues/{n}`);
   `duplicate` reads `duplicateOf` (a number in the same repository, or `owner/name#n`) for its id and sends it as
   `duplicate_issue_id`, which is GitHub's Close as duplicate. Output `{issue, reason, duplicateOf, commentUrl,
-  labels}`. Neither is run again on its own.
+  labels}`. Neither is run again on its own. `github.create_issue` (an action, also the `issue_create` tool) files an
+  issue through the project's forge, from `ticket` (which then links it) or in `project`'s repository
+  ([github.md](github.md) "Filing issues").
 - Release actions (`workflow/nodes/release.rs`, PDT-194) go through the GitHub forge too (its `releases` capability
   for the workflow and release calls). Without `repo` they use the run's project's GitHub repository (its forge; a
   project not on GitHub is an error), so a host-wide workflow runs them in the project its Run now input names
