@@ -46,6 +46,7 @@ import type { Todo } from './gen/Todo';
 import type { TodoPatch } from './gen/TodoPatch';
 import type { SessionMode } from './gen/SessionMode';
 import type { TerminalSize } from './gen/TerminalSize';
+import type { CheckResponse } from './gen/CheckResponse';
 import type { UpdateStatus } from './gen/UpdateStatus';
 import type { WhoAmI } from './gen/WhoAmI';
 import type { Worktree } from './gen/Worktree';
@@ -481,7 +482,7 @@ export const api = {
   refreshRemote: () => request<RemoteStatus>('/api/host/remote/refresh', { method: 'POST' }),
   whoami: () => request<WhoAmI>('/api/host/whoami'),
   updateStatus: () => request<UpdateStatus>('/api/host/update'),
-  checkUpdate: () => request<UpdateStatus>('/api/host/update/check', { method: 'POST' }),
+  checkUpdate: () => request<CheckResponse>('/api/host/update/check', { method: 'POST' }),
   installUpdate: (force: boolean) =>
     request<UpdateStatus>('/api/host/update/install', { method: 'POST', body: JSON.stringify({ force }) }),
   dismissUpdateResult: () => request<void>('/api/host/update/dismiss', { method: 'POST' }),

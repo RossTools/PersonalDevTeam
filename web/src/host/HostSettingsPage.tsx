@@ -4,6 +4,7 @@ import { Alert, Badge, Button, Input, Link, Page, Section, Select, SettingsRow, 
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { BugReportSetting } from '../api/gen/BugReportSetting';
+import type { CheckResult } from '../api/gen/CheckResult';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { HostSettingsPatch } from '../api/gen/HostSettingsPatch';
 import type { HostSettingsView } from '../api/gen/HostSettingsView';
@@ -27,6 +28,18 @@ function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeT
     return t.state === 'expires_soon' ? { tone: 'waiting', text: `Expires soon (${when})` } : { tone: 'running', text: `Stored · expires ${when}` };
   }
   return { tone: 'running', text: 'Stored' };
+}
+
+/** What a check the user asked for found, said in the Version row; `fixToken` points at the token field. */
+function CheckFound({ r, fixToken }: { r: CheckResult; fixToken: () => void }) {
+  if (r.kind === 'upToDate') return <>You're up to date (v{r.version}).</>;
+  if (r.kind === 'available') return <>v{r.version} is available: install it from the banner at the top of the page.</>;
+  const tokenFix = r.reason === 'noToken' ? 'Add a token' : r.reason === 'tokenRejected' ? 'Replace the token' : null;
+  return (
+    <span className="text-destructive">
+      Couldn't check: {r.message}.{tokenFix && <> <Link onClick={fixToken}>{tokenFix}</Link></>}
+    </span>
+  );
 }
 
 const updatePolicies: { value: UpdatePolicy; label: string }[] = [
@@ -199,8 +212,22 @@ function Updates({ v }: { v: HostSettingsView }) {
     },
   });
   const tokenError = useFormError(token.error);
-  const [check, checking] = useAction(async () => qc.setQueryData(['host-update'], await api.checkUpdate()));
+  const tokenInput = useRef<HTMLInputElement>(null);
+  // The last check the button asked for, shown until another check (here or the background one) answers.
+  const [found, setFound] = useState<{ result: CheckResult; at: number | null } | null>(null);
+  const [check, checking] = useAction(async () => {
+    const { result, ...status } = await api.checkUpdate();
+    qc.setQueryData(['host-update'], status);
+    return { result, at: status.lastCheckedAt };
+  });
+  const checkNow = async () => {
+    const r = await check();
+    if (r) setFound(r);
+  };
   const u = update.data;
+  const shownFound = found && u && found.at === u.lastCheckedAt ? found.result : null;
+  // Focusing scrolls the field into view.
+  const fixToken = () => tokenInput.current?.focus();
   const updatesOff = u?.state === 'disabled';
   const badge = tokenBadge(v.tokenPresent, u?.token);
   const checked = u?.lastCheckedAt ? `Last checked ${new Date(u.lastCheckedAt).toLocaleString()}.` : null;
@@ -222,12 +249,13 @@ function Updates({ v }: { v: HostSettingsView }) {
         label={<span className="flex items-center gap-2">Version {u?.current ?? '…'} {u?.currentExperimental && <Badge>Experimental</Badge>}</span>}
         description={
           updatesOff ? `Updates are off: ${u.disabledReason ?? 'updates apply to the installed app'}.`
-            : u?.error ? <span className="text-destructive">{u.error}</span>
+            : shownFound ? <span role="status"><CheckFound r={shownFound} fixToken={fixToken} /> {shownFound.kind !== 'cannotCheck' && checked}</span>
+              : u?.error ? <span className="text-destructive">{u.error}</span>
               : checked
         }
       >
         {u?.state === 'available' && u.latest && <Badge tone="accent">v{u.latest.version} available{u.latest.experimental ? ' (experimental)' : ''}</Badge>}
-        {!updatesOff && <Button size="sm" pending={checking || u?.state === 'checking'} onClick={() => void check()}>Check for updates</Button>}
+        {!updatesOff && <Button size="sm" pending={checking || u?.state === 'checking'} onClick={() => void checkNow()}>Check for updates</Button>}
       </SettingsRow>
       <SettingsRow label="Install updates">
         <SaveNote s={policy} />
@@ -289,7 +317,7 @@ function Updates({ v }: { v: HostSettingsView }) {
           label={<span className="flex items-center gap-2">GitHub token {!v.tokenError && <Badge tone={badge.tone}>{badge.text}</Badge>}</span>}
           description={v.tokenPresent ? 'Kept in the OS keychain. Paste a new one to replace it.' : 'Lets this host read releases. Kept in the OS keychain.'}
         >
-          <Input aria-label="GitHub token" type="password" autoComplete="off" className="w-56" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
+          <Input ref={tokenInput} aria-label="GitHub token" type="password" autoComplete="off" className="w-56" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
           <Button type="submit" size="sm" variant="primary" disabled={!secret.trim()} pending={token.isPending}>Save token</Button>
         </SettingsRow>
         {tokenError}

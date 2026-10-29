@@ -6,7 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import type { SessionStatus } from '../api/gen/SessionStatus';
 import { PtySocket, ptyUrl, type PtyStatus } from './ptySocket';
-import { cssVar, terminalTheme } from './theme';
+import { cssVar, onThemeChange, terminalTheme } from './theme';
 import { NEWLINE, isShiftEnter, promptSequence, shouldOpenLink } from './input';
 import { linkUnderliner } from './linkSpan';
 import { Composer } from '../common/Composer';
@@ -240,9 +240,14 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
     const touch = touchGestures(el, term, () => setTouchSelection(true), () => setTouchSelection(false));
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleRefit);
     observer?.observe(el);
+    // xterm paints its own canvas, so a theme change (Light, Dark, or the OS's while on System) needs a new theme.
+    const unwatchTheme = onThemeChange(() => {
+      term.options.theme = terminalTheme();
+    });
     sock.connect();
     return () => {
       disposed = true;
+      unwatchTheme();
       observer?.disconnect();
       cancelAnimationFrame(frame);
       document.removeEventListener('mouseup', copySelection);

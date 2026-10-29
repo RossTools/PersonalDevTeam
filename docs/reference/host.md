@@ -133,6 +133,12 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   `X.Y.Z-exp.N` sorts after `X.Y.Z-exp.M` for M below N and before `X.Y.Z` itself). A check reads the newest release
   on the host's update channel (below) and offers it only when it is newer than the running version: an older or
   equal release is never installed (no downgrade).
+- "Check for updates" (PDT-223; Settings → This host → Updates, `POST /api/host/update/check`) answers the status
+  plus `result`, what this check found: `upToDate { version }` (the installed one), `available { version }`, or
+  `cannotCheck { reason, message }` with `reason` one of `disabled`, `noToken`, `tokenRejected`, `keychain`,
+  `network`, `github`, `unknownVersion` or `busy` (an update downloading or installing). The Version row says it
+  ("You're up to date (vX)", "vY is available…", "Couldn't check: …", with a link to the token field for `noToken`
+  and `tokenRejected`) until another check answers. The background check says nothing.
 - Update channel (PDT-210; Host settings → Updates → Update channel, `updateChannel` in host settings, `stable` by
   default):
   - `stable` reads `releases/latest`, which is never a draft or pre-release (a tag `vX.Y.Z-exp.N` there is refused).
@@ -246,7 +252,12 @@ pdtd (built with `cargo build -p pdtd`, or `--bin`) against a copy of a real dat
   the instance PDT is developed on, where it is `local`. `GET /api/bug-reports/preview` says which (`setting`,
   `route`, `repo`, `project`, `tokenPresent`) and returns the diagnostics as they would be sent; the form says where
   the report goes before it is sent.
-- **Filing.** `POST /api/bug-reports {title, description?, includeDiagnostics?, nonce?}`. `github`: an issue on the
+- **Filing.** `POST /api/bug-reports {title, description?, expected?, steps?, includeDiagnostics?, nonce?}`. The body
+  (`bug_report::body`) has the sections of the GitHub bug form (`.github/ISSUE_TEMPLATE/bug.yml`; a test keeps the
+  labels in step): `### What happened` (`description`), `### What you expected`, `### How to reproduce`, `### PDT
+  version`, `### OS` (only with the diagnostics, else `_Not shared_`; an empty one is `_No response_`, as GitHub
+  writes it), then the diagnostics. The repository's issue forms don't add `from-pdt`, so triage sees only reports
+  filed from PDT. `github`: an issue on the
   release repository with labels `bug` and `from-pdt`, filed with the update token (pdt-update `create_issue`; the
   token goes only to the API host and is never logged) → `{kind: "issue", number, url}`. `local`: a Draft ticket
   labelled `bug` in that project (diagnostics in its description), with no GitHub request → `{kind: "ticket", key, id,

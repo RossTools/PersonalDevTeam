@@ -74,7 +74,8 @@ async fn another_instance_files_an_issue_with_labels_and_redacted_diagnostics() 
 
     let (s, filed) = report(
         &env,
-        json!({"title": "Board freezes", "description": "Drag a card.", "includeDiagnostics": true, "nonce": "n1"}),
+        json!({"title": "Board freezes", "description": "It stops.", "expected": "It moves.", "steps": "Drag a card.",
+            "includeDiagnostics": true, "nonce": "n1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{filed}");
@@ -83,7 +84,12 @@ async fn another_instance_files_an_issue_with_labels_and_redacted_diagnostics() 
     assert_eq!(issue["title"], "Board freezes");
     assert_eq!(issue["labels"], json!(["bug", "from-pdt"]));
     let body = issue["body"].as_str().unwrap();
-    assert!(body.starts_with("Drag a card.") && body.contains("<details><summary>Diagnostics"), "{body}");
+    assert!(body.starts_with("### What happened\n\nIt stops.\n\n### What you expected\n\nIt moves.\n\n"), "{body}");
+    assert!(
+        body.contains("### How to reproduce\n\nDrag a card.") && body.contains("<details><summary>Diagnostics"),
+        "{body}"
+    );
+    assert!(body.contains(&format!("### OS\n\n{} (", std::env::consts::OS)), "{body}");
     assert!(body.contains("~/work/repo/x.rs") && body.contains("[redacted]"), "{body}");
     assert!(!body.contains(TOKEN) && !body.contains(&home), "{body}");
 
@@ -94,7 +100,7 @@ async fn another_instance_files_an_issue_with_labels_and_redacted_diagnostics() 
     let (_, second) = report(&env, json!({"title": "Other bug", "nonce": "n2"})).await;
     assert_eq!(second["number"], 102);
     let plain = env.gh.created.lock().unwrap()[1]["body"].as_str().unwrap().to_string();
-    assert!(!plain.contains("Diagnostics"), "{plain}");
+    assert!(!plain.contains("Diagnostics") && plain.contains("### OS\n\n_Not shared_"), "{plain}");
 }
 
 #[tokio::test]
@@ -115,7 +121,7 @@ async fn the_instance_with_the_release_project_files_a_draft_ticket_and_never_ca
     let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{}", filed["id"].as_str().unwrap()), None).await;
     assert_eq!((t["stage"].as_str(), t["labels"].clone()), (Some("draft"), json!(["bug"])));
     let d = t["description"].as_str().unwrap();
-    assert!(d.starts_with("Boom.") && d.contains("PDT version:"), "{d}");
+    assert!(d.starts_with("### What happened\n\nBoom.") && d.contains("PDT version:"), "{d}");
     assert_eq!(env.gh.request_count(), 0, "no GitHub request on the local route");
 
     // Choosing GitHub sends it there instead; off refuses.

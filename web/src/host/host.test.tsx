@@ -328,14 +328,66 @@ describe('HostSettingsPage', () => {
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
       'GET /api/connections': [],
-      'POST /api/host/update/check': update({ state: 'available', latest: release, lastCheckedAt: 1 }),
+      'POST /api/host/update/check': { ...update({ state: 'available', latest: release, lastCheckedAt: 1 }), result: { kind: 'available', version: '0.1.7' } },
     });
     renderWithQuery(<HostSettingsPage />);
     const updates = await screen.findByRole('region', { name: 'Updates' });
     await userEvent.click(within(updates).getByRole('button', { name: 'Check for updates' }));
     expect(await within(updates).findByText('v0.1.7 available')).toBeInTheDocument();
+    expect(within(updates).getByRole('status')).toHaveTextContent('v0.1.7 is available: install it from the banner');
     expect(calls.some((c) => c.method === 'POST' && c.path === '/api/host/update/check')).toBe(true);
     expect(screen.queryByRole('region', { name: 'Danger zone' })).toBeNull();
+  });
+
+  it('says when the host is already up to date', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView({ tokenPresent: true }),
+      'GET /api/host/update': update({ token: { state: 'valid', expiresAt: null } }),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+      'POST /api/host/update/check': { ...update({ lastCheckedAt: 5, token: { state: 'valid', expiresAt: null } }), result: { kind: 'upToDate', version: '0.1.6' } },
+    });
+    renderWithQuery(<HostSettingsPage />);
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    await userEvent.click(within(updates).getByRole('button', { name: 'Check for updates' }));
+    expect(await within(updates).findByRole('status')).toHaveTextContent("You're up to date (v0.1.6). Last checked");
+  });
+
+  it('says why it could not check, and points at the token field', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+      'POST /api/host/update/check': { ...update(), result: { kind: 'cannotCheck', reason: 'noToken', message: "no GitHub token is saved, so PDT can't read its releases" } },
+    });
+    renderWithQuery(<HostSettingsPage />);
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    await userEvent.click(within(updates).getByRole('button', { name: 'Check for updates' }));
+    expect(await within(updates).findByRole('status')).toHaveTextContent("Couldn't check: no GitHub token is saved");
+    await userEvent.click(within(updates).getByRole('link', { name: 'Add a token' }));
+    expect(screen.getByLabelText('GitHub token')).toHaveFocus();
+  });
+
+  it('says when GitHub could not be reached, with no token link', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView({ tokenPresent: true }),
+      'GET /api/host/update': update({ token: { state: 'valid', expiresAt: null } }),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+      'POST /api/host/update/check': {
+        ...update({ lastCheckedAt: 5, error: 'could not reach GitHub: timed out', token: { state: 'valid', expiresAt: null } }),
+        result: { kind: 'cannotCheck', reason: 'network', message: 'could not reach GitHub: timed out' },
+      },
+    });
+    renderWithQuery(<HostSettingsPage />);
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    await userEvent.click(within(updates).getByRole('button', { name: 'Check for updates' }));
+    expect(await within(updates).findByRole('status')).toHaveTextContent("Couldn't check: could not reach GitHub: timed out.");
+    expect(within(updates).queryByRole('link', { name: /token/ })).toBeNull();
   });
 
   it('shows why the settings failed to load instead of loading forever', async () => {
