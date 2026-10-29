@@ -11,6 +11,7 @@ import type { Health } from './gen/Health';
 import type { TicketDraft } from './gen/TicketDraft';
 import type { HostChecks } from './gen/HostChecks';
 import type { HostSettingsPatch } from './gen/HostSettingsPatch';
+import type { NetworkSettings } from './gen/NetworkSettings';
 import type { HostSettingsView } from './gen/HostSettingsView';
 import type { Branch } from './gen/Branch';
 import type { NewProject } from './gen/NewProject';
@@ -481,6 +482,11 @@ export const api = {
   hostSettings: () => request<HostSettingsView>('/api/host/settings'),
   saveHostSettings: (p: HostSettingsPatch) =>
     request<HostSettingsView>('/api/host/settings', { method: 'PUT', body: JSON.stringify(p) }),
+  /** Settings → Network (PDT-231): saved now, applied when PDT restarts. */
+  saveNetwork: (n: NetworkSettings) =>
+    request<HostSettingsView>('/api/host/network', { method: 'PUT', body: JSON.stringify(n) }),
+  /** Restart now: pdtd exits and its host supervisor starts it again (409 `not_supervised` without one). */
+  restartHost: () => request<void>('/api/host/restart', { method: 'POST' }),
   refreshRemote: () => request<RemoteStatus>('/api/host/remote/refresh', { method: 'POST' }),
   whoami: () => request<WhoAmI>('/api/host/whoami'),
   updateStatus: () => request<UpdateStatus>('/api/host/update'),

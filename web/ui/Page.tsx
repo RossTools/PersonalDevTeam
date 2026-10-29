@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react';
+import { createContext, useContext, useId, type ReactNode } from 'react';
 import { cn } from './lib/utils';
 
 export interface PageProps {
@@ -32,6 +32,37 @@ export function Page({ title, description, actions, children, className }: PageP
   );
 }
 
+/** The label of the section a `SettingsScreen` is about: that `Section`'s heading is the screen's title. */
+const ScreenLead = createContext<string | null>(null);
+
+export interface SettingsScreenProps {
+  /** Above the title: where the screen is ("This host", "Projects › PDT"). */
+  crumb?: ReactNode;
+  /** The label of the `Section` the screen shows: its heading and description become the screen's title. */
+  lead: string;
+  /** Above the sections: a load error, or a banner. */
+  notice?: ReactNode;
+  /** The `Section` labelled `lead`, and any more cards under their own small headings. */
+  children: ReactNode;
+  className?: string;
+}
+
+/**
+ * One section of a settings page on a screen of its own (PDT-231): a breadcrumb, the section's heading and description
+ * as the screen's title, then its card(s) of rows. Scrolls, max width 3xl, like `Page`.
+ */
+export function SettingsScreen({ crumb, lead, notice, children, className }: SettingsScreenProps) {
+  return (
+    <div className="min-h-0 flex-1 overflow-auto">
+      <article aria-label={lead} className={cn('flex max-w-3xl flex-col gap-6 p-4 text-sm sm:p-6', className)}>
+        {crumb != null && <nav aria-label="Breadcrumb" className="-mb-5 text-xs text-muted-foreground">{crumb}</nav>}
+        {notice}
+        <ScreenLead.Provider value={lead}>{children}</ScreenLead.Provider>
+      </article>
+    </div>
+  );
+}
+
 export interface SectionProps {
   /** The heading above the card. */
   label: ReactNode;
@@ -41,6 +72,8 @@ export interface SectionProps {
    * Secondary buttons; never a destructive one.
    */
   actions?: ReactNode;
+  /** Between the heading and the card: a banner about the whole section ("Restart PDT to apply"). */
+  notice?: ReactNode;
   /** Bottom of the card, right-aligned: a form section's Save (with its "Saved" note). */
   footer?: ReactNode;
   /**
@@ -59,19 +92,23 @@ export interface SectionProps {
 }
 
 /** A group on a `Page`: heading and description, then a card of rows split by lines, then an optional footer. */
-export function Section({ label, description, actions, footer, dirty, danger = false, children, className }: SectionProps) {
+export function Section({ label, description, actions, notice, footer, dirty, danger = false, children, className }: SectionProps) {
   const id = useId();
+  // The section a SettingsScreen is about: its heading is the screen's title.
+  const lead = useContext(ScreenLead) === label;
+  const Heading = lead ? 'h2' : 'h3';
   return (
-    <section aria-labelledby={id} className={cn('flex flex-col gap-2', className)}>
+    <section aria-labelledby={id} className={cn('flex flex-col', lead ? 'gap-4' : 'gap-2', className)}>
       <div className="flex flex-wrap items-end gap-x-4 gap-y-2 px-0.5">
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <h3 id={id} className={cn('text-sm font-semibold', danger ? 'text-destructive' : 'text-foreground')}>
+        <div className={cn('flex min-w-0 flex-1 flex-col', lead ? 'gap-1' : 'gap-0.5')}>
+          <Heading id={id} className={cn(lead ? 'text-lg font-semibold' : 'text-sm font-semibold', danger ? 'text-destructive' : 'text-foreground')}>
             {label}
-          </h3>
-          {description != null && <p className="text-xs text-muted-foreground">{description}</p>}
+          </Heading>
+          {description != null && <p className={cn(lead ? 'text-sm' : 'text-xs', 'text-muted-foreground')}>{description}</p>}
         </div>
         {actions != null && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
       </div>
+      {notice}
       <div
         data-slot="section-card"
         className={cn(

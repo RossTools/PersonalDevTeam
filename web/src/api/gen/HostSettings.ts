@@ -64,4 +64,9 @@ bugReports: BugReportSetting,
  * The GitHub repository (`owner/name`) to take updates from and file bug reports on instead of the built-in one:
  * an emergency override for a move redirects cannot cover (PDT-195). `PDT_RELEASE_REPO` overrides it.
  */
-releaseRepo: string | null, };
+releaseRepo: string | null, 
+/**
+ * The agent programs to launch instead of the ones found on the PATH (a full path, or `~/…`). The matching
+ * `PDT_CLAUDE_PROGRAM` / `PDT_CODEX_PROGRAM` / `PDT_DEVIN_PROGRAM` overrides each (PDT-231).
+ */
+claudeProgram: string | null, codexProgram: string | null, devinProgram: string | null, };

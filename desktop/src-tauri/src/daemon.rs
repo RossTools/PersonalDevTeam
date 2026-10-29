@@ -72,6 +72,16 @@ fn host_command(program: &Path, profile: Profile) -> Command {
 }
 
 /// The data dir pdt-host and pdtd use for `profile` (the tray never passes `PDT_DATA_DIR` on).
+/// pdtd's port: Settings → Network's (or the one a running pdtd still has), else the profile's.
+pub fn port(profile: Profile) -> u16 {
+    match data_dir(profile) {
+        Some(d) => pdt_host::config::current_port(&d, profile, |p| {
+            matches!(pdt_host::health::probe(p), pdt_host::health::Probe::Ours { .. })
+        }),
+        None => profile.port(),
+    }
+}
+
 pub fn data_dir(profile: Profile) -> Option<PathBuf> {
     Some(dirs::data_local_dir()?.join(profile.data_dir_name()))
 }

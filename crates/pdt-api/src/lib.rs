@@ -70,6 +70,7 @@ pub use local_forge::run_local_ci_watch;
 pub async fn shutdown_mcp(st: &AppState) {
     st.mcp.shutdown().await;
 }
+pub use host::HostEnv;
 pub use host_guard::{AllowedHosts, with_host_guard};
 pub use integrations::{Integration, Integrations, Registry, load_enabled as load_enabled_integrations, plugin_infos};
 pub use local_network::prompt as prompt_local_network;

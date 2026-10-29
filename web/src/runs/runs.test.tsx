@@ -386,7 +386,9 @@ describe('ProjectSettingsPanel', () => {
     const box = screen.getByRole('textbox', { name: 'Agent instructions' });
     await waitFor(() => expect(box).toHaveValue('Use make.'));
     await userEvent.type(box, ' Then test.');
-    await userEvent.click(screen.getByRole('button', { name: 'Save agent instructions' }));
+    // Saved when the field is left: no Save button.
+    expect(screen.queryByRole('button', { name: 'Save agent instructions' })).toBeNull();
+    await userEvent.tab();
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
     expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, agentInstructions: 'Use make. Then test.' });
   });

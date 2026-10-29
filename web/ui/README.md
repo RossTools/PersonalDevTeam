@@ -61,22 +61,27 @@ Plan: docs/superpowers/plans/2026-10-17-phase-3c-1-design-system.md. Mockup of t
 
 ## Settings pages
 
-Every settings page (host, project, and whatever comes next) is built the same way from `Page`, `Section` and
-`SettingsRow`, so a page reads the same everywhere and nothing destructive sits next to something routine:
+Every settings page (host, project, and whatever comes next) is built the same way from `Section` and `SettingsRow`,
+so a page reads the same everywhere and nothing destructive sits next to something routine:
 
-- **Page → Section cards → rows.** A `Section` is a heading (and description) over a bordered card; each child of
-  the card is a row, divided from the next. Group by what the user is configuring, not by API field; prefer more
-  small sections to one long one.
+- **One section per screen (PDT-231).** A page's sections are each a screen of their own, with a path
+  (`/settings/host/<slug>`, `/settings/projects/<KEY>/<slug>`), listed in the Settings sidebar (whose search matches
+  section names and the settings on them: `web/src/common/settingsSections.ts`). `SettingsScreens` (web/src/common)
+  shows one in a `SettingsScreen`: a breadcrumb, then the `Section` whose label is the screen's `lead`, whose heading
+  and description become the screen's title. More cards on the same screen (Agents' Programs) are `Section`s too,
+  under their own small headings. A single-screen page (Notifications, Secrets) is a `Page`.
+- **Section cards → rows.** A `Section` is a heading (and description) over a bordered card; each child of the card
+  is a row, divided from the next. Group by what the user is configuring, not by API field.
 - **One setting per row.** `SettingsRow`: label (and a one-line description) on the left, the control on the right.
   `stacked` for wide controls (text areas, file views, folder fields). State goes in a `Badge`/`StatusDot` in the
-  row (Active, Stored, Expired), not in prose.
-- **Saving (spec §6.1).** A switch or select saves at once and shows "Saved" beside it. Text fields belong to a
-  form: the whole section is the form and its one Save goes in the `footer` (with "Saved" beside it), enabled only
-  when dirty. A section saves only its own fields. A lone text field in a section of instant controls (a token, the
-  owner) may carry its Save beside it. Give a form's `Section` `dirty` too: on a phone its footer is then a Save bar
-  stuck to the bottom of the screen, shown only while something changed.
-- **Phones.** Below `md` a page with sections drills down (`SettingsScreens` in web/src/common): the page lists its
-  sections and each is a screen (and a path) of its own. Text fields and selects in a row take its full width.
+  row (Active, Stored, Expired, Found, `env`), not in prose.
+- **Saving: as you change (PDT-231).** Nothing has a Save button: a switch or select saves at once, text on blur or
+  Enter (`AutoSaveText`; Ctrl/⌘+Enter in a text area), and each shows "Saved ✓" beside it for a moment, or its error
+  (`AutoSaveRow`, `SaveStatus`, `useSaveState` in web/src/common/AutoSave.tsx). A failed save keeps the typed text;
+  Escape puts the stored value back. Only secrets and tokens, raw TOML (a project's host overrides) and the Danger
+  zone keep an explicit button. A setting the environment overrides shows an `env` badge and is read-only.
+- **Phones.** Below `md` a page's own path lists its sections; each is a screen of its own. Text fields and selects
+  in a row take its full width.
 - **Buttons are buttons.** In settings every action is a bordered `secondary` button (or `primary` for Save);
   `ghost` is for toolbars, and `Link` is only for navigating somewhere (a URL, another page), never for an action.
   Section-wide actions that change nothing (Check for updates, Run checks again) go in the section's `actions`.

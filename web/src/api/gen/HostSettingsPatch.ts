@@ -31,4 +31,8 @@ triagePerRepoHour?: number, bugReports?: BugReportSetting,
 /**
  * Blank clears it (back to the built-in release repository).
  */
-releaseRepo?: string, };
+releaseRepo?: string, 
+/**
+ * Blank clears it (back to the one on the PATH).
+ */
+claudeProgram?: string, codexProgram?: string, devinProgram?: string, };

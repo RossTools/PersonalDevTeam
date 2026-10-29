@@ -50,6 +50,9 @@ pub struct AppState {
     pub(crate) owner_cache: std::sync::Arc<std::sync::RwLock<Option<String>>>,
     /// The port pdtd listens on (0 in tests that do not serve). Tailscale maps 443 to it.
     pub listen_port: u16,
+    /// What overrides Settings → Network and the agent programs from the environment, Network as it was when pdtd
+    /// started, and whether pdt-host supervises it (so Restart now can work): PDT-231.
+    pub host_env: std::sync::Arc<crate::host::HostEnv>,
     /// The live Host/Origin allowlist (the guard and remote access share it).
     pub allowed_hosts: crate::host_guard::AllowedHosts,
     /// The Tailscale CLI. `new` installs [`pdt_tailscale::Unavailable`], which runs nothing; only pdtd's production
@@ -207,6 +210,7 @@ impl AppState {
             settings_lock: Default::default(),
             owner_cache: Default::default(),
             listen_port: 0,
+            host_env: Default::default(),
             allowed_hosts: Default::default(),
             tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
             github: github_api.clone(),
@@ -373,6 +377,8 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/health", get(move |st: State<AppState>| health(st, index.clone())))
         .route("/shutdown", axum::routing::post(request_shutdown))
         .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
+        .route("/host/network", axum::routing::put(crate::host::put_network))
+        .route("/host/restart", axum::routing::post(crate::host::post_restart))
         .route("/host/whoami", get(crate::identity_guard::whoami))
         .route("/ui/token", get(crate::untrusted::ui_token))
         .route("/host/checks", get(crate::checks::get_checks))

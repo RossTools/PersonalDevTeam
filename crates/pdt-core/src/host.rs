@@ -115,6 +115,11 @@ pub struct HostSettings {
     /// The GitHub repository (`owner/name`) to take updates from and file bug reports on instead of the built-in one:
     /// an emergency override for a move redirects cannot cover (PDT-195). `PDT_RELEASE_REPO` overrides it.
     pub release_repo: Option<String>,
+    /// The agent programs to launch instead of the ones found on the PATH (a full path, or `~/…`). The matching
+    /// `PDT_CLAUDE_PROGRAM` / `PDT_CODEX_PROGRAM` / `PDT_DEVIN_PROGRAM` overrides each (PDT-231).
+    pub claude_program: Option<String>,
+    pub codex_program: Option<String>,
+    pub devin_program: Option<String>,
 }
 
 /// A GitHub `owner/name`: two non-empty parts of letters, digits, `-`, `_` and `.`, neither `.` nor `..`.
@@ -146,6 +151,9 @@ impl Default for HostSettings {
             triage_per_repo_hour: DEFAULT_TRIAGE_PER_REPO,
             bug_reports: Default::default(),
             release_repo: None,
+            claude_program: None,
+            codex_program: None,
+            devin_program: None,
         }
     }
 }
@@ -214,6 +222,16 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub release_repo: Option<String>,
+    /// Blank clears it (back to the one on the PATH).
+    #[serde(default)]
+    #[ts(optional)]
+    pub claude_program: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub codex_program: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub devin_program: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -234,6 +252,8 @@ pub enum HostSettingsError {
     BadTriageCap,
     #[error("the release repository must be a GitHub owner/name, e.g. RossTools/PersonalDevTeam")]
     BadReleaseRepo,
+    #[error("an agent program must be a full path (or start with ~ for your home folder)")]
+    BadProgram,
 }
 
 impl HostSettings {
@@ -332,6 +352,19 @@ impl HostSettings {
             }
             s.release_repo = (!r.is_empty()).then(|| r.to_string());
         }
+        for (given, field) in [
+            (&p.claude_program, &mut s.claude_program),
+            (&p.codex_program, &mut s.codex_program),
+            (&p.devin_program, &mut s.devin_program),
+        ] {
+            if let Some(raw) = given {
+                let path = raw.trim();
+                if !path.is_empty() && !path.starts_with('~') && !std::path::Path::new(path).is_absolute() {
+                    return Err(HostSettingsError::BadProgram);
+                }
+                *field = (!path.is_empty()).then(|| path.to_string());
+            }
+        }
         Ok(s)
     }
 }
@@ -339,6 +372,17 @@ impl HostSettings {
 /// The project's own choice when it has one, else the host's.
 pub fn effective_credentials(host: CredentialPolicy, project: Option<CredentialPolicy>) -> CredentialPolicy {
     project.unwrap_or(host)
+}
+
+impl HostSettings {
+    /// The agent program the host setting names, if any.
+    pub fn program(&self, agent: AgentKind) -> Option<&str> {
+        match agent {
+            AgentKind::Claude => self.claude_program.as_deref(),
+            AgentKind::Codex => self.codex_program.as_deref(),
+            AgentKind::Devin => self.devin_program.as_deref(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -489,6 +533,29 @@ mod tests {
         assert_eq!(effective_credentials(Subscription, None), Subscription);
         assert_eq!(effective_credentials(Subscription, Some(PassThrough)), PassThrough);
         assert_eq!(effective_credentials(PassThrough, Some(Subscription)), Subscription);
+    }
+
+    #[test]
+    fn agent_programs_are_full_paths_and_blank_clears_them() {
+        let s = HostSettings::default();
+        let abs = std::env::temp_dir().join("bin").join("claude").to_string_lossy().into_owned();
+        let set = s
+            .apply(&HostSettingsPatch {
+                claude_program: Some(format!(" {abs} ")),
+                devin_program: Some("~/bin/devin".into()),
+                ..patch()
+            })
+            .unwrap();
+        assert_eq!(set.program(AgentKind::Claude), Some(abs.as_str()));
+        assert_eq!(set.program(AgentKind::Devin), Some("~/bin/devin"));
+        assert_eq!(set.program(AgentKind::Codex), None);
+        assert_eq!(
+            s.apply(&HostSettingsPatch { codex_program: Some("codex".into()), ..patch() }),
+            Err(HostSettingsError::BadProgram)
+        );
+        let cleared = set.apply(&HostSettingsPatch { claude_program: Some(" ".into()), ..patch() }).unwrap();
+        assert_eq!(cleared.claude_program, None);
+        assert_eq!(cleared.devin_program.as_deref(), Some("~/bin/devin"));
     }
 
     #[test]

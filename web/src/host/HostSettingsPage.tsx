@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Badge, Button, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, type BadgeTone, type Status } from '@ui';
+import { Alert, Badge, Button, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, useThemePref, type BadgeTone, type Status, type ThemePref } from '@ui';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { BugReportSetting } from '../api/gen/BugReportSetting';
@@ -12,7 +12,10 @@ import type { SessionMode } from '../api/gen/SessionMode';
 import type { TokenState } from '../api/gen/TokenState';
 import type { UpdateChannel } from '../api/gen/UpdateChannel';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
+import type { NetworkSettings } from '../api/gen/NetworkSettings';
+import { AutoSaveText, SaveStatus, useSaveState } from '../common/AutoSave';
 import { FolderField } from '../common/FolderField';
+import { HOST_SECTIONS } from '../common/settingsSections';
 import { SettingsScreens } from '../common/SettingsScreens';
 import { useAction } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
@@ -82,35 +85,25 @@ const credentialPolicies: { value: CredentialPolicy; label: string }[] = [
 ];
 
 /**
- * Saves a host settings patch. Controls that save immediately (switch, select) show "Saved" for two seconds or their
- * error next to them; forms show the error in an Alert under the form (spec §6.1, §6.3).
+ * Saves a host settings patch. Every setting saves as it changes (PDT-231): a control that saves at once shows
+ * "Saved" for a moment or its error beside it (`SaveNote`).
  */
 function useSaveSettings() {
   const qc = useQueryClient();
-  const [saved, setSaved] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
+  const [state, track] = useSaveState();
   const m = useMutation({
     mutationFn: (p: HostSettingsPatch) => api.saveHostSettings(p),
-    onMutate: () => setSaved(false),
-    onSuccess: (v) => {
-      qc.setQueryData(['host-settings'], v);
-      setSaved(true);
-      clearTimeout(timer.current);
-      timer.current = setTimeout(() => setSaved(false), 2000);
-    },
+    onSuccess: (v) => qc.setQueryData(['host-settings'], v),
   });
-  return { ...m, saved };
+  return { ...m, state, save: (p: HostSettingsPatch) => track(m.mutateAsync(p)), saveText: (p: HostSettingsPatch) => m.mutateAsync(p) };
 }
 
 /** "Saved" or the error, next to a control that saves immediately. */
 function SaveNote({ s }: { s: ReturnType<typeof useSaveSettings> }) {
-  if (s.isError) return <span role="alert" className="text-xs text-destructive">{s.error.message}</span>;
-  if (s.saved) return <span role="status" className="text-xs text-muted-foreground">Saved</span>;
-  return null;
+  return <SaveStatus state={s.state} />;
 }
 
-/** A form inside a section: Enter submits, focus moves to its error Alert when the save fails. */
+/** A form inside a section (secrets and tokens keep an explicit Save): focus moves to its error Alert when it fails. */
 function useFormError(error: Error | null) {
   const id = useId();
   useEffect(() => {
@@ -126,9 +119,9 @@ function submit(fn: () => void) {
   };
 }
 
-/** "Saved" (or nothing) beside a form section's Save. */
-function SavedNote({ show }: { show: boolean }) {
-  return show ? <span role="status" className="text-xs text-muted-foreground">Saved</span> : null;
+/** "env" beside a setting the environment sets: read-only here. */
+function EnvBadge({ name }: { name: string }) {
+  return <Badge title={`Set by ${name}`}>env</Badge>;
 }
 
 function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
@@ -136,8 +129,6 @@ function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
   const qc = useQueryClient();
   const toggle = useSaveSettings();
   const owner = useSaveSettings();
-  const [login, setLogin] = useState(s.ownerLogin ?? '');
-  useEffect(() => setLogin(s.ownerLogin ?? ''), [s.ownerLogin]);
   const [retry, retrying] = useAction(async () => {
     try {
       await api.refreshRemote();
@@ -145,8 +136,6 @@ function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
       void qc.invalidateQueries({ queryKey: ['host-settings'] });
     }
   });
-  const ownerError = useFormError(owner.error);
-  const dirty = login.trim() !== (s.ownerLogin ?? '');
   const [tone, text]: [BadgeTone, string] = v.remote.active
     ? ['running', 'Active']
     : v.remote.error
@@ -158,7 +147,7 @@ function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
     <Section label="Remote access" description="Reach this host from your other devices over Tailscale.">
       <SettingsRow label="Serve on the tailnet" description="Over HTTPS, through tailscale serve.">
         <SaveNote s={toggle} />
-        <Switch aria-label="Remote access" checked={s.remoteAccess} onChange={(on) => toggle.mutate({ remoteAccess: on })} />
+        <Switch aria-label="Remote access" checked={s.remoteAccess} onChange={(on) => void toggle.save({ remoteAccess: on })} />
       </SettingsRow>
       <SettingsRow
         label="Status"
@@ -171,21 +160,23 @@ function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
         <Badge tone={tone}>{text}</Badge>
         <Button size="sm" pending={retrying} onClick={() => void retry()}>Check again</Button>
       </SettingsRow>
-      <form onSubmit={submit(() => { if (dirty) owner.mutate({ ownerLogin: login.trim() }); })} className="flex flex-col gap-2">
-        <SettingsRow
-          label="Owner"
-          description={v.ownerFromEnv ? 'Set by PDT_OWNER_LOGIN.' : 'Only this Tailscale user gets in.'}
-        >
-          <Input aria-label="Owner login" className="w-56" value={v.ownerFromEnv ?? login} disabled={!!v.ownerFromEnv} onChange={(e) => setLogin(e.target.value)} />
-          {!v.ownerFromEnv && me && me !== s.ownerLogin && (
-            <Button size="sm" onClick={() => owner.mutate({ ownerLogin: me })}>Use {me}</Button>
-          )}
-          {!v.ownerFromEnv && (
-            <Button type="submit" size="sm" variant="primary" aria-label="Save owner" disabled={!dirty} pending={owner.isPending && owner.variables?.ownerLogin === login.trim()}>Save</Button>
-          )}
-        </SettingsRow>
-        {ownerError}
-      </form>
+      <SettingsRow
+        label="Owner"
+        description={v.ownerFromEnv ? 'Set by PDT_OWNER_LOGIN, which wins over this setting.' : 'Only this Tailscale user gets in.'}
+      >
+        {v.ownerFromEnv ? (
+          <>
+            <EnvBadge name="PDT_OWNER_LOGIN" />
+            <Input aria-label="Owner login" className="w-56" value={v.ownerFromEnv} disabled />
+          </>
+        ) : (
+          <>
+            <SaveNote s={owner} />
+            <AutoSaveText aria-label="Owner login" className="w-56" value={s.ownerLogin ?? ''} onSave={(ownerLogin) => owner.saveText({ ownerLogin })} />
+            {me && me !== s.ownerLogin && <Button size="sm" onClick={() => void owner.save({ ownerLogin: me })}>Use {me}</Button>}
+          </>
+        )}
+      </SettingsRow>
     </Section>
   );
 }
@@ -197,10 +188,6 @@ function Updates({ v }: { v: HostSettingsView }) {
   const channel = useSaveSettings();
   const interval = useSaveSettings();
   const repoSave = useSaveSettings();
-  const [repo, setRepo] = useState(v.settings.releaseRepo ?? '');
-  useEffect(() => setRepo(v.settings.releaseRepo ?? ''), [v.settings.releaseRepo]);
-  const repoError = useFormError(repoSave.error);
-  const repoDirty = repo.trim() !== (v.settings.releaseRepo ?? '');
   const [secret, setSecret] = useState('');
   const token = useMutation({
     mutationFn: (t: string) => api.saveToken(t),
@@ -241,7 +228,10 @@ function Updates({ v }: { v: HostSettingsView }) {
     : u?.currentExperimental
       ? `This host stays on the experimental build v${u.current} until a newer stable release exists.`
       : 'Full releases only.';
-  const saveRepo = (r: string) => repoSave.mutate({ releaseRepo: r }, { onSuccess: () => void qc.invalidateQueries({ queryKey: ['host-update'] }) });
+  const saveRepo = async (r: string) => {
+    await repoSave.saveText({ releaseRepo: r });
+    void qc.invalidateQueries({ queryKey: ['host-update'] });
+  };
   return (
     <Section label="Updates" description="New releases of PDT, from GitHub.">
       <SettingsRow
@@ -258,7 +248,7 @@ function Updates({ v }: { v: HostSettingsView }) {
       </SettingsRow>
       <SettingsRow label="Install updates">
         <SaveNote s={policy} />
-        <Select aria-label="Update policy" className="w-64" options={updatePolicies} value={v.settings.updatePolicy} onChange={(p) => policy.mutate({ updatePolicy: p })} />
+        <Select aria-label="Update policy" className="w-64" options={updatePolicies} value={v.settings.updatePolicy} onChange={(p) => void policy.save({ updatePolicy: p })} />
       </SettingsRow>
       <SettingsRow label="Update channel" description={channelNote}>
         <SaveNote s={channel} />
@@ -268,7 +258,7 @@ function Updates({ v }: { v: HostSettingsView }) {
           options={updateChannels}
           value={v.settings.updateChannel}
           // Checks again at once, so an update the other channel offered isn't left showing.
-          onChange={(c) => channel.mutate({ updateChannel: c }, { onSuccess: () => { if (!updatesOff) void check(); } })}
+          onChange={(c) => void channel.save({ updateChannel: c }).then((ok) => { if (ok && !updatesOff) void check(); })}
         />
       </SettingsRow>
       <SettingsRow label="Check for updates" description={v.settings.updatePolicy === 'manual' ? 'Off while updates are manual.' : undefined}>
@@ -279,28 +269,28 @@ function Updates({ v }: { v: HostSettingsView }) {
           options={intervalOptions(v.settings.updateCheckMinutes)}
           value={String(v.settings.updateCheckMinutes)}
           disabled={v.settings.updatePolicy === 'manual'}
-          onChange={(m) => interval.mutate({ updateCheckMinutes: Number(m) })}
+          onChange={(m) => void interval.save({ updateCheckMinutes: Number(m) })}
         />
       </SettingsRow>
-      <form onSubmit={submit(() => { if (repoDirty) saveRepo(repo.trim()); })} className="flex flex-col gap-2">
-        <SettingsRow label="Release repository" description={repoNote}>
-          <Input
-            aria-label="Release repository"
-            className="w-56"
-            value={fromEnv ? where.repo : repo}
-            disabled={fromEnv}
-            placeholder={where?.overriddenBy ? undefined : where?.repo}
-            onChange={(e) => setRepo(e.target.value)}
-          />
-          {!fromEnv && v.settings.releaseRepo && (
-            <Button size="sm" onClick={() => saveRepo('')}>Use the built-in one</Button>
-          )}
-          {!fromEnv && (
-            <Button type="submit" size="sm" variant="primary" aria-label="Save release repository" disabled={!repoDirty} pending={repoSave.isPending}>Save</Button>
-          )}
-        </SettingsRow>
-        {repoError}
-      </form>
+      <SettingsRow label="Release repository" description={repoNote}>
+        {fromEnv ? (
+          <>
+            <EnvBadge name="PDT_RELEASE_REPO" />
+            <Input aria-label="Release repository" className="w-56" value={where.repo} disabled />
+          </>
+        ) : (
+          <>
+            <AutoSaveText
+              aria-label="Release repository"
+              className="w-56"
+              value={v.settings.releaseRepo ?? ''}
+              placeholder={where?.overriddenBy ? undefined : where?.repo}
+              onSave={saveRepo}
+            />
+            {v.settings.releaseRepo && <Button size="sm" onClick={() => void saveRepo('')}>Use the built-in one</Button>}
+          </>
+        )}
+      </SettingsRow>
       {v.tokenError && (
         <Alert tone="error" title="Token: cannot be read.">
           <p>{v.tokenError}</p>
@@ -328,42 +318,25 @@ function Updates({ v }: { v: HostSettingsView }) {
 function Runs({ v }: { v: HostSettingsView }) {
   const s = v.settings;
   const save = useSaveSettings();
-  const initial = { start: String(s.runPorts.start), end: String(s.runPorts.end), max: String(s.maxConcurrentRuns) };
-  const [form, setForm] = useState(initial);
-  useEffect(() => setForm({ start: String(s.runPorts.start), end: String(s.runPorts.end), max: String(s.maxConcurrentRuns) }), [s.runPorts.start, s.runPorts.end, s.maxConcurrentRuns]);
-  const error = useFormError(save.error);
-  const portsChanged = Number(form.start) !== s.runPorts.start || Number(form.end) !== s.runPorts.end;
-  const maxChanged = Number(form.max) !== s.maxConcurrentRuns;
-  const maxId = useId();
+  const port = (text: string) => {
+    const n = Number(text);
+    if (!/^\d+$/.test(text) || n > 65535) throw new Error('a port is a number up to 65535');
+    return n;
+  };
   return (
-    <form
-      onSubmit={submit(() => save.mutate({
-        ...(portsChanged ? { runPorts: { start: Number(form.start), end: Number(form.end) } } : {}),
-        ...(maxChanged ? { maxConcurrentRuns: Number(form.max) } : {}),
-      }))}
-    >
-      <Section
-        label="Runs"
-        description="Dev instances and other runs started from a branch."
-        dirty={portsChanged || maxChanged}
-        footer={
-          <>
-            <SavedNote show={save.saved && !portsChanged && !maxChanged} />
-            <Button type="submit" size="sm" variant="primary" aria-label="Save run settings" disabled={!portsChanged && !maxChanged} pending={save.isPending}>Save</Button>
-          </>
-        }
-      >
-        <SettingsRow label="Ports" description="Runs get a port from this range.">
-          <Input aria-label="First run port" inputMode="numeric" className="w-20" value={form.start} onChange={(e) => setForm({ ...form, start: e.target.value })} />
-          <span className="text-muted-foreground">–</span>
-          <Input aria-label="Last run port" inputMode="numeric" className="w-20" value={form.end} onChange={(e) => setForm({ ...form, end: e.target.value })} />
-        </SettingsRow>
-        <SettingsRow label="Max concurrent runs" htmlFor={maxId}>
-          <Input id={maxId} type="number" min={1} max={32} className="w-20" value={form.max} onChange={(e) => setForm({ ...form, max: e.target.value })} />
-        </SettingsRow>
-        {error}
-      </Section>
-    </form>
+    <Section label="Runs" description="Dev instances and other runs started from a branch.">
+      <SettingsRow label="Ports" description="Runs get a port from this range.">
+        <AutoSaveText aria-label="First run port" inputMode="numeric" className="w-20" value={String(s.runPorts.start)}
+          onSave={async (t) => save.saveText({ runPorts: { start: port(t), end: s.runPorts.end } })} />
+        <span className="text-muted-foreground">–</span>
+        <AutoSaveText aria-label="Last run port" inputMode="numeric" className="w-20" value={String(s.runPorts.end)}
+          onSave={async (t) => save.saveText({ runPorts: { start: s.runPorts.start, end: port(t) } })} />
+      </SettingsRow>
+      <SettingsRow label="Max concurrent runs">
+        <AutoSaveText aria-label="Max concurrent runs" type="number" min={1} max={32} className="w-20" value={String(s.maxConcurrentRuns)}
+          onSave={async (t) => save.saveText({ maxConcurrentRuns: Number(t) })} />
+      </SettingsRow>
+    </Section>
   );
 }
 
@@ -378,11 +351,11 @@ function Agents({ v }: { v: HostSettingsView }) {
     <Section label="Agents">
       <SettingsRow label="Default agent" description="Picked first when you start a ticket, and listed first for a new tab and in the palette.">
         <SaveNote s={agent} />
-        <Select aria-label="Default agent" className="w-40" options={agentChoices} value={v.settings.defaultAgent} onChange={(a) => agent.mutate({ defaultAgent: a })} />
+        <Select aria-label="Default agent" className="w-40" options={agentChoices} value={v.settings.defaultAgent} onChange={(a) => void agent.save({ defaultAgent: a })} />
       </SettingsRow>
       <SettingsRow label="Default view" description="Whether a new agent session is a conversation or the agent's own terminal. You can switch a session later.">
         <SaveNote s={view} />
-        <Select aria-label="Default view" className="w-40" options={viewChoices} value={v.settings.defaultSessionMode} onChange={(m) => view.mutate({ defaultSessionMode: m })} />
+        <Select aria-label="Default view" className="w-40" options={viewChoices} value={v.settings.defaultSessionMode} onChange={(m) => void view.save({ defaultSessionMode: m })} />
       </SettingsRow>
       <SettingsRow label="Ticket permissions" description="The permission mode a ticket's Start picks first. In an agent's terminal only Bypass changes anything.">
         <SaveNote s={ticketMode} />
@@ -391,7 +364,7 @@ function Agents({ v }: { v: HostSettingsView }) {
           size="md"
           className="w-48"
           value={v.settings.ticketPermissionMode}
-          onChange={(m) => ticketMode.mutate({ ticketPermissionMode: m })}
+          onChange={(m) => void ticketMode.save({ ticketPermissionMode: m })}
         />
       </SettingsRow>
       <SettingsRow label="Session permissions" description="The permission mode a new session picks first (the new tab chooser).">
@@ -401,7 +374,7 @@ function Agents({ v }: { v: HostSettingsView }) {
           size="md"
           className="w-48"
           value={v.settings.sessionPermissionMode}
-          onChange={(m) => sessionMode.mutate({ sessionPermissionMode: m })}
+          onChange={(m) => void sessionMode.save({ sessionPermissionMode: m })}
         />
       </SettingsRow>
       <SettingsRow
@@ -414,13 +387,185 @@ function Agents({ v }: { v: HostSettingsView }) {
           className="w-40"
           options={[{ value: '0', label: 'No cap' }, ...[1, 2, 3, 4, 6, 8, 12, 16].map((n) => ({ value: String(n), label: String(n) }))]}
           value={String(v.settings.maxAgentTurns)}
-          onChange={(n) => turns.mutate({ maxAgentTurns: Number(n) })}
+          onChange={(n) => void turns.save({ maxAgentTurns: Number(n) })}
         />
       </SettingsRow>
       <TriageCaps v={v} />
       <SettingsRow label="Credentials" description="Subscription removes ANTHROPIC_API_KEY and OPENAI_API_KEY from agents' environment; pass through keeps them (API keys, Bedrock/Vertex, proxies). A project can override it.">
         <SaveNote s={save} />
-        <Select aria-label="Host agent credentials" className="w-72 max-w-full" options={credentialPolicies} value={v.settings.agentCredentials} onChange={(c) => save.mutate({ agentCredentials: c })} />
+        <Select aria-label="Host agent credentials" className="w-72 max-w-full" options={credentialPolicies} value={v.settings.agentCredentials} onChange={(c) => void save.save({ agentCredentials: c })} />
+      </SettingsRow>
+    </Section>
+  );
+}
+
+const PROGRAM_NAMES: Record<AgentKind, string> = { claude: 'Claude Code', codex: 'Codex', devin: 'Devin' };
+const PROGRAM_FIELD: Record<AgentKind, 'claudeProgram' | 'codexProgram' | 'devinProgram'> = {
+  claude: 'claudeProgram',
+  codex: 'codexProgram',
+  devin: 'devinProgram',
+};
+
+/**
+ * Where each agent's program is (PDT-231): found on the PATH unless a path is set here. Its environment variable wins
+ * over the setting, which then shows read-only.
+ */
+function Programs({ v }: { v: HostSettingsView }) {
+  const save = useSaveSettings();
+  const qc = useQueryClient();
+  return (
+    <Section label="Programs" description="Where each agent's program is. Leave a path empty to use the one on the PATH; new sessions use a change.">
+      {v.programs.map((p) => {
+        const name = PROGRAM_NAMES[p.agent];
+        const setting = v.settings[PROGRAM_FIELD[p.agent]] ?? '';
+        const description = p.fromEnv ? `Set by ${p.envVar}, which wins over this setting.`
+          : p.found ? (setting ? `Found at ${p.found}.` : `Found on the PATH: ${p.found}. Set a path to use another one.`)
+            : setting ? 'Not found at this path.' : `Not found on the PATH. Install it or give its path.`;
+        return (
+          <SettingsRow key={p.agent} label={name} description={description}>
+            {p.fromEnv ? <EnvBadge name={p.envVar} /> : p.found ? <Badge tone="running">Found</Badge> : <Badge tone={p.agent === 'devin' ? 'neutral' : 'failed'}>Missing</Badge>}
+            {p.fromEnv ? (
+              <Input aria-label={`${name} program`} mono className="w-64 max-w-full" value={p.fromEnv} disabled />
+            ) : (
+              <AutoSaveText
+                aria-label={`${name} program`}
+                mono
+                className="w-64 max-w-full"
+                spellCheck={false}
+                placeholder={p.found ?? `/path/to/${p.agent}`}
+                value={setting}
+                onSave={async (path) => {
+                  await save.saveText({ [PROGRAM_FIELD[p.agent]]: path });
+                  // The agents offered (and their logins) follow the new program.
+                  void qc.invalidateQueries({ queryKey: ['host-checks'] });
+                }}
+              />
+            )}
+          </SettingsRow>
+        );
+      })}
+    </Section>
+  );
+}
+
+/** Whether the page is open on this machine, so a new port can be reached at the same host name. */
+const isLocal = (hostname: string) => ['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostname);
+
+/** Waits (up to a minute) until something answers at `origin`, then opens the same page there. */
+async function reopenAt(origin: string) {
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try {
+      await fetch(`${origin}/api/health`, { mode: 'no-cors', cache: 'no-store' });
+      window.location.assign(`${origin}${window.location.pathname}`);
+      return;
+    } catch {
+      // Not up yet.
+    }
+  }
+}
+
+/**
+ * Where PDT listens (PDT-231): its port and the extra host names its UI may be opened from. Kept on this host and
+ * applied when PDT restarts: a banner offers Restart now (through pdt-host). PDT_PORT and PDT_ALLOWED_HOSTS win.
+ */
+function Network({ v }: { v: HostSettingsView }) {
+  const qc = useQueryClient();
+  const n = v.network;
+  const save = (next: NetworkSettings) => api.saveNetwork(next).then((view) => qc.setQueryData(['host-settings'], view));
+  const [restarting, setRestarting] = useState(false);
+  const [restart, asking] = useAction(async () => {
+    const port = n.portFromEnv ?? n.settings.port ?? n.defaultPort;
+    await api.restartHost();
+    setRestarting(true);
+    if (port !== n.listenPort && isLocal(window.location.hostname)) {
+      await reopenAt(`${window.location.protocol}//${window.location.hostname}:${port}`);
+    } else {
+      // The same address: the page reconnects by itself once PDT answers again.
+      window.setTimeout(() => void qc.invalidateQueries({ queryKey: ['host-settings'] }), 5000);
+    }
+  });
+  const portText = n.settings.port === null ? '' : String(n.settings.port);
+  return (
+    <Section
+      label="Network"
+      description="Where PDT listens. Changes apply after a restart."
+      notice={n.restartNeeded && (
+        <Alert
+          tone="warning"
+          action={n.canRestart && <Button size="sm" variant="primary" pending={asking || restarting} onClick={() => void restart()}>Restart now</Button>}
+        >
+          {restarting ? 'Restarting PDT…'
+            : n.canRestart ? 'Restart PDT to use the new settings. Its sessions are interrupted and resume when it is back.'
+              : 'Restart PDT to use the new settings: this one was not started by its host supervisor, so stop it and start it again.'}
+        </Alert>
+      )}
+    >
+      <SettingsRow
+        label="Port"
+        description={n.portFromEnv !== null ? 'Set by PDT_PORT, which wins over this setting.'
+          : `PDT's web UI and API (default ${n.defaultPort}; now ${n.listenPort}). Leave it empty for the default.`}
+      >
+        {n.portFromEnv !== null ? (
+          <>
+            <EnvBadge name="PDT_PORT" />
+            <Input aria-label="Port" className="w-24" value={String(n.portFromEnv)} disabled />
+          </>
+        ) : (
+          <AutoSaveText
+            aria-label="Port"
+            inputMode="numeric"
+            className="w-24"
+            placeholder={String(n.defaultPort)}
+            value={portText}
+            onSave={async (t) => {
+              if (t && (!/^\d+$/.test(t) || Number(t) > 65535)) throw new Error('a port is a number up to 65535');
+              await save({ ...n.settings, port: t ? Number(t) : null });
+            }}
+          />
+        )}
+      </SettingsRow>
+      <SettingsRow
+        label="Allowed hosts"
+        description={n.allowedHostsFromEnv !== null ? 'Set by PDT_ALLOWED_HOSTS, which wins over this setting.'
+          : 'Other host names the UI may be opened from, with :port when needed; comma-separated. localhost and the tailnet name remote access uses are always allowed.'}
+      >
+        {n.allowedHostsFromEnv !== null ? (
+          <>
+            <EnvBadge name="PDT_ALLOWED_HOSTS" />
+            <Input aria-label="Allowed hosts" className="w-72 max-w-full" value={n.allowedHostsFromEnv.join(', ')} disabled />
+          </>
+        ) : (
+          <AutoSaveText
+            aria-label="Allowed hosts"
+            mono
+            className="w-72 max-w-full"
+            placeholder="pdt.local:7420"
+            value={n.settings.allowedHosts.join(', ')}
+            onSave={(t) => save({ ...n.settings, allowedHosts: t.split(',').map((h) => h.trim()).filter(Boolean) })}
+          />
+        )}
+      </SettingsRow>
+    </Section>
+  );
+}
+
+const themeChoices: { value: ThemePref; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'light', label: 'Light' },
+];
+
+/** The theme (PDT-231): the same choice as the switch in the rail, kept in this browser. */
+function Appearance() {
+  const [theme, setTheme] = useThemePref();
+  const [state, track] = useSaveState();
+  return (
+    <Section label="Appearance" description="How PDT looks in this browser. The same choice as the switch in the side rail.">
+      <SettingsRow label="Theme" description="System follows your computer's light or dark mode.">
+        <SaveStatus state={state} />
+        <Select<ThemePref> aria-label="Theme" className="w-40" options={themeChoices} value={theme}
+          onChange={(t) => void track(Promise.resolve(setTheme(t)))} />
       </SettingsRow>
     </Section>
   );
@@ -448,7 +593,7 @@ function TriageCaps({ v }: { v: HostSettingsView }) {
           className="w-40"
           options={options(v.settings.triagePerAuthorHour)}
           value={String(v.settings.triagePerAuthorHour)}
-          onChange={(n) => author.mutate({ triagePerAuthorHour: Number(n) })}
+          onChange={(n) => void author.save({ triagePerAuthorHour: Number(n) })}
         />
       </SettingsRow>
       <SettingsRow label="Triage per repository" description="The same for each repository (or webhook).">
@@ -458,7 +603,7 @@ function TriageCaps({ v }: { v: HostSettingsView }) {
           className="w-40"
           options={options(v.settings.triagePerRepoHour)}
           value={String(v.settings.triagePerRepoHour)}
-          onChange={(n) => repo.mutate({ triagePerRepoHour: Number(n) })}
+          onChange={(n) => void repo.save({ triagePerRepoHour: Number(n) })}
         />
       </SettingsRow>
     </>
@@ -468,35 +613,25 @@ function TriageCaps({ v }: { v: HostSettingsView }) {
 function ProjectsFolder({ v }: { v: HostSettingsView }) {
   const saved = v.settings.projectsDir ?? '';
   const save = useSaveSettings();
-  const [dir, setDir] = useState(saved);
-  useEffect(() => setDir(saved), [saved]);
-  const error = useFormError(save.error);
-  const dirty = dir.trim() !== saved;
+  const [dir, setDir] = useState<string | null>(null);
+  const commit = (value: string) => {
+    if (value.trim() === saved) return setDir(null);
+    void save.save({ projectsDir: value }).then((ok) => { if (ok) setDir(null); });
+  };
   return (
-    <form onSubmit={submit(() => { if (dirty) save.mutate({ projectsDir: dir }); })}>
-      <Section
-        label="Projects folder"
-        dirty={dirty}
-        footer={
-          <>
-            <SavedNote show={save.saved && !dirty} />
-            <Button type="submit" size="sm" variant="primary" aria-label="Save projects folder" disabled={!dirty} pending={save.isPending}>Save</Button>
-          </>
-        }
-      >
-        <SettingsRow stacked label="Folder" description="Where “clone by URL” puts new repositories.">
-          <FolderField
-            aria-label="Projects folder"
-            title="Projects folder"
-            placeholder={v.projectsDir ?? '~/work'}
-            start={v.projectsDir ?? ''}
-            value={dir}
-            onChange={setDir}
-          />
-        </SettingsRow>
-        {error}
-      </Section>
-    </form>
+    <Section label="Projects folder" description="Where “clone by URL” puts new repositories.">
+      <SettingsRow stacked label="Folder" description={<>Saved when you leave the field or pick a folder. <SaveNote s={save} /></>}>
+        <FolderField
+          aria-label="Projects folder"
+          title="Projects folder"
+          placeholder={v.projectsDir ?? '~/work'}
+          start={v.projectsDir ?? ''}
+          value={dir ?? saved}
+          onChange={setDir}
+          onCommit={commit}
+        />
+      </SettingsRow>
+    </Section>
   );
 }
 
@@ -564,7 +699,7 @@ function BugReports({ v }: { v: HostSettingsView }) {
           className="w-48"
           options={bugReportChoices}
           value={v.settings.bugReports}
-          onChange={(b) => save.mutate({ bugReports: b }, { onSuccess: () => void qc.invalidateQueries({ queryKey: ['bug-report-preview'] }) })}
+          onChange={(b) => void save.save({ bugReports: b }).then(() => void qc.invalidateQueries({ queryKey: ['bug-report-preview'] }))}
         />
       </SettingsRow>
       {open && <BugReportDialog onClose={() => setOpen(false)} onOpenSettings={() => setOpen(false)} />}
@@ -588,18 +723,16 @@ function DangerZone({ v }: { v: HostSettingsView }) {
     void qc.invalidateQueries({ queryKey: ['host-settings'] });
     void qc.invalidateQueries({ queryKey: ['host-update'] });
   });
-  if (!v.tokenPresent) return null;
   return (
-    <Section label="Danger zone" danger>
-      <SettingsRow label="Remove the GitHub token" description="Deletes it from the OS keychain. Update checks stop until you save a new one.">
+    <Section label="Danger zone" danger description="These always ask first.">
+      {!v.tokenPresent ? (
+        <p className="text-xs text-muted-foreground">Nothing to remove: no GitHub token is stored.</p>
+      ) : <SettingsRow label="Remove the GitHub token" description="Deletes it from the OS keychain. Update checks stop until you save a new one.">
         <Button size="sm" variant="danger" pending={removingToken} onClick={() => void removeToken()}>Remove token…</Button>
-      </SettingsRow>
+      </SettingsRow>}
     </Section>
   );
 }
-
-/** This host's sections, in page order (their `Section` labels): the phone's list of them and its top bar titles. */
-export const HOST_SECTIONS = ['Updates', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Bug reports', 'Checks', 'Danger zone'] as const;
 
 export interface HostSettingsPageProps {
   /** A phone: one screen per section, the list of them while `section` is null. */
@@ -631,22 +764,24 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
   }
   // The device being used when it is on the tailnet; otherwise the login this host's Tailscale is signed in as.
   const me = whoami.data?.caller === 'tailnet' && whoami.data.login ? whoami.data.login : v.remote.tailscaleLogin;
-  const nodes: Record<(typeof HOST_SECTIONS)[number], ReactNode> = {
+  const nodes: Record<string, ReactNode> = {
     'Updates': <Updates v={v} />,
+    'Agents': <><Agents v={v} /><Programs v={v} /></>,
+    'Network': <Network v={v} />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,
-    'Agents': <Agents v={v} />,
     'Runs': <Runs v={v} />,
     'Projects folder': <ProjectsFolder v={v} />,
+    'Appearance': <Appearance />,
     'Bug reports': <BugReports v={v} />,
     'Checks': <Checks />,
-    // Only when there is something to remove.
-    'Danger zone': v.tokenPresent ? <DangerZone v={v} /> : null,
+    'Danger zone': <DangerZone v={v} />,
   };
   return (
     <SettingsScreens
       title="This host"
       description="Settings for the machine running PDT. Projects have their own pages."
-      sections={HOST_SECTIONS.filter((l) => nodes[l] !== null).map((label) => ({ label, node: nodes[label] }))}
+      crumb="This host"
+      sections={HOST_SECTIONS.map(({ label }) => ({ label, node: nodes[label] }))}
       drill={drill}
       section={section}
       onSection={onSection}

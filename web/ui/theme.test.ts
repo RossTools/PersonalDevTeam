@@ -34,3 +34,15 @@ describe('theme', () => {
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
   });
 });
+
+describe('useThemePref', () => {
+  it('is one choice: setting it in one place changes it everywhere', async () => {
+    const { renderHook, act } = await import('@testing-library/react');
+    const { useThemePref } = await import('./theme');
+    const a = renderHook(() => useThemePref());
+    const b = renderHook(() => useThemePref());
+    act(() => a.result.current[1]('light'));
+    expect(b.result.current[0]).toBe('light');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+  });
+});
