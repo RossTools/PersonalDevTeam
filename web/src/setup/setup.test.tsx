@@ -79,7 +79,7 @@ describe('Get started', () => {
 
   it('saves an agent path set by hand, then checks again', async () => {
     const calls = stub(view(), {
-      'PUT /api/host/settings': { settings: {}, projectsDir: null },
+      'PUT /api/host/settings': { settings: {}, projectsDir: null, programs: [] },
       'POST /api/host/checks/refresh': checks({ codex: true }),
     });
     renderWithQuery(<SetupPage {...props()} />);
@@ -135,7 +135,7 @@ describe('Get started', () => {
   it('picks a default agent among the ones found', async () => {
     const calls = stub(view({ steps: { agents: 'done', github: 'done', project: 'done' } }), {
       'GET /api/host/checks': checks({ codex: true }),
-      'PUT /api/host/settings': { settings: { defaultAgent: 'codex' }, projectsDir: null },
+      'PUT /api/host/settings': { settings: { defaultAgent: 'codex' }, projectsDir: null, programs: [] },
     });
     renderWithQuery(<SetupPage {...props()} />);
     const def = await step('Pick a default agent');
