@@ -176,8 +176,10 @@ its tab, the Inbox picking an item) replace it.
   it on first use; it is never listed, has no workspace, and `POST /api/projects` refuses `kind: host`.
 - Projects have a unique key (`PDT`; suggested from the name, backfilled when the store opens).
   `POST /api/projects/clone` clones into the host's Projects folder (default `~/work`) with `GIT_TERMINAL_PROMPT=0`;
-  removing a project stops its sessions and runs and never touches files. Projects carry `githubRepo` from `origin`
-  (no GitHub API calls).
+  removing a project stops its sessions and runs and never touches files. Projects carry `forge` from `origin`: the
+  forge plugin in use that claims it builds the links (`ForgePlugin::links`: its name, the repository and its page,
+  and a branch's and a compare page's, `{branch}`/`{base}` filled in by the web), with no forge API calls. The branch
+  chip, Open on <forge> and the project page's repository link use them.
 - A project's base branch (what new worktrees and tickets branch from and are reviewed against) defaults to the
   repository's default branch: `origin/HEAD`'s, else a local `main` or `master`, else the checked-out branch (pdt-git
   `default_branch`). The project's Settings page changes it (`PATCH /api/projects/{id} {baseBranch}`, which must name

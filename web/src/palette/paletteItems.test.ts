@@ -9,7 +9,7 @@ import { runInfo, sessionInfo, ticketInfo } from '../workspaces/useWorkspaces';
 import { ACTIONS, GO_TO, paletteItems, type PaletteContext, type PaletteHandlers, type PaletteItem } from './paletteItems';
 
 const project = (id: string, name: string, key: string): Project => ({
-  id, name, key, repoPath: `/r/${id}`, baseBranch: 'main', createdAt: 0, githubRepo: null, kind: 'repo',
+  id, name, key, repoPath: `/r/${id}`, baseBranch: 'main', createdAt: 0, forge: null, kind: 'repo',
 });
 
 const session = (over: Partial<Session> & { id: string }): Session => ({

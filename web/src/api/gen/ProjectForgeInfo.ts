@@ -6,6 +6,14 @@ import type { ForgeKind } from "./ForgeKind";
  */
 export type ProjectForgeInfo = { kind: ForgeKind, 
 /**
+ * The forge's name for people (`GitHub`).
+ */
+name: string, 
+/**
+ * What it calls a base branch's merge queue (`merge queue`), when it has them.
+ */
+queueName: string | null, 
+/**
  * The forge's name for the repository (GitHub's `owner/name`).
  */
 repo: string, 

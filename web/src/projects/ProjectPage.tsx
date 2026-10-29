@@ -11,7 +11,7 @@ import { branchOptions } from '../common/branchOptions';
 import { useAction } from '../common/useAction';
 import { useProjectSettingsSections } from '../runs/ProjectSettingsPanel';
 import { SettingsScreens, type SettingsSection } from '../common/SettingsScreens';
-import { repoUrl } from './github';
+import { repoUrl } from './forgeLinks';
 import { useOpenChanges } from '../review/open';
 
 /**
@@ -69,9 +69,9 @@ function General({ project, onKeyChange }: { project: Project; onKeyChange?: (ke
           <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
         </SettingsRow>
       )}
-      {project.githubRepo && (
-        <SettingsRow label="GitHub">
-          <Link external href={repoUrl(project.githubRepo)} className="text-xs">{project.githubRepo} on GitHub</Link>
+      {project.forge && (
+        <SettingsRow label={project.forge.name}>
+          <Link external href={repoUrl(project.forge)} className="text-xs">{project.forge.repo} on {project.forge.name}</Link>
         </SettingsRow>
       )}
     </Section>
@@ -133,7 +133,7 @@ function WorktreeRow({ project, wt }: { project: Project; wt: Worktree }) {
       <div className="flex flex-wrap items-center gap-2">
         <BranchChip
           branch={wt.branch}
-          repo={wt.missing ? null : project.githubRepo}
+          forge={wt.missing ? null : project.forge ?? null}
           base={project.baseBranch}
           {...(wt.missing ? {} : { onReview: () => openChanges({ id: wt.id, projectId: project.id }) })}
         />

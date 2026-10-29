@@ -18,7 +18,7 @@ import { ConfirmCall } from './ConfirmCall';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { useOpenSession, useOpenTicket } from '../tickets/actions';
 import { PrDetails } from '../tickets/PullRequest';
-import { useTicket } from '../tickets/queries';
+import { useProjectForge, useTicket } from '../tickets/queries';
 import { useOpenChanges } from '../review/open';
 import { answerApproval, UpdateView } from './InboxView';
 import { navigate } from '../shell/router';
@@ -431,6 +431,7 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
   const removed = files.reduce((n, f) => n + f.removed, 0);
   const title = capital(item.choices.find((c) => c.id === choice)?.title ?? choice);
   const ci = attempt?.pr?.ci ?? attempt?.ci ?? null;
+  const queueName = useProjectForge(attempt?.pr ? t?.projectId ?? null : null).data?.queueName ?? undefined;
   return (
     <Dialog
       open
@@ -446,7 +447,7 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
     >
       <div className="flex flex-col gap-3 text-sm" aria-label="What merges">
         {ticket.isLoading ? <Skeleton lines={2} /> : attempt?.pr ? (
-          <PrDetails pr={attempt.pr} />
+          <PrDetails pr={attempt.pr} {...(queueName ? { queueName } : {})} />
         ) : (
           <p className="text-muted-foreground">
             No pull request{attempt ? `: ${attempt.branch} merges into ${attempt.baseBranch}` : ''}.

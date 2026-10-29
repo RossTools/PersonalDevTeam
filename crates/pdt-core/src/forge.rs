@@ -83,6 +83,24 @@ pub struct ForgeNotes {
     pub watch: Option<String>,
 }
 
+/// Where a project's repository is on its forge's website, for links in the UI (the forge plugin builds them).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ForgeLinks {
+    pub kind: ForgeKind,
+    /// The forge's name for people (`GitHub`).
+    pub name: String,
+    /// The forge's name for the repository (GitHub's `owner/name`).
+    pub repo: String,
+    /// The repository's page.
+    pub repo_url: String,
+    /// A branch's page; `{branch}` stands for the branch (its `/` kept, the rest URL-encoded).
+    pub branch_url: Option<String>,
+    /// The page that opens a change request from `{branch}` into `{base}` (or shows the open one).
+    pub compare_url: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

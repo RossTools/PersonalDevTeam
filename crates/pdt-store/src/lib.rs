@@ -55,7 +55,7 @@ pub(crate) fn to_project((id, name, repo_path, base_branch, created_at, key, kin
         base_branch,
         created_at,
         key: key.unwrap_or_default(),
-        github_repo: None,
+        forge: None,
         kind: pdt_core::project::ProjectKind::parse(&kind).unwrap_or_default(),
     }
 }
@@ -247,7 +247,7 @@ mod tests {
             base_branch: "main".into(),
             created_at: 1,
             key: String::new(),
-            github_repo: None,
+            forge: None,
             kind: Default::default(),
         }
     }

@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, NotebookPen, PanelBottom, Plus } from 'lucide-react';
 import { api } from '../api/client';
-import { branchUrl } from '../projects/github';
+import { branchUrl } from '../projects/forgeLinks';
 import { Button, EmptyState, IconButton, Link, List, ListRow, Sheet, Skeleton, useConfirm, useThemePref, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { ProjectKey } from '../common/BranchChip';
@@ -468,7 +468,7 @@ export function AppShell() {
   });
   const worktreeBranch = current?.worktreeId ? worktrees.data?.find((w) => w.id === current.worktreeId)?.branch : undefined;
   const branch = current?.run?.branch ?? worktreeBranch ?? null;
-  const branchLink = currentProject?.githubRepo && branch ? branchUrl(currentProject.githubRepo, branch) : null;
+  const branchLink = currentProject?.forge && branch ? branchUrl(currentProject.forge, branch) : null;
   // The Files view: the file in the path, in the checkout the path names (a project key and worktree) or the
   // current tab's.
   const filesRoute = route.view === 'files' ? route : null;
@@ -973,7 +973,7 @@ export function AppShell() {
                 run={current.run}
                 onRemoved={() => void ws.refresh()}
                 branchLink={branchLink}
-                {...(currentProject ? { repo: currentProject.githubRepo, baseBranch: currentProject.baseBranch } : {})}
+                {...(currentProject ? { forge: currentProject.forge ?? null, baseBranch: currentProject.baseBranch } : {})}
               />
             ) : current?.session ? (
               <SessionView
@@ -981,7 +981,7 @@ export function AppShell() {
                 session={current.session}
                 onRemoved={() => void ws.refresh()}
                 branchLink={branchLink}
-                {...(currentProject ? { repo: currentProject.githubRepo, baseBranch: currentProject.baseBranch, projectKey: currentProject.key } : {})}
+                {...(currentProject ? { forge: currentProject.forge ?? null, baseBranch: currentProject.baseBranch, projectKey: currentProject.key } : {})}
                 {...(!current.worktreeId ? { branch: null } : worktreeBranch !== undefined ? { branch: worktreeBranch } : {})}
               />
             ) : ws.projects.length === 0 ? (

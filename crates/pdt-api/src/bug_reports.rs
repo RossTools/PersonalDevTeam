@@ -95,11 +95,12 @@ pub(crate) type Nonces = std::sync::Arc<tokio::sync::Mutex<HashMap<String, (i64,
 /// The first project whose origin is the release repository: the instance PDT is developed on.
 async fn release_project(st: &AppState) -> Result<Option<BugReportProject>, ApiError> {
     let repo = st.update.client.repo();
-    let projects = crate::projects::with_github(st.store.list_projects().await?).await;
-    Ok(projects
-        .into_iter()
-        .find(|p| p.github_repo.as_deref().is_some_and(|r| r.eq_ignore_ascii_case(&repo)))
-        .map(|p| BugReportProject { id: p.id, key: p.key, name: p.name }))
+    for p in st.store.list_projects().await?.into_iter().filter(|p| p.has_repo()) {
+        if crate::github::github_repo(&p.repo_path).await.is_some_and(|r| r.eq_ignore_ascii_case(&repo)) {
+            return Ok(Some(BugReportProject { id: p.id, key: p.key, name: p.name }));
+        }
+    }
+    Ok(None)
 }
 
 fn token_word(t: &TokenState) -> &'static str {

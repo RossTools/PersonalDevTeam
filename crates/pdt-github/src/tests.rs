@@ -253,11 +253,22 @@ fn pr_nodes_parse_merged_and_queue_removals() {
     removed["timelineItems"] = json!({"nodes":[{"__typename":"RemovedFromMergeQueueEvent","id":"RFMQE_x",
         "reason":"merge_conflict","actor":{"login":"github-merge-queue"}}]});
     let r = parse_pr(&removed).queue_removal.unwrap();
-    assert_eq!((r.id.as_str(), r.reason.as_str(), r.by_queue), ("RFMQE_x", "merge_conflict", true));
+    assert_eq!((r.id.as_str(), &r.reason, r.by_queue), ("RFMQE_x", &QueueRemovalReason::Conflict, true));
     removed["timelineItems"]["nodes"][0]["actor"]["login"] = json!("someone");
     assert!(!parse_pr(&removed).queue_removal.unwrap().by_queue);
     removed["timelineItems"]["nodes"][0]["__typename"] = json!("AddedToMergeQueueEvent");
     assert_eq!(parse_pr(&removed).queue_removal, None, "queued again since");
+}
+
+#[test]
+fn merge_queue_reasons_actors_and_refs_are_githubs() {
+    assert_eq!(queue_removal_reason("failed_checks"), QueueRemovalReason::FailedChecks);
+    assert_eq!(queue_removal_reason("merged"), QueueRemovalReason::Merged);
+    assert_eq!(queue_removal_reason("timeout"), QueueRemovalReason::Other("timeout".into()));
+    assert!(is_queue_actor("github-merge-queue[bot]") && !is_queue_actor("someone"));
+    let g = GithubApi::offline();
+    assert_eq!(g.queue_ref("main", 12).as_deref(), Some("gh-readonly-queue/main/pr-12-"));
+    assert_eq!(g.queue_name(), "merge queue");
 }
 
 #[test]

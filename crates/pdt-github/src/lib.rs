@@ -11,7 +11,7 @@ pub mod transport;
 
 pub use actions::GithubActions;
 use pdt_core::brand::SHORT_NAME;
-use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
+use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval, QueueRemovalReason};
 pub use pdt_forge::{
     Capabilities, ChangeComment, ChangeRequest, ChangeReview, CloseReason, Forge, ForgeError, ForgeNotes, Issue,
     IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest, Release,
@@ -686,9 +686,29 @@ fn queue_removal(e: &Value) -> Option<QueueRemoval> {
     }
     Some(QueueRemoval {
         id: s(e, "id"),
-        reason: s(e, "reason"),
-        by_queue: e["actor"]["login"].as_str().is_some_and(QueueRemoval::is_queue_actor),
+        reason: queue_removal_reason(&s(e, "reason")),
+        by_queue: e["actor"]["login"].as_str().is_some_and(is_queue_actor),
     })
+}
+
+/// A `RemovedFromMergeQueueEvent`'s reason.
+pub fn queue_removal_reason(reason: &str) -> QueueRemovalReason {
+    match reason {
+        "merge_conflict" => QueueRemovalReason::Conflict,
+        "failed_checks" => QueueRemovalReason::FailedChecks,
+        "merged" => QueueRemovalReason::Merged,
+        other => QueueRemovalReason::Other(other.to_string()),
+    }
+}
+
+/// The `github-merge-queue` app (`github-merge-queue[bot]` in some fields): a removal it made is the queue's.
+pub fn is_queue_actor(login: &str) -> bool {
+    login.starts_with("github-merge-queue")
+}
+
+/// The start of the branches GitHub's merge queue tests PR `number` into `base` on.
+pub fn queue_branch_prefix(base: &str, number: u32) -> String {
+    format!("gh-readonly-queue/{base}/pr-{number}-")
 }
 
 /// A created pull request (`POST …/pulls`).
@@ -934,6 +954,9 @@ impl Forge for GithubApi {
     }
     fn agent_notes(&self) -> ForgeNotes {
         agent_notes()
+    }
+    fn queue_ref(&self, base: &str, number: u32) -> Option<String> {
+        Some(queue_branch_prefix(base, number))
     }
     fn login_needed(&self) -> bool {
         (self.account().is_none() && self.wanted.load(Ordering::SeqCst)) || self.rejected_at().is_some()

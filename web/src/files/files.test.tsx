@@ -22,7 +22,7 @@ vi.mock('../review/CodeDiff', () => ({
 }));
 afterEach(() => { vi.unstubAllGlobals(); toast.dismiss(); });
 
-const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: null, kind: 'repo' };
+const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', forge: null, kind: 'repo' };
 const entry = (path: string, dir = false, status: string | null = null) => ({ name: path.split('/').pop()!, path, dir, status });
 
 function Harness() {

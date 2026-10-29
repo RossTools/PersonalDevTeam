@@ -13,17 +13,18 @@ import { TerminalView } from '../terminal/TerminalView';
 import { runPtyUrl } from '../terminal/ptySocket';
 import { isActive, runLabel } from './runState';
 import { withStopConfirm } from './useStartRun';
+import type { ForgeLinks } from '../api/gen/ForgeLinks';
 
 type Step = 'setup' | 'command';
 
 /** Keyed by run id by its parent, so tab state never carries over from another run. */
-export function RunView({ run, onRemoved, branchLink, repo, baseBranch }: {
+export function RunView({ run, onRemoved, branchLink, forge, baseBranch }: {
   run: Run;
   onRemoved: () => void;
-  /** The run's branch on GitHub, when known. Superseded by the branch chip's menu when `repo` is known. */
+  /** The run's branch on its forge, when known. Superseded by the branch chip's menu when `forge` is known. */
   branchLink?: string | null;
-  /** The project's `owner/repo` on GitHub (the branch chip's links); read from the projects list when left out. */
-  repo?: string | null;
+  /** The project's repository on its forge (the branch chip's links); read from the projects list when left out. */
+  forge?: ForgeLinks | null;
   /** The project's base branch (the branch chip's "Open PR"); read from the projects list when left out. */
   baseBranch?: string;
 }) {
@@ -34,11 +35,11 @@ export function RunView({ run, onRemoved, branchLink, repo, baseBranch }: {
   const projects = useQuery({
     queryKey: ['projects'],
     queryFn: api.listProjects,
-    enabled: repo === undefined || baseBranch === undefined,
+    enabled: forge === undefined || baseBranch === undefined,
     staleTime: 30_000,
   });
   const project = projects.data?.find((p) => p.id === run.projectId);
-  const theRepo = repo !== undefined ? repo : project?.githubRepo ?? null;
+  const theForge = forge !== undefined ? forge : project?.forge ?? null;
   const theBase = baseBranch ?? project?.baseBranch;
   const refresh = () => qc.invalidateQueries({ queryKey: ['runs', run.projectId] });
   // The tab follows the run's state (Setup while setting up, else Output) unless the user picked one in this state.
@@ -84,7 +85,7 @@ export function RunView({ run, onRemoved, branchLink, repo, baseBranch }: {
 
   const entries = (): MenuEntry[] => [
     ...(run.url ? [{ label: 'Copy URL', onSelect: () => void copyToClipboard(run.url!, 'URL copied') }] : []),
-    ...(!theRepo && branchLink ? [{ label: 'Open on GitHub', onSelect: () => void window.open(branchLink, '_blank', 'noopener,noreferrer') }] : []),
+    ...(!theForge && branchLink ? [{ label: 'Open on the forge', onSelect: () => void window.open(branchLink, '_blank', 'noopener,noreferrer') }] : []),
     ...(!active
       ? [
           { separator: true } as const,
@@ -118,7 +119,7 @@ export function RunView({ run, onRemoved, branchLink, repo, baseBranch }: {
           }
           title={name}
           titleTooltip={`${name} · ${run.branch}`}
-          meta={<BranchChip branch={run.branch} repo={theRepo} base={theBase} className="min-w-0" />}
+          meta={<BranchChip branch={run.branch} forge={theForge} base={theBase} className="min-w-0" />}
           actions={<MenuButton label="Run actions" placement="bottom end" entries={phoneEntries} />}
         />
       ) : (
@@ -128,7 +129,7 @@ export function RunView({ run, onRemoved, branchLink, repo, baseBranch }: {
         titleTooltip={`${name} · ${run.branch}`}
         meta={
           <>
-            <BranchChip branch={run.branch} repo={theRepo} base={theBase} className="min-w-0" />
+            <BranchChip branch={run.branch} forge={theForge} base={theBase} className="min-w-0" />
             <span className="shrink-0">{state}</span>
             {run.url && run.state === 'ready' ? (
               <Link href={run.url} external className="min-w-0 truncate">{run.url}</Link>

@@ -1,6 +1,6 @@
 //! Review (Phase 6; docs/superpowers/specs/2026-10-19-review-design.md): a worktree's changes and the two sides of a
 //! file, line comments, Send feedback into the coder session, Approve, and Merge (a local merge, or auto-merge of the
-//! attempt's pull request on GitHub).
+//! attempt's pull request on the project's forge).
 
 use crate::error::ApiError;
 use crate::forge::ProjectForge;
@@ -461,17 +461,24 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
         None => None,
     };
     if let (Some(pr), Some(forge)) = (pr, forge) {
-        let (gh, repo) = (forge.api.clone(), forge.repo.clone());
+        let (api, repo) = (forge.api.clone(), forge.repo.clone());
         let base_branch = pr.base_branch.clone();
         let queue = forge.caps().merge_queue
-            && tokio::task::spawn_blocking(move || gh.merge_settings(&repo, &base_branch))
+            && tokio::task::spawn_blocking(move || api.merge_settings(&repo, &base_branch))
                 .await
                 .map_err(ApiError::internal)?
                 .map(|s| s.queue)
                 .unwrap_or(false);
-        p.method = MergeMethod::Github;
+        p.method = MergeMethod::Forge;
         p.base = pr.base_branch.clone();
-        p.pr = Some(MergePr { number: pr.number, url: pr.url.clone(), queue, local: pr.local });
+        p.pr = Some(MergePr {
+            number: pr.number,
+            url: pr.url.clone(),
+            forge: forge.api.name().to_string(),
+            queue,
+            queue_name: forge.api.queue_name().to_string(),
+            local: pr.local,
+        });
         p.problem = if pr.draft || pr.mergeable == Mergeable::Conflicting {
             Some(MergeProblem::PrNotMergeable)
         } else if pr.auto_merge || pr.in_merge_queue {
@@ -482,7 +489,7 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
         return Ok(p);
     }
     if st.store.get_project_settings(&info.project_id).await?.merge_via_pr {
-        p.method = MergeMethod::Github;
+        p.method = MergeMethod::Forge;
         p.problem = Some(MergeProblem::NoPr);
         return Ok(p);
     }
@@ -530,7 +537,7 @@ fn why_blocked(problem: MergeProblem) -> &'static str {
         MergeProblem::Conflict => "the merge conflicts; merge the base branch into the branch first",
         MergeProblem::BaseDirty => "the checkout that has the base branch has uncommitted changes",
         MergeProblem::Nothing => "the branch has no commits the base branch lacks",
-        MergeProblem::PrNotMergeable => "GitHub can't merge the pull request (a draft, or it conflicts)",
+        MergeProblem::PrNotMergeable => "the forge can't merge the pull request (a draft, or it conflicts)",
         MergeProblem::PrQueued => "auto-merge is already on for the pull request",
         MergeProblem::NoPr => "this project merges through pull requests, and the branch has no open one yet",
     }
@@ -599,7 +606,7 @@ pub(crate) async fn merge_attempt(
     let st = st.clone();
     let info = load_attempt(&st, id).await?;
     let automated = merger == Merger::Automated;
-    // What GitHub has now (PDT-181): a PR that merged a moment ago (the auto-merge an earlier merge turned on) must not
+    // What the forge has now (PDT-181): a PR that merged a moment ago (the auto-merge an earlier merge turned on) must not
     // look like no PR, which would merge the branch locally a second time.
     let read =
         info.attempt.state != AttemptState::Active || !automated || crate::github::refresh_attempt(&st, &info).await;
@@ -645,7 +652,7 @@ pub(crate) async fn merge_attempt(
             .await
             .ok_or_else(|| conflict("merge_failed", "the project no longer has a forge to merge the pull request"))?;
         // A workflow's or an agent's merge waits for green CI (PDT-151), whatever the repository's branch protection
-        // asks: GitHub's auto-merge merges at once where nothing is required. On a forge that doesn't hold merges for
+        // asks: a forge's auto-merge (GitHub's) merges at once where nothing is required. On a forge that doesn't hold merges for
         // required checks, it always waits (PDT-176), for every CI provider (PDT-242).
         let providers = crate::ci::project_ci(&st, &info.project_id, &info.repo_path, Some(&forge)).await;
         // The local forge holds a merge for its own CI only (PDT-242): with other providers PDT waits for them too.
@@ -682,11 +689,7 @@ pub(crate) async fn merge_attempt(
                     pr.number
                 )
             } else {
-                format!(
-                    "Set PR #{} to merge without waiting for CI: the repository has no CI (no GitHub Actions \
-                     workflows, no CI integration).",
-                    pr.number
-                )
+                format!("Set PR #{} to merge without waiting for CI: {}.", pr.number, no_ci_why(&providers))
             };
             if let Err(e) = st.store.add_comment_by(&info.ticket_id, &body, Actor::System, None, now_ms()).await {
                 tracing::warn!(ticket = %info.ticket_key, error = %e, "could not note a merge without CI");
@@ -765,11 +768,10 @@ async fn no_local_merge(st: &AppState, info: &AttemptInfo, read: bool) -> Result
     }
     if let Some(pr) = crate::github::watched_pr(st, &info.attempt.id) {
         let reason = match pr.state {
-            PrState::Closed => format!(
-                "PR #{} was closed without merging; reopen it or open a new pull request, and merge that",
-                pr.number
-            ),
-            _ => format!("the branch has PR #{}, so it merges on GitHub, not here", pr.number),
+            PrState::Closed => {
+                format!("{} was closed without merging; reopen it or open a new one, and merge that", pr.name())
+            }
+            _ => format!("the branch has {}, so it merges through that, not with a local merge", pr.name()),
         };
         return Ok(Some(Refusal { code: "merge_blocked", reason, fixable: false }));
     }
@@ -778,6 +780,15 @@ async fn no_local_merge(st: &AppState, info: &AttemptInfo, read: bool) -> Result
         return Ok(Some(Refusal { code: "merge_blocked", reason, fixable: false }));
     }
     Ok(None)
+}
+
+/// Why a merge didn't wait for CI: none of the project's CI providers (`providers`) has CI set up for it.
+fn no_ci_why(providers: &[Arc<dyn CiProvider>]) -> String {
+    if providers.is_empty() {
+        return "the project has no CI provider".into();
+    }
+    let names: Vec<&str> = providers.iter().map(|p| p.label()).collect();
+    format!("the repository has no CI set up ({})", names.join(", "))
 }
 
 /// The CI gate of an automated merge of the attempt's open pull request (PDT-151): its head's CI read now, from every

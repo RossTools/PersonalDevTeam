@@ -2,9 +2,17 @@
 
 export type MergePr = { number: number, url: string, 
 /**
+ * The forge's name (`GitHub`).
+ */
+forge: string, 
+/**
  * The base branch has a merge queue (it picks the method).
  */
 queue: boolean, 
+/**
+ * What the forge calls its merge queue (`merge queue`, `merge train`).
+ */
+queueName: string, 
 /**
  * A change request on the local forge (PDT-178): PDT merges it here once its CI passes.
  */

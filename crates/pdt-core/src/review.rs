@@ -186,8 +186,10 @@ pub struct FeedbackResult {
 pub enum MergeMethod {
     /// A merge commit on the local base branch.
     Local,
-    /// Auto-merge of the attempt's open pull request.
-    Github,
+    /// The forge merges the attempt's open change request (its auto-merge, or the base branch's merge queue). Was
+    /// `github` (still read).
+    #[serde(alias = "github")]
+    Forge,
 }
 
 /// Why Merge can't go ahead.
@@ -205,7 +207,7 @@ pub enum MergeProblem {
     BaseDirty,
     /// The branch has no commits the base lacks.
     Nothing,
-    /// GitHub says the PR can't merge (conflicts) or it is a draft.
+    /// The forge says the PR can't merge (conflicts) or it is a draft.
     PrNotMergeable,
     /// Auto-merge is already on, or the PR is in the merge queue.
     PrQueued,
@@ -219,8 +221,12 @@ pub enum MergeProblem {
 pub struct MergePr {
     pub number: u32,
     pub url: String,
+    /// The forge's name (`GitHub`).
+    pub forge: String,
     /// The base branch has a merge queue (it picks the method).
     pub queue: bool,
+    /// What the forge calls its merge queue (`merge queue`, `merge train`).
+    pub queue_name: String,
     /// A change request on the local forge (PDT-178): PDT merges it here once its CI passes.
     #[serde(default)]
     pub local: bool,
@@ -250,7 +256,7 @@ pub struct MergePreview {
 pub enum MergeOutcome {
     /// Merged locally; the attempt ended as merged.
     Merged,
-    /// Auto-merge is on: GitHub merges once the checks pass (the merge check then ends the attempt).
+    /// Auto-merge is on: the forge merges once the checks pass (the merge check then ends the attempt).
     Queued,
 }
 
@@ -276,7 +282,7 @@ pub enum MergeStyle {
 }
 
 /// `POST /api/attempts/{id}/merge` (an empty body is a merge commit). `style` is for a local merge only; a pull
-/// request merges the way GitHub's settings say.
+/// request merges the way the forge's settings say.
 #[derive(Debug, Clone, Default, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -284,7 +290,7 @@ pub struct MergeRequest {
     #[serde(default)]
     #[ts(optional)]
     pub style: Option<MergeStyle>,
-    /// A pull request only: once GitHub merges it, move the ticket to Done and remove the worktree and the workspace
+    /// A pull request only: once the forge merges it, move the ticket to Done and remove the worktree and the workspace
     /// Start made (PDT-75). A local merge finishes in the web right away. Absent: what an earlier merge of the
     /// attempt asked stays (none: don't finish).
     #[serde(default)]
@@ -542,6 +548,12 @@ mod tests {
         let rec = feedback_record(&many);
         assert!(rec.len() <= MAX_FEEDBACK_BYTES);
         assert!(rec.ends_with("…and 3 more comments."), "{}", &rec[rec.len() - 40..]);
+    }
+
+    #[test]
+    fn the_forge_merge_method_reads_its_old_name() {
+        assert_eq!(serde_json::from_str::<MergeMethod>("\"github\"").unwrap(), MergeMethod::Forge);
+        assert_eq!(serde_json::to_string(&MergeMethod::Forge).unwrap(), "\"forge\"");
     }
 
     #[test]

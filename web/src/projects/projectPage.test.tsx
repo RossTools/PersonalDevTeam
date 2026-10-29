@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
-import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
+import { githubLinks, renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { AddProjectForm } from './AddProjectForm';
 import { ProjectPage } from './ProjectPage';
 
@@ -11,7 +11,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: 'o/pdt', kind: 'repo' };
+const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', forge: githubLinks('o/pdt'), kind: 'repo' };
 const wt = (id: string, branch: string, missing = false) => ({ id, projectId: 'p', branch, path: `/r/.worktrees/${branch}`, baseCommit: 'x', createdAt: 1, missing });
 const base = {
   'GET /api/projects/p/worktrees': [wt('w1', 'feature/x'), wt('w2', 'old', true)],
@@ -159,7 +159,7 @@ describe('ProjectPage', () => {
   });
 
   it('shows a Personal project as a folder, with no base branch, worktrees, runs or merging', async () => {
-    const personal: Project = { ...project, kind: 'personal', baseBranch: '', githubRepo: null, repoPath: '/data/personal/p' };
+    const personal: Project = { ...project, kind: 'personal', baseBranch: '', forge: null, repoPath: '/data/personal/p' };
     const calls = stubApi(base);
     const { unmount } = renderWithQuery(<ProjectPage project={personal} onRemoved={() => {}} />);
     const form = screen.getByRole('region', { name: 'General' });

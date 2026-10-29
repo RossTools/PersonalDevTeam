@@ -2643,7 +2643,7 @@ mod tests {
             base_branch: "main".into(),
             created_at: 2,
             key: "OTH".into(),
-            github_repo: None,
+            forge: None,
             kind: Default::default(),
         };
         store.insert_project(&q).await.unwrap();

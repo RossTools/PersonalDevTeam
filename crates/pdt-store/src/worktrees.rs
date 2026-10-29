@@ -61,7 +61,7 @@ pub(crate) mod tests {
             base_branch: "main".into(),
             created_at: 1,
             key: String::new(),
-            github_repo: None,
+            forge: None,
             kind: Default::default(),
         };
         store.insert_project(&p).await.unwrap();

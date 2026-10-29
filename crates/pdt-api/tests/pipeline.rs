@@ -1430,6 +1430,13 @@ async fn a_repository_without_ci_merges_and_says_so() {
             e["kind"] == "comment" && e["body"].as_str().is_some_and(|b| b.contains("without waiting for CI"))
         });
     assert!(said, "{events}");
+    // It names the project's CI providers, not one forge's CI.
+    let why = events["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|e| e["body"].as_str().filter(|b| b.contains("without waiting for CI")).map(str::to_string));
+    assert!(why.as_deref().is_some_and(|b| b.contains("the repository has no CI set up (")), "{why:?}");
 }
 
 /// PDT-151: with CI turned off for the project, a merge doesn't wait for it.

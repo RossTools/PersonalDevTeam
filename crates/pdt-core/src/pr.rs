@@ -296,7 +296,7 @@ pub struct PullRequestStatus {
     pub base_branch: String,
     pub head_sha: String,
     pub mergeable: Mergeable,
-    /// Out of date with its base (GitHub's `BEHIND`). With a merge queue this needs no action.
+    /// Out of date with its base (the forge says so). With a merge queue this needs no action.
     pub behind: bool,
     pub auto_merge: bool,
     pub in_merge_queue: bool,
@@ -304,7 +304,8 @@ pub struct PullRequestStatus {
     pub queue_position: Option<u32>,
     /// CI on the head commit.
     pub ci: Option<CiStatus>,
-    /// The newest merge-queue run for this PR (`gh-readonly-queue/<base>/pr-<n>-…`), while queued or after it left.
+    /// The newest merge-queue run for this PR (on the forge's queue ref, `Forge::queue_ref`), while queued or after it
+    /// left.
     pub queue_ci: Option<CiStatus>,
     /// The PR's last removal from the merge queue, when that is its newest merge-queue event (not re-queued since).
     #[serde(skip)]
@@ -335,27 +336,28 @@ impl PullRequestStatus {
     }
 }
 
-/// A `RemovedFromMergeQueueEvent` on the PR's timeline. GitHub turns auto-merge off when it removes a PR.
+/// The PR's removal from its base branch's merge queue, as the forge reports it. A forge turns auto-merge off when it
+/// removes a PR.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueRemoval {
-    /// The event's node id: one removal is news once.
+    /// The forge's id for the removal: one removal is news once.
     pub id: String,
-    /// GitHub's reason, e.g. `merge_conflict`, `failed_checks`, `merged`.
-    pub reason: String,
+    pub reason: QueueRemovalReason,
     /// The merge queue removed it (not a person dequeuing it by hand).
     pub by_queue: bool,
 }
 
-impl QueueRemoval {
-    /// The `github-merge-queue` app (`github-merge-queue[bot]` in some fields).
-    pub fn is_queue_actor(login: &str) -> bool {
-        login.starts_with("github-merge-queue")
-    }
-}
-
-/// The merge-queue branch prefix of PR `number` into `base`.
-pub fn queue_branch_prefix(base: &str, number: u32) -> String {
-    format!("gh-readonly-queue/{base}/pr-{number}-")
+/// Why a merge queue removed a PR.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueueRemovalReason {
+    /// It conflicts with the base.
+    Conflict,
+    /// Its merge-queue CI failed.
+    FailedChecks,
+    /// It left the queue by merging.
+    Merged,
+    /// Another reason, in the forge's words.
+    Other(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
@@ -426,13 +428,13 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
             },
         });
     }
-    if let Some(r) = now.queue_removal.as_ref().filter(|r| r.by_queue && r.reason != "merged")
+    if let Some(r) = now.queue_removal.as_ref().filter(|r| r.by_queue && r.reason != QueueRemovalReason::Merged)
         && !now.in_merge_queue
         && !now.auto_merge
     {
         let queue_failed = now.queue_ci.as_ref().filter(|q| q.state == CiState::Failed);
-        let (why, url, jobs) = match (r.reason.as_str(), queue_failed) {
-            ("merge_conflict", _) => (format!("it conflicts with {base}"), now.url.clone(), vec![]),
+        let (why, url, jobs) = match (&r.reason, queue_failed) {
+            (QueueRemovalReason::Conflict, _) => (format!("it conflicts with {base}"), now.url.clone(), vec![]),
             (_, Some(q)) => {
                 let jobs: Vec<String> = q.failed().flat_map(|r| r.failed_jobs.iter().cloned()).collect();
                 let mut why = String::from("its merge-queue CI failed");
@@ -446,8 +448,11 @@ pub fn notices(now: &PullRequestStatus, branch: &str) -> Vec<Notice> {
                 }
                 (why, q.url.clone(), jobs)
             }
-            ("failed_checks", None) => ("its merge-queue CI failed".into(), now.url.clone(), vec![]),
-            (other, None) => (format!("GitHub says `{other}`"), now.url.clone(), vec![]),
+            (QueueRemovalReason::FailedChecks, None) => ("its merge-queue CI failed".into(), now.url.clone(), vec![]),
+            (QueueRemovalReason::Merged, None) => ("it merged".into(), now.url.clone(), vec![]),
+            (QueueRemovalReason::Other(other), None) => {
+                (format!("the merge queue says `{other}`"), now.url.clone(), vec![])
+            }
         };
         out.push(Notice {
             kind: NoticeKind::QueueLeft,
@@ -982,15 +987,15 @@ pub(crate) mod tests {
         assert!(notices(&p, "b").is_empty());
     }
 
-    fn removal(id: &str, reason: &str) -> Option<QueueRemoval> {
-        Some(QueueRemoval { id: id.into(), reason: reason.into(), by_queue: true })
+    fn removal(id: &str, reason: QueueRemovalReason) -> Option<QueueRemoval> {
+        Some(QueueRemoval { id: id.into(), reason, by_queue: true })
     }
 
     #[test]
     fn removal_from_the_merge_queue_is_news_once_per_removal() {
         let mut p = pr();
         p.auto_merge = false;
-        p.queue_removal = removal("RFMQE_1", "merge_conflict");
+        p.queue_removal = removal("RFMQE_1", QueueRemovalReason::Conflict);
         let n = notices(&p, "pdt/x");
         assert_eq!(n.len(), 1);
         assert_eq!((n[0].kind, n[0].key.as_str()), (NoticeKind::QueueLeft, "queue_removed:RFMQE_1"));
@@ -1001,11 +1006,14 @@ pub(crate) mod tests {
         );
         assert!(n[0].text.contains("Then ask for the merge again: `change_request_merge` (or Merge on the ticket)."));
         // Merged, removed by hand, back in the queue or auto-merge on again (someone dealt with it): nothing.
-        p.queue_removal = removal("RFMQE_2", "merged");
+        p.queue_removal = removal("RFMQE_2", QueueRemovalReason::Merged);
         assert!(notices(&p, "b").is_empty());
-        p.queue_removal = Some(QueueRemoval { by_queue: false, ..removal("RFMQE_3", "manual").unwrap() });
+        p.queue_removal = Some(QueueRemoval {
+            by_queue: false,
+            ..removal("RFMQE_3", QueueRemovalReason::Other("manual".into())).unwrap()
+        });
         assert!(notices(&p, "b").is_empty());
-        p.queue_removal = removal("RFMQE_1", "merge_conflict");
+        p.queue_removal = removal("RFMQE_1", QueueRemovalReason::Conflict);
         p.auto_merge = true;
         assert!(notices(&p, "b").is_empty());
         p.auto_merge = false;
@@ -1017,7 +1025,7 @@ pub(crate) mod tests {
     fn a_failed_checks_removal_names_the_failed_queue_run() {
         let mut p = pr();
         p.auto_merge = false;
-        p.queue_removal = removal("RFMQE_9", "failed_checks");
+        p.queue_removal = removal("RFMQE_9", QueueRemovalReason::FailedChecks);
         let n = notices(&p, "b");
         assert!(n[0].text.contains("removed from the merge queue: its merge-queue CI failed."), "{}", n[0].text);
         let mut q = run(9, "ci", "queuesha", "t", CiState::Failed);
@@ -1033,11 +1041,10 @@ pub(crate) mod tests {
             n[0].text
         );
         assert_eq!(n[0].url.as_deref(), Some("https://gh/runs/9"));
-        // Another reason says what GitHub said.
-        p.queue_removal = removal("RFMQE_10", "timeout");
+        // Another reason says what the forge said.
+        p.queue_removal = removal("RFMQE_10", QueueRemovalReason::Other("timeout".into()));
         p.queue_ci = None;
-        assert!(notices(&p, "b")[0].text.contains("GitHub says `timeout`"));
-        assert!(QueueRemoval::is_queue_actor("github-merge-queue") && !QueueRemoval::is_queue_actor("someone"));
+        assert!(notices(&p, "b")[0].text.contains("the merge queue says `timeout`"));
     }
 
     #[test]

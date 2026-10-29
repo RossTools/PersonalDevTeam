@@ -11,7 +11,7 @@
 pub mod ci;
 pub use ci::{CiCapabilities, CiConfig, CiProvider};
 
-pub use pdt_core::forge::{ForgeKind, ForgeNotes};
+pub use pdt_core::forge::{ForgeKind, ForgeLinks, ForgeNotes};
 pub use pdt_core::github_issue::CloseReason;
 use pdt_core::pr::{Mergeable, PrState, QueueRemoval};
 use std::sync::Arc;
@@ -251,6 +251,16 @@ pub trait Forge: Send + Sync {
     }
     /// The merge strategies `repo` allows and whether `base` has a merge queue.
     fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, ForgeError>;
+    /// What it calls a base branch's merge queue, for people (`merge queue`; GitLab's `merge train`).
+    fn queue_name(&self) -> &'static str {
+        "merge queue"
+    }
+    /// The start of the refs (branches) its merge queue tests change request `number` into `base` on: CI runs on a
+    /// branch starting with it are the change request's merge-queue runs. None without a merge queue (or when its
+    /// runs can't be told apart).
+    fn queue_ref(&self, _base: &str, _number: u32) -> Option<String> {
+        None
+    }
     /// Sets change request `number` to merge once it may (auto-merge, or the merge queue), with `strategy` unless a
     /// merge queue picks it. One that can merge right away is merged.
     fn merge(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), ForgeError>;
@@ -341,6 +351,10 @@ pub trait ForgePlugin: Send + Sync {
     fn repo_of(&self, remote: &pdt_core::git_url::Remote) -> Option<String> {
         if self.claims_host(&remote.host) { remote.owner_repo() } else { None }
     }
+    /// Where the repository `repo` at `remote` is on the forge's website; None when it has none to link to.
+    fn links(&self, _remote: &pdt_core::git_url::Remote, _repo: &str) -> Option<ForgeLinks> {
+        None
+    }
     /// The forge, as the account PDT has for it.
     fn forge(&self) -> Arc<dyn Forge>;
     /// The forge's own CI (GitHub Actions), if it has one: a project on this forge has it unless `[ci] providers`
@@ -382,6 +396,17 @@ impl ForgePlugin for HostedForge {
     }
     fn claims_host(&self, host: &str) -> bool {
         self.hosts.iter().any(|h| h.eq_ignore_ascii_case(host))
+    }
+    /// The repository's page at `https://<host>/<repo>`, without branch or compare pages.
+    fn links(&self, remote: &pdt_core::git_url::Remote, repo: &str) -> Option<ForgeLinks> {
+        Some(ForgeLinks {
+            kind: self.kind.clone(),
+            name: self.label.into(),
+            repo: repo.into(),
+            repo_url: format!("https://{}/{repo}", remote.host),
+            branch_url: None,
+            compare_url: None,
+        })
     }
     fn forge(&self) -> Arc<dyn Forge> {
         self.forge.clone()
@@ -512,6 +537,11 @@ pub mod testing {
     /// How an issue was closed: the reason, and the duplicate's canonical issue id.
     pub type Closed = (CloseReason, Option<u64>);
 
+    /// The start of the fake's merge-queue refs for change request `number` into `base` ([`Forge::queue_ref`]).
+    pub fn fake_queue_ref(base: &str, number: u32) -> String {
+        format!("fake-queue/{base}/{number}/")
+    }
+
     /// The id the fake gives issue `number` ([`IssueDetail::id`]).
     pub fn fake_issue_id(number: u64) -> u64 {
         1_000_000 + number
@@ -586,6 +616,13 @@ pub mod testing {
         }
         fn agent_notes(&self) -> ForgeNotes {
             self.notes.lock().unwrap().clone()
+        }
+        fn queue_name(&self) -> &'static str {
+            "fake queue"
+        }
+        /// `fake-queue/<base>/<number>/`, with merge queues ([`Capabilities::merge_queue`]).
+        fn queue_ref(&self, base: &str, number: u32) -> Option<String> {
+            self.capabilities().merge_queue.then(|| fake_queue_ref(base, number))
         }
         fn change_request(&self, repo: &str, branch: &str) -> Result<Option<ChangeRequest>, ForgeError> {
             self.call(format!("pr {repo} {branch}"));
@@ -808,6 +845,30 @@ mod tests {
         let new = NewIssue { title: "Crash".into(), body: String::new(), labels: vec![] };
         assert!(matches!(f.create_issue("o/r", &new), Err(ForgeError::Unsupported(_))));
         assert!(f.change_request("o/r", "b").is_ok(), "change requests are every forge's");
+    }
+
+    #[test]
+    fn the_fake_has_queue_refs_only_with_a_merge_queue() {
+        let queued = testing::FakeForge::default();
+        assert_eq!(queued.queue_ref("main", 12).as_deref(), Some("fake-queue/main/12/"));
+        assert_eq!(queued.queue_name(), "fake queue");
+        let plain = testing::FakeForge::with(Capabilities { merge_queue: false, ..Capabilities::ALL });
+        assert_eq!(plain.queue_ref("main", 12), None);
+    }
+
+    #[test]
+    fn a_hosted_forge_links_the_repository_on_its_host() {
+        let gitea = HostedForge {
+            kind: ForgeKind::new("gitea").unwrap(),
+            label: "Gitea",
+            hosts: vec!["git.example.org".into()],
+            forge: Arc::new(testing::FakeForge::default()),
+            ci: None,
+        };
+        let remote = pdt_core::git_url::parse_remote("git@git.example.org:team/app.git").unwrap();
+        let l = gitea.links(&remote, "team/app").unwrap();
+        assert_eq!((l.name.as_str(), l.repo_url.as_str()), ("Gitea", "https://git.example.org/team/app"));
+        assert_eq!((l.branch_url, l.compare_url), (None, None));
     }
 
     #[test]

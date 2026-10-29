@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { vi } from 'vitest';
 import { ConfirmProvider, Toaster } from '@ui';
 import { connectionKinds } from './api/gen/connectionKinds';
+import type { ForgeLinks } from './api/gen/ForgeLinks';
 import { projectSettingsSchemas } from './api/gen/projectSettingsSchemas';
 
 export function renderWithQuery(ui: ReactNode) {
@@ -87,4 +88,10 @@ function editorView(el: HTMLElement): EditorView {
   const view = EditorView.findFromDOM(el.closest<HTMLElement>('.cm-editor') ?? el);
   if (!view) throw new Error('not a CodeMirror editor');
   return view;
+}
+
+/** A project's links on GitHub, as the GitHub forge plugin gives them (`Project.forge`). */
+export function githubLinks(repo: string): ForgeLinks {
+  const repoUrl = `https://github.com/${repo}`;
+  return { kind: 'github', name: 'GitHub', repo, repoUrl, branchUrl: `${repoUrl}/tree/{branch}`, compareUrl: `${repoUrl}/compare/{base}...{branch}?expand=1` };
 }

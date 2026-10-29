@@ -14,7 +14,8 @@ import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { ConversationPane } from '../conversation/ConversationView';
 import type { EventsSocketLike } from '../conversation/eventsSocket';
 import { useConversation, type ConversationData } from '../conversation/useConversation';
-import { branchUrl, repoUrl } from '../projects/github';
+import { branchUrl, repoUrl } from '../projects/forgeLinks';
+import type { ForgeLinks } from '../api/gen/ForgeLinks';
 import { TerminalView, type TerminalHandle } from '../terminal/TerminalView';
 import { FONT_SIZES, setTerminalFontSize, useTerminalFontSize } from '../terminal/fontSize';
 import { MakeTicketDialog } from '../tickets/MakeTicketDialog';
@@ -28,12 +29,12 @@ import { ChangesButton } from '../review/ChangesButton';
 export interface SessionViewProps {
   session: Session;
   onRemoved: () => void;
-  /** The session's branch on GitHub, when known. */
+  /** The session's branch on its forge, when known. */
   branchLink?: string | null;
   /** The worktree's branch; looked up from the project's worktrees when left out. */
   branch?: string | null;
-  /** The project's `owner/repo` on GitHub; read from the projects list when left out. */
-  repo?: string | null;
+  /** The project's repository on its forge; read from the projects list when left out. */
+  forge?: ForgeLinks | null;
   /** The project's base branch (the branch chip's "Open PR"); read from the projects list when left out. */
   baseBranch?: string;
   /** The project's key, shown for the main checkout; read from the projects list when left out. */
@@ -78,7 +79,7 @@ function useStoredView(sessionId: string): [ConvView, (v: ConvView) => void] {
   return [view, set];
 }
 
-function SessionBody({ session, onRemoved, branchLink, branch, repo, baseBranch, projectKey, conv }: SessionViewProps & {
+function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch, projectKey, conv }: SessionViewProps & {
   conv: ConversationData | null;
 }) {
   useViewTracking(session.id, session.unseen ? session.attentionAt ?? 0 : null);
@@ -89,7 +90,7 @@ function SessionBody({ session, onRemoved, branchLink, branch, repo, baseBranch,
   const [composing, setComposing] = useState(false);
 
   // Shared with the workspaces' cached queries, so these are usually free.
-  const needProject = repo === undefined || baseBranch === undefined || (projectKey === undefined && !session.worktreeId);
+  const needProject = forge === undefined || baseBranch === undefined || (projectKey === undefined && !session.worktreeId);
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects, enabled: needProject, staleTime: 30_000 });
   const worktrees = useQuery({
     queryKey: ['worktrees', session.projectId],
@@ -98,14 +99,14 @@ function SessionBody({ session, onRemoved, branchLink, branch, repo, baseBranch,
     staleTime: 30_000,
   });
   const project = projects.data?.find((p) => p.id === session.projectId);
-  const theRepo = repo !== undefined ? repo : project?.githubRepo ?? null;
+  const theForge = forge !== undefined ? forge : project?.forge ?? null;
   const theBase = baseBranch ?? project?.baseBranch;
   const theKey = projectKey ?? project?.key;
   const theBranch = !session.worktreeId
     ? null
     : branch !== undefined ? branch : worktrees.data?.find((w) => w.id === session.worktreeId)?.branch ?? null;
-  const githubLink = branchLink
-    ?? (theRepo ? (theBranch ? branchUrl(theRepo, theBranch) : !session.worktreeId ? repoUrl(theRepo) : null) : null);
+  const forgeLink = branchLink
+    ?? (theForge ? (theBranch ? branchUrl(theForge, theBranch) : !session.worktreeId ? repoUrl(theForge) : null) : null);
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['sessions', session.projectId] });
   const [kill, killing] = useAction(async () => { await api.killSession(session.id); void refresh(); });
@@ -258,7 +259,7 @@ function SessionBody({ session, onRemoved, branchLink, branch, repo, baseBranch,
           { separator: true } as const,
         ]),
     { label: 'Copy path', onSelect: () => void copyToClipboard(session.cwd, 'Path copied') },
-    ...(githubLink ? [{ label: 'Open on GitHub', onSelect: () => void window.open(githubLink, '_blank', 'noopener,noreferrer') }] : []),
+    ...(forgeLink ? [{ label: `Open on ${theForge?.name ?? 'the forge'}`, onSelect: () => void window.open(forgeLink, '_blank', 'noopener,noreferrer') }] : []),
     { separator: true },
     { label: 'Remove…', onSelect: () => void askRemove(), disabled: busy, danger: true },
   ];
@@ -323,7 +324,7 @@ function SessionBody({ session, onRemoved, branchLink, branch, repo, baseBranch,
           }
           title={session.title}
           titleTooltip={`${session.title} · ${session.cwd}`}
-          meta={theBranch ? <BranchChip branch={theBranch} repo={theRepo} base={theBase} className="min-w-0" /> : undefined}
+          meta={theBranch ? <BranchChip branch={theBranch} forge={theForge} base={theBase} className="min-w-0" /> : undefined}
           actions={<MenuButton label="Session actions" placement="bottom end" entries={phoneEntries}/>}
         />
       ) : (
@@ -341,7 +342,7 @@ function SessionBody({ session, onRemoved, branchLink, branch, repo, baseBranch,
             {theBranch ? (
               <BranchChip
                 branch={theBranch}
-                repo={theRepo}
+                forge={theForge}
                 base={theBase}
                 {...(session.worktreeId ? { onReview: () => openChanges({ id: session.worktreeId!, projectId: session.projectId }, { here: true }) } : {})}
                 className="min-w-0"

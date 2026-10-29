@@ -15,9 +15,10 @@ pub struct Project {
     /// Short unique key (e.g. `PDT`); tickets will be numbered with it. Blank on insert means "suggest one".
     #[serde(default)]
     pub key: String,
-    /// `owner/repo` when `origin` is on GitHub. Filled in by the API from git, never stored.
+    /// Where the repository is on the forge that claims `origin` (its website, for links). Filled in by the API from
+    /// git and the forge plugins in use, never stored.
     #[serde(default)]
-    pub github_repo: Option<String>,
+    pub forge: Option<crate::forge::ForgeLinks>,
     /// `personal`: no repository; `repo_path` is a plain folder and tickets run in scratch folders (Phase 7b §7).
     #[serde(default)]
     pub kind: ProjectKind,

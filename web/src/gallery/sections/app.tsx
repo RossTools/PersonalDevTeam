@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Button } from '@ui/Button';
 import { Toaster } from '@ui/Toaster';
 import { ApiError } from '../../api/client';
+import type { ForgeLinks } from '../../api/gen/ForgeLinks';
 import type { Project } from '../../api/gen/Project';
 import type { Worktree } from '../../api/gen/Worktree';
 import { AgentDot, AgentLabel, agentState, rollup, type AgentStateInput } from '../../common/AgentState';
@@ -34,9 +35,14 @@ const states: [string, AgentStateInput][] = [
   ['pdt · phase-3c', { kind: 'run', status: 'starting' }],
 ];
 
+const galleryForge: ForgeLinks = {
+  kind: 'github', name: 'GitHub', repo: 'ross/pdt', repoUrl: 'https://github.com/ross/pdt',
+  branchUrl: 'https://github.com/ross/pdt/tree/{branch}', compareUrl: 'https://github.com/ross/pdt/compare/{base}...{branch}?expand=1',
+};
+
 const projects: Project[] = [
-  { id: 'p1', name: 'PersonalDevTeam', key: 'PDT', repoPath: '/work/pdt', baseBranch: 'main', createdAt: 0, githubRepo: 'ross/pdt', kind: 'repo' },
-  { id: 'p2', name: 'Demo', key: 'DEMO', repoPath: '/work/demo', baseBranch: 'trunk', createdAt: 0, githubRepo: null, kind: 'repo' },
+  { id: 'p1', name: 'PersonalDevTeam', key: 'PDT', repoPath: '/work/pdt', baseBranch: 'main', createdAt: 0, forge: galleryForge, kind: 'repo' },
+  { id: 'p2', name: 'Demo', key: 'DEMO', repoPath: '/work/demo', baseBranch: 'trunk', createdAt: 0, forge: null, kind: 'repo' },
 ];
 const wt = (id: string, projectId: string, branch: string): Worktree =>
   ({ id, projectId, branch, path: `/work/${branch}`, baseCommit: 'abc', createdAt: 0, missing: false });
@@ -127,8 +133,8 @@ function render() {
         )}
       </Row>
       <Row label="BranchChip, ProjectKey">
-        <BranchChip branch="phase-3c-1-ui" repo="ross/pdt" base="main" />
-        <BranchChip branch="main" repo="ross/pdt" base="main" />
+        <BranchChip branch="phase-3c-1-ui" forge={galleryForge} base="main" />
+        <BranchChip branch="main" forge={galleryForge} base="main" />
         <BranchChip branch="feature/local-only" />
         <ProjectKey projectKey="PDT" />
       </Row>
