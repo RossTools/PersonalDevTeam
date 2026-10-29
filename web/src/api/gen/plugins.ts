@@ -338,18 +338,6 @@ export const plugins: IntegrationInfo[] = [
       {
         "id": "builtin:github-issues-discord",
         "title": "New GitHub issues to Discord"
-      },
-      {
-        "id": "builtin:health-watchdog",
-        "title": "Health watchdog"
-      },
-      {
-        "id": "builtin:brief-follow-ups",
-        "title": "Brief follow-ups"
-      },
-      {
-        "id": "builtin:email-processing",
-        "title": "Email processing"
       }
     ],
     "workflows": [],
