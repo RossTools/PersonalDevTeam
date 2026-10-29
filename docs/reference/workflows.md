@@ -791,7 +791,7 @@ The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings �
   group per category under All, and PDT's built-in workflows in a collapsed group at the end; on the right the picked
   one's preview (When the triggers → its steps, the first eight), its params, Name (blank for Start from scratch),
   Project (this host, a project, or None (personal)), Cancel and Create workflow (it starts off). A template whose
-  plugin is off is faded, its preview links to Settings → Integrations and Create is disabled; a built-in already
+  plugin is off is faded, its preview links to that plugin's page (Settings → Plugins, PDT-228) and Create is disabled; a built-in already
   added notes that this makes a second copy. No match: "No templates match" and Start from scratch. On a phone the
   categories are a row of chips and the preview opens as a sheet over the list.
 - A workflow (`WorkflowPage`): header with the Enabled switch (turning on asks, listing its triggers and actions, and

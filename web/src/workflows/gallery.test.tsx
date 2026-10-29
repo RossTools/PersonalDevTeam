@@ -137,14 +137,16 @@ describe('new workflow gallery', () => {
     expect(within(preview).getByRole('button', { name: 'Create workflow' })).toBeEnabled();
   });
 
-  it("fades a template whose plugin is off, says so, and can't create it", async () => {
-    open('builtin:jira-done');
+  it("fades a template whose plugin is off, says so, links to its page, and can't create it", async () => {
+    const { onClose } = open('builtin:jira-done');
     const card = await screen.findByRole('button', { name: /Done moves the Jira issue/ });
     expect(within(card).getByText('Jira is off')).toBeInTheDocument();
     const preview = screen.getByRole('region', { name: 'Preview: Done moves the Jira issue' });
     expect(within(preview).getByText(/Needs the Jira plugin/)).toBeInTheDocument();
-    expect(within(preview).getByRole('link', { name: 'Turn on Jira' })).toBeInTheDocument();
     expect(within(preview).getByRole('button', { name: 'Create workflow' })).toBeDisabled();
+    await userEvent.click(within(preview).getByRole('link', { name: 'Turn on Jira' }));
+    expect(onClose).toHaveBeenCalled();
+    await waitFor(() => expect(window.location.pathname).toBe('/settings/plugins/jira'));
   });
 });
 

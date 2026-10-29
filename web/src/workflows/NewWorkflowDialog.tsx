@@ -96,6 +96,7 @@ function Preview({ t, projects, onClose, onCreated, onEditTemplate }: {
   const [name, setName] = useState(t.id === BLANK ? '' : t.doc.name);
   const [where, setWhere] = useState<string>('host');
   const off = pluginOff(t);
+  const plugin = t.plugin;
   const create = useMutation({
     mutationFn: () => {
       const scope: Scope = where === 'host' || where === 'personal' ? where : 'project';
@@ -110,7 +111,7 @@ function Preview({ t, projects, onClose, onCreated, onEditTemplate }: {
       onCreated(w.id);
     },
   });
-  const openPlugin = () => { onClose(); navigate(routePath({ view: 'settings', page: { kind: 'integrations' } })); };
+  const openPlugin = (id: string) => { onClose(); navigate(routePath({ view: 'settings', page: { kind: 'plugins', id } })); };
   const steps = t.steps.slice(0, STEPS_SHOWN);
   const node = 'rounded-md border border-border bg-background px-2.5 py-1.5 text-xs';
   const arrow = <div aria-hidden className="ml-4 h-3.5 border-l border-border" />;
@@ -121,9 +122,9 @@ function Preview({ t, projects, onClose, onCreated, onEditTemplate }: {
         {t.description && <p className="mt-1 text-xs text-muted-foreground">{t.description}</p>}
         {!t.builtin && onEditTemplate && <Link className="mt-1 text-xs" onClick={() => onEditTemplate(t.id)}>Edit this template</Link>}
       </div>
-      {off && t.plugin && (
+      {off && plugin && (
         <Alert tone="warning">
-          Needs the {t.plugin.label} plugin. <Link onClick={openPlugin}>Turn on {t.plugin.label}</Link> to use it.
+          Needs the {plugin.label} plugin. <Link onClick={() => openPlugin(plugin.id)}>Turn on {plugin.label}</Link> in Settings → Plugins to use it.
         </Alert>
       )}
       {t.builtinWorkflow && t.added && <Alert tone="info">Already in your workflows. This adds a second copy.</Alert>}

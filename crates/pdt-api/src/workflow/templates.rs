@@ -236,7 +236,7 @@ async fn find(st: &AppState, id: &str) -> Result<Template, ApiError> {
             match off_templates(st).into_iter().find(|(t, _)| t.id == id).and_then(|(t, _)| plugin_of(&t.doc)) {
                 Some((_, label)) => conflict(
                     "integration_disabled",
-                    format!("this template needs the {label} integration: turn it on in Settings → Integrations first"),
+                    format!("this template needs the {label} plugin: turn it on in Settings → Plugins first"),
                 ),
                 None => ApiError::not_found("template"),
             },
