@@ -22,6 +22,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # configure-pages looks the Pages site up, which the workflow's contents: read alone doesn't allow.
+    permissions:
+      contents: read
+      pages: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,6 +50,8 @@ jobs:
 
   deploy:
     needs: build
+    # The github-pages environment only takes deploys from main: a workflow_dispatch on a branch checks the build.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write
