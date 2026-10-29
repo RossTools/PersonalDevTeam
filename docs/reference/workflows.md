@@ -140,7 +140,13 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     both where `githubIssue` exists and with `runKey` `{{trigger.ticketId}}`: once per ticket, so moving it again
     changes nothing on GitHub. The release isn't known when a ticket moves to Done, so the comment doesn't name one.
   - **Cut a release** (off, PDT-194): `manual` (Run now; the PM's `workflow_run` when the user asks for a release)
-    with input `projectId` and `bump` (`patch`, `minor`, `major`) or `version` (`X.Y.Z`) → `github.release` (the
+    with input `projectId` and `bump` (`patch`, `minor`, `major`) or `version` (`X.Y.Z`), and `channel` → `condition`
+    (`channel` is `experimental`?; PDT-210). Experimental: `github.release` with `prereleases` (the newest before,
+    `exp_before`) → `github.workflow.run` (`release.yml` on `main`, inputs `bump`, `version` and `channel:
+    experimental`; no release PR, so no review and no check for an open one) → every 2 minutes (four hours)
+    `github.release` with `prereleases` and `newerThan: {{steps.exp_before.tag}}` until the pre-release is published →
+    `notify` and an `inbox.notice` (`released-<tag>`, "Experimental release <tag> is published") → end with
+    `{tag, url}`. Otherwise (stable, the default) → `github.release` (the
     latest before, `before`) → `github.change_request` on branch `release` (`dryRunPort: none`): `open` (an earlier
     release PR still open, which the Action would refuse to replace) → `inbox.notice` (`release-pr-open-<n>`: "Release
     PR #n is still open", merge or close it, then run it again) → end `not_started`; otherwise → `github.workflow.run` (the project's `release.yml` on `main`, inputs `bump` and
@@ -273,7 +279,7 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `github.close` (`repo` + `number`, or `ticket`; `reason: completed \| not_planned \| duplicate`, `duplicateOf` with `duplicate`, `comment`, `labels`) | `out`, `unlinked` |
 | `github.workflow.run` (`repo`: default the run's project's, `workflow`: its file, `ref` default `main`, `inputs`; PDT-194) | `out` |
 | `github.change_request` (`repo`, `branch` or `number`, `dryRunPort`; PDT-194; output `number`, `url`, `title`, `state`, `merged`, `headSha`) | `open`, `merged`, `closed`, `none` |
-| `github.release` (`repo`, `tag` or the latest, `newerThan`; PDT-194; output `tag`, `name`, `url`, `publishedAt`) | `found`, `none` |
+| `github.release` (`repo`, `tag` or the latest, `newerThan`, `prereleases`; PDT-194; output `tag`, `name`, `url`, `publishedAt`) | `found`, `none` |
 | `buildkite.retry` (`connection`, `build`: a build URL, or a number with `pipeline`) | `out` |
 | `buildkite.trigger` (`connection`, `pipeline`, `branch`, `commit` default `HEAD`, `message`, `env`) | `out` |
 | `radarr.search` / `sonarr.search` (`connection`, `term`, `limit`) | `out` |
@@ -339,7 +345,8 @@ notify itself forever.
   its newest) or one by number, and leaves by its state (`none`: quiet). `github.release` reads the latest published
   release or one tag; with `newerThan`, a latest release with that tag, or an older version, is `none` (quiet), so it
   polls for the next one (a pre-release never counts, so with a test tag prefix, whose releases are pre-releases,
-  Cut a release never sees one published). Dry runs call nothing: `github.change_request` takes its `dryRunPort`, else
+  a stable Cut a release never sees one published). With `prereleases` (PDT-210; not with `tag`) it reads the newest
+  published release, pre-releases included, as an experimental cut needs. Dry runs call nothing: `github.change_request` takes its `dryRunPort`, else
   `open` for a branch and `merged` for a number, `github.release` `found`.
 - Buildkite actions (`workflow/nodes/buildkite.rs`, client in `buildkite.rs`; bearer token, the connection's `url`
   or `https://api.buildkite.com`, `config.org`): `buildkite.retry` retries the build's failed retryable jobs (output

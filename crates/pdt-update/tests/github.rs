@@ -139,15 +139,22 @@ async fn redirect_loop(State(f): State<Fake>) -> Response {
     (StatusCode::FOUND, [(header::LOCATION, format!("/repos/loop/r/releases/latest?hop={n}"))]).into_response()
 }
 
-/// Every release, newest first as GitHub lists them: v0.2.1, a draft v0.3.0, a pre-release v0.2.2, v0.2.0, then the
-/// per-merge releases v0.1.840 down to v0.1.1.
+/// Every release, newest first as GitHub lists them: two experimental pre-releases v0.2.2-exp.2 and -exp.1, v0.2.1, a
+/// draft v0.3.0, a pre-release v0.2.2 (not an experimental build), v0.2.0, then the per-merge releases v0.1.840 down
+/// to v0.1.1.
 fn all_releases() -> Vec<serde_json::Value> {
     let r = |tag: &str, draft: bool, prerelease: bool| {
         serde_json::json!({"tag_name": tag, "body": format!("Notes for {tag}"), "published_at": null,
                            "draft": draft, "prerelease": prerelease, "assets": []})
     };
-    let mut out =
-        vec![r("v0.2.1", false, false), r("v0.3.0", true, false), r("v0.2.2", false, true), r("v0.2.0", false, false)];
+    let mut out = vec![
+        r("v0.2.2-exp.2", false, true),
+        r("v0.2.2-exp.1", false, true),
+        r("v0.2.1", false, false),
+        r("v0.3.0", true, false),
+        r("v0.2.2", false, true),
+        r("v0.2.0", false, false),
+    ];
     out.extend((1..=840).rev().map(|n| r(&format!("v0.1.{n}"), false, false)));
     out
 }
@@ -267,6 +274,34 @@ async fn the_releases_an_update_brings_skip_drafts_and_pre_releases() {
     // Nothing newer than the installed version: nothing listed.
     assert!(c.releases_between("good", &v("0.2.1"), &v("0.2.1")).await.unwrap().is_empty());
     assert_eq!(c.releases_between("bad", &v("0.1.1"), &v("0.2.1")).await, Err(UpdateError::Unauthorized));
+}
+
+#[tokio::test]
+async fn each_channel_finds_its_newest_release() {
+    use pdt_core::host::UpdateChannel;
+    let (c, fake) = serve().await;
+    let stable = c.newest("good", UpdateChannel::Stable).await.unwrap();
+    assert_eq!(stable.release.tag, "v0.1.7", "stable is GitHub's latest release");
+    let exp = c.newest("good", UpdateChannel::Experimental).await.unwrap();
+    assert_eq!(exp.release.tag, "v0.2.2-exp.2", "the newest experimental build, not the plain pre-release v0.2.2");
+    assert!(exp.release.prerelease && exp.release.version.is_experimental());
+    assert_eq!(*fake.release_pages.lock().unwrap(), [1]);
+    assert_eq!(c.newest("bad", UpdateChannel::Experimental).await.unwrap_err(), UpdateError::Unauthorized);
+}
+
+#[tokio::test]
+async fn an_experimental_update_brings_its_own_notes_and_the_releases_before_it() {
+    let (c, _) = serve().await;
+    let v = |s| pdt_core::release::parse_version(s).unwrap();
+    let tags = |l: Vec<pdt_update::Release>| l.into_iter().map(|r| r.tag).collect::<Vec<_>>();
+    // The experimental build's notes preview everything unreleased, so its earlier builds are left out.
+    assert_eq!(
+        tags(c.releases_between("good", &v("0.2.0"), &v("0.2.2-exp.2")).await.unwrap()),
+        ["v0.2.2-exp.2", "v0.2.1"]
+    );
+    assert_eq!(tags(c.releases_between("good", &v("0.2.2-exp.1"), &v("0.2.2-exp.2")).await.unwrap()), ["v0.2.2-exp.2"]);
+    // Up to a stable release, experimental builds never count.
+    assert_eq!(tags(c.releases_between("good", &v("0.2.0"), &v("0.2.1")).await.unwrap()), ["v0.2.1"]);
 }
 
 #[tokio::test]

@@ -9,7 +9,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use pdt_core::activity::Activity;
 use pdt_core::handoff::{UpdateRequest, UpdateResult, UpdateSkip, downloads_dir, request_path, result_path, skip_path};
-use pdt_core::host::{DEFAULT_UPDATE_CHECK_MINUTES, UpdatePolicy};
+use pdt_core::host::{DEFAULT_UPDATE_CHECK_MINUTES, UpdateChannel, UpdatePolicy};
 use pdt_core::release::{APPIMAGE_MARKER, HostOs, TokenState, Version, compare_base, parse_version, token_state};
 use pdt_core::run::RunState;
 use pdt_core::session::SessionStatus;
@@ -38,6 +38,8 @@ pub enum UpdateState {
 pub struct ReleaseSummary {
     pub version: String,
     pub tag: String,
+    /// An experimental build (`X.Y.Z-exp.N`, a GitHub pre-release; PDT-210).
+    pub experimental: bool,
     pub notes: String,
     /// GitHub's `published_at` as GitHub sends it (an ISO 8601 UTC string, e.g. `2026-10-15T00:00:00Z`), not Unix
     /// ms: it is only displayed (ruling F17).
@@ -57,6 +59,8 @@ pub struct ReleaseSummary {
 pub struct ReleaseNotes {
     pub version: String,
     pub tag: String,
+    /// An experimental build: its notes preview the changes not yet in a stable release.
+    pub experimental: bool,
     pub notes: String,
     /// As GitHub sends it (ISO 8601 UTC).
     pub published_at: Option<String>,
@@ -132,6 +136,10 @@ pub struct ReleaseRepo {
 #[ts(export)]
 pub struct UpdateStatus {
     pub current: String,
+    /// The installed version is an experimental build (`X.Y.Z-exp.N`).
+    pub current_experimental: bool,
+    /// The host's update channel (PDT-210).
+    pub channel: UpdateChannel,
     pub state: UpdateState,
     pub disabled_reason: Option<String>,
     pub policy: UpdatePolicy,
@@ -194,6 +202,8 @@ impl UpdateService {
             current: current.into(),
             status: Mutex::new(UpdateStatus {
                 current: current.into(),
+                current_experimental: parse_version(current).is_some_and(|v| v.is_experimental()),
+                channel: UpdateChannel::Stable,
                 state: if enabled { UpdateState::Idle } else { UpdateState::Disabled },
                 disabled_reason,
                 policy: UpdatePolicy::Notify,
@@ -328,12 +338,16 @@ pub async fn sync_token_state(st: &AppState) {
     }
 }
 
-/// Reads the host settings this service follows: the update policy, and the release repository override (a failed
-/// read keeps the repository it has).
+/// Reads the host settings this service follows: the update policy and channel, and the release repository override
+/// (a failed read keeps the repository it has).
 pub(crate) async fn refresh_settings(st: &AppState) -> UpdatePolicy {
     let settings = st.store.get_host_settings().await;
     let p = settings.as_ref().map(|s| s.update_policy).unwrap_or(UpdatePolicy::Notify);
-    st.update.edit(|s| s.policy = p);
+    let channel = settings.as_ref().map(|s| s.update_channel).unwrap_or_default();
+    st.update.edit(|s| {
+        s.policy = p;
+        s.channel = channel;
+    });
     if let Ok(s) = &settings {
         st.update.use_repo(s.release_repo.as_deref());
     }
@@ -387,7 +401,9 @@ async fn check_now(st: &AppState) -> UpdateStatus {
     if claimed.state != UpdateState::Checking {
         return claimed;
     }
-    let result = svc.client.latest(&tok).await;
+    // The channel the settings named when this check started (refresh_settings above).
+    let channel = claimed.channel;
+    let result = svc.client.newest(&tok, channel).await;
     let (changes, releases) = match &result {
         Ok(l) if l.release.version.is_newer_than(&current) => {
             (release_changes(svc, &tok, &l.release).await, releases_since(svc, &tok, &current, &l.release).await)
@@ -470,6 +486,7 @@ async fn releases_since(
         .into_iter()
         .map(|r| ReleaseNotes {
             version: r.version.to_string(),
+            experimental: r.version.is_experimental(),
             tag: r.tag,
             notes: r.notes,
             published_at: r.published_at,
@@ -536,6 +553,7 @@ fn set_found(
     s.latest = newer.then(|| ReleaseSummary {
         version: release.version.to_string(),
         tag: release.tag.clone(),
+        experimental: release.version.is_experimental(),
         notes: release.notes.clone(),
         published_at: release.published_at.clone(),
         changes,

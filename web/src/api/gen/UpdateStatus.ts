@@ -2,8 +2,17 @@
 import type { ReleaseRepo } from "./ReleaseRepo";
 import type { ReleaseSummary } from "./ReleaseSummary";
 import type { TokenState } from "./TokenState";
+import type { UpdateChannel } from "./UpdateChannel";
 import type { UpdatePolicy } from "./UpdatePolicy";
 import type { UpdateResult } from "./UpdateResult";
 import type { UpdateState } from "./UpdateState";
 
-export type UpdateStatus = { current: string, state: UpdateState, disabledReason: string | null, policy: UpdatePolicy, latest: ReleaseSummary | null, lastCheckedAt: number | null, error: string | null, token: TokenState, lastResult: UpdateResult | null, releaseRepo: ReleaseRepo, };
+export type UpdateStatus = { current: string, 
+/**
+ * The installed version is an experimental build (`X.Y.Z-exp.N`).
+ */
+currentExperimental: boolean, 
+/**
+ * The host's update channel (PDT-210).
+ */
+channel: UpdateChannel, state: UpdateState, disabledReason: string | null, policy: UpdatePolicy, latest: ReleaseSummary | null, lastCheckedAt: number | null, error: string | null, token: TokenState, lastResult: UpdateResult | null, releaseRepo: ReleaseRepo, };

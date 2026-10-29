@@ -12,7 +12,7 @@ afterEach(() => {
 
 const settingsView = (over: object = {}) => ({
   settings: {
-    remoteAccess: false, ownerLogin: null, updatePolicy: 'notify', runPorts: { start: 8400, end: 8499 },
+    remoteAccess: false, ownerLogin: null, updatePolicy: 'notify', updateChannel: 'stable', runPorts: { start: 8400, end: 8499 },
     maxConcurrentRuns: 4, agentCredentials: 'subscription', projectsDir: null, defaultAgent: 'claude',
     defaultSessionMode: 'conversation', ticketPermissionMode: 'bypass', sessionPermissionMode: 'ask', updateCheckMinutes: 60,
     releaseRepo: null,
@@ -24,14 +24,14 @@ const settingsView = (over: object = {}) => ({
   ...over,
 });
 const update = (over: object = {}) => ({
-  current: '0.1.6', state: 'idle', disabledReason: null, policy: 'notify', latest: null, lastCheckedAt: null,
-  error: null, token: { state: 'missing' }, lastResult: null,
+  current: '0.1.6', currentExperimental: false, channel: 'stable', state: 'idle', disabledReason: null, policy: 'notify',
+  latest: null, lastCheckedAt: null, error: null, token: { state: 'missing' }, lastResult: null,
   releaseRepo: { repo: 'RossTools/PersonalDevTeam', id: 1, movedTo: null, overriddenBy: null }, ...over,
 });
 const tool = (ok: boolean) => ({ found: true, ok, detail: ok ? 'ok' : 'not logged in' });
 const checks = (ok: boolean) => ({ claude: tool(ok), codex: tool(ok), devin: { found: false, ok: false, detail: 'not found' }, git: tool(true), tailscale: tool(true), checkedAt: 1 });
 const local = { caller: 'local', login: null };
-const release = { version: '0.1.7', tag: 'v0.1.7', notes: 'Fixes', publishedAt: null, changes: null, releases: null };
+const release = { version: '0.1.7', tag: 'v0.1.7', experimental: false, notes: 'Fixes', publishedAt: null, changes: null, releases: null };
 
 describe('HostSettingsPage', () => {
   it('sets the owner from this device, then turns on remote access', async () => {
@@ -137,6 +137,39 @@ describe('HostSettingsPage', () => {
     await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Manual (no checks)' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ updatePolicy: 'manual' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Saved');
+  });
+
+  it('switches the update channel and checks again at once', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+      'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
+      'POST /api/host/update/check': update({ channel: 'experimental', state: 'available', latest: { ...release, version: '0.1.7-exp.2', experimental: true } }),
+    });
+    renderWithQuery(<HostSettingsPage />);
+    expect(await screen.findByText('Full releases only.')).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: /Update channel/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Experimental builds too' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ updateChannel: 'experimental' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/host/update/check')).toBe(true));
+    expect(await screen.findByText('v0.1.7-exp.2 available (experimental)')).toBeInTheDocument();
+    expect(screen.getByText(/can carry database migrations no stable release has yet/)).toBeInTheDocument();
+  });
+
+  it('says an experimental build stays until a newer stable release when back on stable', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update({ current: '0.2.1-exp.3', currentExperimental: true }),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+    });
+    renderWithQuery(<HostSettingsPage />);
+    expect(await screen.findByText('This host stays on the experimental build v0.2.1-exp.3 until a newer stable release exists.')).toBeInTheDocument();
+    expect(screen.getByText('Experimental')).toBeInTheDocument();
   });
 
   it('saves the update check interval, which is off while updates are manual', async () => {
@@ -371,6 +404,19 @@ describe('UpdateBanner', () => {
     expect(within(sections[1]).getByText('No notes.')).toBeInTheDocument();
     // The release notes take the place of the commit list.
     expect(within(notes).queryByText('A commit')).toBeNull();
+  });
+
+  it('marks an experimental update and its notes', async () => {
+    const releases = [{ version: '0.2.1-exp.2', tag: 'v0.2.1-exp.2', experimental: true, notes: 'Not yet released:\n\n- Things.', publishedAt: null }];
+    stubApi({ 'GET /api/host/update': update({ current: '0.2.0', state: 'available', latest: { ...release, version: '0.2.1-exp.2', experimental: true, releases } }) });
+    renderWithQuery(<UpdateBanner />);
+    const strip = (await screen.findByText(/Update to v0.2.1-exp.2 available/)).parentElement!;
+    expect(within(strip).getByText('Experimental')).toBeInTheDocument();
+    expect(strip).toHaveClass('h-8', 'flex-nowrap');
+    await userEvent.click(screen.getByRole('button', { name: 'Release notes' }));
+    const section = within(screen.getByRole('region', { name: 'Release notes' })).getByRole('region', { name: 'v0.2.1-exp.2' });
+    expect(within(section).getByText('Experimental')).toBeInTheDocument();
+    expect(within(section).getByText('Things.')).toBeInTheDocument();
   });
 
   it('lists every change since the installed version, linking tickets here and pull requests', async () => {

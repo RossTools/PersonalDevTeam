@@ -3,7 +3,11 @@
 /**
  * One release an update brings, and its notes.
  */
-export type ReleaseNotes = { version: string, tag: string, notes: string, 
+export type ReleaseNotes = { version: string, tag: string, 
+/**
+ * An experimental build: its notes preview the changes not yet in a stable release.
+ */
+experimental: boolean, notes: string, 
 /**
  * As GitHub sends it (ISO 8601 UTC).
  */

@@ -341,6 +341,11 @@ pub trait Forge: Send + Sync {
     fn release(&self, _repo: &str, _tag: Option<&str>) -> Result<Option<Release>, ForgeError> {
         unsupported(self.name(), "releases")
     }
+    /// The newest published release, pre-releases included (an experimental build, PDT-210); None when there is none
+    /// ([`Capabilities::releases`]).
+    fn newest_release(&self, _repo: &str) -> Result<Option<Release>, ForgeError> {
+        unsupported(self.name(), "releases")
+    }
 }
 
 pub mod testing {
@@ -707,6 +712,12 @@ pub mod testing {
                 Some(t) => list.iter().find(|r| r.tag == t).cloned(),
                 None => list.first().cloned(),
             })
+        }
+        fn newest_release(&self, repo: &str) -> Result<Option<Release>, ForgeError> {
+            self.call(format!("newest release {repo}"));
+            self.can(|c| c.releases, "releases")?;
+            self.failing()?;
+            Ok(self.releases.lock().unwrap().get(repo).and_then(|l| l.first().cloned()))
         }
     }
 }

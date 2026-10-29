@@ -42,4 +42,28 @@ for v in 0.9.9 0.10.0 1.0 v1.0.0 01.0.0; do
 done
 expect_eq "a refused set changes nothing" 0.10.0 "$("$script" -C "$dir")"
 
+# --- experimental builds (PDT-210): the next -exp.N, and setting it in a build's checkout
+tags='v0.2.1-exp.1
+v0.2.1-exp.9
+v0.2.1-exp.10
+v10.2.1-exp.40
+v0.2.10-exp.50
+v0.2.1
+v0.2.0-exp.70'
+expect_eq "next-exp after the highest" 0.2.1-exp.11 "$(printf '%s\n' "$tags" | "$script" next-exp 0.2.1)"
+expect_eq "next-exp with none yet" 0.3.0-exp.1 "$(printf '%s\n' "$tags" | "$script" next-exp 0.3.0)"
+expect_eq "next-exp with no tags" 0.2.1-exp.1 "$(printf '' | "$script" next-exp 0.2.1)"
+if printf '' | "$script" next-exp 0.2.1-exp.1 >/dev/null 2>&1; then fail "next-exp takes a release version"; fi
+
+setup exp 0.2.0
+"$script" -C "$dir" set 0.2.1-exp.3 >/dev/null || fail "set an experimental version"
+expect_eq "set writes the experimental version" 0.2.1-exp.3 "$("$script" -C "$dir")"
+"$script" -C "$dir" check >/dev/null || fail "check takes an experimental version"
+if "$script" -C "$dir" next patch >/dev/null 2>&1; then fail "no bump from an experimental build"; fi
+setup exp-old 0.2.1
+for v in 0.2.1-exp.1 0.2.0-exp.9 0.2.1-exp 0.2.1-exp.01 0.2.1-rc.1; do
+  if "$script" -C "$dir" set "$v" >/dev/null 2>&1; then fail "set should refuse $v over 0.2.1"; fi
+done
+"$script" -C "$dir" set 0.2.2-exp.1 >/dev/null || fail "set the next version's experimental build"
+
 if [ "$failed" = 0 ]; then echo "version tests passed"; else exit 1; fi

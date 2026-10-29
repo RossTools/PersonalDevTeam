@@ -4,6 +4,8 @@
 #   scripts/changelog.sh check [<fragment>...]   validate fragments (default: every one in .changes/unreleased)
 #   scripts/changelog.sh <version>               compile .changes/unreleased into CHANGELOG.md
 #   scripts/changelog.sh notes <version>         print <version>'s section of CHANGELOG.md (the release notes)
+#   scripts/changelog.sh preview                 print the notes the unreleased fragments would make, changing nothing
+#                                                (an experimental release's notes)
 #
 # A fragment is `.changes/unreleased/<TICKET>.md` (or `<TICKET>-<anything>.md` for a ticket's second note):
 #
@@ -29,7 +31,7 @@ unreleased="$root/.changes/unreleased"
 die() { printf 'changelog: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '3,8p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -105,19 +107,9 @@ as_items() {
   esac
 }
 
-compile() {
-  local version="$1" date files f kind title section="" group changelog="$root/CHANGELOG.md" dest tmp
-  date="${CHANGELOG_DATE:-$(date +%Y-%m-%d)}"
-  dest="$root/.changes/$version"
-  case "$version" in
-    ""|unreleased|*/*|.*) die "'$version' is not a version" ;;
-  esac
-  files="$(fragments)"
-  [ -n "$files" ] || die "no fragments in .changes/unreleased"
-  check
-  [ ! -e "$dest" ] || die ".changes/$version already exists"
-  [ -f "$changelog" ] || die "no CHANGELOG.md in $root"
-
+# The notes of the fragments given one per line in $1: grouped Breaking, Added, Changed, Fixed, internal ones left out.
+section_of() {
+  local files="$1" f kind title section="" group
   for kind in breaking added changed fixed; do
     group=""
     while IFS= read -r f; do
@@ -137,6 +129,23 @@ EOF
     section="$section### $title"$'\n\n'"$group"
   done
   [ -n "$section" ] || section="Internal changes only."$'\n'
+  printf '%s' "$section"
+}
+
+compile() {
+  local version="$1" date files f section changelog="$root/CHANGELOG.md" dest tmp
+  date="${CHANGELOG_DATE:-$(date +%Y-%m-%d)}"
+  dest="$root/.changes/$version"
+  case "$version" in
+    ""|unreleased|*/*|.*) die "'$version' is not a version" ;;
+  esac
+  files="$(fragments)"
+  [ -n "$files" ] || die "no fragments in .changes/unreleased"
+  check
+  [ ! -e "$dest" ] || die ".changes/$version already exists"
+  [ -f "$changelog" ] || die "no CHANGELOG.md in $root"
+  # Kept with its trailing newline (a command substitution would drop it).
+  section="$(section_of "$files"; echo x)"; section="${section%x}"
 
   # The new section goes before the first `## ` heading (the newest release), or at the end when there is none.
   tmp="$changelog.tmp"
@@ -153,6 +162,18 @@ EOF
 $files
 EOF
   printf '%s' "$section"
+}
+
+# The notes the unreleased fragments would make, as compile prints them, leaving the fragments where they are.
+preview() {
+  local files
+  files="$(fragments)"
+  if [ -z "$files" ]; then
+    echo "No changes since the last release."
+    return
+  fi
+  check
+  section_of "$files"
 }
 
 # The notes of a compiled version: its section of CHANGELOG.md without the heading or surrounding blank lines, as
@@ -176,6 +197,7 @@ case "${1:-}" in
   ""|-h|--help) usage ;;
   check) shift; check "$@" ;;
   notes) [ $# -eq 2 ] || usage; notes "$2" ;;
+  preview) [ $# -eq 1 ] || usage; preview ;;
   -*) usage ;;
   *) [ $# -eq 1 ] || usage; compile "$1" ;;
 esac
