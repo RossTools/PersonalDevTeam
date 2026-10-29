@@ -90,8 +90,9 @@ The value is a forge plugin's id (`github`) or one of PDT's own (`local`, `none`
 forge whose plugin claims its `origin`'s host (GitHub claims github.com, and the GitHub Enterprise Server your GitHub
 login is for) and has none when no plugin does, so existing projects need nothing. It is read from the project's
 **main checkout** plus the host overrides (the overrides' wins). A forge this PDT has no plugin for (written for a
-newer one), or one whose plugin is turned off, leaves the choice to the origin; a value that can't be an id (only
-lower-case letters, digits and `-`) is skipped like an unknown section.
+newer one), or one whose plugin is turned off, leaves the choice to the origin, even when it is the overrides' value
+over one the file names: overrides with `forge = "gitlab"` over a file's `forge = "local"` make the origin decide. A
+value that can't be an id (only lower-case letters, digits and `-`) is skipped like an unknown section.
 
 ### The local forge
 
