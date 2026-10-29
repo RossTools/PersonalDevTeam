@@ -123,8 +123,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     links Jira.
   - **Done moves the Jira issue** (on, 7e-2): `ticket.stage_changed` to `done` with an `external.jira` →
     `jira.transition` (`ticket`: the project's done mapping). Nothing else is pushed to Jira.
-  - **PDT bug triage** (PDT-154; on when installed only where a project's repository is `RELEASE_REPO`, PDT's own;
-    off elsewhere): `github.issue.opened` on `RELEASE_REPO` where `labels` contains `from-pdt` (the bug reports other
+  - **PDT bug triage** (PDT-154; installed, on, and offered as a template only where a project's repository is
+    `RELEASE_REPO`, PDT's own (PDT-226; `builtins::only_for_pdt`); one installed elsewhere before that stays): `github.issue.opened` on `RELEASE_REPO` where `labels` contains `from-pdt` (the bug reports other
     PDT instances file, PDT-153) and `projectId` exists → an `agent` step (the locked-down Triage persona, PDT-201, a
     new session in that project, no ticket) that triages against the code and the tickets, changing nothing itself, with
     outcomes `accept` (`data` `{priority, labels}`), `duplicate` (`data` `{ticket, duplicateOf}`) and `reject` (the
@@ -581,13 +581,12 @@ of `connectionKind` when given; `list`: a list of text, given as a JSON list or 
 reference takes the value with its type; other references stay). Saving checks the params and validates the document
 with defaults or placeholders filled in. Built-in templates (`builtin:<id>`, read-only, `409 builtin_template`):
 Blank, Tell the agent when CI fails, Ask before finishing a merged ticket, Comment when a pull request merges, the
-Pipeline (below), the Hermes jobs of 7e (New GitHub issues to Discord; Health watchdog: a URL on a schedule, Discord
-only on a change, the first check silent; Brief follow-ups and Email processing: a script on a schedule whose
-`{"message": …}` goes to Discord), Triage new GitHub issues (PDT-81: `github.issue.opened` → an `agent` step of the
+Pipeline (below), New GitHub issues to Discord (7e; PDT-226 removed the templates that weren't about development: Health watchdog,
+Brief follow-ups and Email processing; workflows made from them stay as they are), Triage new GitHub issues (PDT-81: `github.issue.opened` → an `agent` step of the
 locked-down Triage persona by default (PDT-201, [agents.md](agents.md)), `{{params.persona}}`, with outcomes `drafted` (it made a draft ticket in `{{params.project}}` with
 `create_ticket`, which asks first unless the project lets the PM act; an external Draft), `duplicate` and `ignored`,
 the last quiet), and
-the built-in workflows. A required text param with no default is checked as
+the built-in workflows (PDT bug triage only where a project is PDT's own repository). A required text param with no default is checked as
 the reference itself. The user's are in `workflow_templates`.
 
 A workflow made from a built-in template records it and its params in its state (`_pdt.template`: `{id, params}`).
@@ -766,7 +765,7 @@ settings without asking (both rows then show "PM acts without asking"). Saving k
 `ConnectionPicker`: the connections of that kind, and Add… for a new one.
 
 To post to Discord: add a Discord webhook connection (above), then New workflow → a template that posts (New GitHub
-issues to Discord, Health watchdog, …) and pick it as the Discord channel, or add a Post to Discord step and pick it in
+issues to Discord) and pick it as the Discord channel, or add a Post to Discord step and pick it in
 the step's panel. Or add a Discord bot connection and ask the PM to set up the channel and its webhook
 ([agents.md](agents.md#the-pm-pdt-81)).
 

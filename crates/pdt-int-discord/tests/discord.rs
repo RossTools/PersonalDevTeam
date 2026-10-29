@@ -188,7 +188,7 @@ async fn a_discord_channel_is_made_only_when_missing() {
 }
 
 #[tokio::test]
-async fn the_hermes_templates_instantiate_and_dry_run() {
+async fn the_discord_templates_instantiate_and_dry_run() {
     let env = setup().await;
     let inst = |id: &str, params: Value| {
         let app = env.app.clone();
@@ -219,49 +219,17 @@ async fn the_hermes_templates_instantiate_and_dry_run() {
     let would = d["run"]["steps"][1]["output"]["would"].as_str().unwrap();
     assert!(would.contains("New issue in o/r #9: **Crash** by al"), "{would}");
 
-    let w = inst("health-watchdog", json!({"url": "http://127.0.0.1:1/health", "discord": "alerts"})).await;
-    assert_eq!(w["doc"]["nodes"][0]["config"]["every"], "1m");
-    let w = inst("brief-follow-ups", json!({"script": "/opt/briefs/watchlist.py", "discord": "alerts"})).await;
-    assert_eq!(w["doc"]["nodes"][1]["config"]["args"], json!(["/opt/briefs/watchlist.py"]));
-    let w = inst("email-processing", json!({"script": "/opt/mail/process.py", "discord": "alerts"})).await;
-    assert_eq!(w["doc"]["nodes"][0]["config"]["every"], "15m");
     let (s, _) = call(
         &env.app,
         "POST",
-        "/api/workflow-templates/builtin:email-processing/instantiate",
+        "/api/workflow-templates/builtin:github-issues-discord/instantiate",
         Some(json!({"params": {"discord": "alerts"}})),
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "the script is required");
-}
-
-#[tokio::test]
-async fn the_health_watchdog_posts_only_on_a_change() {
-    let (discord, posts) = fake_server(|_, n| (200, json!({"id": format!("m{n}")}))).await;
-    // The service: up, up, down, down, up.
-    let (svc, _) = fake_server(|_, n| if matches!(n, 3 | 4) { (503, json!({})) } else { (200, json!({})) }).await;
-    let env = setup().await;
-    connection(&env, "alerts", "discord_webhook", "", json!({}), Some(&format!("{discord}/hook"))).await;
-    let (_, w) = call(
-        &env.app,
-        "POST",
-        "/api/workflow-templates/builtin:health-watchdog/instantiate",
-        Some(json!({"params": {"name": "NAS", "url": format!("{svc}/health"), "discord": "alerts"}, "scope": "personal"})),
-    )
-    .await;
-    let wid = w["id"].as_str().unwrap().to_string();
-    // Run its graph from a manual trigger at the schedule's place, five times.
-    let mut doc = w["doc"].clone();
-    doc["nodes"][0] = json!({"id": "tick", "kind": "manual", "version": 1});
-    let (s, v) = call(&env.app, "PUT", &format!("/api/workflows/{wid}"), Some(json!({"doc": doc}))).await;
-    assert_eq!(s, StatusCode::OK, "{v}");
-    let mut statuses = vec![];
-    for _ in 0..5 {
-        statuses.push(run_now(&env, &wid, json!({})).await["status"].as_str().unwrap().to_string());
+    assert_eq!(s, StatusCode::BAD_REQUEST, "the repository is required");
+    // PDT-226: the templates that weren't about development are gone.
+    for id in ["health-watchdog", "brief-follow-ups", "email-processing"] {
+        let (s, _) = call(&env.app, "GET", &format!("/api/workflow-templates/builtin:{id}"), None).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{id}");
     }
-    assert_eq!(statuses, ["quiet", "quiet", "succeeded", "quiet", "succeeded"]);
-    let texts: Vec<String> = posts.all().iter().map(|p| p.2["content"].as_str().unwrap().to_string()).collect();
-    assert_eq!(texts.len(), 2, "{texts:?}");
-    assert!(texts[0].contains("NAS is down: 503"), "{}", texts[0]);
-    assert!(texts[1].contains("NAS recovered"), "{}", texts[1]);
 }

@@ -182,6 +182,8 @@ async fn bug_reports_are_triaged_into_tickets_duplicates_and_rejections() {
     let env = setup().await;
     let triage = builtin(&env, "pdt-bug-triage").await;
     assert_eq!(triage["enabled"], true, "enabled where a project is the release repository");
+    let (s, _) = call(&env.app, "GET", "/api/workflow-templates/builtin:pdt-bug-triage", None).await;
+    assert_eq!(s, StatusCode::OK, "offered as a template there too (PDT-226)");
     let wf = triage["id"].as_str().unwrap().to_string();
     // Four reports by one author: no triage cap here (PDT-202's has a test of its own).
     call(&env.app, "PUT", "/api/host/settings", Some(json!({"triagePerAuthorHour": 0}))).await;
