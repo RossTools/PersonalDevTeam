@@ -973,7 +973,8 @@ deleted (`409 persona_in_use`).
 - **Policies** (project settings `policy`: `mergeBy` `agents | user | external`, `requireApproval`, `requireGreenCi`
   (default on: an automated merge of a pull request waits for green CI on its head, PDT-151),
   `approvalExemptLabels` (tickets with one of them need no approval; normalised like ticket labels, `[]` clears),
-  `maxRunningAttempts`, `autoStart` `off | todo | ready`, `startDelaySeconds` (auto-start's quiet period, default 120,
+  `maxRunningAttempts`, `autoStart` `off | todo | ready`, `autoStartOrder` `priority | rank` (default `priority`: the most urgent
+  candidate first, PDT-218), `startDelaySeconds` (auto-start's quiet period, default 120,
   0 at once); `PUT` takes them as top-level fields, `maxRunningAttempts` 0 clears it): Merge and Start enforce them ([review.md](review.md#merge), [tickets.md](tickets.md)). Web: the
   project page's "Pipeline and policies".
 - **Host cap on agents running a turn** (`maxAgentTurns`, default 4, 0 none): busy sessions are conversations with a

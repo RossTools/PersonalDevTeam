@@ -307,7 +307,7 @@ describe('ProjectSettingsPanel', () => {
   });
 
   it('turns off waiting for green CI before an automated merge (on by default)', async () => {
-    const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'off', pmActs: false, startDelaySeconds: 120, requireGreenCi: true };
+    const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'off', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120, requireGreenCi: true };
     const calls = stubApi({
       'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, policy },
       'GET /api/projects/p/run-config': config,
@@ -326,7 +326,7 @@ describe('ProjectSettingsPanel', () => {
   });
 
   it('saves the quiet period before auto-start, shown while auto-start is on', async () => {
-    const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'todo', pmActs: false, startDelaySeconds: 120 };
+    const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'todo', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120 };
     const calls = stubApi({
       'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, policy },
       'GET /api/projects/p/run-config': config,
@@ -340,6 +340,23 @@ describe('ProjectSettingsPanel', () => {
     await choose(select, 'None: at once');
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
     expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, startDelaySeconds: 0 });
+  });
+
+  it('saves what auto-start picks by, shown while auto-start is on', async () => {
+    const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'todo', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120 };
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, policy },
+      'GET /api/projects/p/run-config': config,
+      'PUT /api/projects/p/settings': (c) => ({
+        effectiveCredentials: 'subscription', agentInstructions: null, policy: { ...policy, ...(c.body as object) },
+      }),
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    const select = await screen.findByRole('button', { name: /Auto-start picks by/ });
+    expect(select).toHaveTextContent('Priority, then rank');
+    await choose(select, 'Backlog rank');
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, autoStartOrder: 'rank' });
   });
 
   it('saves the credential policy as soon as it is chosen, keeping unsaved overrides on screen', async () => {

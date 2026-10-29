@@ -10,6 +10,7 @@ import { useOpenSession } from '../tickets/actions';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { AutoStart } from '../api/gen/AutoStart';
+import type { AutoStartOrder } from '../api/gen/AutoStartOrder';
 import type { MergeBy } from '../api/gen/MergeBy';
 import { PERMISSION_LABEL, PERMISSION_MODES } from '../conversation/ConversationComposer';
 import type { Project } from '../api/gen/Project';
@@ -319,6 +320,10 @@ const AUTO_START: { value: AutoStart; label: string }[] = [
   { value: 'todo', label: 'To do tickets' },
   { value: 'ready', label: 'To do, then Ready tickets' },
 ];
+const AUTO_START_ORDER: { value: AutoStartOrder; label: string }[] = [
+  { value: 'priority', label: 'Priority, then rank' },
+  { value: 'rank', label: 'Backlog rank' },
+];
 const START_DELAYS: { value: string; label: string }[] = [
   { value: '0', label: 'None: at once' },
   { value: '30', label: '30 seconds' },
@@ -431,7 +436,7 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
       </SettingsRow>
       <SettingsRow
         label="Auto-start"
-        description="Starts tickets in rank order, skipping blocked and conflicting ones, while the project is under its cap."
+        description="Starts tickets on its own, skipping blocked and conflicting ones, while the project is under its cap."
       >
         <Select<AutoStart>
           aria-label="Auto-start"
@@ -442,6 +447,21 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
           onChange={(a) => save.mutate({ autoStart: a }, done)}
         />
       </SettingsRow>
+      {p && p.autoStart !== 'off' && (
+        <SettingsRow
+          label="Auto-start picks by"
+          description="Priority: the most urgent ticket first (urgent, high, medium, low, none), then backlog rank. Backlog rank: the top ticket first, whatever its priority. To do tickets always come before Ready ones."
+        >
+          <Select<AutoStartOrder>
+            aria-label="Auto-start picks by"
+            className="w-56 max-w-full"
+            options={AUTO_START_ORDER}
+            value={p.autoStartOrder}
+            disabled={!settings}
+            onChange={(o) => save.mutate({ autoStartOrder: o }, done)}
+          />
+        </SettingsRow>
+      )}
       {p && p.autoStart !== 'off' && (
         <SettingsRow
           label="Quiet period before auto-start"

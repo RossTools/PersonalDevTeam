@@ -1,7 +1,7 @@
 use crate::{Store, StoreError};
 use pdt_core::host::{CredentialPolicy, HostSettings};
 use pdt_core::integration::IntegrationSettings;
-use pdt_core::policy::{AutoStart, MergeBy, ProjectPolicy};
+use pdt_core::policy::{AutoStart, AutoStartOrder, MergeBy, ProjectPolicy};
 use std::collections::BTreeMap;
 
 const HOST_KEY: &str = "host";
@@ -25,6 +25,7 @@ type ProjectSettingsRow = (
     String,
     i64,
     bool,
+    String,
 );
 
 /// A project's settings on this host (overrides of the repo's run configuration, credential policy).
@@ -148,7 +149,7 @@ impl Store {
         let row: Option<ProjectSettingsRow> = sqlx::query_as(
             "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr, agent_permission_mode, \
              merge_by, require_approval, max_running_attempts, auto_start, approval_exempt_labels, pm_acts, \
-             integration_settings, start_delay_seconds, require_green_ci \
+             integration_settings, start_delay_seconds, require_green_ci, auto_start_order \
              FROM project_settings \
              WHERE project_id = ?",
         )
@@ -170,6 +171,7 @@ impl Store {
             integrations,
             start_delay,
             require_green_ci,
+            order,
         )) = row
         else {
             return Ok(ProjectSettings::default());
@@ -196,6 +198,8 @@ impl Store {
                 max_running_attempts: cap.and_then(|n| u32::try_from(n).ok()),
                 auto_start: AutoStart::parse(&auto)
                     .ok_or_else(|| StoreError::Corrupt(format!("auto-start {auto:?}")))?,
+                auto_start_order: AutoStartOrder::parse(&order)
+                    .ok_or_else(|| StoreError::Corrupt(format!("auto-start order {order:?}")))?,
                 approval_exempt_labels: serde_json::from_str(&exempt)
                     .map_err(|_| StoreError::Corrupt(format!("approval-exempt labels {exempt:?}")))?,
                 pm_acts,
@@ -210,8 +214,9 @@ impl Store {
         sqlx::query(
             "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
              merge_via_pr, agent_permission_mode, merge_by, require_approval, max_running_attempts, auto_start, \
-             approval_exempt_labels, pm_acts, integration_settings, start_delay_seconds, require_green_ci) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             approval_exempt_labels, pm_acts, integration_settings, start_delay_seconds, require_green_ci, \
+             auto_start_order) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(project_id) DO UPDATE SET \
              run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
              agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr, \
@@ -219,7 +224,8 @@ impl Store {
              require_approval = excluded.require_approval, max_running_attempts = excluded.max_running_attempts, \
              auto_start = excluded.auto_start, approval_exempt_labels = excluded.approval_exempt_labels, \
              pm_acts = excluded.pm_acts, integration_settings = excluded.integration_settings, \
-             start_delay_seconds = excluded.start_delay_seconds, require_green_ci = excluded.require_green_ci",
+             start_delay_seconds = excluded.start_delay_seconds, require_green_ci = excluded.require_green_ci, \
+             auto_start_order = excluded.auto_start_order",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
@@ -236,6 +242,7 @@ impl Store {
         .bind(serde_json::to_string(&s.integrations).expect("JSON objects"))
         .bind(i64::from(s.policy.start_delay_seconds))
         .bind(s.policy.require_green_ci)
+        .bind(s.policy.auto_start_order.as_str())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -372,6 +379,7 @@ mod tests {
                 require_approval: true,
                 max_running_attempts: Some(2),
                 auto_start: pdt_core::policy::AutoStart::Ready,
+                auto_start_order: pdt_core::policy::AutoStartOrder::Rank,
                 approval_exempt_labels: vec!["automerge".into()],
                 pm_acts: true,
                 start_delay_seconds: 30,

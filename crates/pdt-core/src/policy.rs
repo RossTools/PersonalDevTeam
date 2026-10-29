@@ -1,7 +1,7 @@
 //! Project policies (Phase 7c spec §4, §6): who may merge, whether an automated merge needs a person's approval, the
 //! cap on running attempts and auto-start. Pure rules: the domain commands (Merge, Start) and the scheduler apply them.
 
-use crate::ticket::{OverlapLevel, TicketSummary};
+use crate::ticket::{OverlapLevel, TicketSort, TicketSummary};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -60,6 +60,46 @@ impl AutoStart {
     }
 }
 
+/// The order auto-start takes a project's candidates in (PDT-218); To do always comes before Ready.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AutoStartOrder {
+    /// Most urgent first (urgent, high, medium, low, none), then backlog rank.
+    #[default]
+    Priority,
+    /// Backlog rank only.
+    Rank,
+}
+
+impl AutoStartOrder {
+    pub const ALL: [AutoStartOrder; 2] = [AutoStartOrder::Priority, AutoStartOrder::Rank];
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AutoStartOrder::Priority => "priority",
+            AutoStartOrder::Rank => "rank",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+    /// The ticket list sort that gives this order.
+    pub fn ticket_sort(self) -> TicketSort {
+        match self {
+            AutoStartOrder::Priority => TicketSort::Priority,
+            AutoStartOrder::Rank => TicketSort::Rank,
+        }
+    }
+    /// Where `t` comes in this order: lower goes first.
+    fn key(self, t: &TicketSummary) -> (std::cmp::Reverse<u8>, &str, &str) {
+        let urgency = match self {
+            AutoStartOrder::Priority => t.priority.weight(),
+            AutoStartOrder::Rank => 0,
+        };
+        (std::cmp::Reverse(urgency), t.rank.as_str(), t.id.as_str())
+    }
+}
+
 /// How long a ticket goes unchanged before auto-start takes it, unless the project says otherwise (PDT-146).
 pub const DEFAULT_START_DELAY_SECONDS: u32 = 120;
 
@@ -82,6 +122,9 @@ pub struct ProjectPolicy {
     /// The most active attempts the project may have (null: no cap; auto-start then keeps to one).
     pub max_running_attempts: Option<u32>,
     pub auto_start: AutoStart,
+    /// Which candidate auto-start takes first (PDT-218).
+    #[serde(default)]
+    pub auto_start_order: AutoStartOrder,
     /// The PM may create and edit the project's tickets and message its sessions without asking (PDT-81).
     #[serde(default)]
     pub pm_acts: bool,
@@ -106,6 +149,7 @@ impl Default for ProjectPolicy {
             approval_exempt_labels: vec![],
             max_running_attempts: None,
             auto_start: AutoStart::default(),
+            auto_start_order: AutoStartOrder::default(),
             pm_acts: false,
             start_delay_seconds: DEFAULT_START_DELAY_SECONDS,
             require_green_ci: true,
@@ -218,8 +262,8 @@ pub fn auto_start_at(policy: &ProjectPolicy, t: &TicketSummary, now: i64) -> Opt
     (takes_stage(policy, t) && startable(t) && at > now).then_some(at)
 }
 
-/// The next ticket auto-start takes from `candidates` (To do in rank order, then Ready ones when the policy says so),
-/// or None. `skip`: tickets it already failed to start. A ticket changed within the start delay before `now` waits.
+/// The next ticket auto-start takes from `candidates` (To do in the policy's order, then Ready ones when the policy
+/// says so), or None. `skip`: tickets it already failed to start. A ticket changed within the start delay before `now` waits.
 pub fn pick_next<'a>(
     policy: &ProjectPolicy,
     active: u32,
@@ -232,12 +276,11 @@ pub fn pick_next<'a>(
         return None;
     }
     let ok = |t: &&TicketSummary| startable(t) && !skip.contains(&t.id) && settles_at(policy, t) <= now;
-    let todo = candidates.iter().filter(|t| t.stage == TicketStage::Todo).find(ok);
-    todo.or_else(|| {
-        (policy.auto_start == AutoStart::Ready)
-            .then(|| candidates.iter().filter(|t| t.stage == TicketStage::Ready).find(ok))
-            .flatten()
-    })
+    let first = |stage: TicketStage| {
+        candidates.iter().filter(|t| t.stage == stage).filter(ok).min_by_key(|t| policy.auto_start_order.key(t))
+    };
+    first(TicketStage::Todo)
+        .or_else(|| (policy.auto_start == AutoStart::Ready).then(|| first(TicketStage::Ready)).flatten())
 }
 
 #[cfg(test)]
@@ -295,6 +338,9 @@ pub(crate) mod tests {
         }
         for a in AutoStart::ALL {
             assert_eq!(AutoStart::parse(a.as_str()), Some(a));
+        }
+        for o in AutoStartOrder::ALL {
+            assert_eq!(AutoStartOrder::parse(o.as_str()), Some(o));
         }
         assert_eq!(MergeBy::parse("robots"), None);
     }
@@ -383,6 +429,43 @@ pub(crate) mod tests {
         // A waiting ticket goes once it is clear.
         let clear = TicketSummary { clear_to_start: true, ..waiting };
         assert_eq!(pick_next(&todo, 0, &[clear], &[], LATER).map(|t| t.id.as_str()), Some("waiting"));
+    }
+
+    #[test]
+    fn auto_start_takes_the_most_urgent_first_unless_the_project_keeps_to_rank() {
+        let by_priority = ProjectPolicy { auto_start: AutoStart::Ready, ..ProjectPolicy::default() };
+        assert_eq!(by_priority.auto_start_order, AutoStartOrder::Priority, "most urgent first unless the project says");
+        let by_rank = ProjectPolicy { auto_start_order: AutoStartOrder::Rank, ..by_priority.clone() };
+        let t =
+            |id: &str, stage, priority, rank: &str| TicketSummary { priority, rank: rank.into(), ..ticket(id, stage) };
+        let list = vec![
+            t("medium", TicketStage::Todo, Priority::Medium, "a"),
+            t("high-later", TicketStage::Todo, Priority::High, "c"),
+            t("high", TicketStage::Todo, Priority::High, "b"),
+            t("urgent-ready", TicketStage::Ready, Priority::Urgent, "0"),
+            t("low-ready", TicketStage::Ready, Priority::Low, "1"),
+            t("none-ready", TicketStage::Ready, Priority::None, "2"),
+        ];
+        let pick = |p: &ProjectPolicy, skip: &[&str]| {
+            let skip: Vec<String> = skip.iter().map(|s| s.to_string()).collect();
+            pick_next(p, 0, &list, &skip, LATER).map(|t| t.id.clone())
+        };
+        // A high-priority ticket ranked below a medium one goes first; within a priority, rank decides.
+        assert_eq!(pick(&by_priority, &[]).as_deref(), Some("high"));
+        assert_eq!(pick(&by_priority, &["high"]).as_deref(), Some("high-later"));
+        assert_eq!(pick(&by_priority, &["high", "high-later"]).as_deref(), Some("medium"));
+        // By rank: today's order, whatever the priority.
+        assert_eq!(pick(&by_rank, &[]).as_deref(), Some("medium"));
+        assert_eq!(pick(&by_rank, &["medium"]).as_deref(), Some("high"));
+        // To do comes before Ready in both, however urgent the Ready ticket.
+        let todo = ["medium", "high", "high-later"];
+        assert_eq!(pick(&by_priority, &todo).as_deref(), Some("urgent-ready"));
+        assert_eq!(pick(&by_priority, &["medium", "high", "high-later", "urgent-ready"]).as_deref(), Some("low-ready"));
+        assert_eq!(pick(&by_rank, &todo).as_deref(), Some("urgent-ready"));
+        // Blocked tickets still wait.
+        let mut blocked = list.clone();
+        blocked[2].blocked_by = 1;
+        assert_eq!(pick_next(&by_priority, 0, &blocked, &[], LATER).map(|t| t.id.as_str()), Some("high-later"));
     }
 
     #[test]
