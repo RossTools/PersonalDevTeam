@@ -277,10 +277,20 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `discord.post` (`connection`: `discord_webhook`, `content`, `username`, `embeds`, `thread`) | `out` |
 | `discord.channel.ensure` (`connection`: `discord_bot`, `name`, `category`, `topic`) | `out` |
 | `notify` (`title`, `body`, `level: info \| warning \| error`, `link`) | `out` |
+| `jira.check` (`connection`; PDT-258: who it signs in as, `deployment`, `version`) | `out` |
+| `jira.search` (`connection`, `jql`, `limit` default 50, `page`: the last page's `next`) | `out` |
+| `jira.issue` (`connection`, `key`; description, comments, mapped `fields`) | `out` |
 | `jira.import` (`key`, `project`: a PDT project, `connection`: default the project's) | `imported`, `exists` |
-| `jira.create` (`connection`, `project`: a Jira project key, `issueType` default `Task`, `summary`, `description`, `fields`) | `out` |
-| `jira.transition` (`connection` + `key`, or `ticket`; `to`: a transition or status, with `ticket` default the project's done mapping) | `out`, `unavailable` |
+| `jira.create` (`connection`, `project`: a Jira project key, `issueType` default `Task`, `summary`, `description`, `assignee`, `priority`, `labels`, `components`, `epic`, `epicName`, `fields`) | `out` |
+| `jira.edit` (`connection`, `key`, `summary`, `description`, `assignee` (`none` unassigns), `priority`, `labels`, `components`, `fields`) | `out` |
 | `jira.comment` (`connection`, `key`, `body`) | `out` |
+| `jira.transitions` (`connection`, `key`; each transition's screen fields) | `out` |
+| `jira.transition` (`connection` + `key`, or `ticket`; `to`: a transition's id or name, or a status, with `ticket` default the project's done mapping; `fields`) | `out`, `unavailable` |
+| `jira.boards` (`connection`, `project`, `name`) | `out` |
+| `jira.sprints` (`connection`, `board`: id or name, `state` default `active,future`; `active`, `sections`) | `out` |
+| `jira.board` (`connection`, `board`, `jql`, `limit` default 100; each issue's `placement`) | `out` |
+| `jira.sprint` (`connection`, `keys`, `sprint`: `active`, a name on `board`, or an id; or `backlog: true`) | `out` |
+| `jira.epic` (`connection`, `keys`, `epic`: its key, empty takes them out) | `out` |
 | `github.import` (`repo`, `number`, `project`: a PDT project, `priority`, `labels`; PDT-154) | `imported`, `exists` |
 | `github.comment` (`repo` + `number`, or `ticket`: its linked issue; `body`) | `out`, `unlinked` |
 | `github.close` (`repo` + `number`, or `ticket`; `reason: completed \| not_planned \| duplicate`, `duplicateOf` with `duplicate`, `comment`, `labels`) | `out`, `unlinked` |
@@ -328,13 +338,32 @@ notify itself forever.
   with it, and a URL can carry the secret (a Discord webhook's token, a `query` key), so every outbound call's error
   goes through `send_error` (`workflow/nodes/http.rs`), which drops the URL and keeps the causes, before it becomes the
   step's error, the run's failure, a notification or a log line.
-- Jira actions (`workflow/nodes/jira.rs`, client in `jira.rs`) sign in with the connection's email and API token
-  (basic auth, REST v3); text goes as ADF (a paragraph per blank-line-separated block, line breaks kept).
+- Jira actions (pdt-int-jira `actions.rs`, client in `client.rs`, field metadata in `meta.rs`; PDT-258) are actions
+  (PDT-172): each node is also a PM tool (`jira_search`, …; [agents.md](agents.md) "pdt-mcp"). A Cloud connection
+  signs in with its email and API token (basic auth, REST v3; text goes as ADF, a paragraph per blank-line-separated
+  block, line breaks kept); a Server / Data Center one with its personal access token as a bearer token (REST v2;
+  text goes as it is). Boards, sprints and the backlog use the Agile API (`/rest/agile/1.0`) on both. A field is named
+  by its id, by a name the connection maps (`config.fields`), or by its name on Jira's screen; a plain value becomes
+  what the field takes from the screen's metadata (createmeta, editmeta, a transition's `fields`): numbers parsed,
+  options, priorities, resolutions, components and versions matched by name or id (a value that matches none fails,
+  listing the ones there are), users by id, rich text per deployment, lists split on commas; a value in Jira's own
+  form (an object) goes as it is. A required field (without a default) the call leaves out fails `jira.create` and
+  `jira.transition` before anything is sent, naming each with its type or choices, so the PM asks the user for it.
   `jira.import` makes a Draft ticket (title the summary, description the issue's text) linked to the issue, or leaves
   by `exists` (quiet) when a ticket already links it. `jira.transition` counts an issue already in `to` as done
-  (quiet), picks the transition named `to` or the one leading to that status, and otherwise leaves by `unavailable`
-  (quiet, with the `available` names); a ticket without a Jira link also leaves by `unavailable`. `jira.create`
-  outputs `{key, url}`, `jira.comment` `{key, commentId}`.
+  (quiet), picks the transition with that id or name or the one leading to that status, sends the screen's `fields`
+  in the same request, and otherwise leaves by `unavailable` (quiet, with the `available` names); a ticket without a
+  Jira link also leaves by `unavailable`. Epics: `jira.create` with `issueType` Epic fills the Epic Name field (with
+  `epicName`, else the summary); `epic` (on create) and `jira.epic` set the Epic Link field, or on Cloud without one
+  the issue's `parent`, or on a Server without one the Agile API's epic. The Epic Name, Epic Link and Sprint fields
+  are the connection's (`epicNameField`, `epicLinkField`, `sprintField`), else found by their custom type
+  (`GET /field`). An issue's sprint is its active one, else a planned one (either form Server writes the Sprint field
+  in); its `placement` is `sprint` (an active sprint, in its status's column), `section` (a sprint the connection names
+  in `backlogSections`, `*` at the end for a prefix: a part of the backlog, never the active sprint), `future` or
+  `backlog`. `jira.sprint` with `sprint: active` takes the board's one active sprint (several, or none, fail naming
+  them). `jira.create`, `jira.comment` are not rerun on their own once cut short (PDT-131). Outputs: `jira.create`
+  `{key, url}`, `jira.edit` `{key, url, changed}`, `jira.comment` `{key, commentId}`, `jira.sprint` `{keys, sprint}`,
+  `jira.epic` `{keys, epic}`.
 - GitHub issue actions (`workflow/nodes/github.rs`, PDT-154) go through the GitHub forge (PDT-176: PDT's GitHub
   login, pdt-github, the access the `github.issue.opened` trigger uses; `FakeForge` in tests), and fail when it has no
   issues; the trigger watches only projects whose forge is GitHub. `number` is a number or text: `12`, `#12`,
@@ -619,7 +648,10 @@ Connections: kinds the actions know are `discord_webhook` (secret: the webhook U
 `config.webhookId`, `channelId`, `channel` and `bot`), `discord_bot` (secret: the bot token; `config.guildId`, checked
 on save, `applicationId` for the invite link, `pmActs`; `url` empty means Discord's API, tests point it at a fake),
 `webhook` (secret: the shared secret), `http` (`url`, `config.auth` and its field; secret: the token or password),
-`jira` (`url` the site `https://<site>.atlassian.net`, `config.email`; secret: an API token), `buildkite` (`url`
+`jira` (`url` the site `https://<site>.atlassian.net` or a server's address, with its base path; `config.deployment`
+`cloud` (the default) or `server`; Cloud's `config.email`; `config.fields` (name → field id), `epicNameField`,
+`epicLinkField`, `sprintField`, `backlogSections`, `pmActs`; secret: Cloud's API token or Server's personal access
+token), `buildkite` (`url`
 empty for Buildkite's own API, `config.org`; secret: an API token with read builds, and write builds to retry or start
 them), `radarr` and `sonarr` (`url`, `config.qualityProfile`, `config.rootFolder`; secret: the API key), `scryer`
 (`url`, `config.pmActs`; secret: an API key), `plex` (`url`;
@@ -709,7 +741,8 @@ opening the first workflow. The workflow page shows the reference warnings in a 
   credentials: any name with `auth`, `token`, `secret`, `signature`, `password`, `credential`, `cookie`, or ending in
   `key` but `idempotency-key`), `body` (JSON, else text).
 - **Jira** (`jira.rs` `refresh_jira`, pdtd every 60 s): each project whose settings link Jira (a `jira` connection,
-  a JQL scope, the done transition) is searched with `POST /rest/api/3/search/jql`, `(<scope>) AND updated >= "-<n>m"
+  a JQL scope, the done transition) is searched with `POST /rest/api/3/search/jql` (Server / Data Center: `POST /rest/api/2/search`, by
+  `startAt`), `(<scope>) AND updated >= "-<n>m"
   ORDER BY updated ASC` (relative, since JQL dates are in the Jira user's zone; n covers the time since the last look
   plus a minute), with the changelog, up to 5 pages of 100; an issue whose changelog or comments the search cut short
   (over 100) has its newest 100 of each read from the issue. The last look is `sensor.jira.<project>` (`since`, the
@@ -721,7 +754,7 @@ opening the first workflow. The workflow page shows the reference warnings in a 
   created in the window), `jira.issue.transitioned` (`from`, `to`; key `…:status:<history id>`) and
   `jira.issue.commented` (`commentId`, `author`, `body` as text, `byMe`; key `…:comment:<id>`). Each carries the
   issue (`projectId`, `connection`, `key`, `url`, `summary`, `description` as text, `status`, `assignee`,
-  `assignedToMe` against `GET /rest/api/3/myself`, `reporter`, `issueType`, `priority`, `labels`) and `ticketId` when
+  `assignedToMe` against `GET /rest/api/3/myself` (Server: `/rest/api/2/myself`, by username), `reporter`, `issueType`, `priority`, `labels`) and `ticketId` when
   a ticket links it.
 - **Buildkite** (`buildkite.rs` `refresh_buildkite`, pdtd every 60 s after the PR check): for each active attempt of
   a project whose settings name a `buildkite` connection and pipelines, the head is its open PR's head, else

@@ -69,6 +69,20 @@ fn the_tools_are_where_they_were() {
             "discord_get",
             "discord_change",
             "discord_webhook",
+            "jira_check",
+            "jira_search",
+            "jira_issue",
+            "jira_import",
+            "jira_create",
+            "jira_edit",
+            "jira_comment",
+            "jira_transitions",
+            "jira_transition",
+            "jira_boards",
+            "jira_sprints",
+            "jira_board",
+            "jira_sprint",
+            "jira_epic",
             "scryer_library",
             "scryer_search",
             "scryer_queue",
@@ -93,6 +107,13 @@ fn the_tools_are_where_they_were() {
             "report_bug",
             "discord_change",
             "discord_webhook",
+            "jira_import",
+            "jira_create",
+            "jira_edit",
+            "jira_comment",
+            "jira_transition",
+            "jira_sprint",
+            "jira_epic",
             "scryer_add",
             "scryer_mutate",
         ]
@@ -118,7 +139,7 @@ fn the_tools_are_where_they_were() {
     let defaults: Vec<&str> = list.iter().filter(|x| x.default).map(|x| x.name.as_str()).collect();
     assert_eq!(defaults, pdt_core::persona::DEFAULT_TOOLS);
     let read_only: Vec<&str> = t.all().iter().filter(|d| d.read_only).map(|d| d.name).collect();
-    assert_eq!(read_only.len(), 24, "{read_only:?}");
+    assert_eq!(read_only.len(), 31, "{read_only:?}");
     let open: Vec<&str> = t.all().iter().filter(|d| d.open_world).map(|d| d.name).collect();
     let forge = [
         "change_request_view",
@@ -131,13 +152,14 @@ fn the_tools_are_where_they_were() {
         "issue_comment",
         "issue_create",
     ];
-    assert!(
-        open.iter()
-            .all(|n| n.starts_with("discord_") || n.starts_with("scryer_") || *n == "report_bug" || forge.contains(n))
-    );
-    assert_eq!(open.len(), 20);
+    assert!(open.iter().all(|n| n.starts_with("discord_")
+        || n.starts_with("jira_")
+        || n.starts_with("scryer_")
+        || *n == "report_bug"
+        || forge.contains(n)));
+    assert_eq!(open.len(), 34);
     let pm = pdt_core::persona::builtin_persona("pm").unwrap().setup(t);
-    assert_eq!(pm.tool_set(t).len(), 45);
+    assert_eq!(pm.tool_set(t).len(), 59);
 }
 
 #[test]
