@@ -7,7 +7,7 @@ import { renderWithQuery, stubApi } from '../test-utils';
 import { PlacePicker } from './PlacePicker';
 
 const project = (id: string, name: string, key: string): Project =>
-  ({ id, name, key, repoPath: `/r/${id}`, baseBranch: 'main', createdAt: 0, githubRepo: null, kind: 'repo' });
+  ({ id, name, key, repoPath: `/r/${id}`, baseBranch: 'main', createdAt: 0, forge: null, kind: 'repo' });
 const wt = (id: string, projectId: string, branch: string, missing = false): Worktree =>
   ({ id, projectId, branch, path: `/r/${projectId}/.worktrees/${branch}`, baseCommit: 'abc', createdAt: 0, missing });
 

@@ -16,12 +16,12 @@
 use crate::forge::ProjectForge;
 use crate::routes::{AppState, now_ms};
 use pdt_core::pr::{
-    CiRun, CiSource, CiState, CiStatus, Notice, NoticeKind, PrState, PullRequestStatus, notices, queue_branch_prefix,
+    CiRun, CiSource, CiState, CiStatus, Notice, NoticeKind, PrState, PullRequestStatus, QueueRemovalReason, notices,
 };
 use pdt_core::ticket::{AttemptSummary, Ticket, TicketSummary};
 use pdt_core::workflow::api::NewLogEvent;
 use pdt_core::workflow::events::{self as ev, AttemptRef, CiEvent, CiRunRef, PrEvent};
-use pdt_forge::{ChangeComment, ChangeReview, CiProvider, Forge, ForgeError};
+use pdt_forge::{ChangeComment, ChangeRequest, ChangeReview, CiProvider, Forge, ForgeError};
 use pdt_store::AttemptInfo;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -857,11 +857,14 @@ pub(crate) fn read_attempt(a: &ReadArgs) -> Result<Read, ForgeError> {
     }
     let mut fresh_queue = None;
     let mut queue_ci = None;
-    let queues = a.forge.as_ref().is_some_and(|f| f.capabilities().merge_queue);
+    let queue_ref = |pr: &ChangeRequest| {
+        let f = a.forge.as_ref().filter(|f| f.capabilities().merge_queue)?;
+        f.queue_ref(&pr.base_branch, pr.number)
+    };
     let queue_provider = a.ci.iter().find(|p| p.capabilities().merge_queue);
-    if let (Some(pr), Some(q)) = (pr.as_ref().filter(|_| queues), queue_provider) {
+    if let (Some((pr, prefix)), Some(q)) = (pr.as_ref().and_then(|p| Some((p, queue_ref(p)?))), queue_provider) {
         let removed_for_checks =
-            pr.queue_removal.as_ref().is_some_and(|r| r.reason == "failed_checks") && !pr.auto_merge;
+            pr.queue_removal.as_ref().is_some_and(|r| r.reason == QueueRemovalReason::FailedChecks) && !pr.auto_merge;
         if pr.state == PrState::Open && (pr.in_merge_queue || a.was_queued || removed_for_checks) {
             let runs = match a.queue_cache.clone() {
                 Some(r) => r,
@@ -871,7 +874,6 @@ pub(crate) fn read_attempt(a: &ReadArgs) -> Result<Read, ForgeError> {
                     r
                 }
             };
-            let prefix = queue_branch_prefix(&pr.base_branch, pr.number);
             let newest = runs.iter().filter(|r| r.branch.starts_with(&prefix)).max_by(|a, b| {
                 (a.created_at.as_str(), a.id.len(), &a.id).cmp(&(b.created_at.as_str(), b.id.len(), &b.id))
             });
@@ -1274,9 +1276,9 @@ mod tests {
         let gh = Arc::new(FakeForge::default());
         gh.set_pr("b", Some(pr(true)));
         *gh.ci.queue.lock().unwrap() = vec![
-            run(5, "gh-readonly-queue/main/pr-12-aaa", "q1", CiState::Failed),
-            run(6, "gh-readonly-queue/main/pr-12-bbb", "q2", CiState::Running),
-            run(7, "gh-readonly-queue/main/pr-120-ccc", "q3", CiState::Failed),
+            run(5, "fake-queue/main/12/aaa", "q1", CiState::Failed),
+            run(6, "fake-queue/main/12/bbb", "q2", CiState::Running),
+            run(7, "fake-queue/main/120/ccc", "q3", CiState::Failed),
         ];
         let r = read_pr(&gh, 0, false, None);
         let q = r.pr.unwrap().queue_ci.unwrap();
@@ -1316,7 +1318,7 @@ mod tests {
             queue_ci: None,
             queue_removal: removal.map(|id| pdt_core::pr::QueueRemoval {
                 id: id.into(),
-                reason: "failed_checks".into(),
+                reason: QueueRemovalReason::FailedChecks,
                 by_queue: true,
             }),
             checked_at: 0,

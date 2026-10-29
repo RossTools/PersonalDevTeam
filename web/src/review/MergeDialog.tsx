@@ -59,7 +59,7 @@ function Problem({ p, onAsk, sending }: { p: MergePreview; onAsk: () => void; se
     case 'pr_not_mergeable':
       return p.pr?.local
         ? <Alert tone="warning">Change request #{p.pr.number} conflicts with {p.base}: merge {p.base} into {p.branch} first.</Alert>
-        : <Alert tone="warning">GitHub can’t merge pull request #{p.pr?.number}: it is a draft or it conflicts with {p.base}.</Alert>;
+        : <Alert tone="warning">{p.pr?.forge ?? 'The forge'} can’t merge pull request #{p.pr?.number}: it is a draft or it conflicts with {p.base}.</Alert>;
     case 'no_pr':
       return (
         <Alert
@@ -73,7 +73,7 @@ function Problem({ p, onAsk, sending }: { p: MergePreview; onAsk: () => void; se
     case 'pr_queued':
       return p.pr?.local
         ? <Alert tone="info">Change request #{p.pr.number} is already set to merge; PDT merges it once its CI passes.</Alert>
-        : <Alert tone="info">Auto-merge is already on for pull request #{p.pr?.number}; GitHub merges it once its checks pass.</Alert>;
+        : <Alert tone="info">Auto-merge is already on for pull request #{p.pr?.number}; {p.pr?.forge ?? 'the forge'} merges it once its checks pass.</Alert>;
     default:
       return null;
   }
@@ -81,8 +81,8 @@ function Problem({ p, onAsk, sending }: { p: MergePreview; onAsk: () => void; se
 
 /**
  * Merge…: into the base branch locally (a merge commit or a squash, remembered per project; then the ticket moves to Done and, by default, the worktree
- * goes), or, when the attempt has an open pull request, auto-merge on GitHub (by default PDT finishes the ticket once
- * GitHub merges it, PDT-75). Problems show instead of the button.
+ * goes), or, when the attempt has an open pull request, auto-merge (or its merge queue) on the project's forge (by
+ * default PDT finishes the ticket once the forge merges it, PDT-75). Problems show instead of the button.
  */
 export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; attemptId: string; onClose: () => void }) {
   const qc = useQueryClient();
@@ -113,20 +113,20 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
     if (!p) return;
     setBusy(true);
     try {
-      const github = p.method === 'github';
-      if (!github) saveStyle(ticket.projectId, style);
-      const r = await api.mergeAttempt(attemptId, github ? { finishOnMerge, deleteBranch: finishOnMerge && deleteBranch } : { style });
+      const viaForge = p.method === 'forge';
+      if (!viaForge) saveStyle(ticket.projectId, style);
+      const r = await api.mergeAttempt(attemptId, viaForge ? { finishOnMerge, deleteBranch: finishOnMerge && deleteBranch } : { style });
       invalidateTickets(qc, [ticket.id]);
       onClose();
       if (r.outcome === 'queued') {
         toast.success(
           p.pr?.local
             ? `Change request #${p.pr.number} merges into ${p.base} once its CI passes${finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : ''}.`
-            : `Auto-merge is on for PR #${p.pr?.number}. GitHub merges it once the checks pass${finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : ''}.`,
+            : `Auto-merge is on for PR #${p.pr?.number}. ${p.pr?.forge ?? 'The forge'} merges it once the checks pass${finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : ''}.`,
         );
         return;
       }
-      if (github) {
+      if (viaForge) {
         // The local forge merged it at once (its CI had passed): PDT finishes the ticket as asked.
         toast.success(`Merged change request #${p.pr?.number} into ${p.base}.`);
         return;
@@ -145,7 +145,8 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
     }
   };
 
-  const github = p?.method === 'github';
+  const viaForge = p?.method === 'forge';
+  const queueName = p?.pr?.queueName ?? 'merge queue';
   return (
     <Dialog
       open
@@ -156,7 +157,7 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {p && !p.problem && (
             <Button variant="primary" pending={busy} onClick={() => void merge()}>
-              {github ? (p.pr?.queue ? 'Add to merge queue' : p.pr?.local ? 'Merge when CI passes' : 'Turn on auto-merge') : style === 'squash' ? 'Squash and merge' : 'Merge'}
+              {viaForge ? (p.pr?.queue ? `Add to ${queueName}` : p.pr?.local ? 'Merge when CI passes' : 'Turn on auto-merge') : style === 'squash' ? 'Squash and merge' : 'Merge'}
             </Button>
           )}
         </>
@@ -168,20 +169,20 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
         <Alert tone="error">{preview.error ? actionError(preview.error) : 'Could not check the merge.'}</Alert>
       ) : (
         <div className="flex flex-col gap-3 text-sm">
-          {github && p.pr?.local ? (
+          {viaForge && p.pr?.local ? (
             <p>
               Change request #{p.pr.number} merges into <span className="font-mono">{p.base}</span> here (a fast-forward, or a merge commit
               when {p.base} has moved) once its CI passes.
               {finishOnMerge ? '' : ` PDT notices the merge and offers to move ${ticket.key} to Done.`}
             </p>
-          ) : github && p.pr ? (
+          ) : viaForge && p.pr ? (
             <p>
-              <Link href={p.pr!.url} external>Pull request #{p.pr!.number}</Link> merges into <span className="font-mono">{p.base}</span> on
-              GitHub{p.pr!.queue ? ' through the merge queue' : ' once its checks pass'}.
+              <Link href={p.pr!.url} external>Pull request #{p.pr!.number}</Link> merges into <span className="font-mono">{p.base}</span> on{' '}
+              {p.pr!.forge}{p.pr!.queue ? ` through the ${queueName}` : ' once its checks pass'}.
               {finishOnMerge ? '' : ` PDT notices the merge and offers to move ${ticket.key} to Done.`}
             </p>
           ) : (
-            !github && p.problem !== 'inactive' && (
+            !viaForge && p.problem !== 'inactive' && (
               <p>
                 Merge <span className="font-mono">{p.branch}</span>
                 {p.commits > 0 ? ` (${plural(p.commits, 'commit')})` : ''} into <span className="font-mono">{p.base}</span>
@@ -190,7 +191,7 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
             )
           )}
           <Problem p={p} onAsk={() => void ask()} sending={sending} />
-          {github && !p.problem && (
+          {viaForge && !p.problem && (
             <div className="flex flex-col gap-1.5">
               <Checkbox checked={finishOnMerge} onChange={(v) => { setFinishOnMerge(v); if (!v) setDeleteBranch(false); }}>
                 Move to Done and clean up once it merges
@@ -200,7 +201,7 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
               </Checkbox>
             </div>
           )}
-          {!github && !p.problem && (
+          {!viaForge && !p.problem && (
             <div className="flex flex-col gap-1.5">
               <SegmentedControl<MergeStyle>
                 aria-label="Merge as"

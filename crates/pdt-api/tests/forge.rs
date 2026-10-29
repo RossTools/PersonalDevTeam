@@ -8,6 +8,7 @@ mod common;
 use axum::http::StatusCode;
 use common::{call, call_as_ui, git};
 use pdt_api::{AppState, router};
+use pdt_forge::Capabilities;
 use pdt_forge::testing::FakeForge;
 use pdt_github::GithubApi;
 use pdt_github::transport::Response;
@@ -443,8 +444,11 @@ async fn an_agent_opens_its_pr_and_asks_for_the_merge_again_after_a_queue_drop()
 
     // The merge queue dropped it: asking again sets it to merge.
     let mut p = pr(100);
-    p.queue_removal =
-        Some(pdt_core::pr::QueueRemoval { id: "RFMQE_1".into(), reason: "failed_checks".into(), by_queue: true });
+    p.queue_removal = Some(pdt_core::pr::QueueRemoval {
+        id: "RFMQE_1".into(),
+        reason: pdt_core::pr::QueueRemovalReason::FailedChecks,
+        by_queue: true,
+    });
     gh.set_pr(&branch, Some(p.clone()));
     let said = say(&env, &s, "mcp: change_request_merge {}").await;
     assert!(said.contains("\"outcome\": \"queued\""), "{said}");
@@ -462,7 +466,15 @@ async fn the_user_files_a_ticket_as_a_github_issue_and_the_ticket_links_it() {
     let gh = Arc::new(FakeForge::default());
     let env = setup(Some(gh.clone()), None).await;
     let (_, f) = call(&env.app, "GET", &format!("/api/projects/{}/forge", env.project), None).await;
-    assert_eq!(f, json!({"kind": "github", "repo": "o/r", "issues": true}));
+    assert_eq!(
+        f,
+        json!({"kind": "github", "name": "the fake forge", "queueName": "fake queue", "repo": "o/r", "issues": true})
+    );
+    // Without a merge queue it names none.
+    *gh.capabilities.lock().unwrap() = Capabilities { merge_queue: false, ..Capabilities::ALL };
+    let (_, f) = call(&env.app, "GET", &format!("/api/projects/{}/forge", env.project), None).await;
+    assert_eq!(f["queueName"], json!(null));
+    *gh.capabilities.lock().unwrap() = Capabilities::ALL;
     let (_, t) = call(
         &env.app,
         "POST",

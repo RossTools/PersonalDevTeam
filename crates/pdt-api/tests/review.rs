@@ -428,7 +428,11 @@ async fn with_an_open_pr_merge_turns_on_auto_merge() {
     let p = preview(&env).await;
     assert_eq!(
         (p["method"].as_str(), p["pr"]["number"].as_u64(), p["pr"]["queue"].as_bool()),
-        (Some("github"), Some(12), Some(true))
+        (Some("forge"), Some(12), Some(true))
+    );
+    assert_eq!(
+        (p["pr"]["forge"].as_str(), p["pr"]["queueName"].as_str()),
+        (Some("the fake forge"), Some("fake queue"))
     );
     assert!(p["problem"].is_null(), "{p}");
     let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), None).await;
@@ -494,7 +498,7 @@ async fn a_project_that_merges_through_prs_never_merges_locally() {
     std::fs::write(env.wt_path.join("a.txt"), "changed\n").unwrap();
     commit_all(&env.wt_path, "change");
     let p = preview(&env).await;
-    assert_eq!((p["method"].as_str(), p["problem"].as_str()), (Some("github"), Some("no_pr")), "{p}");
+    assert_eq!((p["method"].as_str(), p["problem"].as_str()), (Some("forge"), Some("no_pr")), "{p}");
     let (s, e) = call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), None).await;
     assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("merge_blocked")));
     let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{}/ask-agent", env.attempt), None).await;

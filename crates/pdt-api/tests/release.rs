@@ -7,7 +7,7 @@ mod common;
 use axum::http::StatusCode;
 use common::{call, git};
 use pdt_api::{AppState, router};
-use pdt_core::pr::{CiRun, CiState, Mergeable, PrState, QueueRemoval};
+use pdt_core::pr::{CiRun, CiState, Mergeable, PrState, QueueRemoval, QueueRemovalReason};
 use pdt_forge::testing::FakeForge;
 use pdt_forge::{ChangeRequest, Release};
 use pdt_store::Store;
@@ -248,10 +248,11 @@ async fn a_failed_check_goes_to_the_inbox_and_the_release_waits_for_the_fix() {
     time_passes(&env, &id).await;
     assert_eq!(waiting_at(&env, &id).await, "wait_merge");
     // Then the merge queue's run fails and removes it (auto-merge off): that is news too.
-    fixed.queue_removal = Some(QueueRemoval { id: "q1".into(), reason: "failed_checks".into(), by_queue: true });
+    fixed.queue_removal =
+        Some(QueueRemoval { id: "q1".into(), reason: QueueRemovalReason::FailedChecks, by_queue: true });
     env.gh.set_pr("release", Some(fixed.clone()));
     let mut queued = ci_run(4, "ci", "q-sha", CiState::Failed);
-    queued.branch = "gh-readonly-queue/main/pr-7-abcdef".into();
+    queued.branch = "fake-queue/main/7/abcdef".into();
     *env.gh.ci.queue.lock().unwrap() = vec![queued];
     env.gh.set_jobs(4, &["test (linux)"]);
     time_passes(&env, &id).await;

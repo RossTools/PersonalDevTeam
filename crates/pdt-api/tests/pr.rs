@@ -5,7 +5,7 @@ mod common;
 use axum::http::StatusCode;
 use common::{argv_agent, call, git};
 use pdt_api::{AppState, router};
-use pdt_core::pr::{CiRun, CiState, Mergeable, PrState, QueueRemoval};
+use pdt_core::pr::{CiRun, CiState, Mergeable, PrState, QueueRemoval, QueueRemovalReason};
 use pdt_forge::ChangeRequest;
 use pdt_forge::testing::FakeForge;
 use pdt_store::Store;
@@ -276,7 +276,7 @@ async fn a_removal_from_the_merge_queue_puts_an_agent_on_it_even_when_never_seen
     // to merge, so the attempt's agent gets a step to fix it rather than a bare notice (PDT-104).
     let mut removed = pr();
     removed.queue_removal =
-        Some(QueueRemoval { id: "RFMQE_1".into(), reason: "merge_conflict".into(), by_queue: true });
+        Some(QueueRemoval { id: "RFMQE_1".into(), reason: QueueRemovalReason::Conflict, by_queue: true });
     env.gh.set_pr(BRANCH, Some(removed.clone()));
     pdt_api::refresh_prs(&env.state).await;
     pdt_api::run_workflows(&env.state).await;
@@ -722,7 +722,8 @@ async fn a_forge_without_reviews_or_queues_still_reports_ci() {
     call(&env.app, "PATCH", &format!("/api/workflows/{}", id.as_str().unwrap()), Some(json!({"enabled": true}))).await;
     let mut removed = pr();
     // Dropped from the queue for failed checks: a GitHub look would read the queue's runs.
-    removed.queue_removal = Some(QueueRemoval { id: "RFMQE_1".into(), reason: "failed_checks".into(), by_queue: true });
+    removed.queue_removal =
+        Some(QueueRemoval { id: "RFMQE_1".into(), reason: QueueRemovalReason::FailedChecks, by_queue: true });
     env.gh.set_pr(BRANCH, Some(removed));
     env.gh.set_comments(12, vec![comment(1, "alice", None)]);
     env.gh.set_runs(BRANCH, vec![run(7, CiState::Failed)]);
@@ -869,7 +870,8 @@ async fn a_pr_set_to_merge_is_fixed_and_merges_again() {
 
     // The merge queue drops it; the agent calls its fix large: a Reviewer first, then the push, then auto-merge on.
     let mut dropped = pr();
-    dropped.queue_removal = Some(QueueRemoval { id: "Q1".into(), reason: "failed_checks".into(), by_queue: true });
+    dropped.queue_removal =
+        Some(QueueRemoval { id: "Q1".into(), reason: QueueRemovalReason::FailedChecks, by_queue: true });
     env.gh.set_pr(BRANCH, Some(dropped));
     pdt_api::refresh_prs(&env.state).await;
     assert_eq!(step_of(&env, "fix").await, env.session);
@@ -952,7 +954,8 @@ async fn a_conflict_and_its_queue_drop_get_one_fix() {
 
     let mut dropped = pr();
     dropped.mergeable = Mergeable::Conflicting;
-    dropped.queue_removal = Some(QueueRemoval { id: "Q1".into(), reason: "merge_conflict".into(), by_queue: true });
+    dropped.queue_removal =
+        Some(QueueRemoval { id: "Q1".into(), reason: QueueRemovalReason::Conflict, by_queue: true });
     env.gh.set_pr(BRANCH, Some(dropped));
     pdt_api::refresh_prs(&env.state).await;
     let coder = step_of(&env, "fix").await;

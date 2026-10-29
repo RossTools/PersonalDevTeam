@@ -26,6 +26,10 @@ pub const MAX_ISSUE_TITLE: usize = 256;
 #[ts(export)]
 pub struct ProjectForgeInfo {
     pub kind: ForgeKind,
+    /// The forge's name for people (`GitHub`).
+    pub name: String,
+    /// What it calls a base branch's merge queue (`merge queue`), when it has them.
+    pub queue_name: Option<String>,
     /// The forge's name for the repository (GitHub's `owner/name`).
     pub repo: String,
     /// Issues can be filed there (`POST /api/projects/{id}/issues`).
@@ -86,7 +90,9 @@ async fn info(
     let Some(f) = crate::forge::project_forge(st, &project.id, &project.repo_path).await else { return Ok(None) };
     // Only GitHub's issues can be linked to tickets (`owner/name#12`).
     let issues = f.kind == ForgeKind::GITHUB && f.caps().issues;
-    Ok(Some((ProjectForgeInfo { kind: f.kind.clone(), repo: f.repo.clone(), issues }, f)))
+    let name = f.api.name().to_string();
+    let queue_name = f.caps().merge_queue.then(|| f.api.queue_name().to_string());
+    Ok(Some((ProjectForgeInfo { kind: f.kind.clone(), name, queue_name, repo: f.repo.clone(), issues }, f)))
 }
 
 /// `GET /api/projects/{id}/forge`: the project's forge; null when it has none.

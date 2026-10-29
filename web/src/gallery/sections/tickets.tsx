@@ -379,7 +379,7 @@ const START_STATES: { label: string; ticket: FullTicket }[] = [
   { label: 'Waiting', ticket: startTicket({ waiting: true }) },
   { label: 'Active attempt', ticket: startTicket({ stage: 'in_progress', attempt }) },
 ];
-const galleryProject: Project = { id: 'gp', name: 'PersonalDevTeam', key: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: NOW, githubRepo: null, kind: 'repo' };
+const galleryProject: Project = { id: 'gp', name: 'PersonalDevTeam', key: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: NOW, forge: null, kind: 'repo' };
 
 /** The dialog over seeded data (there is no API here: Start shows the error state). */
 function StartDemo() {

@@ -12,30 +12,32 @@ use pdt_core::project::{
 use pdt_git::FastForward;
 use std::path::PathBuf;
 
-/// Fills in `github_repo` from each project's `origin` (git runs off the async runtime).
-pub(crate) async fn with_github(mut projects: Vec<Project>) -> Vec<Project> {
+/// Fills in `forge` from each project's `origin` and the forge plugin in use that claims it (git runs off the async
+/// runtime).
+pub(crate) async fn with_forge(st: &AppState, mut projects: Vec<Project>) -> Vec<Project> {
     let paths: Vec<Option<PathBuf>> =
         projects.iter().map(|p| p.has_repo().then(|| PathBuf::from(&p.repo_path))).collect();
-    let repos = tokio::task::spawn_blocking(move || {
+    let plugins = st.forge_plugins();
+    let links = tokio::task::spawn_blocking(move || {
         paths
             .iter()
             .map(|p| {
-                let p = p.as_ref()?;
-                pdt_git::remote_url(p, "origin").and_then(|u| pdt_core::git_url::github_repo(&u))
+                let remote = pdt_core::git_url::parse_remote(&pdt_git::remote_url(p.as_ref()?, "origin")?)?;
+                plugins.iter().find_map(|f| f.repo_of(&remote).and_then(|repo| f.links(&remote, &repo)))
             })
             .collect::<Vec<_>>()
     })
     .await
     .unwrap_or_default();
-    for (p, r) in projects.iter_mut().zip(repos) {
-        p.github_repo = r;
+    for (p, l) in projects.iter_mut().zip(links) {
+        p.forge = l;
     }
     projects
 }
 
 async fn load(st: &AppState, id: &str) -> Result<Project, ApiError> {
     let p = st.store.get_project(id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    Ok(with_github(vec![p]).await.remove(0))
+    Ok(with_forge(st, vec![p]).await.remove(0))
 }
 
 fn key_taken() -> ApiError {
@@ -43,7 +45,7 @@ fn key_taken() -> ApiError {
 }
 
 pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Project>>, ApiError> {
-    Ok(Json(with_github(st.store.list_projects().await?).await))
+    Ok(Json(with_forge(&st, st.store.list_projects().await?).await))
 }
 
 pub(crate) async fn get_one(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Project>, ApiError> {
@@ -78,7 +80,7 @@ async fn add(
         base_branch: base_branch.or(default).or(info.current_branch).unwrap_or_else(|| "main".into()),
         created_at: now_ms(),
         key: key.unwrap_or_default(),
-        github_repo: None,
+        forge: None,
         kind: Default::default(),
     };
     st.store.insert_project(&project).await.map_err(|e| match e {
@@ -127,7 +129,7 @@ async fn add_personal(st: &AppState, name: String, key: Option<String>) -> Resul
         base_branch: String::new(),
         created_at: now_ms(),
         key: key.unwrap_or_default(),
-        github_repo: None,
+        forge: None,
         kind: pdt_core::project::ProjectKind::Personal,
     };
     st.store.insert_project(&project).await.map_err(|e| match e {

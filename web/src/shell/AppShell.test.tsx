@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
+import { githubLinks, renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { page, summary, ticket } from '../tickets/fixtures';
 import { applyThemePref } from '@ui';
 import { plugins } from '../api/gen/plugins';
@@ -15,7 +15,7 @@ vi.mock('../terminal/TerminalView', () => ({
 
 afterEach(() => vi.unstubAllGlobals());
 
-const project = { id: '0190aaaa-bbbb-cccc-dddd-eeeeffff0000', name: 'Alpha', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'ALP', githubRepo: 'o/alpha' };
+const project = { id: '0190aaaa-bbbb-cccc-dddd-eeeeffff0000', name: 'Alpha', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'ALP', forge: githubLinks('o/alpha') };
 const shell = { id: 'sh', projectId: project.id, worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: 1, activity: null, attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'terminal', model: null, permissionMode: null };
 
 // The shell always renders the update banner; a fully set-up host shows none.

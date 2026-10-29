@@ -341,7 +341,11 @@ pdt-api `forge.rs`, `ci.rs` and `github.rs`, pure rules in pdt-core `pr.rs`.
   runs or queue setting without a merge queue, no `pr.commented`/`pr.reviewed` without reviews, no issue triage or
   `github.*` issue actions without issues, and without required checks a workflow's or agent's merge always waits
   for green CI (Review "Merge"). Each forge also writes its part of agents' instructions (docs/reference/agents.md).
-  GitHub can do all of it.
+  GitHub can do all of it. Merge-queue handling is the forge's too: `Forge::queue_ref(base, number)` names the refs
+  its queue tests a change request on (GitHub: `gh-readonly-queue/<base>/pr-<n>-`; none, no queue runs read),
+  `Forge::queue_name` what it calls the queue in the UI (`merge queue`), and the forge reads whether a PR is behind
+  its base and why the queue removed it (`QueueRemovalReason`: a conflict, failed checks, merged, or the forge's own
+  words), and whether the queue (not a person) did.
 - A project's **CI providers** (PDT-242, `pdt_forge::CiProvider`, pdt-api `ci.rs`) are apart from its forge: GitHub
   Actions (`pdt_github::GithubActions`, the GitHub plugin's own CI, `ForgePlugin::ci`), the local CI command
   (`local_forge::LocalCi`, the local forge's) and Buildkite (`pdt_int_buildkite::BuildkiteCi`, from

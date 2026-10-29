@@ -1,4 +1,4 @@
-// An attempt's pull request on GitHub (PDT-25), or its change request on the local forge (PDT-178): the board card's
+// An attempt's pull request on its forge (PDT-25), or its change request on the local forge (PDT-178): the board card's
 // one-badge summary and the ticket's PR details.
 import { GitPullRequest, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
@@ -32,8 +32,8 @@ export const prHref = (pr: PullRequestStatus, url: string) => (pr.local ? url.re
 const queueFailed = (pr: PullRequestStatus) => pr.state === 'open' && !pr.inMergeQueue && pr.queueCi?.state === 'failed';
 
 /**
- * True when the PR counts as merged: GitHub says so, or the attempt ended merged while the last look still saw it open
- * (git found the merge before GitHub reported it, PDT-59).
+ * True when the PR counts as merged: the forge says so, or the attempt ended merged while the last look still saw it
+ * open (git found the merge before the forge reported it, PDT-59).
  */
 const isMerged = (pr: PullRequestStatus, attemptMerged: boolean) =>
   pr.state === 'merged' || (attemptMerged && pr.state === 'open');
@@ -73,10 +73,14 @@ export function PrBadge({ pr, attemptMerged = false }: { pr: PullRequestStatus; 
   );
 }
 
-/** The ticket's PR: a link to it, then its state (CI, conflict, auto-merge, merge queue) and what failed. */
-export function PrDetails({ pr, attemptMerged = false, className }: {
-  pr: PullRequestStatus; attemptMerged?: boolean; className?: string;
+/**
+ * The ticket's PR: a link to it, then its state (CI, conflict, auto-merge, merge queue) and what failed. `queueName` is
+ * what the project's forge calls its merge queue.
+ */
+export function PrDetails({ pr, attemptMerged = false, queueName = 'merge queue', className }: {
+  pr: PullRequestStatus; attemptMerged?: boolean; queueName?: string; className?: string;
 }) {
+  const Queue = queueName.charAt(0).toUpperCase() + queueName.slice(1);
   const jobs = failedJobs(pr.ci);
   const queueJobs = failedJobs(pr.queueCi);
   const merged = isMerged(pr, attemptMerged);
@@ -98,12 +102,12 @@ export function PrDetails({ pr, attemptMerged = false, className }: {
         {open && pr.draft && <Badge>Draft</Badge>}
         {open && pr.ci && <Badge tone={CI_TONE[pr.ci.state]}>{CI_LABEL[pr.ci.state]}</Badge>}
         {open && pr.mergeable === 'conflicting' && <Badge tone="failed">Conflicts with {pr.baseBranch}</Badge>}
-        {open && pr.behind && pr.mergeable !== 'conflicting' && <Badge title="The merge queue tests it on top of the base">Behind {pr.baseBranch}</Badge>}
+        {open && pr.behind && pr.mergeable !== 'conflicting' && <Badge title={`The ${queueName} tests it on top of the base`}>Behind {pr.baseBranch}</Badge>}
         {open && pr.inMergeQueue && (
-          <Badge tone="waiting">In merge queue{pr.queuePosition ? ` · #${pr.queuePosition}` : ''}</Badge>
+          <Badge tone="waiting">In {queueName}{pr.queuePosition ? ` · #${pr.queuePosition}` : ''}</Badge>
         )}
         {open && !pr.inMergeQueue && pr.autoMerge && <Badge>{pr.local ? 'Merges when CI passes' : 'Auto-merge on'}</Badge>}
-        {open && queueFailed(pr) && <Badge tone="failed">Left the merge queue</Badge>}
+        {open && queueFailed(pr) && <Badge tone="failed">Left the {queueName}</Badge>}
       </div>
       {open && pr.ci && pr.ci.state !== 'passed' && (
         <p className="text-meta text-muted-foreground">
@@ -113,7 +117,7 @@ export function PrDetails({ pr, attemptMerged = false, className }: {
       )}
       {open && pr.queueCi && (pr.inMergeQueue || queueFailed(pr)) && (
         <p className="text-meta text-muted-foreground">
-          Merge queue: {CI_LABEL[pr.queueCi.state].replace('CI ', '')}
+          {Queue}: {CI_LABEL[pr.queueCi.state].replace('CI ', '')}
           {queueJobs.length > 0 && <> ({queueJobs.join(', ')})</>} · <Link href={pr.queueCi.url} external>Run</Link>
         </p>
       )}

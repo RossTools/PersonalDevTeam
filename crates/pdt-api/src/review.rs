@@ -461,17 +461,24 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
         None => None,
     };
     if let (Some(pr), Some(forge)) = (pr, forge) {
-        let (gh, repo) = (forge.api.clone(), forge.repo.clone());
+        let (api, repo) = (forge.api.clone(), forge.repo.clone());
         let base_branch = pr.base_branch.clone();
         let queue = forge.caps().merge_queue
-            && tokio::task::spawn_blocking(move || gh.merge_settings(&repo, &base_branch))
+            && tokio::task::spawn_blocking(move || api.merge_settings(&repo, &base_branch))
                 .await
                 .map_err(ApiError::internal)?
                 .map(|s| s.queue)
                 .unwrap_or(false);
-        p.method = MergeMethod::Github;
+        p.method = MergeMethod::Forge;
         p.base = pr.base_branch.clone();
-        p.pr = Some(MergePr { number: pr.number, url: pr.url.clone(), queue, local: pr.local });
+        p.pr = Some(MergePr {
+            number: pr.number,
+            url: pr.url.clone(),
+            forge: forge.api.name().to_string(),
+            queue,
+            queue_name: forge.api.queue_name().to_string(),
+            local: pr.local,
+        });
         p.problem = if pr.draft || pr.mergeable == Mergeable::Conflicting {
             Some(MergeProblem::PrNotMergeable)
         } else if pr.auto_merge || pr.in_merge_queue {
@@ -482,7 +489,7 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
         return Ok(p);
     }
     if st.store.get_project_settings(&info.project_id).await?.merge_via_pr {
-        p.method = MergeMethod::Github;
+        p.method = MergeMethod::Forge;
         p.problem = Some(MergeProblem::NoPr);
         return Ok(p);
     }
@@ -530,7 +537,7 @@ fn why_blocked(problem: MergeProblem) -> &'static str {
         MergeProblem::Conflict => "the merge conflicts; merge the base branch into the branch first",
         MergeProblem::BaseDirty => "the checkout that has the base branch has uncommitted changes",
         MergeProblem::Nothing => "the branch has no commits the base branch lacks",
-        MergeProblem::PrNotMergeable => "GitHub can't merge the pull request (a draft, or it conflicts)",
+        MergeProblem::PrNotMergeable => "the forge can't merge the pull request (a draft, or it conflicts)",
         MergeProblem::PrQueued => "auto-merge is already on for the pull request",
         MergeProblem::NoPr => "this project merges through pull requests, and the branch has no open one yet",
     }

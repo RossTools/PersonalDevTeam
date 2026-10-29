@@ -7,7 +7,7 @@
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use pdt_core::forge::ForgeKind;
 use pdt_core::github_issue::valid_repo;
-use pdt_core::pr::{CiState, CiStatus, PrState, PullRequestStatus};
+use pdt_core::pr::{CiState, CiStatus, PrState, PullRequestStatus, QueueRemovalReason};
 use pdt_core::release::parse_version;
 use pdt_forge::{ChangeRequest, CiProvider, Forge, ForgeError, Release};
 use schemars::JsonSchema;
@@ -283,7 +283,8 @@ fn failed_list(ci: &CiStatus) -> String {
 fn ci_output(pr: PullRequestStatus) -> (&'static str, GithubChangeRequestOutput) {
     let open = pr.state == PrState::Open;
     let head_failed = pr.ci.as_ref().filter(|c| c.state == CiState::Failed);
-    let queue_dropped = pr.queue_removal.as_ref().is_some_and(|r| r.reason == "failed_checks") && !pr.auto_merge;
+    let queue_dropped =
+        pr.queue_removal.as_ref().is_some_and(|r| r.reason == QueueRemovalReason::FailedChecks) && !pr.auto_merge;
     let failed = match (open, head_failed) {
         (false, _) => None,
         (true, Some(c)) => Some(("ci", c.url.clone(), failed_list(c))),

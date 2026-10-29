@@ -291,7 +291,7 @@ describe('MergeDialog', () => {
   });
 
   it('asks the agent for a pull request when the project merges through them', async () => {
-    const { calls, onClose } = open(preview({ method: 'github', problem: 'no_pr' }), {
+    const { calls, onClose } = open(preview({ method: 'forge', problem: 'no_pr' }), {
       'POST /api/attempts/a1/ask-agent': { sessionId: 's1', sent: 0 },
     });
     expect(await screen.findByText('No pull request yet')).toBeInTheDocument();
@@ -304,7 +304,7 @@ describe('MergeDialog', () => {
   });
 
   it('turns on auto-merge for an open pull request', async () => {
-    const { calls, onClose } = open(preview({ method: 'github', pr: { number: 12, url: 'https://github.com/o/r/pull/12', queue: true, local: false } }), {
+    const { calls, onClose } = open(preview({ method: 'forge', pr: { number: 12, url: 'https://github.com/o/r/pull/12', forge: 'GitHub', queue: true, queueName: 'merge queue', local: false } }), {
       'POST /api/attempts/a1/merge': { outcome: 'queued', commit: null },
     });
     expect(await screen.findByText(/through the merge queue/)).toBeInTheDocument();
@@ -320,8 +320,21 @@ describe('MergeDialog', () => {
     expect(await screen.findByText(/then ALP-1 moves to Done/)).toBeInTheDocument();
   });
 
+  it('names the forge and what it calls its merge queue', async () => {
+    const pr = { number: 7, url: 'https://git.example.org/o/r/-/merge_requests/7', forge: 'GitLab', queue: true, queueName: 'merge train', local: false };
+    open(preview({ method: 'forge', pr }), {});
+    expect(await screen.findByText(/merges into/)).toHaveTextContent(/on GitLab through the merge train/);
+    expect(screen.getByRole('button', { name: 'Add to merge train' })).toBeInTheDocument();
+  });
+
+  it('says which forge can’t merge a pull request', async () => {
+    const pr = { number: 7, url: 'u', forge: 'GitLab', queue: false, queueName: 'merge train', local: false };
+    open(preview({ method: 'forge', problem: 'pr_not_mergeable', pr }), {});
+    expect(await screen.findByText(/GitLab can’t merge pull request #7/)).toBeInTheDocument();
+  });
+
   it('sets a local change request to merge once its CI passes (PDT-178)', async () => {
-    const { onClose } = open(preview({ method: 'github', pr: { number: 3, url: '', queue: false, local: true } }), {
+    const { onClose } = open(preview({ method: 'forge', pr: { number: 3, url: '', forge: 'PDT', queue: false, queueName: 'merge queue', local: true } }), {
       'POST /api/attempts/a1/merge': { outcome: 'queued', commit: null },
     });
     expect(await screen.findByText(/merges into/)).toHaveTextContent(/here \(a fast-forward/);
@@ -332,7 +345,7 @@ describe('MergeDialog', () => {
   });
 
   it('turning off finishing once it merges turns off deleting the branch too', async () => {
-    const { calls } = open(preview({ method: 'github', pr: { number: 12, url: 'https://github.com/o/r/pull/12', queue: false, local: false } }), {
+    const { calls } = open(preview({ method: 'forge', pr: { number: 12, url: 'https://github.com/o/r/pull/12', forge: 'GitHub', queue: false, queueName: 'merge queue', local: false } }), {
       'POST /api/attempts/a1/merge': { outcome: 'queued', commit: null },
     });
     await userEvent.click(await screen.findByRole('checkbox', { name: 'Delete the branch' }));

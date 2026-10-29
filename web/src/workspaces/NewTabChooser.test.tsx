@@ -6,7 +6,7 @@ import { renderWithQuery, stubApi } from '../test-utils';
 import { NewTabChooser } from './NewTabChooser';
 import type { WorkspacesApi } from './useWorkspaces';
 
-const project = { id: 'p1', name: 'Alpha', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'ALP', githubRepo: null };
+const project = { id: 'p1', name: 'Alpha', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'ALP', forge: null };
 
 /** Just the parts of the workspaces API the chooser reads. */
 function fakeWs(): WorkspacesApi {

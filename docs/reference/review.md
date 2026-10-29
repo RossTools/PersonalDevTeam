@@ -58,7 +58,8 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   hasn't reported on that head. A read from the forge or a CI provider that fails is 409 `ci_unreadable`, an error like `merge_failed` (the last look may be
   older than the head's CI). A repository with no CI merges as before, and a ticket comment says it merged without waiting for CI.
   A person's merge doesn't wait.
-- With an open PR (`attempt.pr`) it turns on GitHub's auto-merge (GraphQL `enablePullRequestAutoMerge`) and records the attempt as set to merge
+- With an open PR (`attempt.pr`; the preview's `method` is `forge`, was `github`, still read, and its `pr` names the
+  forge and what it calls its merge queue for the dialog's wording) it turns on the forge's auto-merge (GitHub: GraphQL `enablePullRequestAutoMerge`) and records the attempt as set to merge
   (`attempts.merge_requested`, PDT-104: PR notices gets it merging again after a failure) (the forge's `merge`; the strategy from
   `merge_settings`, none with a merge queue (and no queue on a forge without them); when GitHub says the PR is already
   clean it merges at once, or joins the merge queue when there is one) and the merge

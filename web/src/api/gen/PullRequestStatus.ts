@@ -8,7 +8,7 @@ import type { PrState } from "./PrState";
  */
 export type PullRequestStatus = { number: number, url: string, title: string, state: PrState, draft: boolean, baseBranch: string, headSha: string, mergeable: Mergeable, 
 /**
- * Out of date with its base (GitHub's `BEHIND`). With a merge queue this needs no action.
+ * Out of date with its base (the forge says so). With a merge queue this needs no action.
  */
 behind: boolean, autoMerge: boolean, inMergeQueue: boolean, 
 /**
@@ -20,7 +20,8 @@ queuePosition: number | null,
  */
 ci: CiStatus | null, 
 /**
- * The newest merge-queue run for this PR (`gh-readonly-queue/<base>/pr-<n>-…`), while queued or after it left.
+ * The newest merge-queue run for this PR (on the forge's queue ref, `Forge::queue_ref`), while queued or after it
+ * left.
  */
 queueCi: CiStatus | null, 
 /**

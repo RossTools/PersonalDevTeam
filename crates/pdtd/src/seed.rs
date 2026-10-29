@@ -69,7 +69,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         base_branch: "main".into(),
         created_at: now - 3 * DAY,
         key: String::new(),
-        github_repo: None,
+        forge: None,
         kind: Default::default(),
     };
     let lib = Project {
@@ -79,7 +79,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         base_branch: "main".into(),
         created_at: now - 2 * DAY,
         key: String::new(),
-        github_repo: None,
+        forge: None,
         kind: Default::default(),
     };
     let wt = Worktree {

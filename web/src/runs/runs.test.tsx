@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
 import type { Run } from '../api/gen/Run';
 import { toast } from '@ui';
-import { renderWithQuery, Reply, stubApi } from '../test-utils';
+import { githubLinks, renderWithQuery, Reply, stubApi } from '../test-utils';
 import { OpenSessionContext } from '../tickets/actions';
 import { ProjectSettingsPanel } from './ProjectSettingsPanel';
 import { RunBranchForm } from './RunBranchForm';
@@ -30,7 +30,7 @@ async function runMenu(item: string) {
   await userEvent.click(within(menu).getByRole('menuitem', { name: item }));
 }
 
-const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: null, kind: 'repo' };
+const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', forge: null, kind: 'repo' };
 const run = (over: Partial<Run>): Run => ({
   id: 'r1', projectId: 'p', worktreeId: null, branch: 'main', name: 'web', kind: 'run', state: 'ready',
   port: 8401, url: 'https://box.t.ts.net:8401/', dataDir: '/d', cwd: '/r', exitCode: null, error: null, detached: false,
@@ -76,7 +76,7 @@ describe('RunBranchForm', () => {
 
 describe('RunView', () => {
   it('shows the run in the header: dot, name, branch chip, state, Stop and Restart', async () => {
-    stubApi({ 'GET /api/projects': [{ ...project, githubRepo: 'o/r', kind: 'repo' }] });
+    stubApi({ 'GET /api/projects': [{ ...project, forge: githubLinks('o/r'), kind: 'repo' }] });
     const { rerender } = renderWithQuery(<RunView run={run({ branch: 'feature/x' })} onRemoved={() => {}} />);
     const h = screen.getByRole('banner');
     expect(within(h).getByRole('heading', { name: 'web' })).toHaveAttribute('title', 'web · feature/x');

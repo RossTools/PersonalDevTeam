@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { toast } from '@ui';
 import type { Project } from '../api/gen/Project';
 import type { Session } from '../api/gen/Session';
-import { renderWithQuery, Reply, stubApi } from '../test-utils';
+import { githubLinks, renderWithQuery, Reply, stubApi } from '../test-utils';
 import { SessionView } from './SessionView';
 
 vi.mock('../terminal/TerminalView', () => ({
@@ -19,7 +19,7 @@ afterEach(() => {
   act(() => { toast.dismiss(); });
 });
 
-const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', githubRepo: null, kind: 'repo' };
+const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'main', createdAt: 1, key: 'PDT', forge: null, kind: 'repo' };
 const session = (over: Partial<Session>): Session => ({
   id: 's1', projectId: 'p', worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r',
   status: 'running', exitCode: null, createdAt: 1, endedAt: null,
@@ -82,7 +82,7 @@ describe('SessionView header', () => {
 
   it('shows the worktree branch as a chip with GitHub links', async () => {
     stubApi({
-      'GET /api/projects': [{ ...project, githubRepo: 'o/r', kind: 'repo' }],
+      'GET /api/projects': [{ ...project, forge: githubLinks('o/r'), kind: 'repo' }],
       'GET /api/projects/p/worktrees': [worktree],
       'POST /api/sessions/s1/view': undefined,
     });
@@ -95,7 +95,7 @@ describe('SessionView header', () => {
 
   it('takes the branch and repo from props', () => {
     stubApi({ 'POST /api/sessions/s1/view': undefined });
-    renderWithQuery(<SessionView session={session({ worktreeId: 'w' })} branch="feature/y" repo={null} baseBranch="main" projectKey="PDT" onRemoved={() => {}} />);
+    renderWithQuery(<SessionView session={session({ worktreeId: 'w' })} branch="feature/y" forge={null} baseBranch="main" projectKey="PDT" onRemoved={() => {}} />);
     expect(within(header()).getByText('feature/y')).toBeInTheDocument();
   });
 });

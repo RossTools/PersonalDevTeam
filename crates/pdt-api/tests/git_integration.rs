@@ -122,7 +122,10 @@ async fn github_origins_are_recognised() {
     let env = setup().await;
     git(&env.repo, &["remote", "add", "origin", "git@github.com:example-org/PersonalDevTeam.git"]);
     let (_, p) = call(&env.app, "GET", &format!("/api/projects/{}", env.pid), None).await;
-    assert_eq!(p["githubRepo"], "example-org/PersonalDevTeam");
+    let f = &p["forge"];
+    assert_eq!((f["kind"].as_str(), f["repo"].as_str()), (Some("github"), Some("example-org/PersonalDevTeam")), "{p}");
+    assert_eq!(f["repoUrl"], "https://github.com/example-org/PersonalDevTeam");
+    assert_eq!(f["branchUrl"], "https://github.com/example-org/PersonalDevTeam/tree/{branch}");
 }
 
 #[tokio::test]
