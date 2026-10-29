@@ -111,6 +111,11 @@ kept in step by triggers. API: `GET /api/pm/notes?q=&project=&kind=`, `POST /api
   PDT queues "[PDT] Since your briefing (… ago)…" (later "Since the last update"): the log's events since then, the
   Inbox, and other conversations' journal entries written since then, ending with a request for a journal checkpoint.
   The turn answering it asks for no other. One checkpoint request or update waits at a time per conversation.
+  PDT-211 trims it: no `schedule.fired` or overlap events, one line per ticket (key, title, what happened; at most 20)
+  under the counts line, and only each journal entry's title, age and "Still open" section (at most 15 lines). With no
+  ticket events, an empty Inbox and no new journal entry it sends only a short checkpoint request, or nothing when the
+  conversation's journal is newer than the user's last message. The update, checkpoint and closing requests show in
+  the conversation as one collapsed line (`user_message.pdt`) that opens to the full text.
 - **Closing.** Only the user ends a conversation (`DELETE /api/pm/sessions/{id}`). PDT drops a waiting checkpoint or
   update and sends "[PDT] The user closed this PM conversation, so it is ending. Write its journal entry with
   `write_journal`… Then end your turn." (`pm_sessions.rotation = 'journal'`, reason `user`). When that turn ends

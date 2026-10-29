@@ -3,6 +3,7 @@ import type { Answer } from "./Answer";
 import type { MessagePhase } from "./MessagePhase";
 import type { MessageSource } from "./MessageSource";
 import type { NoticeLevel } from "./NoticeLevel";
+import type { PdtMessage } from "./PdtMessage";
 import type { RateLimitWindow } from "./RateLimitWindow";
 import type { RequestKind } from "./RequestKind";
 import type { RequestState } from "./RequestState";
@@ -13,7 +14,11 @@ import type { TurnStatus } from "./TurnStatus";
 /**
  * A normalized conversation event (spec §4.1).
  */
-export type AgentEvent = { "kind": "user_message", text: string, images: Array<string>, source: MessageSource, } | { "kind": "agent_message", id: string, markdown: string, phase: MessagePhase, } | { "kind": "reasoning", summary: string, } | { "kind": "tool_call", id: string, tool: string, 
+export type AgentEvent = { "kind": "user_message", text: string, images: Array<string>, source: MessageSource, 
+/**
+ * One of PDT's own messages to a PM conversation (with `source` `notice`). Older pdtd versions ignore it.
+ */
+pdt?: PdtMessage, } | { "kind": "agent_message", id: string, markdown: string, phase: MessagePhase, } | { "kind": "reasoning", summary: string, } | { "kind": "tool_call", id: string, tool: string, 
 /**
  * One line: the command, the file, the pattern; empty when the tool has no obvious subject.
  */

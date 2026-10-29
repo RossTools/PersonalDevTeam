@@ -268,8 +268,20 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   end and never wakes a parked conversation). When a turn ends a day (`AppState.pm_update_every_ms`, pdt-core
   `pm::UPDATE_EVERY_MS`) after the conversation was last brought up to date (`pm_sessions.caught_up_at`: its briefing,
   then each update) and the user wrote to it since, PDT queues "[PDT] Since your briefing…" (then "Since the last
-  update…"): the log's events, the Inbox and other conversations' new journal entries, and a request for a
-  checkpoint. One checkpoint request or update waits at a time (dedupe `pm:checkpoint`); closing drops a waiting one.
+  update…", pdt-core `pm::daily_message`), trimmed to what matters (PDT-211): the log's events without
+  `schedule.fired` and `ticket.overlap_found`/`overlap_cleared`, as a counts line and one line per ticket (key, title,
+  what happened: "stage → Done, PR #208 merged, CI passed"; at most `pm::UPDATE_TICKETS`, 20); the Inbox; each other
+  conversation's new journal entry cut to its title, age and "Still open" section (at most 15 lines; the full entry is
+  in later briefings, and journal requests ask for a `Still open` heading); and a request for a checkpoint. When no
+  ticket had events, the Inbox is empty and no journal is new, it sends only a short checkpoint request, or nothing
+  when the conversation's journal entry is newer than the user's last message. One checkpoint request or update waits
+  at a time (dedupe `pm:checkpoint` or `pm:update`); closing drops a waiting one.
+- **PDT's messages collapse in the chat** (PDT-211). The outbox key of each of PDT's own messages to a PM
+  conversation (`pm:update`, `pm:checkpoint`, `pm:journal` for the closing request; pdt-core `pm::pdt_message`) rides
+  on its pending message, and the echoed `user_message` gets `source: notice` and `pdt: update | checkpoint |
+  journal` (the same for Claude, Codex and Devin, no text matching). The conversation view, desktop and phone, shows
+  it as one muted line ("PDT brought this conversation up to date · 1d ago") that opens to the full text; the agent
+  still gets all of it.
   `write_journal` replaces the conversation's one entry, so briefings carry the latest checkpoint. An ended
   conversation shows why it ended (reason `user`; `context` and `age` are from before PDT-167), its journal and New
   conversation in place of its composer; while it writes its closing journal a banner says the user closed it.

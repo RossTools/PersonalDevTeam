@@ -14,9 +14,9 @@ use ts_rs::TS;
 pub const UPDATE_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// What the journal is for, said in every request for it.
-const JOURNAL_WHAT: &str = "what you and the user are working on, what was decided, and the threads still open. It \
-                            replaces this conversation's earlier entry, so write the whole picture; later PM \
-                            conversations start from it";
+const JOURNAL_WHAT: &str = "what you and the user are working on, what was decided, and the threads still open \
+                            (under a `Still open` heading). It replaces this conversation's earlier entry, so write \
+                            the whole picture; later PM conversations start from it";
 
 /// What PDT sends a PM conversation the user closed (spec §5.3).
 pub fn journal_request() -> String {
@@ -415,6 +415,10 @@ pub struct BriefEvent {
     pub kind: String,
     /// A ticket key, when the event is about one.
     pub ticket: Option<String>,
+    /// The ticket's title.
+    pub title: Option<String>,
+    /// The event's payload (an update words it: [`update_message`]).
+    pub payload: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -573,6 +577,10 @@ pub struct UpdateData {
     pub inbox: Vec<BriefInbox>,
     /// Other PM conversations' journal entries written since then, newest first.
     pub journal: Vec<BriefConversationJournal>,
+    /// When this conversation's own journal entry was last written (its last checkpoint), if ever.
+    pub checkpointed_at: Option<i64>,
+    /// When the user last wrote to this conversation.
+    pub user_wrote_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -590,29 +598,213 @@ pub fn update_due(caught_up_at: i64, now: i64, every: i64) -> bool {
     now - caught_up_at >= every
 }
 
-/// The daily update a PM conversation in use gets in place of ending (spec §5.3): what happened since its briefing
-/// or last update, the Inbox, the other conversations' new journal entries, and a request for a journal checkpoint.
-pub fn update_message(d: &UpdateData) -> String {
+/// Events an update leaves out (PDT-211): the clock and overlaps, which say nothing the PM acts on.
+const UPDATE_NOISE: &[&str] = &[
+    crate::workflow::events::SCHEDULE_FIRED,
+    crate::workflow::events::TICKET_OVERLAP_FOUND,
+    crate::workflow::events::TICKET_OVERLAP_CLEARED,
+];
+/// Tickets an update lists.
+pub const UPDATE_TICKETS: usize = 20;
+/// Lines of a journal entry's "Still open" an update quotes.
+pub const STILL_OPEN_LINES: usize = 15;
+
+/// What an event did to its ticket, in a few words ("stage → Done", "PR #208 merged", "CI passed").
+fn event_words(e: &BriefEvent) -> String {
+    use crate::workflow::events as ev;
+    let p = &e.payload;
+    let pr = || p.get("pr").and_then(Value::as_u64).map_or("PR".to_string(), |n| format!("PR #{n}"));
+    let text = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    match e.kind.as_str() {
+        ev::TICKET_STAGE_CHANGED => {
+            let to = text("to").replace('_', " ");
+            let mut c = to.chars();
+            match c.next() {
+                Some(f) => format!("stage → {}{}", f.to_uppercase(), c.as_str()),
+                None => "moved".into(),
+            }
+        }
+        ev::PR_MERGED => format!("{} merged", pr()),
+        ev::PR_CONFLICT => format!("{} conflicts with its base", pr()),
+        ev::PR_QUEUE_LEFT => format!("{} dropped from the merge queue", pr()),
+        ev::PR_BEHIND => format!("{} behind its base", pr()),
+        ev::PR_COMMENTED => format!("{} commented", pr()),
+        ev::PR_REVIEWED => format!("{} reviewed", pr()),
+        ev::CI_RUN_PASSED => "CI passed".into(),
+        ev::CI_RUN_FAILED => "CI failed".into(),
+        ev::ATTEMPT_STARTED => "started".into(),
+        ev::ATTEMPT_MERGED => "merged".into(),
+        ev::ATTEMPT_ABANDONED => "abandoned".into(),
+        ev::ATTEMPT_LATE_COMMITS => "commits pushed after the merge".into(),
+        ev::TICKET_COMMENTED => "commented".into(),
+        ev::AGENT_OUTCOME => match (text("persona"), text("outcome")) {
+            (who, what) if !who.is_empty() && !what.is_empty() => format!("{who} {what}"),
+            _ => "an agent step ended".into(),
+        },
+        kind => kind.to_string(),
+    }
+}
+
+/// An update's events (PDT-211), newest first: the noise left out, counts per kind, then one line per ticket (the
+/// most recently active first) saying what happened to it, oldest first. False when no ticket had any.
+fn ticket_events_section(events: &[BriefEvent], out: &mut String) -> bool {
+    let kept: Vec<&BriefEvent> = events.iter().filter(|e| !UPDATE_NOISE.contains(&e.kind.as_str())).collect();
+    let mut tickets: Vec<(&str, Option<&str>, Vec<String>)> = vec![];
+    for e in &kept {
+        let Some(key) = e.ticket.as_deref() else { continue };
+        let i = match tickets.iter().position(|(k, _, _)| *k == key) {
+            Some(i) => i,
+            None => {
+                tickets.push((key, None, vec![]));
+                tickets.len() - 1
+            }
+        };
+        let t = &mut tickets[i];
+        t.1 = t.1.or(e.title.as_deref());
+        t.2.push(event_words(e));
+    }
+    if tickets.is_empty() {
+        out.push_str("- Nothing happened to any ticket.\n");
+        return false;
+    }
+    let mut counts: Vec<(&str, usize)> = vec![];
+    for e in &kept {
+        match counts.iter_mut().find(|(k, _)| *k == e.kind) {
+            Some(c) => c.1 += 1,
+            None => counts.push((&e.kind, 1)),
+        }
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    out.push_str(&format!(
+        "Counts: {}.\n\n",
+        counts.iter().map(|(k, n)| format!("{k} {n}")).collect::<Vec<_>>().join(", ")
+    ));
+    for (key, title, happened) in tickets.iter().take(UPDATE_TICKETS) {
+        // Oldest first, and the same thing twice in a row once ("CI failed ×2").
+        let mut said: Vec<(String, usize)> = vec![];
+        for w in happened.iter().rev() {
+            match said.last_mut() {
+                Some((last, n)) if last == w => *n += 1,
+                _ => said.push((w.clone(), 1)),
+            }
+        }
+        let said =
+            said.into_iter().map(|(w, n)| if n > 1 { format!("{w} ×{n}") } else { w }).collect::<Vec<_>>().join(", ");
+        match title {
+            Some(t) => out.push_str(&format!("- {key} {t}: {said}\n")),
+            None => out.push_str(&format!("- {key}: {said}\n")),
+        }
+    }
+    if tickets.len() > UPDATE_TICKETS {
+        out.push_str(&format!("- … and {} more tickets\n", tickets.len() - UPDATE_TICKETS));
+    }
+    true
+}
+
+/// The "Still open" section of a journal entry (its lines, up to the next heading or section label), cut to
+/// [`STILL_OPEN_LINES`] lines; None when the entry has none.
+pub fn still_open(body: &str) -> Option<String> {
+    let label = |l: &str| l.trim().trim_start_matches(['#', '*', '_']).trim().to_lowercase();
+    let is_section = |l: &str| {
+        let t = l.trim();
+        t.starts_with('#') || (t.starts_with("**") && t.trim_end_matches(':').ends_with("**"))
+    };
+    let mut lines = body.lines();
+    let first = lines.by_ref().find(|l| label(l).starts_with("still open"))?;
+    let mut open: Vec<&str> = vec![];
+    // "Still open: the DNS cutover" carries a thread of its own.
+    if let Some((_, rest)) = first.split_once(':') {
+        let rest = rest.trim().trim_start_matches(['*', '_']).trim();
+        if !rest.is_empty() {
+            open.push(rest);
+        }
+    }
+    open.extend(lines.take_while(|l| !is_section(l)));
+    while open.last().is_some_and(|l| l.trim().is_empty()) {
+        open.pop();
+    }
+    let open: Vec<&str> = open.into_iter().skip_while(|l| l.trim().is_empty()).collect();
+    if open.is_empty() {
+        return None;
+    }
+    let mut text = open.iter().take(STILL_OPEN_LINES).copied().collect::<Vec<_>>().join("\n");
+    if open.len() > STILL_OPEN_LINES {
+        text.push_str(&format!("\n- … and {} more lines", open.len() - STILL_OPEN_LINES));
+    }
+    Some(text)
+}
+
+/// The daily update a PM conversation in use gets in place of ending (spec §5.3, PDT-211): what happened to tickets
+/// since its briefing or last update, the Inbox, what the other conversations' new journal entries leave open, and a
+/// request for a journal checkpoint. None when nothing relevant happened (no ticket events, an empty Inbox, no new
+/// journal entries): [`daily_message`] sends a short checkpoint request then, or nothing.
+pub fn update_message(d: &UpdateData) -> Option<String> {
     let since = if d.first { "your briefing" } else { "the last update" };
+    let mut events = String::new();
+    let happened = ticket_events_section(&d.events, &mut events);
+    if !happened && d.inbox.is_empty() && d.journal.is_empty() {
+        return None;
+    }
     let mut out = format!(
         "[{SHORT_NAME}] Since {since} ({}): what changed, so this conversation stays current. Look things up with \
-         your tools for more.\n\n## Events\n\n",
+         your tools for more.\n\n## Tickets\n\n{events}",
         ago(d.now, d.since)
     );
-    events_section(d.now, &d.events, &mut out);
     out.push_str("\n## Inbox\n\n");
     inbox_section(&d.inbox, &mut out);
     if !d.journal.is_empty() {
-        out.push_str("\n## New journal entries from other PM conversations\n");
+        out.push_str(
+            "\n## New journal entries from other PM conversations\n\nWhat each leaves open; the full entries are in \
+             later PM conversations' briefings (and `search_notes`).\n",
+        );
         for j in d.journal.iter().take(BRIEF_JOURNALS) {
-            out.push_str(&format!("\n### {} ({})\n\n{}\n", j.title, ago(d.now, j.at), j.body.trim()));
+            let open = still_open(&j.body).unwrap_or_else(|| "(Nothing marked still open.)".into());
+            out.push_str(&format!("\n### {} ({})\n\nStill open:\n{open}\n", j.title, ago(d.now, j.at)));
         }
     }
     out.push_str(&format!(
         "\nThen write a journal checkpoint with `write_journal`: {JOURNAL_WHAT}. Then end your turn; this \
          conversation carries on.\n"
     ));
-    out
+    Some(out)
+}
+
+/// What a quiet day asks a PM conversation in use for: only a journal checkpoint.
+pub fn quiet_checkpoint_request() -> String {
+    format!(
+        "[{SHORT_NAME}] Nothing that needs you happened since the last update. Write a journal checkpoint with \
+         `write_journal`: {JOURNAL_WHAT}. Then end your turn; this conversation carries on."
+    )
+}
+
+/// What a PM conversation due its daily update is sent (PDT-211): the update ([`update_message`]); on a quiet day a
+/// short checkpoint request; nothing when its last checkpoint is newer than the user's last message.
+pub fn daily_message(d: &UpdateData) -> Option<(crate::conversation::PdtMessage, String)> {
+    use crate::conversation::PdtMessage;
+    if let Some(text) = update_message(d) {
+        return Some((PdtMessage::Update, text));
+    }
+    if d.checkpointed_at.is_some_and(|at| at > d.user_wrote_at) {
+        return None;
+    }
+    Some((PdtMessage::Checkpoint, quiet_checkpoint_request()))
+}
+
+/// What PDT's own messages to a PM conversation are queued under in the outbox (`dedupe`), one waiting at a time: it
+/// is also how the conversation view knows them ([`pdt_message`]).
+pub const UPDATE_KEY: &str = "pm:update";
+pub const CHECKPOINT_KEY: &str = "pm:checkpoint";
+pub const JOURNAL_KEY: &str = "pm:journal";
+
+/// Which of PDT's own messages to a PM conversation an outbox message queued under `dedupe` is.
+pub fn pdt_message(dedupe: &str) -> Option<crate::conversation::PdtMessage> {
+    use crate::conversation::PdtMessage;
+    match dedupe {
+        UPDATE_KEY => Some(PdtMessage::Update),
+        CHECKPOINT_KEY => Some(PdtMessage::Checkpoint),
+        JOURNAL_KEY => Some(PdtMessage::Journal),
+        _ => None,
+    }
 }
 
 /// The briefing, as Markdown.
@@ -779,38 +971,154 @@ mod tests {
         assert!(update_due(H, 25 * H, day) && !update_due(H, 24 * H, day), "a day from the last update");
     }
 
-    #[test]
-    fn checkpoints_and_updates_keep_the_conversation_going() {
-        for text in [checkpoint_request(), update_message(&UpdateData::default())] {
-            assert!(text.starts_with("[PDT] ") && text.contains("`write_journal`"), "{text}");
-            assert!(text.contains("this conversation carries on"), "{text}");
+    fn event(at: i64, kind: &str, ticket: Option<(&str, &str)>, payload: Value) -> BriefEvent {
+        BriefEvent {
+            at,
+            kind: kind.into(),
+            ticket: ticket.map(|t| t.0.to_string()),
+            title: ticket.map(|t| t.1.to_string()),
+            payload,
         }
-        assert!(checkpoint_request().contains("compacted"));
-        assert!(journal_request().contains("closed this PM conversation"));
-        let d = UpdateData {
+    }
+
+    fn update() -> UpdateData {
+        UpdateData {
             now: 25 * H,
             since: H,
             first: true,
-            events: vec![BriefEvent { at: 2 * H, kind: "ticket.moved".into(), ticket: Some("PDT-3".into()) }],
+            events: vec![event(2 * H, "ticket.moved", Some(("PDT-3", "Login")), json!({}))],
             inbox: vec![BriefInbox { kind: "approval".into(), ticket: None, title: "Merge it?".into() }],
             journal: vec![BriefConversationJournal {
                 title: "CB cutover".into(),
                 at: 3 * H,
-                body: "Cut over Friday.".into(),
+                body: "## Decided\n\nCut over Friday.\n\n## Still open\n\n- DNS for cb.example\n".into(),
             }],
-        };
-        let text = update_message(&d);
+            checkpointed_at: None,
+            user_wrote_at: 24 * H,
+        }
+    }
+
+    #[test]
+    fn checkpoints_and_updates_keep_the_conversation_going() {
+        let full = update_message(&update()).unwrap();
+        for text in [checkpoint_request(), quiet_checkpoint_request(), full.clone()] {
+            assert!(text.starts_with("[PDT] ") && text.contains("`write_journal`"), "{text}");
+            assert!(text.contains("this conversation carries on") && text.contains("`Still open` heading"), "{text}");
+        }
+        assert!(checkpoint_request().contains("compacted"));
+        assert!(journal_request().contains("closed this PM conversation"));
         for want in [
             "[PDT] Since your briefing (1 d ago)",
             "Counts: ticket.moved 1.",
-            "- 23 h ago · ticket.moved · PDT-3",
+            "- PDT-3 Login: ticket.moved",
             "- approval: Merge it?",
-            "### CB cutover (22 h ago)\n\nCut over Friday.",
+            "### CB cutover (22 h ago)\n\nStill open:\n- DNS for cb.example\n",
+            "the full entries are in later PM conversations' briefings",
+        ] {
+            assert!(full.contains(want), "missing {want:?} in\n{full}");
+        }
+        assert!(!full.contains("Cut over Friday"), "only what is still open: {full}");
+        let later = update_message(&UpdateData { first: false, journal: vec![], ..update() }).unwrap();
+        assert!(later.starts_with("[PDT] Since the last update") && !later.contains("New journal entries"), "{later}");
+    }
+
+    #[test]
+    fn an_update_leaves_out_the_noise_and_groups_events_by_ticket() {
+        let pdt208 = Some(("PDT-208", "Phone Inbox"));
+        let d = UpdateData {
+            // Newest first.
+            events: vec![
+                event(9 * H, "schedule.fired", None, json!({})),
+                event(8 * H, "ci.run_passed", pdt208, json!({"pr": 208})),
+                event(7 * H, "ticket.overlap_cleared", Some(("PDT-9", "Other")), json!({})),
+                event(6 * H, "pr.merged", pdt208, json!({"pr": 208})),
+                event(5 * H, "ticket.stage_changed", pdt208, json!({"from": "in_progress", "to": "done"})),
+                event(
+                    4 * H,
+                    "agent.outcome",
+                    Some(("PDT-5", "Docs")),
+                    json!({"persona": "Coder", "outcome": "submitted"}),
+                ),
+                event(3 * H, "ci.run_failed", pdt208, json!({"pr": 208})),
+                event(2 * H, "ci.run_failed", pdt208, json!({"pr": 208})),
+                event(2 * H, "github.issue.opened", None, json!({})),
+            ],
+            inbox: vec![],
+            journal: vec![],
+            ..update()
+        };
+        let text = update_message(&d).unwrap();
+        for want in [
+            "Counts: ci.run_failed 2, agent.outcome 1, ci.run_passed 1, github.issue.opened 1, pr.merged 1, \
+             ticket.stage_changed 1.",
+            "- PDT-208 Phone Inbox: CI failed ×2, stage → Done, PR #208 merged, CI passed\n- PDT-5 Docs: Coder submitted\n",
         ] {
             assert!(text.contains(want), "missing {want:?} in\n{text}");
         }
-        let later = update_message(&UpdateData { first: false, journal: vec![], ..d });
-        assert!(later.starts_with("[PDT] Since the last update") && !later.contains("New journal entries"), "{later}");
+        for noise in ["schedule.fired", "overlap", "PDT-9"] {
+            assert!(!text.contains(noise), "{noise} in\n{text}");
+        }
+        let many = UpdateData {
+            events: (0..UPDATE_TICKETS + 2)
+                .map(|i| event(2 * H, "ticket.commented", Some((&format!("PDT-{i}"), "T")), json!({})))
+                .collect(),
+            ..d
+        };
+        let text = update_message(&many).unwrap();
+        assert!(text.contains("- … and 2 more tickets") && !text.contains("PDT-21 "), "{text}");
+    }
+
+    #[test]
+    fn journals_are_cut_to_what_is_still_open() {
+        assert_eq!(
+            still_open("Decided things.\n\n**Still open:**\n- a\n- b\n\n**Next**\n- c").as_deref(),
+            Some("- a\n- b")
+        );
+        assert_eq!(still_open("Still open: the DNS cutover\n").as_deref(), Some("the DNS cutover"));
+        assert_eq!(still_open("## Decided\n- x\n"), None);
+        let long = format!("### Still open\n{}", (0..20).map(|i| format!("- t{i}")).collect::<Vec<_>>().join("\n"));
+        let cut = still_open(&long).unwrap();
+        assert_eq!(cut.lines().count(), STILL_OPEN_LINES + 1);
+        assert!(cut.ends_with("- … and 5 more lines") && cut.contains("- t14") && !cut.contains("- t15"), "{cut}");
+        let d = UpdateData {
+            journal: vec![BriefConversationJournal { title: "Plain".into(), at: 3 * H, body: "Just notes.".into() }],
+            ..update()
+        };
+        let text = update_message(&d).unwrap();
+        assert!(
+            text.contains("### Plain (22 h ago)\n\nStill open:\n(Nothing marked still open.)")
+                && !text.contains("Just notes")
+        );
+    }
+
+    #[test]
+    fn a_quiet_day_asks_only_for_a_checkpoint_or_nothing() {
+        use crate::conversation::PdtMessage;
+        let quiet = UpdateData {
+            events: vec![
+                event(2 * H, "schedule.fired", None, json!({})),
+                event(3 * H, "github.issue.opened", None, json!({})),
+            ],
+            inbox: vec![],
+            journal: vec![],
+            ..update()
+        };
+        assert_eq!(update_message(&quiet), None, "nothing relevant: no update");
+        assert_eq!(daily_message(&quiet), Some((PdtMessage::Checkpoint, quiet_checkpoint_request())));
+        let stale = UpdateData { checkpointed_at: Some(23 * H), ..quiet.clone() };
+        assert_eq!(daily_message(&stale).map(|m| m.0), Some(PdtMessage::Checkpoint), "the user wrote since");
+        let fresh = UpdateData { checkpointed_at: Some(24 * H + 1), ..quiet };
+        assert_eq!(daily_message(&fresh), None, "the checkpoint is newer than every change");
+        assert_eq!(daily_message(&update()).map(|m| m.0), Some(PdtMessage::Update));
+    }
+
+    #[test]
+    fn pdts_own_messages_are_known_by_their_outbox_key() {
+        use crate::conversation::PdtMessage;
+        assert_eq!(pdt_message(UPDATE_KEY), Some(PdtMessage::Update));
+        assert_eq!(pdt_message(CHECKPOINT_KEY), Some(PdtMessage::Checkpoint));
+        assert_eq!(pdt_message(JOURNAL_KEY), Some(PdtMessage::Journal));
+        assert_eq!(pdt_message("prompt:x"), None);
     }
 
     #[test]
@@ -911,9 +1219,9 @@ mod tests {
             inbox: vec![BriefInbox { kind: "question".into(), ticket: Some("PDT-81".into()), title: "Which?".into() }],
             since: Some(8 * H),
             events: vec![
-                BriefEvent { at: 9 * H, kind: "pr.ci_failed".into(), ticket: Some("PDT-81".into()) },
-                BriefEvent { at: 8 * H + 1, kind: "ticket.stage_changed".into(), ticket: Some("PDT-80".into()) },
-                BriefEvent { at: 8 * H + 2, kind: "pr.ci_failed".into(), ticket: None },
+                event(9 * H, "pr.ci_failed", Some(("PDT-81", "PM persona")), json!({})),
+                event(8 * H + 1, "ticket.stage_changed", Some(("PDT-80", "Notes")), json!({})),
+                event(8 * H + 2, "pr.ci_failed", None, json!({})),
             ],
             journal: vec![BriefJournal { at: 8 * H, body: "Talked about the PM.\n".into() }],
             pinned: vec![BriefNote { id: "n1".into(), project: None, title: "Prefers short answers".into() }],

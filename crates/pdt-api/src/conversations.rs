@@ -513,7 +513,7 @@ async fn append(
     // The agent echoes a message without PDT's attachment ids (the stored row names them, for the thumbnails) and
     // without saying that PDT sent it on its own.
     let mut event = event;
-    if let AgentEvent::UserMessage { text, images, source } = &mut event
+    if let AgentEvent::UserMessage { text, images, source, pdt } = &mut event
         && *source != pdt_core::conversation::MessageSource::Terminal
     {
         let s = c.state();
@@ -523,6 +523,7 @@ async fn append(
             }
             if p.notice && p.text.trim() == text.trim() {
                 *source = pdt_core::conversation::MessageSource::Notice;
+                *pdt = p.pdt;
             }
         }
     }
@@ -656,9 +657,16 @@ pub(crate) async fn start(st: &AppState, session: &Session, first: Option<String
     let c = conv(st, session).await?;
     ensure_live(st, &c, session).await?;
     if let Some(text) = first {
-        send_message(st, session, &text, &[], Delivery::Next, false, None).await?;
+        send_message(st, session, &text, &[], Delivery::Next, Sender::User, None).await?;
     }
     Ok(())
+}
+
+/// Who a message is from: the user, or PDT on its own (a notice; which of its PM messages, PDT-211).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sender {
+    User,
+    Pdt(Option<pdt_core::conversation::PdtMessage>),
 }
 
 /// Sends a message: pending until the agent echoes it. `outbox` names the pending id the outbox's messages already
@@ -670,9 +678,13 @@ async fn send_message(
     text: &str,
     image_ids: &[String],
     delivery: Delivery,
-    notice: bool,
+    from: Sender,
     outbox: Option<&str>,
 ) -> Result<PendingMessage, ApiError> {
+    let (notice, pdt) = match from {
+        Sender::User => (false, None),
+        Sender::Pdt(pdt) => (true, pdt),
+    };
     if !valid_message(text, image_ids.len()) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -689,6 +701,7 @@ async fn send_message(
         delivery,
         images: image_ids.to_vec(),
         notice,
+        pdt,
     };
     if outbox.is_none() {
         crate::workflow::outbox::track(st, session, &pending.id, text, !notice).await?;
@@ -827,21 +840,22 @@ pub(crate) fn background(st: &AppState, id: &str) -> Option<Background> {
     Some(Background { tasks: s.background_tasks.clone(), live: s.live, busy, settled })
 }
 
-/// Sends the outbox's messages (`pending_id` names them) as the next message; it shows as PDT's, not the user's. They
-/// are told once the agent echoes it.
+/// Sends the outbox's messages (`pending_id` names them) as the next message; it shows as PDT's, not the user's (and
+/// collapsed, when `pdt` says which of its PM messages it is). They are told once the agent echoes it.
 pub(crate) async fn send_notice(
     st: &AppState,
     session: &Session,
     text: &str,
     pending_id: &str,
+    pdt: Option<pdt_core::conversation::PdtMessage>,
 ) -> Result<(), ApiError> {
-    send_message(st, session, text, &[], Delivery::Next, true, Some(pending_id)).await.map(|_| ())
+    send_message(st, session, text, &[], Delivery::Next, Sender::Pdt(pdt), Some(pending_id)).await.map(|_| ())
 }
 
 /// Sends a message PDT composed for the user (review feedback) as the user's next message: queued while a turn runs;
 /// a parked or stopped conversation reopens to take it.
 pub(crate) async fn send_user_message(st: &AppState, session: &Session, text: &str) -> Result<(), ApiError> {
-    send_message(st, session, text, &[], Delivery::Next, false, None).await.map(|_| ())
+    send_message(st, session, text, &[], Delivery::Next, Sender::User, None).await.map(|_| ())
 }
 
 /// Stops a conversation: closes its process and marks the session finished. Sending again reopens it.
@@ -1520,7 +1534,7 @@ pub(crate) async fn post_message(
     let session = conversation_session(&st, &id).await?;
     let images = body.images.unwrap_or_default();
     let pending =
-        send_message(&st, &session, &body.text, &images, body.delivery.unwrap_or_default(), false, None).await?;
+        send_message(&st, &session, &body.text, &images, body.delivery.unwrap_or_default(), Sender::User, None).await?;
     crate::pm::user_wrote(&st, &session, &body.text).await;
     Ok((StatusCode::ACCEPTED, Json(pending)))
 }

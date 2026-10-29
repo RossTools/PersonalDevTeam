@@ -233,6 +233,8 @@ async fn notes_and_the_journal_carry_into_the_next_session() {
     assert!(said.contains("\"written\": true"), "{said}");
 
     close_pm(&env, &first).await;
+    let marked = pdt_says(&env, &first).await;
+    assert!(marked.len() == 1 && marked[0].0 == "journal", "the journal request shows collapsed: {marked:?}");
     let second = start_pm(&env, "hello again").await;
     wait_said(&env, &second, 1).await;
     let (_, pm) = call(&env.app, "GET", "/api/pm", None).await;
@@ -279,6 +281,20 @@ async fn user_says(env: &Env, session: &str) -> Vec<String> {
         .iter()
         .filter(|e| e["event"]["kind"] == "user_message")
         .map(|e| e["event"]["text"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// PDT's own messages to the conversation (PDT-211): which each is (`pdt`) and its text, in order.
+async fn pdt_says(env: &Env, session: &str) -> Vec<(String, String)> {
+    events(env, session)
+        .await
+        .iter()
+        .map(|e| &e["event"])
+        .filter(|e| e["kind"] == "user_message" && e["pdt"].is_string())
+        .map(|e| {
+            assert_eq!(e["source"], "notice", "{e}");
+            (e["pdt"].as_str().unwrap().to_string(), e["text"].as_str().unwrap().to_string())
+        })
         .collect()
 }
 
@@ -405,6 +421,9 @@ async fn a_compacted_conversation_writes_a_checkpoint_after_its_turn_and_carries
     let request = at(&|(k, t)| k == "user_message" && t.contains("Your context was just compacted"));
     let turn_end = compaction + order[compaction..].iter().position(|(k, _)| k == "turn_ended").unwrap();
     assert!(compaction < carried_on && carried_on < turn_end && turn_end < request, "{order:?}");
+    let marked = pdt_says(&env, &id).await;
+    assert_eq!(marked.len(), 1, "{marked:?}");
+    assert!(marked[0].0 == "checkpoint" && marked[0].1.contains("Your context was just compacted"), "{marked:?}");
 
     // Each checkpoint replaces the conversation's entry; it stays open, and the next conversation is briefed with it.
     let said = ask(&env, &id, r#"mcp: write_journal {"body": "Planning the CB cutover."}"#).await;
@@ -431,9 +450,11 @@ async fn a_conversation_in_use_gets_a_daily_update_and_carries_on() {
     let env = setup(Some(0)).await;
     let id = start_pm(&env, "hello").await;
     let said = wait_said(&env, &id, 2).await;
-    for want in ["[PDT] Since your briefing (", "## Events", "## Inbox", "`write_journal`", "carries on"] {
+    // Nothing happened yet: only a checkpoint request.
+    for want in ["[PDT] Nothing that needs you happened", "`write_journal`", "carries on"] {
         assert!(said[1].contains(want), "missing {want:?} in\n{}", said[1]);
     }
+    assert_eq!(pdt_says(&env, &id).await.iter().map(|m| m.0.as_str()).collect::<Vec<_>>(), ["checkpoint"]);
     // Answering the update asks for no other, and the conversation stays open.
     let deadline = Instant::now() + Duration::from_millis(1500);
     while Instant::now() < deadline {
@@ -447,12 +468,15 @@ async fn a_conversation_in_use_gets_a_daily_update_and_carries_on() {
     // Another conversation writes its journal; the next turn the user starts here brings the next update with it.
     let other = start_pm(&env, "CB cutover").await;
     wait_said(&env, &other, 2).await;
-    ask(&env, &other, r#"mcp: write_journal {"body": "Cut over Friday."}"#).await;
+    ask(&env, &other, r#"mcp: write_journal {"body": "Cut over Friday.\n\n## Still open\n- DNS"}"#).await;
     send(&env, &id, "again").await;
     let said = wait_said(&env, &id, 4).await;
-    for want in ["[PDT] Since the last update (", "### CB cutover (", "Cut over Friday."] {
+    for want in ["[PDT] Since the last update (", "## Tickets", "## Inbox", "### CB cutover (", "Still open:\n- DNS"] {
         assert!(said[3].contains(want), "missing {want:?} in\n{}", said[3]);
     }
+    assert!(!said[3].contains("Cut over Friday."), "only what is still open: {}", said[3]);
+    let marked = pdt_says(&env, &id).await;
+    assert_eq!(marked.iter().map(|m| m.0.as_str()).collect::<Vec<_>>(), ["checkpoint", "update"], "{marked:?}");
     assert_eq!(pm_info(&env, &id).await["open"], true);
     for s in [&id, &other] {
         call(&env.app, "POST", &format!("/api/sessions/{s}/kill"), None).await;

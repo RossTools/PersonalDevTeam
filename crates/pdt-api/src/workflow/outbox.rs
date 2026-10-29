@@ -193,7 +193,13 @@ pub(crate) async fn deliver(st: &AppState) {
                 tracing::warn!(session = %sid, error = %e, "could not mark messages on their way");
                 continue;
             }
-            match crate::conversations::send_notice(st, session, &text, &pending_id).await {
+            // PDT's own messages to a PM conversation show collapsed (PDT-211): a batch of nothing else is marked.
+            let pdt = list
+                .iter()
+                .map(|m| m.dedupe.as_deref().and_then(pdt_core::pm::pdt_message))
+                .collect::<Option<Vec<_>>>()
+                .and_then(|kinds| kinds.first().copied());
+            match crate::conversations::send_notice(st, session, &text, &pending_id, pdt).await {
                 Ok(()) => tracing::info!(session = %sid, messages = list.len(), "gave the agent its messages"),
                 Err(e) => {
                     tracing::warn!(session = %sid, error = %e.message(), "could not send messages to the conversation");

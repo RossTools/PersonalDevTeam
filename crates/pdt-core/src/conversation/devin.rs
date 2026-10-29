@@ -307,7 +307,7 @@ impl DevinMapper {
         out.push(DevinOut::Event {
             item_id: Some(format!("u:{turn}")),
             turn_id: Some(turn),
-            event: AgentEvent::UserMessage { text: text.to_string(), images: vec![], source },
+            event: AgentEvent::UserMessage { text: text.to_string(), images: vec![], source, pdt: None },
         });
     }
 
@@ -419,9 +419,10 @@ impl DevinMapper {
         } else {
             self.close_text(MessagePhase::Commentary, &mut out);
             let item = self.id("u");
-            out.push(
-                self.event(Some(item), AgentEvent::UserMessage { text: text.to_string(), images: vec![], source }),
-            );
+            out.push(self.event(
+                Some(item),
+                AgentEvent::UserMessage { text: text.to_string(), images: vec![], source, pdt: None },
+            ));
         }
         out
     }

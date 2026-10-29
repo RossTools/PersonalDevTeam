@@ -113,6 +113,20 @@ pub enum MessageSource {
     Notice,
 }
 
+/// Which of PDT's own messages to a PM conversation a user message is (PDT-211): its view shows one collapsed line.
+/// The agent still gets the whole text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PdtMessage {
+    /// The daily update ("Since your briefing…").
+    Update,
+    /// A request for a journal checkpoint (after a compaction, or a quiet day).
+    Checkpoint,
+    /// The request for the journal entry of a conversation the user closed.
+    Journal,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -241,6 +255,10 @@ pub enum AgentEvent {
         #[serde(default)]
         images: Vec<String>,
         source: MessageSource,
+        /// One of PDT's own messages to a PM conversation (with `source` `notice`). Older pdtd versions ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        pdt: Option<PdtMessage>,
     },
     AgentMessage {
         id: String,
@@ -440,6 +458,10 @@ pub struct PendingMessage {
     /// PDT sent it on its own (a pull-request notice), not the user.
     #[serde(default)]
     pub notice: bool,
+    /// Which of PDT's own messages to a PM conversation it is (PDT-211).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pdt: Option<PdtMessage>,
 }
 
 /// Work the agent left running in the background (a shell command, a sub-agent, a monitor). It reports back on its
