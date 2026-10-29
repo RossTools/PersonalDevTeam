@@ -96,6 +96,30 @@ export function MarkdownEditor({ value, onChange, label, placeholder, variant = 
     }
   }, [value]);
 
+  // A phone's keyboard opening shrinks the page to the part above it (useKeyboardBox), which can leave the caret under
+  // the keyboard or, once the browser has scrolled it into view its own way, well above it (PDT-264). Once the page
+  // has its new size, the caret's line goes back to the nearest edge: right above the keyboard.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    let frame = 0;
+    const onResize = () => {
+      cancelAnimationFrame(frame);
+      // Two frames: the shell takes the new size in a render after this event.
+      frame = requestAnimationFrame(() => {
+        frame = requestAnimationFrame(() => {
+          const ed = view.current;
+          if (ed?.hasFocus) ed.dispatch({ effects: EditorView.scrollIntoView(ed.state.selection.main.head, { y: 'nearest' }) });
+        });
+      });
+    };
+    vv.addEventListener('resize', onResize);
+    return () => {
+      cancelAnimationFrame(frame);
+      vv.removeEventListener('resize', onResize);
+    };
+  }, []);
+
   useImperativeHandle(ref, () => ({ focus: (at) => { if (view.current) focusEditor(view.current, at); } }), []);
 
   return (

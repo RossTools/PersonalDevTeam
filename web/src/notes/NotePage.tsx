@@ -2,9 +2,11 @@ import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type 
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, Eye, FolderGit2, Globe, Pencil, Pin, Ticket } from 'lucide-react';
 import { Alert, Button, EmptyState, IconButton, Input, MenuButton, RelativeTime, SegmentedControl, Skeleton, StatusDot, useConfirm, type MenuEntry } from '@ui';
+import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { PmNote } from '../api/gen/PmNote';
 import type { Project } from '../api/gen/Project';
+import { EndOfText } from '../common/EndOfText';
 import { MarkdownEditor, type MarkdownEditorHandle } from '../common/LazyMarkdownEditor';
 import { Markdown } from '../common/Markdown';
 import { useAction } from '../common/useAction';
@@ -239,7 +241,8 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-auto">
-        <article className="mx-auto max-w-[680px] px-5 pt-6 pb-16 md:px-8 md:pt-14">
+        {/* In Write the article fills the scroll area, its bottom room a tap target for the end of the text (PDT-264). */}
+        <article className={cn('mx-auto max-w-[680px] px-5 pt-6 md:px-8 md:pt-14', mode === 'write' ? 'flex min-h-full flex-col' : 'pb-16')}>
           {mode === 'write' ? (
             <>
               <Input
@@ -270,6 +273,7 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
                 onBlur={() => void draft.flush()}
                 onKeyDown={onFieldKey}
               />
+              <EndOfText onTap={() => bodyRef.current?.focus('end')} />
             </>
           ) : (
             <>
