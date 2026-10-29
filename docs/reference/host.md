@@ -87,6 +87,11 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   browser window) at every start, unless the "Start at login" item was turned off (that leaves
   `<data dir>/tray-login-off`). See "pdt-host at login". Not offered for dev, outside an app bundle on macOS, or from a
   misplaced bundle.
+- Icons (PDT-199): the app icon set in desktop/src-tauri/icons is generated from desktop/app-icon.svg
+  (`pnpm --dir desktop tauri icon <path to app-icon.svg> -o <scratch dir>`, then copy over the files tauri.conf.json
+  lists and icon.png). On macOS the tray shows icons/tray-template.png instead, a template image (the system tints it
+  for light and dark menu bars) rendered from desktop/tray-template.svg at 60×36 (18 pt high at 2×); elsewhere it shows
+  the app icon. The web UI's favicon is web/public/favicon.svg.
 - Open (also left-click on Windows) opens `http://127.0.0.1:<port>/` in the default browser. Restart daemon posts
   /api/shutdown and pdt-host starts pdtd again. The version item shows pdtd's version. Quit exits only the tray;
   pdt-host and pdtd keep running.
@@ -124,13 +129,29 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   to pdt-host, which installs it, health-checks the new version and rolls back on failure. pdt-host copies the
   database to `update/db-before-update` before installing and restores it on rollback (an old version cannot open a
   database a newer one migrated).
-- Versions compare by SemVer (major, then minor, then patch: 0.2.0 is newer than 0.1.840). A check reads
-  `releases/latest`, which is never a draft or pre-release, and offers it only when it is newer than the running
-  version: an older or equal latest release is never installed (no downgrade).
+- Versions compare by SemVer (major, then minor, then patch: 0.2.0 is newer than 0.1.840; an experimental build
+  `X.Y.Z-exp.N` sorts after `X.Y.Z-exp.M` for M below N and before `X.Y.Z` itself). A check reads the newest release
+  on the host's update channel (below) and offers it only when it is newer than the running version: an older or
+  equal release is never installed (no downgrade).
+- Update channel (PDT-210; Host settings → Updates → Update channel, `updateChannel` in host settings, `stable` by
+  default):
+  - `stable` reads `releases/latest`, which is never a draft or pre-release (a tag `vX.Y.Z-exp.N` there is refused).
+  - `experimental` reads the first page of `releases` (100, newest first) and takes the newest by SemVer of the full
+    releases and the experimental pre-releases (`vX.Y.Z-exp.N`, published as GitHub pre-releases by the release
+    workflow; docs/SDLC.md "Experimental releases"). Drafts and other pre-releases (a fork's `test-v…`) never count.
+    Because `0.2.1` sorts above `0.2.1-exp.3`, an experimental host moves to the stable release when it ships.
+  - Switching back to `stable` never downgrades: a host on an experimental build stays on it until a newer stable
+    release exists, and Settings says so ("stays on the experimental build … until a newer stable release exists").
+    Settings checks again as soon as the channel changes, so an update the other channel offered doesn't linger.
+  - `/api/host/update` has `channel`, `currentExperimental` (the running version is an `-exp.N` build) and
+    `latest.experimental`; the Version row in Settings, its "available" badge and the update banner show
+    "Experimental" for them.
 - Release notes (PDT-192): when a check finds a newer release, pdtd lists the repository's releases (`releases`,
   newest first, until it reaches the installed version; 10 pages of 100 at most) and `latest.releases` in
   `/api/host/update` holds every published release after the installed version up to the new one, newest first
-  (`version`, `tag`, `notes`, `publishedAt`; drafts and pre-releases left out). The list is cached for that pair of
+  (`version`, `tag`, `experimental`, `notes`, `publishedAt`; drafts and pre-releases left out, except the new release
+  itself when it is an experimental build: its notes preview everything unreleased, so its earlier `-exp.N` builds
+  would only repeat them). The list is cached for that pair of
   versions. A local build, or a failed call (not cached, not an update `error`), leaves it null. The update banner's
   Release notes show each of those releases with its notes (Markdown), and fall back to the commit list below, then
   the new release's own `notes`.

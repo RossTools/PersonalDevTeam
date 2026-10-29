@@ -13,4 +13,9 @@ tag: string | null,
  * With the latest: count it only when its tag is not this one (nor an older version), e.g. the latest before a
  * release was started (`{{steps.before.tag}}`). Empty: any release counts.
  */
-newerThan: string | null, };
+newerThan: string | null, 
+/**
+ * Instead of the latest release, the newest published one, pre-releases included (an experimental release,
+ * PDT-210).
+ */
+prereleases: boolean, };

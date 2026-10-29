@@ -70,11 +70,15 @@ function token(name: string): string {
 }
 
 /**
- * `svg` (the plain favicon, a 32×32 viewBox) with a dot in its top right corner, ringed in the page's surface colour
- * so it stands off the icon. The colours come from tokens.css.
+ * `svg` (the plain favicon, a square viewBox) with a dot in its top right corner, ringed in the page's surface colour
+ * so it stands off the icon. The dot is sized for a 32-wide viewBox and scaled to the icon's own (32 without one). The
+ * colours come from tokens.css.
  */
 export function badgedSvg(svg: string, level: Exclude<AttentionLevel, 'none'>): string {
-  const dot = `<circle cx="25" cy="7" r="8" fill="${token('--pdt-surface')}"/><circle cx="25" cy="7" r="6" fill="${token(DOT_TOKEN[level])}"/>`;
+  const width = Number(/viewBox="[\d.-]+ [\d.-]+ ([\d.]+)/.exec(svg)?.[1]) || 32;
+  const [cx, cy, ring, r] = [25, 7, 8, 6].map((n) => +(n * width / 32).toFixed(3));
+  const at = `cx="${cx}" cy="${cy}"`;
+  const dot = `<circle ${at} r="${ring}" fill="${token('--pdt-surface')}"/><circle ${at} r="${r}" fill="${token(DOT_TOKEN[level])}"/>`;
   return svg.replace(/<\/svg>\s*$/, `${dot}</svg>`);
 }
 

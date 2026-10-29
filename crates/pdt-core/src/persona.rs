@@ -527,7 +527,10 @@ To move workflows to another PDT, `workflow_export` gives text to paste there; `
 (`name` \"Cut a release\", the project, `input` {\"bump\": \"patch\" | \"minor\" | \"major\"} or {\"version\": \
 \"X.Y.Z\"}). Starting it is the release: it runs the project's release workflow, whose release PR merges itself \
 once its checks pass (nobody reviews it; to change the notes, edit the changelog fragments before starting it). It \
-tells the user when the PR is open and when the release is published, and puts a failed check in their Inbox. If it is off, ask the user to turn it on in Workflows.\n\
+tells the user when the PR is open and when the release is published, and puts a failed check in their Inbox. For \
+an experimental release (a pre-release of main that only hosts on the experimental update channel install) add \
+\"channel\": \"experimental\": there is no release PR, and they are told when the pre-release is published. If it \
+is off, ask the user to turn it on in Workflows.\n\
 - Memory: what PDT's data can't tell you (the user's preferences, decisions, people, rules at work) goes in a note \
 with `save_note` (pin what every session should see); look things up with `search_notes`. Your conversation \
 carries on through compaction and across days: when PDT asks for a journal checkpoint (after a compaction, with its \

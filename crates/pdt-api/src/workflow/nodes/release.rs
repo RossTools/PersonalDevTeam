@@ -419,6 +419,10 @@ pub struct GithubReleaseConfig {
     /// release was started (`{{steps.before.tag}}`). Empty: any release counts.
     #[serde(default)]
     pub newer_than: Option<String>,
+    /// Instead of the latest release, the newest published one, pre-releases included (an experimental release,
+    /// PDT-210).
+    #[serde(default)]
+    pub prereleases: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -452,9 +456,10 @@ impl NodeKind for GithubRelease {
             1,
             Category::Action,
             "Read a GitHub release",
-            "Reads the latest published release (drafts and pre-releases don't count), or the one tagged `tag`. \
-             `found` with `tag`, `name`, `url` and `publishedAt`; `none` when there is none, or with `newerThan` \
-             when the latest is still that one. Between waits it polls for a release to be published.",
+            "Reads the latest published release (drafts and pre-releases don't count; with `prereleases`, the newest \
+             one, pre-releases included), or the one tagged `tag`. `found` with `tag`, `name`, `url` and \
+             `publishedAt`; `none` when there is none, or with `newerThan` when the latest is still that one. \
+             Between waits it polls for a release to be published.",
             &[("found", "Found"), ("none", "None")],
             false,
         )
@@ -466,6 +471,9 @@ impl NodeKind for GithubRelease {
         if nonblank(&c.tag).is_some() && nonblank(&c.newer_than).is_some() {
             return Err("newerThan reads the latest release: leave tag out".into());
         }
+        if nonblank(&c.tag).is_some() && c.prereleases {
+            return Err("prereleases reads the newest release: leave tag out".into());
+        }
         Ok(())
     }
 
@@ -476,11 +484,16 @@ impl NodeKind for GithubRelease {
             let tag = nonblank(&c.tag).map(String::from);
             let than = nonblank(&c.newer_than).map(String::from);
             if cx.dry_run {
-                let what = tag.as_ref().map_or("the latest release".to_string(), |t| format!("release {t}"));
+                let latest = if c.prereleases { "the newest release or pre-release" } else { "the latest release" };
+                let what = tag.as_ref().map_or(latest.to_string(), |t| format!("release {t}"));
                 return Ok(Outcome::next("found", json!({"would": format!("read {what} of {repo}")})));
             }
-            let (r, t) = (repo.clone(), tag.clone());
-            let release: Option<Release> = gh(cx.st, true, move |f| f.release(&r, t.as_deref())).await?;
+            let (r, t, pre) = (repo.clone(), tag.clone(), c.prereleases);
+            let release: Option<Release> = gh(cx.st, true, move |f| match (t, pre) {
+                (None, true) => f.newest_release(&r),
+                (t, _) => f.release(&r, t.as_deref()),
+            })
+            .await?;
             match release {
                 Some(rel) if newer(&rel.tag, than.as_deref()) => Ok(Outcome::next(
                     "found",
@@ -524,6 +537,8 @@ mod tests {
         assert!(rel(json!({})).is_ok());
         assert!(rel(json!({"newerThan": "{{steps.before.tag}}"})).is_ok());
         assert!(rel(json!({"tag": "v1.0.0", "newerThan": "v0.9.0"})).is_err());
+        assert!(rel(json!({"prereleases": true, "newerThan": "{{steps.before.tag}}"})).is_ok());
+        assert!(rel(json!({"tag": "v1.0.0", "prereleases": true})).is_err());
     }
 
     #[test]
@@ -541,5 +556,8 @@ mod tests {
         assert!(!newer("v0.2.0", Some("v0.2.0")));
         assert!(!newer("v0.1.9", Some("v0.2.0")));
         assert!(newer("nightly", Some("v0.2.0")));
+        assert!(newer("v0.2.1-exp.1", Some("v0.2.0")));
+        assert!(newer("v0.2.1-exp.2", Some("v0.2.1-exp.1")));
+        assert!(!newer("v0.2.0", Some("v0.2.1-exp.1")));
     }
 }

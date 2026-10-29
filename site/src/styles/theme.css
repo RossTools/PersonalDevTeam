@@ -1,0 +1,36 @@
+/* Starlight in PDT's colours (web/ui/tokens.css): dark first, accent #3561b8. */
+:root {
+  --sl-font: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+:root,
+::backdrop {
+  --sl-color-white: #e7e8ec;
+  --sl-color-gray-1: #d2d4da;
+  --sl-color-gray-2: #b1b5bf;
+  --sl-color-gray-3: #8a8f9c;
+  --sl-color-gray-4: #4d515c;
+  --sl-color-gray-5: #26282f;
+  --sl-color-gray-6: #17181d;
+  --sl-color-black: #0e0f12;
+  --sl-color-accent-low: #171f33;
+  --sl-color-accent: #3561b8;
+  --sl-color-accent-high: #a9c0ec;
+}
+
+:root[data-theme='light'],
+[data-theme='light'] ::backdrop {
+  --sl-color-white: #0e0f12;
+  --sl-color-gray-1: #17181d;
+  --sl-color-gray-2: #26282f;
+  --sl-color-gray-3: #4d515c;
+  --sl-color-gray-4: #8a8f9c;
+  --sl-color-gray-5: #d2d4da;
+  --sl-color-gray-6: #eef0f4;
+  --sl-color-gray-7: #f6f7f9;
+  --sl-color-black: #ffffff;
+  --sl-color-accent-low: #d6e1f6;
+  --sl-color-accent: #3561b8;
+  --sl-color-accent-high: #1f3f7f;
+}

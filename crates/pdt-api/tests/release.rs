@@ -359,3 +359,66 @@ async fn an_open_release_pr_stops_a_new_release_before_the_action_runs() {
     assert_eq!(last["nodeId"], "not_started", "{r}");
     assert!(inbox_titles(&env).await.contains(&"Release PR #5 is still open".to_string()));
 }
+
+#[tokio::test]
+async fn an_experimental_cut_skips_the_release_pr_and_waits_for_the_pre_release() {
+    let env = setup().await;
+    let wf = cut_release(&env).await;
+    env.gh.publish(REPO, release("v0.2.0"));
+    // A release PR left open doesn't hold up an experimental release: it makes none.
+    env.gh.set_pr("release", Some(pr(5, PrState::Open)));
+    let (_, r) = call(
+        &env.app,
+        "POST",
+        &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
+        Some(json!({"input": {"bump": "patch", "channel": "experimental", "projectId": env.project}})),
+    )
+    .await;
+    let id = r["runId"].as_str().unwrap().to_string();
+    pdt_api::run_workflows(&env.state).await;
+
+    let started = env.gh.workflow_runs.lock().unwrap().clone();
+    let inputs = BTreeMap::from([
+        ("bump".to_string(), "patch".to_string()),
+        ("channel".to_string(), "experimental".to_string()),
+    ]);
+    assert_eq!(started, [(REPO.to_string(), "release.yml".to_string(), "main".to_string(), inputs)]);
+    assert_eq!(waiting_at(&env, &id).await, "wait_exp");
+
+    time_passes(&env, &id).await;
+    assert_eq!(waiting_at(&env, &id).await, "wait_exp", "nothing newer yet");
+    env.gh.publish(REPO, release("v0.2.1-exp.1"));
+    time_passes(&env, &id).await;
+
+    let r = run(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(r["output"]["tag"], "v0.2.1-exp.1");
+    let titles = inbox_titles(&env).await;
+    assert!(titles.contains(&"Experimental release v0.2.1-exp.1 is published".to_string()), "{titles:?}");
+    assert!(!titles.iter().any(|t| t.contains("ready for review")), "no release PR to review: {titles:?}");
+    let calls = env.gh.calls.lock().unwrap().clone();
+    assert!(!calls.iter().any(|c| c.starts_with("merge ")), "{calls:?}");
+}
+
+#[tokio::test]
+async fn an_experimental_cut_dry_runs_without_calling_github() {
+    let env = setup().await;
+    let wf = cut_release(&env).await;
+    let payload = json!({"bump": "patch", "channel": "experimental", "projectId": env.project});
+    let (s, r) = call(
+        &env.app,
+        "POST",
+        "/api/workflows/dry-run",
+        Some(json!({"workflowId": wf["id"], "event": {"type": "manual", "payload": payload}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    let errors: Vec<_> = r["issues"].as_array().unwrap().iter().filter(|i| i["severity"] == "error").collect();
+    assert!(errors.is_empty(), "{r}");
+    let run = &r["run"];
+    assert_eq!(run["status"], "succeeded", "{r}");
+    let nodes: Vec<&str> = run["steps"].as_array().unwrap().iter().map(|s| s["nodeId"].as_str().unwrap()).collect();
+    assert!(nodes.contains(&"exp_dispatch") && nodes.contains(&"exp_released"), "{nodes:?}");
+    assert!(!nodes.contains(&"dispatch"), "not the stable path: {nodes:?}");
+    assert!(env.gh.calls.lock().unwrap().is_empty());
+}

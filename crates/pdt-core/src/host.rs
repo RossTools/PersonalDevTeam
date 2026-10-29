@@ -15,6 +15,19 @@ pub enum UpdatePolicy {
     Manual,
 }
 
+/// Which releases this host updates to (PDT-210).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum UpdateChannel {
+    /// Full releases only (GitHub's latest release).
+    #[default]
+    Stable,
+    /// The newest by SemVer of the full releases and the experimental pre-releases (`X.Y.Z-exp.N`), which are built
+    /// from main by hand and may carry migrations no stable release has yet.
+    Experimental,
+}
+
 /// Whether agent sessions get the host's API-key variables (spec §6 "Agent credentials").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -71,6 +84,9 @@ pub struct HostSettings {
     /// The Tailscale login allowed to use this host remotely. `PDT_OWNER_LOGIN` overrides it.
     pub owner_login: Option<String>,
     pub update_policy: UpdatePolicy,
+    /// Stable or experimental releases. Never a downgrade: back on stable, a host stays on its experimental build
+    /// until a newer stable release exists.
+    pub update_channel: UpdateChannel,
     pub run_ports: PortRange,
     pub max_concurrent_runs: u32,
     pub agent_credentials: CredentialPolicy,
@@ -115,6 +131,7 @@ impl Default for HostSettings {
             remote_access: false,
             owner_login: None,
             update_policy: UpdatePolicy::Notify,
+            update_channel: UpdateChannel::Stable,
             run_ports: DEFAULT_RUN_PORTS,
             max_concurrent_runs: DEFAULT_MAX_RUNS,
             agent_credentials: CredentialPolicy::Subscription,
@@ -147,6 +164,9 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub update_policy: Option<UpdatePolicy>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub update_channel: Option<UpdateChannel>,
     #[serde(default)]
     #[ts(optional)]
     pub run_ports: Option<PortRange>,
@@ -240,6 +260,9 @@ impl HostSettings {
         }
         if let Some(v) = p.update_policy {
             s.update_policy = v;
+        }
+        if let Some(v) = p.update_channel {
+            s.update_channel = v;
         }
         if let Some(r) = p.run_ports {
             let size = u32::from(r.end).saturating_sub(u32::from(r.start)) + 1;
@@ -403,11 +426,13 @@ mod tests {
         let s: HostSettings = serde_json::from_str(r#"{"remoteAccess":true}"#).unwrap();
         assert!(s.remote_access);
         assert_eq!(s.max_concurrent_runs, 4);
+        assert_eq!(s.update_channel, UpdateChannel::Stable, "hosts stay on stable");
     }
 
     #[test]
     fn wire_names() {
         assert_eq!(serde_json::to_string(&UpdatePolicy::AutoWhenIdle).unwrap(), r#""auto_when_idle""#);
+        assert_eq!(serde_json::to_string(&UpdateChannel::Experimental).unwrap(), r#""experimental""#);
         assert_eq!(serde_json::to_string(&CredentialPolicy::PassThrough).unwrap(), r#""pass_through""#);
         for c in [CredentialPolicy::Subscription, CredentialPolicy::PassThrough] {
             assert_eq!(CredentialPolicy::parse(c.as_str()), Some(c));

@@ -1,0 +1,69 @@
+# PDT website
+
+The project website: a landing page and the docs, built with [Astro](https://astro.build) and
+[Starlight](https://starlight.astro.build) and served by GitHub Pages (private for now: only members of the RossTools
+org can open it).
+
+- `src/pages/index.astro` is the landing page (its own page, outside Starlight).
+- `src/pages/docs/index.astro` is the docs overview. The docs pages themselves are the repository's Markdown, read in
+  place from `../docs`: `agent-guide.md`, `run-config.md`, `SDLC.md` and `reference/` (the list is
+  `src/docs-pages.mjs`; `superpowers/`, `prompts/` and `ROADMAP.md` stay out). There is no copy step: edit the file
+  in `docs/` and the next deploy shows it. A page's title is its first `# heading`; relative links between published
+  docs point at their pages on the site, and links to anything else in the repository at the file on GitHub
+  (`src/remark-docs-links.mjs`).
+- The theme is the app's: dark first (a first visit starts dark whatever the system prefers; the theme menu can switch
+  it), `#0e0f12` / `#17181d` / `#e7e8ec` with the `#3561b8` accent, Inter and JetBrains Mono served with the site
+  (`src/styles/`). The logo files in `src/assets/` and `public/` are the logo set, unchanged.
+- The "PDT is built by PDT" numbers and the version on the landing page are counted from git at build time
+  (`src/stats.mjs`; a shallow clone falls back to fixed numbers).
+
+## Local development
+
+From the repository root, after `pnpm install`:
+
+```sh
+pnpm --filter site dev      # http://localhost:4321, reloads on edits to site/ and docs/
+pnpm --filter site build    # into site/dist
+pnpm --filter site preview  # serve site/dist
+pnpm --filter site test     # the link-rewriting tests
+```
+
+## Deploys
+
+`.github/workflows/pages.yml` builds the site and deploys it with `actions/deploy-pages` on every push to `main`
+that touches `site/**` or `docs/**`, and when run by hand (Actions → pages → Run workflow). It takes the site's URL
+and base path from `actions/configure-pages`, so the same build works on the private Pages domain, a project path or
+a custom domain.
+
+On pull requests and in the merge queue, `ci.yml`'s `site` job builds it whenever `site/**` or `docs/**` (or the pnpm
+lockfile) changes. A pull request that only changes `site/`, `docs/` or Markdown runs only `changes` and `site`
+(docs/superpowers/notes/ci.md).
+
+Before the first deploy, in the repository's Settings → Pages: set Source to **GitHub Actions** and visibility to
+**Private**.
+
+## Going public
+
+1. **Visibility.** Settings → Pages → visibility: **Public** (a public site needs the repository to be public, or an
+   Enterprise plan for a public site from a private repository).
+2. **Custom domain.** Settings → Pages → Custom domain: `pdt.dev`, then Save. With a workflow deploy no `CNAME` file is
+   needed; `configure-pages` reports the domain, and the next deploy builds for `https://pdt.dev/`.
+3. **DNS** at the registrar for `pdt.dev`:
+
+   | Name  | Type  | Value                  |
+   | ----- | ----- | ---------------------- |
+   | `@`   | A     | `185.199.108.153`      |
+   | `@`   | A     | `185.199.109.153`      |
+   | `@`   | A     | `185.199.110.153`      |
+   | `@`   | A     | `185.199.111.153`      |
+   | `@`   | AAAA  | `2606:50c0:8000::153`  |
+   | `@`   | AAAA  | `2606:50c0:8001::153`  |
+   | `@`   | AAAA  | `2606:50c0:8002::153`  |
+   | `@`   | AAAA  | `2606:50c0:8003::153`  |
+   | `www` | CNAME | `rosstools.github.io`  |
+
+4. **Verify the domain** for the RossTools org (org Settings → Pages → Add a domain): GitHub gives a TXT record
+   (`_github-pages-challenge-rosstools.pdt.dev`) to add, then Verify. This stops anyone else's repository from
+   claiming `pdt.dev`.
+5. **Enforce HTTPS.** Once the certificate is issued (it can take up to a day after DNS resolves), tick Settings →
+   Pages → Enforce HTTPS.

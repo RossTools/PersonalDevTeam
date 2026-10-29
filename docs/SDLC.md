@@ -14,7 +14,7 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
 4. **Push and open a PR** against `main`. CI runs the full checks on Linux on every push (Namespace); the macOS checks
    run in the merge queue, and on a PR only with the `macos` label or a `.github/` change; Windows checks run only
    with the `windows` label or when the PR touches their files. The bundles run on no PR but the release PR (below, "Releases").
-   Docs-only PRs skip CI (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
+   Docs-only PRs (docs, the website under `site/`, Markdown) skip CI but the website build (docs/superpowers/notes/ci.md). Label a PR `windows` when it touches platform-specific code.
 5. **The user tests it**: Run → `pdt` on the branch gives a dev instance on its own port and data folder (below).
    Feedback comes back in the session; the agent fixes the branch and the run is restarted on the new code.
 6. **Merge when the user says so**, with auto-merge: `gh pr merge <n> --auto`, with no merge-method flag (the queue
@@ -119,7 +119,7 @@ The board no longer jumps back to the top when a ticket moves.
 ## Releases
 
 Releases are deliberate: merges don't ship. A push to `main` runs no CI at all (the merge queue has just checked that
-tree), builds no bundle and publishes nothing. There is no edge or pre-release channel.
+tree), builds no bundle and publishes nothing. Experimental releases (below) are cut by hand too, never per merge.
 
 - **Versions are SemVer**, `X.Y.Z`. The source of truth is the workspace `version` in `Cargo.toml`;
   `desktop/src-tauri/tauri.conf.json` carries the same one. `scripts/version.sh` prints it and `scripts/version.sh
@@ -127,8 +127,10 @@ tree), builds no bundle and publishes nothing. There is no edge or pre-release c
   deliberate release is 0.2.0, after the per-merge `v0.1.<run number>` releases.
 - **Builds:** a release build reports the version as is; every other build (local, Run, a bundle built by hand)
   reports `<version>-local`, which never counts as newer than a release.
-- **Updates** compare versions by SemVer, read GitHub's latest release (never a draft or pre-release), and never
-  install an older version than the one running. The update banner shows the notes of every release between the
+- **Updates** compare versions by SemVer and never install an older version than the one running. A host on the
+  stable update channel (the default) reads GitHub's latest release (never a draft or pre-release); one on the
+  experimental channel also takes experimental pre-releases (`vX.Y.Z-exp.N`), whichever is newest
+  (docs/reference/host.md "Update channel"). The update banner shows the notes of every release between the
   installed version and the new one.
 - **Bundles** (the signed macOS app, the Windows installer, the Linux tarball and AppImage) are built only for a
   release (on the release PR and from the tag), or by hand to try a packaging change: run the `ci` workflow on the
@@ -174,7 +176,33 @@ release is published.
 (only when the user asks for a release). It runs the release workflow, tells the user when the release PR is open
 (nothing to do), puts a failed check in the Inbox with the failed jobs (the user fixes it on `release` or closes the
 PR), and tells the user when the release is published. While an earlier release PR is still open it starts nothing
-and says so in the Inbox: that one merges by itself once its checks pass, or needs fixing or closing.
+and says so in the Inbox: that one merges by itself once its checks pass, or needs fixing or closing. With
+`channel: experimental` it runs the workflow's experimental half (below): no release PR, and the Inbox says when
+the pre-release is published.
+
+### Experimental releases
+
+An experimental release puts the head of `main` in the hands of hosts that opted in, between stable releases: to try
+a change on real machines before it ships to everyone, or to get a fix to one host now. It is cut by hand like a
+stable one, never per merge and never from a branch other than `main`.
+
+- **Start it**: the release workflow with channel `experimental` (`gh workflow run release.yml -f channel=experimental`,
+  with `-f bump=minor` or `-f version=X.Y.Z` when the next release isn't a patch), or ask the PM for an experimental
+  release.
+- **What it does**: no release PR, and nothing is committed to `main`. It picks `X.Y.Z-exp.N`: `X.Y.Z` is the version
+  the next release would have for that bump, `N` one more than the highest `vX.Y.Z-exp.*` tag
+  (`scripts/version.sh next-exp`). It tags the head of `main` with it, builds the same signed and notarized bundles as
+  a stable release with that version set only in the build's checkout, and publishes a GitHub **pre-release** with
+  `SHA256SUMS`. Its notes are "Experimental build of main at `<sha>`" and a preview of the unreleased fragments
+  (`scripts/changelog.sh preview`, which leaves them in `.changes/unreleased/` for the stable release).
+- **Who gets it**: only hosts with Settings → Updates → Update channel set to experimental. Stable hosts ignore it.
+  When `X.Y.Z` ships as a stable release, it sorts above its `-exp.N` builds, so experimental hosts move to it.
+- **Migrations**: an experimental build can carry database migrations that no stable release has yet. A host never
+  downgrades, so one that installs an experimental build stays on experimental builds (or newer) until a newer stable
+  release exists, even when it goes back to the stable channel. Cut one only from a `main` whose migrations you're
+  happy to keep.
+- **Re-runs**: re-running the failed jobs reuses the tag; re-running every job makes the next `-exp.N`. A run that
+  failed before publishing leaves its tag behind, so the numbers may skip one.
 
 ## Testing a branch in a dev instance
 

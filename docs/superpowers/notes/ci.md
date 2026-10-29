@@ -15,6 +15,7 @@ can break on their own: clippy (for `cfg` code) and the Rust tests (paths, proce
 | build (windows-latest) | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | same | always |
 | bundle (macos-latest, app) | GitHub macOS | the app, signed when the secret is there (on the release PR: signed and notarized); a workflow artifact | the release PR only | never | with "Build bundles" |
 | bundle (windows-latest, nsis) | GitHub Windows | the installer (also the only Windows compile of the desktop crate); a workflow artifact | the release PR only | never | with "Build bundles" |
+| site | GitHub `ubuntu-latest` | the website (site/): link-rewriting tests, `astro build` | a change under `site/` or `docs/`, the pnpm lockfile or workspace, `ci.yml` or `pages.yml` | same | always |
 | bundle (linux, x86_64) / bundle (linux, aarch64) | GitHub `ubuntu-22.04` / `ubuntu-22.04-arm` (native, no cross-compiling) | the headless tarball and the AppImage (also the only Linux compile of the desktop crate); a workflow artifact | the release PR only | never | with "Build bundles" |
 
 **Main runs nothing** (PDT-192): `ci.yml` has no `push` trigger. The merge queue (group size 1, squash) has just run
@@ -38,7 +39,10 @@ is), so a packaging break blocks the release PR rather than the tag; the merge q
 the release PR merges, release.yml's `tag` job tags the merge commit and the same workflow builds the bundles from
 it (its own jobs, not ci.yml's checks) and publishes the release. The tag is made with the workflow's token, so it
 starts no other workflow. The PR artifacts are not reused: the queue squash-merges, so the tagged commit is never
-the commit they were built from.
+the commit they were built from. Run with `channel: experimental` (PDT-210), its `experimental` job instead tags the
+head of main `vX.Y.Z-exp.N`, and the same bundle jobs build that commit with the version set in their checkout (the
+bundle action's `version` input; nothing is committed) for `publish` to make a GitHub pre-release. Each job has its
+own concurrency group, so stable and experimental runs never cancel or hold up each other.
 
 **Windows cache:** GitHub's runners save rust-cache only from main, which no longer runs CI, so Windows check runs
 start from a cold cache unless a dispatch on main warms it.
@@ -66,14 +70,20 @@ PR, which never reaches main); add the `macos` label to a PR that touches macOS-
   setup-node's pnpm cache on GitHub's runners instead.
 - Comparing hosts: `.github/workflows/bench.yml` times the same work on any list of runners.
 
-Every job in the table is a required check of the "Main" ruleset.
+Every job in the table but `site` is a required check of the "Main" ruleset. `site` is new (PDT-198): add it to the
+ruleset once it has run on main, so a PR that breaks the website can't merge.
+
+**The website** (site/README.md): `.github/workflows/pages.yml` builds `site/` and deploys it to GitHub Pages on every
+push to main that touches `site/**` or `docs/**`, and by hand. It is the one workflow a merge to main runs; it builds
+and ships nothing of the app.
 
 **changelog** (GitHub `ubuntu-latest`, pull requests only, not docs-only ones): the PR adds a fragment under
 `.changes/unreleased/` or has the `no-changelog` label; every unreleased fragment is valid; the compile script's
 tests pass (docs/SDLC.md "Changelog"). The merge queue and main skip it. Make it a required check of the "Main"
 ruleset (Settings → Rules) so a PR without a fragment can't merge.
 
-**Docs-only PRs** (every changed file under `docs/` or ending in `.md`) skip every job but `changes`; a `windows`,
+**Docs-only PRs** (every changed file under `docs/` or `site/`, or ending in `.md`) skip every job but `changes` and
+`site` (which runs when `site/` or `docs/` changed); a `windows`,
 `macos` label still runs those jobs. The guides pdtd builds in with `include_str!` (`docs/agent-guide.md`,
 `docs/run-config.md`, `docs/prompts/*`; crates/pdt-api/src/guides.rs) count as code, since their tests check them.
 If other code starts reading a Markdown file, add it to that rule in the `changes` job.

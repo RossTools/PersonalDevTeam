@@ -7,6 +7,9 @@ inputs:
   release:
     description: '"true" for a release build (the release workflow): reports the checked-in version instead of <version>-local, must be signed, and is notarized when the API key is given'
     default: "false"
+  version:
+    description: An experimental release's version (X.Y.Z-exp.N), set in this checkout before building and not committed; empty builds the checked-in one
+    default: ''
   signing-p12:
     description: base64 .p12 of the macOS release certificate
     default: ''
@@ -42,11 +45,15 @@ runs:
         cache: pnpm
     - run: pnpm install --frozen-lockfile
       shell: bash
-    # The version is the checked-in one (Cargo.toml, matched by tauri.conf.json; scripts/version.sh). Only a release
-    # build reports it as is; any other reports <version>-local, which never counts as newer than a release.
+    # The version is the checked-in one (Cargo.toml, matched by tauri.conf.json; scripts/version.sh), or an
+    # experimental release's, set here (Cargo.lock follows on the build). Only a release build reports it as is; any
+    # other reports <version>-local, which never counts as newer than a release.
     - name: Version
       shell: bash
+      env:
+        SET_VERSION: ${{ inputs.version }}
       run: |
+        if [ -n "$SET_VERSION" ]; then scripts/version.sh set "$SET_VERSION"; fi
         version="$(scripts/version.sh)"
         echo "PDT_VERSION=$version" >> "$GITHUB_ENV"
         if [ "${{ inputs.release }}" = true ]; then echo "PDT_BUILD_VERSION=$version" >> "$GITHUB_ENV"; fi
