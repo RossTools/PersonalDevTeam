@@ -1,6 +1,6 @@
 //! Each project's forge (PDT-176): the one `.pdt/project.toml` names (`forge = "github"`: a forge plugin's id,
 //! PDT-241; or `"local"`: PDT itself, PDT-178), else the forge plugin that claims the project's `origin` (GitHub:
-//! github.com, or the GitHub Enterprise Server the GitHub login is for, PDT-177). The PR poller, merges, agents'
+//! github.com, or a GitHub Enterprise Server PDT has an account for, PDT-177, PDT-244). The PR poller, merges, agents'
 //! instructions, the issue triage and the forge's workflow nodes ask it, and skip what its [`Capabilities`] say it
 //! can't do. A flow tied to no project uses the forge's own account ([`AppState::forge_account`]).
 
@@ -81,7 +81,24 @@ pub(crate) async fn project_forge(st: &AppState, project_id: &str, repo_path: &s
         }
         None => plugins.iter().find_map(|p| p.repo_of(&remote).map(|r| (p.clone(), r)))?,
     };
-    Some(ProjectForge { kind: plugin.kind(), api: plugin.forge(), repo, ci: plugin.ci() })
+    // The account for the origin's host (PDT-244): github.com's, or an Enterprise Server's.
+    let host = remote.host.to_ascii_lowercase();
+    Some(ProjectForge { kind: plugin.kind(), api: plugin.forge_on(&host), repo, ci: plugin.ci_on(&host) })
+}
+
+/// Each forge `plugin` signs in as, for its Connect items and status: the public host's (None), then each other host
+/// it has an account for (PDT-244).
+pub(crate) fn signed_forges(plugin: &dyn ForgePlugin) -> Vec<(Option<String>, Arc<dyn Forge>)> {
+    let mut out = vec![(None, plugin.forge())];
+    if let Some(l) = plugin.login() {
+        let public = l.spec().default_api_url.map(|u| l.host_of(&u));
+        for a in l.accounts() {
+            if public.as_deref() != Some(a.host.as_str()) {
+                out.push((Some(a.host.clone()), plugin.forge_on(&a.host)));
+            }
+        }
+    }
+    out
 }
 
 /// The forge a flow on `kind`'s repositories uses (a forge's workflow node): the project's, when the run has a project

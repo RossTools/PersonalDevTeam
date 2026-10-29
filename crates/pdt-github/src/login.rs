@@ -2,10 +2,14 @@
 //! OAuth device flow ("Connect GitHub": the user enters a code on GitHub) and checking a token.
 
 use crate::transport::{Request, Transport, form};
+pub use pdt_forge::login::{DeviceCode, DevicePoll, Whoami};
 use serde_json::Value;
 
 /// github.com's API.
 pub const GITHUB_API: &str = "https://api.github.com";
+
+/// github.com's web host: the host of the account [`crate::plugin::GithubPlugin::forge`] signs in with.
+pub const GITHUB_HOST: &str = "github.com";
 
 /// The OAuth scopes PDT asks for: `repo` reads and writes pull requests, issues and comments, reads Actions runs and
 /// their logs, and merges, in public and private repositories.
@@ -41,31 +45,6 @@ pub fn web_host(api: &str) -> String {
     let w = web_url(api);
     let rest = w.split_once("://").map_or(w.as_str(), |(_, r)| r);
     rest.split(['/', ':']).next().unwrap_or_default().to_ascii_lowercase()
-}
-
-/// A device flow's code, for the user to enter at `verification_uri`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeviceCode {
-    pub device_code: String,
-    pub user_code: String,
-    pub verification_uri: String,
-    /// Seconds.
-    pub expires_in: u64,
-    /// The fewest seconds between polls.
-    pub interval: u64,
-}
-
-/// One poll of a device flow.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DevicePoll {
-    /// The user has not entered the code yet.
-    Pending,
-    /// Polling too fast: wait this many seconds between polls from now on.
-    SlowDown(u64),
-    Token(String),
-    Expired,
-    Denied,
-    Failed(String),
 }
 
 fn post_form(t: &dyn Transport, url: String, pairs: &[(&str, &str)]) -> Result<Value, String> {
@@ -134,13 +113,6 @@ pub fn poll_device_flow(t: &dyn Transport, api: &str, client_id: &str, device_co
         Some(e) => DevicePoll::Failed(v["error_description"].as_str().unwrap_or(e).to_string()),
         None => DevicePoll::Failed("no token in GitHub's answer".into()),
     }
-}
-
-/// Who a token signs in as, and the OAuth scopes it has (empty for a fine-grained token, which has none).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Whoami {
-    pub login: String,
-    pub scopes: Vec<String>,
 }
 
 /// Checks `token` against GitHub: who it is.

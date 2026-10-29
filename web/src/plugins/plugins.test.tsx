@@ -207,7 +207,7 @@ describe('plugins: a plugin’s page', () => {
     stubApi({ 'GET /api/integrations': catalog({ github: { status: 'needs_setup' } }), 'GET /api/connections': [] });
     renderWithQuery(<PluginPage id="github" onBack={() => {}} />);
     expect(await screen.findByText(/PDT needs your GitHub login/)).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'GitHub login' })).toBeInTheDocument();
+    expect((await screen.findByRole('region', { name: 'GitHub logins' }))).toBeInTheDocument();
     expect(screen.getByText('Built in')).toBeInTheDocument();
   });
 });

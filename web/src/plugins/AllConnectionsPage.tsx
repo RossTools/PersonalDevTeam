@@ -21,13 +21,13 @@ interface Line {
 export function AllConnectionsPage({ onOpen }: { onOpen: (pluginId: string) => void }) {
   const plugins = usePlugins();
   const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
-  const github = useQuery({ queryKey: ['github-login'], queryFn: api.githubLogin });
+  const github = useQuery({ queryKey: ['forge-login', 'github'], queryFn: () => api.forgeLogin('github') });
   const [q, setQ] = useState('');
   const ps = plugins.data ?? [];
   const lines: Line[] = [
-    ...(github.data?.connected ? [{
-      id: 'github-login', name: 'GitHub login', plugin: 'github', pluginLabel: 'GitHub', details: github.data.login ?? '', failing: github.data.rejectedAt != null,
-    }] : []),
+    ...(github.data?.accounts ?? []).map((a) => ({
+      id: `github-login:${a.host}`, name: `GitHub login (${a.host})`, plugin: 'github', pluginLabel: 'GitHub', details: a.login, failing: a.rejectedAt != null,
+    })),
     ...(connections.data ?? []).map((c) => {
       const p = pluginOf(ps, c);
       return { id: c.id, name: c.name, plugin: p?.id ?? null, pluginLabel: p?.label ?? c.kind, details: connectionDetails(c), failing: c.lastError !== null };

@@ -1663,7 +1663,7 @@ describe('routes (PDT-111)', () => {
     at('/settings/host/github');
     renderWithQuery(<AppShell />);
     await waitFor(() => expect(here()).toBe('/settings/plugins/github'));
-    expect(await within(screen.getByRole('main')).findByRole('region', { name: 'GitHub login' })).toBeInTheDocument();
+    expect(await within(screen.getByRole('main')).findByRole('region', { name: 'GitHub logins' })).toBeInTheDocument();
   });
 
   it('opens Settings pages from their paths, and puts the page chosen in the path', async () => {

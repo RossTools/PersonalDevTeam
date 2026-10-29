@@ -283,7 +283,7 @@ pdtd (built with `cargo build -p pdtd`, or `--bin`) against a copy of a real dat
   of its last 20 logged events that matches it (`schedule` and `manual` on made-up ones; a type with no logged event
   on an empty made-up one, reported as untested when it fails); each enabled integration's tools (`GET
   /api/integrations` `tools`/`pmTools`) are in the agents' list (`GET /api/personas/tools`) and the PM persona's; with
-  no token, `GET /api/github/login` is not connected (Settings offers Connect GitHub); the UI is served when
+  no token, `GET /api/forges/github/login` has no accounts (Settings offers Connect GitHub); the UI is served when
   `web/dist` is built.
 
 ## Bug reports (PDT-153)

@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SetupView } from '../api/gen/SetupView';
-import { renderWithQuery, stubApi } from '../test-utils';
+import { forgeAccount, githubLogin, renderWithQuery, stubApi } from '../test-utils';
 import { firstOpenStep, foundAgents, SetupPage, type SetupPageProps } from './SetupPage';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -30,10 +30,7 @@ function view(o: Partial<Omit<SetupView, 'steps'>> & { steps?: Partial<SetupView
   };
 }
 
-const notConnected = {
-  connected: false, login: null, apiUrl: 'https://api.github.com', webUrl: 'https://github.com', deviceFlow: true,
-  scopes: 'repo', pending: null, error: null, rejectedAt: null,
-};
+const notConnected = githubLogin();
 
 function props(): SetupPageProps {
   return { onAddProject: vi.fn(), onBoard: vi.fn(), onPm: vi.fn(), onHostSettings: vi.fn(), onDismissed: vi.fn() };
@@ -43,7 +40,7 @@ function stub(v: SetupView, extra: Record<string, unknown> = {}) {
   return stubApi({
     'GET /api/host/setup': v,
     'GET /api/host/checks': checks(),
-    'GET /api/github/login': notConnected,
+    'GET /api/forges/github/login': notConnected,
     'GET /api/projects': [],
     'GET /api/host/settings': { settings: { defaultAgent: 'claude' }, projectsDir: '/u/work', programs: [] },
     ...extra,
@@ -98,7 +95,7 @@ describe('Get started', () => {
     const skipped = view({ steps: { agents: 'done', github: 'skipped' } });
     const calls = stub(view({ steps: { agents: 'done' } }), {
       'PUT /api/host/setup': skipped,
-      'POST /api/github/login/device': { ...notConnected, pending: { userCode: '4F2A-9C1D', verificationUri: 'https://github.com/login/device', expiresAt: 0 } },
+      'POST /api/forges/github/login/device': { ...notConnected, pending: { userCode: '4F2A-9C1D', verificationUri: 'https://github.com/login/device', expiresAt: 0 } },
     });
     renderWithQuery(<SetupPage {...props()} />);
     const gh = await step('Connect GitHub');
@@ -113,7 +110,7 @@ describe('Get started', () => {
 
   it('adds a project through the dialog, offering Clone from GitHub only when connected', async () => {
     const p = props();
-    stub(view({ steps: { agents: 'done', github: 'done' } }), { 'GET /api/github/login': { ...notConnected, connected: true, login: 'me' } });
+    stub(view({ steps: { agents: 'done', github: 'done' } }), { 'GET /api/forges/github/login': githubLogin({ accounts: [forgeAccount('me')] }) });
     renderWithQuery(<SetupPage {...p} />);
     const proj = await step('Add a project');
     await userEvent.click(within(proj).getByRole('button', { name: 'Choose a folder…' }));

@@ -665,12 +665,13 @@ impl PluginFacts {
                 .plugins()
                 .iter()
                 .map(|p| {
-                    let f = p.forge();
+                    // Any of its accounts (PDT-244).
+                    let fs = crate::forge::signed_forges(p.as_ref());
                     ForgeLogin {
                         kind: p.kind(),
                         label: p.label(),
-                        needed: f.login_needed(),
-                        rejected: f.login_rejected_at().is_some(),
+                        needed: fs.iter().any(|(_, f)| f.login_needed()),
+                        rejected: fs.iter().any(|(_, f)| f.login_rejected_at().is_some()),
                     }
                 })
                 .collect(),

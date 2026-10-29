@@ -9,7 +9,9 @@
 //! Actions) with [`ForgePlugin::ci`].
 
 pub mod ci;
+pub mod login;
 pub use ci::{CiCapabilities, CiConfig, CiProvider};
+pub use login::{ForgeAccount, ForgeLogin};
 
 pub use pdt_core::forge::{ForgeKind, ForgeLinks, ForgeNotes};
 pub use pdt_core::github_issue::CloseReason;
@@ -355,11 +357,23 @@ pub trait ForgePlugin: Send + Sync {
     fn links(&self, _remote: &pdt_core::git_url::Remote, _repo: &str) -> Option<ForgeLinks> {
         None
     }
-    /// The forge, as the account PDT has for it.
+    /// The forge as its public host's account (github.com's), for a flow tied to no project.
     fn forge(&self) -> Arc<dyn Forge>;
     /// The forge's own CI (GitHub Actions), if it has one: a project on this forge has it unless `[ci] providers`
     /// leaves it out.
     fn ci(&self) -> Option<Arc<dyn CiProvider>> {
+        None
+    }
+    /// The forge as the account for `host` (lower case; PDT-244): a project's, by its `origin`'s host.
+    fn forge_on(&self, _host: &str) -> Arc<dyn Forge> {
+        self.forge()
+    }
+    /// The forge's own CI as the account for `host`.
+    fn ci_on(&self, _host: &str) -> Option<Arc<dyn CiProvider>> {
+        self.ci()
+    }
+    /// How the user signs in to it (PDT-244); None for a forge with no login.
+    fn login(&self) -> Option<&dyn ForgeLogin> {
         None
     }
 }

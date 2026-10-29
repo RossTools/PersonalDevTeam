@@ -1,4 +1,4 @@
-//! Secrets (the update token, the GitHub login) live only in the OS keychain / credential manager (spec §3.2). Never logged, never
+//! Secrets (the update token, the forge logins) live only in the OS keychain / credential manager (spec §3.2). Never logged, never
 //! returned by the API, never written to the database. The one exception is Linux without a Secret Service (a headless
 //! machine, PDT-197): there they go to a file in the data folder only the user can read ([`FileSecretStore`]), and
 //! Settings → Secrets says so. macOS and Windows never fall back.
@@ -23,6 +23,16 @@ pub const GITHUB_LOGIN: &str = "github-login";
 /// token's is ([`update_token_account`]).
 pub fn github_login_account(data_dir: &std::path::Path, stable_data_dir: Option<&std::path::Path>) -> String {
     instance_account(GITHUB_LOGIN, data_dir, stable_data_dir)
+}
+
+/// The keychain account holding the stable instance's forge logins (PDT-244): every account on every forge host, as
+/// one JSON `pdt_forge::login::AccountStore`. See [`forge_logins_account`].
+pub const FORGE_LOGINS: &str = "forge-logins";
+
+/// The keychain account for the forge logins of the pdtd using `data_dir`, kept apart per instance as the update
+/// token's is. The first read copies an old [`GITHUB_LOGIN`] into it (and leaves that one, for an older PDT).
+pub fn forge_logins_account(data_dir: &std::path::Path, stable_data_dir: Option<&std::path::Path>) -> String {
+    instance_account(FORGE_LOGINS, data_dir, stable_data_dir)
 }
 
 /// `name` for the stable instance's default data dir, else `name:<12 hex digits of the canonical data dir>`.
@@ -271,6 +281,8 @@ pub fn secret_label(account: &str) -> &'static str {
         "the update token"
     } else if is(GITHUB_LOGIN) {
         "the GitHub login"
+    } else if is(FORGE_LOGINS) {
+        "the forge logins"
     } else if account.starts_with("connection:") {
         "a connection's secret"
     } else {
@@ -564,6 +576,7 @@ mod tests {
         assert_eq!(secret_label("update-token:0123456789ab"), "the update token");
         assert_eq!(secret_label(GITHUB_LOGIN), "the GitHub login");
         assert_eq!(secret_label("github-loginx"), "a secret");
+        assert_eq!(secret_label("forge-logins:0123456789ab"), "the forge logins");
         let e = stalled(secret_label("connection:1")).naming("connection:1", "the secret of the connection jira");
         assert!(e.0.contains("did not answer in time for the secret of the connection jira"), "{}", e.0);
     }

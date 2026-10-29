@@ -47,7 +47,7 @@ async fn facts(st: &AppState) -> Result<SetupFacts, ApiError> {
         claude: c.claude.found,
         codex: c.codex.found,
         devin: c.devin.found,
-        github_connected: st.github_api.account().is_some(),
+        github_connected: crate::forge_login::connected(st, &pdt_core::forge::ForgeKind::GITHUB),
         projects: st.store.list_projects().await?.len(),
     })
 }

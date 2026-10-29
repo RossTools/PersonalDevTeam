@@ -263,13 +263,13 @@ function ProgramPathForm({ onSaved }: { onSaved: () => void }) {
 function GithubStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
   const qc = useQueryClient();
   const login = useQuery({
-    queryKey: ['github-login'],
-    queryFn: api.githubLogin,
+    queryKey: ['forge-login', 'github'],
+    queryFn: () => api.forgeLogin('github'),
     refetchInterval: (q) => (q.state.data?.pending ? 2000 : false),
   });
   const device = useMutation({
-    mutationFn: () => api.githubLoginDevice({}),
-    onSuccess: (v) => qc.setQueryData(['github-login'], v),
+    mutationFn: () => api.forgeLoginDevice('github', {}),
+    onSuccess: (v) => qc.setQueryData(['forge-login', 'github'], v),
   });
   const skip = useMutation({
     mutationFn: () => api.saveHostSetup({ githubSkipped: true }),
@@ -279,13 +279,14 @@ function GithubStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
     },
   });
   const g = login.data;
-  const summary = g?.connected ? `Connected as ${g.login}.`
+  const account = g?.accounts[0];
+  const summary = account ? `Connected as ${account.login}.`
     : step.state === 'skipped' ? 'Skipped: projects without GitHub merge locally.'
       : 'For pull requests, CI and issues. Skip it if your projects aren’t on GitHub.';
   return (
     <Step {...step} title="Connect GitHub" summary={summary} tag="Optional">
-      {g?.connected ? (
-        <p className="text-muted-foreground">PDT signs in to GitHub as <b className="text-foreground">{g.login}</b>.</p>
+      {account ? (
+        <p className="text-muted-foreground">PDT signs in to GitHub as <b className="text-foreground">{account.login}</b>.</p>
       ) : (
         <>
           <p className="text-xs text-muted-foreground">PDT shows a code; you enter it at github.com/login/device (a phone works too).</p>
@@ -314,14 +315,14 @@ function GithubStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
 function ProjectStep({ onAddProject, onHostSettings, ...step }: StepProps & SetupPageProps) {
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
   const host = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
-  const github = useQuery({ queryKey: ['github-login'], queryFn: api.githubLogin });
+  const github = useQuery({ queryKey: ['forge-login', 'github'], queryFn: () => api.forgeLogin('github') });
   const first = projects.data?.[0];
   const summary = first ? `${first.name}${first.repoPath ? ` · ${first.repoPath}` : ''}` : 'A folder with a git repo. PDT makes a worktree for each ticket.';
   return (
     <Step {...step} title="Add a project" summary={summary}>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant={first ? 'secondary' : 'primary'} onClick={() => onAddProject()}>{first ? 'Add another…' : 'Choose a folder…'}</Button>
-        {github.data?.connected && <Button size="sm" onClick={() => onAddProject('clone')}>Clone from GitHub…</Button>}
+        {(github.data?.accounts.length ?? 0) > 0 && <Button size="sm" onClick={() => onAddProject('clone')}>Clone from GitHub…</Button>}
       </div>
       <p className="text-xs text-muted-foreground">
         Projects folder: <span className="font-mono">{host.data?.projectsDir ?? '~/work'}</span> · <Link onClick={() => onHostSettings('projects-folder')}>change</Link>

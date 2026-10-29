@@ -1,5 +1,6 @@
 import type { ApiErrorBody } from './gen/ApiErrorBody';
-import type { GithubLoginView } from './gen/GithubLoginView';
+import type { ForgeLoginView } from './gen/ForgeLoginView';
+import type { ForgeTokenCheck } from './gen/ForgeTokenCheck';
 import type { ConnectionKind } from './gen/ConnectionKind';
 import type { IntegrationInfo } from './gen/IntegrationInfo';
 import type { ProjectSettingsSchema } from './gen/ProjectSettingsSchema';
@@ -499,13 +500,18 @@ export const api = {
   dismissUpdateResult: () => request<void>('/api/host/update/dismiss', { method: 'POST' }),
   saveToken: (token: string) => request<UpdateStatus>('/api/host/token', { method: 'PUT', body: JSON.stringify({ token }) }),
   deleteToken: () => request<void>('/api/host/token', { method: 'DELETE' }),
-  githubLogin: () => request<GithubLoginView>('/api/github/login'),
-  githubLoginToken: (token: string, apiUrl?: string) =>
-    request<GithubLoginView>('/api/github/login/token', { method: 'POST', body: JSON.stringify({ token, ...(apiUrl ? { apiUrl } : {}) }) }),
-  githubLoginDevice: (b: { apiUrl?: string; clientId?: string }) =>
-    request<GithubLoginView>('/api/github/login/device', { method: 'POST', body: JSON.stringify(b) }),
-  githubCancelDevice: () => request<GithubLoginView>('/api/github/login/device', { method: 'DELETE' }),
-  githubDisconnect: () => request<GithubLoginView>('/api/github/login', { method: 'DELETE' }),
+  /** A forge's accounts, one per host (PDT-244), and how to add one. */
+  forgeLogin: (kind: string) => request<ForgeLoginView>(`/api/forges/${kind}/login`),
+  /** Who a pasted token signs in as, without saving it. */
+  forgeTestToken: (kind: string, token: string, apiUrl?: string) =>
+    request<ForgeTokenCheck>(`/api/forges/${kind}/login/test`, { method: 'POST', body: JSON.stringify({ token, ...(apiUrl ? { apiUrl } : {}) }) }),
+  forgeLoginToken: (kind: string, token: string, apiUrl?: string) =>
+    request<ForgeLoginView>(`/api/forges/${kind}/login/token`, { method: 'POST', body: JSON.stringify({ token, ...(apiUrl ? { apiUrl } : {}) }) }),
+  forgeLoginDevice: (kind: string, b: { apiUrl?: string; clientId?: string }) =>
+    request<ForgeLoginView>(`/api/forges/${kind}/login/device`, { method: 'POST', body: JSON.stringify(b) }),
+  forgeCancelDevice: (kind: string) => request<ForgeLoginView>(`/api/forges/${kind}/login/device`, { method: 'DELETE' }),
+  forgeDisconnect: (kind: string, host: string) =>
+    request<ForgeLoginView>(`/api/forges/${kind}/login/accounts/${encodeURIComponent(host)}`, { method: 'DELETE' }),
   hostChecks: () => request<HostChecks>('/api/host/checks'),
   /** Get started (PDT-230): the first-run checklist's steps, and whether the app opens on it. */
   hostSetup: () => request<SetupView>('/api/host/setup'),
