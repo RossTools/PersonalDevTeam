@@ -114,6 +114,67 @@ async fn a_command_cwd_must_be_a_mode_or_a_full_path() {
     assert!(v.to_string().contains("not scratch, project, attempt or a full path"), "{v}");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_command_runs_a_multi_line_script_in_its_shell() {
+    let env = setup(vec![]).await;
+    let script = "read -r input\nword='{{trigger.word}}'\nprintf '{\"word\": \"%s\", \"stdin\": %s, \"env\": \"%s\"}' \
+                  \"$word\" \"$input\" \"$FAKE_ENV\"";
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "run", "kind": "command", "version": 1, "config": {
+            "script": script, "shell": "sh", "input": {"n": "{{trigger.n}}"}, "env": {"FAKE_ENV": "set"}}})),
+    )
+    .await;
+    let r = run_now(&env, &wf, json!({"n": 3, "word": "hi"})).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    let out = &step(&r, "run")["output"]["json"];
+    assert_eq!(out, &json!({"word": "hi", "stdin": {"n": 3}, "env": "set"}));
+
+    // A failing script fails the step, named by its shell.
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "run", "kind": "command", "version": 1,
+            "config": {"script": "echo nope >&2\nexit 4", "shell": "sh"}})),
+    )
+    .await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert!(r["error"].as_str().unwrap().contains("sh exited with 4: nope"), "{r}");
+}
+
+#[tokio::test]
+async fn a_command_has_a_program_or_a_script_not_both() {
+    let env = setup(vec![]).await;
+    let app = &env.app;
+    let problem = |config: Value| {
+        let doc = manual_then(json!({"id": "run", "kind": "command", "version": 1, "config": config}));
+        async move {
+            let (s, v) = call(app, "POST", "/api/workflows/validate", Some(json!({"doc": doc}))).await;
+            assert_eq!(s, StatusCode::OK);
+            v.to_string()
+        }
+    };
+    assert!(problem(json!({"program": "x", "script": "echo"})).await.contains("set program or script, not both"));
+    assert!(problem(json!({})).await.contains("program is empty"));
+    assert!(problem(json!({"script": "  "})).await.contains("script is empty"));
+    assert!(problem(json!({"script": "echo", "args": ["a"]})).await.contains("args go with program"));
+    assert!(problem(json!({"shell": "fish", "script": "echo"})).await.contains("fish"));
+    let fine = problem(json!({"script": "echo hi", "shell": "bash"})).await;
+    assert!(!fine.contains("script") && !fine.contains("program"), "{fine}");
+}
+
+#[tokio::test]
+async fn a_dry_run_shows_the_script() {
+    let env = setup(vec![]).await;
+    let doc = manual_then(json!({"id": "run", "kind": "command", "version": 1,
+        "config": {"script": "echo one\necho two", "shell": "bash"}}));
+    let (s, d) =
+        call(&env.app, "POST", "/api/workflows/dry-run", Some(json!({"doc": doc, "event": {"type": "manual"}}))).await;
+    assert_eq!(s, StatusCode::OK, "{d}");
+    let would = d["run"]["steps"][1]["output"]["would"].as_str().unwrap();
+    assert!(would.starts_with("run a bash script in scratch") && would.contains("echo one\necho two"), "{would}");
+}
+
 // ---- HTTP ----
 
 #[tokio::test]

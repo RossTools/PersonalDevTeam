@@ -152,6 +152,7 @@ impl NodeKind for Move {
 pub struct CommentConfig {
     /// The ticket's id or key (`PDT-12`).
     pub ticket: String,
+    #[schemars(extend("x-format" = "markdown"))]
     pub body: String,
 }
 
@@ -215,6 +216,7 @@ pub struct CreateConfig {
     pub title: String,
     #[serde(default)]
     #[ts(optional)]
+    #[schemars(extend("x-format" = "markdown"))]
     pub description: Option<String>,
     /// Draft when left out.
     #[serde(default)]

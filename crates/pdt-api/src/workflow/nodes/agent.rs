@@ -50,6 +50,7 @@ pub struct AgentConfig {
     /// A persona's name or id.
     pub persona: String,
     /// The task; PDT adds the ticket and the outcome rules.
+    #[schemars(extend("x-format" = "markdown"))]
     pub prompt: String,
     /// What the step may end with; one port each.
     pub outcomes: Vec<OutcomeSpec>,

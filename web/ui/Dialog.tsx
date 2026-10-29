@@ -9,7 +9,7 @@ import {
   DialogTrigger,
 } from './primitives/dialog';
 
-export type DialogSize = 'sm' | 'md' | 'lg' | 'xl';
+export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
 
 const sizes: Record<DialogSize, string> = {
   sm: 'sm:max-w-sm',
@@ -17,6 +17,8 @@ const sizes: Record<DialogSize, string> = {
   lg: 'sm:max-w-2xl',
   /** Wide content: a diff. */
   xl: 'sm:max-w-6xl',
+  /** Most of the screen, at its full height: a long text being edited. */
+  full: 'h-[calc(100dvh-4rem)] sm:max-w-[calc(100vw-4rem)]',
 };
 
 /**

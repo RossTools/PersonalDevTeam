@@ -26,6 +26,7 @@ pub struct DiscordConfig {
     pub connection: String,
     /// The message (Discord Markdown). Longer than 2000 characters, it goes as several messages.
     #[serde(default)]
+    #[schemars(extend("x-format" = "markdown"))]
     pub content: String,
     /// Shown as the sender instead of the webhook's name.
     #[serde(default)]

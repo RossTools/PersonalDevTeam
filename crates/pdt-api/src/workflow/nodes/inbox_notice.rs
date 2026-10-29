@@ -21,6 +21,7 @@ pub struct InboxNoticeConfig {
     #[serde(default)]
     pub attempt: Option<String>,
     /// What happened (`{{trigger.notice.text}}`).
+    #[schemars(extend("x-format" = "markdown"))]
     pub text: String,
     /// One item per attempt and key (`{{trigger.notice.key}}`).
     pub key: String,
