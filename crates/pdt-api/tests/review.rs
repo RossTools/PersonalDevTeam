@@ -783,7 +783,8 @@ async fn a_workflow_never_merges_locally_what_had_or_would_have_a_pr() {
     env.gh.set_pr(&env.branch, Some(pr.clone()));
     let (s, e) = call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), None).await;
     assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("merge_blocked")), "{e}");
-    assert!(e["message"].as_str().unwrap().contains("closed without merging"), "{e}");
+    assert!(e["message"].as_str().unwrap().starts_with("PR #12 was closed without merging"), "{e}");
+    assert!(!e["message"].as_str().unwrap().contains("GitHub"), "the forge's wording, not GitHub's: {e}");
     assert_eq!(rev(&env.repo, "main"), main);
 
     // GitHub not answering: a PR may be there.
