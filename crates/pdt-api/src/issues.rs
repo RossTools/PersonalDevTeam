@@ -85,8 +85,8 @@ async fn info(
     let project = st.store.get_project(project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let Some(f) = crate::forge::project_forge(st, &project.id, &project.repo_path).await else { return Ok(None) };
     // Only GitHub's issues can be linked to tickets (`owner/name#12`).
-    let issues = f.kind == ForgeKind::Github && f.caps().issues;
-    Ok(Some((ProjectForgeInfo { kind: f.kind, repo: f.repo.clone(), issues }, f)))
+    let issues = f.kind == ForgeKind::GITHUB && f.caps().issues;
+    Ok(Some((ProjectForgeInfo { kind: f.kind.clone(), repo: f.repo.clone(), issues }, f)))
 }
 
 /// `GET /api/projects/{id}/forge`: the project's forge; null when it has none.

@@ -58,11 +58,13 @@ pub struct AppState {
     /// The Tailscale CLI. `new` installs [`pdt_tailscale::Unavailable`], which runs nothing; only pdtd's production
     /// wiring installs the real CLI, so tests can never touch the machine's Tailscale (it serves the stable instance).
     pub tailscale: std::sync::Arc<dyn pdt_tailscale::TailscaleApi>,
-    /// The GitHub forge (PDT-176), for projects on GitHub (`crate::forge::project_forge`): `github_api` unless a test
-    /// installs a fake.
-    pub github: std::sync::Arc<dyn pdt_forge::Forge>,
-    /// The GitHub forge over the API (PDT-177), which the in-app login signs in. `new` makes one with no network
-    /// ([`pdt_github::GithubApi::offline`]); only pdtd's production wiring installs one that reaches GitHub.
+    /// The forge plugins (PDT-241), which `crate::forge::project_forge` asks for a project's forge (a plugin counts
+    /// while the integration that declares its kind is enabled, [`crate::Integration::forge_kind`]). `new` has GitHub
+    /// over `github_api`; pdtd sets the real one, a test a fake (`pdt_forge::HostedForge`).
+    pub forges: pdt_forge::ForgeRegistry,
+    /// The GitHub client (PDT-177) the in-app login signs in, which the GitHub plugin in `forges` opens. `new` makes
+    /// one with no network ([`pdt_github::GithubApi::offline`]); only pdtd's production wiring installs one that
+    /// reaches GitHub. Only the login uses it directly.
     pub github_api: std::sync::Arc<pdt_github::GithubApi>,
     /// The keychain account of this instance's GitHub login (see `secrets::github_login_account`), kept apart from
     /// the stable instance's as `update_token_account` is.
@@ -213,7 +215,9 @@ impl AppState {
             host_env: Default::default(),
             allowed_hosts: Default::default(),
             tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
-            github: github_api.clone(),
+            forges: pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_github::plugin::GithubPlugin::new(
+                github_api.clone(),
+            ))]),
             github_api,
             github_account,
             github_client_id: pdt_core::brand::GITHUB_OAUTH_CLIENT_ID.into(),

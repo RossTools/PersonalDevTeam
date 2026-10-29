@@ -1,11 +1,11 @@
-//! Release actions (PDT-194), through the GitHub forge: `github.workflow.run` (start a CI workflow by hand, e.g. the
+//! Release actions (PDT-194), through the GitHub forge (the run's project's, else GitHub's account, PDT-241): `github.workflow.run` (start a CI workflow by hand, e.g. the
 //! repository's Release Action), `github.change_request` (read a pull request by branch or number) and
 //! `github.release` (read the latest release, or one tag). The built-in "Cut a release" polls the last two between
 //! waits, the pull request with its CI (PDT-214: the release PR merges itself, so a failed check is the news).
 //! `repo` defaults to the run's project's GitHub repository.
 
-use crate::routes::AppState;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use pdt_core::forge::ForgeKind;
 use pdt_core::github_issue::valid_repo;
 use pdt_core::pr::{CiState, CiStatus, PrState, PullRequestStatus};
 use pdt_core::release::parse_version;
@@ -17,13 +17,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use ts_rs::TS;
 
-/// Runs a call on the GitHub forge off the async threads; `releases` when it needs [`pdt_forge::Capabilities::releases`].
+/// Runs a call on `api` (from [`repo_of`]) off the async threads; `releases` when it needs
+/// [`pdt_forge::Capabilities::releases`] (an error when the forge lacks them).
 async fn gh<T: Send + 'static>(
-    st: &AppState,
+    api: &Arc<dyn Forge>,
     releases: bool,
     f: impl FnOnce(&dyn Forge) -> Result<T, ForgeError> + Send + 'static,
 ) -> Result<T, String> {
-    let api: Arc<dyn Forge> = st.github.clone();
+    let api = api.clone();
     if releases && !api.capabilities().releases {
         return Err(format!("{} has no releases", api.name()));
     }
@@ -49,15 +50,18 @@ fn check_repo(repo: &Option<String>) -> Result<(), String> {
     }
 }
 
-/// The repository: the one given, else the run's project's on GitHub.
-async fn repo_of(cx: &StepCx<'_>, repo: &Option<String>) -> Result<String, String> {
+/// The repository and the forge it is read through (PDT-241): the one given, through the run's project's forge when
+/// that is GitHub, else GitHub's account; without one, the run's project's on GitHub.
+async fn repo_of(cx: &StepCx<'_>, repo: &Option<String>) -> Result<(String, Arc<dyn Forge>), String> {
+    let project = cx.run.project_id.as_deref();
     if let Some(r) = nonblank(repo) {
-        return valid_repo(r).map(|_| r.to_string()).ok_or_else(|| format!("{r:?} is not owner/name"));
+        valid_repo(r).ok_or_else(|| format!("{r:?} is not owner/name"))?;
+        return Ok((r.to_string(), crate::forge::forge_for(cx.st, &ForgeKind::GITHUB, project).await?));
     }
-    let id = cx.run.project_id.as_deref().ok_or("give repo (owner/name): the run has no project to take it from")?;
+    let id = project.ok_or("give repo (owner/name): the run has no project to take it from")?;
     let p = cx.st.store.get_project(id).await.map_err(|e| e.to_string())?.ok_or("the run's project is gone")?;
     match crate::forge::project_forge(cx.st, id, &p.repo_path).await {
-        Some(f) if f.kind == pdt_core::forge::ForgeKind::Github => Ok(f.repo),
+        Some(f) if f.kind == ForgeKind::GITHUB => Ok((f.repo, f.api)),
         _ => Err(format!("{} is not on GitHub: give repo (owner/name)", p.name)),
     }
 }
@@ -140,7 +144,7 @@ impl NodeKind for GithubWorkflowRun {
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: GithubWorkflowRunConfig = parse(&input)?;
-            let repo = repo_of(cx, &c.repo).await?;
+            let (repo, forge) = repo_of(cx, &c.repo).await?;
             let workflow = c.workflow.trim().to_string();
             let git_ref = nonblank(&c.git_ref).unwrap_or("main").to_string();
             let inputs = inputs_of(&c.inputs)?;
@@ -152,7 +156,7 @@ impl NodeKind for GithubWorkflowRun {
                 ));
             }
             let (r, w, g) = (repo.clone(), workflow.clone(), git_ref.clone());
-            gh(cx.st, true, move |f| f.run_workflow(&r, &w, &g, &inputs)).await?;
+            gh(&forge, true, move |f| f.run_workflow(&r, &w, &g, &inputs)).await?;
             Ok(Outcome::next("out", out))
         })
     }
@@ -348,7 +352,7 @@ impl NodeKind for GithubChangeRequest {
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: GithubChangeRequestConfig = parse(&input)?;
-            let repo = repo_of(cx, &c.repo).await?;
+            let (repo, forge) = repo_of(cx, &c.repo).await?;
             if cx.dry_run {
                 // The number may come from a step a dry run didn't really run.
                 let (default, would) = match nonblank(&c.branch) {
@@ -362,7 +366,7 @@ impl NodeKind for GithubChangeRequest {
                 let branch = nonblank(&c.branch).ok_or("ci needs branch")?.to_string();
                 let number = number_of(&c.number).transpose()?;
                 let (r, b) = (repo.clone(), branch.clone());
-                let read = gh(cx.st, false, move |f| {
+                let read = gh(&forge, false, move |f| {
                     let (pr, _, _) = crate::github::read_pr(f, &r, &b, 0, false, None, &Default::default())?;
                     Ok(pr)
                 })
@@ -375,7 +379,7 @@ impl NodeKind for GithubChangeRequest {
                 let found = match number {
                     Some(n) => {
                         let r = repo.clone();
-                        gh(cx.st, false, move |f| f.change_request_number(&r, n)).await?
+                        gh(&forge, false, move |f| f.change_request_number(&r, n)).await?
                     }
                     None => None,
                 };
@@ -391,8 +395,8 @@ impl NodeKind for GithubChangeRequest {
             };
             let r = repo.clone();
             let pr = match by {
-                Err(b) => gh(cx.st, false, move |f| f.change_request(&r, &b)).await?,
-                Ok(n) => gh(cx.st, false, move |f| f.change_request_number(&r, n)).await?,
+                Err(b) => gh(&forge, false, move |f| f.change_request(&r, &b)).await?,
+                Ok(n) => gh(&forge, false, move |f| f.change_request_number(&r, n)).await?,
             };
             let Some(pr) = pr else {
                 return Ok(Outcome::Next { port: "none".into(), output: json!({"repo": repo, "quiet": true}) });
@@ -480,7 +484,7 @@ impl NodeKind for GithubRelease {
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: GithubReleaseConfig = parse(&input)?;
-            let repo = repo_of(cx, &c.repo).await?;
+            let (repo, forge) = repo_of(cx, &c.repo).await?;
             let tag = nonblank(&c.tag).map(String::from);
             let than = nonblank(&c.newer_than).map(String::from);
             if cx.dry_run {
@@ -489,7 +493,7 @@ impl NodeKind for GithubRelease {
                 return Ok(Outcome::next("found", json!({"would": format!("read {what} of {repo}")})));
             }
             let (r, t, pre) = (repo.clone(), tag.clone(), c.prereleases);
-            let release: Option<Release> = gh(cx.st, true, move |f| match (t, pre) {
+            let release: Option<Release> = gh(&forge, true, move |f| match (t, pre) {
                 (None, true) => f.newest_release(&r),
                 (t, _) => f.release(&r, t.as_deref()),
             })

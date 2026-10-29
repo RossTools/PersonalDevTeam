@@ -156,6 +156,12 @@ pub trait Integration: Send + Sync {
         None
     }
 
+    /// The forge it provides (PDT-241), if it is one: the forge plugin of this kind in [`AppState::forges`] is used
+    /// while it is enabled, and Settings → Plugins shows its login's state.
+    fn forge_kind(&self) -> Option<pdt_core::forge::ForgeKind> {
+        None
+    }
+
     /// Its members of the 60 s poll, run after PDT's own checks.
     fn pollers(&self) -> Vec<Poller> {
         vec![]
@@ -624,14 +630,22 @@ pub struct IntegrationInfo {
     pub projects: Vec<PluginProject>,
 }
 
+/// A forge plugin's login, for its integration's status.
+pub(crate) struct ForgeLogin {
+    pub kind: pdt_core::forge::ForgeKind,
+    pub label: &'static str,
+    /// PDT needs the login and has none ([`pdt_forge::Forge::login_needed`]).
+    pub needed: bool,
+    /// The forge refuses the login PDT has.
+    pub rejected: bool,
+}
+
 /// What a plugin's status is computed from.
 #[derive(Default)]
 pub(crate) struct PluginFacts {
     pub connections: Vec<pdt_core::workflow::api::Connection>,
-    /// PDT needs the GitHub login and has none ([`pdt_forge::Forge::login_needed`]).
-    pub github_needed: bool,
-    /// GitHub refuses the login PDT has.
-    pub github_rejected: bool,
+    /// Each forge plugin's login ([`Integration::forge_kind`]).
+    pub forges: Vec<ForgeLogin>,
     /// Each project, with the ids of the integrations it has settings for.
     pub projects: Vec<(PluginProject, Vec<String>)>,
 }
@@ -645,8 +659,20 @@ impl PluginFacts {
         }
         Ok(Self {
             connections: st.store.list_connections().await?,
-            github_needed: st.github.login_needed(),
-            github_rejected: st.github.login_rejected_at().is_some(),
+            forges: st
+                .forges
+                .plugins()
+                .iter()
+                .map(|p| {
+                    let f = p.forge();
+                    ForgeLogin {
+                        kind: p.kind(),
+                        label: p.label(),
+                        needed: f.login_needed(),
+                        rejected: f.login_rejected_at().is_some(),
+                    }
+                })
+                .collect(),
             projects,
         })
     }
@@ -677,18 +703,19 @@ fn info(
     let kinds = i.connection_kinds();
     let own: Vec<_> = facts.connections.iter().filter(|c| kinds.iter().any(|k| k.id == c.kind)).collect();
     let failing = own.iter().find(|c| c.last_error.is_some());
+    let login = i.forge_kind().and_then(|k| facts.forges.iter().find(|f| f.kind == k));
     let (status, error, error_connection) = if !enabled {
         (PluginStatus::Off, None, None)
-    } else if i.id() == "github" && facts.github_rejected {
+    } else if let Some(l) = login.filter(|l| l.rejected) {
         (
             PluginStatus::Error,
-            Some("GitHub no longer accepts PDT's login: the token was revoked or expired.".into()),
+            Some(format!("{} no longer accepts PDT's login: the token was revoked or expired.", l.label)),
             None,
         )
     } else if let Some(c) = failing {
         let e = c.last_error.clone().unwrap_or_default();
         (PluginStatus::Error, Some(format!("{}: {e}", c.name)), Some(c.id.clone()))
-    } else if (i.id() == "github" && facts.github_needed) || (!core && !kinds.is_empty() && own.is_empty()) {
+    } else if login.is_some_and(|l| l.needed) || (!core && !kinds.is_empty() && own.is_empty()) {
         (PluginStatus::NeedsSetup, None, None)
     } else {
         (PluginStatus::On, None, None)

@@ -3712,6 +3712,7 @@ dependencies = [
  "jiff",
  "pdt-api",
  "pdt-core",
+ "pdt-forge",
  "pdt-git",
  "pdt-github",
  "pdt-int-arr",

@@ -53,7 +53,7 @@ async fn setup_with(gh: Option<std::sync::Arc<FakeForge>>) -> Env {
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
     if let Some(gh) = gh {
-        state.github = gh;
+        state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::HostedForge::github(gh))]);
     }
     state.integrations = std::sync::Arc::new(pdt_api::Integrations::new(vec![std::sync::Arc::new(FakeCi)]));
     state.integrations.enable(&["fakeci".into()]);

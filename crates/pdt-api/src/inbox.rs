@@ -101,30 +101,34 @@ async fn sessions_waiting(st: &AppState, project: Option<&str>) -> Result<Vec<In
     Ok(out)
 }
 
-/// "Connect GitHub" (PDT-177) while the GitHub forge has no login and something (the PR poller, a merge, an agent's
-/// tool) wanted it; "Reconnect GitHub" while GitHub refuses the login it has (PDT-212). Not stored: one item, which
-/// goes once the user connects.
-pub(crate) fn connect_forge(st: &AppState) -> Option<InboxItem> {
-    if !st.github.login_needed() {
+/// "Connect GitHub" (PDT-177) while a forge in use (PDT-241: one item per forge plugin) has no login and something
+/// (the PR poller, a merge, an agent's tool) wanted it; "Reconnect GitHub" while the forge refuses the login it has
+/// (PDT-212). Not stored: one item per forge, which goes once the user connects.
+pub(crate) fn connect_forge(st: &AppState) -> Vec<InboxItem> {
+    st.forge_plugins().iter().filter_map(|p| connect_item(p.kind().as_str(), p.label(), p.forge().as_ref())).collect()
+}
+
+fn connect_item(kind: &str, label: &str, forge: &dyn pdt_forge::Forge) -> Option<InboxItem> {
+    if !forge.login_needed() {
         return None;
     }
-    let rejected = st.github.login_rejected_at();
+    let rejected = forge.login_rejected_at();
     let (title, body) = match rejected {
         Some(_) => (
-            "Reconnect GitHub",
-            json!({"forge": "github", "reason": "rejected", "text": "GitHub no longer accepts PDT's login (the token \
-was revoked or expired). Until you connect again, PDT has stopped calling GitHub: it can't follow pull requests or CI, \
-merge, or let agents read CI logs. Connect GitHub again in Settings › Plugins › GitHub."}),
+            format!("Reconnect {label}"),
+            json!({"forge": kind, "reason": "rejected", "text": format!("{label} no longer accepts PDT's login (the \
+token was revoked or expired). Until you connect again, PDT has stopped calling {label}: it can't follow pull requests \
+or CI, merge, or let agents read CI logs. Connect {label} again in Settings › Plugins › {label}.")}),
         ),
         None => (
-            "Connect GitHub",
-            json!({"forge": "github", "text": "PDT reads pull requests, CI and issues, merges and comments on \
-GitHub with your GitHub login, and it has none: until you connect, it can't follow pull requests or CI, merge, or \
-let agents read CI logs. Connect GitHub in Settings › Plugins › GitHub."}),
+            format!("Connect {label}"),
+            json!({"forge": kind, "text": format!("PDT reads pull requests, CI and issues, merges and comments on \
+{label} with your {label} login, and it has none: until you connect, it can't follow pull requests or CI, merge, or \
+let agents read CI logs. Connect {label} in Settings › Plugins › {label}.")}),
         ),
     };
     Some(InboxItem {
-        id: "connect:github".into(),
+        id: format!("connect:{kind}"),
         kind: InboxKind::Connect,
         group: InboxGroup::Notice,
         status: InboxStatus::Open,
@@ -138,7 +142,7 @@ let agents read CI logs. Connect GitHub in Settings › Plugins › GitHub."}),
         step_id: None,
         persona_id: None,
         persona_name: None,
-        title: title.into(),
+        title,
         body,
         choices: vec![],
         resolution: Value::Null,

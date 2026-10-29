@@ -19,6 +19,7 @@ tracing-appender = "0.2.5"
 jiff.workspace = true
 pdt-tailscale.workspace = true
 pdt-github.workspace = true
+pdt-forge.workspace = true
 serde_json.workspace = true
 pdt-update.workspace = true
 pdt-git.workspace = true

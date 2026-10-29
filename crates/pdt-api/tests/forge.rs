@@ -46,11 +46,11 @@ async fn setup(forge: Option<Arc<dyn Forge>>, github: Option<Arc<GithubApi>>) ->
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
     if let Some(g) = github {
-        state.github = g.clone();
+        state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_github::plugin::GithubPlugin::new(g.clone()))]);
         state.github_api = g;
     }
     if let Some(f) = forge {
-        state.github = f;
+        state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_forge::HostedForge::github(f))]);
     }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();

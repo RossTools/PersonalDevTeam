@@ -396,19 +396,11 @@ pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) -> bool {
 
 /// The project's GitHub repository (`owner/name`) from its `origin`, as project responses report it.
 pub(crate) async fn github_repo(repo_path: &str) -> Option<String> {
-    github_repo_on(repo_path, None).await
-}
-
-/// [`github_repo`], or on GitHub Enterprise Server `host` (the GitHub login's).
-pub(crate) async fn github_repo_on(repo_path: &str, host: Option<String>) -> Option<String> {
     let path = std::path::PathBuf::from(repo_path);
-    tokio::task::spawn_blocking(move || {
-        let url = pdt_git::remote_url(&path, "origin")?;
-        pdt_core::git_url::github_repo(&url).or_else(|| host.and_then(|h| pdt_core::git_url::github_repo_on(&url, &h)))
-    })
-    .await
-    .ok()
-    .flatten()
+    tokio::task::spawn_blocking(move || pdt_core::git_url::github_repo(&pdt_git::remote_url(&path, "origin")?))
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Reads one attempt's PR into the watch; with `tell`, queues its news. False when the read failed.
@@ -420,7 +412,7 @@ async fn refresh_one(st: &AppState, info: &AttemptInfo, forge: &ProjectForge, ti
     let known_jobs = tick.jobs.clone();
     let (gh, repo_s, branch) = (forge.api.clone(), repo.to_string(), info.attempt.branch.clone());
     let since = info.attempt.created_at;
-    let local = forge.kind == pdt_core::forge::ForgeKind::Local;
+    let local = forge.kind == pdt_core::forge::ForgeKind::LOCAL;
     let read = tokio::task::spawn_blocking(move || {
         read_pr(gh.as_ref(), &repo_s, &branch, since, was_queued, cached_queue, &known_jobs)
             .map(|(pr, q, j)| (pr.map(|p| PullRequestStatus { local, ..p }), q, j))

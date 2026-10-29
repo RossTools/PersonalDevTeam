@@ -125,7 +125,7 @@ async fn setup() -> Env {
     state.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(pdt_int_buildkite::Buildkite)]));
     state.integrations.enable(&["buildkite".into()]);
     let gh = Arc::new(FakeForge::default());
-    state.github = gh.clone();
+    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::HostedForge::github(gh.clone()))]);
     let app = router(state.clone(), None);
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "Work", "repoPath": repo.to_string_lossy()}))).await;

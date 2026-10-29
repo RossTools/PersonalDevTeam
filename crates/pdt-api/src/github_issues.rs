@@ -3,20 +3,24 @@
 //! `github.issue.opened` for each issue newer than the last one seen. The first look at a repo only records its newest
 //! issue (`sensor.github_issues.<repo>`), so turning a watcher on never replays a repo's history. Later looks read
 //! back page by page to the last issue seen, and the mark moves only past issues that were logged: a failed insert is
-//! tried again on the next look.
+//! tried again on the next look. A project's repo is read through the project's forge, any other through GitHub's
+//! account (PDT-241).
 
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{
     BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, in_scope, parse, ports, schema_of,
 };
+use pdt_core::forge::ForgeKind;
 use pdt_core::workflow::api::{LogEvent, NewLogEvent, Scope, Workflow};
 use pdt_core::workflow::cond::Condition;
 use pdt_core::workflow::doc::Node;
 use pdt_core::workflow::events::{GITHUB_ISSUE_OPENED, GithubIssueOpened, event_type};
+use pdt_forge::Forge;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -92,19 +96,27 @@ fn baseline_key(repo: &str) -> String {
     format!("sensor.github_issues.{}", repo.to_ascii_lowercase())
 }
 
-/// The repos enabled workflows watch (by lower-case name), each as written and with the project it belongs to.
-async fn watched_repos(st: &AppState) -> BTreeMap<String, (String, Option<String>)> {
-    let mut project_repos: Vec<(String, String)> = vec![];
+/// A repository a workflow watches: as written, the project it belongs to, and the forge its issues are read from
+/// (the project's, else GitHub's account).
+struct Watched {
+    repo: String,
+    project: Option<String>,
+    forge: Arc<dyn Forge>,
+}
+
+/// The repos enabled workflows watch (by lower-case name).
+async fn watched_repos(st: &AppState) -> BTreeMap<String, Watched> {
+    let mut project_repos: Vec<(String, String, Arc<dyn Forge>)> = vec![];
     for p in st.store.list_projects().await.unwrap_or_default() {
         // Projects whose forge is GitHub (the trigger's issues are GitHub's).
         if let Some(f) = crate::forge::project_forge(st, &p.id, &p.repo_path).await
-            && f.kind == pdt_core::forge::ForgeKind::Github
+            && f.kind == ForgeKind::GITHUB
         {
-            project_repos.push((p.id.clone(), f.repo));
+            project_repos.push((p.id.clone(), f.repo, f.api));
         }
     }
-    let project_of = |repo: &str| project_repos.iter().find(|(_, r)| same_repo(r, repo)).map(|(p, _)| p.clone());
-    let mut out: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
+    let account = st.forge_account(&ForgeKind::GITHUB).ok();
+    let mut out: BTreeMap<String, Watched> = BTreeMap::new();
     for wf in st.store.enabled_workflows().await.unwrap_or_default() {
         let Ok(Some(doc)) = st.store.workflow_doc(&wf.id, wf.version).await else { continue };
         for node in doc.nodes.iter().filter(|n| n.kind == GITHUB_ISSUE_OPENED) {
@@ -117,19 +129,29 @@ async fn watched_repos(st: &AppState) -> BTreeMap<String, (String, Option<String
             } else {
                 project_repos
                     .iter()
-                    .filter(|(p, _)| match wf.scope {
+                    .filter(|(p, _, _)| match wf.scope {
                         Scope::Project => wf.project_id.as_deref() == Some(p.as_str()),
                         Scope::Host => true,
                         Scope::Personal => false,
                     })
-                    .filter(|(p, _)| c.projects.is_empty() || c.projects.contains(p))
-                    .map(|(_, r)| r.clone())
+                    .filter(|(p, _, _)| c.projects.is_empty() || c.projects.contains(p))
+                    .map(|(_, r, _)| r.clone())
                     .collect()
             };
             for r in repos {
                 let key = r.to_ascii_lowercase();
-                let project = project_of(&r);
-                out.entry(key).or_insert((r, project));
+                if out.contains_key(&key) {
+                    continue;
+                }
+                let owner = project_repos.iter().find(|(_, pr, _)| same_repo(pr, &r));
+                let (project, forge) = match owner {
+                    Some((p, _, f)) => (Some(p.clone()), f.clone()),
+                    None => match &account {
+                        Some(a) => (None, a.clone()),
+                        None => continue,
+                    },
+                };
+                out.insert(key, Watched { repo: r, project, forge });
             }
         }
     }
@@ -139,12 +161,12 @@ async fn watched_repos(st: &AppState) -> BTreeMap<String, (String, Option<String
 /// One look at every watched repo's newest issues. pdtd runs it every 60 s. Never fails; problems are logged (a
 /// failing read once per repo until it works again).
 pub async fn refresh_issues(st: &AppState) {
-    if !st.github.capabilities().issues {
-        return;
-    }
-    for (repo, project) in watched_repos(st).await.into_values() {
+    for Watched { repo, project, forge } in watched_repos(st).await.into_values() {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
+        }
+        if !forge.capabilities().issues {
+            continue;
         }
         let key = baseline_key(&repo);
         let seen = match st.store.get_host_value(&key).await {
@@ -154,7 +176,7 @@ pub async fn refresh_issues(st: &AppState) {
                 continue;
             }
         };
-        let (gh, r) = (st.github.clone(), repo.clone());
+        let (gh, r) = (forge, repo.clone());
         let read = tokio::task::spawn_blocking(move || gh.recent_issues(&r, seen)).await;
         let issues = match read {
             Ok(Ok(i)) => {

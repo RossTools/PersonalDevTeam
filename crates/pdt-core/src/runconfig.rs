@@ -19,8 +19,8 @@ pub struct ConfigFile {
     pub tests: Vec<EntryFile>,
     #[serde(default, rename = "area")]
     pub areas: Vec<AreaFile>,
-    /// `forge = "github"`: the project's forge (PDT-176), when it names one this PDT knows (one it doesn't is listed
-    /// in `ignored` as `forge`, like an unknown section).
+    /// `forge = "github"`: the project's forge (PDT-176), a forge plugin's id (PDT-241); a value that can't be one is
+    /// listed in `ignored` as `forge`, like an unknown section.
     #[serde(skip)]
     pub forge: Option<ForgeKind>,
     /// `[ci]`: the command the local forge runs as CI (PDT-178).
@@ -523,15 +523,18 @@ command = "cargo run"
     #[test]
     fn the_forge_is_named_at_the_top_and_the_overrides_win() {
         let f = parse("forge = \"github\"\n", Source::File).unwrap();
-        assert_eq!((f.forge, f.ignored.is_empty()), (Some(ForgeKind::Github), true));
-        assert_eq!(merge(Some(f.clone()), None).unwrap().forge, Some(ForgeKind::Github));
+        assert_eq!((f.forge.clone(), f.ignored.is_empty()), (Some(ForgeKind::GITHUB), true));
+        assert_eq!(merge(Some(f.clone()), None).unwrap().forge, Some(ForgeKind::GITHUB));
         let none = parse("forge = \"none\"\n", Source::Overrides).unwrap();
-        assert_eq!(merge(Some(f), Some(none)).unwrap().forge, Some(ForgeKind::None));
+        assert_eq!(merge(Some(f), Some(none)).unwrap().forge, Some(ForgeKind::NONE));
         assert_eq!(merge(None, None).unwrap().forge, None, "chosen from the origin");
-        // One a newer PDT knows is skipped like an unknown section, so the file still works.
+        // Any plugin's id is a forge (PDT-241): one this PDT has no plugin for is left to the origin when it is used.
         let later = parse("forge = \"gitlab\"\n[[run]]\nname = \"a\"\ncommand = \"x\"\n", Source::File).unwrap();
-        assert_eq!((later.forge, later.ignored.as_slice()), (None, ["forge".to_string()].as_slice()));
+        assert_eq!((later.forge.clone(), later.ignored.is_empty()), (ForgeKind::new("gitlab"), true));
         assert_eq!(merge(Some(later), None).unwrap().runs.len(), 1);
+        // One that can't be an id is skipped like an unknown section, so the file still works.
+        let bad = parse("forge = \"Git Lab\"\n", Source::File).unwrap();
+        assert_eq!((bad.forge, bad.ignored.as_slice()), (None, ["forge".to_string()].as_slice()));
     }
 
     #[test]
@@ -539,7 +542,7 @@ command = "cargo run"
         let f = parse("forge = \"local\"\n[ci]\ncommand = \"cargo test\"\n", Source::File).unwrap();
         assert!(f.ignored.is_empty(), "{:?}", f.ignored);
         let c = merge(Some(f.clone()), None).unwrap();
-        assert_eq!(c.forge, Some(ForgeKind::Local));
+        assert_eq!(c.forge, Some(ForgeKind::LOCAL));
         assert_eq!(c.ci, Some(CiDef { command: "cargo test".into() }));
         let over = parse("[ci]\ncommand = \"make check\"\n", Source::Overrides).unwrap();
         assert_eq!(merge(Some(f.clone()), Some(over)).unwrap().ci.unwrap().command, "make check", "the overrides win");
