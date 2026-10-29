@@ -40,7 +40,7 @@
   --accent-foreground: var(--pdt-fg);
   --destructive: var(--pdt-failed);
   --border: var(--pdt-border);
-  --input: var(--pdt-border);
+  --input: var(--pdt-input);
   --ring: var(--pdt-ring);
   --radius: var(--pdt-radius);
   --sidebar: var(--pdt-surface);
@@ -92,6 +92,7 @@
   --color-backdrop: var(--pdt-backdrop);
   --shadow-popover: var(--pdt-shadow-popover);
   --shadow-dialog: var(--pdt-shadow-dialog);
+  --shadow-card: var(--pdt-shadow-card);
   --text-2xs: 10px;
   --text-meta: 11px;
   /* A document's title (a note's, PDT-143): the one size above text-base. */

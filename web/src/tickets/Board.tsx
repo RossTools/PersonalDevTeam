@@ -184,7 +184,7 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
       onDragStart={draggable ? onDragStart : undefined}
       onDragEnd={() => setDragging(false)}
       className={cn(
-        'group/card relative flex flex-col rounded-md border border-border bg-card',
+        'group/card relative flex flex-col rounded-md border border-border bg-card shadow-card',
         'transition-colors duration-(--pdt-duration) hover:border-input motion-reduce:transition-none',
         draggable && 'cursor-grab active:cursor-grabbing',
         dragging && 'opacity-50',
