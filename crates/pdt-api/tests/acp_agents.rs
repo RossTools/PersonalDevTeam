@@ -229,8 +229,11 @@ async fn a_persona_on_an_acp_agent_runs_an_agent_step_through_a_permission_reque
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
     assert_eq!((r["status"].as_str(), r["output"]["result"].as_str()), (Some("succeeded"), Some("approved")), "{r:#}");
-    let says = said(&events(&env, &session).await);
-    assert!(says.iter().any(|m| m.starts_with("mcp submit_outcome:")), "{says:?}");
+    // The outcome can end the run before the agent's message about it is recorded.
+    wait_for(&env, &session, "the agent saying it submitted", |a| {
+        said(a).iter().any(|m| m.starts_with("mcp submit_outcome:"))
+    })
+    .await;
 }
 
 #[tokio::test]
