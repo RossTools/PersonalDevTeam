@@ -379,6 +379,10 @@ pub struct Notification {
     pub read_at: Option<i64>,
     #[ts(type = "number | null")]
     pub cleared_at: Option<i64>,
+    /// The user cleared it from Updates (PDT-224): hidden, and while its cause lasts (the row stays live) the same
+    /// cause updates it out of sight instead of raising it again.
+    #[ts(type = "number | null")]
+    pub dismissed_at: Option<i64>,
 }
 
 /// A notification to make (the Notifier fills in its Show and needs-you).
@@ -564,7 +568,7 @@ pub struct KindSetting {
 #[ts(export)]
 pub struct NotificationList {
     pub items: Vec<Notification>,
-    /// Updates not read yet (and not cleared): the dot on the Inbox.
+    /// Updates not read yet (not cleared, nor dismissed by the user): the dot on the Inbox.
     pub unread_updates: u32,
 }
 

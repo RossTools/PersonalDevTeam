@@ -1,4 +1,5 @@
-import { Button, List, ListRow, relativeTime } from '@ui';
+import { X } from 'lucide-react';
+import { Button, IconButton, List, ListRow, relativeTime } from '@ui';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import { TicketKey } from '../common/TicketKey';
@@ -40,11 +41,15 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading }: {
   );
 }
 
-/** Updates: notifications that wait on nothing, newest first: unread in bold, cleared ones dimmed. */
-export function UpdatesList({ updates, selectedId, onSelect, loading }: {
+/**
+ * Updates: notifications that wait on nothing, newest first: unread in bold, resolved ones dimmed. With `onClear`, each
+ * row has a Clear button (on hover, always on touch).
+ */
+export function UpdatesList({ updates, selectedId, onSelect, onClear, loading }: {
   updates: Notification[];
   selectedId: string | null;
   onSelect: (selection: string) => void;
+  onClear?: (id: string) => void;
   loading?: boolean;
 }) {
   const update = selectedUpdate(selectedId);
@@ -63,6 +68,12 @@ export function UpdatesList({ updates, selectedId, onSelect, loading }: {
               bold={u.readAt === null && u.clearedAt === null}
               className={u.clearedAt !== null ? 'opacity-60' : undefined}
               secondary={[u.body, relativeTime(u.createdAt)].filter(Boolean).join(' · ')}
+              trailing={onClear && (
+                <IconButton label="Clear" size="sm" onClick={() => onClear(u.id)}
+                  className="text-muted-foreground opacity-0 group-data-hovered/row:opacity-100 group-data-focus-visible/row:opacity-100 data-focus-visible:opacity-100 pointer-coarse:opacity-100">
+                  <X size={12} aria-hidden />
+                </IconButton>
+              )}
             />
           ))}
         </List>
@@ -72,15 +83,17 @@ export function UpdatesList({ updates, selectedId, onSelect, loading }: {
 }
 
 /**
- * The Inbox's list column (UX spec §8.4, PDT-108 §5.1): **Needs you**, then **Updates**, with Mark all read and a way
- * to the notification settings.
+ * The Inbox's list column (UX spec §8.4, PDT-108 §5.1): **Needs you**, then **Updates**, with Mark all read, Clear all
+ * (and Clear on each Update) and a way to the notification settings.
  */
-export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll, onSettings, loading }: {
+export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll, onClear, onClearAll, onSettings, loading }: {
   items: InboxItem[];
   updates?: Notification[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onReadAll?: () => void;
+  onClear?: (id: string) => void;
+  onClearAll?: () => void;
   onSettings?: () => void;
   loading?: boolean;
 }) {
@@ -93,9 +106,10 @@ export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll
         <div className="flex items-center gap-1 pt-1 pr-2">
           <h2 className={cn(heading, 'flex-1')}>Updates</h2>
           {onReadAll && <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" disabled={!unread} onClick={onReadAll}>Mark all read</Button>}
+          {onClearAll && <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" disabled={updates.length === 0} onClick={onClearAll}>Clear all</Button>}
           {onSettings && <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" onClick={onSettings}>Settings</Button>}
         </div>
-        <UpdatesList updates={updates} selectedId={selectedId} onSelect={onSelect} loading={loading} />
+        <UpdatesList updates={updates} selectedId={selectedId} onSelect={onSelect} onClear={onClear} loading={loading} />
       </section>
     </nav>
   );

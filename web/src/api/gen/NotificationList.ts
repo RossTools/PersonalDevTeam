@@ -6,6 +6,6 @@ import type { Notification } from "./Notification";
  */
 export type NotificationList = { items: Array<Notification>, 
 /**
- * Updates not read yet (and not cleared): the dot on the Inbox.
+ * Updates not read yet (not cleared, nor dismissed by the user): the dot on the Inbox.
  */
 unreadUpdates: number, };

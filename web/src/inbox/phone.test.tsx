@@ -57,7 +57,7 @@ const waiting = item('session:sess', { kind: 'session', group: 'session', sessio
 
 const update = (id: string, over: Partial<Notification> = {}): Notification => ({
   id, kind: 'pr.merged', severity: 'info', title: `Update ${id}`, body: null, target: { kind: 'none' }, projectId: null,
-  ticketId: null, sessionId: null, inboxItemId: null, readAt: null, clearedAt: null, createdAt: Date.now(), ...over,
+  ticketId: null, sessionId: null, inboxItemId: null, readAt: null, clearedAt: null, dismissedAt: null, createdAt: Date.now(), ...over,
 } as Notification);
 
 const answered = (calls: Call[]) => calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body;
@@ -101,7 +101,7 @@ function PhoneInbox({ items }: { items: InboxItem[] }) {
   const [id, setId] = useState<string | null>(null);
   return id
     ? <PhoneInboxItem items={items} updates={[]} itemId={id} onMove={setId} onList={() => setId(null)} />
-    : <PhoneInboxList items={items} updates={[]} onOpen={setId} onReadAll={() => {}} onSettings={() => {}} />;
+    : <PhoneInboxList items={items} updates={[]} onOpen={setId} onReadAll={() => {}} onClear={() => {}} onClearAll={() => {}} onSettings={() => {}} />;
 }
 
 describe('phone inbox: opening a question (PDT-209)', () => {
@@ -160,7 +160,7 @@ describe('phone inbox list', () => {
   it('shows Needs you with its count, and Review all opens the first item in list order', async () => {
     stubApi({});
     const onOpen = vi.fn();
-    renderWithQuery(<PhoneInboxList items={[stalled, waiting, question]} updates={[update('u1')]} onOpen={onOpen} onReadAll={() => {}} onSettings={() => {}} />);
+    renderWithQuery(<PhoneInboxList items={[stalled, waiting, question]} updates={[update('u1')]} onOpen={onOpen} onReadAll={() => {}} onClear={() => {}} onClearAll={() => {}} onSettings={() => {}} />);
     expect(screen.getByRole('radio', { name: 'Needs you (3)' })).toBeChecked();
     expect(screen.getByRole('radio', { name: 'Updates (unread)' })).toBeInTheDocument();
     // Sessions waiting come after Approvals, before Stalled.
@@ -175,12 +175,25 @@ describe('phone inbox list', () => {
   it('shows the Updates on their own segment, without Review all', async () => {
     stubApi({});
     const onOpen = vi.fn();
-    renderWithQuery(<PhoneInboxList items={[question]} updates={[update('u1')]} onOpen={onOpen} onReadAll={() => {}} onSettings={() => {}} />);
+    renderWithQuery(<PhoneInboxList items={[question]} updates={[update('u1')]} onOpen={onOpen} onReadAll={() => {}} onClear={() => {}} onClearAll={() => {}} onSettings={() => {}} />);
     await userEvent.click(screen.getByRole('radio', { name: 'Updates (unread)' }));
     expect(screen.queryByRole('button', { name: /Review all/ })).toBeNull();
     await userEvent.click(screen.getByText('Update u1'));
     expect(onOpen).toHaveBeenCalledWith('update:u1');
     // The list remembers its segment: back to Needs you for the tests after this one.
+    await userEvent.click(screen.getByRole('radio', { name: /Needs you/ }));
+  });
+
+  it('clears one Update, or all of them (PDT-224)', async () => {
+    stubApi({});
+    const onClear = vi.fn();
+    const onClearAll = vi.fn();
+    renderWithQuery(<PhoneInboxList items={[]} updates={[update('u1'), update('u2')]} onOpen={() => {}} onReadAll={() => {}} onClear={onClear} onClearAll={onClearAll} onSettings={() => {}} />);
+    await userEvent.click(screen.getByRole('radio', { name: 'Updates (unread)' }));
+    await userEvent.click(screen.getAllByRole('button', { name: 'Clear' })[1]);
+    expect(onClear).toHaveBeenCalledWith('u2');
+    await userEvent.click(screen.getByRole('button', { name: 'Clear all' }));
+    expect(onClearAll).toHaveBeenCalled();
     await userEvent.click(screen.getByRole('radio', { name: /Needs you/ }));
   });
 });

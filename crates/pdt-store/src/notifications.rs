@@ -6,7 +6,7 @@ use sqlx::sqlite::SqliteRow;
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
 const COLUMNS: &str = "id, seq, kind, needs_you, severity, show, project_id, ticket_id, session_id, run_id, \
-                       inbox_item_id, title, body, target, dedupe_key, created_at, read_at, cleared_at";
+                       inbox_item_id, title, body, target, dedupe_key, created_at, read_at, cleared_at, dismissed_at";
 
 fn corrupt(what: &str, v: &str) -> StoreError {
     StoreError::Corrupt(format!("{what} {v:?}"))
@@ -36,6 +36,7 @@ fn to_row(r: &SqliteRow) -> Result<Notification, StoreError> {
         created_at: r.try_get("created_at")?,
         read_at: r.try_get("read_at")?,
         cleared_at: r.try_get("cleared_at")?,
+        dismissed_at: r.try_get("dismissed_at")?,
     })
 }
 
@@ -65,7 +66,8 @@ pub struct NotificationFilter {
 }
 
 impl Store {
-    /// Makes a notification, or updates the live row of its `dedupe_key` (title, body, created_at; unread again).
+    /// Makes a notification, or updates the live row of its `dedupe_key` (title, body, created_at; unread again). A live
+    /// row the user dismissed stays dismissed: its cause hasn't gone away.
     pub async fn put_notification(
         &self,
         n: &NewNotification,
@@ -164,9 +166,10 @@ impl Store {
         rows.iter().map(to_row).collect()
     }
 
-    /// Rows newest first.
+    /// Rows newest first; never those the user dismissed.
     pub async fn list_notifications(&self, f: &NotificationFilter) -> Result<Vec<Notification>, StoreError> {
-        let mut qb = QueryBuilder::<Sqlite>::new(format!("SELECT {COLUMNS} FROM notifications WHERE 1 = 1"));
+        let mut qb =
+            QueryBuilder::<Sqlite>::new(format!("SELECT {COLUMNS} FROM notifications WHERE dismissed_at IS NULL"));
         if let Some(s) = f.section {
             qb.push(" AND needs_you = ").push_bind(s == Section::NeedsYou);
         }
@@ -187,11 +190,11 @@ impl Store {
         rows.iter().map(to_row).collect()
     }
 
-    /// Updates neither read nor cleared (the Inbox's dot).
+    /// Updates neither read, cleared nor dismissed (the Inbox's dot).
     pub async fn unread_updates(&self, project_id: Option<&str>) -> Result<u32, StoreError> {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM notifications WHERE needs_you = 0 AND read_at IS NULL AND cleared_at IS NULL \
-             AND (? IS NULL OR project_id = ? OR project_id IS NULL)",
+             AND dismissed_at IS NULL AND (? IS NULL OR project_id = ? OR project_id IS NULL)",
         )
         .bind(project_id)
         .bind(project_id)
@@ -200,9 +203,13 @@ impl Store {
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
-    /// Rows changed after `seq`, in order (the stream's catch-up).
+    /// Rows changed after `seq`, in order (the stream's catch-up), but for live rows the user dismissed.
     pub async fn notifications_after(&self, seq: i64, limit: i64) -> Result<Vec<Notification>, StoreError> {
-        let sql = format!("SELECT {COLUMNS} FROM notifications WHERE seq > ? ORDER BY seq LIMIT ?");
+        // A dismissed row that is still live changed out of sight: nothing to tell.
+        let sql = format!(
+            "SELECT {COLUMNS} FROM notifications WHERE seq > ? AND (dismissed_at IS NULL OR cleared_at IS NOT NULL) \
+             ORDER BY seq LIMIT ?"
+        );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(seq).bind(limit).fetch_all(&self.pool).await?;
         rows.iter().map(to_row).collect()
     }
@@ -241,6 +248,34 @@ impl Store {
             qb.push(" AND inbox_item_id = ").push_bind(i.to_string());
         }
         Ok(qb.build().execute(&self.pool).await?.rows_affected())
+    }
+
+    /// The user clears an Update from the Inbox (PDT-224): hidden from then on, and read. False when there is no such
+    /// Update (a Needs-you row is cleared by its cause, never by this).
+    pub async fn dismiss_notification(&self, id: &str, now: i64) -> Result<bool, StoreError> {
+        let r = sqlx::query(
+            "UPDATE notifications SET dismissed_at = COALESCE(dismissed_at, ?), read_at = COALESCE(read_at, ?) \
+             WHERE id = ? AND needs_you = 0",
+        )
+        .bind(now)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Dismisses every Update not dismissed yet ("Clear all"). Returns how many went.
+    pub async fn dismiss_updates(&self, now: i64) -> Result<u64, StoreError> {
+        let r = sqlx::query(
+            "UPDATE notifications SET dismissed_at = ?, read_at = COALESCE(read_at, ?) \
+             WHERE needs_you = 0 AND dismissed_at IS NULL",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected())
     }
 
     /// Deletes rows made before `before`, except live Needs-you rows (their cause still waits). Returns how many went.
@@ -316,5 +351,43 @@ mod tests {
         assert_eq!(store.prune_notifications(100).await.unwrap(), 2, "the live Needs-you row stays");
         store.clear_notification("q", 9).await.unwrap();
         assert_eq!(store.prune_notifications(100).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn dismissed_updates_stay_hidden_while_their_cause_lasts() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_project(dir.path()).await;
+        let (q, _) =
+            store.put_notification(&new(NotificationKind::SessionNeedsYou, "q"), Show::Desktop, 5).await.unwrap();
+        let (a, _) = store.put_notification(&new(NotificationKind::PrConflict, "a"), Show::Inbox, 6).await.unwrap();
+        store.put_notification(&new(NotificationKind::PrMerged, "b"), Show::Inbox, 7).await.unwrap();
+        let updates = NotificationFilter { section: Some(Section::Updates), limit: 50, ..Default::default() };
+
+        assert!(store.dismiss_notification(&a.id, 8).await.unwrap());
+        assert!(!store.dismiss_notification(&q.id, 8).await.unwrap(), "Needs you isn't the user's to clear");
+        assert!(!store.dismiss_notification("nope", 8).await.unwrap());
+        let shown = store.list_notifications(&updates).await.unwrap();
+        assert_eq!(shown.iter().map(|n| n.dedupe_key.as_str()).collect::<Vec<_>>(), ["b"]);
+        assert_eq!(store.unread_updates(None).await.unwrap(), 1);
+
+        // The same cause again: the live row updates, out of sight and off the stream's catch-up.
+        let seq = store.last_notification_seq().await.unwrap();
+        let (again, c) = store.put_notification(&new(NotificationKind::PrConflict, "a"), Show::Inbox, 9).await.unwrap();
+        assert_eq!((c, again.id.as_str(), again.dismissed_at), (Change::Updated, a.id.as_str(), Some(8)));
+        assert_eq!(store.list_notifications(&updates).await.unwrap().len(), 1);
+        assert_eq!(store.unread_updates(None).await.unwrap(), 1);
+        assert!(store.notifications_after(seq, 10).await.unwrap().is_empty());
+        assert!(store.live_notifications().await.unwrap().iter().any(|n| n.id == a.id), "still live: not made again");
+
+        // Once the cause went away, a new one shows.
+        store.clear_notification("a", 10).await.unwrap();
+        store.put_notification(&new(NotificationKind::PrConflict, "a"), Show::Inbox, 11).await.unwrap();
+        assert_eq!(store.list_notifications(&updates).await.unwrap().len(), 2);
+
+        assert_eq!(store.dismiss_updates(12).await.unwrap(), 2);
+        assert!(store.list_notifications(&updates).await.unwrap().is_empty());
+        assert_eq!(store.unread_updates(None).await.unwrap(), 0);
+        let needs = NotificationFilter { section: Some(Section::NeedsYou), limit: 50, ..Default::default() };
+        assert_eq!(store.list_notifications(&needs).await.unwrap().len(), 1, "Needs you stays");
     }
 }

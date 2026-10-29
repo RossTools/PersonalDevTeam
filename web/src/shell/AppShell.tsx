@@ -70,7 +70,7 @@ import { triageTitle } from '../inbox/model';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useDevTitle } from './useInstance';
 import { NotificationSettingsPage } from '../notifications/NotificationSettingsPage';
-import { useReadAllUpdates, useUpdates } from '../notifications/queries';
+import { useReadAllUpdates, useClearUpdate, useClearAllUpdates, useUpdates } from '../notifications/queries';
 import { useNotificationStream } from '../notifications/useNotificationStream';
 import { useAttention, useFaviconBadge, type Attention } from '../notifications/attention';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
@@ -513,6 +513,8 @@ export function AppShell() {
   // Notifications (PDT-108): the Inbox's Updates, the stream's toasts and desktop notifications, and where a click goes.
   const updates = useUpdates();
   const readAllUpdates = useReadAllUpdates();
+  const clearUpdate = useClearUpdate();
+  const clearAllUpdates = useClearAllUpdates();
   const unreadUpdates = (updates.data?.unreadUpdates ?? 0) > 0;
   // The PM's unread reply: no dot for the conversation on screen (on a phone `/pm` is the list).
   const pmShown = route.view !== 'pm' || (phone && pmSelection === 'current') ? null
@@ -624,7 +626,8 @@ export function AppShell() {
   ) : view === 'inbox' ? (
     <InboxList items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} loading={inbox.isLoading}
       onSelect={(id) => { setInboxId(id); setSheetOpen(false); }}
-      onReadAll={() => readAllUpdates.mutate()} onSettings={() => showProjectSettings(NOTIFICATIONS)} />
+      onReadAll={() => readAllUpdates.mutate()} onClear={(id) => clearUpdate.mutate(id)} onClearAll={() => clearAllUpdates.mutate()}
+      onSettings={() => showProjectSettings(NOTIFICATIONS)} />
   ) : view === 'pm' ? (
     <PmList selection={pmSelection} onSelect={(sel) => { setPmSelection(sel); setSheetOpen(false); }} onNew={newPmSession} />
   ) : view === 'notes' ? (
@@ -917,7 +920,8 @@ export function AppShell() {
             ) : phoneList && view === 'inbox' ? (
               <PhoneInboxList items={inboxItems} updates={updates.data?.items ?? []} loading={inbox.isLoading}
                 onOpen={(id) => go({ view: 'inbox', itemId: id })}
-                onReadAll={() => readAllUpdates.mutate()} onSettings={() => showProjectSettings(NOTIFICATIONS)} />
+                onReadAll={() => readAllUpdates.mutate()} onClear={(id) => clearUpdate.mutate(id)} onClearAll={() => clearAllUpdates.mutate()}
+                onSettings={() => showProjectSettings(NOTIFICATIONS)} />
             ) : phoneList ? (
               <div className="flex-1 overflow-auto px-1">
                 {list}
