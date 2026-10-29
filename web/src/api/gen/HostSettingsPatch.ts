@@ -40,4 +40,8 @@ claudeProgram?: string, codexProgram?: string, devinProgram?: string,
 /**
  * The whole list of the user's ACP agents.
  */
-acpAgents?: Array<AcpAgentConfig>, };
+acpAgents?: Array<AcpAgentConfig>, 
+/**
+ * Default models for the agents it names; the others keep theirs. Blank clears one (back to the agent's own).
+ */
+agentModels?: Partial<Record<AgentKind, string>>, };

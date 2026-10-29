@@ -18,7 +18,7 @@ import { FolderField } from '../common/FolderField';
 import { HOST_SECTIONS } from '../common/settingsSections';
 import { SettingsScreens } from '../common/SettingsScreens';
 import { useAction } from '../common/useAction';
-import { PermissionModeSelect } from '../conversation/ConversationComposer';
+import { DEFAULT_MODEL, modelChoices, PermissionModeSelect } from '../conversation/ConversationComposer';
 import { navigate } from '../shell/router';
 import { useAgents } from '../common/agents';
 import { AcpAgents } from './AcpAgents';
@@ -404,6 +404,55 @@ function Agents({ v }: { v: HostSettingsView }) {
         <SaveNote s={save} />
         <Select aria-label="Host agent credentials" className="w-72 max-w-full" options={credentialPolicies} value={v.settings.agentCredentials} onChange={(c) => void save.save({ agentCredentials: c })} />
       </SettingsRow>
+    </Section>
+  );
+}
+
+/** One agent's default model: a pick from the models its conversations offer, or typed while it has listed none. */
+function DefaultModel({ agent, label, value }: { agent: AgentKind; label: string; value: string | null }) {
+  const save = useSaveSettings();
+  const caps = useQuery({ queryKey: ['agent-capabilities', agent], queryFn: () => api.agentCapabilities(agent), staleTime: 60_000 });
+  const models = caps.data?.models ?? [];
+  const set = (model: string | null) => ({ agentModels: { [agent]: model ?? '' } });
+  return (
+    <SettingsRow label={label}>
+      {models.length ? (
+        <>
+          <SaveNote s={save} />
+          <Select
+            aria-label={`${label} default model`}
+            className="w-48"
+            options={modelChoices(models, value, "Agent's default")}
+            value={value ?? DEFAULT_MODEL}
+            onChange={(m) => void save.save(set(m === DEFAULT_MODEL ? null : m))}
+          />
+        </>
+      ) : (
+        <AutoSaveText
+          aria-label={`${label} default model`}
+          mono
+          className="w-48"
+          spellCheck={false}
+          placeholder="Agent's default"
+          value={value ?? ''}
+          onSave={async (m) => save.saveText(set(m || null))}
+        />
+      )}
+    </SettingsRow>
+  );
+}
+
+/**
+ * The model each agent starts with when neither the session nor its persona picks one (PDT-265). The list is the one
+ * the conversation's model picker shows; until the agent has run a conversation it has none, and the name is typed.
+ */
+function DefaultModels({ v }: { v: HostSettingsView }) {
+  const agents = useAgents();
+  return (
+    <Section label="Default models" description="The model each agent starts with: conversations, terminals (Claude and Codex), workflow steps and the PM. A model picked in the conversation or set on the persona wins.">
+      {agents.all.map((a) => (
+        <DefaultModel key={a} agent={a} label={agents.label(a)} value={v.settings.agentModels?.[a] ?? null} />
+      ))}
     </Section>
   );
 }
@@ -795,7 +844,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
   const nodes: Record<string, ReactNode> = {
     'Setup': <Setup />,
     'Updates': <Updates v={v} />,
-    'Agents': <><Agents v={v} /><Programs v={v} /><AcpAgents v={v} /></>,
+    'Agents': <><Agents v={v} /><DefaultModels v={v} /><Programs v={v} /><AcpAgents v={v} /></>,
     'Network': <Network v={v} />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,
     'Runs': <Runs v={v} />,

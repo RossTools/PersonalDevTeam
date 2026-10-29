@@ -420,6 +420,35 @@ async fn idle_conversations_park_and_settings_apply_on_resume() {
 }
 
 #[tokio::test]
+async fn a_conversation_with_no_model_starts_with_the_agents_default_model() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let (st, v) =
+        call(&env.app, "PUT", "/api/host/settings", Some(json!({"agentModels": {"claude": "opus", "codex": "gpt-5"}})))
+            .await;
+    assert_eq!(st.as_u16(), 200, "{v}");
+    let s = new_conversation(&env, json!({"initialPrompt": "who"})).await;
+    let id = s["id"].as_str().unwrap().to_string();
+    assert_eq!(s["model"], Value::Null, "the session keeps no model of its own");
+    let all = wait_turns(&env, &id, 1).await;
+    assert!(agent_text(&all)[0].contains("model=opus"), "{:?}", agent_text(&all));
+    // The session's own model wins.
+    let own = new_conversation(&env, json!({"initialPrompt": "who", "model": "haiku"})).await;
+    let own_id = own["id"].as_str().unwrap().to_string();
+    let all = wait_turns(&env, &own_id, 1).await;
+    assert!(agent_text(&all)[0].contains("model=haiku"), "{:?}", agent_text(&all));
+    // Back to "Default" is the agent's default model, live.
+    let (st, v) = call(&env.app, "PATCH", &format!("/api/sessions/{own_id}"), Some(json!({"model": null}))).await;
+    assert_eq!(st.as_u16(), 200, "{v}");
+    send(&env, &own_id, "who").await;
+    let all = wait_turns(&env, &own_id, 2).await;
+    assert!(agent_text(&all).last().unwrap().contains("model=opus"), "{:?}", agent_text(&all));
+    for id in [id, own_id] {
+        call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    }
+}
+
+#[tokio::test]
 async fn a_shutdown_ends_the_turn_and_the_next_pdtd_reopens_on_send() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;

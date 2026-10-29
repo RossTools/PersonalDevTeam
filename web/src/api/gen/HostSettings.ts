@@ -74,4 +74,9 @@ claudeProgram: string | null, codexProgram: string | null, devinProgram: string 
 /**
  * The ACP agents the user added (Settings → Agents → Add ACP agent; PDT-234), agent kinds `acp:<id>`.
  */
-acpAgents: Array<AcpAgentConfig>, };
+acpAgents: Array<AcpAgentConfig>, 
+/**
+ * A default model for each agent (Settings → Agents, PDT-265). A session with no model of its own (nor its
+ * persona's) starts with it; an agent without one uses the agent's own default (`HostSettings::model_for`).
+ */
+agentModels: Partial<Record<AgentKind, string>>, };
