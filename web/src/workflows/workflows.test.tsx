@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { TopBarActionsContext, type TopBarActions } from '../shell/PhoneTopBar';
+import { OpenSessionContext } from '../tickets/actions';
 import { Reply, renderWithQuery, stubApi, type Call } from '../test-utils';
 import { DryRunDialog } from './DryRunDialog';
 import { RunsView } from './RunsView';
@@ -212,6 +213,24 @@ describe('runs view', () => {
     await userEvent.click(first);
     expect(first).toHaveAttribute('aria-expanded', 'true');
     expect(within(steps).getByText(/"ticket": "PDT-1"/)).toBeInTheDocument();
+  });
+
+  it('opens an agent step\'s session from its step', async () => {
+    const ended = run('succeeded', [step('s1', 'ci', 'succeeded'), step('s2', 'tell', 'succeeded', { output: { outcome: 'done', sessionId: 'sx' } })]);
+    stubApi({
+      'GET /api/workflow-runs': [ended],
+      'GET /api/workflow-runs/r1': ended,
+      'GET /api/workflows/w1/versions/1': { workflowId: 'w1', version: 1, author: 'user', status: 'saved', note: '', createdAt: 1, doc: DOC },
+      'POST /api/workflows/check': check,
+      'GET /api/sessions/sx': { id: 'sx', projectId: 'p1' },
+    });
+    const open = vi.fn();
+    renderWithQuery(<OpenSessionContext.Provider value={open}><RunsView workflowId="w1" catalog={CATALOG} runId={null} onRunChange={() => {}} /></OpenSessionContext.Provider>);
+    const steps = await screen.findByRole('list', { name: 'Steps' });
+    const buttons = await within(steps).findAllByRole('button', { name: 'Open session' });
+    expect(buttons).toHaveLength(1);
+    await userEvent.click(buttons[0]);
+    await waitFor(() => expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: 'sx', projectId: 'p1' })));
   });
 
   it('resumes a run from the agent step it timed out at', async () => {

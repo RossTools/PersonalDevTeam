@@ -860,7 +860,9 @@ The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings â†
     opens the same editor over most of the screen (Done keeps the edit, Cancel drops it).
 - Runs (`RunsView`): the runs (polled), and a run's graph of the version it ran with the path taken, its steps (input,
   output, error), Retry from the failed step, Resume from a timed-out or stopped agent step, Cancel, and a waiting
-  gate's choices.
+  gate's choices. A step whose output names a session (an agent step's, `session.send`'s) has Open session: its tab,
+  else a new one in its project's workspace (the workspace on screen when its project has none, as for a host-project
+  step).
 - Dry run (`DryRunDialog`): the draft against a recent event of its trigger types, a hand-written one (prefilled from
   the trigger's schema) or a manual input; the path, why triggers didn't match, and what each action would do.
 - Versions (`VersionsView`): every version with author, status and note, a diff against the current one, Restore,
@@ -894,7 +896,9 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   attempt's Start workspace (after the ticket's tab and the sessions before it: Coder, Reviewer, QA), else the
   project's workspace (a Refiner before any attempt, or the workspace is gone), as a session the user's Start makes
   would (PDT-103, PDT-105); each pass's new session opens its own tab, and earlier passes' stay like other ended
-  sessions. A step with no ticket opens no tab. A reused session gets the step through the outbox
+  sessions. A step with no ticket opens no tab, and once its session ends (finished or interrupted) the session lists
+  (the Agents sidebar and phone drawer, Bring here, the palette) leave it out unless a tab holds it (PDT-263): it is
+  kept, and opens from its run's step (Open session). A reused session gets the step through the outbox
   (never into a running turn), with the step's rules in the message since its instructions were fixed at its start.
   On a later pass in the same session (sent back by Review, QA or a rejection) it gets only why it is back (the
   sending step's outcome and summary, then its line comments as a list of findings, PDT-161; or the user's gate
