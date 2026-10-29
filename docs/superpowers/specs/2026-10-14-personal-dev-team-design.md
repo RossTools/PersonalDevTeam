@@ -259,7 +259,7 @@ Transitions are therefore **explicit, typed tool calls**, never guessed from the
 
 ### 7.2 Design language: Graphite
 
-- **Base:** cool neutral grays. Dark-mode background `#0e0f12`, surface `#17181d`, border `#26282f`, text `#e7e8ec`, muted text `#8a8f9c`. Light mode is equivalent, with a `#f7f7f9` background.
+- **Base:** cool neutral grays. Dark-mode background `#0e0f12`, surface `#17181d`, border `#26282f`, text `#e7e8ec`, muted text `#8a8f9c`. Light mode is equivalent, with a `#f2f3f6` background.
 - **Accent:** muted blue, `#3561b8` in dark mode (text on accent `#eef2fb`), `#2563eb` in light mode. Used for the primary button, selected item, links and focus ring.
 - **Status colors** (kept separate from the accent): running green, waiting amber, failed red, idle gray.
 - **Type:** Inter for the interface, JetBrains Mono for code and terminals.

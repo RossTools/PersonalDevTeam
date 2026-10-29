@@ -14,7 +14,7 @@ describe('Button', () => {
       </>,
     );
     expect(screen.getByRole('button', { name: 'P' }).className).toContain('bg-primary');
-    expect(screen.getByRole('button', { name: 'S' }).className).toContain('border-border');
+    expect(screen.getByRole('button', { name: 'S' }).className).toContain('border-input');
     expect(screen.getByRole('button', { name: 'G' }).className).toContain('text-muted-foreground');
     expect(screen.getByRole('button', { name: 'D' }).className).toContain('text-destructive');
   });

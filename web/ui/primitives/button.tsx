@@ -17,7 +17,7 @@ const buttonVariants = cva(
       variant: {
         default: "bg-primary font-semibold text-primary-foreground hover:brightness-110",
         outline:
-          "border-border bg-card text-foreground hover:bg-surface-2 aria-expanded:bg-surface-2 aria-pressed:bg-accent",
+          "border-input bg-card text-foreground hover:bg-surface-2 aria-expanded:bg-surface-2 aria-pressed:bg-accent",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-accent aria-expanded:bg-accent",
         ghost:
