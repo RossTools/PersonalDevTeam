@@ -12,6 +12,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::conversation::SessionMode;
+use pdt_core::forge::ForgeKind;
 use pdt_core::policy::{Merger, may_merge};
 use pdt_core::pr::{CiGate, Mergeable, PrState};
 use pdt_core::project::Project;
@@ -25,11 +26,12 @@ use pdt_core::session::{Session, SessionKind};
 use pdt_core::ticket::{Actor, AttemptState, EventKind, Ticket};
 use pdt_core::workflow::events::MergeVia;
 use pdt_core::worktree::Worktree;
-use pdt_forge::{MergeSettings, MergeStrategy};
+use pdt_forge::{CiConfig, CiProvider, MergeSettings, MergeStrategy};
 use pdt_store::AttemptInfo;
 use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 fn conflict(code: &'static str, message: impl Into<String>) -> ApiError {
     ApiError::new(StatusCode::CONFLICT, code, message)
@@ -644,9 +646,13 @@ pub(crate) async fn merge_attempt(
             .ok_or_else(|| conflict("merge_failed", "the project no longer has a forge to merge the pull request"))?;
         // A workflow's or an agent's merge waits for green CI (PDT-151), whatever the repository's branch protection
         // asks: GitHub's auto-merge merges at once where nothing is required. On a forge that doesn't hold merges for
-        // required checks, it always waits (PDT-176).
-        let no_ci = if automated && (policy.require_green_ci || !forge.caps().required_checks) {
-            match ci_gate(&st, &info, &forge).await.map_err(|m| conflict("ci_unreadable", m))? {
+        // required checks, it always waits (PDT-176), for every CI provider (PDT-242).
+        let providers = crate::ci::project_ci(&st, &info.project_id, &info.repo_path, Some(&forge)).await;
+        // The local forge holds a merge for its own CI only (PDT-242): with other providers PDT waits for them too.
+        let holds = forge.caps().required_checks
+            && (forge.kind != ForgeKind::LOCAL || providers.iter().all(|p| p.id() == pdt_core::pr::LOCAL_CI));
+        let no_ci = if automated && (policy.require_green_ci || !holds) {
+            match ci_gate(&st, &info, &forge, &providers).await.map_err(|m| conflict("ci_unreadable", m))? {
                 CiGate::Passed => false,
                 CiGate::NoCi => true,
                 CiGate::Pending(reason) => return Ok(Err(Refusal { code: "ci_pending", reason, fixable: false })),
@@ -774,36 +780,60 @@ async fn no_local_merge(st: &AppState, info: &AttemptInfo, read: bool) -> Result
     Ok(None)
 }
 
-/// The CI gate of an automated merge of the attempt's open pull request (PDT-151): its head's CI read from the forge
-/// now. The repository has CI when the head (or the branch) has the forge's CI configuration (GitHub Actions
-/// workflows) or the project a CI integration (its pipelines), so no run yet is CI still to come. A project
-/// with a CI integration waits for its builds on the head too, so green Actions alone don't pass while it hasn't
-/// reported on that head.
-/// A read from the forge that fails is an error (`ci_unreadable`), as a failing merge is: the last look may be older
-/// than the head's CI, and no CI event would end a wait once the forge answers again.
-async fn ci_gate(st: &AppState, info: &AttemptInfo, forge: &ProjectForge) -> Result<CiGate, String> {
+/// The CI gate of an automated merge of the attempt's open pull request (PDT-151): its head's CI read now, from every
+/// one of the project's CI providers (PDT-242). A provider has CI to come when it is set up for the project (Buildkite's
+/// pipelines, the local `[ci]` command) or the head (or the branch) has its configuration (GitHub Actions workflows), so
+/// no run of it yet is CI still to come: green from one provider doesn't pass while another hasn't reported on the
+/// head. A read that fails (the forge's, or a provider's) is an error (`ci_unreadable`), as a failing merge is: the
+/// last look may be older than the head's CI, and no CI event would end a wait once it answers again.
+async fn ci_gate(
+    st: &AppState,
+    info: &AttemptInfo,
+    forge: &ProjectForge,
+    providers: &[Arc<dyn CiProvider>],
+) -> Result<CiGate, String> {
     crate::github::refresh_attempt(st, info).await;
     let name = forge.api.name();
-    let Some((pr, ci, reported)) = crate::github::head_ci(st, &info.attempt.id) else {
+    let Some((pr, errors)) = crate::github::head_ci(st, &info.attempt.id) else {
         return Err(format!("{SHORT_NAME} couldn't read the change request's CI from {name}"));
     };
     // A failed read keeps the last look, which may be older than the head's CI.
     if let Some(e) = &pr.error {
         return Err(format!("{SHORT_NAME} couldn't read the change request's CI from {name}: {e}"));
     }
-    let reg = st.registry();
-    let providers = match st.store.get_project_settings(&info.project_id).await {
-        Ok(s) => reg.integrations().iter().filter_map(|i| i.project_ci(&s).map(|label| (i.id(), label))).collect(),
-        Err(_) => vec![],
-    };
-    let waiting_for = providers.iter().find(|(id, _)| !reported.iter().any(|r| r == id)).map(|(_, label)| *label);
-    let has_ci = !providers.is_empty()
-        || match forge.api.has_ci() {
-            Some(known) => known,
-            None => {
+    if let Some((id, e)) = errors.iter().next() {
+        let label = providers.iter().find(|p| p.id() == id).map_or(id.as_str(), |p| p.label());
+        return Err(format!("{SHORT_NAME} couldn't read {label}: {e}"));
+    }
+    let reported: Vec<String> =
+        pr.ci.as_ref().map(|c| c.providers().into_iter().map(String::from).collect()).unwrap_or_default();
+    let (has_ci, waiting_for) = expected_ci(info, &pr.head_sha, providers, &reported).await;
+    Ok(match pdt_core::pr::ci_gate(&pr, pr.ci.as_ref(), has_ci) {
+        CiGate::Passed | CiGate::NoCi if let Some(label) = waiting_for => CiGate::Pending(format!(
+            "{label} hasn't reported on {} at {} yet",
+            pr.name(),
+            pr.head_sha.get(..7).unwrap_or(&pr.head_sha)
+        )),
+        gate => gate,
+    })
+}
+
+/// Whether the repository has CI from any of `providers`, and the first of those with CI that hasn't `reported` on
+/// `head` yet (its label).
+async fn expected_ci(
+    info: &AttemptInfo,
+    head: &str,
+    providers: &[Arc<dyn CiProvider>],
+    reported: &[String],
+) -> (bool, Option<String>) {
+    let mut has_ci = false;
+    let mut waiting = None;
+    for p in providers {
+        let has = match p.config_paths() {
+            CiConfig::Known(known) => known,
+            CiConfig::Paths(dirs) => {
                 let repo = PathBuf::from(&info.repo_path);
-                let (head, branch) = (pr.head_sha.clone(), format!("refs/heads/{}", info.attempt.branch));
-                let dirs = forge.api.ci_dirs();
+                let (head, branch) = (head.to_string(), format!("refs/heads/{}", info.attempt.branch));
                 tokio::task::spawn_blocking(move || {
                     [head, branch].iter().any(|rev| dirs.iter().any(|d| pdt_git::has_files_under(&repo, rev, d)))
                 })
@@ -811,14 +841,12 @@ async fn ci_gate(st: &AppState, info: &AttemptInfo, forge: &ProjectForge) -> Res
                 .unwrap_or(true)
             }
         };
-    Ok(match pdt_core::pr::ci_gate(&pr, ci.as_ref(), has_ci) {
-        CiGate::Passed | CiGate::NoCi if let Some(label) = waiting_for => CiGate::Pending(format!(
-            "{label} hasn't reported on PR #{} at {} yet",
-            pr.number,
-            pr.head_sha.get(..7).unwrap_or(&pr.head_sha)
-        )),
-        gate => gate,
-    })
+        has_ci |= has;
+        if has && waiting.is_none() && !reported.iter().any(|r| r == p.id()) {
+            waiting = Some(p.label().to_string());
+        }
+    }
+    (has_ci, waiting)
 }
 
 /// `POST /api/attempts/{id}/ask-agent`: asks the coder session to clear what stops the merge: merge the base in and

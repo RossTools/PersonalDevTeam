@@ -26,8 +26,10 @@ structured view) are in [conversations.md](conversations.md). Code: crates/pdt-a
 - The forge tools (pdt-api `integrations/forge.rs`, actions with only a tool face, in the default tool set): they use
   the session's project forge and branch (its attempt's, a step's attempt's, else its worktree's).
   `change_request_view` (number or branch; state, mergeability, comments and reviews), `change_request_comment`
-  (`replyTo`: a review comment's id), `ci_runs` (with failed jobs), `ci_failed_logs` (a run's failed jobs with the
-  last 200 lines of each log; the newest failed run when no `runId`), `issue_view`, `issue_comment`. The PM has
+  (`replyTo`: a review comment's id), `ci_runs` (every CI provider's runs of the project, PDT-242, each naming its
+  `provider`, with failed jobs; `provider` for one), `ci_failed_logs` (a run's failed jobs with the last 200 lines of
+  each log; `provider` and `runId`, a text id or an Actions number; the newest failed run of any provider when no
+  `runId`), `issue_view`, `issue_comment`. The PM has
   `issue_view`. `issue_create` (PDT-221, pdt-api `integrations/github.rs`; also in the default set and the PM's) files
   an issue, from a ticket that then links it, and asks before each call ([github.md](github.md) "Filing issues"). PDT-185, for the session's own ticket attempt or worktree branch only (not a step's
   attempt, so a Reviewer or QA session opens and merges nothing): `change_request_open` (`title`, `body`, `base`:

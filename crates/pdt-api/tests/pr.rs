@@ -54,7 +54,7 @@ async fn setup_as(tmp: &std::path::Path, mode: &str) -> Env {
     state.conversations.notice_quiet = Duration::ZERO;
     state.typing_quiet = Duration::ZERO;
     let gh = Arc::new(FakeForge::default());
-    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::HostedForge::github(gh.clone()))]);
+    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::testing::fake_github(&gh))]);
     // pdt-mcp (a fake agent's `mcp:` calls) needs pdtd listening.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();
@@ -106,13 +106,14 @@ fn pr() -> ChangeRequest {
 
 fn run(id: u64, state: CiState) -> CiRun {
     CiRun {
-        id,
+        provider: "github_actions".into(),
+        id: id.to_string(),
         attempt: 1,
-        workflow: "ci".into(),
+        name: "ci".into(),
         state,
         url: format!("https://github.com/o/r/actions/runs/{id}"),
         head_sha: "abcdef1234".into(),
-        head_branch: BRANCH.into(),
+        branch: BRANCH.into(),
         created_at: "2026-10-18T00:00:00Z".into(),
         failed_jobs: vec![],
     }
@@ -728,7 +729,8 @@ async fn a_forge_without_reviews_or_queues_still_reports_ci() {
     pdt_api::refresh_prs(&env.state).await;
     pdt_api::refresh_prs(&env.state).await;
     assert_eq!(ticket(&env).await["attempt"]["pr"]["ci"]["state"], "failed");
-    let calls = env.gh.calls.lock().unwrap().clone();
+    let mut calls = env.gh.calls.lock().unwrap().clone();
+    calls.extend(env.gh.ci.calls.lock().unwrap().iter().cloned());
     assert!(calls.iter().any(|c| c == &format!("runs o/r {BRANCH}")), "{calls:?}");
     let asked = |what: &str| calls.iter().any(|c| c.starts_with(what));
     assert!(!asked("comments") && !asked("reviews") && !asked("queue"), "{calls:?}");

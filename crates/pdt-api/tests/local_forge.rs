@@ -129,6 +129,11 @@ async fn a_ticket_goes_through_local_ci_to_a_local_merge() {
     assert_eq!(failed.len(), 1, "{failed:#?}");
     let notice = failed[0]["payload"]["notice"]["text"].as_str().unwrap();
     assert!(notice.contains("change request #1") && notice.contains(&format!("curl -s {url}")), "{notice}");
+    // PDT-242: the local CI command is a CI provider of its own.
+    let p = &failed[0]["payload"];
+    assert_eq!((p["provider"].as_str(), p["runs"][0]["provider"].as_str()), (Some("local"), Some("local")));
+    assert_eq!(p["jobs"], json!(["git ls-files --error-unmatch ok.txt"]), "its job is the command");
+    assert!(p["runs"][0]["id"].is_string(), "{p}");
 
     // Merge…: set to merge, it waits for CI.
     let (s, r) =

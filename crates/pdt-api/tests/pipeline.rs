@@ -53,7 +53,7 @@ async fn setup_with(gh: Option<std::sync::Arc<FakeForge>>) -> Env {
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
     if let Some(gh) = gh {
-        state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::HostedForge::github(gh))]);
+        state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::testing::fake_github(&gh))]);
     }
     state.integrations = std::sync::Arc::new(pdt_api::Integrations::new(vec![std::sync::Arc::new(FakeCi)]));
     state.integrations.enable(&["fakeci".into()]);
@@ -85,8 +85,15 @@ impl pdt_api::Integration for FakeCi {
         })
     }
 
-    fn project_ci(&self, settings: &pdt_store::ProjectSettings) -> Option<&'static str> {
-        settings.integrations.contains_key("fakeci").then_some("Fake CI")
+    fn ci_provider(
+        &self,
+        _st: &pdt_api::sdk::AppState,
+        _project_id: &str,
+        settings: &pdt_store::ProjectSettings,
+    ) -> Option<std::sync::Arc<dyn pdt_forge::CiProvider>> {
+        let caps = pdt_forge::CiCapabilities { branches: true, ..pdt_forge::CiCapabilities::NONE };
+        let ci = pdt_forge::testing::FakeCi::new("fakeci", "Fake CI", caps, pdt_forge::CiConfig::Known(true));
+        settings.integrations.contains_key("fakeci").then(|| std::sync::Arc::new(ci) as _)
     }
 }
 
@@ -1238,13 +1245,14 @@ async fn conflicting_pr(abandon: bool) {
     gh.set_runs(
         &branch,
         vec![CiRun {
-            id: 8,
+            provider: "github_actions".into(),
+            id: "8".into(),
             attempt: 1,
-            workflow: "ci".into(),
+            name: "ci".into(),
             state: CiState::Passed,
             url: "https://github.com/o/r/actions/runs/8".into(),
             head_sha: "abcdef1234".into(),
-            head_branch: branch.clone(),
+            branch: branch.clone(),
             created_at: "2026-10-23T00:00:00Z".into(),
             failed_jobs: vec![],
         }],
@@ -1292,13 +1300,14 @@ async fn conflicting_pr(abandon: bool) {
 
 fn ci_run(id: u64, branch: &str, state: CiState) -> CiRun {
     CiRun {
-        id,
+        provider: "github_actions".into(),
+        id: id.to_string(),
         attempt: 1,
-        workflow: "ci".into(),
+        name: "ci".into(),
         state,
         url: format!("https://github.com/o/r/actions/runs/{id}"),
         head_sha: "abcdef1234".into(),
-        head_branch: branch.into(),
+        branch: branch.into(),
         created_at: format!("2026-10-25T00:00:{id:02}Z"),
         failed_jobs: vec![],
     }
@@ -1599,6 +1608,39 @@ async fn a_ci_integration_not_yet_on_the_head_and_an_unreadable_github_hold_the_
     assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge o/r 12")), "nothing merged");
 }
 
+/// PDT-242: `[ci] providers` picks the project's CI: listing GitHub Actions alone leaves the CI integration out of the
+/// gate, and listing it too makes the merge wait for it.
+#[tokio::test]
+async fn ci_providers_listed_in_the_project_file_are_the_ones_the_merge_waits_for() {
+    let gh = std::sync::Arc::new(FakeForge::default());
+    let env = setup_with(Some(gh.clone())).await;
+    let (s, c) = call(
+        &env.app,
+        "POST",
+        "/api/connections",
+        Some(json!({"name": "ci", "kind": "http", "url": "http://127.0.0.1:1"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{c}");
+    settings(&env, json!({"integrations": {"fakeci": {"connection": "ci"}}})).await;
+    std::fs::create_dir_all(env.repo.join(".pdt")).unwrap();
+    let toml = env.repo.join(".pdt/project.toml");
+    std::fs::write(&toml, "[ci]\nproviders = [\"github_actions\"]\n").unwrap();
+    let t = ticket(&env, "Change it").await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let (id, branch) = (attempt["id"].as_str().unwrap().to_string(), attempt["branch"].as_str().unwrap().to_string());
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Passed)]);
+    std::fs::write(&toml, "[ci]\nproviders = [\"fakeci\", \"github_actions\"]\n").unwrap();
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("ci_pending")), "both listed: {v}");
+    assert!(v["message"].as_str().unwrap().contains("Fake CI hasn't reported"), "{v}");
+    std::fs::write(&toml, "[ci]\nproviders = [\"github_actions\"]\n").unwrap();
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
+    assert_eq!(s, StatusCode::OK, "Actions alone, and it passed: {v}");
+    assert!(gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge o/r 12")));
+}
+
 /// PDT-176: on a forge that doesn't hold merges for required checks, an agent's merge waits for green CI even where the
 /// project doesn't ask it to; on one without merge queues, a repository's queue setting is ignored and the merge names
 /// its strategy. A person's merge doesn't wait.
@@ -1627,7 +1669,7 @@ async fn a_forge_without_required_checks_or_queues_still_merges_safely() {
     let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(merges(), ["merge o/r 12 squash"], "the strategy is named: no queue picks it");
-    assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("queue")), "no merge-queue runs read");
+    assert!(!gh.ci.calls.lock().unwrap().iter().any(|c| c.starts_with("queue")), "no merge-queue runs read");
 }
 
 /// PDT-159: moving an in-progress ticket back to To do stops its work: the Pipeline's run is cancelled, the Coder's

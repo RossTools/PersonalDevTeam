@@ -292,7 +292,7 @@ const galleryPr = (over: Partial<PullRequestStatus> = {}): PullRequestStatus => 
   ci: { state: 'running', url: 'https://github.com/o/r/actions/runs/1', runs: [] }, queueCi: null, checkedAt: NOW, error: null, local: false, ...over,
 });
 const failedCi = { state: 'failed' as const, url: 'https://github.com/o/r/actions/runs/2',
-  runs: [{ id: 2, attempt: 1, workflow: 'ci', state: 'failed' as const, url: 'https://github.com/o/r/actions/runs/2', failedJobs: ['test (linux)', 'web (linux)'] }] };
+  runs: [{ provider: 'github_actions', id: '2', attempt: 1, name: 'ci', state: 'failed' as const, url: 'https://github.com/o/r/actions/runs/2', failedJobs: ['test (linux)', 'web (linux)'] }] };
 const noMenu = () => [{ label: 'Open', onSelect: () => {} }, { label: 'Start…', onSelect: () => {} }];
 
 function Cards() {

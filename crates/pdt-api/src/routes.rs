@@ -79,7 +79,7 @@ pub struct AppState {
     /// Each attempt's pull request as last seen, and the notices waiting for their agent session.
     pub(crate) pr_watch: crate::github::SharedPrWatch,
     /// The local forge's CI runs in this pdtd (PDT-178).
-    pub(crate) local_ci: std::sync::Arc<crate::local_forge::LocalCi>,
+    pub(crate) local_ci: std::sync::Arc<crate::local_forge::LocalCiState>,
     /// The user's yes to the PM's calls that may let an external ticket in (PDT-201).
     pub(crate) grants: std::sync::Arc<crate::untrusted::Grants>,
     /// This pdtd's UI token (PDT-204): PDT's web client sends it, an agent's curl doesn't.

@@ -1,18 +1,21 @@
-//! Buildkite (PDT-85): CI of tickets' branches (a 60 s check of each active attempt's builds, logged as `ci.*` events
-//! and shown with the PR's CI), the `buildkite` connection a project names its pipelines through, and the Buildkite
-//! actions. pdtd's `buildkite` feature.
+//! Buildkite (PDT-85): CI of tickets' branches (a CI provider, PDT-242: the PR poller reads each active attempt's
+//! builds, logs them as `ci.*` events and shows them with the PR's other CI), the `buildkite` connection a project
+//! names its pipelines through, and the Buildkite actions. pdtd's `buildkite` feature.
 
+mod ci;
 mod core;
 mod nodes;
-mod sensor;
 
-use crate::core::{BUILDKITE, BuildkiteSettings};
+use crate::core::BUILDKITE;
 use crate::nodes::{Retry, TriggerBuild};
-use pdt_api::sdk::{AppState, BoxFut, Integration, NodeKind, Poller};
+use pdt_api::sdk::{AppState, Integration, NodeKind};
 use pdt_core::integration::{ConfigField, ConnectionKind, FieldType, IntegrationSettings, ProjectSettingsSchema};
+use pdt_forge::CiProvider;
+use std::sync::Arc;
 
+pub use crate::ci::BuildkiteCi;
+pub use crate::core::BuildkiteSettings;
 pub use crate::nodes::{BuildOutput, RetryConfig, TriggerBuildConfig};
-pub use crate::sensor::refresh_buildkite;
 
 pub struct Buildkite;
 
@@ -21,15 +24,14 @@ impl Integration for Buildkite {
         "buildkite"
     }
 
-    fn pollers(&self) -> Vec<Poller> {
-        fn run(st: AppState) -> BoxFut<'static, ()> {
-            Box::pin(async move { refresh_buildkite(&st).await })
-        }
-        vec![Poller { name: "the Buildkite check", run }]
-    }
-
-    fn project_ci(&self, settings: &pdt_store::ProjectSettings) -> Option<&'static str> {
-        settings.integration::<BuildkiteSettings>(BUILDKITE).map(|_| "Buildkite")
+    fn ci_provider(
+        &self,
+        st: &AppState,
+        _project_id: &str,
+        settings: &pdt_store::ProjectSettings,
+    ) -> Option<Arc<dyn CiProvider>> {
+        let bk = settings.integration::<BuildkiteSettings>(BUILDKITE)?;
+        BuildkiteCi::new(st, bk).map(|c| Arc::new(c) as Arc<dyn CiProvider>)
     }
 
     fn connection_kinds(&self) -> Vec<ConnectionKind> {

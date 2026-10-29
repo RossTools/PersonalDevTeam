@@ -49,12 +49,13 @@ docs/superpowers/plans/2026-10-19-phase-6-review.md. Code: pdt-git `review.rs`, 
   merge whose pull request is already on auto-merge or in the queue counts as queued.
 - Green CI (PDT-151, policy `requireGreenCi`, on by default; project settings: "An automated merge waits for green
   CI"): an automated merge of a pull request reads its PR from GitHub again and needs CI on its head to have passed
-  (GitHub Actions and Buildkite together, as the badge shows it; pdt-core `pr::ci_gate`), whatever GitHub's branch
+  (every CI provider of the project together, PDT-242: GitHub Actions, the local CI command, Buildkite; as the badge
+  shows it; pdt-core `pr::ci_gate`), whatever GitHub's branch
   protection requires (GitHub's auto-merge merges at once where nothing is required). A failed or cancelled run is
   409 `ci_failed` (`fixable`, the reason names the failed jobs and the run); runs still going, or none yet while the
-  repository has CI (`.github/workflows` files at the head or on the branch, or a Buildkite pipeline for the project),
-  `ci_pending`; in a project with Buildkite, green Actions alone are `ci_pending` while Buildkite hasn't reported on
-  that head. A read from GitHub that fails is 409 `ci_unreadable`, an error like `merge_failed` (the last look may be
+  repository has CI (a provider's `config_paths`: `.github/workflows` files at the head or on the branch for Actions;
+  set up, for the others), `ci_pending`; with two providers, green from one alone is `ci_pending` while the other
+  hasn't reported on that head. A read from the forge or a CI provider that fails is 409 `ci_unreadable`, an error like `merge_failed` (the last look may be
   older than the head's CI). A repository with no CI merges as before, and a ticket comment says it merged without waiting for CI.
   A person's merge doesn't wait.
 - With an open PR (`attempt.pr`) it turns on GitHub's auto-merge (GraphQL `enablePullRequestAutoMerge`) and records the attempt as set to merge

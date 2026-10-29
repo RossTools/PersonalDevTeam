@@ -1,5 +1,6 @@
 //! Buildkite CI (Phase 7e-2, PDT-85) through the API: a started ticket's builds become its CI (with or without a
-//! pull request), `ci.*` events with `provider: buildkite` once per build state, and the retry and trigger actions.
+//! pull request) as a CI provider the PR poller reads (PDT-242), `ci.*` events with `provider: buildkite` once per
+//! build state, its failed jobs' logs for `ci_failed_logs`, and the retry and trigger actions.
 //! Buildkite is a fake local server; GitHub is `FakeForge`.
 
 #[path = "../../pdt-api/tests/common/mod.rs"]
@@ -64,6 +65,7 @@ async fn bk_app(State(b): State<Shared>, req: Request<Body>) -> (StatusCode, axu
             Some(x) => ok(x.clone()),
             None => (StatusCode::NOT_FOUND, axum::Json(json!({"message": "No build found"}))),
         },
+        ("GET", ["app", "builds", _, "jobs", job, "log"]) => ok(json!({"content": format!("one\ntwo\n{job} broke\n")})),
         ("PUT", ["app", "builds", _, "jobs", _, "retry"]) => ok(json!({"id": "retried"})),
         ("PUT", ["app", "builds", n, "rebuild"]) => {
             let n: u64 = n.parse().unwrap();
@@ -125,7 +127,7 @@ async fn setup() -> Env {
     state.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(pdt_int_buildkite::Buildkite)]));
     state.integrations.enable(&["buildkite".into()]);
     let gh = Arc::new(FakeForge::default());
-    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::HostedForge::github(gh.clone()))]);
+    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::testing::fake_github(&gh))]);
     let app = router(state.clone(), None);
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "Work", "repoPath": repo.to_string_lossy()}))).await;
@@ -180,8 +182,8 @@ async fn events(env: &Env, kind: &str) -> Vec<Value> {
 async fn a_branch_without_a_pr_gets_its_builds_once_per_state() {
     let env = setup().await;
     env.bk.lock().unwrap().builds = vec![build(1, "failed", &env.head, 0)];
-    pdt_int_buildkite::refresh_buildkite(&env.state).await;
-    pdt_int_buildkite::refresh_buildkite(&env.state).await;
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::refresh_prs(&env.state).await;
     assert!(!env.bk.lock().unwrap().unauthorized, "sent the token");
     let seen = env.bk.lock().unwrap().seen.clone();
     assert!(seen[0].1.contains("branch=pdt-") && seen[0].1.contains(&format!("commit={}", env.head)), "{seen:?}");
@@ -201,11 +203,11 @@ async fn a_branch_without_a_pr_gets_its_builds_once_per_state() {
 
     // A retry that fails again is news; passing then is too.
     env.bk.lock().unwrap().builds = vec![build(1, "failed", &env.head, 1)];
-    pdt_int_buildkite::refresh_buildkite(&env.state).await;
+    pdt_api::refresh_prs(&env.state).await;
     assert_eq!(events(&env, "ci.run_failed").await.len(), 2);
     env.bk.lock().unwrap().builds = vec![build(1, "failed", &env.head, 1), build(2, "passed", &env.head, 0)];
-    pdt_int_buildkite::refresh_buildkite(&env.state).await;
-    pdt_int_buildkite::refresh_buildkite(&env.state).await;
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::refresh_prs(&env.state).await;
     let passed = events(&env, "ci.run_passed").await;
     assert_eq!(passed.len(), 1);
     assert_eq!(passed[0]["payload"]["provider"], "buildkite");
@@ -228,7 +230,7 @@ async fn a_revoked_token_notifies_once_until_it_works_again() {
             .collect::<Vec<_>>()
     };
     for _ in 0..3 {
-        pdt_int_buildkite::refresh_buildkite(&env.state).await;
+        pdt_api::refresh_prs(&env.state).await;
     }
     let n = live().await;
     assert_eq!(n.len(), 1, "{n:?}");
@@ -238,7 +240,7 @@ async fn a_revoked_token_notifies_once_until_it_works_again() {
     assert!(list[0]["lastError"].as_str().unwrap().contains("401"), "{list}");
 
     env.bk.lock().unwrap().revoked = false;
-    pdt_int_buildkite::refresh_buildkite(&env.state).await;
+    pdt_api::refresh_prs(&env.state).await;
     assert!(live().await.is_empty());
     assert_eq!(attempt(&env).await["ci"]["state"], "running");
     let (_, list) = call(&env.app, "GET", "/api/connections", None).await;
@@ -271,20 +273,20 @@ async fn a_pr_shows_both_providers() {
     env.gh.set_runs(
         &branch,
         vec![CiRun {
-            id: 5,
+            provider: "github_actions".into(),
+            id: "5".into(),
             attempt: 1,
-            workflow: "ci".into(),
+            name: "ci".into(),
             state: CiState::Passed,
             url: "https://github.com/o/r/actions/runs/5".into(),
             head_sha: env.head.clone(),
-            head_branch: branch.clone(),
+            branch: branch.clone(),
             created_at: "2026-10-22T00:00:00Z".into(),
             failed_jobs: vec![],
         }],
     );
     env.bk.lock().unwrap().builds = vec![build(3, "failed", &env.head, 0)];
     pdt_api::refresh_prs(&env.state).await;
-    pdt_int_buildkite::refresh_buildkite(&env.state).await;
     let a = attempt(&env).await;
     assert!(a["ci"].is_null(), "with a PR, Buildkite is in its CI");
     assert_eq!(a["pr"]["ci"]["state"], "failed", "{a}");
@@ -356,4 +358,90 @@ async fn retry_and_trigger() {
     )
     .await;
     assert!(v.to_string().contains("needs its pipeline"), "{v}");
+}
+
+/// PDT-242: Buildkite through the `CiProvider` trait: its builds' jobs and logs (what `ci_failed_logs` reads), retries
+/// and new builds.
+#[tokio::test]
+async fn the_provider_reads_jobs_and_logs_retries_and_triggers() {
+    use pdt_forge::CiProvider;
+    let env = setup().await;
+    env.bk.lock().unwrap().builds = vec![build(4, "failed", "c", 0), build(5, "passed", "c", 0)];
+    let settings = pdt_int_buildkite::BuildkiteSettings { connection: "bk".into(), pipelines: vec!["app".into()] };
+    let bk = std::sync::Arc::new(pdt_int_buildkite::BuildkiteCi::new(&env.state, settings).unwrap());
+    let none = pdt_int_buildkite::BuildkiteSettings { connection: "bk".into(), pipelines: vec![] };
+    assert!(pdt_int_buildkite::BuildkiteCi::new(&env.state, none).is_none(), "no pipelines, no CI");
+    let p = bk.clone();
+    let (runs, jobs, log) = tokio::task::spawn_blocking(move || {
+        let runs = p.runs("", "b", Some("c")).unwrap();
+        let jobs = p.jobs("", &runs[0]).unwrap();
+        let log = p.job_log_tail("", &runs[0], &jobs[0], 2).unwrap();
+        p.retry("", &runs[0], true).unwrap();
+        p.retry("", &runs[1], false).unwrap();
+        let inputs = std::collections::BTreeMap::from([("DEPLOY".to_string(), "1".to_string())]);
+        p.trigger("", "main", "app", &inputs).unwrap();
+        (runs, jobs, log)
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        (runs[0].id.as_str(), runs[0].provider.as_str(), runs[0].state),
+        ("app/4", "buildkite", CiState::Failed)
+    );
+    assert_eq!(
+        jobs.iter().map(|j| (j.id.as_str(), j.state)).collect::<Vec<_>>(),
+        [("job-test", CiState::Failed), ("job-build", CiState::Passed)]
+    );
+    assert_eq!(log, "… (1 earlier lines)\ntwo\njob-test broke\n");
+    let seen = env.bk.lock().unwrap().seen.clone();
+    let did = |m: &str, end: &str| seen.iter().any(|(x, p, _)| x == m && p.ends_with(end));
+    assert!(did("PUT", "/builds/4/jobs/job-test/retry"), "the failed jobs again: {seen:?}");
+    assert!(did("PUT", "/builds/5/rebuild"), "the whole build");
+    let (_, _, body) = seen.iter().find(|(m, _, _)| m == "POST").unwrap();
+    assert_eq!((body["branch"].clone(), body["env"]["DEPLOY"].clone()), (json!("main"), json!("1")));
+}
+
+/// Buildkite doesn't depend on the forge: with GitHub unreadable (signed out, rate limited), its builds still update
+/// the attempt's CI and tell the agent, on the branch without a PR and on the PR's last head with one.
+#[tokio::test]
+async fn buildkite_reports_while_github_cannot_be_read() {
+    let env = setup().await;
+    *env.gh.error.lock().unwrap() = Some("GitHub is not connected".into());
+    env.bk.lock().unwrap().builds = vec![build(1, "failed", &env.head, 0)];
+    pdt_api::refresh_prs(&env.state).await;
+    assert_eq!(attempt(&env).await["ci"]["state"], "failed");
+    assert_eq!(events(&env, "ci.run_failed").await.len(), 1);
+
+    // A PR seen once, then GitHub goes away: Buildkite's part of its CI keeps moving, marked stale.
+    *env.gh.error.lock().unwrap() = None;
+    let branch = attempt(&env).await["branch"].as_str().unwrap().to_string();
+    env.gh.set_pr(
+        &branch,
+        Some(ChangeRequest {
+            number: 12,
+            url: "https://github.com/o/r/pull/12".into(),
+            title: "Ship it".into(),
+            state: PrState::Open,
+            draft: false,
+            head_sha: env.head.clone(),
+            base_branch: "main".into(),
+            mergeable: Mergeable::Mergeable,
+            behind: false,
+            auto_merge: false,
+            in_merge_queue: false,
+            queue_position: None,
+            queue_removal: None,
+            created_at: None,
+        }),
+    );
+    pdt_api::refresh_prs(&env.state).await;
+    assert_eq!(attempt(&env).await["pr"]["ci"]["state"], "failed");
+    *env.gh.error.lock().unwrap() = Some("GitHub is not connected".into());
+    env.bk.lock().unwrap().builds = vec![build(1, "failed", &env.head, 0), build(2, "passed", &env.head, 0)];
+    pdt_api::refresh_prs(&env.state).await;
+    let a = attempt(&env).await;
+    assert_eq!(a["pr"]["ci"]["state"], "passed", "{a}");
+    assert!(a["pr"]["error"].as_str().unwrap().contains("not connected"), "{a}");
+    let passed = events(&env, "ci.run_passed").await;
+    assert_eq!((passed.len(), passed[0]["payload"]["pr"].clone()), (1, json!(12)));
 }

@@ -4,18 +4,22 @@
 //!
 //! Forges are plugins (PDT-241): each registers a [`ForgePlugin`] (its [`ForgeKind`], the remote hosts it claims, and
 //! the [`Forge`] it opens) in a [`ForgeRegistry`], which PDT asks for a project's forge.
+//!
+//! CI is not the forge's (PDT-242): a [`ci::CiProvider`] reads it, and a forge plugin registers its own CI (GitHub
+//! Actions) with [`ForgePlugin::ci`].
+
+pub mod ci;
+pub use ci::{CiCapabilities, CiConfig, CiProvider};
 
 pub use pdt_core::forge::{ForgeKind, ForgeNotes};
 pub use pdt_core::github_issue::CloseReason;
-use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
-use std::collections::BTreeMap;
+use pdt_core::pr::{Mergeable, PrState, QueueRemoval};
 use std::sync::Arc;
 
-/// What a forge can do beyond reading a branch's change request and CI, so the SDLC skips (or does itself) what it
-/// can't.
+/// What a forge can do beyond reading a branch's change request, so the SDLC skips (or does itself) what it can't.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
-    /// A base branch can have a merge queue (its runs are read while a change request is queued).
+    /// A base branch can have a merge queue (its CI's queue runs are read while a change request is queued).
     pub merge_queue: bool,
     /// The forge holds an auto-merge until the base branch's required checks pass. Without it, PDT's own merges wait
     /// for green CI.
@@ -24,7 +28,7 @@ pub struct Capabilities {
     pub issues: bool,
     /// Reviews and comments on change requests.
     pub reviews: bool,
-    /// Releases to read, and CI workflows to start by hand (PDT-194: the release workflow).
+    /// Releases to read (PDT-194: the release workflow).
     pub releases: bool,
 }
 
@@ -32,7 +36,7 @@ impl Capabilities {
     /// Everything (GitHub).
     pub const ALL: Capabilities =
         Capabilities { merge_queue: true, required_checks: true, issues: true, reviews: true, releases: true };
-    /// Change requests and CI only.
+    /// Change requests only.
     pub const NONE: Capabilities =
         Capabilities { merge_queue: false, required_checks: false, issues: false, reviews: false, releases: false };
 }
@@ -198,15 +202,6 @@ pub struct Release {
     pub notes: String,
 }
 
-/// A failed CI job and the end of its log.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JobLog {
-    pub name: String,
-    pub url: String,
-    /// The log's last lines (see the forge for how many), timestamps dropped.
-    pub log: String,
-}
-
 /// A forge call that failed. The text is the forge's own (e.g. "GitHub is not connected").
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ForgeError {
@@ -234,11 +229,6 @@ pub trait Forge: Send + Sync {
     fn agent_notes(&self) -> ForgeNotes {
         ForgeNotes::default()
     }
-    /// Where a repository keeps this forge's CI configuration (GitHub: `.github/workflows`): a commit with files under
-    /// one has CI to come even before its first run.
-    fn ci_dirs(&self) -> &'static [&'static str] {
-        &[]
-    }
     /// The user still has to sign in to it before PDT can use it, and something wanted it: the Inbox asks them to.
     fn login_needed(&self) -> bool {
         false
@@ -246,11 +236,6 @@ pub trait Forge: Send + Sync {
     /// When the forge stopped accepting the login it has (Unix ms; PDT-212): the user has to sign in again, and
     /// nothing is sent to it until they do. [`Forge::login_needed`] is true while it lasts.
     fn login_rejected_at(&self) -> Option<i64> {
-        None
-    }
-    /// Whether the repository has CI, when the forge knows without looking at its files (the local forge: its `[ci]`
-    /// command). None: ask [`Forge::ci_dirs`].
-    fn has_ci(&self) -> Option<bool> {
         None
     }
     /// The change request whose head is `branch`: the newest open one, else the newest.
@@ -264,23 +249,11 @@ pub trait Forge: Send + Sync {
     fn open_change_request(&self, _repo: &str, _new: &NewChangeRequest) -> Result<OpenedChangeRequest, ForgeError> {
         unsupported(self.name(), "change requests to open")
     }
-    /// Recent CI runs on `branch`.
-    fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, ForgeError>;
-    /// The names of the failed jobs of one run attempt.
-    fn failed_jobs(&self, repo: &str, run_id: u64, attempt: u32) -> Result<Vec<String>, ForgeError>;
-    /// The failed jobs of run `run_id`'s latest attempt, each with the end of its log.
-    fn failed_logs(&self, _repo: &str, _run_id: u64) -> Result<Vec<JobLog>, ForgeError> {
-        unsupported(self.name(), "CI logs")
-    }
     /// The merge strategies `repo` allows and whether `base` has a merge queue.
     fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, ForgeError>;
     /// Sets change request `number` to merge once it may (auto-merge, or the merge queue), with `strategy` unless a
     /// merge queue picks it. One that can merge right away is merged.
     fn merge(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), ForgeError>;
-    /// Recent merge-queue runs in `repo` ([`Capabilities::merge_queue`]).
-    fn queue_runs(&self, _repo: &str) -> Result<Vec<CiRun>, ForgeError> {
-        unsupported(self.name(), "merge queue")
-    }
     /// The login the forge is used as (the user themself): comments by it are the user's own.
     fn viewer_login(&self) -> Result<String, ForgeError> {
         unsupported(self.name(), "login")
@@ -344,17 +317,6 @@ pub trait Forge: Send + Sync {
     ) -> Result<(), ForgeError> {
         unsupported(self.name(), "issues")
     }
-    /// Starts CI workflow `workflow` (its file name, `release.yml`) on `git_ref` with `inputs`
-    /// ([`Capabilities::releases`]).
-    fn run_workflow(
-        &self,
-        _repo: &str,
-        _workflow: &str,
-        _git_ref: &str,
-        _inputs: &BTreeMap<String, String>,
-    ) -> Result<(), ForgeError> {
-        unsupported(self.name(), "workflows to run")
-    }
     /// The release tagged `tag`, or the latest one without it; None when there is none ([`Capabilities::releases`]).
     fn release(&self, _repo: &str, _tag: Option<&str>) -> Result<Option<Release>, ForgeError> {
         unsupported(self.name(), "releases")
@@ -381,6 +343,11 @@ pub trait ForgePlugin: Send + Sync {
     }
     /// The forge, as the account PDT has for it.
     fn forge(&self) -> Arc<dyn Forge>;
+    /// The forge's own CI (GitHub Actions), if it has one: a project on this forge has it unless `[ci] providers`
+    /// leaves it out.
+    fn ci(&self) -> Option<Arc<dyn CiProvider>> {
+        None
+    }
 }
 
 /// A plugin over a forge already made, on fixed hosts: a test's [`testing::FakeForge`] as GitHub, say.
@@ -390,12 +357,19 @@ pub struct HostedForge {
     /// Lower case.
     pub hosts: Vec<String>,
     pub forge: Arc<dyn Forge>,
+    /// Its own CI.
+    pub ci: Option<Arc<dyn CiProvider>>,
 }
 
 impl HostedForge {
-    /// `forge` as GitHub, on github.com.
+    /// `forge` as GitHub, on github.com, with no CI of its own.
     pub fn github(forge: Arc<dyn Forge>) -> Self {
-        Self { kind: ForgeKind::GITHUB, label: "GitHub", hosts: vec!["github.com".into()], forge }
+        Self { kind: ForgeKind::GITHUB, label: "GitHub", hosts: vec!["github.com".into()], forge, ci: None }
+    }
+
+    /// With `ci` as its own CI.
+    pub fn with_ci(self, ci: Arc<dyn CiProvider>) -> Self {
+        Self { ci: Some(ci), ..self }
     }
 }
 
@@ -411,6 +385,9 @@ impl ForgePlugin for HostedForge {
     }
     fn forge(&self) -> Arc<dyn Forge> {
         self.forge.clone()
+    }
+    fn ci(&self) -> Option<Arc<dyn CiProvider>> {
+        self.ci.clone()
     }
 }
 
@@ -453,17 +430,24 @@ pub mod testing {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    /// An in-memory forge for other crates' tests: set a branch's change request and runs, its capabilities, count
-    /// the calls.
+    pub use crate::ci::testing::FakeCi;
+    use pdt_core::pr::CiRun;
+
+    /// `forge` as GitHub, with its fake GitHub Actions ([`FakeForge::ci`]) as its CI.
+    pub fn fake_github(forge: &Arc<FakeForge>) -> HostedForge {
+        HostedForge::github(forge.clone()).with_ci(forge.ci.clone())
+    }
+
+    /// An in-memory forge for other crates' tests: set a branch's change request, its capabilities, count the calls.
+    /// Its `ci` is a fake GitHub Actions ([`fake_github`] registers both).
     pub struct FakeForge {
         /// What `capabilities` answers (everything when unchanged).
         pub capabilities: Mutex<Capabilities>,
         /// What `agent_notes` answers.
         pub notes: Mutex<ForgeNotes>,
         pub prs: Mutex<HashMap<String, ChangeRequest>>,
-        pub runs: Mutex<HashMap<String, Vec<CiRun>>>,
-        pub queue: Mutex<Vec<CiRun>>,
-        pub jobs: Mutex<HashMap<u64, Vec<String>>>,
+        /// Its CI (GitHub Actions).
+        pub ci: Arc<FakeCi>,
         /// What `merge_settings` answers (squash only, no queue, when unset).
         pub settings: Mutex<Option<MergeSettings>>,
         /// `merge` fails with this.
@@ -480,8 +464,6 @@ pub mod testing {
         /// Issues closed (by `close_issue` or [`FakeForge::set_closed`]): by repo and number, the reason and the
         /// duplicate's canonical issue id.
         pub closed: Mutex<HashMap<(String, u64), Closed>>,
-        /// Failed jobs' logs by run id.
-        pub logs: Mutex<HashMap<u64, Vec<JobLog>>>,
         /// Comments added to change requests: number, the review comment replied to, body.
         pub change_comments_added: Mutex<Vec<(u32, Option<u64>, String)>>,
         /// Comments added to issues: repo, number, body.
@@ -492,8 +474,6 @@ pub mod testing {
         pub added_labels: Mutex<Vec<(String, u64, Vec<String>)>>,
         /// Change requests opened, in order (each is also set as its head branch's, numbered from 100).
         pub opened: Mutex<Vec<NewChangeRequest>>,
-        /// Workflows started: repo, workflow, ref, inputs.
-        pub workflow_runs: Mutex<Vec<WorkflowRun>>,
         /// Releases by repo, newest first (the first is the latest).
         pub releases: Mutex<HashMap<String, Vec<Release>>>,
         pub calls: Mutex<Vec<String>>,
@@ -509,9 +489,7 @@ pub mod testing {
                     watch: Some("`fake-forge watch`".into()),
                 }),
                 prs: Default::default(),
-                runs: Default::default(),
-                queue: Default::default(),
-                jobs: Default::default(),
+                ci: Default::default(),
                 settings: Default::default(),
                 merge_error: Default::default(),
                 login: Default::default(),
@@ -520,21 +498,16 @@ pub mod testing {
                 comments: Default::default(),
                 reviews: Default::default(),
                 closed: Default::default(),
-                logs: Default::default(),
                 change_comments_added: Default::default(),
                 issue_comments: Default::default(),
                 created_issues: Default::default(),
                 added_labels: Default::default(),
                 opened: Default::default(),
-                workflow_runs: Default::default(),
                 releases: Default::default(),
                 calls: Default::default(),
             }
         }
     }
-
-    /// A workflow started ([`Forge::run_workflow`]): repo, workflow, ref, inputs.
-    pub type WorkflowRun = (String, String, String, BTreeMap<String, String>);
 
     /// How an issue was closed: the reason, and the duplicate's canonical issue id.
     pub type Closed = (CloseReason, Option<u64>);
@@ -556,11 +529,13 @@ pub mod testing {
                 None => m.remove(branch),
             };
         }
+        /// Its CI's runs of `branch` ([`FakeCi::set_runs`]).
         pub fn set_runs(&self, branch: &str, runs: Vec<CiRun>) {
-            self.runs.lock().unwrap().insert(branch.into(), runs);
+            self.ci.set_runs(branch, runs);
         }
-        pub fn set_jobs(&self, run_id: u64, jobs: &[&str]) {
-            self.jobs.lock().unwrap().insert(run_id, jobs.iter().map(|j| j.to_string()).collect());
+        /// Its CI's failed jobs of run `run_id` ([`FakeCi::set_jobs`]).
+        pub fn set_jobs(&self, run_id: impl ToString, jobs: &[&str]) {
+            self.ci.set_jobs(&run_id.to_string(), jobs);
         }
         pub fn set_issues(&self, repo: &str, issues: Vec<Issue>) {
             self.issues.lock().unwrap().insert(repo.into(), issues);
@@ -612,9 +587,6 @@ pub mod testing {
         fn agent_notes(&self) -> ForgeNotes {
             self.notes.lock().unwrap().clone()
         }
-        fn ci_dirs(&self) -> &'static [&'static str] {
-            &[".github/workflows"]
-        }
         fn change_request(&self, repo: &str, branch: &str) -> Result<Option<ChangeRequest>, ForgeError> {
             self.call(format!("pr {repo} {branch}"));
             self.failing()?;
@@ -650,11 +622,6 @@ pub mod testing {
             };
             self.prs.lock().unwrap().insert(new.head.clone(), pr);
             Ok(OpenedChangeRequest { number, url })
-        }
-        fn failed_logs(&self, repo: &str, run_id: u64) -> Result<Vec<JobLog>, ForgeError> {
-            self.call(format!("logs {repo} {run_id}"));
-            self.failing()?;
-            Ok(self.logs.lock().unwrap().get(&run_id).cloned().unwrap_or_default())
         }
         fn comment_change_request(&self, repo: &str, number: u32, body: &str) -> Result<String, ForgeError> {
             self.call(format!("comment-pr {repo} {number}"));
@@ -698,19 +665,6 @@ pub mod testing {
                     collaborator: true,
                 })
                 .collect())
-        }
-        fn branch_runs(&self, repo: &str, branch: &str) -> Result<Vec<CiRun>, ForgeError> {
-            self.call(format!("runs {repo} {branch}"));
-            Ok(self.runs.lock().unwrap().get(branch).cloned().unwrap_or_default())
-        }
-        fn queue_runs(&self, repo: &str) -> Result<Vec<CiRun>, ForgeError> {
-            self.call(format!("queue {repo}"));
-            self.can(|c| c.merge_queue, "merge queue")?;
-            Ok(self.queue.lock().unwrap().clone())
-        }
-        fn failed_jobs(&self, repo: &str, run_id: u64, attempt: u32) -> Result<Vec<String>, ForgeError> {
-            self.call(format!("jobs {repo} {run_id}.{attempt}"));
-            Ok(self.jobs.lock().unwrap().get(&run_id).cloned().unwrap_or_default())
         }
         fn merge_settings(&self, repo: &str, base: &str) -> Result<MergeSettings, ForgeError> {
             self.call(format!("merge-settings {repo} {base}"));
@@ -811,19 +765,6 @@ pub mod testing {
             self.closed.lock().unwrap().insert((repo.into(), number), (reason, duplicate_of));
             Ok(())
         }
-        fn run_workflow(
-            &self,
-            repo: &str,
-            workflow: &str,
-            git_ref: &str,
-            inputs: &BTreeMap<String, String>,
-        ) -> Result<(), ForgeError> {
-            self.call(format!("run-workflow {repo} {workflow} {git_ref}"));
-            self.can(|c| c.releases, "workflows to run")?;
-            self.failing()?;
-            self.workflow_runs.lock().unwrap().push((repo.into(), workflow.into(), git_ref.into(), inputs.clone()));
-            Ok(())
-        }
         fn release(&self, repo: &str, tag: Option<&str>) -> Result<Option<Release>, ForgeError> {
             self.call(format!("release {repo} {}", tag.unwrap_or("latest")));
             self.can(|c| c.releases, "releases")?;
@@ -863,15 +804,10 @@ mod tests {
         let f = testing::FakeForge::with(Capabilities::NONE);
         assert!(matches!(f.recent_issues("o/r", None), Err(ForgeError::Unsupported(_))));
         assert!(matches!(f.change_reviews("o/r", 1), Err(ForgeError::Unsupported(_))));
-        assert!(matches!(f.queue_runs("o/r"), Err(ForgeError::Unsupported(_))));
         assert!(matches!(f.release("o/r", None), Err(ForgeError::Unsupported(_))));
         let new = NewIssue { title: "Crash".into(), body: String::new(), labels: vec![] };
         assert!(matches!(f.create_issue("o/r", &new), Err(ForgeError::Unsupported(_))));
-        assert!(matches!(
-            f.run_workflow("o/r", "release.yml", "main", &BTreeMap::new()),
-            Err(ForgeError::Unsupported(_))
-        ));
-        assert!(f.change_request("o/r", "b").is_ok(), "change requests and CI are every forge's");
+        assert!(f.change_request("o/r", "b").is_ok(), "change requests are every forge's");
     }
 
     #[test]
@@ -893,12 +829,16 @@ mod tests {
             label: "Gitea",
             hosts: vec!["git.example.org".into()],
             forge: other,
+            ci: None,
         };
         let twice = HostedForge::github(Arc::new(testing::FakeForge::default()));
         let r = ForgeRegistry::new(vec![Arc::new(HostedForge::github(gh.clone())), Arc::new(gitea), Arc::new(twice)]);
         assert_eq!(r.plugins().len(), 2, "a kind registered twice keeps the first");
         assert!(Arc::ptr_eq(&r.get(&ForgeKind::GITHUB).unwrap().forge(), &gh));
         assert!(r.get(&ForgeKind::LOCAL).is_none());
+        assert!(r.get(&ForgeKind::GITHUB).unwrap().ci().is_none(), "no CI of its own unless given one");
+        let fake = Arc::new(testing::FakeForge::default());
+        assert_eq!(testing::fake_github(&fake).ci().unwrap().id(), "github_actions");
         let (p, repo) = r.detect("git@github.com:o/r.git").unwrap();
         assert_eq!((p.kind(), repo.as_str()), (ForgeKind::GITHUB, "o/r"));
         let (p, repo) = r.detect("https://GIT.example.org/team/app").unwrap();

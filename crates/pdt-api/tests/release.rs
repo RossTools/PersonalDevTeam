@@ -37,7 +37,7 @@ async fn setup() -> Env {
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = AppState::new(store, tmp.path().join("data"));
     let gh = Arc::new(FakeForge::default());
-    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::HostedForge::github(gh.clone()))]);
+    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::testing::fake_github(&gh))]);
     let app = router(state.clone(), None);
     let (s, p) = call(
         &app,
@@ -128,13 +128,14 @@ async fn notified(env: &Env) -> Vec<String> {
 /// One CI run on the release branch at `sha`.
 fn ci_run(id: u64, workflow: &str, sha: &str, state: CiState) -> CiRun {
     CiRun {
-        id,
+        provider: "github_actions".into(),
+        id: id.to_string(),
         attempt: 1,
-        workflow: workflow.into(),
+        name: workflow.into(),
         state,
         url: format!("https://github.com/{REPO}/actions/runs/{id}"),
         head_sha: sha.into(),
-        head_branch: "release".into(),
+        branch: "release".into(),
         created_at: format!("2026-10-28T12:00:{:02}Z", id % 60),
         failed_jobs: vec![],
     }
@@ -182,7 +183,7 @@ async fn cut_a_release_from_the_action_to_the_published_release() {
     pdt_api::run_workflows(&env.state).await;
 
     // The release workflow runs on main with the bump (no version given: none sent).
-    let started = env.gh.workflow_runs.lock().unwrap().clone();
+    let started = env.gh.ci.triggered.lock().unwrap().clone();
     let inputs = BTreeMap::from([("bump".to_string(), "minor".to_string())]);
     assert_eq!(started, [(REPO.to_string(), "release.yml".to_string(), "main".to_string(), inputs)]);
     assert_eq!(waiting_at(&env, &id).await, "wait_pr");
@@ -250,8 +251,8 @@ async fn a_failed_check_goes_to_the_inbox_and_the_release_waits_for_the_fix() {
     fixed.queue_removal = Some(QueueRemoval { id: "q1".into(), reason: "failed_checks".into(), by_queue: true });
     env.gh.set_pr("release", Some(fixed.clone()));
     let mut queued = ci_run(4, "ci", "q-sha", CiState::Failed);
-    queued.head_branch = "gh-readonly-queue/main/pr-7-abcdef".into();
-    *env.gh.queue.lock().unwrap() = vec![queued];
+    queued.branch = "gh-readonly-queue/main/pr-7-abcdef".into();
+    *env.gh.ci.queue.lock().unwrap() = vec![queued];
     env.gh.set_jobs(4, &["test (linux)"]);
     time_passes(&env, &id).await;
     assert_eq!(inbox_titles(&env).await.len(), 2, "{:?}", inbox_titles(&env).await);
@@ -300,7 +301,7 @@ async fn a_release_pr_closed_unmerged_releases_nothing() {
     .await;
     let id = r["runId"].as_str().unwrap().to_string();
     pdt_api::run_workflows(&env.state).await;
-    let started = env.gh.workflow_runs.lock().unwrap().clone();
+    let started = env.gh.ci.triggered.lock().unwrap().clone();
     assert_eq!(started[0].3, BTreeMap::from([("version".to_string(), "1.0.0".to_string())]));
 
     env.gh.set_pr("release", Some(pr(9, PrState::Open)));
@@ -331,7 +332,7 @@ async fn the_builtin_dry_runs_without_calling_github() {
     assert_eq!(run["status"], "succeeded", "{r}");
     let nodes: Vec<&str> = run["steps"].as_array().unwrap().iter().map(|s| s["nodeId"].as_str().unwrap()).collect();
     assert!(nodes.contains(&"dispatch") && nodes.contains(&"released"), "{nodes:?}");
-    assert!(env.gh.workflow_runs.lock().unwrap().is_empty());
+    assert!(env.gh.ci.triggered.lock().unwrap().is_empty());
     let calls = env.gh.calls.lock().unwrap().clone();
     assert!(calls.is_empty(), "a dry run calls nothing: {calls:?}");
 }
@@ -352,7 +353,7 @@ async fn an_open_release_pr_stops_a_new_release_before_the_action_runs() {
     let id = r["runId"].as_str().unwrap().to_string();
     pdt_api::run_workflows(&env.state).await;
 
-    assert!(env.gh.workflow_runs.lock().unwrap().is_empty(), "the release workflow is not started");
+    assert!(env.gh.ci.triggered.lock().unwrap().is_empty(), "the release workflow is not started");
     let r = run(&env, &id).await;
     assert_eq!(r["status"], "succeeded", "{r}");
     let last = r["steps"].as_array().unwrap().last().unwrap();
@@ -377,7 +378,7 @@ async fn an_experimental_cut_skips_the_release_pr_and_waits_for_the_pre_release(
     let id = r["runId"].as_str().unwrap().to_string();
     pdt_api::run_workflows(&env.state).await;
 
-    let started = env.gh.workflow_runs.lock().unwrap().clone();
+    let started = env.gh.ci.triggered.lock().unwrap().clone();
     let inputs = BTreeMap::from([
         ("bump".to_string(), "patch".to_string()),
         ("channel".to_string(), "experimental".to_string()),

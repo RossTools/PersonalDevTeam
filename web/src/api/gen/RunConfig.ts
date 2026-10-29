@@ -14,6 +14,11 @@ forge: ForgeKind | null,
  */
 ci: CiDef | null, 
 /**
+ * `[ci] providers`: the CI providers whose runs are the project's CI, by id (the overrides' list wins); None: its
+ * forge's own CI and every CI integration set up for it.
+ */
+ciProviders: Array<string> | null, 
+/**
  * Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
  */
 ignored: Array<string>, };

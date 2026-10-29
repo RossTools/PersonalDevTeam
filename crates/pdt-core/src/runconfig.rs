@@ -23,7 +23,7 @@ pub struct ConfigFile {
     /// listed in `ignored` as `forge`, like an unknown section.
     #[serde(skip)]
     pub forge: Option<ForgeKind>,
-    /// `[ci]`: the command the local forge runs as CI (PDT-178).
+    /// `[ci]`: the command the local forge runs as CI (PDT-178), and the project's CI providers (PDT-242).
     #[serde(default)]
     pub ci: Option<CiFile>,
     /// Top-level sections this PDT does not know (e.g. written for a newer PDT), skipped rather than refused.
@@ -31,11 +31,12 @@ pub struct ConfigFile {
     pub ignored: Vec<String>,
 }
 
-/// `[ci]` as written: `command = "cargo test"`.
+/// `[ci]` as written: `command = "cargo test"`, `providers = ["github_actions", "buildkite"]`.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CiFile {
     pub command: Option<String>,
+    pub providers: Option<Vec<String>>,
 }
 
 /// The project's own CI (PDT-178): the command a project on the local forge (`forge = "local"`) runs in an attempt's
@@ -115,6 +116,9 @@ pub struct RunConfig {
     pub forge: Option<ForgeKind>,
     /// `[ci]`: the command the local forge runs as CI (the overrides' wins).
     pub ci: Option<CiDef>,
+    /// `[ci] providers`: the CI providers whose runs are the project's CI, by id (the overrides' list wins); None: its
+    /// forge's own CI and every CI integration set up for it.
+    pub ci_providers: Option<Vec<String>>,
     /// Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
     pub ignored: Vec<String>,
 }
@@ -163,6 +167,8 @@ pub enum RunConfigError {
     NoAreaPaths(String),
     #[error("area \"{area}\" has a path that is not a valid pattern ({path:?}): {message}")]
     BadGlob { area: String, path: String, message: String },
+    #[error("\"{0}\" in [ci] providers is not a CI provider id (letters, digits, _ and -)")]
+    BadCiProvider(String),
 }
 
 /// Parses a configuration. Unknown top-level sections are skipped and listed in `ignored`, so a file written for a
@@ -305,11 +311,31 @@ pub fn merge(file: Option<ConfigFile>, overrides: Option<ConfigFile>) -> Result<
     let tests = merge_list(file.tests, over.tests)?.into_iter().map(|e| finish(e, true)).collect::<Result<_, _>>()?;
     let areas = merge_areas(file.areas, over.areas)?;
     let forge = over.forge.or(file.forge);
+    let providers = |c: &Option<CiFile>| c.as_ref().and_then(|c| c.providers.clone()).map(ci_provider_ids).transpose();
+    let ci_providers = match providers(&over.ci)? {
+        Some(p) => Some(p),
+        None => providers(&file.ci)?,
+    };
     let command = |c: Option<CiFile>| c.and_then(|c| c.command).map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
     let ci = command(over.ci).or(command(file.ci)).map(|command| CiDef { command });
     let mut ignored = file.ignored;
     ignored.extend(over.ignored.into_iter().filter(|s| !ignored.contains(s)).collect::<Vec<_>>());
-    Ok(RunConfig { runs, tests, areas, forge, ci, ignored })
+    Ok(RunConfig { runs, tests, areas, forge, ci, ci_providers, ignored })
+}
+
+/// `[ci] providers` checked: ids (`[a-z0-9_-]+`), each once, in order.
+fn ci_provider_ids(list: Vec<String>) -> Result<Vec<String>, RunConfigError> {
+    let mut out: Vec<String> = vec![];
+    for p in list {
+        let id = p.trim().to_ascii_lowercase();
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            return Err(RunConfigError::BadCiProvider(p));
+        }
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    Ok(out)
 }
 
 /// The values PDT provides to a run (spec §4.2 "Variables PDT sets").
@@ -546,6 +572,16 @@ command = "cargo run"
         assert_eq!(c.ci, Some(CiDef { command: "cargo test".into() }));
         let over = parse("[ci]\ncommand = \"make check\"\n", Source::Overrides).unwrap();
         assert_eq!(merge(Some(f.clone()), Some(over)).unwrap().ci.unwrap().command, "make check", "the overrides win");
+        let listed =
+            parse("[ci]\nproviders = [\"github_actions\", \"Buildkite\", \"buildkite\"]\n", Source::File).unwrap();
+        let c = merge(Some(listed.clone()), None).unwrap();
+        assert_eq!(c.ci_providers.as_deref(), Some(&["github_actions".to_string(), "buildkite".into()][..]));
+        assert_eq!(c.ci, None, "a list alone names no command");
+        assert_eq!(merge(Some(f.clone()), None).unwrap().ci_providers, None, "none listed: the defaults");
+        let only = parse("[ci]\nproviders = [\"local\"]\n", Source::Overrides).unwrap();
+        assert_eq!(merge(Some(listed), Some(only)).unwrap().ci_providers, Some(vec!["local".to_string()]));
+        let bad = parse("[ci]\nproviders = [\"git hub\"]\n", Source::File).unwrap();
+        assert!(matches!(merge(Some(bad), None), Err(RunConfigError::BadCiProvider(_))));
         let blank = parse("[ci]\ncommand = \" \"\n", Source::Overrides).unwrap();
         assert_eq!(merge(Some(f), Some(blank)).unwrap().ci.unwrap().command, "cargo test", "a blank one is none");
         assert!(matches!(parse("[ci]\ncmd = \"x\"\n", Source::File), Err(RunConfigError::Parse { .. })));

@@ -46,7 +46,7 @@ pub async fn setup_with(update_every_ms: Option<i64>, tweak: impl FnOnce(&mut Ap
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
     let gh = std::sync::Arc::new(pdt_forge::testing::FakeForge::default());
-    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::HostedForge::github(gh.clone()))]);
+    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::testing::fake_github(&gh))]);
     if let Some(ms) = update_every_ms {
         state.pm_update_every_ms = ms;
     }

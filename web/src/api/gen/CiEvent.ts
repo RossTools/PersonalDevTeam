@@ -7,7 +7,7 @@ import type { Notice } from "./Notice";
  */
 export type CiEvent = { 
 /**
- * `github_actions`, or a CI integration's id.
+ * The CI provider whose runs these are: `github_actions`, `local`, or a CI integration's id (`buildkite`).
  */
 provider: string, pr: number | null, headSha: string, 
 /**

@@ -8,11 +8,10 @@ mod common;
 use axum::http::StatusCode;
 use common::{call, call_as_ui, git};
 use pdt_api::{AppState, router};
-use pdt_forge::JobLog;
 use pdt_forge::testing::FakeForge;
+use pdt_github::GithubApi;
 use pdt_github::transport::Response;
 use pdt_github::transport::testing::Recorded;
-use pdt_github::{Forge, GithubApi};
 use pdt_store::Store;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -29,7 +28,7 @@ struct Env {
 
 /// A project whose origin is on github.com; `forge` is the GitHub forge unless None (then the state's own, signed out
 /// and offline).
-async fn setup(forge: Option<Arc<dyn Forge>>, github: Option<Arc<GithubApi>>) -> Env {
+async fn setup(forge: Option<Arc<FakeForge>>, github: Option<Arc<GithubApi>>) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -50,7 +49,7 @@ async fn setup(forge: Option<Arc<dyn Forge>>, github: Option<Arc<GithubApi>>) ->
         state.github_api = g;
     }
     if let Some(f) = forge {
-        state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_forge::HostedForge::github(f))]);
+        state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_forge::testing::fake_github(&f))]);
     }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();
@@ -113,13 +112,14 @@ async fn say(env: &Env, session: &str, text: &str) -> String {
 
 fn run(id: u64, branch: &str, state: pdt_core::pr::CiState, at: &str) -> pdt_core::pr::CiRun {
     pdt_core::pr::CiRun {
-        id,
+        provider: "github_actions".into(),
+        id: id.to_string(),
         attempt: 1,
-        workflow: "ci".into(),
+        name: "ci".into(),
         state,
         url: format!("https://github.com/o/r/actions/runs/{id}"),
         head_sha: "abc".into(),
-        head_branch: branch.into(),
+        branch: branch.into(),
         created_at: at.into(),
         failed_jobs: vec![],
     }
@@ -160,15 +160,17 @@ async fn an_agent_reads_failed_ci_logs_and_answers_on_its_pr_through_pdt_tools()
         ],
     );
     gh.set_jobs(7, &["test (linux)"]);
-    gh.logs.lock().unwrap().insert(
-        7,
-        vec![JobLog { name: "test (linux)".into(), url: "https://j/1".into(), log: "error: boom\n".into() }],
-    );
+    gh.ci.logs.lock().unwrap().insert("7-0".into(), "error: boom\n".into());
     let said = say(&env, &s, "mcp: ci_runs {}").await;
     assert!(said.contains("failedJobs") && said.contains("test (linux)"), "{said}");
     let said = say(&env, &s, "mcp: ci_failed_logs {}").await;
-    assert!(said.contains("\"runId\": 7") && said.contains("error: boom"), "the newest failed run: {said}");
-    assert!(gh.calls.lock().unwrap().contains(&"logs o/r 7".to_string()));
+    assert!(said.contains("\"runId\": \"7\"") && said.contains("error: boom"), "the newest failed run: {said}");
+    assert!(said.contains("\"provider\": \"github_actions\""), "{said}");
+    assert!(gh.ci.calls.lock().unwrap().contains(&"log o/r 7-0".to_string()));
+    let said = say(&env, &s, "mcp: ci_failed_logs {\"runId\": 7}").await;
+    assert!(said.contains("error: boom"), "a run id as a number still works: {said}");
+    let said = say(&env, &s, "mcp: ci_failed_logs {\"provider\": \"buildkite\"}").await;
+    assert!(said.contains("no CI provider buildkite"), "{said}");
 
     let said = say(&env, &s, "mcp: change_request_comment {\"body\": \"Fixed in abc\"}").await;
     assert!(said.contains("has no pull request yet"), "{said}");
@@ -247,7 +249,12 @@ async fn without_a_login_the_inbox_asks_to_connect_github_until_a_token_is_saved
 
     // The PR poller (or a merge, or an agent's tool) wants GitHub.
     let g2 = g.clone();
-    let e = tokio::task::spawn_blocking(move || g2.branch_runs("o/r", "b")).await.unwrap().unwrap_err();
+    let e = tokio::task::spawn_blocking(move || {
+        pdt_forge::CiProvider::runs(&pdt_github::GithubActions::new(g2), "o/r", "b", None)
+    })
+    .await
+    .unwrap()
+    .unwrap_err();
     assert!(e.to_string().contains("GitHub is not connected"), "{e}");
     let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
     assert!(connect(&inbox), "{inbox}");

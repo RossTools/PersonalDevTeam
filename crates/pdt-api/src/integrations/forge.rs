@@ -10,10 +10,9 @@ use crate::forge::ProjectForge;
 use crate::workflow::catalog::BoxFut;
 use pdt_core::integration::ToolDecl;
 use pdt_core::policy::Merger;
-use pdt_core::pr::CiState;
-use pdt_core::pr::PrState;
+use pdt_core::pr::{CiRun, CiState, PrState};
 use pdt_core::review::{MergeOutcome, MergeRequest};
-use pdt_forge::{ChangeComment, ChangeRequest, Forge, ForgeError, NewChangeRequest};
+use pdt_forge::{ChangeComment, ChangeRequest, CiProvider, Forge, ForgeError, NewChangeRequest};
 use pdt_store::AttemptInfo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -44,6 +43,8 @@ impl Integration for ForgeTools {
 /// session reads that attempt's CI but opens and merges nothing).
 struct Here {
     forge: ProjectForge,
+    /// The project's CI providers (PDT-242).
+    ci: Vec<Arc<dyn CiProvider>>,
     branch: Option<String>,
     /// The branch is the session's own (its attempt's or its worktree's), not a workflow step's attempt's.
     own_branch: bool,
@@ -71,7 +72,8 @@ async fn here(cx: &ActionCx<'_>) -> Result<Here, String> {
             },
         },
     };
-    Ok(Here { forge, branch, own_branch, attempt })
+    let ci = crate::ci::project_ci(st, &project.id, &project.repo_path, Some(&forge)).await;
+    Ok(Here { forge, ci, branch, own_branch, attempt })
 }
 
 impl Here {
@@ -80,6 +82,11 @@ impl Here {
             .filter(|b| !b.trim().is_empty())
             .or_else(|| self.branch.clone())
             .ok_or_else(|| "this session has no branch: name one".into())
+    }
+
+    /// The forge's name for the repository.
+    fn repo(&self) -> String {
+        self.forge.repo.clone()
     }
 
     /// Runs a forge call off the async runtime.
@@ -520,14 +527,21 @@ pub struct RunsInput {
     /// The branch; the session's when left out.
     #[serde(default)]
     pub branch: Option<String>,
+    /// Only this CI provider's runs (`github_actions`, `buildkite`, `local`); every provider of the project's when
+    /// left out.
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RunOut {
-    pub id: u64,
+    /// Its CI provider.
+    pub provider: String,
+    pub id: String,
     pub attempt: u32,
-    pub workflow: String,
+    /// Its workflow (or pipeline).
+    pub name: String,
     pub state: CiState,
     pub url: String,
     pub head_sha: String,
@@ -539,11 +553,37 @@ pub struct RunOut {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct RunsOutput {
     pub branch: String,
-    /// Newest first.
+    /// Newest first, each provider's in turn.
     pub runs: Vec<RunOut>,
+    /// Providers whose runs couldn't be read, and why.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
 }
 
 pub struct CiRuns;
+
+/// The project's CI providers, or only `provider`.
+fn providers_of(h: &Here, provider: Option<&str>) -> Result<Vec<Arc<dyn CiProvider>>, String> {
+    let all = h.ci.clone();
+    let Some(id) = provider.map(str::trim).filter(|p| !p.is_empty()) else {
+        return if all.is_empty() { Err("this project has no CI provider".into()) } else { Ok(all) };
+    };
+    let names = all.iter().map(|p| p.id().to_string()).collect::<Vec<_>>().join(", ");
+    match all.into_iter().find(|p| p.id() == id) {
+        Some(p) => Ok(vec![p]),
+        None => Err(format!("this project has no CI provider {id} (it has: {names})")),
+    }
+}
+
+/// `p`'s runs on `branch`, newest first, failed jobs filled in.
+fn runs_of(p: &dyn CiProvider, repo: &str, branch: &str) -> Result<Vec<CiRun>, ForgeError> {
+    let mut runs = p.runs(repo, branch, None)?;
+    for run in runs.iter_mut().filter(|x| x.state == CiState::Failed && x.failed_jobs.is_empty()) {
+        run.failed_jobs = pdt_forge::ci::failed_job_names(p, repo, run)?;
+    }
+    runs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(runs)
+}
 
 impl Action for CiRuns {
     type Input = RunsInput;
@@ -553,8 +593,9 @@ impl Action for CiRuns {
         tool(
             ToolDecl::new("ci_runs", "Read a branch's CI runs").read_only().open_world(),
             "CI runs",
-            "The recent CI runs on the session's branch (or another): each run's workflow, state, commit and URL, \
-             and the failed jobs of failed runs. `ci_failed_logs` reads their logs.",
+            "The recent CI runs on the session's branch (or another), from each of the project's CI providers (or \
+             one): each run's provider, workflow, state, commit and URL, and the failed jobs of failed runs. \
+             `ci_failed_logs` reads their logs.",
         )
     }
 
@@ -566,22 +607,30 @@ impl Action for CiRuns {
         Box::pin(async move {
             let h = here(cx).await?;
             let branch = h.branch(i.branch)?;
-            let b = branch.clone();
-            let runs = h
-                .call(move |f, r| {
-                    let mut runs = f.branch_runs(r, &b)?;
-                    for run in runs.iter_mut().filter(|x| x.state == CiState::Failed) {
-                        run.failed_jobs = f.failed_jobs(r, run.id, run.attempt)?;
-                    }
-                    Ok(runs)
-                })
-                .await?;
+            let providers = providers_of(&h, i.provider.as_deref())?;
+            let (repo, b) = (h.repo(), branch.clone());
+            let read = tokio::task::spawn_blocking(move || {
+                providers.iter().map(|p| (p.label().to_string(), runs_of(p.as_ref(), &repo, &b))).collect::<Vec<_>>()
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            let (mut runs, mut errors) = (vec![], vec![]);
+            for (label, got) in read {
+                match got {
+                    Ok(r) => runs.extend(r),
+                    Err(e) => errors.push(format!("{label}: {e}")),
+                }
+            }
+            if runs.is_empty() && !errors.is_empty() {
+                return Err(errors.join("; "));
+            }
             let runs = runs
                 .into_iter()
                 .map(|r| RunOut {
+                    provider: r.provider,
                     id: r.id,
                     attempt: r.attempt,
-                    workflow: r.workflow,
+                    name: r.name,
                     state: r.state,
                     url: r.url,
                     head_sha: r.head_sha,
@@ -589,19 +638,40 @@ impl Action for CiRuns {
                     failed_jobs: r.failed_jobs,
                 })
                 .collect();
-            Ok(RunsOutput { branch, runs })
+            Ok(RunsOutput { branch, runs, errors })
         })
     }
 }
 
 // ---- ci_failed_logs
 
+/// A run id: text, or a number as GitHub Actions' were.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+#[schemars(inline)]
+pub enum RunId {
+    Number(u64),
+    Text(String),
+}
+
+impl RunId {
+    fn text(&self) -> String {
+        match self {
+            RunId::Number(n) => n.to_string(),
+            RunId::Text(s) => s.trim().to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LogsInput {
     /// A run's id (`ci_runs`); the newest failed run on the session's branch when left out.
     #[serde(default)]
-    pub run_id: Option<u64>,
+    pub run_id: Option<RunId>,
+    /// The run's CI provider (`ci_runs` names it); GitHub Actions, or the only provider, when left out.
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -615,11 +685,61 @@ pub struct JobLogOut {
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct LogsOutput {
-    pub run_id: u64,
+    pub provider: String,
+    pub run_id: String,
     pub jobs: Vec<JobLogOut>,
 }
 
 pub struct CiFailedLogs;
+
+/// The failed run to read: `id` of `provider` (looked up on the branch, for its attempt), else the newest failed run
+/// on the branch of any of `providers`.
+fn failed_run(
+    providers: &[Arc<dyn CiProvider>],
+    repo: &str,
+    branch: Option<&str>,
+    id: Option<&str>,
+) -> Result<(Arc<dyn CiProvider>, CiRun), String> {
+    let read = |p: &Arc<dyn CiProvider>| match branch {
+        Some(b) => p.runs(repo, b, None).map_err(|e| format!("{}: {e}", p.label())),
+        None => Ok(vec![]),
+    };
+    if let Some(id) = id {
+        let p = match providers {
+            [one] => one.clone(),
+            _ => providers
+                .iter()
+                .find(|p| p.id() == pdt_core::pr::GITHUB_ACTIONS)
+                .cloned()
+                .ok_or("name the run's provider (`ci_runs` gives it)")?,
+        };
+        let known = read(&p).unwrap_or_default().into_iter().find(|r| r.id == id);
+        // A run no longer among the branch's recent ones: its first attempt.
+        let run = known.unwrap_or_else(|| CiRun {
+            provider: p.id().to_string(),
+            id: id.to_string(),
+            attempt: 1,
+            name: String::new(),
+            state: CiState::Failed,
+            url: String::new(),
+            head_sha: String::new(),
+            branch: branch.unwrap_or_default().to_string(),
+            created_at: String::new(),
+            failed_jobs: vec![],
+        });
+        return Ok((p, run));
+    }
+    let b = branch.ok_or("this session has no branch: name a run")?;
+    let mut newest: Option<(Arc<dyn CiProvider>, CiRun)> = None;
+    for p in providers {
+        for r in read(p)?.into_iter().filter(|r| r.state == CiState::Failed) {
+            if newest.as_ref().is_none_or(|(_, n)| r.created_at > n.created_at) {
+                newest = Some((p.clone(), r));
+            }
+        }
+    }
+    newest.ok_or(format!("no CI run on {b} has failed"))
+}
 
 impl Action for CiFailedLogs {
     type Input = LogsInput;
@@ -629,34 +749,37 @@ impl Action for CiFailedLogs {
         tool(
             ToolDecl::new("ci_failed_logs", "Read the logs of a CI run's failed jobs").read_only().open_world(),
             "Failed CI logs",
-            "The failed jobs of a CI run (by id, else the newest failed run on the session's branch), each with the \
-             end of its log: what to fix.",
+            "The failed jobs of a CI run (by provider and id, else the newest failed run on the session's branch), \
+             each with the end of its log: what to fix.",
         )
     }
 
     fn approval_title(&self, i: &LogsInput) -> String {
-        i.run_id.map_or_else(|| "read failed CI logs".into(), |r| format!("read run {r}'s failed logs"))
+        i.run_id
+            .as_ref()
+            .map_or_else(|| "read failed CI logs".into(), |r| format!("read run {}'s failed logs", r.text()))
     }
 
     fn run<'a>(&'a self, cx: &'a ActionCx<'a>, i: LogsInput) -> BoxFut<'a, Result<LogsOutput, String>> {
         Box::pin(async move {
             let h = here(cx).await?;
-            let run_id = match i.run_id {
-                Some(r) => r,
-                None => {
-                    let b = h.branch(None)?;
-                    let on = b.clone();
-                    let runs = h.call(move |f, r| f.branch_runs(r, &on)).await?;
-                    runs.iter()
-                        .filter(|r| r.state == CiState::Failed)
-                        .max_by(|a, b| a.created_at.cmp(&b.created_at))
-                        .map(|r| r.id)
-                        .ok_or(format!("no CI run on {b} has failed"))?
+            let providers = providers_of(&h, i.provider.as_deref())?;
+            let (repo, branch, id) = (h.repo(), h.branch(None).ok(), i.run_id.map(|r| r.text()));
+            tokio::task::spawn_blocking(move || {
+                let (p, run) = failed_run(&providers, &repo, branch.as_deref(), id.as_deref())?;
+                if !p.capabilities().logs {
+                    return Err(format!("{} has no logs to read: {}", p.label(), run.url));
                 }
-            };
-            let jobs = h.call(move |f, r| f.failed_logs(r, run_id)).await?;
-            let jobs = jobs.into_iter().map(|j| JobLogOut { name: j.name, url: j.url, log: j.log }).collect();
-            Ok(LogsOutput { run_id, jobs })
+                let failed = p.jobs(&repo, &run).map_err(|e| e.to_string())?;
+                let mut jobs = vec![];
+                for j in failed.into_iter().filter(|j| j.state == CiState::Failed) {
+                    let log = p.job_log_tail(&repo, &run, &j, pdt_forge::ci::LOG_LINES).map_err(|e| e.to_string())?;
+                    jobs.push(JobLogOut { name: j.name, url: j.url, log });
+                }
+                Ok(LogsOutput { provider: p.id().to_string(), run_id: run.id, jobs })
+            })
+            .await
+            .map_err(|e| e.to_string())?
         })
     }
 }

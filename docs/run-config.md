@@ -115,7 +115,25 @@ command = "cargo test"                            # optional; run with sh -c (cm
   no `[ci]`): a fast-forward of the base when it hasn't moved, else a merge commit, in the project's checkout. A
   conflict goes back to the agent (`git merge <base>`). Approval and review rules apply as on any forge.
 - No merge queue, issues or forge reviews (PDT's own review only). Agents are told to commit and not push.
-- `[ci]` is only read with `forge = "local"`; an older PDT skips the section.
+- `[ci] command` is only read with `forge = "local"`; an older PDT skips the section.
+
+### CI providers
+
+A project's CI can come from more than one place (PDT-242): its forge's own CI (GitHub Actions on GitHub, the
+`[ci] command` on the local forge) and the CI integrations set up for it in its settings (Buildkite: a connection and
+pipelines). By default PDT reads all of them. `[ci] providers` picks which, by id, in order:
+
+```toml
+[ci]
+providers = ["github_actions", "buildkite"]       # github_actions, local, buildkite
+```
+
+- The pull request's CI badge rolls up every listed provider's runs on its head, each provider's failures reach the
+  agent on their own, and an automated merge waits until each provider with CI has passed on the head.
+- An id the project doesn't have (Buildkite with no pipelines set) is skipped; an empty list means no CI. An id that
+  isn't one (letters, digits, `_` and `-`) makes the file invalid. The host overrides' list replaces the file's.
+- An older PDT refuses the whole file over the unknown `providers` key: wait for the stable release to support it
+  before adding it to a repository's file.
 
 ## What a run gets
 

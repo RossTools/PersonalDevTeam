@@ -14,11 +14,14 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
   jobs, logs, comments, reviews and issues through REST (`X-GitHub-Api-Version: 2022-11-28`), as do releases
   (`releases/latest`, `releases/tags/{tag}`; drafts and pre-releases don't count, a 404 is none; `newest_release`,
   the first non-draft of `releases`, pre-releases included, for an experimental release, PDT-210) and starting a
-  workflow (`POST actions/workflows/{file}/dispatches`; the forge's `releases` capability, PDT-194).
+  workflow (`POST actions/workflows/{file}/dispatches`; GitHub Actions' `trigger`, PDT-194).
 - Merging turns on auto-merge (`enablePullRequestAutoMerge`, with the strategy unless a merge queue picks it). A pull
   request GitHub calls clean merges at once instead: with no strategy it joins the merge queue
   (`enqueuePullRequest`), else `PUT …/pulls/<n>/merge`.
-- Failed logs (`Forge::failed_logs`, the `ci_failed_logs` tool): the run's latest attempt's failed, timed-out or
+- GitHub Actions is GitHub's CI provider (PDT-242, `pdt_github::GithubActions`, registered by the GitHub plugin as
+  `ForgePlugin::ci`), over the same login: runs, jobs, logs, re-runs (`…/rerun`, `…/rerun-failed-jobs`), starting a
+  workflow and merge-queue runs.
+- Failed logs (`CiProvider::jobs` and `job_log_tail`, the `ci_failed_logs` tool): the run's attempt's failed, timed-out or
   never-started jobs, each job's log through `…/actions/jobs/<id>/logs` (a redirect to storage; reqwest drops the
   token when it leaves GitHub's host), cut to its last 200 lines (30,000 characters), timestamps and terminal colours
   dropped. A log GitHub no longer has says so instead of failing the call.
