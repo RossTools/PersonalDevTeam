@@ -1,0 +1,43 @@
+# The field labels match the sections of a report filed with Report a bug in PDT (pdt-core bug_report.rs `SECTIONS`;
+# a test checks), so bugs filed in the app and here look alike. Don't add the `from-pdt` label: triage keys off it.
+name: Bug report
+description: Something in PDT doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. PDT can file this for you too: **Report a bug** in the command palette adds its diagnostics, with tokens and home folders taken out.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw. Paste error messages as they appear.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      placeholder: |
+        1. Open a project.
+        2. ...
+  - type: input
+    id: version
+    attributes:
+      label: PDT version
+      description: In Host settings → Updates, or the tray menu.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "macOS 26.1 (Apple silicon), Windows 11, Ubuntu 24.04…"
+    validations:
+      required: true

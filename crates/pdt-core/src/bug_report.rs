@@ -51,8 +51,27 @@ pub const NONCE_TTL_MS: i64 = 60_000;
 const MAX_TITLE: usize = 200;
 const MAX_DESCRIPTION: usize = 20_000;
 
-/// The title and description trimmed, or why they can't be sent.
-pub fn validate(title: &str, description: &str) -> Result<(String, String), String> {
+/// The sections of a report's body, in order: the same labels as the bug form on GitHub
+/// (`.github/ISSUE_TEMPLATE/bug.yml`), so bugs filed in the app and on GitHub look alike.
+pub const WHAT_HAPPENED: &str = "What happened";
+pub const EXPECTED: &str = "What you expected";
+pub const STEPS: &str = "How to reproduce";
+pub const VERSION: &str = "PDT version";
+pub const OS: &str = "OS";
+pub const SECTIONS: [&str; 5] = [WHAT_HAPPENED, EXPECTED, STEPS, VERSION, OS];
+/// What GitHub's issue forms write for a field left empty.
+const NO_RESPONSE: &str = "_No response_";
+
+/// What the reporter wrote, by section (Markdown each).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Report {
+    pub what_happened: String,
+    pub expected: String,
+    pub steps: String,
+}
+
+/// The title and report trimmed, or why they can't be sent.
+pub fn validate(title: &str, report: &Report) -> Result<(String, Report), String> {
     let title = title.trim();
     if title.is_empty() {
         return Err("give the report a title".into());
@@ -60,11 +79,16 @@ pub fn validate(title: &str, description: &str) -> Result<(String, String), Stri
     if title.contains(['\n', '\r']) || title.chars().count() > MAX_TITLE {
         return Err(format!("the title must be one line of at most {MAX_TITLE} characters"));
     }
-    let description = description.trim();
-    if description.chars().count() > MAX_DESCRIPTION {
+    let report = Report {
+        what_happened: report.what_happened.trim().to_string(),
+        expected: report.expected.trim().to_string(),
+        steps: report.steps.trim().to_string(),
+    };
+    let len = [&report.what_happened, &report.expected, &report.steps].iter().map(|s| s.chars().count()).sum::<usize>();
+    if len > MAX_DESCRIPTION {
         return Err(format!("the description must be at most {MAX_DESCRIPTION} characters"));
     }
-    Ok((title.to_string(), description.to_string()))
+    Ok((title.to_string(), report))
 }
 
 /// What the diagnostics say about this instance. No ticket or project content.
@@ -118,23 +142,28 @@ pub fn tail(text: &str, n: usize) -> Vec<String> {
     lines[lines.len().saturating_sub(n)..].iter().map(|l| l.to_string()).collect()
 }
 
-/// The issue's (or ticket's) body: the description, the diagnostics in a collapsed block, and where it came from.
-pub fn body(description: &str, diagnostics: Option<&str>, version: &str) -> String {
+/// The issue's (or ticket's) body: the report's sections, the version, the OS (`None`: not shared, as with the
+/// diagnostics), the diagnostics in a collapsed block, and where it came from.
+pub fn body(report: &Report, diagnostics: Option<&str>, version: &str, os: Option<&str>) -> String {
     let mut out = String::new();
-    if description.is_empty() {
-        out.push_str("_No description._\n");
-    } else {
-        out.push_str(description);
-        out.push('\n');
+    for (label, text) in [
+        (WHAT_HAPPENED, report.what_happened.as_str()),
+        (EXPECTED, report.expected.as_str()),
+        (STEPS, report.steps.as_str()),
+        (VERSION, version),
+        (OS, os.unwrap_or("_Not shared_")),
+    ] {
+        let text = if text.trim().is_empty() { NO_RESPONSE } else { text };
+        out.push_str(&format!("### {label}\n\n{text}\n\n"));
     }
     if let Some(d) = diagnostics {
         let fence = "`".repeat(longest_backtick_run(d).max(2) + 1);
         out.push_str(&format!(
-            "\n<details><summary>Diagnostics</summary>\n\n{fence}text\n{}\n{fence}\n\n</details>\n",
+            "<details><summary>Diagnostics</summary>\n\n{fence}text\n{}\n{fence}\n\n</details>\n\n",
             d.trim_end()
         ));
     }
-    out.push_str(&format!("\n_Reported with Report a bug in {} {version}._\n", crate::brand::PRODUCT_NAME));
+    out.push_str(&format!("_Reported with Report a bug in {} {version}._\n", crate::brand::PRODUCT_NAME));
     out
 }
 
@@ -355,11 +384,14 @@ mod tests {
 
     #[test]
     fn titles_are_one_line_and_required() {
-        assert_eq!(validate("  Crash  ", " details "), Ok(("Crash".into(), "details".into())));
-        assert!(validate("  ", "x").is_err());
-        assert!(validate("a\nb", "").is_err());
-        assert!(validate(&"x".repeat(201), "").is_err());
-        assert!(validate("t", &"x".repeat(20_001)).is_err());
+        let r = |w: &str| Report { what_happened: w.into(), ..Default::default() };
+        assert_eq!(validate("  Crash  ", &r(" details ")), Ok(("Crash".into(), r("details"))));
+        assert!(validate("  ", &r("x")).is_err());
+        assert!(validate("a\nb", &r("")).is_err());
+        assert!(validate(&"x".repeat(201), &r("")).is_err());
+        assert!(validate("t", &r(&"x".repeat(20_001))).is_err());
+        let split = Report { what_happened: "x".repeat(10_000), expected: "x".repeat(10_000), steps: "x".into() };
+        assert!(validate("t", &split).is_err(), "the cap is on the sections together");
     }
 
     #[test]
@@ -418,12 +450,41 @@ mod tests {
 
     #[test]
     fn the_body_fences_diagnostics_safely() {
-        let b = body("It broke.", Some("log ``` line"), "0.1.42");
-        assert!(b.starts_with("It broke.\n"));
+        let r = Report { what_happened: "It broke.".into(), ..Default::default() };
+        let b = body(&r, Some("log ``` line"), "0.1.42", Some("macos (aarch64)"));
         assert!(b.contains("<details><summary>Diagnostics</summary>"));
         assert!(b.contains("````text\nlog ``` line\n````"));
         assert!(b.contains("0.1.42"));
-        assert!(!body("", None, "1").contains("<details>"));
+        assert!(!body(&r, None, "1", None).contains("<details>"));
+    }
+
+    #[test]
+    fn the_body_has_the_bug_forms_sections() {
+        let r = Report { what_happened: "It broke.".into(), steps: "1. Drag a card.".into(), ..Default::default() };
+        let b = body(&r, None, "0.1.42", Some("macos (aarch64)"));
+        assert!(
+            b.starts_with(
+                "### What happened\n\nIt broke.\n\n### What you expected\n\n_No response_\n\n\
+             ### How to reproduce\n\n1. Drag a card.\n\n### PDT version\n\n0.1.42\n\n### OS\n\nmacos (aarch64)\n\n"
+            ),
+            "{b}"
+        );
+        assert!(body(&r, None, "1", None).contains("### OS\n\n_Not shared_\n"));
+    }
+
+    /// The GitHub bug form asks for the same sections, and no issue template adds `from-pdt` (triage keys off it:
+    /// only reports filed from PDT carry it).
+    #[test]
+    fn the_github_issue_forms_match_the_report() {
+        let bug = include_str!("../../../.github/ISSUE_TEMPLATE/bug.yml");
+        let labels: Vec<&str> =
+            bug.lines().filter_map(|l| l.trim().strip_prefix("label: ")).map(|l| l.trim_matches('"')).collect();
+        assert_eq!(labels, SECTIONS, "bug.yml's field labels, in order");
+        let feature = include_str!("../../../.github/ISSUE_TEMPLATE/feature.yml");
+        for t in [bug, feature] {
+            let labels = t.lines().find_map(|l| l.strip_prefix("labels: ")).expect("a labels line");
+            assert!(!labels.contains(crate::github_issue::FROM_PDT), "an issue template adds {labels}");
+        }
     }
 
     #[test]

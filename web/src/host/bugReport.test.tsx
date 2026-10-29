@@ -27,11 +27,15 @@ describe('BugReportDialog', () => {
     const send = screen.getByRole('button', { name: 'Send report' });
     expect(send).toBeDisabled();
     await userEvent.type(screen.getByLabelText('Title'), 'Board freezes');
-    await userEvent.type(screen.getByLabelText('Description'), 'Drag a card.');
+    await userEvent.type(screen.getByLabelText('What happened'), 'It stops.');
+    await userEvent.type(screen.getByLabelText('What you expected'), 'It moves.');
+    await userEvent.type(screen.getByLabelText('How to reproduce'), 'Drag a card.');
     await userEvent.click(send);
     expect(await screen.findByRole('link', { name: '#7' })).toHaveAttribute('href', 'https://github.com/o/r/issues/7');
     const body = calls.find((c) => c.method === 'POST')!.body as Record<string, unknown>;
-    expect(body).toMatchObject({ title: 'Board freezes', description: 'Drag a card.', includeDiagnostics: true });
+    expect(body).toMatchObject({
+      title: 'Board freezes', description: 'It stops.', expected: 'It moves.', steps: 'Drag a card.', includeDiagnostics: true,
+    });
     expect(typeof body.nonce).toBe('string');
   });
 
