@@ -61,9 +61,10 @@ pub fn params() -> Vec<TemplateParam> {
         {"id": "accept", "title": "Who accepts", "type": "choice", "choices": ["user", "auto"], "default": "user",
          "description": "user: you accept from the Inbox before the merge; auto: it merges once QA passes (unless the \
                          project needs a person's approval)."},
-        {"id": "autoAcceptLabels", "title": "Labels accepted automatically", "type": "list", "default": [],
+        {"id": "autoAcceptLabels", "title": "Labels accepted automatically", "type": "list", "default": ["agentic"],
          "description": "With user accepting: a ticket with any of these labels (lower case, as it had them when it \
-                         started) skips Accept and merges once QA passes; every other ticket waits for you at Accept."},
+                         started) skips Accept and merges once QA passes; every other ticket waits for you at Accept. \
+                         Default: agentic."},
         {"id": "merge", "title": "Who merges", "type": "choice", "choices": ["workflow", "person"],
          "default": "workflow",
          "description": "workflow: the run merges after Accept (auto-merge of the pull request, or a local merge); \
