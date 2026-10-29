@@ -27,6 +27,7 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
   { label: 'Appearance', terms: ['Theme', 'Dark', 'Light', 'System'] },
   { label: 'Bug reports', terms: ['Send reports to', 'Report a bug'] },
   { label: 'Checks', terms: ['git', 'tailscale', 'claude', 'codex', 'devin', 'Run checks again'] },
+  { label: 'Setup', terms: ['Get started', 'First run', 'Checklist', 'Onboarding'] },
   { label: 'Danger zone', terms: ['Remove the GitHub token'] },
 ];
 

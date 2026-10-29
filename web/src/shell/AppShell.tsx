@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, NotebookPen, PanelBottom, Plus } from 'lucide-react';
 import { api } from '../api/client';
 import { branchUrl } from '../projects/github';
-import { Button, EmptyState, IconButton, List, ListRow, Sheet, Skeleton, useConfirm, useThemePref, type MenuEntry } from '@ui';
+import { Button, EmptyState, IconButton, Link, List, ListRow, Sheet, Skeleton, useConfirm, useThemePref, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { ProjectKey } from '../common/BranchChip';
 import type { Place } from '../common/PlacePicker';
@@ -16,6 +16,8 @@ import { CommandPalette } from '../palette/CommandPalette';
 import { paletteItems, type NewKind, type PaletteHandlers } from '../palette/paletteItems';
 import { useMetaK } from '../palette/useMetaK';
 import { AddProjectDialog } from '../projects/AddProjectDialog';
+import type { AddProjectMode } from '../projects/AddProjectForm';
+import { SetupPage } from '../setup/SetupPage';
 import { choiceFor, newSession, type Choice } from '../sessions/newSession';
 import { ProjectPage } from '../projects/ProjectPage';
 import { FileViewer, FolderList, FolderTree, useFolderView, type FolderViewState } from '../files/FolderView';
@@ -135,13 +137,17 @@ export function AppShell() {
   const route = useMemo(() => parseLocation(loc), [loc]);
   const phone = useMediaQuery(PHONE_QUERY);
   const defaultView: ViewId = phone ? 'pm' : 'sessions';
+  // Get started (PDT-230) shows in the Sessions view's place: its sidebar lists the projects as they are added.
+  const setupShown = route.view === 'setup';
+  // Whether the app opens on Get started (a new install, until it is set up or dismissed).
+  const setup = useQuery({ queryKey: ['host-setup'], queryFn: api.hostSetup, retry: false, staleTime: Infinity });
   // While a phone's on-screen keyboard is up, the shell fits the part above it, so a composer stays in view.
   const keyboardBox = useKeyboardBox(phone);
-  const view: ViewId = route.view ?? defaultView;
+  const view: ViewId = route.view === 'setup' ? 'sessions' : route.view ?? defaultView;
   // The path each view showed last, so coming back to a view shows what it did (as when this was React state).
   const lastPath = useRef<Partial<Record<ViewId, string>>>({});
   useEffect(() => {
-    if (route.view) lastPath.current[route.view] = loc;
+    if (route.view && route.view !== 'setup') lastPath.current[route.view] = loc;
   }, [route.view, loc]);
   useAppLinks();
   // An old path (the Integrations page, This host's GitHub section) shows its new page under the new path.
@@ -179,6 +185,8 @@ export function AppShell() {
   const [todoFocus, setTodoFocus] = useState<TodoFocus | null>(null);
   const clearTodoFocus = useCallback(() => setTodoFocus(null), []);
   const [addingProject, setAddingProject] = useState(false);
+  // The way of adding a project the dialog opens on (Get started's Clone from GitHub opens on Clone URL).
+  const [addMode, setAddMode] = useState<AddProjectMode>('path');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
   // The New ticket form: its project and the title typed so far.
@@ -247,10 +255,13 @@ export function AppShell() {
     if (route.view !== 'sessions' || !wsId || (phone && !route.workspaceId)) return;
     if (route.workspaceId !== wsId || route.tabId !== tabId) go({ view: 'sessions', workspaceId: wsId, tabId }, { replace: true });
   }, [route, wsId, tabId, phone]);
-  // `/` shows the default view: the PM on a phone, Sessions otherwise.
+  // `/` shows the default view: the PM on a phone, Sessions otherwise; Get started instead while it opens on launch
+  // (once it has said whether it does).
+  const opensOnSetup = setup.isPending ? null : setup.data?.opensOnLaunch ?? false;
   useEffect(() => {
-    if (route.view === null) go(viewRoute(defaultView), { replace: true });
-  }, [route.view, defaultView]);
+    if (route.view !== null || opensOnSetup === null) return;
+    go(opensOnSetup ? { view: 'setup' } : viewRoute(defaultView), { replace: true });
+  }, [route.view, defaultView, opensOnSetup]);
   // A ticket workspace whose attempt merged: its banner shows above every tab (PDT-71) while the ticket is open, or
   // Done with its worktree still there (the banner checks that, PDT-97).
   const wsTicket = ws.workspace?.ticket;
@@ -589,7 +600,7 @@ export function AppShell() {
     // The Sidebar has its own section headings (Workspaces, Agents).
     <>
       {ws.projects.length === 0 && (
-        <EmptyState action={<Button size="sm" onClick={() => { setView('settings'); setSheetOpen(false); }}>Add one in Settings</Button>}>
+        <EmptyState action={<Button size="sm" onClick={() => { setSheetOpen(false); setAddingProject(true); }}>Add a project</Button>}>
           No projects yet.
         </EmptyState>
       )}
@@ -639,7 +650,7 @@ export function AppShell() {
   );
   // The phone's screens (PDT-112): a view's top-level screen (its list, for most views) or a detail screen with ←.
   const detail = isDetail(route);
-  const phoneList = phone && !detail && PHONE_LIST_SCREENS.includes(view);
+  const phoneList = phone && !detail && !setupShown && PHONE_LIST_SCREENS.includes(view);
   // The overview and a rename in the top bar belong to the workspace screen they were opened on.
   const workspaceScreen = view === 'sessions' && detail ? wsId : null;
   useEffect(() => {
@@ -684,7 +695,7 @@ export function AppShell() {
       await ws.focusItem({ kind: 'session', id: s.id }, s.projectId);
     });
   };
-  const phoneTitle: ReactNode = view === 'tickets' && !detail ? (
+  const phoneTitle: ReactNode = setupShown ? 'Get started' : view === 'tickets' && !detail ? (
     <Button variant="ghost" size="sm" aria-label="Projects and filters" aria-haspopup="dialog" onClick={() => setSheetOpen(true)} className="min-w-0 font-medium">
       <span className="truncate">{ticketsProject ? `${label} · ${ticketsProject.key}` : label}</span>
       <ChevronDown aria-hidden className="size-4 text-muted-foreground" />
@@ -726,7 +737,7 @@ export function AppShell() {
       { label: 'New workspace', onSelect: () => setAddingWorkspace(true) },
       { label: 'New conversation', onSelect: newConversation, disabled: ws.projects.length === 0 },
     ] : [];
-  const hasShellActions = view === 'pm' || view === 'sessions';
+  const hasShellActions = !setupShown && (view === 'pm' || view === 'sessions');
   const phoneActions: TopBarActions | null = hasShellActions || screenActions
     ? () => [...shellActions(), ...(screenActions?.entries() ?? [])]
     : null;
@@ -810,7 +821,7 @@ export function AppShell() {
       )}
       <main className="relative flex-1 flex flex-col min-w-0 min-h-0">
         <UpdateBanner />
-        {view === 'sessions' && !phoneList ? (
+        {view === 'sessions' && !phoneList && !setupShown ? (
           <WorkspaceBar
             ws={ws}
             renamingTabId={renamingTabId}
@@ -827,7 +838,7 @@ export function AppShell() {
             )}
           />
         ) : null}
-        {view === 'sessions' && !phoneList && mergedTicketId && (
+        {view === 'sessions' && !phoneList && !setupShown && mergedTicketId && (
           <Suspense fallback={null}><WorkspaceMergedBanner key={mergedTicketId} ticketId={mergedTicketId} /></Suspense>
         )}
         {chooserOpen && view === 'sessions' && <NewTabChooser ws={ws} onClose={() => setChooserOpen(false)} anchor={plusRef} />}
@@ -857,8 +868,14 @@ export function AppShell() {
         )}
         {addingProject && (
           <AddProjectDialog
-            onClose={() => setAddingProject(false)}
+            mode={addMode}
+            onClose={() => { setAddingProject(false); setAddMode('path'); }}
             onAdded={(p) => {
+              // Get started stays on screen: its project step ticks off.
+              if (setupShown) {
+                void qc.invalidateQueries({ queryKey: ['host-setup'] });
+                return;
+              }
               if (view === 'settings') {
                 go({ view: 'settings', page: { kind: 'project', key: p.key, section: null } });
                 return;
@@ -875,7 +892,15 @@ export function AppShell() {
         {!(bottomOpen && bottomMax) && (
           <div className="flex-1 flex flex-col min-h-0">
             <ErrorBoundary resetKey={loc} onBack={() => go(viewRoute('inbox'))}>
-            {phone && view === 'sessions' && !phoneList && overviewOpen ? (
+            {setupShown ? (
+              <SetupPage
+                onAddProject={(mode) => { setAddMode(mode ?? 'path'); setAddingProject(true); }}
+                onBoard={() => go({ view: 'tickets', board: true, ticket: null })}
+                onPm={() => setView('pm')}
+                onHostSettings={(section) => go({ view: 'settings', page: { kind: 'host', section } })}
+                onDismissed={() => go(viewRoute(defaultView))}
+              />
+            ) : phone && view === 'sessions' && !phoneList && overviewOpen ? (
               <TabOverview ws={ws} onClose={() => setOverviewOpen(false)} onRename={setRenamingTabId} />
             ) : phoneList && view === 'inbox' ? (
               <PhoneInboxList items={inboxItems} updates={updates.data?.items ?? []} loading={inbox.isLoading}
@@ -957,7 +982,7 @@ export function AppShell() {
                 {...(!current.worktreeId ? { branch: null } : worktreeBranch !== undefined ? { branch: worktreeBranch } : {})}
               />
             ) : ws.projects.length === 0 ? (
-              <EmptyState>Add a project to get started.</EmptyState>
+              <EmptyState><Link onClick={() => go({ view: 'setup' })}>Add a project to get started.</Link></EmptyState>
             ) : (
               <EmptyState>{ws.tab ? 'Loading…' : 'No tabs here. Press + to start an agent or a shell (Ctrl+] c).'}</EmptyState>
             )}

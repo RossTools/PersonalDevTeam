@@ -71,6 +71,25 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   and Sample App tickets (ten, plus an "Accounts" parent with three of them as parts) (crates/pdtd/src/seed.rs).
   Nothing is started; a database with any project is left alone; ignored outside the dev profile.
 
+## Get started (PDT-230)
+
+- The first-run checklist (`/setup`, web/src/setup/SetupPage.tsx), shown in the Sessions view's place so the sidebar
+  lists projects as they are added. Four steps in any order, each ticked off from real state (pdt-core `setup.rs`):
+  **Agents on this machine** (git and at least one of Claude Code, Codex, Devin found by the host checks), **Connect
+  GitHub** (connected, or "Skip, my projects aren't on GitHub", for local merging), **Add a project** (one exists; the
+  Add project dialog, with "Clone from GitHub…" opening it on Clone URL while GitHub is connected) and **Pick a default
+  agent** (set in the checklist or in Settings, which counts as confirming the preset one).
+- `GET /api/host/setup` returns the steps, how many are done and `opensOnLaunch`; `PUT` takes `dismissed`,
+  `githubSkipped` and `defaultAgentConfirmed`. Its state is the host value `setup`, written the first time it is
+  asked for: a host that already has a project and an agent is marked not needed then and never sees it. `/` opens on
+  Get started while it is needed and neither dismissed nor finished (every step done once; a step coming undone later
+  does not bring it back). The state lives on the host, so every browser and phone sees the same.
+- Settings › This host › Setup reopens it. The Sessions sidebar's "Add a project" opens the Add project dialog, and
+  the empty main pane links to Get started.
+- "Set a path by hand…" saves an agent's program in the host settings, the same `claudeProgram` / `codexProgram` /
+  `devinProgram` as Settings › This host › Agents › Programs (PDT-231; a `PDT_*_PROGRAM` variable still wins and makes
+  the field read-only), then runs the checks again. The checks report where each program was found (`path`).
+
 ## Remote access and the Host guard
 
 - `PDT_ALLOWED_HOSTS` (comma-separated), or else Settings → Network's allowed hosts, adds Host header values accepted

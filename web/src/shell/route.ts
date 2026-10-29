@@ -37,7 +37,9 @@ export type Route =
    * `worktree` say which checkout when the user picked one.
    */
   | { view: 'files'; path: string | null; project: string | null; worktree: string | null }
-  | { view: 'settings'; page: SettingsPage };
+  | { view: 'settings'; page: SettingsPage }
+  /** Get started (PDT-230): the first-run checklist, in the Sessions view's place. */
+  | { view: 'setup' };
 
 const WORKFLOW_TABS: readonly WorkflowTab[] = ['outline', 'runs', 'graph', 'text', 'versions'];
 
@@ -85,6 +87,8 @@ export function parseRoute(pathname: string, search = ''): Route {
         project: q.get('project'),
         worktree: q.get('worktree'),
       };
+    case 'setup':
+      return { view: 'setup' };
     case 'settings':
       if (a === 'plugins') return { view: 'settings', page: { kind: 'plugins', id: b } };
       // The old Integrations page (PDT-228), and GitHub's login, which was a section of This host.
@@ -107,6 +111,8 @@ export function routePath(r: Route): string {
   switch (r.view) {
     case null:
       return '/';
+    case 'setup':
+      return '/setup';
     case 'pm':
       return r.pm === 'current' ? '/pm' : `/pm/${enc(r.pm)}`;
     case 'notes':
@@ -170,6 +176,7 @@ export function viewRoute(view: ViewId): Route {
 export function isDetail(r: Route): boolean {
   switch (r.view) {
     case null: return false;
+    case 'setup': return false;
     case 'pm': return r.pm !== 'current';
     case 'sessions': return r.workspaceId !== null;
     case 'inbox': return r.itemId !== null;
@@ -185,6 +192,7 @@ export function isDetail(r: Route): boolean {
 /** Where ← goes from a detail screen when there is no history to go back through (opened from a link): its view. */
 export function upRoute(r: Route): Route {
   if (r.view === null) return r;
+  if (r.view === 'setup') return viewRoute('sessions');
   if (r.view === 'tickets') return { ...r, ticket: null };
   // A run goes up to the workflow's runs.
   if (r.view === 'workflows' && r.target?.kind === 'workflow' && r.target.runId) return { view: 'workflows', target: { kind: 'workflow', id: r.target.id, tab: 'runs' } };

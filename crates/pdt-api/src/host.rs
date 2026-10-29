@@ -257,6 +257,10 @@ pub(crate) async fn put_settings(
         crate::remote::apply_locked(&st).await;
     }
     drop(guard);
+    // Get started's last step: the default agent was picked.
+    if patch.default_agent.is_some() {
+        crate::setup::confirm_default_agent(&st).await?;
+    }
     // Another agent program: what the checks found (logins, the agents offered) is out of date.
     if patch.claude_program.is_some() || patch.codex_program.is_some() || patch.devin_program.is_some() {
         let st = st.clone();

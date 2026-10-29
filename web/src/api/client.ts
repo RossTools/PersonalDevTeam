@@ -11,6 +11,8 @@ import type { Health } from './gen/Health';
 import type { TicketDraft } from './gen/TicketDraft';
 import type { HostChecks } from './gen/HostChecks';
 import type { HostSettingsPatch } from './gen/HostSettingsPatch';
+import type { SetupPatch } from './gen/SetupPatch';
+import type { SetupView } from './gen/SetupView';
 import type { NetworkSettings } from './gen/NetworkSettings';
 import type { HostSettingsView } from './gen/HostSettingsView';
 import type { Branch } from './gen/Branch';
@@ -505,6 +507,9 @@ export const api = {
   githubCancelDevice: () => request<GithubLoginView>('/api/github/login/device', { method: 'DELETE' }),
   githubDisconnect: () => request<GithubLoginView>('/api/github/login', { method: 'DELETE' }),
   hostChecks: () => request<HostChecks>('/api/host/checks'),
+  /** Get started (PDT-230): the first-run checklist's steps, and whether the app opens on it. */
+  hostSetup: () => request<SetupView>('/api/host/setup'),
+  saveHostSetup: (p: SetupPatch) => request<SetupView>('/api/host/setup', { method: 'PUT', body: JSON.stringify(p) }),
   /** Where a bug report would go, and the redacted diagnostics it would carry (PDT-153). */
   bugReportPreview: () => request<BugReportPreview>('/api/bug-reports/preview'),
   reportBug: (r: NewBugReport) =>

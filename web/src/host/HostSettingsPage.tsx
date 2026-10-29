@@ -19,6 +19,7 @@ import { HOST_SECTIONS } from '../common/settingsSections';
 import { SettingsScreens } from '../common/SettingsScreens';
 import { useAction } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
+import { navigate } from '../shell/router';
 import { BugReportDialog } from './BugReportDialog';
 
 /** The stored token's state as a badge (never the token itself). */
@@ -668,6 +669,22 @@ function Checks() {
   );
 }
 
+/** Get started (PDT-230): reopens the first-run checklist. */
+function Setup() {
+  const setup = useQuery({ queryKey: ['host-setup'], queryFn: api.hostSetup });
+  const v = setup.data;
+  const where = !v ? undefined
+    : v.done === 4 ? 'Every step is done.'
+      : `${v.done} of 4 steps done.${v.state.dismissed ? ' Dismissed: it no longer opens on its own.' : ''}`;
+  return (
+    <Section label="Setup" description="The Get started checklist: agents, GitHub, a first project and the default agent.">
+      <SettingsRow label="Get started" description={where}>
+        <Button size="sm" onClick={() => navigate('/setup')}>Open Get started</Button>
+      </SettingsRow>
+    </Section>
+  );
+}
+
 const bugReportChoices: { value: BugReportSetting; label: string }[] = [
   { value: 'auto', label: 'Automatic' },
   { value: 'github', label: 'GitHub issue' },
@@ -765,6 +782,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
   // The device being used when it is on the tailnet; otherwise the login this host's Tailscale is signed in as.
   const me = whoami.data?.caller === 'tailnet' && whoami.data.login ? whoami.data.login : v.remote.tailscaleLogin;
   const nodes: Record<string, ReactNode> = {
+    'Setup': <Setup />,
     'Updates': <Updates v={v} />,
     'Agents': <><Agents v={v} /><Programs v={v} /></>,
     'Network': <Network v={v} />,

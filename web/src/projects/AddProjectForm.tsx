@@ -5,7 +5,8 @@ import { api } from '../api/client';
 import { FolderField } from '../common/FolderField';
 import type { Project } from '../api/gen/Project';
 
-type Mode = 'path' | 'clone' | 'personal';
+export type AddProjectMode = 'path' | 'clone' | 'personal';
+type Mode = AddProjectMode;
 const modes = [
   { value: 'path' as const, label: 'Folder' },
   { value: 'clone' as const, label: 'Clone URL' },
@@ -16,10 +17,10 @@ const modes = [
  * Adds a project from a folder on this host, by cloning a repository URL into the Projects folder, or as a Personal
  * project with no repository (PDT makes its folder; spec 7b §7).
  */
-export function AddProjectForm({ onAdded, autoFocus = false }: { onAdded?: (p: Project) => void; autoFocus?: boolean }) {
+export function AddProjectForm({ onAdded, autoFocus = false, initialMode = 'path' }: { onAdded?: (p: Project) => void; autoFocus?: boolean; initialMode?: Mode }) {
   const qc = useQueryClient();
   const errorId = useId();
-  const [mode, setMode] = useState<Mode>('path');
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
   const [repoPath, setRepoPath] = useState('');

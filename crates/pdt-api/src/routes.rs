@@ -46,6 +46,8 @@ pub struct AppState {
     pub owner_from_env: Option<String>,
     /// Serializes read-modify-write of host settings and the side effects applied with them.
     pub(crate) settings_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Serializes read-modify-write of Get started's state (`crate::setup`).
+    pub(crate) setup_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// The effective owner (`PDT_OWNER_LOGIN`, else the stored setting) the identity guard checks; see `refresh_owner`.
     pub(crate) owner_cache: std::sync::Arc<std::sync::RwLock<Option<String>>>,
     /// The port pdtd listens on (0 in tests that do not serve). Tailscale maps 443 to it.
@@ -210,6 +212,7 @@ impl AppState {
             },
             owner_from_env: None,
             settings_lock: Default::default(),
+            setup_lock: Default::default(),
             owner_cache: Default::default(),
             listen_port: 0,
             host_env: Default::default(),
@@ -385,6 +388,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/host/restart", axum::routing::post(crate::host::post_restart))
         .route("/host/whoami", get(crate::identity_guard::whoami))
         .route("/ui/token", get(crate::untrusted::ui_token))
+        .route("/host/setup", get(crate::setup::get_setup).put(crate::setup::put_setup))
         .route("/host/checks", get(crate::checks::get_checks))
         .route("/host/checks/refresh", axum::routing::post(crate::checks::refresh_checks))
         .route("/host/remote", get(crate::remote::get_remote))

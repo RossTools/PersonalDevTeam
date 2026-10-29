@@ -1134,7 +1134,7 @@ describe('phone', () => {
     const main = screen.getByRole('main');
     const sections = await within(main).findByRole('grid', { name: 'Sections' });
     expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual([
-      'Updates', 'Agents', 'Network', 'Remote access', 'Runs', 'Projects folder', 'Appearance', 'Bug reports', 'Checks', 'Danger zone',
+      'Updates', 'Agents', 'Network', 'Remote access', 'Runs', 'Projects folder', 'Appearance', 'Bug reports', 'Checks', 'Setup', 'Danger zone',
     ]);
     await userEvent.click(within(sections).getByRole('row', { name: /Runs/ }));
     expect(here()).toBe('/settings/host/runs');
@@ -1699,5 +1699,48 @@ describe('routes (PDT-111)', () => {
     expect(await within(screen.getByRole('main')).findByRole('heading', { name: 'docs/notes.txt' })).toBeInTheDocument();
     // Its folder opens, so the file shows in the tree.
     expect(await screen.findByRole('row', { name: /notes\.txt/ })).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
+describe('Get started (PDT-230)', () => {
+  const here = () => window.location.pathname + window.location.search;
+  const setupView = (opensOnLaunch: boolean) => ({
+    state: { needed: opensOnLaunch, dismissed: false, finished: false, githubSkipped: false, defaultAgentConfirmed: false },
+    steps: { agents: 'done', github: 'todo', project: 'todo', defaultAgent: 'todo' },
+    done: 1, opensOnLaunch, defaultAgent: 'claude',
+  });
+  afterEach(() => cleanup());
+
+  it('a new install opens on Get started, beside the projects', async () => {
+    window.history.replaceState(null, '', '/');
+    stubApi({ 'GET /api/projects': [], ...hostRoutes, 'GET /api/host/setup': setupView(true) });
+    renderWithQuery(<AppShell />);
+    await waitFor(() => expect(here()).toBe('/setup'));
+    const main = screen.getByRole('main');
+    expect(await within(main).findByRole('heading', { name: 'Get started' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
+    // The sidebar's Add a project opens the add-project dialog.
+    expect(screen.getByText('No projects yet.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Add a project' }));
+    expect(await screen.findByRole('dialog', { name: 'Add project' })).toBeInTheDocument();
+  });
+
+  it('an install already set up opens where it always did, and its empty pane links to Get started', async () => {
+    window.history.replaceState(null, '', '/');
+    stubApi({ 'GET /api/projects': [], ...hostRoutes, 'GET /api/host/setup': setupView(false) });
+    renderWithQuery(<AppShell />);
+    await waitFor(() => expect(here()).toBe('/sessions'));
+    await userEvent.click(await screen.findByRole('link', { name: 'Add a project to get started.' }));
+    expect(here()).toBe('/setup');
+  });
+
+  it('Settings › This host › Setup reopens it', async () => {
+    window.history.replaceState(null, '', '/settings/host/setup');
+    stubApi({ 'GET /api/projects': [], ...hostRoutes, 'GET /api/host/setup': setupView(false) });
+    renderWithQuery(<AppShell />);
+    const setup = await within(screen.getByRole('main')).findByRole('region', { name: 'Setup' });
+    expect(await within(setup).findByText('1 of 4 steps done.')).toBeInTheDocument();
+    await userEvent.click(within(setup).getByRole('button', { name: 'Open Get started' }));
+    await waitFor(() => expect(here()).toBe('/setup'));
   });
 });

@@ -38,6 +38,7 @@ describe('routes', () => {
     ['/files/src/', { view: 'files', path: 'src/', project: null, worktree: null }],
     ['/files/a%20b/c/?project=PDT', { view: 'files', path: 'a b/c/', project: 'PDT', worktree: null }],
     ['/files/a%20b/c%23d.md?project=PDT&worktree=wt', { view: 'files', path: 'a b/c#d.md', project: 'PDT', worktree: 'wt' }],
+    ['/setup', { view: 'setup' }],
     ['/settings', { view: 'settings', page: { kind: 'index' } }],
     ['/settings/host', { view: 'settings', page: { kind: 'host', section: null } }],
     ['/settings/host/updates', { view: 'settings', page: { kind: 'host', section: 'updates' } }],
