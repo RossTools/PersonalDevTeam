@@ -53,7 +53,7 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
         worktree_id: r.try_get("worktree_id")?,
         kind: SessionKind::parse(&kind).ok_or_else(|| corrupt("kind", &kind))?,
         agent: match agent {
-            Some(a) => Some(AgentKind::parse(&a).ok_or_else(|| corrupt("agent", &a))?),
+            Some(a) => Some(AgentKind::parse_stored(&a).ok_or_else(|| corrupt("agent", &a))?),
             None => None,
         },
         bypass_permissions: r.try_get("bypass_permissions")?,

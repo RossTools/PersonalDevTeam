@@ -32,7 +32,8 @@ pub enum AgentKind {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AcpAgentId(&'static str);
 
-/// The most distinct ACP agent ids interned (a bound on what bad input can leak).
+/// The most distinct ACP agent ids interned from outside input (a bound on what bad input can leak). Ids read back
+/// from the store don't count against it (`AgentKind::parse_stored`), so junk can't make stored rows unreadable.
 const MAX_INTERNED: usize = 1024;
 static INTERNED: std::sync::Mutex<std::collections::BTreeSet<&'static str>> =
     std::sync::Mutex::new(std::collections::BTreeSet::new());
@@ -40,17 +41,27 @@ static INTERNED: std::sync::Mutex<std::collections::BTreeSet<&'static str>> =
 impl AcpAgentId {
     pub const PREFIX: &'static str = "acp:";
 
-    /// The id for `id` (without `acp:`), or None when it is not a valid one (`crate::acp_agent::valid_id`).
+    /// The id for `id` (without `acp:`), or None when it is not a valid one (`crate::acp_agent::valid_id`) or too
+    /// many ids were interned already.
     pub fn new(id: &str) -> Option<Self> {
+        Self::intern(id, true)
+    }
+
+    fn intern(id: &str, capped: bool) -> Option<Self> {
+        let mut set = INTERNED.lock().unwrap_or_else(|e| e.into_inner());
+        Self::intern_in(&mut set, id, capped.then_some(MAX_INTERNED))
+    }
+
+    /// Interns `id` in `set`, refusing a new one once `set` holds `cap` ids.
+    fn intern_in(set: &mut std::collections::BTreeSet<&'static str>, id: &str, cap: Option<usize>) -> Option<Self> {
         if !crate::acp_agent::valid_id(id) {
             return None;
         }
         let kind = format!("{}{id}", Self::PREFIX);
-        let mut set = INTERNED.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(k) = set.get(kind.as_str()) {
             return Some(AcpAgentId(k));
         }
-        if set.len() >= MAX_INTERNED {
+        if cap.is_some_and(|cap| set.len() >= cap) {
             return None;
         }
         let k: &'static str = Box::leak(kind.into_boxed_str());
@@ -120,6 +131,13 @@ impl AgentKind {
         match s.strip_prefix(AcpAgentId::PREFIX) {
             Some(id) => AcpAgentId::new(id).map(AgentKind::Acp),
             None => AgentKind::ALL.into_iter().find(|k| k.as_str() == s),
+        }
+    }
+    /// `parse` for a value PDT stored itself (valid when written, so never refused for the interner's cap).
+    pub fn parse_stored(s: &str) -> Option<Self> {
+        match s.strip_prefix(AcpAgentId::PREFIX) {
+            Some(id) => AcpAgentId::intern(id, false).map(AgentKind::Acp),
+            None => AgentKind::parse(s),
         }
     }
     /// The agents built into PDT (ACP agents are defined per host).
@@ -680,6 +698,20 @@ mod tests {
             assert_eq!(AgentKind::parse(bad), None, "{bad}");
             assert!(serde_json::from_str::<AgentKind>(&format!("\"{bad}\"")).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_full_interner_refuses_new_ids_from_outside_but_never_stored_ones() {
+        let mut set = std::collections::BTreeSet::new();
+        let cap = Some(2);
+        assert!(
+            AcpAgentId::intern_in(&mut set, "a", cap).is_some() && AcpAgentId::intern_in(&mut set, "b", cap).is_some()
+        );
+        assert_eq!(AcpAgentId::intern_in(&mut set, "c", cap), None, "full");
+        assert_eq!(AcpAgentId::intern_in(&mut set, "a", cap).unwrap().id(), "a", "an interned one still parses");
+        assert_eq!(AcpAgentId::intern_in(&mut set, "c", None).unwrap().id(), "c", "a stored one is never refused");
+        assert_eq!(AgentKind::parse_stored("acp:x").unwrap().as_str(), "acp:x");
+        assert_eq!(AgentKind::parse_stored("claude"), Some(AgentKind::Claude));
     }
 
     #[test]

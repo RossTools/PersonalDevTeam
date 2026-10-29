@@ -12,7 +12,8 @@ use pdt_core::session::AgentKind;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-struct Plain(bool);
+/// A plain ACP agent, with the `fake-agent` flag that says which modes it advertises (if any).
+struct Plain(Option<&'static str>);
 
 impl AcpProfile for Plain {
     type Extensions = PlainAcp;
@@ -35,8 +36,8 @@ impl AcpProfile for Plain {
 
     fn args(&self, _spec: &OpenSpec) -> Vec<String> {
         let mut a = vec!["--plain".to_string(), "acp".into()];
-        if self.0 {
-            a.insert(0, "--modes".into());
+        if let Some(flag) = self.0 {
+            a.insert(0, flag.into());
         }
         a
     }
@@ -96,7 +97,7 @@ async fn say(live: &dyn LiveConversation, text: &str) {
 async fn a_plain_acp_agent_converses_asks_in_pdt_and_has_no_modes_or_resume_fallback() {
     let tmp = tempfile::tempdir().unwrap();
     let (tx, mut rx): (EventSink, _) = mpsc::unbounded_channel();
-    let live = acp::open(Plain(false), spec(tmp.path(), PermissionMode::Ask), tx).await.unwrap();
+    let live = acp::open(Plain(None), spec(tmp.path(), PermissionMode::Ask), tx).await.unwrap();
     let session = until(&mut rx, |o| match o {
         AdapterOutput::ExternalId(id) => Some(id.clone()),
         _ => None,
@@ -143,7 +144,7 @@ async fn a_plain_acp_agent_converses_asks_in_pdt_and_has_no_modes_or_resume_fall
     let mut s = spec(tmp.path(), PermissionMode::Ask);
     s.external_id = Some("never-saved".into());
     s.resume = true;
-    match acp::open(Plain(false), s, tx).await {
+    match acp::open(Plain(None), s, tx).await {
         Err(AdapterError::Refused(m)) => assert_eq!(m, "Session not found"),
         Err(e) => panic!("{e}"),
         Ok(_) => panic!("opened a session that was never saved"),
@@ -157,7 +158,7 @@ async fn an_agent_that_advertises_its_modes_has_them_set_and_gets_instructions_i
     let mut s = spec(tmp.path(), PermissionMode::Plan);
     let file = tmp.path().join("instructions.md");
     s.instructions = Some(pdt_agents::adapter::SessionInstructions { text: "PDT says hello".into(), file });
-    let live = acp::open(Plain(true), s, tx).await.unwrap();
+    let live = acp::open(Plain(Some("--modes")), s, tx).await.unwrap();
     // The capabilities once the session is open (the model list comes before).
     let caps = until(&mut rx, |o| match o {
         AdapterOutput::Capabilities(c) if !c.permission_modes.is_empty() => Some(c.clone()),
@@ -178,5 +179,44 @@ async fn an_agent_that_advertises_its_modes_has_them_set_and_gets_instructions_i
         _ => None,
     })
     .await;
+    live.close().await;
+}
+
+#[tokio::test]
+async fn pdt_keeps_a_mode_the_agent_has_none_for_and_hands_the_ones_it_has_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tx, mut rx): (EventSink, _) = mpsc::unbounded_channel();
+    // Only `plan` maps (OpenCode's build/plan): Bypass, a ticket's default, is PDT's to keep.
+    let live = acp::open(Plain(Some("--partial-modes")), spec(tmp.path(), PermissionMode::Bypass), tx).await.unwrap();
+    let caps = until(&mut rx, |o| match o {
+        AdapterOutput::Capabilities(c) if !c.permission_modes.is_empty() => Some(c.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(caps.permission_modes, PermissionMode::ALL.to_vec(), "PDT keeps the ones it has no mode for");
+    say(live.as_ref(), "run: ls").await;
+    assert_eq!(answer_text(&mut rx).await, "ran it (allow_once)", "allowed without asking");
+    say(live.as_ref(), "who").await;
+    assert!(answer_text(&mut rx).await.contains("mode=build"), "the agent stays in its own mode");
+
+    // Plan is the agent's: set there, and its requests go to the user.
+    live.set(&SessionChange { permission_mode: Some(PermissionMode::Plan), ..Default::default() }).await.unwrap();
+    say(live.as_ref(), "who").await;
+    assert!(answer_text(&mut rx).await.contains("mode=plan"));
+    say(live.as_ref(), "run: ls").await;
+    let id = until(&mut rx, |o| match o {
+        AdapterOutput::Event { event: AgentEvent::Request { id, .. }, .. } => Some(id.clone()),
+        _ => None,
+    })
+    .await;
+    live.answer(&id, &Answer::Deny { message: None }).await.unwrap();
+    assert_eq!(answer_text(&mut rx).await, "not run (reject_once)");
+
+    // Back to Bypass: PDT keeps it again, with the agent back in the mode it started in.
+    live.set(&SessionChange { permission_mode: Some(PermissionMode::Bypass), ..Default::default() }).await.unwrap();
+    say(live.as_ref(), "who").await;
+    assert!(answer_text(&mut rx).await.contains("mode=build"));
+    say(live.as_ref(), "run: pwd").await;
+    assert_eq!(answer_text(&mut rx).await, "ran it (allow_once)");
     live.close().await;
 }

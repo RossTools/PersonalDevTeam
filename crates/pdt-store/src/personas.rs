@@ -24,7 +24,7 @@ fn to_setup(r: &SqliteRow) -> Result<PersonaSetup, StoreError> {
     let mode: Option<String> = r.try_get("permission_mode")?;
     let tools: String = r.try_get("tools")?;
     Ok(PersonaSetup {
-        agent: AgentKind::parse(&agent).ok_or_else(|| corrupt("agent", &agent))?,
+        agent: AgentKind::parse_stored(&agent).ok_or_else(|| corrupt("agent", &agent))?,
         model: r.try_get("model")?,
         instructions: r.try_get("instructions")?,
         permission_mode: match mode {

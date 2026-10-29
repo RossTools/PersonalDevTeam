@@ -129,6 +129,8 @@ struct Shared<P: AcpProfile> {
     mode: Mutex<Option<String>>,
     /// The mode map the agent advertised (`availableModes`), for a profile with none of its own.
     learned_modes: Mutex<Vec<(PermissionMode, String)>>,
+    /// The mode the agent's session started in, as it named it.
+    start_mode: Mutex<Option<String>>,
     /// PDT's instructions, to go in front of the next prompt (a new session's first; `instructions_in_prompt`).
     instructions: Mutex<Option<String>>,
     /// Whether no turn is running (for "Send now").
@@ -189,27 +191,18 @@ impl<P: AcpProfile> Shared<P> {
         })
     }
 
-    /// Whether the session has modes of the agent's own (the profile's or advertised ones), so PDT sets them;
-    /// without, PDT keeps the mode itself.
-    fn has_modes(&self) -> bool {
-        !self.profile.modes().is_empty() || !self.learned_modes.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
-    }
-
-    /// Learns the agent's modes from a `session/new` or `session/load` answer (a profile with none of its own), then
-    /// says which modes the session offers: its own, or all of PDT's when PDT keeps the mode.
-    fn settle_modes(&self, answer: &Value, mode: PermissionMode) {
+    /// Learns the agent's modes from a `session/new` or `session/load` answer (a profile with none of its own). The
+    /// session offers all of PDT's modes: those the agent has no mode for, PDT keeps itself (`AcpLive::apply_mode`).
+    fn settle_modes(&self, answer: &Value) {
         if self.profile.modes().is_empty() {
             let learned =
                 pdt_core::acp_agent::advertised_modes(answer.pointer("/modes/availableModes").unwrap_or(&Value::Null));
-            *self.learned_modes.lock().unwrap_or_else(|e| e.into_inner()) = learned.clone();
+            *self.learned_modes.lock().unwrap_or_else(|e| e.into_inner()) = learned;
             if let Some(current) = answer.pointer("/modes/currentModeId").and_then(Value::as_str) {
                 *self.mode.lock().unwrap_or_else(|e| e.into_inner()) = Some(current.to_string());
+                self.start_mode.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(|| current.to_string());
             }
-            let modes: Vec<PermissionMode> = learned.iter().map(|(m, _)| *m).collect();
-            let enforce = modes.is_empty();
-            self.mapper().enforce_mode(enforce.then_some(mode));
-            self.caps.lock().unwrap_or_else(|e| e.into_inner()).permission_modes =
-                if enforce { PermissionMode::ALL.to_vec() } else { modes };
+            self.caps.lock().unwrap_or_else(|e| e.into_inner()).permission_modes = PermissionMode::ALL.to_vec();
         }
     }
 
@@ -361,6 +354,7 @@ impl<P: AcpProfile> AcpLive<P> {
             caps: Mutex::new(AgentCapabilities { conversation: true, permission_modes, ..Default::default() }),
             mode: Mutex::new(None),
             learned_modes: Mutex::new(Vec::new()),
+            start_mode: Mutex::new(None),
             instructions: Mutex::new(None),
             idle: watch::channel(true).0,
         });
@@ -459,7 +453,7 @@ impl<P: AcpProfile> AcpLive<P> {
             match r? {
                 Ok(v) => {
                     loaded = true;
-                    sh.settle_modes(&v, spec.permission_mode);
+                    sh.settle_modes(&v);
                 }
                 Err(e) => {
                     let Some(text) = sh.profile.resume_fallback(e.code) else { return Err(refused(e)) };
@@ -485,23 +479,41 @@ impl<P: AcpProfile> AcpLive<P> {
                 .to_string();
             *sh.session.lock().unwrap_or_else(|e| e.into_inner()) = id.clone();
             let _ = sh.sink.send(AdapterOutput::ExternalId(id));
-            sh.settle_modes(&v, spec.permission_mode);
+            sh.settle_modes(&v);
             if sh.profile.instructions_in_prompt() {
                 *sh.instructions.lock().unwrap_or_else(|e| e.into_inner()) =
                     spec.instructions.as_ref().map(|i| i.text.clone());
             }
         }
-        if let Some(want) = sh.mode_id(spec.permission_mode) {
-            let current = sh.mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            if current.as_deref() != Some(want.as_str()) {
-                self.set_mode(&want).await?;
-            }
-        }
+        self.apply_mode(spec.permission_mode).await?;
         if let Some(m) = &spec.model {
             self.set_model(m).await?;
         }
         sh.publish_caps();
         Ok(())
+    }
+
+    /// Puts the session in `mode`: the agent's own mode for it when it has one; otherwise PDT keeps the mode by
+    /// answering its permission requests, with the agent back in the mode it started in when that is none of PDT's
+    /// (an agent left in its Plan would refuse what Bypass allows).
+    async fn apply_mode(&self, mode: PermissionMode) -> Result<(), AdapterError> {
+        let sh = &self.shared;
+        let current = sh.mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let want = match sh.mode_id(mode) {
+            Some(id) => {
+                sh.mapper().enforce_mode(None);
+                Some(id)
+            }
+            None => {
+                sh.mapper().enforce_mode(Some(mode));
+                let start = sh.start_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                start.filter(|id| sh.pdt_mode(id).is_none())
+            }
+        };
+        match want {
+            Some(id) if current.as_deref() != Some(id.as_str()) => self.set_mode(&id).await,
+            _ => Ok(()),
+        }
     }
 
     async fn set_mode(&self, mode: &str) -> Result<(), AdapterError> {
@@ -636,14 +648,7 @@ impl<P: AcpProfile> LiveConversation for AcpLive<P> {
             }
         }
         if let Some(mode) = change.permission_mode {
-            if self.shared.has_modes() {
-                if let Some(id) = self.shared.mode_id(mode) {
-                    self.set_mode(&id).await?;
-                }
-            } else {
-                // An agent with no modes: PDT keeps the new one.
-                self.shared.mapper().enforce_mode(Some(mode));
-            }
+            self.apply_mode(mode).await?;
         }
         Ok(())
     }

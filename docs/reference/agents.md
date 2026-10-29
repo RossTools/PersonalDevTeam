@@ -465,9 +465,15 @@ the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the
   notice.
 - Modes: a profile's mode map, else the `availableModes` the agent advertises in `session/new`/`session/load`
   (matched to PDT's by id or name: `default`/`ask`, `acceptEdits`/`code`, `plan`, `bypass`/`yolo`, …,
-  `acp_agent::advertised_modes`), set with `session/set_mode`. With none, PDT keeps the session's mode itself by
-  answering `session/request_permission` (`acp_agent::enforced_answer`, by the tool call's ACP kind): Bypass allows
-  everything; reads, searches and thinking are allowed in every mode; Accept edits allows edits, deletes and moves;
-  Plan rejects those and commands; the rest go to the user.
-- Tests: `fake-agent --plain acp` (with `--modes` it advertises its modes; `mcp: <tool> <json>` calls pdt-mcp after
-  asking) in pdt-api `tests/acp_plain.rs` and `tests/acp_agents.rs`.
+  `acp_agent::advertised_modes`), set with `session/set_mode`. Every PDT mode is offered: one the agent has no mode
+  for (all of them for an agent that advertises none; Bypass for OpenCode's build/plan), PDT keeps itself, at start
+  and on a change, with the agent back in the mode it started in when that is none of PDT's
+  (pdt-agents `AcpLive::apply_mode`). Keeping a mode is answering `session/request_permission`
+  (`acp_agent::enforced_answer`, by the tool call's ACP kind): Bypass allows everything; reads, searches and thinking
+  are allowed in every mode; Accept edits allows edits, deletes and moves; Plan rejects those and commands; the rest
+  go to the user.
+- Ids are interned (at most 1024 from outside input; values read from the store are never refused,
+  `AgentKind::parse_stored`), and `GET /api/agents/acp:<id>/capabilities` answers 404 for an id the host doesn't
+  have before parsing it.
+- Tests: `fake-agent --plain acp` (with `--modes` it advertises its modes, with `--partial-modes` only `build` and
+  `plan`; `mcp: <tool> <json>` calls pdt-mcp after asking) in pdt-api `tests/acp_plain.rs` and `tests/acp_agents.rs`.

@@ -26,6 +26,7 @@ use pdt_core::conversation::{
     SessionMode, TurnPhase, TurnStatus, conversation_activity, valid_message,
 };
 use pdt_core::host::CredentialPolicy;
+use pdt_core::session::AcpAgentId;
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus, is_scrubbed};
 use pdt_store::NewEvent;
 use std::collections::{HashMap, HashSet};
@@ -1682,6 +1683,13 @@ pub(crate) async fn capabilities(
     State(st): State<AppState>,
     Path(agent): Path<String>,
 ) -> Result<Json<AgentCapabilities>, ApiError> {
+    // An ACP agent only when the host has it: the path is outside input, and parsing interns the id.
+    if let Some(id) = agent.strip_prefix(AcpAgentId::PREFIX) {
+        let host = st.store.get_host_settings().await?;
+        if pdt_core::acp_agent::find(&host.acp_agents, id).is_none() {
+            return Err(ApiError::not_found("agent"));
+        }
+    }
     let agent = AgentKind::parse(&agent).ok_or_else(|| ApiError::not_found("agent"))?;
     let known = st.conversations.caps.lock().unwrap_or_else(|e| e.into_inner()).get(&agent).cloned();
     let known = known.or_else(|| match agent {
