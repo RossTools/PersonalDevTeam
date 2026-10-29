@@ -201,3 +201,13 @@ export function sameRule(a: RepeatRule, b: RepeatRule): boolean {
 export function defaultRecurrence(dueOn: string | null, now: Date): Recurrence {
   return { rule: { every: 'week', interval: 1, days: [weekdayOf(dueOn ?? localDay(now))] }, from: 'due' };
 }
+
+/** A body's first line with text, without its Markdown marks (heading, list, quote, task box), for the row (PDT-227). */
+export function bodyPreview(body: string): string {
+  const line = body.split(/\r?\n/).find((l) => l.trim()) ?? '';
+  return line
+    .trim()
+    .replace(/^(#{1,6}\s+|>\s*|[-*+]\s+(\[[ xX]\]\s+)?|\d+[.)]\s+(\[[ xX]\]\s+)?)+/, '')
+    .replace(/[*_`~]/g, '')
+    .trim();
+}

@@ -4,7 +4,11 @@ import type { Recurrence } from "./Recurrence";
 /**
  * One todo, with the keys its chips show.
  */
-export type Todo = { id: string, projectId: string | null, ticketId: string | null, title: string, done: boolean, 
+export type Todo = { id: string, projectId: string | null, ticketId: string | null, title: string, 
+/**
+ * Its notes, in Markdown; empty when it has none.
+ */
+body: string, done: boolean, 
 /**
  * Ascending: the list's order.
  */

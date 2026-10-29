@@ -588,7 +588,7 @@ pub(crate) fn defs() -> Vec<Tool> {
         Tool {
             decl: ToolDecl::new("list_todos", "Read your todo list").read_only().pm(),
             title: "List todos",
-            description: "The user's own todo list (open ones in their order, then done ones): title, done, project, \
+            description: "The user's own todo list (open ones in their order, then done ones): title, body (the user's notes on it, Markdown), done, project, \
                           linked ticket, due date (dueOn, YYYY-MM-DD, and dueTime, HH:MM, the user's local time), how it repeats \
                           (recurrence: a rule, every day/weekday/week/month, and whether the next one counts from \
                           the due date or when it's done; checking it off makes the next one) and dates. Read-only: the user edits it in PDT.",
@@ -961,7 +961,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 .map_err(store)?
                 .into_iter()
                 .map(|t| {
-                    json!({"id": t.id, "title": t.title, "done": t.done, "project": t.project_key,
+                    json!({"id": t.id, "title": t.title, "body": t.body, "done": t.done, "project": t.project_key,
                            "ticket": t.ticket_key, "ticketTitle": t.ticket_title, "createdAt": t.created_at,
                            "updatedAt": t.updated_at, "doneAt": t.done_at, "dueOn": t.due_on, "dueTime": t.due_time,
                            "recurrence": t.recurrence})

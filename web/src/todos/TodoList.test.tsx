@@ -5,12 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
 import type { Todo } from '../api/gen/Todo';
 import { OpenTicketContext } from '../tickets/actions';
-import { renderWithQuery, stubApi, type Call } from '../test-utils';
+import { editorText, renderWithQuery, setEditorText, stubApi, type Call } from '../test-utils';
+import { AUTOSAVE_MS } from '../notes/useNoteDraft';
 import { TodoList, type TodoFocus } from './TodoList';
 
 const todo = (id: string, position: number, more: Partial<Todo> = {}): Todo => ({
   id, title: `Todo ${id}`, position, done: false, projectId: null, ticketId: null, createdAt: 1, updatedAt: 1,
-  doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null, dueOn: null, dueTime: null, recurrence: null, ...more,
+  doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null, body: '', dueOn: null, dueTime: null, recurrence: null, ...more,
 });
 const project = { id: 'p1', key: 'PX', name: 'P' } as Project;
 const list = [
@@ -76,7 +77,8 @@ describe('TodoList', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'Done: Todo a' }));
     expect(sent('PATCH', '/api/todos/a')).toEqual([{ done: true }]);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Todo c' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Actions for Todo c' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
     const input = screen.getByRole('textbox', { name: 'Todo' });
     await userEvent.clear(input);
     await userEvent.type(input, 'Todo see{Enter}');
@@ -134,6 +136,102 @@ describe('TodoList', () => {
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Link to a ticket…' }));
     await userEvent.click(await within(await screen.findByRole('dialog')).findByText('PX-9 · Add todos'));
     await waitFor(() => expect(sent('PATCH', '/api/todos/a')).toEqual([{ ticket: 't9' }]));
+  });
+});
+
+describe('An open todo (PDT-227)', () => {
+  const noted = [
+    todo('a', 1, { body: '## Bring\n\n- the **forms**' }),
+    todo('b', 2),
+  ];
+  let server: Todo[];
+  beforeEach(() => {
+    server = noted.map((t) => ({ ...t }));
+    calls = stubApi({
+      'GET /api/todos': () => server,
+      'PATCH /api/todos/a': (c: Call) => (server[0] = { ...server[0], ...(c.body as object) }),
+      'PATCH /api/todos/b': (c: Call) => (server[1] = { ...server[1], ...(c.body as object) }),
+      'DELETE /api/todos/b': undefined,
+    });
+  });
+
+  it('shows a notes icon and the first line of the notes in the list', async () => {
+    show();
+    const a = await screen.findByRole('listitem', { name: 'Todo a' });
+    expect(within(a).getByText('Bring')).toBeInTheDocument();
+    expect(within(a).getByLabelText('Has notes')).toBeInTheDocument();
+    const b = screen.getByRole('listitem', { name: 'Todo b' });
+    expect(within(b).queryByLabelText('Has notes')).toBeNull();
+  });
+
+  it('opens from its title, saves its notes as you type, and goes back to the list', async () => {
+    show();
+    await userEvent.click(await screen.findByRole('button', { name: 'Todo b' }));
+    const view = await screen.findByRole('article', { name: 'Todo: Todo b' });
+    expect(screen.queryByRole('textbox', { name: 'Add a todo' }), 'in place of the list').toBeNull();
+    const notes = await within(view).findByRole('textbox', { name: 'Notes' });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    setEditorText(notes, '# Agenda\n\n- *dates*');
+    act(() => vi.advanceTimersByTime(AUTOSAVE_MS - 1));
+    expect(sent('PATCH', '/api/todos/b')).toEqual([]);
+    expect(screen.getByRole('status')).toHaveTextContent('Saving…');
+    await act(async () => vi.advanceTimersByTime(1));
+    vi.useRealTimers();
+    await waitFor(() => expect(sent('PATCH', '/api/todos/b')).toEqual([{ body: '# Agenda\n\n- *dates*' }]));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Saved'));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Todos' }));
+    const b = await screen.findByRole('listitem', { name: 'Todo b' });
+    expect(within(b).getByText('Agenda')).toBeInTheDocument();
+    expect(within(b).getByLabelText('Has notes')).toBeInTheDocument();
+
+    // Opened again, the notes are there.
+    await userEvent.click(within(b).getByRole('button', { name: 'Todo b' }));
+    expect(editorText(await screen.findByRole('textbox', { name: 'Notes' }))).toBe('# Agenda\n\n- *dates*');
+  });
+
+  it('saves what is unsaved on Back, renames, and keeps a title', async () => {
+    show();
+    await userEvent.click(await screen.findByRole('button', { name: 'Todo a' }));
+    setEditorText(await screen.findByRole('textbox', { name: 'Notes' }), 'Changed');
+    const title = screen.getByRole('textbox', { name: 'Title' });
+    await userEvent.clear(title);
+    await userEvent.tab();
+    expect(title, 'an emptied title comes back').toHaveValue('Todo a');
+    await userEvent.clear(title);
+    await userEvent.type(title, 'Bring forms{Enter}');
+    await userEvent.click(screen.getByRole('button', { name: 'Todos' }));
+    await waitFor(() => {
+      const patches = sent('PATCH', '/api/todos/a') as Partial<Todo>[];
+      expect(patches.some((p) => p.body === 'Changed')).toBe(true);
+      expect(patches.some((p) => p.title === 'Bring forms')).toBe(true);
+      expect(patches.every((p) => p.title === undefined || p.title.trim() !== '')).toBe(true);
+    });
+  });
+
+  it('checks off, links and deletes from the open view', async () => {
+    show();
+    await userEvent.click(await screen.findByRole('button', { name: 'Todo b' }));
+    const view = await screen.findByRole('article', { name: 'Todo: Todo b' });
+    await userEvent.click(within(view).getByRole('checkbox', { name: 'Done: Todo b' }));
+    await waitFor(() => expect(sent('PATCH', '/api/todos/b')).toEqual([{ done: true }]));
+    await userEvent.click(screen.getByRole('button', { name: /^Actions for Todo b/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/todos/b')).toBe(true));
+    expect(await screen.findByRole('textbox', { name: 'Add a todo' }), 'back to the list').toBeInTheDocument();
+  });
+
+  it('tells the shell when a todo opens and closes (a phone goes full screen)', async () => {
+    const onOpenChange = vi.fn();
+    renderWithQuery(
+      <OpenTicketContext.Provider value={vi.fn()}>
+        <TodoList projectId="p1" projects={[project]} onOpenChange={onOpenChange} />
+      </OpenTicketContext.Provider>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Todo a' }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(true));
+    await userEvent.click(screen.getByRole('button', { name: 'Todos' }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenLastCalledWith(false));
   });
 });
 
@@ -480,8 +578,11 @@ describe('TodoList with due dates', () => {
       return shown ? <TodoList projectId="p1" projects={[project]} focus={focus} onFocused={() => { onFocused(); setFocus(null); }} /> : null;
     }
     renderWithQuery(<OpenTicketContext.Provider value={vi.fn()}><Harness /></OpenTicketContext.Provider>);
-    expect((await screen.findByRole('listitem', { name: 'Todo late' })).className).toMatch(/ring-2/);
+    expect(await screen.findByRole('article', { name: 'Todo: Todo late' })).toBeInTheDocument();
     expect(onFocused).toHaveBeenCalledTimes(1);
+    // Back: the list shows it (All: the filter hid it), with a ring.
+    await userEvent.click(screen.getByRole('button', { name: 'Todos' }));
+    expect((await screen.findByRole('listitem', { name: 'Todo late' })).className).toMatch(/ring-2/);
     expect(screen.getByRole('button', { name: 'Scope: All projects' })).toBeInTheDocument();
 
     act(() => toggle());
@@ -491,12 +592,13 @@ describe('TodoList with due dates', () => {
     expect(onFocused).toHaveBeenCalledTimes(1);
   });
 
-  it('shows a todo a reminder opened, even when the filter hid it', async () => {
+  it('opens the todo a reminder is for, even when the filter hid it', async () => {
     stubDated();
     localStorage.setItem('pdt.todos.filter', 'project');
     show('p1', vi.fn(), { id: 'late', seq: 1 });
-    const card = await screen.findByRole('listitem', { name: 'Todo late' });
-    expect(card.className).toMatch(/ring-2/);
+    const view = await screen.findByRole('article', { name: 'Todo: Todo late' });
+    expect(within(view).getByRole('textbox', { name: 'Title' })).toHaveValue('Todo late');
+    expect(screen.queryByRole('list', { name: /todos$/i })).toBeNull();
   });
 
   describe('repeating (PDT-141)', () => {

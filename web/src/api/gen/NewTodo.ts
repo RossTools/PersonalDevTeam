@@ -6,6 +6,10 @@ import type { Recurrence } from "./Recurrence";
  */
 export type NewTodo = { title: string, 
 /**
+ * Markdown.
+ */
+body?: string, 
+/**
  * A project id or key.
  */
 project?: string, 

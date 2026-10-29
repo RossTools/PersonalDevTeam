@@ -2,13 +2,15 @@
 //! PM reads them (`list_todos`) but never changes them. A todo may have a due day (PDT-140), the user's local day,
 //! with an optional time; when it comes, pdtd makes one `todo.due` notification. A dated todo may repeat (PDT-141):
 //! checking it off makes the next one, due on the next day its [`Recurrence`] gives. Pure; pdt-store keeps the rows,
-//! pdt-api serves them.
+//! pdt-api serves them. A todo may carry a Markdown body (PDT-227), its notes, written in its open view.
 
 use chrono::{Datelike, Duration, Months, NaiveDate, NaiveTime, TimeZone, Weekday};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 const MAX_TITLE: usize = 500;
+/// A body's longest, in bytes.
+const MAX_BODY: usize = 64 * 1024;
 
 /// One todo, with the keys its chips show.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -19,6 +21,9 @@ pub struct Todo {
     pub project_id: Option<String>,
     pub ticket_id: Option<String>,
     pub title: String,
+    /// Its notes, in Markdown; empty when it has none.
+    #[serde(default)]
+    pub body: String,
     pub done: bool,
     /// Ascending: the list's order.
     pub position: f64,
@@ -85,6 +90,10 @@ pub enum RepeatFrom {
 #[ts(export)]
 pub struct NewTodo {
     pub title: String,
+    /// Markdown.
+    #[serde(default)]
+    #[ts(optional)]
+    pub body: Option<String>,
     /// A project id or key.
     #[serde(default)]
     #[ts(optional)]
@@ -117,6 +126,10 @@ pub struct TodoPatch {
     #[serde(default)]
     #[ts(optional)]
     pub title: Option<String>,
+    /// Markdown; `""` clears it.
+    #[serde(default)]
+    #[ts(optional)]
+    pub body: Option<String>,
     #[serde(default)]
     #[ts(optional)]
     pub done: Option<bool>,
@@ -156,6 +169,14 @@ pub fn valid_title(t: &str) -> Result<String, String> {
         return Err(format!("a todo is one line of at most {MAX_TITLE} characters"));
     }
     Ok(t.to_string())
+}
+
+/// A todo's body as given (Markdown, any number of lines), or why not.
+pub fn valid_body(b: &str) -> Result<String, String> {
+    if b.len() > MAX_BODY {
+        return Err(format!("a todo's notes are at most {} KB", MAX_BODY / 1024));
+    }
+    Ok(b.to_string())
 }
 
 /// A position the client sent, or why not (NaN and infinities would break the order).
@@ -326,6 +347,17 @@ mod tests {
         assert!(valid_title("a\nb").is_err());
         assert!(valid_title(&"x".repeat(MAX_TITLE + 1)).is_err());
         assert!(valid_title(&"x".repeat(MAX_TITLE)).is_ok());
+    }
+
+    #[test]
+    fn bodies_are_markdown_up_to_a_limit() {
+        assert_eq!(valid_body("# Plan\n\n- one\n"), Ok("# Plan\n\n- one\n".into()));
+        assert_eq!(valid_body(""), Ok(String::new()));
+        assert!(valid_body(&"x".repeat(MAX_BODY)).is_ok());
+        assert!(valid_body(&"x".repeat(MAX_BODY + 1)).is_err());
+        let p: TodoPatch = serde_json::from_str(r#"{"body":""}"#).unwrap();
+        assert_eq!(p.body.as_deref(), Some(""), "empty clears it");
+        assert_eq!(serde_json::from_str::<NewTodo>(r#"{"title":"x"}"#).unwrap().body, None);
     }
 
     #[test]

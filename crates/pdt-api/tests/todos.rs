@@ -1,5 +1,5 @@
 //! PDT-125: the user's todo list over the API: add, edit, check off, reorder, link to a project or ticket, delete.
-//! PDT-140: due dates, and the one reminder each makes.
+//! PDT-140: due dates, and the one reminder each makes. PDT-227: a Markdown body.
 
 mod common;
 
@@ -75,6 +75,23 @@ async fn todos_are_added_edited_checked_off_reordered_and_deleted() {
             .await;
     assert_eq!(moved["title"], "Write the spec");
     assert_eq!(titles(&env, "").await, ["Write the spec", "Call Sam"]);
+    assert_eq!(moved["body"], "", "no body yet");
+
+    // A body: Markdown, on many lines; cleared with "".
+    let noted = patch(&env, id, json!({"body": "## Outline\n\n- intro\n- **scope**\n"})).await;
+    assert_eq!(
+        (&noted["body"], &noted["title"]),
+        (&json!("## Outline\n\n- intro\n- **scope**\n"), &json!("Write the spec"))
+    );
+    assert_eq!(patch(&env, id, json!({"done": false})).await["body"], noted["body"], "other edits keep it");
+    assert_eq!(patch(&env, id, json!({"body": ""})).await["body"], "");
+    let (s, _) =
+        call(&env.app, "PATCH", &format!("/api/todos/{id}"), Some(json!({"body": "x".repeat(65 * 1024)}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "too long");
+    let with = add(&env, json!({"title": "With notes", "body": "Ask about *dates*."})).await;
+    assert_eq!(with["body"], "Ask about *dates*.");
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/todos/{}", with["id"].as_str().unwrap()), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
 
     // Check off, and back.
     let done = patch(&env, id, json!({"done": true})).await;
@@ -278,8 +295,8 @@ async fn checking_off_a_repeating_todo_makes_exactly_one_next_one() {
     let env = setup().await;
     let t = add(
         &env,
-        json!({"title": "Water plants", "dueOn": "2999-01-04", "dueTime": "08:00", "ticket": "PX-1",
-               "recurrence": weekly(&[4, 1])}),
+        json!({"title": "Water plants", "body": "The *fern* needs less.", "dueOn": "2999-01-04", "dueTime": "08:00",
+               "ticket": "PX-1", "recurrence": weekly(&[4, 1])}),
     )
     .await;
     assert_eq!(t["recurrence"], weekly(&[1, 4]), "days sorted");
@@ -294,6 +311,7 @@ async fn checking_off_a_repeating_todo_makes_exactly_one_next_one() {
     assert_eq!(open.len(), 1, "{open:?}");
     let next = &open[0];
     assert_ne!(next["id"], t["id"]);
+    assert_eq!(next["body"], "The *fern* needs less.", "the body carries over");
     assert_eq!(
         (&next["title"], &next["dueOn"], &next["dueTime"], &next["ticketKey"], &next["projectId"], &next["recurrence"]),
         (
