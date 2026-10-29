@@ -72,6 +72,18 @@ describe('attentionOf', () => {
     expect(attentionOf({ ...none, pm: [reply] })).toEqual({ level: 'idle', count: 0 });
   });
 
+  it('leaves workflow step sessions out of idle, but not out of needs_you (PDT-262)', () => {
+    const persona = { id: 'coder', name: 'Coder', version: 1, stepId: 'st1' };
+    const step = sessionInfo(session('c', { activity: 'idle', unseen: true, persona }));
+    expect(attentionOf({ ...none, items: [step] })).toEqual({ level: 'none', count: 0 });
+    const ended = sessionInfo(session('q', { status: 'finished', activity: null, unseen: true, persona }));
+    expect(attentionOf({ ...none, items: [step, ended] }).level).toBe('none');
+    const mine = sessionInfo(session('m', { activity: 'idle', unseen: true }));
+    expect(attentionOf({ ...none, items: [step, mine] }).level).toBe('idle');
+    const asking = sessionInfo(session('r', { activity: 'needs_you', unseen: true, persona }));
+    expect(attentionOf({ ...none, items: [asking] }).level).toBe('needs_you');
+  });
+
   it('skips the PM conversation on screen, a running PM turn and an ended conversation', () => {
     const s = session('pm1', { activity: 'idle', unseen: true });
     expect(attentionOf({ ...none, pm: [pm(s)], pmShown: 'pm1' }).level).toBe('none');

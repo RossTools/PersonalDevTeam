@@ -1130,7 +1130,8 @@ rail already reads (the notification stream refreshes them). The title is prefix
 (`(3) …`, the rail badge's number) and nothing else. The favicon gets a dot coloured by the most important thing
 waiting: red (`--pdt-failed`) while a session needs the user (its `needs_you` activity or its Inbox item), amber
 (`--pdt-waiting`) while the Inbox has any other item, the accent (`--pdt-accent`) while an agent or run has finished
-unseen or a PM reply is unread; the dot is ringed in `--pdt-surface` so it reads on light and dark tab bars. With
+unseen or a PM reply is unread (not a workflow's step session: those finish all the time, so they count only when they
+need the user, PDT-262; the rail's and sidebar's unseen dots still show them); the dot is ringed in `--pdt-surface` so it reads on light and dark tab bars. With
 nothing waiting the plain icon and title come back.
 
 Web: the rail's Inbox (web/src/inbox; the open count on its icon, a dot when Updates are unread, `Ctrl+] i`): the list

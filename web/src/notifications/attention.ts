@@ -8,8 +8,9 @@ import type { ItemInfo } from '../workspaces/useWorkspaces';
 
 /**
  * The most important thing waiting on the user (PDT-207), most important first: `needs_you` when a session needs them
- * (an open permission or question request), `inbox` when the Inbox has items, `idle` when an agent or run has finished
- * and they haven't seen it (or a PM reply is unread), else `none`.
+ * (an open permission or question request), `inbox` when the Inbox has items, `idle` when something they started (a
+ * session or run, not a workflow's step session: PDT-262) has finished and they haven't seen it (or a PM reply is
+ * unread), else `none`.
  */
 export type AttentionLevel = 'none' | 'idle' | 'inbox' | 'needs_you';
 
@@ -36,13 +37,18 @@ export interface AttentionSources {
 export function attentionOf({ inbox, items, pm, pmShown }: AttentionSources): Attention {
   const open = inbox.filter((i) => i.status === 'open');
   const states = items.map(itemState);
+  // Workflow step sessions (Coder, Reviewer, QA…) finish all the time: news only when they need the user.
+  const news = items.filter((i) => !isStepSession(i)).map(itemState);
   const level: AttentionLevel =
     open.some((i) => i.kind === 'session') || states.some((s) => s.label === 'Needs you') ? 'needs_you'
     : open.length > 0 ? 'inbox'
-    : states.some((s) => s.unseen) || pm.some((p) => isUnread(p, pmShown)) ? 'idle'
+    : news.some((s) => s.unseen) || pm.some((p) => isUnread(p, pmShown)) ? 'idle'
     : 'none';
   return { level, count: open.length };
 }
+
+/** A session a workflow's agent step started, rather than the user. */
+const isStepSession = (i: ItemInfo) => !!i.session?.persona?.stepId;
 
 /**
  * [attentionOf] over the queries the rail already reads (the stream refreshes the Inbox's; no polling of its own).
