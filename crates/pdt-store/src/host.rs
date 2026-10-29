@@ -1,14 +1,14 @@
 use crate::{Store, StoreError};
 use pdt_core::host::{CredentialPolicy, HostSettings};
 use pdt_core::integration::IntegrationSettings;
-use pdt_core::policy::{AutoStart, AutoStartOrder, MergeBy, ProjectPolicy};
+use pdt_core::policy::{AutoStart, AutoStartOrder, MergeBy, ProjectPolicy, TriageApproval};
 use std::collections::BTreeMap;
 
 const HOST_KEY: &str = "host";
 
 /// `project_settings` columns: run overrides, credential policy, agent instructions, merge through PRs, permission
 /// mode, and the policies (merge by, require approval, running-attempt cap, auto-start, approval-exempt labels, the PM
-/// may act), the integrations' settings (JSON), the start delay and green CI. (0027's integration columns are
+/// may act), the integrations' settings (JSON), the start delay, green CI, auto-start order and triage approval. (0027's integration columns are
 /// unused since the integration settings took them in, PDT-174.)
 type ProjectSettingsRow = (
     Option<String>,
@@ -25,6 +25,7 @@ type ProjectSettingsRow = (
     String,
     i64,
     bool,
+    String,
     String,
 );
 
@@ -149,7 +150,7 @@ impl Store {
         let row: Option<ProjectSettingsRow> = sqlx::query_as(
             "SELECT run_overrides, agent_credentials, agent_instructions, merge_via_pr, agent_permission_mode, \
              merge_by, require_approval, max_running_attempts, auto_start, approval_exempt_labels, pm_acts, \
-             integration_settings, start_delay_seconds, require_green_ci, auto_start_order \
+             integration_settings, start_delay_seconds, require_green_ci, auto_start_order, triage_approval \
              FROM project_settings \
              WHERE project_id = ?",
         )
@@ -172,6 +173,7 @@ impl Store {
             start_delay,
             require_green_ci,
             order,
+            triage,
         )) = row
         else {
             return Ok(ProjectSettings::default());
@@ -205,6 +207,8 @@ impl Store {
                 pm_acts,
                 start_delay_seconds: u32::try_from(start_delay).unwrap_or(0),
                 require_green_ci,
+                triage_approval: TriageApproval::parse(&triage)
+                    .ok_or_else(|| StoreError::Corrupt(format!("triage approval {triage:?}")))?,
             },
             integrations,
         })
@@ -215,8 +219,8 @@ impl Store {
             "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
              merge_via_pr, agent_permission_mode, merge_by, require_approval, max_running_attempts, auto_start, \
              approval_exempt_labels, pm_acts, integration_settings, start_delay_seconds, require_green_ci, \
-             auto_start_order) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             auto_start_order, triage_approval) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(project_id) DO UPDATE SET \
              run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
              agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr, \
@@ -225,7 +229,7 @@ impl Store {
              auto_start = excluded.auto_start, approval_exempt_labels = excluded.approval_exempt_labels, \
              pm_acts = excluded.pm_acts, integration_settings = excluded.integration_settings, \
              start_delay_seconds = excluded.start_delay_seconds, require_green_ci = excluded.require_green_ci, \
-             auto_start_order = excluded.auto_start_order",
+             auto_start_order = excluded.auto_start_order, triage_approval = excluded.triage_approval",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
@@ -243,6 +247,7 @@ impl Store {
         .bind(i64::from(s.policy.start_delay_seconds))
         .bind(s.policy.require_green_ci)
         .bind(s.policy.auto_start_order.as_str())
+        .bind(s.policy.triage_approval.as_str())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -384,6 +389,7 @@ mod tests {
                 pm_acts: true,
                 start_delay_seconds: 30,
                 require_green_ci: false,
+                triage_approval: pdt_core::policy::TriageApproval::Off,
             },
             integrations: [
                 ("tracker", json!({"connection": "work", "scope": "project = ABC", "done": "Close"})),

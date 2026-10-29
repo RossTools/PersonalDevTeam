@@ -666,6 +666,9 @@ async fn change_stage_by(
     .bind(id)
     .execute(&mut *conn)
     .await?;
+    if !matches!(to, TicketStage::Draft | TicketStage::Ready) {
+        close_admit_items(conn, id, json!({"moved": to}), now).await?;
+    }
     let mut data = json!({"from": from, "to": to});
     if let (Some(d), Some(serde_json::Value::Object(x))) = (data.as_object_mut(), extra) {
         d.extend(x.clone());
@@ -681,6 +684,25 @@ async fn change_stage_by(
             insert_event(conn, &t, EventKind::Unblocked, Actor::System, None, Some(json!({"by": id})), now).await?;
         }
     }
+    Ok(())
+}
+
+/// Closes a ticket's open "triaged ticket" Inbox items (PDT-225): it moved past Ready, so nothing is left to approve.
+async fn close_admit_items(
+    conn: &mut SqliteConnection,
+    id: &str,
+    resolution: serde_json::Value,
+    now: i64,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "UPDATE inbox_items SET status = 'closed', resolution = ?, resolved_at = ? \
+         WHERE ticket_id = ? AND kind = 'admit' AND status = 'open'",
+    )
+    .bind(resolution.to_string())
+    .bind(now)
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -739,6 +761,11 @@ async fn delete_rows(conn: &mut SqliteConnection, ids: &[String]) -> Result<(), 
             .fetch_optional(&mut *conn)
             .await?;
         workspaces.extend(ws.map(|(w,)| w));
+        // Nothing is left to approve (PDT-225).
+        sqlx::query("DELETE FROM inbox_items WHERE ticket_id = ? AND kind = 'admit' AND status = 'open'")
+            .bind(id)
+            .execute(&mut *conn)
+            .await?;
         sqlx::query("DELETE FROM tickets WHERE id = ?").bind(id).execute(&mut *conn).await?;
     }
     for w in workspaces {
@@ -2458,6 +2485,57 @@ mod tests {
         assert!(store.get_ticket_summary("e").await.unwrap().unwrap().admitted);
         // The user making one in To do lets it in at once.
         assert!(add(&store, "f", ext(TicketStage::Todo)).await.summary.admitted);
+    }
+
+    #[tokio::test]
+    async fn a_triaged_tickets_inbox_item_closes_once_it_moves_past_ready() {
+        use pdt_core::inbox::{InboxGroup, InboxItem, InboxKind, InboxStatus};
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        let admit = |id: &str, ticket: &str| InboxItem {
+            id: id.into(),
+            kind: InboxKind::Admit,
+            group: InboxGroup::Admit,
+            status: InboxStatus::Open,
+            project_id: Some("p".into()),
+            ticket_id: Some(ticket.into()),
+            ticket_key: None,
+            ticket_title: None,
+            attempt_id: None,
+            session_id: None,
+            run_id: None,
+            step_id: None,
+            persona_id: None,
+            persona_name: None,
+            title: "Approve?".into(),
+            body: json!({}),
+            choices: vec![],
+            resolution: serde_json::Value::Null,
+            created_at: 1,
+            resolved_at: None,
+        };
+        let open = |store: &Store| {
+            let store = store.clone();
+            async move {
+                let items = store.open_inbox_items_of(InboxKind::Admit).await.unwrap();
+                items.into_iter().map(|i| i.id).collect::<Vec<_>>()
+            }
+        };
+        add(&store, "a", new("Triaged")).await;
+        add(&store, "b", new("Also triaged")).await;
+        store.add_inbox_item_once(&admit("ia", "a"), "admit:a").await.unwrap();
+        store.add_inbox_item_once(&admit("ib", "b"), "admit:b").await.unwrap();
+        // Refining it to Ready leaves it waiting.
+        store.move_ticket_by("a", TicketStage::Ready, Actor::System, None, 2).await.unwrap();
+        assert_eq!(open(&store).await, ["ia", "ib"]);
+        // Moved on the board, it closes; deleted, it goes.
+        let todo = ValidPatch { stage: Some(TicketStage::Todo), ..Default::default() };
+        store.patch_ticket("a", &todo, 3).await.unwrap();
+        assert_eq!(open(&store).await, ["ib"]);
+        let a = store.get_inbox_item("ia").await.unwrap().unwrap();
+        assert_eq!((a.status, a.resolution), (InboxStatus::Closed, json!({"moved": "todo"})));
+        assert_eq!(store.delete_ticket("b").await.unwrap(), DeleteTicket::Deleted);
+        assert!(open(&store).await.is_empty());
     }
 
     fn part(title: &str, parent: &str) -> ValidNewTicket {

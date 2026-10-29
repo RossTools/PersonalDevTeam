@@ -6,7 +6,7 @@ use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use pdt_core::conversation::{AgentEvent, RequestState};
 use pdt_core::inbox::{self, InboxAnswer, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxList, InboxStatus};
 use pdt_core::pr::NoticeKind;
@@ -218,6 +218,7 @@ async fn load(st: &AppState, id: &str) -> Result<InboxItem, ApiError> {
 pub(crate) async fn answer(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     payload: Result<Json<InboxAnswer>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let Json(a) = payload?;
@@ -238,7 +239,14 @@ pub(crate) async fn answer(
             format!("{c} is not a choice of this item"),
         ));
     }
-    let r = crate::workflow::agent::answer_item(&st, &item, &a).await.map_err(bad)?;
+    let r = match (item.kind, a.choice.as_deref()) {
+        (InboxKind::Admit, Some(c)) => {
+            let from_ui = crate::untrusted::from_ui(&st, &headers)?;
+            crate::workflow::nodes::inbox_admit::answer(&st, &item, c, from_ui).await.map_err(bad)?
+        }
+        (InboxKind::Admit, None) => return Err(bad("choose Approve or Reject")),
+        _ => crate::workflow::agent::answer_item(&st, &item, &a).await.map_err(bad)?,
+    };
     crate::notifications::kick(&st);
     Ok(Json(r))
 }

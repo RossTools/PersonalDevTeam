@@ -90,6 +90,8 @@ reaches agents only once the user says so.
   external ticket not let in yet can't be made in, or moved to, To do or In progress, nor get the `agentic` label
   (pdt-core `AGENTIC_LABEL`), except by the user (`Actor::User`: the UI, the bulk bar, Start) or a PM call the
   user confirmed (`By.confirmed`). Such a change lets it in (`admitted_at`); from then on it moves as any other ticket.
+  A triaged ticket's Approve in the Inbox (PDT-225, [workflows.md](workflows.md#inbox)) is the user's move too, sent with
+  the UI token.
   Anything else is refused with `403 untrusted_ticket` (a workflow step fails with the reason; an agent's tool call
   gets it): `ticket.move`, `ticket.create` with `stage: todo`, the Refiner, Coder, Reviewer, QA and triage sessions,
   the PM without the user's yes. `ticket.move`'s `externalStage` sends such a ticket somewhere else instead (the

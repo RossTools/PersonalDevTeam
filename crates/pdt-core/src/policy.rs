@@ -100,6 +100,31 @@ impl AutoStartOrder {
     }
 }
 
+/// What happens to a ticket triage drafts (PDT-225).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TriageApproval {
+    /// It waits in the Inbox for the user's Approve (to To do) or Reject (to Won't do).
+    #[default]
+    Inbox,
+    /// It stays where triage left it (Draft, or Ready once refined) until the user moves it.
+    Off,
+}
+
+impl TriageApproval {
+    pub const ALL: [TriageApproval; 2] = [TriageApproval::Inbox, TriageApproval::Off];
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TriageApproval::Inbox => "inbox",
+            TriageApproval::Off => "off",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+}
+
 /// How long a ticket goes unchanged before auto-start takes it, unless the project says otherwise (PDT-146).
 pub const DEFAULT_START_DELAY_SECONDS: u32 = 120;
 
@@ -135,6 +160,9 @@ pub struct ProjectPolicy {
     /// whatever GitHub's branch protection requires.
     #[serde(default = "yes")]
     pub require_green_ci: bool,
+    /// Whether tickets triage drafts wait for the user's approval in the Inbox (PDT-225).
+    #[serde(default)]
+    pub triage_approval: TriageApproval,
 }
 
 fn yes() -> bool {
@@ -153,6 +181,7 @@ impl Default for ProjectPolicy {
             pm_acts: false,
             start_delay_seconds: DEFAULT_START_DELAY_SECONDS,
             require_green_ci: true,
+            triage_approval: TriageApproval::default(),
         }
     }
 }

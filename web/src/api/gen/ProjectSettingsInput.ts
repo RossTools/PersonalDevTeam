@@ -3,6 +3,7 @@ import type { AutoStart } from "./AutoStart";
 import type { AutoStartOrder } from "./AutoStartOrder";
 import type { CredentialPolicy } from "./CredentialPolicy";
 import type { MergeBy } from "./MergeBy";
+import type { TriageApproval } from "./TriageApproval";
 
 /**
  * Replaces `agentCredentials` and `runOverrides`. `agentInstructions` ("" clears it), `mergeViaPr`,
@@ -39,6 +40,10 @@ startDelaySeconds?: number,
  * An automated merge waits for green CI on the pull request's head (PDT-151).
  */
 requireGreenCi?: boolean, 
+/**
+ * Tickets triage drafts wait for Approve or Reject in the Inbox (`inbox`), or not (`off`) (PDT-225).
+ */
+triageApproval?: TriageApproval, 
 /**
  * Integration settings by integration id: each one named is set (keys left out keep their values), null or a
  * `connection` of "" unlinks it, and integrations not named are kept.

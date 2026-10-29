@@ -10,6 +10,7 @@ pub mod end;
 pub mod gate;
 pub mod github;
 pub mod http;
+pub mod inbox_admit;
 pub mod inbox_notice;
 pub mod mcp_tool;
 pub mod merge;
