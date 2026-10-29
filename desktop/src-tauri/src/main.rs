@@ -120,9 +120,16 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
         menu.insert(&login_item, 3)?;
     }
     let suffix = if profile == Profile::Dev { " (dev)" } else { "" };
-    let icon = app.default_window_icon().cloned().ok_or("the app has no icon")?;
+    // macOS menu bars get the monochrome mark as a template image (the system tints it for light and dark bars, PDT-199);
+    // elsewhere the tray shows the app icon.
+    let icon = if cfg!(target_os = "macos") {
+        tauri::include_image!("icons/tray-template.png")
+    } else {
+        app.default_window_icon().cloned().ok_or("the app has no icon")?
+    };
     TrayIconBuilder::with_id("main")
         .icon(icon)
+        .icon_as_template(cfg!(target_os = "macos"))
         .tooltip(format!("{PRODUCT_NAME}{suffix} — port {port}"))
         .menu(&menu)
         .show_menu_on_left_click(!cfg!(windows))
