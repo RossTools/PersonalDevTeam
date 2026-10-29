@@ -17,15 +17,17 @@ const big = 'h-12 pointer-coarse:h-12 min-w-0 flex-1';
 
 /**
  * `/inbox` on a phone: **Needs you** (its count) | **Updates** (a dot while any is unread). A row opens its item;
- * **Review all (n)** at the bottom opens the first and steps through them all.
+ * **Review all (n)** at the bottom opens the first and steps through them all. Updates can be cleared one by one or all.
  */
-export function PhoneInboxList({ items, updates, loading, onOpen, onReadAll, onSettings }: {
+export function PhoneInboxList({ items, updates, loading, onOpen, onReadAll, onClear, onClearAll, onSettings }: {
   items: InboxItem[];
   updates: Notification[];
   loading?: boolean;
   /** Opens an item, or an Update by its selection id. */
   onOpen: (id: string) => void;
   onReadAll: () => void;
+  onClear: (id: string) => void;
+  onClearAll: () => void;
   onSettings: () => void;
 }) {
   const [segment, setSegment] = useState<Segment>(lastSegment);
@@ -63,9 +65,10 @@ export function PhoneInboxList({ items, updates, loading, onOpen, onReadAll, onS
             <div className="flex items-center gap-1 pr-2">
               <h2 className={cn(heading, 'flex-1')}>Updates</h2>
               <Button size="sm" variant="ghost" disabled={!unread} onClick={onReadAll}>Mark all read</Button>
+              <Button size="sm" variant="ghost" disabled={updates.length === 0} onClick={onClearAll}>Clear all</Button>
               <Button size="sm" variant="ghost" onClick={onSettings}>Settings</Button>
             </div>
-            <UpdatesList updates={updates} selectedId={null} onSelect={onOpen} loading={loading} />
+            <UpdatesList updates={updates} selectedId={null} onSelect={onOpen} onClear={onClear} loading={loading} />
           </section>
         )}
       </div>

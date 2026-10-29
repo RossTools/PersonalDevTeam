@@ -131,6 +131,64 @@ async fn a_turn_left_unseen_is_an_update_only_above_the_dot() {
 }
 
 #[tokio::test]
+async fn cleared_updates_stay_gone_and_their_cause_does_not_raise_them_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, st) = setup(tmp.path()).await;
+    let long_ago = jiff::Timestamp::now().as_millisecond() - 60_000;
+    st.store.update_activity("c1", Some(Activity::Idle), Some(long_ago)).await.unwrap();
+    call(&app, "PATCH", "/api/notifications/settings", Some(json!({"session.turn_ended": "inbox"}))).await;
+    pdt_api::sync_notifications(&st).await;
+    let rows = list(&app, "updates").await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let id = rows[0]["id"].as_str().unwrap();
+
+    assert_eq!(call(&app, "POST", &format!("/api/notifications/{id}/clear"), None).await.0, StatusCode::NO_CONTENT);
+    assert!(list(&app, "updates").await.is_empty());
+    assert_eq!(call(&app, "GET", "/api/notifications", None).await.1["unreadUpdates"], 0);
+    // The turn is still unseen: the next pass doesn't raise it again.
+    pdt_api::sync_notifications(&st).await;
+    assert!(list(&app, "updates").await.is_empty(), "the same cause stays cleared");
+    assert_eq!(call(&app, "POST", &format!("/api/notifications/{id}/clear"), None).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(call(&app, "POST", "/api/notifications/nope/clear", None).await.0, StatusCode::NOT_FOUND);
+    let nid = needs_you_row(&st).await;
+    let (s, v) = call(&app, "POST", &format!("/api/notifications/{nid}/clear"), None).await;
+    assert_eq!((s, &v["code"]), (StatusCode::CONFLICT, &json!("needs_you")), "Needs you keeps its own rules");
+
+    // News of another cause shows; Clear all takes it.
+    let merged = pdt_core::notification::NewNotification::new(
+        pdt_core::notification::NotificationKind::PrMerged,
+        "test:merged",
+        "PDT-1 merged",
+        pdt_core::notification::NotificationTarget::None,
+    );
+    st.store.put_notification(&merged, pdt_core::notification::Show::Inbox, 2).await.unwrap();
+    assert_eq!(list(&app, "updates").await.len(), 1);
+    assert_eq!(call(&app, "POST", "/api/notifications/clear-all", None).await.0, StatusCode::NO_CONTENT);
+    assert!(list(&app, "updates").await.is_empty());
+    let needs = st.store.get_notification(&nid).await.unwrap().unwrap();
+    assert_eq!(needs.dismissed_at, None, "Clear all leaves Needs you");
+
+    // After a restart (the store opened again) they are still gone.
+    drop((app, st));
+    let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+    let st = pdt_api::AppState::new(store, tmp.path().join("data"));
+    let app = pdt_api::router(st.clone(), None);
+    pdt_api::sync_notifications(&st).await;
+    assert!(list(&app, "updates").await.is_empty());
+}
+
+/// A Needs-you row, made directly (the next sync clears it: nothing waits).
+async fn needs_you_row(st: &pdt_api::AppState) -> String {
+    let n = pdt_core::notification::NewNotification::new(
+        pdt_core::notification::NotificationKind::SessionNeedsYou,
+        "test:needs_you",
+        "Waits",
+        pdt_core::notification::NotificationTarget::None,
+    );
+    st.store.put_notification(&n, pdt_core::notification::Show::Inbox, 1).await.unwrap().0.id
+}
+
+#[tokio::test]
 async fn settings_list_every_kind_and_keep_inbox_kinds_findable() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, _) = setup(tmp.path()).await;

@@ -501,6 +501,8 @@ export const api = {
     request<NotificationList>(`/api/notifications${queryString(q)}`),
   readNotification: (id: string) => request<void>(`/api/notifications/${enc(id)}/read`, { method: 'POST' }),
   readNotifications: (r: ReadAll) => request<void>('/api/notifications/read-all', { method: 'POST', body: JSON.stringify(r) }),
+  clearNotification: (id: string) => request<void>(`/api/notifications/${enc(id)}/clear`, { method: 'POST' }),
+  clearUpdates: () => request<void>('/api/notifications/clear-all', { method: 'POST' }),
   notificationSettings: () => request<KindSetting[]>('/api/notifications/settings'),
   setNotificationSettings: (changes: Record<string, Show | null>) =>
     request<KindSetting[]>('/api/notifications/settings', { method: 'PATCH', body: JSON.stringify(changes) }),

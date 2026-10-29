@@ -93,7 +93,8 @@ pub(crate) async fn settings(st: &AppState) -> NotificationSettings {
     s
 }
 
-/// Makes (or updates) a notification at its kind's Show; nothing below `inbox` is stored.
+/// Makes (or updates) a notification at its kind's Show; nothing below `inbox` is stored. An update to a live row
+/// the user dismissed (PDT-224) is kept quiet: the same cause doesn't raise it again.
 pub(crate) async fn notify(st: &AppState, n: NewNotification) -> Option<Notification> {
     let show = settings(st).await.show(n.kind);
     if !show.stored() {
@@ -101,7 +102,9 @@ pub(crate) async fn notify(st: &AppState, n: NewNotification) -> Option<Notifica
     }
     match st.store.put_notification(&n, show, now_ms()).await {
         Ok((row, change)) => {
-            st.notifier.send(change, &row);
+            if row.dismissed_at.is_none() {
+                st.notifier.send(change, &row);
+            }
             Some(row)
         }
         Err(e) => {
@@ -487,6 +490,28 @@ pub(crate) async fn read_all(
 ) -> Result<StatusCode, ApiError> {
     let Json(r) = payload?;
     st.store.read_notifications(r.section, r.session_id.as_deref(), r.inbox_item_id.as_deref(), now_ms()).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/notifications/{id}/clear`: the user clears one Update from the Inbox (PDT-224). Needs-you rows are
+/// cleared by their cause, never here.
+pub(crate) async fn clear_one(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    if !st.store.dismiss_notification(&id, now_ms()).await? {
+        return match st.store.get_notification(&id).await? {
+            Some(_) => Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "needs_you",
+                "only Updates can be cleared; this one waits on you",
+            )),
+            None => Err(ApiError::not_found("notification")),
+        };
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/notifications/clear-all`: every Update ("Clear all").
+pub(crate) async fn clear_all(State(st): State<AppState>) -> Result<StatusCode, ApiError> {
+    st.store.dismiss_updates(now_ms()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

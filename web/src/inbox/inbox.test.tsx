@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -337,5 +337,31 @@ describe('inbox sections (PDT-108)', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/notifications/u1/read')).toBe(true));
     await userEvent.click(screen.getAllByRole('button', { name: 'Open' })[0]);
     expect(onOpenTarget).toHaveBeenCalledWith({ kind: 'ticket', id: 't', projectId: 'p' });
+  });
+
+  it('clears one Update from its row or its view, and Clear all empties Updates (PDT-224)', async () => {
+    const { notification } = await import('../notifications/fixtures');
+    const onClear = vi.fn();
+    const onClearAll = vi.fn();
+    const { unmount } = renderWithQuery(
+      <InboxList items={[]} updates={[notification('u1', { title: 'PDT-7 merged' }), notification('u2', { title: 'Old' })]}
+        selectedId={null} onSelect={() => {}} onClear={onClear} onClearAll={onClearAll} />,
+    );
+    await userEvent.click(screen.getAllByRole('button', { name: 'Clear' })[0]);
+    expect(onClear).toHaveBeenCalledWith('u1');
+    await userEvent.click(screen.getByRole('button', { name: 'Clear all' }));
+    expect(onClearAll).toHaveBeenCalled();
+    unmount();
+
+    renderWithQuery(<InboxList items={[]} updates={[]} selectedId={null} onSelect={() => {}} onClearAll={onClearAll} />);
+    expect(screen.getByRole('button', { name: 'Clear all' })).toBeDisabled();
+    cleanup();
+
+    const calls = stubApi({ 'POST /api/notifications/u1/read': null, 'POST /api/notifications/u1/clear': null, 'GET /api/notifications': { items: [], unreadUpdates: 0 }, 'GET /api/inbox': { items: [], total: 0 } });
+    const onSelect = vi.fn();
+    renderWithQuery(<InboxView items={[]} updates={[notification('u1')]} selectedId="update:u1" onSelect={onSelect} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/notifications/u1/clear')).toBe(true));
+    expect(onSelect).toHaveBeenCalledWith(null);
   });
 });

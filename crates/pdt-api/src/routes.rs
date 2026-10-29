@@ -524,11 +524,13 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/notifications", get(crate::notifications::list))
         .route("/notifications/stream", get(crate::notifications::stream))
         .route("/notifications/read-all", axum::routing::post(crate::notifications::read_all))
+        .route("/notifications/clear-all", axum::routing::post(crate::notifications::clear_all))
         .route(
             "/notifications/settings",
             get(crate::notifications::get_settings).patch(crate::notifications::patch_settings),
         )
         .route("/notifications/{id}/read", axum::routing::post(crate::notifications::read))
+        .route("/notifications/{id}/clear", axum::routing::post(crate::notifications::clear_one))
         .merge(crate::integrations::routes(&state))
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {

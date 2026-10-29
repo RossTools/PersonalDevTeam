@@ -18,7 +18,7 @@ import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
 import { navigate } from '../shell/router';
 import { after, CONNECT_PATH, dismissable, KIND_LABEL, noticeText, passesOf, primary, questionsOf, resends, selectedUpdate, step } from './model';
-import { useReadNotification } from '../notifications/queries';
+import { useClearUpdate, useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
 
 /**
@@ -125,7 +125,7 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
   }, []);
 
   if (updateId) {
-    return update ? <UpdateView update={update} onOpenTarget={onOpenTarget} /> : <EmptyState>This update is gone.</EmptyState>;
+    return update ? <UpdateView update={update} onOpenTarget={onOpenTarget} onCleared={() => onSelect(null)} /> : <EmptyState>This update is gone.</EmptyState>;
   }
   if (!item) {
     return <EmptyState>{items.length === 0 ? 'Nothing waits on you. Questions, approvals and gates from agents and workflows show up here.' : 'Choose an item.'}</EmptyState>;
@@ -311,9 +311,14 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
   );
 }
 
-/** An Update: what it says, read once it is open, and a way to what it is about. */
-export function UpdateView({ update, onOpenTarget }: { update: Notification; onOpenTarget?: (t: NotificationTarget) => void }) {
+/** An Update: what it says, read once it is open, a way to what it is about, and Clear (then `onCleared`). */
+export function UpdateView({ update, onOpenTarget, onCleared }: {
+  update: Notification;
+  onOpenTarget?: (t: NotificationTarget) => void;
+  onCleared?: () => void;
+}) {
   const read = useReadNotification();
+  const clear = useClearUpdate();
   const unread = update.readAt === null;
   const { mutate } = read;
   useEffect(() => {
@@ -328,7 +333,10 @@ export function UpdateView({ update, onOpenTarget }: { update: Notification; onO
         title={update.title}
         titleTooltip={update.title}
         meta={<span className="text-meta text-muted-foreground">{meta}</span>}
-        actions={open ? <Button variant="ghost" size="sm" onClick={open}>Open</Button> : undefined}
+        actions={<>
+          {open && <Button variant="ghost" size="sm" onClick={open}>Open</Button>}
+          <Button variant="ghost" size="sm" onClick={() => { clear.mutate(update.id); onCleared?.(); }}>Clear</Button>
+        </>}
       />
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
         {update.body && <p className="text-sm whitespace-pre-wrap">{update.body}</p>}

@@ -1031,8 +1031,8 @@ nothing waiting the plain icon and title come back.
 
 Web: the rail's Inbox (web/src/inbox; the open count on its icon, a dot when Updates are unread, `Ctrl+] i`): the list
 has two sections, **Needs you** (the items, grouped by kind) and **Updates** (the notification feed, newest first, unread
-in bold, cleared dimmed, Mark all read, a link to Settings → Notifications; selecting one reads it and shows Open, its
-target); opening an item reads its notifications. The work
+in bold, cleared dimmed, Mark all read, Clear all, a Clear button on each row (on hover; always on touch), a link to
+Settings → Notifications; selecting one reads it and shows Open, its target, and Clear); opening an item reads its notifications. The work
 area shows the item and its decision (answers per question, the approval card, Nudge / Take over, Once more / Take
 over / Stop, Resume (with a note) / Stop, a gate's choices, a manual step's outcomes, an unheard notice's text with
 Open ticket and Dismiss); `j`/`k` move, Enter takes the primary action,
@@ -1079,6 +1079,10 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
   `run:<id>:failed`, `notify:<step>`, `connection:<name>`, `loop:<name>:stale`, `todo:<id>:<dueOn>[T<HH:MM>]`); a cause firing again updates its row
   (title, body, `created_at`, unread again).
   `seq` grows on every change (created, updated, cleared). Pruned after 30 days, except live Needs-you rows.
+  The user can clear an Update (PDT-224: `dismissed_at`, also read): it leaves every list and the Inbox's dot for good.
+  Its row stays live while its cause lasts, so the same cause doesn't raise it again: state causes find it live and
+  make nothing, and a cause firing again updates it out of sight (no stream event, no toast). Once the cause went
+  away (the row is cleared) a new one is news again. Needs-you rows can't be cleared this way.
 - **State causes** (`sync`, every 2 s and at once on a kick: activity changes, a session viewed, an Inbox answer or
   dismiss, a settings change): a running agent session that needs the user and is unseen (`session.needs_you`, not
   for a conversation with an open approval: that is `inbox.approval`), or idle and unseen for 30 s
@@ -1099,7 +1103,8 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
   `undelivered:<message id>`).
 - **API.** `GET /api/notifications?section=needs_you|updates&project=&unread=&limit=&before=` → `{items,
   unreadUpdates}` (Needs you lists live rows only); `POST /api/notifications/{id}/read`; `POST
-  /api/notifications/read-all {section?, sessionId?, inboxItemId?}`; `GET /api/notifications/stream`, Server-Sent
+  /api/notifications/read-all {section?, sessionId?, inboxItemId?}`; `POST /api/notifications/{id}/clear` (an Update;
+  409 `needs_you` for a Needs-you row) and `POST /api/notifications/clear-all` (every Update); `GET /api/notifications/stream`, Server-Sent
   Events `created`/`updated`/`cleared` with the row (event id = `seq`; `Last-Event-ID` gets what was missed, as
   `created` or `cleared`; it ends when pdtd shuts down).
 - **Web** (`web/src/notifications`): AppShell follows the stream (`useNotificationStream`, EventSource) and refreshes
