@@ -13,6 +13,8 @@ export interface FolderFieldProps {
   start?: string;
   /** A folder was chosen in the picker (e.g. to suggest a project name from it). */
   onPick?: (folder: FolderPickerSelection) => void;
+  /** The value is final: the field lost focus, Enter was pressed, or a folder was picked (settings save then). */
+  onCommit?: (value: string) => void;
   placeholder?: string;
   required?: boolean;
   autoFocus?: boolean;
@@ -25,7 +27,7 @@ export interface FolderFieldProps {
  * A path field with Browse…: type a folder on the host, or pick one in a dialog that lists the host's folders
  * (`/api/host/folders`). The picked path is written as the host writes it, with the home folder as `~`.
  */
-export function FolderField({ value, onChange, start = '', onPick, placeholder, required, autoFocus, title = 'Choose a folder', ...aria }: FolderFieldProps) {
+export function FolderField({ value, onChange, start = '', onPick, onCommit, placeholder, required, autoFocus, title = 'Choose a folder', ...aria }: FolderFieldProps) {
   const [open, setOpen] = useState(false);
   return (
     <div className="flex min-w-0 items-center gap-1.5">
@@ -40,9 +42,19 @@ export function FolderField({ value, onChange, start = '', onPick, placeholder, 
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={(e) => {
+          // Browse… takes focus from the field; its pick commits instead.
+          if (onCommit && !(e.relatedTarget instanceof HTMLElement && e.relatedTarget.dataset.browse !== undefined)) onCommit(value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && onCommit) {
+            e.preventDefault();
+            onCommit(value);
+          }
+        }}
         {...aria}
       />
-      <Button variant="secondary" aria-label={aria['aria-label'] ? `Browse for ${aria['aria-label']}` : 'Browse folders'} onClick={() => setOpen(true)}>
+      <Button data-browse="" variant="secondary" aria-label={aria['aria-label'] ? `Browse for ${aria['aria-label']}` : 'Browse folders'} onClick={() => setOpen(true)}>
         <FolderOpen /> Browse…
       </Button>
       {open && (
@@ -53,6 +65,7 @@ export function FolderField({ value, onChange, start = '', onPick, placeholder, 
           onChoose={(f) => {
             onChange(f.display);
             onPick?.(f);
+            onCommit?.(f.display);
             setOpen(false);
           }}
         />

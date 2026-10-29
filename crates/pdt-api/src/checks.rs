@@ -5,7 +5,7 @@ use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::State;
 use pdt_core::host::{CredentialPolicy, HostSettings};
-use pdt_core::session::{AgentKind, SessionKind, is_scrubbed};
+use pdt_core::session::{SessionKind, is_scrubbed};
 use serde::Serialize;
 use std::time::Duration;
 use ts_rs::TS;
@@ -143,24 +143,26 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
             HostSettings::default().agent_credentials
         }
     };
-    let agent = |kind: AgentKind, args: &'static [&'static str]| {
-        let program = st.agent_program(kind);
+    let platform = st.agent_platform().await;
+    let agent = |program: &str, args: &'static [&'static str]| {
+        let program = program.to_string();
         async move { run(st, &program, args, SessionKind::AgentTui, creds).await }
     };
-    let claude =
-        check("claude", agent(AgentKind::Claude, &["auth", "status"]).await, |_, out| match claude_logged_in(&out) {
+    let claude = check("claude", agent(&platform.claude_program, &["auth", "status"]).await, |_, out| {
+        match claude_logged_in(&out) {
             Some(true) => ToolCheck::answered(true, "logged in".into()),
             Some(false) => ToolCheck::answered(false, "not logged in: run `claude` and log in".into()),
             None => ToolCheck::answered(false, format!("could not read `claude auth status`: {out}")),
-        });
-    let codex = check("codex", agent(AgentKind::Codex, &["login", "status"]).await, |ok, out| {
+        }
+    });
+    let codex = check("codex", agent(&platform.codex_program, &["login", "status"]).await, |ok, out| {
         if ok {
             ToolCheck::answered(true, out)
         } else {
             ToolCheck::answered(false, format!("not logged in: run `codex login` ({out})"))
         }
     });
-    let devin = check("devin", agent(AgentKind::Devin, &["auth", "status"]).await, |ok, out| {
+    let devin = check("devin", agent(&platform.devin_program, &["auth", "status"]).await, |ok, out| {
         if devin_logged_in(ok, &out) {
             // Its status goes on to list the account and team settings; the first line says it all.
             ToolCheck::answered(true, out.lines().next().unwrap_or_default().trim().to_string())

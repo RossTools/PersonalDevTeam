@@ -21,56 +21,52 @@ const base = {
 };
 
 describe('ProjectPage', () => {
-  it('renames and re-keys the project', async () => {
-    const calls = stubApi({ ...base, 'PATCH /api/projects/p': { ...project, key: 'CORE' } });
-    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
-    const form = screen.getByRole('region', { name: 'Project' });
-    const save = within(form).getByRole('button', { name: 'Save' });
-    expect(save).toBeDisabled();
-    const key = within(form).getByRole('textbox', { name: 'Project key' });
-    await userEvent.clear(key);
-    await userEvent.type(key, 'core');
-    await userEvent.click(save);
-    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/projects/p', body: { key: 'core' } }));
-    expect(screen.getByRole('link', { name: /o\/pdt on GitHub/ })).toHaveAttribute('href', 'https://github.com/o/pdt');
-  });
-
-  it('says Saved once the saved project comes back (the form starts over with it)', async () => {
-    const saved = { ...project, key: 'CORE' };
-    const calls = stubApi({ ...base, 'PATCH /api/projects/p': saved });
-    const { rerender } = renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
-    const form = screen.getByRole('region', { name: 'Project' });
-    const key = within(form).getByRole('textbox', { name: 'Project key' });
-    await userEvent.clear(key);
-    await userEvent.type(key, 'core');
-    await userEvent.click(within(form).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
-    rerender(<ProjectPage project={saved} onRemoved={() => {}} />);
-    expect(within(screen.getByRole('region', { name: 'Project' })).getByText('Saved')).toBeInTheDocument();
-  });
-
-  it('changes the base branch to a local or origin branch', async () => {
-    const calls = stubApi({ ...base, 'PATCH /api/projects/p': { ...project, baseBranch: 'release' } });
-    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
-    const form = screen.getByRole('region', { name: 'Project' });
-    const save = within(form).getByRole('button', { name: 'Save' });
-    await userEvent.click(within(form).getByRole('button', { name: /Base branch/ }));
-    await userEvent.click(await screen.findByRole('option', { name: 'release (origin)' }));
-    expect(save).toBeEnabled();
-    await userEvent.click(save);
-    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/projects/p', body: { baseBranch: 'release' } }));
-  });
-
-  it('shows why saving the name and key failed', async () => {
-    stubApi({ ...base, 'PATCH /api/projects/p': new Reply(409, { code: 'key_taken', message: 'the key CORE is taken' }) });
-    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
-    const form = screen.getByRole('region', { name: 'Project' });
+  it('saves the name and key as they are left, and follows the new key', async () => {
+    const onKeyChange = vi.fn();
+    const calls = stubApi({ ...base, 'PATCH /api/projects/p': (c: Call) => ({ ...project, ...(c.body as object), key: 'CORE' }) });
+    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} onKeyChange={onKeyChange} />);
+    const form = screen.getByRole('region', { name: 'General' });
+    expect(within(form).queryByRole('button', { name: 'Save' })).toBeNull();
     const key = within(form).getByRole('textbox', { name: 'Project key' });
     await userEvent.clear(key);
     await userEvent.type(key, 'core{Enter}');
-    const alert = await within(form).findByRole('alert');
-    expect(alert).toHaveTextContent('the key CORE is taken');
-    await waitFor(() => expect(alert).toHaveFocus());
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/projects/p', body: { key: 'core' } }));
+    expect(await within(form).findByRole('status')).toHaveTextContent('Saved');
+    await waitFor(() => expect(onKeyChange).toHaveBeenCalledWith('CORE'));
+    expect(screen.getByRole('link', { name: /o\/pdt on GitHub/ })).toHaveAttribute('href', 'https://github.com/o/pdt');
+  });
+
+  it('saves the name on blur, and nothing when it did not change', async () => {
+    const calls = stubApi({ ...base, 'PATCH /api/projects/p': (c: Call) => ({ ...project, ...(c.body as object) }) });
+    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
+    const name = screen.getByRole('textbox', { name: 'Project name' });
+    await userEvent.click(name);
+    await userEvent.tab();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+    await userEvent.type(name, ' Core');
+    await userEvent.tab();
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/projects/p', body: { name: 'PDT Core' } }));
+  });
+
+  it('changes the base branch to a local or origin branch at once', async () => {
+    const calls = stubApi({ ...base, 'PATCH /api/projects/p': { ...project, baseBranch: 'release' } });
+    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
+    const form = screen.getByRole('region', { name: 'General' });
+    await userEvent.click(within(form).getByRole('button', { name: /Base branch/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'release (origin)' }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/projects/p', body: { baseBranch: 'release' } }));
+    expect(await within(form).findByRole('status')).toHaveTextContent('Saved');
+  });
+
+  it('shows why saving the key failed, and keeps what was typed', async () => {
+    stubApi({ ...base, 'PATCH /api/projects/p': new Reply(409, { code: 'key_taken', message: 'the key CORE is taken' }) });
+    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
+    const form = screen.getByRole('region', { name: 'General' });
+    const key = within(form).getByRole('textbox', { name: 'Project key' });
+    await userEvent.clear(key);
+    await userEvent.type(key, 'core{Enter}');
+    expect(await within(form).findByRole('alert')).toHaveTextContent('the key CORE is taken');
+    expect(key).toHaveValue('core');
   });
 
   it('links worktrees to GitHub and removes one, confirming again when it has uncommitted changes', async () => {
@@ -81,7 +77,7 @@ describe('ProjectPage', () => {
       'DELETE /api/worktrees/w1?force=true&deleteBranch=true': undefined,
     });
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
-    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
+    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} section="worktrees" />);
     const list = await screen.findByRole('region', { name: 'Worktrees' });
     const row = (await within(list).findByText('feature/x')).closest('li')!;
     await userEvent.click(within(row).getByRole('button', { name: 'Branch feature/x' }));
@@ -103,7 +99,7 @@ describe('ProjectPage', () => {
       ...base,
       'DELETE /api/worktrees/w1?force=false&deleteBranch=false': new Reply(409, { code: 'worktree_dirty', message: 'dirty' }),
     });
-    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
+    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} section="worktrees" />);
     const row = (await screen.findByText('feature/x')).closest('li')!;
     await userEvent.click(within(row).getByRole('button', { name: 'Remove…' }));
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
@@ -120,11 +116,13 @@ describe('ProjectPage', () => {
   it('forgets a missing worktree and removes the project after confirming', async () => {
     const onRemoved = vi.fn();
     const calls = stubApi({ ...base, 'DELETE /api/worktrees/w2?force=false&deleteBranch=false': undefined, 'DELETE /api/projects/p': undefined });
-    renderWithQuery(<ProjectPage project={project} onRemoved={onRemoved} />);
+    const { unmount } = renderWithQuery(<ProjectPage project={project} onRemoved={onRemoved} section="worktrees" />);
     const row = (await screen.findByText('old')).closest('li')!;
     expect(row).toHaveTextContent('folder missing');
     await userEvent.click(within(row).getByRole('button', { name: 'Forget' }));
     await waitFor(() => expect(calls.some((c) => c.path === '/api/worktrees/w2?force=false&deleteBranch=false')).toBe(true));
+    unmount();
+    renderWithQuery(<ProjectPage project={project} onRemoved={onRemoved} section="danger-zone" />);
     // Cancelling keeps the project.
     await userEvent.click(screen.getByRole('button', { name: 'Remove project…' }));
     await userEvent.click(within(await screen.findByRole('alertdialog', { name: 'Remove PDT?' })).getByRole('button', { name: 'Cancel' }));
@@ -147,7 +145,7 @@ describe('ProjectPage', () => {
       'GET /api/projects/p/settings': { runOverrides: 'x = 1', agentCredentials: 'subscription', agentPermissionMode: null },
       'PUT /api/projects/p/settings': (c: Call) => ({ runOverrides: 'x = 1', agentCredentials: 'subscription', ...(c.body as object) }),
     });
-    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} />);
+    renderWithQuery(<ProjectPage project={project} onRemoved={() => {}} section="agents" />);
     const trigger = await screen.findByRole('button', { name: /Agent permission mode for workflow steps/ });
     await waitFor(() => expect(trigger).toBeEnabled());
     await userEvent.click(trigger);
@@ -163,15 +161,19 @@ describe('ProjectPage', () => {
   it('shows a Personal project as a folder, with no base branch, worktrees, runs or merging', async () => {
     const personal: Project = { ...project, kind: 'personal', baseBranch: '', githubRepo: null, repoPath: '/data/personal/p' };
     const calls = stubApi(base);
-    renderWithQuery(<ProjectPage project={personal} onRemoved={() => {}} />);
-    const form = screen.getByRole('region', { name: 'Project' });
+    const { unmount } = renderWithQuery(<ProjectPage project={personal} onRemoved={() => {}} />);
+    const form = screen.getByRole('region', { name: 'General' });
     expect(within(form).getByText(/Personal project \(no repository\)/)).toBeInTheDocument();
     expect(within(form).getByText('/data/personal/p')).toBeInTheDocument();
     expect(within(form).queryByRole('button', { name: /Base branch/ })).toBeNull();
-    expect(screen.queryByRole('region', { name: 'Worktrees' })).toBeNull();
-    expect(screen.queryByRole('region', { name: 'Runs on this host' })).toBeNull();
-    expect(screen.queryByRole('region', { name: 'Review' })).toBeNull();
-    expect(await screen.findByRole('button', { name: /Agent permission mode for workflow steps/ })).toBeInTheDocument();
+    unmount();
+    // On a phone its list of sections has no worktrees, runs or review.
+    renderWithQuery(<ProjectPage project={personal} onRemoved={() => {}} drill />);
+    const sections = screen.getByRole('grid', { name: 'Sections' });
+    expect(within(sections).queryByText('Worktrees')).toBeNull();
+    expect(within(sections).queryByText('Runs on this host')).toBeNull();
+    expect(within(sections).queryByText('Review')).toBeNull();
+    expect(within(sections).getByText('Agents')).toBeInTheDocument();
     expect(calls.some((c) => c.path.includes('/branches') || c.path.includes('/worktrees') || c.path.includes('/run-config'))).toBe(false);
   });
 });

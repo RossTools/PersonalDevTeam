@@ -1,6 +1,6 @@
-//! `command` (Phase 7e spec §3.1): runs a program (no shell) with JSON on stdin and reads JSON from stdout, in a scratch
-//! folder, the project's checkout or the attempt's worktree. A non-zero exit is an error (so retries and the error port
-//! apply); the node's time limit kills the whole process tree.
+//! `command` (Phase 7e spec §3.1): runs a program (no shell) or a shell script (PDT-250) with JSON on stdin and reads
+//! JSON from stdout, in a scratch folder, the project's checkout or the attempt's worktree. A non-zero exit is an error
+//! (so retries and the error port apply); the node's time limit kills the whole process tree.
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use schemars::JsonSchema;
@@ -25,20 +25,55 @@ pub enum ParseAs {
     Text,
 }
 
+/// The shell a `script` runs in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Shell {
+    #[default]
+    Sh,
+    Bash,
+    Zsh,
+    Pwsh,
+}
+
+impl Shell {
+    fn program(self) -> &'static str {
+        match self {
+            Shell::Sh => "sh",
+            Shell::Bash => "bash",
+            Shell::Zsh => "zsh",
+            Shell::Pwsh => "pwsh",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(extend("oneOf" = [{"required": ["program"]}, {"required": ["script"]}]))]
 #[ts(export)]
 pub struct CommandConfig {
-    /// The program: a name on PATH or a full path. No shell: use `sh -c …` / `cmd /c …` for one.
+    /// The program: a name on PATH or a full path, run without a shell. Or leave it out and write a `script`.
+    #[serde(default)]
     pub program: String,
     #[serde(default)]
     pub args: Vec<String>,
+    /// A script, run as `<shell> -c <script>` instead of `program`. `{{…}}` references are pasted in as plain text,
+    /// not quoted for the shell: put outside text in `env` and use `"$NAME"` in the script.
+    #[serde(default)]
+    #[schemars(extend("x-format" = "code", "x-language" = "sh"))]
+    #[ts(optional)]
+    pub script: Option<String>,
+    /// The shell for `script`.
+    #[serde(default)]
+    pub shell: Shell,
     /// `scratch` (a fresh folder for the run), `project` (the project's main checkout), `attempt` (the attempt's
     /// worktree) or a full path.
     #[serde(default = "scratch")]
     pub cwd: String,
     /// Written to stdin as JSON (nothing when absent).
     #[serde(default)]
+    #[schemars(extend("x-format" = "code", "x-language" = "json"))]
     #[ts(type = "unknown")]
     pub input: Value,
     /// Added to PDT's environment.
@@ -50,6 +85,16 @@ pub struct CommandConfig {
 
 fn scratch() -> String {
     "scratch".into()
+}
+
+impl CommandConfig {
+    /// What runs: the program and its arguments, or the shell with `-c` and the script.
+    fn command_line(&self) -> (&str, Vec<&str>) {
+        match self.script.as_deref() {
+            Some(script) => (self.shell.program(), vec!["-c", script]),
+            None => (self.program.as_str(), self.args.iter().map(String::as_str).collect()),
+        }
+    }
 }
 
 /// What a command step outputs.
@@ -82,8 +127,9 @@ impl NodeKind for Command {
             1,
             Category::Action,
             "Run a command",
-            "Runs a program with `input` as JSON on stdin and reads its stdout as JSON (`{{steps.<id>.json}}`). A \
-             non-zero exit fails the step; `{\"quiet\": true}` on stdout means nothing to report.",
+            "Runs a program, or a shell script, with `input` as JSON on stdin and reads its stdout as JSON \
+             (`{{steps.<id>.json}}`). A non-zero exit fails the step; `{\"quiet\": true}` on stdout means nothing to \
+             report.",
             &[("out", "Then")],
             false,
         )
@@ -96,8 +142,12 @@ impl NodeKind for Command {
 
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: CommandConfig = parse(config)?;
-        if c.program.trim().is_empty() {
-            return Err("program is empty".into());
+        match (&c.script, c.program.trim().is_empty()) {
+            (Some(_), false) => return Err("set program or script, not both".into()),
+            (Some(_), true) if !c.args.is_empty() => return Err("args go with program; a script has none".into()),
+            (Some(s), true) if s.trim().is_empty() => return Err("script is empty".into()),
+            (None, true) => return Err("program is empty (set program or script)".into()),
+            _ => {}
         }
         let cwd = c.cwd.trim();
         if !matches!(cwd, "scratch" | "project" | "attempt") && !cwd.contains("{{") && !Path::new(cwd).is_absolute() {
@@ -110,9 +160,14 @@ impl NodeKind for Command {
         Box::pin(async move {
             let c: CommandConfig = parse(&input)?;
             if cx.dry_run {
-                let line = std::iter::once(c.program.as_str()).chain(c.args.iter().map(String::as_str));
-                let line: Vec<&str> = line.collect();
-                return Ok(Outcome::next("out", json!({"would": format!("run {} in {}", line.join(" "), c.cwd)})));
+                let would = match &c.script {
+                    Some(script) => format!("run a {} script in {}:\n{script}", c.shell.program(), c.cwd),
+                    None => {
+                        let line = std::iter::once(c.program.as_str()).chain(c.args.iter().map(String::as_str));
+                        format!("run {} in {}", line.collect::<Vec<_>>().join(" "), c.cwd)
+                    }
+                };
+                return Ok(Outcome::next("out", json!({"would": would})));
             }
             let dir = working_dir(cx, &c.cwd).await?;
             let out = run_command(&c, &dir).await?;
@@ -199,8 +254,9 @@ fn tail(s: &str, max: usize) -> String {
 }
 
 pub(crate) async fn run_command(c: &CommandConfig, dir: &Path) -> Result<CommandOutput, String> {
-    let mut cmd = tokio::process::Command::new(&c.program);
-    cmd.args(&c.args)
+    let (program, args) = c.command_line();
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(&args)
         .current_dir(dir)
         .envs(&c.env)
         .stdin(if c.input.is_null() { Stdio::null() } else { Stdio::piped() })
@@ -211,7 +267,7 @@ pub(crate) async fn run_command(c: &CommandConfig, dir: &Path) -> Result<Command
     cmd.process_group(0);
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    let mut child = cmd.spawn().map_err(|e| format!("could not run {}: {e}", c.program))?;
+    let mut child = cmd.spawn().map_err(|e| format!("could not run {program}: {e}"))?;
     let mut guard = TreeGuard(child.id());
     if let Some(mut stdin) = child.stdin.take() {
         let body = serde_json::to_vec(&c.input).unwrap_or_default();
@@ -232,7 +288,7 @@ pub(crate) async fn run_command(c: &CommandConfig, dir: &Path) -> Result<Command
         let last: Vec<&str> = stderr.lines().rev().filter(|l| !l.trim().is_empty()).take(5).collect();
         let last: Vec<&str> = last.into_iter().rev().collect();
         let why = if last.is_empty() { tail(stdout.trim(), 500) } else { last.join("\n") };
-        return Err(format!("{} exited with {code}: {why}", c.program));
+        return Err(format!("{program} exited with {code}: {why}"));
     }
     let json = match c.parse {
         ParseAs::Text => Value::Null,

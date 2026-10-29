@@ -7,7 +7,6 @@ use crate::routes::AppState;
 use axum::Json;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
-use pdt_core::host::AgentPrograms;
 use pdt_core::session::AgentKind;
 use pdt_core::setup::{SetupFacts, SetupPatch, SetupState, SetupSteps};
 use serde::Serialize;
@@ -26,10 +25,6 @@ pub struct SetupView {
     /// The app opens on Get started.
     pub opens_on_launch: bool,
     pub default_agent: AgentKind,
-    /// The agent programs set by hand in the host settings.
-    pub agent_programs: AgentPrograms,
-    /// The agents whose program an environment variable (`PDT_CLAUDE_PROGRAM` …) sets: it wins over a path set here.
-    pub programs_from_env: Vec<AgentKind>,
 }
 
 async fn stored(st: &AppState) -> Result<Option<SetupState>, ApiError> {
@@ -87,18 +82,12 @@ async fn view(st: &AppState, patch: Option<&SetupPatch>) -> Result<SetupView, Ap
         store(st, &s).await?;
     }
     let settings = st.store.get_host_settings().await?;
-    let from_env = [AgentKind::Claude, AgentKind::Codex, AgentKind::Devin]
-        .into_iter()
-        .filter(|a| st.programs_from_env.get(*a).is_some())
-        .collect();
     Ok(SetupView {
         opens_on_launch: s.opens_on_launch(),
         done: steps.done(),
         steps,
         state: s,
         default_agent: settings.default_agent,
-        agent_programs: settings.agent_programs,
-        programs_from_env: from_env,
     })
 }
 

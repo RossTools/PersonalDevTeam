@@ -115,8 +115,41 @@ describe('AppShell', () => {
     stubApi({ 'GET /api/projects': [], ...hostRoutes });
     renderWithQuery(<AppShell />);
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    expect(await screen.findByRole('heading', { name: 'This host' })).toBeInTheDocument();
+    // This host's first section, a screen of its own.
+    expect(await screen.findByRole('heading', { name: 'Updates' })).toBeInTheDocument();
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
+    expect(within(nav).getByRole('button', { name: 'This host' })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(nav).getByRole('button', { name: 'Updates' })).toHaveAttribute('aria-current', 'page');
+    await userEvent.click(within(nav).getByRole('button', { name: 'Remote access' }));
+    expect(window.location.pathname).toBe('/settings/host/remote-access');
     expect(await screen.findByRole('switch', { name: 'Remote access' })).toBeChecked();
+    expect(screen.queryByRole('heading', { name: 'Updates' })).not.toBeInTheDocument();
+  });
+
+  it('finds settings by name from the search box', async () => {
+    stubApi({ 'GET /api/projects': [], ...hostRoutes });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
+    await userEvent.type(within(nav).getByRole('searchbox', { name: 'Search settings' }), 'allowed hosts');
+    expect(within(nav).getByRole('button', { name: 'Network' })).toBeInTheDocument();
+    expect(within(nav).queryByRole('button', { name: 'Updates' })).toBeNull();
+    expect(within(nav).queryByRole('button', { name: 'Secrets' })).toBeNull();
+    await userEvent.clear(within(nav).getByRole('searchbox', { name: 'Search settings' }));
+    await userEvent.type(within(nav).getByRole('searchbox', { name: 'Search settings' }), 'nothing like it');
+    expect(within(nav).getByText(/No settings match/)).toBeInTheDocument();
+  });
+
+  it('marks Network with "restart" while a saved network setting waits for a restart', async () => {
+    const view = hostRoutes['GET /api/host/settings'];
+    stubApi({
+      'GET /api/projects': [], ...hostRoutes,
+      'GET /api/host/settings': { ...view, network: { settings: { port: 7500, allowedHosts: [] }, portFromEnv: null, allowedHostsFromEnv: null, listenPort: 7420, defaultPort: 7420, restartNeeded: true, canRestart: true } },
+    });
+    renderWithQuery(<AppShell />);
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
+    expect(await within(nav).findByRole('button', { name: 'Network restart' })).toBeInTheDocument();
   });
 
   it('toggles the bottom panel with Ctrl+` and with the on-screen button', async () => {
@@ -519,9 +552,13 @@ describe('workspaces', () => {
     renderWithQuery(<AppShell />);
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
-    await userEvent.click(await within(nav).findByRole('row', { name: /Alpha/ }));
-    expect(within(nav).getByRole('row', { name: /Alpha/ })).toHaveAttribute('data-current', 'true');
-    expect(within(nav).getByRole('row', { name: /Alpha/ })).toHaveTextContent('ALP');
+    const alpha = await within(nav).findByRole('button', { name: /Alpha/ });
+    expect(alpha).toHaveTextContent('ALP');
+    expect(alpha).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(alpha);
+    await userEvent.click(within(within(nav).getByRole('group', { name: 'Alpha' })).getByRole('button', { name: 'General' }));
+    expect(window.location.pathname).toBe('/settings/projects/ALP/general');
+    expect(within(within(nav).getByRole('group', { name: 'Alpha' })).getByRole('button', { name: 'General' })).toHaveAttribute('aria-current', 'page');
     expect(await within(screen.getByRole('main')).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
     expect(screen.getByRole('button', { name: 'Add project' })).toBeInTheDocument();
   });
@@ -718,7 +755,7 @@ describe('settings page', () => {
     renderWithQuery(<AppShell />);
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
-    expect(within(nav).getByRole('row', { name: /This host/ })).toBeInTheDocument();
+    expect(within(nav).getByRole('button', { name: /This host/ })).toBeInTheDocument();
     expect(screen.queryByRole('radio', { name: 'Clone URL' })).not.toBeInTheDocument();
     await userEvent.click(within(nav).getByRole('button', { name: 'Add project' }));
     const dialog = screen.getByRole('dialog', { name: 'Add project' });
@@ -731,14 +768,14 @@ describe('settings page', () => {
     renderWithQuery(<AppShell />);
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
-    expect(within(nav).queryByRole('row', { name: 'Integrations' })).toBeNull();
-    await userEvent.click(within(nav).getByRole('row', { name: /Plugins/ }));
+    expect(within(nav).queryByRole('button', { name: 'Integrations' })).toBeNull();
+    await userEvent.click(within(nav).getByRole('button', { name: 'Plugins' }));
     const main = screen.getByRole('main');
     expect(here()).toBe('/settings/plugins');
     await userEvent.click(await within(main).findByRole('button', { name: 'Discord' }));
     expect(here()).toBe('/settings/plugins/discord');
     expect(await within(main).findByRole('region', { name: 'Connections' })).toBeInTheDocument();
-    await userEvent.click(within(nav).getByRole('row', { name: /All connections/ }));
+    await userEvent.click(within(nav).getByRole('button', { name: 'All connections' }));
     expect(here()).toBe('/settings/connections');
     expect(await within(main).findByRole('heading', { name: 'All connections' })).toBeInTheDocument();
   });
@@ -749,12 +786,16 @@ describe('settings page', () => {
     renderWithQuery(<AppShell />);
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
-    await userEvent.click(await within(nav).findByRole('row', { name: /Alpha/ }));
+    await userEvent.click(await within(nav).findByRole('button', { name: /Alpha/ }));
+    const group = within(nav).getByRole('group', { name: 'Alpha' });
+    expect(within(group).getAllByRole('button').map((b) => b.textContent))
+      .toEqual(['General', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Danger zone']);
+    // One section per screen, under a breadcrumb.
+    await userEvent.click(within(group).getByRole('button', { name: 'Review' }));
     const main = screen.getByRole('main');
-    await within(main).findByRole('region', { name: 'Project' });
-    expect(within(main).getAllByRole('region').map((r) => r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)?.textContent))
-      .toEqual(['Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Danger zone']);
-    expect(within(main).queryByText(/settings on this host/)).not.toBeInTheDocument();
+    expect(await within(main).findByRole('heading', { name: 'Review' })).toBeInTheDocument();
+    expect(within(main).getAllByRole('region')).toHaveLength(1);
+    expect(within(main).getByRole('navigation', { name: 'Breadcrumb' })).toHaveTextContent('Projects › Alpha');
   });
 });
 
@@ -797,7 +838,7 @@ describe('phone', () => {
   it('opens the todo list in a sheet from the top bar, with no right panel', async () => {
     stubPhone();
     stubWorkspaces({ 'GET /api/todos': [{ id: 'a', title: 'Call Sam', position: 0, done: false, projectId: null, ticketId: null,
-      createdAt: 1, updatedAt: 1, doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null }] });
+      createdAt: 1, updatedAt: 1, doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null, body: '' }] });
     renderWithQuery(<AppShell />);
     expect(screen.queryByRole('complementary', { name: 'Right panel' })).not.toBeInTheDocument();
     await userEvent.click(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('button', { name: 'Todos' }));
@@ -1056,34 +1097,31 @@ describe('phone', () => {
   it('goes up from a detail screen opened from a link, and drills into Settings from its list', async () => {
     stubPhone();
     stubWorkspaces({ [`GET /api/projects/${project.id}/settings`]: { runOverrides: null, agentCredentials: null }, [`GET /api/projects/${project.id}/run-config`]: { file: null, filePath: null, error: null, effective: null } });
-    window.history.replaceState(null, '', '/settings/projects/ALP/project');
+    window.history.replaceState(null, '', '/settings/projects/ALP/general');
     renderWithQuery(<AppShell />);
     const main = screen.getByRole('main');
     const topBar = screen.getByRole('banner', { name: 'Top bar' });
     // A section is a screen of its own, titled by it.
     expect(await within(main).findByRole('textbox', { name: /^(Project )?key$/i })).toHaveValue('ALP');
     expect(within(main).queryByRole('region', { name: 'Danger zone' })).not.toBeInTheDocument();
-    expect(topBar).toHaveTextContent('Project');
+    expect(topBar).toHaveTextContent('General');
     // ← walks out: the project's sections, then the Settings list.
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(here()).toBe('/settings/projects/ALP');
     const sections = await within(main).findByRole('grid', { name: 'Sections' });
     expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual([
-      'Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Danger zone',
+      'General', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Danger zone',
     ]);
     expect(topBar).toHaveTextContent('Alpha');
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(here()).toBe('/settings');
     const list = await within(main).findByRole('navigation', { name: 'Settings sections' });
-    expect(within(list).getAllByRole('row').map((r) => r.textContent)).toEqual(expect.arrayContaining(['This host', 'Plugins', 'All connections', 'Notifications', 'Add project']));
-    // Drilling in pushes a screen per level, and Back pops them.
-    await userEvent.click(within(list).getByRole('row', { name: /Alpha/ }));
-    expect(here()).toBe('/settings/projects/ALP');
-    await userEvent.click(within(await within(main).findByRole('grid', { name: 'Sections' })).getByRole('row', { name: /Danger zone/ }));
+    expect(within(list).getAllByRole('button').map((r) => r.textContent)).toEqual(expect.arrayContaining(['This host', 'Plugins', 'All connections', 'Notifications', 'Add project']));
+    // A section in the list is a screen of its own, and Back comes out of it.
+    await userEvent.click(within(list).getByRole('button', { name: /Alpha/ }));
+    await userEvent.click(within(within(list).getByRole('group', { name: 'Alpha' })).getByRole('button', { name: 'Danger zone' }));
     expect(here()).toBe('/settings/projects/ALP/danger-zone');
     expect(await within(main).findByRole('button', { name: 'Remove project…' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Back' }));
-    await waitFor(() => expect(here()).toBe('/settings/projects/ALP'));
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(here()).toBe('/settings'));
   });
@@ -1095,17 +1133,16 @@ describe('phone', () => {
     renderWithQuery(<AppShell />);
     const main = screen.getByRole('main');
     const sections = await within(main).findByRole('grid', { name: 'Sections' });
-    expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual(['Setup', 'Updates', 'Remote access', 'Agents', 'Runs', 'Projects folder', 'Bug reports', 'Checks', 'Danger zone']);
+    expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual([
+      'Updates', 'Agents', 'Network', 'Remote access', 'Runs', 'Projects folder', 'Appearance', 'Bug reports', 'Checks', 'Setup', 'Danger zone',
+    ]);
     await userEvent.click(within(sections).getByRole('row', { name: /Runs/ }));
     expect(here()).toBe('/settings/host/runs');
     expect(screen.getByRole('banner', { name: 'Top bar' })).toHaveTextContent('Runs');
     const runs = await within(main).findByRole('region', { name: 'Runs' });
     expect(within(main).queryByRole('region', { name: 'Updates' })).not.toBeInTheDocument();
-    // The Save bar shows only once something changed.
-    const bar = runs.querySelector('[data-slot="section-footer"]')!;
-    expect(bar).toHaveAttribute('data-dirty', 'false');
-    await userEvent.type(within(runs).getByRole('spinbutton', { name: /Max concurrent runs/ }), '0');
-    expect(bar).toHaveAttribute('data-dirty', 'true');
+    // It saves as it changes: no Save bar.
+    expect(runs.querySelector('[data-slot="section-footer"]')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(here()).toBe('/settings/host'));
   });
@@ -1638,13 +1675,15 @@ describe('routes (PDT-111)', () => {
     at('/settings/projects/ALP');
     renderWithQuery(<AppShell />);
     const main = screen.getByRole('main');
-    expect(await within(main).findByRole('region', { name: 'Project' })).toBeInTheDocument();
+    expect(await within(main).findByRole('region', { name: 'General' })).toBeInTheDocument();
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    await userEvent.click(within(nav).getByRole('row', { name: /All connections/ }));
+    await userEvent.click(within(nav).getByRole('button', { name: 'All connections' }));
     expect(here()).toBe('/settings/connections');
     expect(await within(main).findByRole('heading', { name: 'All connections' })).toBeInTheDocument();
-    await userEvent.click(within(nav).getByRole('row', { name: /This host/ }));
-    expect(here()).toBe('/settings/host');
+    // This host's group is closed on a project's page.
+    await userEvent.click(within(nav).getByRole('button', { name: 'This host' }));
+    await userEvent.click(within(nav).getByRole('button', { name: 'Checks' }));
+    expect(here()).toBe('/settings/host/checks');
     await back();
     expect(await within(main).findByRole('heading', { name: 'All connections' })).toBeInTheDocument();
   });
@@ -1668,7 +1707,7 @@ describe('Get started (PDT-230)', () => {
   const setupView = (opensOnLaunch: boolean) => ({
     state: { needed: opensOnLaunch, dismissed: false, finished: false, githubSkipped: false, defaultAgentConfirmed: false },
     steps: { agents: 'done', github: 'todo', project: 'todo', defaultAgent: 'todo' },
-    done: 1, opensOnLaunch, defaultAgent: 'claude', agentPrograms: { claude: null, codex: null, devin: null }, programsFromEnv: [],
+    done: 1, opensOnLaunch, defaultAgent: 'claude',
   });
   afterEach(() => cleanup());
 
@@ -1696,7 +1735,7 @@ describe('Get started (PDT-230)', () => {
   });
 
   it('Settings › This host › Setup reopens it', async () => {
-    window.history.replaceState(null, '', '/settings/host');
+    window.history.replaceState(null, '', '/settings/host/setup');
     stubApi({ 'GET /api/projects': [], ...hostRoutes, 'GET /api/host/setup': setupView(false) });
     renderWithQuery(<AppShell />);
     const setup = await within(screen.getByRole('main')).findByRole('region', { name: 'Setup' });

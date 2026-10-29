@@ -20,6 +20,7 @@ pub mod links;
 pub mod liveness;
 pub mod local_network;
 pub mod mcp;
+pub mod network;
 pub mod notification;
 pub mod overlap;
 pub mod parts;

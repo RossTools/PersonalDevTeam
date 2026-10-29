@@ -125,6 +125,7 @@ pub struct TriggerBuildConfig {
     #[serde(default = "head")]
     pub commit: String,
     #[serde(default)]
+    #[schemars(extend("x-format" = "multiline"))]
     pub message: String,
     #[serde(default)]
     pub env: BTreeMap<String, String>,

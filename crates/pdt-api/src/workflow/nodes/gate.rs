@@ -51,6 +51,7 @@ pub enum GateInbox {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
 pub struct GateConfig {
+    #[schemars(extend("x-format" = "markdown"))]
     pub question: String,
     /// One port each.
     pub choices: Vec<String>,

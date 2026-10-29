@@ -29,7 +29,6 @@ enum Placement {
 
 struct Tray {
     profile: Profile,
-    port: u16,
     menu: Menu<Wry>,
     /// In the menu only while `placement` is set.
     placement_item: MenuItem<Wry>,
@@ -51,8 +50,13 @@ struct Tray {
 }
 
 impl Tray {
+    /// pdtd's port now: it follows Settings → Network (PDT-231), so it is looked up each time.
+    fn port(&self) -> u16 {
+        daemon::port(self.profile)
+    }
+
     fn url(&self) -> String {
-        format!("http://127.0.0.1:{}/", self.port)
+        format!("http://127.0.0.1:{}/", self.port())
     }
 
     /// Claims the busy flag; false when startup or a restart is running.
@@ -95,7 +99,7 @@ fn main() {
 fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-    let port = profile.port();
+    let port = daemon::port(profile);
     let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
     let update_item = MenuItem::with_id(app, "update", "Checking for updates…", false, None::<&str>)?;
     let restart_item = MenuItem::with_id(app, "restart", "Restart daemon", false, None::<&str>)?;
@@ -145,7 +149,6 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
         .build(app)?;
     app.manage(Tray {
         profile,
-        port,
         menu,
         placement_item,
         placement: Mutex::new(None),
@@ -212,13 +215,13 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
 /// Updates the Update and Version items from pdtd.
 fn refresh(app: &AppHandle) {
     let tray = app.state::<Tray>();
-    let (text, enabled) = match api::call(tray.port, "GET", "/api/host/update", None) {
+    let (text, enabled) = match api::call(tray.port(), "GET", "/api/host/update", None) {
         Ok((200, s)) => api::update_label(&s),
         _ => ("Update check failed".into(), true),
     };
     let _ = tray.update_item.set_text(text);
     let _ = tray.update_item.set_enabled(enabled);
-    if let Ok((200, h)) = api::call(tray.port, "GET", "/api/health", None) {
+    if let Ok((200, h)) = api::call(tray.port(), "GET", "/api/health", None) {
         let _ = tray.version_item.set_text(format!("Version {}", h["version"].as_str().unwrap_or("?")));
     }
 }
@@ -344,7 +347,7 @@ fn switch_flow(app: &AppHandle, other: &daemon::OtherCopy) {
     }
     let _ = tray.restart_item.set_enabled(false);
     let profile = tray.profile;
-    let result = daemon::switch_to_this_copy(profile).and_then(|()| restart_and_wait(tray.port, profile));
+    let result = daemon::switch_to_this_copy(profile).and_then(|()| restart_and_wait(tray.port(), profile));
     match result {
         Ok(()) => set_placement(app, None),
         Err(e) => error_dialog(app, format!("Could not switch to this copy: {}", daemon::with_log_tail(e, profile)))
@@ -359,6 +362,8 @@ fn switch_flow(app: &AppHandle, other: &daemon::OtherCopy) {
 fn restart_and_wait(port: u16, profile: Profile) -> Result<(), String> {
     pdt_host::health::request_shutdown(port).and_then(|()| {
         std::thread::sleep(Duration::from_secs(2));
+        // The new pdtd may take another port (Settings → Network).
+        let port = daemon::port(profile);
         daemon::ensure_daemon(port, pdt_host::health::probe, || daemon::spawn_host(profile), STARTUP_TIMEOUT)
     })
 }
@@ -374,7 +379,7 @@ fn restart_daemon(app: &AppHandle) {
     std::thread::spawn(move || {
         let tray = app.state::<Tray>();
         let profile = tray.profile;
-        if let Err(e) = restart_and_wait(tray.port, profile) {
+        if let Err(e) = restart_and_wait(tray.port(), profile) {
             error_dialog(&app, format!("The daemon did not come back: {}", daemon::with_log_tail(e, profile)))
                 .show(|_| {});
         }
@@ -397,7 +402,7 @@ fn update_clicked(app: &AppHandle) {
 }
 
 fn update_flow(app: &AppHandle) {
-    let port = app.state::<Tray>().port;
+    let port = app.state::<Tray>().port();
     let status = api::call(port, "GET", "/api/host/update", None).map(|(_, v)| v).unwrap_or_default();
     if status["state"] != "available" {
         let _ = api::call(port, "POST", "/api/host/update/check", None);

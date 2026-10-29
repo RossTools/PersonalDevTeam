@@ -6,7 +6,11 @@ import type { Recurrence } from "./Recurrence";
  * clears the due date (and its time and recurrence), `dueTime: ""` only the time, `recurrence: null` stops it
  * repeating.
  */
-export type TodoPatch = { title?: string, done?: boolean, position?: number, project?: string, ticket?: string, dueOn?: string, dueTime?: string, 
+export type TodoPatch = { title?: string, 
+/**
+ * Markdown; `""` clears it.
+ */
+body?: string, done?: boolean, position?: number, project?: string, ticket?: string, dueOn?: string, dueTime?: string, 
 /**
  * Some(None): stop repeating.
  */

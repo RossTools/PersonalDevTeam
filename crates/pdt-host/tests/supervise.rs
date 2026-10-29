@@ -75,6 +75,7 @@ fn config(install: &Path, data: &Path, port: u16) -> HostConfig {
         install_dir: install.to_path_buf(),
         data_dir: data.to_path_buf(),
         port,
+        port_setting: false,
         dev: true,
         health_timeout: Duration::from_secs(30),
         watch: Duration::from_secs(3),

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { Alert, Button, Field, Input, MenuButton, Section, Select, SettingsRow, Skeleton, Switch, Textarea } from '@ui';
+import { Alert, Button, Field, MenuButton, Section, Select, SettingsRow, Skeleton, Switch, Textarea } from '@ui';
+import { AutoSaveRow, AutoSaveText, SaveStatus } from '../common/AutoSave';
 import { api } from '../api/client';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
@@ -113,16 +114,6 @@ export function useProjectSettingsSections(project: Project): { notice: ReactNod
 
 type Entries = () => { label: string; onSelect: () => void }[];
 
-/** A form's Save with its "Saved" note, for a section footer. */
-function SaveFooter({ label, dirty, saved, pending }: { label: string; dirty: boolean; saved: boolean; pending: boolean }) {
-  return (
-    <>
-      {saved && !dirty && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
-      <Button type="submit" variant="primary" size="sm" aria-label={label} disabled={!dirty} pending={pending}>Save</Button>
-    </>
-  );
-}
-
 function RunConfiguration({ project, settings, setUpEntries }: { project: Project; settings: ProjectSettingsView | undefined; setUpEntries: Entries }) {
   const config = useQuery({ queryKey: ['run-config', project.id, null], queryFn: () => api.runConfig(project.id, null) });
   const ignored = ignoredNote(config.data?.effective?.ignored);
@@ -142,7 +133,13 @@ function RunConfiguration({ project, settings, setUpEntries }: { project: Projec
           </MenuButton>
         }
         dirty={dirty}
-        footer={<SaveFooter label="Save run overrides" dirty={dirty} saved={save.isSuccess} pending={save.isPending} />}
+        // Raw TOML keeps an explicit Save (PDT-231): half-typed TOML is never saved.
+        footer={
+          <>
+            {save.isSuccess && !dirty && <SaveStatus state={{ kind: 'saved' }} />}
+            <Button type="submit" variant="primary" size="sm" aria-label="Save run overrides" disabled={!dirty} pending={save.isPending}>Save</Button>
+          </>
+        }
       >
         <SettingsRow stacked label="Repository configuration" description={<span className="font-mono">{config.data?.filePath ?? '.pdt/project.toml'}</span>}>
           {config.isPending ? (
@@ -180,39 +177,31 @@ function RunConfiguration({ project, settings, setUpEntries }: { project: Projec
 }
 
 function Instructions({ project, settings, writeEntries }: { project: Project; settings: ProjectSettingsView | undefined; writeEntries: Entries }) {
-  const stored = settings?.agentInstructions ?? '';
-  const [text, setText] = useState('');
-  useEffect(() => setText(stored), [stored]);
   const save = useSaveProjectSettings(project, settings);
-  const dirty = text !== stored;
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (dirty) save.mutate({ agentInstructions: text }); }}>
-      <Section
-        label="Agent instructions"
-        description="Given to every Claude, Codex and Devin session in this project, with PDT's own context, on top of the repository's CLAUDE.md or AGENTS.md. Kept on this host, never written to the repository. New sessions get changes."
-        actions={
-          <MenuButton label="Write the instructions with an agent" placement="bottom end" entries={writeEntries}>
-            <Button size="sm">Write instructions with an agent</Button>
-          </MenuButton>
-        }
-        dirty={dirty}
-        footer={<SaveFooter label="Save agent instructions" dirty={dirty} saved={save.isSuccess} pending={save.isPending} />}
-      >
-        <div>
-          <Textarea
-            aria-label="Agent instructions"
-            rows={6}
-            spellCheck={false}
-            placeholder={'How agents should work here, e.g.:\n- Make a branch and worktree through PDT for every change.\n- Run `make check` before pushing.'}
-            value={text}
-            disabled={!settings}
-            onChange={(e) => { setText(e.target.value); save.reset(); }}
-            className="text-xs"
-          />
-        </div>
-        {save.isError && <Alert tone="error">{save.error.message}</Alert>}
-      </Section>
-    </form>
+    <Section
+      label="Agent instructions"
+      description="Given to every Claude, Codex and Devin session in this project, with PDT's own context, on top of the repository's CLAUDE.md or AGENTS.md. Kept on this host, never written to the repository. New sessions get changes."
+      actions={
+        <MenuButton label="Write the instructions with an agent" placement="bottom end" entries={writeEntries}>
+          <Button size="sm">Write instructions with an agent</Button>
+        </MenuButton>
+      }
+    >
+      <SettingsRow stacked label="Instructions" description="Saved when you leave the field (or press Ctrl+Enter).">
+        <AutoSaveText
+          multiline
+          aria-label="Agent instructions"
+          rows={6}
+          spellCheck={false}
+          placeholder={'How agents should work here, e.g.:\n- Make a branch and worktree through PDT for every change.\n- Run `make check` before pushing.'}
+          value={settings?.agentInstructions ?? ''}
+          disabled={!settings}
+          onSave={(text) => save.mutateAsync({ agentInstructions: text })}
+          className="text-xs"
+        />
+      </SettingsRow>
+    </Section>
   );
 }
 
@@ -226,38 +215,26 @@ function Agents({ project, settings }: { project: Project; settings: ProjectSett
   );
 }
 
-/** "Saved" for a couple of seconds after `setSaved(true)`. */
-function useSavedNote(): [saved: boolean, setSaved: (on: boolean) => void] {
-  const [saved, setSaved] = useState(false);
-  useEffect(() => {
-    if (!saved) return;
-    const t = setTimeout(() => setSaved(false), 2000);
-    return () => clearTimeout(t);
-  }, [saved]);
-  return [saved, setSaved];
-}
-
 function Credentials({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
   const save = useSaveProjectSettings(project, settings);
-  const [saved, setSaved] = useSavedNote();
   const value: CredsChoice = settings?.agentCredentials ?? HOST;
   return (
-    <SettingsRow label="Agent credentials" description="What agents in this project may use to sign in.">
-      {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
-      {saved && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
-      <Select<CredsChoice>
-        aria-label="Agent credentials"
-        className="w-72 max-w-full"
-        options={[
-          { value: HOST, label: `Use the host setting (${settings?.effectiveCredentials ?? '…'})` },
-          { value: 'subscription', label: 'Subscription (remove API keys)' },
-          { value: 'pass_through', label: 'Pass through' },
-        ]}
-        value={value}
-        disabled={!settings}
-        onChange={(c) => save.mutate({ agentCredentials: c === HOST ? null : c }, { onSuccess: () => setSaved(true) })}
-      />
-    </SettingsRow>
+    <AutoSaveRow label="Agent credentials" description="What agents in this project may use to sign in.">
+      {(track) => (
+        <Select<CredsChoice>
+          aria-label="Agent credentials"
+          className="w-72 max-w-full"
+          options={[
+            { value: HOST, label: `Use the host setting (${settings?.effectiveCredentials ?? '…'})` },
+            { value: 'subscription', label: 'Subscription (remove API keys)' },
+            { value: 'pass_through', label: 'Pass through' },
+          ]}
+          value={value}
+          disabled={!settings}
+          onChange={(c) => void track(save.mutateAsync({ agentCredentials: c === HOST ? null : c }))}
+        />
+      )}
+    </AutoSaveRow>
   );
 }
 
@@ -268,24 +245,23 @@ type StepModeChoice = PermissionMode | typeof NO_MODE;
 /** The permission mode of every persona's session (workflow agent steps) here, over the persona's own (spec 7b §3). */
 function StepPermissionMode({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
   const save = useSaveProjectSettings(project, settings);
-  const [saved, setSaved] = useSavedNote();
   const value: StepModeChoice = settings?.agentPermissionMode ?? NO_MODE;
   return (
-    <SettingsRow
+    <AutoSaveRow
       label="Agent permission mode for workflow steps"
       description="Used by every persona's session in this project, over the persona's own mode. None: the persona's, else the host default."
     >
-      {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
-      {saved && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
-      <Select<StepModeChoice>
-        aria-label="Agent permission mode for workflow steps"
-        className="w-56 max-w-full"
-        options={[{ value: NO_MODE, label: "None (the persona's)" }, ...PERMISSION_MODES.map((m) => ({ value: m, label: PERMISSION_LABEL[m] }))]}
-        value={value}
-        disabled={!settings}
-        onChange={(m) => save.mutate({ agentPermissionMode: m === NO_MODE ? '' : m }, { onSuccess: () => setSaved(true) })}
-      />
-    </SettingsRow>
+      {(track) => (
+        <Select<StepModeChoice>
+          aria-label="Agent permission mode for workflow steps"
+          className="w-56 max-w-full"
+          options={[{ value: NO_MODE, label: "None (the persona's)" }, ...PERMISSION_MODES.map((m) => ({ value: m, label: PERMISSION_LABEL[m] }))]}
+          value={value}
+          disabled={!settings}
+          onChange={(m) => void track(save.mutateAsync({ agentPermissionMode: m === NO_MODE ? '' : m }))}
+        />
+      )}
+    </AutoSaveRow>
   );
 }
 
@@ -294,18 +270,19 @@ function Merging({ project, settings }: { project: Project; settings: ProjectSet
   const save = useSaveProjectSettings(project, settings);
   return (
     <Section label="Review">
-      <SettingsRow
+      <AutoSaveRow
         label="Merge through pull requests"
         description="Merge… only turns on auto-merge for the ticket's pull request (or asks the agent to open one); it never merges into the base branch on this machine."
       >
-        {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
-        <Switch
-          aria-label="Merge through pull requests"
-          checked={settings?.mergeViaPr ?? false}
-          disabled={!settings || save.isPending}
-          onChange={(on) => save.mutate({ mergeViaPr: on })}
-        />
-      </SettingsRow>
+        {(track) => (
+          <Switch
+            aria-label="Merge through pull requests"
+            checked={settings?.mergeViaPr ?? false}
+            disabled={!settings || save.isPending}
+            onChange={(on) => void track(save.mutateAsync({ mergeViaPr: on }))}
+          />
+        )}
+      </AutoSaveRow>
     </Section>
   );
 }
@@ -344,158 +321,153 @@ const CAPS = [1, 2, 3, 4, 5, 6, 8, 10];
  */
 function Pipeline({ project, settings, personal }: { project: Project; settings: ProjectSettingsView | undefined; personal: boolean }) {
   const save = useSaveProjectSettings(project, settings);
-  const [saved, setSaved] = useSavedNote();
+  const set = (p: Partial<ProjectSettingsInput>) => save.mutateAsync(p);
   const p = settings?.policy;
-  const done = { onSuccess: () => setSaved(true) };
   const cap = p?.maxRunningAttempts ? String(p.maxRunningAttempts) : NO_CAP;
-  // Typed text until it is saved (the panel re-renders on every poll, so it is never overwritten while typed).
-  const storedExempt = (p?.approvalExemptLabels ?? []).join(', ');
-  const [exempt, setExempt] = useState<string | null>(null);
-  const saveExempt = () => {
-    if (save.isPending) return;
-    if (exempt === null || exempt === storedExempt) return setExempt(null);
-    const labels = exempt.split(',').map((l) => l.trim()).filter(Boolean);
-    save.mutate({ approvalExemptLabels: labels }, { onSuccess: () => { setExempt(null); setSaved(true); } });
-  };
   return (
     <Section
       label="Pipeline and policies"
       description="What workflows and agents may do here. Merge and Start keep to these whatever a workflow asks."
-      footer={
-        <>
-          {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
-          {saved && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
-        </>
-      }
     >
       {!personal && (
         <>
-          <SettingsRow label="Who may merge" description="Merge… in PDT is a person's merge; a workflow's or an agent's is automated.">
-            <Select<MergeBy>
-              aria-label="Who may merge"
-              className="w-72 max-w-full"
-              options={MERGE_BY}
-              value={p?.mergeBy ?? 'agents'}
-              disabled={!settings}
-              onChange={(m) => save.mutate({ mergeBy: m }, done)}
-            />
-          </SettingsRow>
-          <SettingsRow
+          <AutoSaveRow label="Who may merge" description="Merge… in PDT is a person's merge; a workflow's or an agent's is automated.">
+            {(track) => (
+              <Select<MergeBy>
+                aria-label="Who may merge"
+                className="w-72 max-w-full"
+                options={MERGE_BY}
+                value={p?.mergeBy ?? 'agents'}
+                disabled={!settings}
+                onChange={(m) => void track(set({ mergeBy: m }))}
+              />
+            )}
+          </AutoSaveRow>
+          <AutoSaveRow
             label="A person approves before an automated merge"
             description="Approve in Changes, or Accept in the Inbox, at the branch's current head."
           >
-            <Switch
-              aria-label="A person approves before an automated merge"
-              checked={p?.requireApproval ?? false}
-              disabled={!settings || save.isPending}
-              onChange={(on) => save.mutate({ requireApproval: on }, done)}
-            />
-          </SettingsRow>
+            {(track) => (
+              <Switch
+                aria-label="A person approves before an automated merge"
+                checked={p?.requireApproval ?? false}
+                disabled={!settings || save.isPending}
+                onChange={(on) => void track(set({ requireApproval: on }))}
+              />
+            )}
+          </AutoSaveRow>
           {p?.requireApproval && (
             <SettingsRow
               label="Labels that merge without approval"
               description="A ticket with any of these labels may merge automatically without it. Comma-separated."
             >
-              <Input
+              <AutoSaveText
                 aria-label="Labels that merge without approval"
                 className="w-72 max-w-full"
                 placeholder="e.g. automerge"
-                value={exempt ?? storedExempt}
+                value={(p.approvalExemptLabels ?? []).join(', ')}
                 disabled={!settings}
-                onChange={(e) => setExempt(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') saveExempt(); }}
-                onBlur={saveExempt}
+                onSave={(text) => set({ approvalExemptLabels: text.split(',').map((l) => l.trim()).filter(Boolean) })}
               />
             </SettingsRow>
           )}
-          <SettingsRow
+          <AutoSaveRow
             label="An automated merge waits for green CI"
             description="A workflow's or an agent's merge of a pull request waits for CI on its head to pass, and goes back to the coder when it fails, whatever GitHub's branch protection requires. A repository without CI merges at once."
           >
-            <Switch
-              aria-label="An automated merge waits for green CI"
-              checked={p?.requireGreenCi ?? true}
-              disabled={!settings || save.isPending}
-              onChange={(on) => save.mutate({ requireGreenCi: on }, done)}
-            />
-          </SettingsRow>
+            {(track) => (
+              <Switch
+                aria-label="An automated merge waits for green CI"
+                checked={p?.requireGreenCi ?? true}
+                disabled={!settings || save.isPending}
+                onChange={(on) => void track(set({ requireGreenCi: on }))}
+              />
+            )}
+          </AutoSaveRow>
         </>
       )}
-      <SettingsRow
+      <AutoSaveRow
         label="Running tickets at once"
         description="Counts every ticket with an active attempt, however it started. Start asks before going over it; auto-start never goes over it, and starts one at a time when there is no cap."
       >
-        <Select<string>
-          aria-label="Running tickets at once"
-          className="w-56 max-w-full"
-          options={[{ value: NO_CAP, label: p?.autoStart && p.autoStart !== 'off' ? 'No cap (auto-start: 1)' : 'No cap' }, ...CAPS.map((n) => ({ value: String(n), label: String(n) }))]}
-          value={cap}
-          disabled={!settings}
-          onChange={(v) => save.mutate({ maxRunningAttempts: v === NO_CAP ? 0 : Number(v) }, done)}
-        />
-      </SettingsRow>
-      <SettingsRow
+        {(track) => (
+          <Select<string>
+            aria-label="Running tickets at once"
+            className="w-56 max-w-full"
+            options={[{ value: NO_CAP, label: p?.autoStart && p.autoStart !== 'off' ? 'No cap (auto-start: 1)' : 'No cap' }, ...CAPS.map((n) => ({ value: String(n), label: String(n) }))]}
+            value={cap}
+            disabled={!settings}
+            onChange={(v) => void track(set({ maxRunningAttempts: v === NO_CAP ? 0 : Number(v) }))}
+          />
+        )}
+      </AutoSaveRow>
+      <AutoSaveRow
         label="Auto-start"
         description="Starts tickets on its own, skipping blocked and conflicting ones, while the project is under its cap."
       >
-        <Select<AutoStart>
-          aria-label="Auto-start"
-          className="w-56 max-w-full"
-          options={AUTO_START}
-          value={p?.autoStart ?? 'off'}
-          disabled={!settings}
-          onChange={(a) => save.mutate({ autoStart: a }, done)}
-        />
-      </SettingsRow>
+        {(track) => (
+          <Select<AutoStart>
+            aria-label="Auto-start"
+            className="w-56 max-w-full"
+            options={AUTO_START}
+            value={p?.autoStart ?? 'off'}
+            disabled={!settings}
+            onChange={(a) => void track(set({ autoStart: a }))}
+          />
+        )}
+      </AutoSaveRow>
       {p && p.autoStart !== 'off' && (
-        <SettingsRow
+        <AutoSaveRow
           label="Auto-start picks by"
           description="Priority: the most urgent ticket first (urgent, high, medium, low, none), then backlog rank. Backlog rank: the top ticket first, whatever its priority. To do tickets always come before Ready ones."
         >
-          <Select<AutoStartOrder>
-            aria-label="Auto-start picks by"
-            className="w-56 max-w-full"
-            options={AUTO_START_ORDER}
-            value={p.autoStartOrder}
-            disabled={!settings}
-            onChange={(o) => save.mutate({ autoStartOrder: o }, done)}
-          />
-        </SettingsRow>
+          {(track) => (
+            <Select<AutoStartOrder>
+              aria-label="Auto-start picks by"
+              className="w-56 max-w-full"
+              options={AUTO_START_ORDER}
+              value={p.autoStartOrder}
+              disabled={!settings}
+              onChange={(o) => void track(set({ autoStartOrder: o }))}
+            />
+          )}
+        </AutoSaveRow>
       )}
       {p && p.autoStart !== 'off' && (
-        <SettingsRow
+        <AutoSaveRow
           label="Quiet period before auto-start"
           description="Auto-start takes a ticket only once it has gone this long unchanged since it was created, edited, linked or commented on, so blockers linked just after it was made count. Start is never delayed."
         >
-          <Select<string>
-            aria-label="Quiet period before auto-start"
-            className="w-56 max-w-full"
-            options={START_DELAYS.some((d) => d.value === String(p.startDelaySeconds))
-              ? START_DELAYS
-              : [...START_DELAYS, { value: String(p.startDelaySeconds), label: `${p.startDelaySeconds} seconds` }]}
-            value={String(p.startDelaySeconds)}
-            disabled={!settings}
-            onChange={(v) => save.mutate({ startDelaySeconds: Number(v) }, done)}
-          />
-        </SettingsRow>
+          {(track) => (
+            <Select<string>
+              aria-label="Quiet period before auto-start"
+              className="w-56 max-w-full"
+              options={START_DELAYS.some((d) => d.value === String(p.startDelaySeconds))
+                ? START_DELAYS
+                : [...START_DELAYS, { value: String(p.startDelaySeconds), label: `${p.startDelaySeconds} seconds` }]}
+              value={String(p.startDelaySeconds)}
+              disabled={!settings}
+              onChange={(v) => void track(set({ startDelaySeconds: Number(v) }))}
+            />
+          )}
+        </AutoSaveRow>
       )}
-      <SettingsRow
+      <AutoSaveRow
         label="The PM acts without asking"
         description="The project manager creates and edits this project's tickets and messages its sessions without asking you first. Off: you confirm each change."
       >
-        <Switch
-          aria-label="The PM acts without asking"
-          checked={p?.pmActs ?? false}
-          disabled={!settings || save.isPending}
-          onChange={(on) => save.mutate({ pmActs: on }, done)}
-        />
-      </SettingsRow>
+        {(track) => (
+          <Switch
+            aria-label="The PM acts without asking"
+            checked={p?.pmActs ?? false}
+            disabled={!settings || save.isPending}
+            onChange={(on) => void track(set({ pmActs: on }))}
+          />
+        )}
+      </AutoSaveRow>
     </Section>
   );
 }
-
-/** A form's text for each integration edited, by its id: `connection` and each field's key. */
-type IntegrationForms = Record<string, Record<string, string>>;
 
 /** An integration's stored settings as the form's text (a field with a default shows it until set). */
 function integrationText(schema: ProjectSettingsSchema, stored: Record<string, unknown> | undefined): Record<string, string> {
@@ -516,62 +488,63 @@ function integrationInput(schema: ProjectSettingsSchema, text: Record<string, st
 
 /**
  * The project's integrations (PDT-174): each integration that a project links to declares its connection kind and
- * fields, and its part of the form is made from them (Jira's issues and Done, Buildkite's pipelines). Kept on this
- * host, never in the repository. Typed values stay until saved (the panel re-renders on every poll).
+ * fields, and its part of the page is made from them (Jira's issues and Done, Buildkite's pipelines). Kept on this
+ * host, never in the repository. Each field saves as it changes (PDT-231): a connection or choice at once, text on
+ * blur or Enter.
  */
 function Integrations({ project, settings, schemas }: { project: Project; settings: ProjectSettingsView | undefined; schemas: ProjectSettingsSchema[] }) {
   const save = useSaveProjectSettings(project, settings);
-  const [saved, setSaved] = useSavedNote();
-  const [forms, setForms] = useState<IntegrationForms>({});
   const stored = (id: string) => settings?.integrations?.[id];
-  const textOf = (s: ProjectSettingsSchema) => forms[s.integration] ?? integrationText(s, stored(s.integration));
-  const set = (s: ProjectSettingsSchema, key: string, value: string) => setForms((f) => ({ ...f, [s.integration]: { ...textOf(s), [key]: value } }));
-  const dirty = Object.keys(forms).length > 0;
-  const done = { onSuccess: () => { setForms({}); setSaved(true); } };
-  const submit = () => {
-    if (!dirty || save.isPending) return;
-    const integrations = Object.fromEntries(schemas.filter((s) => forms[s.integration]).map((s) => [s.integration, integrationInput(s, forms[s.integration]!)]));
-    save.mutate({ integrations }, done);
-  };
+  /** Saves the integration's settings with one field changed (every field is sent, so the rest stay as they are). */
+  const saveField = (s: ProjectSettingsSchema, key: string, value: string) =>
+    save.mutateAsync({ integrations: { [s.integration]: integrationInput(s, { ...integrationText(s, stored(s.integration)), [key]: value }) } });
   return (
-    <form onSubmit={(e) => { e.preventDefault(); submit(); }}>
-      <Section
-        label="Plugins"
-        dirty={dirty}
-        description="Link this project to the services its issues and CI live in. Kept on this host, never written to the repository."
-        footer={
-          <>
-            {save.isError && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
-            <SaveFooter label="Save integrations" dirty={dirty} saved={saved} pending={save.isPending} />
-          </>
-        }
-      >
-        {schemas.map((s) => {
-          const text = textOf(s);
-          return (
-            <Fragment key={s.integration}>
-              <SettingsRow label={s.label} description={s.description}>
+    <Section
+      label="Plugins"
+      description="Link this project to the services its issues and CI live in. Kept on this host, never written to the repository."
+    >
+      {schemas.map((s) => {
+        const text = integrationText(s, stored(s.integration));
+        return (
+          <Fragment key={s.integration}>
+            <AutoSaveRow label={s.label} description={s.description}>
+              {(track) => (
                 <div className="flex w-80 max-w-full flex-col gap-1">
-                  <ConnectionPicker kind={s.connectionKind} label={`${s.label} connection`} value={text.connection ?? ''} disabled={!settings} onChange={(c) => set(s, 'connection', c)} />
+                  <ConnectionPicker kind={s.connectionKind} label={`${s.label} connection`} value={text.connection ?? ''} disabled={!settings}
+                    onChange={(c) => void track(saveField(s, 'connection', c))} />
                   {stored(s.integration) && (
-                    <Button size="sm" variant="secondary" onClick={() => save.mutate({ integrations: { [s.integration]: null } }, done)}>Unlink {s.label}</Button>
+                    <Button size="sm" variant="secondary" onClick={() => void track(save.mutateAsync({ integrations: { [s.integration]: null } }))}>Unlink {s.label}</Button>
                   )}
                 </div>
-              </SettingsRow>
-              {text.connection && s.fields.filter((f) => fieldShown(f, text)).map((f) => (
+              )}
+            </AutoSaveRow>
+            {text.connection && s.fields.filter((f) => fieldShown(f, text)).map((f) =>
+              f.type === 'choice' ? (
+                <AutoSaveRow key={f.key} label={f.label} description={f.hint}>
+                  {(track) => (
+                    <Select<string> aria-label={f.label} className="w-56 max-w-full" options={f.options ?? []} value={text[f.key] ?? ''}
+                      onChange={(v) => void track(saveField(s, f.key, v))} />
+                  )}
+                </AutoSaveRow>
+              ) : (
                 <SettingsRow key={f.key} label={f.label} description={f.hint}>
-                  {f.type === 'lines'
-                    ? <Textarea mono aria-label={f.label} rows={3} className="w-80 max-w-full" placeholder={f.placeholder} value={text[f.key] ?? ''} onChange={(e) => set(s, f.key, e.target.value)} />
-                    : f.type === 'choice'
-                      ? <Select<string> aria-label={f.label} className="w-56 max-w-full" options={f.options ?? []} value={text[f.key] ?? ''} onChange={(v) => set(s, f.key, v)} />
-                      : <Input aria-label={f.label} className="w-80 max-w-full" placeholder={f.placeholder} value={text[f.key] ?? ''} onChange={(e) => set(s, f.key, e.target.value)} />}
+                  <AutoSaveText
+                    multiline={f.type === 'lines'}
+                    mono={f.type === 'lines'}
+                    rows={3}
+                    aria-label={f.label}
+                    className="w-80 max-w-full"
+                    placeholder={f.placeholder ?? undefined}
+                    value={text[f.key] ?? ''}
+                    onSave={(v) => saveField(s, f.key, v)}
+                  />
                 </SettingsRow>
-              ))}
-            </Fragment>
-          );
-        })}
-      </Section>
-    </form>
+              ),
+            )}
+          </Fragment>
+        );
+      })}
+    </Section>
   );
 }
 

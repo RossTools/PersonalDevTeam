@@ -19,4 +19,9 @@ show: Show, projectId: string | null, ticketId: string | null, sessionId: string
 /**
  * One live row per key: a cause that fires again updates its row.
  */
-dedupeKey: string, createdAt: number, readAt: number | null, clearedAt: number | null, };
+dedupeKey: string, createdAt: number, readAt: number | null, clearedAt: number | null, 
+/**
+ * The user cleared it from Updates (PDT-224): hidden, and while its cause lasts (the row stays live) the same
+ * cause updates it out of sight instead of raising it again.
+ */
+dismissedAt: number | null, };

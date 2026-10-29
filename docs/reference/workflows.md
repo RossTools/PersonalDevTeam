@@ -270,7 +270,7 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `schedule` (`every` or `cron` + `timezone`, `catchUp`, `where`, `runKey`; fires on its own `schedule.fired`) | `out` |
 | `webhook` (`hook`: a `webhook` connection, `where`, `runKey`; its own `webhook.received`) | `out` |
 | `github.issue.opened` (`repos`, else the projects' repos; `projects`, `where`, `runKey`) | `out` |
-| `command` (`program`, `args`, `cwd: scratch \| project \| attempt \| <full path>`, `input`, `env`, `parse: json \| text`) | `out` |
+| `command` (`program` and `args`, or `script` and `shell: sh \| bash \| zsh \| pwsh`; `cwd: scratch \| project \| attempt \| <full path>`, `input`, `env`, `parse: json \| text`) | `out` |
 | `http.request` (`connection`, `method`, `url`, `headers`, `query`, `body`, `expect: 2xx \| any \| [codes]`) | `out` |
 | `discord.post` (`connection`: `discord_webhook`, `content`, `username`, `embeds`, `thread`) | `out` |
 | `discord.channel.ensure` (`connection`: `discord_bot`, `name`, `category`, `topic`) | `out` |
@@ -305,9 +305,14 @@ then the engine checks the shared `projects` and `where`. `schedule` and `webhoo
 `github.issue.opened` with `repos` for those repos whatever the scope. `notify` logs no event, so a workflow can't
 notify itself forever.
 
-- `command` runs the program without a shell (`sh -c` / `cmd /c` for one), `input` as JSON on stdin, `env` added to
-  pdtd's environment, in a scratch folder (`<data dir>/workflow-scratch/<run>`, removed when the run ends), the run's
-  project's main checkout, its attempt's worktree or a full path. stdout (up to 64 KiB) is parsed as JSON into `json`
+- `command` runs the program without a shell, or a `script` (PDT-250) as `<shell> -c <script>` (`shell` defaults to
+  `sh`; `pwsh` for PowerShell). A step has a program or a script, never both (the schema's `oneOf`, and validation says
+  so; a script takes no `args`). `{{…}}` references in a script are filled in like any text field: the value pasted in
+  as plain text, not quoted for the shell, so a value with a quote or `$(…)` in it can break or change the script. Put
+  outside text (titles, comments, anything a person wrote) in `env` (`"TITLE": "{{trigger.title}}"`) and use `"$TITLE"`
+  in the script, or read it from `input` on stdin. The step gets `input` as JSON on stdin and `env` added to pdtd's
+  environment, and runs in a scratch folder (`<data dir>/workflow-scratch/<run>`, removed when the run ends), the
+  run's project's main checkout, its attempt's worktree or a full path. stdout (up to 64 KiB) is parsed as JSON into `json`
   (empty: null); `{"quiet": true}` makes the step quiet. A non-zero exit or unparseable stdout fails it (with the end
   of stderr). The time limit kills the process tree (its own process group on Unix, `taskkill /T` on Windows).
 - `http.request`: `url` may be relative to the connection's URL; the connection's secret is sent per its `config.auth`
@@ -792,7 +797,11 @@ The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings �
     choices, lists, objects, optional and `Tpl` fields (a value or a `{{reference}}`, with a picker of trigger fields and
     earlier steps), JSON for anything else; plus id (rename rewrites edges and `{{steps.<id>}}`), title, retries,
     time limit, loop limit and "On error, go to". With no node selected it edits the workflow's name, description and
-    limits.
+    limits. A field's `x-format` picks the editor for long text (PDT-250): `markdown` (agent prompts, gate questions,
+    messages, comments and ticket text: `MarkdownEditor`), `code` with `x-language` (a command's `script` in `sh`; with
+    `json`, and for every JSON field, `CodeEditor` holding JSON, kept as typed until it parses) and `multiline` (a
+    growing text area); other text is one line until it holds a newline. Markdown and code fields have Expand, which
+    opens the same editor over most of the screen (Done keeps the edit, Cancel drops it).
 - Runs (`RunsView`): the runs (polled), and a run's graph of the version it ran with the path taken, its steps (input,
   output, error), Retry from the failed step, Resume from a timed-out or stopped agent step, Cancel, and a waiting
   gate's choices.
@@ -1059,8 +1068,8 @@ nothing waiting the plain icon and title come back.
 
 Web: the rail's Inbox (web/src/inbox; the open count on its icon, a dot when Updates are unread, `Ctrl+] i`): the list
 has two sections, **Needs you** (the items, grouped by kind) and **Updates** (the notification feed, newest first, unread
-in bold, cleared dimmed, Mark all read, a link to Settings → Notifications; selecting one reads it and shows Open, its
-target); opening an item reads its notifications. The work
+in bold, cleared dimmed, Mark all read, Clear all, a Clear button on each row (on hover; always on touch), a link to
+Settings → Notifications; selecting one reads it and shows Open, its target, and Clear); opening an item reads its notifications. The work
 area shows the item and its decision (answers per question, the approval card, Nudge / Take over, Once more / Take
 over / Stop, Resume (with a note) / Stop, a gate's choices, a manual step's outcomes, an unheard notice's text with
 Open ticket and Dismiss); `j`/`k` move, Enter takes the primary action,
@@ -1107,6 +1116,10 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
   `run:<id>:failed`, `notify:<step>`, `connection:<name>`, `loop:<name>:stale`, `todo:<id>:<dueOn>[T<HH:MM>]`); a cause firing again updates its row
   (title, body, `created_at`, unread again).
   `seq` grows on every change (created, updated, cleared). Pruned after 30 days, except live Needs-you rows.
+  The user can clear an Update (PDT-224: `dismissed_at`, also read): it leaves every list and the Inbox's dot for good.
+  Its row stays live while its cause lasts, so the same cause doesn't raise it again: state causes find it live and
+  make nothing, and a cause firing again updates it out of sight (no stream event, no toast). Once the cause went
+  away (the row is cleared) a new one is news again. Needs-you rows can't be cleared this way.
 - **State causes** (`sync`, every 2 s and at once on a kick: activity changes, a session viewed, an Inbox answer or
   dismiss, a settings change): a running agent session that needs the user and is unseen (`session.needs_you`, not
   for a conversation with an open approval: that is `inbox.approval`), or idle and unseen for 30 s
@@ -1127,7 +1140,8 @@ every client shows it from there. Types and rules: pdt-core `notification.rs`; t
   `undelivered:<message id>`).
 - **API.** `GET /api/notifications?section=needs_you|updates&project=&unread=&limit=&before=` → `{items,
   unreadUpdates}` (Needs you lists live rows only); `POST /api/notifications/{id}/read`; `POST
-  /api/notifications/read-all {section?, sessionId?, inboxItemId?}`; `GET /api/notifications/stream`, Server-Sent
+  /api/notifications/read-all {section?, sessionId?, inboxItemId?}`; `POST /api/notifications/{id}/clear` (an Update;
+  409 `needs_you` for a Needs-you row) and `POST /api/notifications/clear-all` (every Update); `GET /api/notifications/stream`, Server-Sent
   Events `created`/`updated`/`cleared` with the row (event id = `seq`; `Last-Event-ID` gets what was missed, as
   `created` or `cleared`; it ends when pdtd shuts down).
 - **Web** (`web/src/notifications`): AppShell follows the stream (`useNotificationStream`, EventSource) and refreshes

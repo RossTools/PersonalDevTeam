@@ -98,7 +98,7 @@ describe('Host settings: Bug reports', () => {
       'GET /api/bug-reports/preview': preview({ route: 'local', project: { id: 'p', key: 'PDT', name: 'Personal Dev Team' } }),
       'PUT /api/host/settings': (c) => ({ ...view, settings: { ...settings, ...(c.body as object) } }),
     });
-    renderWithQuery(<HostSettingsPage />);
+    renderWithQuery(<HostSettingsPage section="bug-reports" />);
     expect(await screen.findByText(/Draft bug tickets in PDT · Personal Dev Team/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Send bug reports to/ }));
     await userEvent.click(await screen.findByRole('option', { name: 'GitHub issue' }));

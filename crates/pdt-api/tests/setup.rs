@@ -84,11 +84,10 @@ async fn a_new_install_opens_on_get_started_and_steps_tick_off_from_real_state()
 
     // "Set a path by hand" makes a missing agent found once the checks run again.
     let codex = fake(tmp.path(), "my-codex");
-    let (s, v) =
-        call(&app, "PUT", "/api/host/settings", Some(json!({"agentProgram": {"agent": "codex", "path": codex}}))).await;
+    let (s, v) = call(&app, "PUT", "/api/host/settings", Some(json!({"codexProgram": codex}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(v["settings"]["agentPrograms"]["codex"].as_str(), Some(codex.as_str()));
-    let (_, checks) = call(&app, "GET", "/api/host/checks", None).await;
+    assert_eq!(v["settings"]["codexProgram"].as_str(), Some(codex.as_str()));
+    let (_, checks) = call(&app, "POST", "/api/host/checks/refresh", None).await;
     assert_eq!(checks["codex"]["found"], true, "{checks}");
     assert!(checks["codex"]["path"].as_str().unwrap().contains("my-codex"), "{checks}");
     let v = setup(&app).await;
@@ -122,20 +121,4 @@ async fn an_existing_install_with_a_project_and_an_agent_never_sees_it() {
     let v = setup(&app).await;
     assert_eq!(v["state"]["needed"], false, "{v}");
     assert_eq!(v["opensOnLaunch"], false);
-}
-
-#[tokio::test]
-async fn an_environment_program_wins_over_one_set_by_hand() {
-    let tmp = tempfile::tempdir().unwrap();
-    let (app, mut st) = host(tmp.path(), None).await;
-    st.programs_from_env.codex = Some(fake(tmp.path(), "env-codex"));
-    let app_env = router(st.clone(), None);
-    let by_hand = fake(tmp.path(), "hand-codex");
-    let (s, _) =
-        call(&app, "PUT", "/api/host/settings", Some(json!({"agentProgram": {"agent": "codex", "path": by_hand}})))
-            .await;
-    assert_eq!(s, StatusCode::OK);
-    let (_, checks) = call(&app_env, "POST", "/api/host/checks/refresh", None).await;
-    assert!(checks["codex"]["path"].as_str().unwrap().contains("env-codex"), "{checks}");
-    assert_eq!(setup(&app_env).await["programsFromEnv"], json!(["codex"]));
 }

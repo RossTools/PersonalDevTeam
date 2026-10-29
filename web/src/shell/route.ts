@@ -97,7 +97,8 @@ export function parseRoute(pathname: string, search = ''): Route {
       if (a === 'connections') return { view: 'settings', page: { kind: 'connections' } };
       if (a === 'secrets') return { view: 'settings', page: { kind: 'secrets' } };
       if (a === 'notifications') return { view: 'settings', page: { kind: 'notifications' } };
-      if (a === 'projects' && b) return { view: 'settings', page: { kind: 'project', key: b, section: c } };
+      // A project's first section was "Project" before it was "General" (PDT-231).
+      if (a === 'projects' && b) return { view: 'settings', page: { kind: 'project', key: b, section: c === 'project' ? 'general' : c } };
       if (a === 'host') return { view: 'settings', page: { kind: 'host', section: b } };
       return { view: 'settings', page: { kind: 'index' } };
     default:

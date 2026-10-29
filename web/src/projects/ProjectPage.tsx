@@ -1,7 +1,8 @@
-import { useEffect, useId, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useId } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
-import { Alert, Badge, Button, EmptyState, Input, Link, Section, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
+import { Alert, Badge, Button, EmptyState, Link, Section, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
+import { AutoSaveText, SaveStatus, useSaveState } from '../common/AutoSave';
 import { api, ApiError } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import type { Worktree } from '../api/gen/Worktree';
@@ -14,93 +15,66 @@ import { repoUrl } from './github';
 import { useOpenChanges } from '../review/open';
 
 /**
- * Name, key and base branch: one form, one Save (spec §6.1). Folder and GitHub link below. A Personal project has no
- * repository, so no base branch either.
+ * Name, key and base branch, each saved as it changes (PDT-231): text on blur or Enter, the branch at once. Folder and
+ * GitHub link below. A Personal project has no repository, so no base branch either.
  */
-/** What Identity is keyed on: a change from elsewhere starts the form over. */
-const identityKey = (p: Pick<Project, 'name' | 'key' | 'baseBranch'>) => `${p.name}:${p.key}:${p.baseBranch}`;
-
-/**
- * Name, key and base branch. A save remounts the form (it is keyed on them), so whether it was just saved comes from
- * the parent: `savedAs` is the key the last save led to.
- */
-function Identity({ project, savedAs, onSaved }: { project: Project; savedAs: string | null; onSaved: (key: string) => void }) {
+function General({ project, onKeyChange }: { project: Project; onKeyChange?: (key: string) => void }) {
   const personal = project.kind === 'personal';
   const qc = useQueryClient();
-  const errorId = useId();
-  const [name, setName] = useState(project.name);
-  const [key, setKey] = useState(project.key);
-  const [base, setBase] = useState(project.baseBranch);
   const branches = useQuery({ queryKey: ['branches', project.id], queryFn: () => api.listBranches(project.id), enabled: !personal });
   const baseOptions = branchOptions(branches.data ?? [], project.baseBranch);
-  const save = useMutation({
-    mutationFn: () => api.updateProject(project.id, {
-      ...(name.trim() !== project.name ? { name } : {}),
-      ...(key.trim().toUpperCase() !== project.key ? { key } : {}),
-      ...(base !== project.baseBranch ? { baseBranch: base } : {}),
-    }),
-    onSuccess: (p) => {
-      onSaved(identityKey(p));
-      void qc.invalidateQueries({ queryKey: ['projects'] });
-      void qc.invalidateQueries({ queryKey: ['workspaces'] });
-    },
-  });
-  useEffect(() => {
-    if (save.isError) document.getElementById(errorId)?.focus();
-  }, [save.isError, save.error, errorId]);
-  const changed = name.trim() !== project.name || key.trim().toUpperCase() !== project.key || base !== project.baseBranch;
+  const [baseState, trackBase] = useSaveState();
+  const save = async (p: { name?: string; key?: string; baseBranch?: string }) => {
+    const saved = await api.updateProject(project.id, p);
+    await qc.invalidateQueries({ queryKey: ['projects'] });
+    void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    // The page's path names the project by its key.
+    if (saved.key !== project.key) onKeyChange?.(saved.key);
+    return saved;
+  };
   const nameId = useId();
   const keyId = useId();
   const baseId = useId();
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (changed) save.mutate(); }}>
-      <Section
-        label="Project"
-        dirty={changed}
-        footer={
-          <>
-            {(save.isSuccess || savedAs === identityKey(project)) && !changed && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
-            <Button type="submit" size="sm" variant="primary" disabled={!changed} pending={save.isPending}>Save</Button>
-          </>
-        }
+    <Section label="General" description="The project's name, key and the branch its work starts from.">
+      <SettingsRow label="Name" htmlFor={nameId}>
+        <AutoSaveText id={nameId} aria-label="Project name" className="w-64 max-w-full" value={project.name} onSave={(name) => save({ name })} />
+      </SettingsRow>
+      <SettingsRow
+        label="Key"
+        htmlFor={keyId}
+        description={`The project's short code (2–10 letters and digits); tickets are numbered with it, like ${project.key}-42.`}
       >
-        <SettingsRow label="Name" htmlFor={nameId}>
-          <Input id={nameId} aria-label="Project name" className="w-64 max-w-full" value={name} onChange={(e) => setName(e.target.value)} />
-        </SettingsRow>
+        <AutoSaveText id={keyId} aria-label="Project key" mono className="w-28 uppercase" maxLength={10} value={project.key}
+          onSave={(key) => save({ key })} />
+      </SettingsRow>
+      {!personal && (
         <SettingsRow
-          label="Key"
-          htmlFor={keyId}
-          description={`The project's short code (2–10 letters and digits); tickets are numbered with it, like ${project.key}-42.`}
+          label="Base branch"
+          htmlFor={baseId}
+          description="New worktrees and tickets branch from it, and their changes are reviewed and merged against it."
         >
-          <Input id={keyId} aria-label="Project key" mono className="w-28 uppercase" maxLength={10} value={key} onChange={(e) => setKey(e.target.value)} />
+          <SaveStatus state={baseState} />
+          <Select id={baseId} aria-label="Base branch" className="w-64 max-w-full" searchable options={baseOptions} value={project.baseBranch}
+            onChange={(baseBranch) => void trackBase(save({ baseBranch }))} />
         </SettingsRow>
-        {!personal && (
-          <SettingsRow
-            label="Base branch"
-            htmlFor={baseId}
-            description="New worktrees and tickets branch from it, and their changes are reviewed and merged against it."
-          >
-            <Select id={baseId} aria-label="Base branch" className="w-64 max-w-full" searchable options={baseOptions} value={base} onChange={setBase} />
-          </SettingsRow>
-        )}
-        {branches.isError && <Alert tone="error">Branches could not be loaded: {branches.error.message}</Alert>}
-        {save.isError && <Alert id={errorId} tabIndex={-1} tone="error">{save.error.message}</Alert>}
-        {personal ? (
-          <SettingsRow label="Folder" description="Personal project (no repository): each ticket works in its own folder here.">
-            <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
-          </SettingsRow>
-        ) : (
-          <SettingsRow label="Repository folder">
-            <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
-          </SettingsRow>
-        )}
-        {project.githubRepo && (
-          <SettingsRow label="GitHub">
-            <Link external href={repoUrl(project.githubRepo)} className="text-xs">{project.githubRepo} on GitHub</Link>
-          </SettingsRow>
-        )}
-      </Section>
-    </form>
+      )}
+      {branches.isError && <Alert tone="error">Branches could not be loaded: {branches.error.message}</Alert>}
+      {personal ? (
+        <SettingsRow label="Folder" description="Personal project (no repository): each ticket works in its own folder here.">
+          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
+        </SettingsRow>
+      ) : (
+        <SettingsRow label="Repository folder">
+          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
+        </SettingsRow>
+      )}
+      {project.githubRepo && (
+        <SettingsRow label="GitHub">
+          <Link external href={repoUrl(project.githubRepo)} className="text-xs">{project.githubRepo} on GitHub</Link>
+        </SettingsRow>
+      )}
+    </Section>
   );
 }
 
@@ -219,11 +193,6 @@ function RemoveProject({ project, onRemoved }: { project: Project; onRemoved: ()
   );
 }
 
-/** A project's sections, in page order (their `Section` labels): its top bar titles on a phone. */
-export const PROJECT_SECTIONS = [
-  'Project', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Danger zone',
-] as const;
-
 export interface ProjectPageProps {
   project: Project;
   onRemoved: () => void;
@@ -231,17 +200,18 @@ export interface ProjectPageProps {
   drill?: boolean;
   section?: string | null;
   onSection?: (slug: string) => void;
+  /** The project's key changed: its page's path changes with it. */
+  onKeyChange?: (key: string) => void;
 }
 
 /**
  * A project's page in Settings: identity, worktrees, run settings on this host, removal. A Personal project (no
  * repository) has no worktrees, runs or merging.
  */
-export function ProjectPage({ project, onRemoved, drill = false, section = null, onSection }: ProjectPageProps) {
+export function ProjectPage({ project, onRemoved, drill = false, section = null, onSection, onKeyChange }: ProjectPageProps) {
   const panel = useProjectSettingsSections(project);
-  const [savedAs, setSavedAs] = useState<string | null>(null);
   const sections: SettingsSection[] = [
-    { label: 'Project', node: <Identity key={identityKey(project)} project={project} savedAs={savedAs} onSaved={setSavedAs} /> },
+    { label: 'General', node: <General project={project} onKeyChange={onKeyChange} /> },
     ...(project.kind !== 'personal' ? [{ label: 'Worktrees', node: <Worktrees project={project} /> }] : []),
     ...panel.sections,
     { label: 'Danger zone', node: <RemoveProject project={project} onRemoved={onRemoved} /> },
@@ -250,6 +220,7 @@ export function ProjectPage({ project, onRemoved, drill = false, section = null,
     <SettingsScreens
       title={project.name}
       actions={<ProjectKey projectKey={project.key} />}
+      crumb={<span className="flex items-center gap-1.5">Projects › {project.name} <ProjectKey projectKey={project.key} /></span>}
       notice={panel.notice}
       sections={sections}
       drill={drill}

@@ -24,8 +24,6 @@ function view(o: Partial<Omit<SetupView, 'steps'>> & { steps?: Partial<SetupView
     done: Object.values(steps).filter((s) => s !== 'todo').length,
     opensOnLaunch: true,
     defaultAgent: 'claude',
-    agentPrograms: { claude: null, codex: null, devin: null },
-    programsFromEnv: [],
     ...o,
     steps,
   };
@@ -46,7 +44,7 @@ function stub(v: SetupView, extra: Record<string, unknown> = {}) {
     'GET /api/host/checks': checks(),
     'GET /api/github/login': notConnected,
     'GET /api/projects': [],
-    'GET /api/host/settings': { settings: { defaultAgent: 'claude' }, projectsDir: '/u/work' },
+    'GET /api/host/settings': { settings: { defaultAgent: 'claude' }, projectsDir: '/u/work', programs: [] },
     ...extra,
   });
 }
@@ -92,7 +90,7 @@ describe('Get started', () => {
     await userEvent.type(within(agents).getByRole('textbox', { name: 'Program path' }), '/opt/codex/bin/codex');
     await userEvent.click(within(agents).getByRole('button', { name: 'Save path' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/host/checks/refresh')).toBe(true));
-    expect(calls.find((c) => c.method === 'PUT' && c.path === '/api/host/settings')?.body).toEqual({ agentProgram: { agent: 'codex', path: '/opt/codex/bin/codex' } });
+    expect(calls.find((c) => c.method === 'PUT' && c.path === '/api/host/settings')?.body).toEqual({ codexProgram: '/opt/codex/bin/codex' });
   });
 
   it('skips GitHub, or shows the code to enter while connecting', async () => {

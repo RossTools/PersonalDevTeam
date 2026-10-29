@@ -1,4 +1,5 @@
 use pdt_core::brand::{DAEMON_BIN, Profile};
+use pdt_core::network::{NetworkSettings, PORT_FROM_SETTING_ENV, network_path};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -14,7 +15,11 @@ pub struct HostConfig {
     /// Where the installed app lives: pdtd (and the bundled pdt-host) are here.
     pub install_dir: PathBuf,
     pub data_dir: PathBuf,
+    /// The port pdtd listens on (see `refresh_port`).
     pub port: u16,
+    /// No `PDT_PORT`: the port follows Settings → Network (`network.json`), read again whenever pdtd is (re)started
+    /// (PDT-231).
+    pub port_setting: bool,
     pub dev: bool,
     /// How long a (new) pdtd gets to answer /api/health (spec §3.4: 60 s).
     pub health_timeout: Duration,
@@ -42,9 +47,9 @@ impl HostConfig {
     ) -> Result<HostConfig, String> {
         let lookup = |k: &str| lookup(k).filter(|v| !v.trim().is_empty());
         let profile = Profile::from_env_value(lookup("PDT_PROFILE").as_deref());
-        let port = match lookup("PDT_PORT") {
-            Some(p) => p.trim().parse().map_err(|_| format!("PDT_PORT is not a valid port: {p:?}"))?,
-            None => profile.port(),
+        let env_port: Option<u16> = match lookup("PDT_PORT") {
+            Some(p) => Some(p.trim().parse().map_err(|_| format!("PDT_PORT is not a valid port: {p:?}"))?),
+            None => None,
         };
         let data_dir = match lookup("PDT_DATA_DIR") {
             Some(d) => PathBuf::from(d),
@@ -52,11 +57,13 @@ impl HostConfig {
                 .ok_or("could not determine a data directory; set PDT_DATA_DIR")?
                 .join(profile.data_dir_name()),
         };
+        let port = env_port.unwrap_or_else(|| setting_port(&data_dir, profile));
         let forward_env = FORWARDED_ENV.iter().filter_map(|k| lookup(k).map(|v| (k.to_string(), v))).collect();
         Ok(HostConfig {
             install_dir,
             data_dir,
             port,
+            port_setting: env_port.is_none(),
             dev: profile == Profile::Dev,
             health_timeout: Duration::from_secs(60),
             watch: Duration::from_secs(60),
@@ -72,6 +79,16 @@ impl HostConfig {
         Self::from_lookup(|k| std::env::var(k).ok(), dirs::data_local_dir(), install_dir)
     }
 
+    /// Reads Settings → Network again (when the port follows it), for the next pdtd: the port a pdtd of this data
+    /// dir still listens on while it answers (one started before the setting changed), else the setting's.
+    pub fn refresh_port(&mut self, answers: impl Fn(u16) -> bool) {
+        if !self.port_setting {
+            return;
+        }
+        let profile = if self.dev { Profile::Dev } else { Profile::Stable };
+        self.port = current_port(&self.data_dir, profile, answers);
+    }
+
     pub fn pdtd_path(&self) -> PathBuf {
         self.install_dir.join(format!("{DAEMON_BIN}{}", std::env::consts::EXE_SUFFIX))
     }
@@ -84,12 +101,36 @@ impl HostConfig {
             ("PDT_DATA_DIR".to_string(), self.data_dir.to_string_lossy().into_owned()),
             ("PDT_SUPERVISED".to_string(), "1".to_string()),
         ];
+        if self.port_setting {
+            env.push((PORT_FROM_SETTING_ENV.to_string(), "1".to_string()));
+        }
         env.extend(self.forward_env.iter().filter(|(k, _)| FORWARDED_ENV.contains(&k.as_str())).cloned());
         if let Some(reason) = &self.updates_unsupported {
             env.push(("PDT_UPDATES_UNSUPPORTED".to_string(), reason.clone()));
         }
         env
     }
+}
+
+/// The port a pdtd of this data dir said it listens on (it may have exited since).
+pub fn read_listening(data_dir: &std::path::Path) -> Option<u16> {
+    pdt_core::network::parse_listening(&std::fs::read_to_string(pdt_core::network::listening_path(data_dir)).ok()?)
+}
+
+/// The port of the data dir's pdtd when `PDT_PORT` doesn't say: the one a running pdtd listens on while it answers
+/// (started before Settings → Network changed), else the setting's, else the profile's. The tray finds pdtd by it.
+pub fn current_port(data_dir: &std::path::Path, profile: Profile, answers: impl Fn(u16) -> bool) -> u16 {
+    let wanted = setting_port(data_dir, profile);
+    match read_listening(data_dir) {
+        Some(live) if live != wanted && answers(live) => live,
+        _ => wanted,
+    }
+}
+
+/// The port Settings → Network gives the data dir's pdtd, or the profile's.
+fn setting_port(data_dir: &std::path::Path, profile: Profile) -> u16 {
+    let settings = std::fs::read(network_path(data_dir)).map(|b| NetworkSettings::parse(&b)).unwrap_or_default();
+    settings.port_for(None, profile)
 }
 
 #[cfg(test)]
@@ -116,6 +157,30 @@ mod tests {
     }
 
     #[test]
+    fn without_pdt_port_the_port_follows_the_network_setting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("pdt");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(network_path(&data), r#"{"port": 7500}"#).unwrap();
+        let mut c = HostConfig::from_lookup(lookup(&[]), Some(tmp.path().into()), "/app".into()).unwrap();
+        assert_eq!((c.port, c.port_setting), (7500, true));
+        assert!(c.pdtd_env().contains(&(PORT_FROM_SETTING_ENV.into(), "1".into())));
+        std::fs::write(network_path(&data), r#"{"port": 7600}"#).unwrap();
+        // A pdtd still answering on the port it started on is adopted until it exits.
+        std::fs::write(pdt_core::network::listening_path(&data), "7500\n").unwrap();
+        c.refresh_port(|p| p == 7500);
+        assert_eq!(c.port, 7500);
+        c.refresh_port(|_| false);
+        assert_eq!(c.port, 7600);
+        // PDT_PORT wins, and pdtd is told it is the user's.
+        let mut e =
+            HostConfig::from_lookup(lookup(&[("PDT_PORT", "9000")]), Some(tmp.path().into()), "/app".into()).unwrap();
+        e.refresh_port(|_| false);
+        assert_eq!((e.port, e.port_setting), (9000, false));
+        assert!(!e.pdtd_env().iter().any(|(k, _)| k == PORT_FROM_SETTING_ENV));
+    }
+
+    #[test]
     fn pdtd_gets_an_explicit_profile_port_and_data_dir_and_only_the_forwarded_extras() {
         let env = lookup(&[
             ("PDT_PROFILE", "dev"),
@@ -134,6 +199,7 @@ mod tests {
             ("PDT_SUPERVISED", "1"),
             ("PDT_WEB_DIR", "/web"),
             ("PDT_ALLOWED_HOSTS", "h:1"),
+            (PORT_FROM_SETTING_ENV, "1"),
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))

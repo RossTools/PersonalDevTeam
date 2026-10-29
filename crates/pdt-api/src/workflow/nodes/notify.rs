@@ -45,6 +45,7 @@ fn target(link: Option<&str>) -> NotificationTarget {
 pub struct NotifyConfig {
     pub title: String,
     #[serde(default)]
+    #[schemars(extend("x-format" = "multiline"))]
     pub body: String,
     #[serde(default)]
     pub level: NotifyLevel,

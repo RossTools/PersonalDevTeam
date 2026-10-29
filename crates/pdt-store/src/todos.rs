@@ -6,7 +6,7 @@ use pdt_core::todo::Todo;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{QueryBuilder, Row, Sqlite};
 
-const SELECT: &str = "SELECT t.id, t.project_id, t.ticket_id, t.title, t.done, t.position, t.created_at, \
+const SELECT: &str = "SELECT t.id, t.project_id, t.ticket_id, t.title, t.body, t.done, t.position, t.created_at, \
                       t.updated_at, t.done_at, t.due_on, t.due_time, t.recurrence, p.key AS project_key, k.number AS ticket_number, \
                       kp.key AS ticket_project_key, k.title AS ticket_title \
                       FROM todos t \
@@ -22,6 +22,7 @@ fn to_todo(r: &SqliteRow) -> Result<Todo, StoreError> {
         project_id: r.try_get("project_id")?,
         ticket_id: r.try_get("ticket_id")?,
         title: r.try_get("title")?,
+        body: r.try_get("body")?,
         done: r.try_get::<i64, _>("done")? != 0,
         position: r.try_get("position")?,
         created_at: r.try_get("created_at")?,
@@ -47,13 +48,14 @@ fn recurrence_json(t: &Todo) -> Option<String> {
 /// Adds `t` (its keys are ignored: they come from the links).
 async fn insert(e: impl sqlx::SqliteExecutor<'_>, t: &Todo) -> Result<(), StoreError> {
     sqlx::query(
-        "INSERT INTO todos (id, project_id, ticket_id, title, done, position, created_at, updated_at, done_at, \
-         due_on, due_time, recurrence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO todos (id, project_id, ticket_id, title, body, done, position, created_at, updated_at, \
+         done_at, due_on, due_time, recurrence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&t.id)
     .bind(&t.project_id)
     .bind(&t.ticket_id)
     .bind(&t.title)
+    .bind(&t.body)
     .bind(t.done)
     .bind(t.position)
     .bind(t.created_at)
@@ -69,12 +71,13 @@ async fn insert(e: impl sqlx::SqliteExecutor<'_>, t: &Todo) -> Result<(), StoreE
 
 async fn update(e: impl sqlx::SqliteExecutor<'_>, t: &Todo) -> Result<bool, StoreError> {
     let r = sqlx::query(
-        "UPDATE todos SET project_id = ?, ticket_id = ?, title = ?, done = ?, position = ?, updated_at = ?, \
-         done_at = ?, due_on = ?, due_time = ?, recurrence = ? WHERE id = ?",
+        "UPDATE todos SET project_id = ?, ticket_id = ?, title = ?, body = ?, done = ?, position = ?, \
+         updated_at = ?, done_at = ?, due_on = ?, due_time = ?, recurrence = ? WHERE id = ?",
     )
     .bind(&t.project_id)
     .bind(&t.ticket_id)
     .bind(&t.title)
+    .bind(&t.body)
     .bind(t.done)
     .bind(t.position)
     .bind(t.updated_at)
@@ -208,6 +211,7 @@ mod tests {
             project_id: None,
             ticket_id: None,
             title: id.to_uppercase(),
+            body: String::new(),
             done: false,
             position,
             created_at: 1,
@@ -274,9 +278,12 @@ mod tests {
         let mut b = store.get_todo("b").await.unwrap().unwrap();
         b.position = 0.5;
         b.title = "Bee".into();
+        b.body = "# Notes\n\n- **bold**\n".into();
         assert!(store.update_todo(&b).await.unwrap());
         assert_eq!(ids(store.list_todos(&f(None, Some(false))).await.unwrap()), ["b", "a"]);
-        assert_eq!(store.get_todo("b").await.unwrap().unwrap().title, "Bee");
+        let b = store.get_todo("b").await.unwrap().unwrap();
+        assert_eq!((b.title.as_str(), b.body.as_str()), ("Bee", "# Notes\n\n- **bold**\n"));
+        assert_eq!(store.get_todo("a").await.unwrap().unwrap().body, "", "none by default");
 
         assert!(matches!(store.delete_ticket("k1").await.unwrap(), crate::DeleteTicket::Deleted));
         let a = store.get_todo("a").await.unwrap().unwrap();
@@ -325,7 +332,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
         let daily = Recurrence { rule: RepeatRule::Day { interval: 1 }, from: RepeatFrom::Due };
-        let a = Todo { due_on: Some("2026-10-23".into()), recurrence: Some(daily.clone()), ..todo("a", 1.0) };
+        let a = Todo {
+            due_on: Some("2026-10-23".into()),
+            recurrence: Some(daily.clone()),
+            body: "Bring the forms.".into(),
+            ..todo("a", 1.0)
+        };
         store.insert_todo(&a).await.unwrap();
         assert_eq!(store.get_todo("a").await.unwrap().unwrap().recurrence, Some(daily.clone()), "kept as JSON");
 
@@ -340,6 +352,7 @@ mod tests {
         let open = store.list_todos(&TodoFilter { done: Some(false), ..Default::default() }).await.unwrap();
         assert_eq!(open.len(), 1, "{open:?}");
         assert_eq!(open[0].recurrence, Some(daily.clone()));
+        assert_eq!(open[0].body, "Bring the forms.", "the next one keeps the body");
 
         // Reopened and checked off again: no second one.
         assert!(store.update_todo(&a).await.unwrap());

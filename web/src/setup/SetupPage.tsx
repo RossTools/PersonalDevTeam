@@ -18,6 +18,8 @@ const AGENTS: { id: AgentKind; name: string; install: string; env: string }[] = 
   { id: 'codex', name: 'Codex', install: 'https://developers.openai.com/codex/cli', env: 'PDT_CODEX_PROGRAM' },
   { id: 'devin', name: 'Devin', install: 'https://cli.devin.ai', env: 'PDT_DEVIN_PROGRAM' },
 ];
+/** Each agent's program in the host settings (Settings › This host › Agents › Programs). */
+const PROGRAM = { claude: 'claudeProgram', codex: 'codexProgram', devin: 'devinProgram' } as const;
 const GIT_INSTALL = 'https://git-scm.com/downloads';
 const agentName = (a: AgentKind) => AGENTS.find((x) => x.id === a)!.name;
 
@@ -210,7 +212,7 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
         <Button size="sm" pending={checking} onClick={() => void check()}>Check again</Button>
         <Button size="sm" variant="ghost" aria-expanded={byHand} onClick={() => setByHand(!byHand)}>Set a path by hand…</Button>
       </div>
-      {byHand && <ProgramPathForm v={v} onSaved={() => void check()} />}
+      {byHand && <ProgramPathForm onSaved={() => void check()} />}
       {step.state === 'todo' && !loading && (
         <p className="text-xs text-muted-foreground">Install git and one agent, log in to it once in a terminal, then Check again.</p>
       )}
@@ -219,18 +221,21 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
 }
 
 /** Saves an agent's program path in the host settings: for one installed where PDT doesn't look. */
-function ProgramPathForm({ v, onSaved }: { v: SetupView; onSaved: () => void }) {
+function ProgramPathForm({ onSaved }: { onSaved: () => void }) {
   const qc = useQueryClient();
+  const host = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
+  const stored = (a: AgentKind) => host.data?.settings[PROGRAM[a]] ?? '';
   const [agent, setAgent] = useState<AgentKind>('claude');
-  const [path, setPath] = useState(v.agentPrograms[agent] ?? '');
+  const [path, setPath] = useState<string | null>(null);
+  const shown = path ?? stored(agent);
   const save = useMutation({
-    mutationFn: () => api.saveHostSettings({ agentProgram: { agent, path } }),
+    mutationFn: () => api.saveHostSettings({ [PROGRAM[agent]]: shown }),
     onSuccess: (s) => {
       qc.setQueryData(['host-settings'], s);
       onSaved();
     },
   });
-  const fromEnv = v.programsFromEnv.includes(agent);
+  const fromEnv = !!host.data?.programs.find((p) => p.agent === agent)?.fromEnv;
   const submit = (e: FormEvent) => {
     e.preventDefault();
     save.mutate();
@@ -239,9 +244,9 @@ function ProgramPathForm({ v, onSaved }: { v: SetupView; onSaved: () => void }) 
     <form onSubmit={submit} aria-label="Agent program path" className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <Select aria-label="Agent" className="w-36" options={AGENTS.map((a) => ({ value: a.id, label: a.name }))} value={agent}
-          onChange={(a) => { setAgent(a); setPath(v.agentPrograms[a] ?? ''); }} />
-        <Input aria-label="Program path" mono className="min-w-48 flex-1" placeholder="/full/path/to/the/program" value={path} onChange={(e) => setPath(e.target.value)} />
-        <Button type="submit" size="sm" variant="primary" pending={save.isPending}>Save path</Button>
+          onChange={(a) => { setAgent(a); setPath(null); }} />
+        <Input aria-label="Program path" mono className="min-w-48 flex-1" placeholder="/full/path/to/the/program" value={shown} disabled={fromEnv} onChange={(e) => setPath(e.target.value)} />
+        <Button type="submit" size="sm" variant="primary" disabled={fromEnv} pending={save.isPending}>Save path</Button>
       </div>
       <p className="text-xs text-muted-foreground">
         {fromEnv ? `${AGENTS.find((a) => a.id === agent)!.env} sets it on this host, and wins over a path saved here.`

@@ -308,13 +308,15 @@ describe('dry run', () => {
 
 describe('schema form', () => {
   const kind = (id: string) => CATALOG.find((k) => k.id === id)!.configSchema as Record<string, unknown>;
-  const prop = (id: string, key: string) => classify((kind(id).properties as Record<string, Record<string, unknown>>)[key], kind(id), key);
+  const prop = (id: string, key: string) => classify((kind(id).properties as Record<string, Record<string, unknown>>)[key], kind(id));
 
   it('reads the kinds of field the catalog uses', () => {
     expect(prop('gate', 'choices').field.kind).toBe('strings');
     expect(prop('gate', 'ahead').field.kind).toBe('objects');
     expect(prop('gate', 'ask').field).toMatchObject({ kind: 'enum', options: [{ value: 'wait' }, { value: 'skip' }] });
-    expect(prop('session.send', 'text').field).toEqual({ kind: 'string', multiline: true });
+    expect(prop('session.send', 'text').field).toEqual({ kind: 'markdown' });
+    expect(prop('gate', 'question').field).toEqual({ kind: 'markdown' });
+    expect(prop('workflow.call', 'input').field).toEqual({ kind: 'json' });
     expect(prop('session.send', 'attempt')).toMatchObject({ field: { kind: 'string' }, nullable: true });
     expect(prop('ticket.finish', 'deleteBranch')).toMatchObject({ field: { kind: 'boolean' }, tpl: true });
     expect(prop('wait', 'ms')).toMatchObject({ field: { kind: 'number', integer: true }, tpl: true, nullable: true });

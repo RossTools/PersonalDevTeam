@@ -5,8 +5,179 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use pdt_core::host::{HostSettings, HostSettingsError, HostSettingsPatch};
+use pdt_core::network::{NetworkError, NetworkSettings, network_path};
+use pdt_core::session::{AgentKind, Platform};
 use serde::Serialize;
 use ts_rs::TS;
+
+/// What the environment sets over Settings (PDT-231), Network as pdtd started with it, and whether pdt-host
+/// supervises this pdtd.
+#[derive(Debug, Clone, Default)]
+pub struct HostEnv {
+    /// `PDT_PORT`, when the user set it (pdt-host passing the setting on doesn't count).
+    pub port: Option<u16>,
+    /// `PDT_ALLOWED_HOSTS`'s hosts.
+    pub allowed_hosts: Option<Vec<String>>,
+    /// `PDT_CLAUDE_PROGRAM` / `PDT_CODEX_PROGRAM` / `PDT_DEVIN_PROGRAM`.
+    pub claude_program: Option<String>,
+    pub codex_program: Option<String>,
+    pub devin_program: Option<String>,
+    /// `network.json` when pdtd started: a setting that differs from it applies after a restart.
+    pub network_at_start: NetworkSettings,
+    /// pdt-host started this pdtd, so it starts it again when it exits (Restart now).
+    pub supervised: bool,
+    /// The profile's own port, the one used when neither `PDT_PORT` nor the setting gives one.
+    pub default_port: u16,
+}
+
+impl HostEnv {
+    pub fn program(&self, agent: AgentKind) -> Option<&str> {
+        match agent {
+            AgentKind::Claude => self.claude_program.as_deref(),
+            AgentKind::Codex => self.codex_program.as_deref(),
+            AgentKind::Devin => self.devin_program.as_deref(),
+        }
+    }
+}
+
+const AGENTS: [AgentKind; 3] = [AgentKind::Claude, AgentKind::Codex, AgentKind::Devin];
+
+fn program_slot(p: &mut Platform, agent: AgentKind) -> &mut String {
+    match agent {
+        AgentKind::Claude => &mut p.claude_program,
+        AgentKind::Codex => &mut p.codex_program,
+        AgentKind::Devin => &mut p.devin_program,
+    }
+}
+
+/// `~/…` in a program setting, in the home folder.
+fn expand_home(path: &str, home: Option<&std::path::Path>) -> String {
+    match (path.strip_prefix('~'), home) {
+        (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with(['/', '\\']) => {
+            home.join(rest.trim_start_matches(['/', '\\'])).to_string_lossy().into_owned()
+        }
+        _ => path.to_string(),
+    }
+}
+
+/// `platform` with the agent programs Settings → Agents names, except where the environment named one (pdtd put
+/// those in `platform` already).
+pub fn with_program_settings(
+    platform: &Platform,
+    env: &HostEnv,
+    s: &HostSettings,
+    home: Option<&std::path::Path>,
+) -> Platform {
+    let mut p = platform.clone();
+    for agent in AGENTS {
+        if env.program(agent).is_none()
+            && let Some(path) = s.program(agent)
+        {
+            *program_slot(&mut p, agent) = expand_home(path, home);
+        }
+    }
+    p
+}
+
+impl AppState {
+    /// The platform agent sessions and checks launch with: each agent's program from the environment, else from
+    /// Settings → Agents, else the one on the PATH.
+    pub async fn agent_platform(&self) -> Platform {
+        match self.store.get_host_settings().await {
+            Ok(s) => with_program_settings(&self.platform, &self.host_env, &s, self.home_dir.as_deref()),
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read the host settings; agents launch from the PATH");
+                self.platform.clone()
+            }
+        }
+    }
+}
+
+/// An agent's program in Settings → Agents.
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentProgramView {
+    pub agent: AgentKind,
+    /// The environment variable that sets it (`PDT_CLAUDE_PROGRAM`), and its value when it is set: it then wins.
+    pub env_var: String,
+    pub from_env: Option<String>,
+    /// Where the program in use was found, or null when it wasn't.
+    pub found: Option<String>,
+}
+
+/// Settings → Network: the stored settings, what the environment sets over them, and whether a restart is needed.
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NetworkView {
+    pub settings: NetworkSettings,
+    pub port_from_env: Option<u16>,
+    pub allowed_hosts_from_env: Option<Vec<String>>,
+    /// The port pdtd listens on now.
+    pub listen_port: u16,
+    /// The port used when no setting or `PDT_PORT` gives one.
+    pub default_port: u16,
+    /// The settings differ from the ones pdtd started with (where the environment doesn't override them).
+    pub restart_needed: bool,
+    /// pdt-host supervises pdtd, so Restart now brings it back; otherwise the user restarts it.
+    pub can_restart: bool,
+}
+
+fn read_network(st: &AppState) -> NetworkSettings {
+    std::fs::read(network_path(&st.data_dir)).map(|b| NetworkSettings::parse(&b)).unwrap_or_default()
+}
+
+/// Whether `now` (the file) differs from what pdtd started with, in what the environment doesn't override.
+pub fn restart_needed(env: &HostEnv, now: &NetworkSettings) -> bool {
+    let start = &env.network_at_start;
+    (env.port.is_none() && now.port != start.port)
+        || (env.allowed_hosts.is_none() && now.allowed_hosts != start.allowed_hosts)
+}
+
+fn network_view(st: &AppState) -> NetworkView {
+    let settings = read_network(st);
+    let env = &st.host_env;
+    NetworkView {
+        restart_needed: restart_needed(env, &settings),
+        settings,
+        port_from_env: env.port,
+        allowed_hosts_from_env: env.allowed_hosts.clone(),
+        listen_port: st.listen_port,
+        default_port: env.default_port,
+        can_restart: env.supervised,
+    }
+}
+
+async fn program_views(st: &AppState) -> Vec<AgentProgramView> {
+    let platform = st.agent_platform().await;
+    let search = st.platform.login_path.clone();
+    let env = st.host_env.clone();
+    tokio::task::spawn_blocking(move || {
+        AGENTS
+            .iter()
+            .map(|&agent| {
+                let program = match agent {
+                    AgentKind::Claude => &platform.claude_program,
+                    AgentKind::Codex => &platform.codex_program,
+                    AgentKind::Devin => &platform.devin_program,
+                };
+                let found = pdt_agents::launch::resolve(program, &[], search.as_deref())
+                    .ok()
+                    .map(|(exe, _)| exe.to_string_lossy().into_owned());
+                let env_var = match agent {
+                    AgentKind::Claude => "PDT_CLAUDE_PROGRAM",
+                    AgentKind::Codex => "PDT_CODEX_PROGRAM",
+                    AgentKind::Devin => "PDT_DEVIN_PROGRAM",
+                }
+                .to_string();
+                AgentProgramView { agent, env_var, from_env: env.program(agent).map(String::from), found }
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
 
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -23,10 +194,19 @@ pub struct HostSettingsView {
     pub remote: crate::remote::RemoteStatus,
     /// Where clones go: `settings.projectsDir`, else `~/work`.
     pub projects_dir: Option<String>,
+    /// Claude's, Codex's and Devin's programs (Settings → Agents).
+    pub programs: Vec<AgentProgramView>,
+    pub network: NetworkView,
 }
 
 impl From<HostSettingsError> for ApiError {
     fn from(e: HostSettingsError) -> Self {
+        ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
+    }
+}
+
+impl From<NetworkError> for ApiError {
+    fn from(e: NetworkError) -> Self {
         ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
     }
 }
@@ -39,6 +219,7 @@ pub(crate) async fn view(st: &AppState) -> Result<HostSettingsView, ApiError> {
     let settings = st.store.get_host_settings().await?;
     let projects_dir =
         crate::projects::projects_dir(settings.projects_dir.as_deref()).map(|p| p.to_string_lossy().into_owned());
+    let programs = program_views(st).await;
     Ok(HostSettingsView {
         projects_dir,
         settings,
@@ -46,6 +227,8 @@ pub(crate) async fn view(st: &AppState) -> Result<HostSettingsView, ApiError> {
         token_present,
         token_error,
         remote: st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        programs,
+        network: network_view(st),
     })
 }
 
@@ -70,17 +253,64 @@ pub(crate) async fn put_settings(
     }
     st.store.put_host_settings(&next).await?;
     st.refresh_owner().await;
-    if patch.agent_program.is_some() {
-        st.refresh_programs().await;
-        // The checks looked for the old program: the next look runs them again.
-        *st.checks.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    }
     if patch.remote_access.is_some() {
         crate::remote::apply_locked(&st).await;
     }
     drop(guard);
+    // Get started's last step: the default agent was picked.
     if patch.default_agent.is_some() {
         crate::setup::confirm_default_agent(&st).await?;
     }
+    // Another agent program: what the checks found (logins, the agents offered) is out of date.
+    if patch.claude_program.is_some() || patch.codex_program.is_some() || patch.devin_program.is_some() {
+        let st = st.clone();
+        tokio::spawn(async move {
+            crate::checks::run_host_checks(&st).await;
+        });
+    }
     Ok(Json(view(&st).await?))
+}
+
+/// Saves Settings → Network (`network.json`); it applies when pdtd next starts.
+pub(crate) async fn put_network(
+    State(st): State<AppState>,
+    payload: Result<Json<NetworkSettings>, JsonRejection>,
+) -> Result<Json<HostSettingsView>, ApiError> {
+    let Json(next) = payload?;
+    let next = next.validated()?;
+    let guard = st.settings_lock.lock().await;
+    let runs = st.store.get_host_settings().await?.run_ports;
+    if let Some(p) = next.port
+        && (runs.start..=runs.end).contains(&p)
+    {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            format!("port {p} is in the runs' port range ({}–{}); pick one outside it", runs.start, runs.end),
+        ));
+    }
+    let path = network_path(&st.data_dir);
+    let tmp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(&next).expect("network settings serialize");
+    std::fs::write(&tmp, bytes)
+        .and_then(|()| std::fs::rename(&tmp, &path))
+        .map_err(|e| ApiError::internal(format!("saving {}: {e}", path.display())))?;
+    drop(guard);
+    tracing::info!(port = ?next.port, hosts = ?next.allowed_hosts, "network settings saved; they apply after a restart");
+    Ok(Json(view(&st).await?))
+}
+
+/// Restart now (Settings → Network): pdtd exits and pdt-host starts it again, with the new network settings. Only
+/// under pdt-host; a pdtd started any other way would just stop.
+pub(crate) async fn post_restart(State(st): State<AppState>) -> Result<StatusCode, ApiError> {
+    if !st.host_env.supervised {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "not_supervised",
+            "this PDT wasn't started by its host supervisor, so it can't restart itself: stop it and start it again",
+        ));
+    }
+    tracing::info!("restart requested from Settings");
+    st.shutdown.notify_one();
+    Ok(StatusCode::ACCEPTED)
 }

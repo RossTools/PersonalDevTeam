@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Todo } from '../api/gen/Todo';
-import { addDays, defaultRecurrence, dueLabel, dueState, grouped, inAnHour, localDay, moveToToday, positionFor, quickPicks, repeatPresets, repeatText, shown, weekdayOf, weekendPick } from './model';
+import { addDays, bodyPreview, defaultRecurrence, dueLabel, dueState, grouped, inAnHour, localDay, moveToToday, positionFor, quickPicks, repeatPresets, repeatText, shown, weekdayOf, weekendPick } from './model';
 
 function todo(id: string, position: number, more: Partial<Todo> = {}): Todo {
   return {
     id, title: id.toUpperCase(), position, done: false, projectId: null, ticketId: null, createdAt: 1, updatedAt: 1,
-    doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null, dueOn: null, dueTime: null, recurrence: null, ...more,
+    doneAt: null, projectKey: null, ticketKey: null, ticketTitle: null, body: '', dueOn: null, dueTime: null, recurrence: null, ...more,
   };
 }
 
@@ -162,5 +162,15 @@ describe('repeatText', () => {
       ['Every 2 weeks', 'on Wed', { every: 'week', interval: 2, days: [3] }],
       ['Every month', 'on the 28th', { every: 'month', day: 28 }],
     ]);
+  });
+});
+
+describe('bodyPreview', () => {
+  it('is the first line with text, without its Markdown marks', () => {
+    expect(bodyPreview('')).toBe('');
+    expect(bodyPreview('\n\n## Bring the **forms**\nmore')).toBe('Bring the forms');
+    expect(bodyPreview('- [ ] call `Sam`')).toBe('call Sam');
+    expect(bodyPreview('1. first\n2. second')).toBe('first');
+    expect(bodyPreview('> quoted')).toBe('quoted');
   });
 });

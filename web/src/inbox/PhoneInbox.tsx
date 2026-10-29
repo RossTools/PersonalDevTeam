@@ -161,7 +161,7 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
   };
 
   if (updateId) {
-    return update ? <UpdateView update={update} onOpenTarget={onOpenTarget} /> : <EmptyState>This update is gone.</EmptyState>;
+    return update ? <UpdateView update={update} onOpenTarget={onOpenTarget} onCleared={onList} /> : <EmptyState>This update is gone.</EmptyState>;
   }
   if (!item) {
     if (loading) return <Skeleton lines={8} className="p-4" />;

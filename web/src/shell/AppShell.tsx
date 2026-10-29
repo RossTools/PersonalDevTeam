@@ -19,12 +19,14 @@ import { AddProjectDialog } from '../projects/AddProjectDialog';
 import type { AddProjectMode } from '../projects/AddProjectForm';
 import { SetupPage } from '../setup/SetupPage';
 import { choiceFor, newSession, type Choice } from '../sessions/newSession';
-import { PROJECT_SECTIONS, ProjectPage } from '../projects/ProjectPage';
+import { ProjectPage } from '../projects/ProjectPage';
 import { FileViewer, FolderList, FolderTree, useFolderView, type FolderViewState } from '../files/FolderView';
 import { RunView } from '../runs/RunView';
 import { SessionView } from '../sessions/SessionView';
-import { HOST_SECTIONS, HostSettingsPage } from '../host/HostSettingsPage';
+import { HostSettingsPage } from '../host/HostSettingsPage';
 import { sectionLabel } from '../common/SettingsScreens';
+import { HOST_SECTION_LABELS, PROJECT_SECTION_LABELS } from '../common/settingsSections';
+import { SettingsNav } from './SettingsNav';
 import { SecretsPage } from '../secrets/SecretsPage';
 import { AllConnectionsPage } from '../plugins/AllConnectionsPage';
 import { PluginPage } from '../plugins/PluginPage';
@@ -72,7 +74,7 @@ import { triageTitle } from '../inbox/model';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useDevTitle } from './useInstance';
 import { NotificationSettingsPage } from '../notifications/NotificationSettingsPage';
-import { useReadAllUpdates, useUpdates } from '../notifications/queries';
+import { useReadAllUpdates, useClearUpdate, useClearAllUpdates, useUpdates } from '../notifications/queries';
 import { useNotificationStream } from '../notifications/useNotificationStream';
 import { useAttention, useFaviconBadge, type Attention } from '../notifications/attention';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
@@ -101,22 +103,6 @@ const NOTIFICATIONS = 'notifications';
 const SECRETS = 'secrets';
 
 const go = (r: Route, opts?: { replace?: boolean }) => navigate(routePath(r), opts);
-
-/** Brings a Settings section (named in the path) into view once the page has drawn it. */
-function useScrollToSection(section: string | null, page: string) {
-  useEffect(() => {
-    if (!section) return;
-    let tries = 0;
-    let timer = 0;
-    const find = () => {
-      const hit = [...document.querySelectorAll('main section')].find((s) => sectionSlug(s.querySelector('h3')?.textContent ?? '') === section);
-      if (hit) hit.scrollIntoView?.({ block: 'start' });
-      else if (tries++ < 50) timer = window.setTimeout(find, 100);
-    };
-    find();
-    return () => window.clearTimeout(timer);
-  }, [section, page]);
-}
 
 const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
 
@@ -191,6 +177,8 @@ export function AppShell() {
   const [reportingBug, setReportingBug] = useState(false);
   const [rightOpen, setRightOpen] = useRightPanelOpen();
   const [todosSheetOpen, setTodosSheetOpen] = useState(false);
+  // A todo is open in the phone's sheet: it takes the whole screen (PDT-227).
+  const [todoOpenInSheet, setTodoOpenInSheet] = useState(false);
   // Bumped when Ctrl+] t opens the todo list: its add box takes the focus.
   const [todoAddSeq, setTodoAddSeq] = useState(0);
   // A todo a due reminder opened (PDT-140).
@@ -467,13 +455,7 @@ export function AppShell() {
   const label = VIEWS.find((v) => v.id === view)!.label;
   const current = ws.currentInfo;
   const settingsProject = settingsPage.kind === 'project' ? ws.projects.find((p) => p.key === settingsPage.key) ?? null : null;
-  // The Settings list's current row: a project's id, connections, or null (this host).
-  const settingsProjectId = settingsProject?.id
-    ?? (settingsPage.kind === 'plugins' ? PLUGINS : settingsPage.kind === 'connections' ? CONNECTIONS : settingsPage.kind === 'secrets' ? SECRETS
-      : settingsPage.kind === 'notifications' ? NOTIFICATIONS : null);
   const section = settingsPage.kind === 'host' || settingsPage.kind === 'project' ? settingsPage.section : null;
-  // On a phone a section is a screen of its own; on a desktop the page scrolls to it.
-  useScrollToSection(view === 'settings' && !phone ? section : null, settingsProjectId ?? '');
   const showSection = (slug: string) => {
     if (settingsPage.kind === 'host' || settingsPage.kind === 'project') go({ view: 'settings', page: { ...settingsPage, section: slug } });
   };
@@ -522,6 +504,8 @@ export function AppShell() {
   // Notifications (PDT-108): the Inbox's Updates, the stream's toasts and desktop notifications, and where a click goes.
   const updates = useUpdates();
   const readAllUpdates = useReadAllUpdates();
+  const clearUpdate = useClearUpdate();
+  const clearAllUpdates = useClearAllUpdates();
   const unreadUpdates = (updates.data?.unreadUpdates ?? 0) > 0;
   // The PM's unread reply: no dot for the conversation on screen (on a phone `/pm` is the list).
   const pmShown = route.view !== 'pm' || (phone && pmSelection === 'current') ? null
@@ -633,7 +617,8 @@ export function AppShell() {
   ) : view === 'inbox' ? (
     <InboxList items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} loading={inbox.isLoading}
       onSelect={(id) => { setInboxId(id); setSheetOpen(false); }}
-      onReadAll={() => readAllUpdates.mutate()} onSettings={() => showProjectSettings(NOTIFICATIONS)} />
+      onReadAll={() => readAllUpdates.mutate()} onClear={(id) => clearUpdate.mutate(id)} onClearAll={() => clearAllUpdates.mutate()}
+      onSettings={() => showProjectSettings(NOTIFICATIONS)} />
   ) : view === 'pm' ? (
     <PmList selection={pmSelection} onSelect={(sel) => { setPmSelection(sel); setSheetOpen(false); }} onNew={newPmSession} />
   ) : view === 'notes' ? (
@@ -654,34 +639,14 @@ export function AppShell() {
       </>
     )
   ) : (
-    <nav aria-label="Settings sections" className="flex flex-col gap-0.5 py-1">
-      <h2 className={listHeading}>{label}</h2>
-      <List aria-label="Host" onAction={(id) => showProjectSettings(id === PLUGINS || id === CONNECTIONS || id === SECRETS || id === NOTIFICATIONS ? id : null)}>
-        <ListRow id="host" title="This host" current={!phone && settingsProjectId === null} />
-        <ListRow id={NOTIFICATIONS} title="Notifications" current={settingsProjectId === NOTIFICATIONS} />
-        <ListRow id={PLUGINS} title="Plugins" current={settingsProjectId === PLUGINS} />
-        <ListRow id={CONNECTIONS} title="All connections" current={settingsProjectId === CONNECTIONS} />
-        <ListRow id={SECRETS} title="Secrets" current={settingsProjectId === SECRETS} />
-      </List>
-      <h3 className="flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">
-        <span className="flex-1">Projects</span>
-        <IconButton label="Add project" size="sm" noTooltip className="size-5" onClick={() => { setSheetOpen(false); setAddingProject(true); }}>
-          <Plus aria-hidden />
-        </IconButton>
-      </h3>
-      <List aria-label="Projects" onAction={(id) => showProjectSettings(id)}>
-        {ws.projects.map((p) => (
-          <ListRow key={p.id} id={p.id} title={p.name} textValue={p.name} current={settingsProjectId === p.id}
-            leading={<ProjectKey projectKey={p.key} />} />
-        ))}
-      </List>
-      {/* A phone's row-sized Add project, under the projects (the heading's ＋ is small for a thumb). */}
-      {phone && (
-        <List aria-label="Add" onAction={() => setAddingProject(true)}>
-          <ListRow id="add-project" title="Add project" leading={<Plus aria-hidden className="size-4 text-muted-foreground" />} />
-        </List>
-      )}
-    </nav>
+    <SettingsNav
+      projects={ws.projects}
+      page={settingsPage}
+      phone={phone}
+      heading={<h2 className={listHeading}>{label}</h2>}
+      onGo={(page) => { go({ view: 'settings', page }); setSheetOpen(false); }}
+      onAddProject={() => { setSheetOpen(false); setAddingProject(true); }}
+    />
   );
   // The phone's screens (PDT-112): a view's top-level screen (its list, for most views) or a detail screen with ←.
   const detail = isDetail(route);
@@ -754,8 +719,8 @@ export function AppShell() {
   : label;
   function settingsTitle(): string {
     switch (settingsPage.kind) {
-      case 'host': return (section && sectionLabel(HOST_SECTIONS, section)) || 'This host';
-      case 'project': return (section && sectionLabel(PROJECT_SECTIONS, section)) || (settingsProject?.name ?? settingsPage.key);
+      case 'host': return (section && sectionLabel(HOST_SECTION_LABELS, section)) || 'This host';
+      case 'project': return (section && sectionLabel(PROJECT_SECTION_LABELS, section)) || (settingsProject?.name ?? settingsPage.key);
       case 'plugins': return settingsPage.id ? pluginTitle(settingsPage.id) : 'Plugins';
       case 'connections': return 'All connections';
       case 'secrets': return 'Secrets';
@@ -823,13 +788,14 @@ export function AppShell() {
             theme={theme}
             onTheme={setTheme}
           />
-          <Sheet side="right" title="Todos" hideTitle open={todosSheetOpen} onOpenChange={setTodosSheetOpen} className="flex w-80 max-w-[90vw] flex-col">
+          <Sheet side="right" title="Todos" hideTitle open={todosSheetOpen} onOpenChange={setTodosSheetOpen} className={cn('flex flex-col', todoOpenInSheet ? 'w-screen max-w-none' : 'w-80 max-w-[90vw]')}>
             <RightPanelContent
               projectId={todoProjectId}
               projects={ws.projects}
               focusTodo={todoFocus}
               onTodoFocused={clearTodoFocus}
               focusAddSeq={todoAddSeq}
+              onTodoOpen={setTodoOpenInSheet}
             />
           </Sheet>
           {pickerSheet && (
@@ -939,7 +905,8 @@ export function AppShell() {
             ) : phoneList && view === 'inbox' ? (
               <PhoneInboxList items={inboxItems} updates={updates.data?.items ?? []} loading={inbox.isLoading}
                 onOpen={(id) => go({ view: 'inbox', itemId: id })}
-                onReadAll={() => readAllUpdates.mutate()} onSettings={() => showProjectSettings(NOTIFICATIONS)} />
+                onReadAll={() => readAllUpdates.mutate()} onClear={(id) => clearUpdate.mutate(id)} onClearAll={() => clearAllUpdates.mutate()}
+                onSettings={() => showProjectSettings(NOTIFICATIONS)} />
             ) : phoneList ? (
               <div className="flex-1 overflow-auto px-1">
                 {list}
@@ -983,7 +950,8 @@ export function AppShell() {
             ) : view === 'settings' ? (
               settingsPage.kind === 'project' ? (
                 settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => (phone ? go(viewRoute('settings'), { replace: true }) : showProjectSettings(null))}
-                  drill={phone} section={section} onSection={showSection} />
+                  drill={phone} section={section} onSection={showSection}
+                  onKeyChange={(key) => go({ view: 'settings', page: { kind: 'project', key, section } }, { replace: true })} />
                   : ws.projectsLoaded ? <EmptyState>No project has the key {settingsPage.key}.</EmptyState> : <Skeleton lines={8} className="p-4" />
               ) : settingsPage.kind === 'plugins' ? (
                 settingsPage.id

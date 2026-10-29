@@ -37,32 +37,39 @@ describe('Jira and Buildkite', () => {
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ name: 'work', kind: 'jira', url: 'https://acme.atlassian.net', config: { email: 'me@acme.com' } });
   });
 
-  it('links the project to Jira and Buildkite in its settings, a form made from what each declares', async () => {
+  it('links the project to Jira and Buildkite in its settings, each field saved as it changes', async () => {
+    let current = { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, integrations: {} as Record<string, unknown> };
     const calls = stubApi({
-      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, integrations: {} },
+      'GET /api/projects/p/settings': () => current,
       'GET /api/projects/p/run-config': config,
       'GET /api/connections': [conn('work-jira', 'jira'), conn('bk', 'buildkite'), conn('alerts', 'discord_webhook')],
-      'PUT /api/projects/p/settings': (c) => ({ effectiveCredentials: 'subscription', agentInstructions: null, ...(c.body as object) }),
+      'PUT /api/projects/p/settings': (c) => {
+        const body = c.body as { integrations: Record<string, unknown> };
+        current = { ...current, integrations: { ...current.integrations, ...body.integrations } };
+        return current;
+      },
     });
     renderWithQuery(<ProjectSettingsPanel project={project} />);
     await userEvent.click(await screen.findByRole('button', { name: /Jira connection/ }));
     const options = within(screen.getByRole('listbox')).getAllByRole('option').map((o) => o.textContent);
     expect(options).toEqual(['work-jira']);
     await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'work-jira' }));
-    await userEvent.type(screen.getByRole('textbox', { name: 'Jira issues' }), 'project = ABC');
-    expect(screen.getByRole('textbox', { name: 'Done in Jira' })).toHaveValue('Done');
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    expect(await screen.findByRole('textbox', { name: 'Done in Jira' })).toHaveValue('Done');
+    await userEvent.type(screen.getByRole('textbox', { name: 'Jira issues' }), 'project = ABC{Enter}');
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2));
     await userEvent.click(screen.getByRole('button', { name: /Buildkite connection/ }));
     await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'bk' }));
-    await userEvent.type(screen.getByRole('textbox', { name: 'Pipelines' }), 'app{enter}app-e2e');
-    await userEvent.click(screen.getByRole('button', { name: 'Save integrations' }));
-    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
-    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({
-      agentCredentials: null, runOverrides: null,
-      integrations: {
-        jira: { connection: 'work-jira', scope: 'project = ABC', done: 'Done' },
-        buildkite: { connection: 'bk', pipelines: ['app', 'app-e2e'] },
-      },
-    });
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(3));
+    await userEvent.type(await screen.findByRole('textbox', { name: 'Pipelines' }), 'app{enter}app-e2e');
+    await userEvent.tab();
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(4));
+    expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([
+      { agentCredentials: null, runOverrides: null, integrations: { jira: { connection: 'work-jira', scope: '', done: 'Done' } } },
+      { agentCredentials: null, runOverrides: null, integrations: { jira: { connection: 'work-jira', scope: 'project = ABC', done: 'Done' } } },
+      { agentCredentials: null, runOverrides: null, integrations: { buildkite: { connection: 'bk', pipelines: [] } } },
+      { agentCredentials: null, runOverrides: null, integrations: { buildkite: { connection: 'bk', pipelines: ['app', 'app-e2e'] } } },
+    ]);
   });
 
   it('shows a linked integration\'s settings and unlinks it', async () => {

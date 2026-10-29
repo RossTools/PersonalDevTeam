@@ -44,6 +44,28 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   It polls health every 5 s and reloads when `webBuild` changes from the one it loaded with (a dev instance restarted
   with a rebuilt web/dist; every dev build reports the checked-in version), held back while a modal is open or a focused text
   field holds text (web/src/host/useReloadOnNewBuild.ts).
+- Settings → This host (PDT-231) is a screen per section (Updates, Agents, Network, Remote access, Runs, Projects
+  folder, Appearance, Bug reports, Checks, Danger zone), each with its own path (`/settings/host/<slug>`), and every
+  setting saves as it changes. Settings the environment can set:
+  - **Agent programs** (Agents → Programs): `claudeProgram`, `codexProgram` and `devinProgram` in the host settings
+    (a full path or `~/…`; empty: the one on the PATH). `PDT_CLAUDE_PROGRAM` / `PDT_CODEX_PROGRAM` /
+    `PDT_DEVIN_PROGRAM` win over them; Settings then shows the variable's value read-only with an `env` badge. Each
+    shows whether the program in use was found (`programs` in `GET /api/host/settings`). New sessions, conversations
+    and the checks use a change at once (`AppState::agent_platform`); PDT's Codex app-server keeps its program until
+    pdtd restarts.
+  - **Network**: the port and extra allowed hosts, in `<data dir>/network.json` (not the database: pdtd binds its
+    port before opening it, and pdt-host and the tray need the port too). `PUT /api/host/network` saves them; they
+    apply when pdtd next starts. `PDT_PORT` and `PDT_ALLOWED_HOSTS` win (`network.portFromEnv`,
+    `network.allowedHostsFromEnv`). While the file differs from what pdtd started with, `network.restartNeeded` is
+    true: Settings shows a "Restart PDT to apply" banner and a `restart` badge on Network in the sidebar. Restart now
+    (`POST /api/host/restart`) asks pdtd to exit and pdt-host starts it again; a pdtd not under pdt-host answers 409
+    `not_supervised` and the banner says to restart it by hand. On a new port the page reopens itself there when it
+    was opened on this machine.
+  - pdt-host passes the setting's port on as `PDT_PORT` with `PDT_PORT_FROM_SETTING=1`, so pdtd tells it from the
+    user's own `PDT_PORT`. It reads `network.json` again before each start of pdtd; pdtd writes the port it took to
+    `<data dir>/listening-port`, so pdt-host (and the tray, which looks the port up each time) keeps finding a pdtd
+    still running on its old port. The stable instance on a port of its own choosing still takes https 443 for
+    remote access and still counts as the stable instance (`dev: false`).
 - Demo data: `PDT_SEED=demo` (set by the "pdt" run) makes a dev-profile pdtd with no projects create two demo git repos
   in `<data dir>/demo` (branches, a worktree with uncommitted work) and register them with ended sessions, past runs
   and Sample App tickets (ten, plus an "Accounts" parent with three of them as parts) (crates/pdtd/src/seed.rs).
@@ -64,18 +86,17 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   does not bring it back). The state lives on the host, so every browser and phone sees the same.
 - Settings › This host › Setup reopens it. The Sessions sidebar's "Add a project" opens the Add project dialog, and
   the empty main pane links to Get started.
-- "Set a path by hand…" saves an agent's program in the host settings (`agentPrograms`, `agentProgram` in a patch: a
-  full path or `~/…`, blank clears it). `PDT_CLAUDE_PROGRAM`, `PDT_CODEX_PROGRAM` and `PDT_DEVIN_PROGRAM` still win.
-  Sessions, conversations and the checks use the new path at once (`AppState::agent_program`); saving one clears the
-  cached checks. The checks report where each program was found (`path`).
+- "Set a path by hand…" saves an agent's program in the host settings, the same `claudeProgram` / `codexProgram` /
+  `devinProgram` as Settings › This host › Agents › Programs (PDT-231; a `PDT_*_PROGRAM` variable still wins and makes
+  the field read-only), then runs the checks again. The checks report where each program was found (`path`).
 
 ## Remote access and the Host guard
 
-- `PDT_ALLOWED_HOSTS` (comma-separated) adds Host header values accepted beyond `127.0.0.1:<port>`, `localhost:<port>`
-  and `[::1]:<port>` (DNS-rebinding guard). The dev profile also accepts the Vite dev server (`localhost:5173`,
+- `PDT_ALLOWED_HOSTS` (comma-separated), or else Settings → Network's allowed hosts, adds Host header values accepted
+  beyond `127.0.0.1:<port>`, `localhost:<port>` and `[::1]:<port>` (DNS-rebinding guard). The dev profile also accepts the Vite dev server (`localhost:5173`,
   `127.0.0.1:5173`) in its Host/Origin allowlist.
-- Remote access (Host settings) maps the daemon over `tailscale serve --bg`: the stable instance on https 443, any
-  other port (dev, explicit `PDT_PORT`) on https `<its own port>`. With it off, pdtd runs no `tailscale serve` command
+- Remote access (Host settings) maps the daemon over `tailscale serve --bg`: the stable instance on https 443 (on
+  whatever port Settings → Network gives it), any other (dev, explicit `PDT_PORT`) on https `<its own port>`. With it off, pdtd runs no `tailscale serve` command
   (read-only `tailscale status` still runs for the checks); turning it off removes only the mappings that process
   made. `PDT_TAILSCALE_BIN` sets the tailscale CLI path (tests point it at `fake-tailscale` or a missing file so they
   never touch the real Tailscale); otherwise it is found on PATH or in the standard install location.

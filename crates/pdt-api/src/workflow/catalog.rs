@@ -364,6 +364,7 @@ pub fn listed_spec(st: &AppState, id: &str) -> Option<KindSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn catalog() -> &'static Catalog {
         crate::integrations::test_registry().catalog()
@@ -400,6 +401,25 @@ mod tests {
             "{}",
             prop("http.request", "connection")
         );
+    }
+
+    #[test]
+    fn text_fields_say_how_to_edit_them() {
+        let prop = |kind: &str, field: &str| catalog().spec(kind).unwrap().config_schema["properties"][field].clone();
+        assert_eq!(prop("agent", "prompt")["x-format"], "markdown");
+        assert_eq!(prop("gate", "question")["x-format"], "markdown");
+        assert_eq!(prop("notify", "body")["x-format"], "multiline");
+        for (kind, field) in
+            [("command", "input"), ("workflow.call", "input"), ("http.request", "body"), ("end", "output")]
+        {
+            let p = prop(kind, field);
+            assert_eq!((&p["x-format"], &p["x-language"]), (&json!("code"), &json!("json")), "{kind}.{field}: {p}");
+        }
+        let script = prop("command", "script");
+        assert_eq!((&script["x-format"], &script["x-language"]), (&json!("code"), &json!("sh")), "{script}");
+        // A command has a program or a script.
+        let one_of = &catalog().spec("command").unwrap().config_schema["oneOf"];
+        assert_eq!(one_of, &json!([{"required": ["program"]}, {"required": ["script"]}]));
     }
 
     #[test]

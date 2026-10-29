@@ -13,6 +13,7 @@ import type { HostChecks } from './gen/HostChecks';
 import type { HostSettingsPatch } from './gen/HostSettingsPatch';
 import type { SetupPatch } from './gen/SetupPatch';
 import type { SetupView } from './gen/SetupView';
+import type { NetworkSettings } from './gen/NetworkSettings';
 import type { HostSettingsView } from './gen/HostSettingsView';
 import type { Branch } from './gen/Branch';
 import type { NewProject } from './gen/NewProject';
@@ -483,6 +484,11 @@ export const api = {
   hostSettings: () => request<HostSettingsView>('/api/host/settings'),
   saveHostSettings: (p: HostSettingsPatch) =>
     request<HostSettingsView>('/api/host/settings', { method: 'PUT', body: JSON.stringify(p) }),
+  /** Settings → Network (PDT-231): saved now, applied when PDT restarts. */
+  saveNetwork: (n: NetworkSettings) =>
+    request<HostSettingsView>('/api/host/network', { method: 'PUT', body: JSON.stringify(n) }),
+  /** Restart now: pdtd exits and its host supervisor starts it again (409 `not_supervised` without one). */
+  restartHost: () => request<void>('/api/host/restart', { method: 'POST' }),
   refreshRemote: () => request<RemoteStatus>('/api/host/remote/refresh', { method: 'POST' }),
   whoami: () => request<WhoAmI>('/api/host/whoami'),
   updateStatus: () => request<UpdateStatus>('/api/host/update'),
@@ -517,6 +523,8 @@ export const api = {
     request<NotificationList>(`/api/notifications${queryString(q)}`),
   readNotification: (id: string) => request<void>(`/api/notifications/${enc(id)}/read`, { method: 'POST' }),
   readNotifications: (r: ReadAll) => request<void>('/api/notifications/read-all', { method: 'POST', body: JSON.stringify(r) }),
+  clearNotification: (id: string) => request<void>(`/api/notifications/${enc(id)}/clear`, { method: 'POST' }),
+  clearUpdates: () => request<void>('/api/notifications/clear-all', { method: 'POST' }),
   notificationSettings: () => request<KindSetting[]>('/api/notifications/settings'),
   setNotificationSettings: (changes: Record<string, Show | null>) =>
     request<KindSetting[]>('/api/notifications/settings', { method: 'PATCH', body: JSON.stringify(changes) }),
