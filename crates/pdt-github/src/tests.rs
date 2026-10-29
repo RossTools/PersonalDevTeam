@@ -541,6 +541,61 @@ fn issue_pages_are_read_back_to_the_last_issue_seen() {
 }
 
 #[test]
+fn pull_request_lists_are_read_back_to_the_last_look() {
+    let (g, t) = forge();
+    let fork = r#"{"number":7,"title":"Fix typo","body":null,"html_url":"https://github.com/o/r/pull/7",
+      "user":{"login":"al","type":"User"},"author_association":"FIRST_TIME_CONTRIBUTOR","state":"open","draft":true,
+      "head":{"ref":"patch-1","sha":"abc","repo":{"full_name":"al/r"}},"base":{"ref":"main"},
+      "labels":[{"name":"docs"}],"created_at":"2026-10-20T00:00:00Z","updated_at":"2026-10-21T00:00:00Z"}"#;
+    let bot = r#"{"number":6,"title":"Bump x from 1.0.0 to 1.0.1","html_url":"u","state":"closed",
+      "merged_at":"2026-10-19T00:00:00Z","user":{"login":"dependabot[bot]","type":"Bot"},
+      "author_association":"NONE","head":{"ref":"dependabot/x","sha":"def","repo":null},"base":{"ref":"main"},
+      "created_at":"2026-10-18T00:00:00Z","updated_at":"2026-10-19T00:00:00Z"}"#;
+    let list = format!("{API}/repos/o/r/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1");
+    t.ok("GET", &list, &format!("[{fork}, {bot}]"));
+    t.ok("GET", &list, &format!("[{fork}, {bot}]"));
+    let all = g.recent_change_requests("o/r", None).unwrap();
+    let (a, b) = (&all[0], &all[1]);
+    assert_eq!((a.number, a.author.as_str(), a.body.as_str(), a.draft), (7, "al", "", true));
+    assert_eq!((a.head_repo.as_deref(), a.head_branch.as_str(), a.head_sha.as_str()), (Some("al/r"), "patch-1", "abc"));
+    assert_eq!(
+        (a.state, a.collaborator, a.is_bot, a.labels.clone()),
+        (PrState::Open, false, false, vec!["docs".into()])
+    );
+    assert_eq!((b.state, b.is_bot, b.head_repo.as_deref()), (PrState::Merged, true, None));
+    let since = g.recent_change_requests("o/r", Some("2026-10-20T00:00:00Z")).unwrap();
+    assert_eq!(since.iter().map(|p| p.number).collect::<Vec<_>>(), [7], "updated before the last look");
+
+    t.ok("GET", &format!("{API}/repos/o/r/pulls/7"), r#"{"changed_files":2,"additions":10,"deletions":3}"#);
+    let st = g.change_request_stats("o/r", 7).unwrap();
+    assert_eq!((st.changed_files, st.additions, st.deletions), (2, 10, 3));
+}
+
+#[test]
+fn pull_pages_stop_at_the_first_one_updated_before_the_last_look() {
+    let at = |d: u32| format!("2026-10-{d:02}T00:00:00Z");
+    // 150 pull requests, 100 a page; page 1 updated on day 28, page 2 on day 10.
+    let page = |n: u32| -> Result<Vec<Value>, GhError> {
+        let (count, day) = if n == 1 { (100, 28) } else { (50, 10) };
+        Ok((0..count).map(|i| json!({"number": n * 1000 + i, "updated_at": at(day)})).collect())
+    };
+    let mut asked = vec![];
+    let got = read_pull_pages(Some(&at(20)), |n| {
+        asked.push(n);
+        page(n)
+    })
+    .unwrap();
+    assert_eq!((asked.as_slice(), got.len()), (&[1, 2][..], 100));
+    asked.clear();
+    read_pull_pages(None, |n| {
+        asked.push(n);
+        page(n)
+    })
+    .unwrap();
+    assert_eq!(asked, [1], "the first look reads one page");
+}
+
+#[test]
 fn issues_are_read_commented_labelled_and_closed() {
     let (g, t) = forge();
     let one = r#"{"id":901,"number":12,"title":"Crash","body":null,"html_url":"https://github.com/o/r/issues/12",

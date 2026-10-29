@@ -82,7 +82,7 @@ reaches agents only once the user says so.
   an agent other than the PM, an agent's `report_bug`) or `external`: `github.import`, `jira.import` and the Jira
   sensor (pdt-store `create_linked_ticket` always makes it `external`), `create_ticket` from a session that triages
   (the Triage persona, or any agent step of a run an outside event started: pdt-core `workflow::events::UNTRUSTED_EVENTS`,
-  `github.issue.opened` and `webhook.received`), and `ticket.create` in such a run. Requests can't set it.
+  `github.issue.opened`, `github.pull_request.opened`/`.pushed`/`.closed` and `webhook.received`), and `ticket.create` in such a run. Requests can't set it.
   `admitted` (`tickets.admitted_at`) says the user let an external ticket in. The card and the ticket page show a
   badge for every source but `user`: PM, Workflow, External (in the waiting tone until let in, its tooltip says only
   the user can move it on).
@@ -122,7 +122,7 @@ reaches agents only once the user says so.
 The second layer: lower the odds an injection works, and record what outside text reached which agent.
 
 - **Fencing** (pdt-core `fence`): an event type declares the payload fields that hold outside text (`EventType.outside`:
-  `github.issue.opened` `title`, `body`; `webhook.received` `query`, `headers`, `body`; `pr.commented` and
+  `github.issue.opened` and `github.pull_request.*` `title`, `body`; `webhook.received` `query`, `headers`, `body`; `pr.commented` and
   `pr.reviewed` `body`; Jira's `summary`, `description`, a comment's `body`). Wherever a reference to such a field, or
   to something inside one (`{{trigger.body.message}}`), goes to an agent (a node kind's `agent_text`: an `agent`
   step's `prompt`, `session.send`'s `text`), the engine (`engine::fence_input`, pdt-core `resolve_fenced`) puts its
@@ -143,7 +143,7 @@ The second layer: lower the odds an injection works, and record what outside tex
   they started leaves by `skipped` with the reason, an agent step fails with it, and PR comments to the agent skips
   them in its trigger.
 - **Triage cap**: a workflow with an `agent` step started by an outside event (`github.issue.opened`,
-  `webhook.received`) is a triage run. One author's issues start at most `triagePerAuthorHour` of them an hour (default
+  `github.pull_request.*`, `webhook.received`) is a triage run. One author's issues start at most `triagePerAuthorHour` of them an hour (default
   3), one repository's (or webhook's) `triagePerRepoHour` (default 20; Settings → Host, 0 for no cap), counted in
   events that started a run (pdt-store `events_with_runs_since`). Over the cap the run isn't started: a
   `triage.skipped` event (`repo`, `number`, `url`, `author`, the workflow, `cap`: `author` or `repo`, `limit`), and one

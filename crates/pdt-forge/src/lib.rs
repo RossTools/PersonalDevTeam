@@ -126,6 +126,38 @@ pub struct OpenedChangeRequest {
     pub url: String,
 }
 
+/// A change request in a repository's list ([`Forge::recent_change_requests`]): whoever opened it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoChangeRequest {
+    pub number: u32,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub author: String,
+    pub is_bot: bool,
+    /// Its author is an insider on the repository, as on [`ChangeComment`].
+    pub collaborator: bool,
+    /// The repository its branch is in (`owner/name`); None when that is gone (a deleted fork).
+    pub head_repo: Option<String>,
+    pub head_branch: String,
+    pub head_sha: String,
+    pub base_branch: String,
+    pub labels: Vec<String>,
+    pub state: PrState,
+    pub draft: bool,
+    /// The forge's timestamps (RFC 3339, UTC: they sort as text).
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// How big a change request is ([`Forge::change_request_stats`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChangeStats {
+    pub changed_files: u64,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
 /// An issue (not a change request).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Issue {
@@ -297,6 +329,15 @@ pub trait Forge: Send + Sync {
     /// issue `after` ([`Capabilities::issues`], as are the other issue calls).
     fn recent_issues(&self, _repo: &str, _after: Option<u64>) -> Result<Vec<Issue>, ForgeError> {
         unsupported(self.name(), "issues")
+    }
+    /// The change requests of `repo`, whoever opened them, most recently updated first: one page without `since`,
+    /// else back to the first one updated before `since` (a [`RepoChangeRequest::updated_at`]).
+    fn recent_change_requests(&self, _repo: &str, _since: Option<&str>) -> Result<Vec<RepoChangeRequest>, ForgeError> {
+        unsupported(self.name(), "change request lists")
+    }
+    /// How many files, added and deleted lines change request `number` has.
+    fn change_request_stats(&self, _repo: &str, _number: u32) -> Result<ChangeStats, ForgeError> {
+        unsupported(self.name(), "change request lists")
     }
     /// Issue `number`; None when there is none (or the forge can't see it).
     fn issue(&self, _repo: &str, _number: u64) -> Result<Option<IssueDetail>, ForgeError> {
@@ -495,6 +536,10 @@ pub mod testing {
         pub login: Mutex<Option<String>>,
         /// Reads of change requests and issues fail with this (signed out, the forge down).
         pub error: Mutex<Option<String>>,
+        /// Change requests by repo, whoever opened them, most recently updated first ([`Forge::recent_change_requests`]).
+        pub repo_prs: Mutex<HashMap<String, Vec<RepoChangeRequest>>>,
+        /// [`Forge::change_request_stats`] by number (none when unset).
+        pub stats: Mutex<HashMap<u32, ChangeStats>>,
         /// Issues by repo, newest first.
         pub issues: Mutex<HashMap<String, Vec<Issue>>>,
         /// Comments and reviews by change request number.
@@ -533,6 +578,8 @@ pub mod testing {
                 merge_error: Default::default(),
                 login: Default::default(),
                 error: Default::default(),
+                repo_prs: Default::default(),
+                stats: Default::default(),
                 issues: Default::default(),
                 comments: Default::default(),
                 reviews: Default::default(),
@@ -580,6 +627,10 @@ pub mod testing {
         /// Its CI's failed jobs of run `run_id` ([`FakeCi::set_jobs`]).
         pub fn set_jobs(&self, run_id: impl ToString, jobs: &[&str]) {
             self.ci.set_jobs(&run_id.to_string(), jobs);
+        }
+        /// `repo`'s change requests ([`FakeForge::repo_prs`]), most recently updated first.
+        pub fn set_repo_prs(&self, repo: &str, prs: Vec<RepoChangeRequest>) {
+            self.repo_prs.lock().unwrap().insert(repo.into(), prs);
         }
         pub fn set_issues(&self, repo: &str, issues: Vec<Issue>) {
             self.issues.lock().unwrap().insert(repo.into(), issues);
@@ -741,6 +792,22 @@ pub mod testing {
             self.can(|c| c.issues, "issues")?;
             self.failing()?;
             Ok(self.issues.lock().unwrap().get(repo).cloned().unwrap_or_default())
+        }
+        /// All of them, or those updated at or after `since`.
+        fn recent_change_requests(
+            &self,
+            repo: &str,
+            since: Option<&str>,
+        ) -> Result<Vec<RepoChangeRequest>, ForgeError> {
+            self.call(format!("pulls {repo}"));
+            self.failing()?;
+            let all = self.repo_prs.lock().unwrap().get(repo).cloned().unwrap_or_default();
+            Ok(all.into_iter().filter(|p| since.is_none_or(|s| p.updated_at.as_str() >= s)).collect())
+        }
+        fn change_request_stats(&self, repo: &str, number: u32) -> Result<ChangeStats, ForgeError> {
+            self.call(format!("stats {repo} {number}"));
+            self.failing()?;
+            Ok(self.stats.lock().unwrap().get(&number).copied().unwrap_or_default())
         }
         fn change_comments(&self, repo: &str, number: u32) -> Result<Vec<ChangeComment>, ForgeError> {
             self.call(format!("comments {repo} {number}"));

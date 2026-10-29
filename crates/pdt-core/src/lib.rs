@@ -23,6 +23,7 @@ pub mod local_network;
 pub mod mcp;
 pub mod network;
 pub mod notification;
+pub mod outside_pr;
 pub mod overlap;
 pub mod parts;
 pub mod persona;

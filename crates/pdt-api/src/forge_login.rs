@@ -305,6 +305,7 @@ async fn save(
         tokio::spawn(async move {
             crate::refresh_prs(&st).await;
             crate::refresh_issues(&st).await;
+            crate::refresh_pulls(&st).await;
         });
     }
     Ok(())
@@ -353,6 +354,7 @@ pub async fn check(st: &AppState) {
         crate::notifications::kick(st);
         crate::refresh_prs(st).await;
         crate::refresh_issues(st).await;
+        crate::refresh_pulls(st).await;
     }
 }
 
