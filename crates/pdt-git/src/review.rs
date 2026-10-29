@@ -382,6 +382,70 @@ pub fn merge_fast_forward(repo: &Path, branch: &str, base: &str, message: &str) 
     }
 }
 
+/// What [`prepare_merge`] made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreparedMerge {
+    /// `commit` is what `base` (now `old`) becomes: `branch`'s head when `base` hasn't moved since it left, else a merge
+    /// commit of the two. Nothing moved yet: [`advance_branch`] moves `base`.
+    Ready {
+        old: String,
+        commit: String,
+    },
+    Conflict {
+        files: Vec<String>,
+    },
+    BaseDirty {
+        checkout: PathBuf,
+    },
+    Nothing,
+}
+
+/// [`merge_fast_forward`] without moving anything (PDT-245): the commit `base` would become, so it can be pushed to a
+/// remote first and `base` moved only once the remote took it. A merge commit is made with the user's own identity and
+/// `message`; nobody refers to it until `base` does.
+pub fn prepare_merge(repo: &Path, branch: &str, base: &str, message: &str) -> Result<PreparedMerge, GitError> {
+    let preview = merge_preview(repo, branch, base)?;
+    if preview.commits == 0 {
+        return Ok(PreparedMerge::Nothing);
+    }
+    if !preview.conflicts.is_empty() {
+        return Ok(PreparedMerge::Conflict { files: preview.conflicts });
+    }
+    if let Some(dir) = preview.base_checkout.filter(|d| d.is_dir() && preview.base_dirty) {
+        return Ok(PreparedMerge::BaseDirty { checkout: dir });
+    }
+    let old = rev_parse(repo, &head_ref(base)).ok_or_else(|| GitError::UnknownRef(base.to_string()))?;
+    let theirs = rev_parse(repo, &head_ref(branch)).ok_or_else(|| GitError::UnknownRef(branch.to_string()))?;
+    if is_ancestor(repo, &old, &theirs) {
+        return Ok(PreparedMerge::Ready { old, commit: theirs });
+    }
+    let (tree, conflicts) = merge_tree(repo, &old, &theirs)?;
+    if !conflicts.is_empty() {
+        return Ok(PreparedMerge::Conflict { files: conflicts });
+    }
+    let commit = run(repo, &["commit-tree", &tree, "-p", &old, "-p", &theirs, "-m", message])?;
+    Ok(PreparedMerge::Ready { old, commit })
+}
+
+/// Fast-forwards local `branch` from `old` to `commit` (a descendant): in the checkout that has it checked out
+/// (`git merge --ff-only`, which needs it clean), else only the ref. Fails when `branch` is no longer at `old`.
+pub fn advance_branch(repo: &Path, branch: &str, old: &str, commit: &str) -> Result<(), GitError> {
+    let branch_ref = head_ref(branch);
+    if rev_parse(repo, &branch_ref).as_deref() != Some(old) {
+        return Err(GitError::Command(format!("{branch} moved meanwhile")));
+    }
+    let checkout = list_worktrees(repo)?.into_iter().find(|w| w.branch.as_deref() == Some(branch)).map(|w| w.path);
+    match checkout.filter(|d| d.is_dir()) {
+        Some(dir) => {
+            if is_dirty(&dir)? {
+                return Err(GitError::Command(format!("{} has uncommitted changes", dir.display())));
+            }
+            run(&dir, &["merge", "--ff-only", "--quiet", commit]).map(|_| ())
+        }
+        None => run(repo, &["update-ref", &branch_ref, commit, old]).map(|_| ()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,6 +643,39 @@ mod tests {
             panic!("not merged")
         };
         assert_eq!(git(&repo, &["rev-parse", &format!("{commit}^2")]), head);
+        assert_eq!(git(&repo, &["log", "-1", "--format=%s", "main"]), "Merge e");
+    }
+
+    #[test]
+    fn prepares_a_merge_without_moving_the_base_then_advances_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, wt, base) = setup(tmp.path());
+        assert_eq!(prepare_merge(&repo, "feature", "main", "m").unwrap(), PreparedMerge::Nothing);
+        write(&wt, "a.txt", b"one\nTWO\nthree\n");
+        let head = commit_all(&wt, "two");
+        write(&repo, "a.txt", b"dirty\n");
+        assert!(matches!(prepare_merge(&repo, "feature", "main", "m").unwrap(), PreparedMerge::BaseDirty { .. }));
+        assert!(advance_branch(&repo, "main", &base, &head).is_err(), "a dirty checkout is not moved");
+        git(&repo, &["checkout", "--", "a.txt"]);
+        let ready = prepare_merge(&repo, "feature", "main", "m").unwrap();
+        assert_eq!(ready, PreparedMerge::Ready { old: base.clone(), commit: head.clone() }, "a fast-forward");
+        assert_eq!(git(&repo, &["rev-parse", "main"]), base, "nothing moved");
+        assert!(advance_branch(&repo, "main", &head, &head).is_err(), "main is not at the old commit");
+        advance_branch(&repo, "main", &base, &head).unwrap();
+        assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "one\nTWO\nthree\n", "checkout moved");
+
+        // main moved on: a merge commit, made but not referred to until main is advanced (here with no checkout).
+        write(&repo, "d.txt", b"d\n");
+        let moved = commit_all(&repo, "main moves");
+        git(&repo, &["switch", "-q", "-c", "elsewhere"]);
+        write(&wt, "e.txt", b"e\n");
+        let head = commit_all(&wt, "e");
+        let PreparedMerge::Ready { old, commit } = prepare_merge(&repo, "feature", "main", "Merge e").unwrap() else {
+            panic!("not ready")
+        };
+        assert_eq!((old.as_str(), git(&repo, &["rev-parse", "main"])), (moved.as_str(), moved.clone()));
+        assert_eq!(git(&repo, &["rev-parse", &format!("{commit}^2")]), head);
+        advance_branch(&repo, "main", &old, &commit).unwrap();
         assert_eq!(git(&repo, &["log", "-1", "--format=%s", "main"]), "Merge e");
     }
 

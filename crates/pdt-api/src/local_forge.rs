@@ -8,6 +8,13 @@
 //! head, merges it once it is set to merge and CI passed). A run that ends wakes [`run_local_ci_watch`], which reads
 //! the attempt again at once rather than at the next 60 s poll. Its runs are read as a CI provider, [`LocalCi`]
 //! (PDT-242), the local forge's own CI.
+//!
+//! With `[push] remote` (PDT-245) the repository has a plain git remote on any host: the merge commit (or the branch
+//! head, for a fast-forward) is pushed to the remote's base first, and the local base moves only once the remote took
+//! it. A push the remote refuses because it moved on is recovered: fetch, fast-forward the local base, merge it into
+//! the branch (whose new head CI runs on again), and merge once that passes. What can't be recovered is a notice in
+//! the Inbox, and the change request waits for the next Merge. With `branches`, each ticket branch is pushed too as it
+//! moves. Git uses the user's own credentials; PDT stores none.
 
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
@@ -16,11 +23,14 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::forge::ForgeNotes;
+use pdt_core::inbox::{InboxGroup, InboxItem, InboxKind, InboxStatus};
 use pdt_core::pr::{CiJob, CiRun, CiState, LOCAL_CI, Mergeable, PrState};
+use pdt_core::runconfig::PushDef;
+use pdt_core::ticket::Actor;
 use pdt_forge::{
     Capabilities, ChangeRequest, CiCapabilities, CiConfig, CiProvider, Forge, ForgeError, MergeSettings, MergeStrategy,
 };
-use pdt_store::{LocalChange, Store};
+use pdt_store::{AttemptInfo, LocalChange, Store};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -29,12 +39,20 @@ use std::time::Duration;
 /// The longest one CI run may take before it is stopped and fails.
 const CI_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
 
+/// The longest a push to (or a fetch from) the remote may take.
+const REMOTE_LIMIT: Duration = Duration::from_secs(2 * 60);
+
+/// How many times a change request's refused push is recovered before PDT asks the user instead.
+const MAX_RECOVERIES: u32 = 3;
+
 /// What every local-forge project shares: the CI runs going on in this pdtd, and the wake-up when one ends.
 pub(crate) struct LocalCiState {
     /// Each running CI process by run id, with the signal that stops it.
     live: Mutex<HashMap<i64, Arc<tokio::sync::Notify>>>,
     /// One change request moves on at a time (two reads at once would open two, or start CI twice).
     step: tokio::sync::Mutex<()>,
+    /// How many refused pushes each change request recovered from, by id (PDT-245).
+    recoveries: Mutex<HashMap<i64, u32>>,
     /// (project, branch) of each run that ended.
     ended: tokio::sync::mpsc::UnboundedSender<(String, String)>,
     ended_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<(String, String)>>>,
@@ -43,7 +61,13 @@ pub(crate) struct LocalCiState {
 impl Default for LocalCiState {
     fn default() -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        LocalCiState { live: Default::default(), step: Default::default(), ended: tx, ended_rx: Mutex::new(Some(rx)) }
+        LocalCiState {
+            live: Default::default(),
+            step: Default::default(),
+            recoveries: Default::default(),
+            ended: tx,
+            ended_rx: Mutex::new(Some(rx)),
+        }
     }
 }
 
@@ -51,10 +75,15 @@ impl LocalCiState {
     fn live(&self) -> std::sync::MutexGuard<'_, HashMap<i64, Arc<tokio::sync::Notify>>> {
         self.live.lock().unwrap_or_else(|e| e.into_inner())
     }
+
+    fn recoveries(&self) -> std::sync::MutexGuard<'_, HashMap<i64, u32>> {
+        self.recoveries.lock().unwrap_or_else(|e| e.into_inner())
+    }
 }
 
 /// The local forge of one project.
 pub(crate) struct LocalForge {
+    st: AppState,
     store: Store,
     rt: tokio::runtime::Handle,
     ci: Arc<LocalCiState>,
@@ -62,6 +91,8 @@ pub(crate) struct LocalForge {
     repo: PathBuf,
     /// The `[ci]` command; None: no CI, so a change request merges as soon as it is set to.
     command: Option<String>,
+    /// `[push]`: the remote the base is pushed to on merge; None: it pushes nowhere.
+    push: Option<PushDef>,
     logs: PathBuf,
     port: u16,
     /// The user's login PATH, so the command finds what a terminal would.
@@ -90,14 +121,22 @@ struct Stepped {
 }
 
 impl LocalForge {
-    pub(crate) fn new(st: &AppState, project_id: &str, repo_path: &str, command: Option<String>) -> Self {
+    pub(crate) fn new(
+        st: &AppState,
+        project_id: &str,
+        repo_path: &str,
+        command: Option<String>,
+        push: Option<PushDef>,
+    ) -> Self {
         LocalForge {
+            st: st.clone(),
             store: st.store.clone(),
             rt: tokio::runtime::Handle::current(),
             ci: st.local_ci.clone(),
             project_id: project_id.to_string(),
             repo: PathBuf::from(repo_path),
             command,
+            push,
             logs: st.data_dir.join("local-ci"),
             port: st.listen_port,
             path: st.platform.login_path.clone(),
@@ -144,6 +183,7 @@ impl LocalForge {
                 }
                 if c.head_sha != head {
                     self.store.set_local_change_head(c.id, &head).await.map_err(failed)?;
+                    self.push_branch(branch);
                 }
                 LocalChange { head_sha: head.clone(), ..c }
             }
@@ -165,6 +205,7 @@ impl LocalForge {
                     .await
                     .map_err(failed)?;
                 tracing::info!(ticket = %attempt.ticket_key, number = c.number, "opened a local change request");
+                self.push_branch(branch);
                 c
             }
         };
@@ -175,6 +216,16 @@ impl LocalForge {
             (Some(_), None) => None,
             (None, _) => Some(CiState::Passed),
         };
+        if change.auto_merge
+            && mergeable == Mergeable::Mergeable
+            && ci == Some(CiState::Passed)
+            && let Some(push) = &self.push
+        {
+            let message = format!("Merge {branch}: {}", change.title);
+            // Merged or not, the stored change request has the news (merged, or no longer set to merge).
+            self.merge_and_push(&attempt, &change, push, &message).await?;
+            return self.reread(branch, mergeable).await;
+        }
         if change.auto_merge && mergeable == Mergeable::Mergeable && ci == Some(CiState::Passed) {
             let message = format!("Merge {branch}: {}", change.title);
             let (repo, b, base) = (self.repo.clone(), branch.to_string(), change.base_branch.clone());
@@ -203,6 +254,207 @@ impl LocalForge {
         match self.store.local_change_for_branch(&self.project_id, branch).await.map_err(failed)? {
             Some(c) => Ok(Some(self.stepped(c, mergeable).await)),
             None => Ok(None),
+        }
+    }
+
+    /// Pushes `branch` to the remote in the background when `[push] branches` asks for it (a backup, or for CI that
+    /// watches pushed branches). The agent may rewrite its branch, so it is forced; a failure is only logged.
+    fn push_branch(&self, branch: &str) {
+        let Some(push) = self.push.clone().filter(|p| p.branches) else { return };
+        let (repo, spec) = (self.repo.clone(), format!("+refs/heads/{branch}:refs/heads/{branch}"));
+        self.rt.spawn_blocking(move || {
+            if let Err(e) = pdt_git::push(&repo, &push.remote, &[&spec], REMOTE_LIMIT) {
+                tracing::warn!(remote = %push.remote, %spec, error = %e, "could not push a ticket branch");
+            }
+        });
+    }
+
+    /// Merges the change request by way of the remote: the commit its base becomes is pushed there first, and the local
+    /// base moves only once the remote took it. A refused push is recovered ([`Self::recover`]).
+    async fn merge_and_push(
+        &self,
+        attempt: &AttemptInfo,
+        change: &LocalChange,
+        push: &PushDef,
+        message: &str,
+    ) -> Result<(), ForgeError> {
+        let (repo, b, base, m) =
+            (self.repo.clone(), change.branch.clone(), change.base_branch.clone(), message.to_string());
+        let prepared =
+            tokio::task::spawn_blocking(move || pdt_git::prepare_merge(&repo, &b, &base, &m)).await.map_err(failed)?;
+        let (old, commit) = match prepared {
+            Ok(pdt_git::PreparedMerge::Ready { old, commit }) => (old, commit),
+            // Conflicts are the agent's (the poller tells it); a dirty base checkout, the user's.
+            other => {
+                tracing::warn!(ticket = %attempt.ticket_key, outcome = ?other, "could not merge a local change request");
+                return Ok(());
+            }
+        };
+        let base = &change.base_branch;
+        let (repo, remote, spec) = (self.repo.clone(), push.remote.clone(), format!("{commit}:refs/heads/{base}"));
+        let pushed = tokio::task::spawn_blocking(move || pdt_git::push(&repo, &remote, &[&spec], REMOTE_LIMIT))
+            .await
+            .map_err(failed)?;
+        match pushed {
+            Ok(pdt_git::PushOutcome::Pushed) => {}
+            Ok(pdt_git::PushOutcome::Rejected(why)) => {
+                self.recover(attempt, change, push, &why).await?;
+                return Ok(());
+            }
+            Err(e) => {
+                let text = format!(
+                    "{SHORT_NAME} could not push `{base}` to the remote `{}` for change request #{} ({}): {e}\n\n\
+                     Git pushes with your own credentials (ssh keys or a credential helper) and can't ask for them. \
+                     Fix the remote or the credentials, then Merge again.",
+                    push.remote, change.number, change.branch
+                );
+                self.give_up(attempt, change, "push-failed", "Could not push to the remote", text).await;
+                return Ok(());
+            }
+        }
+        let (repo, base_c, old_c, commit_c) = (self.repo.clone(), base.clone(), old.clone(), commit.clone());
+        let advanced = tokio::task::spawn_blocking(move || pdt_git::advance_branch(&repo, &base_c, &old_c, &commit_c))
+            .await
+            .map_err(failed)?;
+        if let Err(e) = advanced {
+            // The remote has the merge; the local base catches up by hand (a pull), after which the change is merged.
+            let text = format!(
+                "{SHORT_NAME} pushed change request #{} ({}) to `{base}` on the remote `{}`, but could not move the \
+                 local `{base}` to it: {e}\n\nPull `{base}` from `{}` in the project's checkout.",
+                change.number, change.branch, push.remote, push.remote
+            );
+            self.give_up(attempt, change, "advance-failed", "Merged on the remote, not here", text).await;
+            return Ok(());
+        }
+        self.store.end_local_change(change.id, PrState::Merged, &change.head_sha, now_ms()).await.map_err(failed)?;
+        self.ci.recoveries().remove(&change.id);
+        tracing::info!(ticket = %attempt.ticket_key, number = change.number, commit = %commit, remote = %push.remote,
+            "merged a local change request and pushed it");
+        Ok(())
+    }
+
+    /// The remote refused the push because its base moved on: fetch it, fast-forward the local base to it and merge
+    /// that into the branch, whose new head CI runs on again before the merge is tried again. What can't be done this
+    /// way (the bases diverged, a dirty checkout, too many tries) is a notice for the user.
+    async fn recover(
+        &self,
+        attempt: &AttemptInfo,
+        change: &LocalChange,
+        push: &PushDef,
+        why: &str,
+    ) -> Result<(), ForgeError> {
+        let (base, branch, remote) = (&change.base_branch, &change.branch, &push.remote);
+        let tries = {
+            let mut r = self.ci.recoveries();
+            let n = r.entry(change.id).or_default();
+            *n += 1;
+            *n
+        };
+        if tries > MAX_RECOVERIES {
+            let text = format!(
+                "The remote `{remote}` refused change request #{} ({branch}) {MAX_RECOVERIES} times: its `{base}` \
+                 keeps moving on.\n\n{why}\n\nMerge again to try once more.",
+                change.number
+            );
+            self.give_up(attempt, change, "push-rejected", "The remote keeps refusing the merge", text).await;
+            return Ok(());
+        }
+        tracing::info!(ticket = %attempt.ticket_key, number = change.number, %remote, "the remote moved on; catching up");
+        let (repo, r, b) = (self.repo.clone(), remote.clone(), base.clone());
+        let caught_up = tokio::task::spawn_blocking(move || catch_up(&repo, &r, &b)).await.map_err(failed)?;
+        let tip = match caught_up {
+            Ok(tip) => tip,
+            Err(e) => {
+                let text = format!(
+                    "The remote `{remote}` refused change request #{} ({branch}) because its `{base}` moved on, and \
+                     {SHORT_NAME} could not catch up with it: {e}\n\nBring the local `{base}` and `{remote}/{base}` \
+                     together by hand (pull, then push), then Merge again.",
+                    change.number
+                );
+                self.give_up(attempt, change, "catch-up-failed", "Could not catch up with the remote", text).await;
+                return Ok(());
+            }
+        };
+        let message = format!("Merge {base} into {branch}");
+        let (repo, b, br) = (self.repo.clone(), base.clone(), branch.clone());
+        // `base` into `branch`: in the attempt's worktree, which has the branch checked out (it must be clean).
+        let merged = tokio::task::spawn_blocking(move || pdt_git::merge_local(&repo, &b, &br, &message, false))
+            .await
+            .map_err(failed)?;
+        let note = match merged {
+            Ok(pdt_git::MergeOutcome::Merged { .. }) => format!(
+                "`{base}` on the remote `{remote}` had moved on (to {}), so {SHORT_NAME} merged it into the branch; CI \
+                 runs again before change request #{} merges.",
+                short(&tip),
+                change.number
+            ),
+            Ok(pdt_git::MergeOutcome::Nothing) => return Ok(()),
+            // The next read finds the conflict and tells the agent, as for any conflict with the base.
+            Ok(pdt_git::MergeOutcome::Conflict { .. }) => format!(
+                "`{base}` on the remote `{remote}` had moved on (to {}) and conflicts with the branch: merge `{base}` \
+                 in and resolve it; change request #{} then merges once CI passes.",
+                short(&tip),
+                change.number
+            ),
+            Ok(pdt_git::MergeOutcome::BaseDirty { checkout }) => {
+                let text = format!(
+                    "`{base}` on the remote `{remote}` moved on, and {SHORT_NAME} could not merge it into {branch}: \
+                     its worktree ({}) has uncommitted changes. Commit them (or merge `{base}` in), then Merge again.",
+                    checkout.display()
+                );
+                self.give_up(attempt, change, "worktree-dirty", "Could not catch up with the remote", text).await;
+                return Ok(());
+            }
+            Err(e) => {
+                let text = format!(
+                    "`{base}` on the remote `{remote}` moved on, and {SHORT_NAME} could not merge it into {branch}: {e}"
+                );
+                self.give_up(attempt, change, "merge-failed", "Could not catch up with the remote", text).await;
+                return Ok(());
+            }
+        };
+        if let Err(e) = self.store.add_comment_by(&attempt.ticket_id, &note, Actor::System, None, now_ms()).await {
+            tracing::warn!(ticket = %attempt.ticket_key, error = %e, "could not note catching up with the remote");
+        }
+        // Read the attempt again at once: CI starts on the new head.
+        let _ = self.ci.ended.send((self.project_id.clone(), branch.clone()));
+        Ok(())
+    }
+
+    /// Stops trying to merge `change` (it waits for the next Merge) and tells the user in the Inbox, once per head and
+    /// `key`. It closes once the attempt ends.
+    async fn give_up(&self, attempt: &AttemptInfo, change: &LocalChange, key: &str, title: &str, text: String) {
+        tracing::warn!(ticket = %attempt.ticket_key, number = change.number, %key, %text, "a local merge needs the user");
+        self.ci.recoveries().remove(&change.id);
+        if let Err(e) = self.store.set_local_change_auto_merge(change.id, false).await {
+            tracing::warn!(ticket = %attempt.ticket_key, error = %e, "could not stop a local merge");
+        }
+        let item = InboxItem {
+            id: uuid::Uuid::now_v7().to_string(),
+            kind: InboxKind::Notice,
+            group: InboxGroup::Notice,
+            status: InboxStatus::Open,
+            project_id: Some(attempt.project_id.clone()),
+            ticket_id: Some(attempt.ticket_id.clone()),
+            ticket_key: None,
+            ticket_title: None,
+            attempt_id: Some(attempt.attempt.id.clone()),
+            session_id: None,
+            run_id: None,
+            step_id: None,
+            persona_id: None,
+            persona_name: None,
+            title: format!("{title}: change request #{}", change.number),
+            body: serde_json::json!({"notice": null, "key": key, "text": text}),
+            choices: vec![],
+            resolution: serde_json::Value::Null,
+            created_at: now_ms(),
+            resolved_at: None,
+        };
+        let dedupe = format!("local-push:{}:{}:{key}", attempt.attempt.id, change.head_sha);
+        match self.store.add_inbox_item_once(&item, &dedupe).await {
+            Ok(_) => crate::notifications::kick(&self.st),
+            Err(e) => tracing::warn!(ticket = %attempt.ticket_key, error = %e, "could not put a notice in the Inbox"),
         }
     }
 
@@ -253,6 +505,29 @@ impl LocalForge {
         self.rt.spawn(job.run(stop));
         Ok(Some(CiState::Running))
     }
+}
+
+fn short(sha: &str) -> &str {
+    sha.get(..8).unwrap_or(sha)
+}
+
+/// Fetches `remote`'s `base` and fast-forwards the local `base` to it; the remote's tip. Err when they diverged (the
+/// local base has commits the remote lacks) or the local base can't move.
+fn catch_up(repo: &std::path::Path, remote: &str, base: &str) -> Result<String, String> {
+    let tracking = format!("refs/remotes/{remote}/{base}");
+    pdt_git::fetch(repo, remote, &format!("+refs/heads/{base}:{tracking}"), REMOTE_LIMIT).map_err(|e| e.to_string())?;
+    let tip = pdt_git::rev_parse(repo, &tracking).ok_or_else(|| format!("`{remote}` has no `{base}`"))?;
+    let old = pdt_git::rev_parse(repo, &format!("refs/heads/{base}")).ok_or_else(|| format!("no local `{base}`"))?;
+    if old == tip || pdt_git::is_ancestor(repo, &tip, &old) {
+        return Ok(tip);
+    }
+    if !pdt_git::is_ancestor(repo, &old, &tip) {
+        return Err(format!(
+            "the local `{base}` and `{remote}/{base}` have diverged (each has commits the other lacks)"
+        ));
+    }
+    pdt_git::advance_branch(repo, base, &old, &tip).map_err(|e| e.to_string())?;
+    Ok(tip)
 }
 
 /// One CI run going on.
@@ -367,6 +642,20 @@ impl Forge for LocalForge {
 
     fn agent_notes(&self) -> ForgeNotes {
         let api = format!("http://127.0.0.1:{}/api", self.port);
+        if let Some(push) = &self.push {
+            let ci = match &self.command {
+                Some(c) => format!(
+                    " runs its CI (`{c}`) in this worktree on each new commit (a run's log is at `GET {api}/local-ci/runs/<id>/log`) and, once it passes,"
+                ),
+                None => String::new(),
+            };
+            let ci = format!(
+                "Commit on `{{branch}}`; don't push, and don't push the base. {SHORT_NAME}{ci} merges the branch into \
+                 its base itself and pushes the base to the remote `{}`.",
+                push.remote
+            );
+            return ForgeNotes { ci: Some(ci), reply: None, watch: None };
+        }
         let ci = match &self.command {
             Some(c) => format!(
                 "This project has no remote: commit on `{{branch}}`, don't push. {SHORT_NAME} runs its CI (`{c}`) in \

@@ -183,3 +183,149 @@ async fn without_a_ci_command_merge_is_at_once_and_a_conflict_goes_back_to_the_a
     assert_eq!(ticket(&env).await["attempt"]["state"], "merged");
     assert_eq!(rev(&env.repo, "main"), rev(&env.worktree, "HEAD"), "a fast-forward to the branch's merge");
 }
+
+/// `[push]` (PDT-245): the repository has a plain git remote, here a bare one in the temp folder.
+const PUSH: &str = "forge = \"local\"\n\n[push]\nremote = \"origin\"\nbranches = true\n\n[ci]\ncommand = \"git ls-files \
+                    --error-unmatch ok.txt\"\n";
+
+/// A bare remote the repository's `main` is pushed to, as `origin`; the remote's folder.
+fn add_remote(tmp: &Path, repo: &Path) -> PathBuf {
+    let remote = tmp.join("remote.git");
+    git(tmp, &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+    git(repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(repo, &["push", "-q", "origin", "main"]);
+    remote
+}
+
+/// Someone else pushes a commit to the remote's `main`; its sha.
+fn push_from_elsewhere(tmp: &Path, remote: &Path, file: &str) -> String {
+    let other = tmp.join(format!("other-{file}"));
+    git(tmp, &["clone", "-q", remote.to_str().unwrap(), other.to_str().unwrap()]);
+    commit(&other, file, "elsewhere");
+    git(&other, &["push", "-q", "origin", "main"]);
+    rev(&other, "HEAD")
+}
+
+async fn merge(env: &Env) -> Value {
+    let (s, r) =
+        call(&env.app, "POST", &format!("/api/attempts/{}/merge", env.attempt), Some(json!({"by": "user"}))).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    r
+}
+
+async fn notices(env: &Env) -> Vec<pdt_core::inbox::InboxItem> {
+    env.state.store.open_inbox_items_of(pdt_core::inbox::InboxKind::Notice).await.unwrap()
+}
+
+#[tokio::test]
+async fn with_a_remote_the_merge_is_pushed_and_so_are_ticket_branches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), PUSH).await;
+    let remote = add_remote(tmp.path(), &env.repo);
+    commit(&env.worktree, "ok.txt", "work");
+    let head = rev(&env.worktree, "HEAD");
+    let branch = ticket(&env).await["attempt"]["branch"].as_str().unwrap().to_string();
+    pdt_api::refresh_prs(&env.state).await;
+    wait_for(&env, |t| t["attempt"]["pr"]["ci"]["state"] == "passed").await;
+    // `branches = true`: the ticket branch went to the remote as it opened (in the background).
+    for _ in 0..100 {
+        if rev(&remote, &format!("refs/heads/{branch}")) == head {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(rev(&remote, &format!("refs/heads/{branch}")), head, "the branch was pushed");
+
+    merge(&env).await;
+    let t = wait_for(&env, |t| t["attempt"]["state"] == "merged").await;
+    assert_eq!(t["attempt"]["pr"]["state"], "merged", "{t:#}");
+    assert_eq!(rev(&env.repo, "main"), head, "a fast-forward");
+    assert_eq!(rev(&remote, "main"), head, "main was pushed");
+    assert!(env.repo.join("ok.txt").is_file(), "the checkout of main moved too");
+    assert!(notices(&env).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_refused_push_catches_up_runs_ci_again_and_merges() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), PUSH).await;
+    let remote = add_remote(tmp.path(), &env.repo);
+    commit(&env.worktree, "ok.txt", "work");
+    let head = rev(&env.worktree, "HEAD");
+    pdt_api::refresh_prs(&env.state).await;
+    wait_for(&env, |t| t["attempt"]["pr"]["ci"]["state"] == "passed").await;
+
+    // The remote moves on before the merge: the push is refused, PDT fetches, catches main up and merges it into the
+    // branch, CI runs on that, and the merge (a fast-forward now) is pushed.
+    let theirs = push_from_elsewhere(tmp.path(), &remote, "theirs.txt");
+    merge(&env).await;
+    wait_for(&env, |t| t["attempt"]["state"] == "merged").await;
+    let main = rev(&remote, "main");
+    assert_eq!(rev(&env.repo, "main"), main, "local and remote main agree");
+    assert_eq!(main, rev(&env.worktree, "HEAD"), "main is the branch with the remote's main merged in");
+    for c in [&head, &theirs] {
+        let ok = std::process::Command::new("git")
+            .current_dir(&env.repo)
+            .args(["merge-base", "--is-ancestor", c, &main])
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "{c} is in main");
+    }
+    assert!(env.repo.join("theirs.txt").is_file() && env.repo.join("ok.txt").is_file());
+    let runs = env.state.store.local_ci_runs(1).await.unwrap();
+    assert_eq!(runs.len(), 2, "CI ran again on the caught-up head: {runs:?}");
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{}/events", env.ticket), None).await;
+    let noted = events["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["kind"] == "comment" && e["body"].as_str().is_some_and(|b| b.contains("had moved on")));
+    assert!(noted, "{events:#}");
+    assert!(notices(&env).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_push_that_cannot_catch_up_is_a_notice_and_waits_for_the_next_merge() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), PUSH).await;
+    let remote = add_remote(tmp.path(), &env.repo);
+    commit(&env.worktree, "ok.txt", "work");
+    pdt_api::refresh_prs(&env.state).await;
+    wait_for(&env, |t| t["attempt"]["pr"]["ci"]["state"] == "passed").await;
+
+    // Local main and the remote's diverged: PDT can't bring them together on its own.
+    push_from_elsewhere(tmp.path(), &remote, "theirs.txt");
+    git(&env.repo, &["switch", "-q", "--detach"]);
+    commit(&env.repo, "local.txt", "local only");
+    let local = rev(&env.repo, "HEAD");
+    git(&env.repo, &["branch", "-f", "main", &local]);
+    git(&env.repo, &["switch", "-q", "main"]);
+    let before = rev(&remote, "main");
+    merge(&env).await;
+    let t = wait_for(&env, |t| t["attempt"]["pr"]["autoMerge"] == false).await;
+    assert_eq!(t["attempt"]["state"], "active");
+    assert_eq!((rev(&env.repo, "main"), rev(&remote, "main")), (local, before), "nothing moved");
+    let n = notices(&env).await;
+    assert_eq!(n.len(), 1, "{n:#?}");
+    assert_eq!(n[0].attempt_id.as_deref(), Some(env.attempt.as_str()));
+    let text = n[0].body["text"].as_str().unwrap();
+    assert!(text.contains("diverged") && text.contains("Merge again"), "{text}");
+}
+
+#[tokio::test]
+async fn a_push_with_no_access_is_a_notice() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), PUSH).await;
+    // `origin` points at nothing.
+    git(&env.repo, &["remote", "add", "origin", tmp.path().join("missing.git").to_str().unwrap()]);
+    commit(&env.worktree, "ok.txt", "work");
+    pdt_api::refresh_prs(&env.state).await;
+    wait_for(&env, |t| t["attempt"]["pr"]["ci"]["state"] == "passed").await;
+    let main = rev(&env.repo, "main");
+    merge(&env).await;
+    let t = wait_for(&env, |t| t["attempt"]["pr"]["autoMerge"] == false).await;
+    assert_eq!((t["attempt"]["state"].as_str(), rev(&env.repo, "main")), (Some("active"), main), "not merged");
+    let n = notices(&env).await;
+    assert!(n[0].body["text"].as_str().unwrap().contains("could not push `main` to the remote `origin`"), "{n:#?}");
+}

@@ -243,6 +243,24 @@ describe('ProjectSettingsPanel', () => {
     expect(await screen.findByText('Skipped [pipeline], [gate]: this version does not know those sections.')).toBeInTheDocument();
   });
 
+  it('shows where the local forge pushes its merges', async () => {
+    const local = (push: unknown) => ({ ...config, effective: { ...config.effective, areas: [], ignored: [], forge: 'local', push } });
+    stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null },
+      'GET /api/projects/p/run-config': local({ remote: 'origin', branches: true }),
+    });
+    const { unmount } = renderWithQuery(<ProjectSettingsPanel project={project} />);
+    expect(await screen.findByText('origin')).toBeInTheDocument();
+    expect(screen.getByText(/pushes the base to this remote.*Ticket branches are pushed too/)).toBeInTheDocument();
+    unmount();
+    stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null },
+      'GET /api/projects/p/run-config': local(null),
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    expect(await screen.findByText(/Pushes nowhere/)).toBeInTheDocument();
+  });
+
   it('saves run overrides with their own Save and shows validation errors', async () => {
     let attempt = 0;
     const calls = stubApi({

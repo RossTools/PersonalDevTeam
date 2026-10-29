@@ -2,6 +2,7 @@
 import type { AreaDef } from "./AreaDef";
 import type { CiDef } from "./CiDef";
 import type { ForgeKind } from "./ForgeKind";
+import type { PushDef } from "./PushDef";
 import type { RunDef } from "./RunDef";
 
 export type RunConfig = { runs: Array<RunDef>, tests: Array<RunDef>, areas: Array<AreaDef>, 
@@ -18,6 +19,10 @@ ci: CiDef | null,
  * forge's own CI and every CI integration set up for it.
  */
 ciProviders: Array<string> | null, 
+/**
+ * `[push]`: the remote the local forge pushes to (the overrides' fields win); None: it pushes nowhere.
+ */
+push: PushDef | null, 
 /**
  * Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
  */
