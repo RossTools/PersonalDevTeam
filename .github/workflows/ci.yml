@@ -188,6 +188,12 @@ jobs:
         with:
           nextest: "true"
           zsh: "true"
+      # Linux tests at a version no release has (PDT-216): a test that hard-codes the checked-in version fails on its
+      # own PR, not first on the release PR that bumps it. The release PR tests its real version; macOS and Windows
+      # always test the checked-in one. Only this job's checkout changes (Cargo.lock follows on the next cargo command).
+      - name: Set a stand-in version
+        if: needs.changes.outputs.release != 'true'
+        run: scripts/version.sh set 9.9.9
       # nextest runs all test binaries at once (cargo test runs them one after another); it also writes the TS types.
       - run: cargo nextest run --profile ci
       # pdtd with no integration built in (the run above has them all; PDT-173).
