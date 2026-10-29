@@ -163,7 +163,13 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   repository). `/api/host/update` `releaseRepo` says which repository is used (`repo`, `id`, `movedTo`,
   `overriddenBy`: `setting` or `environment`), and Settings shows it.
 - Keychain calls time out after 5 s and the startup token read runs in the background, so a keychain prompt never
-  blocks serving.
+  blocks serving. Calls run side by side, each with its own limit (`secrets::TimeLimited`, PDT-215): only a call that
+  really timed out and is still running makes further calls for the same secret fail at once (and, once 4 are stuck,
+  every call), so concurrent reads never fail for being busy. The error names the secret ("did not answer in time for
+  the update token", the GitHub login, the connection or secret by name). What pdtd read is kept in memory
+  (`secrets::Cached`) and replaced or forgotten when pdtd sets or deletes it (a reconnect, a sign-out), so pollers
+  (Settings, the update banner, connections' sensors) do not ask the keychain each time; a failed read is not kept.
+  The update banner and Settings clear a keychain error on the next successful read.
 - Updates are offered only when pdt-host supervises a stable pdtd; dev instances never update (and a dev pdt-host
   never installs).
 - The web UI reloads itself when `/api/host/update` reports a different `current` version than it loaded against

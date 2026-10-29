@@ -260,8 +260,8 @@ async fn secret_store(
     cfg: &config::Config,
 ) -> (std::sync::Arc<dyn pdt_api::secrets::SecretStore>, pdt_api::secrets::SecretStoreInfo) {
     use pdt_api::secrets::{
-        FileSecretStore, KeyringStore, MemorySecretStore, SecretBackend, SecretStoreInfo, StoreHistory, TimeLimited,
-        choose_backend, keychain_marker, secrets_file,
+        Cached, FileSecretStore, KeyringStore, MemorySecretStore, SecretBackend, SecretStoreInfo, StoreHistory,
+        TimeLimited, choose_backend, keychain_marker, secrets_file,
     };
     let forced = if cfg.memory_secrets {
         Some("memory")
@@ -313,10 +313,11 @@ async fn secret_store(
                     problem = Some(why.to_string());
                 }
             }
-            let store = TimeLimited::new(
+            // Reads are kept in memory, so pollers do not ask the keychain each time (PDT-215).
+            let store = Cached::new(std::sync::Arc::new(TimeLimited::new(
                 std::sync::Arc::new(KeyringStore::new(pdt_core::brand::KEYCHAIN_SERVICE)),
                 Duration::from_secs(5),
-            );
+            )));
             (std::sync::Arc::new(store), SecretStoreInfo { backend, path: None, problem })
         }
     }

@@ -254,55 +254,195 @@ impl SecretStore for FileSecretStore {
     }
 }
 
-/// What a keychain call that ran out of time reports (after "the OS keychain failed: ").
-pub const KEYCHAIN_STALLED: &str =
-    "it did not answer in time (macOS may be waiting for someone at this Mac to allow access to the update token)";
+/// What a keychain call reports when it runs out of time (after "the OS keychain failed: "), naming the secret
+/// (`what`, e.g. [`secret_label`]). Only a call that really timed out, or one refused because an earlier call for the
+/// same secret is still stuck, says this: a keychain that is merely busy with other calls never does.
+pub fn stalled(what: &str) -> SecretError {
+    SecretError(format!(
+        "it did not answer in time for {what} (macOS may be waiting for someone at this Mac to allow access to it)"
+    ))
+}
+
+/// How [`TimeLimited`] names the secret in `account` in its errors: the update token, the GitHub login, or (callers
+/// that know its name say which, with [`SecretError::naming`]) a connection's secret or a vault secret.
+pub fn secret_label(account: &str) -> &'static str {
+    let is = |name: &str| account == name || account.strip_prefix(name).is_some_and(|r| r.starts_with(':'));
+    if is(UPDATE_TOKEN) {
+        "the update token"
+    } else if is(GITHUB_LOGIN) {
+        "the GitHub login"
+    } else if account.starts_with("connection:") {
+        "a connection's secret"
+    } else {
+        "a secret"
+    }
+}
+
+impl SecretError {
+    /// Names the secret in `account` as `what` instead of its generic [`secret_label`] (e.g. the connection's name).
+    pub fn naming(self, account: &str, what: &str) -> SecretError {
+        SecretError(self.0.replacen(secret_label(account), what, 1))
+    }
+}
+
+/// How many calls may be stuck past their timeout at once (each holds a thread) before every further call fails at
+/// once instead of starting another.
+const MAX_STUCK: usize = 4;
 
 /// Bounds every call to `inner` by `timeout`, so a keychain waiting on an approval prompt nobody sees cannot hang
-/// pdtd. A call that times out keeps running on its own thread; until it returns, further calls fail at once
-/// instead of piling up more stuck threads.
+/// pdtd. Calls run side by side, each on its own thread with its own limit. A call that times out keeps running;
+/// until it returns, further calls for the same secret fail at once instead of piling up more stuck threads, and
+/// once [`MAX_STUCK`] calls are stuck every call does. Calls for other secrets are never refused for being busy.
 pub struct TimeLimited {
     inner: std::sync::Arc<dyn SecretStore>,
     timeout: std::time::Duration,
-    busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Calls past their timeout and still running, by account.
+    stuck: std::sync::Arc<Mutex<HashMap<String, usize>>>,
 }
 
 impl TimeLimited {
     pub fn new(inner: std::sync::Arc<dyn SecretStore>, timeout: std::time::Duration) -> Self {
-        Self { inner, timeout, busy: Default::default() }
+        Self { inner, timeout, stuck: Default::default() }
+    }
+
+    #[cfg(test)]
+    fn stuck_calls(&self) -> usize {
+        self.stuck.lock().unwrap().values().sum()
     }
 
     fn call<T: Send + 'static>(
         &self,
+        account: &str,
         f: impl FnOnce(&dyn SecretStore) -> Result<T, SecretError> + Send + 'static,
     ) -> Result<T, SecretError> {
-        use std::sync::atomic::Ordering;
-        if self.busy.swap(true, Ordering::SeqCst) {
-            return Err(SecretError(KEYCHAIN_STALLED.into()));
+        use std::sync::atomic::{AtomicU8, Ordering};
+        const RUNNING: u8 = 0;
+        const DONE: u8 = 1;
+        const STUCK: u8 = 2;
+        {
+            let stuck = self.stuck.lock().unwrap_or_else(|e| e.into_inner());
+            if stuck.contains_key(account) {
+                return Err(stalled(secret_label(account)));
+            }
+            let n: usize = stuck.values().sum();
+            if n >= MAX_STUCK {
+                return Err(SecretError(format!(
+                    "{n} earlier calls have not answered yet (macOS may be waiting for someone at this Mac to allow \
+                     access to a secret)"
+                )));
+            }
         }
         let (tx, rx) = std::sync::mpsc::channel();
-        let (inner, busy) = (self.inner.clone(), self.busy.clone());
+        let state = std::sync::Arc::new(AtomicU8::new(RUNNING));
+        let (inner, stuck, name) = (self.inner.clone(), self.stuck.clone(), account.to_string());
+        let thread_state = state.clone();
         std::thread::spawn(move || {
             let r = f(inner.as_ref());
-            busy.store(false, Ordering::SeqCst);
+            // Counted as stuck (under the lock, before this swap could see it): it no longer is.
+            if thread_state.swap(DONE, Ordering::SeqCst) == STUCK {
+                let mut stuck = stuck.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(n) = stuck.get_mut(&name) {
+                    *n -= 1;
+                    if *n == 0 {
+                        stuck.remove(&name);
+                    }
+                }
+            }
             let _ = tx.send(r);
         });
-        rx.recv_timeout(self.timeout).unwrap_or_else(|_| Err(SecretError(KEYCHAIN_STALLED.into())))
+        match rx.recv_timeout(self.timeout) {
+            Ok(r) => r,
+            Err(_) => {
+                let mut stuck = self.stuck.lock().unwrap_or_else(|e| e.into_inner());
+                if state.compare_exchange(RUNNING, STUCK, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                    *stuck.entry(account.to_string()).or_default() += 1;
+                    drop(stuck);
+                    Err(stalled(secret_label(account)))
+                } else {
+                    // It answered just as the limit passed.
+                    drop(stuck);
+                    rx.recv().unwrap_or_else(|_| Err(stalled(secret_label(account))))
+                }
+            }
+        }
     }
 }
 
 impl SecretStore for TimeLimited {
     fn get(&self, name: &str) -> Result<Option<String>, SecretError> {
-        let name = name.to_string();
-        self.call(move |s| s.get(&name))
+        let n = name.to_string();
+        self.call(name, move |s| s.get(&n))
     }
     fn set(&self, name: &str, value: &str) -> Result<(), SecretError> {
-        let (name, value) = (name.to_string(), value.to_string());
-        self.call(move |s| s.set(&name, &value))
+        let (n, value) = (name.to_string(), value.to_string());
+        self.call(name, move |s| s.set(&n, &value))
     }
     fn delete(&self, name: &str) -> Result<(), SecretError> {
-        let name = name.to_string();
-        self.call(move |s| s.delete(&name))
+        let n = name.to_string();
+        self.call(name, move |s| s.delete(&n))
+    }
+}
+
+/// Keeps what `inner` read in memory, so pollers (the update banner, Settings, connections' sensors) do not ask the
+/// keychain on every call. Every change goes through pdtd (each instance has its own accounts), so a value is
+/// replaced on `set`, forgotten on `delete` (the GitHub login's reconnect or sign-out), and dropped on a failed
+/// change. Failed reads are never kept: the next call asks again.
+pub struct Cached {
+    inner: std::sync::Arc<dyn SecretStore>,
+    cache: Mutex<CacheState>,
+}
+
+#[derive(Default)]
+struct CacheState {
+    values: HashMap<String, Option<String>>,
+    /// Bumped by every change, so a read that started before one does not put back the old value.
+    generation: u64,
+}
+
+impl Cached {
+    pub fn new(inner: std::sync::Arc<dyn SecretStore>) -> Self {
+        Self { inner, cache: Default::default() }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, CacheState> {
+        self.cache.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn changed(&self, name: &str, r: &Result<(), SecretError>, value: Option<&str>) {
+        let mut c = self.lock();
+        c.generation += 1;
+        match r {
+            Ok(()) => c.values.insert(name.to_string(), value.map(str::to_string)),
+            Err(_) => c.values.remove(name),
+        };
+    }
+}
+
+impl SecretStore for Cached {
+    fn get(&self, name: &str) -> Result<Option<String>, SecretError> {
+        let generation = {
+            let c = self.lock();
+            if let Some(v) = c.values.get(name) {
+                return Ok(v.clone());
+            }
+            c.generation
+        };
+        let v = self.inner.get(name)?;
+        let mut c = self.lock();
+        if c.generation == generation {
+            c.values.insert(name.to_string(), v.clone());
+        }
+        Ok(v)
+    }
+    fn set(&self, name: &str, value: &str) -> Result<(), SecretError> {
+        let r = self.inner.set(name, value);
+        self.changed(name, &r, Some(value));
+        r
+    }
+    fn delete(&self, name: &str) -> Result<(), SecretError> {
+        let r = self.inner.delete(name);
+        self.changed(name, &r, None);
+        r
     }
 }
 
@@ -312,11 +452,17 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    /// A store whose `get` waits until `release` is sent (a keychain showing a prompt).
-    struct Blocking(Mutex<std::sync::mpsc::Receiver<()>>);
+    /// A store whose `get` of `blocked` waits until `release` is sent (a keychain showing a prompt); other accounts
+    /// answer at once.
+    struct Blocking {
+        blocked: &'static str,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
     impl SecretStore for Blocking {
-        fn get(&self, _: &str) -> Result<Option<String>, SecretError> {
-            let _ = self.0.lock().unwrap().recv();
+        fn get(&self, name: &str) -> Result<Option<String>, SecretError> {
+            if name == self.blocked {
+                let _ = self.release.lock().unwrap().recv();
+            }
             Ok(Some("tok".into()))
         }
         fn set(&self, _: &str, _: &str) -> Result<(), SecretError> {
@@ -327,24 +473,151 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_stalled_keychain_times_out_and_later_calls_fail_fast_until_it_answers() {
-        let (release, rx) = std::sync::mpsc::channel();
-        // A 1 s limit leaves room to tell "failed at once" from "waited for the limit" on a loaded CI runner.
-        let s = TimeLimited::new(Arc::new(Blocking(Mutex::new(rx))), Duration::from_secs(1));
-        let t = Instant::now();
-        assert_eq!(s.get("a").unwrap_err().0, KEYCHAIN_STALLED);
-        assert!(t.elapsed() < Duration::from_secs(5));
-        let t = Instant::now();
-        assert_eq!(s.get("a").unwrap_err().0, KEYCHAIN_STALLED, "still stuck: no second thread");
-        assert!(t.elapsed() < Duration::from_millis(500), "fails at once while the first call is stuck");
-        release.send(()).unwrap();
+    fn wait_unstuck(s: &TimeLimited) {
         let deadline = Instant::now() + Duration::from_secs(5);
-        while s.busy.load(std::sync::atomic::Ordering::SeqCst) && Instant::now() < deadline {
+        while s.stuck_calls() > 0 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
+        assert_eq!(s.stuck_calls(), 0);
+    }
+
+    #[test]
+    fn a_stalled_keychain_times_out_naming_its_secret_and_only_then_fails_fast() {
+        let (release, rx) = std::sync::mpsc::channel();
+        let store = Blocking { blocked: UPDATE_TOKEN, release: Mutex::new(rx) };
+        // A 1 s limit leaves room to tell "failed at once" from "waited for the limit" on a loaded CI runner.
+        let s = TimeLimited::new(Arc::new(store), Duration::from_secs(1));
+        let t = Instant::now();
+        let e = s.get(UPDATE_TOKEN).unwrap_err().0;
+        assert!(t.elapsed() >= Duration::from_secs(1), "waited for the limit");
+        assert!(t.elapsed() < Duration::from_secs(5));
+        assert!(e.contains("did not answer in time for the update token"), "{e}");
+        let t = Instant::now();
+        let e = s.get(UPDATE_TOKEN).unwrap_err().0;
+        assert!(e.contains("the update token"), "{e}");
+        assert!(t.elapsed() < Duration::from_millis(500), "fails at once while the first call is stuck");
+        assert_eq!(s.stuck_calls(), 1, "no second thread");
+        assert_eq!(s.get(GITHUB_LOGIN).unwrap().as_deref(), Some("tok"), "other secrets still answer");
         release.send(()).unwrap();
-        assert_eq!(s.get("a").unwrap().as_deref(), Some("tok"), "answers again once the prompt is dealt with");
+        wait_unstuck(&s);
+        release.send(()).unwrap();
+        assert_eq!(s.get(UPDATE_TOKEN).unwrap().as_deref(), Some("tok"), "answers again once the prompt is dealt with");
+    }
+
+    /// A store whose `get` returns only once two calls are inside it at the same time.
+    struct Together(std::sync::Barrier);
+    impl SecretStore for Together {
+        fn get(&self, name: &str) -> Result<Option<String>, SecretError> {
+            self.0.wait();
+            Ok(Some(name.to_string()))
+        }
+        fn set(&self, _: &str, _: &str) -> Result<(), SecretError> {
+            Ok(())
+        }
+        fn delete(&self, _: &str) -> Result<(), SecretError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn overlapping_reads_of_different_secrets_both_succeed() {
+        let s = Arc::new(TimeLimited::new(Arc::new(Together(std::sync::Barrier::new(2))), Duration::from_secs(5)));
+        let other = s.clone();
+        let t = std::thread::spawn(move || other.get(GITHUB_LOGIN));
+        assert_eq!(s.get(UPDATE_TOKEN).unwrap().as_deref(), Some(UPDATE_TOKEN));
+        assert_eq!(t.join().unwrap().unwrap().as_deref(), Some(GITHUB_LOGIN));
+        assert_eq!(s.stuck_calls(), 0);
+    }
+
+    /// Every `get` waits until `release` is dropped.
+    struct AllBlocked(Mutex<std::sync::mpsc::Receiver<()>>);
+    impl SecretStore for AllBlocked {
+        fn get(&self, _: &str) -> Result<Option<String>, SecretError> {
+            let _ = self.0.lock().unwrap().recv();
+            Ok(None)
+        }
+        fn set(&self, _: &str, _: &str) -> Result<(), SecretError> {
+            Ok(())
+        }
+        fn delete(&self, _: &str) -> Result<(), SecretError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn too_many_stuck_calls_make_every_call_fail_fast() {
+        let (release, rx) = std::sync::mpsc::channel::<()>();
+        let s = TimeLimited::new(Arc::new(AllBlocked(Mutex::new(rx))), Duration::from_millis(100));
+        for i in 0..MAX_STUCK {
+            assert!(s.get(&format!("secret:{i}")).is_err());
+        }
+        assert_eq!(s.stuck_calls(), MAX_STUCK);
+        let t = Instant::now();
+        let e = s.get("secret:new").unwrap_err().0;
+        assert!(t.elapsed() < Duration::from_millis(500) && e.contains("earlier calls have not answered"), "{e}");
+        drop(release);
+        wait_unstuck(&s);
+    }
+
+    #[test]
+    fn stalled_errors_name_the_secret() {
+        assert_eq!(secret_label("update-token:0123456789ab"), "the update token");
+        assert_eq!(secret_label(GITHUB_LOGIN), "the GitHub login");
+        assert_eq!(secret_label("github-loginx"), "a secret");
+        let e = stalled(secret_label("connection:1")).naming("connection:1", "the secret of the connection jira");
+        assert!(e.0.contains("did not answer in time for the secret of the connection jira"), "{}", e.0);
+    }
+
+    /// Counts the calls that reach it.
+    #[derive(Default)]
+    struct Counting {
+        inner: MemorySecretStore,
+        gets: std::sync::atomic::AtomicUsize,
+    }
+    impl SecretStore for Counting {
+        fn get(&self, name: &str) -> Result<Option<String>, SecretError> {
+            self.gets.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.get(name)
+        }
+        fn set(&self, name: &str, value: &str) -> Result<(), SecretError> {
+            self.inner.set(name, value)
+        }
+        fn delete(&self, name: &str) -> Result<(), SecretError> {
+            self.inner.delete(name)
+        }
+    }
+
+    #[test]
+    fn a_cached_secret_survives_polling_and_a_change_replaces_it() {
+        let inner = Arc::new(Counting::default());
+        inner.inner.set(GITHUB_LOGIN, "old").unwrap();
+        let s = Cached::new(inner.clone());
+        let gets = || inner.gets.load(std::sync::atomic::Ordering::SeqCst);
+        for _ in 0..10 {
+            assert_eq!(s.get(GITHUB_LOGIN).unwrap().as_deref(), Some("old"));
+        }
+        assert_eq!(gets(), 1, "polling reads the keychain once");
+        s.set(GITHUB_LOGIN, "new").unwrap();
+        assert_eq!(s.get(GITHUB_LOGIN).unwrap().as_deref(), Some("new"), "reconnecting replaces it");
+        s.delete(GITHUB_LOGIN).unwrap();
+        assert_eq!(s.get(GITHUB_LOGIN).unwrap(), None, "signing out forgets it");
+        assert_eq!(gets(), 1);
+        assert_eq!(s.get(UPDATE_TOKEN).unwrap(), None);
+        assert_eq!(s.get(UPDATE_TOKEN).unwrap(), None);
+        assert_eq!(gets(), 2, "a missing secret is remembered too");
+    }
+
+    #[test]
+    fn failed_reads_are_not_cached() {
+        let (release, rx) = std::sync::mpsc::channel();
+        let store = Blocking { blocked: UPDATE_TOKEN, release: Mutex::new(rx) };
+        let limited = Arc::new(TimeLimited::new(Arc::new(store), Duration::from_millis(200)));
+        let s = Cached::new(limited.clone());
+        assert!(s.get(UPDATE_TOKEN).is_err());
+        release.send(()).unwrap();
+        wait_unstuck(&limited);
+        release.send(()).unwrap();
+        assert_eq!(s.get(UPDATE_TOKEN).unwrap().as_deref(), Some("tok"), "asked again");
     }
 
     #[test]

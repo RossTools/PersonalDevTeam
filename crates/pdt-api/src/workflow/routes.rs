@@ -828,7 +828,8 @@ pub async fn connection_with_secret(st: &AppState, name: &str) -> Result<(Connec
         .ok_or_else(|| format!("no connection is called {name}"))?;
     let secrets = st.secrets.clone();
     let account = secret_account(&c.id);
-    let secret = tokio::task::spawn_blocking(move || secrets.get(&account))
+    let what = format!("the secret of the connection {}", c.name);
+    let secret = tokio::task::spawn_blocking(move || secrets.get(&account).map_err(|e| e.naming(&account, &what)))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
