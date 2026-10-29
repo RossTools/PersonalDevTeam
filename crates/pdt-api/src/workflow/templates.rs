@@ -10,7 +10,9 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::workflow::api::{Author, Scope, Source, Workflow, WorkflowDetail};
 use pdt_core::workflow::doc::WorkflowDoc;
-use pdt_core::workflow::template::{Template, TemplateParam, check_params, fill, param_values, placeholder_values};
+use pdt_core::workflow::template::{
+    Category, Template, TemplateParam, check_params, fill, param_values, placeholder_values, plugin_of,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use ts_rs::TS;
@@ -28,12 +30,13 @@ pub fn params(v: Value) -> Vec<TemplateParam> {
 }
 
 /// One of the templates PDT (or an integration) ships: `builtin:<id>`, read-only.
-pub fn builtin(id: &str, params: Vec<TemplateParam>, doc: WorkflowDoc) -> Template {
+pub fn builtin(id: &str, category: Category, params: Vec<TemplateParam>, doc: WorkflowDoc) -> Template {
     Template {
         id: format!("{BUILTIN_PREFIX}{id}"),
         name: doc.name.clone(),
         description: doc.description.clone(),
         builtin: true,
+        category,
         params,
         doc,
         created_at: 0,
@@ -49,7 +52,8 @@ pub fn builtin_templates(reg: &crate::integrations::Registry) -> Vec<Template> {
             name: "Blank".into(),
             description: "A Run now trigger and an end: build the rest yourself.".into(),
             ..builtin(
-                "blank",
+                BLANK,
+                Category::Other,
                 vec![],
                 doc(json!({
                     "name": "New workflow",
@@ -64,6 +68,7 @@ pub fn builtin_templates(reg: &crate::integrations::Registry) -> Vec<Template> {
         },
         builtin(
             "ci-failed-tell",
+            Category::CiPr,
             params(json!([{"id": "message", "title": "Message", "type": "text",
                 "description": "What the agent is told. {{trigger.notice.text}} is PDT's own notice (the failed jobs and \
                                 how to see their logs).",
@@ -82,6 +87,7 @@ pub fn builtin_templates(reg: &crate::integrations::Registry) -> Vec<Template> {
         ),
         builtin(
             "ask-finish",
+            Category::Tickets,
             params(
                 json!([{"id": "deleteBranch", "title": "Delete the branch too", "type": "boolean", "default": false}]),
             ),
@@ -111,6 +117,7 @@ pub fn builtin_templates(reg: &crate::integrations::Registry) -> Vec<Template> {
         ),
         builtin(
             "comment-on-merge",
+            Category::CiPr,
             params(json!([{"id": "body", "title": "Comment", "type": "text", "default": "Merged."}])),
             doc(json!({
                 "name": "Comment when a pull request merges",
@@ -126,9 +133,17 @@ pub fn builtin_templates(reg: &crate::integrations::Registry) -> Vec<Template> {
     ];
     out.push(issue_triage());
     out.extend(reg.templates());
-    out.push(builtin(super::pipeline::ID, super::pipeline::params(), super::pipeline::doc()));
-    out.extend(super::builtins::all(reg).iter().map(|b| builtin(b.id, vec![], (b.doc)())));
+    out.push(builtin(super::pipeline::ID, Category::Tickets, super::pipeline::params(), super::pipeline::doc()));
+    out.extend(super::builtins::all(reg).iter().map(of_builtin));
     out
+}
+
+/// The blank template's id (without `builtin:`): the gallery's "Start from scratch".
+pub const BLANK: &str = "blank";
+
+/// A built-in workflow as a template, to copy (e.g. per project).
+fn of_builtin(b: &super::builtins::Builtin) -> Template {
+    builtin(b.id, b.category, vec![], (b.doc)())
 }
 
 /// What the triage step asks of the PM (PDT-81).
@@ -143,6 +158,7 @@ it asks for, scope and \"Done when\". If only the user can decide, ask with ask_
 fn issue_triage() -> Template {
     builtin(
         "issue-triage",
+        Category::Issues,
         params(json!([
             {"id": "repo", "title": "Repository", "type": "string", "required": true,
              "description": "owner/name on GitHub (read through PDT's GitHub login)."},
@@ -197,20 +213,122 @@ async fn offered_templates(st: &AppState) -> Vec<Template> {
     out
 }
 
+/// The templates (and built-in workflows, as templates) of the integrations this build has that are turned off, with
+/// each one's integration: the gallery shows them faded (PDT-229).
+fn off_templates(st: &AppState) -> Vec<(Template, bool)> {
+    st.integrations
+        .built()
+        .iter()
+        .filter(|i| !st.integrations.is_enabled(i.id()))
+        .flat_map(|i| {
+            let workflows = i.builtin_workflows().into_iter().map(|b| (of_builtin(&b), true));
+            i.templates().into_iter().map(|t| (t, false)).chain(workflows)
+        })
+        .collect()
+}
+
 async fn find(st: &AppState, id: &str) -> Result<Template, ApiError> {
     if id.starts_with(BUILTIN_PREFIX) {
-        return offered_templates(st)
-            .await
-            .into_iter()
-            .find(|t| t.id == id)
-            .ok_or_else(|| ApiError::not_found("template"));
+        if let Some(t) = offered_templates(st).await.into_iter().find(|t| t.id == id) {
+            return Ok(t);
+        }
+        return Err(
+            match off_templates(st).into_iter().find(|(t, _)| t.id == id).and_then(|(t, _)| plugin_of(&t.doc)) {
+                Some((_, label)) => conflict(
+                    "integration_disabled",
+                    format!("this template needs the {label} plugin: turn it on in Settings → Plugins first"),
+                ),
+                None => ApiError::not_found("template"),
+            },
+        );
     }
     st.store.get_template(id).await?.ok_or_else(|| ApiError::not_found("template"))
 }
 
-pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Template>>, ApiError> {
-    let mut out = offered_templates(&st).await;
-    out.extend(st.store.list_templates().await?);
+/// The integration a template needs, as the gallery shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TemplatePlugin {
+    /// The integration's id (`jira`, `discord`, `github`).
+    pub id: String,
+    pub label: String,
+    /// It is turned on (GitHub always is): a template whose integration is off can't be used yet.
+    pub on: bool,
+}
+
+/// A template as the New workflow gallery lists it (PDT-229): the template, with what its card and preview show.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GalleryTemplate {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub template: Template,
+    /// The integration it needs, if any.
+    pub plugin: Option<TemplatePlugin>,
+    /// It is one of PDT's built-in workflows, offered to add back (or copy).
+    pub builtin_workflow: bool,
+    /// A built-in workflow this host already has.
+    pub added: bool,
+    /// Its triggers' titles, in document order, each once.
+    pub triggers: Vec<String>,
+    /// Its other steps' titles (no ends), in document order: the preview's outline.
+    pub steps: Vec<String>,
+}
+
+/// The gallery's entry for `t`, naming its nodes from `catalog` (every integration's, on or not).
+fn gallery_entry(
+    st: &AppState,
+    catalog: &super::catalog::Catalog,
+    t: Template,
+    builtin_workflow: bool,
+    added: bool,
+) -> GalleryTemplate {
+    let plugin = plugin_of(&t.doc).map(|(id, label)| TemplatePlugin {
+        id: id.into(),
+        label: label.into(),
+        on: id == "github" || st.integrations.is_enabled(id),
+    });
+    let (mut triggers, mut steps) = (vec![], vec![]);
+    for n in &t.doc.nodes {
+        let spec = catalog.spec(&n.kind);
+        let title = if !n.title.trim().is_empty() {
+            n.title.clone()
+        } else {
+            spec.map_or_else(|| n.kind.clone(), |s| s.title.clone())
+        };
+        if spec.is_some_and(|s| s.category == super::catalog::Category::Trigger) {
+            if !triggers.contains(&title) {
+                triggers.push(title);
+            }
+        } else if n.kind != "end" {
+            steps.push(title);
+        }
+    }
+    GalleryTemplate { template: t, plugin, builtin_workflow, added, triggers, steps }
+}
+
+pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<GalleryTemplate>>, ApiError> {
+    let have: std::collections::HashSet<String> =
+        st.store.list_workflows(None).await?.into_iter().filter_map(|w| w.builtin).collect();
+    let workflows: Vec<String> =
+        super::builtins::all(&st.registry()).iter().map(|b| format!("{BUILTIN_PREFIX}{}", b.id)).collect();
+    let everything = st.integrations.everything();
+    let catalog = everything.catalog();
+    let mut out: Vec<GalleryTemplate> = offered_templates(&st)
+        .await
+        .into_iter()
+        .map(|t| {
+            let workflow = workflows.contains(&t.id);
+            let added = workflow && t.id.strip_prefix(BUILTIN_PREFIX).is_some_and(|id| have.contains(id));
+            gallery_entry(&st, catalog, t, workflow, added)
+        })
+        .collect();
+    out.extend(off_templates(&st).into_iter().map(|(t, workflow)| gallery_entry(&st, catalog, t, workflow, false)));
+    for t in st.store.list_templates().await? {
+        out.push(gallery_entry(&st, catalog, t, false, false));
+    }
     Ok(Json(out))
 }
 
@@ -258,6 +376,7 @@ pub(crate) async fn create(
         name,
         description,
         builtin: false,
+        category: Category::Other,
         params,
         doc,
         created_at: now,
@@ -452,6 +571,25 @@ mod tests {
         for id in ["issue-triage", "pipeline", "comment-on-merge"] {
             assert!(all.iter().any(|t| t.id == format!("builtin:{id}")), "{id}");
         }
+    }
+
+    /// PDT-229: every template PDT ships has its gallery group; only the blank one is in Other.
+    #[test]
+    fn every_builtin_template_has_a_category() {
+        for t in builtin_templates(crate::integrations::test_registry()) {
+            let other = t.category == Category::Other;
+            assert_eq!(other, t.id == format!("{BUILTIN_PREFIX}{BLANK}"), "{}: {:?}", t.id, t.category);
+        }
+        let of = |id: &str| {
+            builtin_templates(crate::integrations::test_registry())
+                .into_iter()
+                .find(|t| t.id == format!("{BUILTIN_PREFIX}{id}"))
+                .map(|t| t.category)
+        };
+        assert_eq!(of("pipeline"), Some(Category::Tickets));
+        assert_eq!(of("pr-notices"), Some(Category::CiPr));
+        assert_eq!(of("cut-release"), Some(Category::Releases));
+        assert_eq!(of("issue-triage"), Some(Category::Issues));
     }
 
     /// PDT-165: fine-grained `gh` tokens can't read checks, so no built-in prompt tells an agent to run `gh pr checks`

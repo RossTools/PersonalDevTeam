@@ -11,6 +11,7 @@ use pdt_api::sdk::{AppState, BoxFut, Builtin, Integration, NodeKind, Poller};
 use pdt_core::integration::{ConfigField, ConnectionKind, ProjectSettingsSchema};
 use pdt_core::workflow::doc::WorkflowDoc;
 use pdt_core::workflow::events::EventType;
+use pdt_core::workflow::template::Category;
 use serde_json::json;
 
 pub use crate::core::{
@@ -43,8 +44,8 @@ impl Integration for Jira {
 
     fn builtin_workflows(&self) -> Vec<Builtin> {
         vec![
-            Builtin { id: JIRA_IMPORT, enabled: true, doc: jira_import },
-            Builtin { id: JIRA_DONE, enabled: true, doc: jira_done },
+            Builtin { id: JIRA_IMPORT, enabled: true, category: Category::Issues, doc: jira_import },
+            Builtin { id: JIRA_DONE, enabled: true, category: Category::Tickets, doc: jira_done },
         ]
     }
 

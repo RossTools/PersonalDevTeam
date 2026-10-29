@@ -1,4 +1,5 @@
-// The Workflows view's work area (Phase 7d spec §2): a workflow's page, a template's page, or a start.
+// The Workflows view's work area (Phase 7d spec §2): a workflow's page, one of the user's templates' page (from Save
+// as template or the gallery's Edit this template), or a start.
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, EmptyState, Skeleton } from '@ui';
 import { api } from '../api/client';
@@ -32,7 +33,8 @@ export function WorkflowsView({ target, onOpen, projects, creating, onCreate }: 
       {body}
       {creating && (
         <NewWorkflowDialog projects={projects} templateId={creating.templateId} onClose={() => onCreate(null)}
-          onCreated={(id) => { onCreate(null); onOpen({ kind: 'workflow', id }); }} />
+          onCreated={(id) => { onCreate(null); onOpen({ kind: 'workflow', id }); }}
+          onEditTemplate={(id) => { onCreate(null); onOpen({ kind: 'template', id }); }} />
       )}
     </div>
   );

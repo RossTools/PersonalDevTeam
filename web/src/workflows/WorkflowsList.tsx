@@ -1,6 +1,6 @@
-// The Workflows view's list column (Phase 7d spec §2): New workflow, Import and Export (PDT-155), the workflows by
-// where they apply, and the templates. On a phone there is no New workflow or Import (workflows are view-only there,
-// PDT-120).
+// The Workflows view's list column (Phase 7d spec §2): New workflow, Import and Export (PDT-155), and the workflows by
+// where they apply; templates are in the New workflow gallery (PDT-229). On a phone there is no New workflow or Import
+// (workflows are view-only there, PDT-120).
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
@@ -34,7 +34,6 @@ export function WorkflowsList({ projects, current, onOpen, onNew }: {
   projects: Project[]; current: WorkflowTarget; onOpen: (t: WorkflowTarget) => void; onNew: () => void;
 }) {
   const workflows = useQuery({ queryKey: ['workflows'], queryFn: () => api.listWorkflows(), refetchInterval: 5000 });
-  const templates = useQuery({ queryKey: ['workflow-templates'], queryFn: () => api.listWorkflowTemplates() });
   const groups = groupWorkflows(workflows.data ?? [], projects);
   const phone = useMediaQuery(PHONE_QUERY);
   const [moving, setMoving] = useState<'import' | 'export' | null>(null);
@@ -77,14 +76,6 @@ export function WorkflowsList({ projects, current, onOpen, onNew }: {
         </section>
       ))}
       {workflows.isSuccess && groups.length === 0 && <p className="px-3 text-sm text-muted-foreground">No workflows yet.</p>}
-      <h2 className={heading}>Templates</h2>
-      <List aria-label="Templates" onAction={(id) => onOpen({ kind: 'template', id })}>
-        {(templates.data ?? []).map((t) => (
-          <ListRow key={t.id} id={t.id} title={t.name} textValue={t.name}
-            current={current?.kind === 'template' && current.id === t.id}
-            trailing={t.builtin ? <Badge tone="neutral">Built in</Badge> : undefined} />
-        ))}
-      </List>
     </nav>
   );
 }

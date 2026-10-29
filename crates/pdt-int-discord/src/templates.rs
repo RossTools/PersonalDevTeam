@@ -1,7 +1,7 @@
 //! The workflow templates that post to Discord (Phase 7e spec §5).
 
 use pdt_api::sdk::templates::{builtin, doc, params};
-use pdt_core::workflow::template::Template;
+use pdt_core::workflow::template::{Category, Template};
 use serde_json::{Value, json};
 
 /// The param of a Discord webhook connection.
@@ -14,6 +14,7 @@ fn discord_param() -> Value {
 pub(crate) fn all() -> Vec<Template> {
     vec![builtin(
         "github-issues-discord",
+        Category::Notifications,
         params(json!([
             {"id": "repo", "title": "Repository", "type": "string", "required": true,
              "description": "owner/name on GitHub (read through PDT's GitHub login)."},

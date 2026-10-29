@@ -121,6 +121,7 @@ import type { ImportRequest } from './gen/ImportRequest';
 import type { ImportResult } from './gen/ImportResult';
 import type { WorkflowDoc } from './gen/WorkflowDoc';
 import type { WorkflowRunDetail } from './gen/WorkflowRunDetail';
+import type { GalleryTemplate } from './gen/GalleryTemplate';
 import type { WorkflowTemplate } from './gen/WorkflowTemplate';
 import type { WorkflowVersion } from './gen/WorkflowVersion';
 import type { WorkflowPatch } from './gen/WorkflowPatch';
@@ -430,7 +431,7 @@ export const api = {
   connectionTools: (id: string) => request<McpTools | null>(`/api/connections/${enc(id)}/tools`),
   /** Lists an MCP server's tools now. */
   refreshConnectionTools: (id: string) => request<McpTools>(`/api/connections/${enc(id)}/tools`, { method: 'POST' }),
-  listWorkflowTemplates: () => request<WorkflowTemplate[]>('/api/workflow-templates'),
+  listWorkflowTemplates: () => request<GalleryTemplate[]>('/api/workflow-templates'),
   getWorkflowTemplate: (id: string) => request<WorkflowTemplate>(`/api/workflow-templates/${enc(id)}`),
   createWorkflowTemplate: (t: TemplateInput) =>
     request<WorkflowTemplate>('/api/workflow-templates', { method: 'POST', body: JSON.stringify(t) }),

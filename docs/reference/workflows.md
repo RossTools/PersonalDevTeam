@@ -594,6 +594,16 @@ the last quiet), and
 the built-in workflows (PDT bug triage only where a project is PDT's own repository). A required text param with no default is checked as
 the reference itself. The user's are in `workflow_templates`.
 
+Each template has a `category` for the New workflow gallery (PDT-229): `ciPr` (CI & pull requests), `tickets`, `issues`,
+`notifications`, `releases` or `other` (Blank and the user's own); every built-in declares its own (`builtin()`'s
+argument, `Builtin::category`). The list (`GET /api/workflow-templates`) adds to each what its card and preview show:
+`plugin` (`{id, label, on}`: the first optional integration whose node kinds it uses, else GitHub for a `github.*`
+kind; GitHub is always on), `builtinWorkflow` and `added` (one of PDT's built-in workflows, and whether this host has
+it), `triggers` and `steps` (node titles, the kind's title when a node has none; ends left out). It also lists the
+templates and built-ins of integrations this build has that are turned off, with `plugin.on` false; instantiating one
+is `409 integration_disabled`. Node titles come from a catalog of every integration this build has
+(`Integrations::everything`), which nothing runs from.
+
 A workflow made from a built-in template records it and its params in its state (`_pdt.template`: `{id, params}`).
 On the engine's first tick (with the built-ins), each such workflow still untouched (its current version is the one
 instantiating wrote, or one PDT wrote) moves to the template's current document filled with those params (its name
@@ -778,8 +788,17 @@ the step's panel. Or add a Discord bot connection and ask the PM to set up the c
 
 The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings → This host → Workflows:
 
-- List column (`WorkflowsList`): New workflow (template, params, name, where it applies; it starts off), the
-  workflows grouped This host / Personal / each project (on/off dot, Built in, Repo, Proposed), then the templates.
+- List column (`WorkflowsList`): New workflow, Import, Export, and the workflows grouped This host / Personal / each
+  project (on/off dot, Built in, Repo, Proposed). Templates are only in the gallery.
+- New workflow (`NewWorkflowDialog`, the gallery; model in `gallery.ts`): search (name, description, plugin) in the
+  header; on the left All and the categories that have templates, with how many match, then Built-in; in the middle
+  cards (name, description, trigger, plugin; Added / Not added for built-ins), Start from scratch first and then a
+  group per category under All, and PDT's built-in workflows in a collapsed group at the end; on the right the picked
+  one's preview (When the triggers → its steps, the first eight), its params, Name (blank for Start from scratch),
+  Project (this host, a project, or None (personal)), Cancel and Create workflow (it starts off). A template whose
+  plugin is off is faded, its preview links to that plugin's page (Settings → Plugins, PDT-228) and Create is disabled; a built-in already
+  added notes that this makes a second copy. No match: "No templates match" and Start from scratch. On a phone the
+  categories are a row of chips and the preview opens as a sheet over the list.
 - A workflow (`WorkflowPage`): header with the Enabled switch (turning on asks, listing its triggers and actions, and
   offers Dry run first), Dry run, Run now (with a manual trigger; runs the saved version), ⋯ (Save as template,
   Duplicate, Delete…); a banner for a pending proposal; and Graph | Outline | Text | Runs | Versions.
@@ -809,7 +828,8 @@ The Workflows view (rail; `web/src/workflows/`), which replaced 7a's Settings �
   the trigger's schema) or a manual input; the path, why triggers didn't match, and what each action would do.
 - Versions (`VersionsView`): every version with author, status and note, a diff against the current one, Restore,
   Accept / Discard for a proposal.
-- Templates (`TemplatePage`): built-in ones read-only; the user's edit name, description, params and the document.
+- Templates (`TemplatePage`): the user's own edit name, description, params and the document; reached from Save as
+  template and the gallery's "Edit this template" (built-in ones only by their URL, read-only).
 - On a phone (PDT-120) all of it is view-only except turning a workflow on or off: no New workflow, Dry run, Run now,
   workflow ⋯ menu or draft edits (the panel's fields are read-only, Outline rows have no ⋯), and templates have no Use
   or Delete. The top bar's ⋯ has Enable… (the same "Turn on?" dialog, without Dry run first) or Disable. The tabs are

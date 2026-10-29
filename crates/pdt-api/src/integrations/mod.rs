@@ -469,6 +469,8 @@ pub struct Integrations {
     built: Vec<Arc<dyn Integration>>,
     /// The ids of the enabled ones, and their registry with PDT's own.
     current: RwLock<(Vec<&'static str>, Arc<Registry>)>,
+    /// The registry of every integration this build has, enabled or not, made when first asked for.
+    everything: std::sync::OnceLock<Arc<Registry>>,
 }
 
 impl Default for Integrations {
@@ -481,7 +483,18 @@ impl Integrations {
     /// `built`, none of them enabled yet.
     pub fn new(built: Vec<Arc<dyn Integration>>) -> Self {
         let registry = Arc::new(Registry::new(own(), built.iter().map(|i| i.id()).collect()));
-        Self { built, current: RwLock::new((vec![], registry)) }
+        Self { built, current: RwLock::new((vec![], registry)), everything: Default::default() }
+    }
+
+    /// The registry of PDT's own integrations and every one this build has, enabled or not: what the New workflow
+    /// gallery names a turned-off integration's nodes with (PDT-229). Nothing runs from it.
+    pub fn everything(&self) -> Arc<Registry> {
+        self.everything
+            .get_or_init(|| {
+                let ids = self.built.iter().map(|i| i.id()).collect();
+                Arc::new(Registry::new(own().into_iter().chain(self.built.iter().cloned()).collect(), ids))
+            })
+            .clone()
     }
 
     /// The optional integrations this build has.

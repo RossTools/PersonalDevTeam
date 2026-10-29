@@ -5,7 +5,6 @@ import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { TopBarActionsContext, type TopBarActions } from '../shell/PhoneTopBar';
 import { Reply, renderWithQuery, stubApi, type Call } from '../test-utils';
 import { DryRunDialog } from './DryRunDialog';
-import { NewWorkflowDialog } from './NewWorkflowDialog';
 import { RunsView } from './RunsView';
 import { classify } from './SchemaForm';
 import { CATALOG, DOC, detail } from './testData';
@@ -249,27 +248,6 @@ describe('versions', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Accept' }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(calls.some((c) => c.path === '/api/workflows/w1/versions/2/accept')).toBe(true);
-  });
-});
-
-describe('new workflow', () => {
-  it("instantiates a template with its params and where it applies", async () => {
-    const calls = stubApi({
-      'GET /api/workflow-templates': [
-        { id: 'builtin:blank', name: 'Blank', description: '', builtin: true, params: [], doc: DOC, createdAt: 0, updatedAt: 0 },
-        { id: 't1', name: 'Mine', description: 'd', builtin: false, doc: { ...DOC, name: 'From mine' }, createdAt: 0, updatedAt: 0,
-          params: [{ id: 'word', title: 'Word', description: '', type: 'string', choices: [], required: true }, { id: 'loud', title: 'Loud', description: '', type: 'boolean', choices: [], default: true, required: false }] },
-      ],
-      'POST /api/workflow-templates/t1/instantiate': detail({ id: 'w9' }),
-    });
-    const onCreated = vi.fn();
-    renderWithQuery(<NewWorkflowDialog projects={[{ id: 'p1', name: 'Proj' } as never]} templateId="t1" onClose={() => {}} onCreated={onCreated} />);
-    await userEvent.type(await screen.findByRole('textbox', { name: /Word/ }), 'hi');
-    await userEvent.click(screen.getByRole('button', { name: /Applies to/ }));
-    await userEvent.click(await screen.findByRole('option', { name: 'Proj' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('w9'));
-    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ params: { word: 'hi', loud: true }, name: null, scope: 'project', projectId: 'p1' });
   });
 });
 

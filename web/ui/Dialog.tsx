@@ -9,7 +9,7 @@ import {
   DialogTrigger,
 } from './primitives/dialog';
 
-export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
+export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'full' | 'gallery';
 
 const sizes: Record<DialogSize, string> = {
   sm: 'sm:max-w-sm',
@@ -19,6 +19,8 @@ const sizes: Record<DialogSize, string> = {
   xl: 'sm:max-w-6xl',
   /** Most of the screen, at its full height: a long text being edited. */
   full: 'h-[calc(100dvh-4rem)] sm:max-w-[calc(100vw-4rem)]',
+  /** A large picker of fixed height whose body lays out its own scrolling columns (the New workflow gallery). */
+  gallery: 'sm:max-w-5xl h-[min(42.5rem,calc(100dvh-2rem))]',
 };
 
 /**
@@ -34,6 +36,7 @@ export function Dialog({
   description,
   children,
   footer,
+  headerActions,
   size = 'md',
   dismissable = true,
   className,
@@ -46,6 +49,8 @@ export function Dialog({
   children?: ReactNode;
   /** Action buttons, right-aligned (primary last). */
   footer?: ReactNode;
+  /** Beside the title, before the close button (a search field). */
+  headerActions?: ReactNode;
   size?: DialogSize;
   /** false: the backdrop doesn't close it (Escape still does). For forms with unsaved text. */
   dismissable?: boolean;
@@ -63,13 +68,14 @@ export function Dialog({
       className={cn('flex max-h-[calc(100dvh-2rem)] flex-col', sizes[size], className)}
       innerClassName="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto] gap-3"
     >
-      <DialogHeader className="pr-8">
-        <DialogTitle className="text-sm font-semibold">{title}</DialogTitle>
+      <DialogHeader className={cn('pr-8', headerActions && 'flex-row items-center gap-3')}>
+        <DialogTitle className="shrink-0 text-sm font-semibold">{title}</DialogTitle>
         {description && (
           <DialogDescription id={descId} className="text-xs">
             {description}
           </DialogDescription>
         )}
+        {headerActions && <div className="flex min-w-0 flex-1 items-center gap-2">{headerActions}</div>}
       </DialogHeader>
       <div className="min-h-0 overflow-auto">{children}</div>
       {footer && <DialogFooter>{footer}</DialogFooter>}

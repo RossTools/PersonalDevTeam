@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { Dialog } from './Dialog';
@@ -82,5 +82,11 @@ describe('Dialog', () => {
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(screen.getByRole('button', { name: 'Shortcuts' })).toHaveFocus());
+  });
+
+  it('puts header actions beside the title', async () => {
+    render(<Dialog open title="New workflow" headerActions={<input aria-label="Search" />}>body</Dialog>);
+    const d = await screen.findByRole('dialog', { name: 'New workflow' });
+    expect(within(d).getByRole('textbox', { name: 'Search' })).toBeInTheDocument();
   });
 });

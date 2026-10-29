@@ -52,6 +52,22 @@ pub struct TemplateParam {
     pub connection_kind: Option<String>,
 }
 
+/// Where a template sits in the New workflow gallery (PDT-229).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename = "TemplateCategory")]
+pub enum Category {
+    /// CI and pull requests.
+    CiPr,
+    Tickets,
+    Issues,
+    Notifications,
+    Releases,
+    /// The user's own templates, and anything else.
+    #[default]
+    Other,
+}
+
 /// A template as the API lists it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +78,9 @@ pub struct Template {
     pub name: String,
     pub description: String,
     pub builtin: bool,
+    /// Its group in the gallery; the user's own are [`Category::Other`].
+    #[serde(default)]
+    pub category: Category,
     pub params: Vec<TemplateParam>,
     pub doc: WorkflowDoc,
     #[ts(type = "number")]
@@ -196,6 +215,15 @@ pub fn placeholder_values(params: &[TemplateParam]) -> Map<String, Value> {
         .collect()
 }
 
+/// The optional integration (or GitHub) a document needs: the first whose node kinds it uses (PDT-229).
+pub fn plugin_of(doc: &WorkflowDoc) -> Option<(&'static str, &'static str)> {
+    let kinds = || doc.nodes.iter().map(|n| n.kind.as_str());
+    kinds()
+        .find_map(crate::integration::owner_of_kind)
+        .map(|k| (k.id, k.label))
+        .or_else(|| kinds().any(|k| k.starts_with("github.")).then_some(("github", "GitHub")))
+}
+
 /// The template's document with `{{params.x}}` filled in from `values`.
 pub fn fill(doc: &WorkflowDoc, values: &Map<String, Value>) -> Result<WorkflowDoc, String> {
     let v = serde_json::to_value(doc).map_err(|e| e.to_string())?;
@@ -268,6 +296,26 @@ mod tests {
         let mut repo = param("repo", ParamType::String);
         repo.required = true;
         assert_eq!(Value::Object(placeholder_values(&[repo])), json!({"repo": "{{params.repo}}"}), "left for later");
+    }
+
+    #[test]
+    fn a_document_names_the_integration_it_needs() {
+        let with = |kinds: &[&str]| {
+            let nodes: Vec<Value> = kinds
+                .iter()
+                .enumerate()
+                .map(|(i, k)| json!({"id": format!("n{i}"), "kind": k, "version": 1}))
+                .collect();
+            plugin_of(&serde_json::from_value(json!({"name": "x", "nodes": nodes})).unwrap())
+        };
+        assert_eq!(with(&["manual", "session.send"]), None);
+        assert_eq!(
+            with(&["github.issue.opened", "discord.post"]),
+            Some(("discord", "Discord")),
+            "the optional one first"
+        );
+        assert_eq!(with(&["github.issue.opened", "agent"]), Some(("github", "GitHub")));
+        assert_eq!(with(&["manual", "jira.comment"]), Some(("jira", "Jira")));
     }
 
     #[test]
