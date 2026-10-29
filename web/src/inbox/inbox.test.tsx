@@ -212,6 +212,26 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/inbox/n/dismiss')).toBe(true));
   });
 
+  it('shows a triaged ticket with its notes and issue: Enter approves it, Reject rejects it (PDT-225)', async () => {
+    const triaged = item('a', {
+      kind: 'admit', group: 'admit', runId: 'r', stepId: null, title: 'Crash on start',
+      body: { summary: 'Panics when the config is empty.', issue: 'https://github.com/o/r/issues/2', external: true, workflow: 'PDT bug triage' },
+      choices: [{ id: 'approve', title: 'Approve', primary: true }, { id: 'reject', title: 'Reject', primary: false }],
+    });
+    expect(grouped([gate, triaged]).map((g) => g.title)).toEqual(['Triaged tickets', 'Gates']);
+    expect(dismissable(triaged)).toBe(false);
+    const calls = stubApi({ 'POST /api/inbox/a/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[triaged]} selectedId="a" onSelect={() => {}} />);
+    const region = screen.getByRole('region', { name: 'Triaged ticket' });
+    expect(region).toHaveTextContent('Panics when the config is empty.');
+    expect(region).toHaveTextContent('only you can');
+    expect(screen.getByRole('link', { name: 'https://github.com/o/r/issues/2' })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/inbox/a/answer')?.body).toEqual({ choice: 'approve' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await waitFor(() => expect(calls.filter((c) => c.path === '/api/inbox/a/answer').map((c) => c.body)).toContainEqual({ choice: 'reject' }));
+  });
+
   it('asks to connect GitHub: Enter opens GitHub’s plugin page, and it is not dismissed', async () => {
     const connect = item('connect:github', {
       kind: 'connect', group: 'notice', projectId: null, ticketId: null, runId: null, stepId: null, title: 'Connect GitHub',

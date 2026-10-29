@@ -2,6 +2,7 @@
 import type { AutoStart } from "./AutoStart";
 import type { AutoStartOrder } from "./AutoStartOrder";
 import type { MergeBy } from "./MergeBy";
+import type { TriageApproval } from "./TriageApproval";
 
 /**
  * A project's policies.
@@ -36,4 +37,8 @@ startDelaySeconds: number,
  * An automated merge of a pull request waits for its head's CI to pass, and is refused while it fails (PDT-151),
  * whatever GitHub's branch protection requires.
  */
-requireGreenCi: boolean, };
+requireGreenCi: boolean, 
+/**
+ * Whether tickets triage drafts wait for the user's approval in the Inbox (PDT-225).
+ */
+triageApproval: TriageApproval, };

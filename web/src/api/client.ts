@@ -513,7 +513,8 @@ export const api = {
   /** What waits on the user: questions, approvals, stalled steps, loop limits, gates (Phase 7b). */
   inbox: (project?: string) => request<InboxList>(`/api/inbox${queryString({ project })}`),
   answerInbox: (id: string, a: InboxAnswer) =>
-    request<Record<string, unknown>>(`/api/inbox/${enc(id)}/answer`, { method: 'POST', body: JSON.stringify(a) }),
+    // As the user's: a triaged ticket's Approve lets an external ticket in (PDT-225).
+    request<Record<string, unknown>>(`/api/inbox/${enc(id)}/answer`, { method: 'POST', body: JSON.stringify(a) }, { asUser: true }),
   dismissInbox: (id: string) => request<void>(`/api/inbox/${enc(id)}/dismiss`, { method: 'POST' }),
   notifications: (q: { section?: NotificationSection; project?: string; unread?: boolean; limit?: number; before?: number } = {}) =>
     request<NotificationList>(`/api/notifications${queryString(q)}`),

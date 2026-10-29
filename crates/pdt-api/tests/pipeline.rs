@@ -571,7 +571,7 @@ async fn a_strict_project_is_other_parameters_and_policies() {
         s["policy"],
         json!({"mergeBy": "user", "requireApproval": true, "approvalExemptLabels": [], "maxRunningAttempts": 1,
                "autoStart": "off", "autoStartOrder": "priority", "pmActs": false, "startDelaySeconds": 120,
-               "requireGreenCi": true})
+               "requireGreenCi": true, "triageApproval": "inbox"})
     );
 
     let (s, started) =

@@ -12,6 +12,7 @@ import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { AutoStart } from '../api/gen/AutoStart';
 import type { AutoStartOrder } from '../api/gen/AutoStartOrder';
+import type { TriageApproval } from '../api/gen/TriageApproval';
 import type { MergeBy } from '../api/gen/MergeBy';
 import { PERMISSION_LABEL, PERMISSION_MODES } from '../conversation/ConversationComposer';
 import type { Project } from '../api/gen/Project';
@@ -301,6 +302,10 @@ const AUTO_START_ORDER: { value: AutoStartOrder; label: string }[] = [
   { value: 'priority', label: 'Priority, then rank' },
   { value: 'rank', label: 'Backlog rank' },
 ];
+const TRIAGE_APPROVAL: { value: TriageApproval; label: string }[] = [
+  { value: 'inbox', label: 'Wait in the Inbox' },
+  { value: 'off', label: 'Off: stay in the backlog' },
+];
 const START_DELAYS: { value: string; label: string }[] = [
   { value: '0', label: 'None: at once' },
   { value: '30', label: '30 seconds' },
@@ -462,6 +467,21 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
             checked={p?.pmActs ?? false}
             disabled={!settings || save.isPending}
             onChange={(on) => void track(set({ pmActs: on }))}
+          />
+        )}
+      </AutoSaveRow>
+      <AutoSaveRow
+        label="Triaged tickets"
+        description="A ticket triage drafts from an issue waits in your Inbox: Approve moves it to To do (letting in one that came from outside PDT), Reject to Won't do. Off: it stays in the backlog until you move it."
+      >
+        {(track) => (
+          <Select<TriageApproval>
+            aria-label="Triaged tickets"
+            className="w-56 max-w-full"
+            options={TRIAGE_APPROVAL}
+            value={p?.triageApproval ?? 'inbox'}
+            disabled={!settings}
+            onChange={(t) => void track(set({ triageApproval: t }))}
           />
         )}
       </AutoSaveRow>

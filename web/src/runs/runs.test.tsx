@@ -325,6 +325,23 @@ describe('ProjectSettingsPanel', () => {
     await waitFor(() => expect(toggle).not.toBeChecked());
   });
 
+  it('turns off waiting in the Inbox for triaged tickets (on by default, PDT-225)', async () => {
+    const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'off', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120, requireGreenCi: true, triageApproval: 'inbox' };
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, policy },
+      'GET /api/projects/p/run-config': config,
+      'PUT /api/projects/p/settings': (c) => ({
+        effectiveCredentials: 'subscription', agentInstructions: null, policy: { ...policy, ...(c.body as object) },
+      }),
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    const select = await screen.findByRole('button', { name: /Triaged tickets/ });
+    expect(select).toHaveTextContent('Wait in the Inbox');
+    await choose(select, 'Off: stay in the backlog');
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, triageApproval: 'off' });
+  });
+
   it('saves the quiet period before auto-start, shown while auto-start is on', async () => {
     const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'todo', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120 };
     const calls = stubApi({

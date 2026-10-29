@@ -34,6 +34,9 @@ pub enum InboxKind {
     Secret,
     /// A forge PDT needs is not signed in (PDT-177): Connect GitHub in Settings. Not stored: listed while it lasts.
     Connect,
+    /// A ticket triage drafted waits for the user's Approve (to To do) or Reject (to Won't do) (PDT-225). It closes
+    /// once the ticket moves past Ready some other way.
+    Admit,
 }
 
 impl InboxKind {
@@ -50,6 +53,7 @@ impl InboxKind {
             InboxKind::Notice => "notice",
             InboxKind::Secret => "secret",
             InboxKind::Connect => "connect",
+            InboxKind::Admit => "admit",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -65,6 +69,7 @@ impl InboxKind {
             Self::Notice,
             Self::Secret,
             Self::Connect,
+            Self::Admit,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -84,19 +89,22 @@ pub enum InboxGroup {
     LoopLimit,
     /// Notices no agent session could be told (PDT-139).
     Notice,
+    /// Triaged tickets waiting for the user's approval (PDT-225).
+    Admit,
     Gate,
     /// A gate with `inbox: accept`: the work is done and waits for the user's Accept.
     Accept,
 }
 
 impl InboxGroup {
-    pub const ALL: [InboxGroup; 8] = [
+    pub const ALL: [InboxGroup; 9] = [
         InboxGroup::Question,
         InboxGroup::Approval,
         InboxGroup::Session,
         InboxGroup::Stalled,
         InboxGroup::LoopLimit,
         InboxGroup::Notice,
+        InboxGroup::Admit,
         InboxGroup::Gate,
         InboxGroup::Accept,
     ];
@@ -108,6 +116,7 @@ impl InboxGroup {
             InboxGroup::Stalled => "stalled",
             InboxGroup::LoopLimit => "loop_limit",
             InboxGroup::Notice => "notice",
+            InboxGroup::Admit => "admit",
             InboxGroup::Gate => "gate",
             InboxGroup::Accept => "accept",
         }
@@ -123,6 +132,7 @@ impl InboxGroup {
             InboxGroup::Stalled => "Stalled",
             InboxGroup::LoopLimit => "Loop limit",
             InboxGroup::Notice => "Unheard notices",
+            InboxGroup::Admit => "Triaged tickets",
             InboxGroup::Gate => "Gates",
             InboxGroup::Accept => "Ready to accept",
         }
@@ -198,6 +208,10 @@ pub const STOP: &str = "stop";
 pub const RESUME: &str = "resume";
 /// A stalled step whose first message never reached its session: send it again, as the user's (PDT-144).
 pub const RESEND: &str = "resend";
+/// A triaged ticket's Approve: to To do, as the user's own move (PDT-225).
+pub const APPROVE: &str = "approve";
+/// A triaged ticket's Reject: to Won't do.
+pub const REJECT: &str = "reject";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -221,7 +235,8 @@ pub struct InboxItem {
     pub persona_name: Option<String>,
     pub title: String,
     /// Kind-specific: `questions` (question), `question`/`choices` (gate), `outcomes`, `summary`, `turns`
-    /// (stalled), `passes` (loop limit), `request` (approval), `notice`/`key`/`text`/`pr`/`url` (notice).
+    /// (stalled), `passes` (loop limit), `request` (approval), `notice`/`key`/`text`/`pr`/`url` (notice),
+    /// `summary`/`issue`/`external` (admit).
     #[ts(type = "Record<string, unknown>")]
     pub body: Value,
     pub choices: Vec<InboxChoice>,

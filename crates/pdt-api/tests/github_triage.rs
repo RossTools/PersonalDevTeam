@@ -248,6 +248,29 @@ async fn bug_reports_are_triaged_into_tickets_duplicates_and_rejections() {
     );
     assert!(logged.iter().any(|e| e["payload"]["via"] == "triage" && e["payload"]["ticketId"] == id.as_str()));
     assert_eq!(run["steps"].as_array().unwrap().last().unwrap()["nodeId"], "imported");
+    // It waits for the user's approval in the Inbox (PDT-225), with the triage notes and the issue.
+    let item = admit_item(&env, &id).await.expect("a triaged ticket in the Inbox");
+    assert_eq!((item["group"].as_str(), item["ticketKey"].as_str()), (Some("admit"), Some(tkey.as_str())));
+    assert_eq!(item["body"]["summary"], "Panics in main.rs when the config is empty.");
+    assert_eq!(
+        (item["body"]["issue"].as_str(), item["body"]["external"].as_bool()),
+        (Some(issue(2, "", &[]).url.as_str()), Some(true))
+    );
+    let answer = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
+    // An agent's curl can't approve it: only the user's click lets an external ticket in.
+    let (s, v) = call(&env.app, "POST", &answer, Some(json!({"choice": "approve"}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("only the user can approve it"), "{v}");
+    let t = &tickets(&env).await[0];
+    assert_eq!((t["stage"].as_str(), t["admitted"].as_bool()), (Some("draft"), Some(false)));
+    assert!(admit_item(&env, &id).await.is_some(), "still waiting");
+    // The user's Approve puts it in To do and lets it in, without the agentic label.
+    let (s, v) = common::call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "approve"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let t = &tickets(&env).await[0];
+    assert_eq!((t["stage"].as_str(), t["admitted"].as_bool()), (Some("todo"), Some(true)));
+    assert_eq!(t["labels"], json!(["bug", "crash"]));
+    assert!(admit_item(&env, &id).await.is_none());
 
     // An issue without the label is left alone.
     look(&env, issue(3, "A question", &["question"])).await;
@@ -299,6 +322,77 @@ async fn bug_reports_are_triaged_into_tickets_duplicates_and_rejections() {
     move_ticket(&env, &id, "done").await;
     assert_eq!(env.gh.comments_on(RELEASE_REPO, 2).len(), 2, "once per ticket");
     assert!(!env.gh.closed.lock().unwrap().contains_key(&(RELEASE_REPO.to_string(), 2)));
+}
+
+/// The open "triaged ticket" Inbox item of `ticket` (PDT-225).
+async fn admit_item(env: &Env, ticket: &str) -> Option<Value> {
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    inbox["items"].as_array().unwrap().iter().find(|i| i["kind"] == "admit" && i["ticketId"] == ticket).cloned()
+}
+
+/// PDT-225: `inbox.admit` puts a triaged ticket in the Inbox once; Reject puts it in Won't do, a move on the board
+/// closes it, and with the project's triage approval off nothing is asked.
+#[tokio::test]
+async fn triaged_tickets_wait_for_approve_or_reject_in_the_inbox() {
+    let env = setup().await;
+    let new_ticket = |title: &str| {
+        let (app, project, title) = (env.app.clone(), env.project.clone(), title.to_string());
+        async move {
+            let uri = format!("/api/projects/{project}/tickets");
+            let (s, t) = call(&app, "POST", &uri, Some(json!({"title": title}))).await;
+            assert_eq!(s, StatusCode::CREATED, "{t}");
+            t["id"].as_str().unwrap().to_string()
+        }
+    };
+    let admit = action(
+        &env,
+        json!({"id": "act", "kind": "inbox.admit", "version": 1, "config": {
+            "ticket": "{{trigger.ticket}}", "summary": "Worth doing.", "issue": "https://github.com/o/r/issues/1"}}),
+    )
+    .await;
+    let a = new_ticket("Rejected").await;
+    let r = run_now(&env, &admit, json!({"ticket": a})).await;
+    assert_eq!(step(&r, "act")["port"], "added", "{r}");
+    // Once per ticket.
+    let r = run_now(&env, &admit, json!({"ticket": a})).await;
+    assert_eq!(step(&r, "act")["port"], "skipped", "{r}");
+    let item = admit_item(&env, &a).await.unwrap();
+    assert_eq!(item["body"]["external"], false);
+    let ids: Vec<_> = item["choices"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["approve", "reject"]);
+    let answer = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
+    let (s, v) = call(&env.app, "POST", &answer, Some(json!({"choice": "reject"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{a}"), None).await;
+    assert_eq!(t["stage"], "wont_do");
+    assert!(admit_item(&env, &a).await.is_none());
+
+    // Moved on the board, its item closes; Ready (a refine) leaves it waiting.
+    let b = new_ticket("Moved").await;
+    run_now(&env, &admit, json!({"ticket": b})).await;
+    move_ticket(&env, &b, "ready").await;
+    assert!(admit_item(&env, &b).await.is_some());
+    move_ticket(&env, &b, "todo").await;
+    assert!(admit_item(&env, &b).await.is_none());
+    // Past Ready already: not asked. No ticket given: not asked.
+    let r = run_now(&env, &admit, json!({"ticket": b})).await;
+    assert_eq!(step(&r, "act")["port"], "skipped", "{r}");
+    let r = run_now(&env, &admit, json!({})).await;
+    assert_eq!(step(&r, "act")["port"], "skipped", "{r}");
+
+    // With the project's triage approval off, nothing is asked.
+    let (s, v) = call(
+        &env.app,
+        "PUT",
+        &format!("/api/projects/{}/settings", env.project),
+        Some(json!({"agentCredentials": null, "runOverrides": null, "triageApproval": "off"})),
+    )
+    .await;
+    assert_eq!((s, v["policy"]["triageApproval"].as_str()), (StatusCode::OK, Some("off")), "{v}");
+    let c = new_ticket("Off").await;
+    let r = run_now(&env, &admit, json!({"ticket": c})).await;
+    assert_eq!(step(&r, "act")["port"], "skipped", "{r}");
+    assert!(admit_item(&env, &c).await.is_none());
 }
 
 /// A workflow that runs one action on Run now's input.

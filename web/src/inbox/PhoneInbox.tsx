@@ -13,6 +13,7 @@ import { ErrorBoundary } from '../common/ErrorBoundary';
 import { Markdown } from '../common/Markdown';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { SecretRequest } from './SecretRequest';
+import { TriagedTicket } from './TriagedTicket';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { useOpenSession, useOpenTicket } from '../tickets/actions';
 import { PrDetails } from '../tickets/PullRequest';
@@ -368,6 +369,10 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
         { id: 'dismiss', title: 'Dismiss' },
         { id: 'ticket', title: 'Open ticket', primary: true, disabled: !item.ticketId },
       ]} onPick={(id) => (id === 'dismiss' ? onDismiss() : onOpenTicket())} />;
+      break;
+    case 'admit':
+      content = <TriagedTicket item={item} />;
+      bar = <DecisionBar busy={busy} decisions={itemChoices} onPick={(choice) => void onAnswer({ choice })} />;
       break;
     case 'gate':
       content = (

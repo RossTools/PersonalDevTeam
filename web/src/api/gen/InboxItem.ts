@@ -15,6 +15,7 @@ ticketKey: string | null, ticketTitle: string | null, attemptId: string | null, 
 personaName: string | null, title: string, 
 /**
  * Kind-specific: `questions` (question), `question`/`choices` (gate), `outcomes`, `summary`, `turns`
- * (stalled), `passes` (loop limit), `request` (approval), `notice`/`key`/`text`/`pr`/`url` (notice).
+ * (stalled), `passes` (loop limit), `request` (approval), `notice`/`key`/`text`/`pr`/`url` (notice),
+ * `summary`/`issue`/`external` (admit).
  */
 body: Record<string, unknown>, choices: Array<InboxChoice>, resolution: unknown, createdAt: number, resolvedAt: number | null, };

@@ -130,7 +130,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     outcomes `accept` (`data` `{priority, labels}`), `duplicate` (`data` `{ticket, duplicateOf}`) and `reject` (the
     summary is the reason, for the reporter). `accept` → `github.import` (the suggested priority and labels but
     `agentic`; an external Draft only the user moves to To do) → a
-    `ticket.comment` with the triage notes → `github.comment` with the ticket key. `duplicate` → `github.close`
+    `ticket.comment` with the triage notes → `github.comment` with the ticket key → `inbox.admit` (the ticket waits
+    in the Inbox for Approve or Reject, PDT-225) → end. `duplicate` → `github.close`
     `duplicate` of `duplicateOf` (the issue linked to the existing ticket, else the earliest one reporting the same
     bug; a comment names it and the ticket), or `not_planned` naming the ticket when there is none → a
     `ticket.comment` on the existing ticket noting the extra report; no ticket is made. `reject` → `github.close`
@@ -265,6 +266,7 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `ticket.move` (`ticket`, `stage`, `externalStage`: where an external ticket the user hasn't let in goes instead of To do or In progress; without it such a move fails, PDT-201), `ticket.comment` (`ticket`: its id or key, `body`) | `out` |
 | `ticket.create` (`project`, `title`, `description`, `stage` default Draft, `labels`; PDT-151; output `id`, `key`; not run again on its own; source `workflow`, or `external` in a run an outside event started, then never in To do) | `out` |
 | `attempt.merge` (`attempt`, `style`, `finishOnMerge`, `deleteBranch`, `again`, `pipelineStage`; Phase 7c) | `merged`, `queued`, `refused` |
+| `inbox.admit` (`ticket`, `summary`, `issue`; PDT-225): a ticket triage drafted waits in the Inbox (kind and group `admit`, Triaged tickets) for Approve (To do) or Reject (Won't do), once per ticket (`dedupe_key` `admit:<ticket>`); body `summary`, `issue`, `external` (not let in yet), `workflow`. Not asked (`skipped`) when `ticket` is empty, the ticket is past Ready, or the project's `triageApproval` is `off`. The step doesn't wait: the item has no step and outlives its run | `added`, `skipped` |
 | `inbox.notice` (`attempt`, `text`, `key`, `title`; PDT-139): an Inbox item (kind and group `notice`, Unheard notices) on the attempt's ticket, once per attempt and key (`inbox_items.dedupe_key` `notice:<attempt>:<key>`, also once it closed); body `notice` (the trigger's notice kind), `key`, `text`, `pr`, `url`, `workflow`; the default title says what happened and that no agent session is open. Without `attempt` (PDT-154) it is the workflow's notice, in the run's project (and ticket, if any), once per workflow and key (`notice:workflow:<workflow>:<key>`), titled by `title` or the text's first line, open until dismissed | `added`, `skipped` |
 | `attempt.agent_working` (`attempt`, `known`; PDT-104): an agent step on the attempt now (bound, or waiting for a slot, in any other run) | `yes`, `no` |
 | `schedule` (`every` or `cron` + `timezone`, `catchUp`, `where`, `runKey`; fires on its own `schedule.fired`) | `out` |
@@ -589,8 +591,8 @@ Blank, Tell the agent when CI fails, Ask before finishing a merged ticket, Comme
 Pipeline (below), New GitHub issues to Discord (7e; PDT-226 removed the templates that weren't about development: Health watchdog,
 Brief follow-ups and Email processing; workflows made from them stay as they are), Triage new GitHub issues (PDT-81: `github.issue.opened` → an `agent` step of the
 locked-down Triage persona by default (PDT-201, [agents.md](agents.md)), `{{params.persona}}`, with outcomes `drafted` (it made a draft ticket in `{{params.project}}` with
-`create_ticket`, which asks first unless the project lets the PM act; an external Draft), `duplicate` and `ignored`,
-the last quiet), and
+`create_ticket`, which asks first unless the project lets the PM act; an external Draft; `data` `{ticket}` its key →
+`inbox.admit`, PDT-225), `duplicate` and `ignored`, the last quiet), and
 the built-in workflows (PDT bug triage only where a project is PDT's own repository). A required text param with no default is checked as
 the reference itself. The user's are in `workflow_templates`.
 
@@ -1040,7 +1042,8 @@ deleted (`409 persona_in_use`).
   `approvalExemptLabels` (tickets with one of them need no approval; normalised like ticket labels, `[]` clears),
   `maxRunningAttempts`, `autoStart` `off | todo | ready`, `autoStartOrder` `priority | rank` (default `priority`: the most urgent
   candidate first, PDT-218), `startDelaySeconds` (auto-start's quiet period, default 120,
-  0 at once); `PUT` takes them as top-level fields, `maxRunningAttempts` 0 clears it): Merge and Start enforce them ([review.md](review.md#merge), [tickets.md](tickets.md)). Web: the
+  0 at once), `triageApproval` `inbox | off` (default `inbox`: tickets triage drafts wait in the Inbox, `inbox.admit`,
+  PDT-225; web: "Triaged tickets"); `PUT` takes them as top-level fields, `maxRunningAttempts` 0 clears it): Merge and Start enforce them ([review.md](review.md#merge), [tickets.md](tickets.md)). Web: the
   project page's "Pipeline and policies".
 - **Host cap on agents running a turn** (`maxAgentTurns`, default 4, 0 none): busy sessions are conversations with a
   turn running or a message queued, and agent terminals whose activity is `working`. An agent step that would start
@@ -1056,8 +1059,15 @@ deleted (`409 persona_in_use`).
 group `gate` or `accept` from its `inbox`), `stalled`, `loop_limit`, `manual` (an `owner: user` step, Phase 7c),
 `timed_out` (group Stalled, PDT-123), `notice` (group Unheard notices, after Loop limit, PDT-139: made by
 `inbox.notice`, with no step, so it outlives its run), `secret` (group Questions, `request_secret`, PDT-158:
-answered `{secret}` in a masked field, [secrets.md](secrets.md#agents-pdt-mcp)); one
-open item per step and kind. A `notice` closes (`resolution` `{settled: true}`) when its cause is gone: the
+answered `{secret}` in a masked field, [secrets.md](secrets.md#agents-pdt-mcp)), `admit` (group Triaged tickets,
+after Unheard notices, PDT-225: made by `inbox.admit`, with no step; notified as `inbox.gate`); one
+open item per step and kind. An `admit` item is answered `{choice: approve | reject}`: Approve moves its ticket to To
+do and Reject to Won't do, both as the user's move (`moved` data `via: inbox`; Won't do ends an attempt as any close
+does, and "Done closes the GitHub issue" closes a linked issue as not planned). Approving a ticket not let in yet
+(external) needs the UI token (PDT-204): from anything but PDT's web client it is refused (`409 cannot_answer`), so
+an agent's curl can't admit it. Any move of the ticket past Ready (the board, the bulk bar, a workflow, Start) closes
+the item (`resolution` `{moved: <stage>}`, in pdt-store's stage change), and deleting the ticket removes it; a move to
+Ready (Refine) leaves it open. Approve never adds the `agentic` label. A `notice` closes (`resolution` `{settled: true}`) when its cause is gone: the
 attempt ended (merged, abandoned) or its PR, as the PR check last saw it, is no longer open or shows the notice
 settled (`pdt_core::pr::notice_settled`: a conflict mergeable again, CI passed, back in the queue or on auto-merge,
 caught up with its base), checked on every notifications `sync` (`inbox::settle_notices`); and at once on the

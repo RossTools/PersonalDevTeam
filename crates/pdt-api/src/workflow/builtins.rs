@@ -551,7 +551,8 @@ fn pdt_bug_triage() -> WorkflowDoc {
         "description": format!("Each new issue labelled {FROM_PDT} on {RELEASE_REPO} (a bug report from another PDT \
                         instance) is triaged by the locked-down Triage persona against the code and the tickets. \
                         Accepted: an external Draft ticket linked to the issue (only you move it to To do), with the triage notes, and a comment with its key on the \
-                        issue. A duplicate: the issue is closed at once as a duplicate of the canonical issue (or as \
+                        issue; it waits in your Inbox for Approve (To do) or Reject (Won't do) unless the project's \
+                        triage approval is off. A duplicate: the issue is closed at once as a duplicate of the canonical issue (or as \
                         not planned when there is none), and the existing ticket notes the extra report. Rejected: \
                         closed as not planned with the reason, and a notice in your Inbox so you can overrule it. \
                         Enabled where a project's repository is {RELEASE_REPO}.", RELEASE_REPO = RELEASE_REPO),
@@ -581,7 +582,10 @@ fn pdt_bug_triage() -> WorkflowDoc {
                 "repo": "{{trigger.repo}}", "number": "{{trigger.number}}",
                 "body": "Thanks for the report. It is tracked as {{steps.import.ticketKey}}; this issue is closed \
                          when that ticket is done."}},
-            {"id": "imported", "kind": "end", "version": 1, "position": {"x": 1500, "y": 0}, "title": "Imported"},
+            {"id": "approve", "kind": "inbox.admit", "version": 1, "position": {"x": 1500, "y": 0},
+             "title": "Wait for my approval", "config": {
+                "ticket": "{{steps.import.ticketId}}", "summary": triage, "issue": "{{trigger.url}}"}},
+            {"id": "imported", "kind": "end", "version": 1, "position": {"x": 1800, "y": 0}, "title": "Imported"},
             {"id": "known", "kind": "end", "version": 1, "position": {"x": 900, "y": -140},
              "title": "Already a ticket", "config": {"quiet": true}},
             // duplicate
@@ -629,7 +633,9 @@ fn pdt_bug_triage() -> WorkflowDoc {
             {"from": "import", "port": "imported", "to": "notes"},
             {"from": "import", "port": "exists", "to": "known"},
             {"from": "notes", "to": "tell"},
-            {"from": "tell", "to": "imported"},
+            {"from": "tell", "to": "approve"},
+            {"from": "approve", "port": "added", "to": "imported"},
+            {"from": "approve", "port": "skipped", "to": "imported"},
             {"from": "canonical", "port": "true", "to": "close_dup"},
             {"from": "canonical", "port": "false", "to": "close_known"},
             {"from": "close_dup", "to": "extra"},

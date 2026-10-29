@@ -10,6 +10,7 @@ export const GROUPS: { id: InboxGroup; title: string }[] = [
   { id: 'stalled', title: 'Stalled' },
   { id: 'loop_limit', title: 'Loop limit' },
   { id: 'notice', title: 'Unheard notices' },
+  { id: 'admit', title: 'Triaged tickets' },
   { id: 'gate', title: 'Gates' },
   { id: 'accept', title: 'Ready to accept' },
 ];
@@ -21,6 +22,7 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   notice: 'Unheard notice',
   secret: 'Secret request',
   connect: 'Connect',
+  admit: 'Triaged ticket',
 };
 
 /** The items of each group that has any, in the API's order. */
@@ -97,6 +99,16 @@ export const CONNECT_PATH = '/settings/plugins/github';
 /** What an unheard notice said, and its settling, in a line (PDT-139). */
 export function noticeText(item: InboxItem): string {
   return typeof item.body.text === 'string' ? item.body.text : item.title;
+}
+
+/** A triaged ticket's notes, the issue it came from and whether it came from outside PDT (PDT-225). */
+export function triageOf(item: InboxItem): { summary: string | null; issue: string | null; external: boolean } {
+  const b = item.body;
+  return {
+    summary: typeof b.summary === 'string' ? b.summary : null,
+    issue: typeof b.issue === 'string' ? b.issue : null,
+    external: b.external === true,
+  };
 }
 
 /** An Update's id in the Inbox's selection (Needs-you items use their own ids). */

@@ -6,7 +6,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::host::{CredentialPolicy, effective_credentials};
 use pdt_core::integration::IntegrationSettings;
-use pdt_core::policy::{AutoStart, AutoStartOrder, MergeBy, ProjectPolicy};
+use pdt_core::policy::{AutoStart, AutoStartOrder, MergeBy, ProjectPolicy, TriageApproval};
 use pdt_store::ProjectSettings;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -90,6 +90,10 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub require_green_ci: Option<bool>,
+    /// Tickets triage drafts wait for Approve or Reject in the Inbox (`inbox`), or not (`off`) (PDT-225).
+    #[serde(default)]
+    #[ts(optional)]
+    pub triage_approval: Option<TriageApproval>,
     /// Integration settings by integration id: each one named is set (keys left out keep their values), null or a
     /// `connection` of "" unlinks it, and integrations not named are kept.
     #[serde(default)]
@@ -199,6 +203,7 @@ pub(crate) async fn put_settings(
         pm_acts: input.pm_acts.unwrap_or(current.policy.pm_acts),
         start_delay_seconds: input.start_delay_seconds.unwrap_or(current.policy.start_delay_seconds),
         require_green_ci: input.require_green_ci.unwrap_or(current.policy.require_green_ci),
+        triage_approval: input.triage_approval.unwrap_or(current.policy.triage_approval),
     };
     let mut integrations = current.integrations;
     let reg = st.registry();

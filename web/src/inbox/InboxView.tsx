@@ -9,6 +9,7 @@ import { TicketKey } from '../common/TicketKey';
 import { actionError } from '../common/useAction';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { SecretRequest } from './SecretRequest';
+import { TriagedTicket } from './TriagedTicket';
 import { useOpenSession, useOpenTicket } from '../tickets/actions';
 import { useOpenChanges } from '../review/open';
 import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
@@ -284,6 +285,12 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
                 </Button>
               ))}
             </div>
+          </section>
+        )}
+        {item.kind === 'admit' && (
+          <section aria-label="Triaged ticket" className="flex flex-col gap-3">
+            <TriagedTicket item={item} />
+            <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice })} />
           </section>
         )}
         {(item.kind === 'gate') && (
