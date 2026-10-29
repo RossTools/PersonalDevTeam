@@ -1,9 +1,10 @@
 //! GitHub issue actions (PDT-154), modelled on an issue tracker integration's: `github.import` (an issue as a linked Draft ticket),
-//! `github.comment` and `github.close`, through the GitHub forge (PDT-176; PDT's GitHub login, the access the
+//! `github.comment` and `github.close`, through the GitHub forge (PDT-176; the run's project's, else GitHub's account, PDT-241; the access the
 //! `github.issue.opened` trigger uses). A ticket links an issue as `owner/name#12` ([`pdt_core::github_issue`]); linking is the dedupe.
 
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use pdt_core::forge::ForgeKind;
 use pdt_core::github_issue::{CloseReason, GITHUB, issue_key, parse_issue, repo_id, valid_repo};
 use pdt_core::ticket::{AGENTIC_LABEL, Actor, NewTicket, Priority};
 use pdt_forge::{Forge, ForgeError, IssueDetail};
@@ -14,12 +15,14 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use ts_rs::TS;
 
-/// Runs an issue call on the GitHub forge off the async threads.
+/// Runs an issue call off the async threads on GitHub: the forge of `project` when it is on GitHub, else GitHub's
+/// account (PDT-241); an error when that forge has no issues.
 async fn gh<T: Send + 'static>(
     st: &AppState,
+    project: Option<&str>,
     f: impl FnOnce(&dyn Forge) -> Result<T, ForgeError> + Send + 'static,
 ) -> Result<T, String> {
-    let api: Arc<dyn Forge> = st.github.clone();
+    let api: Arc<dyn Forge> = crate::forge::forge_for(st, &ForgeKind::GITHUB, project).await?;
     if !api.capabilities().issues {
         return Err(format!("{} has no issues", api.name()));
     }
@@ -181,7 +184,7 @@ pub(crate) async fn import_issue(
         return exists(t).await;
     }
     let r = repo.to_string();
-    let d = gh(st, move |g| g.issue(&r, number))
+    let d = gh(st, Some(project_id), move |g| g.issue(&r, number))
         .await?
         .ok_or_else(|| format!("GitHub has no issue {repo}#{number} (or PDT's GitHub login can't see it)"))?;
     if d.change_request {
@@ -354,7 +357,7 @@ impl NodeKind for GithubComment {
                 return Ok(Outcome::next("out", json!({"would": format!("comment on {repo}#{number}: {}", c.body)})));
             }
             let (r, body) = (repo.clone(), c.body.clone());
-            let url = gh(cx.st, move |g| g.comment_issue(&r, number, &body)).await?;
+            let url = gh(cx.st, cx.run.project_id.as_deref(), move |g| g.comment_issue(&r, number, &body)).await?;
             Ok(Outcome::next("out", json!({"issue": issue_key(&repo, number), "url": url})))
         })
     }
@@ -465,7 +468,7 @@ impl NodeKind for GithubClose {
                 return Ok(Outcome::next("out", json!({"would": would})));
             }
             let r = repo.clone();
-            let d = gh(cx.st, move |g| g.issue(&r, number))
+            let d = gh(cx.st, cx.run.project_id.as_deref(), move |g| g.issue(&r, number))
                 .await?
                 .ok_or_else(|| format!("GitHub has no issue {repo}#{number} (or PDT's GitHub login can't see it)"))?;
             if d.closed {
@@ -477,7 +480,7 @@ impl NodeKind for GithubClose {
             let duplicate_id = match &canonical {
                 Some((r, n)) => {
                     let (r2, n2) = (r.clone(), *n);
-                    let c = gh(cx.st, move |g| g.issue(&r2, n2))
+                    let c = gh(cx.st, cx.run.project_id.as_deref(), move |g| g.issue(&r2, n2))
                         .await?
                         .ok_or_else(|| format!("GitHub has no issue {r}#{n} to mark this a duplicate of"))?;
                     Some(c.id)
@@ -486,15 +489,15 @@ impl NodeKind for GithubClose {
             };
             if !labels.is_empty() {
                 let (r, l) = (repo.clone(), labels.clone());
-                gh(cx.st, move |g| g.add_labels(&r, number, &l)).await?;
+                gh(cx.st, cx.run.project_id.as_deref(), move |g| g.add_labels(&r, number, &l)).await?;
             }
             let mut url = None;
             if let Some(body) = comment {
                 let r = repo.clone();
-                url = Some(gh(cx.st, move |g| g.comment_issue(&r, number, &body)).await?);
+                url = Some(gh(cx.st, cx.run.project_id.as_deref(), move |g| g.comment_issue(&r, number, &body)).await?);
             }
             let r = repo.clone();
-            gh(cx.st, move |g| g.close_issue(&r, number, reason, duplicate_id)).await?;
+            gh(cx.st, cx.run.project_id.as_deref(), move |g| g.close_issue(&r, number, reason, duplicate_id)).await?;
             let of = canonical.map(|(r, n)| issue_key(&r, n));
             Ok(Outcome::next(
                 "out",

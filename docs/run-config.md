@@ -86,9 +86,12 @@ The same file can name the project's forge: where its pull requests, CI, reviews
 forge = "github"                                  # or "local" (below), or "none": no pull requests, CI or issues are read; merges are local
 ```
 
-Without it, a project whose `origin` is on github.com uses GitHub and any other has none, so existing projects need
-nothing. It is read from the project's **main checkout** plus the host overrides (the overrides' wins). A forge name
-this PDT does not know (written for a newer one) is skipped like an unknown section, leaving the choice to the origin.
+The value is a forge plugin's id (`github`) or one of PDT's own (`local`, `none`). Without it, the project uses the
+forge whose plugin claims its `origin`'s host (GitHub claims github.com, and the GitHub Enterprise Server your GitHub
+login is for) and has none when no plugin does, so existing projects need nothing. It is read from the project's
+**main checkout** plus the host overrides (the overrides' wins). A forge this PDT has no plugin for (written for a
+newer one), or one whose plugin is turned off, leaves the choice to the origin; a value that can't be an id (only
+lower-case letters, digits and `-`) is skipped like an unknown section.
 
 ### The local forge
 

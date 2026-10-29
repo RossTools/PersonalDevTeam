@@ -54,7 +54,7 @@ async fn setup_as(tmp: &std::path::Path, mode: &str) -> Env {
     state.conversations.notice_quiet = Duration::ZERO;
     state.typing_quiet = Duration::ZERO;
     let gh = Arc::new(FakeForge::default());
-    state.github = gh.clone();
+    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::HostedForge::github(gh.clone()))]);
     // pdt-mcp (a fake agent's `mcp:` calls) needs pdtd listening.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();

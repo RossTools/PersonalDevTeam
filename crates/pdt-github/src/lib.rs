@@ -5,6 +5,7 @@
 //! limit stops every call until it resets. Blocking; call from `spawn_blocking` in async code.
 
 pub mod login;
+pub mod plugin;
 pub mod transport;
 
 use pdt_core::brand::SHORT_NAME;

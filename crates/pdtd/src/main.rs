@@ -117,7 +117,9 @@ async fn run() -> anyhow::Result<()> {
         let api = std::sync::Arc::new(pdt_github::GithubApi::new(std::sync::Arc::new(
             pdt_github::transport::ReqwestTransport::current(),
         )));
-        state.github = api.clone();
+        state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_github::plugin::GithubPlugin::new(
+            api.clone(),
+        ))]);
         state.github_api = api;
     }
     if let Some(id) = &cfg.github_client_id {

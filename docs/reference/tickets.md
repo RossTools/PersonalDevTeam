@@ -324,8 +324,15 @@ crates/pdt-forge (the `Forge` trait), crates/pdt-github (the GitHub forge), pdt-
 rules in pdt-core `pr.rs`.
 
 - A project's **forge** (PDT-176) is where its PRs, CI, reviews and issues live: the one `.pdt/project.toml` names
-  (`forge = "github"`, `"local"` or `"none"`, docs/run-config.md "Forge"), else GitHub when its `origin` is on github.com, else
-  none (no PR, CI or feedback is read and Merge is local). A forge declares its capabilities (`Forge::capabilities`:
+  (`forge = "github"`, `"local"` or `"none"`, docs/run-config.md "Forge"), else the forge whose plugin claims its
+  `origin`'s host, else none (no PR, CI or feedback is read and Merge is local). Forges are plugins (PDT-241): each
+  registers a `pdt_forge::ForgePlugin` (its kind, the hosts it claims, the `Forge` it opens) in the
+  `pdt_forge::ForgeRegistry` on `AppState::forges`, and is used while the integration that declares its kind
+  (`Integration::forge_kind`) is enabled. GitHub (`pdt_github::plugin::GithubPlugin`) claims github.com and the GitHub
+  Enterprise Server the login is for; the local forge is built in. Everything that reads a forge goes through
+  `forge::project_forge` (the PR poller, merges, agents' tools, issue triage, the `github.*` nodes); a flow tied to no
+  project (an issue trigger's `repos`, a node's `repo` in a run without a GitHub project) uses the forge's account
+  (`AppState::forge_account`). Only the GitHub login uses the GitHub client directly. A forge declares its capabilities (`Forge::capabilities`:
   merge queue, required checks, issues, reviews) and the steps below skip or adapt what it can't do: no merge-queue
   runs or queue setting without a merge queue, no `pr.commented`/`pr.reviewed` without reviews, no issue triage or
   `github.*` issue actions without issues, and without required checks a workflow's or agent's merge always waits
@@ -345,8 +352,8 @@ rules in pdt-core `pr.rs`.
 - Every 60 s (before the merge check) and when a ticket is opened (`check-merge`), pdtd reads each active attempt's PR
   from its project's forge; GitHub's goes over GitHub's REST and GraphQL APIs with the in-app GitHub login
   ([github.md](github.md); no `gh`). Without a login every read fails as "GitHub is not connected" and the Inbox asks
-  the user to connect. Tests get `GithubApi::offline()` (no network, no login) or `pdt_forge::testing::FakeForge`,
-  whose capabilities a test can turn off, and pdtd's own tests set `PDT_GITHUB_OFFLINE=1`. Only projects with a
+  the user to connect. Tests get `GithubApi::offline()` (no network, no login) or `pdt_forge::testing::FakeForge`
+  registered as GitHub through the registry (`pdt_forge::HostedForge::github`), whose capabilities a test can turn off, and pdtd's own tests set `PDT_GITHUB_OFFLINE=1`. Only projects with a
   forge (a GitHub Enterprise Server's origin counts once the login is for that host).
 - One GraphQL query reads state, draft, mergeable, `BEHIND`, auto-merge, merge-queue entry and newest merge-queue
   event; then the Actions runs API (`…/actions/runs?branch=`) gives CI on the PR head (the newest run of each workflow;

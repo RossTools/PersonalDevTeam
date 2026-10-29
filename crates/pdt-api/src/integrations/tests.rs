@@ -372,10 +372,15 @@ fn a_plugins_status_comes_from_its_connections() {
     assert_eq!(find(&infos(&ints, &failing), "dummy").error_connection.as_deref(), Some("c-d2"));
     let hook = PluginFacts { connections: vec![connection("h", "webhook", Some("bad"))], ..Default::default() };
     assert_eq!(status(&hook, "webhook").0, PluginStatus::Error);
-    let wanted = PluginFacts { github_needed: true, ..Default::default() };
-    assert_eq!(status(&wanted, "github"), (PluginStatus::NeedsSetup, None));
-    let rejected = PluginFacts { github_needed: true, github_rejected: true, ..Default::default() };
-    assert_eq!(status(&rejected, "github").0, PluginStatus::Error);
+    let login = |needed, rejected| {
+        let kind = pdt_core::forge::ForgeKind::GITHUB;
+        PluginFacts { forges: vec![ForgeLogin { kind, label: "GitHub", needed, rejected }], ..Default::default() }
+    };
+    assert_eq!(status(&login(true, false), "github"), (PluginStatus::NeedsSetup, None));
+    let rejected = status(&login(true, true), "github");
+    assert_eq!(rejected.0, PluginStatus::Error);
+    assert_eq!(rejected.1.as_deref(), Some("GitHub no longer accepts PDT's login: the token was revoked or expired."));
+    assert_eq!(status(&login(false, false), "github"), (PluginStatus::On, None));
     ints.enable(&[]);
     assert_eq!(status(&failing, "dummy"), (PluginStatus::Off, None));
 }

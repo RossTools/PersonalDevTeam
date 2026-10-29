@@ -63,8 +63,8 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
   and how long ago it was made. Never the token.
 - **GitHub Enterprise Server**: give the host's API URL (`https://github.example.com/api/v3`). The site is the URL
   without `/api/v3`, GraphQL is `<site>/api/graphql`, and a project whose `origin` is on that host uses the forge
-  (`git_url::github_repo_on`). The device flow there needs an OAuth App registered on that host (its client ID in the
-  form); PDT's own is github.com's.
+  (the GitHub forge plugin claims the host, `GithubPlugin::claims_host`). The device flow there needs an OAuth App
+  registered on that host (its client ID in the form); PDT's own is github.com's.
 
 ### Registering PDT's OAuth App
 
@@ -90,8 +90,9 @@ works but that organization's private repositories answer 404.
 ## Not connected
 
 - Every forge call without a login fails and marks the forge as wanted (`Forge::login_needed`). While it is, the Inbox
-  lists **Connect GitHub** (kind `connect`, group Unheard notices; not stored, never dismissed): Enter opens Settings
-  › Plugins › GitHub. It goes once a login is saved.
+  lists **Connect GitHub** (kind `connect`, id `connect:github`, group Unheard notices; not stored, never dismissed):
+  Enter opens Settings › Plugins › GitHub. It goes once a login is saved. Each forge plugin in use gets its own item
+  (`connect:<kind>`, PDT-241), named with its label.
 - A login GitHub refuses (it answers **401**: the token was revoked or expired; PDT-212) is kept but marked rejected,
   with the time (`GithubApi::rejected_at`, `Forge::login_rejected_at`; in memory, so a restart finds out again on its
   first call). While it is, no call reaches GitHub: every one fails as "GitHub no longer accepts PDT's login" at once,

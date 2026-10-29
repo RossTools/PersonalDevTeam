@@ -71,7 +71,7 @@ async fn setup(tmp: &Path, mode: &str) -> Env {
     state.platform.claude_program =
         if mode == "conversation" { FAKE.to_string() } else { reading_agent(&bin).to_string_lossy().into_owned() };
     let gh = Arc::new(FakeForge::default());
-    state.github = gh.clone();
+    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::HostedForge::github(gh.clone()))]);
     let app = router(state.clone(), None);
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "Sample", "repoPath": repo.to_string_lossy()}))).await;

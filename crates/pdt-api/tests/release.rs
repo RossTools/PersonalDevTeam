@@ -37,7 +37,7 @@ async fn setup() -> Env {
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = AppState::new(store, tmp.path().join("data"));
     let gh = Arc::new(FakeForge::default());
-    state.github = gh.clone();
+    state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::HostedForge::github(gh.clone()))]);
     let app = router(state.clone(), None);
     let (s, p) = call(
         &app,

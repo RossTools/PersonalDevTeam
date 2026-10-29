@@ -39,6 +39,10 @@ impl Integration for Github {
         Icon { letters: "GH", color: "#24292f" }
     }
 
+    fn forge_kind(&self) -> Option<pdt_core::forge::ForgeKind> {
+        Some(pdt_core::forge::ForgeKind::GITHUB)
+    }
+
     fn node_kinds(&self) -> Vec<Box<dyn NodeKind>> {
         vec![
             Box::new(crate::github_issues::IssueOpened),

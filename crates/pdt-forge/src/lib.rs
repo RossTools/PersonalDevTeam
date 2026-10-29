@@ -1,11 +1,15 @@
 //! Forges (PDT-176): where a project's change requests (GitHub's pull requests, GitLab's merge requests), their CI,
 //! reviews and comments, merges and issues live. The SDLC talks to a [`Forge`] and asks its [`Capabilities`] before a
 //! step only some forges can do; `pdt-github` is the GitHub one. Blocking; call from `spawn_blocking` in async code.
+//!
+//! Forges are plugins (PDT-241): each registers a [`ForgePlugin`] (its [`ForgeKind`], the remote hosts it claims, and
+//! the [`Forge`] it opens) in a [`ForgeRegistry`], which PDT asks for a project's forge.
 
 pub use pdt_core::forge::{ForgeKind, ForgeNotes};
 pub use pdt_core::github_issue::CloseReason;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// What a forge can do beyond reading a branch's change request and CI, so the SDLC skips (or does itself) what it
 /// can't.
@@ -359,6 +363,88 @@ pub trait Forge: Send + Sync {
     /// ([`Capabilities::releases`]).
     fn newest_release(&self, _repo: &str) -> Result<Option<Release>, ForgeError> {
         unsupported(self.name(), "releases")
+    }
+}
+
+/// A forge plugin (PDT-241): a kind of forge, the remotes it handles, and the forge it opens for them.
+pub trait ForgePlugin: Send + Sync {
+    /// Its id, which `.pdt/project.toml`'s `forge = "…"` names.
+    fn kind(&self) -> ForgeKind;
+    /// Its name for people (`GitHub`).
+    fn label(&self) -> &'static str;
+    /// Whether a remote on `host` (lower case) is on this forge: github.com, and the GitHub Enterprise Server the
+    /// login is for.
+    fn claims_host(&self, host: &str) -> bool;
+    /// The forge's name for the repository at `remote` (GitHub's `owner/name`); None when it isn't one of its own.
+    fn repo_of(&self, remote: &pdt_core::git_url::Remote) -> Option<String> {
+        if self.claims_host(&remote.host) { remote.owner_repo() } else { None }
+    }
+    /// The forge, as the account PDT has for it.
+    fn forge(&self) -> Arc<dyn Forge>;
+}
+
+/// A plugin over a forge already made, on fixed hosts: a test's [`testing::FakeForge`] as GitHub, say.
+pub struct HostedForge {
+    pub kind: ForgeKind,
+    pub label: &'static str,
+    /// Lower case.
+    pub hosts: Vec<String>,
+    pub forge: Arc<dyn Forge>,
+}
+
+impl HostedForge {
+    /// `forge` as GitHub, on github.com.
+    pub fn github(forge: Arc<dyn Forge>) -> Self {
+        Self { kind: ForgeKind::GITHUB, label: "GitHub", hosts: vec!["github.com".into()], forge }
+    }
+}
+
+impl ForgePlugin for HostedForge {
+    fn kind(&self) -> ForgeKind {
+        self.kind.clone()
+    }
+    fn label(&self) -> &'static str {
+        self.label
+    }
+    fn claims_host(&self, host: &str) -> bool {
+        self.hosts.iter().any(|h| h.eq_ignore_ascii_case(host))
+    }
+    fn forge(&self) -> Arc<dyn Forge> {
+        self.forge.clone()
+    }
+}
+
+/// The forge plugins PDT has, in the order they are asked to claim a remote.
+#[derive(Clone, Default)]
+pub struct ForgeRegistry {
+    plugins: Arc<[Arc<dyn ForgePlugin>]>,
+}
+
+impl ForgeRegistry {
+    /// The registry of `plugins`; a kind registered twice keeps the first.
+    pub fn new(plugins: Vec<Arc<dyn ForgePlugin>>) -> Self {
+        let mut out: Vec<Arc<dyn ForgePlugin>> = vec![];
+        for p in plugins {
+            if !out.iter().any(|x| x.kind() == p.kind()) {
+                out.push(p);
+            }
+        }
+        Self { plugins: out.into() }
+    }
+
+    pub fn plugins(&self) -> &[Arc<dyn ForgePlugin>] {
+        &self.plugins
+    }
+
+    /// The plugin of `kind`.
+    pub fn get(&self, kind: &ForgeKind) -> Option<&Arc<dyn ForgePlugin>> {
+        self.plugins.iter().find(|p| p.kind() == *kind)
+    }
+
+    /// The plugin that claims the remote at `url`, and its name for the repository.
+    pub fn detect(&self, url: &str) -> Option<(&Arc<dyn ForgePlugin>, String)> {
+        let remote = pdt_core::git_url::parse_remote(url)?;
+        self.plugins.iter().find_map(|p| p.repo_of(&remote).map(|r| (p, r)))
     }
 }
 
@@ -796,5 +882,28 @@ mod tests {
         assert_eq!((i.number, i.url.as_str(), i.author.as_str()), (500, "https://github.com/o/r/issues/500", "me"));
         assert_eq!(f.issue("o/r", 500).unwrap().unwrap().issue, i);
         assert_eq!(*f.created_issues.lock().unwrap(), [("o/r".to_string(), new)]);
+    }
+
+    #[test]
+    fn the_registry_finds_a_forge_by_kind_and_by_remote() {
+        let gh: Arc<dyn Forge> = Arc::new(testing::FakeForge::default());
+        let other: Arc<dyn Forge> = Arc::new(testing::FakeForge::default());
+        let gitea = HostedForge {
+            kind: ForgeKind::new("gitea").unwrap(),
+            label: "Gitea",
+            hosts: vec!["git.example.org".into()],
+            forge: other,
+        };
+        let twice = HostedForge::github(Arc::new(testing::FakeForge::default()));
+        let r = ForgeRegistry::new(vec![Arc::new(HostedForge::github(gh.clone())), Arc::new(gitea), Arc::new(twice)]);
+        assert_eq!(r.plugins().len(), 2, "a kind registered twice keeps the first");
+        assert!(Arc::ptr_eq(&r.get(&ForgeKind::GITHUB).unwrap().forge(), &gh));
+        assert!(r.get(&ForgeKind::LOCAL).is_none());
+        let (p, repo) = r.detect("git@github.com:o/r.git").unwrap();
+        assert_eq!((p.kind(), repo.as_str()), (ForgeKind::GITHUB, "o/r"));
+        let (p, repo) = r.detect("https://GIT.example.org/team/app").unwrap();
+        assert_eq!((p.label(), repo.as_str()), ("Gitea", "team/app"));
+        assert!(r.detect("https://gitlab.com/o/r.git").is_none());
+        assert!(r.detect("/srv/git/r.git").is_none());
     }
 }
