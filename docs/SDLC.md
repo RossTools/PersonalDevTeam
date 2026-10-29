@@ -106,7 +106,7 @@ The board no longer jumps back to the top when a ticket moves.
 - **CI** (the `changelog` job, pull requests only) fails a PR that adds no fragment unless it has the `no-changelog`
   label, which is for PRs that only change docs, CI or tests. Adding the label re-runs CI. Docs-only PRs skip the
   job, and the release PR passes it without one (it compiles them). It also runs the scripts' tests
-  (`scripts/changelog.test.sh`, `scripts/version.test.sh`).
+  (`scripts/changelog.test.sh`, `scripts/version.test.sh`, `scripts/release-tag.test.sh`).
 - In the Pipeline, the Coder writes the fragment (this repo's AGENTS.md says how) and the Reviewer checks that it is
   written for users and accurate.
 - **At release**, `scripts/changelog.sh <version>` adds a `## <version> (<date>)` section to the top of
