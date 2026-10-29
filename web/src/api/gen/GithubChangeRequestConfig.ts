@@ -10,9 +10,14 @@ repo: string | null,
  */
 branch: string | null, 
 /**
- * Or its number.
+ * Or its number. With `ci`, give its head branch too.
  */
 number: number | string | null, 
+/**
+ * Read its CI too: an open pull request whose CI failed on its head, or that the merge queue removed for failed
+ * checks, leaves by `failed`. Needs `branch` (its head, where CI runs).
+ */
+ci: boolean, 
 /**
  * The port a dry run takes, as it reads nothing: `open` for a branch and `merged` for a number when left out.
  */

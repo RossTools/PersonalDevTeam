@@ -1,12 +1,13 @@
 //! Release actions (PDT-194), through the GitHub forge: `github.workflow.run` (start a CI workflow by hand, e.g. the
 //! repository's Release Action), `github.change_request` (read a pull request by branch or number) and
 //! `github.release` (read the latest release, or one tag). The built-in "Cut a release" polls the last two between
-//! waits. `repo` defaults to the run's project's GitHub repository.
+//! waits, the pull request with its CI (PDT-214: the release PR merges itself, so a failed check is the news).
+//! `repo` defaults to the run's project's GitHub repository.
 
 use crate::routes::AppState;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use pdt_core::github_issue::valid_repo;
-use pdt_core::pr::PrState;
+use pdt_core::pr::{CiState, CiStatus, PrState, PullRequestStatus};
 use pdt_core::release::parse_version;
 use pdt_forge::{ChangeRequest, Forge, ForgeError, Release};
 use schemars::JsonSchema;
@@ -169,10 +170,14 @@ pub struct GithubChangeRequestConfig {
     /// The pull request whose head is this branch (the newest open one, else the newest).
     #[serde(default)]
     pub branch: Option<String>,
-    /// Or its number.
+    /// Or its number. With `ci`, give its head branch too.
     #[serde(default)]
     #[ts(type = "number | string | null")]
     pub number: Option<Value>,
+    /// Read its CI too: an open pull request whose CI failed on its head, or that the merge queue removed for failed
+    /// checks, leaves by `failed`. Needs `branch` (its head, where CI runs).
+    #[serde(default)]
+    pub ci: bool,
     /// The port a dry run takes, as it reads nothing: `open` for a branch and `merged` for a number when left out.
     #[serde(default)]
     pub dry_run_port: Option<String>,
@@ -189,6 +194,23 @@ pub struct GithubChangeRequestOutput {
     pub state: String,
     pub merged: bool,
     pub head_sha: String,
+    /// With `ci`: its CI on the head (`passed`, `running`, `failed`, …), when it has any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ci: Option<CiState>,
+    /// With `ci`, when `failed`: what failed, `ci` (a check on the head) or `queue` (the merge queue's run, which took
+    /// it out of the queue and turned auto-merge off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub failure: Option<String>,
+    /// With `ci`, when `failed`: the failed run to look at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ci_url: Option<String>,
+    /// With `ci`, when `failed`: the failed jobs (`workflow: job`), as a Markdown list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub failed_jobs: Option<String>,
 }
 
 fn number_of(v: &Option<Value>) -> Option<Result<u32, String>> {
@@ -216,7 +238,58 @@ fn change_output(pr: ChangeRequest) -> GithubChangeRequestOutput {
         state: state_name(pr.state).into(),
         merged: pr.state == PrState::Merged,
         head_sha: pr.head_sha,
+        ci: None,
+        failure: None,
+        ci_url: None,
+        failed_jobs: None,
     }
+}
+
+/// The failed jobs of a CI status, one Markdown list item each (the workflow alone when it names none).
+fn failed_list(ci: &CiStatus) -> String {
+    let mut lines = vec![];
+    for r in ci.failed() {
+        if r.failed_jobs.is_empty() {
+            lines.push(format!("- {}", r.workflow));
+        }
+        lines.extend(r.failed_jobs.iter().map(|j| format!("- {}: {j}", r.workflow)));
+    }
+    lines.join("\n")
+}
+
+/// A pull request read with its CI, and the port it leaves by: `failed` when it is open and a check on its head
+/// failed, or the merge queue removed it for failed checks (auto-merge off since).
+fn ci_output(pr: PullRequestStatus) -> (&'static str, GithubChangeRequestOutput) {
+    let open = pr.state == PrState::Open;
+    let head_failed = pr.ci.as_ref().filter(|c| c.state == CiState::Failed);
+    let queue_dropped = pr.queue_removal.as_ref().is_some_and(|r| r.reason == "failed_checks") && !pr.auto_merge;
+    let failed = match (open, head_failed) {
+        (false, _) => None,
+        (true, Some(c)) => Some(("ci", c.url.clone(), failed_list(c))),
+        (true, None) if queue_dropped => {
+            let q = pr.queue_ci.as_ref().filter(|c| c.state == CiState::Failed);
+            Some(("queue", q.map(|c| c.url.clone()).unwrap_or_default(), q.map(failed_list).unwrap_or_default()))
+        }
+        (true, None) => None,
+    };
+    let port = if failed.is_some() { "failed" } else { state_name(pr.state) };
+    let (failure, ci_url, failed_jobs) = match failed {
+        Some((f, url, jobs)) => (Some(f.to_string()), Some(url), Some(jobs)),
+        None => (None, None, None),
+    };
+    let out = GithubChangeRequestOutput {
+        number: pr.number,
+        url: pr.url,
+        title: pr.title,
+        state: state_name(pr.state).into(),
+        merged: pr.state == PrState::Merged,
+        head_sha: pr.head_sha,
+        ci: pr.ci.map(|c| c.state),
+        failure,
+        ci_url,
+        failed_jobs,
+    };
+    (port, out)
 }
 
 pub struct GithubChangeRequest;
@@ -230,29 +303,45 @@ impl NodeKind for GithubChangeRequest {
             "Read a GitHub pull request",
             "Reads a pull request by its head branch or its number and leaves by its state: `open`, `merged`, \
              `closed`, or `none` when there is none. Output: `number`, `url`, `title`, `state`, `merged`, `headSha`. \
-             Between waits it polls one (a dry run takes `dryRunPort`, else `open` for a branch, `merged` for a \
-             number).",
+             With `ci` (and `branch`, its head) it reads CI too: an open one whose check failed on its head, or that \
+             the merge queue removed for failed checks, leaves by `failed` with `failure` (`ci` or `queue`), `ciUrl` \
+             and `failedJobs`. Between waits it polls one (a dry run takes `dryRunPort`, else `open` for a branch, \
+             `merged` for a number).",
             &[("open", "Open"), ("merged", "Merged"), ("closed", "Closed unmerged"), ("none", "No pull request")],
-            false,
+            true,
         )
+    }
+
+    /// `failed` too, with `ci`.
+    fn ports(&self, config: &Value) -> Vec<String> {
+        let mut out: Vec<String> = ["open", "merged", "closed", "none"].map(String::from).into();
+        if parse::<GithubChangeRequestConfig>(config).is_ok_and(|c| c.ci) {
+            out.push("failed".into());
+        }
+        out
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: GithubChangeRequestConfig = parse(config)?;
         check_repo(&c.repo)?;
         if let Some(p) = &c.dry_run_port
-            && !["open", "merged", "closed", "none"].contains(&p.as_str())
+            && !["open", "merged", "closed", "none", "failed"].contains(&p.as_str())
         {
-            return Err(format!("dryRunPort {p:?} is not open, merged, closed or none"));
+            return Err(format!("dryRunPort {p:?} is not open, merged, closed, none or failed"));
         }
-        match (nonblank(&c.branch), number_of(&c.number)) {
+        if c.ci && nonblank(&c.branch).is_none() {
+            return Err("ci reads CI on the pull request's head: give branch".into());
+        }
+        let number = match number_of(&c.number) {
+            Some(Err(_)) if matches!(&c.number, Some(Value::String(s)) if templated(s)) => Some(Ok(0)),
+            n => n,
+        };
+        match (nonblank(&c.branch), number) {
             (Some(_), None) => Ok(()),
             (None, Some(Ok(_))) => Ok(()),
-            (None, Some(Err(e))) => match &c.number {
-                Some(Value::String(s)) if templated(s) => Ok(()),
-                _ => Err(e),
-            },
-            _ => Err("give either branch or number".into()),
+            (Some(_), Some(Ok(_))) if c.ci => Ok(()),
+            (_, Some(Err(e))) => Err(e),
+            _ => Err("give either branch or number (both only with ci)".into()),
         }
     }
 
@@ -268,6 +357,32 @@ impl NodeKind for GithubChangeRequest {
                 };
                 let port = c.dry_run_port.as_deref().unwrap_or(default);
                 return Ok(Outcome::next(port, json!({"would": would})));
+            }
+            if c.ci {
+                let branch = nonblank(&c.branch).ok_or("ci needs branch")?.to_string();
+                let number = number_of(&c.number).transpose()?;
+                let (r, b) = (repo.clone(), branch.clone());
+                let read = gh(cx.st, false, move |f| {
+                    let (pr, _, _) = crate::github::read_pr(f, &r, &b, 0, false, None, &Default::default())?;
+                    Ok(pr)
+                })
+                .await?;
+                if let Some(pr) = read.filter(|pr| number.is_none_or(|n| n == pr.number)) {
+                    let (port, out) = ci_output(pr);
+                    return Ok(Outcome::next(port, out));
+                }
+                // The branch's newest is another pull request (a later release's): this one's state is enough.
+                let found = match number {
+                    Some(n) => {
+                        let r = repo.clone();
+                        gh(cx.st, false, move |f| f.change_request_number(&r, n)).await?
+                    }
+                    None => None,
+                };
+                return match found {
+                    Some(pr) => Ok(Outcome::next(state_name(pr.state), change_output(pr))),
+                    None => Ok(Outcome::Next { port: "none".into(), output: json!({"repo": repo, "quiet": true}) }),
+                };
             }
             let by = match (nonblank(&c.branch), number_of(&c.number)) {
                 (Some(b), None) => Err(b.to_string()),
@@ -412,6 +527,11 @@ mod tests {
         assert!(pr(json!({"number": "x"})).is_err());
         assert!(pr(json!({})).is_err());
         assert!(pr(json!({"branch": "b", "number": 3})).is_err());
+        assert!(pr(json!({"branch": "b", "number": "{{steps.pr.number}}", "ci": true})).is_ok());
+        assert!(pr(json!({"number": 3, "ci": true})).unwrap_err().contains("branch"));
+        assert!(pr(json!({"branch": "b", "dryRunPort": "failed"})).is_ok());
+        assert!(!GithubChangeRequest.ports(&json!({"branch": "b"})).contains(&"failed".to_string()));
+        assert!(GithubChangeRequest.ports(&json!({"branch": "b", "ci": true})).contains(&"failed".to_string()));
 
         let rel = |v: Value| GithubRelease.check(&v);
         assert!(rel(json!({})).is_ok());
