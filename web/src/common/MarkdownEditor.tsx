@@ -25,8 +25,10 @@ export interface MarkdownEditorProps {
   /** The text box's accessible name. */
   label: string;
   placeholder?: string;
-  /** `note`: a page of prose (notes), no gutter; `file`: a Markdown file, with line numbers and the active line. */
-  variant?: 'note' | 'file';
+  /** `note`: a page of prose (notes), no gutter; `field`: the same, smaller, for a form's field; `file`: a Markdown
+   *  file, with line numbers and the active line. */
+  variant?: 'note' | 'field' | 'file';
+  readOnly?: boolean;
   /** Focus the editor when it opens, with the caret here. */
   autoFocus?: number | 'end';
   onBlur?: () => void;
@@ -41,12 +43,14 @@ export interface MarkdownEditorProps {
  * ends it), Backspace after a list marker removes it, and Tab / Shift-Tab indent and outdent. A text with Windows line
  * endings keeps them.
  */
-export function MarkdownEditor({ value, onChange, label, placeholder, variant = 'note', autoFocus, onBlur, onKeyDown, className, ref }: MarkdownEditorProps) {
+export function MarkdownEditor({ value, onChange, label, placeholder, variant = 'note', readOnly = false, autoFocus, onBlur, onKeyDown, className, ref }: MarkdownEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const change = useRef(onChange);
   change.current = onChange;
   const start = useRef({ value, autoFocus });
+  // A new editor (another variant, label or mode) starts from the text as it is now.
+  start.current.value = value;
 
   useEffect(() => {
     const { value: doc, autoFocus: focusAt } = start.current;
@@ -64,6 +68,8 @@ export function MarkdownEditor({ value, onChange, label, placeholder, variant = 
           Prec.high(listKeys),
           keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
           EditorView.contentAttributes.of({ 'aria-label': label }),
+          EditorState.readOnly.of(readOnly),
+          EditorView.editable.of(!readOnly),
           ...(placeholder ? [placeholderText(placeholder)] : []),
           EditorView.updateListener.of((u) => {
             if (u.docChanged && !u.transactions.some((tr) => tr.annotation(fromValue))) change.current(u.state.sliceDoc());
@@ -81,7 +87,7 @@ export function MarkdownEditor({ value, onChange, label, placeholder, variant = 
       ed.destroy();
       view.current = null;
     };
-  }, [variant, label, placeholder]);
+  }, [variant, label, placeholder, readOnly]);
 
   useEffect(() => {
     const ed = view.current;
@@ -180,18 +186,18 @@ const markdownHighlight = HighlightStyle.define([
   { tag: t.atom, color: v('muted') },
 ]);
 
-function markdownTheme(variant: 'note' | 'file'): Extension {
-  const note = variant === 'note';
+function markdownTheme(variant: 'note' | 'field' | 'file'): Extension {
+  const note = variant !== 'file';
   return EditorView.theme({
     '&': {
       backgroundColor: note ? 'transparent' : v('bg'),
       color: v('fg'),
-      fontSize: note ? '1rem' : '0.875rem',
+      fontSize: variant === 'note' ? '1rem' : '0.875rem',
       ...(note ? {} : { height: '100%' }),
     },
     '&.cm-focused': { outline: 'none' },
     '.cm-scroller': { fontFamily: v('font-sans'), lineHeight: note ? '1.7' : '1.6' },
-    '.cm-content': { padding: note ? '0' : '12px 0', caretColor: v('fg'), ...(note ? { minHeight: '10rem' } : {}) },
+    '.cm-content': { padding: note ? '0' : '12px 0', caretColor: v('fg'), ...(note ? { minHeight: variant === 'note' ? '10rem' : '6rem' } : {}) },
     '.cm-line': { padding: note ? '0' : '0 12px' },
     '.cm-gutters': { backgroundColor: v('surface'), color: v('muted'), borderRight: `1px solid ${v('border')}`, fontFamily: v('font-mono') },
     '.cm-placeholder': { color: v('muted') },

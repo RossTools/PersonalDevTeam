@@ -94,6 +94,7 @@ pub struct JiraCreateConfig {
     pub summary: String,
     /// Text (sent as Jira rich text).
     #[serde(default)]
+    #[schemars(extend("x-format" = "multiline"))]
     pub description: String,
     /// More fields, as Jira's REST API names them (`{"labels": ["pdt"]}`).
     #[serde(default)]
@@ -295,6 +296,7 @@ pub struct JiraCommentConfig {
     pub connection: String,
     pub key: String,
     /// Text (sent as Jira rich text: a paragraph per blank-line-separated block).
+    #[schemars(extend("x-format" = "multiline"))]
     pub body: String,
 }
 

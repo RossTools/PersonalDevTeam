@@ -33,6 +33,7 @@ pub struct HttpConfig {
     /// JSON (sent as `application/json`) or a string (sent as it is).
     #[serde(default)]
     #[ts(type = "unknown")]
+    #[schemars(extend("x-format" = "code", "x-language" = "json"))]
     pub body: Value,
     /// The statuses that count as success: `"2xx"` (default), `"any"`, or a list (`[200, 404]`).
     #[serde(default = "two_xx")]

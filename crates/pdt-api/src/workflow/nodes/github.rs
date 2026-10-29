@@ -307,6 +307,7 @@ pub struct GithubCommentConfig {
     #[serde(default)]
     pub ticket: Option<String>,
     /// Markdown.
+    #[schemars(extend("x-format" = "markdown"))]
     pub body: String,
 }
 
@@ -383,6 +384,7 @@ pub struct GithubCloseConfig {
     pub duplicate_of: Option<Value>,
     /// A comment to add first (Markdown).
     #[serde(default)]
+    #[schemars(extend("x-format" = "markdown"))]
     pub comment: Option<String>,
     /// Labels to add (the issue keeps its others).
     #[serde(default)]

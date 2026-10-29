@@ -37,6 +37,7 @@ pub struct BriefArchiveConfig {
     pub title: String,
     /// The entry's text (Markdown).
     #[serde(default)]
+    #[schemars(extend("x-format" = "markdown"))]
     pub body: String,
     /// What it covered: `[{title, link, note}]` (or a reference to such a list).
     #[serde(default)]
