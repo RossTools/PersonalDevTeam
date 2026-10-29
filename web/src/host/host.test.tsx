@@ -316,6 +316,31 @@ describe('HostSettingsPage', () => {
     expect(last).toHaveValue('8300');
   });
 
+  it("sets an agent's default model from its models, or typed while it lists none", async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView({ settings: { ...settingsView().settings, agentModels: { codex: 'gpt-5' } } }),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+      'GET /api/agents/claude/capabilities': { conversation: true, permissionModes: [], models: [{ value: 'default', displayName: 'Default' }, { value: 'opus', displayName: 'Opus' }], commands: [] },
+      'GET /api/agents/codex/capabilities': { conversation: true, permissionModes: [], models: [], commands: [] },
+      'GET /api/agents/devin/capabilities': { conversation: true, permissionModes: [], models: [], commands: [] },
+      'PUT /api/host/settings': (c) => settingsView({ settings: { ...settingsView().settings, ...(c.body as object) } }),
+    });
+    renderWithQuery(<HostSettingsPage section="agents" />);
+    const models = await screen.findByRole('region', { name: 'Default models' });
+    const codex = within(models).getByRole('textbox', { name: 'Codex default model' });
+    expect(codex).toHaveValue('gpt-5');
+    await userEvent.clear(codex);
+    await userEvent.type(codex, '{Enter}');
+    await userEvent.click(await within(models).findByRole('button', { name: /Claude default model/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Opus' }));
+    await waitFor(() =>
+      expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([{ agentModels: { codex: '' } }, { agentModels: { claude: 'opus' } }]),
+    );
+  });
+
   it('saves an agent program path, and shows one set by the environment as read-only', async () => {
     const calls = stubApi({
       'GET /api/host/settings': settingsView({

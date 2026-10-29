@@ -335,7 +335,8 @@ async fn ensure_live(st: &AppState, c: &Arc<Conv>, session: &Session) -> Result<
         cwd: PathBuf::from(&session.cwd),
         program,
         search_path: st.platform.login_path.clone(),
-        model: row.model.clone(),
+        // Its own model (or its persona's), else the agent's default model in Settings → Agents.
+        model: st.store.get_host_settings().await?.model_for(row.agent, row.model.as_deref()),
         permission_mode: row.permission_mode.unwrap_or_default(),
         env: login_path_env(st),
         env_remove: scrubbed(creds),
@@ -920,6 +921,11 @@ pub(crate) async fn apply_settings(st: &AppState, session: &Session, change: Ses
     let c = conv(st, session).await?;
     if let Some(mode) = change.permission_mode {
         c.state().permission_mode = mode;
+    }
+    // Back to "Default" is the agent's default model in Settings → Agents when it has one.
+    let mut change = change;
+    if let Some(None) = change.model {
+        change.model = Some(st.store.get_host_settings().await?.model_for(session.agent, None));
     }
     if let Some(live) = c.current_live().await
         && let Err(e) = live.set(&change).await
@@ -1640,7 +1646,7 @@ pub(crate) async fn ticket_draft(
         cwd: PathBuf::from(&session.cwd),
         program,
         search_path: st.platform.login_path.clone(),
-        model: session.model.clone(),
+        model: st.store.get_host_settings().await?.model_for(session.agent, session.model.as_deref()),
         permission_mode: PermissionMode::Ask,
         env: login_path_env(&st),
         env_remove: scrubbed(creds),

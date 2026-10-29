@@ -122,6 +122,10 @@ pub struct HostSettings {
     pub devin_program: Option<String>,
     /// The ACP agents the user added (Settings → Agents → Add ACP agent; PDT-234), agent kinds `acp:<id>`.
     pub acp_agents: Vec<crate::acp_agent::AcpAgentConfig>,
+    /// A default model for each agent (Settings → Agents, PDT-265). A session with no model of its own (nor its
+    /// persona's) starts with it; an agent without one uses the agent's own default (`HostSettings::model_for`).
+    #[ts(type = "Partial<Record<AgentKind, string>>")]
+    pub agent_models: std::collections::BTreeMap<AgentKind, String>,
 }
 
 /// A GitHub `owner/name`: two non-empty parts of letters, digits, `-`, `_` and `.`, neither `.` nor `..`.
@@ -157,6 +161,7 @@ impl Default for HostSettings {
             codex_program: None,
             devin_program: None,
             acp_agents: Vec::new(),
+            agent_models: Default::default(),
         }
     }
 }
@@ -239,6 +244,10 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub acp_agents: Option<Vec<crate::acp_agent::AcpAgentConfig>>,
+    /// Default models for the agents it names; the others keep theirs. Blank clears one (back to the agent's own).
+    #[serde(default)]
+    #[ts(optional, type = "Partial<Record<AgentKind, string>>")]
+    pub agent_models: Option<std::collections::BTreeMap<AgentKind, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -261,6 +270,8 @@ pub enum HostSettingsError {
     BadReleaseRepo,
     #[error("an agent program must be a full path (or start with ~ for your home folder)")]
     BadProgram,
+    #[error("a model name must be 1 to 100 characters with no spaces")]
+    BadModel,
     #[error("that agent isn't one this host has")]
     UnknownAgent,
     #[error("{0}")]
@@ -387,6 +398,27 @@ impl HostSettings {
             }
             s.default_agent = AgentKind::Claude;
         }
+        if let Some(models) = &p.agent_models {
+            for (&agent, model) in models {
+                let model = model.trim();
+                if agent.is_acp() && s.acp_agent(agent).is_none() {
+                    return Err(HostSettingsError::UnknownAgent);
+                }
+                if model.is_empty() {
+                    s.agent_models.remove(&agent);
+                } else if crate::conversation::valid_model(model) {
+                    s.agent_models.insert(agent, model.to_string());
+                } else {
+                    return Err(HostSettingsError::BadModel);
+                }
+            }
+        }
+        // A removed ACP agent's default model goes with it.
+        let gone: Vec<AgentKind> =
+            s.agent_models.keys().filter(|&&a| a.is_acp() && s.acp_agent(a).is_none()).copied().collect();
+        for a in gone {
+            s.agent_models.remove(&a);
+        }
         Ok(s)
     }
 }
@@ -406,6 +438,12 @@ impl HostSettings {
             // Its command is in its definition (`acp_agent`).
             AgentKind::Acp(_) => None,
         }
+    }
+
+    /// The model a session of `agent` starts with: its own (`chosen`: the user's pick, or its persona's), else the
+    /// host's default for the agent, else None (the agent's own default).
+    pub fn model_for(&self, agent: Option<AgentKind>, chosen: Option<&str>) -> Option<String> {
+        chosen.map(String::from).or_else(|| agent.and_then(|a| self.agent_models.get(&a).cloned()))
     }
 
     /// The ACP agent an agent kind names, when it is one this host has (a built-in profile or the user's).
@@ -586,6 +624,59 @@ mod tests {
         assert_eq!(removed.default_agent, AgentKind::Claude);
         let bad = HostSettingsPatch { acp_agents: Some(vec![agent("Bad id")]), ..patch() };
         assert!(matches!(HostSettings::default().apply(&bad), Err(HostSettingsError::BadAcpAgent(_))));
+    }
+
+    #[test]
+    fn agent_models_are_set_per_agent_and_cleared_by_blank() {
+        let models = |pairs: &[(AgentKind, &str)]| HostSettingsPatch {
+            agent_models: Some(pairs.iter().map(|(a, m)| (*a, m.to_string())).collect()),
+            ..patch()
+        };
+        let s = HostSettings::default()
+            .apply(&models(&[(AgentKind::Claude, " opus "), (AgentKind::Codex, "gpt-5")]))
+            .unwrap();
+        assert_eq!(s.agent_models.get(&AgentKind::Claude).map(String::as_str), Some("opus"));
+        // Naming one agent leaves the others alone; blank clears it.
+        let s = s.apply(&models(&[(AgentKind::Codex, " ")])).unwrap();
+        assert_eq!(s.agent_models.len(), 1);
+        assert_eq!(s.apply(&models(&[(AgentKind::Claude, "two words")])), Err(HostSettingsError::BadModel));
+        let json: HostSettingsPatch = serde_json::from_str(r#"{"agentModels":{"claude":"sonnet"}}"#).unwrap();
+        assert_eq!(s.apply(&json).unwrap().agent_models.get(&AgentKind::Claude).map(String::as_str), Some("sonnet"));
+        let back: HostSettings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.agent_models, s.agent_models);
+    }
+
+    #[test]
+    fn an_acp_agents_model_needs_the_agent_and_goes_with_it() {
+        let kind = AgentKind::parse("acp:fake-model").unwrap();
+        let model = HostSettingsPatch { agent_models: Some([(kind, "m1".to_string())].into()), ..patch() };
+        assert_eq!(HostSettings::default().apply(&model), Err(HostSettingsError::UnknownAgent));
+        let agent = crate::acp_agent::AcpAgentConfig {
+            id: "fake-model".into(),
+            label: "Fake".into(),
+            command: "fake-acp".into(),
+            args: vec![],
+            env: vec![],
+        };
+        let added = HostSettings::default()
+            .apply(&HostSettingsPatch { acp_agents: Some(vec![agent]), ..patch() })
+            .and_then(|s| s.apply(&model))
+            .unwrap();
+        assert_eq!(added.model_for(Some(kind), None).as_deref(), Some("m1"));
+        let removed = added.apply(&HostSettingsPatch { acp_agents: Some(vec![]), ..patch() }).unwrap();
+        assert!(removed.agent_models.is_empty());
+    }
+
+    #[test]
+    fn a_sessions_own_model_wins_over_the_agents_default() {
+        let s = HostSettings { agent_models: [(AgentKind::Claude, "opus".to_string())].into(), ..Default::default() };
+        // The session's own choice (the user's pick, or its persona's model) wins.
+        assert_eq!(s.model_for(Some(AgentKind::Claude), Some("haiku")).as_deref(), Some("haiku"));
+        // Else the agent's default model.
+        assert_eq!(s.model_for(Some(AgentKind::Claude), None).as_deref(), Some("opus"));
+        // Else none: the agent CLI's own default.
+        assert_eq!(s.model_for(Some(AgentKind::Codex), None), None);
+        assert_eq!(s.model_for(None, None), None);
     }
 
     #[test]
