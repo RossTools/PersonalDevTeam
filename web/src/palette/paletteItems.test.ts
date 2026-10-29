@@ -46,7 +46,7 @@ function handlers(): PaletteHandlers {
   return {
     selectWorkspace: vi.fn(), selectTab: vi.fn(), focusItem: vi.fn(), projectSettings: vi.fn(), hostSettings: vi.fn(),
     newSession: vi.fn(), openChooser: vi.fn(), renameTab: vi.fn(), closeTab: vi.fn(), moveTab: vi.fn(),
-    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), reportBug: vi.fn(), showFiles: vi.fn(), showWorkflows: vi.fn(), showInbox: vi.fn(), showPersonas: vi.fn(), showPm: vi.fn(), showNotes: vi.fn(), newTicket: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(), startNextPart: vi.fn(),
+    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), reportBug: vi.fn(), showFiles: vi.fn(), showWorkflows: vi.fn(), showInbox: vi.fn(), showPersonas: vi.fn(), showPm: vi.fn(), showNotes: vi.fn(), newTicket: vi.fn(), newIssue: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(), startNextPart: vi.fn(),
   };
 }
 
@@ -244,6 +244,15 @@ describe('paletteItems', () => {
     open.next.run(summary);
     expect(c.handlers.openTicket).toHaveBeenCalledWith(summary);
     expect(ids(paletteItems(ctx({ projects: [] })))).not.toContain('tickets:new');
+  });
+
+  it('offers New issue in the current project\'s repository when its forge takes issues (PDT-221)', () => {
+    expect(ids(paletteItems(ctx()))).not.toContain('issues:new');
+    const c = ctx({ issueRepo: 'o/r' });
+    const item = byId(paletteItems(c), 'issues:new');
+    expect([item.label, item.detail]).toEqual(['New issue', 'o/r']);
+    item.run!();
+    expect(c.handlers.newIssue).toHaveBeenCalled();
   });
 
   it('goes to tickets the API matched by key, matching their number too', () => {

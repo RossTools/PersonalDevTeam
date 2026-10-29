@@ -80,6 +80,8 @@ export interface PaletteHandlers {
   showNotes: () => void;
   /** The New ticket form. */
   newTicket: () => void;
+  /** The New GitHub issue form, for {@link PaletteContext.issueRepo}. */
+  newIssue: () => void;
   /** Opens (or focuses) a ticket's tab. */
   openTicket: (ticket: { id: string; projectId: string }) => void;
   /** Opens the Start dialog; `here`: the ticket's tab is on screen, so its tabs open after it. */
@@ -103,6 +105,8 @@ export interface PaletteContext {
   tickets?: TicketSummary[];
   /** Where "Open ticket…" searches: the backlog's project, or every project (null). */
   ticketProjectId?: string | null;
+  /** The current project's repository when its forge takes issues (`owner/name`): "New issue" files one there. */
+  issueRepo?: string | null;
   /** What the host checks say about each agent (all offered when absent): "New … here" leaves out a missing one. */
   agents?: (agent: AgentKind) => AgentAvailability;
   /** The host's default agent and view: their "New … here" comes first. */
@@ -244,6 +248,9 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
   if (projects.length > 0) {
     actions.push(
       { id: 'tickets:new', label: 'New ticket', group: ACTIONS, icon: 'add', keywords: ['create', 'issue', 'task'], run: h.newTicket },
+      ...(ctx.issueRepo
+        ? [{ id: 'issues:new', label: 'New issue', detail: ctx.issueRepo, group: ACTIONS, icon: 'add' as const, keywords: ['github', 'create', 'file', 'report'], run: h.newIssue }]
+        : []),
       {
         id: 'tickets:open',
         label: 'Open ticket…',

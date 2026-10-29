@@ -990,6 +990,53 @@ impl Store {
         Ok(Ok(self.get_ticket(id).await?.ok_or(TicketError::NotFound("ticket"))?))
     }
 
+    /// Links ticket `link.ticket_id` to an external issue it was filed as (PDT-221), on behalf of `by`. Its source is
+    /// unchanged: the issue came from the ticket, not from outside. `Ok(Err(id))` when a ticket already links that
+    /// issue (nothing changes); NotFound("ticket") when the ticket is gone.
+    pub async fn link_external(
+        &self,
+        link: &StoredExternalLink,
+        by: impl Into<By>,
+        now: i64,
+    ) -> TResult<Result<Ticket, String>> {
+        let mut tx = self.write_tx().await?;
+        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM tickets WHERE id = ?")
+            .bind(&link.ticket_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if exists.is_none() {
+            return Err(TicketError::NotFound("ticket"));
+        }
+        let existing: Option<(String,)> = sqlx::query_as(
+            "SELECT ticket_id FROM ticket_links_external WHERE system = ? AND connection_id = ? AND key = ?",
+        )
+        .bind(&link.system)
+        .bind(&link.connection_id)
+        .bind(&link.key)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some((other,)) = existing {
+            return Ok(Err(other));
+        }
+        sqlx::query(
+            "INSERT INTO ticket_links_external (ticket_id, system, connection_id, key, url, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&link.ticket_id)
+        .bind(&link.system)
+        .bind(&link.connection_id)
+        .bind(&link.key)
+        .bind(&link.url)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        touch(&mut tx, &link.ticket_id, now).await?;
+        let data = json!({"system": link.system, "key": link.key, "url": link.url});
+        insert_event(&mut tx, &link.ticket_id, EventKind::Linked, by, None, Some(data), now).await?;
+        tx.commit().await?;
+        Ok(Ok(self.get_ticket(&link.ticket_id).await?.ok_or(TicketError::NotFound("ticket"))?))
+    }
+
     /// The ticket linked to an external issue.
     pub async fn ticket_for_external(
         &self,
@@ -2466,6 +2513,37 @@ mod tests {
         assert_eq!(page.items[0].external[0].key, "ABC-1", "lists carry the link too");
         store.delete_ticket("t1").await.unwrap();
         assert_eq!(store.ticket_for_external("tracker", "c", "ABC-1").await.unwrap(), None, "gone with its ticket");
+    }
+
+    #[tokio::test]
+    async fn a_ticket_filed_as_an_issue_links_it_and_stays_its_own() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        let t = add(&store, "t1", new("Fix")).await;
+        let link = StoredExternalLink {
+            ticket_id: t.summary.id.clone(),
+            system: "github".into(),
+            connection_id: "o/r".into(),
+            key: "o/r#5".into(),
+            url: "https://github.com/o/r/issues/5".into(),
+        };
+        let linked = store.link_external(&link, Actor::User, 9).await.unwrap().unwrap();
+        assert_eq!(linked.summary.source, TicketSource::User, "filed from the ticket: not outside input");
+        assert_eq!(
+            linked.summary.external,
+            [ExternalLink { system: "github".into(), key: "o/r#5".into(), url: link.url.clone() }]
+        );
+        assert_eq!(linked.summary.updated_at, 9);
+        assert_eq!(events(&store, "t1").await, [EventKind::Created, EventKind::Linked]);
+        let other = add(&store, "t2", new("Other")).await;
+        let again = StoredExternalLink { ticket_id: other.summary.id, ..link.clone() };
+        assert_eq!(
+            store.link_external(&again, Actor::User, 10).await.unwrap(),
+            Err("t1".into()),
+            "one ticket per issue"
+        );
+        let gone = StoredExternalLink { ticket_id: "nope".into(), key: "o/r#6".into(), ..link };
+        assert!(matches!(store.link_external(&gone, Actor::User, 10).await, Err(TicketError::NotFound("ticket"))));
     }
 
     #[tokio::test]
