@@ -68,7 +68,8 @@ async fn another_instance_files_an_issue_with_labels_and_redacted_diagnostics() 
     assert_eq!((p["repo"].as_str(), p["tokenPresent"].as_bool()), (Some("o/r"), Some(true)));
     assert!(p["project"].is_null());
     let preview = p["diagnostics"].as_str().unwrap();
-    assert!(preview.contains("PDT version: 0.1.0-local") && preview.contains("INFO last line"), "{preview}");
+    let version = format!("PDT version: {}", pdt_core::BUILD_VERSION);
+    assert!(preview.contains(&version) && preview.contains("INFO last line"), "{preview}");
     assert!(!preview.contains("old day"), "only the newest log");
 
     let (s, filed) = report(

@@ -9,7 +9,7 @@ can break on their own: clippy (for `cfg` code) and the Rust tests (paths, proce
 | Check | Runs on | Does | Pull requests | Merge queue | Run by hand |
 |---|---|---|---|---|---|
 | lint (linux) | Namespace `linux-8` | version sync (`scripts/version.sh check`), fmt, clippy (pdtd also with no integration features) | unless docs only | unless docs only | always |
-| test (linux) | Namespace `linux-8` | nextest (pdtd also with no integration features), generated TS types are committed | unless docs only | unless docs only | always |
+| test (linux) | Namespace `linux-8` | nextest at the stand-in version 9.9.9 (pdtd also with no integration features), generated TS types are committed | unless docs only | unless docs only | always |
 | web (linux) | Namespace `linux-8` | web typecheck, vitest, build | unless docs only | unless docs only | always |
 | build (macos-latest) | Namespace `macos-6` | clippy, nextest, desktop crate clippy + test | `macos` label, or a change under `.github/` | unless docs only | always |
 | build (windows-latest) | GitHub Windows | clippy, nextest | `windows` label, or a change under `windows/`, `*.ps1`, `*.cmd`, `.github/` | same | always |
@@ -17,6 +17,13 @@ can break on their own: clippy (for `cfg` code) and the Rust tests (paths, proce
 | bundle (windows-latest, nsis) | GitHub Windows | the installer (also the only Windows compile of the desktop crate); a workflow artifact | the release PR only | never | with "Build bundles" |
 | site | GitHub `ubuntu-latest` | the website (site/): link-rewriting tests, `astro build` | a change under `site/` or `docs/`, the pnpm lockfile or workspace, `ci.yml` or `pages.yml` | same | always |
 | bundle (linux, x86_64) / bundle (linux, aarch64) | GitHub `ubuntu-22.04` / `ubuntu-22.04-arm` (native, no cross-compiling) | the headless tarball and the AppImage (also the only Linux compile of the desktop crate); a workflow artifact | the release PR only | never | with "Build bundles" |
+
+**Tests never depend on the checked-in version** (PDT-216): `test (linux)` first sets the version to 9.9.9
+(`scripts/version.sh set 9.9.9`, in its own checkout only), so a test that hard-codes `0.x.y` fails on its own PR rather
+than first on the release PR that bumps it. Tests compare with `pdt_core::BUILD_VERSION` or `env!("CARGO_PKG_VERSION")`,
+or pass their own version (e.g. `UpdateService::new(…, "0.1.0-local")`). The release PR's `test (linux)` runs at its real
+version, and macOS and Windows always do, so no extra run is needed. The web tests never see the version (it reaches
+the UI only through `/api/health`, which they stub).
 
 **Main runs nothing** (PDT-192): `ci.yml` has no `push` trigger. The merge queue (group size 1, squash) has just run
 the checks on the tree that lands on main, and releases are deliberate, so a merge builds no bundle and publishes no
