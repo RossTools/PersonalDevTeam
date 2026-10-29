@@ -136,6 +136,7 @@ jobs:
       - uses: actions/checkout@v7
       - run: scripts/changelog.test.sh
       - run: scripts/version.test.sh
+      - run: scripts/release-tag.test.sh
       - name: The pull request adds a changelog fragment
         env:
           GH_TOKEN: ${{ github.token }}

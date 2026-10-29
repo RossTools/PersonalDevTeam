@@ -173,16 +173,9 @@ jobs:
           version="$(scripts/version.sh check | sed 's/^version //')"
           tag="${TAG_PREFIX}${version}"
           scripts/changelog.sh notes "$version" >/dev/null
-          # A re-run finds its own tag; a tag on any other commit stops the release.
-          existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha' 2>/dev/null || true)"
-          if [ -z "$existing" ]; then
-            # Made with the workflow's token, so it starts no other workflow: this one builds and publishes it.
-            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$SHA" >/dev/null
-          elif [ "$existing" != "$SHA" ]; then
-            echo "::error title=The tag exists::$tag already points at $existing, not the merge commit $SHA."
-            exit 1
-          fi
-          echo "Tagged $tag at $SHA"
+          # A re-run finds its own tag; a tag on any other commit, or a failed lookup, stops the release. Made with
+          # the workflow's token, so it starts no other workflow: this one builds and publishes it.
+          scripts/release-tag.sh "$tag" "$SHA"
           { echo "tag=$tag"; echo "version=$version"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
 
   experimental:
@@ -214,8 +207,10 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           if [ -n "$VERSION" ]; then base="${VERSION#v}"; else base="$(scripts/version.sh next "$BUMP")"; fi
-          version="$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/${TAG_PREFIX}${base}-exp." --jq '.[].ref' |
-            sed 's#^refs/tags/##' | scripts/version.sh next-exp "$base")"
+          # Read on its own, so a failed lookup stops the step (in a pipe its status would be lost, and GitHub's error
+          # body read as tags). No match is an empty list, not a 404.
+          refs="$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/${TAG_PREFIX}${base}-exp." --jq '.[].ref')"
+          version="$(printf '%s\n' "$refs" | sed 's#^refs/tags/##' | scripts/version.sh next-exp "$base")"
           # Refuses a version that is not newer than main's (in this checkout only: nothing is committed), and
           # fragments that the notes could not be made from.
           scripts/version.sh set "$version"
@@ -318,7 +313,7 @@ jobs:
         run: |
           cd assets
           for f in *; do n="${f// /.}"; if [ "$f" != "$n" ]; then mv "$f" "$n"; fi; done
-          sha256sum * > SHA256SUMS
+          sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
       - name: Publish the release
         env:
@@ -343,7 +338,8 @@ jobs:
             scripts/changelog.sh notes "$VERSION" > "$RUNNER_TEMP/notes.md"
           fi
           ls -l assets
-          # A re-run of this job finds the release already there: replace its assets instead of failing.
+          # A re-run of this job finds the release already there: replace its assets instead of failing. Any failed
+          # lookup counts as no release; `create` then fails loudly if one is there after all.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" assets/* --repo "$GITHUB_REPOSITORY" --clobber
           else
