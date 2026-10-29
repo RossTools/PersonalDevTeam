@@ -3384,7 +3384,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-agents"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3407,7 +3407,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-api"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "flate2",
@@ -3447,7 +3447,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -3464,7 +3464,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-desktop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "pdt-core",
@@ -3480,7 +3480,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-forge"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pdt-core",
  "serde",
@@ -3490,7 +3490,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-git"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "tempfile",
  "thiserror 2.0.21",
@@ -3498,7 +3498,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-github"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "pdt-core",
@@ -3513,7 +3513,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-host"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -3527,7 +3527,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-int-arr"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "http-body-util",
@@ -3548,7 +3548,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-int-buildkite"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "http-body-util",
@@ -3570,7 +3570,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-int-discord"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "http-body-util",
@@ -3593,7 +3593,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-int-jira"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "chrono",
@@ -3617,7 +3617,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-int-plex"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "http-body-util",
@@ -3638,7 +3638,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-int-scryer"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "apollo-compiler",
  "axum",
@@ -3661,7 +3661,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-store"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "jiff",
  "pdt-core",
@@ -3676,7 +3676,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-tailscale"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -3686,7 +3686,7 @@ dependencies = [
 
 [[package]]
 name = "pdt-update"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "futures-util",
@@ -3705,7 +3705,7 @@ dependencies = [
 
 [[package]]
 name = "pdtd"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
