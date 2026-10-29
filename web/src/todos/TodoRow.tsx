@@ -1,8 +1,9 @@
-// One todo as a row (PDT-143, was PDT-140's card): a round checkbox, the title (click to rename) and a muted meta line
-// (due day or time, repeat rule, ticket, project). On hover a calendar button (the due picker) and ⋯. Drag (a handle on
+// One todo as a row (PDT-143, was PDT-140's card): a round checkbox, the title (click to open it, PDT-227; Edit in ⋯
+// renames it in place), the first line of its notes, muted, and a meta line (due day or time, repeat rule, ticket,
+// project, a notes icon). On hover a calendar button (the due picker) and ⋯. Drag (a handle on
 // touch) or Alt+↑/↓ reorders it within its group. Pure: the list hands it its actions.
 import { useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { CalendarDays, Clock, GripVertical, Repeat } from 'lucide-react';
+import { CalendarDays, Clock, GripVertical, NotebookText, Repeat } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { Checkbox, dragData, IconButton, MenuButton, parseDragData, type MenuEntry } from '@ui';
 import type { Project } from '../api/gen/Project';
@@ -12,7 +13,7 @@ import { ProjectKey } from '../common/BranchChip';
 import { InlineRename } from '../common/InlineRename';
 import { useMediaQuery } from '../common/useMediaQuery';
 import { DuePicker, dayText } from './DuePicker';
-import { formatDay, repeatText, type DueGroupId } from './model';
+import { bodyPreview, formatDay, repeatText, type DueGroupId } from './model';
 
 export const TODO_DRAG_KIND = 'todo';
 
@@ -24,7 +25,7 @@ function dueMeta(t: Todo, group: DueGroupId | null, now: Date): { text: string; 
   return { text: `${formatDay(t.dueOn, now)}${t.dueTime ? ` ${t.dueTime}` : ''}`, tone: null, time: false };
 }
 
-export function TodoRow({ todo: t, now, group, showProject, projects, highlighted, completing, onPatch, onDelete, onLink, onRepeat, onOpenTicket, onMove, onDropHere }: {
+export function TodoRow({ todo: t, now, group, showProject, projects, highlighted, completing, onOpen, onPatch, onDelete, onLink, onRepeat, onOpenTicket, onMove, onDropHere }: {
   todo: Todo;
   now: Date;
   /** The open group it is in (its meta line leaves out what the heading says); null when done. */
@@ -36,6 +37,8 @@ export function TodoRow({ todo: t, now, group, showProject, projects, highlighte
   highlighted?: boolean;
   /** Just ticked: struck through on a faint green fill until it moves to Completed. */
   completing?: boolean;
+  /** Opens it large (a click on the title); without it the click renames it in place. */
+  onOpen?: () => void;
   onPatch: (p: TodoPatch) => void;
   onDelete: () => void;
   onLink: () => void;
@@ -74,6 +77,7 @@ export function TodoRow({ todo: t, now, group, showProject, projects, highlighte
     if (e.key === 'ArrowDown') { e.preventDefault(); onMove('after'); }
   };
   const entries = (): MenuEntry[] => [
+    ...(onOpen ? [{ label: 'Open', onSelect: onOpen }] : []),
     { label: 'Edit', onSelect: () => setEditing(true) },
     ...(t.done ? [] : [
       { label: 'Due date…', icon: <CalendarDays aria-hidden />, onSelect: () => pick(actsRef.current) },
@@ -97,6 +101,8 @@ export function TodoRow({ todo: t, now, group, showProject, projects, highlighte
   const repeat = !t.done && t.recurrence ? repeatText(t.recurrence) : null;
   const project = showProject && t.projectKey && !t.ticketKey ? t.projectKey : null;
   const ticket = t.ticketKey && t.ticketId && t.projectId ? t.ticketKey : null;
+  const preview = bodyPreview(t.body);
+  const hasNotes = t.body.trim() !== '';
   const when = t.dueOn ? `Due ${formatDay(t.dueOn, now)}${t.dueTime ? ` at ${t.dueTime}` : ''}` : '';
   return (
     <li
@@ -152,8 +158,8 @@ export function TodoRow({ todo: t, now, group, showProject, projects, highlighte
         ) : (
           <button
             type="button"
-            title={onMove ? 'Click to edit · Alt+↑/↓ to reorder' : 'Click to edit'}
-            onClick={() => setEditing(true)}
+            title={`${onOpen ? 'Click to open' : 'Click to edit'}${onMove ? ' · Alt+↑/↓ to reorder' : ''}`}
+            onClick={onOpen ?? (() => setEditing(true))}
             className={cn(
               'min-w-0 rounded-sm text-left leading-5 break-words outline-none focus-visible:ring-2 focus-visible:ring-ring',
               (t.done || completing) && 'text-muted-foreground line-through decoration-muted-foreground',
@@ -162,7 +168,10 @@ export function TodoRow({ todo: t, now, group, showProject, projects, highlighte
             {t.title}
           </button>
         )}
-        {(due || repeat || project || ticket) && (
+        {preview && (
+          <p className="truncate text-xs leading-4 text-muted-foreground">{preview}</p>
+        )}
+        {(due || repeat || project || ticket || hasNotes) && (
           <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs leading-4 text-muted-foreground">
             {due && (
               <button
@@ -197,6 +206,7 @@ export function TodoRow({ todo: t, now, group, showProject, projects, highlighte
               </button>
             )}
             {project && <ProjectKey projectKey={project} />}
+            {hasNotes && <Meta icon={<NotebookText aria-hidden className="size-3" />} title="Has notes">{null}</Meta>}
           </div>
         )}
       </div>

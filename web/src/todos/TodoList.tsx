@@ -1,6 +1,7 @@
 // The user's todo list (PDT-125): the right panel on desktop and the phone's Todos sheet. Due dates and their groups
 // (PDT-140); repeating todos (PDT-141); the redesign (PDT-143): a header with the scope, quick add, rows, six groups,
-// Move to today, the due picker, and ticked rows that linger before moving to Completed.
+// Move to today, the due picker, and ticked rows that linger before moving to Completed. A todo opens large in place of
+// the list (PDT-227).
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CalendarDays, ChevronDown, ChevronRight, CircleAlert, CircleArrowRight, Inbox, Sun, Sunrise } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
@@ -15,6 +16,7 @@ import { TicketPicker } from '../tickets/TicketPicker';
 import { defaultRecurrence, grouped, localDay, moveToToday, positionFor, repeatText, shown, weekdayOf, WEEKDAYS, type DueGroupId, type TodoFilter } from './model';
 import { QuickAdd } from './QuickAdd';
 import { TodoRow } from './TodoRow';
+import { TodoView } from './TodoView';
 import { useTodoActions, useTodos } from './useTodos';
 
 export const TODO_FILTER_KEY = 'pdt.todos.filter';
@@ -39,7 +41,7 @@ function writeFilter(f: TodoFilter) {
   }
 }
 
-/** A todo to open: a notification asked for it. `seq` changes each time, so the same todo can be opened again. */
+/** A todo to open (its open view): a notification asked for it. `seq` changes each time, so the same todo can be opened again. */
 export type TodoFocus = { id: string; seq: number };
 
 const GROUP_ICON: Record<DueGroupId, ReactNode> = {
@@ -58,9 +60,10 @@ type Repeating = { title: string; initial: Recurrence; dueOn: string | null; sav
  * The header ("Todos", the open count, the scope: All projects or the one on screen), quick add, then the open todos
  * grouped as Overdue, Today, Tomorrow, Next 7 days, Later and No date (headings once something has a date), and the
  * done ones folded into "Completed · n". Rows check off, rename in place, take a due date from the picker, drag (or
- * Alt+↑/↓) within their group, and link to a project or ticket from ⋯.
+ * Alt+↑/↓) within their group, and link to a project or ticket from ⋯. A click on a title opens the todo in place of the
+ * list (its notes, and the same controls), with Back to the list.
  */
-export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, trailing }: {
+export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, trailing, onOpenChange }: {
   /** The project on screen: the scope's project, and new todos' project while it is on. */
   projectId: string | null;
   projects: readonly Project[];
@@ -72,6 +75,8 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
   focusAddSeq?: number;
   /** At the end of the header (the desktop's collapse button). */
   trailing?: ReactNode;
+  /** A todo was opened (true) or the list is back (false): a phone's sheet goes full screen for it. */
+  onOpenChange?: (open: boolean) => void;
 }) {
   const todos = useTodos();
   const actions = useTodoActions();
@@ -82,6 +87,7 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
   const [repeating, setRepeating] = useState<Repeating | null>(null);
   const [deleting, setDeleting] = useState<Todo | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [completing, setCompleting] = useState<ReadonlySet<string>>(new Set());
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const now = new Date();
@@ -127,8 +133,21 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
     return () => pending.forEach(clearTimeout);
   }, []);
 
-  // Opened from a notification: show it (All if the filter hides it, Completed unfolded if it is done) with a ring,
-  // then hand the request back (`onFocused`) so a later mount of the list (the panel reopened) doesn't show it again.
+  const openChange = useRef(onOpenChange);
+  openChange.current = onOpenChange;
+  const isOpen = openId !== null;
+  useEffect(() => {
+    openChange.current?.(isOpen);
+  }, [isOpen]);
+  // Back to the list: the todo that was open keeps a ring for a moment, so the eye finds it.
+  const closeTodo = () => {
+    setHighlight(openId);
+    setOpenId(null);
+  };
+
+  // Opened from a notification: open it (and, behind it, show it in the list: All if the filter hides it, Completed
+  // unfolded if it is done), then hand the request back (`onFocused`) so a later mount of the list (the panel
+  // reopened) doesn't open it again.
   const focused = useRef(onFocused);
   focused.current = onFocused;
   const focusId = focus?.id ?? null;
@@ -140,20 +159,20 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
     if (t) {
       if (active === 'project' && t.projectId !== project?.id) setFilterState('all');
       if (t.done) setDoneOpen(true);
-      setHighlight(focusId);
+      setOpenId(focusId);
     }
     focused.current?.();
     // Once per request (the list re-renders on every poll).
   }, [focusId, focusSeq, loaded]);
   useEffect(() => {
-    if (!highlight) return;
+    if (!highlight || openId) return;
     const scroll = requestAnimationFrame(() => document.getElementById(`todo-${highlight}`)?.scrollIntoView?.({ block: 'nearest' }));
     const off = setTimeout(() => setHighlight(null), HIGHLIGHT_MS);
     return () => {
       cancelAnimationFrame(scroll);
       clearTimeout(off);
     };
-  }, [highlight]);
+  }, [highlight, openId]);
 
   const editRepeat = (t: Todo) => setRepeating({
     title: t.title,
@@ -172,6 +191,7 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
       projects={projects}
       highlighted={highlight === t.id}
       completing={completing.has(t.id)}
+      onOpen={() => setOpenId(t.id)}
       onPatch={(p) => (p.done !== undefined ? tick(t, p.done) : void actions.patch(t.id, p))}
       onDelete={() => (!t.done && t.recurrence ? setDeleting(t) : void actions.remove([t.id]))}
       onLink={() => setLinking(t)}
@@ -188,89 +208,119 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
   );
 
   const scopeLabel = active === 'project' && project ? project.key || project.name : 'All projects';
+  const removeRepeating = (t: Todo, series: 'only' | 'series') => {
+    setDeleting(null);
+    if (t.id === openId) setOpenId(null);
+    void actions.remove([t.id], series);
+  };
+  const opened = openId ? all.find((t) => t.id === openId) : undefined;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 pt-3 pr-2 pb-2 pl-4">
-        <h2 className="text-sm font-semibold tracking-tight">Todos</h2>
-        {openCount > 0 && <span className="text-xs text-muted-foreground tabular-nums" aria-label={`${openCount} open`}>{openCount}</span>}
-        <MenuButton
-          label="Scope"
-          entries={() => [
-            { label: `${active === 'all' ? '✓ ' : ''}All projects`, onSelect: () => setFilter('all') },
-            { label: `${active === 'project' ? '✓ ' : ''}${project ? project.key || project.name : 'This project'}`, disabled: !project, onSelect: () => setFilter('project') },
-          ]}
-        >
-          <Button variant="ghost" size="sm" aria-label={`Scope: ${scopeLabel}`} className="ml-auto gap-1 font-normal text-muted-foreground">
-            {scopeLabel}
-            <ChevronDown aria-hidden className="size-3.5" />
-          </Button>
-        </MenuButton>
-        {trailing}
-      </div>
-      <div className="shrink-0 px-3 pb-2">
-        <QuickAdd
+      {openId ? (
+        <TodoView
+          key={openId}
+          todo={opened}
           now={now}
           projects={projects}
-          projectId={active === 'project' && project ? project.id : null}
-          focusSeq={focusAddSeq}
-          onAdd={(t) => actions.add(t)}
-          onCustomRepeat={(title, current, set) => setRepeating({
-            title,
-            initial: current.recurrence ?? defaultRecurrence(current.dueOn, now),
-            dueOn: current.dueOn,
-            save: (recurrence, dueOn) => set({ ...current, recurrence, dueOn: current.dueOn ?? dueOn }),
-          })}
+          onBack={closeTodo}
+          onPatch={(p) => { if (opened) void actions.patch(opened.id, p); }}
+          onDelete={() => {
+            if (!opened) return;
+            if (!opened.done && opened.recurrence) setDeleting(opened);
+            else {
+              setOpenId(null);
+              void actions.remove([opened.id]);
+            }
+          }}
+          onLink={() => opened && setLinking(opened)}
+          onRepeat={() => opened && editRepeat(opened)}
+          onOpenTicket={openTicket}
         />
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto px-1.5 pb-3">
-        {todos.isPending && <Skeleton lines={4} label="Loading todos" />}
-        {todos.isError && <Alert tone="error">Todos could not be loaded: {todos.error.message}</Alert>}
-        {todos.isSuccess && open.length === 0 && done.length === 0 && (
-          <EmptyState>{active === 'project' ? `No todos for ${project?.key ?? 'this project'} yet.` : 'Nothing to do yet.'}</EmptyState>
-        )}
-        {groups.map((g) => (
-          <section key={g.id} aria-label={g.label} className="mt-2.5 flex flex-col first:mt-1">
-            {headings && (
-              <h3 className={cn('flex min-h-6.5 items-center gap-1.5 px-2.5 text-xs font-semibold [&>svg]:size-3.5', g.id === 'overdue' && 'text-destructive')}>
-                {GROUP_ICON[g.id]}
-                {g.label}
-                <span className="font-medium text-muted-foreground tabular-nums">{g.todos.length}</span>
-                {g.id === 'overdue' && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="ml-auto font-medium text-muted-foreground"
-                    onClick={() => g.todos.forEach((t) => void actions.patch(t.id, moveToToday(t, new Date())))}
-                  >
-                    Move to today
-                  </Button>
-                )}
-              </h3>
-            )}
-            <ul aria-label={headings ? `${g.label} todos` : 'Todos'} className="flex flex-col">
-              {g.todos.map((t, i) => row(t, g.id, g.todos, i))}
-            </ul>
-          </section>
-        ))}
-        {done.length > 0 && (
-          <section aria-label="Completed" className="mt-3.5 flex flex-col">
-            <div className="flex items-center gap-1 px-1">
-              <Button variant="ghost" size="sm" aria-expanded={doneOpen} onClick={() => setDoneOpen((o) => !o)} className="font-medium text-muted-foreground">
-                {doneOpen ? <ChevronDown aria-hidden className="size-3.5" /> : <ChevronRight aria-hidden className="size-3.5" />}
-                Completed · {done.length}
-              </Button>
-              <Button variant="ghost" size="sm" className="ml-auto font-normal text-muted-foreground" onClick={() => void actions.remove(done.map((t) => t.id))}>
-                Clear
-              </Button>
-            </div>
-            {doneOpen && (
-              <ul aria-label="Completed todos" className="flex flex-col">
-                {done.map((t) => row(t, null))}
+      ) : (
+        <>
+        <div className="flex shrink-0 items-center gap-2 pt-3 pr-2 pb-2 pl-4">
+          <h2 className="text-sm font-semibold tracking-tight">Todos</h2>
+          {openCount > 0 && <span className="text-xs text-muted-foreground tabular-nums" aria-label={`${openCount} open`}>{openCount}</span>}
+          <MenuButton
+            label="Scope"
+            entries={() => [
+              { label: `${active === 'all' ? '✓ ' : ''}All projects`, onSelect: () => setFilter('all') },
+              { label: `${active === 'project' ? '✓ ' : ''}${project ? project.key || project.name : 'This project'}`, disabled: !project, onSelect: () => setFilter('project') },
+            ]}
+          >
+            <Button variant="ghost" size="sm" aria-label={`Scope: ${scopeLabel}`} className="ml-auto gap-1 font-normal text-muted-foreground">
+              {scopeLabel}
+              <ChevronDown aria-hidden className="size-3.5" />
+            </Button>
+          </MenuButton>
+          {trailing}
+        </div>
+        <div className="shrink-0 px-3 pb-2">
+          <QuickAdd
+            now={now}
+            projects={projects}
+            projectId={active === 'project' && project ? project.id : null}
+            focusSeq={focusAddSeq}
+            onAdd={(t) => actions.add(t)}
+            onCustomRepeat={(title, current, set) => setRepeating({
+              title,
+              initial: current.recurrence ?? defaultRecurrence(current.dueOn, now),
+              dueOn: current.dueOn,
+              save: (recurrence, dueOn) => set({ ...current, recurrence, dueOn: current.dueOn ?? dueOn }),
+            })}
+          />
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto px-1.5 pb-3">
+          {todos.isPending && <Skeleton lines={4} label="Loading todos" />}
+          {todos.isError && <Alert tone="error">Todos could not be loaded: {todos.error.message}</Alert>}
+          {todos.isSuccess && open.length === 0 && done.length === 0 && (
+            <EmptyState>{active === 'project' ? `No todos for ${project?.key ?? 'this project'} yet.` : 'Nothing to do yet.'}</EmptyState>
+          )}
+          {groups.map((g) => (
+            <section key={g.id} aria-label={g.label} className="mt-2.5 flex flex-col first:mt-1">
+              {headings && (
+                <h3 className={cn('flex min-h-6.5 items-center gap-1.5 px-2.5 text-xs font-semibold [&>svg]:size-3.5', g.id === 'overdue' && 'text-destructive')}>
+                  {GROUP_ICON[g.id]}
+                  {g.label}
+                  <span className="font-medium text-muted-foreground tabular-nums">{g.todos.length}</span>
+                  {g.id === 'overdue' && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="ml-auto font-medium text-muted-foreground"
+                      onClick={() => g.todos.forEach((t) => void actions.patch(t.id, moveToToday(t, new Date())))}
+                    >
+                      Move to today
+                    </Button>
+                  )}
+                </h3>
+              )}
+              <ul aria-label={headings ? `${g.label} todos` : 'Todos'} className="flex flex-col">
+                {g.todos.map((t, i) => row(t, g.id, g.todos, i))}
               </ul>
-            )}
-          </section>
-        )}
-      </div>
+            </section>
+          ))}
+          {done.length > 0 && (
+            <section aria-label="Completed" className="mt-3.5 flex flex-col">
+              <div className="flex items-center gap-1 px-1">
+                <Button variant="ghost" size="sm" aria-expanded={doneOpen} onClick={() => setDoneOpen((o) => !o)} className="font-medium text-muted-foreground">
+                  {doneOpen ? <ChevronDown aria-hidden className="size-3.5" /> : <ChevronRight aria-hidden className="size-3.5" />}
+                  Completed · {done.length}
+                </Button>
+                <Button variant="ghost" size="sm" className="ml-auto font-normal text-muted-foreground" onClick={() => void actions.remove(done.map((t) => t.id))}>
+                  Clear
+                </Button>
+              </div>
+              {doneOpen && (
+                <ul aria-label="Completed todos" className="flex flex-col">
+                  {done.map((t) => row(t, null))}
+                </ul>
+              )}
+            </section>
+          )}
+        </div>
+        </>
+      )}
       {linking && (
         <Dialog open onOpenChange={(o) => !o && setLinking(null)} title="Link to a ticket" description={linking.title}>
           <TicketPicker
@@ -307,8 +357,8 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
           footer={
             <>
               <Button variant="ghost" onClick={() => setDeleting(null)}>Cancel</Button>
-              <Button onClick={() => { setDeleting(null); void actions.remove([deleting.id], 'only'); }}>Only this one</Button>
-              <Button variant="danger" onClick={() => { setDeleting(null); void actions.remove([deleting.id], 'series'); }}>Stop the series</Button>
+              <Button onClick={() => removeRepeating(deleting, 'only')}>Only this one</Button>
+              <Button variant="danger" onClick={() => removeRepeating(deleting, 'series')}>Stop the series</Button>
             </>
           }
         >

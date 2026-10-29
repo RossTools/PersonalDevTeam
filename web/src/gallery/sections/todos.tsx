@@ -21,7 +21,7 @@ const TODAY = localDay(NOW);
 const PROJECTS = [{ id: 'p1', key: 'PDT', name: 'Personal Dev Team' }] as Project[];
 const todo = (id: string, title: string, more: Partial<Todo> = {}): Todo => ({
   id, title, position: 0, done: false, projectId: null, ticketId: null, createdAt: 1, updatedAt: 1, doneAt: null,
-  projectKey: null, ticketKey: null, ticketTitle: null, dueOn: null, dueTime: null, recurrence: null, ...more,
+  projectKey: null, ticketKey: null, ticketTitle: null, body: '', dueOn: null, dueTime: null, recurrence: null, ...more,
 });
 
 const ROWS: [string, Todo][] = [
@@ -31,7 +31,7 @@ const ROWS: [string, Todo][] = [
   })],
   ['Tomorrow, with a project', todo('c', 'Call Sam about the release', { dueOn: addDays(TODAY, 1), projectId: 'p1', projectKey: 'PDT' })],
   ['Next 7 days, repeating', todo('g', 'Water the plants', { dueOn: addDays(TODAY, 4), recurrence: { rule: { every: 'week', interval: 1, days: [1, 4] }, from: 'due' } })],
-  ['Later', todo('d', 'Write the quarterly plan', { dueOn: addDays(TODAY, 12) })],
+  ['Later, with notes', todo('d', 'Write the quarterly plan', { dueOn: addDays(TODAY, 12), body: '## Outline\n\n- Goals\n- Hiring' })],
   ['No date, a long title', todo('e', 'A long title that wraps onto a second line so the row shows how the meta line sits under it')],
   ['Done', todo('f', 'Pay the rent', { done: true, doneAt: 1, dueOn: addDays(TODAY, -1) })],
 ];

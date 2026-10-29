@@ -735,7 +735,7 @@ async fn the_pm_moves_an_external_ticket_to_to_do_only_after_the_users_yes() {
 async fn the_pm_reads_the_users_todos_but_cannot_change_them() {
     let env = setup(None).await;
     for body in [
-        json!({"title": "Buy milk", "dueOn": "2026-10-26", "recurrence": {"rule": {"every": "week", "interval": 1, "days": [1]}, "from": "due"}}),
+        json!({"title": "Buy milk", "body": "Oat, **not** soy.", "dueOn": "2026-10-26", "recurrence": {"rule": {"every": "week", "interval": 1, "days": [1]}, "from": "due"}}),
         json!({"title": "Review the login fix", "ticket": "PX-1"}),
     ] {
         let (s, v) = call(&env.app, "POST", "/api/todos", Some(body)).await;
@@ -747,6 +747,7 @@ async fn the_pm_reads_the_users_todos_but_cannot_change_them() {
     assert!(said.contains("Buy milk") && said.contains("Review the login fix"), "{said}");
     assert!(said.contains("\"ticket\": \"PX-1\""), "{said}");
     assert!(said.contains("\"every\": \"week\""), "the rule comes with it: {said}");
+    assert!(said.contains("Oat, **not** soy."), "and the body: {said}");
     let said = ask(&env, &pm, r#"mcp: list_todos {"project": "PX"}"#).await;
     assert!(!said.contains("Buy milk") && said.contains("Review the login fix"), "{said}");
     let said = ask(&env, &pm, r#"mcp: list_todos {"done": true}"#).await;

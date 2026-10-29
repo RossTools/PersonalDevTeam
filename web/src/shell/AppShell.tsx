@@ -185,6 +185,8 @@ export function AppShell() {
   const [reportingBug, setReportingBug] = useState(false);
   const [rightOpen, setRightOpen] = useRightPanelOpen();
   const [todosSheetOpen, setTodosSheetOpen] = useState(false);
+  // A todo is open in the phone's sheet: it takes the whole screen (PDT-227).
+  const [todoOpenInSheet, setTodoOpenInSheet] = useState(false);
   // Bumped when Ctrl+] t opens the todo list: its add box takes the focus.
   const [todoAddSeq, setTodoAddSeq] = useState(0);
   // A todo a due reminder opened (PDT-140).
@@ -812,13 +814,14 @@ export function AppShell() {
             theme={theme}
             onTheme={setTheme}
           />
-          <Sheet side="right" title="Todos" hideTitle open={todosSheetOpen} onOpenChange={setTodosSheetOpen} className="flex w-80 max-w-[90vw] flex-col">
+          <Sheet side="right" title="Todos" hideTitle open={todosSheetOpen} onOpenChange={setTodosSheetOpen} className={cn('flex flex-col', todoOpenInSheet ? 'w-screen max-w-none' : 'w-80 max-w-[90vw]')}>
             <RightPanelContent
               projectId={todoProjectId}
               projects={ws.projects}
               focusTodo={todoFocus}
               onTodoFocused={clearTodoFocus}
               focusAddSeq={todoAddSeq}
+              onTodoOpen={setTodoOpenInSheet}
             />
           </Sheet>
           {pickerSheet && (

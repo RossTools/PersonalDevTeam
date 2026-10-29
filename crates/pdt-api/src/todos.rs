@@ -59,6 +59,7 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<Todo>), ApiError> {
     let Json(input) = payload?;
     let title = todo::valid_title(&input.title).map_err(bad)?;
+    let body = todo::valid_body(input.body.as_deref().unwrap_or_default()).map_err(bad)?;
     let (mut ticket_id, mut project_id) = (None, None);
     if let Some(t) = input.ticket.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
         let (t, p) = ticket(&st, t).await?;
@@ -81,6 +82,7 @@ pub(crate) async fn create(
             project_id,
             ticket_id,
             title,
+            body,
             done: false,
             position,
             created_at: now,
@@ -100,7 +102,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(made)))
 }
 
-/// `PATCH /api/todos/{id}`: title, done, position, project and ticket (`""` removes a link), due date and time (`""`
+/// `PATCH /api/todos/{id}`: title, body, done, position, project and ticket (`""` removes a link), due date and time (`""`
 /// clears; clearing the date clears the time). A linked ticket's project is the todo's: linking one sets the project,
 /// and moving the todo to another project (or none) drops the ticket.
 pub(crate) async fn patch(
@@ -114,6 +116,9 @@ pub(crate) async fn patch(
     let now = now_ms();
     if let Some(title) = &p.title {
         t.title = todo::valid_title(title).map_err(bad)?;
+    }
+    if let Some(body) = &p.body {
+        t.body = todo::valid_body(body).map_err(bad)?;
     }
     if let Some(done) = p.done {
         t.done_at = todo::done_at(t.done_at, done, now);
@@ -182,7 +187,7 @@ pub(crate) async fn patch(
 }
 
 /// The todo a repeating one makes when it is checked off (or skipped) now: due on the rule's next day, with the same
-/// title, time, links and rule, where it was in the list. None for a todo that doesn't repeat.
+/// title, body, time, links and rule, where it was in the list. None for a todo that doesn't repeat.
 fn next_todo(t: &Todo, now: i64) -> Option<Todo> {
     let rule = t.recurrence.as_ref()?;
     let due_on = todo::next_due_on_local(rule, t.due_on.as_deref()?)?;
