@@ -45,6 +45,19 @@ describe('ForgeLogin', () => {
     expect(calls.some((c) => c.method === 'POST' && c.path === `${LOGIN}/device`)).toBe(true);
   });
 
+  it('says when a token expires, and whether PDT renews it', async () => {
+    const at = Date.UTC(2026, 9, 29, 21, 21);
+    stubApi({
+      [`GET ${LOGIN}`]: login({ accounts: [
+        forgeAccount('ross', 'github.com'),
+        forgeAccount('rwest', 'ghe.example.com', { expiresAt: at, renews: true }),
+      ] }),
+    });
+    ui();
+    expect(await screen.findByText(/On ghe\.example\.com\. Its token expires .+; PDT renews it before then\./)).toBeInTheDocument();
+    expect(screen.getByText('On github.com.')).toBeInTheDocument();
+  });
+
   it('tests a pasted token, saves it, and says why GitHub refused one', async () => {
     let n = 0;
     const calls = stubApi({

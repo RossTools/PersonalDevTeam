@@ -16,4 +16,12 @@ login: string, signedInAt: number | null,
  * When the forge stopped accepting it (PDT-212): it is kept, but PDT sends that host nothing until the user signs
  * in again.
  */
-rejectedAt: number | null, };
+rejectedAt: number | null, 
+/**
+ * When its token expires (PDT-260): None for one that doesn't.
+ */
+expiresAt: number | null, 
+/**
+ * PDT renews the token before it expires (it has a refresh token).
+ */
+renews: boolean, };

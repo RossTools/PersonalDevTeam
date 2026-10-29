@@ -445,6 +445,7 @@ async fn a_login_github_rejects_asks_once_to_reconnect_and_the_pollers_wait_for_
         api_url: "https://api.github.com".into(),
         login: "ross".into(),
         signed_in_at: None,
+        ..Default::default()
     }));
     let env = setup(None, Some(g.clone())).await;
     let connects = |inbox: &Value| -> Vec<Value> {
@@ -545,6 +546,13 @@ async fn connect_github_enters_a_code_then_signs_in() {
     );
     assert_eq!(g.account().unwrap().token, "gho_dev");
     assert!(t.sent()[0].body.as_deref().unwrap().contains("client_id=Iv1.pdt"));
+    // PDT's own app issues tokens that don't expire: no expiry, nothing to renew.
+    assert_eq!(
+        (v["accounts"][0]["expiresAt"].clone(), v["accounts"][0]["renews"].clone()),
+        (json!(null), json!(false))
+    );
+    let kept = stored(&env).unwrap();
+    assert!(!kept.contains("expiresAt") && !kept.contains("refresh"), "{kept}");
 
     // A code that is never entered: cancelling stops the wait.
     t.ok(
@@ -557,6 +565,74 @@ async fn connect_github_enters_a_code_then_signs_in() {
     assert_eq!(v["pending"]["userCode"], "WXYZ-0000");
     let (_, v) = call(&env.app, "DELETE", &format!("{LOGIN}/device"), None).await;
     assert!(v["pending"].is_null() && v["accounts"].as_array().unwrap().len() == 1, "{v}");
+}
+
+/// PDT-260: an OAuth App with token expiration on (the user's own, on another host or github.com): its token, expiry
+/// and refresh token are stored; a renewal's rotated refresh token reaches the keychain at once; a refused one asks
+/// to reconnect.
+#[tokio::test]
+async fn an_expiring_login_is_stored_with_its_refresh_token_renewed_and_reconnected_when_refused() {
+    let t = Arc::new(Recorded::new());
+    let g = Arc::new(GithubApi::new(t.clone()));
+    let env = setup(None, Some(g.clone())).await;
+    t.ok(
+        "POST",
+        "https://github.com/login/device/code",
+        r#"{"device_code":"dc","user_code":"ABCD-1234","verification_uri":"https://github.com/login/device",
+            "expires_in":900,"interval":0}"#,
+    );
+    let token = "https://github.com/login/oauth/access_token";
+    t.ok(
+        "POST",
+        token,
+        r#"{"access_token":"ghu_1","expires_in":600,"refresh_token":"ghr_1","refresh_token_expires_in":15724799,
+            "token_type":"bearer","scope":"repo"}"#,
+    );
+    t.ok("GET", "https://api.github.com/user", r#"{"login":"ross"}"#);
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/device"), Some(json!({"clientId": "Iv1.own"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let v = loop {
+        let (_, v) = call(&env.app, "GET", LOGIN, None).await;
+        if !v["accounts"].as_array().unwrap().is_empty() || v["error"].is_string() {
+            break v;
+        }
+        assert!(Instant::now() < deadline, "never signed in: {v}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    let expires_at = v["accounts"][0]["expiresAt"].as_i64().expect("an expiry");
+    assert!(expires_at > common_now() && expires_at <= common_now() + 600_000, "{v}");
+    assert_eq!(v["accounts"][0]["renews"], true, "{v}");
+    assert!(!v.to_string().contains("ghr_"), "never a token in the view: {v}");
+    let kept = stored(&env).unwrap();
+    assert!(kept.contains("ghu_1") && kept.contains(r#""token":"ghr_1","clientId":"Iv1.own""#), "{kept}");
+
+    // Within 15 minutes of expiry, the next call renews it first, and the new refresh token is stored.
+    t.ok("POST", token, r#"{"access_token":"ghu_2","expires_in":28800,"refresh_token":"ghr_2"}"#);
+    t.ok("GET", "https://api.github.com/user", r#"{"login":"ross"}"#);
+    let g2 = g.clone();
+    let who = tokio::task::spawn_blocking(move || pdt_forge::Forge::viewer_login(g2.as_ref())).await.unwrap();
+    assert_eq!(who.unwrap(), "ross");
+    let kept = stored(&env).unwrap();
+    assert!(kept.contains("ghu_2") && kept.contains("ghr_2") && !kept.contains("ghr_1"), "{kept}");
+    let (_, v) = call(&env.app, "GET", LOGIN, None).await;
+    assert!(v["accounts"][0]["expiresAt"].as_i64().unwrap() > common_now() + 7 * 3_600_000, "{v}");
+
+    // GitHub refuses the token and then the refresh token: "Reconnect GitHub".
+    t.on("GET", "https://api.github.com/user", Response::new(401, r#"{"message":"Bad credentials"}"#));
+    t.ok("POST", token, r#"{"error":"bad_refresh_token"}"#);
+    let g2 = g.clone();
+    let e = tokio::task::spawn_blocking(move || pdt_forge::Forge::viewer_login(g2.as_ref())).await.unwrap();
+    assert!(e.unwrap_err().to_string().contains("connect GitHub again"));
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    let items: Vec<_> = inbox["items"].as_array().unwrap().iter().filter(|i| i["kind"] == "connect").collect();
+    assert_eq!(items.len(), 1, "{inbox}");
+    assert_eq!(items[0]["title"], "Reconnect GitHub");
+    assert!(stored(&env).unwrap().contains("ghr_2"), "the refused login is kept, as before");
+}
+
+fn common_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
 }
 
 #[tokio::test]

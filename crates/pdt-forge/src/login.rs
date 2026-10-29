@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// One account on a forge host: its token and the API it is for. Never sent to the browser.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ForgeAccount {
     pub token: String,
@@ -19,7 +19,53 @@ pub struct ForgeAccount {
     /// When the user signed in (Unix ms); unknown for a login stored before PDT-252.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed_in_at: Option<i64>,
+    /// When the token expires (Unix ms; PDT-260): None for one that doesn't (a pasted token, or an OAuth App with
+    /// token expiration off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+    /// How to get a new token before this one expires, when the forge gave a refresh token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<Refresh>,
 }
+
+/// A refresh token (PDT-260): it gets a new token, and a new refresh token, from the OAuth App that issued it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Refresh {
+    pub token: String,
+    /// The OAuth App's client ID: a refresh asks with it, as the device flow did.
+    pub client_id: String,
+    /// When the refresh token expires (Unix ms); None when the forge didn't say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+}
+
+/// A token the forge issued (the device flow's, or a refresh's), with its expiry and refresh token when it has them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TokenGrant {
+    pub token: String,
+    /// Seconds.
+    pub expires_in: Option<u64>,
+    pub refresh_token: Option<String>,
+    /// Seconds.
+    pub refresh_token_expires_in: Option<u64>,
+}
+
+impl TokenGrant {
+    /// The grant as an account's `(expires_at, refresh)`, issued at `now` (Unix ms) by OAuth App `client_id`.
+    pub fn renewal(&self, now: i64, client_id: &str) -> (Option<i64>, Option<Refresh>) {
+        let at = |s: u64| now.saturating_add(i64::try_from(s).unwrap_or(i64::MAX / 1000).saturating_mul(1000));
+        let refresh = self.refresh_token.as_ref().filter(|t| !t.is_empty() && !client_id.is_empty()).map(|t| Refresh {
+            token: t.clone(),
+            client_id: client_id.into(),
+            expires_at: self.refresh_token_expires_in.map(at),
+        });
+        (self.expires_in.map(at), refresh)
+    }
+}
+
+/// Called with the account a forge renewed itself (PDT-260), and the token it replaced, so it is stored at once.
+pub type RenewHook = std::sync::Arc<dyn Fn(&str, &str, &ForgeAccount) + Send + Sync>;
 
 /// What a forge's sign-in form asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,7 +108,7 @@ pub enum DevicePoll {
     Pending,
     /// Polling too fast: wait this many seconds between polls from now on.
     SlowDown(u64),
-    Token(String),
+    Token(TokenGrant),
     Expired,
     Denied,
     Failed(String),
@@ -106,6 +152,9 @@ pub trait ForgeLogin: Send + Sync {
     fn check_accounts(&self) -> bool {
         false
     }
+    /// Sets what is called with `(host, replaced token, account)` when the forge renews an account's token itself
+    /// (PDT-260): the new token, and the new refresh token, are to be stored at once.
+    fn on_renewed(&self, _hook: RenewHook) {}
 }
 
 /// Every forge account PDT has, keyed `<kind>:<host>`: what the keychain holds (as JSON, one entry per instance).
@@ -153,7 +202,13 @@ mod tests {
     use super::*;
 
     fn acct(login: &str, api: &str) -> ForgeAccount {
-        ForgeAccount { token: format!("t-{login}"), api_url: api.into(), login: login.into(), signed_in_at: Some(1) }
+        ForgeAccount {
+            token: format!("t-{login}"),
+            api_url: api.into(),
+            login: login.into(),
+            signed_in_at: Some(1),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -185,5 +240,28 @@ mod tests {
         assert!(json.contains(r#""github:github.com""#), "{json}");
         assert_eq!(serde_json::from_str::<AccountStore>(&json).unwrap(), s);
         assert_eq!(serde_json::from_str::<AccountStore>("{}").unwrap(), AccountStore::default());
+        assert!(!json.contains("expiresAt") && !json.contains("refresh"), "a token that doesn't expire: {json}");
+    }
+
+    #[test]
+    fn a_grant_that_expires_becomes_an_expiry_and_a_refresh_token() {
+        let g = TokenGrant {
+            token: "ghu_x".into(),
+            expires_in: Some(28800),
+            refresh_token: Some("ghr_x".into()),
+            refresh_token_expires_in: Some(15_724_799),
+        };
+        let (at, r) = g.renewal(1_000, "Iv1.x");
+        assert_eq!(at, Some(1_000 + 28_800_000));
+        let r = r.unwrap();
+        assert_eq!((r.token.as_str(), r.client_id.as_str(), r.expires_at), ("ghr_x", "Iv1.x", Some(15_724_800_000)));
+        assert_eq!(g.renewal(1_000, ""), (Some(28_801_000), None), "no client ID to refresh with");
+        let plain = TokenGrant { token: "gho_x".into(), ..Default::default() };
+        assert_eq!(plain.renewal(1_000, "Iv1.x"), (None, None), "a token that doesn't expire");
+
+        let a = ForgeAccount { token: "ghu_x".into(), expires_at: at, refresh: Some(r), ..Default::default() };
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(json.contains(r#""refresh":{"token":"ghr_x","clientId":"Iv1.x","expiresAt":15724800000}"#), "{json}");
+        assert_eq!(serde_json::from_str::<ForgeAccount>(&json).unwrap(), a);
     }
 }

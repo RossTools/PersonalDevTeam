@@ -23,7 +23,13 @@ const GQL: &str = "https://api.github.com/graphql";
 fn forge() -> (Arc<GithubApi>, Arc<Recorded>) {
     let t = Arc::new(Recorded::new());
     let g = Arc::new(GithubApi::new(t.clone()));
-    g.set_account(Some(Account { token: "gho_t".into(), api_url: API.into(), login: "me".into(), signed_in_at: None }));
+    g.set_account(Some(Account {
+        token: "gho_t".into(),
+        api_url: API.into(),
+        login: "me".into(),
+        signed_in_at: None,
+        ..Default::default()
+    }));
     (g, t)
 }
 
@@ -40,7 +46,13 @@ fn without_a_login_nothing_is_sent_and_the_inbox_is_asked() {
     assert!(matches!(&e, ForgeError::Unavailable(m) if m.contains("GitHub is not connected")), "{e:?}");
     assert!(g.login_needed());
     assert!(t.sent().is_empty());
-    g.set_account(Some(Account { token: "x".into(), api_url: API.into(), login: "me".into(), signed_in_at: None }));
+    g.set_account(Some(Account {
+        token: "x".into(),
+        api_url: API.into(),
+        login: "me".into(),
+        signed_in_at: None,
+        ..Default::default()
+    }));
     assert!(!g.login_needed());
     assert_eq!(GithubApi::offline().change_request("o/r", "b"), Err(GhError::NotConnected.into()));
 }
@@ -82,6 +94,7 @@ fn a_rejected_login_is_kept_and_nothing_more_is_sent_until_the_user_signs_in_aga
         api_url: API.into(),
         login: "me".into(),
         signed_in_at: None,
+        ..Default::default()
     }));
     assert_eq!((g.login_needed(), g.login_rejected_at()), (false, None));
     t.ok("GET", &format!("{API}/repos/o/r/actions/runs?branch=b&per_page={RUN_LIMIT}"), r#"{"workflow_runs":[]}"#);
@@ -202,6 +215,7 @@ fn a_refusal_of_the_old_token_does_not_mark_a_new_login() {
         api_url: API.into(),
         login: "me".into(),
         signed_in_at: None,
+        ..Default::default()
     }));
     g.reject("gho_t");
     assert_eq!(g.login_rejected_at(), None);
@@ -688,6 +702,7 @@ fn enterprise_calls_go_to_its_api() {
         api_url: "https://ghe.example.com/api/v3".into(),
         login: "me".into(),
         signed_in_at: None,
+        ..Default::default()
     }));
     let _ = g.viewer_login();
     let _ = g.change_request("o/r", "b");
@@ -726,4 +741,181 @@ fn agents_read_ci_and_answer_with_pdt_tools() {
     assert!(!t.contains("`gh "), "no gh commands: {t}");
     assert_eq!(GithubApi::offline().agent_notes(), notes);
     assert_eq!(GithubApi::offline().capabilities(), Capabilities::ALL);
+}
+
+/// The accounts a renewal stored, with the token each replaced.
+type Stored = Arc<Mutex<Vec<(String, Account)>>>;
+
+/// PDT-260: a login on an OAuth App with token expiration on, its token expiring `in_ms` from now.
+fn expiring(in_ms: i64) -> (Arc<GithubApi>, Arc<Recorded>, Stored) {
+    let t = Arc::new(Recorded::new());
+    let g = Arc::new(GithubApi::new(t.clone()));
+    g.set_account(Some(Account {
+        token: "ghu_1".into(),
+        api_url: API.into(),
+        login: "me".into(),
+        expires_at: Some(now_ms() + in_ms),
+        refresh: Some(pdt_forge::login::Refresh {
+            token: "ghr_1".into(),
+            client_id: "Iv1.own".into(),
+            expires_at: Some(now_ms() + 86_400_000),
+        }),
+        ..Default::default()
+    }));
+    let stored: Stored = Arc::default();
+    let s = stored.clone();
+    g.on_renewed(Some(Arc::new(move |old: &str, a: &Account| s.lock().unwrap().push((old.to_string(), a.clone())))));
+    (g, t, stored)
+}
+
+const TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
+const RENEWED: &str = r#"{"access_token":"ghu_2","expires_in":28800,"refresh_token":"ghr_2",
+    "refresh_token_expires_in":15724799,"token_type":"bearer","scope":""}"#;
+
+fn refreshes(t: &Recorded) -> Vec<Request> {
+    t.sent().into_iter().filter(|r| r.url == TOKEN_URL).collect()
+}
+
+#[test]
+fn a_login_about_to_expire_is_renewed_before_the_call_and_its_new_refresh_token_stored() {
+    let (g, t, stored) = expiring(5 * 60_000);
+    t.ok("POST", TOKEN_URL, RENEWED);
+    t.ok("GET", &format!("{API}/user"), r#"{"login":"me"}"#);
+    t.ok("GET", &format!("{API}/user"), r#"{"login":"me"}"#);
+    assert_eq!(g.viewer_login().unwrap(), "me");
+    let sent = t.sent();
+    assert_eq!(t.urls(), [format!("POST {TOKEN_URL}"), format!("GET {API}/user")], "renewed first");
+    assert_eq!(sent[0].body.as_deref(), Some("client_id=Iv1.own&grant_type=refresh_token&refresh_token=ghr_1"));
+    assert!(sent[1].headers.contains(&("Authorization", "Bearer ghu_2".into())), "the new token");
+
+    // The rotated refresh token is stored at once, over the account it renewed.
+    let a = g.account().unwrap();
+    assert_eq!((a.token.as_str(), a.refresh.as_ref().unwrap().token.as_str()), ("ghu_2", "ghr_2"));
+    assert!(a.expires_at.unwrap() > now_ms() + 7 * 3_600_000, "8 hours from now");
+    assert_eq!(*stored.lock().unwrap(), [("ghu_1".to_string(), a.clone())]);
+
+    // The new token lasts: the next call renews nothing.
+    assert_eq!(g.viewer_login().unwrap(), "me");
+    assert_eq!(refreshes(&t).len(), 1);
+    assert_eq!(g.login_rejected_at(), None);
+}
+
+#[test]
+fn a_login_far_from_expiry_is_not_renewed_and_the_login_check_renews_it_in_time() {
+    let (g, t, _) = expiring(3_600_000);
+    t.ok("GET", &format!("{API}/rate_limit"), "{}");
+    assert_eq!(g.check_login(), Some(LoginCheck::Ok));
+    assert!(refreshes(&t).is_empty());
+
+    let (g, t, stored) = expiring(10 * 60_000);
+    t.ok("POST", TOKEN_URL, RENEWED);
+    t.ok("GET", &format!("{API}/rate_limit"), "{}");
+    assert_eq!(g.check_login(), Some(LoginCheck::Ok), "the 5-minute check renews it with nothing else calling");
+    assert_eq!((refreshes(&t).len(), stored.lock().unwrap().len()), (1, 1));
+}
+
+#[test]
+fn a_401_on_a_login_that_renews_is_recovered_by_one_renewal_and_a_retry() {
+    let (g, t, stored) = expiring(3_600_000);
+    t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
+    t.ok("POST", TOKEN_URL, RENEWED);
+    t.ok("GET", &format!("{API}/user"), r#"{"login":"me"}"#);
+    assert_eq!(g.viewer_login().unwrap(), "me");
+    assert_eq!(t.urls(), [format!("GET {API}/user"), format!("POST {TOKEN_URL}"), format!("GET {API}/user")]);
+    assert!(t.sent()[2].headers.contains(&("Authorization", "Bearer ghu_2".into())));
+    assert_eq!((g.login_rejected_at(), stored.lock().unwrap().len()), (None, 1));
+
+    // Refused again with the new token: no second renewal, and the login is refused as before.
+    t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
+    t.ok("POST", TOKEN_URL, RENEWED);
+    t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
+    t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
+    let e = g.viewer_login().unwrap_err();
+    assert!(matches!(&e, ForgeError::Unavailable(m) if m.contains("connect GitHub again")), "{e:?}");
+    assert_eq!(refreshes(&t).len(), 2, "one renewal per call");
+}
+
+#[test]
+fn a_refused_or_expired_refresh_token_asks_to_reconnect() {
+    let (g, t, stored) = expiring(60_000);
+    t.ok(
+        "POST",
+        TOKEN_URL,
+        r#"{"error":"bad_refresh_token","error_description":"The refresh token passed is incorrect or expired."}"#,
+    );
+    let e = g.viewer_login().unwrap_err();
+    assert!(matches!(&e, ForgeError::Unavailable(m) if m.contains("connect GitHub again")), "{e:?}");
+    assert!(g.login_needed() && g.login_rejected_at().is_some(), "the Inbox asks to reconnect");
+    assert!(stored.lock().unwrap().is_empty());
+    assert_eq!(t.urls(), [format!("POST {TOKEN_URL}")], "the expiring token was not sent");
+    // The login check tries the refresh token again, and it stays refused.
+    t.ok("POST", TOKEN_URL, r#"{"error":"bad_refresh_token"}"#);
+    assert_eq!(g.check_login(), Some(LoginCheck::Rejected));
+
+    // A refresh token past its own expiry is not even sent.
+    let (g, t, _) = expiring(60_000);
+    let mut a = g.account().unwrap();
+    a.refresh.as_mut().unwrap().expires_at = Some(now_ms() - 1);
+    g.set_account(Some(a));
+    assert!(matches!(g.viewer_login(), Err(ForgeError::Unavailable(_))));
+    assert!(g.login_rejected_at().is_some());
+    assert!(t.sent().is_empty(), "{:?}", t.urls());
+}
+
+#[test]
+fn a_renewal_without_an_answer_keeps_the_token_until_it_expires_and_tries_again_later() {
+    let (g, t, _) = expiring(5 * 60_000);
+    t.on("POST", TOKEN_URL, Response::new(502, "<html>"));
+    t.ok("GET", &format!("{API}/user"), r#"{"login":"me"}"#);
+    t.ok("GET", &format!("{API}/user"), r#"{"login":"me"}"#);
+    assert_eq!(g.viewer_login().unwrap(), "me", "the old token still works");
+    assert_eq!(g.viewer_login().unwrap(), "me");
+    assert_eq!(refreshes(&t).len(), 1, "no second try within a minute");
+    assert!(t.sent()[1].headers.contains(&("Authorization", "Bearer ghu_1".into())));
+    assert_eq!(g.login_rejected_at(), None, "not refused: GitHub didn't answer");
+
+    // Already expired, and no answer: nothing is sent with the dead token, and the login isn't marked.
+    let (g, t, _) = expiring(-1);
+    t.on("POST", TOKEN_URL, Response::new(503, ""));
+    assert!(matches!(g.viewer_login(), Err(ForgeError::Failed(_))));
+    assert_eq!((t.urls(), g.login_rejected_at()), (vec![format!("POST {TOKEN_URL}")], None));
+}
+
+#[test]
+fn two_calls_at_once_renew_the_token_once() {
+    let (g, t, stored) = expiring(60_000);
+    t.ok("POST", TOKEN_URL, RENEWED);
+    for _ in 0..4 {
+        t.ok("GET", &format!("{API}/user"), r#"{"login":"me"}"#);
+    }
+    let calls: Vec<_> = (0..4)
+        .map(|_| {
+            let g = g.clone();
+            std::thread::spawn(move || g.viewer_login())
+        })
+        .collect();
+    for c in calls {
+        assert_eq!(c.join().unwrap().unwrap(), "me");
+    }
+    assert_eq!(refreshes(&t).len(), 1, "{:?}", t.urls());
+    assert_eq!(stored.lock().unwrap().len(), 1);
+    assert!(
+        t.sent()
+            .iter()
+            .filter(|r| r.method == "GET")
+            .all(|r| r.headers.contains(&("Authorization", "Bearer ghu_2".into())))
+    );
+}
+
+#[test]
+fn a_login_that_does_not_expire_never_renews() {
+    let (g, t) = forge();
+    assert_eq!((g.account().unwrap().expires_at, g.account().unwrap().refresh), (None, None));
+    t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
+    t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
+    assert!(g.viewer_login().is_err());
+    assert!(refreshes(&t).is_empty());
+    t.on("GET", &format!("{API}/user"), Response::new(401, r#"{"message":"Bad credentials"}"#));
+    assert_eq!(g.check_login(), Some(LoginCheck::Rejected));
+    assert!(refreshes(&t).is_empty(), "{:?}", t.urls());
 }
