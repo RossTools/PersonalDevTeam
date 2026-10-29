@@ -141,24 +141,29 @@ The user decides when to release; there is no schedule. `.github/workflows/relea
 
 1. **Start it**: Actions → release → Run workflow on `main`, with the bump (`patch`, `minor`; `major` only from 1.0.0
    on) or an exact version (`gh workflow run release.yml -f bump=minor`, or `-f version=1.0.0`). Or ask the PM, which
-   runs PDT's "Cut a release" workflow (below). It refuses while another release PR is open.
+   runs PDT's "Cut a release" workflow (below). Starting it is the deliberate act: nobody reviews the release PR. To
+   change the notes, edit the changelog fragments (`.changes/unreleased/`) on `main` before starting it. It refuses
+   while another release PR is open.
 2. **The release PR**: the workflow sets the version in `Cargo.toml`, `Cargo.lock` and `tauri.conf.json`
    (`scripts/version.sh next` / `set`), compiles the fragments into `CHANGELOG.md`'s new section
    (`scripts/changelog.sh <version>`), and opens `Release vX.Y.Z` from the `release` branch with those notes as its
    body. It is a normal PR: CI runs, and on this PR only the bundle jobs build the release bundles (signed and
    notarized macOS app, Windows installer, Linux packages), so packaging problems show before anything is tagged;
-   the `changelog` check lets it through without a fragment. To change the notes, edit `CHANGELOG.md` on the
-   `release` branch (the PR body is only a copy). Merge it like any PR (`gh pr merge <n> --auto`, the merge queue).
+   the `changelog` check lets it through without a fragment. The workflow turns on its auto-merge (with
+   `PDT_RELEASE_TOKEN`; the job fails if it can't), so it joins the merge queue and merges by itself once its checks
+   pass. A failed check leaves it open and unmerged: push a fix to the `release` branch (after the merge queue removes
+   it, turn auto-merge on again), or close it, which releases nothing.
 3. **Tag and publish**: when it merges, the workflow tags `vX.Y.Z` on the merge commit, builds the bundles again from
    that commit (the PR's were built from a commit the queue squashed away), and publishes the GitHub release with the
    bundles, `SHA256SUMS` and the version's `CHANGELOG.md` section as its notes (`scripts/changelog.sh notes
    <version>`). Hosts see it on their next update check. A failed job can be re-run from the Actions page: the tag and
    the release are reused, and re-uploaded assets replace the old ones.
 
-Setup: the `PDT_RELEASE_TOKEN` secret, a token that may push branches and open pull requests here (fine-grained:
-Contents and Pull requests, read and write). Without it the release PR is opened with the workflow's own token, and
-GitHub starts no CI for that: push a commit to the branch (or close and reopen it) to run it. The bundles use the
-macOS signing and notarizing secrets.
+Setup: the `PDT_RELEASE_TOKEN` secret (required), a token that may push branches, open pull requests and turn on
+their auto-merge here (fine-grained: Contents and Pull requests, read and write), and auto-merge allowed in the
+repository's settings. Without the token the workflow stops before opening anything: with the workflow's own token
+GitHub would start no CI on the release PR and its merge would tag nothing. The bundles use the macOS signing and
+notarizing secrets.
 
 **Dry run**: on a fork with the same secrets, set the repo variable `PDT_RELEASE_TAG_PREFIX` to a test prefix
 (`test-v`) and run it end to end: the tag becomes `test-vX.Y.Z` and the release a pre-release, which no PDT installs.
@@ -166,9 +171,10 @@ macOS signing and notarizing secrets.
 release is published.
 
 **"Cut a release"** (a built-in PDT workflow, off by default; Settings → Workflows): the PM starts it with a bump kind
-(only when the user asks for a release). It runs the release workflow, puts the release PR in the Inbox for review,
-and tells the user when the release is published. While an earlier release PR is still open it starts nothing and
-says so in the Inbox: merge or close that one first.
+(only when the user asks for a release). It runs the release workflow, tells the user when the release PR is open
+(nothing to do), puts a failed check in the Inbox with the failed jobs (the user fixes it on `release` or closes the
+PR), and tells the user when the release is published. While an earlier release PR is still open it starts nothing
+and says so in the Inbox: that one merges by itself once its checks pass, or needs fixing or closing.
 
 ## Testing a branch in a dev instance
 

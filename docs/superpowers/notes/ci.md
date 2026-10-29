@@ -31,7 +31,8 @@ bundle action's `release: "true"` input is for releases: it reports the version 
 certificate and notarizes.
 
 **Releases** (PDT-194; docs/SDLC.md "Releasing"): `.github/workflows/release.yml`. Run by hand on main, it opens the
-release PR from the `release` branch (version bumped, CHANGELOG.md compiled). `changes` notices that PR (head branch
+release PR from the `release` branch (version bumped, CHANGELOG.md compiled) and turns on its auto-merge with
+`PDT_RELEASE_TOKEN` (PDT-214), so it merges by itself once its checks pass. `changes` notices that PR (head branch
 `release` in this repository) and runs the bundle jobs on it as release builds (signed and notarized, the version as
 is), so a packaging break blocks the release PR rather than the tag; the merge queue doesn't build them again. When
 the release PR merges, release.yml's `tag` job tags the merge commit and the same workflow builds the bundles from

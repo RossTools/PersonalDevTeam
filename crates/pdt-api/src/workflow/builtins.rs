@@ -678,18 +678,21 @@ fn github_issue_done() -> WorkflowDoc {
 pub const RELEASE_WORKFLOW: &str = "release.yml";
 pub const RELEASE_BRANCH: &str = "release";
 
-/// How often "Cut a release" looks, and for how long: the release PR (opened within a minute or two), its merge (the
-/// user reviews the notes; up to two weeks) and the published release (the tag's bundles build for up to an hour).
+/// How often "Cut a release" looks, and for how long: the release PR (opened within a minute or two), its merge (it
+/// merges itself once its checks, the bundle builds among them, and the merge queue pass: an hour or two; a failed
+/// check waits for the user's fix, up to two weeks) and the published release (the tag's bundles build for up to an
+/// hour; allowed four).
 const PR_POLL_MS: u64 = 30_000;
 const PR_POLLS: u32 = 40;
-const MERGE_POLL_MS: u64 = 10 * 60_000;
-const MERGE_POLLS: u32 = 14 * 24 * 6;
+const MERGE_POLL_MS: u64 = 5 * 60_000;
+const MERGE_POLLS: u32 = 14 * 24 * 12;
 const RELEASE_POLL_MS: u64 = 2 * 60_000;
 const RELEASE_POLLS: u32 = 4 * 30;
 
-/// Cut a release (PDT-194): started (Run now, by the PM or the user) in a project with `bump` and optionally
-/// `version`, it runs the project's Release Action, puts the release PR in the Inbox for review, and says when the
-/// tag's release is published. Nothing is merged or tagged by PDT: merging the release PR is the user's.
+/// Cut a release (PDT-194, PDT-214): started (Run now, by the PM or the user) in a project with `bump` and optionally
+/// `version`, it runs the project's Release Action, whose release PR merges itself once its checks pass. It says
+/// when the PR is open, puts a failed check in the Inbox (the PR waits for a fix pushed to `release`, or to be
+/// closed), and says when the tag's release is published. PDT merges and tags nothing: the Action and GitHub do.
 fn cut_release() -> WorkflowDoc {
     // A GitHub read that fails (the network, a rate limit) is tried again before the run fails.
     let retry = json!({"max": 5, "backoffMs": 60_000});
@@ -701,9 +704,11 @@ fn cut_release() -> WorkflowDoc {
         "name": "Cut a release",
         "description": format!("Runs the project's release workflow ({RELEASE_WORKFLOW}) with a bump kind (patch, \
                         minor or major) or an exact version: it opens a release PR that sets the version, compiles \
-                        the changelog and builds the bundles. The release PR goes to the Inbox for review; merging it \
-                        tags the release, which publishes it, and you are told when it is out. Run it (the PM does, \
-                        when you ask for a release) with input {{\"bump\": \"minor\", \"projectId\": …}}."),
+                        the changelog and builds the bundles, and merges itself once its checks pass, which tags and \
+                        publishes the release. You are told when the PR is open and when the release is out; a failed \
+                        check goes to the Inbox (the PR stays open: push a fix to the release branch, or close it). \
+                        Run it (the PM does, when you ask for a release) with input \
+                        {{\"bump\": \"minor\", \"projectId\": …}}."),
         "nodes": [
             {"id": "start", "kind": "manual", "version": 1, "position": {"x": 0, "y": 0}, "title": "Cut a release"},
             {"id": "before", "kind": "github.release", "version": 1, "position": {"x": 260, "y": 0},
@@ -717,8 +722,9 @@ fn cut_release() -> WorkflowDoc {
                 "key": "release-pr-open-{{steps.open_already.number}}",
                 "title": "Release PR #{{steps.open_already.number}} is still open",
                 "text": "No new release was started: [{{steps.open_already.title}}]({{steps.open_already.url}}) is \
-                         still open, and the release workflow opens only one release PR at a time. Merge it (that \
-                         release ships) or close it, then run Cut a release again."}},
+                         still open, and the release workflow opens only one release PR at a time. It merges by \
+                         itself once its checks pass (that release ships); if they failed, push a fix to the release \
+                         branch or close it. Then run Cut a release again."}},
             {"id": "not_started", "kind": "end", "version": 1, "position": {"x": 910, "y": 200},
              "title": "Not started"},
             {"id": "dispatch", "kind": "github.workflow.run", "version": 1, "position": {"x": 520, "y": 0},
@@ -728,18 +734,31 @@ fn cut_release() -> WorkflowDoc {
             {"id": "find_pr", "kind": "github.change_request", "version": 1, "position": {"x": 1040, "y": 0},
              "title": "Release PR opened?", "retry": retry, "maxVisits": PR_POLLS,
              "config": {"branch": RELEASE_BRANCH}},
-            {"id": "tell_pr", "kind": "inbox.notice", "version": 1, "position": {"x": 1300, "y": 0},
-             "title": "Ask for a review", "config": {
-                "key": "release-pr-{{steps.find_pr.number}}",
-                "title": "Release PR #{{steps.find_pr.number}} is ready for review",
-                "text": "[{{steps.find_pr.title}}]({{steps.find_pr.url}}) sets the version, adds the release's \
-                         section to CHANGELOG.md and builds the bundles as a check. Read the notes (its description; \
-                         edit them in the PR if they need it) and merge it when its checks pass: the merge tags the \
-                         release, which publishes it. You are told when it is out."}},
+            {"id": "tell_pr", "kind": "notify", "version": 1, "position": {"x": 1300, "y": 0},
+             "title": "Tell me it is open", "config": {
+                "title": "Release PR #{{steps.find_pr.number}} is open",
+                "body": "{{steps.find_pr.title}} merges by itself once its checks pass, which publishes it.",
+                "link": "{{steps.find_pr.url}}"}},
             wait("wait_merge", 1560, 0, "Wait for the merge", MERGE_POLL_MS, MERGE_POLLS),
             {"id": "check_pr", "kind": "github.change_request", "version": 1, "position": {"x": 1820, "y": 0},
              "title": "Release PR merged?", "retry": retry, "maxVisits": MERGE_POLLS,
-             "config": {"number": "{{steps.find_pr.number}}"}},
+             "config": {"branch": RELEASE_BRANCH, "number": "{{steps.find_pr.number}}", "ci": true,
+                        "dryRunPort": "merged"}},
+            // Once per head commit and kind of failure: a fix pushed that fails again is news again.
+            {"id": "tell_failed", "kind": "inbox.notice", "version": 1, "position": {"x": 1820, "y": -200},
+             "title": "Inbox: a check failed", "maxVisits": MERGE_POLLS, "config": {
+                "key": "release-pr-{{steps.check_pr.number}}-{{steps.check_pr.failure}}-{{steps.check_pr.headSha}}",
+                "title": "Release PR #{{steps.check_pr.number}} failed its checks",
+                "text": "[{{steps.check_pr.title}}]({{steps.check_pr.url}}) didn't merge: [a check failed]\
+                         ({{steps.check_pr.ciUrl}}).\n\n{{steps.check_pr.failedJobs}}\n\nIt stays open, and nothing \
+                         is released. Push a fix to the release branch (it merges by itself once its checks pass; \
+                         after the merge queue removed it, turn auto-merge on again), or close it, which ends this \
+                         release."}},
+            {"id": "notify_failed", "kind": "notify", "version": 1, "position": {"x": 1560, "y": -200},
+             "title": "Tell me it failed", "maxVisits": MERGE_POLLS, "config": {
+                "title": "Release PR #{{steps.check_pr.number}} failed its checks",
+                "body": "It stays open and nothing is released: fix it or close it.",
+                "level": "warning", "link": "{{steps.check_pr.ciUrl}}"}},
             wait("wait_release", 2080, 0, "Wait for the release", RELEASE_POLL_MS, RELEASE_POLLS),
             {"id": "published", "kind": "github.release", "version": 1, "position": {"x": 2340, "y": 0},
              "title": "Release published?", "retry": retry, "maxVisits": RELEASE_POLLS,
@@ -782,10 +801,13 @@ fn cut_release() -> WorkflowDoc {
             {"from": "find_pr", "port": "none", "to": "wait_pr"},
             {"from": "find_pr", "port": "merged", "to": "wait_pr"},
             {"from": "find_pr", "port": "closed", "to": "wait_pr"},
-            {"from": "tell_pr", "port": "added", "to": "wait_merge"},
-            {"from": "tell_pr", "port": "skipped", "to": "wait_merge"},
+            {"from": "tell_pr", "to": "wait_merge"},
             {"from": "wait_merge", "port": "done", "to": "check_pr"},
             {"from": "check_pr", "port": "open", "to": "wait_merge"},
+            {"from": "check_pr", "port": "failed", "to": "tell_failed"},
+            {"from": "tell_failed", "port": "added", "to": "notify_failed"},
+            {"from": "tell_failed", "port": "skipped", "to": "wait_merge"},
+            {"from": "notify_failed", "to": "wait_merge"},
             {"from": "check_pr", "port": "merged", "to": "wait_release"},
             {"from": "check_pr", "port": "closed", "to": "dropped"},
             {"from": "check_pr", "port": "none", "to": "dropped"},
@@ -797,7 +819,7 @@ fn cut_release() -> WorkflowDoc {
             {"from": "tell_released", "port": "added", "to": "released"},
             {"from": "tell_released", "port": "skipped", "to": "released"},
         ],
-        "settings": {"maxSteps": 2 * (PR_POLLS + MERGE_POLLS + RELEASE_POLLS) + 20,
+        "settings": {"maxSteps": 2 * PR_POLLS + 3 * MERGE_POLLS + 2 * RELEASE_POLLS + 20,
                      "maxRuntimeMs": 16_i64 * 24 * 60 * 60 * 1000},
     }))
 }

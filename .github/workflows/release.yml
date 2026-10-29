@@ -4,16 +4,19 @@ name: release
 #   the release PR from the `release` branch: the new version in Cargo.toml, Cargo.lock and tauri.conf.json, and
 #   CHANGELOG.md's new section compiled from the fragments (scripts/changelog.sh), which is also the PR's body. It is a
 #   normal PR: CI checks it, and for this PR only ci.yml builds the release bundles too (signed and notarized), so
-#   packaging problems show before anything is tagged. Edit CHANGELOG.md on the branch to change the notes.
-# - Merging it (through the merge queue) runs `tag`, which tags the merge commit <prefix>X.Y.Z, then builds the
+#   packaging problems show before anything is tagged. `prepare` turns on auto-merge for it: starting a release is the
+#   deliberate act, and nobody reviews the PR. Its checks pass and it goes through the merge queue by itself; a failed
+#   check leaves it open (push a fix to `release`, or close it). Change the notes by editing the changelog fragments
+#   before starting a release.
+# - Its merge (through the merge queue) runs `tag`, which tags the merge commit <prefix>X.Y.Z, then builds the
 #   bundles again from that commit (the PR's were built from another commit: the queue squashes), and `publish`
 #   makes the GitHub release with them, SHA256SUMS and the version's CHANGELOG.md section as its notes.
 #
-# Secrets: PDT_RELEASE_TOKEN, a token that can push branches and open pull requests on this repository (a
-# fine-grained token with Contents and Pull requests read and write, or a GitHub App's). Pull requests and pushes made
-# with the workflow's own GITHUB_TOKEN start no workflows, so with only that the release PR gets no CI until someone
-# pushes to it. The bundles use the signing secrets ci.yml does (MACOS_SIGNING_P12, MACOS_SIGNING_P12_PASSWORD,
-# MACOS_NOTARY_KEY, MACOS_NOTARY_KEY_ID, MACOS_NOTARY_ISSUER).
+# Secrets: PDT_RELEASE_TOKEN (required), a token that can push branches, open pull requests and turn on their
+# auto-merge on this repository (a fine-grained token with Contents and Pull requests read and write, or a GitHub
+# App's). Pull requests, pushes and merges made with the workflow's own GITHUB_TOKEN start no workflows, so the release
+# PR would get no CI and its merge would tag nothing. The bundles use the signing secrets ci.yml does
+# (MACOS_SIGNING_P12, MACOS_SIGNING_P12_PASSWORD, MACOS_NOTARY_KEY, MACOS_NOTARY_KEY_ID, MACOS_NOTARY_ISSUER).
 #
 # Repo variable PDT_RELEASE_TAG_PREFIX (default `v`) is for a dry run on a fork: with any other prefix (`test-v`) the
 # release is published as a pre-release, which no PDT installs as an update.
@@ -62,18 +65,19 @@ jobs:
           RELEASE_TOKEN: ${{ secrets.PDT_RELEASE_TOKEN }}
         run: |
           if [ -z "$RELEASE_TOKEN" ]; then
-            echo "::warning title=No PDT_RELEASE_TOKEN::The release PR is opened with the workflow's token, so CI won't start on it: push a commit to the release branch (or close and reopen the PR) to run it."
+            echo "::error title=No PDT_RELEASE_TOKEN::The release PR merges itself, which needs the PDT_RELEASE_TOKEN secret (Contents and Pull requests read and write): with the workflow's own token its CI wouldn't start and its merge wouldn't tag. Add the secret and run the release again."
+            exit 1
           fi
       - uses: actions/checkout@v7
         with:
-          token: ${{ secrets.PDT_RELEASE_TOKEN || github.token }}
+          token: ${{ secrets.PDT_RELEASE_TOKEN }}
       - name: No release PR is open
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           open="$(gh pr list --repo "$GITHUB_REPOSITORY" --head release --state open --json number,url --jq '.[0].url // ""')"
           if [ -n "$open" ]; then
-            echo "::error title=A release PR is open::$open is still open: merge or close it before cutting another release."
+            echo "::error title=A release PR is open::$open is still open: it merges by itself once its checks pass. If they failed, push a fix to the release branch or close it, then cut the release again."
             exit 1
           fi
       - name: Set the version and compile the changelog
@@ -90,14 +94,15 @@ jobs:
           scripts/changelog.sh "$version" > "$RUNNER_TEMP/notes.md"
           {
             echo
-            echo "<!-- Release PR (docs/SDLC.md \"Releases\"). Merging it tags ${TAG_PREFIX}${version} and publishes the release."
-            echo "The release notes are CHANGELOG.md's ${version} section: edit that file on this branch to change them. -->"
+            echo "<!-- Release PR (docs/SDLC.md \"Releases\"). It merges by itself once its checks pass, which tags"
+            echo "${TAG_PREFIX}${version} and publishes the release. The release notes are CHANGELOG.md's ${version} section. -->"
           } >> "$RUNNER_TEMP/notes.md"
           git status --short
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Open the release PR
+        id: open
         env:
-          GH_TOKEN: ${{ secrets.PDT_RELEASE_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.PDT_RELEASE_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           title="Release ${TAG_PREFIX}${VERSION}"
@@ -112,6 +117,19 @@ jobs:
             --head release --title "$title" --body-file "$RUNNER_TEMP/notes.md")"
           echo "::notice title=Release PR::$url"
           echo "Release PR: $url" >> "$GITHUB_STEP_SUMMARY"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      # With the release token, so the merge (and the `tag` run it starts) isn't the workflow token's. No merge method:
+      # the merge queue sets it.
+      - name: Merge it once its checks pass
+        env:
+          GH_TOKEN: ${{ secrets.PDT_RELEASE_TOKEN }}
+          URL: ${{ steps.open.outputs.url }}
+        run: |
+          if ! gh pr merge "$URL" --repo "$GITHUB_REPOSITORY" --auto; then
+            echo "::error title=Auto-merge is off::$URL is open, but auto-merge couldn't be turned on for it. Check that PDT_RELEASE_TOKEN has Pull requests read and write and that the repository allows auto-merge, then turn it on for the PR (or close it)."
+            exit 1
+          fi
+          echo "Auto-merge is on: it merges once its checks pass." >> "$GITHUB_STEP_SUMMARY"
 
   tag:
     # The release PR merged (into main, from this repository's `release` branch).

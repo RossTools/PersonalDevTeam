@@ -643,14 +643,14 @@ pub(crate) fn news_events(
     out
 }
 
-type Read = (Option<PullRequestStatus>, Option<Vec<CiRun>>, HashMap<(u64, u32), Vec<String>>);
+pub(crate) type Read = (Option<PullRequestStatus>, Option<Vec<CiRun>>, HashMap<(u64, u32), Vec<String>>);
 
 /// The PR of `branch` for the attempt started at `since` (ms) with its CI and merge-queue CI, failed jobs filled in
 /// (from `known` where already asked). A closed or merged PR opened before the attempt started is an earlier
 /// attempt's on the same branch name, not this one's; an open one is the branch's, whoever opened it.
 /// Merge-queue runs are read only while the PR is queued, just left the queue (`was_queued`) or was removed from it
 /// for failed checks and not handled yet, once per repo, and only from a forge with merge queues.
-fn read_pr(
+pub(crate) fn read_pr(
     gh: &dyn Forge,
     repo: &str,
     branch: &str,

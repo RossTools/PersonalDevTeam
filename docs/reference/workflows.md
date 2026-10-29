@@ -139,20 +139,25 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     commenting "Fixed in <key>; it ships in the next PDT release") or `wont_do` (→ `not_planned`, with a comment),
     both where `githubIssue` exists and with `runKey` `{{trigger.ticketId}}`: once per ticket, so moving it again
     changes nothing on GitHub. The release isn't known when a ticket moves to Done, so the comment doesn't name one.
-  - **Cut a release** (off, PDT-194): `manual` (Run now; the PM's `workflow_run` when the user asks for a release)
+  - **Cut a release** (off, PDT-194, PDT-214): `manual` (Run now; the PM's `workflow_run` when the user asks for a release)
     with input `projectId` and `bump` (`patch`, `minor`, `major`) or `version` (`X.Y.Z`) → `github.release` (the
     latest before, `before`) → `github.change_request` on branch `release` (`dryRunPort: none`): `open` (an earlier
     release PR still open, which the Action would refuse to replace) → `inbox.notice` (`release-pr-open-<n>`: "Release
-    PR #n is still open", merge or close it, then run it again) → end `not_started`; otherwise → `github.workflow.run` (the project's `release.yml` on `main`, inputs `bump` and
+    PR #n is still open": it merges by itself once its checks pass, or fix or close it, then run it again) → end `not_started`; otherwise → `github.workflow.run` (the project's `release.yml` on `main`, inputs `bump` and
     `version`; empty ones are left out) → every 30 s (40 times) `github.change_request` on branch `release` until one
-    is `open` (`none`, and the last release's `merged` or `closed` PR, keep looking) → `inbox.notice` (the workflow's,
-    key `release-pr-<n>`: "Release PR #n is ready for review", its link, review the notes and merge it) → every 10
-    minutes (two weeks) `github.change_request` by number: `open` keeps waiting, `closed` or `none` → `notify`
-    (warning: closed without merging, nothing released) → end; `merged` → every 2 minutes (four hours)
+    is `open` (`none`, and the last release's `merged` or `closed` PR, keep looking) → `notify` ("Release PR #n is
+    open", informational: it merges by itself) → every 5 minutes (two weeks: the checks with the bundle builds, the
+    merge queue, and time for a fix) `github.change_request` with `ci` (number `n`, branch `release`): `open` keeps
+    waiting; `failed` (a check failed on its head, or the merge queue removed it for failed checks) →
+    `inbox.notice` (key `release-pr-<n>-<ci|queue>-<head sha>`, so once per failure: "Release PR #n failed its
+    checks", the run's link and the failed jobs; push a fix to `release` or close it) and a warning `notify` → keeps
+    waiting; `closed` or `none` → `notify` (warning: closed without merging, nothing released) → end; `merged` →
+    every 2 minutes (four hours)
     `github.release` with `newerThan: {{steps.before.tag}}` until the tag's release is published → `notify` and an
     `inbox.notice` (`released-<tag>`, "Release <tag> is published") → end with `{tag, url}`. The GitHub reads retry 5
-    times a minute apart; `maxRuntimeMs` 16 days. PDT never merges or tags anything here: the release PR is merged by
-    the user, and the merge's tag publishes the release ([SDLC.md](../SDLC.md) "Releases").
+    times a minute apart; `maxRuntimeMs` 16 days. PDT never merges or tags anything here: the Action turns on the
+    release PR's auto-merge, the merge queue merges it once its checks pass, and the merge's tag publishes the release
+    ([SDLC.md](../SDLC.md) "Releases"). To change the notes, edit the changelog fragments before starting it.
 - What the enabled workflows will tell an attempt's agent is also in that agent's instructions (pdt-core
   `workflow/news.rs`, [agents.md](agents.md) "Instructions and guides"), so turning one off changes what new sessions
   are told.
@@ -336,7 +341,10 @@ notify itself forever.
   (`projectId`; dry runs take the event's `projectId` as real runs do). `github.workflow.run` sends
   `workflow_dispatch` with the inputs as text (null and empty ones left out); it is not run again on its own, and
   GitHub doesn't say which run it started. `github.change_request` reads the branch's newest open pull request (else
-  its newest) or one by number, and leaves by its state (`none`: quiet). `github.release` reads the latest published
+  its newest) or one by number, and leaves by its state (`none`: quiet). With `ci` (and `branch`, its head; `number`
+  then picks the PR, else read by number alone) it reads CI on the head and the merge-queue run as the PR checks do:
+  an open PR whose head CI failed, or that the merge queue removed for failed checks with auto-merge off, leaves by
+  `failed` (a port only with `ci`), with `failure` (`ci` or `queue`), `ciUrl` and `failedJobs` (a Markdown list). `github.release` reads the latest published
   release or one tag; with `newerThan`, a latest release with that tag, or an older version, is `none` (quiet), so it
   polls for the next one (a pre-release never counts, so with a test tag prefix, whose releases are pre-releases,
   Cut a release never sees one published). Dry runs call nothing: `github.change_request` takes its `dryRunPort`, else
