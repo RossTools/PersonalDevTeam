@@ -22,7 +22,7 @@ export function renderWithQuery(ui: ReactNode) {
   return { ...result, qc, rerender: (node: ReactNode) => result.rerender(wrap(node)) };
 }
 
-/** A connected GitHub login (Settings › This host › GitHub). */
+/** A connected GitHub login (Settings › Plugins › GitHub). */
 const githubConnected = {
   connected: true, login: 'me', apiUrl: 'https://api.github.com', webUrl: 'https://github.com', deviceFlow: true,
   scopes: 'repo', pending: null, error: null,

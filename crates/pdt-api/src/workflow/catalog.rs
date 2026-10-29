@@ -265,7 +265,7 @@ impl Catalog {
         match pdt_core::integration::owner_of_kind(kind) {
             Some(i) if self.built.contains(&i.id) => (
                 "integration_disabled",
-                format!("{kind} is part of the {} integration, which is turned off (Settings → Integrations)", i.label),
+                format!("{kind} is part of the {} integration, which is turned off (Settings → Plugins)", i.label),
             ),
             Some(i) => (
                 "integration_missing",

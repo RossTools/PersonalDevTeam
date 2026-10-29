@@ -112,14 +112,38 @@ impl ToolTable {
     }
 }
 
+/// Where a plugin (an integration, as the UI calls it) sits in Settings → Plugins (PDT-228).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PluginCategory {
+    /// Forges, trackers and CI.
+    Dev,
+    Chat,
+    Media,
+    /// PDT's own general pieces: incoming webhooks, HTTP services, MCP servers.
+    General,
+}
+
+/// A plugin's icon: a letter or two on a colour (a CSS colour; the brand's, so it is the plugin's, not the theme's).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Icon {
+    pub letters: &'static str,
+    pub color: &'static str,
+}
+
 /// An integration PDT knows of, whether or not this build has it (PDT-173): the list that names them outside their own
 /// crates. Each one's crate is `crates/pdt-int-<id>` and pdtd's cargo feature `<id>`. An instance enables the ones it
-/// uses (Settings → Integrations); this list says which an upgraded install already used, and names the integration a
+/// uses (Settings → Plugins); this list says which an upgraded install already used, and names the integration a
 /// workflow's node kind belongs to when it is turned off or not built in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KnownIntegration {
     pub id: &'static str,
     pub label: &'static str,
+    /// What it adds, in a line (Settings → Plugins), whether or not this build has it.
+    pub description: &'static str,
+    pub category: PluginCategory,
+    pub icon: Icon,
     /// The kinds of connection it adds.
     pub connection_kinds: &'static [&'static str],
     /// Its node kinds' (and event types') id prefixes, with their dot.
@@ -130,24 +154,58 @@ pub const KNOWN: &[KnownIntegration] = &[
     KnownIntegration {
         id: "discord",
         label: "Discord",
+        description: "Post to Discord channels from workflows, and let the PM manage a Discord server through a bot.",
+        category: PluginCategory::Chat,
+        icon: Icon { letters: "D", color: "#5865f2" },
         connection_kinds: &["discord_webhook", "discord_bot"],
         kind_prefixes: &["discord."],
     },
-    KnownIntegration { id: "jira", label: "Jira", connection_kinds: &["jira"], kind_prefixes: &["jira."] },
+    KnownIntegration {
+        id: "jira",
+        label: "Jira",
+        description: "Link projects to a Jira Cloud site: issues assigned to you become tickets, and Done moves the issue.",
+        category: PluginCategory::Dev,
+        icon: Icon { letters: "J", color: "#2684ff" },
+        connection_kinds: &["jira"],
+        kind_prefixes: &["jira."],
+    },
     KnownIntegration {
         id: "buildkite",
         label: "Buildkite",
+        description: "CI of tickets' branches from Buildkite pipelines, shown and acted on like the pull request's CI.",
+        category: PluginCategory::Dev,
+        icon: Icon { letters: "BK", color: "#14cc80" },
         connection_kinds: &["buildkite"],
         kind_prefixes: &["buildkite."],
     },
     KnownIntegration {
         id: "arr",
         label: "Sonarr and Radarr",
+        description: "Search Radarr and Sonarr, add films and series, and read their download queues from workflows.",
+        category: PluginCategory::Media,
+        icon: Icon { letters: "R", color: "#e6a817" },
         connection_kinds: &["sonarr", "radarr"],
         kind_prefixes: &["sonarr.", "radarr."],
     },
-    KnownIntegration { id: "scryer", label: "Scryer", connection_kinds: &["scryer"], kind_prefixes: &["scryer."] },
-    KnownIntegration { id: "plex", label: "Plex", connection_kinds: &["plex"], kind_prefixes: &["plex."] },
+    KnownIntegration {
+        id: "scryer",
+        label: "Scryer",
+        description: "Films, series and anime from a Scryer media manager: workflow actions, and the PM's tools for its \
+                      library and settings.",
+        category: PluginCategory::Media,
+        icon: Icon { letters: "S", color: "#7c3aed" },
+        connection_kinds: &["scryer"],
+        kind_prefixes: &["scryer."],
+    },
+    KnownIntegration {
+        id: "plex",
+        label: "Plex",
+        description: "Search a Plex server, list what it added lately and refresh its libraries from workflows.",
+        category: PluginCategory::Media,
+        icon: Icon { letters: "P", color: "#cc7b19" },
+        connection_kinds: &["plex"],
+        kind_prefixes: &["plex."],
+    },
 ];
 
 /// The known integration with this id.

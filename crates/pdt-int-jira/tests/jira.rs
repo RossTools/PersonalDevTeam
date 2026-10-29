@@ -191,7 +191,7 @@ async fn the_jira_integration_serves_its_connection_kind_and_triggers() {
     assert_eq!(trigger["category"], "trigger");
 }
 
-/// PDT-173: turned off in Settings → Integrations, Jira adds nothing (its connection kind, triggers, project settings
+/// PDT-173: turned off in Settings → Plugins, Jira adds nothing (its connection kind, triggers, project settings
 /// and import route are gone) and a workflow using it names it; its connection and the project's link are kept, and
 /// turning it on again brings them back.
 #[tokio::test]
@@ -226,10 +226,20 @@ async fn turned_off_jira_registers_nothing_and_its_workflows_name_it() {
     assert_eq!(off["code"], "integration_disabled", "{off}");
     assert!(off["message"].as_str().unwrap().contains("Jira integration, which is turned off"), "{off}");
 
+    assert_eq!(jira["status"], "off");
     let (s, _) = call(&env.app, "PUT", "/api/integrations", Some(json!({"enabled": ["jira"]}))).await;
     assert_eq!(s, StatusCode::OK);
     let (_, settings) = call(&env.app, "GET", &format!("/api/projects/{}/settings", env.project), None).await;
     assert_eq!(settings["integrations"]["jira"]["connection"], "work-jira", "kept while it was off: {settings}");
+    // Its plugin page (PDT-228): on with its connection, what it adds, and the project linked to it.
+    let (_, list) = call(&env.app, "GET", "/api/integrations", None).await;
+    let jira = list.as_array().unwrap().iter().find(|i| i["id"] == "jira").unwrap();
+    assert_eq!((jira["status"].as_str(), jira["category"].as_str()), (Some("on"), Some("dev")), "{jira}");
+    assert_eq!(jira["connectionKinds"][0]["id"], "jira", "{jira}");
+    assert!(jira["nodeKinds"].as_array().unwrap().iter().any(|k| k["id"] == "jira.comment"), "{jira}");
+    assert!(jira["workflows"].as_array().unwrap().iter().any(|w| w["id"] == "jira-done"), "{jira}");
+    assert_eq!(jira["projects"][0]["id"], json!(env.project), "{jira}");
+    assert_eq!(jira["checkable"], true, "{jira}");
     let (_, issues) = call(&env.app, "POST", "/api/workflows/validate", Some(json!({"doc": doc}))).await;
     assert!(!issues.as_array().unwrap().iter().any(|i| i["node"] == "c" && i["severity"] == "error"), "{issues}");
     // The built-ins come with it.

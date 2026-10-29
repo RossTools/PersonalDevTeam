@@ -31,7 +31,7 @@ pdt-int-scryer = { workspace = true, optional = true }
 pdt-int-plex = { workspace = true, optional = true }
 
 # One feature per integration (PDT-173); release builds have them all, and a build may leave any out
-# (`--no-default-features --features jira,…`). An instance enables the ones it uses in Settings → Integrations.
+# (`--no-default-features --features jira,…`). An instance enables the ones it uses in Settings → Plugins.
 [features]
 default = ["discord", "jira", "buildkite", "arr", "scryer", "plex"]
 discord = ["dep:pdt-int-discord"]

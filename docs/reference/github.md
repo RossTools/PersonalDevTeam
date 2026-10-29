@@ -36,7 +36,8 @@ login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the S
 
 ## The login
 
-- Settings › This host › GitHub (`web/src/host/GithubLogin.tsx`; pdt-api `github_login.rs`). The login is a JSON
+- GitHub's plugin page, Settings › Plugins › GitHub (PDT-228; its connection is the login: `web/src/plugins/GithubLogin.tsx`;
+  pdt-api `github_login.rs`). The old path `/settings/host/github` goes there. The login is a JSON
   `Account` (`token`, `apiUrl`, `login`) in the OS keychain only, under `github-login` for the stable instance's
   default data dir and `github-login:<hash of the data dir>` for any other (`secrets::github_login_account`, as the
   update token's), so a dev instance never reads or replaces the stable one's. pdtd reads it at startup in the
@@ -76,7 +77,7 @@ fork, or an Enterprise host):
    (the device flow never calls it), e.g. the homepage.
 3. Register it, then tick **Enable Device Flow** and save. No client secret is needed: the device flow doesn't use one.
 4. Put the Client ID in `GITHUB_OAUTH_CLIENT_ID` (crates/pdt-core/src/brand.rs) and release (done for PDT's app).
-5. At the cutover each host's user opens Settings › This host › GitHub, clicks Connect GitHub, enters the code on
+5. At the cutover each host's user opens Settings › Plugins › GitHub, clicks Connect GitHub, enters the code on
    GitHub and authorizes the app.
 
 Private repositories of an organization: the organization has to grant the app access (Organization settings › Third-
@@ -87,12 +88,12 @@ works but that organization's private repositories answer 404.
 
 - Every forge call without a login fails and marks the forge as wanted (`Forge::login_needed`). While it is, the Inbox
   lists **Connect GitHub** (kind `connect`, group Unheard notices; not stored, never dismissed): Enter opens Settings
-  › This host › GitHub. It goes once a login is saved.
+  › Plugins › GitHub. It goes once a login is saved.
 - A login GitHub refuses (it answers **401**: the token was revoked or expired; PDT-212) is kept but marked rejected,
   with the time (`GithubApi::rejected_at`, `Forge::login_rejected_at`; in memory, so a restart finds out again on its
   first call). While it is, no call reaches GitHub: every one fails as "GitHub no longer accepts PDT's login" at once,
   so the 60 s pollers back off without spending the rate limit. `GET /api/github/login` reports it as `rejectedAt`
-  (still `connected`), Settings › This host › GitHub says "GitHub no longer accepts this login" with Reconnect, and
+  (still `connected`), Settings › Plugins › GitHub says "GitHub no longer accepts this login" with Reconnect, and
   the same single Inbox item reads **Reconnect GitHub** (`body.reason: "rejected"`, created at the refusal). Saving
   a login (device flow or pasted token) clears it, takes the item out of the Inbox and runs the PR and issue checks
   at once. A 403 (missing scopes, or no access to one repository) is not a rejected login: it stays that PR's or

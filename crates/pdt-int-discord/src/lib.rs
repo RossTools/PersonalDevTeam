@@ -24,10 +24,6 @@ impl Integration for Discord {
         "discord"
     }
 
-    fn description(&self) -> &'static str {
-        "Post to Discord channels from workflows, and let the PM manage a Discord server through a bot."
-    }
-
     fn check_connection_config(&self, kind: &str, config: &Value) -> Result<(), String> {
         if kind == DISCORD_BOT {
             core::bot_config(config)?;

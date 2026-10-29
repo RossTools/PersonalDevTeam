@@ -114,13 +114,13 @@ pub(crate) fn connect_forge(st: &AppState) -> Option<InboxItem> {
             "Reconnect GitHub",
             json!({"forge": "github", "reason": "rejected", "text": "GitHub no longer accepts PDT's login (the token \
 was revoked or expired). Until you connect again, PDT has stopped calling GitHub: it can't follow pull requests or CI, \
-merge, or let agents read CI logs. Connect GitHub again in Settings › This host › GitHub."}),
+merge, or let agents read CI logs. Connect GitHub again in Settings › Plugins › GitHub."}),
         ),
         None => (
             "Connect GitHub",
             json!({"forge": "github", "text": "PDT reads pull requests, CI and issues, merges and comments on \
 GitHub with your GitHub login, and it has none: until you connect, it can't follow pull requests or CI, merge, or \
-let agents read CI logs. Connect GitHub in Settings › This host › GitHub."}),
+let agents read CI logs. Connect GitHub in Settings › Plugins › GitHub."}),
         ),
     };
     Some(InboxItem {

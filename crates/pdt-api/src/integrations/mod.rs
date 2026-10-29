@@ -9,7 +9,8 @@
 //!
 //! The optional integrations live in crates of their own (`crates/pdt-int-<id>`, PDT-173), each behind a pdtd cargo
 //! feature; pdtd hands the ones it was built with to [`Integrations::new`], and an instance enables those it uses
-//! (Settings → Integrations, [`Integrations::enable`]). A disabled one registers nothing.
+//! (Settings → Plugins, [`Integrations::enable`]). A disabled one registers nothing. The UI calls an integration a
+//! plugin (PDT-228): those with a [`Integration::category`] are listed in Settings → Plugins, each with a page.
 
 pub mod action;
 mod bug_reports;
@@ -27,7 +28,9 @@ use crate::workflow::catalog::{BoxFut, Catalog, NodeKind};
 use crate::workflow::nodes::trigger::EventTrigger;
 use action::AnyAction;
 use axum::extract::State;
-use pdt_core::integration::{ConnectionKind, IntegrationSettings, ProjectSettingsSchema, ToolDecl, ToolTable};
+use pdt_core::integration::{
+    ConnectionKind, Icon, IntegrationSettings, PluginCategory, ProjectSettingsSchema, ToolDecl, ToolTable,
+};
 use pdt_core::mcp::ToolInfo;
 use pdt_core::pm::AskTarget;
 use pdt_core::workflow::events::EventType;
@@ -77,14 +80,24 @@ pub trait Integration: Send + Sync {
     /// A short id (`chat`), unique among integrations: its entry in [`pdt_core::integration::KNOWN`].
     fn id(&self) -> &'static str;
 
-    /// Its name on the Settings → Integrations page.
+    /// Its name in Settings → Plugins.
     fn label(&self) -> &'static str {
         pdt_core::integration::known(self.id()).map_or(self.id(), |k| k.label)
     }
 
-    /// What it adds, in a line, on the Settings → Integrations page.
+    /// What it adds, in a line, in Settings → Plugins.
     fn description(&self) -> &'static str {
-        ""
+        pdt_core::integration::known(self.id()).map_or("", |k| k.description)
+    }
+
+    /// Its group in Settings → Plugins; None: not a plugin of its own (PDT's core, listed nowhere).
+    fn category(&self) -> Option<PluginCategory> {
+        pdt_core::integration::known(self.id()).map(|k| k.category)
+    }
+
+    /// Its icon in Settings → Plugins.
+    fn icon(&self) -> Icon {
+        pdt_core::integration::known(self.id()).map_or(Icon { letters: "?", color: "#6b7080" }, |k| k.icon)
     }
 
     /// The kinds of connection it uses, in the order the Connections page shows them.
@@ -528,7 +541,50 @@ pub async fn load_enabled(st: &AppState) -> Result<(), pdt_store::StoreError> {
     Ok(())
 }
 
-/// An integration as Settings → Integrations lists it.
+/// A plugin's state in Settings → Plugins (PDT-228).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PluginStatus {
+    On,
+    Off,
+    /// On, but it has no connection of any of its kinds (GitHub: PDT needs the login and has none).
+    NeedsSetup,
+    /// One of its connections is failing ([`IntegrationInfo::error`] says which and why).
+    Error,
+    /// This build lacks it.
+    NotBuilt,
+}
+
+/// A plugin's icon: a letter or two on its colour.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginIcon {
+    pub letters: String,
+    pub color: String,
+}
+
+/// Something a plugin adds, by id and name: a workflow step or trigger, or a template.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginPart {
+    pub id: String,
+    pub title: String,
+}
+
+/// A project linked to a plugin (its project settings).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginProject {
+    pub id: String,
+    pub key: String,
+    pub name: String,
+}
+
+/// An integration as Settings → Plugins lists it: a card in the catalog, and its page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -536,13 +592,64 @@ pub struct IntegrationInfo {
     pub id: String,
     pub label: String,
     pub description: String,
+    pub category: PluginCategory,
+    pub icon: PluginIcon,
     pub enabled: bool,
     /// This build has it (pdtd's cargo feature); one it lacks can't be enabled.
     pub built: bool,
+    /// Part of PDT (GitHub, incoming webhooks, HTTP services, MCP servers): always on, no switch.
+    pub core: bool,
+    pub status: PluginStatus,
+    /// What is failing, for [`PluginStatus::Error`]: the connection's name and its error.
+    pub error: Option<String>,
+    /// The connection with the error, for Edit connection.
+    pub error_connection: Option<String>,
+    /// It has checks of its own in the poll, which "Test again" runs now (`POST /api/integrations/{id}/check`).
+    pub checkable: bool,
+    /// The kinds of connection it adds, enabled or not.
+    pub connection_kinds: Vec<ConnectionKind>,
+    /// Its workflow steps and triggers.
+    pub node_kinds: Vec<PluginPart>,
+    /// Its workflow templates.
+    pub templates: Vec<PluginPart>,
+    /// The built-in workflows it installs (by their id).
+    pub workflows: Vec<PluginPart>,
     /// The pdt-mcp tools it adds (its actions' and its own), enabled or not; none when this build lacks it.
     pub tools: Vec<String>,
     /// Those of [`IntegrationInfo::tools`] the PM has ([`ToolDecl::pm`]).
     pub pm_tools: Vec<String>,
+    /// What a project sets for it (its project settings' description), if anything.
+    pub project_settings: Option<String>,
+    /// The projects linked to it.
+    pub projects: Vec<PluginProject>,
+}
+
+/// What a plugin's status is computed from.
+#[derive(Default)]
+pub(crate) struct PluginFacts {
+    pub connections: Vec<pdt_core::workflow::api::Connection>,
+    /// PDT needs the GitHub login and has none ([`pdt_forge::Forge::login_needed`]).
+    pub github_needed: bool,
+    /// GitHub refuses the login PDT has.
+    pub github_rejected: bool,
+    /// Each project, with the ids of the integrations it has settings for.
+    pub projects: Vec<(PluginProject, Vec<String>)>,
+}
+
+impl PluginFacts {
+    pub(crate) async fn load(st: &AppState) -> Result<Self, pdt_store::StoreError> {
+        let mut projects = vec![];
+        for p in st.store.list_projects().await? {
+            let linked = st.store.get_project_settings(&p.id).await?.integrations.into_keys().collect();
+            projects.push((PluginProject { id: p.id, key: p.key, name: p.name }, linked));
+        }
+        Ok(Self {
+            connections: st.store.list_connections().await?,
+            github_needed: st.github.login_needed(),
+            github_rejected: st.github.login_rejected_at().is_some(),
+            projects,
+        })
+    }
 }
 
 /// What `PUT /api/integrations` takes: the ids of the integrations to enable (the rest are disabled).
@@ -553,41 +660,138 @@ pub struct EnableIntegrations {
     pub enabled: Vec<String>,
 }
 
-fn infos(ints: &Integrations) -> Vec<IntegrationInfo> {
-    let built = ints.built();
-    let mut out: Vec<IntegrationInfo> = built
+fn icon_of(i: Icon) -> PluginIcon {
+    PluginIcon { letters: i.letters.into(), color: i.color.into() }
+}
+
+/// A plugin this build has, with its status from `facts`.
+fn info(
+    i: &dyn Integration,
+    category: PluginCategory,
+    enabled: bool,
+    core: bool,
+    facts: &PluginFacts,
+) -> IntegrationInfo {
+    let decls: Vec<ToolDecl> =
+        i.actions().iter().map(|a| a.decl()).chain(i.tools().into_iter().map(|t| t.decl)).collect();
+    let kinds = i.connection_kinds();
+    let own: Vec<_> = facts.connections.iter().filter(|c| kinds.iter().any(|k| k.id == c.kind)).collect();
+    let failing = own.iter().find(|c| c.last_error.is_some());
+    let (status, error, error_connection) = if !enabled {
+        (PluginStatus::Off, None, None)
+    } else if i.id() == "github" && facts.github_rejected {
+        (
+            PluginStatus::Error,
+            Some("GitHub no longer accepts PDT's login: the token was revoked or expired.".into()),
+            None,
+        )
+    } else if let Some(c) = failing {
+        let e = c.last_error.clone().unwrap_or_default();
+        (PluginStatus::Error, Some(format!("{}: {e}", c.name)), Some(c.id.clone()))
+    } else if (i.id() == "github" && facts.github_needed) || (!core && !kinds.is_empty() && own.is_empty()) {
+        (PluginStatus::NeedsSetup, None, None)
+    } else {
+        (PluginStatus::On, None, None)
+    };
+    let mut steps: Vec<PluginPart> = vec![];
+    let nodes = i.node_kinds().into_iter().chain(i.actions().into_iter().filter_map(|a| a.node_kind()));
+    let mut claimed: Vec<String> = vec![];
+    for k in nodes {
+        let spec = k.spec();
+        claimed.extend(k.event_type().map(String::from));
+        steps.push(PluginPart { id: spec.id, title: spec.title });
+    }
+    let triggers = i
+        .event_types()
         .iter()
-        .map(|i| {
-            let decls: Vec<ToolDecl> =
-                i.actions().iter().map(|a| a.decl()).chain(i.tools().into_iter().map(|t| t.decl)).collect();
-            IntegrationInfo {
-                id: i.id().into(),
-                label: i.label().into(),
-                description: i.description().into(),
-                enabled: ints.is_enabled(i.id()),
-                built: true,
-                tools: decls.iter().map(|d| d.name.to_string()).collect(),
-                pm_tools: decls.iter().filter(|d| d.pm).map(|d| d.name.to_string()).collect(),
-            }
-        })
+        .filter(|t| !claimed.iter().any(|c| c == t.id))
+        .map(|t| PluginPart { id: t.id.into(), title: t.title.into() });
+    let schema = i.project_settings();
+    IntegrationInfo {
+        id: i.id().into(),
+        label: i.label().into(),
+        description: i.description().into(),
+        category,
+        icon: icon_of(i.icon()),
+        enabled,
+        built: true,
+        core,
+        status,
+        error,
+        error_connection,
+        checkable: !i.pollers().is_empty(),
+        connection_kinds: kinds,
+        node_kinds: triggers.chain(steps).collect(),
+        templates: i.templates().into_iter().map(|t| PluginPart { id: t.id, title: t.name }).collect(),
+        workflows: i
+            .builtin_workflows()
+            .into_iter()
+            .map(|w| PluginPart { id: w.id.into(), title: (w.doc)().name })
+            .collect(),
+        tools: decls.iter().map(|d| d.name.to_string()).collect(),
+        pm_tools: decls.iter().filter(|d| d.pm).map(|d| d.name.to_string()).collect(),
+        projects: match &schema {
+            Some(_) => facts
+                .projects
+                .iter()
+                .filter(|(_, ids)| ids.iter().any(|x| x == i.id()))
+                .map(|(p, _)| p.clone())
+                .collect(),
+            None => vec![],
+        },
+        project_settings: schema.map(|s| s.description),
+    }
+}
+
+/// Every plugin: PDT's own (always on), the ones this build has, enabled or not, then the known ones it lacks.
+fn infos(ints: &Integrations, facts: &PluginFacts) -> Vec<IntegrationInfo> {
+    let built = ints.built();
+    let own = own();
+    let mut out: Vec<IntegrationInfo> = own
+        .iter()
+        .filter_map(|i| Some(info(i.as_ref(), i.category()?, true, true, facts)))
+        .chain(
+            built.iter().filter_map(|i| Some(info(i.as_ref(), i.category()?, ints.is_enabled(i.id()), false, facts))),
+        )
         .collect();
     for k in pdt_core::integration::KNOWN.iter().filter(|k| !built.iter().any(|i| i.id() == k.id)) {
         out.push(IntegrationInfo {
             id: k.id.into(),
             label: k.label.into(),
-            description: String::new(),
+            description: k.description.into(),
+            category: k.category,
+            icon: icon_of(k.icon),
             enabled: false,
             built: false,
+            core: false,
+            status: PluginStatus::NotBuilt,
+            error: None,
+            error_connection: None,
+            checkable: false,
+            connection_kinds: vec![],
+            node_kinds: vec![],
+            templates: vec![],
+            workflows: vec![],
             tools: vec![],
             pm_tools: vec![],
+            project_settings: None,
+            projects: vec![],
         });
     }
     out
 }
 
-/// `GET /api/integrations`: every integration this build has, enabled or not, then the known ones it lacks.
-pub(crate) async fn list(State(st): State<AppState>) -> axum::Json<Vec<IntegrationInfo>> {
-    axum::Json(infos(&st.integrations))
+/// Every plugin as a fresh instance lists it (no connections, no projects): the web tests' fixture.
+pub fn plugin_infos(ints: &Integrations) -> Vec<IntegrationInfo> {
+    infos(ints, &PluginFacts::default())
+}
+
+/// `GET /api/integrations`: every plugin, PDT's own first, then those this build has, enabled or not, then the known
+/// ones it lacks.
+pub(crate) async fn list(
+    State(st): State<AppState>,
+) -> Result<axum::Json<Vec<IntegrationInfo>>, crate::error::ApiError> {
+    Ok(axum::Json(infos(&st.integrations, &PluginFacts::load(&st).await?)))
 }
 
 /// `PUT /api/integrations`: enables exactly the given integrations. Turning one on installs its built-in workflows
@@ -600,6 +804,10 @@ pub(crate) async fn put(
     let axum::Json(input) = payload?;
     let mut ids: Vec<String> = vec![];
     for id in input.enabled {
+        // PDT's own are always on.
+        if own().iter().any(|i| i.id() == id) {
+            continue;
+        }
         if !st.integrations.built().iter().any(|i| i.id() == id) {
             let what = match pdt_core::integration::known(&id) {
                 Some(k) => {
@@ -619,7 +827,23 @@ pub(crate) async fn put(
     st.builtins_installed.store(false, std::sync::atomic::Ordering::SeqCst);
     st.personas_installed.store(false, std::sync::atomic::Ordering::SeqCst);
     tracing::info!(enabled = ?st.integrations.enabled(), "changed the enabled integrations");
-    Ok(axum::Json(infos(&st.integrations)))
+    Ok(axum::Json(infos(&st.integrations, &PluginFacts::load(&st).await?)))
+}
+
+/// `POST /api/integrations/{id}/check`: runs an enabled integration's checks in the poll now ("Test again"), which
+/// record how its connections' uses went; then lists the plugins.
+pub(crate) async fn check(
+    State(st): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<axum::Json<Vec<IntegrationInfo>>, crate::error::ApiError> {
+    let registry = st.registry();
+    let Some(int) = registry.integrations().iter().find(|i| i.id() == id) else {
+        return Err(crate::error::ApiError::not_found("integration"));
+    };
+    for p in int.pollers() {
+        crate::loops::part(&st, p.name, p.run).await;
+    }
+    Ok(axum::Json(infos(&st.integrations, &PluginFacts::load(&st).await?)))
 }
 
 /// Each integration's routes this build has, answering 404 while it is disabled.
