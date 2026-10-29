@@ -376,7 +376,7 @@ pub enum MergeVia {
     /// A workflow or an agent merged it locally in PDT (`attempt.merge`, or the API without `by: "user"`, PDT-181):
     /// Finish merged tickets finishes it, as a detected merge.
     Automated,
-    /// The user closed the ticket (Done says the work landed).
+    /// The user closed the ticket (Done says the work landed, unless its PR is unmerged).
     Closed,
 }
 

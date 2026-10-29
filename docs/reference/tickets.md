@@ -240,7 +240,9 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
 - `noSession: true` (PDT-72; the Start dialog's "No session") starts no agent session: the branch, worktree, attempt
   and only the ticket's tab (still in its new workspace with `newWorkspace`); the result's `session` is `null`.
 - `POST /api/attempts/{id}/abandon` ends an attempt (worktree kept); moving a ticket to Done ends its attempt as
-  merged, to Won't do as merged if detected, else abandoned, once the move went through (a PATCH or bulk move that is
+  merged (even when git cannot see the merge) unless its PR is unmerged (PDT-257: the PR is read again first; still
+  open or closed, the attempt is abandoned, so the ticket never shows an unmerged PR as merged), to Won't do as merged
+  if detected, else abandoned, once the move went through (a PATCH or bulk move that is
   refused ends nothing; a bulk move ends each ticket's attempt on its own).
 - **Stopping a ticket's work** (PDT-159, pdt-api `stop.rs`): moving a ticket with an active attempt back to Draft,
   Ready or To do (a PATCH, a bulk move, the PM's `edit_ticket`), Abandon and `POST /api/tickets/{id}/stop` cancel the
@@ -294,7 +296,7 @@ types). Plan: docs/superpowers/plans/2026-10-19-pdt-38-ticket-parts.md.
 - Finishing is one server command, `POST /api/tickets/{id}/finish {stopRunning, discardChanges, deleteBranch,
   keepWorktree}` (pdt-api `finish.rs`, PDT-76). It checks first and changes nothing when something would be lost:
   `outcome: blocked` with `blocked {sessions, runs, dirty}` for sessions or runs still going (unless `stopRunning`)
-  or uncommitted changes (unless `discardChanges`). Otherwise it moves the ticket to Done, ends its active attempt (as merged, `via: closed`), cancels the
+  or uncommitted changes (unless `discardChanges`). Otherwise it moves the ticket to Done, ends its active attempt (as merged, `via: closed`, unless its PR is unmerged, as for a move to Done), cancels the
   ticket's workflow runs still going (but the run finishing it and the runs that called that one; error "cancelled:
   the ticket was finished"), stops every session
   in the worktree, the attempt's sessions and everything in the workspace Start made for the ticket
