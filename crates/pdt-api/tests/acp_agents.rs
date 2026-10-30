@@ -107,13 +107,15 @@ async fn an_acp_agent_is_added_checked_and_refused_where_it_cannot_go() {
     let v = add_fake(&env).await;
     let (s, v2) = call(&env.app, "GET", "/api/agents/acp:fake/capabilities", None).await;
     assert_eq!((s, v2["permissionModes"].as_array().map(Vec::len)), (StatusCode::OK, Some(4)), "{v2}");
-    // The built-in profiles (OhMyPi, Cursor), then the user's.
+    // The built-in profiles (OhMyPi, Cursor, Grok), then the user's.
     let agents = v["acpAgents"].as_array().unwrap();
-    assert_eq!(agents.len(), 3, "{v}");
-    assert_eq!((agents[0]["agent"].as_str(), agents[0]["builtin"].as_bool()), (Some("acp:omp"), Some(true)));
-    assert_eq!((agents[1]["agent"].as_str(), agents[1]["builtin"].as_bool()), (Some("acp:cursor"), Some(true)));
-    assert_eq!((agents[2]["agent"].as_str(), agents[2]["label"].as_str()), (Some("acp:fake"), Some("Fake ACP")));
-    assert!(agents[2]["found"].as_str().is_some(), "{v}");
+    let builtins: Vec<&str> =
+        agents.iter().filter(|a| a["builtin"] == true).filter_map(|a| a["agent"].as_str()).collect();
+    assert_eq!(builtins, ["acp:omp", "acp:cursor", "acp:grok"], "{v}");
+    let agents: Vec<&Value> = agents.iter().filter(|a| a["builtin"] == false).collect();
+    assert_eq!(agents.len(), 1, "{v}");
+    assert_eq!((agents[0]["agent"].as_str(), agents[0]["label"].as_str()), (Some("acp:fake"), Some("Fake ACP")));
+    assert!(agents[0]["found"].as_str().is_some(), "{v}");
     // Cursor edits without asking: no Ask.
     let (s, v2) = call(&env.app, "GET", "/api/agents/acp:cursor/capabilities", None).await;
     assert_eq!((s, v2["permissionModes"].clone()), (StatusCode::OK, json!(["accept_edits", "plan", "bypass"])), "{v2}");

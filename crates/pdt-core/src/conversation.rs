@@ -9,6 +9,7 @@ pub mod cursor;
 pub mod devin;
 pub mod draft;
 pub mod flavor;
+pub mod grok;
 pub mod omp;
 
 use crate::activity::Activity;

@@ -505,14 +505,16 @@ the id is 1–32 lowercase letters, digits and `-`, interned so `AgentKind` stay
 the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the built-in names are unchanged.
 
 - Definitions (pdt-core `acp_agent`): profiles that ship with PDT (`builtin_profiles()`: id, label, icon, command,
-  arguments, environment, a mode map and a flavor, `AcpFlavor`, for what the agent adds to ACP; OhMyPi's and Cursor's
-  so far, each harness's ticket adds its own; their ids can't be taken) and the user's, in host
+  arguments, environment, a mode map and a flavor, `AcpFlavor`, for what the agent adds to ACP; OhMyPi's, Cursor's and
+  Grok's so far, each harness's ticket adds its own; their ids can't be taken) and the user's, in host
   settings `acpAgents` (`[{id, label, command, args, env: [{name, value}]}]`, the whole list per `PUT
   /api/host/settings`; up to 32). Settings → This host → Agents → ACP agents adds, edits and removes them ("Add ACP
   agent": name, command, arguments one per line, `NAME=value` lines; the id comes from the name and never changes).
   The view lists each with where its command was found (`acpAgents[].found`); the host checks report each under
   `acp["acp:<id>"]` (found is ok: PDT can't tell whether one is logged in). A session, persona or default agent naming
   an ACP agent the host doesn't have is refused (400 `unknown_agent`); removing the default one puts it back on Claude.
+  A built-in profile whose command isn't found is hidden like a missing agent; a user's agent can't take a built-in
+  profile's id (one saved before the profile shipped is left out of the list).
 - Conversations only: `mode: terminal` is refused, they don't switch to a terminal, and they have no TUI hooks,
   background tasks or Make ticket (409 `draft_unsupported`). The UI offers them as conversations wherever an agent is
   offered (new tab, palette "New <label> here", ticket Start, personas, Settings' default agent) with a plug icon.
@@ -522,6 +524,8 @@ the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the
   without it). Resume is `session/load` when the agent advertises `loadSession`; otherwise a new session starts with a
   notice, as it does when the agent's `session/load` says it has no such session (`-32002`, or the flavor's own way
   of saying it, `AcpFlavor::session_missing`). An error's `data.details` is added to its message.
+  The model and its choices come from `configOptions`, in a `session/new` or `session/load` answer or a
+  `config_option_update`.
 - Modes: a profile's mode map, else the `availableModes` the agent advertises in `session/new`/`session/load`
   (matched to PDT's by id or name: `default`/`ask`, `acceptEdits`/`code`, `plan`, `bypass`/`yolo`, …,
   `acp_agent::advertised_modes`), set with `session/set_mode`. Every PDT mode is offered: one the agent has no mode
@@ -591,3 +595,31 @@ user installs the Cursor CLI and signs in with `agent login` (PDT passes nothing
   2026.10.22: the handshake, modes, a Free-plan prompt and a missing session; `turn.jsonl` and `plan.jsonl` built from
   its source). A Cursor persona has run an agent step end to end (2026-10-30, on a scratch daemon, model
   `default[]`).
+
+### Grok Build (PDT-236)
+
+The built-in profile `acp:grok` ("Grok") runs `grok agent --no-leader stdio` (xAI's Grok Build CLI, `curl -fsSL
+https://x.ai/cli/install.sh | bash`, signed in with `grok`; checked against grok 1.0.70's `--help` and its bundled
+docs, `~/.grok/docs/user-guide/15-agent-mode.md`). `--no-leader` starts an agent of its own rather than joining a
+shared Grok leader process. What Grok adds to ACP is pdt-core `conversation/grok.rs` (`GrokExtensions`, `AcpFlavor::Grok`), recorded in `crates/pdt-core/tests/fixtures/grok`:
+
+- Modes: Grok advertises no `availableModes` (its own ask / accept-edits / plan / always-approve modes are not
+  reachable over ACP, except always-approve as `_meta.yoloMode` on `session/new`, which PDT doesn't use), so PDT
+  keeps all four by answering its `session/request_permission`s. Grok itself runs its read-only tools and commands
+  (`read_file`, `grep`, `ls`, `cat`, `git status`, …) and bare `mkdir`/`touch` without asking, in every mode, and asks
+  for edits (kind `edit`), other commands (`execute`) and MCP tools (`other`). Refusing a request ends Grok's turn
+  (`stopReason: cancelled`), so a refused edit in Plan ends the turn as interrupted.
+- Options: `allow-once`, `reject-once`, and on an edit `allow-edits-session` (every edit, this session only: what
+  "Always allow" picks). Grok's `always-allow` saves a rule for the project, so PDT never picks it.
+- Tool names: `_meta["x.ai/tool"].name` (`write`, `run_terminal_command`, `read_file`, …). MCP tools go through
+  `use_tool` with `rawInput.tool_name` `<server>__<tool>`, so pdt-mcp's are `pdt__get_ticket`, … and run without
+  asking. A refused call ends `failed` with `_meta.toolNotRun: "rejected"` (declined).
+- Resume: `loadSession` is advertised and `session/load` replays the history (dropped: PDT logged it). Grok saves a
+  session when it is created; loading one it doesn't have fails with -32603 "Path not found", which starts a new one
+  (`AcpFlavor::session_missing`).
+- Cancel: `session/cancel` ends the turn `cancelled`; MCP: stdio and HTTP servers in `mcpServers` both work. The
+  model list is `configOptions.model` in the `session/new` answer (Grok sends no `config_option_update`).
+- Ignored: Grok's `_x.ai/*` notifications (setup phases, MCP status, retries after rate limits, queue, usage,
+  announcements), its `session_info_update` (a title) and the `_meta` on every update.
+- Tests: `fake-agent agent --no-leader stdio` speaks Grok's fields; pdt-api `tests/acp_grok.rs` installs it as `grok`
+  on the login path.
