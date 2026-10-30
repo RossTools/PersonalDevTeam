@@ -408,6 +408,26 @@ until the checks load or when they fail. Only a program missing from the search 
 check times out (30 s) or cannot start is found but not ok, and pdtd's startup check runs again (up to 3 times, 30 s
 apart) while an agent's check is unanswered, since a CLI's first launch after a restart can be slow (PDT-92).
 
+## Switching an agent off (PDT-270)
+
+Settings → This host → Agents has an on/off switch for each agent, next to its program (Programs) or in its row (ACP
+agents). Host settings `disabledAgents` lists the ones switched off; every agent is on unless it is there, and an ACP
+agent's entry goes when the agent is removed. The settings view's `enabledAgents` is the agents switched on (the
+built-ins, then the ACP agents): `useAgents().all` (web/src/common/agents.ts) is that list, and
+`useAgentAvailability` reports a switched-off agent as `off`, so it leaves every picker (ticket Start, new tab, the
+palette, "… with an agent", persona editing, the default agent, Get started). A persona already on one keeps it,
+listed as "switched off". The Checks list and Get started don't count it as missing (Get started's agents step needs
+one agent that is found and on).
+
+- The default agent can't be switched off (`invalid_input`, "Claude is the default agent: pick another default
+  before switching it off"), nor can a switched-off agent be made the default; its switch is disabled with that reason.
+- `POST /api/sessions` (and ticket Start, the PM, a workflow step: every `create_session`) refuses a new session on a
+  switched-off agent: 400 `agent_off`, "Codex is switched off in Settings → Agents". Sessions already running carry
+  on, and past ones still open and resume.
+- An agent step whose persona runs on a switched-off agent fails with "<persona>: Codex is switched off in Settings →
+  Agents" (its dry run too); it never falls back to another agent. Workflow validation (the editor's check,
+  `workflow_validate`) warns `agent_off` on such a step ahead of time.
+
 ## Host defaults (PDT-69)
 
 Host settings `defaultAgent` (claude), `defaultSessionMode` (conversation), `ticketPermissionMode` (bypass: the

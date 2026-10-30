@@ -20,8 +20,9 @@ import { SettingsScreens } from '../common/SettingsScreens';
 import { useAction } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
 import { navigate } from '../shell/router';
-import { useAgents } from '../common/agents';
+import { useAgents, useAgentsOff } from '../common/agents';
 import { AcpAgents } from './AcpAgents';
+import { agentsOff, AgentSwitch, offNote, switchBlocked } from './AgentSwitch';
 import { BugReportDialog } from './BugReportDialog';
 
 /** The stored token's state as a badge (never the token itself). */
@@ -357,7 +358,8 @@ function Agents({ v }: { v: HostSettingsView }) {
         <Select
           aria-label="Default agent"
           className="w-40"
-          options={[...agentChoices, ...v.acpAgents.map((a) => ({ value: a.agent, label: a.label }))]}
+          // A switched-off agent can't be the default (PDT-270).
+          options={[...agentChoices, ...v.acpAgents.map((a) => ({ value: a.agent, label: a.label }))].filter((o) => !agentsOff(v).includes(o.value))}
           value={v.settings.defaultAgent}
           onChange={(a) => void agent.save({ defaultAgent: a })}
         />
@@ -417,22 +419,24 @@ const PROGRAM_FIELD: Record<AgentKind, 'claudeProgram' | 'codexProgram' | 'devin
 
 /**
  * Where each agent's program is (PDT-231): found on the PATH unless a path is set here. Its environment variable wins
- * over the setting, which then shows read-only.
+ * over the setting, which then shows read-only. Each agent has its switch (PDT-270): a switched-off one isn't missing.
  */
 function Programs({ v }: { v: HostSettingsView }) {
   const save = useSaveSettings();
   const qc = useQueryClient();
   return (
-    <Section label="Programs" description="Where each agent's program is. Leave a path empty to use the one on the PATH; new sessions use a change.">
+    <Section label="Programs" description="Where each agent's program is, and whether PDT uses it. Leave a path empty to use the one on the PATH; new sessions use a change.">
       {v.programs.map((p) => {
         const name = PROGRAM_NAMES[p.agent];
         const setting = v.settings[PROGRAM_FIELD[p.agent]] ?? '';
-        const description = p.fromEnv ? `Set by ${p.envVar}, which wins over this setting.`
+        const off = offNote(v, p.agent);
+        const description = off ?? (p.fromEnv ? `Set by ${p.envVar}, which wins over this setting.`
           : p.found ? (setting ? `Found at ${p.found}.` : `Found on the PATH: ${p.found}. Set a path to use another one.`)
-            : setting ? 'Not found at this path.' : `Not found on the PATH. Install it or give its path.`;
+            : setting ? 'Not found at this path.' : `Not found on the PATH. Install it or give its path.`);
         return (
-          <SettingsRow key={p.agent} label={name} description={description}>
-            {p.fromEnv ? <EnvBadge name={p.envVar} /> : p.found ? <Badge tone="running">Found</Badge> : <Badge tone={p.agent === 'devin' ? 'neutral' : 'failed'}>Missing</Badge>}
+          <SettingsRow key={p.agent} label={name} description={<>{description}{switchBlocked(v, p.agent) && <span className="block">{switchBlocked(v, p.agent)}</span>}</>}>
+            <AgentSwitch v={v} agent={p.agent} label={name} />
+            {off ? <Badge>Off</Badge> : p.fromEnv ? <EnvBadge name={p.envVar} /> : p.found ? <Badge tone="running">Found</Badge> : <Badge tone={p.agent === 'devin' ? 'neutral' : 'failed'}>Missing</Badge>}
             {p.fromEnv ? (
               <Input aria-label={`${name} program`} mono className="w-64 max-w-full" value={p.fromEnv} disabled />
             ) : (
@@ -647,6 +651,7 @@ function ProjectsFolder({ v }: { v: HostSettingsView }) {
 function Checks() {
   const qc = useQueryClient();
   const agents = useAgents();
+  const off = useAgentsOff();
   const checks = useQuery({ queryKey: ['host-checks'], queryFn: api.hostChecks });
   const [refresh, refreshing] = useAction(async () => qc.setQueryData(['host-checks'], await api.refreshChecks()));
   return (
@@ -662,9 +667,11 @@ function Checks() {
             ...(['claude', 'codex', 'devin', 'git', 'tailscale'] as const).map((k) => ({ key: k, name: k, c: checks.data[k], optional: k === 'devin' })),
             ...Object.entries(checks.data.acp ?? {}).map(([k, c]) => ({ key: k, name: agents.label(k as AgentKind), c, optional: true })),
           ].map(({ key: k, name, c, optional: canLack }) => {
+            // An agent switched off is not checked for (PDT-270).
+            const switchedOff = off.includes(k as AgentKind);
             // Devin and ACP agents are optional: a host without them is fine.
-            const optional = canLack && !c.found;
-            const [status, text]: [Status, string] = c.ok ? ['running', 'OK'] : c.found ? ['waiting', 'needs attention'] : optional ? ['idle', 'not installed (optional)'] : ['failed', 'not found'];
+            const optional = switchedOff || (canLack && !c.found);
+            const [status, text]: [Status, string] = switchedOff ? ['idle', 'switched off'] : c.ok ? ['running', 'OK'] : c.found ? ['waiting', 'needs attention'] : optional ? ['idle', 'not installed (optional)'] : ['failed', 'not found'];
             return (
               <li key={k} className="flex min-w-0 items-center gap-2">
                 <StatusDot status={status} label={text} />

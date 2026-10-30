@@ -34,6 +34,9 @@ describe('agent availability', () => {
     const acp = { ...checks(true), acp: { 'acp:fake': { found: false, ok: false, detail: '', path: null } } };
     expect(availabilityOf(acp, 'acp:fake')).toBe('missing');
     expect(availabilityOf(acp, 'acp:new')).toBe('ready');
+    // Switched off in Settings → Agents (PDT-270), found or not.
+    expect(availabilityOf(checks(true), 'claude', ['claude'])).toBe('off');
+    expect(availabilityOf(undefined, 'acp:new', ['acp:new'])).toBe('off');
   });
 
   it('offers every agent when the checks fail', async () => {

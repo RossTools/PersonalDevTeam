@@ -11,7 +11,7 @@ import type { StepState } from '../api/gen/StepState';
 import type { AddProjectMode } from '../projects/AddProjectForm';
 import { useAction } from '../common/useAction';
 import type { AcpAgentView } from '../api/gen/AcpAgentView';
-import { agentLabel, isAcp, useAcpAgents, type BuiltinAgent } from '../common/agents';
+import { agentLabel, isAcp, useAcpAgents, useAgentsOff, type BuiltinAgent } from '../common/agents';
 import { checkOf } from '../common/useAgentAvailability';
 
 export type StepId = 'agents' | 'github' | 'project' | 'defaultAgent';
@@ -31,9 +31,9 @@ export function firstOpenStep(v: SetupView): StepId | null {
   return (['agents', 'github', 'project', 'defaultAgent'] as const).find((k) => v.steps[k] === 'todo') ?? null;
 }
 
-/** Pure: the agents the checks found, in page order. */
-export function foundAgents(checks: HostChecks | undefined): BuiltinAgent[] {
-  return AGENTS.map((a) => a.id).filter((a) => checks?.[a].found);
+/** Pure: the agents the checks found, in page order, less the ones switched off (PDT-270). */
+export function foundAgents(checks: HostChecks | undefined, off: readonly AgentKind[] = []): BuiltinAgent[] {
+  return AGENTS.map((a) => a.id).filter((a) => checks?.[a].found && !off.includes(a));
 }
 
 export interface SetupPageProps {
@@ -183,12 +183,14 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
     qc.setQueryData(['host-checks'], await api.refreshChecks());
     await qc.invalidateQueries({ queryKey: ['host-setup'] });
   });
-  const found = foundAgents(checks);
+  const off = useAgentsOff();
+  const found = foundAgents(checks, off);
   const summary = loading ? 'Looking for git and the agents…'
     : found.length > 0
       ? `Found ${found.map((a) => agentName(a)).join(' and ')}. PDT needs at least one, and git.`
       : 'No agent found yet. PDT needs at least one (Claude Code, Codex or Devin), and git.';
-  const rows: { id: 'git' | BuiltinAgent; name: string; install: string }[] = [{ id: 'git', name: 'git', install: GIT_INSTALL }, ...AGENTS];
+  // An agent switched off in Settings → Agents isn't one PDT needs (PDT-270).
+  const rows: { id: 'git' | BuiltinAgent; name: string; install: string }[] = [{ id: 'git', name: 'git', install: GIT_INSTALL }, ...AGENTS.filter((a) => !off.includes(a.id))];
   return (
     <Step {...step} title="Agents on this machine" summary={checks && !checks.git.found ? 'git is missing. PDT needs it, and at least one agent.' : summary}>
       {loading ? <Skeleton lines={4} label="Loading checks" /> : (
@@ -333,7 +335,8 @@ function ProjectStep({ onAddProject, onHostSettings, ...step }: StepProps & Setu
 
 function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; checks: HostChecks | undefined }) {
   const qc = useQueryClient();
-  const found = foundAgents(checks);
+  const off = useAgentsOff();
+  const found = foundAgents(checks, off);
   // The preset one, unless it isn't installed and another is.
   const acp = useAcpAgents();
   // An ACP agent the user made the default stays it.
@@ -352,7 +355,7 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
   return (
     <Step {...step} title="Pick a default agent" summary={summary}>
       <div role="radiogroup" aria-label="Default agent" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        {AGENTS.map((a) => {
+        {AGENTS.filter((a) => !off.includes(a.id)).map((a) => {
           const there = !checks || checks[a.id].found;
           return (
             <button key={a.id} type="button" role="radio" aria-checked={agent === a.id} disabled={!there} onClick={() => setPicked(a.id)}

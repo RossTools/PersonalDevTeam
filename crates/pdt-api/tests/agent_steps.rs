@@ -1439,3 +1439,49 @@ async fn a_coder_edits_only_its_own_tickets_unless_it_names_another_by_key() {
     let said = ask(format!(r#"mcp: edit_ticket {{"ticket": "{busy_key}", "priority": "high"}}"#)).await;
     assert!(said.contains("\"updated\": true"), "{said}");
 }
+
+/// A switched-off agent (PDT-270): Settings lists the agents still on and won't switch off the default; no new
+/// session starts on it; a step whose persona uses it fails (no fallback), and validation warns ahead of time.
+#[tokio::test]
+async fn a_switched_off_agent_is_refused_everywhere_until_it_is_back_on() {
+    let env = setup().await;
+    let put = |body: Value| call(&env.app, "PUT", "/api/host/settings", Some(body));
+    let (s, v) = put(json!({"disabledAgents": ["claude"]})).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")), "{v}");
+    assert!(v["message"].as_str().unwrap().contains("Claude is the default agent"), "{v}");
+    let (s, v) = put(json!({"defaultAgent": "codex", "disabledAgents": ["claude"]})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let on: Vec<&str> = v["enabledAgents"].as_array().unwrap().iter().map(|a| a.as_str().unwrap()).collect();
+    assert!(!on.contains(&"claude") && on.contains(&"codex"), "{v}");
+
+    let body = json!({"projectId": env.project, "kind": "agent_tui", "agent": "claude", "mode": "conversation",
+                      "cols": 80, "rows": 24});
+    let (s, v) = call(&env.app, "POST", "/api/sessions", Some(body.clone())).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("agent_off")), "{v}");
+    assert_eq!(v["message"], "Claude is switched off in Settings → Agents");
+
+    let doc = review_doc(r#"mcp: submit_outcome {"outcome": "approved", "summary": "Fine."}"#, json!({}));
+    let (s, v) = call(&env.app, "POST", "/api/workflows/validate", Some(json!({"doc": doc}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let warning = v.as_array().unwrap().iter().find(|i| i["code"] == "agent_off").expect("a warning");
+    assert_eq!(warning["severity"], "warning");
+    assert!(warning["message"].as_str().unwrap().contains("Claude is switched off"), "{warning}");
+
+    let t = ticket(&env, "Off").await;
+    let wf = create_workflow(&env, doc.clone()).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let r = run_ended(&env, &id).await;
+    assert_eq!(r["status"], "failed", "{r:#}");
+    let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "review").unwrap().clone();
+    assert_eq!(step["error"], "Reviewer: Claude is switched off in Settings → Agents", "{step:#}");
+    let (_, sessions) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await;
+    assert_eq!(sessions.as_array().map(Vec::len), Some(0), "nothing started on another agent: {sessions}");
+
+    // Back on: everything is.
+    let (s, v) = put(json!({"disabledAgents": []})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, v) = call(&env.app, "POST", "/api/workflows/validate", Some(json!({"doc": doc}))).await;
+    assert!(!v.as_array().unwrap().iter().any(|i| i["code"] == "agent_off"), "{v}");
+    let (s, v) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+}

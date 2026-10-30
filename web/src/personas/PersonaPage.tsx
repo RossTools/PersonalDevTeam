@@ -67,7 +67,8 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
   const set = (p: Partial<PersonaSetup>) => onChange({ ...value, ...p });
   const known = usePersonaTools().data;
   const agents = useAgents();
-  // The persona's agent stays listed even if the host no longer has it (an ACP agent removed since).
+  // The persona's agent stays listed even if the host no longer offers it (an ACP agent removed since, or one switched
+  // off in Settings → Agents).
   const agentOptions = agents.all.includes(value.agent) ? agents.all : [...agents.all, value.agent];
   const checked = shownTools(value.tools);
   const toggle = (name: string, on: boolean) =>
@@ -81,7 +82,7 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
           id={agentId}
           aria-label="Agent"
           className="w-40"
-          options={agentOptions.map((a) => ({ value: a, label: agents.label(a) }))}
+          options={agentOptions.map((a) => ({ value: a, label: agents.on(a) ? agents.label(a) : `${agents.label(a)} · switched off` }))}
           value={value.agent}
           onChange={(agent) => set({ agent })}
         />

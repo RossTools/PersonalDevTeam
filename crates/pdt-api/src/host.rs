@@ -232,6 +232,9 @@ pub struct HostSettingsView {
     pub programs: Vec<AgentProgramView>,
     /// The ACP agents: the built-in profiles and the user's.
     pub acp_agents: Vec<AcpAgentView>,
+    /// The agents switched on (`settings.disabledAgents` left out): the built-ins, then the ACP agents. What every
+    /// agent picker offers (PDT-270).
+    pub enabled_agents: Vec<AgentKind>,
     pub network: NetworkView,
 }
 
@@ -258,6 +261,7 @@ pub(crate) async fn view(st: &AppState) -> Result<HostSettingsView, ApiError> {
     let programs = program_views(st).await;
     let acp_agents = acp_agent_views(st, &settings).await;
     Ok(HostSettingsView {
+        enabled_agents: settings.enabled_agents(),
         acp_agents,
         projects_dir,
         settings,

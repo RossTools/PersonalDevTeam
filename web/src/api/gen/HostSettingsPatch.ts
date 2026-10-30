@@ -40,4 +40,8 @@ claudeProgram?: string, codexProgram?: string, devinProgram?: string,
 /**
  * The whole list of the user's ACP agents.
  */
-acpAgents?: Array<AcpAgentConfig>, };
+acpAgents?: Array<AcpAgentConfig>, 
+/**
+ * The whole list of the agents switched off.
+ */
+disabledAgents?: Array<AgentKind>, };

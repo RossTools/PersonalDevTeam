@@ -6,6 +6,7 @@ import type { AcpAgentConfig } from '../api/gen/AcpAgentConfig';
 import type { AcpAgentView } from '../api/gen/AcpAgentView';
 import type { EnvVar } from '../api/gen/EnvVar';
 import type { HostSettingsView } from '../api/gen/HostSettingsView';
+import { AgentSwitch, offNote, switchBlocked } from './AgentSwitch';
 
 /** Pure: an id for a new agent from its label ("Open Code" → `open-code`), not one of `taken`. */
 export function idFor(label: string, taken: string[]): string {
@@ -72,9 +73,13 @@ export function AcpAgents({ v }: { v: HostSettingsView }) {
         <SettingsRow
           key={a.id}
           label={a.label}
-          description={<span className="font-mono break-all">{[a.command, ...a.args].join(' ')}</span>}
+          description={<>
+            <span className="font-mono break-all">{[a.command, ...a.args].join(' ')}</span>
+            {[offNote(v, a.agent), switchBlocked(v, a.agent)].filter(Boolean).map((t) => <span key={t} className="block">{t}</span>)}
+          </>}
         >
-          {a.found ? <Badge tone="running" title={a.found}>Found</Badge> : <Badge tone="failed">Missing</Badge>}
+          <AgentSwitch v={v} agent={a.agent} label={a.label} />
+          {offNote(v, a.agent) ? <Badge>Off</Badge> : a.found ? <Badge tone="running" title={a.found}>Found</Badge> : <Badge tone="failed">Missing</Badge>}
           {a.builtin ? (
             <Badge>Built in</Badge>
           ) : (

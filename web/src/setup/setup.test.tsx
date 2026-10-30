@@ -55,6 +55,7 @@ describe('Get started', () => {
     expect(firstOpenStep(view({ steps: { agents: 'done', github: 'skipped' } }))).toBe('project');
     expect(firstOpenStep(view({ steps: { agents: 'done', github: 'done', project: 'done', defaultAgent: 'done' } }))).toBeNull();
     expect(foundAgents(checks({ codex: true }))).toEqual(['claude', 'codex']);
+    expect(foundAgents(checks({ codex: true }), ['codex'])).toEqual(['claude']);
   });
 
   it('shows the progress and each step’s state, and lists git and the agents with their paths', async () => {

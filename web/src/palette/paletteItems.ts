@@ -110,7 +110,7 @@ export interface PaletteContext {
   ticketProjectId?: string | null;
   /** The current project's repository when its forge takes issues (`owner/name`): "New issue" files one there. */
   issueRepo?: string | null;
-  /** What the host checks say about each agent (all offered when absent): "New … here" leaves out a missing one. */
+  /** What the host checks say about each agent (all offered when absent): "New … here" leaves out a missing or switched-off one. */
   agents?: (agent: AgentKind) => AgentAvailability;
   /** The host's default agent and view: their "New … here" comes first. */
   defaults?: Pick<AgentDefaults, 'agent' | 'mode'>;
@@ -217,7 +217,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
     const agentItems = byDefault(allAgentItems, ([agent, kind]) => choiceFor(agent, kind.endsWith('_terminal') ? 'terminal' : 'conversation'), ctx.defaults ?? FALLBACK_DEFAULTS);
     for (const [agent, kind, id, label] of agentItems) {
       const availability = ctx.agents?.(agent) ?? 'ready';
-      if (availability === 'missing') continue;
+      if (availability === 'missing' || availability === 'off') continue;
       actions.push({
         id,
         label,

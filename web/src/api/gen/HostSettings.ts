@@ -74,4 +74,9 @@ claudeProgram: string | null, codexProgram: string | null, devinProgram: string 
 /**
  * The ACP agents the user added (Settings → Agents → Add ACP agent; PDT-234), agent kinds `acp:<id>`.
  */
-acpAgents: Array<AcpAgentConfig>, };
+acpAgents: Array<AcpAgentConfig>, 
+/**
+ * The agents switched off in Settings → Agents (PDT-270): never offered, and no new session starts on them.
+ * Every agent is on unless it is here. The default agent never is.
+ */
+disabledAgents: Array<AgentKind>, };

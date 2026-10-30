@@ -42,11 +42,13 @@ async fn facts(st: &AppState) -> Result<SetupFacts, ApiError> {
         Some(c) => c,
         None => crate::checks::run_host_checks(st).await,
     };
+    // A switched-off agent counts as absent (PDT-270): it isn't one PDT uses.
+    let host = st.store.get_host_settings().await?;
     Ok(SetupFacts {
         git: c.git.found,
-        claude: c.claude.found,
-        codex: c.codex.found,
-        devin: c.devin.found,
+        claude: c.claude.found && host.agent_on(AgentKind::Claude),
+        codex: c.codex.found && host.agent_on(AgentKind::Codex),
+        devin: c.devin.found && host.agent_on(AgentKind::Devin),
         github_connected: crate::forge_login::connected(st, &pdt_core::forge::ForgeKind::GITHUB),
         projects: st.store.list_projects().await?.len(),
     })
