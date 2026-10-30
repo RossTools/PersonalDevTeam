@@ -36,6 +36,11 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin { id: COMMENTS_TO_AGENT, enabled: true, category: Category::Tickets, doc: comments_to_agent },
     Builtin { id: BASE_MOVED, enabled: false, category: Category::CiPr, doc: base_moved },
     Builtin { id: PR_FEEDBACK, enabled: false, category: Category::CiPr, doc: pr_feedback },
+];
+
+/// The GitHub plugin's built-ins ([`crate::integrations::Integration::builtin_workflows`]): left out while it is off
+/// (PDT-251).
+pub const GITHUB_BUILTINS: &[Builtin] = &[
     // Installed (enabled) and offered as a template only on a host with a project whose repository is the release
     // repository, PDT's own (PDT-226).
     Builtin { id: PDT_BUG_TRIAGE, enabled: true, category: Category::Issues, doc: pdt_bug_triage },
@@ -965,7 +970,7 @@ mod tests {
 
     #[test]
     fn every_builtin_is_valid() {
-        for b in BUILTINS {
+        for b in &all(crate::integrations::test_registry()) {
             let d = (b.doc)();
             let issues = validate(&d, crate::integrations::test_registry().catalog());
             let errors: Vec<_> = issues.iter().filter(|i| i.severity == Severity::Error).collect();
@@ -983,7 +988,10 @@ mod tests {
                 || (i.code == "open_port" && !i.node.as_deref().is_some_and(|n| n.starts_with("wait_")))
         };
         assert!(!issues.iter().any(|i| open(&i)), "{issues:?}");
-        assert!(!BUILTINS.iter().find(|b| b.id == CUT_RELEASE).unwrap().enabled, "off until the user turns it on");
+        assert!(
+            !GITHUB_BUILTINS.iter().find(|b| b.id == CUT_RELEASE).unwrap().enabled,
+            "off until the user turns it on"
+        );
     }
 
     /// PDT-139: a notice nobody could be told goes on, to the Inbox and the ticket.

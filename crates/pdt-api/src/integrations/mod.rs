@@ -5,7 +5,8 @@
 //! templates, CI). The [`Registry`] gathers every enabled integration's into the lists the rest of PDT reads: the node
 //! catalog, `tools/list` and `tools/call`, the personas' tools, the event types, `GET /api/connections/kinds`, the
 //! project settings form (`GET /api/integrations/project-settings`) and the PM's prompt, approvals and transcripts.
-//! PDT's own pieces register the same way ([`core::Core`]) and are always on.
+//! PDT's own pieces register the same way ([`core::Core`]) and are always on, but for those that can be turned off
+//! ([`Integration::can_turn_off`]: GitHub, while no project uses its forge, PDT-251).
 //!
 //! The optional integrations live in crates of their own (`crates/pdt-int-<id>`, PDT-173), each behind a pdtd cargo
 //! feature; pdtd hands the ones it was built with to [`Integrations::new`], and an instance enables those it uses
@@ -168,6 +169,12 @@ pub trait Integration: Send + Sync {
         None
     }
 
+    /// One of PDT's own that the user can turn off (GitHub, PDT-251). A forge plugin ([`Integration::forge_kind`])
+    /// can't be turned off while a project uses its forge.
+    fn can_turn_off(&self) -> bool {
+        false
+    }
+
     /// Its members of the 60 s poll, run after PDT's own checks.
     fn pollers(&self) -> Vec<Poller> {
         vec![]
@@ -214,7 +221,7 @@ pub trait Integration: Send + Sync {
     }
 }
 
-/// PDT's own integrations, always on, in the catalog's order.
+/// PDT's own integrations, in the catalog's order: always on, but for those that can be turned off.
 fn own() -> Vec<Arc<dyn Integration>> {
     vec![
         Arc::new(core::Core),
@@ -474,10 +481,20 @@ impl Registry {
 pub struct Integrations {
     /// The optional integrations this build has (pdtd's features), in their order.
     built: Vec<Arc<dyn Integration>>,
-    /// The ids of the enabled ones, and their registry with PDT's own.
-    current: RwLock<(Vec<&'static str>, Arc<Registry>)>,
+    /// What is on now, and its registry.
+    current: RwLock<Current>,
     /// The registry of every integration this build has, enabled or not, made when first asked for.
     everything: std::sync::OnceLock<Arc<Registry>>,
+}
+
+/// The integrations an instance has on.
+struct Current {
+    /// The ids of the enabled optional ones, in the build's order.
+    enabled: Vec<&'static str>,
+    /// The ids of PDT's own that are turned off ([`Integration::can_turn_off`]).
+    off: Vec<&'static str>,
+    /// The registry of PDT's own that are on and the enabled ones.
+    registry: Arc<Registry>,
 }
 
 impl Default for Integrations {
@@ -490,7 +507,11 @@ impl Integrations {
     /// `built`, none of them enabled yet.
     pub fn new(built: Vec<Arc<dyn Integration>>) -> Self {
         let registry = Arc::new(Registry::new(own(), built.iter().map(|i| i.id()).collect()));
-        Self { built, current: RwLock::new((vec![], registry)), everything: Default::default() }
+        Self {
+            built,
+            current: RwLock::new(Current { enabled: vec![], off: vec![], registry }),
+            everything: Default::default(),
+        }
     }
 
     /// The registry of PDT's own integrations and every one this build has, enabled or not: what the New workflow
@@ -509,28 +530,58 @@ impl Integrations {
         &self.built
     }
 
-    /// The registry of PDT's own integrations and the enabled ones.
+    fn current(&self) -> std::sync::RwLockReadGuard<'_, Current> {
+        self.current.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The registry of PDT's own integrations that are on and the enabled ones.
     pub fn registry(&self) -> Arc<Registry> {
-        self.current.read().unwrap_or_else(|e| e.into_inner()).1.clone()
+        self.current().registry.clone()
     }
 
-    /// The ids of the enabled integrations, in the build's order.
+    /// The ids of the enabled optional integrations, in the build's order.
     pub fn enabled(&self) -> Vec<&'static str> {
-        self.current.read().unwrap_or_else(|e| e.into_inner()).0.clone()
+        self.current().enabled.clone()
     }
 
+    /// The ids of PDT's own integrations that are turned off (PDT-251).
+    pub fn own_off(&self) -> Vec<&'static str> {
+        self.current().off.clone()
+    }
+
+    /// Whether integration `id` is on: an enabled optional one, or one of PDT's own not turned off.
     pub fn is_enabled(&self, id: &str) -> bool {
-        self.current.read().unwrap_or_else(|e| e.into_inner()).0.contains(&id)
+        let c = self.current();
+        c.enabled.contains(&id) || (own().iter().any(|i| i.id() == id) && !c.off.contains(&id))
     }
 
-    /// Enables exactly the integrations in `ids` this build has (the rest are ignored), and makes their registry.
+    /// The integrations this build has that are off: the optional ones not enabled and PDT's own turned off.
+    pub fn off(&self) -> Vec<Arc<dyn Integration>> {
+        let c = self.current();
+        let own_off = own().into_iter().filter(|i| c.off.contains(&i.id()));
+        own_off.chain(self.built.iter().filter(|i| !c.enabled.contains(&i.id())).cloned()).collect()
+    }
+
+    /// Enables exactly the optional integrations in `ids` this build has (the rest are ignored), keeping PDT's own as
+    /// they are, and makes their registry.
     pub fn enable(&self, ids: &[String]) {
+        let off: Vec<String> = self.own_off().into_iter().map(String::from).collect();
+        self.set(ids, &off);
+    }
+
+    /// Enables exactly the optional integrations in `ids` this build has and turns off those of PDT's own in `off`
+    /// that can be turned off (the rest of both are ignored), and makes their registry.
+    pub fn set(&self, ids: &[String], off: &[String]) {
         let on: Vec<Arc<dyn Integration>> =
             self.built.iter().filter(|i| ids.iter().any(|x| x == i.id())).cloned().collect();
         let enabled: Vec<&'static str> = on.iter().map(|i| i.id()).collect();
+        let (dropped, own_on): (Vec<_>, Vec<_>) =
+            own().into_iter().partition(|i| i.can_turn_off() && off.iter().any(|x| x == i.id()));
+        let off: Vec<&'static str> = dropped.iter().map(|i| i.id()).collect();
         let registry =
-            Registry::new(own().into_iter().chain(on).collect(), self.built.iter().map(|i| i.id()).collect());
-        *self.current.write().unwrap_or_else(|e| e.into_inner()) = (enabled, Arc::new(registry));
+            Registry::new(own_on.into_iter().chain(on).collect(), self.built.iter().map(|i| i.id()).collect());
+        *self.current.write().unwrap_or_else(|e| e.into_inner()) =
+            Current { enabled, off, registry: Arc::new(registry) };
     }
 }
 
@@ -541,10 +592,12 @@ impl AppState {
     }
 }
 
-/// Enables the integrations the store says this instance enabled (pdtd's start, and after a change).
+/// Enables the integrations the store says this instance enabled, and turns off PDT's own it turned off (pdtd's
+/// start, and after a change).
 pub async fn load_enabled(st: &AppState) -> Result<(), pdt_store::StoreError> {
     let ids = st.store.enabled_integrations().await?;
-    st.integrations.enable(&ids);
+    let off = st.store.own_integrations_off().await?;
+    st.integrations.set(&ids, &off);
     Ok(())
 }
 
@@ -604,8 +657,14 @@ pub struct IntegrationInfo {
     pub enabled: bool,
     /// This build has it (pdtd's cargo feature); one it lacks can't be enabled.
     pub built: bool,
-    /// Part of PDT (GitHub, incoming webhooks, HTTP services, MCP servers): always on, no switch.
+    /// Part of PDT (GitHub, incoming webhooks, HTTP services, MCP servers): always on, no switch, unless
+    /// [`IntegrationInfo::can_turn_off`].
     pub core: bool,
+    /// One of PDT's own the user can turn off (GitHub, PDT-251), while no project uses it
+    /// ([`IntegrationInfo::forge_projects`]).
+    pub can_turn_off: bool,
+    /// The projects whose forge it is, while it is on (PDT-251): a forge plugin can't be turned off while any does.
+    pub forge_projects: Vec<PluginProject>,
     pub status: PluginStatus,
     /// What is failing, for [`PluginStatus::Error`]: the connection's name and its error.
     pub error: Option<String>,
@@ -649,14 +708,23 @@ pub(crate) struct PluginFacts {
     pub forges: Vec<ForgeLogin>,
     /// Each project, with the ids of the integrations it has settings for.
     pub projects: Vec<(PluginProject, Vec<String>)>,
+    /// Each project with a forge from a forge plugin in use, with its kind.
+    pub forge_projects: Vec<(pdt_core::forge::ForgeKind, PluginProject)>,
 }
 
 impl PluginFacts {
     pub(crate) async fn load(st: &AppState) -> Result<Self, pdt_store::StoreError> {
         let mut projects = vec![];
+        let mut forge_projects = vec![];
         for p in st.store.list_projects().await? {
             let linked = st.store.get_project_settings(&p.id).await?.integrations.into_keys().collect();
-            projects.push((PluginProject { id: p.id, key: p.key, name: p.name }, linked));
+            let plugin = PluginProject { id: p.id.clone(), key: p.key, name: p.name };
+            if let Some(f) = crate::forge::project_forge(st, &p.id, &p.repo_path).await
+                && st.forge_plugin(&f.kind).is_some()
+            {
+                forge_projects.push((f.kind, plugin.clone()));
+            }
+            projects.push((plugin, linked));
         }
         Ok(Self {
             connections: st.store.list_connections().await?,
@@ -676,6 +744,7 @@ impl PluginFacts {
                 })
                 .collect(),
             projects,
+            forge_projects,
         })
     }
 }
@@ -686,6 +755,11 @@ impl PluginFacts {
 #[ts(export)]
 pub struct EnableIntegrations {
     pub enabled: Vec<String>,
+    /// The ids of PDT's own to turn off (the rest of those that can be are turned on, PDT-251); left out: as they
+    /// are.
+    #[serde(default)]
+    #[ts(optional)]
+    pub off: Option<Vec<String>>,
 }
 
 fn icon_of(i: Icon) -> PluginIcon {
@@ -736,6 +810,10 @@ fn info(
         .filter(|t| !claimed.iter().any(|c| c == t.id))
         .map(|t| PluginPart { id: t.id.into(), title: t.title.into() });
     let schema = i.project_settings();
+    let forge_projects = match i.forge_kind() {
+        Some(k) if enabled => facts.forge_projects.iter().filter(|(x, _)| *x == k).map(|(_, p)| p.clone()).collect(),
+        _ => vec![],
+    };
     IntegrationInfo {
         id: i.id().into(),
         label: i.label().into(),
@@ -745,6 +823,8 @@ fn info(
         enabled,
         built: true,
         core,
+        can_turn_off: core && i.can_turn_off(),
+        forge_projects,
         status,
         error,
         error_connection,
@@ -772,13 +852,13 @@ fn info(
     }
 }
 
-/// Every plugin: PDT's own (always on), the ones this build has, enabled or not, then the known ones it lacks.
+/// Every plugin: PDT's own (on unless turned off), the ones this build has, enabled or not, then the known ones it lacks.
 fn infos(ints: &Integrations, facts: &PluginFacts) -> Vec<IntegrationInfo> {
     let built = ints.built();
     let own = own();
     let mut out: Vec<IntegrationInfo> = own
         .iter()
-        .filter_map(|i| Some(info(i.as_ref(), i.category()?, true, true, facts)))
+        .filter_map(|i| Some(info(i.as_ref(), i.category()?, ints.is_enabled(i.id()), true, facts)))
         .chain(
             built.iter().filter_map(|i| Some(info(i.as_ref(), i.category()?, ints.is_enabled(i.id()), false, facts))),
         )
@@ -793,6 +873,8 @@ fn infos(ints: &Integrations, facts: &PluginFacts) -> Vec<IntegrationInfo> {
             enabled: false,
             built: false,
             core: false,
+            can_turn_off: false,
+            forge_projects: vec![],
             status: PluginStatus::NotBuilt,
             error: None,
             error_connection: None,
@@ -831,9 +913,10 @@ pub(crate) async fn put(
     payload: Result<axum::Json<EnableIntegrations>, axum::extract::rejection::JsonRejection>,
 ) -> Result<axum::Json<Vec<IntegrationInfo>>, crate::error::ApiError> {
     let axum::Json(input) = payload?;
+    let invalid = |m: String| crate::error::ApiError::new(axum::http::StatusCode::UNPROCESSABLE_ENTITY, "invalid", m);
     let mut ids: Vec<String> = vec![];
     for id in input.enabled {
-        // PDT's own are always on.
+        // PDT's own are on unless `off` names them.
         if own().iter().any(|i| i.id() == id) {
             continue;
         }
@@ -844,19 +927,64 @@ pub(crate) async fn put(
                 }
                 None => format!("there is no integration {id}"),
             };
-            return Err(crate::error::ApiError::new(axum::http::StatusCode::UNPROCESSABLE_ENTITY, "invalid", what));
+            return Err(invalid(what));
         }
         if !ids.contains(&id) {
             ids.push(id);
         }
     }
+    let off: Vec<String> = match input.off {
+        None => st.integrations.own_off().into_iter().map(String::from).collect(),
+        Some(off) => {
+            let mut out: Vec<String> = vec![];
+            for id in off {
+                match own().into_iter().find(|i| i.id() == id) {
+                    Some(i) if i.can_turn_off() => {
+                        if st.integrations.is_enabled(i.id()) {
+                            turn_off_check(&st, i.as_ref()).await?;
+                        }
+                        if !out.contains(&id) {
+                            out.push(id);
+                        }
+                    }
+                    Some(i) => return Err(invalid(format!("{} is part of PDT: it can't be turned off", i.label()))),
+                    None => return Err(invalid(format!("{id} is not one of PDT's own plugins"))),
+                }
+            }
+            out
+        }
+    };
     st.store.set_enabled_integrations(&ids).await?;
-    st.integrations.enable(&ids);
+    st.store.set_own_integrations_off(&off).await?;
+    st.integrations.set(&ids, &off);
     // Built-in workflows and personas follow what is enabled on the engine's next tick.
     st.builtins_installed.store(false, std::sync::atomic::Ordering::SeqCst);
     st.personas_installed.store(false, std::sync::atomic::Ordering::SeqCst);
-    tracing::info!(enabled = ?st.integrations.enabled(), "changed the enabled integrations");
+    tracing::info!(enabled = ?st.integrations.enabled(), off = ?st.integrations.own_off(), "changed the enabled integrations");
     Ok(axum::Json(infos(&st.integrations, &PluginFacts::load(&st).await?)))
+}
+
+/// Refuses to turn off a forge plugin while a project's forge is its (PDT-251): the project's `forge` in
+/// `.pdt/project.toml`, else its origin.
+async fn turn_off_check(st: &AppState, i: &dyn Integration) -> Result<(), crate::error::ApiError> {
+    let Some(kind) = i.forge_kind() else { return Ok(()) };
+    let facts = PluginFacts::load(st).await?;
+    let using: Vec<String> =
+        facts.forge_projects.iter().filter(|(k, _)| *k == kind).map(|(_, p)| p.name.clone()).collect();
+    if using.is_empty() {
+        return Ok(());
+    }
+    let label = i.label();
+    Err(crate::error::ApiError::new(
+        axum::http::StatusCode::CONFLICT,
+        "in_use",
+        format!(
+            "{label} is the forge of {}: give {} another forge (`forge` in .pdt/project.toml: \"local\" or \"none\") \
+             before turning {label} off",
+            using.join(", "),
+            if using.len() == 1 { "it" } else { "them" },
+        ),
+    ))
 }
 
 /// `POST /api/integrations/{id}/check`: runs an enabled integration's checks in the poll now ("Test again"), which

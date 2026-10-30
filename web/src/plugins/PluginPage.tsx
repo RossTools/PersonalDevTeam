@@ -8,7 +8,7 @@ import type { Connection } from '../api/gen/Connection';
 import { ConnectionDialog, connectionsKey } from '../connections/ConnectionDialog';
 import { ConnectionRow } from '../connections/ConnectionRow';
 import { ForgeLogin } from './ForgeLogin';
-import { CATEGORY_LABEL, connectionsOf, pluginsKey, type Plugin } from './model';
+import { CATEGORY_LABEL, connectionsOf, pluginsKey, stuckOn, type Plugin } from './model';
 import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch, usePlugins } from './parts';
 
 function Tags({ items, empty = 'None' }: { items: string[]; empty?: string }) {
@@ -32,6 +32,7 @@ function setupSteps(p: Plugin): string[] {
       'Connect GitHub above (sign in with a code), or paste a token.',
       'Projects whose origin is on GitHub then get their pull requests, CI and merges followed.',
       'Use its steps in a workflow, or let agents use its tools instead of the GitHub CLI.',
+      'Not using GitHub? Turn it off while no project’s forge is GitHub: PDT then never calls it.',
     ];
   }
   return [
@@ -98,6 +99,10 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
       description={`${CATEGORY_LABEL[p.category]} · ${p.description || `This PDT was built without ${p.label}.`}`}
       actions={<><PluginStatusBadge p={p} /><PluginSwitch p={p} pending={sw.pending} onChange={(on) => sw.toggle(p, on)} /></>}
     >
+      {stuckOn(p) && <Alert tone="info">{stuckOn(p)}</Alert>}
+      {p.status === 'off' && p.canTurnOff && (
+        <Alert tone="info">{p.label} is off: PDT doesn’t call it, and its steps, triggers, tools and built-in workflows are gone until you turn it on.</Alert>
+      )}
       {p.status === 'needs_setup' && (p.id === 'github' ? (
         <Alert tone="warning">PDT needs your GitHub login and has none: connect GitHub below.</Alert>
       ) : (

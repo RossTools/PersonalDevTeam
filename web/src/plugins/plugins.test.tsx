@@ -5,7 +5,7 @@ import { renderWithQuery, stubApi } from '../test-utils';
 import type { Connection } from '../api/gen/Connection';
 import { plugins as built } from '../api/gen/plugins';
 import { AllConnectionsPage } from './AllConnectionsPage';
-import { NO_FILTER, categoryCounts, enabledWith, filterPlugins, groupPlugins, loadLayout, type Plugin } from './model';
+import { NO_FILTER, categoryCounts, enabledWith, filterPlugins, groupPlugins, loadLayout, offWith, stuckOn, type Plugin } from './model';
 import { PluginPage } from './PluginPage';
 import { PluginsPage } from './PluginsPage';
 
@@ -52,6 +52,16 @@ describe('plugins: the catalog’s filters', () => {
     expect(enabledWith(mixed(), 'jira', true)).toEqual(['discord', 'jira', 'arr', 'scryer']);
     expect(enabledWith(mixed(), 'discord', false)).toEqual(['arr', 'scryer']);
   });
+
+  it('turns off only PDT’s own that can be, and one a project uses as its forge stays on (PDT-251)', () => {
+    expect(offWith(mixed(), 'github', false)).toEqual(['github']);
+    expect(offWith(mixed(), 'discord', false)).toEqual([]);
+    expect(offWith(catalog({ github: off }), 'jira', true)).toEqual(['github']);
+    expect(offWith(catalog({ github: off }), 'github', true)).toEqual([]);
+    const used = catalog({ github: { forgeProjects: [{ id: 'p1', key: 'PDT', name: 'Personal Dev Team' }] } }).find((p) => p.id === 'github')!;
+    expect(stuckOn(used)).toMatch(/^GitHub is the forge of Personal Dev Team\. To turn it off, give it another forge/);
+    expect(stuckOn({ ...used, enabled: false })).toBeNull();
+  });
 });
 
 describe('plugins: Settings → Plugins', () => {
@@ -68,9 +78,10 @@ describe('plugins: Settings → Plugins', () => {
     expect(within(await card('Scryer')).getByText('Error')).toBeInTheDocument();
     expect(within(await card('Plex')).getByText('Not in this build')).toBeInTheDocument();
     expect(within(await card('Plex')).getByRole('switch', { name: 'Use Plex' })).toBeDisabled();
-    // PDT's own have no switch.
-    expect(within(await card('GitHub')).getByText('Built in')).toBeInTheDocument();
-    expect(within(await card('GitHub')).queryByRole('switch')).toBeNull();
+    // PDT's own have no switch, but for GitHub (PDT-251).
+    expect(within(await card('MCP servers')).getByText('Built in')).toBeInTheDocument();
+    expect(within(await card('MCP servers')).queryByRole('switch')).toBeNull();
+    expect(within(await card('GitHub')).getByRole('switch', { name: 'Use GitHub' })).toBeEnabled();
     expect(screen.getByRole('region', { name: 'Media' })).toHaveTextContent('Scryer');
     expect(document.body).toHaveTextContent('Later: an Available section for plugins installed from outside PDT.');
   });
@@ -114,7 +125,7 @@ describe('plugins: Settings → Plugins', () => {
     expect(onOpen).toHaveBeenCalledWith('discord');
     onOpen.mockClear();
     await userEvent.click(screen.getByRole('switch', { name: 'Use Discord' }));
-    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ enabled: ['arr', 'scryer'] }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ enabled: ['arr', 'scryer'], off: [] }));
     expect(onOpen).not.toHaveBeenCalled();
   });
 
@@ -130,7 +141,7 @@ describe('plugins: Settings → Plugins', () => {
     await userEvent.click(await screen.findByRole('switch', { name: 'Use Jira' }));
     const dialog = await screen.findByRole('dialog', { name: 'Add Jira' });
     expect(within(dialog).getByText(/Jira is on\. Add a connection/)).toBeInTheDocument();
-    expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ enabled: ['discord', 'jira', 'arr', 'scryer'] });
+    expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ enabled: ['discord', 'jira', 'arr', 'scryer'], off: [] });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Later' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(within(screen.getByRole('group', { name: 'Jira' })).getByText('Needs setup')).toBeInTheDocument();
@@ -203,12 +214,26 @@ describe('plugins: a plugin’s page', () => {
     expect(await within(connections).findByText('ci')).toBeInTheDocument();
   });
 
-  it('GitHub’s connection is its login, and it is built in', async () => {
+  it('GitHub’s connection is its login', async () => {
     stubApi({ 'GET /api/integrations': catalog({ github: { status: 'needs_setup' } }), 'GET /api/connections': [] });
     renderWithQuery(<PluginPage id="github" onBack={() => {}} />);
     expect(await screen.findByText(/PDT needs your GitHub login/)).toBeInTheDocument();
     expect((await screen.findByRole('region', { name: 'GitHub logins' }))).toBeInTheDocument();
-    expect(screen.getByText('Built in')).toBeInTheDocument();
+  });
+
+  it('GitHub stays on while a project uses it as its forge, and turns off when none does (PDT-251)', async () => {
+    const used = catalog({ github: { forgeProjects: [{ id: 'p1', key: 'PDT', name: 'Personal Dev Team' }] } });
+    stubApi({ 'GET /api/integrations': used, 'GET /api/connections': [] });
+    const { unmount } = renderWithQuery(<PluginPage id="github" onBack={() => {}} />);
+    expect(await screen.findByText(/GitHub is the forge of Personal Dev Team/)).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Use GitHub' })).toBeDisabled();
+    unmount();
+    vi.unstubAllGlobals();
+    const calls = stubApi({ 'GET /api/integrations': catalog(), 'PUT /api/integrations': catalog({ github: off }), 'GET /api/connections': [] });
+    renderWithQuery(<PluginPage id="github" onBack={() => {}} />);
+    await userEvent.click(await screen.findByRole('switch', { name: 'Use GitHub' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ enabled: enabledWith(catalog(), 'github', false), off: ['github'] }));
+    expect(await screen.findByText(/GitHub is off: PDT doesn’t call it/)).toBeInTheDocument();
   });
 });
 

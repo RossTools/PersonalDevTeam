@@ -271,6 +271,11 @@ impl Catalog {
                 "integration_missing",
                 format!("{kind} is part of the {} integration, which this {SHORT_NAME} was built without", i.label),
             ),
+            // GitHub's are only missing while it is turned off (PDT-251).
+            None if kind.starts_with("github.") => (
+                "integration_disabled",
+                format!("{kind} is part of the GitHub plugin, which is turned off (Settings → Plugins)"),
+            ),
             None => ("unknown_kind", format!("no node kind is called {kind}")),
         }
     }
