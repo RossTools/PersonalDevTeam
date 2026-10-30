@@ -17,6 +17,7 @@ use pdt_core::pm::{
 use pdt_core::project::Project;
 use pdt_core::session::{Session, SessionKind, SessionPersona, SessionStatus, TerminalSize, ValidSession, clean_title};
 use pdt_core::ticket::{TicketQuery, TicketStage};
+use pdt_core::workflow::api::{Scope, Workflow};
 use pdt_store::{NoteFilter, PmSessionRow};
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -481,7 +482,7 @@ pub(crate) async fn project_id(st: &AppState, given: &str) -> Result<String, Str
         .into_iter()
         .find(|p| p.id == g || p.key.eq_ignore_ascii_case(g) || p.name.eq_ignore_ascii_case(g))
         .map(|p| p.id)
-        .ok_or_else(|| format!("no project is called {g} (use a project's key, such as PDT)"))
+        .ok_or_else(|| format!("no project is called {g} (use a project's key, such as ABC)"))
 }
 
 /// A PM session's instructions: PDT's PM context, the persona's instructions and the briefing, made once per session
@@ -570,14 +571,35 @@ pub(crate) async fn in_flight(
     Ok(page.items)
 }
 
+/// The enabled release workflow (Cut a release, or the user's copy of it) that runs in a project, by name (PDT-296):
+/// the PM's only release guidance comes with it.
+fn release_workflow(st: &AppState, workflows: &[Workflow], project_id: &str) -> Option<String> {
+    let reg = st.registry();
+    workflows
+        .iter()
+        .filter(|w| w.enabled && !crate::workflow::builtins::hidden(&reg, w))
+        .filter(|w| {
+            w.builtin.as_deref() == Some(crate::workflow::builtins::CUT_RELEASE)
+                || w.name.eq_ignore_ascii_case("Cut a release")
+        })
+        .find(|w| match w.scope {
+            Scope::Project => w.project_id.as_deref() == Some(project_id),
+            Scope::Host => true,
+            Scope::Personal => false,
+        })
+        .map(|w| w.name.clone())
+}
+
 async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, ApiError> {
     let now = now_ms();
     let projects = st.store.list_projects().await?;
     let mut keys = std::collections::HashMap::new();
+    let workflows = st.store.list_workflows(None).await?;
     let mut out_projects = vec![];
     for p in &projects {
         keys.insert(p.id.clone(), p.key.clone());
         let pm_acts = st.store.get_project_settings(&p.id).await?.policy.pm_acts;
+        let release = if p.is_personal() { None } else { release_workflow(st, &workflows, &p.id) };
         out_projects.push(BriefProject {
             name: p.name.clone(),
             key: p.key.clone(),
@@ -585,6 +607,7 @@ async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, 
             folder: p.repo_path.clone(),
             stages: stage_counts(st, &p.id).await?,
             pm_acts,
+            release,
         });
     }
     let in_flight = in_flight(st, None)

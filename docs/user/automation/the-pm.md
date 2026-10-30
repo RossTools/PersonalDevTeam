@@ -77,6 +77,9 @@ Each new conversation starts with a briefing: your projects and their tickets by
 Inbox, what happened since the last conversation started, the last few journal entries, the other open conversations,
 and the pinned notes. So you can ask "what's new?" without explaining anything.
 
+A project with an enabled release workflow (such as Cut a release) is listed with it, and the PM starts that workflow
+when you ask for a release. For a project without one, the PM has no release instructions: tell it how you release.
+
 ## The daily update
 
 A conversation you keep using doesn't go stale. About once a day, when you've written to it since, PDT brings it up to

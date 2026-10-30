@@ -163,8 +163,7 @@ providers = ["github_actions", "buildkite"]       # github_actions, gitlab_ci, l
   agent on their own, and an automated merge waits until each provider with CI has passed on the head.
 - An id the project doesn't have (Buildkite with no pipelines set) is skipped; an empty list means no CI. An id that
   isn't one (letters, digits, `_` and `-`) makes the file invalid. The host overrides' list replaces the file's.
-- An older PDT refuses the whole file over the unknown `providers` key: wait for the stable release to support it
-  before adding it to a repository's file.
+- `providers` needs PDT 0.3.0 or newer: an older PDT refuses the whole file over the unknown key.
 
 ## What a run gets
 

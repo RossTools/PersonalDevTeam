@@ -203,6 +203,10 @@ itself once its checks pass, or needs fixing or closing. For a nightly now, leav
 published. Nothing in Cut a release is PDT's own: any project gives its own workflow, inputs, branch and tag
 pattern (docs/user "Workflows").
 
+Agents start releases only this way, never with `gh workflow run`: the PM sees a project's release workflow in its
+briefing only when one is enabled for it, and PDT's prompts carry nothing about PDT's own release process (the
+repository's AGENTS.md does).
+
 ### Moving the release repository
 
 Hosts reach the release repository by its numeric id (`RELEASE_REPO_ID` in `crates/pdt-core/src/brand.rs`), which
