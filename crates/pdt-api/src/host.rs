@@ -168,6 +168,13 @@ pub struct AcpAgentView {
     pub def: pdt_core::acp_agent::AcpAgentDef,
     /// Where its command was found, or null when it wasn't.
     pub found: Option<String>,
+    /// The version PDT installed, for a profile PDT installs (`installer`); null when it hasn't.
+    pub installed_version: Option<String>,
+    /// The path set over the installed program (Settings → Agents), for a profile PDT installs.
+    pub program: Option<String>,
+    /// The sign-in its server keeps, for one PDT can sign in (Antigravity's `auth.type`: `oauth-personal`, …); null
+    /// when it has none (or PDT can't tell).
+    pub signed_in: Option<String>,
 }
 
 /// Every ACP agent this host has, with where each one's command was found.
@@ -175,12 +182,22 @@ pub(crate) async fn acp_agent_views(st: &AppState, s: &HostSettings) -> Vec<AcpA
     let defs = pdt_core::acp_agent::all(&s.acp_agents);
     let search = st.platform.login_path.clone();
     let home = st.home_dir.clone();
+    let data_dir = st.data_dir.clone();
+    let s = s.clone();
     tokio::task::spawn_blocking(move || {
         defs.into_iter()
             .filter_map(|def| {
                 let agent = def.kind()?;
-                let found = found(&expand_home(&def.command, home.as_deref()), search.as_deref());
-                Some(AcpAgentView { agent, def, found })
+                let installed_version = def
+                    .installer
+                    .as_deref()
+                    .and_then(|id| crate::toolchains::installed(&data_dir, id))
+                    .map(|i| i.version);
+                let program = def.installer.as_ref().and_then(|_| s.acp_programs.get(&def.id).cloned());
+                let signed_in = crate::toolchains::signed_in(def.flavor, home.as_deref());
+                let launch = crate::toolchains::launch_def(&data_dir, home.as_deref(), &s, def.clone());
+                let found = found(&expand_home(&launch.command, home.as_deref()), search.as_deref());
+                Some(AcpAgentView { agent, def, found, installed_version, program, signed_in })
             })
             .collect()
     })
@@ -308,6 +325,7 @@ pub(crate) async fn put_settings(
         || patch.codex_program.is_some()
         || patch.devin_program.is_some()
         || patch.acp_agents.is_some()
+        || patch.acp_programs.is_some()
     {
         let st = st.clone();
         tokio::spawn(async move {

@@ -9,7 +9,20 @@ export type AcpAgentView = { agent: AgentKind,
 /**
  * Where its command was found, or null when it wasn't.
  */
-found: string | null, id: string, label: string, 
+found: string | null, 
+/**
+ * The version PDT installed, for a profile PDT installs (`installer`); null when it hasn't.
+ */
+installedVersion: string | null, 
+/**
+ * The path set over the installed program (Settings → Agents), for a profile PDT installs.
+ */
+program: string | null, 
+/**
+ * The sign-in its server keeps, for one PDT can sign in (Antigravity's `auth.type`: `oauth-personal`, …); null
+ * when it has none (or PDT can't tell).
+ */
+signedIn: string | null, id: string, label: string, 
 /**
  * The icon the app shows for it (a built-in profile's); None: the generic agent icon.
  */
@@ -17,4 +30,9 @@ icon: string | null, command: string, args: Array<string>, env: Array<EnvVar>,
 /**
  * It ships with PDT (it can't be edited or removed).
  */
-builtin: boolean, };
+builtin: boolean, 
+/**
+ * The ACP registry entry PDT installs its program from (Settings → Agents → Install), when it isn't one the user
+ * installs: `command` is then only a placeholder for the installed program (or the path set over it).
+ */
+installer: string | null, };

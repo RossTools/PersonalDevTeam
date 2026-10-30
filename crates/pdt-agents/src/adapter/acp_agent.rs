@@ -3,7 +3,7 @@
 //! and environment come from the definition; their modes from its mode map, else from the `availableModes` they
 //! advertise, else PDT keeps the mode itself (also the modes a built-in profile's map leaves out). PDT's instructions
 //! go in front of a new session's first prompt. What a built-in profile's agent adds to ACP comes from its flavor
-//! (`pdt_core::conversation::omp`, `cursor`).
+//! (`pdt_core::conversation::omp`, `cursor`, `antigravity`).
 
 use super::acp::AcpProfile;
 use super::{AdapterError, AgentAdapter, EventSink, LiveConversation, OpenSpec};
@@ -59,6 +59,10 @@ impl AcpProfile for DefinedProfile {
             .flavor
             .session_missing(code, message)
             .then(|| format!("{} had no saved conversation to resume, so this is a new one.", self.def.label))
+    }
+
+    fn refusal_hint(&self, code: i64, message: &str) -> Option<String> {
+        self.def.flavor.refusal_hint(code, message)
     }
 
     fn base_mode(&self) -> Option<&str> {

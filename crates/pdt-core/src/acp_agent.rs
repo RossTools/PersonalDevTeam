@@ -1,6 +1,8 @@
 //! ACP agents (PDT-234): agents that speak the Agent Client Protocol, other than Devin, as agent kinds `acp:<id>`.
-//! Each is a definition: a profile that ships with PDT (OhMyPi's and Cursor's; each harness's ticket adds its own) or
-//! one the user added in Settings → Agents (label, command, arguments, environment). They run only as conversations.
+//! Each is a definition: a profile that ships with PDT (OhMyPi's, Cursor's and Antigravity's; each harness's ticket adds
+//! its own) or one the user added in Settings → Agents (label, command, arguments, environment). They run only as
+//! conversations. A profile with an `installer` runs a program PDT installs itself from the ACP registry
+//! (`crate::acp_registry`).
 
 use crate::conversation::PermissionMode;
 use serde::{Deserialize, Serialize};
@@ -73,6 +75,9 @@ pub struct AcpAgentDef {
     pub flavor: AcpFlavor,
     /// It ships with PDT (it can't be edited or removed).
     pub builtin: bool,
+    /// The ACP registry entry PDT installs its program from (Settings → Agents → Install), when it isn't one the user
+    /// installs: `command` is then only a placeholder for the installed program (or the path set over it).
+    pub installer: Option<String>,
 }
 
 /// What an ACP agent adds to plain ACP, for the conversation mapper (`crate::conversation::omp`, `cursor`).
@@ -84,6 +89,8 @@ pub enum AcpFlavor {
     Omp,
     /// Cursor's `cursor-agent acp` (notes: docs/superpowers/notes/cursor-acp.md).
     Cursor,
+    /// Google's Antigravity ACP server (notes: docs/superpowers/notes/antigravity-acp.md).
+    Antigravity,
 }
 
 impl AcpAgentDef {
@@ -111,13 +118,14 @@ impl From<&AcpAgentConfig> for AcpAgentDef {
             edits_unasked: false,
             flavor: AcpFlavor::Plain,
             builtin: false,
+            installer: None,
         }
     }
 }
 
 /// The ACP profiles that ship with PDT. Each harness's own ticket adds its profile here.
 pub fn builtin_profiles() -> Vec<AcpAgentDef> {
-    vec![omp(), cursor()]
+    vec![omp(), cursor(), antigravity()]
 }
 
 /// OhMyPi (`omp acp`, PDT-238). Its modes come from those it advertises: `default` (Ask) and, when its plan mode is
@@ -135,6 +143,7 @@ fn omp() -> AcpAgentDef {
         edits_unasked: false,
         flavor: AcpFlavor::Omp,
         builtin: true,
+        installer: None,
     }
 }
 
@@ -154,6 +163,34 @@ fn cursor() -> AcpAgentDef {
         edits_unasked: true,
         flavor: AcpFlavor::Cursor,
         builtin: true,
+        installer: None,
+    }
+}
+
+/// The ACP registry id of Google's Antigravity ACP server.
+pub const ANTIGRAVITY_REGISTRY_ID: &str = "antigravity-acp";
+
+/// Google Antigravity (PDT-239), through Google's own ACP server (`agy` itself speaks no ACP), which PDT installs from
+/// the ACP registry. Its modes are `default` (asks), `auto_edit` and `yolo`; it has no plan mode, so PDT keeps Plan
+/// itself with the server in `default`, refusing edits and commands.
+fn antigravity() -> AcpAgentDef {
+    AcpAgentDef {
+        id: "antigravity".into(),
+        label: "Antigravity".into(),
+        icon: None,
+        command: "agy_acp_server".into(),
+        args: Vec::new(),
+        env: Vec::new(),
+        modes: vec![
+            (PermissionMode::Ask, "default".into()),
+            (PermissionMode::AcceptEdits, "auto_edit".into()),
+            (PermissionMode::Bypass, "yolo".into()),
+        ],
+        base_mode: Some("default".into()),
+        edits_unasked: false,
+        flavor: AcpFlavor::Antigravity,
+        builtin: true,
+        installer: Some(ANTIGRAVITY_REGISTRY_ID.into()),
     }
 }
 
@@ -362,6 +399,21 @@ mod tests {
         assert_eq!(d.offered_modes(), vec![AcceptEdits, Plan, Bypass]);
         assert_eq!(find(&[], "omp").unwrap().offered_modes(), PermissionMode::ALL.to_vec());
         assert_eq!(validate(&[agent("cursor")]).unwrap_err(), AcpAgentError::DuplicateId("cursor".into()));
+    }
+
+    #[test]
+    fn antigravity_ships_built_in_installed_from_the_registry() {
+        let d = find(&[], "antigravity").unwrap();
+        assert_eq!((d.label.as_str(), d.builtin, d.flavor), ("Antigravity", true, AcpFlavor::Antigravity));
+        assert_eq!(d.kind().unwrap().as_str(), "acp:antigravity");
+        assert_eq!(d.installer.as_deref(), Some(ANTIGRAVITY_REGISTRY_ID));
+        use PermissionMode::*;
+        assert_eq!(d.modes, vec![(Ask, "default".into()), (AcceptEdits, "auto_edit".into()), (Bypass, "yolo".into())]);
+        // No plan mode of its own: PDT keeps Plan with the server in `default`.
+        assert_eq!(d.base_mode.as_deref(), Some("default"));
+        assert_eq!(d.offered_modes(), PermissionMode::ALL.to_vec());
+        assert_eq!(validate(&[agent("antigravity")]).unwrap_err(), AcpAgentError::DuplicateId("antigravity".into()));
+        assert!(find(&[], "omp").unwrap().installer.is_none());
     }
 
     #[test]

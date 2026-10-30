@@ -76,6 +76,11 @@ claudeProgram: string | null, codexProgram: string | null, devinProgram: string 
  */
 acpAgents: Array<AcpAgentConfig>, 
 /**
+ * The program to launch for a built-in ACP profile PDT installs (by profile id, PDT-239), instead of the one PDT
+ * installed: one installed by hand (a full path, or `~/…`).
+ */
+acpPrograms: Record<string, string>, 
+/**
  * The agents switched off in Settings → Agents (PDT-270): never offered, and no new session starts on them.
  * Every agent is on unless it is here. The default agent never is.
  */

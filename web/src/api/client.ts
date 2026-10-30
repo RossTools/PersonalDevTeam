@@ -487,6 +487,10 @@ export const api = {
   hostSettings: () => request<HostSettingsView>('/api/host/settings'),
   saveHostSettings: (p: HostSettingsPatch) =>
     request<HostSettingsView>('/api/host/settings', { method: 'PUT', body: JSON.stringify(p) }),
+  /** Installs (or updates) a built-in ACP profile's program from the ACP registry (PDT-239). */
+  installAcpAgent: (id: string) => request<HostSettingsView>(`/api/host/acp-agents/${enc(id)}/install`, { method: 'POST' }),
+  /** Asks a built-in ACP profile's server to sign in: it opens the browser on PDT's computer; this answers when that is done. */
+  signInAcpAgent: (id: string) => request<HostSettingsView>(`/api/host/acp-agents/${enc(id)}/sign-in`, { method: 'POST' }),
   /** Settings → Network (PDT-231): saved now, applied when PDT restarts. */
   saveNetwork: (n: NetworkSettings) =>
     request<HostSettingsView>('/api/host/network', { method: 'PUT', body: JSON.stringify(n) }),

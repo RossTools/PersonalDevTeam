@@ -1,7 +1,8 @@
 //! A defined ACP agent's extensions ([`AcpFlavor`]): plain ACP, or what its built-in profile's agent adds, mapped in
-//! that agent's module (`super::omp`, `super::cursor`).
+//! that agent's module (`super::omp`, `super::cursor`, `super::antigravity`).
 
 use super::acp::{AcpExtensions, ExtAnswer, ExtRequest, PlainAcp};
+use super::antigravity::{self, AntigravityExtensions};
 use super::cursor::{self, CursorExtensions};
 use super::omp::{self, OmpExtensions};
 use crate::acp_agent::AcpFlavor;
@@ -13,6 +14,7 @@ macro_rules! by_flavor {
             AcpFlavor::Plain => PlainAcp.$method($($arg),*),
             AcpFlavor::Omp => OmpExtensions.$method($($arg),*),
             AcpFlavor::Cursor => CursorExtensions.$method($($arg),*),
+            AcpFlavor::Antigravity => AntigravityExtensions.$method($($arg),*),
         }
     };
 }
@@ -20,6 +22,10 @@ macro_rules! by_flavor {
 impl AcpExtensions for AcpFlavor {
     fn name(&self) -> &str {
         by_flavor!(self, name())
+    }
+
+    fn resolves_symlinks(&self) -> bool {
+        by_flavor!(self, resolves_symlinks())
     }
 
     fn tool_name(&self, update: &Value) -> Option<String> {
@@ -36,6 +42,10 @@ impl AcpExtensions for AcpFlavor {
 
     fn pdt_tool_prefix(&self) -> Option<&str> {
         by_flavor!(self, pdt_tool_prefix())
+    }
+
+    fn session_option(&self) -> Option<&str> {
+        by_flavor!(self, session_option())
     }
 
     fn raw_output(&self, update: &Value) -> Option<(String, Option<i32>)> {
@@ -60,6 +70,20 @@ impl AcpFlavor {
                 AcpFlavor::Plain => false,
                 AcpFlavor::Omp => omp::session_missing(code, message),
                 AcpFlavor::Cursor => cursor::session_missing(code, message),
+                AcpFlavor::Antigravity => false,
             }
+    }
+
+    /// Why a session could not start, in words the user can act on, when the agent's error (`code`, `message`) means
+    /// more than it says: Antigravity's "Authentication required" means it isn't signed in.
+    pub fn refusal_hint(self, code: i64, message: &str) -> Option<String> {
+        match self {
+            AcpFlavor::Antigravity if antigravity::needs_sign_in(code, message) => Some(
+                "Antigravity is not signed in: sign in from Settings → Agents → Antigravity (its own Google sign-in, \
+                 apart from the agy CLI's)"
+                    .into(),
+            ),
+            _ => None,
+        }
     }
 }

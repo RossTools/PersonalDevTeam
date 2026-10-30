@@ -505,8 +505,8 @@ the id is 1–32 lowercase letters, digits and `-`, interned so `AgentKind` stay
 the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the built-in names are unchanged.
 
 - Definitions (pdt-core `acp_agent`): profiles that ship with PDT (`builtin_profiles()`: id, label, icon, command,
-  arguments, environment, a mode map and a flavor, `AcpFlavor`, for what the agent adds to ACP; OhMyPi's and Cursor's
-  so far, each harness's ticket adds its own; their ids can't be taken) and the user's, in host
+  arguments, environment, a mode map and a flavor, `AcpFlavor`, for what the agent adds to ACP; OhMyPi's, Cursor's and
+  Antigravity's so far, each harness's ticket adds its own; their ids can't be taken) and the user's, in host
   settings `acpAgents` (`[{id, label, command, args, env: [{name, value}]}]`, the whole list per `PUT
   /api/host/settings`; up to 32). Settings → This host → Agents → ACP agents adds, edits and removes them ("Add ACP
   agent": name, command, arguments one per line, `NAME=value` lines; the id comes from the name and never changes).
@@ -519,7 +519,8 @@ the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the
 - They run through the generic ACP adapter as plain ACP (pdt-agents `adapter/acp_agent.rs`, `DefinedProfile`): the
   command (`~` expanded, looked up on the login PATH) with its arguments and environment in the session's folder,
   pdt-mcp in `mcpServers`, and PDT's instructions as a text block in front of a new session's first prompt (logged
-  without it). Resume is `session/load` when the agent advertises `loadSession`; otherwise a new session starts with a
+  without it). The models PDT's model picker offers come from the `model` config option, in a `config_option_update`
+  or in the `session/new`/`session/load` answer's `configOptions`. Resume is `session/load` when the agent advertises `loadSession`; otherwise a new session starts with a
   notice, as it does when the agent's `session/load` says it has no such session (`-32002`, or the flavor's own way
   of saying it, `AcpFlavor::session_missing`). An error's `data.details` is added to its message.
 - Modes: a profile's mode map, else the `availableModes` the agent advertises in `session/new`/`session/load`
@@ -591,3 +592,49 @@ user installs the Cursor CLI and signs in with `agent login` (PDT passes nothing
   2026.10.22: the handshake, modes, a Free-plan prompt and a missing session; `turn.jsonl` and `plan.jsonl` built from
   its source). A Cursor persona has run an agent step end to end (2026-10-30, on a scratch daemon, model
   `default[]`).
+
+### Antigravity (PDT-239)
+
+The built-in profile `acp:antigravity` ("Antigravity") runs Google's own ACP server for Antigravity
+(`agy_acp_server.par`; notes: docs/superpowers/notes/antigravity-acp.md). The `agy` CLI itself speaks no ACP, and
+Gemini CLI, which it replaced, is not supported. Third-party `agy-acp` bridges aren't used.
+- Install (pdt-api `toolchains.rs`, pdt-core `acp_registry`): the profile names its ACP registry entry
+  (`AcpAgentDef::installer`, `antigravity-acp`). Settings → Agents → Antigravity → Install (`POST
+  /api/host/acp-agents/antigravity/install`; Update once installed) reads the registry
+  (`cdn.agentclientprotocol.com/registry/v1/latest/registry.json`) and takes this platform's build. The archive must
+  be an https URL under `dl.google.com/agy-extensions/releases/`. Its sha256 must match the registry's, or nothing is
+  installed. It is unpacked without running anything: no paths outside its folder, no links, and the exec bits it
+  marks. It lands in `<data dir>/toolchains/antigravity-acp/<version>/` with a `pdt-install.json`
+  (version, command, the registry's arguments: Linux adds `--uid=`). Older versions are removed. The newest
+  installed version is what launches (`toolchains::launch_def`). Path (host settings `acpPrograms.antigravity`, a full
+  path or `~/…`) runs a server installed by hand instead. With neither, it shows Not installed, and a session can't
+  start (`agent_not_found`). Only pdtd's production wiring downloads (`AppState::toolchains`; `new` is offline, and
+  tests use a fake source).
+- Sign-in: the server has its own Google sign-in, apart from `agy`'s. It keeps its token in the keychain under
+  service `gemini`, account `antigravity-acp`, and records `auth.type` in `~/.gemini/antigravity-acp/settings.json`
+  (`$GEMINI_HOME` moves it). Sign in (`POST /api/host/acp-agents/antigravity/sign-in`) starts the server and calls
+  ACP `authenticate` with `oauth-personal`. The server opens the browser on PDT's computer, and the request answers
+  once that is done (it waits up to about five minutes). PDT never sees the credentials, and only reads
+  `settings.json` to show Signed in (`acpAgents[].signedIn`). A session started before signing in fails with
+  "Antigravity is not signed in: sign in from Settings → Agents → Antigravity" (`AcpFlavor::refusal_hint` for its
+  `-32000` "Authentication required"). Its other sign-ins (Gemini Enterprise, an API key, Agent Platform) aren't
+  offered.
+- Modes: Ask is its `default`, Accept edits `auto_edit`, Bypass `yolo`. It has no plan mode (`set_mode plan` is
+  refused), so PDT keeps Plan itself, with the server in `default` (the base mode), refusing edits and commands.
+- Models: its `model` config option (the free tier offers Gemini 3.8 Flash only), set with
+  `session/set_config_option`. Its `thinking_level` option isn't offered.
+- pdt-mcp: the HTTP server in `mcpServers` is honoured, with its auth header. MCP calls carry `_meta.mcp {server,
+  tool}`, named `mcp__<server>__<tool>`, and pdt-mcp's run without asking.
+- Its flavor (pdt-core `conversation/antigravity.rs`): a command's output and exit code come from `rawOutput`
+  `{exitCode, combinedOutput}`. Its "Allow Always" is kept in the server's memory for the session (for a command, that
+  exact command), so PDT offers it. Paths come back with symlinks resolved. Resume is `session/load`; an id it never
+  saved answers `-32002`. Cancel ends the turn `cancelled`.
+- Known server quirks (1.4.5): `session/new` writes `skills/system/run-workflow/SKILL.md` into the session's folder,
+  and writes it again if it is removed, so it shows as an untracked folder in a worktree. In Ask, a new file shows
+  twice: the approved `create_file` card later fails as "approved but never executed", and the `edit_file` card that
+  ran beside it is done.
+- Tests: pdt-core `conversation::antigravity` on fixtures recorded from the server 1.4.5 in
+  `tests/fixtures/antigravity/` (`start.jsonl`: the handshake, modes, models and a missing session; `turn.jsonl`: a
+  pdt-mcp call, `ls` and a new file); pdt-api `tests/acp_antigravity.rs` (install from a recorded registry, the
+  checksum check, Path, Sign in and a conversation, with `fake-agent` as the installed program). An Antigravity
+  persona has run a Code step end to end (2026-10-30, on a scratch daemon, Gemini 3.8 Flash).

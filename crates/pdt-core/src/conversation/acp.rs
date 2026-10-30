@@ -792,6 +792,15 @@ impl<P: AcpExtensions> AcpMapper<P> {
         out
     }
 
+    /// The models a `session/new` or `session/load` answer's `configOptions` offer (Antigravity's: it sends no
+    /// `config_option_update` until something changes). Only the models: the session's mode is PDT's to set next.
+    pub fn answer_models(&self, answer: &Value) -> Vec<AcpOut> {
+        self.config_options(answer.get("configOptions"))
+            .into_iter()
+            .filter(|o| matches!(o, AcpOut::Models(_)))
+            .collect()
+    }
+
     fn config_options(&self, options: Option<&Value>) -> Vec<AcpOut> {
         let options = options.and_then(Value::as_array).cloned().unwrap_or_default();
         let find = |id: &str| options.iter().find(|o| s(o, "id").as_deref() == Some(id));

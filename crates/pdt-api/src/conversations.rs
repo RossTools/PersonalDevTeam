@@ -210,8 +210,12 @@ fn unknown_agent(agent: AgentKind) -> ApiError {
 }
 
 /// The ACP agent an agent kind names (a built-in profile or one the user added), or 400 when this host has none.
+/// The ACP agent as it launches on this host (a profile PDT installs runs the program it installed, or the path set
+/// over it).
 pub(crate) async fn acp_agent(st: &AppState, agent: AgentKind) -> Result<AcpAgentDef, ApiError> {
-    st.store.get_host_settings().await?.acp_agent(agent).ok_or_else(|| unknown_agent(agent))
+    let s = st.store.get_host_settings().await?;
+    let def = s.acp_agent(agent).ok_or_else(|| unknown_agent(agent))?;
+    Ok(crate::toolchains::launch_def(&st.data_dir, st.home_dir.as_deref(), &s, def))
 }
 
 fn conflict(code: &'static str, message: &str) -> ApiError {

@@ -359,6 +359,17 @@ pub fn serve(args: &[String]) {
         match v["method"].as_str().unwrap_or("") {
             "initialize" => ok(json!({"protocolVersion": 1, "agentCapabilities": {"loadSession": true,
                 "promptCapabilities": {"image": true}}, "agentInfo": {"name": "fake", "version": "0.0.0-fake"}})),
+            // Sign in (PDT-239): `FAKE_ACP_AUTH` names a file the method goes in.
+            "authenticate" => {
+                if let Ok(path) = std::env::var("FAKE_ACP_AUTH") {
+                    let _ = std::fs::write(path, p["methodId"].as_str().unwrap_or(""));
+                }
+                ok(json!({}));
+            }
+            "session/new" if std::env::var("FAKE_ACP_AUTH").is_ok_and(|f| !std::path::Path::new(&f).exists()) => {
+                out(json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32000, "message": "Authentication required",
+                    "data": {"message": "No authentication method selected."}}}));
+            }
             "session/new" => {
                 a.cwd = p["cwd"].as_str().unwrap_or("?").to_string();
                 a.mcp = mcp_server(&p);

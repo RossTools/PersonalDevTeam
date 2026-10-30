@@ -71,6 +71,12 @@ pub trait AcpProfile: Send + Sync + 'static {
         None
     }
 
+    /// Opening the session failed with `code` and `message`: what to tell the user instead, when the agent's error
+    /// means more than it says (Antigravity's "Authentication required": it isn't signed in).
+    fn refusal_hint(&self, _code: i64, _message: &str) -> Option<String> {
+        None
+    }
+
     /// The agent's session mode PDT keeps the modes this profile's map leaves out in (Cursor's `agent`): the
     /// session offers all of PDT's modes, and PDT answers permission requests for the rest (`AcpLive::apply_mode`).
     /// None: the map covers every mode it offers.
@@ -220,10 +226,16 @@ impl<P: AcpProfile> Shared<P> {
         })
     }
 
-    /// Learns the agent's modes from a `session/new` or `session/load` answer (a profile with none of its own, or
+    /// Learns the agent's models, and its modes, from a `session/new` or `session/load` answer (modes: a profile with none of its own, or
     /// one that covers only some of PDT's). The session offers all of PDT's modes: those the agent has no mode for,
     /// PDT keeps itself (`AcpLive::apply_mode`).
     fn settle_modes(&self, answer: &Value) {
+        // Published with the rest once the session has started (`start_session`).
+        for out in self.mapper().answer_models(answer) {
+            if let AcpOut::Models(models) = out {
+                self.caps.lock().unwrap_or_else(|e| e.into_inner()).models = models;
+            }
+        }
         let own = !self.profile.modes().is_empty();
         if own && self.profile.base_mode().is_none() {
             return;
@@ -461,7 +473,8 @@ impl<P: AcpProfile> AcpLive<P> {
     /// one, then the session's mode and model.
     async fn start_session(&self, spec: &OpenSpec) -> Result<(), AdapterError> {
         let sh = &self.shared;
-        let refused = |e: RpcError| AdapterError::Refused(e.message);
+        let refused =
+            |e: RpcError| AdapterError::Refused(sh.profile.refusal_hint(e.code, &e.message).unwrap_or(e.message));
         let init = sh.request("initialize", initialize_params(), START_TIMEOUT).await?.map_err(refused)?;
         let can_load = init.pointer("/agentCapabilities/loadSession").and_then(Value::as_bool).unwrap_or(false);
         let cwd = spec.cwd.to_string_lossy().into_owned();

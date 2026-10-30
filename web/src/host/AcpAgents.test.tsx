@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AcpAgentConfig } from '../api/gen/AcpAgentConfig';
 import { renderWithQuery, stubApi } from '../test-utils';
-import { idFor, parseArgs, parseEnv } from './AcpAgents';
+import { idFor, installedText, parseArgs, parseEnv } from './AcpAgents';
 import { HostSettingsPage } from './HostSettingsPage';
 
 afterEach(() => {
@@ -89,5 +89,47 @@ describe('Settings → Agents → ACP agents', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Remove agent' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([{ acpAgents: [] }]));
     expect(await screen.findByText('None yet.')).toBeInTheDocument();
+  });
+
+  it('installs Antigravity, signs it in and sets its path', async () => {
+    const agy = (installedVersion: string | null, signedIn: string | null, program: string | null = null) => ({
+      ...view([]),
+      acpAgents: [{
+        id: 'antigravity', label: 'Antigravity', agent: 'acp:antigravity', icon: null, command: 'agy_acp_server', args: [], env: [],
+        builtin: true, installer: 'antigravity-acp', installedVersion, signedIn, program,
+        found: installedVersion ? '/data/toolchains/antigravity-acp/1.4.5/agy_acp_server.par' : null,
+      }],
+    });
+    let current = agy(null, null);
+    const calls = stubApi({
+      'GET /api/host/settings': () => current,
+      'GET /api/host/update': { current: '0.1.0', state: 'idle', token: { state: 'missing' }, releaseRepo: { repo: 'a/b' } },
+      'POST /api/host/acp-agents/antigravity/install': () => (current = agy('1.4.5', null)),
+      'POST /api/host/acp-agents/antigravity/sign-in': () => (current = agy('1.4.5', 'oauth-personal')),
+      'PUT /api/host/settings': () => (current = agy('1.4.5', 'oauth-personal', '~/agy/server')),
+    });
+    renderWithQuery(<HostSettingsPage section="agents" />);
+    expect(await screen.findByText('Not installed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Install' }));
+    expect(await screen.findByText("Google's ACP server 1.4.5, installed by PDT.")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Update' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByText('Signed in (oauth-personal).')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Path' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.type(within(dialog).getByRole('textbox', { name: /Path/ }), '~/agy/server');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body)).toEqual([{ acpPrograms: { antigravity: '~/agy/server' } }]);
+    expect(await screen.findByText('Runs ~/agy/server, set by hand.')).toBeInTheDocument();
+  });
+});
+
+describe('installedText', () => {
+  it('says what runs and whether it is signed in', () => {
+    const a = { installedVersion: null, program: null, signedIn: null } as Parameters<typeof installedText>[0];
+    expect(installedText(a)[0]).toMatch(/^Not installed/);
+    expect(installedText(a)[1]).toMatch(/^Not signed in/);
   });
 });
