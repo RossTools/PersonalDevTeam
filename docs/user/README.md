@@ -9,8 +9,8 @@ fails. This README is not published.
 | --- | --- |
 | `getting-started/` | Getting started: install, first run, connecting agents and GitHub, a first project and ticket |
 | `using-pdt/` | Using PDT: tickets and the board, workspaces and sessions, review and merge, the Inbox |
-| `automation/` | Automation: workflows, the PM, personas and approvals, plugins, run configuration |
-| `your-machine/` | Your machine: install and updates, remote access and the phone, secrets, settings, data |
+| `automation/` | Automation: workflows, the PM, personas and approvals, plugins, run configuration, outside contributions |
+| `your-machine/` | Your machine: install and updates, remote access and the phone, GitHub, secrets, settings, data |
 | `troubleshooting/` | Troubleshooting & FAQ |
 | `contributing/` | Contributing |
 

@@ -1,4 +1,4 @@
-//! Demo data for dev instances (`PDT_SEED=demo`): two small git repositories inside the data folder, registered as
+//! Demo data for dev instances (`PDT_SEED=demo`; the website's sample, `PDT_SEED=website`, is in `website.rs`): two small git repositories inside the data folder, registered as
 //! projects, with a worktree, a few ended sessions and a few past runs, so every list in the UI has something in it.
 //! Only an empty database is seeded, and nothing is started: the sessions are finished and the runs are over.
 
@@ -10,6 +10,8 @@ use pdt_core::ticket::{LinkKind, NewTicket, Priority, TicketStage};
 use pdt_core::worktree::{WORKTREES_DIR, Worktree, worktree_path};
 use pdt_store::Store;
 use std::path::{Path, PathBuf};
+
+pub mod website;
 
 /// Where the demo repositories live, inside the data folder.
 pub const DEMO_DIR: &str = "demo";

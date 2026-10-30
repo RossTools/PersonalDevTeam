@@ -1690,11 +1690,13 @@ pub(crate) async fn capabilities(
     Path(agent): Path<String>,
 ) -> Result<Json<AgentCapabilities>, ApiError> {
     // An ACP agent only when the host has it: the path is outside input, and parsing interns the id.
+    let mut acp_modes = None;
     if let Some(id) = agent.strip_prefix(AcpAgentId::PREFIX) {
         let host = st.store.get_host_settings().await?;
-        if pdt_core::acp_agent::find(&host.acp_agents, id).is_none() {
+        let Some(def) = pdt_core::acp_agent::find(&host.acp_agents, id) else {
             return Err(ApiError::not_found("agent"));
-        }
+        };
+        acp_modes = Some(def.offered_modes());
     }
     let agent = AgentKind::parse(&agent).ok_or_else(|| ApiError::not_found("agent"))?;
     let known = st.conversations.caps.lock().unwrap_or_else(|e| e.into_inner()).get(&agent).cloned();
@@ -1706,7 +1708,7 @@ pub(crate) async fn capabilities(
         conversation: true,
         permission_modes: match agent {
             AgentKind::Devin => pdt_core::conversation::devin::DEVIN_MODES.to_vec(),
-            _ => PermissionMode::ALL.to_vec(),
+            _ => acp_modes.unwrap_or_else(|| PermissionMode::ALL.to_vec()),
         },
         ..Default::default()
     })))

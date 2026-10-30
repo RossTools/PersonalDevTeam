@@ -1,8 +1,9 @@
 //! ACP agents defined as data (PDT-234; pdt-core `acp_agent`): a profile that ships with PDT or one the user added
 //! in Settings → Agents, run through the generic ACP adapter (`super::acp`) as plain ACP. Their command, arguments
 //! and environment come from the definition; their modes from its mode map, else from the `availableModes` they
-//! advertise, else PDT keeps the mode itself. PDT's instructions go in front of a new session's first prompt. What a
-//! built-in profile's agent adds to ACP comes from its flavor (`pdt_core::conversation::omp`).
+//! advertise, else PDT keeps the mode itself (also the modes a built-in profile's map leaves out). PDT's instructions
+//! go in front of a new session's first prompt. What a built-in profile's agent adds to ACP comes from its flavor
+//! (`pdt_core::conversation::omp`, `cursor`).
 
 use super::acp::AcpProfile;
 use super::{AdapterError, AgentAdapter, EventSink, LiveConversation, OpenSpec};
@@ -58,6 +59,14 @@ impl AcpProfile for DefinedProfile {
             .flavor
             .session_missing(code, message)
             .then(|| format!("{} had no saved conversation to resume, so this is a new one.", self.def.label))
+    }
+
+    fn base_mode(&self) -> Option<&str> {
+        self.def.base_mode.as_deref()
+    }
+
+    fn asks_before_edits(&self) -> bool {
+        !self.def.edits_unasked
     }
 
     fn instructions_in_prompt(&self) -> bool {

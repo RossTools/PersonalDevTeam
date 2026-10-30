@@ -1,0 +1,193 @@
+// The website's screenshots of PDT (PDT-273): the board, a workspace, the backlog and a workflow, taken from a
+// throwaway pdtd seeded with the made-up "Acme Shop" project (`PDT_SEED=website`, crates/pdtd/src/seed/website.rs),
+// in the dark theme, and written as WebP to site/src/assets/screens/. Run it from the checkout after the builds:
+//
+//   cargo build -p pdtd && pnpm --dir web build
+//   pnpm --dir web exec playwright-core install chromium   # once
+//   node scripts/site-screenshots.mjs [--out <dir>]
+//
+// The daemon comes from scripts/scratch-daemon.sh (a free port, a scratch data folder, GitHub offline, in-memory
+// secrets, no Tailscale), with a stand-in for every agent program: nothing real is started, and it never touches the
+// stable PDT. The two agent sessions it brings back run the stand-in, and their activity is reported as Claude's hooks
+// would; the sample's dev server is the one real process (a static file server in the scratch folder).
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// playwright-core is the web package's, sharp the site's (Astro's image service).
+const { chromium } = createRequire(join(root, 'web/package.json'))('playwright-core');
+const sharp = createRequire(join(root, 'site/package.json'))('sharp');
+
+const args = process.argv.slice(2);
+const outIdx = args.indexOf('--out');
+const out = resolve(outIdx >= 0 ? args[outIdx + 1] : join(root, 'site/src/assets/screens'));
+// The site's content column is ~1040px wide: a 1600×1000 window at device scale 2 stays sharp there and on large
+// screens, and leaves the board's seven columns room for their titles.
+const VIEWPORT = { width: 1600, height: 1000 };
+const SCALE = 2;
+
+for (const [path, build] of [['target/debug/pdtd', 'cargo build -p pdtd'], ['web/dist/index.html', 'pnpm --dir web build']]) {
+  if (!existsSync(join(root, path))) {
+    console.error(`site-screenshots: no ${path}; build it first (${build})`);
+    process.exit(1);
+  }
+}
+
+// The stand-in for claude, codex and devin: a terminal that says it's working, and stays up for an hour at most.
+const scratch = mkdtempSync(join(tmpdir(), 'pdt-site-shots-'));
+const agent = join(scratch, 'agent.sh');
+writeFileSync(agent, '#!/bin/sh\nprintf "Working on it…\\r\\n"\nexec sleep 3600\n');
+chmodSync(agent, 0o755);
+
+const daemon = join(root, 'scripts/scratch-daemon.sh');
+const started = execFileSync(daemon, ['start', '--seed', 'website'], {
+  cwd: root,
+  encoding: 'utf8',
+  env: { ...process.env, PDT_CLAUDE_PROGRAM: agent, PDT_CODEX_PROGRAM: agent, PDT_DEVIN_PROGRAM: agent },
+  stdio: ['ignore', 'pipe', 'inherit'],
+});
+const port = /^port=(\d+)$/m.exec(started)?.[1];
+const base = /^url=(.+)$/m.exec(started)?.[1];
+if (!port || !base) {
+  console.error(`site-screenshots: the scratch daemon did not say where it is:\n${started}`);
+  process.exit(1);
+}
+
+async function api(path, init) {
+  const res = await fetch(`${base}/api${path}`, {
+    ...init,
+    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+  });
+  if (!res.ok) throw new Error(`${init?.method ?? 'GET'} ${path}: ${res.status} ${await res.text()}`);
+  return res.status === 204 ? null : res.json();
+}
+
+/** Polls `check` until it returns something truthy (or throws after `ms`). */
+async function until(what, check, ms = 15_000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await check();
+    if (v) return v;
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+/** Brings the sample's sessions and runs to life: two agents at work, the dev server up. */
+async function stage() {
+  const [project] = await api('/projects');
+  const sessions = await api(`/projects/${project.id}/sessions`);
+  const byTitle = (title) => sessions.find((s) => s.title === title);
+  // The Reviewer is working; QA waits on a permission prompt.
+  for (const [prefix, event] of [['Reviewer', 'UserPromptSubmit'], ['QA', 'PermissionRequest']]) {
+    const s = byTitle(prefix);
+    await api(`/sessions/${s.id}/restart`, { method: 'POST', body: JSON.stringify({ cols: 120, rows: 30 }) });
+    await until(`${s.title} to run`, async () => (await api(`/sessions/${s.id}`)).status === 'running');
+    await api(`/sessions/${s.id}/activity`, { method: 'POST', body: JSON.stringify({ source: 'claude', event }) });
+  }
+  const coder = byTitle('Coder');
+  const run = await api(`/projects/${project.id}/runs`, {
+    method: 'POST',
+    body: JSON.stringify({ worktreeId: coder.worktreeId, name: 'dev', kind: 'run' }),
+  });
+  await until('the dev server', async () => ['ready', 'running'].includes((await api(`/runs/${run.id}`)).state));
+  const workspace = (await api('/workspaces')).find((w) => w.projectId === project.id);
+  const coderTab = workspace.tabs.find((t) => t.item?.session === coder.id || t.sessionId === coder.id);
+  const workflow = (await api('/workflows')).find((w) => w.name === 'Nightly dependency updates');
+  const detail = await api(`/workflows/${workflow.id}`);
+  // Issues show on the graph's nodes.
+  if (detail.issues?.length) throw new Error(`the sample workflow has issues: ${JSON.stringify(detail.issues)}`);
+  return { project, workspace, coderTab, workflow };
+}
+
+async function shoot(page, name, clip) {
+  // The UI polls every 2 s (never network-idle): give its first answers and the fonts time to land.
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(2500);
+  const png = await page.screenshot(clip ? { clip } : {});
+  const file = join(out, `${name}.webp`);
+  await sharp(png).webp({ quality: 82, effort: 6 }).toFile(file);
+  console.log(file);
+}
+
+/** The graph's nodes with a margin, made 2:1 where the canvas allows (the site shows it full width). */
+async function nodesClip(page) {
+  const canvas = await page.getByLabel('Workflow graph').boundingBox();
+  const boxes = await Promise.all((await page.locator('[data-testid^="flow-node-"]').all()).map((n) => n.boundingBox()));
+  const pad = 48;
+  let x0 = Math.min(...boxes.map((b) => b.x)) - pad;
+  let x1 = Math.max(...boxes.map((b) => b.x + b.width)) + pad;
+  let y0 = Math.min(...boxes.map((b) => b.y)) - pad;
+  let y1 = Math.max(...boxes.map((b) => b.y + b.height)) + pad;
+  const grow = (x1 - x0) / 2 - (y1 - y0);
+  if (grow > 0) [y0, y1] = [y0 - grow / 2, y1 + grow / 2];
+  x0 = Math.max(x0, canvas.x);
+  y0 = Math.max(y0, canvas.y);
+  x1 = Math.min(x1, canvas.x + canvas.width);
+  y1 = Math.min(y1, canvas.y + canvas.height);
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
+let browser;
+try {
+  const { project, workspace, coderTab, workflow } = await stage();
+  mkdirSync(out, { recursive: true });
+  browser = await chromium.launch();
+  const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: SCALE, colorScheme: 'dark' });
+  await context.addInitScript((projectId) => {
+    // No toasts over the screens (the sample's failed CI makes an Inbox notice).
+    addEventListener('DOMContentLoaded', () => {
+      const style = document.createElement('style');
+      style.textContent = '[data-sonner-toaster] { display: none !important; }';
+      document.head.append(style);
+    });
+    localStorage.setItem('pdt.theme', 'dark');
+    localStorage.setItem('pdt.rightPanel.open', 'false');
+    localStorage.setItem(
+      'pdt.tickets.view',
+      JSON.stringify({ projectId, mode: 'backlog', filters: { group: 'stage', sort: 'rank' } }),
+    );
+  }, project.id);
+  // No DEV badge: the shots show PDT as people run it.
+  await context.route('**/api/health', async (route) => {
+    const res = await route.fetch();
+    await route.fulfill({ response: res, json: { ...(await res.json()), dev: false } });
+  });
+  const page = await context.newPage();
+
+  // The board's lanes end about 750px down: a shorter window leaves no empty band under them.
+  await page.setViewportSize({ width: VIEWPORT.width, height: 800 });
+  await page.goto(`${base}/tickets?view=board`);
+  await page.getByText('Your turn').first().waitFor();
+  await shoot(page, 'board');
+  await page.setViewportSize(VIEWPORT);
+
+  await page.goto(`${base}/sessions/${workspace.id}/${coderTab.id}`);
+  await page.getByText('Search is in.').waitFor();
+  // The turn's tool calls, folded into one line once it ended.
+  await page.getByText(/^Ran \d+ commands/).click();
+  await shoot(page, 'workspaces');
+
+  await page.goto(`${base}/tickets`);
+  await page.getByText('Fix price rounding in cart totals').waitFor();
+  await shoot(page, 'backlog');
+
+  // The graph alone, in a wider window so it fits at a size its node titles read at, cropped to its nodes.
+  await page.setViewportSize({ width: 2000, height: 1000 });
+  await page.goto(`${base}/workflows/${workflow.id}/graph`);
+  await page.getByText('Ticket for the Coder').first().waitFor();
+  await page.getByRole('button', { name: /fit/i }).first().click();
+  await page.waitForTimeout(500);
+  await shoot(page, 'workflows', await nodesClip(page));
+} finally {
+  await browser?.close();
+  try {
+    execFileSync(daemon, ['stop', port], { cwd: root, stdio: 'inherit' });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}

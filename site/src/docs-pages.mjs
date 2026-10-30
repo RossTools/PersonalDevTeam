@@ -25,14 +25,14 @@ export const USER_SECTIONS = [
   {
     dir: 'automation',
     label: 'Automation',
-    summary: 'Workflows, the PM, personas and approvals, plugins, and how Run and Test start your project.',
-    pages: ['workflows', 'the-pm', 'personas-and-approvals', 'plugins', 'run-configuration'],
+    summary: 'Workflows, the PM, personas and approvals, plugins, how Run and Test start your project, and outside contributions.',
+    pages: ['workflows', 'the-pm', 'personas-and-approvals', 'plugins', 'run-configuration', 'outside-contributions'],
   },
   {
     dir: 'your-machine',
     label: 'Your machine',
-    summary: 'Updates, remote access from a phone or another computer, secrets, settings and where your data lives.',
-    pages: ['install-and-updates', 'remote-access', 'secrets', 'settings', 'your-data'],
+    summary: 'Updates, remote access from a phone or another computer, GitHub, secrets, settings and where your data lives.',
+    pages: ['install-and-updates', 'remote-access', 'github', 'secrets', 'settings', 'your-data'],
   },
   {
     dir: 'troubleshooting',

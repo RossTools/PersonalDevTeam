@@ -1,5 +1,85 @@
 # The PM
 
-The project manager for your whole machine: ask it to plan work into tickets, tidy the backlog and report what's in flight.
+The PM is a project manager for your whole machine: an agent you talk to about the work rather than the code. It sees
+every project, its tickets and what's in flight, and it can plan, write and tidy tickets for you.
 
-This page is being written.
+Open **Project manager** in the rail (or **Ctrl+]** then **m**). A dot on it means the PM has replied and you haven't
+looked yet.
+
+## What to ask it
+
+- **Plan a feature**: "Plan dark mode for the web app into tickets." It reads the code, drafts the tickets in its
+  reply, and creates them (as **Draft**s) once you agree, split into parts and linked in order when that helps.
+- **Write or refine a ticket**: "Turn my note about slow search into a ticket with a Done when."
+- **Tidy the backlog**: "Which tickets are duplicates or out of date?", "Rank the bugs by how much they hurt."
+- **Say what's going on**: "What's in flight?", "Why is ABC-12 stuck?", "What needs me?" It reads the board, pull
+  requests and CI, running agents and the Inbox.
+- **Talk to an agent**: "Tell the agent on ABC-12 to rebase before it pushes again."
+- **Run or write a workflow**: "Run the release workflow", "Write a workflow that posts merged tickets to Discord." A
+  workflow it writes is a proposal you accept or discard (see [Workflows](workflows.md#share-and-copy)).
+- **Report a bug in PDT itself**.
+
+It can also read and search your projects' code, use git, and search the web, as its agent normally would. With a
+plugin on (Jira, Discord…), it can use that service too: see [Plugins and connections](plugins.md).
+
+The PM runs as the **PM** persona: change its agent, model or instructions in **Personas** (see
+[Personas and approvals](personas-and-approvals.md)).
+
+## Conversations
+
+Keep one conversation per topic: a release, a feature, a clean-up. Each has its own history, and several can be open at
+once.
+
+- **New conversation** starts one. Its first message names it; **Rename** changes the name.
+- The list on the left has the open conversations, the most recently active first. One with a reply you haven't read
+  is in bold; one that's working shows a spinner.
+- **Close…** ends a conversation: the PM first writes a short journal entry (what was done, what's still open), then
+  the conversation becomes read-only. The newest ended ones are listed below the open ones, with **All ended
+  conversations** for the rest.
+
+A conversation doesn't end on its own. When it gets long, the agent condenses its own history and PDT asks it to write
+a journal checkpoint first, so nothing important is lost.
+
+## When it asks first
+
+Before the PM creates, edits, stops or links a ticket, messages an agent, or runs or saves a workflow, it asks you. An
+approval card shows in the conversation (and under **Approvals** in the Inbox) with exactly what it's about to do.
+**Allow** lets it go ahead; **Deny** tells it no. (With Codex or Devin as the PM's agent, the card is in the Inbox
+only.)
+
+Reading never asks, and nor do its own notes: it can look at anything without stopping you.
+
+To let it act on a project's tickets without asking, turn on **The PM acts without asking** in **Settings**, on the
+project's page, under **Pipeline and policies**. A plugin's connection can have the same setting, for that service.
+
+Some things always ask, whatever the setting:
+
+- moving a ticket that came from outside PDT (an issue, say) onto the board, or labelling it `agentic`;
+- reporting a bug in PDT.
+
+## Notes and the PM's memory
+
+Open **Notes** in the rail (**Ctrl+]** then **o**). **Mine | PM's memory** switches between two kinds:
+
+- **Mine**: your own notes and ideas. The PM can find and read them when it searches, but never changes or deletes
+  them. **Make a ticket** on a note turns it into a draft ticket.
+- **PM's memory**: what the PM saves to remember: decisions, how a project works, what you prefer. You can read, edit
+  and delete them.
+
+**Pin** a note in the PM's memory and it's in every PM conversation from the start. Pinning one of your own only lists
+it first.
+
+A note is host-wide or belongs to one project. Notes save as you type.
+
+## What it knows when it starts
+
+Each new conversation starts with a briefing: your projects and their tickets by stage, the tickets in progress, the
+Inbox, what happened since the last conversation started, the last few journal entries, the other open conversations,
+and the pinned notes. So you can ask "what's new?" without explaining anything.
+
+## The daily update
+
+A conversation you keep using doesn't go stale. About once a day, when you've written to it since, PDT brings it up to
+date: what happened to each ticket (moved, merged, CI failed…), what waits in the Inbox, and what the other
+conversations noted as still open. In the conversation it shows as one quiet line, "PDT brought this conversation up to
+date", which opens to the full text.

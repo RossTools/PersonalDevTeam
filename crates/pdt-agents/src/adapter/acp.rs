@@ -65,10 +65,23 @@ pub trait AcpProfile: Send + Sync + 'static {
         None
     }
 
-    /// `session/load` failed with `code` and `message` (with the error's details): when that means the agent has no saved session to resume, a new one is
-    /// started instead and this notice says why.
+    /// `session/load` failed with `code` and `message` (with the error's details): when that means the agent has no
+    /// saved session to resume, a new one is started instead and this notice says why.
     fn resume_fallback(&self, _code: i64, _message: &str) -> Option<String> {
         None
+    }
+
+    /// The agent's session mode PDT keeps the modes this profile's map leaves out in (Cursor's `agent`): the
+    /// session offers all of PDT's modes, and PDT answers permission requests for the rest (`AcpLive::apply_mode`).
+    /// None: the map covers every mode it offers.
+    fn base_mode(&self) -> Option<&str> {
+        None
+    }
+
+    /// The agent asks before editing files, so PDT can keep Ask. False (Cursor's `agent` edits without asking): the
+    /// session offers no Ask, and one started in Ask runs as Accept edits, as Devin's does.
+    fn asks_before_edits(&self) -> bool {
+        true
     }
 
     /// PDT's instructions go in front of a new session's first prompt: the agent has no other way to get them (Devin
@@ -76,6 +89,13 @@ pub trait AcpProfile: Send + Sync + 'static {
     fn instructions_in_prompt(&self) -> bool {
         false
     }
+}
+
+/// The PDT modes a session keeping the ones its profile has no mode for offers: all of them, but Ask for an agent that
+/// edits without asking.
+fn offered(profile: &impl AcpProfile) -> Vec<PermissionMode> {
+    let ask = profile.asks_before_edits();
+    PermissionMode::ALL.into_iter().filter(|m| ask || *m != PermissionMode::Ask).collect()
 }
 
 /// `initialize`'s parameters: no file system or terminal for the agent to borrow (it uses its own tools), and form
@@ -101,11 +121,13 @@ struct RpcError {
 }
 
 impl RpcError {
-    /// The error's message, with its `data.details` when it gives some (OhMyPi's "Internal error" says what went
-    /// wrong only there: "No model selected").
+    /// The error's message, with its `data.details` or `data.message` when it gives some (Cursor's "Invalid params"
+    /// says what was wrong only there: `Session "…" not found`).
     fn of(v: &Value, ext: &impl AcpExtensions) -> Self {
         let message = v.get("message").and_then(Value::as_str).unwrap_or("error");
-        let details = v.pointer("/data/details").and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty());
+        let details = ["/data/details", "/data/message"]
+            .iter()
+            .find_map(|p| v.pointer(p).and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty()));
         RpcError {
             code: v.get("code").and_then(Value::as_i64).unwrap_or(0),
             message: match details {
@@ -198,19 +220,24 @@ impl<P: AcpProfile> Shared<P> {
         })
     }
 
-    /// Learns the agent's modes from a `session/new` or `session/load` answer (a profile with none of its own). The
-    /// session offers all of PDT's modes: those the agent has no mode for, PDT keeps itself (`AcpLive::apply_mode`).
+    /// Learns the agent's modes from a `session/new` or `session/load` answer (a profile with none of its own, or
+    /// one that covers only some of PDT's). The session offers all of PDT's modes: those the agent has no mode for,
+    /// PDT keeps itself (`AcpLive::apply_mode`).
     fn settle_modes(&self, answer: &Value) {
-        if self.profile.modes().is_empty() {
+        let own = !self.profile.modes().is_empty();
+        if own && self.profile.base_mode().is_none() {
+            return;
+        }
+        if !own {
             let learned =
                 pdt_core::acp_agent::advertised_modes(answer.pointer("/modes/availableModes").unwrap_or(&Value::Null));
             *self.learned_modes.lock().unwrap_or_else(|e| e.into_inner()) = learned;
-            if let Some(current) = answer.pointer("/modes/currentModeId").and_then(Value::as_str) {
-                *self.mode.lock().unwrap_or_else(|e| e.into_inner()) = Some(current.to_string());
-                self.start_mode.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(|| current.to_string());
-            }
-            self.caps.lock().unwrap_or_else(|e| e.into_inner()).permission_modes = PermissionMode::ALL.to_vec();
         }
+        if let Some(current) = answer.pointer("/modes/currentModeId").and_then(Value::as_str) {
+            *self.mode.lock().unwrap_or_else(|e| e.into_inner()) = Some(current.to_string());
+            self.start_mode.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(|| current.to_string());
+        }
+        self.caps.lock().unwrap_or_else(|e| e.into_inner()).permission_modes = offered(&self.profile);
     }
 
     fn publish_caps(&self) {
@@ -346,7 +373,8 @@ impl<P: AcpProfile> AcpLive<P> {
         let prefix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let mapper = AcpMapper::with_extensions(profile.extensions(), spec.cwd.to_string_lossy(), canonical, prefix);
-        let permission_modes = profile.modes();
+        // A profile that keeps the modes its map leaves out offers them all from the start.
+        let permission_modes = if profile.base_mode().is_some() { offered(&profile) } else { profile.modes() };
         let shared = Arc::new(Shared {
             profile,
             mapper: Mutex::new(mapper),
@@ -505,10 +533,21 @@ impl<P: AcpProfile> AcpLive<P> {
     }
 
     /// Puts the session in `mode`: the agent's own mode for it when it has one; otherwise PDT keeps the mode by
-    /// answering its permission requests, with the agent back in the mode it started in when that is none of PDT's
-    /// (an agent left in its Plan would refuse what Bypass allows).
-    async fn apply_mode(&self, mode: PermissionMode) -> Result<(), AdapterError> {
+    /// answering its permission requests, with the agent in the profile's base mode, else back in the mode it started
+    /// in when that is none of PDT's (an agent left in its Plan would refuse what Bypass allows).
+    /// Returns the mode the session runs in (Accept edits for Ask on an agent that edits without asking).
+    async fn apply_mode(&self, mode: PermissionMode) -> Result<PermissionMode, AdapterError> {
         let sh = &self.shared;
+        let mode = if mode == PermissionMode::Ask && !sh.profile.asks_before_edits() {
+            // It would edit without asking: say what the session really runs in.
+            let _ = sh.sink.send(AdapterOutput::Info(AgentInfo {
+                permission_mode: Some(PermissionMode::AcceptEdits),
+                ..Default::default()
+            }));
+            PermissionMode::AcceptEdits
+        } else {
+            mode
+        };
         let current = sh.mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let want = match sh.mode_id(mode) {
             Some(id) => {
@@ -518,13 +557,13 @@ impl<P: AcpProfile> AcpLive<P> {
             None => {
                 sh.mapper().enforce_mode(Some(mode));
                 let start = sh.start_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                start.filter(|id| sh.pdt_mode(id).is_none())
+                sh.profile.base_mode().map(String::from).or_else(|| start.filter(|id| sh.pdt_mode(id).is_none()))
             }
         };
-        match want {
-            Some(id) if current.as_deref() != Some(id.as_str()) => self.set_mode(&id).await,
-            _ => Ok(()),
+        if let Some(id) = want.filter(|id| current.as_deref() != Some(id.as_str())) {
+            self.set_mode(&id).await?;
         }
+        Ok(mode)
     }
 
     async fn set_mode(&self, mode: &str) -> Result<(), AdapterError> {
@@ -622,6 +661,14 @@ impl<P: AcpProfile> LiveConversation for AcpLive<P> {
         })?;
         self.shared.write(&json!({"jsonrpc": "2.0", "id": a.rpc_id, "result": a.result}))?;
         self.shared.emit(a.events, None);
+        if let Some(mode) = a.mode {
+            // An approved plan of the agent's own plan request: it leaves plan mode only when told to.
+            let mode = self.apply_mode(mode).await?;
+            let _ = self
+                .shared
+                .sink
+                .send(AdapterOutput::Info(AgentInfo { permission_mode: Some(mode), ..Default::default() }));
+        }
         if let Some(note) = a.follow_up {
             // ACP's reject has no message: the note goes to the agent as the next message (taken into the running
             // turn).
