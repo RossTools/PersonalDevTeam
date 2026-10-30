@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"c58eb3ca-17d7-443f-9ca2-101734ad5b1e","update":{"sessionUpdate":"plan","entries":[{"content":"git mv a.txt b.txt","priority":"medium","status":"pending"}]}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"c58eb3ca-17d7-443f-9ca2-101734ad5b1e","update":{"sessionUpdate":"tool_call","toolCallId":"tool_p1","title":"Create Plan: Rename a.txt","kind":"other","status":"pending","rawInput":{"_toolName":"createPlan","name":"Rename a.txt","plan":"1. `git mv a.txt b.txt`"}}}}
+{"jsonrpc":"2.0","id":200,"method":"cursor/create_plan","params":{"toolCallId":"tool_p1","name":"Rename a.txt","overview":"Rename a.txt to b.txt.","plan":"1. `git mv a.txt b.txt`","todos":[{"id":"1","content":"git mv a.txt b.txt","status":"pending"}]}}
+{"jsonrpc":"2.0","id":9,"result":{"stopReason":"end_turn"}}

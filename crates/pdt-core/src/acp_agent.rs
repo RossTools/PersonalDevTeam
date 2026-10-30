@@ -1,6 +1,6 @@
 //! ACP agents (PDT-234): agents that speak the Agent Client Protocol, other than Devin, as agent kinds `acp:<id>`.
-//! Each is a definition: a profile that ships with PDT (OhMyPi's; each harness's ticket adds its own) or one the user
-//! added in Settings → Agents (label, command, arguments, environment). They run only as conversations.
+//! Each is a definition: a profile that ships with PDT (OhMyPi's and Cursor's; each harness's ticket adds its own) or
+//! one the user added in Settings → Agents (label, command, arguments, environment). They run only as conversations.
 
 use crate::conversation::PermissionMode;
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,16 @@ pub struct AcpAgentDef {
     #[ts(skip)]
     #[serde(skip)]
     pub modes: Vec<(PermissionMode, String)>,
+    /// The agent's session mode PDT keeps the modes `modes` leaves out in, by answering its permission requests
+    /// (Cursor's `agent`). None: `modes` is all the modes the session offers.
+    #[ts(skip)]
+    #[serde(skip)]
+    pub base_mode: Option<String>,
+    /// The agent edits files in its workspace without asking (Cursor's `agent`): PDT can't keep Ask, so it offers no
+    /// Ask and a session in Ask runs as Accept edits (as Devin's does).
+    #[ts(skip)]
+    #[serde(skip)]
+    pub edits_unasked: bool,
     /// What the agent adds to ACP (a built-in profile's; the user's agents are plain ACP).
     #[ts(skip)]
     #[serde(skip)]
@@ -65,16 +75,23 @@ pub struct AcpAgentDef {
     pub builtin: bool,
 }
 
-/// What an ACP agent adds to plain ACP, for the conversation mapper (`crate::conversation::omp`).
+/// What an ACP agent adds to plain ACP, for the conversation mapper (`crate::conversation::omp`, `cursor`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AcpFlavor {
     #[default]
     Plain,
     /// OhMyPi's `omp acp` (notes: docs/superpowers/notes/omp-acp.md).
     Omp,
+    /// Cursor's `cursor-agent acp` (notes: docs/superpowers/notes/cursor-acp.md).
+    Cursor,
 }
 
 impl AcpAgentDef {
+    /// The PDT modes a session on this agent offers: all of them, but Ask for an agent that edits without asking.
+    pub fn offered_modes(&self) -> Vec<PermissionMode> {
+        PermissionMode::ALL.into_iter().filter(|m| !(self.edits_unasked && *m == PermissionMode::Ask)).collect()
+    }
+
     pub fn kind(&self) -> Option<crate::session::AgentKind> {
         crate::session::AcpAgentId::new(&self.id).map(crate::session::AgentKind::Acp)
     }
@@ -90,6 +107,8 @@ impl From<&AcpAgentConfig> for AcpAgentDef {
             args: c.args.clone(),
             env: c.env.clone(),
             modes: Vec::new(),
+            base_mode: None,
+            edits_unasked: false,
             flavor: AcpFlavor::Plain,
             builtin: false,
         }
@@ -98,7 +117,7 @@ impl From<&AcpAgentConfig> for AcpAgentDef {
 
 /// The ACP profiles that ship with PDT. Each harness's own ticket adds its profile here.
 pub fn builtin_profiles() -> Vec<AcpAgentDef> {
-    vec![omp()]
+    vec![omp(), cursor()]
 }
 
 /// OhMyPi (`omp acp`, PDT-238). Its modes come from those it advertises: `default` (Ask) and, when its plan mode is
@@ -112,7 +131,28 @@ fn omp() -> AcpAgentDef {
         args: vec!["acp".into()],
         env: Vec::new(),
         modes: Vec::new(),
+        base_mode: None,
+        edits_unasked: false,
         flavor: AcpFlavor::Omp,
+        builtin: true,
+    }
+}
+
+/// Cursor (`cursor-agent acp`, PDT-237). Its modes are `agent`, `plan` and `ask`, but its `ask` is read-only Q&A, not
+/// PDT's Ask: only Plan has a mode of its own, and PDT keeps Ask, Accept edits and Bypass itself with Cursor in
+/// `agent`.
+fn cursor() -> AcpAgentDef {
+    AcpAgentDef {
+        id: "cursor".into(),
+        label: "Cursor".into(),
+        icon: None,
+        command: "cursor-agent".into(),
+        args: vec!["acp".into()],
+        env: Vec::new(),
+        modes: vec![(PermissionMode::Plan, "plan".into())],
+        base_mode: Some("agent".into()),
+        edits_unasked: true,
+        flavor: AcpFlavor::Cursor,
         builtin: true,
     }
 }
@@ -304,6 +344,24 @@ mod tests {
             advertised_modes(&available),
             vec![(PermissionMode::Ask, "default".into()), (PermissionMode::Plan, "plan".into())]
         );
+    }
+
+    #[test]
+    fn cursor_ships_built_in_with_only_its_plan_mode_mapped() {
+        let d = find(&[], "cursor").unwrap();
+        assert_eq!(
+            (d.label.as_str(), d.command.as_str(), d.args.as_slice()),
+            ("Cursor", "cursor-agent", &["acp".to_string()][..])
+        );
+        assert_eq!((d.builtin, d.flavor), (true, AcpFlavor::Cursor));
+        assert_eq!(d.kind().unwrap().as_str(), "acp:cursor");
+        assert_eq!(d.modes, vec![(PermissionMode::Plan, "plan".to_string())]);
+        assert_eq!(d.base_mode.as_deref(), Some("agent"));
+        // Cursor's `agent` edits without asking: no Ask (a session in Ask runs as Accept edits).
+        use PermissionMode::*;
+        assert_eq!(d.offered_modes(), vec![AcceptEdits, Plan, Bypass]);
+        assert_eq!(find(&[], "omp").unwrap().offered_modes(), PermissionMode::ALL.to_vec());
+        assert_eq!(validate(&[agent("cursor")]).unwrap_err(), AcpAgentError::DuplicateId("cursor".into()));
     }
 
     #[test]

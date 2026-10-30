@@ -61,6 +61,47 @@ pub struct AcpAnswer {
     pub events: Vec<AcpOut>,
     /// ACP's reject carries no message: the user's note goes to the agent as the next message.
     pub follow_up: Option<String>,
+    /// The mode to put the session in after answering (an approved plan of the agent's own plan request, which
+    /// leaves plan mode only when told to).
+    pub mode: Option<PermissionMode>,
+}
+
+/// One question of an agent's own question request (Cursor's `cursor/ask_question`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtQuestion {
+    /// The agent's id for the question.
+    pub id: String,
+    pub question: String,
+    pub header: Option<String>,
+    /// Its options: (the agent's id, label).
+    pub options: Vec<(String, String)>,
+    pub multi: bool,
+}
+
+/// An agent's own request (a method that is not ACP's) that PDT shows the user.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExtRequest {
+    Questions(Vec<ExtQuestion>),
+    /// A plan to approve.
+    Plan {
+        markdown: String,
+    },
+}
+
+/// The user's answer to an agent's own request, for its extensions to put in the agent's terms.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExtAnswer {
+    /// Question id → the ids of the options picked.
+    Answered(Vec<(String, Vec<String>)>),
+    /// Not answered by picking options: skipped, or answered in the user's own words (`reason` says which).
+    Skipped {
+        reason: Option<String>,
+    },
+    Cancelled,
+    Plan {
+        approve: bool,
+        feedback: Option<String>,
+    },
 }
 
 /// What one agent adds to plain ACP, for the mapper: the extra fields it sends and the names it gives things. Each
@@ -106,6 +147,12 @@ pub trait AcpExtensions: std::fmt::Debug + Send {
     /// A `usage_update` that is not the conversation's (a sub-agent's).
     fn ignore_usage(&self, _update: &Value) -> bool {
         false
+    }
+
+    /// A call's output and exit code from the agent's `rawOutput`, for an agent that reports a command's output there
+    /// instead of in `content` (Cursor's `{exitCode, stdout, stderr}`).
+    fn raw_output(&self, _update: &Value) -> Option<(String, Option<i32>)> {
+        None
     }
 
     /// A replayed prompt's id and time (ms), for importing turns taken outside PDT (`import_after`). Without a time,
@@ -154,6 +201,16 @@ pub trait AcpExtensions: std::fmt::Debug + Send {
     fn retryable(&self, _data: &Value) -> bool {
         false
     }
+
+    /// An agent's own request (`method` is not ACP's) that asks the user something; None: PDT refuses it.
+    fn ext_request(&self, _method: &str, _params: &Value) -> Option<ExtRequest> {
+        None
+    }
+
+    /// The JSON-RPC result answering an agent's own request.
+    fn ext_answer(&self, _method: &str, _answer: &ExtAnswer) -> Value {
+        Value::Null
+    }
 }
 
 /// Plain ACP, with no agent's extra fields.
@@ -193,6 +250,10 @@ struct OpenRequest {
     always: Option<String>,
     /// Question text → the form field that answers it.
     fields: BTreeMap<String, FormField>,
+    /// The method of an agent's own request (`AcpExtensions::ext_request`), answered in its terms.
+    ext: Option<String>,
+    /// An agent's own question request's questions.
+    ext_questions: Vec<ExtQuestion>,
     turn_id: Option<String>,
 }
 
@@ -615,7 +676,9 @@ impl<P: AcpExtensions> AcpMapper<P> {
             .requests
             .values()
             .map(|r| {
-                let result = if r.kind == RequestKind::Question {
+                let result = if let Some(method) = &r.ext {
+                    self.ext.ext_answer(method, &ExtAnswer::Cancelled)
+                } else if r.kind == RequestKind::Question {
                     json!({"action": "cancel"})
                 } else {
                     json!({"outcome": {"outcome": "cancelled"}})
@@ -772,7 +835,11 @@ impl<P: AcpExtensions> AcpMapper<P> {
             exit_plan: false,
             turn_id: turn,
         });
-        if new && let Some(n) = name {
+        // A call first reported without its name (only its kind) gets it from a later update.
+        let unnamed = before.as_ref().is_none_or(|b| Some(&b.tool) == b.kind.as_ref() || b.tool == "tool");
+        if (new || unnamed)
+            && let Some(n) = name
+        {
             t.tool = n;
         }
         if let Some(k) = s(u, "kind") {
@@ -826,6 +893,12 @@ impl<P: AcpExtensions> AcpMapper<P> {
         }
         if let Some(code) = meta(u, "terminal_exit").and_then(|e| e.get("exit_code")).and_then(Value::as_i64) {
             t.exit_code = i32::try_from(code).ok();
+        }
+        if let Some((output, code)) = self.ext.raw_output(u) {
+            if !output.trim().is_empty() {
+                t.output = Some(cap_text(output.trim_end(), MAX_TOOL_OUTPUT));
+            }
+            t.exit_code = code.or(t.exit_code);
         }
         // A call that failed or was refused stays so (an agent can report it completed after cancelling it).
         if !matches!(t.status, ToolStatus::Failed | ToolStatus::Declined) {
@@ -894,10 +967,12 @@ impl<P: AcpExtensions> AcpMapper<P> {
                         options,
                         always,
                         fields: BTreeMap::new(),
+                        ext: None,
+                        ext_questions: vec![],
                         turn_id: self.turn.clone(),
                     }
                 } else {
-                    let (name, title, input, diff) = match &tool {
+                    let (mut name, title, input, diff) = match &tool {
                         Some(t) => (t.tool.clone(), t.title.clone(), t.input.clone(), t.diff.clone()),
                         // Asked before the agent reported the call (OhMyPi does): the request's own call names it.
                         None => {
@@ -914,6 +989,11 @@ impl<P: AcpExtensions> AcpMapper<P> {
                             (name, title, input, None)
                         }
                     };
+                    // The request's own call names the tool when the agent's earlier report of it didn't (Cursor
+                    // asks before its `tool_call` has its `rawInput`).
+                    if let Some(own) = p.get("toolCall").and_then(|c| self.ext.tool_name(c)) {
+                        name = own;
+                    }
                     // PDT's own tools (pdt-mcp): the session only has those its persona allows, so they run
                     // without asking, as Claude's `--allowedTools` and Codex's approval mode do.
                     if self.ext.pdt_tool_prefix().is_some_and(|prefix| name.starts_with(prefix))
@@ -950,6 +1030,8 @@ impl<P: AcpExtensions> AcpMapper<P> {
                         options,
                         always,
                         fields: BTreeMap::new(),
+                        ext: None,
+                        ext_questions: vec![],
                         turn_id: self.turn.clone(),
                     }
                 }
@@ -972,10 +1054,51 @@ impl<P: AcpExtensions> AcpMapper<P> {
                     options: vec![],
                     always: None,
                     fields,
+                    ext: None,
+                    ext_questions: vec![],
                     turn_id: self.turn.clone(),
                 }
             }
-            _ => return vec![AcpOut::RespondError { id: rpc_id, message: format!("PDT does not handle {method}") }],
+            _ => match self.ext.ext_request(method, p) {
+                Some(ExtRequest::Questions(qs)) => OpenRequest {
+                    rpc_id,
+                    kind: RequestKind::Question,
+                    tool: "AskUserQuestion".into(),
+                    title: qs.first().map(|q| q.question.clone()).unwrap_or_default(),
+                    input: json!({"questions": qs.iter().map(|q| json!({
+                        "question": q.question,
+                        "header": q.header,
+                        "options": q.options.iter().map(|(_, label)| json!({"label": label})).collect::<Vec<_>>(),
+                        "multiSelect": q.multi,
+                    })).collect::<Vec<_>>()}),
+                    tool_call_id: s(p, "toolCallId"),
+                    diff: None,
+                    options: vec![],
+                    always: None,
+                    fields: BTreeMap::new(),
+                    ext: Some(method.to_string()),
+                    ext_questions: qs,
+                    turn_id: self.turn.clone(),
+                },
+                Some(ExtRequest::Plan { markdown }) => OpenRequest {
+                    rpc_id,
+                    kind: RequestKind::Plan,
+                    tool: "ExitPlanMode".into(),
+                    title: "Plan".into(),
+                    input: json!({"plan": markdown}),
+                    tool_call_id: s(p, "toolCallId"),
+                    diff: None,
+                    options: vec![],
+                    always: None,
+                    fields: BTreeMap::new(),
+                    ext: Some(method.to_string()),
+                    ext_questions: vec![],
+                    turn_id: self.turn.clone(),
+                },
+                None => {
+                    return vec![AcpOut::RespondError { id: rpc_id, message: format!("PDT does not handle {method}") }];
+                }
+            },
         };
         let out = vec![self.request_event(&id, &r, RequestState::Open, None)];
         self.requests.insert(id, r);
@@ -986,6 +1109,13 @@ impl<P: AcpExtensions> AcpMapper<P> {
     pub fn answer(&mut self, request_id: &str, answer: &Answer) -> Result<AcpAnswer, AnswerError> {
         let r = self.requests.get(request_id).ok_or(AnswerError::Closed)?;
         let note = |m: &Option<String>| m.as_deref().map(str::trim).filter(|m| !m.is_empty()).map(String::from);
+        if let Some(method) = r.ext.clone() {
+            let (ext_answer, mode, follow_up) = ext_answer(r, answer, note)?;
+            let result = self.ext.ext_answer(&method, &ext_answer);
+            let r = self.requests.remove(request_id).expect("checked above");
+            let events = vec![self.request_event(request_id, &r, RequestState::Answered, Some(answer.clone()))];
+            return Ok(AcpAnswer { rpc_id: r.rpc_id, result, events, follow_up, mode });
+        }
         let selected = |id: Option<String>| -> Result<Value, AnswerError> {
             let id = id.ok_or(AnswerError::WrongAnswer)?;
             Ok(json!({"outcome": {"outcome": "selected", "optionId": id}}))
@@ -1040,8 +1170,60 @@ impl<P: AcpExtensions> AcpMapper<P> {
         };
         let r = self.requests.remove(request_id).expect("checked above");
         let events = vec![self.request_event(request_id, &r, RequestState::Answered, Some(answer.clone()))];
-        Ok(AcpAnswer { rpc_id: r.rpc_id, result, events, follow_up })
+        Ok(AcpAnswer { rpc_id: r.rpc_id, result, events, follow_up, mode: None })
     }
+}
+
+/// The user's answer to an agent's own request (`OpenRequest::ext`): the answer in [`ExtAnswer`]'s terms, the mode an
+/// approved plan goes on in (the one picked, else Ask) and what to tell the agent next (an approved plan is built).
+type ExtAnswered = (ExtAnswer, Option<PermissionMode>, Option<String>);
+
+fn ext_answer(
+    r: &OpenRequest,
+    answer: &Answer,
+    note: impl Fn(&Option<String>) -> Option<String>,
+) -> Result<ExtAnswered, AnswerError> {
+    const BUILD: &str = "The plan is approved: implement it now.";
+    Ok(match (r.kind, answer) {
+        (RequestKind::Question, Answer::Question { answers }) => {
+            let mut picked = Vec::new();
+            let mut own = Vec::new();
+            for q in &r.ext_questions {
+                let Some(chosen) = answers.get(&q.question) else { continue };
+                let ids: Vec<String> = chosen
+                    .iter()
+                    .filter_map(|c| q.options.iter().find(|(_, label)| label == c).map(|(id, _)| id.clone()))
+                    .collect();
+                if ids.len() < chosen.len() {
+                    own.push(format!("{}: {}", q.question, chosen.join(", ")));
+                }
+                picked.push((q.id.clone(), ids));
+            }
+            if own.is_empty() {
+                (ExtAnswer::Answered(picked), None, None)
+            } else {
+                // The agent's answer takes only its options' ids: words of the user's own go in the reason.
+                let reason = format!("The user answered in their own words. {}", own.join("; "));
+                (ExtAnswer::Skipped { reason: Some(reason) }, None, None)
+            }
+        }
+        (RequestKind::Question, Answer::Deny { message }) => (ExtAnswer::Skipped { reason: note(message) }, None, None),
+        (RequestKind::Plan, Answer::Approve { .. }) => {
+            (ExtAnswer::Plan { approve: true, feedback: None }, Some(PermissionMode::Ask), Some(BUILD.into()))
+        }
+        (RequestKind::Plan, Answer::Plan { approve: true, mode, .. }) => (
+            ExtAnswer::Plan { approve: true, feedback: None },
+            Some(mode.unwrap_or(PermissionMode::Ask)),
+            Some(BUILD.into()),
+        ),
+        (RequestKind::Plan, Answer::Plan { approve: false, feedback, .. }) => {
+            (ExtAnswer::Plan { approve: false, feedback: note(feedback) }, None, None)
+        }
+        (RequestKind::Plan, Answer::Deny { message }) => {
+            (ExtAnswer::Plan { approve: false, feedback: note(message) }, None, None)
+        }
+        _ => return Err(AnswerError::WrongAnswer),
+    })
 }
 
 /// An elicitation form's fields as PDT questions (`{question, header, options, multiSelect}`, as Claude's

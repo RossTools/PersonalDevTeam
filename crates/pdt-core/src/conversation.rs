@@ -5,8 +5,10 @@ pub mod acp;
 pub mod claude;
 pub mod codex;
 pub mod composer;
+pub mod cursor;
 pub mod devin;
 pub mod draft;
+pub mod flavor;
 pub mod omp;
 
 use crate::activity::Activity;
