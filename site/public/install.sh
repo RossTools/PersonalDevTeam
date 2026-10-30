@@ -115,7 +115,13 @@ pdt_install() {
 		say "To install it again anyway, run this with --force."
 		return 0
 	fi
-	if [ "$os" = mac ] && [ -n "$existing" ]; then dest="$existing"; fi
+	# --force replaces the app where it is; one in a folder only an admin can change (/Applications, usually) is left
+	# to the user rather than asking for sudo.
+	if [ "$os" = mac ] && [ -n "$existing" ]; then
+		dest="$existing"
+		[ -w "$(dirname "$dest")" ] ||
+			die "$product is installed in $dest, which needs admin rights to replace. It updates itself (Settings > This host > Updates); to reinstall, move it to the Bin first."
+	fi
 
 	tmp="$(mktemp -d)"
 	# Removes only the folder made above.
@@ -186,8 +192,13 @@ install_mac() {
 	fi
 	mv "$tmp/unpack/$app_name" "$dest"
 	rm -rf "$dest.old"
-	say "Installed in $dest. Opening it once so it starts at login..."
-	open "$dest"
+	if [ -n "$running" ]; then
+		# The running PDT keeps the version it started with; open would only bring it forward.
+		say "Installed in $dest. The $product that is running keeps its version until you log out and back in."
+	else
+		say "Installed in $dest. Opening it once so it starts at login..."
+		open "$dest"
+	fi
 }
 
 install_linux() {

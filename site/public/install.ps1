@@ -133,7 +133,11 @@ function Install-Pdt {
 
         Write-Host 'Installing...'
         # Silent (NSIS /S): a per-user install that starts PDT and registers it to start at login.
-        $setup = Start-Process -FilePath $exe -ArgumentList '/S' -Wait -PassThru
+        # Waits for the installer only: its hook starts pdt-host, which runs on, and `Start-Process -Wait` would wait for
+        # that too (it waits for the whole process tree). Reading Handle first keeps ExitCode readable after the exit.
+        $setup = Start-Process -FilePath $exe -ArgumentList '/S' -PassThru
+        $null = $setup.Handle
+        $setup.WaitForExit()
         if ($setup.ExitCode -ne 0) { return Write-Failure "the installer failed (exit code $($setup.ExitCode))." }
     } finally {
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

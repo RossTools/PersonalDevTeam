@@ -238,3 +238,31 @@ test('no readable releases (a private repository) asks for GITHUB_TOKEN', { skip
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /set GITHUB_TOKEN/);
 });
+
+test('--force on macOS replaces the app where it is, but not in a folder only an admin can write', { skip }, async (ctx) => {
+  const t = setup({ os: 'Darwin', arch: 'arm64' });
+  ctx.after(() => {
+    chmodSync(join(t.root, 'system-apps'), 0o755);
+    t.cleanup();
+  });
+  const app = tarball(t, { [`${APP}/Contents/MacOS/pdt-host`]: hostStub, [`${APP}/Contents/Info.plist`]: 'new' });
+  publish(t, 'v0.3.0', { 'Personal.Dev.Team.app.tar.gz': app });
+
+  const mine = join(t.home, 'Applications', APP, 'Contents');
+  mkdirSync(mine, { recursive: true });
+  writeFileSync(join(mine, 'Info.plist'), 'old');
+  const r = await run(t, ['--force']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(read(join(mine, 'Info.plist')), 'new');
+  assert.ok(!existsSync(join(t.home, 'Applications', `${APP}.old`)));
+  rmSync(join(t.home, 'Applications'), { recursive: true });
+
+  const system = join(t.root, 'system-apps');
+  mkdirSync(join(system, APP), { recursive: true });
+  chmodSync(system, 0o555);
+  const s = await run(t, ['--force']);
+  assert.notEqual(s.status, 0);
+  assert.match(s.stderr, /needs admin rights to replace/);
+  assert.ok(existsSync(join(system, APP)));
+  assert.ok(!existsSync(join(t.home, 'Applications', APP)));
+});
