@@ -260,3 +260,55 @@ keeps its place between looks, so a run that ends while PDT is stopped is report
 
 **Ask before finishing a merged ticket** puts a gate in the Inbox whenever a ticket's branch is found merged: **finish**
 moves it to **Done** and removes its worktree, **keep** leaves it as it is.
+
+### Cut a release
+
+**Cut a release** (a built-in workflow that comes with the GitHub plugin, off until you turn it on) runs your
+repository's release workflow and follows it through to the published release. It works with any release workflow that can be
+started by hand (`workflow_dispatch`): you say which one, with which inputs, each time you run it. Usually you ask the
+[PM](the-pm.md) for a release ("cut a minor release") and it runs this for you; you can also **Run now** it yourself
+with an input like:
+
+```json
+{
+  "workflow": "publish.yml",
+  "inputs": {"bump": "minor"},
+  "releaseBranch": "release-pr",
+  "tag": "v*"
+}
+```
+
+- **workflow**: the release workflow's file in `.github/workflows`. Without it, nothing starts and you are told what
+  is missing.
+- **inputs**: the workflow's own inputs, named as the workflow names them (`bump`, `version`, `channel`: whatever it
+  takes).
+- **ref**: the branch it runs on, if not `main`.
+- **releaseBranch**: if your workflow opens a release pull request, the branch it opens it from. Then a release pull
+  request that is still open stops a new release (the Inbox says so), you are told when the new one is open, and a
+  failed check goes to the Inbox while it waits for the merge. Leave it out when the workflow publishes the release
+  itself.
+- **tag**: how to recognise the release it publishes, a pattern where `*` is any text and `?` one character (`v*`,
+  `v*-beta.*`). Pre-releases count when you give one. Leave it out to wait for the repository's latest release.
+
+When the release is published, you get a notification and an Inbox item with its link. PDT itself merges and tags
+nothing: your workflow and GitHub do.
+
+### Report a missing scheduled release
+
+GitHub's scheduled workflows are best-effort, and some days a scheduled run never starts. **Report a missing
+scheduled release** (under **Releases**) checks each day that your scheduled release came out:
+
+1. **New workflow** › **Report a missing scheduled release**.
+2. Fill in **Repository** (`owner/name`), **Release workflow** (its file, `nightly-build.yml`) and **Tag pattern**:
+   the tag the day's release gets, with `{date}` for the day (`20261030` or `2026-10-30`), e.g. `v*-beta.{date}*` or
+   `snapshot-{date}`. Without `{date}`, any matching release published that day counts.
+3. Set **Expected by (hour, UTC)**: when the day's release should be out. It looks then.
+4. Leave **Only if the branch changed** on to stay quiet on days the **Branch** has nothing new since the last
+   matching release (or the latest release), if your workflow skips those days.
+5. **Start it inputs**: the workflow's inputs when you start it from the Inbox, as JSON (`{"channel": "beta"}`), or
+   `{}`.
+6. **Create workflow** and turn it on.
+
+When the day's release is missing, the Inbox says so, with a link to the workflow's runs: **Start it** runs the
+workflow on the branch with those inputs, **Ignore** leaves it. The item goes away by itself once the release is
+published.

@@ -6,7 +6,7 @@ export type GithubNightlyOutput = {
  */
 day: bigint, 
 /**
- * With `published`: the day's nightly.
+ * With `published`: the day's release.
  */
 tag: string | null, url: string | null, 
 /**

@@ -113,23 +113,26 @@ pub fn newest_on_channel(channel: UpdateChannel, releases: &[(Version, bool)]) -
         .map(|(i, _)| i)
 }
 
-/// What the missing-nightly watch (PDT-288) finds for a day's nightly: the release workflow's schedule is
-/// best-effort, and GitHub sometimes never starts it.
+/// What the missing scheduled release watch (PDT-288, PDT-294) finds for a day's release: a release workflow's
+/// schedule is best-effort, and GitHub sometimes never starts it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NightlyWatch {
-    /// A nightly for the day (or a later one) is published.
+pub enum ScheduledWatch {
+    /// A matching release for the day (or a later one) is published.
     Published,
     /// It is not the day's due time yet: the schedule may still run.
     Early,
-    /// main has nothing the newest nightly or stable release lacks: the workflow would publish nothing.
+    /// The branch has nothing the newest matching release (or the latest release) lacks: nothing to publish.
     Unchanged,
-    /// main changed, the due time has passed and no nightly for the day is published.
+    /// The branch changed (or that isn't asked), the due time has passed and no release for the day is published.
     Missing,
 }
 
-/// A day as nightly tags write it (`20261030`) from `2026-10-30` or `20261030`.
-pub fn nightly_day(s: &str) -> Option<u64> {
+/// A day as `YYYYMMDD` (`20261030`) from `2026-10-30` or `20261030`.
+pub fn parse_day(s: &str) -> Option<u64> {
     let digits: String = s.trim().chars().filter(|c| *c != '-').collect();
+    if digits.len() != 8 {
+        return None;
+    }
     let d = chrono::NaiveDate::parse_from_str(&digits, "%Y%m%d").ok()?;
     d.format("%Y%m%d").to_string().parse().ok()
 }
@@ -140,48 +143,132 @@ pub fn utc_day(ms: i64) -> u64 {
     t.format("%Y%m%d").to_string().parse().unwrap_or_default()
 }
 
-/// When `day` (`20261030`) reaches `hour` UTC, in ms.
-pub fn day_hour_ms(day: u64, hour: u32) -> i64 {
+/// The UTC day (`20261030`) of an RFC 3339 time (a release's `publishedAt`).
+pub fn rfc3339_day(s: &str) -> Option<u64> {
+    let t = chrono::DateTime::parse_from_rfc3339(s.trim()).ok()?;
+    Some(utc_day(t.timestamp_millis()))
+}
+
+/// When `day` (`20261030`) reaches `minutes` after midnight UTC, in ms.
+pub fn day_time_ms(day: u64, minutes: u32) -> i64 {
     let Ok(d) = chrono::NaiveDate::parse_from_str(&day.to_string(), "%Y%m%d") else { return 0 };
-    d.and_hms_opt(hour.min(23), 0, 0).map_or(0, |t| t.and_utc().timestamp_millis())
+    let m = minutes.min(24 * 60 - 1);
+    d.and_hms_opt(m / 60, m % 60, 0).map_or(0, |t| t.and_utc().timestamp_millis())
 }
 
-/// The newest published nightly for `day` or a later one, among release tags.
-pub fn nightly_for_day<'a>(tags: &[&'a str], day: u64) -> Option<&'a str> {
-    let date = |t: &str| match parse_version(t)?.pre? {
-        Pre::Nightly { date, .. } => Some(date),
-        Pre::Exp(_) => None,
-    };
-    tags.iter().copied().filter(|t| date(t).is_some_and(|d| d >= day)).max_by_key(|t| parse_version(t).map(|v| v.key()))
+/// A time of day, `HH:MM` (or `H:MM`, or a bare hour), as minutes after midnight.
+pub fn parse_time_of_day(s: &str) -> Option<u32> {
+    let s = s.trim();
+    let (h, m) = s.split_once(':').unwrap_or((s, "0"));
+    let all_digits = |x: &str| !x.is_empty() && x.len() <= 2 && x.chars().all(|c| c.is_ascii_digit());
+    if !all_digits(h) || !all_digits(m) {
+        return None;
+    }
+    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    (h < 24 && m < 60).then_some(h * 60 + m)
 }
 
-/// What main is compared with to tell whether it changed: the newest nightly and the latest stable release among
-/// release tags (either may be missing).
-pub fn nightly_bases<'a>(tags: &[&'a str]) -> (Option<&'a str>, Option<&'a str>) {
-    let newest = |nightly: bool| {
-        tags.iter()
-            .copied()
-            .filter_map(|t| Some((t, parse_version(t)?)))
-            .filter(|(_, v)| {
-                !v.local && if nightly { matches!(v.pre, Some(Pre::Nightly { .. })) } else { v.pre.is_none() }
-            })
-            .max_by_key(|(_, v)| v.key())
-            .map(|(t, _)| t)
-    };
-    (newest(true), newest(false))
+/// A release tag pattern (PDT-294): a glob, anchored at both ends, where `*` is any run of characters, `?` one
+/// character and `{date}` (at most once) a date, `YYYYMMDD` or `YYYY-MM-DD`: `v*-nightly.{date}*`, `snapshot-{date}`,
+/// `v*`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagPattern {
+    tokens: Vec<Token>,
 }
 
-/// The watch's decision for `day` at `now_ms`, `due_hour` UTC being when its nightly should be out: published first
-/// (so an item clears whenever one appears), then nothing before the due time, then nothing when main didn't change.
-pub fn nightly_watch(now_ms: i64, day: u64, due_hour: u32, published: bool, main_changed: bool) -> NightlyWatch {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Token {
+    Char(char),
+    Any,
+    One,
+    Date,
+}
+
+/// The `{date}` placeholder of a [`TagPattern`].
+pub const DATE_PLACEHOLDER: &str = "{date}";
+
+impl TagPattern {
+    pub fn parse(s: &str) -> Result<TagPattern, String> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Err("the tag pattern is empty".into());
+        }
+        let mut tokens = vec![];
+        let mut rest = s;
+        while let Some(c) = rest.chars().next() {
+            if let Some(after) = rest.strip_prefix(DATE_PLACEHOLDER) {
+                if tokens.contains(&Token::Date) {
+                    return Err(format!("{s:?} has {DATE_PLACEHOLDER} twice"));
+                }
+                tokens.push(Token::Date);
+                rest = after;
+                continue;
+            }
+            tokens.push(match c {
+                '*' => Token::Any,
+                '?' => Token::One,
+                c => Token::Char(c),
+            });
+            rest = &rest[c.len_utf8()..];
+        }
+        Ok(TagPattern { tokens })
+    }
+
+    /// Whether it has `{date}`.
+    pub fn has_date(&self) -> bool {
+        self.tokens.contains(&Token::Date)
+    }
+
+    /// None when `tag` doesn't match; else the date `{date}` matched (`20261030`), if the pattern has one.
+    pub fn matches(&self, tag: &str) -> Option<Option<u64>> {
+        let chars: Vec<char> = tag.chars().collect();
+        match_at(&self.tokens, &chars, None)
+    }
+}
+
+/// The date at the start of `s`: `YYYYMMDD` or `YYYY-MM-DD`, with how many characters it takes. Both lengths are
+/// tried (longest first) by the caller's backtracking.
+fn dates_at(s: &[char]) -> Vec<(u64, usize)> {
+    let mut out = vec![];
+    for len in [10, 8] {
+        if s.len() < len {
+            continue;
+        }
+        let text: String = s[..len].iter().collect();
+        let shape = if len == 10 {
+            text.char_indices().all(|(i, c)| if i == 4 || i == 7 { c == '-' } else { c.is_ascii_digit() })
+        } else {
+            text.chars().all(|c| c.is_ascii_digit())
+        };
+        if let Some(d) = shape.then(|| parse_day(&text)).flatten() {
+            out.push((d, len));
+        }
+    }
+    out
+}
+
+fn match_at(tokens: &[Token], s: &[char], date: Option<u64>) -> Option<Option<u64>> {
+    let Some((t, rest)) = tokens.split_first() else { return s.is_empty().then_some(date) };
+    match t {
+        Token::Char(c) => (s.first() == Some(c)).then(|| match_at(rest, &s[1..], date)).flatten(),
+        Token::One => (!s.is_empty()).then(|| match_at(rest, &s[1..], date)).flatten(),
+        Token::Any => (0..=s.len()).find_map(|i| match_at(rest, &s[i..], date)),
+        Token::Date => dates_at(s).into_iter().find_map(|(d, len)| match_at(rest, &s[len..], Some(d))),
+    }
+}
+
+/// The watch's decision for `day` at `now_ms`, `due_minutes` after midnight UTC being when its release should be out:
+/// published first (so an item clears whenever one appears), then nothing before the due time, then nothing when the
+/// branch didn't change.
+pub fn scheduled_watch(now_ms: i64, day: u64, due_minutes: u32, published: bool, changed: bool) -> ScheduledWatch {
     if published {
-        NightlyWatch::Published
-    } else if now_ms < day_hour_ms(day, due_hour) {
-        NightlyWatch::Early
-    } else if !main_changed {
-        NightlyWatch::Unchanged
+        ScheduledWatch::Published
+    } else if now_ms < day_time_ms(day, due_minutes) {
+        ScheduledWatch::Early
+    } else if !changed {
+        ScheduledWatch::Unchanged
     } else {
-        NightlyWatch::Missing
+        ScheduledWatch::Missing
     }
 }
 
@@ -350,45 +437,71 @@ pub fn parse_change(sha: &str, message: &str) -> Change {
 mod tests {
     use super::*;
 
-    /// PDT-288: the missing-nightly watch's decision.
+    /// PDT-288, PDT-294: the missing scheduled release watch's decision.
     #[test]
-    fn a_nightly_is_missing_only_when_main_changed_and_it_is_due() {
-        let day = nightly_day("2026-10-30").unwrap();
+    fn a_scheduled_release_is_missing_only_when_the_branch_changed_and_it_is_due() {
+        let day = parse_day("2026-10-30").unwrap();
         assert_eq!(day, 20261030);
-        assert_eq!(nightly_day("20261030"), Some(20261030));
-        assert_eq!(nightly_day("2026-13-01"), None);
-        assert_eq!(nightly_day("{{trigger.date}}"), None);
-        let at = |h: u32| day_hour_ms(day, h);
+        assert_eq!(parse_day("20261030"), Some(20261030));
+        assert_eq!(parse_day("2026-13-01"), None);
+        assert_eq!(parse_day("{{trigger.date}}"), None);
+        assert_eq!(parse_day("202610301"), None);
+        let at = |h: u32| day_time_ms(day, h * 60);
         assert_eq!(at(10), 1_793_354_400_000, "2026-10-30T10:00:00Z");
+        assert_eq!(day_time_ms(day, 10 * 60 + 30), 1_793_354_400_000 + 30 * 60_000);
         assert_eq!(utc_day(at(10)), day);
         assert_eq!(utc_day(at(0) - 1), 20261029);
+        assert_eq!(rfc3339_day("2026-10-30T23:59:00Z"), Some(20261030));
+        assert_eq!(rfc3339_day("2026-10-30T23:59:00-02:00"), Some(20261031));
+        assert_eq!(rfc3339_day("soon"), None);
 
-        use NightlyWatch::*;
+        assert_eq!(parse_time_of_day("10:00"), Some(600));
+        assert_eq!(parse_time_of_day("7:05"), Some(425));
+        assert_eq!(parse_time_of_day("9"), Some(540));
+        for bad in ["24:00", "10:60", "", "ten", "10:5:0", "-1"] {
+            assert_eq!(parse_time_of_day(bad), None, "{bad}");
+        }
+
+        use ScheduledWatch::*;
         // Before 10:00 UTC the schedule may still run (or run late).
-        assert_eq!(nightly_watch(at(10) - 1, day, 10, false, true), Early);
-        // Due, main changed, none published: missing.
-        assert_eq!(nightly_watch(at(10), day, 10, false, true), Missing);
-        assert_eq!(nightly_watch(at(23), day, 10, false, true), Missing);
-        // A day main didn't change: nothing to publish.
-        assert_eq!(nightly_watch(at(11), day, 10, false, false), Unchanged);
+        assert_eq!(scheduled_watch(at(10) - 1, day, 600, false, true), Early);
+        // Due, the branch changed, none published: missing.
+        assert_eq!(scheduled_watch(at(10), day, 600, false, true), Missing);
+        assert_eq!(scheduled_watch(at(23), day, 600, false, true), Missing);
+        // A day the branch didn't change: nothing to publish.
+        assert_eq!(scheduled_watch(at(11), day, 600, false, false), Unchanged);
         // Published (even early): the item clears.
-        assert_eq!(nightly_watch(at(11), day, 10, true, true), Published);
-        assert_eq!(nightly_watch(at(9), day, 10, true, true), Published);
+        assert_eq!(scheduled_watch(at(11), day, 600, true, true), Published);
+        assert_eq!(scheduled_watch(at(9), day, 600, true, true), Published);
     }
 
+    /// PDT-294: tag patterns, with the date `{date}` matched.
     #[test]
-    fn the_days_nightly_and_what_main_is_compared_with() {
-        let tags = ["v0.2.1-nightly.20261029", "v0.2.0", "v0.2.1-nightly.20261028.2", "v0.1.9", "test-v9.9.9"];
-        assert_eq!(nightly_for_day(&tags, 20261030), None);
-        assert_eq!(nightly_for_day(&tags, 20261029), Some("v0.2.1-nightly.20261029"));
-        assert_eq!(nightly_for_day(&tags, 20261028), Some("v0.2.1-nightly.20261029"), "a later day counts too");
-        let second = ["v0.2.1-nightly.20261030", "v0.2.1-nightly.20261030.2"];
-        assert_eq!(nightly_for_day(&second, 20261030), Some("v0.2.1-nightly.20261030.2"));
-        assert_eq!(nightly_for_day(&["v0.2.1-exp.3"], 0), None, "an experimental build is no nightly");
+    fn tag_patterns_match_globs_and_find_the_date() {
+        let p = |s: &str| TagPattern::parse(s).unwrap();
+        let nightly = p("v*-nightly.{date}*");
+        assert!(nightly.has_date());
+        assert_eq!(nightly.matches("v0.2.1-nightly.20261030"), Some(Some(20261030)));
+        assert_eq!(nightly.matches("v0.2.1-nightly.20261030.2"), Some(Some(20261030)));
+        assert_eq!(nightly.matches("v0.2.1"), None);
+        assert_eq!(nightly.matches("0.2.1-nightly.20261030"), None, "anchored: the v is needed");
+        assert_eq!(nightly.matches("v0.2.1-nightly.20261399"), None, "not a date");
 
-        assert_eq!(nightly_bases(&tags), (Some("v0.2.1-nightly.20261029"), Some("v0.2.0")));
-        assert_eq!(nightly_bases(&["v0.2.0"]), (None, Some("v0.2.0")));
-        assert_eq!(nightly_bases(&[]), (None, None));
+        let dashed = p("nightly-{date}");
+        assert_eq!(dashed.matches("nightly-2026-10-30"), Some(Some(20261030)));
+        assert_eq!(dashed.matches("nightly-20261030"), Some(Some(20261030)));
+        assert_eq!(dashed.matches("nightly-2026-10-30-b"), None);
+
+        let any = p("v*");
+        assert!(!any.has_date());
+        assert_eq!(any.matches("v1.0.0"), Some(None));
+        assert_eq!(any.matches("x1.0.0"), None);
+        assert_eq!(p("v?.?.?").matches("v1.2.3"), Some(None));
+        assert_eq!(p("v?.?.?").matches("v1.2.30"), None);
+        assert_eq!(p("{weird}").matches("{weird}"), Some(None), "only {{date}} is special");
+
+        assert!(TagPattern::parse(" ").is_err());
+        assert!(TagPattern::parse("{date}-{date}").unwrap_err().contains("twice"));
     }
 
     #[test]

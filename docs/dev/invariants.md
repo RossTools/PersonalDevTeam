@@ -71,6 +71,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **Everything runs at least once, maybe more.** Events are deduplicated by their key, runs by their run key. A new
   node kind with side effects either records its progress or sets `rerun_safe = false` (pdt-api
   `workflow/catalog.rs`), so a step cut short by a crash isn't repeated blindly.
+- **A node kind's config changes incompatibly only with a version bump and a migration.** Stored documents keep each
+  node's `version`; the engine and validation bring an older config up to date as they read it (`NodeKind::migrate`
+  in pdt-api `workflow/catalog.rs`; e.g. `github.nightly` 1 → 2 in `workflow/nodes/release.rs`), so a user's
+  workflows run unchanged after an update. Never rewrite their documents for it.
 - **Never hold `engine_lock` across a slow node body.** Node bodies run outside it; a result is written only if the
   step is still `running` with the same attempt.
 - **Secrets are filled in only when a node runs**, only from the node's own config, never from text that arrived as

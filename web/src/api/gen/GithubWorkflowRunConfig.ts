@@ -6,7 +6,7 @@ export type GithubWorkflowRunConfig = {
  */
 repo: string | null, 
 /**
- * The workflow's file name (`release.yml`) or id. It must take `workflow_dispatch`.
+ * The workflow's file name (`publish.yml`) or id. It must take `workflow_dispatch`.
  */
 workflow: string, 
 /**
@@ -14,6 +14,6 @@ workflow: string,
  */
 ref: string | null, 
 /**
- * Its `workflow_dispatch` inputs; empty and null values are left out.
+ * Its `workflow_dispatch` inputs (an object, or text holding one as JSON); empty and null values are left out.
  */
 inputs: Record<string, unknown> | null, };

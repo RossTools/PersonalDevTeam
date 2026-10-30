@@ -697,17 +697,9 @@ fn github_issue_done() -> WorkflowDoc {
     }))
 }
 
-/// The release workflow a project's repository has (PDT-194; docs/SDLC.md "Releases"): run by hand with `bump`
-/// (patch, minor, major) or an exact `version`, it pushes branch [`RELEASE_BRANCH`] and opens the release PR from it.
-/// With `channel: nightly` (PDT-210, PDT-283) it opens no PR: it tags main's head `vX.Y.Z-nightly.YYYYMMDD` and
-/// publishes a pre-release, as it does by itself every night.
-pub const RELEASE_WORKFLOW: &str = "release.yml";
-pub const RELEASE_BRANCH: &str = "release";
-
 /// How often "Cut a release" looks, and for how long: the release PR (opened within a minute or two), its merge (it
-/// merges itself once its checks, the bundle builds among them, and the merge queue pass: an hour or two; a failed
-/// check waits for the user's fix, up to two weeks) and the published release (the tag's bundles build for up to an
-/// hour; allowed four).
+/// may merge itself once its checks and a merge queue pass: hours; a failed check waits for the user's fix, up to two
+/// weeks) and the published release (bundles may build for an hour or more; allowed four).
 const PR_POLL_MS: u64 = 30_000;
 const PR_POLLS: u32 = 40;
 const MERGE_POLL_MS: u64 = 5 * 60_000;
@@ -715,12 +707,17 @@ const MERGE_POLLS: u32 = 14 * 24 * 12;
 const RELEASE_POLL_MS: u64 = 2 * 60_000;
 const RELEASE_POLLS: u32 = 4 * 30;
 
-/// Cut a release (PDT-194, PDT-214): started (Run now, by the PM or the user) in a project with `bump` and optionally
-/// `version`, it runs the project's Release Action, whose release PR merges itself once its checks pass. It says
-/// when the PR is open, puts a failed check in the Inbox (the PR waits for a fix pushed to `release`, or to be
-/// closed), and says when the tag's release is published. PDT merges and tags nothing: the Action and GitHub do. With
-/// `channel: nightly` (PDT-210, PDT-283; `experimental`, its old name, too) there is no release PR: it runs the Action
-/// and says when the pre-release is published.
+/// Cut a release (PDT-194, PDT-214, PDT-294): started (Run now, by the PM or the user) in a project, it runs the
+/// release workflow its input names, with the inputs it gives, and follows what that makes. Its input:
+/// - `workflow`: the release workflow's file (`publish.yml`); without it nothing starts;
+/// - `inputs`: the workflow's `workflow_dispatch` inputs (`{"bump": "minor"}`), named as the workflow names them;
+/// - `ref`: the branch it runs on (default `main`);
+/// - `releaseBranch`: the branch the workflow opens its release PR from. With it, an open one stops a new release,
+///   and the run says when the PR is open, puts a failed check in the Inbox and waits for the merge; without it, there
+///   is no PR stage;
+/// - `tag`: the published release's tag pattern (`v*`, `v*-beta.*`); without it, the latest release.
+///
+/// It says when the release is published. PDT merges and tags nothing: the workflow and the forge do.
 fn cut_release() -> WorkflowDoc {
     // A GitHub read that fails (the network, a rate limit) is tried again before the run fails.
     let retry = json!({"max": 5, "backoffMs": 60_000});
@@ -728,81 +725,103 @@ fn cut_release() -> WorkflowDoc {
         json!({"id": id, "kind": "wait", "version": 1, "position": {"x": x, "y": y}, "title": title,
                "maxVisits": visits, "config": {"ms": ms}})
     };
+    let run_workflow = |id: &str, x: i32, y: i32| {
+        json!({"id": id, "kind": "github.workflow.run", "version": 1, "position": {"x": x, "y": y},
+               "title": "Run the release workflow", "config": {"workflow": "{{trigger.workflow}}",
+               "ref": "{{trigger.ref}}", "inputs": "{{trigger.inputs}}"}})
+    };
+    let release = |id: &str, x: i32, y: i32, title: &str, extra: serde_json::Value| {
+        let mut config = json!({"tagPattern": "{{trigger.tag}}"});
+        config.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
+        json!({"id": id, "kind": "github.release", "version": 1, "position": {"x": x, "y": y}, "title": title,
+               "retry": retry, "config": config})
+    };
+    let mut direct_published = release(
+        "direct_published",
+        1040,
+        -260,
+        "Release published?",
+        json!({"newerThan": "{{steps.direct_before.tag}}"}),
+    );
+    direct_published["maxVisits"] = json!(RELEASE_POLLS);
+    let mut published =
+        release("published", 2340, 0, "Release published?", json!({"newerThan": "{{steps.before.tag}}"}));
+    published["maxVisits"] = json!(RELEASE_POLLS);
     doc(json!({
         "name": "Cut a release",
-        "description": format!("Runs the project's release workflow ({RELEASE_WORKFLOW}) with a bump kind (patch, \
-                        minor or major) or an exact version: it opens a release PR that sets the version, compiles \
-                        the changelog and builds the bundles, and merges itself once its checks pass, which tags and \
-                        publishes the release. You are told when the PR is open and when the release is out; a failed \
-                        check goes to the Inbox (the PR stays open: push a fix to the release branch, or close it). \
-                        With channel nightly there is no release PR: it publishes a nightly build of main's head now \
-                        (X.Y.Z-nightly.YYYYMMDD, a pre-release, as the release workflow makes every night) that only \
-                        hosts on the nightly update channel install, and you are told when it is out. Run it (the PM does, when you ask for a release) with input \
-                        {{\"bump\": \"minor\", \"channel\": \"stable\", \"projectId\": …}}."),
+        "description": "Runs a project's release workflow with the inputs you give, and tells you when the release \
+                        is published. Its input: workflow (the workflow's file, e.g. publish.yml), inputs (its \
+                        workflow_dispatch inputs, e.g. {\"bump\": \"minor\"}), ref (the branch it runs on, default \
+                        main), releaseBranch (when the workflow opens a release PR, the branch it opens it from) and \
+                        tag (the release's tag pattern, e.g. v*; default the latest release). With releaseBranch, an \
+                        open release PR stops a new release, you are told when the PR is open, and a failed check \
+                        goes to the Inbox while it waits for the merge. Run it (the PM does, when you ask for a \
+                        release) with input {\"workflow\": \"publish.yml\", \"inputs\": {\"bump\": \"minor\"}, \
+                        \"releaseBranch\": \"release\", \"projectId\": …}.",
         "nodes": [
-            {"id": "start", "kind": "manual", "version": 1, "position": {"x": -260, "y": 0}, "title": "Cut a release"},
-            {"id": "channel", "kind": "condition", "version": 1, "position": {"x": 0, "y": 0},
-             "title": "Nightly?", "config": {"conditions": [
-                {"left": "{{trigger.channel}}", "op": "in", "right": ["nightly", "experimental"]}]}},
-            // Nightly (PDT-210, PDT-283): no release PR; the Action tags main's head and publishes a pre-release.
-            {"id": "nightly_before", "kind": "github.release", "version": 1, "position": {"x": 260, "y": -260},
-             "title": "Newest release before", "retry": retry, "config": {"prereleases": true}},
-            {"id": "nightly_dispatch", "kind": "github.workflow.run", "version": 1, "position": {"x": 520, "y": -260},
-             "title": "Run the release workflow (nightly)", "config": {"workflow": RELEASE_WORKFLOW,
-                "ref": "main", "inputs": {"bump": "{{trigger.bump}}", "version": "{{trigger.version}}",
-                "channel": "nightly"}}},
-            wait("wait_nightly", 780, -260, "Wait for the pre-release", RELEASE_POLL_MS, RELEASE_POLLS),
-            {"id": "nightly_published", "kind": "github.release", "version": 1, "position": {"x": 1040, "y": -260},
-             "title": "Pre-release published?", "retry": retry, "maxVisits": RELEASE_POLLS,
-             "config": {"prereleases": true, "newerThan": "{{steps.nightly_before.tag}}"}},
-            {"id": "nightly_notify", "kind": "notify", "version": 1, "position": {"x": 1300, "y": -260},
+            {"id": "start", "kind": "manual", "version": 1, "position": {"x": -520, "y": 0}, "title": "Cut a release"},
+            {"id": "configured", "kind": "condition", "version": 1, "position": {"x": -260, "y": 0},
+             "title": "Workflow given?", "config": {"conditions": [{"left": "{{trigger.workflow}}", "op": "truthy"}]}},
+            {"id": "unconfigured", "kind": "notify", "version": 1, "position": {"x": -260, "y": 200},
+             "title": "Tell me what is missing", "config": {
+                "title": "Cut a release needs the release workflow",
+                "body": "Run it again with input workflow, the release workflow's file (e.g. publish.yml), and its \
+                         inputs.",
+                "level": "warning"}},
+            {"id": "not_configured", "kind": "end", "version": 1, "position": {"x": 0, "y": 200},
+             "title": "Not started",
+             "config": {"output": {"error": "give workflow, the release workflow's file, in the run's input"}}},
+            {"id": "has_pr", "kind": "condition", "version": 1, "position": {"x": 0, "y": 0},
+             "title": "A release PR?", "config": {"conditions": [
+                {"left": "{{trigger.releaseBranch}}", "op": "truthy"}]}},
+            // No release PR: the workflow publishes the release itself.
+            release("direct_before", 260, -260, "Newest release before", json!({})),
+            run_workflow("direct_dispatch", 520, -260),
+            wait("wait_direct", 780, -260, "Wait for the release", RELEASE_POLL_MS, RELEASE_POLLS),
+            direct_published,
+            {"id": "direct_notify", "kind": "notify", "version": 1, "position": {"x": 1300, "y": -260},
              "title": "Tell me it is out", "config": {
-                "title": "Nightly release {{steps.nightly_published.tag}} is published",
-                "body": "{{steps.nightly_published.name}} is out as a pre-release; hosts on the nightly update \
-                         channel offer it.",
-                "link": "{{steps.nightly_published.url}}"}},
-            {"id": "nightly_tell", "kind": "inbox.notice", "version": 1, "position": {"x": 1560, "y": -260},
+                "title": "Release {{steps.direct_published.tag}} is published",
+                "body": "{{steps.direct_published.name}} is out.",
+                "link": "{{steps.direct_published.url}}"}},
+            {"id": "direct_tell", "kind": "inbox.notice", "version": 1, "position": {"x": 1560, "y": -260},
              "title": "Inbox: published", "config": {
-                "key": "released-{{steps.nightly_published.tag}}",
-                "title": "Nightly release {{steps.nightly_published.tag}} is published",
-                "text": "[{{steps.nightly_published.name}}]({{steps.nightly_published.url}}) is published as a \
-                         pre-release of main, with its bundles: hosts on the nightly update channel (Settings → \
-                         Updates) offer it, stable hosts ignore it."}},
-            {"id": "nightly_released", "kind": "end", "version": 1, "position": {"x": 1820, "y": -260},
-             "title": "Released (nightly)",
-             "config": {"output": {"tag": "{{steps.nightly_published.tag}}", "url": "{{steps.nightly_published.url}}"}}},
-            {"id": "before", "kind": "github.release", "version": 1, "position": {"x": 260, "y": 0},
-             "title": "Latest release before", "retry": retry, "config": {}},
-            // The Action refuses while a release PR is open, and that PR isn't the release asked for: say so instead.
+                "key": "released-{{steps.direct_published.tag}}",
+                "title": "Release {{steps.direct_published.tag}} is published",
+                "text": "[{{steps.direct_published.name}}]({{steps.direct_published.url}}) is published."}},
+            {"id": "direct_released", "kind": "end", "version": 1, "position": {"x": 1820, "y": -260},
+             "title": "Released",
+             "config": {"output": {"tag": "{{steps.direct_published.tag}}", "url": "{{steps.direct_published.url}}"}}},
+            // A release PR: the workflow opens it, and it merges (by itself or by hand), which publishes the release.
+            release("before", 260, 0, "Latest release before", json!({})),
+            // A workflow that opens one release PR at a time refuses while one is open, and that PR isn't the release
+            // asked for: say so instead.
             {"id": "open_already", "kind": "github.change_request", "version": 1, "position": {"x": 390, "y": 200},
              "title": "A release PR still open?", "retry": retry,
-             "config": {"branch": RELEASE_BRANCH, "dryRunPort": "none"}},
+             "config": {"branch": "{{trigger.releaseBranch}}", "dryRunPort": "none"}},
             {"id": "still_open", "kind": "inbox.notice", "version": 1, "position": {"x": 650, "y": 200},
              "title": "Inbox: one is still open", "config": {
                 "key": "release-pr-open-{{steps.open_already.number}}",
                 "title": "Release PR #{{steps.open_already.number}} is still open",
                 "text": "No new release was started: [{{steps.open_already.title}}]({{steps.open_already.url}}) is \
-                         still open, and the release workflow opens only one release PR at a time. It merges by \
-                         itself once its checks pass (that release ships); if they failed, push a fix to the release \
-                         branch or close it. Then run Cut a release again."}},
+                         still open on {{trigger.releaseBranch}}. Merge it (that release ships) or close it, then \
+                         run Cut a release again."}},
             {"id": "not_started", "kind": "end", "version": 1, "position": {"x": 910, "y": 200},
              "title": "Not started"},
-            {"id": "dispatch", "kind": "github.workflow.run", "version": 1, "position": {"x": 520, "y": 0},
-             "title": "Run the release workflow", "config": {"workflow": RELEASE_WORKFLOW, "ref": "main",
-                "inputs": {"bump": "{{trigger.bump}}", "version": "{{trigger.version}}"}}},
+            run_workflow("dispatch", 520, 0),
             wait("wait_pr", 780, 0, "Wait for the release PR", PR_POLL_MS, PR_POLLS),
             {"id": "find_pr", "kind": "github.change_request", "version": 1, "position": {"x": 1040, "y": 0},
              "title": "Release PR opened?", "retry": retry, "maxVisits": PR_POLLS,
-             "config": {"branch": RELEASE_BRANCH}},
+             "config": {"branch": "{{trigger.releaseBranch}}"}},
             {"id": "tell_pr", "kind": "notify", "version": 1, "position": {"x": 1300, "y": 0},
              "title": "Tell me it is open", "config": {
                 "title": "Release PR #{{steps.find_pr.number}} is open",
-                "body": "{{steps.find_pr.title}} merges by itself once its checks pass, which publishes it.",
+                "body": "{{steps.find_pr.title}}: the release is published once it merges.",
                 "link": "{{steps.find_pr.url}}"}},
             wait("wait_merge", 1560, 0, "Wait for the merge", MERGE_POLL_MS, MERGE_POLLS),
             {"id": "check_pr", "kind": "github.change_request", "version": 1, "position": {"x": 1820, "y": 0},
              "title": "Release PR merged?", "retry": retry, "maxVisits": MERGE_POLLS,
-             "config": {"branch": RELEASE_BRANCH, "number": "{{steps.find_pr.number}}", "ci": true,
+             "config": {"branch": "{{trigger.releaseBranch}}", "number": "{{steps.find_pr.number}}", "ci": true,
                         "dryRunPort": "merged"}},
             // Once per head commit and kind of failure: a fix pushed that fails again is news again.
             {"id": "tell_failed", "kind": "inbox.notice", "version": 1, "position": {"x": 1820, "y": -200},
@@ -811,29 +830,25 @@ fn cut_release() -> WorkflowDoc {
                 "title": "Release PR #{{steps.check_pr.number}} failed its checks",
                 "text": "[{{steps.check_pr.title}}]({{steps.check_pr.url}}) didn't merge: [a check failed]\
                          ({{steps.check_pr.ciUrl}}).\n\n{{steps.check_pr.failedJobs}}\n\nIt stays open, and nothing \
-                         is released. Push a fix to the release branch (it merges by itself once its checks pass; \
-                         after the merge queue removed it, turn auto-merge on again), or close it, which ends this \
-                         release."}},
+                         is released. Push a fix to {{trigger.releaseBranch}} (after a merge queue removed it, set it \
+                         to merge again), or close it, which ends this release."}},
             {"id": "notify_failed", "kind": "notify", "version": 1, "position": {"x": 1560, "y": -200},
              "title": "Tell me it failed", "maxVisits": MERGE_POLLS, "config": {
                 "title": "Release PR #{{steps.check_pr.number}} failed its checks",
                 "body": "It stays open and nothing is released: fix it or close it.",
                 "level": "warning", "link": "{{steps.check_pr.ciUrl}}"}},
             wait("wait_release", 2080, 0, "Wait for the release", RELEASE_POLL_MS, RELEASE_POLLS),
-            {"id": "published", "kind": "github.release", "version": 1, "position": {"x": 2340, "y": 0},
-             "title": "Release published?", "retry": retry, "maxVisits": RELEASE_POLLS,
-             "config": {"newerThan": "{{steps.before.tag}}"}},
+            published,
             {"id": "notify", "kind": "notify", "version": 1, "position": {"x": 2600, "y": 0},
              "title": "Tell me it is out", "config": {
                 "title": "Release {{steps.published.tag}} is published",
-                "body": "{{steps.published.name}} is out; hosts offer it as an update.",
+                "body": "{{steps.published.name}} is out.",
                 "link": "{{steps.published.url}}"}},
             {"id": "tell_released", "kind": "inbox.notice", "version": 1, "position": {"x": 2860, "y": 0},
              "title": "Inbox: published", "config": {
                 "key": "released-{{steps.published.tag}}",
                 "title": "Release {{steps.published.tag}} is published",
-                "text": "[{{steps.published.name}}]({{steps.published.url}}) is published with its notes and \
-                         bundles; hosts offer it as an update."}},
+                "text": "[{{steps.published.name}}]({{steps.published.url}}) is published."}},
             {"id": "released", "kind": "end", "version": 1, "position": {"x": 3120, "y": 0}, "title": "Released",
              "config": {"output": {"tag": "{{steps.published.tag}}", "url": "{{steps.published.url}}"}}},
             {"id": "dropped", "kind": "notify", "version": 1, "position": {"x": 2080, "y": 200},
@@ -845,18 +860,21 @@ fn cut_release() -> WorkflowDoc {
              "title": "Not released"},
         ],
         "edges": [
-            {"from": "start", "to": "channel"},
-            {"from": "channel", "port": "false", "to": "before"},
-            {"from": "channel", "port": "true", "to": "nightly_before"},
-            {"from": "nightly_before", "port": "found", "to": "nightly_dispatch"},
-            {"from": "nightly_before", "port": "none", "to": "nightly_dispatch"},
-            {"from": "nightly_dispatch", "to": "wait_nightly"},
-            {"from": "wait_nightly", "port": "done", "to": "nightly_published"},
-            {"from": "nightly_published", "port": "found", "to": "nightly_notify"},
-            {"from": "nightly_published", "port": "none", "to": "wait_nightly"},
-            {"from": "nightly_notify", "to": "nightly_tell"},
-            {"from": "nightly_tell", "port": "added", "to": "nightly_released"},
-            {"from": "nightly_tell", "port": "skipped", "to": "nightly_released"},
+            {"from": "start", "to": "configured"},
+            {"from": "configured", "port": "false", "to": "unconfigured"},
+            {"from": "unconfigured", "to": "not_configured"},
+            {"from": "configured", "port": "true", "to": "has_pr"},
+            {"from": "has_pr", "port": "true", "to": "before"},
+            {"from": "has_pr", "port": "false", "to": "direct_before"},
+            {"from": "direct_before", "port": "found", "to": "direct_dispatch"},
+            {"from": "direct_before", "port": "none", "to": "direct_dispatch"},
+            {"from": "direct_dispatch", "to": "wait_direct"},
+            {"from": "wait_direct", "port": "done", "to": "direct_published"},
+            {"from": "direct_published", "port": "found", "to": "direct_notify"},
+            {"from": "direct_published", "port": "none", "to": "wait_direct"},
+            {"from": "direct_notify", "to": "direct_tell"},
+            {"from": "direct_tell", "port": "added", "to": "direct_released"},
+            {"from": "direct_tell", "port": "skipped", "to": "direct_released"},
             {"from": "before", "port": "found", "to": "open_already"},
             {"from": "before", "port": "none", "to": "open_already"},
             {"from": "open_already", "port": "open", "to": "still_open"},
@@ -894,6 +912,94 @@ fn cut_release() -> WorkflowDoc {
                      "maxRuntimeMs": 16_i64 * 24 * 60 * 60 * 1000},
     }))
 }
+
+/// The id of the Report a missing scheduled release template (without `builtin:`).
+pub const MISSING_RELEASE: &str = "missing-scheduled-release";
+
+/// Report a missing scheduled release (PDT-294; PDT missing nightly, PDT-288, for any project): a release workflow on
+/// a schedule (GitHub's are best-effort, and some days never start) should have published a release whose tag matches
+/// a pattern by an hour. Each day then it looks; a missing one goes to the Inbox with Start it (the workflow, with the
+/// inputs given), and the item closes by itself once the release is published.
+pub(crate) fn missing_release_template() -> pdt_core::workflow::template::Template {
+    use super::templates::{builtin, params};
+    builtin(
+        MISSING_RELEASE,
+        Category::Releases,
+        params(json!([
+            {"id": "repo", "title": "Repository", "type": "string", "required": true,
+             "description": "owner/name on GitHub."},
+            {"id": "workflow", "title": "Release workflow", "type": "string", "required": true,
+             "description": "The scheduled release workflow's file (publish.yml): its runs are linked, and Start it \
+                             runs it."},
+            {"id": "branch", "title": "Branch", "type": "string", "default": "main",
+             "description": "The branch the release is built from (and Start it runs on)."},
+            {"id": "tagPattern", "title": "Tag pattern", "type": "string", "required": true,
+             "description": "The scheduled release's tag: * is any text, ? one character and {date} the day \
+                             (YYYYMMDD or YYYY-MM-DD), e.g. v*-beta.{date}* or snapshot-{date}. Without {date}, a \
+                             matching release published that day counts."},
+            {"id": "hour", "title": "Expected by (hour, UTC)", "type": "number", "default": 10,
+             "description": "When the day's release should be out (0 to 23): it looks then."},
+            {"id": "onlyIfChanged", "title": "Only if the branch changed", "type": "boolean", "default": true,
+             "description": "Say nothing on a day the branch has nothing the newest matching release lacks."},
+            {"id": "inputs", "title": "Start it inputs", "type": "text", "default": "{}",
+             "description": "The workflow's inputs for Start it, as JSON: {\"channel\": \"beta\"}."},
+            {"id": "title", "title": "Inbox title", "type": "string", "default": "A scheduled release is missing"},
+        ])),
+        doc(json!({
+            "name": "Report a missing scheduled release",
+            "description": "Every day at the hour you give, looks for the day's release from a scheduled release \
+                            workflow (by its tag pattern). When none is published (and the branch changed since \
+                            the last one), the Inbox says so, with Start it, which runs the workflow; the item \
+                            closes by itself once the release is published.",
+            "nodes": [
+                {"id": "daily", "kind": "schedule", "version": 1, "position": {"x": 0, "y": 0}, "title": "Every day",
+                 "config": {"cron": "0 {{params.hour}} * * *", "timezone": "UTC", "catchUp": true}},
+                {"id": "watch", "kind": "github.nightly", "version": 2, "position": {"x": 260, "y": 0},
+                 "title": "The day's release", "retry": {"max": 5, "backoffMs": 60_000},
+                 "config": {"repo": "{{params.repo}}", "workflow": "{{params.workflow}}", "branch": "{{params.branch}}",
+                            "tagPattern": "{{params.tagPattern}}", "day": "{{trigger.date}}",
+                            "dueBy": "{{params.hour}}:00", "onlyIfChanged": "{{params.onlyIfChanged}}",
+                            "title": "{{params.title}}"}},
+                {"id": "start", "kind": "github.workflow.run", "version": 1, "position": {"x": 520, "y": -160},
+                 "title": "Run the release workflow", "config": {"repo": "{{params.repo}}",
+                    "workflow": "{{params.workflow}}", "ref": "{{params.branch}}", "inputs": "{{params.inputs}}"}},
+                {"id": "started", "kind": "notify", "version": 1, "position": {"x": 780, "y": -160},
+                 "title": "Tell me it started", "config": {
+                    "title": "The release workflow is starting",
+                    "body": "{{params.workflow}} runs on {{params.branch}}.",
+                    "link": "{{steps.watch.runsUrl}}"}},
+                {"id": "start_failed", "kind": "inbox.notice", "version": 1, "position": {"x": 780, "y": -320},
+                 "title": "Inbox: it would not start", "config": {
+                    "key": "release-start-failed-{{steps.watch.day}}",
+                    "title": "The release workflow didn't start",
+                    "text": "PDT could not run {{params.workflow}}: {{steps.start.error}}\n\nStart it on GitHub \
+                             instead: [the release workflow]({{steps.watch.runsUrl}}), Run workflow on \
+                             {{params.branch}}."}},
+                {"id": "done", "kind": "end", "version": 1, "position": {"x": 1040, "y": -160}, "title": "Started"},
+                {"id": "fine", "kind": "end", "version": 1, "position": {"x": 520, "y": 160}, "title": "Fine",
+                 "config": {"quiet": true}},
+            ],
+            "edges": [
+                {"from": "daily", "to": "watch"},
+                {"from": "watch", "port": "start", "to": "start"},
+                {"from": "start", "to": "started"},
+                {"from": "start", "port": "error", "to": "start_failed"},
+                {"from": "started", "to": "done"},
+                {"from": "start_failed", "port": "added", "to": "done"},
+                {"from": "start_failed", "port": "skipped", "to": "done"},
+                {"from": "watch", "port": "published", "to": "fine"},
+                {"from": "watch", "port": "early", "to": "fine"},
+                {"from": "watch", "port": "unchanged", "to": "fine"},
+                {"from": "watch", "port": "ignore", "to": "fine"},
+                {"from": "watch", "port": "already", "to": "fine"},
+                {"from": "watch", "port": "expired", "to": "fine"},
+            ],
+        })),
+    )
+}
+
+/// PDT's own release workflow (docs/SDLC.md "Releases"), for its PDT-only built-ins below.
+const PDT_RELEASE_WORKFLOW: &str = "release.yml";
 
 /// The release workflow's name as Actions shows it (its `name:`).
 const RELEASE_WORKFLOW_NAME: &str = "release";
@@ -971,13 +1077,15 @@ fn pdt_nightly_missing() -> WorkflowDoc {
         "nodes": [
             {"id": "daily", "kind": "schedule", "version": 1, "position": {"x": 0, "y": 0}, "title": "Every day",
              "config": {"cron": NIGHTLY_DUE_CRON, "timezone": "UTC", "catchUp": true}},
+            // Still version 1 of the node (PDT's nightlies), which PDT moves to version 2 as it runs (PDT-294): this
+            // built-in goes with PDT-295, and until then it shows that a version 1 config runs unchanged.
             {"id": "watch", "kind": "github.nightly", "version": 1, "position": {"x": 260, "y": 0},
              "title": "The day's nightly", "retry": {"max": 5, "backoffMs": 60_000},
-             "config": {"repo": RELEASE_REPO, "workflow": RELEASE_WORKFLOW, "branch": "main",
+             "config": {"repo": RELEASE_REPO, "workflow": PDT_RELEASE_WORKFLOW, "branch": "main",
                         "day": "{{trigger.date}}", "dueHour": NIGHTLY_DUE_HOUR}},
             {"id": "start", "kind": "github.workflow.run", "version": 1, "position": {"x": 520, "y": -160},
              "title": "Run the release workflow (nightly)", "config": {"repo": RELEASE_REPO,
-                "workflow": RELEASE_WORKFLOW, "ref": "main", "inputs": {"channel": "nightly"}}},
+                "workflow": PDT_RELEASE_WORKFLOW, "ref": "main", "inputs": {"channel": "nightly"}}},
             {"id": "started", "kind": "notify", "version": 1, "position": {"x": 780, "y": -160},
              "title": "Tell me it started", "config": {
                 "title": "Tonight's nightly is starting",
@@ -1138,6 +1246,37 @@ mod tests {
         let issues = validate(&pdt_nightly_missing(), crate::integrations::test_registry().catalog());
         assert!(!issues.iter().any(|i| i.code == "unreachable" || i.code == "open_port"), "{issues:?}");
         assert!(only_for_pdt(PDT_NIGHTLY_MISSING));
+    }
+
+    /// PDT-294: Report a missing scheduled release, filled in, leaves no port open, and names nothing of PDT's.
+    #[test]
+    fn the_missing_release_template_fills_in() {
+        use pdt_core::workflow::template::{fill, param_values};
+        let t = missing_release_template();
+        let given = json!({"repo": "acme/app", "workflow": "publish.yml", "tagPattern": "v*-beta.{date}", "hour": 7,
+                           "inputs": "{\"channel\": \"beta\"}"});
+        let d = fill(&t.doc, &param_values(&t.params, given.as_object().unwrap()).unwrap()).unwrap();
+        let issues = validate(&d, crate::integrations::test_registry().catalog());
+        assert!(!issues.iter().any(|i| i.code == "unreachable" || i.code == "open_port"), "{issues:?}");
+        assert!(issues.iter().all(|i| i.severity != Severity::Error), "{issues:?}");
+        let watch = &d.node("watch").unwrap().config;
+        assert_eq!(watch["dueBy"], "7:00");
+        assert_eq!(watch["onlyIfChanged"], true);
+        assert_eq!(d.node("daily").unwrap().config["cron"], "0 7 * * *");
+        // The node kind keeps its version 1 id.
+        let text = serde_json::to_string(&t).unwrap().to_lowercase().replace("\"github.nightly\"", "");
+        for pdt in ["release.yml", "nightly", RELEASE_REPO] {
+            assert!(!text.contains(&pdt.to_lowercase()), "names {pdt}");
+        }
+    }
+
+    /// PDT-294: Cut a release assumes no workflow file, branch, inputs or tag scheme.
+    #[test]
+    fn cut_release_has_no_pdt_defaults() {
+        let text = serde_json::to_string(&cut_release()).unwrap().to_lowercase();
+        for pdt in ["release.yml", "nightly", "experimental", "channel", "\"release\"", RELEASE_REPO] {
+            assert!(!text.contains(&pdt.to_lowercase()), "names {pdt}");
+        }
     }
 
     /// PDT-139: a notice nobody could be told goes on, to the Inbox and the ticket.

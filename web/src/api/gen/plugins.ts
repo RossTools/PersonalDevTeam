@@ -135,7 +135,7 @@ export const plugins: IntegrationInfo[] = [
       },
       {
         "id": "github.nightly",
-        "title": "Watch for the day's nightly"
+        "title": "Watch for a scheduled release"
       },
       {
         "id": "github.workflow.failed",
@@ -158,6 +158,10 @@ export const plugins: IntegrationInfo[] = [
       {
         "id": "builtin:issue-triage",
         "title": "Triage new GitHub issues"
+      },
+      {
+        "id": "builtin:missing-scheduled-release",
+        "title": "Report a missing scheduled release"
       },
       {
         "id": "builtin:failed-workflow-runs",
