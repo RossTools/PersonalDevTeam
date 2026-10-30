@@ -3,8 +3,7 @@
 //! `<field>__other` field beside it for an answer in the user's own words. What a built-in profile's flavor adds
 //! ([`AcpFlavor`]) is mapped here.
 
-use super::acp::{AcpExtensions, PlainAcp};
-use crate::acp_agent::AcpFlavor;
+use super::acp::AcpExtensions;
 use serde_json::Value;
 
 /// What OhMyPi adds to ACP.
@@ -39,51 +38,12 @@ pub fn session_missing(code: i64, message: &str) -> bool {
     code == -32603 && message.contains("session not found")
 }
 
-macro_rules! by_flavor {
-    ($self:ident, $method:ident($($arg:expr),*)) => {
-        match $self {
-            AcpFlavor::Plain => PlainAcp.$method($($arg),*),
-            AcpFlavor::Omp => OmpExtensions.$method($($arg),*),
-        }
-    };
-}
-
-/// A defined ACP agent's extensions: plain ACP, or what its built-in profile's agent adds.
-impl AcpExtensions for AcpFlavor {
-    fn name(&self) -> &str {
-        by_flavor!(self, name())
-    }
-
-    fn tool_name(&self, update: &Value) -> Option<String> {
-        by_flavor!(self, tool_name(update))
-    }
-
-    fn question_in_title(&self) -> bool {
-        by_flavor!(self, question_in_title())
-    }
-
-    fn other_field(&self, key: &str) -> Option<String> {
-        by_flavor!(self, other_field(key))
-    }
-}
-
-impl AcpFlavor {
-    /// `session/load` failed with `code` and `message` because the agent has no saved session by that id (the
-    /// spec's resource-not-found, or the agent's own way of saying it).
-    pub fn session_missing(self, code: i64, message: &str) -> bool {
-        code == -32002
-            || match self {
-                AcpFlavor::Plain => false,
-                AcpFlavor::Omp => session_missing(code, message),
-            }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::acp::{AcpMapper, AcpOut};
     use super::super::{AgentEvent, Answer, RequestKind, ToolStatus, TurnPhase, TurnStatus};
     use super::*;
+    use crate::acp_agent::AcpFlavor;
     use serde_json::json;
     use std::collections::BTreeMap;
 

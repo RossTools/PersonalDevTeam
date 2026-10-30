@@ -116,7 +116,10 @@ stored in `session_events`; terminals keep their scrollback in memory. Every age
 `agent_context`, plus the project's agent instructions and the ticket), written to the session's folder and passed in
 the way each agent takes them. A session belongs to an attempt (the Coder's) or to a ticket (a workflow step's
 reviewer or QA). Claude, Codex and Devin terminals are resumed by their conversation ids after a restart;
-conversations never are.
+conversations never are. A built-in ACP agent (OhMyPi, Cursor) is a profile in pdt-core `acp_agent::builtin_profiles`
+(command, mode map, flavor) plus, for what it adds to ACP, a flavor mapper in pdt-core `conversation/<agent>.rs` with
+recorded frames in `crates/pdt-core/tests/fixtures/<agent>/`; PDT keeps the session's permission mode by answering
+the agent's permission requests itself (`acp_agent::enforced_answer`).
 
 **pdt-mcp.** PDT's MCP server at `/api/mcp` (pdt-api `mcp/`). Each session gets a token (its id, signed with a key in
 the data folder) and the tools of its persona; each tool calls the API route's own function. Tools that need the

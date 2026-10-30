@@ -1,0 +1,65 @@
+//! A defined ACP agent's extensions ([`AcpFlavor`]): plain ACP, or what its built-in profile's agent adds, mapped in
+//! that agent's module (`super::omp`, `super::cursor`).
+
+use super::acp::{AcpExtensions, ExtAnswer, ExtRequest, PlainAcp};
+use super::cursor::{self, CursorExtensions};
+use super::omp::{self, OmpExtensions};
+use crate::acp_agent::AcpFlavor;
+use serde_json::Value;
+
+macro_rules! by_flavor {
+    ($self:ident, $method:ident($($arg:expr),*)) => {
+        match $self {
+            AcpFlavor::Plain => PlainAcp.$method($($arg),*),
+            AcpFlavor::Omp => OmpExtensions.$method($($arg),*),
+            AcpFlavor::Cursor => CursorExtensions.$method($($arg),*),
+        }
+    };
+}
+
+impl AcpExtensions for AcpFlavor {
+    fn name(&self) -> &str {
+        by_flavor!(self, name())
+    }
+
+    fn tool_name(&self, update: &Value) -> Option<String> {
+        by_flavor!(self, tool_name(update))
+    }
+
+    fn question_in_title(&self) -> bool {
+        by_flavor!(self, question_in_title())
+    }
+
+    fn other_field(&self, key: &str) -> Option<String> {
+        by_flavor!(self, other_field(key))
+    }
+
+    fn pdt_tool_prefix(&self) -> Option<&str> {
+        by_flavor!(self, pdt_tool_prefix())
+    }
+
+    fn raw_output(&self, update: &Value) -> Option<(String, Option<i32>)> {
+        by_flavor!(self, raw_output(update))
+    }
+
+    fn ext_request(&self, method: &str, params: &Value) -> Option<ExtRequest> {
+        by_flavor!(self, ext_request(method, params))
+    }
+
+    fn ext_answer(&self, method: &str, answer: &ExtAnswer) -> Value {
+        by_flavor!(self, ext_answer(method, answer))
+    }
+}
+
+impl AcpFlavor {
+    /// `session/load` failed with `code` and `message` because the agent has no saved session by that id (the
+    /// spec's resource-not-found, or the agent's own way of saying it).
+    pub fn session_missing(self, code: i64, message: &str) -> bool {
+        code == -32002
+            || match self {
+                AcpFlavor::Plain => false,
+                AcpFlavor::Omp => omp::session_missing(code, message),
+                AcpFlavor::Cursor => cursor::session_missing(code, message),
+            }
+    }
+}
