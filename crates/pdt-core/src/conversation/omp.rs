@@ -90,10 +90,11 @@ mod tests {
     /// `omp acp`'s answers to `initialize` and `session/new`, a prompt with no model set up, and the session's first
     /// updates (recorded from omp 18.14.0).
     const START: &str = include_str!("../../tests/fixtures/omp/start.jsonl");
-    /// A turn in omp 18.14.0's frames (from its ACP mode's source: `acp-event-mapper.ts`, `acp-permission-gate.ts`,
-    /// the `ask` tool's form in `acp-agent.ts`): a command it asks to run, an edit, two questions.
+    /// A turn recorded from omp 18.14.0 (Claude as its model): an MCP tool call (omp writes to `xd://mcp__<tool>`),
+    /// `ls`, which it asks to run before it reports the call, an edit, and two questions in one `ask` form.
     const TURN: &str = include_str!("../../tests/fixtures/omp/turn.jsonl");
-    /// Plan mode's approval: a one-field select form.
+    /// Plan mode, recorded likewise: the plan written, its approval (a one-field select form), omp back in `default`,
+    /// and the approved command.
     const PLAN: &str = include_str!("../../tests/fixtures/omp/plan.jsonl");
 
     fn mapper() -> AcpMapper<AcpFlavor> {
@@ -169,8 +170,9 @@ mod tests {
         let mut m = mapper();
         let (ev, sent) = feed(&mut m, TURN, |e| match e {
             AgentEvent::Request { request_kind: RequestKind::Approval, tool, title, can_always, .. } => {
-                assert_eq!((tool.as_str(), title.as_str()), ("bash", "ls"));
-                // omp's "Always allow" is its own rule for the session's process; PDT never offers it.
+                // Asked before omp reports the call: the request's own call names it.
+                assert_eq!((tool.as_str(), title.as_str()), ("execute", "ls"));
+                // omp's "Always allow" is its own rule for the process; PDT never offers it.
                 assert!(!*can_always);
                 Some(Answer::Approve { always: false })
             }
@@ -182,7 +184,7 @@ mod tests {
                     (qs[0]["question"].as_str(), qs[0]["header"].as_str()),
                     (Some("Which colour?"), Some("Colour"))
                 );
-                assert_eq!(qs[0]["options"][1], json!({"label": "Blue", "description": "The sky's"}));
+                assert_eq!(qs[0]["options"][1]["label"], "Blue");
                 assert_eq!(
                     (qs[1]["question"].as_str(), qs[1]["multiSelect"].as_bool()),
                     (Some("Which extras?"), Some(true))
@@ -196,17 +198,22 @@ mod tests {
             _ => None,
         });
         assert_eq!(sent[0], json!({"outcome": {"outcome": "selected", "optionId": "allow_once"}}));
-        // Own words go in the question's `__other` field.
+        // Own words go in the question's `__other` field (what omp was sent when this was recorded).
         assert_eq!(
             sent[1],
             json!({"action": "accept", "content": {"q0": "Blue", "q1": ["Tests"], "q1__other": "Benchmarks"}})
         );
-        let AgentEvent::ToolCall { tool, status, .. } = last_tool(&ev, "call_1") else { panic!() };
-        assert_eq!((tool.as_str(), *status), ("bash", ToolStatus::Done));
-        let AgentEvent::ToolCall { tool, diff, .. } = last_tool(&ev, "call_2") else { panic!() };
+        let AgentEvent::ToolCall { tool, output, .. } = last_tool(&ev, "xi6bHf") else { panic!() };
+        assert_eq!((tool.as_str(), output.as_deref()), ("write", Some("the secret word is PAPAYA")));
+        let AgentEvent::ToolCall { tool, status, title, .. } = last_tool(&ev, "3XWDp5") else { panic!() };
+        assert_eq!((tool.as_str(), title.as_str(), *status), ("bash", "ls", ToolStatus::Done));
+        let AgentEvent::ToolCall { tool, diff, .. } = last_tool(&ev, "JWM4mL") else { panic!() };
         assert_eq!(tool, "edit");
-        assert!(diff.as_deref().unwrap().contains("+goodbye"));
-        assert!(ev.iter().any(|e| matches!(e, AgentEvent::Usage { context_used: Some(5000), .. })));
+        assert!(diff.as_deref().unwrap().contains("+goodbye"), "{diff:?}");
+        assert!(ev.iter().any(|e| matches!(e, AgentEvent::Usage { context_used: Some(14279), .. })));
+        assert!(
+            ev.iter().any(|e| matches!(e, AgentEvent::AgentMessage { markdown, .. } if markdown.contains("PAPAYA")))
+        );
         assert!(matches!(
             ev.last().unwrap(),
             AgentEvent::Turn { phase: TurnPhase::Ended, status: Some(TurnStatus::Completed), .. }
@@ -230,20 +237,50 @@ mod tests {
     #[test]
     fn plan_approval_is_a_question_with_the_plan_in_it() {
         let mut m = mapper();
-        let (_, sent) = feed(&mut m, PLAN, |e| match e {
+        let (ev, sent) = feed(&mut m, PLAN, |e| match e {
             AgentEvent::Request { request_kind: RequestKind::Question, input, .. } => {
                 let q = &input["questions"][0];
-                assert!(q["question"].as_str().unwrap().starts_with("Approve plan \"Rename a.txt\""));
+                let text = q["question"].as_str().unwrap();
+                assert!(text.starts_with("Approve plan \"rename-a-to-b\""), "{text}");
+                assert!(text.contains("mv a.txt b.txt"), "the plan is in it");
                 assert_eq!(q["options"][0]["label"], "Approve and execute");
-                let answers = BTreeMap::from([(
-                    q["question"].as_str().unwrap().to_string(),
-                    vec!["Approve and execute".to_string()],
-                )]);
-                Some(Answer::Question { answers })
+                Some(Answer::Question {
+                    answers: BTreeMap::from([(text.to_string(), vec!["Approve and execute".to_string()])]),
+                })
+            }
+            AgentEvent::Request { request_kind: RequestKind::Approval, title, .. } => {
+                assert_eq!(title, "test ! -e b.txt && mv a.txt b.txt && ls");
+                Some(Answer::Approve { always: false })
             }
             _ => None,
         });
         assert_eq!(sent[0], json!({"action": "accept", "content": {"value": "Approve and execute"}}));
+        assert_eq!(sent[1]["outcome"]["optionId"], "allow_once");
+        assert!(matches!(
+            ev.last().unwrap(),
+            AgentEvent::Turn { phase: TurnPhase::Ended, status: Some(TurnStatus::Completed), .. }
+        ));
+    }
+
+    #[test]
+    fn approval_leaves_plan_mode() {
+        let mut m = mapper();
+        m.begin_prompt("go");
+        let modes: Vec<String> = PLAN
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["method"] == "session/update")
+            .flat_map(|v| m.on_update(&v["params"]["update"]))
+            .filter_map(|o| match o {
+                AcpOut::Settings { mode: Some(mode), .. } => Some(mode),
+                _ => None,
+            })
+            .collect();
+        // Its `current_mode_update` and `config_option_update` both say so.
+        assert!(
+            !modes.is_empty() && modes.iter().all(|m| m == "default"),
+            "omp leaves plan mode once approved: {modes:?}"
+        );
     }
 
     #[test]

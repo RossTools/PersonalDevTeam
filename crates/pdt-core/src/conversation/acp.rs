@@ -899,7 +899,20 @@ impl<P: AcpExtensions> AcpMapper<P> {
                 } else {
                     let (name, title, input, diff) = match &tool {
                         Some(t) => (t.tool.clone(), t.title.clone(), t.input.clone(), t.diff.clone()),
-                        None => ("tool".into(), String::new(), Value::Null, None),
+                        // Asked before the agent reported the call (OhMyPi does): the request's own call names it.
+                        None => {
+                            let call = p.get("toolCall").cloned().unwrap_or_default();
+                            let input = call.get("rawInput").cloned().unwrap_or(Value::Null);
+                            let title = input
+                                .get("command")
+                                .and_then(Value::as_str)
+                                .map(one_line)
+                                .or_else(|| s(&call, "title").map(|t| one_line(&t)))
+                                .unwrap_or_default();
+                            let name =
+                                self.ext.tool_name(&call).or_else(|| s(&call, "kind")).unwrap_or_else(|| "tool".into());
+                            (name, title, input, None)
+                        }
                     };
                     // PDT's own tools (pdt-mcp): the session only has those its persona allows, so they run
                     // without asking, as Claude's `--allowedTools` and Codex's approval mode do.

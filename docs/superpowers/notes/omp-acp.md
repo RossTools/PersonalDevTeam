@@ -1,7 +1,7 @@
 # OhMyPi's `omp acp` (PDT-238)
 
-Facts PDT relies on, checked against `omp 18.14.0` (Homebrew) on macOS on 2026-10-29: live over stdio where marked
-**live**, otherwise read from its source (https://github.com/can1357/oh-my-pi, `packages/coding-agent/src/modes/acp/`
+Facts PDT relies on, checked against `omp 18.14.0` (Homebrew, Claude as its model) on macOS on 2026-10-29: live over
+stdio where marked **live**, otherwise read from its source (https://github.com/can1357/oh-my-pi, `packages/coding-agent/src/modes/acp/`
 and `src/session/acp-permission-gate.ts`, at `338d2ce`). Windows is untested.
 
 ## Launch and handshake (live)
@@ -18,24 +18,27 @@ and `src/session/acp-permission-gate.ts`, at `338d2ce`). Windows is untested.
 - `session/load` of a saved id works and answers `modes` again; omp saves a session file at `session/new`, before any
   prompt. An unknown id fails `-32603` with details "ACP session not found: <id>".
 
-## Permissions (source)
+## Permissions (source; live where marked)
 
 - Only `bash`, `delete`, `move`, and an `edit` that deletes or moves a file ask (`session/request_permission`;
   `PERMISSION_REQUIRED_TOOLS`). Plain edits, `write` and MCP tools never ask, in any mode.
 - Options: `allow_once`, `allow_always`, `reject_once`, `reject_always` (ids = kinds). "Always" is remembered by omp for
   the process; PDT never offers it (plain ACP's rule).
-- The request's `toolCall.kind` is set only for `bash` (`execute`); the others' kind is the earlier `tool_call`'s
-  (`delete`, `move`, `edit`).
+- The request's `toolCall.kind` is set only for `bash` (`execute`), and it has no `name`. **Live:** the request comes
+  *before* the call's `tool_call` (the gate runs before omp reports the call), so PDT names the request from its own
+  `toolCall`. A delete or move asked about then has no kind, so in Accept edits PDT passes it to the user.
 
-## Tool calls (source)
+## Tool calls (live)
 
+- MCP tools are called by writing JSON to `xd://mcp__<tool>` (`name: "write"`, `kind: "execute"`), after reading
+  `xd://mcp__<tool>` for its schema; neither asks.
 - `tool_call` carries a non-standard `name` (the tool: `bash`, `edit`, `read`, `ask`) beside `kind` (`read`, `edit`
   for write/edit, `delete`, `move`, `execute`, `search`, `fetch`, `think` for todo, else `other`).
 - A command's content starts with `$ <command>`; its output follows as a further content block. Edits carry `diff`
   content (`path`, `oldText`, `newText`).
 - `todo` results also arrive as `plan` updates.
 
-## Questions and plan approval (source)
+## Questions and plan approval (live)
 
 - Only for a client advertising `elicitation.form` (PDT does). Without it, `ask` gets no answer and plan approval is
   automatic.
@@ -44,4 +47,6 @@ and `src/session/acp-permission-gate.ts`, at `338d2ce`). Windows is untested.
   description}`, and `q<n>__other` (string, title "Other (type your own)") for the user's own words; no `required`. A
   single-choice answer is read only when `q<n>__other` is empty.
 - Plan mode's approval → `elicitation/create` with one required field `value`, `enum: ["Approve and execute", "Refine
-  plan"]`, the plan's first 12 lines in `message`. Anything but approve keeps plan mode.
+  plan"]`, the plan's first 12 lines in `message`. Anything but approve keeps plan mode; on approve omp sends
+  `current_mode_update` (and `config_option_update`) back to `default` and goes on in the same turn.
+- The `ask` form also comes before its `tool_call`.

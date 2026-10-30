@@ -538,11 +538,16 @@ error).
 - Modes: it advertises `default` (PDT's Ask) and, while omp's plan mode is on, `plan` (Plan); PDT keeps Accept edits
   and Bypass itself, with omp in `default`. omp asks (`session/request_permission`) only before `bash`, `delete`,
   `move` and an edit that deletes or moves a file, so in Ask mode its other edits and writes run without asking.
-- pdt-mcp: omp connects to the `mcpServers` PDT passes in `session/new` and `session/load` (it doesn't ask before MCP
-  tools). Resume is `session/load` (it replays the conversation; omp saves a session at `session/new`).
+- pdt-mcp: omp connects to the `mcpServers` PDT passes in `session/new` and `session/load`, and calls a tool by
+  writing to `xd://mcp__<tool>` (a `write` call of kind `execute`; it never asks before one). Resume is `session/load` (it replays the conversation; omp saves a session at `session/new`).
 - Its flavor (pdt-core `conversation/omp.rs`): a tool call's `name` is its tool (`bash`, `edit`); its `ask` tool's
   questions arrive as a form elicitation where each question is a field's `title` (its header the `description`) with
   a `<field>__other` field beside it, which takes an answer in the user's own words (`AcpExtensions::question_in_title`,
   `other_field`). Plan mode's approval is a one-question form ("Approve and execute" / "Refine plan").
-- Tests: pdt-core `conversation::omp` on fixtures in `tests/fixtures/omp/` (`start.jsonl` recorded from omp 18.14.0;
-  `turn.jsonl` and `plan.jsonl` in its frames, from its ACP source).
+- It asks permission before it reports the call (`session/request_permission` comes before the `tool_call`): the
+  generic mapper then names the request from the request's own `toolCall` (its kind, `execute` for `bash`; its command
+  or title).
+- Tests: pdt-core `conversation::omp` on fixtures recorded from omp 18.14.0 in `tests/fixtures/omp/` (`start.jsonl`:
+  the handshake and a prompt with no model; `turn.jsonl`: an MCP call, a command, an edit and an `ask` form;
+  `plan.jsonl`: plan mode, its approval and the approved command). An omp persona has run a Code step end to end
+  (2026-10-29, on a scratch daemon).
