@@ -22,6 +22,11 @@ agent**.
 PDT can also run any agent that speaks the Agent Client Protocol (ACP). OhMyPi is built in: install `omp`, set up its
 model in omp, and PDT finds it.
 
+Google Antigravity is built in too, through Google's own ACP server. In **Settings › This host › Agents › ACP agents**,
+click **Install** beside Antigravity. PDT downloads the server from Google and checks it against the ACP registry
+before installing it. Then click **Sign in**: your browser opens to sign in with your Google account. This sign-in is
+the server's own: signing in to the `agy` CLI doesn't count. Click **Update** later to get a newer version.
+
 To add another:
 
 1. Open **Settings › This host › Agents › ACP agents** and click **Add ACP agent**.

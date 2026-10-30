@@ -51,6 +51,7 @@ mod start;
 mod stop;
 mod tickets;
 mod todos;
+pub mod toolchains;
 mod untrusted;
 pub mod update;
 pub mod vault;

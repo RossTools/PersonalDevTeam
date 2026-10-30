@@ -71,6 +71,12 @@ pub trait AcpProfile: Send + Sync + 'static {
         None
     }
 
+    /// Opening the session failed with `code` and `message`: what to tell the user instead, when the agent's error
+    /// means more than it says (Antigravity's "Authentication required": it isn't signed in).
+    fn refusal_hint(&self, _code: i64, _message: &str) -> Option<String> {
+        None
+    }
+
     /// The agent's session mode PDT keeps the modes this profile's map leaves out in (Cursor's `agent`): the
     /// session offers all of PDT's modes, and PDT answers permission requests for the rest (`AcpLive::apply_mode`).
     /// None: the map covers every mode it offers.
@@ -461,7 +467,8 @@ impl<P: AcpProfile> AcpLive<P> {
     /// one, then the session's mode and model.
     async fn start_session(&self, spec: &OpenSpec) -> Result<(), AdapterError> {
         let sh = &self.shared;
-        let refused = |e: RpcError| AdapterError::Refused(e.message);
+        let refused =
+            |e: RpcError| AdapterError::Refused(sh.profile.refusal_hint(e.code, &e.message).unwrap_or(e.message));
         let init = sh.request("initialize", initialize_params(), START_TIMEOUT).await?.map_err(refused)?;
         let can_load = init.pointer("/agentCapabilities/loadSession").and_then(Value::as_bool).unwrap_or(false);
         let cwd = spec.cwd.to_string_lossy().into_owned();

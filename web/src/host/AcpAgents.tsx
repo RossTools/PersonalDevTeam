@@ -44,6 +44,7 @@ export function AcpAgents({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<AcpAgentView | 'new' | null>(null);
+  const [pathFor, setPathFor] = useState<AcpAgentView | null>(null);
   const user = v.acpAgents.filter((a) => !a.builtin);
   const save = useMutation({
     mutationFn: (acpAgents: AcpAgentConfig[]) => api.saveHostSettings({ acpAgents }),
@@ -74,12 +75,13 @@ export function AcpAgents({ v }: { v: HostSettingsView }) {
           key={a.id}
           label={a.label}
           description={<>
-            <span className="font-mono break-all">{[a.command, ...a.args].join(' ')}</span>
+            {a.installer ? <InstalledNote a={a} /> : <span className="font-mono break-all">{[a.command, ...a.args].join(' ')}</span>}
             {[offNote(v, a.agent), switchBlocked(v, a.agent)].filter(Boolean).map((t) => <span key={t} className="block">{t}</span>)}
           </>}
         >
           <AgentSwitch v={v} agent={a.agent} label={a.label} />
-          {offNote(v, a.agent) ? <Badge>Off</Badge> : a.found ? <Badge tone="running" title={a.found}>Found</Badge> : <Badge tone="failed">Missing</Badge>}
+          {offNote(v, a.agent) ? <Badge>Off</Badge> : a.found ? <Badge tone="running" title={a.found}>Found</Badge> : <Badge tone="failed">{a.installer ? 'Not installed' : 'Missing'}</Badge>}
+          {a.installer && <InstallerActions a={a} onPath={() => setPathFor(a)} />}
           {a.builtin ? (
             <Badge>Built in</Badge>
           ) : (
@@ -91,6 +93,7 @@ export function AcpAgents({ v }: { v: HostSettingsView }) {
         </SettingsRow>
       ))}
       {save.error && !editing && <Alert tone="error">{save.error.message}</Alert>}
+      {pathFor && <ProgramDialog a={pathFor} onClose={() => setPathFor(null)} />}
       {editing && (
         <AcpAgentDialog
           agent={editing === 'new' ? null : editing}
@@ -107,6 +110,85 @@ export function AcpAgents({ v }: { v: HostSettingsView }) {
         />
       )}
     </Section>
+  );
+}
+
+/** Pure: what a profile PDT installs says about its program and sign-in. */
+export function installedText(a: AcpAgentView): string[] {
+  const program = a.program
+    ? `Runs ${a.program}, set by hand.`
+    : a.installedVersion
+      ? `Google's ACP server ${a.installedVersion}, installed by PDT.`
+      : "Not installed: Install gets Google's ACP server, checked against the ACP registry's sha256.";
+  const signIn = a.signedIn
+    ? `Signed in (${a.signedIn}).`
+    : 'Not signed in: Sign in opens your browser on this computer. Its sign-in is its own, apart from the agy CLI’s.';
+  return [program, signIn];
+}
+
+function InstalledNote({ a }: { a: AcpAgentView }) {
+  return <>{installedText(a).map((t) => <span key={t} className="block">{t}</span>)}</>;
+}
+
+/** Install or Update, Sign in, and Path for a built-in profile whose program PDT installs (Antigravity, PDT-239). */
+function InstallerActions({ a, onPath }: { a: AcpAgentView; onPath: () => void }) {
+  const qc = useQueryClient();
+  const done = (view: HostSettingsView) => {
+    qc.setQueryData(['host-settings'], view);
+    void qc.invalidateQueries({ queryKey: ['host-checks'] });
+  };
+  const install = useMutation({ mutationFn: () => api.installAcpAgent(a.id), onSuccess: done });
+  const signIn = useMutation({ mutationFn: () => api.signInAcpAgent(a.id), onSuccess: done });
+  const error = install.error ?? signIn.error;
+  return (
+    <>
+      <Button size="sm" pending={install.isPending} onClick={() => { signIn.reset(); install.mutate(); }}>
+        {a.installedVersion ? 'Update' : 'Install'}
+      </Button>
+      <Button
+        size="sm"
+        disabled={!a.found}
+        pending={signIn.isPending}
+        title={signIn.isPending ? 'Finish signing in in your browser' : undefined}
+        onClick={() => { install.reset(); signIn.mutate(); }}
+      >
+        {a.signedIn ? 'Sign in again' : 'Sign in'}
+      </Button>
+      <Button size="sm" variant="ghost" onClick={onPath}>Path</Button>
+      {signIn.isPending && <span className="text-sm text-muted-foreground">Finish signing in in your browser…</span>}
+      {error && <Alert tone="error">{error.message}</Alert>}
+    </>
+  );
+}
+
+/** The path to run instead of the program PDT installed (one installed by hand). */
+function ProgramDialog({ a, onClose }: { a: AcpAgentView; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [path, setPath] = useState(a.program ?? '');
+  const save = useMutation({
+    mutationFn: () => api.saveHostSettings({ acpPrograms: { [a.id]: path.trim() } }),
+    onSuccess: (view) => {
+      qc.setQueryData(['host-settings'], view);
+      void qc.invalidateQueries({ queryKey: ['host-checks'] });
+      onClose();
+    },
+  });
+  return (
+    <Dialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={`${a.label}'s program`}
+      description="Leave it blank to run the one PDT installs."
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" pending={save.isPending} onClick={() => save.mutate()}>Save</Button></>}
+    >
+      <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+        <Field label="Path" hint="A full path, or one starting with ~.">
+          <Input mono spellCheck={false} value={path} onChange={(e) => setPath(e.target.value)} placeholder="~/agy-acp/agy_acp_server.par" />
+        </Field>
+        {save.error && <Alert tone="error">{save.error.message}</Alert>}
+        <button type="submit" hidden />
+      </form>
+    </Dialog>
   );
 }
 
