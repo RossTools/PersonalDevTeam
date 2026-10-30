@@ -59,8 +59,16 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, reply(&st, ticket).await?))
 }
 
+/// `GET /api/tickets/{id}`: by id, or by key (`PDT-12`, any case; PDT-271).
 pub(crate) async fn get_one(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
-    reply(&st, st.store.get_ticket(&id).await?.ok_or_else(unknown_ticket)?).await
+    let ticket = match st.store.get_ticket(&id).await? {
+        Some(t) => Some(t),
+        None => match st.store.ticket_id_by_key(&id).await? {
+            Some(id) => st.store.get_ticket(&id).await?,
+            None => None,
+        },
+    };
+    reply(&st, ticket.ok_or_else(unknown_ticket)?).await
 }
 
 pub(crate) async fn update(

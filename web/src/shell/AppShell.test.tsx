@@ -1310,6 +1310,7 @@ describe('tickets', () => {
   const fixLogin = ticket(1, { projectId: project.id, title: 'Fix login' });
   const ticketRoutes = {
     'GET /api/tickets/t1': fixLogin,
+    'GET /api/tickets/ALP-1': fixLogin,
     'GET /api/tickets/t1/events': { items: [], nextCursor: null },
     [`GET /api/projects/${project.id}/labels`]: [],
     'GET /api/tickets': page([summary(1, { projectId: project.id, title: 'Fix login' })]),
@@ -1491,6 +1492,7 @@ describe('routes (PDT-111)', () => {
   const fixLogin = ticket(1, { projectId: project.id, title: 'Fix login' });
   const ticketRoutes = {
     'GET /api/tickets/t1': fixLogin,
+    'GET /api/tickets/ALP-1': fixLogin,
     'GET /api/tickets/t1/events': { items: [], nextCursor: null },
     [`GET /api/projects/${project.id}/labels`]: [],
     'GET /api/tickets': page([summary(1, { projectId: project.id, title: 'Fix login' })]),
@@ -1600,6 +1602,27 @@ describe('routes (PDT-111)', () => {
     await userEvent.click(await screen.findByRole('row', { name: /Fix login/ }));
     await waitFor(() => expect(here()).toBe('/tickets/ALP-1'));
     expect(await screen.findByRole('dialog', { name: 'ALP-1 · Fix login' })).toBeInTheDocument();
+  });
+
+  it("opens /tickets/KEY by asking pdtd for the key, not by searching (PDT-271)", async () => {
+    const old = ticket(7, { projectId: project.id, title: 'Old ticket' });
+    // A search for ALP-7 would list tickets mentioning it, and not ALP-7 itself.
+    stubWorkspaces({
+      ...ticketRoutes,
+      'GET /api/tickets/alp-7': old,
+      'GET /api/tickets/t7': old,
+      'GET /api/tickets/t7/events': { items: [], nextCursor: null },
+    });
+    at('/tickets/alp-7');
+    renderWithQuery(<AppShell />);
+    expect(await screen.findByRole('dialog', { name: 'ALP-7 · Old ticket' })).toBeInTheDocument();
+  });
+
+  it('says a key no ticket has is not found', async () => {
+    stubWorkspaces(ticketRoutes);
+    at('/tickets/ALP-99');
+    renderWithQuery(<AppShell />);
+    expect(await screen.findByText('Ticket not found.')).toBeInTheDocument();
   });
 
   it('shows a ticket as a detail screen on a phone, where ← and Back agree', async () => {

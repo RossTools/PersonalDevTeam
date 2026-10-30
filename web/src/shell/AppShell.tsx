@@ -41,7 +41,7 @@ import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Workspace } from '../api/gen/Workspace';
 import { looksLikeKey } from '../tickets/model';
-import { useProjectForge, useTicketSearch } from '../tickets/queries';
+import { ticketByKey, useProjectForge, useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
 import { useBacklog } from '../tickets/useBacklog';
 import { UpdateBanner } from '../host/UpdateBanner';
@@ -303,7 +303,7 @@ export function AppShell() {
   }, [ws.focusItem, setView]);
   const openTicketByKey = useCallback((key: string) => {
     void runAction(async () => {
-      const hit = (await api.listTickets({ q: key, limit: 1 })).items[0];
+      const hit = await ticketByKey(key);
       if (hit) openTicket(hit);
     });
   }, [openTicket]);
