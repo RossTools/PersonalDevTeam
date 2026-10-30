@@ -102,7 +102,8 @@ A workflow's **Runs** tab lists its runs, newest first. Pick one to see:
 
 - the graph of the version it ran, with the path it took;
 - each step, with what it got (its input), what it gave (its output) or the error it stopped with;
-- **Open session** on a step that ran an agent, to see what the agent did.
+- **Open session** on a step that ran an agent, to see what the agent did. A ticket's step sessions are left out of
+  the sidebar's **Agents** list; open them here or from the ticket.
 
 A run is **Waiting** while a step waits: for an agent to finish, for you to answer, for CI, or for a time. **Cancel**
 stops it.

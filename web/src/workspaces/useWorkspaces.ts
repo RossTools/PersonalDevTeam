@@ -154,10 +154,13 @@ export function useWorkspaces(routed?: RoutedChoice) {
           : infos.get(`${item.kind}:${item.id}`) ?? null,
     [infos, ticketInfos, changesInfos],
   );
-  // The lists' sessions and runs: an ended step session with no ticket only while a tab holds it (PDT-263).
+  // Every session and run, hidden ones included: what the favicon and title watch (PDT-262).
+  const everyInfo = useMemo(() => [...infos.values()], [infos]);
+  // The lists' sessions and runs: a workflow step's session (a ticket's, or an ended one with no ticket) only while a
+  // tab holds it (PDT-263, PDT-290).
   const allInfos = useMemo(
-    () => [...infos.values()].filter((i) => !i.session || !hiddenStepSession(i.session) || findTab(workspaces, i.item)),
-    [infos, workspaces],
+    () => everyInfo.filter((i) => !i.session || !hiddenStepSession(i.session) || findTab(workspaces, i.item)),
+    [everyInfo, workspaces],
   );
 
   const [stored, setChoiceState] = useState<CurrentChoice>(loadChoice);
@@ -296,7 +299,7 @@ export function useWorkspaces(routed?: RoutedChoice) {
 
   return {
     createWorkspace, renameWorkspace, moveWorkspace, deleteWorkspace,
-    projects: projectList, projectsLoaded: projects.isSuccess, workspaces, workspacesError: workspacesQ.error, workspace, tab, info, allInfos, ticketInfos,
+    projects: projectList, projectsLoaded: projects.isSuccess, workspaces, workspacesError: workspacesQ.error, workspace, tab, info, allInfos, everyInfo, ticketInfos,
     selectWorkspace, selectTab, focusItem, placementFor, closeTab, moveTab, openIn, refresh,
     currentInfo: tab ? info(itemOf(tab)) : null,
   };

@@ -518,7 +518,7 @@ export function AppShell() {
   const pmShown = route.view !== 'pm' || (phone && pmSelection === 'current') ? null
     : shownConversation(pm.data?.sessions, pm.data?.current?.id, pmSelection)?.session.id ?? null;
   const pmDot = pmUnread(pm.data?.sessions, pmShown);
-  useAttentionTitle(useAttention(ws.allInfos, pmShown));
+  useAttentionTitle(useAttention(ws.everyInfo, pmShown));
   const openTarget = useCallback((t: NotificationTarget) => {
     switch (t.kind) {
       case 'session': openSession({ id: t.id, projectId: t.projectId }); break;

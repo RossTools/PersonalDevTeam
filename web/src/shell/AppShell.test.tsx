@@ -323,6 +323,29 @@ describe('workspaces', () => {
     expect(within(agents).queryByRole('row', { name: /Triage done/ })).not.toBeInTheDocument();
     expect(within(agents).queryByRole('row', { name: /Triage stopped/ })).not.toBeInTheDocument();
   });
+  it('leaves a ticket\'s workflow step sessions out of the agents list, running or ended, unless a tab holds them', async () => {
+    const forTicket = { attemptId: 'at1', ticket: { id: 't1', key: 'PDT-1' } };
+    const step = (id: string, title: string, status: string) =>
+      sess(id, title, { kind: 'agent_tui', agent: 'claude', status, ...forTicket, persona: { id: 'co', name: 'Coder', version: 1, stepId: `st-${id}` } });
+    stubWorkspaces({
+      [`GET /api/projects/${project.id}/sessions`]: [
+        sess('a', 'Claude A', { kind: 'agent_tui', agent: 'claude', activity: 'working' }),
+        step('c1', 'Coder running', 'running'),
+        step('c2', 'Coder done', 'finished'),
+        step('c3', 'Coder in a tab', 'running'),
+        sess('u1', 'Started by hand', { kind: 'agent_tui', agent: 'claude', status: 'running', ...forTicket, persona: { id: 'co', name: 'Coder', version: 1, stepId: null } }),
+      ],
+      'GET /api/workspaces': [
+        { id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [tabOf('ta', 'wa', 'a', 0), tabOf('tc3', 'wa', 'c3', 1)] },
+      ],
+    });
+    renderWithQuery(<AppShell />);
+    const agents = await screen.findByRole('region', { name: 'Agents' });
+    await within(agents).findByRole('row', { name: /Started by hand/ });
+    expect(within(agents).getByRole('row', { name: /Coder in a tab/ })).toBeInTheDocument();
+    expect(within(agents).queryByRole('row', { name: /Coder running/ })).not.toBeInTheDocument();
+    expect(within(agents).queryByRole('row', { name: /Coder done/ })).not.toBeInTheDocument();
+  });
   it('shows each agent\'s branch, and its workspace only when it is not the current one', async () => {
     stubWorkspaces({
       [`GET /api/projects/${project.id}/worktrees`]: [{ id: 'wt1', projectId: project.id, branch: 'feat/login', path: '/r/.worktrees/feat-login', baseCommit: 'x', createdAt: 2 }],
