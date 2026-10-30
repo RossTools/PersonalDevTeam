@@ -822,7 +822,8 @@ naming them. Off, it registers nothing: its triggers (`GITHUB_EVENT_TYPES` in pd
 steps, the `issue_create` tool, its built-ins (PDT bug triage, Close GitHub issues on Done, Cut a release:
 `builtins::GITHUB_BUILTINS`, hidden like a turned-off integration's) and the issue-triage template (in the gallery
 faded); the GitHub forge is not in use (`AppState::forge_plugins`), so no project gets it from its origin, the
-Connect GitHub Inbox item goes and the 5-minute login check skips it. The login is kept.
+Connect GitHub Inbox item goes, the 5-minute login check skips it and the setup checklist's GitHub step counts as
+skipped. The login is kept. Updates and bug reports still call GitHub (they are not the forge).
 
 A plugin's page (`/settings/plugins/<id>`; a phone's drill-down): its icon, name, category, description, status and
 switch; a banner for Needs setup (Add a connection), Error (the error, with Test again, `POST

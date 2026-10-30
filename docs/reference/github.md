@@ -4,7 +4,9 @@ How PDT talks to GitHub (PDT-177): the GitHub forge over GitHub's REST and Graph
 login. Nothing runs the GitHub CLI (`gh`). Which projects use it, and what the SDLC does with it, is in
 [tickets.md](tickets.md) ("PR and CI tracking") and [review.md](review.md) ("Merge"). A host that doesn't use GitHub
 can turn the GitHub plugin off in Settings → Plugins → GitHub while no project's forge is GitHub (PDT-251,
-[workflows.md](workflows.md) "Plugins in Settings"): PDT then never calls GitHub.
+[workflows.md](workflows.md) "Plugins in Settings"): PDT then stops using GitHub as a forge (pull requests, CI, issues, its workflow steps and
+tools). Updates (pdt-update's release client) and bug reports (`report_bug`, filed on the release repository) still
+call GitHub: they are not the forge.
 
 ## The forge
 

@@ -32,7 +32,7 @@ function setupSteps(p: Plugin): string[] {
       'Connect GitHub above (sign in with a code), or paste a token.',
       'Projects whose origin is on GitHub then get their pull requests, CI and merges followed.',
       'Use its steps in a workflow, or let agents use its tools instead of the GitHub CLI.',
-      'Not using GitHub? Turn it off while no project’s forge is GitHub: PDT then never calls it.',
+      'Not using GitHub? Turn it off while no project’s forge is GitHub: PDT then stops using it for pull requests, CI and issues.',
     ];
   }
   return [
@@ -101,7 +101,7 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
     >
       {stuckOn(p) && <Alert tone="info">{stuckOn(p)}</Alert>}
       {p.status === 'off' && p.canTurnOff && (
-        <Alert tone="info">{p.label} is off: PDT doesn’t call it, and its steps, triggers, tools and built-in workflows are gone until you turn it on.</Alert>
+        <Alert tone="info">{p.label} is off: PDT doesn’t use it for pull requests, CI or issues, and its steps, triggers, tools and built-in workflows are gone until you turn it on. Updates and bug reports still go through GitHub.</Alert>
       )}
       {p.status === 'needs_setup' && (p.id === 'github' ? (
         <Alert tone="warning">PDT needs your GitHub login and has none: connect GitHub below.</Alert>

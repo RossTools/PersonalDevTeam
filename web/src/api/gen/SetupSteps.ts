@@ -7,7 +7,7 @@ export type SetupSteps = {
  */
 agents: StepState, 
 /**
- * Connected, or skipped.
+ * Connected, or skipped (also while the GitHub plugin is off).
  */
 github: StepState, 
 /**

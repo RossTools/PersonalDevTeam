@@ -716,10 +716,13 @@ impl PluginFacts {
     pub(crate) async fn load(st: &AppState) -> Result<Self, pdt_store::StoreError> {
         let mut projects = vec![];
         let mut forge_projects = vec![];
+        // Each project's forge costs a run config read and `git remote`: only worth it while a forge plugin is on.
+        let forges_on = !st.forge_plugins().is_empty();
         for p in st.store.list_projects().await? {
             let linked = st.store.get_project_settings(&p.id).await?.integrations.into_keys().collect();
             let plugin = PluginProject { id: p.id.clone(), key: p.key, name: p.name };
-            if let Some(f) = crate::forge::project_forge(st, &p.id, &p.repo_path).await
+            if forges_on
+                && let Some(f) = crate::forge::project_forge(st, &p.id, &p.repo_path).await
                 && st.forge_plugin(&f.kind).is_some()
             {
                 forge_projects.push((f.kind, plugin.clone()));

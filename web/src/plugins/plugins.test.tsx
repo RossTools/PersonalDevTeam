@@ -233,7 +233,7 @@ describe('plugins: a plugin’s page', () => {
     renderWithQuery(<PluginPage id="github" onBack={() => {}} />);
     await userEvent.click(await screen.findByRole('switch', { name: 'Use GitHub' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ enabled: enabledWith(catalog(), 'github', false), off: ['github'] }));
-    expect(await screen.findByText(/GitHub is off: PDT doesn’t call it/)).toBeInTheDocument();
+    expect(await screen.findByText(/GitHub is off: PDT doesn’t use it for pull requests, CI or issues/)).toBeInTheDocument();
   });
 });
 
