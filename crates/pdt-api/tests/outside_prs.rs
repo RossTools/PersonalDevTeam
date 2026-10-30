@@ -256,9 +256,11 @@ async fn say(env: &Env, session: &str, text: &str) -> String {
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
+        // The fake agent echoes PDT's stall nudge too (its first turn ends without an outcome), and on a slow machine
+        // that echo can come after `before`: it is not the answer to `text`.
         let said = agent_says(env, session).await;
-        if said.len() > before {
-            return said.last().unwrap().clone();
+        if let Some(reply) = said.iter().skip(before).find(|m| !m.starts_with("echo: [PDT]")) {
+            return reply.clone();
         }
         assert!(Instant::now() < deadline, "the agent said nothing to {text}");
         tokio::time::sleep(Duration::from_millis(50)).await;
