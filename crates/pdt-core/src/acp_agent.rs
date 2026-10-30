@@ -1,5 +1,5 @@
 //! ACP agents (PDT-234): agents that speak the Agent Client Protocol, other than Devin, as agent kinds `acp:<id>`.
-//! Each is a definition: a profile that ships with PDT (none yet; each harness's ticket adds its own) or one the user
+//! Each is a definition: a profile that ships with PDT (Cursor's; each harness's ticket adds its own) or one the user
 //! added in Settings → Agents (label, command, arguments, environment). They run only as conversations.
 
 use crate::conversation::PermissionMode;
@@ -57,8 +57,26 @@ pub struct AcpAgentDef {
     #[ts(skip)]
     #[serde(skip)]
     pub modes: Vec<(PermissionMode, String)>,
+    /// The agent's session mode PDT keeps the modes `modes` leaves out in, by answering its permission requests
+    /// (Cursor's `agent`). None: `modes` is all the modes the session offers.
+    #[ts(skip)]
+    #[serde(skip)]
+    pub base_mode: Option<String>,
+    /// What the agent adds to ACP (a built-in profile's; the user's agents are plain ACP).
+    #[ts(skip)]
+    #[serde(skip)]
+    pub flavor: AcpFlavor,
     /// It ships with PDT (it can't be edited or removed).
     pub builtin: bool,
+}
+
+/// What an ACP agent adds to plain ACP, for the conversation mapper (`crate::conversation::cursor`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AcpFlavor {
+    #[default]
+    Plain,
+    /// Cursor's `cursor-agent acp` (notes: docs/superpowers/notes/cursor-acp.md).
+    Cursor,
 }
 
 impl AcpAgentDef {
@@ -77,6 +95,8 @@ impl From<&AcpAgentConfig> for AcpAgentDef {
             args: c.args.clone(),
             env: c.env.clone(),
             modes: Vec::new(),
+            base_mode: None,
+            flavor: AcpFlavor::Plain,
             builtin: false,
         }
     }
@@ -84,7 +104,25 @@ impl From<&AcpAgentConfig> for AcpAgentDef {
 
 /// The ACP profiles that ship with PDT. Each harness's own ticket adds its profile here.
 pub fn builtin_profiles() -> Vec<AcpAgentDef> {
-    Vec::new()
+    vec![cursor()]
+}
+
+/// Cursor (`cursor-agent acp`, PDT-237). Its modes are `agent`, `plan` and `ask`, but its `ask` is read-only Q&A, not
+/// PDT's Ask: only Plan has a mode of its own, and PDT keeps Ask, Accept edits and Bypass itself with Cursor in
+/// `agent`.
+fn cursor() -> AcpAgentDef {
+    AcpAgentDef {
+        id: "cursor".into(),
+        label: "Cursor".into(),
+        icon: None,
+        command: "cursor-agent".into(),
+        args: vec!["acp".into()],
+        env: Vec::new(),
+        modes: vec![(PermissionMode::Plan, "plan".into())],
+        base_mode: Some("agent".into()),
+        flavor: AcpFlavor::Cursor,
+        builtin: true,
+    }
 }
 
 /// Every ACP agent: the built-in profiles, then the user's.
@@ -256,6 +294,20 @@ mod tests {
         assert_eq!(validate(&[a]).unwrap_err(), AcpAgentError::BadArgs);
         let many: Vec<_> = (0..=MAX_ACP_AGENTS).map(|n| agent(&format!("a{n}"))).collect();
         assert_eq!(validate(&many).unwrap_err(), AcpAgentError::TooMany);
+    }
+
+    #[test]
+    fn cursor_ships_built_in_with_only_its_plan_mode_mapped() {
+        let d = find(&[], "cursor").unwrap();
+        assert_eq!(
+            (d.label.as_str(), d.command.as_str(), d.args.as_slice()),
+            ("Cursor", "cursor-agent", &["acp".to_string()][..])
+        );
+        assert_eq!((d.builtin, d.flavor), (true, AcpFlavor::Cursor));
+        assert_eq!(d.kind().unwrap().as_str(), "acp:cursor");
+        assert_eq!(d.modes, vec![(PermissionMode::Plan, "plan".to_string())]);
+        assert_eq!(d.base_mode.as_deref(), Some("agent"));
+        assert_eq!(validate(&[agent("cursor")]).unwrap_err(), AcpAgentError::DuplicateId("cursor".into()));
     }
 
     #[test]

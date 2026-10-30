@@ -1,13 +1,14 @@
 //! ACP agents defined as data (PDT-234; pdt-core `acp_agent`): a profile that ships with PDT or one the user added
 //! in Settings → Agents, run through the generic ACP adapter (`super::acp`) as plain ACP. Their command, arguments
 //! and environment come from the definition; their modes from its mode map, else from the `availableModes` they
-//! advertise, else PDT keeps the mode itself. PDT's instructions go in front of a new session's first prompt.
+//! advertise, else PDT keeps the mode itself (also the modes a built-in profile's map leaves out). PDT's instructions
+//! go in front of a new session's first prompt. What a built-in profile's agent adds to ACP comes from its flavor
+//! (`pdt_core::conversation::cursor`).
 
 use super::acp::AcpProfile;
 use super::{AdapterError, AgentAdapter, EventSink, LiveConversation, OpenSpec};
-use pdt_core::acp_agent::AcpAgentDef;
+use pdt_core::acp_agent::{AcpAgentDef, AcpFlavor};
 use pdt_core::conversation::PermissionMode;
-use pdt_core::conversation::acp::PlainAcp;
 use pdt_core::session::AgentKind;
 use serde_json::Value;
 
@@ -19,7 +20,7 @@ pub struct DefinedProfile {
 }
 
 impl AcpProfile for DefinedProfile {
-    type Extensions = PlainAcp;
+    type Extensions = AcpFlavor;
 
     fn agent(&self) -> AgentKind {
         self.kind
@@ -29,8 +30,8 @@ impl AcpProfile for DefinedProfile {
         &self.def.label
     }
 
-    fn extensions(&self) -> PlainAcp {
-        PlainAcp
+    fn extensions(&self) -> AcpFlavor {
+        self.def.flavor
     }
 
     fn args(&self, _spec: &OpenSpec) -> Vec<String> {
@@ -51,6 +52,17 @@ impl AcpProfile for DefinedProfile {
 
     fn pdt_mode(&self, id: &str) -> Option<PermissionMode> {
         self.def.modes.iter().find(|(_, i)| i == id).map(|(m, _)| *m)
+    }
+
+    fn resume_fallback(&self, code: i64, message: &str) -> Option<String> {
+        self.def
+            .flavor
+            .session_missing(code, message)
+            .then(|| format!("{} had no saved conversation to resume, so this is a new one.", self.def.label))
+    }
+
+    fn base_mode(&self) -> Option<&str> {
+        self.def.base_mode.as_deref()
     }
 
     fn instructions_in_prompt(&self) -> bool {

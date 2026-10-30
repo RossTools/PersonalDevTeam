@@ -220,3 +220,66 @@ async fn pdt_keeps_a_mode_the_agent_has_none_for_and_hands_the_ones_it_has_back(
     assert_eq!(answer_text(&mut rx).await, "ran it (allow_once)");
     live.close().await;
 }
+
+/// A profile whose own mode map covers only Plan, with the mode PDT keeps the others in (Cursor's: `plan`, and
+/// `agent` for the rest; here `fake-agent --partial-modes`'s `plan` and `build`).
+struct Mapped;
+
+impl AcpProfile for Mapped {
+    type Extensions = PlainAcp;
+
+    fn agent(&self) -> AgentKind {
+        AgentKind::Devin
+    }
+
+    fn name(&self) -> &str {
+        "Mapped"
+    }
+
+    fn extensions(&self) -> PlainAcp {
+        PlainAcp
+    }
+
+    fn args(&self, _spec: &OpenSpec) -> Vec<String> {
+        vec!["--partial-modes".into(), "--plain".into(), "acp".into()]
+    }
+
+    fn modes(&self) -> Vec<PermissionMode> {
+        vec![PermissionMode::Plan]
+    }
+
+    fn mode_id(&self, mode: PermissionMode) -> Option<&str> {
+        (mode == PermissionMode::Plan).then_some("plan")
+    }
+
+    fn pdt_mode(&self, id: &str) -> Option<PermissionMode> {
+        (id == "plan").then_some(PermissionMode::Plan)
+    }
+
+    fn base_mode(&self) -> Option<&str> {
+        Some("build")
+    }
+}
+
+#[tokio::test]
+async fn a_profile_mapping_only_plan_offers_every_mode_and_keeps_the_rest_in_its_base_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tx, mut rx): (EventSink, _) = mpsc::unbounded_channel();
+    let live = acp::open(Mapped, spec(tmp.path(), PermissionMode::Plan), tx).await.unwrap();
+    let caps = until(&mut rx, |o| match o {
+        AdapterOutput::Capabilities(c) if !c.permission_modes.is_empty() => Some(c.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(caps.permission_modes, PermissionMode::ALL.to_vec(), "Plan is the profile's, the rest PDT's");
+    say(live.as_ref(), "who").await;
+    assert!(answer_text(&mut rx).await.contains("mode=plan"));
+
+    // Bypass has no mode of the agent's: PDT puts it in its base mode and allows without asking.
+    live.set(&SessionChange { permission_mode: Some(PermissionMode::Bypass), ..Default::default() }).await.unwrap();
+    say(live.as_ref(), "who").await;
+    assert!(answer_text(&mut rx).await.contains("mode=build"));
+    say(live.as_ref(), "run: ls").await;
+    assert_eq!(answer_text(&mut rx).await, "ran it (allow_once)");
+    live.close().await;
+}

@@ -107,10 +107,12 @@ async fn an_acp_agent_is_added_checked_and_refused_where_it_cannot_go() {
     let v = add_fake(&env).await;
     let (s, v2) = call(&env.app, "GET", "/api/agents/acp:fake/capabilities", None).await;
     assert_eq!((s, v2["permissionModes"].as_array().map(Vec::len)), (StatusCode::OK, Some(4)), "{v2}");
+    // The built-in profiles (Cursor), then the user's.
     let agents = v["acpAgents"].as_array().unwrap();
-    assert_eq!(agents.len(), 1, "{v}");
-    assert_eq!((agents[0]["agent"].as_str(), agents[0]["label"].as_str()), (Some("acp:fake"), Some("Fake ACP")));
-    assert!(agents[0]["found"].as_str().is_some(), "{v}");
+    assert_eq!(agents.len(), 2, "{v}");
+    assert_eq!((agents[0]["agent"].as_str(), agents[0]["builtin"].as_bool()), (Some("acp:cursor"), Some(true)));
+    assert_eq!((agents[1]["agent"].as_str(), agents[1]["label"].as_str()), (Some("acp:fake"), Some("Fake ACP")));
+    assert!(agents[1]["found"].as_str().is_some(), "{v}");
     let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"defaultAgent": "acp:fake"}))).await;
     assert_eq!((s, v["settings"]["defaultAgent"].as_str()), (StatusCode::OK, Some("acp:fake")), "{v}");
     let (_, checks) = call(&env.app, "POST", "/api/host/checks/refresh", None).await;

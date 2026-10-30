@@ -505,7 +505,7 @@ the id is 1–32 lowercase letters, digits and `-`, interned so `AgentKind` stay
 the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the built-in names are unchanged.
 
 - Definitions (pdt-core `acp_agent`): profiles that ship with PDT (`builtin_profiles()`: id, label, icon, command,
-  arguments, environment and a mode map; none yet, each harness's ticket adds its own) and the user's, in host
+  arguments, environment and a mode map; Cursor's, below; each harness's ticket adds its own) and the user's, in host
   settings `acpAgents` (`[{id, label, command, args, env: [{name, value}]}]`, the whole list per `PUT
   /api/host/settings`; up to 32). Settings → This host → Agents → ACP agents adds, edits and removes them ("Add ACP
   agent": name, command, arguments one per line, `NAME=value` lines; the id comes from the name and never changes).
@@ -528,9 +528,24 @@ the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the
   (pdt-agents `AcpLive::apply_mode`). Keeping a mode is answering `session/request_permission`
   (`acp_agent::enforced_answer`, by the tool call's ACP kind): Bypass allows everything; reads, searches and thinking
   are allowed in every mode; Accept edits allows edits, deletes and moves; Plan rejects those and commands; the rest
-  go to the user.
+  go to the user. A profile's map may cover only some modes and name a base mode (`AcpAgentDef::base_mode`,
+  `AcpProfile::base_mode`): the session still offers all four, and PDT keeps the rest with the agent in that mode.
+- A built-in profile's flavor (`AcpAgentDef::flavor`, pdt-core `AcpFlavor`) is what its agent adds to ACP, mapped in
+  pdt-core `conversation/<agent>.rs`: tool names, output in `rawOutput`, its own blocking requests as PDT questions
+  and plan approvals (`AcpExtensions::ext_request`/`ext_answer`), how it says a saved session is missing (resume
+  starts a new one with a notice). ACP errors show their `data.details` or `data.message`.
+- Cursor (`acp:cursor`, PDT-237; notes in docs/superpowers/notes/cursor-acp.md): `cursor-agent acp`, signed in with
+  `agent login` beforehand (PDT passes nothing). pdt-mcp goes in `mcpServers`, which Cursor honours (no
+  `.cursor/mcp.json`). Plan is Cursor's `plan`; Ask, Accept edits and Bypass are PDT's, with Cursor in `agent` (its
+  `ask` is read-only Q&A, not PDT's Ask). Cursor's "Allow always" writes its own allowlist, so PDT never offers it;
+  its pdt-mcp calls (`mcp__pdt__*`, from the call's `rawInput`) run without asking. `cursor/ask_question` is a PDT
+  question (own words skip it with them as the reason) and `cursor/create_plan` a plan approval: approving it puts the
+  session in the mode picked (Ask by default) and tells Cursor to build it. A command's output comes from its
+  `rawOutput`. The prompt Cursor echoes back as a `user_message_chunk` mid-turn is dropped. Cursor's Free plan answers
+  every prompt "Upgrade your plan to continue".
 - Ids are interned (at most 1024 from outside input; values read from the store are never refused,
   `AgentKind::parse_stored`), and `GET /api/agents/acp:<id>/capabilities` answers 404 for an id the host doesn't
   have before parsing it.
 - Tests: `fake-agent --plain acp` (with `--modes` it advertises its modes, with `--partial-modes` only `build` and
-  `plan`; `mcp: <tool> <json>` calls pdt-mcp after asking) in pdt-api `tests/acp_plain.rs` and `tests/acp_agents.rs`.
+  `plan`; `mcp: <tool> <json>` calls pdt-mcp after asking) in pdt-api `tests/acp_plain.rs` and `tests/acp_agents.rs`;
+  a flavor's recorded and source-built frames in pdt-core `tests/fixtures/<agent>/` (Cursor's in `cursor/`).

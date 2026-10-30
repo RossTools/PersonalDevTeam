@@ -65,9 +65,16 @@ pub trait AcpProfile: Send + Sync + 'static {
         None
     }
 
-    /// `session/load` failed with `code`: when that means the agent has no saved session to resume, a new one is
-    /// started instead and this notice says why.
-    fn resume_fallback(&self, _code: i64) -> Option<String> {
+    /// `session/load` failed with `code` and `message` (with the error's details): when that means the agent has no
+    /// saved session to resume, a new one is started instead and this notice says why.
+    fn resume_fallback(&self, _code: i64, _message: &str) -> Option<String> {
+        None
+    }
+
+    /// The agent's session mode PDT keeps the modes this profile's map leaves out in (Cursor's `agent`): the
+    /// session offers all of PDT's modes, and PDT answers permission requests for the rest (`AcpLive::apply_mode`).
+    /// None: the map covers every mode it offers.
+    fn base_mode(&self) -> Option<&str> {
         None
     }
 
@@ -101,10 +108,19 @@ struct RpcError {
 }
 
 impl RpcError {
+    /// The error's message, with its `data.details` or `data.message` when it gives some (Cursor's "Invalid params"
+    /// says what was wrong only there: `Session "…" not found`).
     fn of(v: &Value, ext: &impl AcpExtensions) -> Self {
+        let message = v.get("message").and_then(Value::as_str).unwrap_or("error");
+        let details = ["/data/details", "/data/message"]
+            .iter()
+            .find_map(|p| v.pointer(p).and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty()));
         RpcError {
             code: v.get("code").and_then(Value::as_i64).unwrap_or(0),
-            message: v.get("message").and_then(Value::as_str).unwrap_or("error").to_string(),
+            message: match details {
+                Some(d) => format!("{message}: {d}"),
+                None => message.to_string(),
+            },
             retryable: v.get("data").is_some_and(|d| ext.retryable(d)),
         }
     }
@@ -191,19 +207,24 @@ impl<P: AcpProfile> Shared<P> {
         })
     }
 
-    /// Learns the agent's modes from a `session/new` or `session/load` answer (a profile with none of its own). The
-    /// session offers all of PDT's modes: those the agent has no mode for, PDT keeps itself (`AcpLive::apply_mode`).
+    /// Learns the agent's modes from a `session/new` or `session/load` answer (a profile with none of its own, or
+    /// one that covers only some of PDT's). The session offers all of PDT's modes: those the agent has no mode for,
+    /// PDT keeps itself (`AcpLive::apply_mode`).
     fn settle_modes(&self, answer: &Value) {
-        if self.profile.modes().is_empty() {
+        let own = !self.profile.modes().is_empty();
+        if own && self.profile.base_mode().is_none() {
+            return;
+        }
+        if !own {
             let learned =
                 pdt_core::acp_agent::advertised_modes(answer.pointer("/modes/availableModes").unwrap_or(&Value::Null));
             *self.learned_modes.lock().unwrap_or_else(|e| e.into_inner()) = learned;
-            if let Some(current) = answer.pointer("/modes/currentModeId").and_then(Value::as_str) {
-                *self.mode.lock().unwrap_or_else(|e| e.into_inner()) = Some(current.to_string());
-                self.start_mode.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(|| current.to_string());
-            }
-            self.caps.lock().unwrap_or_else(|e| e.into_inner()).permission_modes = PermissionMode::ALL.to_vec();
         }
+        if let Some(current) = answer.pointer("/modes/currentModeId").and_then(Value::as_str) {
+            *self.mode.lock().unwrap_or_else(|e| e.into_inner()) = Some(current.to_string());
+            self.start_mode.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(|| current.to_string());
+        }
+        self.caps.lock().unwrap_or_else(|e| e.into_inner()).permission_modes = PermissionMode::ALL.to_vec();
     }
 
     fn publish_caps(&self) {
@@ -339,7 +360,9 @@ impl<P: AcpProfile> AcpLive<P> {
         let prefix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let mapper = AcpMapper::with_extensions(profile.extensions(), spec.cwd.to_string_lossy(), canonical, prefix);
-        let permission_modes = profile.modes();
+        // A profile that keeps the modes its map leaves out offers them all from the start.
+        let permission_modes =
+            if profile.base_mode().is_some() { PermissionMode::ALL.to_vec() } else { profile.modes() };
         let shared = Arc::new(Shared {
             profile,
             mapper: Mutex::new(mapper),
@@ -456,7 +479,7 @@ impl<P: AcpProfile> AcpLive<P> {
                     sh.settle_modes(&v);
                 }
                 Err(e) => {
-                    let Some(text) = sh.profile.resume_fallback(e.code) else { return Err(refused(e)) };
+                    let Some(text) = sh.profile.resume_fallback(e.code, &e.message) else { return Err(refused(e)) };
                     sh.session.lock().unwrap_or_else(|e| e.into_inner()).clear();
                     let _ = sh.sink.send(AdapterOutput::Event {
                         item_id: None,
@@ -494,8 +517,8 @@ impl<P: AcpProfile> AcpLive<P> {
     }
 
     /// Puts the session in `mode`: the agent's own mode for it when it has one; otherwise PDT keeps the mode by
-    /// answering its permission requests, with the agent back in the mode it started in when that is none of PDT's
-    /// (an agent left in its Plan would refuse what Bypass allows).
+    /// answering its permission requests, with the agent in the profile's base mode, else back in the mode it started
+    /// in when that is none of PDT's (an agent left in its Plan would refuse what Bypass allows).
     async fn apply_mode(&self, mode: PermissionMode) -> Result<(), AdapterError> {
         let sh = &self.shared;
         let current = sh.mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -507,7 +530,7 @@ impl<P: AcpProfile> AcpLive<P> {
             None => {
                 sh.mapper().enforce_mode(Some(mode));
                 let start = sh.start_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                start.filter(|id| sh.pdt_mode(id).is_none())
+                sh.profile.base_mode().map(String::from).or_else(|| start.filter(|id| sh.pdt_mode(id).is_none()))
             }
         };
         match want {
@@ -611,6 +634,14 @@ impl<P: AcpProfile> LiveConversation for AcpLive<P> {
         })?;
         self.shared.write(&json!({"jsonrpc": "2.0", "id": a.rpc_id, "result": a.result}))?;
         self.shared.emit(a.events, None);
+        if let Some(mode) = a.mode {
+            // An approved plan of the agent's own plan request: it leaves plan mode only when told to.
+            self.apply_mode(mode).await?;
+            let _ = self
+                .shared
+                .sink
+                .send(AdapterOutput::Info(AgentInfo { permission_mode: Some(mode), ..Default::default() }));
+        }
         if let Some(note) = a.follow_up {
             // ACP's reject has no message: the note goes to the agent as the next message (taken into the running
             // turn).
