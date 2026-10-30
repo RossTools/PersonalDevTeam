@@ -12,7 +12,9 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   the macOS bundle layout; crates/pdtd/src/config.rs).
 - Data lives in `<local data dir>/pdt` (stable) or `pdt-dev` (`dirs::data_local_dir()`: `~/Library/Application
   Support` on macOS, `%LOCALAPPDATA%` on Windows, `$XDG_DATA_HOME` or `~/.local/share` on Linux); a `pdtd.lock` file prevents two daemons sharing a dir
-  (pdt-host keeps its own `pdt-host.lock`).
+  (pdt-host keeps its own `pdt-host.lock`). The pdt-host holding the lock records its process id in `pdt-host.pid`;
+  a pdt-host that finds another one's id there steps down ("another pdt-host (process N) supervises this data folder
+  now; exiting"), leaving pdtd running for the other to adopt, so two supervisors never run side by side (PDT-213).
 - Logs: `<data dir>/logs/pdtd.<date>.log` (daily, 14 kept) and `pdt-host.log`; a spawned pdt-host's and pdtd's
   startup output goes to `<data dir>/logs/pdtd-launch.log`; on macOS launchd's output goes to `pdt-host.launchd.log`.
   pdtd logs to stderr too unless pdt-host started it (`PDT_SUPERVISED=1`), so `pdtd-launch.log` holds only what is
@@ -124,7 +126,8 @@ The desktop app is an optional tray view of the host (decision 16; no window, no
 per profile; a second launch just opens the UI). pdt-host, not the tray, keeps pdtd running.
 
 - At startup the tray starts pdt-host (`pdt-host run`: on Windows the `<data dir>/host` copy if present, else the one
-  beside its exe; on macOS always the bundle's) when /api/health doesn't answer, then opens the UI (not when pdt-host
+  beside its exe, which hands over to the `<data dir>/host` copy once there is one, so pdt-host never runs from the
+  folder an update replaces; on macOS always the bundle's) when /api/health doesn't answer, then opens the UI (not when pdt-host
   started it after an update). On a first launch of the installed stable app on macOS it registers the LaunchAgent
   itself (`pdt-host install`, desktop/src-tauri/src/daemon.rs).
 - Start at login (PDT-148): the stable app registers itself to start at login (with `--no-open`, so a login opens no
@@ -173,6 +176,12 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
   to pdt-host, which installs it, health-checks the new version and rolls back on failure. pdt-host copies the
   database to `update/db-before-update` before installing and restores it on rollback (an old version cannot open a
   database a newer one migrated).
+- Windows (PDT-213): before running the installer, pdt-host stops any pdtd or pdt-host still running from the install
+  folder (its own pdtd has stopped by then, so these are strays; each is logged by name and process id) and checks
+  that `pdtd.exe` can be replaced; if it cannot, the update is not installed and the error says `pdtd.exe` is in use.
+  After the installer, an installed `pdtd.exe` identical to the backed-up one means the installer did not replace it:
+  the update is rolled back with "the installer did not replace pdtd.exe", not a failed health check. A rollback
+  stops strays too before restoring the previous version.
 - A release that changes pdt-host has the old pdt-host start the new pdtd, then restarts pdt-host last; the new
   pdt-host adopts that pdtd. pdtd records its version and a fingerprint of the `PDT_*` variables it started with in
   `<data dir>/pdtd-env.json` (names only, values hashed); a pdt-host that adopts a running pdtd compares it with the
@@ -237,7 +246,8 @@ per profile; a second launch just opens the UI). pdt-host, not the tray, keeps p
 - Keychain calls time out after 5 s and the startup token read runs in the background, so a keychain prompt never
   blocks serving. Calls run side by side, each with its own limit (`secrets::TimeLimited`, PDT-215): only a call that
   really timed out and is still running makes further calls for the same secret fail at once (and, once 4 are stuck,
-  every call), so concurrent reads never fail for being busy. The error names the secret ("did not answer in time for
+  every call), so concurrent reads never fail for being busy. Only on macOS does the error add that macOS may be
+  waiting for someone at the Mac to allow access. The error names the secret ("did not answer in time for
   the update token", the GitHub login, the connection or secret by name). What pdtd read is kept in memory
   (`secrets::Cached`) and replaced or forgotten when pdtd sets or deletes it (a reconnect, a sign-out), so pollers
   (Settings, the update banner, connections' sensors) do not ask the keychain each time; a failed read is not kept.

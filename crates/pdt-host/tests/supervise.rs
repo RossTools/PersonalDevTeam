@@ -434,6 +434,32 @@ fn a_failed_installer_is_rolled_back() {
     assert!(read(&install.join("fake.json")).contains("0.1.5"), "the half-written file was restored");
 }
 
+/// PDT-213: an installer that reports success but leaves the old pdtd in place (a running copy kept it open) is rolled
+/// back, saying so, rather than failing a health check against the old version.
+#[test]
+fn an_installer_that_did_not_replace_pdtd_is_rolled_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
+    let setup = fake_installer(&tmp.path().join("release"), "noop");
+    let data = tmp.path().join("data");
+    let port = free_port();
+    let installer = NsisInstaller {
+        install_dir: install.clone(),
+        backup: tmp.path().join("backup"),
+        timeout: Duration::from_secs(30),
+    };
+    let cfg = config(&install, &data, port);
+    let _h = supervise_with(cfg.clone(), Box::new(installer));
+    wait_version(port, "0.1.5", Duration::from_secs(20));
+    request(&data, "0.1.6", &setup);
+    hand_over(port);
+    let r = read_result(&data);
+    assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
+    assert!(r.message.contains("the installer did not replace pdtd"), "{}", r.message);
+    assert!(!read(&log_path(&cfg)).contains("health check"), "{}", read(&log_path(&cfg)));
+    wait_version(port, "0.1.5", Duration::from_secs(30));
+}
+
 /// Review issue 3: an installer that never finishes is stopped and the update rolled back.
 #[test]
 fn a_hanging_installer_times_out_and_is_rolled_back() {
@@ -768,4 +794,31 @@ fn recovery_waits_for_a_pdtd_that_will_not_stop() {
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     wait_version(port, "0.1.5", Duration::from_secs(20));
+}
+
+/// PDT-213: once another pdt-host records itself as the data folder's supervisor, this one steps down and leaves pdtd
+/// running for it.
+#[test]
+fn steps_down_when_another_pdt_host_takes_over() {
+    let tmp = tempfile::tempdir().unwrap();
+    let install = fake_install(&tmp.path().join("app"), "0.1.5", "healthy");
+    let data = tmp.path().join("data");
+    let port = free_port();
+    let cfg = config(&install, &data, port);
+    let h = supervise(cfg.clone(), tmp.path().join("backup"));
+    wait_version(port, "0.1.5", Duration::from_secs(20));
+    std::fs::write(pdt_host::register::pid_path(&data), std::process::id().to_string()).unwrap();
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(h.is_running(), "its own record is not another pdt-host");
+    let other = std::process::id().wrapping_add(1);
+    std::fs::write(pdt_host::register::pid_path(&data), other.to_string()).unwrap();
+    let end = Instant::now() + Duration::from_secs(20);
+    while h.is_running() {
+        assert!(Instant::now() < end, "it kept supervising");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let log = read(&log_path(&cfg));
+    assert!(log.contains(&format!("another pdt-host (process {other}) supervises this data folder now")), "{log}");
+    assert_eq!(probe(port), Probe::Ours { version: "0.1.5".into() }, "pdtd was left running");
+    request_shutdown(port).unwrap();
 }

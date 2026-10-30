@@ -44,6 +44,9 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     if !cfg.dev {
         use_the_bundle(&cfg, &exe, &bundled, args);
     }
+    if let Some(copy) = pdt_host::register::copy_to_hand_over_to(pdt_host::register::Os::current(), &cfg, &exe) {
+        hand_over_to_copy(&cfg, &copy, args);
+    }
     let lock_path = cfg.data_dir.join(format!("{}.lock", pdt_core::brand::HOST_BIN));
     let Some(lock) = pdt_host::supervise::acquire_lock(&lock_path, LOCK_WAIT)? else {
         log(&cfg, "another pdt-host is already supervising this data folder; exiting");
@@ -55,6 +58,8 @@ fn run(args: &[String]) -> anyhow::Result<()> {
     };
     if let Err(e) = pdt_host::register::write_pid(&cfg.data_dir) {
         log(&cfg, &format!("could not record this process id: {e}"));
+        // An earlier pdt-host's id left there would make this one step down (supervise::superseded_by).
+        let _ = std::fs::remove_file(pdt_host::register::pid_path(&cfg.data_dir));
     }
     if let Err(e) = pdt_host::register::write_program(&cfg.data_dir, &exe) {
         log(&cfg, &format!("could not record this program's path: {e}"));
@@ -111,6 +116,19 @@ fn use_the_bundle(cfg: &HostConfig, exe: &std::path::Path, bundled: &std::path::
         cmd.arg("run").args(args.iter().filter(|a| *a != FROM_COPY)).arg(FROM_COPY);
         let e = cmd.exec();
         log(cfg, &format!("could not start {} ({e}); this copy keeps supervising", bundled.display()));
+    }
+}
+
+/// Windows: starts the data folder's copy with the same arguments and exits (see `copy_to_hand_over_to`). Returns
+/// (and this one goes on as usual) only when the copy cannot start.
+fn hand_over_to_copy(cfg: &HostConfig, copy: &std::path::Path, args: &[String]) {
+    log(cfg, &format!("started from the install folder; handing over to {}", copy.display()));
+    let mut cmd = std::process::Command::new(copy);
+    cmd.arg("run").args(args);
+    pdt_host::process::detached_no_window(&mut cmd);
+    match cmd.spawn() {
+        Ok(_) => std::process::exit(0),
+        Err(e) => log(cfg, &format!("could not start {} ({e}); running from the install folder", copy.display())),
     }
 }
 

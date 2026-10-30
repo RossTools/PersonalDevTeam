@@ -8,7 +8,7 @@
 //! (to `migrated by <version>`) and its `-wal` and `-shm` files.
 //! As an installer (started with `/S /D=<dir>`): "hang" never finishes; "hang_tree" also starts a child that never
 //! finishes (its pid in `grandchild.pid` beside the installer, written before the installer hangs); "fail_partial"
-//! breaks `<dir>/fake.json` and fails.
+//! breaks `<dir>/fake.json` and fails; anything else (e.g. "noop") succeeds without changing anything.
 use std::io::{Read, Write};
 
 fn installer(cfg: &serde_json::Value, args: &[String]) -> ! {

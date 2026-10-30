@@ -11,13 +11,24 @@ use std::time::{Duration, Instant};
 /// How long the installer (or extracting the archive) may take before it is stopped and the update rolled back.
 pub const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// One update: `backup`, then `install`; `rollback` after a failed `install` or health check.
+/// One update: `prepare`, `backup`, then `install` and `verify`; `rollback` after a failed `install`, `verify` or health
+/// check.
 pub trait Installer {
+    /// Makes sure the install can replace the files in place, before anything changes (pdtd has stopped by then).
+    /// Returns what it did, for the log; after an error the update is abandoned.
+    fn prepare(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
     /// Keeps what is needed to restore the current version. Changes nothing that runs: after an error nothing has
     /// changed and the update is abandoned.
     fn backup(&self) -> Result<(), String>;
     /// Installs `asset`. After an error the install may be partial; the caller rolls back.
     fn install(&self, asset: &Path) -> Result<(), String>;
+    /// Checks that `install` really put a new version in place (it is rolled back otherwise). Only called when the
+    /// update changes the version.
+    fn verify(&self) -> Result<(), String> {
+        Ok(())
+    }
     /// Restores the version kept by `backup`. Succeeds when there is nothing to undo.
     fn rollback(&self) -> Result<(), String>;
     /// Where the previous version is kept, if anywhere.
@@ -157,7 +168,29 @@ pub struct NsisInstaller {
     pub timeout: Duration,
 }
 
+impl NsisInstaller {
+    fn daemon(&self) -> PathBuf {
+        daemon_in(&self.install_dir)
+    }
+}
+
+/// pdtd in an install folder (or its backup).
+fn daemon_in(dir: &Path) -> PathBuf {
+    dir.join(format!("{}{}", pdt_core::brand::DAEMON_BIN, std::env::consts::EXE_SUFFIX))
+}
+
 impl Installer for NsisInstaller {
+    /// Stops any pdtd or pdt-host still running from the install folder (PDT-213: a second pdt-host's pdtd kept
+    /// pdtd.exe open, so the silent installer "succeeded" without replacing it), then checks pdtd can be replaced.
+    fn prepare(&self) -> Result<Vec<String>, String> {
+        let stopped = stop_strays(&self.install_dir);
+        let notes = stopped.iter().map(|p| format!("stopped {p}, which ran from the install folder")).collect();
+        if let Some(e) = wait_replaceable(&self.daemon(), Duration::from_secs(10)) {
+            let stopped = if stopped.is_empty() { String::new() } else { format!(" (stopped {})", stopped.join(", ")) };
+            return Err(format!("{} is in use by another program{stopped}: {e}", self.daemon().display()));
+        }
+        Ok(notes)
+    }
     fn backup(&self) -> Result<(), String> {
         replace_dir(&self.install_dir, &self.backup).map_err(|e| format!("backing up the install folder: {e}"))
     }
@@ -167,13 +200,80 @@ impl Installer for NsisInstaller {
             .map_err(|e| format!("running the installer: {e}"))?;
         if status.success() { Ok(()) } else { Err(format!("the installer failed ({status})")) }
     }
+    fn verify(&self) -> Result<(), String> {
+        unchanged_daemon(&self.install_dir, &self.backup)
+    }
     fn rollback(&self) -> Result<(), String> {
         let _tray = TrayPause::stop(&self.install_dir);
+        // What kept the new version from installing would keep the old one from coming back too.
+        stop_strays(&self.install_dir);
         replace_dir(&self.backup, &self.install_dir).map_err(|e| format!("restoring the previous version: {e}"))
     }
     fn backup_path(&self) -> Option<PathBuf> {
         Some(self.backup.clone())
     }
+}
+
+/// An error when the installed pdtd is byte for byte the one backed up: the installer reported success without
+/// replacing it (a running copy kept it open, PDT-213).
+pub fn unchanged_daemon(install_dir: &Path, backup: &Path) -> Result<(), String> {
+    let (now, before) = (daemon_in(install_dir), daemon_in(backup));
+    match (crate::selfupdate::digest(&now), crate::selfupdate::digest(&before)) {
+        (Some(a), Some(b)) if a == b => Err(format!(
+            "the installer did not replace {} (it is still the previous version)",
+            now.file_name().unwrap_or_default().to_string_lossy()
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Waits (up to `within`) until `exe` can be opened for writing, as the installer must: `None` once it can (or when
+/// it does not exist), else the last error. Windows refuses while a process runs from it; elsewhere a running program
+/// never blocks its replacement, so this is not checked.
+fn wait_replaceable(exe: &Path, within: Duration) -> Option<String> {
+    if !cfg!(windows) || !exe.is_file() {
+        return None;
+    }
+    let end = Instant::now() + within;
+    loop {
+        match std::fs::File::options().write(true).open(exe) {
+            Ok(_) => return None,
+            Err(e) if Instant::now() >= end => return Some(e.to_string()),
+            Err(_) => std::thread::sleep(Duration::from_millis(200)),
+        }
+    }
+}
+
+/// The PowerShell that stops every pdtd and pdt-host running from `place` except the process `own_pid` (pdt-host
+/// itself, when it runs from there), printing `<name> (process <id>)` for each.
+fn stray_stop_script(place: &Path, own_pid: u32) -> String {
+    let (daemon, host) = (pdt_core::brand::DAEMON_BIN, pdt_core::brand::HOST_BIN);
+    format!(
+        "$p = Get-Process | Where-Object {{ $_.Id -ne {own_pid} -and $_.Path -and $_.Path.StartsWith('{}\\', [StringComparison]::OrdinalIgnoreCase) -and $_.ProcessName -in @('{daemon}', '{host}') }}; foreach ($x in $p) {{ \"$($x.ProcessName) (process $($x.Id))\" }}; if ($p) {{ $p | Stop-Process -Force }}",
+        place.display().to_string().replace('\'', "''")
+    )
+}
+
+/// Windows: stops every pdtd and pdt-host still running from the install folder other than this process (by the time
+/// an update installs, this pdt-host's own pdtd has stopped, so any left is a stray that would keep the installer from
+/// replacing it). Returns the ones it stopped. Elsewhere nothing blocks replacing a running program: does nothing.
+fn stop_strays(place: &Path) -> Vec<String> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    let script = stray_stop_script(place, std::process::id());
+    no_window(Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]))
+        .stdin(Stdio::null())
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The bundle that contains `exe_dir` (`…/X.app/Contents/MacOS` → `…/X.app`).
@@ -545,6 +645,30 @@ mod tests {
         assert!(s.contains("@('pdtd', 'pdt-host', 'uninstall')"), "{s}");
         let ps = "  10 /A/P.app/Contents/MacOS/Personal Dev Team --flag\n  11 /A/P.app/Contents/MacOS/pdt-host run\n  12 /A/P.app/Contents/MacOS/pdtd\n  13 /A/P.app/Contents/MacOS/Personal Dev Team\n  14 /other/thing\n";
         assert_eq!(tray_pids(ps, Path::new("/A/P.app"), 13), [10]);
+    }
+
+    #[test]
+    fn the_stray_stop_takes_only_pdtd_and_pdt_host_from_the_install_folder() {
+        let s = stray_stop_script(Path::new(r"C:\Apps\P's"), 4242);
+        assert!(s.contains("$_.Id -ne 4242"), "{s}");
+        assert!(s.contains(r"StartsWith('C:\Apps\P''s\'"), "{s}");
+        assert!(s.contains("-in @('pdtd', 'pdt-host')"), "{s}");
+        assert!(s.contains("(process $($x.Id))"), "{s}");
+    }
+
+    #[test]
+    fn an_installer_that_left_pdtd_in_place_is_caught() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (install, backup) = (tmp.path().join("app"), tmp.path().join("previous"));
+        for d in [&install, &backup] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(daemon_in(d), "v1").unwrap();
+        }
+        let err = unchanged_daemon(&install, &backup).unwrap_err();
+        assert!(err.contains("did not replace pdtd") && err.contains("previous version"), "{err}");
+        std::fs::write(daemon_in(&install), "v2").unwrap();
+        assert_eq!(unchanged_daemon(&install, &backup), Ok(()));
+        assert_eq!(unchanged_daemon(&install, &tmp.path().join("none")), Ok(()), "no backup: nothing to compare");
     }
 
     #[test]

@@ -268,9 +268,17 @@ impl SecretStore for FileSecretStore {
 /// (`what`, e.g. [`secret_label`]). Only a call that really timed out, or one refused because an earlier call for the
 /// same secret is still stuck, says this: a keychain that is merely busy with other calls never does.
 pub fn stalled(what: &str) -> SecretError {
-    SecretError(format!(
-        "it did not answer in time for {what} (macOS may be waiting for someone at this Mac to allow access to it)"
-    ))
+    SecretError(format!("it did not answer in time for {what}{}", waiting_hint("it")))
+}
+
+/// Why a keychain call may hang, after its message: macOS asks someone at the Mac to allow access. Other keychains
+/// never ask, so there is nothing to suggest (PDT-213: Windows said the same).
+fn waiting_hint(what: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!(" (macOS may be waiting for someone at this Mac to allow access to {what})")
+    } else {
+        String::new()
+    }
 }
 
 /// How [`TimeLimited`] names the secret in `account` in its errors: the update token, the GitHub login, or (callers
@@ -339,8 +347,8 @@ impl TimeLimited {
             let n: usize = stuck.values().sum();
             if n >= MAX_STUCK {
                 return Err(SecretError(format!(
-                    "{n} earlier calls have not answered yet (macOS may be waiting for someone at this Mac to allow \
-                     access to a secret)"
+                    "{n} earlier calls have not answered yet{}",
+                    waiting_hint("a secret")
                 )));
             }
         }
@@ -579,6 +587,12 @@ mod tests {
         assert_eq!(secret_label("forge-logins:0123456789ab"), "the forge logins");
         let e = stalled(secret_label("connection:1")).naming("connection:1", "the secret of the connection jira");
         assert!(e.0.contains("did not answer in time for the secret of the connection jira"), "{}", e.0);
+        assert_eq!(
+            e.0.contains("macOS"),
+            cfg!(target_os = "macos"),
+            "only macOS asks someone to allow access: {}",
+            e.0
+        );
     }
 
     /// Counts the calls that reach it.
