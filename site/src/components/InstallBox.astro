@@ -37,7 +37,7 @@ const commands = OSES.map((os) => {
 		))}
 	</div>
 	{OSES.map((os, i) => (
-		<div class={i === 0 ? 'install-panel default' : 'install-panel'} id={`${id}-${os.id}`} role="tabpanel" data-os={os.id}>
+		<div class={i === 0 ? 'install-panel install-default' : 'install-panel'} id={`${id}-${os.id}`} role="tabpanel" data-os={os.id}>
 			<div class="install-command">
 				<code>{commands[i].head}<span class="install-pipe">{commands[i].pipe}</span></code>
 				<button type="button" class="install-copy" hidden aria-label={`Copy the ${os.label} command`}>Copy</button>
@@ -61,7 +61,7 @@ const commands = OSES.map((os) => {
 			tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.os === id)));
 			panels.forEach((p) => (p.hidden = p.dataset.os !== id));
 		};
-		box.classList.add('ready');
+		box.classList.add('install-ready');
 		tabs.forEach((t) =>
 			t.addEventListener('click', (e) => {
 				e.preventDefault();

@@ -121,12 +121,12 @@ ul.checks b { color: var(--fg); font-weight: 500; }
 .install-tab { padding: 8px 16px; font-size: 14px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .install-tab:hover { color: var(--fg); }
 .install-tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent-hi); }
-.install:not(.ready) .install-tab[aria-selected="true"] { color: var(--muted); border-bottom-color: transparent; }
+.install:not(.install-ready) .install-tab[aria-selected="true"] { color: var(--muted); border-bottom-color: transparent; }
 .install-tab:focus-visible, .install-copy:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: -2px; }
 .install-panel { grid-area: 2 / 1; visibility: hidden; padding: 14px 16px; }
-.install-panel.default, .install-panel:target, .install.ready .install-panel { visibility: visible; }
-.install:has(.install-panel:target):not(.ready) .install-panel.default:not(:target) { visibility: hidden; }
-.install.ready .install-panel[hidden] { display: block; visibility: hidden; }
+.install-panel.install-default, .install-panel:target, .install.install-ready .install-panel { visibility: visible; }
+.install:has(.install-panel:target):not(.install-ready) .install-panel.install-default:not(:target) { visibility: hidden; }
+.install.install-ready .install-panel[hidden] { display: block; visibility: hidden; }
 .install-command { display: flex; gap: 10px; align-items: center; background: #0a0b0d; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
 .install-command code { flex: 1; font: 14px var(--mono); color: var(--fg); overflow-wrap: anywhere; }
 .install-pipe { white-space: nowrap; }
