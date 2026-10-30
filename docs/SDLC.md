@@ -199,6 +199,10 @@ and says so in the Inbox: that one merges by itself once its checks pass, or nee
 `channel: nightly` it runs the workflow's nightly half (below) now: no release PR, and the Inbox says when the
 pre-release is published.
 
+Agents start releases only this way, never with `gh workflow run`: the PM sees a project's release workflow in its
+briefing only when one is enabled for it, and PDT's prompts carry nothing about PDT's own release process (the
+repository's AGENTS.md does).
+
 ### Moving the release repository
 
 Hosts reach the release repository by its numeric id (`RELEASE_REPO_ID` in `crates/pdt-core/src/brand.rs`), which

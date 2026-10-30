@@ -569,3 +569,83 @@ fn without_discord_and_scryer_the_pm_has_none_of_them() {
     assert_eq!(registry().connection_label("scryer"), "Scryer");
     assert!(text.contains("`create_ticket`"), "PDT's own tools stay");
 }
+
+/// What PDT tells every user's agents is about their project, not PDT's own development (PDT-296): no prompt, tool
+/// description or served guide names PDT's changelog, release workflow, nightlies, repository or tickets.
+#[test]
+fn prompts_and_guides_carry_no_pdt_development_assumptions() {
+    use pdt_core::agent_context::{SessionContext, TicketWork, session_instructions};
+    use pdt_core::workflow::events as ev;
+    const BANNED: &[&str] =
+        &[".changes/", "changelog.sh", "no-changelog", "release.yml", "nightly", "RossTools", "PersonalDevTeam"];
+    // (where, what is allowed there, why). None so far.
+    const ALLOWED: &[(&str, &str, &str)] = &[];
+    fn pdt_key(text: &str) -> Option<String> {
+        text.match_indices("PDT-").find_map(|(i, _)| {
+            let digits: String = text[i + 4..].chars().take_while(char::is_ascii_digit).collect();
+            (!digits.is_empty()).then(|| format!("PDT-{digits}"))
+        })
+    }
+
+    let r = registry();
+    let mut texts: Vec<(String, String)> = vec![];
+    for p in pdt_core::persona::BUILTIN_PERSONAS {
+        texts.push((format!("persona {}", p.id), p.instructions.to_string()));
+    }
+    texts.push(("the PM's instructions".into(), pm_text(&r)));
+    for t in r.tool_infos() {
+        texts.push((format!("tool {}", t.name), serde_json::to_string(&t).unwrap()));
+    }
+    for name in pdt_api::guides::guide_names() {
+        texts.push((format!("guide {name}"), pdt_api::guides::guide_text(name).unwrap().to_string()));
+    }
+    let tools: Vec<String> = r.tool_infos().into_iter().map(|t| t.name).collect();
+    let notes = pdt_github::agent_notes();
+    let news = [
+        ev::CI_RUN_FAILED,
+        ev::CI_RUN_PASSED,
+        ev::PR_CONFLICT,
+        ev::PR_QUEUE_LEFT,
+        ev::PR_BEHIND,
+        ev::PR_MERGED,
+        ev::ATTEMPT_ABANDONED,
+        ev::TICKET_STAGE_CHANGED,
+        ev::TICKET_COMMENTED,
+        ev::TICKET_OVERLAP_FOUND,
+    ];
+    let ctx = SessionContext {
+        port: 7421,
+        session_id: "s1",
+        project_id: "p1",
+        project_name: "Work App",
+        project_key: "WA",
+        checkout: "/r/.worktrees/x",
+        branch: Some("wa-7-x"),
+        repo_path: "/r",
+        base_branch: "main",
+        ticket: Some(TicketWork {
+            ticket_id: "t7",
+            key: "WA-7",
+            branch: "wa-7-x",
+            base: "main",
+            news: news.into_iter().collect(),
+        }),
+        personal: false,
+        tools: &tools,
+        step: None,
+        ci_branch: Some("wa-7-x"),
+        forge: Some(&notes),
+    };
+    texts.push(("agent context".into(), session_instructions(&ctx, None)));
+
+    let mut found = vec![];
+    for (place, text) in &texts {
+        let hits = BANNED.iter().filter(|b| text.contains(**b)).map(|b| b.to_string()).chain(pdt_key(text));
+        for hit in hits {
+            if !ALLOWED.iter().any(|(w, what, _)| w == place && *what == hit) {
+                found.push(format!("{place}: {hit}"));
+            }
+        }
+    }
+    assert!(found.is_empty(), "PDT's own development in what users' agents see:\n{}", found.join("\n"));
+}

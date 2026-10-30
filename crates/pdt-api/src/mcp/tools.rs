@@ -44,7 +44,7 @@ struct NoArgs {}
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GetTicket {
-    /// A ticket key (`PDT-12`) or id. Leave it out for this session's ticket.
+    /// A ticket key (`ABC-12`) or id. Leave it out for this session's ticket.
     #[serde(default)]
     ticket: Option<String>,
 }
@@ -124,13 +124,12 @@ struct WorkflowGet {
 struct WorkflowRun {
     #[serde(default)]
     id: Option<String>,
-    /// The workflow's name (`Cut a release`), when you don't know its id.
+    /// The workflow's name, when you don't know its id.
     #[serde(default)]
     name: Option<String>,
     /// The project it runs in (its key or id): its `projectId` in the run's input.
     project: String,
-    /// The run's input, read as `{{trigger.x}}` (Cut a release: `bump` patch, minor or major, or `version` X.Y.Z;
-    /// `channel` stable or nightly).
+    /// The run's input, read as `{{trigger.x}}` (the workflow's description says what it reads).
     #[serde(default)]
     input: serde_json::Map<String, Value>,
 }
@@ -174,7 +173,7 @@ struct GetOverview {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SearchTickets {
-    /// Words (prefix-matched in titles and descriptions) or a key (`PDT-12`).
+    /// Words (prefix-matched in titles and descriptions) or a key (`ABC-12`).
     #[serde(default)]
     query: Option<String>,
     /// A project's key or id; every project when left out.
@@ -304,7 +303,7 @@ struct CreateTicket {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EditTicket {
-    /// The ticket's key (`PDT-12`) or id. Outside the PM, a ticket other than the session's own needs its exact key.
+    /// The ticket's key (`ABC-12`) or id. Outside the PM, a ticket other than the session's own needs its exact key.
     ticket: String,
     #[serde(default)]
     title: Option<String>,
@@ -328,7 +327,7 @@ struct EditTicket {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StopTicket {
-    /// The ticket's key (`PDT-12`) or id.
+    /// The ticket's key (`ABC-12`) or id.
     ticket: String,
     /// Where it goes: draft, ready or todo. Left out, an in-progress ticket goes to todo.
     #[serde(default)]
@@ -356,7 +355,7 @@ enum LinkAs {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LinkTickets {
-    /// The ticket's key (`PDT-12`) or id.
+    /// The ticket's key (`ABC-12`) or id.
     ticket: String,
     /// blocks, blockedBy or relates: how `ticket` stands to `other`.
     kind: LinkAs,
@@ -512,8 +511,8 @@ pub(crate) fn defs() -> Vec<Tool> {
             decl: ToolDecl::new("workflow_run", "Run an enabled workflow now").asks().pm(),
             title: "Run a workflow",
             description: "Runs an enabled workflow that has a Run now trigger, in a project, with an input its steps \
-                          read as {{trigger.x}}: e.g. the built-in Cut a release with {\"bump\": \"minor\"}, only when \
-                          the user asks for a release. The user confirms each call. Returns the run's id \
+                          read as {{trigger.x}}: e.g. {\"environment\": \"staging\"} for a deploy workflow (its \
+                          description says what input it reads). The user confirms each call. Returns the run's id \
                           (list_workflow_runs follows it).",
             schema: schema::<WorkflowRun>,
         },
@@ -613,7 +612,7 @@ pub(crate) fn defs() -> Vec<Tool> {
             title: "Edit a ticket",
             description: "Changes a ticket's title, description, stage, priority, labels or parent, recorded as the \
                           agent's. Outside the PM, a ticket other than the session's own needs its exact key \
-                          (`PDT-12`), and one in progress or done keeps its title and description unless this \
+                          (`ABC-12`), and one in progress or done keeps its title and description unless this \
                           session created it: comment on it instead. The user confirms each call unless the project \
                           lets you act.",
             schema: schema::<EditTicket>,
@@ -1429,7 +1428,7 @@ fn clip(t: &str) -> String {
     format!("{}…", &t[..end])
 }
 
-/// A ticket's id from its id or key (`PDT-12`; a bare number is in `project`).
+/// A ticket's id from its id or key (`ABC-12`; a bare number is in `project`).
 pub(crate) async fn resolve_ticket(st: &AppState, given: &str, project: Option<&str>) -> Result<String, String> {
     let g = given.trim();
     if st.store.get_ticket(g).await.map_err(store)?.is_some() {
@@ -1446,7 +1445,9 @@ pub(crate) async fn resolve_ticket(st: &AppState, given: &str, project: Option<&
             .find(|p| p.key.eq_ignore_ascii_case(key))
             .map(|p| p.id)
             .ok_or_else(|| format!("no project has the key {key}"))?,
-        None => project.ok_or_else(|| format!("{g} needs its project's key, such as PDT-{}", k.number))?.to_string(),
+        None => project
+            .ok_or_else(|| format!("{g} needs its project's key in front, such as ABC-{}", k.number))?
+            .to_string(),
     };
     st.store
         .ticket_id_by_number(&project, k.number)
@@ -1463,7 +1464,7 @@ async fn ticket_for(cx: &Cx<'_>, given: Option<&str>) -> Result<String, String> 
     let st = cx.st;
     session_ticket(st, cx.session)
         .await
-        .ok_or_else(|| "this session works on no ticket; name one (`ticket`: a key such as PDT-12)".to_string())
+        .ok_or_else(|| "this session works on no ticket; name one (`ticket`: a key such as ABC-12)".to_string())
 }
 
 /// Who a session's ticket changes and comments are by (PDT-163): the agent, its persona and the ticket it works on.
