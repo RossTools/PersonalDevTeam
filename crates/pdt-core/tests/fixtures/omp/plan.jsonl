@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-1","update":{"sessionUpdate":"current_mode_update","currentModeId":"plan"}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-1","update":{"sessionUpdate":"tool_call","toolCallId":"call_9","name":"write","title":"xd://propose","kind":"edit","status":"pending","rawInput":{"path":"xd://propose","content":"Rename a.txt"}}}}
+{"jsonrpc":"2.0","id":4,"method":"elicitation/create","params":{"mode":"form","sessionId":"omp-1","message":"Approve plan \"Rename a.txt\" and start implementation?\n\n# Rename a.txt\n- Move a.txt to b.txt","requestedSchema":{"type":"object","properties":{"value":{"type":"string","enum":["Approve and execute","Refine plan"]}},"required":["value"]}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-1","update":{"sessionUpdate":"current_mode_update","currentModeId":"default"}}}
+{"jsonrpc":"2.0","id":5,"result":{"stopReason":"end_turn"}}

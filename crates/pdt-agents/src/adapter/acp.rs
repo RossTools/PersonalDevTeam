@@ -65,9 +65,9 @@ pub trait AcpProfile: Send + Sync + 'static {
         None
     }
 
-    /// `session/load` failed with `code`: when that means the agent has no saved session to resume, a new one is
+    /// `session/load` failed with `code` and `message` (with the error's details): when that means the agent has no saved session to resume, a new one is
     /// started instead and this notice says why.
-    fn resume_fallback(&self, _code: i64) -> Option<String> {
+    fn resume_fallback(&self, _code: i64, _message: &str) -> Option<String> {
         None
     }
 
@@ -101,10 +101,17 @@ struct RpcError {
 }
 
 impl RpcError {
+    /// The error's message, with its `data.details` when it gives some (OhMyPi's "Internal error" says what went
+    /// wrong only there: "No model selected").
     fn of(v: &Value, ext: &impl AcpExtensions) -> Self {
+        let message = v.get("message").and_then(Value::as_str).unwrap_or("error");
+        let details = v.pointer("/data/details").and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty());
         RpcError {
             code: v.get("code").and_then(Value::as_i64).unwrap_or(0),
-            message: v.get("message").and_then(Value::as_str).unwrap_or("error").to_string(),
+            message: match details {
+                Some(d) => format!("{message}: {d}"),
+                None => message.to_string(),
+            },
             retryable: v.get("data").is_some_and(|d| ext.retryable(d)),
         }
     }
@@ -456,7 +463,7 @@ impl<P: AcpProfile> AcpLive<P> {
                     sh.settle_modes(&v);
                 }
                 Err(e) => {
-                    let Some(text) = sh.profile.resume_fallback(e.code) else { return Err(refused(e)) };
+                    let Some(text) = sh.profile.resume_fallback(e.code, &e.message) else { return Err(refused(e)) };
                     sh.session.lock().unwrap_or_else(|e| e.into_inner()).clear();
                     let _ = sh.sink.send(AdapterOutput::Event {
                         item_id: None,

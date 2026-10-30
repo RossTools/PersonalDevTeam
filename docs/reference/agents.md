@@ -498,7 +498,8 @@ the id is 1–32 lowercase letters, digits and `-`, interned so `AgentKind` stay
 the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the built-in names are unchanged.
 
 - Definitions (pdt-core `acp_agent`): profiles that ship with PDT (`builtin_profiles()`: id, label, icon, command,
-  arguments, environment and a mode map; none yet, each harness's ticket adds its own) and the user's, in host
+  arguments, environment, a mode map and a flavor, `AcpFlavor`, for what the agent adds to ACP; OhMyPi's so far, each
+  harness's ticket adds its own; their ids can't be taken) and the user's, in host
   settings `acpAgents` (`[{id, label, command, args, env: [{name, value}]}]`, the whole list per `PUT
   /api/host/settings`; up to 32). Settings → This host → Agents → ACP agents adds, edits and removes them ("Add ACP
   agent": name, command, arguments one per line, `NAME=value` lines; the id comes from the name and never changes).
@@ -512,7 +513,8 @@ the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the
   command (`~` expanded, looked up on the login PATH) with its arguments and environment in the session's folder,
   pdt-mcp in `mcpServers`, and PDT's instructions as a text block in front of a new session's first prompt (logged
   without it). Resume is `session/load` when the agent advertises `loadSession`; otherwise a new session starts with a
-  notice.
+  notice, as it does when the agent's `session/load` says it has no such session (`-32002`, or the flavor's own way
+  of saying it, `AcpFlavor::session_missing`). An error's `data.details` is added to its message.
 - Modes: a profile's mode map, else the `availableModes` the agent advertises in `session/new`/`session/load`
   (matched to PDT's by id or name: `default`/`ask`, `acceptEdits`/`code`, `plan`, `bypass`/`yolo`, …,
   `acp_agent::advertised_modes`), set with `session/set_mode`. Every PDT mode is offered: one the agent has no mode
@@ -527,3 +529,20 @@ the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the
   have before parsing it.
 - Tests: `fake-agent --plain acp` (with `--modes` it advertises its modes, with `--partial-modes` only `build` and
   `plan`; `mcp: <tool> <json>` calls pdt-mcp after asking) in pdt-api `tests/acp_plain.rs` and `tests/acp_agents.rs`.
+
+### OhMyPi (PDT-238)
+
+The built-in profile `acp:omp` ("OhMyPi") runs `omp acp` (notes: docs/superpowers/notes/omp-acp.md); the user installs
+`omp` and sets up its model in omp itself (with none, a prompt fails with "No model selected", shown in the turn's
+error).
+- Modes: it advertises `default` (PDT's Ask) and, while omp's plan mode is on, `plan` (Plan); PDT keeps Accept edits
+  and Bypass itself, with omp in `default`. omp asks (`session/request_permission`) only before `bash`, `delete`,
+  `move` and an edit that deletes or moves a file, so in Ask mode its other edits and writes run without asking.
+- pdt-mcp: omp connects to the `mcpServers` PDT passes in `session/new` and `session/load` (it doesn't ask before MCP
+  tools). Resume is `session/load` (it replays the conversation; omp saves a session at `session/new`).
+- Its flavor (pdt-core `conversation/omp.rs`): a tool call's `name` is its tool (`bash`, `edit`); its `ask` tool's
+  questions arrive as a form elicitation where each question is a field's `title` (its header the `description`) with
+  a `<field>__other` field beside it, which takes an answer in the user's own words (`AcpExtensions::question_in_title`,
+  `other_field`). Plan mode's approval is a one-question form ("Approve and execute" / "Refine plan").
+- Tests: pdt-core `conversation::omp` on fixtures in `tests/fixtures/omp/` (`start.jsonl` recorded from omp 18.14.0;
+  `turn.jsonl` and `plan.jsonl` in its frames, from its ACP source).
