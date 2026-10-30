@@ -11,7 +11,7 @@ call GitHub: they are not the forge.
 ## The forge
 
 - `crates/pdt-github`: `GithubApi` implements `pdt_forge::Forge` (every capability). It sends one request at a time
-  through a `Transport`: pdtd's `ReqwestTransport` (reqwest on pdtd's runtime; blocking, so callers use
+  through a `Transport` (`pdt_forge::transport`, shared with the GitLab forge, [gitlab.md](gitlab.md)): pdtd's `ReqwestTransport` (reqwest on pdtd's runtime; blocking, so callers use
   `spawn_blocking`), `transport::Offline` (no network: `AppState::new`'s forge, `PDT_GITHUB_OFFLINE=1`) or the tests'
   `transport::testing::Recorded` (recorded answers matched by method and URL start; every request kept).
 - Pull requests, merge settings and merges go through GraphQL (`/graphql`, Enterprise `/api/graphql`); Actions runs,

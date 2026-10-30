@@ -220,10 +220,11 @@ pub fn file_at(worktree: &Path, rev: &str, path: &str) -> Result<Option<Vec<u8>>
     }
 }
 
-/// Whether commit `rev` has any file under the folder `dir` (e.g. `.github/workflows`); false when it can't tell.
+/// Whether commit `rev` has any file under the folder `dir` (e.g. `.github/workflows`), or the file `dir` itself
+/// (`.gitlab-ci.yml`); false when it can't tell.
 pub fn has_files_under(repo: &Path, rev: &str, dir: &str) -> bool {
-    let dir = format!("{}/", dir.trim_end_matches('/'));
-    matches!(git_bytes(repo, &["ls-tree", "--name-only", rev, "--", &dir], None), Ok(Ok(out)) if !out.trim_ascii().is_empty())
+    let dir = dir.trim_end_matches('/');
+    matches!(git_bytes(repo, &["ls-tree", "--name-only", rev, "--", dir], None), Ok(Ok(out)) if !out.trim_ascii().is_empty())
 }
 
 /// What merging `branch` into `base` would do.
@@ -547,6 +548,11 @@ mod tests {
         commit_all(&wt, "ci");
         assert!(has_files_under(&wt, "HEAD", ".github/workflows"));
         assert!(!has_files_under(&wt, "nope", ".github/workflows"), "an unknown commit");
+        assert!(!has_files_under(&wt, "HEAD", ".gitlab-ci.yml"));
+        assert!(!has_files_under(&wt, "HEAD", ".github/work"), "a folder by its whole name only");
+        write(&wt, ".gitlab-ci.yml", b"test:\n  script: [make]\n");
+        commit_all(&wt, "gitlab ci");
+        assert!(has_files_under(&wt, "HEAD", ".gitlab-ci.yml"), "a file");
     }
 
     #[test]

@@ -35,8 +35,8 @@ pub enum CiConfig {
     /// Known without looking at the repository's files (the local CI command; a CI integration set up for the
     /// project).
     Known(bool),
-    /// The repository has it when a commit has files under one of these (GitHub: `.github/workflows`): it has CI to
-    /// come even before its first run.
+    /// The repository has it when a commit has files under one of these folders (GitHub: `.github/workflows`), or one
+    /// of these files (GitLab: `.gitlab-ci.yml`): it has CI to come even before its first run.
     Paths(&'static [&'static str]),
 }
 
