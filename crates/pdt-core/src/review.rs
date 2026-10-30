@@ -230,6 +230,10 @@ pub struct MergePr {
     /// A change request on the local forge (PDT-178): PDT merges it here once its CI passes.
     #[serde(default)]
     pub local: bool,
+    /// The forge can hold the merge until the checks pass (GitHub's auto-merge, allowed in the repository's
+    /// settings). Without it (PDT-297) PDT merges the pull request now when CI passed, or once it passes.
+    #[serde(default)]
+    pub auto_merge: bool,
 }
 
 /// `GET /api/attempts/{id}/merge`.
@@ -256,7 +260,8 @@ pub struct MergePreview {
 pub enum MergeOutcome {
     /// Merged locally; the attempt ended as merged.
     Merged,
-    /// Auto-merge is on: the forge merges once the checks pass (the merge check then ends the attempt).
+    /// Set to merge: auto-merge is on or it is queued (the forge merges once the checks pass), or PDT merges it once
+    /// CI passes where the forge can't hold it (PDT-297). The merge check then ends the attempt.
     Queued,
 }
 

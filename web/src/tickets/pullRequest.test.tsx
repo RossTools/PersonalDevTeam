@@ -22,7 +22,7 @@ const passed: CiStatus = { state: 'passed', url: 'https://gh/runs/1', runs: [] }
 const pr = (over: Partial<PullRequestStatus> = {}): PullRequestStatus => ({
   number: 12, url: 'https://gh/pull/12', title: 'Fix login', state: 'open', draft: false, baseBranch: 'main', headSha: 'abc',
   mergeable: 'mergeable', behind: false, autoMerge: true, inMergeQueue: false, queuePosition: null, ci: passed, queueCi: null,
-  checkedAt: 1, error: null, local: false, ...over,
+  checkedAt: 1, error: null, local: false, mergeHeld: false, ...over,
 });
 
 const attempt = (p: PullRequestStatus | null): AttemptSummary => ({
@@ -42,6 +42,15 @@ describe('pull request status', () => {
     expect(prSummary(pr()).label).toBe('Auto-merge');
     expect(prSummary(pr({ autoMerge: false })).label).toBe('CI passed');
     expect(prSummary(pr({ autoMerge: false, ci: null })).label).toBe('Open');
+    // Held by PDT where the repository has no auto-merge (PDT-297).
+    expect(prSummary(pr({ autoMerge: false, mergeHeld: true })).label).toBe('Merging');
+    expect(prSummary(pr({ autoMerge: false, mergeHeld: true, ci: null })).label).toBe('Set to merge');
+  });
+
+  it('says PDT merges a held pull request once CI passes (PDT-297)', () => {
+    render(<PrDetails pr={pr({ autoMerge: false, mergeHeld: true, ci: { ...passed, state: 'running' } })} />);
+    expect(screen.getByText('Merging when CI passes')).toBeInTheDocument();
+    expect(screen.queryByText('Auto-merge on')).not.toBeInTheDocument();
   });
 
   it('shows a merged attempt\'s PR as merged while the last look still saw it queued (PDT-59)', () => {

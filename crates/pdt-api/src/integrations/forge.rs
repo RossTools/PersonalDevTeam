@@ -576,12 +576,12 @@ impl Action for ChangeRequestMerge {
         tool(
             ToolDecl::new(
                 "change_request_merge",
-                "Ask again for the merge of the session's pull request after the merge queue dropped it",
+                "Ask again for the merge of the session's pull request after it dropped out (a merge queue, failed CI)",
             )
             .open_world(),
             "Merge the pull request again",
-            "Sets the session's ticket attempt's pull request to merge again (auto-merge, or back into the merge \
-             queue) once you have fixed and pushed what made it drop out. Only for a pull request that was already \
+            "Sets the session's ticket attempt's pull request to merge again (auto-merge, back into the merge \
+             queue, or merged once CI passes where the repository has no auto-merge) once you have fixed and pushed what made it drop out. Only for a pull request that was already \
              set to merge: the user or the project's workflow decides the first merge. The project's merge policy \
              applies (it may wait for CI on the push).",
         )
@@ -631,13 +631,13 @@ impl Action for ChangeRequestMerge {
                     Ok(MergeOutput { number: n, outcome: outcome.into(), message })
                 }
                 Err(r) if r.code == "ci_pending" => {
-                    // Still set to merge, so CI passing turns auto-merge on (PR notices, PDT-104).
+                    // Still set to merge, so CI passing merges it (PR notices, PDT-104; PDT itself, PDT-297).
                     if let Err(e) = cx.st.store.set_attempt_merge_requested(&info.attempt.id).await {
                         tracing::warn!(attempt = %info.attempt.id, error = %e, "could not record a merge waiting for CI");
                     }
                     let message = format!(
-                        "{}. Ask again once CI on the push passes (`ci_runs`); PR notices also turns auto-merge on \
-                         when it passes and no workflow step is on the ticket",
+                        "{}. Ask again once CI on the push passes (`ci_runs`); PDT also sets it to merge when it \
+                         passes and no workflow step is on the ticket",
                         r.reason
                     );
                     Ok(MergeOutput { number: n, outcome: "waitingForCi".into(), message })

@@ -775,8 +775,21 @@ fn merges_turn_on_auto_merge_or_merge_a_clean_pr() {
     assert_eq!(body_of(&sent[sent.len() - 2])["variables"]["method"], Value::Null);
     assert!(body_of(sent.last().unwrap())["query"].as_str().unwrap().contains("enqueuePullRequest"));
 
-    t.ok("POST", GQL, id).ok("POST", GQL, r#"{"errors":[{"message":"Auto merge is not allowed"}]}"#);
-    assert!(matches!(g.merge("o/r", 7, None), Err(ForgeError::Failed(m)) if m.contains("not allowed")));
+    let refused = r#"{"errors":[{"message":"Pull request is in unstable status"}]}"#;
+    t.ok("POST", GQL, id).ok("POST", GQL, refused);
+    assert!(
+        matches!(g.merge("o/r", 7, None), Err(ForgeError::NotReady(m)) if m.contains("checks o/r doesn't require"))
+    );
+
+    // PDT-297: a repository that turned auto-merge off since PDT read it merges the PR at once.
+    t.ok("POST", GQL, id).ok(
+        "POST",
+        GQL,
+        r#"{"errors":[{"message":"Auto merge is not allowed for this repository"}]}"#,
+    );
+    t.ok("PUT", &format!("{API}/repos/o/r/pulls/7/merge"), r#"{"merged":true}"#);
+    g.merge("o/r", 7, Some(MergeStrategy::Squash)).unwrap();
+    assert_eq!(body_of(t.sent().last().unwrap()), json!({"merge_method": "squash"}));
 
     // PDT-269: only while the head is the one approved.
     t.ok("POST", GQL, id).ok("POST", GQL, r#"{"data":{"enablePullRequestAutoMerge":{"clientMutationId":null}}}"#);
@@ -791,6 +804,35 @@ fn merges_turn_on_auto_merge_or_merge_a_clean_pr() {
     assert_eq!(body_of(t.sent().last().unwrap()), json!({"merge_method": "squash", "sha": "abc"}));
 }
 
+/// PDT-297: a repository without auto-merge never asks for it: the PR joins its merge queue, or merges at once.
+#[test]
+fn merges_without_auto_merge_go_straight_in() {
+    let (g, t) = forge();
+    let id = r#"{"data":{"repository":{"autoMergeAllowed":false,"pullRequest":{"id":"PR_7"}}}}"#;
+    t.ok("POST", GQL, id);
+    t.ok("PUT", &format!("{API}/repos/o/r/pulls/7/merge"), r#"{"merged":true}"#);
+    g.merge_head("o/r", 7, Some(MergeStrategy::Merge), Some("abc")).unwrap();
+    let sent = t.sent();
+    assert_eq!(sent.len(), 2, "no auto-merge mutation: {sent:?}");
+    assert_eq!(body_of(&sent[1]), json!({"merge_method": "merge", "sha": "abc"}));
+
+    t.ok("POST", GQL, id).ok("POST", GQL, r#"{"data":{"enqueuePullRequest":{"clientMutationId":null}}}"#);
+    g.merge("o/r", 7, None).unwrap();
+    let sent = t.sent();
+    assert!(body_of(sent.last().unwrap())["query"].as_str().unwrap().contains("enqueuePullRequest"));
+    assert!(!sent.iter().any(|r| r.body.as_deref().unwrap_or_default().contains("enablePullRequestAutoMerge")));
+
+    // GitHub refuses the merge (required checks pending, a required review): its reason.
+    t.ok("POST", GQL, id);
+    t.on(
+        "PUT",
+        &format!("{API}/repos/o/r/pulls/7/merge"),
+        Response::new(405, r#"{"message":"Required status check \"ci\" is expected."}"#),
+    );
+    let e = g.merge("o/r", 7, Some(MergeStrategy::Squash)).unwrap_err();
+    assert!(matches!(&e, ForgeError::Failed(m) if m.contains("Required status check")), "{e:?}");
+}
+
 #[test]
 fn reads_merge_settings() {
     let (g, t) = forge();
@@ -798,14 +840,15 @@ fn reads_merge_settings() {
         "POST",
         GQL,
         r#"{"data":{"repository":{"squashMergeAllowed":true,"mergeCommitAllowed":false,
-      "rebaseMergeAllowed":true,"mergeQueue":{"id":"MQ_1"}}}}"#,
+      "rebaseMergeAllowed":true,"autoMergeAllowed":false,"mergeQueue":{"id":"MQ_1"}}}}"#,
     );
     assert_eq!(
         g.merge_settings("o/r", "main").unwrap(),
-        MergeSettings { squash: true, merge: false, rebase: true, queue: true }
+        MergeSettings { squash: true, merge: false, rebase: true, queue: true, auto_merge: false }
     );
     assert_eq!(body_of(&t.sent()[0])["variables"]["base"], "main");
-    assert!(!parse_merge_settings(&json!({"repository":{"mergeQueue":null}})).unwrap().queue);
+    let unsaid = parse_merge_settings(&json!({"repository":{"mergeQueue":null}})).unwrap();
+    assert!(!unsaid.queue && unsaid.auto_merge, "auto-merge allowed when the answer doesn't say");
     assert!(parse_merge_settings(&json!({})).is_err());
 }
 

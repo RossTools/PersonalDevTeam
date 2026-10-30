@@ -16,4 +16,9 @@ queueName: string,
 /**
  * A change request on the local forge (PDT-178): PDT merges it here once its CI passes.
  */
-local: boolean, };
+local: boolean, 
+/**
+ * The forge can hold the merge until the checks pass (GitHub's auto-merge, allowed in the repository's
+ * settings). Without it (PDT-297) PDT merges the pull request now when CI passed, or once it passes.
+ */
+autoMerge: boolean, };

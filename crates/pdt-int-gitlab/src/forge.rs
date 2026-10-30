@@ -433,6 +433,8 @@ impl Forge for GitlabApi {
             merge: p.merge_method == "merge",
             rebase: p.merge_method != "merge",
             queue: p.merge_trains,
+            // Merge when the pipeline succeeds (auto-merge) is always there.
+            auto_merge: true,
         })
     }
     fn merge(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), ForgeError> {

@@ -692,7 +692,7 @@ impl Forge for LocalForge {
     }
 
     fn merge_settings(&self, _repo: &str, _base: &str) -> Result<MergeSettings, ForgeError> {
-        Ok(MergeSettings { squash: false, merge: true, rebase: false, queue: false })
+        Ok(MergeSettings { squash: false, merge: true, rebase: false, queue: false, auto_merge: true })
     }
 
     /// Sets the change request to merge once CI passes; one whose CI passed merges now.

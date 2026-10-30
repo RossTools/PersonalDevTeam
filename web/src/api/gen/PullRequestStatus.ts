@@ -36,4 +36,9 @@ error: string | null,
  * A change request on the local forge (PDT-178): PDT's own, with CI it runs and merges it makes itself. Its
  * `url` is its newest CI run's log.
  */
-local: boolean, };
+local: boolean, 
+/**
+ * Set to merge, and PDT merges it itself once CI on its head passes (PDT-297): the forge can't hold the merge
+ * (a repository without auto-merge, or checks it doesn't require), so it is neither on auto-merge nor queued.
+ */
+mergeHeld: boolean, };

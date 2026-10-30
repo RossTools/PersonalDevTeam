@@ -74,8 +74,9 @@ impl NodeKind for Merge {
             1,
             Category::Action,
             "Merge the attempt",
-            "Merges the attempt as Merge… does: turns on auto-merge for its pull request (`queued`), or merges it \
-             locally (`merged`). The project's policy may not let a workflow merge, or may need a person's approval \
+            "Merges the attempt as Merge… does: sets its pull request to merge (`queued`: auto-merge, its merge \
+             queue, or, where the repository has no auto-merge, PDT merges it once CI passes), or merges it locally or \
+             at once (`merged`). The project's policy may not let a workflow merge, or may need a person's approval \
              first; that, and anything that stops the merge, leaves by `refused`. With `again` (after a fix), a pull \
              request already set to merge counts as `queued`, and the first merge's finishing choice stays. A refusal \
              says `fixable` when the attempt's agent can clear it with a commit (a conflict, uncommitted changes, \
@@ -83,7 +84,7 @@ impl NodeKind for Merge {
              its head passed: `code` `ci_failed` (fixable) or `ci_pending` otherwise; a repository with no CI \
              merges as before, noted on the ticket. Merging `again` before CI passed sets the pull request to merge, \
              so CI passing merges it.",
-            &[("merged", "Merged"), ("queued", "Auto-merge on"), ("refused", "Refused")],
+            &[("merged", "Merged"), ("queued", "Set to merge"), ("refused", "Refused")],
             false,
         )
     }

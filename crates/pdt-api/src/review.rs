@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::conversation::SessionMode;
 use pdt_core::forge::ForgeKind;
-use pdt_core::policy::{Merger, may_merge};
+use pdt_core::policy::{MergeBy, Merger, may_merge};
 use pdt_core::pr::{CiGate, Mergeable, PrState};
 use pdt_core::project::Project;
 use pdt_core::review::{
@@ -26,10 +26,11 @@ use pdt_core::session::{Session, SessionKind};
 use pdt_core::ticket::{Actor, AttemptState, EventKind, Ticket};
 use pdt_core::workflow::events::MergeVia;
 use pdt_core::worktree::Worktree;
-use pdt_forge::{CiConfig, CiProvider, MergeSettings, MergeStrategy};
+use pdt_forge::{CiConfig, CiProvider, ForgeError, MergeSettings, MergeStrategy};
 use pdt_store::AttemptInfo;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -461,14 +462,8 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
         None => None,
     };
     if let (Some(pr), Some(forge)) = (pr, forge) {
-        let (api, repo) = (forge.api.clone(), forge.repo.clone());
-        let base_branch = pr.base_branch.clone();
-        let queue = forge.caps().merge_queue
-            && tokio::task::spawn_blocking(move || api.merge_settings(&repo, &base_branch))
-                .await
-                .map_err(ApiError::internal)?
-                .map(|s| s.queue)
-                .unwrap_or(false);
+        let settings = crate::github::merge_settings(st, &forge, &pr.base_branch).await;
+        let queue = forge.caps().merge_queue && settings.is_some_and(|s| s.queue);
         p.method = MergeMethod::Forge;
         p.base = pr.base_branch.clone();
         p.pr = Some(MergePr {
@@ -478,10 +473,11 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
             queue,
             queue_name: forge.api.queue_name().to_string(),
             local: pr.local,
+            auto_merge: settings.is_none_or(|s| s.auto_merge),
         });
         p.problem = if pr.draft || pr.mergeable == Mergeable::Conflicting {
             Some(MergeProblem::PrNotMergeable)
-        } else if pr.auto_merge || pr.in_merge_queue {
+        } else if pr.auto_merge || pr.in_merge_queue || pr.merge_held {
             Some(MergeProblem::PrQueued)
         } else {
             None
@@ -538,7 +534,7 @@ fn why_blocked(problem: MergeProblem) -> &'static str {
         MergeProblem::BaseDirty => "the checkout that has the base branch has uncommitted changes",
         MergeProblem::Nothing => "the branch has no commits the base branch lacks",
         MergeProblem::PrNotMergeable => "the forge can't merge the pull request (a draft, or it conflicts)",
-        MergeProblem::PrQueued => "auto-merge is already on for the pull request",
+        MergeProblem::PrQueued => "the pull request is already set to merge",
         MergeProblem::NoPr => "this project merges through pull requests, and the branch has no open one yet",
     }
 }
@@ -604,6 +600,10 @@ pub(crate) async fn merge_attempt(
     merger: Merger,
 ) -> Result<Result<MergeResult, Refusal>, ApiError> {
     let st = st.clone();
+    // One merge of an attempt at a time (PDT-297): PDT's own merge once CI passes and PR notices' merge again come
+    // together, and the second must see what the first did.
+    let lock = merge_lock(id);
+    let _merging = lock.lock().await;
     let info = load_attempt(&st, id).await?;
     let automated = merger == Merger::Automated;
     // What the forge has now (PDT-181): a PR that merged a moment ago (the auto-merge an earlier merge turned on) must not
@@ -619,13 +619,19 @@ pub(crate) async fn merge_attempt(
     let ticket = st.store.get_ticket_summary(&info.ticket_id).await?;
     let labels = ticket.as_ref().map(|t| t.labels.as_slice()).unwrap_or_default();
     let approved = merger == Merger::Automated && policy.needs_approval(labels) && approved_at_head(&st, &info).await?;
-    if let Err(refusal) = may_merge(&policy, merger, approved, labels) {
+    // A merge PDT holds (PDT-297) was let through when it was asked for: merging it once CI passes is that merge, as a
+    // forge's auto-merge would be, whoever asked.
+    let held = crate::github::watched_pr(&st, &info.attempt.id).is_some_and(|p| p.merge_held);
+    let standing = automated && held && info.merge_requested && policy.merge_by != MergeBy::External;
+    if !standing && let Err(refusal) = may_merge(&policy, merger, approved, labels) {
         let reason = refusal.message(&policy).into();
         return Ok(Err(Refusal { code: refusal.code(), reason, fixable: false }));
     }
     let p = preview(&st, &info).await?;
     match p.problem {
         None => {}
+        // Held by PDT (PDT-297): an automated merge is what merges it.
+        Some(MergeProblem::PrQueued) if automated && held => {}
         // Already set to merge (a person, or PR notices, got there first): for a workflow that is what it asked.
         Some(MergeProblem::PrQueued) if automated => {
             record_merge(&st, &info, input).await?;
@@ -655,32 +661,45 @@ pub(crate) async fn merge_attempt(
         // asks: a forge's auto-merge (GitHub's) merges at once where nothing is required. On a forge that doesn't hold merges for
         // required checks, it always waits (PDT-176), for every CI provider (PDT-242).
         let providers = crate::ci::project_ci(&st, &info.project_id, &info.repo_path, Some(&forge)).await;
+        let settings = crate::github::merge_settings(&st, &forge, &p.base).await;
+        let name = if pr.local { format!("change request #{}", pr.number) } else { format!("PR #{}", pr.number) };
+        // Whether the forge can hold a merge until its checks pass (PDT-297): a GitHub repository may not allow
+        // auto-merge. Unknown: as it could.
+        let can_hold = settings.is_none_or(|s| s.auto_merge);
         // The local forge holds a merge for its own CI only (PDT-242): with other providers PDT waits for them too.
         let holds = forge.caps().required_checks
+            && can_hold
             && (forge.kind != ForgeKind::LOCAL || providers.iter().all(|p| p.id() == pdt_core::pr::LOCAL_CI));
-        let no_ci = if automated && (policy.require_green_ci || !holds) {
+        // Where the forge can't hold it, a person's merge waits for CI too: PDT merges it once CI passes.
+        let no_ci = if (automated && (policy.require_green_ci || !holds)) || !can_hold {
             match ci_gate(&st, &info, &forge, &providers).await.map_err(|m| conflict("ci_unreadable", m))? {
                 CiGate::Passed => false,
-                CiGate::NoCi => true,
+                CiGate::NoCi => automated,
+                CiGate::Pending(_) | CiGate::Failed(_) if !automated => {
+                    let why = format!("{} doesn't allow auto-merge", forge.repo);
+                    return Ok(Ok(hold_merge(&st, &info, input, &name, &why).await?));
+                }
                 CiGate::Pending(reason) => return Ok(Err(Refusal { code: "ci_pending", reason, fixable: false })),
                 CiGate::Failed(reason) => return Ok(Err(Refusal { code: "ci_failed", reason, fixable: true })),
             }
         } else {
             false
         };
-        let queues = forge.caps().merge_queue;
-        let (gh, repo, base, number) = (forge.api.clone(), forge.repo.clone(), p.base.clone(), pr.number);
-        tokio::task::spawn_blocking(move || {
-            let strategy = match gh.merge_settings(&repo, &base) {
-                Ok(s) => MergeSettings { queue: s.queue && queues, ..s }.strategy(),
-                // Unknown: squash (with a merge queue the queue's own method applies whatever is asked).
-                Err(_) => Some(MergeStrategy::Squash),
-            };
-            gh.merge(&repo, number, strategy)
-        })
-        .await
-        .map_err(ApiError::internal)?
-        .map_err(|e| conflict("merge_failed", e.to_string()))?;
+        let strategy = match settings {
+            Some(s) => MergeSettings { queue: s.queue && forge.caps().merge_queue, ..s }.strategy(),
+            // Unknown: squash (with a merge queue the queue's own method applies whatever is asked).
+            None => Some(MergeStrategy::Squash),
+        };
+        let (gh, repo, number) = (forge.api.clone(), forge.repo.clone(), pr.number);
+        match tokio::task::spawn_blocking(move || gh.merge(&repo, number, strategy))
+            .await
+            .map_err(ApiError::internal)?
+        {
+            Ok(()) => {}
+            // The forge can't hold it for checks it doesn't require (PDT-297): PDT does.
+            Err(ForgeError::NotReady(why)) => return Ok(Ok(hold_merge(&st, &info, input, &name, &why).await?)),
+            Err(e) => return Err(conflict("merge_failed", e.to_string())),
+        }
         record_merge(&st, &info, input).await?;
         if no_ci {
             let body = if pr.local {
@@ -699,6 +718,10 @@ pub(crate) async fn merge_attempt(
         // The local forge merges here, at once when CI already passed (PDT-178).
         if pr.local && crate::start::end_if_merged(&st, &info).await {
             return Ok(Ok(MergeResult { outcome: MergeOutcome::Merged, commit: None }));
+        }
+        // Merged at once (a forge without auto-merge, or a pull request that could merge now): the attempt ends.
+        if let Some(merged) = crate::github::watched_pr(&st, &info.attempt.id).filter(|p| p.state == PrState::Merged) {
+            return Ok(Ok(pr_merged(&st, &info, merged.number, input, merger).await?));
         }
         return Ok(Ok(MergeResult { outcome: MergeOutcome::Queued, commit: None }));
     }
@@ -737,6 +760,64 @@ pub(crate) async fn merge_attempt(
     };
     st.store.end_attempt(&info.attempt.id, AttemptState::Merged, actor, Some(via), pr, now_ms()).await?;
     Ok(Ok(MergeResult { outcome: MergeOutcome::Merged, commit: Some(commit) }))
+}
+
+/// The lock of attempt `id`'s merges ([`merge_attempt`]).
+fn merge_lock(id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+        std::sync::LazyLock::new(Default::default);
+    let mut locks = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    // Forget the ones nobody holds or waits for.
+    locks.retain(|_, l| Arc::strong_count(l) > 1);
+    locks.entry(id.to_string()).or_default().clone()
+}
+
+/// Sets the attempt's pull request (`name`) to merge where the forge can't hold it (PDT-297): PDT merges it itself once
+/// CI on its head passes ([`merge_held`]). `why`: why the forge can't, for the ticket's comment.
+async fn hold_merge(
+    st: &AppState,
+    info: &AttemptInfo,
+    input: &MergeRequest,
+    name: &str,
+    why: &str,
+) -> Result<MergeResult, ApiError> {
+    record_merge(st, info, input).await?;
+    crate::github::hold(st, &info.attempt.id);
+    let body = format!("{SHORT_NAME} merges {name} once its CI passes: {why}.");
+    if let Err(e) = st.store.add_comment_by(&info.ticket_id, &body, Actor::System, None, now_ms()).await {
+        tracing::warn!(ticket = %info.ticket_key, error = %e, "could not note a merge waiting for CI");
+    }
+    // Read again with the request recorded, so the pull request shows it is set to merge.
+    let info = load_attempt(st, &info.attempt.id).await?;
+    crate::github::refresh_attempt(st, &info).await;
+    Ok(MergeResult { outcome: MergeOutcome::Queued, commit: None })
+}
+
+/// PDT's own auto-merge (PDT-297): CI passed on the attempt's pull request, which was set to merge where the forge
+/// can't hold it, so PDT merges it now, as [`merge_attempt`] does for a workflow. A refusal other than CI still to
+/// come goes on the ticket. Boxed: the PR poller starts it, and it reads the pull request again through the poller.
+pub(crate) fn merge_held(st: AppState, attempt_id: String) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> {
+    Box::pin(async move { merge_held_now(&st, &attempt_id).await })
+}
+
+async fn merge_held_now(st: &AppState, attempt_id: &str) {
+    let req = MergeRequest::default();
+    let (ticket, why) = match merge_attempt(st, attempt_id, &req, Merger::Automated).await {
+        Ok(Ok(r)) => {
+            tracing::info!(attempt = attempt_id, outcome = ?r.outcome, "merged a pull request PDT held until CI passed");
+            return;
+        }
+        // Another provider's CI still to come: its pass tries again.
+        Ok(Err(r)) if r.code == "ci_pending" => return,
+        Ok(Err(r)) => (st.store.get_attempt(attempt_id).await.ok().flatten(), r.reason),
+        Err(e) => (st.store.get_attempt(attempt_id).await.ok().flatten(), e.message().to_string()),
+    };
+    let Some(info) = ticket else { return };
+    let pr = crate::github::watched_pr(st, attempt_id).map_or_else(|| "the pull request".into(), |p| p.name());
+    let body = format!("{SHORT_NAME} couldn't merge {pr} once its CI passed: {why}");
+    if let Err(e) = st.store.add_comment_by(&info.ticket_id, &body, Actor::System, None, now_ms()).await {
+        tracing::warn!(ticket = %info.ticket_key, error = %e, "could not note a held merge that failed");
+    }
 }
 
 /// The attempt's pull request merged already: the attempt ends as merge detection would end it (`detected`, with the

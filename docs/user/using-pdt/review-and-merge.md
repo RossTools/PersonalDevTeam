@@ -43,11 +43,15 @@ in its settings). Then a workflow or agent can only merge branches you approved.
 Click **Merge…** (on the Changes view, or in the ticket's menu). The dialog says what will happen, and what's in the
 way if anything is.
 
-**With a pull request** (a project on GitHub), PDT doesn't merge it itself: it asks GitHub to.
+**With a pull request** (a project on GitHub), the button depends on what the repository allows:
 
-- **Turn on auto-merge**: GitHub merges the pull request as soon as its required checks pass.
 - **Add to merge queue**, when the repository uses one: the queue tests it on top of the latest base branch and
   merges it.
+- **Turn on auto-merge**, when the repository allows auto-merge (a setting in its GitHub settings): GitHub merges the
+  pull request as soon as its required checks pass. A pull request that can merge right away merges at once.
+- **Merge when CI passes**, when the repository has neither: PDT merges the pull request itself, at once if its CI
+  passed, otherwise as soon as it passes. Until then the badge says **Merging when CI passes**, and the ticket has a
+  comment saying why.
 - **Move to Done and clean up once it merges** (on by default) finishes the ticket for you when the merge happens:
   it moves to **Done**, its sessions and runs stop, and its worktree and workspace go. **Delete the branch** removes the
   branch too.
@@ -79,7 +83,7 @@ A worktree with uncommitted changes is never thrown away without asking.
 
 On a project on GitHub, each ticket in progress shows its pull request: a badge on its board card and in the
 Sessions sidebar, and the details in the ticket's **Attempt** section. The badge says where it stands: **Draft**,
-open with its CI result, **Auto-merge on**, **In queue**, **CI failed**, **Conflict**, **Queue failed**, **Merged**,
+open with its CI result, **Auto-merge on**, **Merging when CI passes**, **In queue**, **CI failed**, **Conflict**, **Queue failed**, **Merged**,
 **Closed**. The details list each CI run with its failed jobs, and link to them.
 
 PDT reads them from GitHub about once a minute (and when you open the ticket). If it can't (GitHub isn't connected,
@@ -89,9 +93,11 @@ When something goes wrong with a pull request, PDT tells the agent working on it
 
 - **CI failed**: the agent gets the failed jobs and reads their logs;
 - **a conflict** with the base branch: the agent merges the base in and resolves it;
-- **dropped from the merge queue**, or **behind** its base while it waits to merge: the agent brings it up to date.
+- **dropped from the merge queue** (on a repository with one), or **behind** its base while it waits to merge: the
+  agent brings it up to date.
 
-Once auto-merge was on, PDT turns it back on after the fix. If no agent is running on the ticket, the news goes to
+Once the pull request was set to merge, PDT sets it to merge again after the fix (auto-merge, the queue, or its own
+merge once CI passes). If no agent is running on the ticket, the news goes to
 you instead: a comment on the ticket and an item in the [Inbox](the-inbox.md). The **PR notices** workflow does this;
 turn it off in **Workflows** if you'd rather handle it yourself.
 
