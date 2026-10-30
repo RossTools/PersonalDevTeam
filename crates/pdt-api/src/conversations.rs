@@ -59,6 +59,9 @@ pub struct Conversations {
     /// How long a conversation whose background tasks all finished must stay quiet (no turn) before an agent step
     /// waiting on them counts its turn as ended (PDT-142; tests shorten it).
     pub background_grace: Duration,
+    /// A pause between a step's session being found idle and its close (PDT-188): none, but tests lengthen it to send
+    /// a message in between.
+    pub close_pause: Duration,
     /// PDT's `codex app-server`, made on first use.
     codex: Arc<std::sync::OnceLock<Arc<CodexServer>>>,
 }
@@ -73,6 +76,7 @@ impl Default for Conversations {
             notice_quiet: Duration::from_secs(20),
             pending_timeout: PENDING_TIMEOUT,
             background_grace: Duration::from_secs(10),
+            close_pause: Duration::ZERO,
             codex: Default::default(),
         }
     }
@@ -117,6 +121,9 @@ pub(crate) struct Conv {
     state: Mutex<ConvState>,
     /// Orders activity writes so the row always ends with the latest state.
     activity_write: tokio::sync::Mutex<()>,
+    /// Sends hold it shared until their message is pending; closing an idle conversation holds it alone, so a message
+    /// sent as a step's session is closed either lands first (and keeps it open) or reopens it after (PDT-188).
+    sending: tokio::sync::RwLock<()>,
     /// The newest process generation whose exit has been fully applied (its last events stored).
     exits: tokio::sync::watch::Sender<u64>,
 }
@@ -274,6 +281,7 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
             background_tasks: Vec::new(),
         }),
         activity_write: tokio::sync::Mutex::new(()),
+        sending: tokio::sync::RwLock::new(()),
         exits: tokio::sync::watch::channel(0).0,
     });
     let mut map = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner());
@@ -720,6 +728,7 @@ async fn send_message(
     }
     let images = crate::attachments::resolve(st, &session.id, image_ids)?;
     let c = conv(st, session).await?;
+    let _sending = c.sending.read().await;
     let live = ensure_live(st, &c, session).await?;
     let pending = PendingMessage {
         id: outbox.map_or_else(|| uuid::Uuid::now_v7().to_string(), String::from),
@@ -887,10 +896,31 @@ pub(crate) async fn send_user_message(st: &AppState, session: &Session, text: &s
 /// Stops a conversation: closes its process and marks the session finished. Sending again reopens it.
 pub(crate) async fn stop(st: &AppState, session: &Session) -> Result<(), ApiError> {
     let c = conv(st, session).await?;
+    stop_conv(st, session, &c).await
+}
+
+/// Stops a conversation if it is idle (no turn, request or pending message), checked so that no message can go in
+/// between the look and the stop (PDT-188). False: it was at work, and is left alone.
+pub(crate) async fn stop_if_idle(st: &AppState, session: &Session) -> Result<bool, ApiError> {
+    let c = conv(st, session).await?;
+    let _closing = c.sending.write().await;
+    if !idle(&c) {
+        return Ok(false);
+    }
+    stop_conv(st, session, &c).await.map(|()| true)
+}
+
+/// No turn runs, nothing is asked and no message waits to go in.
+fn idle(c: &Conv) -> bool {
+    let s = c.state();
+    !s.turn_running && s.open_requests.is_empty() && s.pending.is_empty()
+}
+
+async fn stop_conv(st: &AppState, session: &Session, c: &Arc<Conv>) -> Result<(), ApiError> {
     if st.ptys.is_running(&session.id) {
         let _ = st.kill_pty(&session.id).await;
     }
-    park(st, &c).await;
+    park(st, c).await;
     st.store.end_session(&session.id, SessionStatus::Finished, None, now_ms()).await?;
     let dropped: Vec<String> = {
         let mut s = c.state();
@@ -938,18 +968,19 @@ pub(crate) async fn apply_settings(st: &AppState, session: &Session, change: Ses
 }
 
 /// Parks a loaded conversation's process now if it is idle (no turn, request or pending message), instead of after
-/// `idle_park` (an `own` step's session between passes, PDT-183).
-pub(crate) async fn park_idle(st: &AppState, id: &str) {
-    let Some(c) = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned() else { return };
-    let idle = {
-        let s = c.state();
-        s.live && !s.turn_running && s.open_requests.is_empty() && s.pending.is_empty()
-    };
-    if idle {
+/// `idle_park` (an `own` step's session between passes, PDT-183). False: it was at work (a message went in, PDT-188).
+pub(crate) async fn park_idle(st: &AppState, id: &str) -> bool {
+    let Some(c) = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned() else { return true };
+    let _closing = c.sending.write().await;
+    if !idle(&c) {
+        return false;
+    }
+    if c.state().live {
         tracing::info!(session = %id, "parking a step's conversation after its outcome");
         park(st, &c).await;
         c.push_state();
     }
+    true
 }
 
 /// Forgets a removed session's runtime, closing its process.

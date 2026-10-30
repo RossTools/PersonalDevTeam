@@ -664,6 +664,14 @@ pub(crate) async fn stop(st: &AppState, id: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Stops a conversation session if it is idle, with no message able to go in between the look and the stop (PDT-188).
+/// False: it was at work and is left alone.
+pub(crate) async fn stop_if_idle(st: &AppState, id: &str) -> Result<bool, ApiError> {
+    let _guard = st.lock_session(id).await;
+    let session = load(st, id).await?;
+    crate::conversations::stop_if_idle(st, &session).await
+}
+
 pub(crate) async fn restart(
     State(st): State<AppState>,
     Path(id): Path<String>,

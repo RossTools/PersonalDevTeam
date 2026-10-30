@@ -988,7 +988,10 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
   idle park; a `reuse` step's goes on. When a run ends (succeeded, failed or cancelled), its steps' sessions still
   open are stopped (`agent::run_ended`; a cancelled run's at once, mid-turn too), except the attempt's own session
   (the Coder's) and the session of a timed-out step the run can still be resumed from (a late outcome, PDT-123). A
-  session a step took up meanwhile is left alone. Transcripts stay in the session history until the ticket's
+  session a step took up meanwhile is left alone. A message sent to the session meanwhile is never lost (PDT-188):
+  the idle check and the close hold the conversation's send gate (`conversations::stop_if_idle` / `park_idle`), so a
+  message that goes in first keeps it open until the turn it starts ends (then the close tries again), and one sent
+  after reopens it. Transcripts stay in the session history until the ticket's
   cleanup.
 - **Ticket and attempt**: the config's, else the trigger's `ticketId` / `attemptId`, else the ticket's active attempt.
   A step with neither runs in the run's (or workflow's) project. One with no project either (a personal or scheduled
