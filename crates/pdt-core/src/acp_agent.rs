@@ -1,5 +1,5 @@
 //! ACP agents (PDT-234): agents that speak the Agent Client Protocol, other than Devin, as agent kinds `acp:<id>`.
-//! Each is a definition: a profile that ships with PDT (none yet; each harness's ticket adds its own) or one the user
+//! Each is a definition: a profile that ships with PDT (OhMyPi's; each harness's ticket adds its own) or one the user
 //! added in Settings → Agents (label, command, arguments, environment). They run only as conversations.
 
 use crate::conversation::PermissionMode;
@@ -57,8 +57,21 @@ pub struct AcpAgentDef {
     #[ts(skip)]
     #[serde(skip)]
     pub modes: Vec<(PermissionMode, String)>,
+    /// What the agent adds to ACP (a built-in profile's; the user's agents are plain ACP).
+    #[ts(skip)]
+    #[serde(skip)]
+    pub flavor: AcpFlavor,
     /// It ships with PDT (it can't be edited or removed).
     pub builtin: bool,
+}
+
+/// What an ACP agent adds to plain ACP, for the conversation mapper (`crate::conversation::omp`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AcpFlavor {
+    #[default]
+    Plain,
+    /// OhMyPi's `omp acp` (notes: docs/superpowers/notes/omp-acp.md).
+    Omp,
 }
 
 impl AcpAgentDef {
@@ -77,6 +90,7 @@ impl From<&AcpAgentConfig> for AcpAgentDef {
             args: c.args.clone(),
             env: c.env.clone(),
             modes: Vec::new(),
+            flavor: AcpFlavor::Plain,
             builtin: false,
         }
     }
@@ -84,7 +98,23 @@ impl From<&AcpAgentConfig> for AcpAgentDef {
 
 /// The ACP profiles that ship with PDT. Each harness's own ticket adds its profile here.
 pub fn builtin_profiles() -> Vec<AcpAgentDef> {
-    Vec::new()
+    vec![omp()]
+}
+
+/// OhMyPi (`omp acp`, PDT-238). Its modes come from those it advertises: `default` (Ask) and, when its plan mode is
+/// on, `plan`; PDT keeps Accept edits and Bypass itself.
+fn omp() -> AcpAgentDef {
+    AcpAgentDef {
+        id: "omp".into(),
+        label: "OhMyPi".into(),
+        icon: None,
+        command: "omp".into(),
+        args: vec!["acp".into()],
+        env: Vec::new(),
+        modes: Vec::new(),
+        flavor: AcpFlavor::Omp,
+        builtin: true,
+    }
 }
 
 /// Every ACP agent: the built-in profiles, then the user's.
@@ -256,6 +286,24 @@ mod tests {
         assert_eq!(validate(&[a]).unwrap_err(), AcpAgentError::BadArgs);
         let many: Vec<_> = (0..=MAX_ACP_AGENTS).map(|n| agent(&format!("a{n}"))).collect();
         assert_eq!(validate(&many).unwrap_err(), AcpAgentError::TooMany);
+    }
+
+    #[test]
+    fn omp_ships_built_in_and_its_id_is_taken() {
+        let d = find(&[], "omp").unwrap();
+        assert_eq!(
+            (d.label.as_str(), d.command.as_str(), d.args.as_slice()),
+            ("OhMyPi", "omp", &["acp".to_string()][..])
+        );
+        assert_eq!((d.builtin, d.flavor), (true, AcpFlavor::Omp));
+        assert_eq!(d.kind().unwrap().as_str(), "acp:omp");
+        assert_eq!(validate(&[agent("omp")]).unwrap_err(), AcpAgentError::DuplicateId("omp".into()));
+        // It advertises `default` and `plan`: PDT's Ask and Plan.
+        let available = json!([{"id": "default", "name": "Default"}, {"id": "plan", "name": "Plan"}]);
+        assert_eq!(
+            advertised_modes(&available),
+            vec![(PermissionMode::Ask, "default".into()), (PermissionMode::Plan, "plan".into())]
+        );
     }
 
     #[test]
