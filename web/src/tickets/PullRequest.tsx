@@ -51,8 +51,8 @@ export function prSummary(pr: PullRequestStatus, attemptMerged = false): { label
   if (pr.inMergeQueue) return { label: 'In queue', tone: 'waiting' };
   if (pr.ci && pr.ci.state !== 'passed') return { label: CI_LABEL[pr.ci.state], tone: CI_TONE[pr.ci.state] };
   if (pr.draft) return { label: 'Draft', tone: 'neutral' };
-  if (pr.ci) return { label: pr.autoMerge ? 'Auto-merge' : 'CI passed', tone: 'running' };
-  return { label: pr.autoMerge ? 'Auto-merge' : 'Open', tone: 'neutral' };
+  if (pr.ci) return { label: pr.autoMerge ? 'Auto-merge' : pr.mergeHeld ? 'Merging' : 'CI passed', tone: 'running' };
+  return { label: pr.autoMerge ? 'Auto-merge' : pr.mergeHeld ? 'Set to merge' : 'Open', tone: 'neutral' };
 }
 
 /** When the PR was last read and, when reading it fails now, why (the rest is that older look). */
@@ -107,6 +107,7 @@ export function PrDetails({ pr, attemptMerged = false, queueName = 'merge queue'
           <Badge tone="waiting">In {queueName}{pr.queuePosition ? ` · #${pr.queuePosition}` : ''}</Badge>
         )}
         {open && !pr.inMergeQueue && pr.autoMerge && <Badge>{pr.local ? 'Merges when CI passes' : 'Auto-merge on'}</Badge>}
+        {open && pr.mergeHeld && <Badge title="The repository doesn’t allow auto-merge, so PDT merges it once CI passes">Merging when CI passes</Badge>}
         {open && queueFailed(pr) && <Badge tone="failed">Left the {queueName}</Badge>}
       </div>
       {open && pr.ci && pr.ci.state !== 'passed' && (

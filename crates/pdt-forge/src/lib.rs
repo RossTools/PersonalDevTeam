@@ -70,6 +70,10 @@ pub struct MergeSettings {
     pub rebase: bool,
     /// The base branch has a merge queue.
     pub queue: bool,
+    /// The forge can hold a merge until the change request's checks pass (GitHub's auto-merge, when the repository
+    /// allows it; GitLab's merge when the pipeline succeeds; the local forge). Without it PDT holds the merge itself:
+    /// it merges once CI on the head passes (PDT-297).
+    pub auto_merge: bool,
 }
 
 impl MergeSettings {
@@ -286,6 +290,10 @@ pub enum ForgeError {
     /// The forge doesn't do this (a capability it lacks).
     #[error("{0}")]
     Unsupported(String),
+    /// A merge the forge can't make yet and can't hold for its checks (PDT-297: GitHub refuses auto-merge for a pull
+    /// request whose checks aren't required, while they run). PDT holds it: it merges once CI passes.
+    #[error("{0}")]
+    NotReady(String),
 }
 
 fn unsupported<T>(forge: &str, what: &str) -> Result<T, ForgeError> {
@@ -606,7 +614,7 @@ pub mod testing {
         pub prs: Mutex<HashMap<String, ChangeRequest>>,
         /// Its CI (GitHub Actions).
         pub ci: Arc<FakeCi>,
-        /// What `merge_settings` answers (squash only, no queue, when unset).
+        /// What `merge_settings` answers (squash only, no queue, auto-merge allowed, when unset).
         pub settings: Mutex<Option<MergeSettings>>,
         /// `merge` fails with this.
         pub merge_error: Mutex<Option<String>>,
@@ -868,6 +876,7 @@ pub mod testing {
                 merge: false,
                 rebase: false,
                 queue: false,
+                auto_merge: true,
             }))
         }
         /// Refuses a head other than the change request's, as GitHub does.
@@ -889,10 +898,16 @@ pub mod testing {
         }
         fn merge(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), ForgeError> {
             self.call(format!("merge {repo} {number} {}", strategy.map_or("-", MergeStrategy::as_str)));
-            match self.merge_error.lock().unwrap().clone() {
-                Some(e) => Err(ForgeError::Failed(e)),
-                None => Ok(()),
+            if let Some(e) = self.merge_error.lock().unwrap().clone() {
+                return Err(ForgeError::Failed(e));
             }
+            // A repository with neither auto-merge nor a merge queue merges at once, as GitHub does (PDT-297).
+            if self.settings.lock().unwrap().is_some_and(|s| !s.auto_merge && !s.queue) {
+                for p in self.prs.lock().unwrap().values_mut().filter(|p| p.number == number) {
+                    p.state = PrState::Merged;
+                }
+            }
+            Ok(())
         }
         fn viewer_login(&self) -> Result<String, ForgeError> {
             Ok(self.login.lock().unwrap().clone().unwrap_or_else(|| "me".into()))
@@ -1059,7 +1074,8 @@ mod tests {
 
     #[test]
     fn the_strategy_defers_to_a_queue_then_prefers_squash() {
-        let s = |squash, merge, rebase, queue| MergeSettings { squash, merge, rebase, queue }.strategy();
+        let s =
+            |squash, merge, rebase, queue| MergeSettings { squash, merge, rebase, queue, auto_merge: true }.strategy();
         assert_eq!(s(true, true, true, true), None);
         assert_eq!(s(true, true, true, false), Some(MergeStrategy::Squash));
         assert_eq!(s(false, true, true, false), Some(MergeStrategy::Merge));

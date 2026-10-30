@@ -50,8 +50,8 @@ With a login, PDT:
 
 - follows each ticket's pull request: its state, reviews, CI runs and whether it merged;
 - opens pull requests for agents, and lets them read CI's failed logs and reply to review comments;
-- merges when you (or a workflow you turned on) say so: through auto-merge or the merge queue when the repository
-  uses them;
+- merges when you (or a workflow you turned on) say so: through the merge queue or auto-merge when the repository
+  uses them, otherwise itself, once CI passes;
 - reads, comments on and files issues, when you or a workflow ask it to;
 - reruns CI or starts a GitHub Actions workflow, when a workflow asks it to.
 

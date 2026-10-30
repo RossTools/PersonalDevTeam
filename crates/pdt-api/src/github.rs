@@ -16,12 +16,13 @@
 use crate::forge::ProjectForge;
 use crate::routes::{AppState, now_ms};
 use pdt_core::pr::{
-    CiRun, CiSource, CiState, CiStatus, Notice, NoticeKind, PrState, PullRequestStatus, QueueRemovalReason, notices,
+    CiRun, CiSource, CiState, CiStatus, Mergeable, Notice, NoticeKind, PrState, PullRequestStatus, QueueRemovalReason,
+    notices,
 };
 use pdt_core::ticket::{AttemptSummary, Ticket, TicketSummary};
 use pdt_core::workflow::api::NewLogEvent;
 use pdt_core::workflow::events::{self as ev, AttemptRef, CiEvent, CiRunRef, PrEvent};
-use pdt_forge::{ChangeComment, ChangeRequest, ChangeReview, CiProvider, Forge, ForgeError};
+use pdt_forge::{ChangeComment, ChangeRequest, ChangeReview, CiProvider, Forge, ForgeError, MergeSettings};
 use pdt_store::AttemptInfo;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -47,6 +48,84 @@ pub(crate) struct PrWatch {
     branch_ci: HashMap<String, CiStatus>,
     /// Why each provider's last read of an attempt's CI failed, by attempt and then by provider.
     ci_errors: HashMap<String, BTreeMap<String, String>>,
+    /// Each repository's merge settings by forge, repository and base, and when they were read (PDT-297).
+    merge_settings: HashMap<(String, String, String), (MergeSettings, i64)>,
+    /// The green CI (head and runs) PDT last merged each held merge on (PDT-297), so it tries each once.
+    held_tried: HashMap<String, String>,
+    /// Attempts whose merge the forge refused to hold although the repository allows auto-merge (checks it doesn't
+    /// require, PDT-297): PDT holds them.
+    held: HashSet<String>,
+}
+
+/// PDT holds the attempt's merge (PDT-297): the forge refused to ([`pdt_forge::ForgeError::NotReady`]).
+pub(crate) fn hold(st: &AppState, attempt_id: &str) {
+    watch(st).held.insert(attempt_id.to_string());
+}
+
+/// How long a repository's merge settings are kept (they change in the repository's settings, rarely).
+const MERGE_SETTINGS_MS: i64 = 5 * 60 * 1000;
+
+/// The merge settings of `forge`'s repository into `base` (its merge queue, auto-merge, methods), read once in
+/// [`MERGE_SETTINGS_MS`]; None when they can't be read.
+pub(crate) async fn merge_settings(st: &AppState, forge: &ProjectForge, base: &str) -> Option<MergeSettings> {
+    let key = (forge.kind.to_string(), forge.repo.clone(), base.to_string());
+    let now = now_ms();
+    if let Some((s, at)) = watch(st).merge_settings.get(&key)
+        && now - at < MERGE_SETTINGS_MS
+    {
+        return Some(*s);
+    }
+    let (api, repo, b) = (forge.api.clone(), forge.repo.clone(), base.to_string());
+    match tokio::task::spawn_blocking(move || api.merge_settings(&repo, &b)).await {
+        Ok(Ok(s)) => {
+            watch(st).merge_settings.insert(key, (s, now));
+            Some(s)
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(repo = %forge.repo, error = %e, "could not read the repository's merge settings");
+            None
+        }
+        Err(_) => None,
+    }
+}
+
+/// Whether PDT holds the open PR's merge itself (PDT-297): it was set to merge, it is neither on auto-merge nor
+/// queued, nor did a merge queue just drop it, and the forge can't hold it (the repository has no auto-merge, or the
+/// forge refused to). Elsewhere PR notices sets it to merge again.
+async fn merge_held(st: &AppState, info: &AttemptInfo, pr: &PullRequestStatus, forge: Option<&ProjectForge>) -> bool {
+    if !info.merge_requested
+        || pr.state != PrState::Open
+        || pr.auto_merge
+        || pr.in_merge_queue
+        || pr.queue_removal.is_some()
+        || pr.local
+    {
+        return false;
+    }
+    if watch(st).held.contains(&info.attempt.id) {
+        return true;
+    }
+    match forge {
+        Some(f) => merge_settings(st, f, &pr.base_branch).await.is_some_and(|s| !s.auto_merge),
+        None => false,
+    }
+}
+
+/// The green CI a held merge may merge on now (its head and runs), once each: None when the PR isn't held, CI on its
+/// head hasn't passed, or PDT tried on this CI already.
+fn held_merge_due(st: &AppState, info: &AttemptInfo, pr: &PullRequestStatus) -> Option<String> {
+    if !pr.merge_held || pr.draft || pr.mergeable == Mergeable::Conflicting || pr.local {
+        return None;
+    }
+    let ci = pr.ci.as_ref().filter(|c| c.state == CiState::Passed)?;
+    let runs: Vec<String> = ci.runs.iter().map(|r| format!("{}:{}:{}", r.provider, r.id, r.attempt)).collect();
+    let key = format!("{}:{}", pr.head_sha, runs.join(","));
+    let mut w = watch(st);
+    if w.held_tried.get(&info.attempt.id) == Some(&key) {
+        return None;
+    }
+    w.held_tried.insert(info.attempt.id.clone(), key.clone());
+    Some(key)
 }
 
 /// A run attempt: its provider, id and attempt.
@@ -560,6 +639,7 @@ async fn refresh_one(
         now.ci = all;
     }
     now.checked_at = now_ms();
+    now.merge_held = merge_held(st, info, &now, forge).await;
     watch(st).by_attempt.insert(id.clone(), now.clone());
     if tell {
         let mut info = info.clone();
@@ -588,6 +668,14 @@ async fn refresh_one(
             }
         }
         emit(st, info, events).await;
+        // PDT's own auto-merge (PDT-297): CI passed on a merge the forge couldn't hold.
+        now.merge_held = merge_held(st, info, &now, forge).await;
+        if let Some(p) = watch(st).by_attempt.get_mut(&id) {
+            p.merge_held = now.merge_held;
+        }
+        if held_merge_due(st, info, &now).is_some() {
+            tokio::spawn(crate::review::merge_held(st.clone(), info.attempt.id.clone()));
+        }
         if now.state == PrState::Open
             && tick.feedback
             && let Some(f) = forge.filter(|f| f.caps().reviews)
@@ -904,6 +992,7 @@ pub(crate) fn read_attempt(a: &ReadArgs) -> Result<Read, ForgeError> {
         checked_at: 0,
         error: None,
         local: false,
+        merge_held: false,
     });
     Ok(Read { pr: status, head, ci, queue: fresh_queue, jobs: fetched, forge_error: None })
 }
@@ -1096,6 +1185,7 @@ mod tests {
             checked_at: 0,
             error: None,
             local: false,
+            merge_held: false,
         };
         w.by_attempt.insert("a".into(), status(vec![failed.clone()]));
         let k = |id: &str| ("github_actions".to_string(), id.to_string(), 1);
@@ -1263,6 +1353,7 @@ mod tests {
             checked_at: 0,
             error: None,
             local: false,
+            merge_held: false,
         };
         let gh = CiStatus::of(&[run(7, "b", "h", CiState::Passed)], "h").unwrap();
         let actions = CiSource { id: "github_actions".into(), label: "GitHub Actions".into(), logs: true };
@@ -1324,6 +1415,7 @@ mod tests {
             checked_at: 0,
             error: None,
             local: false,
+            merge_held: false,
         };
         let on = status(true, false, None);
         assert!(turned_off_by_hand(Some(&on), &status(false, false, None)));

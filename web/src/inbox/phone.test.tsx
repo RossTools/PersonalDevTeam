@@ -282,7 +282,7 @@ describe('phone triage', () => {
     const pr: PullRequestStatus = {
       number: 42, url: 'https://github.com/o/r/pull/42', title: 'Phone triage', state: 'open', draft: false, baseBranch: 'main',
       headSha: 'abc', mergeable: 'mergeable', behind: false, autoMerge: false, inMergeQueue: false, queuePosition: null,
-      ci: { state: 'passed', url: 'https://ci', runs: [] }, queueCi: null, checkedAt: 1, error: null, local: false,
+      ci: { state: 'passed', url: 'https://ci', runs: [] }, queueCi: null, checkedAt: 1, error: null, local: false, mergeHeld: false,
     };
     const t = ticket(7, {
       id: 't',

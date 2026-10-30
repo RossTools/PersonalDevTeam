@@ -1655,7 +1655,8 @@ async fn ci_providers_listed_in_the_project_file_are_the_ones_the_merge_waits_fo
 async fn a_forge_without_required_checks_or_queues_still_merges_safely() {
     let caps = pdt_forge::Capabilities { required_checks: false, merge_queue: false, ..pdt_forge::Capabilities::ALL };
     let gh = std::sync::Arc::new(FakeForge::with(caps));
-    *gh.settings.lock().unwrap() = Some(MergeSettings { squash: true, merge: false, rebase: false, queue: true });
+    *gh.settings.lock().unwrap() =
+        Some(MergeSettings { squash: true, merge: false, rebase: false, queue: true, auto_merge: true });
     let env = setup_with(Some(gh.clone())).await;
     settings(&env, json!({"requireGreenCi": false})).await;
     let t = ticket(&env, "Change it").await;
@@ -1890,4 +1891,109 @@ async fn submitted_needs_a_clean_pushed_worktree() {
     assert!(r.starts_with("mcp submit_outcome:"), "{r}");
     let review = inbox_item(&env, "manual", &t).await;
     assert_eq!(review["title"], "Your turn: Review");
+}
+
+/// A GitHub repository with neither a merge queue nor auto-merge allowed (PDT-297).
+fn no_auto_merge() -> std::sync::Arc<FakeForge> {
+    let gh = std::sync::Arc::new(FakeForge::default());
+    *gh.settings.lock().unwrap() =
+        Some(MergeSettings { squash: true, merge: false, rebase: false, queue: false, auto_merge: false });
+    gh
+}
+
+async fn events_of(env: &Env, kind: &str) -> Vec<Value> {
+    call(&env.app, "GET", &format!("/api/events?type={kind}"), None).await.1.as_array().unwrap().clone()
+}
+
+/// PDT-297: on a repository without auto-merge, the user's Merge of a pull request whose CI passed merges it at once,
+/// and the attempt ends merged.
+#[tokio::test]
+async fn without_auto_merge_a_green_pull_request_merges_at_once() {
+    let gh = no_auto_merge();
+    let env = setup_with(Some(gh.clone())).await;
+    let t = ticket(&env, "Change it").await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let (id, branch) = (attempt["id"].as_str().unwrap().to_string(), attempt["branch"].as_str().unwrap().to_string());
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let (s, p) = call(&env.app, "GET", &format!("/api/attempts/{id}/merge"), None).await;
+    assert_eq!((s, &p["pr"]["autoMerge"], &p["pr"]["queue"]), (StatusCode::OK, &json!(false), &json!(false)), "{p}");
+
+    let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "user"}))).await;
+    assert_eq!((s, r["outcome"].as_str()), (StatusCode::OK, Some("merged")), "{r}");
+    assert_eq!(
+        gh.calls.lock().unwrap().iter().filter(|c| c.starts_with("merge o/r 12")).collect::<Vec<_>>(),
+        ["merge o/r 12 squash"]
+    );
+    assert_eq!(get_ticket(&env, &t).await["attempt"]["state"], "merged");
+}
+
+/// PDT-297: on a repository without auto-merge, the user's Merge while CI runs sets the pull request to merge (no
+/// call to the forge yet), and PDT merges it once CI passes, even where only people may merge (the request was a
+/// person's). No queue notice and no "turned off by hand" along the way.
+#[tokio::test]
+async fn without_auto_merge_pdt_merges_a_pull_request_once_its_ci_passes() {
+    let gh = no_auto_merge();
+    let env = setup_with(Some(gh.clone())).await;
+    settings(&env, json!({"mergeBy": "user"})).await;
+    let t = ticket(&env, "Change it").await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let (id, branch) = (attempt["id"].as_str().unwrap().to_string(), attempt["branch"].as_str().unwrap().to_string());
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Running)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let merges = || gh.calls.lock().unwrap().iter().filter(|c| c.starts_with("merge o/r 12")).count();
+
+    let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "user"}))).await;
+    assert_eq!((s, r["outcome"].as_str()), (StatusCode::OK, Some("queued")), "{r}");
+    assert_eq!(merges(), 0, "nothing merges while CI runs");
+    let v = get_ticket(&env, &t).await;
+    assert_eq!(v["attempt"]["pr"]["mergeHeld"], true, "{v}");
+    let (_, comments) = call(&env.app, "GET", &format!("/api/tickets/{t}/events"), None).await;
+    assert!(
+        comments.to_string().contains("merges PR #12 once its CI passes: o/r doesn't allow auto-merge"),
+        "{comments}"
+    );
+    let (_, p) = call(&env.app, "GET", &format!("/api/attempts/{id}/merge"), None).await;
+    assert_eq!(p["problem"], "pr_queued", "already set to merge: {p}");
+
+    // Still running: nothing. Green: PDT merges it.
+    pdt_api::refresh_prs(&env.state).await;
+    assert_eq!(merges(), 0);
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    tick_until(&env, "PDT merging the pull request", || async {
+        pdt_api::refresh_prs(&env.state).await;
+        (get_ticket(&env, &t).await["attempt"]["state"] == "merged").then_some(Value::Null)
+    })
+    .await;
+    assert_eq!(merges(), 1, "merged once");
+    assert!(events_of(&env, "pr.queue_left").await.is_empty(), "no merge queue to leave");
+    assert!(env.state.store.get_attempt(&id).await.unwrap().unwrap().merge_requested, "never taken as turned off");
+}
+
+/// PDT-297: a workflow's merge (the Pipeline's `attempt.merge`) on a repository without auto-merge waits for CI, then
+/// merges the pull request itself.
+#[tokio::test]
+async fn without_auto_merge_a_workflow_merge_waits_for_ci_then_merges() {
+    let gh = no_auto_merge();
+    let env = setup_with(Some(gh.clone())).await;
+    settings(&env, json!({"requireGreenCi": false})).await;
+    let t = ticket(&env, "Change it").await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let (id, branch) = (attempt["id"].as_str().unwrap().to_string(), attempt["branch"].as_str().unwrap().to_string());
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Running)]);
+    pdt_api::refresh_prs(&env.state).await;
+    // Even without requireGreenCi: the repository can't hold the merge, so it waits.
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("ci_pending")), "{v}");
+    assert!(!gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge o/r 12")));
+
+    gh.set_runs(&branch, vec![ci_run(1, &branch, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
+    assert_eq!((s, r["outcome"].as_str()), (StatusCode::OK, Some("merged")), "{r}");
+    assert_eq!(get_ticket(&env, &t).await["attempt"]["state"], "merged");
 }

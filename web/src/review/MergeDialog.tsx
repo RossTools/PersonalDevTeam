@@ -67,22 +67,27 @@ function Problem({ p, onAsk, sending }: { p: MergePreview; onAsk: () => void; se
           title="No pull request yet"
           action={<Button size="sm" pending={sending} onClick={onAsk}>Ask the agent to open one</Button>}
         >
-          This project merges through pull requests, and {p.branch} has no open one. Once it has, Merge… turns on auto-merge for it.
+          This project merges through pull requests, and {p.branch} has no open one. Once it has, Merge… sets it to merge.
         </Alert>
       );
     case 'pr_queued':
-      return p.pr?.local
-        ? <Alert tone="info">Change request #{p.pr.number} is already set to merge; PDT merges it once its CI passes.</Alert>
-        : <Alert tone="info">Auto-merge is already on for pull request #{p.pr?.number}; {p.pr?.forge ?? 'the forge'} merges it once its checks pass.</Alert>;
+      if (p.pr?.local) return <Alert tone="info">Change request #{p.pr.number} is already set to merge; PDT merges it once its CI passes.</Alert>;
+      return p.pr && !p.pr.autoMerge && !p.pr.queue
+        ? <Alert tone="info">Pull request #{p.pr.number} is already set to merge; PDT merges it once its CI passes.</Alert>
+        : <Alert tone="info">Pull request #{p.pr?.number} is already set to merge; {p.pr?.forge ?? 'the forge'} merges it once its checks pass.</Alert>;
     default:
       return null;
   }
 }
 
+/** Whether PDT, not the forge, holds the pull request's merge until CI passes: no merge queue, and no auto-merge (PDT-297). */
+const pdtHolds = (p: MergePreview) => !!p.pr && !p.pr.local && !p.pr.queue && !p.pr.autoMerge;
+
 /**
  * Merge…: into the base branch locally (a merge commit or a squash, remembered per project; then the ticket moves to Done and, by default, the worktree
- * goes), or, when the attempt has an open pull request, auto-merge (or its merge queue) on the project's forge (by
- * default PDT finishes the ticket once the forge merges it, PDT-75). Problems show instead of the button.
+ * goes), or, when the attempt has an open pull request, auto-merge (or its merge queue) on the project's forge; where
+ * the repository allows neither, it merges now if CI passed, else PDT merges it once CI passes (by default PDT
+ * finishes the ticket once it merges, PDT-75). Problems show instead of the button.
  */
 export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; attemptId: string; onClose: () => void }) {
   const qc = useQueryClient();
@@ -119,16 +124,21 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
       invalidateTickets(qc, [ticket.id]);
       onClose();
       if (r.outcome === 'queued') {
+        const then = finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : '';
         toast.success(
           p.pr?.local
-            ? `Change request #${p.pr.number} merges into ${p.base} once its CI passes${finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : ''}.`
-            : `Auto-merge is on for PR #${p.pr?.number}. ${p.pr?.forge ?? 'The forge'} merges it once the checks pass${finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : ''}.`,
+            ? `Change request #${p.pr.number} merges into ${p.base} once its CI passes${then}.`
+            : pdtHolds(p)
+              ? `PR #${p.pr?.number} is set to merge. PDT merges it once its CI passes${then}.`
+              : p.pr?.queue
+                ? `PR #${p.pr.number} is set to merge through the ${p.pr.queueName}${then}.`
+                : `Auto-merge is on for PR #${p.pr?.number}. ${p.pr?.forge ?? 'The forge'} merges it once the checks pass${then}.`,
         );
         return;
       }
       if (viaForge) {
-        // The local forge merged it at once (its CI had passed): PDT finishes the ticket as asked.
-        toast.success(`Merged change request #${p.pr?.number} into ${p.base}.`);
+        // Merged at once (CI had passed, or the forge merged it straight away): PDT finishes the ticket as asked.
+        toast.success(`Merged ${p.pr?.local ? 'change request' : 'PR'} #${p.pr?.number} into ${p.base}.`);
         return;
       }
       const fresh = await api.getTicket(ticket.id);
@@ -157,7 +167,9 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {p && !p.problem && (
             <Button variant="primary" pending={busy} onClick={() => void merge()}>
-              {viaForge ? (p.pr?.queue ? `Add to ${queueName}` : p.pr?.local ? 'Merge when CI passes' : 'Turn on auto-merge') : style === 'squash' ? 'Squash and merge' : 'Merge'}
+              {viaForge
+                ? (p.pr?.queue ? `Add to ${queueName}` : p.pr?.local || pdtHolds(p) ? 'Merge when CI passes' : 'Turn on auto-merge')
+                : style === 'squash' ? 'Squash and merge' : 'Merge'}
             </Button>
           )}
         </>
@@ -179,6 +191,7 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
             <p>
               <Link href={p.pr!.url} external>Pull request #{p.pr!.number}</Link> merges into <span className="font-mono">{p.base}</span> on{' '}
               {p.pr!.forge}{p.pr!.queue ? ` through the ${queueName}` : ' once its checks pass'}.
+              {pdtHolds(p) ? ` The repository doesn’t allow auto-merge, so PDT merges it now if its CI passed, or once it passes.` : ''}
               {finishOnMerge ? '' : ` PDT notices the merge and offers to move ${ticket.key} to Done.`}
             </p>
           ) : (

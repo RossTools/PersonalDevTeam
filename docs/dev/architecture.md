@@ -104,7 +104,12 @@ agent.
 Line comments are drafts until Send feedback sends them, as one message, to the attempt's agent. Approve records a
 review at the branch head. Merge (pdt-api `review::merge_attempt`, shared with the `attempt.merge` workflow node)
 checks the project's policy first, then turns on the forge's auto-merge or merge queue, or merges locally when there
-is no PR.
+is no PR. Where the forge can't hold a merge for its checks (`MergeSettings::auto_merge` false: a GitHub repository
+without auto-merge; or GitHub refusing it for checks it doesn't require, `ForgeError::NotReady`), PDT holds it: the
+attempt is set to merge (`merge_requested`, shown as the PR's `mergeHeld`), and the PR poller merges it once CI on its
+head passes (`review::merge_held`, once per green CI). Merges of one attempt take a lock, so the poller's and PR
+notices' merge again never both go through. Merge settings are read once per repository and base every five minutes
+(`github::merge_settings`).
 
 **Areas and overlap.** `[[area]]`s in `.pdt/project.toml` name parts of the repository. Tickets in flight are
 compared by their areas and their changed files (pdt-core `overlap.rs`, refreshed every 30 s); a shared exclusive

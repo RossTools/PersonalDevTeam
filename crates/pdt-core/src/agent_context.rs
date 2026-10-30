@@ -131,7 +131,7 @@ fn ticket_section(api: &str, t: &TicketWork, forge: Option<&ForgeNotes>) -> Stri
         (has(ev::CI_RUN_FAILED), "CI fails on its pull request".to_string()),
         (has(ev::CI_RUN_PASSED), "CI passes".into()),
         (has(ev::PR_CONFLICT), format!("the pull request conflicts with {base}")),
-        (has(ev::PR_QUEUE_LEFT), "the merge queue drops it".into()),
+        (has(ev::PR_QUEUE_LEFT), "a merge queue drops it".into()),
         (has(ev::PR_BEHIND), format!("{base} moves while it waits to merge")),
         (merged, "it is merged".into()),
         (has(ev::ATTEMPT_ABANDONED), "the attempt is abandoned".into()),
@@ -309,7 +309,7 @@ mod tests {
         let t = on_ticket(&[ev::CI_RUN_FAILED, ev::PR_CONFLICT, ev::PR_QUEUE_LEFT, ev::PR_MERGED, ev::ATTEMPT_MERGED]);
         assert!(
             t.contains(
-                "when CI fails on its pull request, the pull request conflicts with `main`, the merge queue drops it \
+                "when CI fails on its pull request, the pull request conflicts with `main`, a merge queue drops it \
                  or it is merged."
             ),
             "{t}"

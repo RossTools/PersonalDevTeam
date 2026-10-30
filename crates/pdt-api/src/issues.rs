@@ -76,7 +76,7 @@ fn bad(message: impl Into<String>) -> ApiError {
 fn forge_error(e: ForgeError) -> ApiError {
     match e {
         ForgeError::Unavailable(m) => ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "forge_unavailable", m),
-        ForgeError::Failed(m) => ApiError::new(StatusCode::BAD_GATEWAY, "forge_error", m),
+        ForgeError::Failed(m) | ForgeError::NotReady(m) => ApiError::new(StatusCode::BAD_GATEWAY, "forge_error", m),
         ForgeError::Unsupported(m) => ApiError::new(StatusCode::BAD_REQUEST, "unsupported", m),
     }
 }

@@ -424,7 +424,8 @@ async fn with_an_open_pr_merge_turns_on_auto_merge() {
     pdt_api::refresh_prs(&env.state).await;
     let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await;
     assert_eq!(t["attempt"]["pr"]["number"], json!(12), "{t}");
-    *env.gh.settings.lock().unwrap() = Some(MergeSettings { squash: true, merge: true, rebase: false, queue: true });
+    *env.gh.settings.lock().unwrap() =
+        Some(MergeSettings { squash: true, merge: true, rebase: false, queue: true, auto_merge: true });
     let p = preview(&env).await;
     assert_eq!(
         (p["method"].as_str(), p["pr"]["number"].as_u64(), p["pr"]["queue"].as_bool()),

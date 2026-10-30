@@ -78,9 +78,9 @@ fn doc(v: serde_json::Value) -> WorkflowDoc {
 /// How many times PR notices puts an agent on one attempt's failed merge before it stops and comments (PDT-104).
 pub const FIX_TRIES: u32 = 3;
 
-const FIX_PROMPT: &str = "{{trigger.notice.text}}\n\nThis pull request was set to merge (auto-merge or the merge \
-queue), so get it merging again: fix the cause, run the checks, commit and push. Once you push, PDT turns auto-merge \
-back on if it is off: don't turn it on yourself, whatever the notice above says.\n\nMost fixes are small (a CI fix, resolving a conflict, merging the base \
+const FIX_PROMPT: &str = "{{trigger.notice.text}}\n\nThis pull request was set to merge (auto-merge, a merge queue, \
+or PDT once CI passes), so get it merging again: fix the cause, run the checks, commit and push. Once you push, PDT \
+sets it to merge again if it isn't: don't turn on auto-merge or merge it yourself, whatever the notice above says.\n\nMost fixes are small (a CI fix, resolving a conflict, merging the base \
 in): push and submit `submitted`. If the fix is a large change to the work (new behaviour, a redesign, a big rewrite), \
 commit it but don't push, and submit `review`: a Reviewer looks at it first, then you are asked to push.";
 

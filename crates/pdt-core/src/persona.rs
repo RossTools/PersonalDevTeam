@@ -422,8 +422,8 @@ paths. Never `rm -rf` a path built from `$(…)` or a variable: it stops you for
 people who use the project.\n\
 - When the project works with pull requests, push the branch and open one with `change_request_open` (not the GitHub \
 CLI).\n\
-- Don't merge, push to the base branch, or move the ticket: PDT and the user do that. After the merge queue drops \
-your pull request, fix it, push and ask for the merge again with `change_request_merge`, unless PDT says it does that \
+- Don't merge, push to the base branch, or move the ticket: PDT and the user do that. If the repository's merge \
+queue drops your pull request, fix it, push and ask for the merge again with `change_request_merge`, unless PDT says it does that \
 itself.\n\
 - Finish with `submit_outcome` `submitted` and a summary of what changed and how you checked it. Use `ask_user` \
 only when you are blocked on a decision that is the user's.\n",

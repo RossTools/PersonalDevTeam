@@ -57,9 +57,11 @@ fn pr_number_query() -> String {
 }
 
 const MERGE_SETTINGS_QUERY: &str = "query($owner:String!,$name:String!,$base:String!){repository(owner:$owner,\
-name:$name){squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed mergeQueue(branch:$base){id}}}";
+name:$name){squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed autoMergeAllowed mergeQueue(branch:$base){id}}}";
 
-const PR_ID_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id}}}";
+/// A pull request's node id, and whether its repository allows auto-merge (PDT-297: many don't).
+const PR_ID_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){\
+autoMergeAllowed pullRequest(number:$number){id}}}";
 
 const AUTO_MERGE: &str = "mutation($id:ID!,$method:PullRequestMergeMethod){enablePullRequestAutoMerge(input:\
 {pullRequestId:$id,mergeMethod:$method}){clientMutationId}}";
@@ -634,13 +636,15 @@ impl GithubApi {
         graphql_data(v)
     }
 
-    fn pr_node_id(&self, repo: &str, number: u32) -> Result<String, GhError> {
+    /// The pull request's node id, and whether its repository allows auto-merge (allowed when the answer doesn't say).
+    fn pr_node_id(&self, repo: &str, number: u32) -> Result<(String, bool), GhError> {
         let (owner, name) = owner_name(repo)?;
         let d = self.graphql(PR_ID_QUERY, json!({"owner": owner, "name": name, "number": number}))?;
-        d["repository"]["pullRequest"]["id"]
+        let id = d["repository"]["pullRequest"]["id"]
             .as_str()
             .map(String::from)
-            .ok_or_else(|| GhError::BadAnswer(format!("no pull request #{number}")))
+            .ok_or_else(|| GhError::BadAnswer(format!("no pull request #{number}")))?;
+        Ok((id, d["repository"]["autoMergeAllowed"].as_bool().unwrap_or(true)))
     }
 
     fn merge_now(
@@ -876,6 +880,8 @@ pub fn parse_merge_settings(data: &Value) -> Result<MergeSettings, GhError> {
         merge: b("mergeCommitAllowed"),
         rebase: b("rebaseMergeAllowed"),
         queue: r["mergeQueue"].is_object(),
+        // Older GitHub Enterprise Servers don't say: allowed, as before.
+        auto_merge: r["autoMergeAllowed"].as_bool().unwrap_or(true),
     })
 }
 
@@ -1229,7 +1235,9 @@ impl Forge for GithubApi {
     fn merge(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), ForgeError> {
         self.merge_head(repo, number, strategy, None)
     }
-    /// GraphQL's `expectedHeadOid`, and REST's `sha` for a merge at once.
+    /// GraphQL's `expectedHeadOid`, and REST's `sha` for a merge at once. Auto-merge where the repository allows it;
+    /// otherwise (PDT-297), and for a pull request that could merge now, into the merge queue (no strategy) or merged
+    /// at once. A repository without auto-merge can't hold a merge for its checks: PDT's callers wait for CI first.
     fn merge_head(
         &self,
         repo: &str,
@@ -1237,7 +1245,7 @@ impl Forge for GithubApi {
         strategy: Option<MergeStrategy>,
         head: Option<&str>,
     ) -> Result<(), ForgeError> {
-        let id = self.pr_node_id(repo, number)?;
+        let (id, auto_merge) = self.pr_node_id(repo, number)?;
         let method = strategy.map(merge_method);
         let (auto, enqueue, vars, queue_vars) = match head {
             Some(h) => (
@@ -1248,18 +1256,27 @@ impl Forge for GithubApi {
             ),
             None => (AUTO_MERGE, ENQUEUE, json!({"id": id, "method": method}), json!({"id": id})),
         };
-        match self.graphql(auto, vars) {
-            Ok(_) => Ok(()),
-            // GitHub refuses auto-merge for a PR that could merge now ("is in clean status"): merge it, through the
-            // merge queue when no strategy is given (a queue picks it).
-            Err(GhError::Status(200, m)) if m.contains("clean status") => {
-                if strategy.is_none() && self.graphql(enqueue, queue_vars).is_ok() {
-                    return Ok(());
+        if auto_merge {
+            match self.graphql(auto, vars) {
+                Ok(_) => return Ok(()),
+                // GitHub refuses auto-merge for a PR that could merge now ("is in clean status"), and where the
+                // repository turned it off since: merge it as a repository without auto-merge does.
+                Err(GhError::Status(200, m))
+                    if m.contains("clean status") || m.contains("Auto merge is not allowed") => {}
+                // Checks that aren't required still running (or failing): auto-merge can't wait for them.
+                Err(GhError::Status(200, m)) if m.contains("unstable status") => {
+                    return Err(ForgeError::NotReady(format!(
+                        "GitHub can't hold the merge of #{number} for checks {repo} doesn't require"
+                    )));
                 }
-                Ok(self.merge_now(repo, number, strategy, head)?)
+                Err(e) => return Err(e.into()),
             }
-            Err(e) => Err(e.into()),
         }
+        // Through the merge queue when no strategy is given (a queue picks it), else at once.
+        if strategy.is_none() && self.graphql(enqueue, queue_vars).is_ok() {
+            return Ok(());
+        }
+        Ok(self.merge_now(repo, number, strategy, head)?)
     }
     fn viewer_login(&self) -> Result<String, ForgeError> {
         let login = s(&self.get("user")?, "login");

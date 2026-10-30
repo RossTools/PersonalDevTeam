@@ -49,6 +49,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   fast-forwarded to the base is not merged.
 - **An automated merge never merges locally when a PR may exist**, and needs green CI from every provider and the
   policy's approval; a person's merge skips those gates (pdt-api `review::merge_attempt`, pdt-core `policy.rs`).
+  Where the forge can't hold a merge (no auto-merge), a person's merge waits for green CI too, and PDT's own merge once
+  it passes is that person's request: it skips the policy, as the forge's auto-merge would (`review::merge_held`).
 - **Finish never discards uncommitted changes** unless asked (`discardChanges`), and runs in its own task so it
   completes when the agent that called it is stopped.
 - **Workflows hear of a Start only once its session exists** (`announce_start`).

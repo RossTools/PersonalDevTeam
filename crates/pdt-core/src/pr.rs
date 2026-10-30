@@ -3,6 +3,7 @@
 //! into the attempt's agent session when CI fails, the branch conflicts with the base, the merge queue removes the PR
 //! without merging it, or it merges. Pure: pdt-github reads GitHub, pdt-api polls and delivers.
 
+use crate::brand::SHORT_NAME;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -271,6 +272,9 @@ pub fn ci_failed_notice(
         Some(p) if p.auto_merge => {
             text.push_str(" Auto-merge is on for the pull request, so it merges once the fix passes.")
         }
+        Some(p) if p.merge_held => {
+            text.push_str(&format!(" It is set to merge, so {SHORT_NAME} merges it once the fix passes."))
+        }
         _ => {}
     }
     Some(Notice {
@@ -321,6 +325,10 @@ pub struct PullRequestStatus {
     /// `url` is its newest CI run's log.
     #[serde(default)]
     pub local: bool,
+    /// Set to merge, and PDT merges it itself once CI on its head passes (PDT-297): the forge can't hold the merge
+    /// (a repository without auto-merge, or checks it doesn't require), so it is neither on auto-merge nor queued.
+    #[serde(default)]
+    pub merge_held: bool,
 }
 
 impl PullRequestStatus {
@@ -837,6 +845,7 @@ pub(crate) mod tests {
             checked_at: 0,
             error: None,
             local: false,
+            merge_held: false,
         }
     }
 
