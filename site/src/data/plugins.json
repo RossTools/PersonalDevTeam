@@ -94,6 +94,11 @@
           "title": "Run a GitHub Actions workflow"
         },
         {
+          "description": "Reads the newest GitHub Actions run of a workflow (by its name, `release`) on a branch (default `main`), however it was started (a schedule, by hand), and leaves by its state: `passed`, `failed` (with `failedJobs`), `running` (queued or running), `cancelled`, or `none` when there is no run.",
+          "id": "github.workflow.latest",
+          "title": "Read a workflow's latest run"
+        },
+        {
           "description": "Reads a pull request by its head branch or its number and leaves by its state: `open`, `merged`, `closed`, or `none` when there is none. Output: `number`, `url`, `title`, `state`, `merged`, `headSha`. With `ci` (and `branch`, its head) it reads CI too: an open one whose check failed on its head, or that the merge queue removed for failed checks, leaves by `failed` with `failure` (`ci` or `queue`), `ciUrl` and `failedJobs`. Between waits it polls one (a dry run takes `dryRunPort`, else `open` for a branch, `merged` for a number).",
           "id": "github.change_request",
           "title": "Read a GitHub pull request"
@@ -146,6 +151,7 @@
       "workflows": [
         "PDT bug triage",
         "PDT pull request review",
+        "PDT nightly release",
         "Done closes the GitHub issue",
         "Cut a release"
       ]
