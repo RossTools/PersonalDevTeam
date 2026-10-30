@@ -25,6 +25,7 @@ pub const BASE_MOVED: &str = "base-moved";
 pub const PR_FEEDBACK: &str = "pr-feedback";
 pub const LATE_COMMITS: &str = "late-commits";
 pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
+/// The Cut a release template (without `builtin:`); a built-in workflow until PDT-301 ([`RETIRED`]).
 pub const CUT_RELEASE: &str = "cut-release";
 
 pub const BUILTINS: &[Builtin] = &[
@@ -38,11 +39,8 @@ pub const BUILTINS: &[Builtin] = &[
 
 /// The GitHub plugin's built-ins ([`crate::integrations::Integration::builtin_workflows`]): left out while it is off
 /// (PDT-251).
-pub const GITHUB_BUILTINS: &[Builtin] = &[
-    Builtin { id: GITHUB_ISSUE_DONE, enabled: true, category: Category::Issues, doc: github_issue_done },
-    // Off until the user turns it on; the PM starts it (Run now) when the user asks for a release.
-    Builtin { id: CUT_RELEASE, enabled: false, category: Category::Releases, doc: cut_release },
-];
+pub const GITHUB_BUILTINS: &[Builtin] =
+    &[Builtin { id: GITHUB_ISSUE_DONE, enabled: true, category: Category::Issues, doc: github_issue_done }];
 
 /// PDT's built-ins, then the enabled integrations' ([`crate::integrations::Integration::builtin_workflows`]).
 pub fn all(reg: &crate::integrations::Registry) -> Vec<Builtin> {
@@ -570,210 +568,270 @@ const MERGE_POLLS: u32 = 14 * 24 * 12;
 const RELEASE_POLL_MS: u64 = 2 * 60_000;
 const RELEASE_POLLS: u32 = 4 * 30;
 
-/// Cut a release (PDT-194, PDT-214, PDT-294): started (Run now, by the PM or the user) in a project, it runs the
-/// release workflow its input names, with the inputs it gives, and follows what that makes. Its input:
-/// - `workflow`: the release workflow's file (`publish.yml`); without it nothing starts;
-/// - `inputs`: the workflow's `workflow_dispatch` inputs (`{"bump": "minor"}`), named as the workflow names them;
-/// - `ref`: the branch it runs on (default `main`);
-/// - `releaseBranch`: the branch the workflow opens its release PR from. With it, an open one stops a new release,
-///   and the run says when the PR is open, puts a failed check in the Inbox and waits for the merge; without it, there
-///   is no PR stage;
-/// - `tag`: the published release's tag pattern (`v*`, `v*-beta.*`); without it, the latest release.
+/// Cut a release (PDT-194, PDT-214, PDT-294; a template since PDT-301): made for a project from its release workflow
+/// (`workflow`, run on `ref`), it asks Run now for the kind of release and follows what the workflow makes:
+/// - a stable release runs the workflow with `stableInputs` (`{{trigger.bump}}` or `{{trigger.version}}` in them).
+///   With `releaseBranch` (the branch the workflow opens its release PR from), an open one stops a new release, and the
+///   run says when the PR is open, puts a failed check in the Inbox and waits for the merge; without it, there is no PR
+///   stage. `tagPattern` is its tag (none: the latest release);
+/// - the other kind (named `preName`, e.g. Nightly) runs it with `preInputs` and has no PR; `preTagPattern` is its tag.
 ///
 /// It says when the release is published. PDT merges and tags nothing: the workflow and the forge do.
-fn cut_release() -> WorkflowDoc {
+pub(crate) fn cut_release_template() -> pdt_core::workflow::template::Template {
+    use super::templates::{builtin, params};
     // A GitHub read that fails (the network, a rate limit) is tried again before the run fails.
     let retry = json!({"max": 5, "backoffMs": 60_000});
     let wait = |id: &str, x: i32, y: i32, title: &str, ms: u64, visits: u32| {
         json!({"id": id, "kind": "wait", "version": 1, "position": {"x": x, "y": y}, "title": title,
                "maxVisits": visits, "config": {"ms": ms}})
     };
-    let run_workflow = |id: &str, x: i32, y: i32| {
+    let run_workflow = |id: &str, x: i32, y: i32, inputs: &str| {
         json!({"id": id, "kind": "github.workflow.run", "version": 1, "position": {"x": x, "y": y},
-               "title": "Run the release workflow", "config": {"workflow": "{{trigger.workflow}}",
-               "ref": "{{trigger.ref}}", "inputs": "{{trigger.inputs}}"}})
+               "title": "Run the release workflow", "config": {"workflow": "{{params.workflow}}",
+               "ref": "{{params.ref}}", "inputs": inputs}})
     };
-    let release = |id: &str, x: i32, y: i32, title: &str, extra: serde_json::Value| {
-        let mut config = json!({"tagPattern": "{{trigger.tag}}"});
+    let release = |id: &str, x: i32, y: i32, title: &str, tag: &str, extra: serde_json::Value| {
+        let mut config = json!({"tagPattern": tag});
         config.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
         json!({"id": id, "kind": "github.release", "version": 1, "position": {"x": x, "y": y}, "title": title,
                "retry": retry, "config": config})
     };
-    let mut direct_published = release(
-        "direct_published",
-        1040,
-        -260,
-        "Release published?",
-        json!({"newerThan": "{{steps.direct_before.tag}}"}),
-    );
-    direct_published["maxVisits"] = json!(RELEASE_POLLS);
-    let mut published =
-        release("published", 2340, 0, "Release published?", json!({"newerThan": "{{steps.before.tag}}"}));
-    published["maxVisits"] = json!(RELEASE_POLLS);
-    doc(json!({
-        "name": "Cut a release",
-        "description": "Runs a project's release workflow with the inputs you give, and tells you when the release \
-                        is published. Its input: workflow (the workflow's file, e.g. publish.yml), inputs (its \
-                        workflow_dispatch inputs, e.g. {\"bump\": \"minor\"}), ref (the branch it runs on, default \
-                        main), releaseBranch (when the workflow opens a release PR, the branch it opens it from) and \
-                        tag (the release's tag pattern, e.g. v*; default the latest release). With releaseBranch, an \
-                        open release PR stops a new release, you are told when the PR is open, and a failed check \
-                        goes to the Inbox while it waits for the merge. Run it (the PM does, when you ask for a \
-                        release) with input {\"workflow\": \"publish.yml\", \"inputs\": {\"bump\": \"minor\"}, \
-                        \"releaseBranch\": \"release\", \"projectId\": …}.",
-        "nodes": [
-            {"id": "start", "kind": "manual", "version": 1, "position": {"x": -520, "y": 0}, "title": "Cut a release"},
-            {"id": "configured", "kind": "condition", "version": 1, "position": {"x": -260, "y": 0},
-             "title": "Workflow given?", "config": {"conditions": [{"left": "{{trigger.workflow}}", "op": "truthy"}]}},
-            {"id": "unconfigured", "kind": "notify", "version": 1, "position": {"x": -260, "y": 200},
-             "title": "Tell me what is missing", "config": {
-                "title": "Cut a release needs the release workflow",
-                "body": "Run it again with input workflow, the release workflow's file (e.g. publish.yml), and its \
-                         inputs.",
-                "level": "warning"}},
-            {"id": "not_configured", "kind": "end", "version": 1, "position": {"x": 0, "y": 200},
-             "title": "Not started",
-             "config": {"output": {"error": "give workflow, the release workflow's file, in the run's input"}}},
-            {"id": "has_pr", "kind": "condition", "version": 1, "position": {"x": 0, "y": 0},
-             "title": "A release PR?", "config": {"conditions": [
-                {"left": "{{trigger.releaseBranch}}", "op": "truthy"}]}},
-            // No release PR: the workflow publishes the release itself.
-            release("direct_before", 260, -260, "Newest release before", json!({})),
-            run_workflow("direct_dispatch", 520, -260),
-            wait("wait_direct", 780, -260, "Wait for the release", RELEASE_POLL_MS, RELEASE_POLLS),
-            direct_published,
-            {"id": "direct_notify", "kind": "notify", "version": 1, "position": {"x": 1300, "y": -260},
-             "title": "Tell me it is out", "config": {
-                "title": "Release {{steps.direct_published.tag}} is published",
-                "body": "{{steps.direct_published.name}} is out.",
-                "link": "{{steps.direct_published.url}}"}},
-            {"id": "direct_tell", "kind": "inbox.notice", "version": 1, "position": {"x": 1560, "y": -260},
-             "title": "Inbox: published", "config": {
-                "key": "released-{{steps.direct_published.tag}}",
-                "title": "Release {{steps.direct_published.tag}} is published",
-                "text": "[{{steps.direct_published.name}}]({{steps.direct_published.url}}) is published."}},
-            {"id": "direct_released", "kind": "end", "version": 1, "position": {"x": 1820, "y": -260},
-             "title": "Released",
-             "config": {"output": {"tag": "{{steps.direct_published.tag}}", "url": "{{steps.direct_published.url}}"}}},
-            // A release PR: the workflow opens it, and it merges (by itself or by hand), which publishes the release.
-            release("before", 260, 0, "Latest release before", json!({})),
-            // A workflow that opens one release PR at a time refuses while one is open, and that PR isn't the release
-            // asked for: say so instead.
-            {"id": "open_already", "kind": "github.change_request", "version": 1, "position": {"x": 390, "y": 200},
-             "title": "A release PR still open?", "retry": retry,
-             "config": {"branch": "{{trigger.releaseBranch}}", "dryRunPort": "none"}},
-            {"id": "still_open", "kind": "inbox.notice", "version": 1, "position": {"x": 650, "y": 200},
-             "title": "Inbox: one is still open", "config": {
-                "key": "release-pr-open-{{steps.open_already.number}}",
-                "title": "Release PR #{{steps.open_already.number}} is still open",
-                "text": "No new release was started: [{{steps.open_already.title}}]({{steps.open_already.url}}) is \
-                         still open on {{trigger.releaseBranch}}. Merge it (that release ships) or close it, then \
-                         run Cut a release again."}},
-            {"id": "not_started", "kind": "end", "version": 1, "position": {"x": 910, "y": 200},
-             "title": "Not started"},
-            run_workflow("dispatch", 520, 0),
-            wait("wait_pr", 780, 0, "Wait for the release PR", PR_POLL_MS, PR_POLLS),
-            {"id": "find_pr", "kind": "github.change_request", "version": 1, "position": {"x": 1040, "y": 0},
-             "title": "Release PR opened?", "retry": retry, "maxVisits": PR_POLLS,
-             "config": {"branch": "{{trigger.releaseBranch}}"}},
-            {"id": "tell_pr", "kind": "notify", "version": 1, "position": {"x": 1300, "y": 0},
-             "title": "Tell me it is open", "config": {
-                "title": "Release PR #{{steps.find_pr.number}} is open",
-                "body": "{{steps.find_pr.title}}: the release is published once it merges.",
-                "link": "{{steps.find_pr.url}}"}},
-            wait("wait_merge", 1560, 0, "Wait for the merge", MERGE_POLL_MS, MERGE_POLLS),
-            {"id": "check_pr", "kind": "github.change_request", "version": 1, "position": {"x": 1820, "y": 0},
-             "title": "Release PR merged?", "retry": retry, "maxVisits": MERGE_POLLS,
-             "config": {"branch": "{{trigger.releaseBranch}}", "number": "{{steps.find_pr.number}}", "ci": true,
-                        "dryRunPort": "merged"}},
-            // Once per head commit and kind of failure: a fix pushed that fails again is news again.
-            {"id": "tell_failed", "kind": "inbox.notice", "version": 1, "position": {"x": 1820, "y": -200},
-             "title": "Inbox: a check failed", "maxVisits": MERGE_POLLS, "config": {
-                "key": "release-pr-{{steps.check_pr.number}}-{{steps.check_pr.failure}}-{{steps.check_pr.headSha}}",
-                "title": "Release PR #{{steps.check_pr.number}} failed its checks",
-                "text": "[{{steps.check_pr.title}}]({{steps.check_pr.url}}) didn't merge: [a check failed]\
-                         ({{steps.check_pr.ciUrl}}).\n\n{{steps.check_pr.failedJobs}}\n\nIt stays open, and nothing \
-                         is released. Push a fix to {{trigger.releaseBranch}} (after a merge queue removed it, set it \
-                         to merge again), or close it, which ends this release."}},
-            {"id": "notify_failed", "kind": "notify", "version": 1, "position": {"x": 1560, "y": -200},
-             "title": "Tell me it failed", "maxVisits": MERGE_POLLS, "config": {
-                "title": "Release PR #{{steps.check_pr.number}} failed its checks",
-                "body": "It stays open and nothing is released: fix it or close it.",
-                "level": "warning", "link": "{{steps.check_pr.ciUrl}}"}},
-            wait("wait_release", 2080, 0, "Wait for the release", RELEASE_POLL_MS, RELEASE_POLLS),
+    // A release without a PR (a stable one without releaseBranch, or the other kind): the workflow publishes it.
+    let direct = |p: &str, y: i32, inputs: &str, tag: &str| {
+        let id = |s: &str| format!("{p}{s}");
+        let mut published = release(
+            &id("published"),
+            1040,
+            y,
+            "Release published?",
+            tag,
+            json!({"newerThan": format!("{{{{steps.{p}before.tag}}}}")}),
+        );
+        published["maxVisits"] = json!(RELEASE_POLLS);
+        let out = |field: &str| format!("{{{{steps.{p}published.{field}}}}}");
+        let nodes = vec![
+            release(&id("before"), 260, y, "Newest release before", tag, json!({})),
+            run_workflow(&id("dispatch"), 520, y, inputs),
+            wait(&id("wait"), 780, y, "Wait for the release", RELEASE_POLL_MS, RELEASE_POLLS),
             published,
-            {"id": "notify", "kind": "notify", "version": 1, "position": {"x": 2600, "y": 0},
+            json!({"id": id("notify"), "kind": "notify", "version": 1, "position": {"x": 1300, "y": y},
              "title": "Tell me it is out", "config": {
-                "title": "Release {{steps.published.tag}} is published",
-                "body": "{{steps.published.name}} is out.",
-                "link": "{{steps.published.url}}"}},
-            {"id": "tell_released", "kind": "inbox.notice", "version": 1, "position": {"x": 2860, "y": 0},
+                "title": format!("Release {} is published", out("tag")),
+                "body": format!("{} is out.", out("name")),
+                "link": out("url")}}),
+            json!({"id": id("tell"), "kind": "inbox.notice", "version": 1, "position": {"x": 1560, "y": y},
              "title": "Inbox: published", "config": {
-                "key": "released-{{steps.published.tag}}",
-                "title": "Release {{steps.published.tag}} is published",
-                "text": "[{{steps.published.name}}]({{steps.published.url}}) is published."}},
-            {"id": "released", "kind": "end", "version": 1, "position": {"x": 3120, "y": 0}, "title": "Released",
-             "config": {"output": {"tag": "{{steps.published.tag}}", "url": "{{steps.published.url}}"}}},
-            {"id": "dropped", "kind": "notify", "version": 1, "position": {"x": 2080, "y": 200},
-             "title": "Tell me it was closed", "config": {
-                "title": "Release PR #{{steps.find_pr.number}} was closed without merging",
-                "body": "Nothing was released. Run Cut a release again for a new one.",
-                "level": "warning", "link": "{{steps.find_pr.url}}"}},
-            {"id": "not_released", "kind": "end", "version": 1, "position": {"x": 2340, "y": 200},
-             "title": "Not released"},
+                "key": format!("released-{}", out("tag")),
+                "title": format!("Release {} is published", out("tag")),
+                "text": format!("[{}]({}) is published.", out("name"), out("url"))}}),
+            json!({"id": id("released"), "kind": "end", "version": 1, "position": {"x": 1820, "y": y},
+             "title": "Released", "config": {"output": {"tag": out("tag"), "url": out("url")}}}),
+        ];
+        let edges = vec![
+            json!({"from": id("before"), "port": "found", "to": id("dispatch")}),
+            json!({"from": id("before"), "port": "none", "to": id("dispatch")}),
+            json!({"from": id("dispatch"), "to": id("wait")}),
+            json!({"from": id("wait"), "port": "done", "to": id("published")}),
+            json!({"from": id("published"), "port": "found", "to": id("notify")}),
+            json!({"from": id("published"), "port": "none", "to": id("wait")}),
+            json!({"from": id("notify"), "to": id("tell")}),
+            json!({"from": id("tell"), "port": "added", "to": id("released")}),
+            json!({"from": id("tell"), "port": "skipped", "to": id("released")}),
+        ];
+        (nodes, edges)
+    };
+    let (direct_nodes, direct_edges) = direct("direct_", -260, "{{params.stableInputs}}", "{{params.tagPattern}}");
+    let (pre_nodes, pre_edges) = direct("pre_", -520, "{{params.preInputs}}", "{{params.preTagPattern}}");
+    let mut published = release(
+        "published",
+        2340,
+        0,
+        "Release published?",
+        "{{params.tagPattern}}",
+        json!({"newerThan": "{{steps.before.tag}}"}),
+    );
+    published["maxVisits"] = json!(RELEASE_POLLS);
+    let start = json!({"id": "start", "kind": "manual", "version": 1, "position": {"x": -520, "y": 0},
+        "title": "Cut a release", "config": {
+        "inputs": [
+            {"id": "type", "label": "Type", "type": "choice", "required": true, "default": "{{params.defaultType}}",
+             "choices": [{"value": "prerelease", "label": "{{params.preName}}"}, {"value": "stable", "label": "Stable"}]},
+            {"id": "version", "label": "Exact version", "type": "text", "showIf": {"field": "type", "equals": "stable"},
+             "help": "X.Y.Z. Leave it empty to bump the version instead."},
+            {"id": "bump", "label": "Bump", "type": "choice", "default": "patch",
+             "showIf": {"field": "version", "equals": ""},
+             "choices": [{"value": "patch", "label": "Patch"}, {"value": "minor", "label": "Minor"},
+                         {"value": "major", "label": "Major"}]},
         ],
-        "edges": [
-            {"from": "start", "to": "configured"},
-            {"from": "configured", "port": "false", "to": "unconfigured"},
-            {"from": "unconfigured", "to": "not_configured"},
-            {"from": "configured", "port": "true", "to": "has_pr"},
-            {"from": "has_pr", "port": "true", "to": "before"},
-            {"from": "has_pr", "port": "false", "to": "direct_before"},
-            {"from": "direct_before", "port": "found", "to": "direct_dispatch"},
-            {"from": "direct_before", "port": "none", "to": "direct_dispatch"},
-            {"from": "direct_dispatch", "to": "wait_direct"},
-            {"from": "wait_direct", "port": "done", "to": "direct_published"},
-            {"from": "direct_published", "port": "found", "to": "direct_notify"},
-            {"from": "direct_published", "port": "none", "to": "wait_direct"},
-            {"from": "direct_notify", "to": "direct_tell"},
-            {"from": "direct_tell", "port": "added", "to": "direct_released"},
-            {"from": "direct_tell", "port": "skipped", "to": "direct_released"},
-            {"from": "before", "port": "found", "to": "open_already"},
-            {"from": "before", "port": "none", "to": "open_already"},
-            {"from": "open_already", "port": "open", "to": "still_open"},
-            {"from": "open_already", "port": "none", "to": "dispatch"},
-            {"from": "open_already", "port": "merged", "to": "dispatch"},
-            {"from": "open_already", "port": "closed", "to": "dispatch"},
-            {"from": "still_open", "port": "added", "to": "not_started"},
-            {"from": "still_open", "port": "skipped", "to": "not_started"},
-            {"from": "dispatch", "to": "wait_pr"},
-            {"from": "wait_pr", "port": "done", "to": "find_pr"},
-            {"from": "find_pr", "port": "open", "to": "tell_pr"},
-            // Until the new one is open, the branch's newest PR may be the last release's (merged).
-            {"from": "find_pr", "port": "none", "to": "wait_pr"},
-            {"from": "find_pr", "port": "merged", "to": "wait_pr"},
-            {"from": "find_pr", "port": "closed", "to": "wait_pr"},
-            {"from": "tell_pr", "to": "wait_merge"},
-            {"from": "wait_merge", "port": "done", "to": "check_pr"},
-            {"from": "check_pr", "port": "open", "to": "wait_merge"},
-            {"from": "check_pr", "port": "failed", "to": "tell_failed"},
-            {"from": "tell_failed", "port": "added", "to": "notify_failed"},
-            {"from": "tell_failed", "port": "skipped", "to": "wait_merge"},
-            {"from": "notify_failed", "to": "wait_merge"},
-            {"from": "check_pr", "port": "merged", "to": "wait_release"},
-            {"from": "check_pr", "port": "closed", "to": "dropped"},
-            {"from": "check_pr", "port": "none", "to": "dropped"},
-            {"from": "dropped", "to": "not_released"},
-            {"from": "wait_release", "port": "done", "to": "published"},
-            {"from": "published", "port": "found", "to": "notify"},
-            {"from": "published", "port": "none", "to": "wait_release"},
-            {"from": "notify", "to": "tell_released"},
-            {"from": "tell_released", "port": "added", "to": "released"},
-            {"from": "tell_released", "port": "skipped", "to": "released"},
-        ],
-        "settings": {"maxSteps": 2 * PR_POLLS + 3 * MERGE_POLLS + 2 * RELEASE_POLLS + 20,
-                     "maxRuntimeMs": 16_i64 * 24 * 60 * 60 * 1000},
-    }))
+        "confirm": {"text": "This publishes a stable release ({{trigger.bump}}{{trigger.version}}). Continue?",
+                    "showIf": {"field": "type", "equals": "stable"}}}});
+    let mut nodes = vec![
+        start,
+        json!({"id": "kind", "kind": "condition", "version": 1, "position": {"x": -260, "y": 0},
+         "title": "Stable?", "config": {"conditions": [{"left": "{{trigger.type}}", "op": "eq", "right": "stable"}]}}),
+        json!({"id": "has_pr", "kind": "condition", "version": 1, "position": {"x": 0, "y": 0},
+         "title": "A release PR?", "config": {"conditions": [{"left": "{{params.releaseBranch}}", "op": "truthy"}]}}),
+    ];
+    nodes.extend(direct_nodes);
+    nodes.extend(pre_nodes);
+    // A release PR: the workflow opens it, and it merges (by itself or by hand), which publishes the release. Its
+    // branch comes through a step, so a project without one (these nodes never run) still validates.
+    nodes.extend([
+        json!({"id": "pr_branch", "kind": "state.set", "version": 1, "position": {"x": 130, "y": 100},
+         "title": "The release PR branch", "config": {"key": "releaseBranch", "value": "{{params.releaseBranch}}"}}),
+        release("before", 260, 0, "Latest release before", "{{params.tagPattern}}", json!({})),
+        // A workflow that opens one release PR at a time refuses while one is open, and that PR isn't the release
+        // asked for: say so instead.
+        json!({"id": "open_already", "kind": "github.change_request", "version": 1, "position": {"x": 390, "y": 200},
+         "title": "A release PR still open?", "retry": retry,
+         "config": {"branch": "{{steps.pr_branch.value}}", "dryRunPort": "none"}}),
+        json!({"id": "still_open", "kind": "inbox.notice", "version": 1, "position": {"x": 650, "y": 200},
+         "title": "Inbox: one is still open", "config": {
+            "key": "release-pr-open-{{steps.open_already.number}}",
+            "title": "Release PR #{{steps.open_already.number}} is still open",
+            "text": "No new release was started: [{{steps.open_already.title}}]({{steps.open_already.url}}) is \
+                     still open on {{steps.pr_branch.value}}. Merge it (that release ships) or close it, then \
+                     run Cut a release again."}}),
+        json!({"id": "not_started", "kind": "end", "version": 1, "position": {"x": 910, "y": 200},
+         "title": "Not started"}),
+        run_workflow("dispatch", 520, 0, "{{params.stableInputs}}"),
+        wait("wait_pr", 780, 0, "Wait for the release PR", PR_POLL_MS, PR_POLLS),
+        json!({"id": "find_pr", "kind": "github.change_request", "version": 1, "position": {"x": 1040, "y": 0},
+         "title": "Release PR opened?", "retry": retry, "maxVisits": PR_POLLS,
+         "config": {"branch": "{{steps.pr_branch.value}}"}}),
+        json!({"id": "tell_pr", "kind": "notify", "version": 1, "position": {"x": 1300, "y": 0},
+         "title": "Tell me it is open", "config": {
+            "title": "Release PR #{{steps.find_pr.number}} is open",
+            "body": "{{steps.find_pr.title}}: the release is published once it merges.",
+            "link": "{{steps.find_pr.url}}"}}),
+        wait("wait_merge", 1560, 0, "Wait for the merge", MERGE_POLL_MS, MERGE_POLLS),
+        json!({"id": "check_pr", "kind": "github.change_request", "version": 1, "position": {"x": 1820, "y": 0},
+         "title": "Release PR merged?", "retry": retry, "maxVisits": MERGE_POLLS,
+         "config": {"branch": "{{steps.pr_branch.value}}", "number": "{{steps.find_pr.number}}", "ci": true,
+                    "dryRunPort": "merged"}}),
+        // Once per head commit and kind of failure: a fix pushed that fails again is news again.
+        json!({"id": "tell_failed", "kind": "inbox.notice", "version": 1, "position": {"x": 1820, "y": -200},
+         "title": "Inbox: a check failed", "maxVisits": MERGE_POLLS, "config": {
+            "key": "release-pr-{{steps.check_pr.number}}-{{steps.check_pr.failure}}-{{steps.check_pr.headSha}}",
+            "title": "Release PR #{{steps.check_pr.number}} failed its checks",
+            "text": "[{{steps.check_pr.title}}]({{steps.check_pr.url}}) didn't merge: [a check failed]\
+                     ({{steps.check_pr.ciUrl}}).\n\n{{steps.check_pr.failedJobs}}\n\nIt stays open, and nothing \
+                     is released. Push a fix to {{steps.pr_branch.value}} (after a merge queue removed it, set it \
+                     to merge again), or close it, which ends this release."}}),
+        json!({"id": "notify_failed", "kind": "notify", "version": 1, "position": {"x": 1560, "y": -200},
+         "title": "Tell me it failed", "maxVisits": MERGE_POLLS, "config": {
+            "title": "Release PR #{{steps.check_pr.number}} failed its checks",
+            "body": "It stays open and nothing is released: fix it or close it.",
+            "level": "warning", "link": "{{steps.check_pr.ciUrl}}"}}),
+        wait("wait_release", 2080, 0, "Wait for the release", RELEASE_POLL_MS, RELEASE_POLLS),
+        published,
+        json!({"id": "notify", "kind": "notify", "version": 1, "position": {"x": 2600, "y": 0},
+         "title": "Tell me it is out", "config": {
+            "title": "Release {{steps.published.tag}} is published",
+            "body": "{{steps.published.name}} is out.",
+            "link": "{{steps.published.url}}"}}),
+        json!({"id": "tell_released", "kind": "inbox.notice", "version": 1, "position": {"x": 2860, "y": 0},
+         "title": "Inbox: published", "config": {
+            "key": "released-{{steps.published.tag}}",
+            "title": "Release {{steps.published.tag}} is published",
+            "text": "[{{steps.published.name}}]({{steps.published.url}}) is published."}}),
+        json!({"id": "released", "kind": "end", "version": 1, "position": {"x": 3120, "y": 0}, "title": "Released",
+         "config": {"output": {"tag": "{{steps.published.tag}}", "url": "{{steps.published.url}}"}}}),
+        json!({"id": "dropped", "kind": "notify", "version": 1, "position": {"x": 2080, "y": 200},
+         "title": "Tell me it was closed", "config": {
+            "title": "Release PR #{{steps.find_pr.number}} was closed without merging",
+            "body": "Nothing was released. Run Cut a release again for a new one.",
+            "level": "warning", "link": "{{steps.find_pr.url}}"}}),
+        json!({"id": "not_released", "kind": "end", "version": 1, "position": {"x": 2340, "y": 200},
+         "title": "Not released"}),
+    ]);
+    let mut edges = vec![
+        json!({"from": "start", "to": "kind"}),
+        json!({"from": "kind", "port": "true", "to": "has_pr"}),
+        json!({"from": "kind", "port": "false", "to": "pre_before"}),
+        json!({"from": "has_pr", "port": "true", "to": "pr_branch"}),
+        json!({"from": "pr_branch", "to": "before"}),
+        json!({"from": "has_pr", "port": "false", "to": "direct_before"}),
+    ];
+    edges.extend(direct_edges);
+    edges.extend(pre_edges);
+    edges.extend([
+        json!({"from": "before", "port": "found", "to": "open_already"}),
+        json!({"from": "before", "port": "none", "to": "open_already"}),
+        json!({"from": "open_already", "port": "open", "to": "still_open"}),
+        json!({"from": "open_already", "port": "none", "to": "dispatch"}),
+        json!({"from": "open_already", "port": "merged", "to": "dispatch"}),
+        json!({"from": "open_already", "port": "closed", "to": "dispatch"}),
+        json!({"from": "still_open", "port": "added", "to": "not_started"}),
+        json!({"from": "still_open", "port": "skipped", "to": "not_started"}),
+        json!({"from": "dispatch", "to": "wait_pr"}),
+        json!({"from": "wait_pr", "port": "done", "to": "find_pr"}),
+        json!({"from": "find_pr", "port": "open", "to": "tell_pr"}),
+        // Until the new one is open, the branch's newest PR may be the last release's (merged).
+        json!({"from": "find_pr", "port": "none", "to": "wait_pr"}),
+        json!({"from": "find_pr", "port": "merged", "to": "wait_pr"}),
+        json!({"from": "find_pr", "port": "closed", "to": "wait_pr"}),
+        json!({"from": "tell_pr", "to": "wait_merge"}),
+        json!({"from": "wait_merge", "port": "done", "to": "check_pr"}),
+        json!({"from": "check_pr", "port": "open", "to": "wait_merge"}),
+        json!({"from": "check_pr", "port": "failed", "to": "tell_failed"}),
+        json!({"from": "tell_failed", "port": "added", "to": "notify_failed"}),
+        json!({"from": "tell_failed", "port": "skipped", "to": "wait_merge"}),
+        json!({"from": "notify_failed", "to": "wait_merge"}),
+        json!({"from": "check_pr", "port": "merged", "to": "wait_release"}),
+        json!({"from": "check_pr", "port": "closed", "to": "dropped"}),
+        json!({"from": "check_pr", "port": "none", "to": "dropped"}),
+        json!({"from": "dropped", "to": "not_released"}),
+        json!({"from": "wait_release", "port": "done", "to": "published"}),
+        json!({"from": "published", "port": "found", "to": "notify"}),
+        json!({"from": "published", "port": "none", "to": "wait_release"}),
+        json!({"from": "notify", "to": "tell_released"}),
+        json!({"from": "tell_released", "port": "added", "to": "released"}),
+        json!({"from": "tell_released", "port": "skipped", "to": "released"}),
+    ]);
+    builtin(
+        CUT_RELEASE,
+        Category::Releases,
+        params(json!([
+            {"id": "workflow", "title": "Release workflow", "type": "string", "required": true,
+             "description": "The release workflow's file (publish.yml), started by hand (workflow_dispatch)."},
+            {"id": "ref", "title": "Branch it runs on", "type": "string", "default": "main"},
+            {"id": "stableInputs", "title": "Stable release inputs", "type": "text",
+             "default": "{\"bump\": \"{{trigger.bump}}\", \"version\": \"{{trigger.version}}\"}",
+             "description": "The workflow's inputs for a stable release, as JSON. {{trigger.bump}} is the bump \
+                             asked for (patch, minor or major), {{trigger.version}} the exact version; empty ones are \
+                             left out."},
+            {"id": "releaseBranch", "title": "Release PR branch", "type": "string", "default": "",
+             "description": "When the workflow opens a release PR for a stable release, the branch it opens it from: \
+                             you are told when it is open, a failed check goes to the Inbox, and an open one stops a \
+                             new release. Empty: no release PR."},
+            {"id": "tagPattern", "title": "Stable tag pattern", "type": "string", "default": "",
+             "description": "The stable release's tag (* is any text), e.g. v*. Empty: the latest release."},
+            {"id": "preName", "title": "Other release's name", "type": "string", "default": "Pre-release",
+             "description": "What Run now calls the other kind of release, e.g. Beta."},
+            {"id": "preInputs", "title": "Other release's inputs", "type": "text", "default": "{}",
+             "description": "The workflow's inputs for it, as JSON: {\"stage\": \"beta\"}. It has no release PR."},
+            {"id": "preTagPattern", "title": "Other release's tag pattern", "type": "string", "default": "",
+             "description": "Its tag (* is any text), e.g. v*-beta.*; pre-releases count. Empty: the newest release."},
+            {"id": "defaultType", "title": "Run now offers first", "type": "choice", "default": "prerelease",
+             "choices": ["prerelease", "stable"],
+             "description": "The kind Run now's form starts on. A stable release always asks you to confirm."},
+        ])),
+        super::templates::doc(json!({
+            "name": "Cut a release",
+            "description": "Runs a project's release workflow and tells you when the release is published. Run now \
+                            asks which kind: a stable release (an exact version, or a patch, minor or major bump; \
+                            you confirm it) or the other kind the workflow makes (a pre-release). With a release PR \
+                            branch, an open release PR stops a new stable release, you are told when the PR is open, \
+                            and a failed check goes to the Inbox while it waits for the merge. Run it (the PM does, \
+                            when you ask for a release) with input {\"type\": \"stable\", \"bump\": \"minor\"}, \
+                            {\"type\": \"stable\", \"version\": \"2.0.0\"} or {\"type\": \"prerelease\"}.",
+            "nodes": nodes,
+            "edges": edges,
+            "settings": {"maxSteps": 2 * PR_POLLS + 3 * MERGE_POLLS + 2 * RELEASE_POLLS + 20,
+                         "maxRuntimeMs": 16_i64 * 24 * 60 * 60 * 1000},
+        })),
+    )
 }
 
 /// The id of the Report a missing scheduled release template (without `builtin:`).
@@ -887,9 +945,11 @@ pub(crate) async fn ensure_installed(st: &AppState) {
 }
 
 /// Built-ins PDT no longer ships (PDT-295): they automated PDT's own development (bug triage, outside pull request
-/// review, nightly release watches), and PDT never special-cases its own repository. A host that has one keeps it as
-/// its own workflow ([`detach_retired`]); no host gets one installed.
-pub(crate) const RETIRED: &[&str] = &["pdt-bug-triage", "pdt-pr-review", "pdt-nightly", "pdt-nightly-missing"];
+/// review, nightly release watches), and PDT never special-cases its own repository; Cut a release is a template
+/// since PDT-301 (made per project with its release workflow). A host that has one keeps it as its own workflow
+/// ([`detach_retired`]); no host gets one installed.
+pub(crate) const RETIRED: &[&str] =
+    &["pdt-bug-triage", "pdt-pr-review", "pdt-nightly", "pdt-nightly-missing", CUT_RELEASE];
 
 /// Makes each installed [`RETIRED`] built-in an ordinary workflow of the user's: the same document, enabled state,
 /// runs and state, no longer updated by PDT. One the user never edited gets its nodes moved to their kinds' current
@@ -902,6 +962,12 @@ async fn detach_retired(st: &AppState) -> Result<(), pdt_store::StoreError> {
     for id in RETIRED {
         let Some(w) = st.store.workflow_by_builtin(id).await? else { continue };
         let untouched = st.store.current_version_author(&w.id).await? == Some(Author::Builtin);
+        // Cut a release came off; one never turned on, edited or run was only ever PDT's: it goes (PDT-301).
+        if *id == CUT_RELEASE && untouched && !w.enabled && !ran(st, &w.id).await? {
+            st.store.delete_workflow(&w.id).await?;
+            tracing::info!(builtin = id, "removed a retired built-in workflow that was never used");
+            continue;
+        }
         if let Some(mut doc) = st.store.workflow_doc(&w.id, w.version).await?.filter(|_| untouched) {
             let mut moved = false;
             for n in &mut doc.nodes {
@@ -924,6 +990,12 @@ async fn detach_retired(st: &AppState) -> Result<(), pdt_store::StoreError> {
         tracing::info!(builtin = id, workflow = %w.name, "kept a retired built-in workflow as the user's own");
     }
     Ok(())
+}
+
+/// Whether a workflow has any run.
+async fn ran(st: &AppState, id: &str) -> Result<bool, pdt_store::StoreError> {
+    let f = pdt_store::RunFilter { workflow_id: Some(id.into()), limit: 1, ..Default::default() };
+    Ok(!st.store.list_workflow_runs(&f).await?.is_empty())
 }
 
 async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError> {
@@ -977,20 +1049,50 @@ mod tests {
         }
     }
 
+    /// Cut a release made for a project: a beta channel, a release PR branch.
+    fn cut_release_for(given: serde_json::Value) -> WorkflowDoc {
+        use pdt_core::workflow::template::{fill, param_values};
+        let t = cut_release_template();
+        fill(&t.doc, &param_values(&t.params, given.as_object().unwrap()).unwrap()).unwrap()
+    }
+
     /// PDT-194: every port of Cut a release leads somewhere (but a timed wait's event and timeout, which it never
-    /// takes), and every node is reached.
+    /// takes), and every node is reached; since PDT-301 it is a template, no built-in.
     #[test]
     fn cut_release_has_no_open_ports() {
-        let issues = validate(&cut_release(), crate::integrations::test_registry().catalog());
+        let d = cut_release_for(json!({"workflow": "publish.yml", "releaseBranch": "cut/release", "preName": "Beta",
+                                       "preInputs": "{\"channel\": \"beta\"}"}));
+        let issues = validate(&d, crate::integrations::test_registry().catalog());
         let open = |i: &&pdt_core::workflow::validate::Issue| {
-            i.code == "unreachable"
-                || (i.code == "open_port" && !i.node.as_deref().is_some_and(|n| n.starts_with("wait_")))
+            i.code == "unreachable" || (i.code == "open_port" && !i.node.as_deref().is_some_and(|n| n.contains("wait")))
         };
         assert!(!issues.iter().any(|i| open(&i)), "{issues:?}");
-        assert!(
-            !GITHUB_BUILTINS.iter().find(|b| b.id == CUT_RELEASE).unwrap().enabled,
-            "off until the user turns it on"
-        );
+        assert!(issues.iter().all(|i| i.severity != Severity::Error), "{issues:?}");
+        assert!(!all(crate::integrations::test_registry()).iter().any(|b| b.id == CUT_RELEASE), "a template only");
+        assert!(RETIRED.contains(&CUT_RELEASE));
+    }
+
+    /// PDT-301: Run now asks the kind of release, the other kind (the safe one) first, and a stable one confirms.
+    #[test]
+    fn cut_release_asks_the_kind_of_release() {
+        use crate::workflow::nodes::trigger::ManualConfig;
+        let d = cut_release_for(json!({"workflow": "publish.yml", "preName": "Beta"}));
+        let manual: ManualConfig = serde_json::from_value(d.node("start").unwrap().config.clone()).unwrap();
+        pdt_core::workflow::inputs::check_fields(&manual.inputs, manual.confirm.as_ref()).unwrap();
+        assert_eq!(manual.inputs[0].choices[0].label, "Beta");
+        let input = |v: serde_json::Value| manual.input(&v).unwrap();
+        assert_eq!(input(json!({})), json!({"type": "prerelease"}));
+        let stable = input(json!({"type": "stable", "bump": "minor"}));
+        assert_eq!(stable, json!({"type": "stable", "bump": "minor"}));
+        let ask = |v: &serde_json::Value| pdt_core::workflow::inputs::confirm_text(manual.confirm.as_ref(), v);
+        assert_eq!(ask(&stable).as_deref(), Some("This publishes a stable release (minor). Continue?"));
+        assert_eq!(ask(&input(json!({}))), None);
+        let exact = input(json!({"type": "stable", "version": "2.0.0", "bump": "major"}));
+        assert_eq!(exact, json!({"type": "stable", "version": "2.0.0"}), "an exact version, no bump");
+        assert!(manual.input(&json!({"channel": "beta"})).unwrap_err().contains("there is no input channel"));
+        let stable_first = cut_release_for(json!({"workflow": "publish.yml", "defaultType": "stable"}));
+        let m: ManualConfig = serde_json::from_value(stable_first.node("start").unwrap().config.clone()).unwrap();
+        assert_eq!(m.input(&json!({})).unwrap()["type"], "stable");
     }
 
     /// PDT-295: no built-in is a retired one, so none comes back.
@@ -1026,7 +1128,7 @@ mod tests {
     /// PDT-294: Cut a release assumes no workflow file, branch, inputs or tag scheme.
     #[test]
     fn cut_release_has_no_pdt_defaults() {
-        let text = serde_json::to_string(&cut_release()).unwrap().to_lowercase();
+        let text = serde_json::to_string(&cut_release_template()).unwrap().to_lowercase();
         for pdt in ["release.yml", "nightly", "experimental", "channel", "\"release\"", pdt_core::brand::RELEASE_REPO] {
             assert!(!text.contains(&pdt.to_lowercase()), "names {pdt}");
         }

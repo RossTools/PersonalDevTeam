@@ -1,5 +1,5 @@
 //! The built-ins PDT shipped for its own development until PDT-295 (bug triage, outside pull request review, the
-//! nightly release watches), as a host that had them stored them: `fixtures/retired_builtins/<id>.json` is each one's
+//! nightly release watches), and Cut a release until PDT-301, as a host that had them stored them: `fixtures/retired_builtins/<id>.json` is each one's
 //! document as its last release installed it. A test puts one in the store before pdtd starts, as an upgraded host
 //! has it; pdtd then keeps it as the user's own workflow.
 #![allow(dead_code)]
@@ -13,6 +13,8 @@ pub const PR_REVIEW: &str = "pdt-pr-review";
 pub const NIGHTLY: &str = "pdt-nightly";
 pub const NIGHTLY_MISSING: &str = "pdt-nightly-missing";
 pub const ALL: [&str; 4] = [BUG_TRIAGE, PR_REVIEW, NIGHTLY, NIGHTLY_MISSING];
+/// Cut a release, a built-in until PDT-301 (a template since), as PDT 0.4.0 installed it.
+pub const CUT_RELEASE: &str = "cut-release";
 
 /// The workflow id a retired built-in gets here.
 pub fn id(builtin: &str) -> String {
@@ -25,6 +27,7 @@ pub fn doc(builtin: &str) -> WorkflowDoc {
         PR_REVIEW => include_str!("../fixtures/retired_builtins/pdt-pr-review.json"),
         NIGHTLY => include_str!("../fixtures/retired_builtins/pdt-nightly.json"),
         NIGHTLY_MISSING => include_str!("../fixtures/retired_builtins/pdt-nightly-missing.json"),
+        CUT_RELEASE => include_str!("../fixtures/retired_builtins/cut-release.json"),
         other => panic!("no retired built-in {other}"),
     };
     serde_json::from_str(text).unwrap()

@@ -160,6 +160,10 @@ export const plugins: IntegrationInfo[] = [
         "title": "Triage new GitHub issues"
       },
       {
+        "id": "builtin:cut-release",
+        "title": "Cut a release"
+      },
+      {
         "id": "builtin:missing-scheduled-release",
         "title": "Report a missing scheduled release"
       },
@@ -176,10 +180,6 @@ export const plugins: IntegrationInfo[] = [
       {
         "id": "github-issue-done",
         "title": "Done closes the GitHub issue"
-      },
-      {
-        "id": "cut-release",
-        "title": "Cut a release"
       }
     ],
     "tools": [

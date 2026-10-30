@@ -191,17 +191,18 @@ notarizing secrets.
 "Cut a release" doesn't count pre-releases either, so in such a dry run it waits at the last step and never says the
 release is published.
 
-**"Cut a release"** (a built-in PDT workflow, off by default; Settings → Workflows): the PM starts it (only when the
-user asks for a release) with this repository's release workflow as its input: `{"workflow": "release.yml",
-"inputs": {"bump": "minor"}, "releaseBranch": "release"}` (or `"version": "1.0.0"` in `inputs`; no `tag`: the
-repository's latest release, which nightlies never are). It
-runs the release workflow, tells the user when the release PR is open (nothing to do), puts a failed check in the
-Inbox with the failed jobs (the user fixes it on `release` or closes the PR), and tells the user when the release is
-published. While an earlier release PR is still open it starts nothing and says so in the Inbox: that one merges by
-itself once its checks pass, or needs fixing or closing. For a nightly now, leave `releaseBranch` out and give
-`"inputs": {"channel": "nightly"}, "tag": "v*-nightly.*"`: no release PR, and the Inbox says when the pre-release is
-published. Nothing in Cut a release is PDT's own: any project gives its own workflow, inputs, branch and tag
-pattern (docs/user "Workflows").
+**"Cut a release"** (made from PDT's Cut a release template for this project; Settings → Workflows): the PM starts it
+(only when the user asks for a release) with `{"type": "stable", "bump": "minor"}`, `{"type": "stable", "version":
+"1.0.0"}` or `{"type": "prerelease"}` (a nightly now); Run now asks the same in a form, Nightly first, and a stable
+release asks to confirm. This repository's copy is filled in with: release workflow `release.yml` on `main`, stable
+inputs `{"bump": "{{trigger.bump}}", "version": "{{trigger.version}}"}`, release PR branch `release`, no stable tag
+pattern (the repository's latest release, which nightlies never are), other release `Nightly` with inputs
+`{"channel": "nightly"}` and tag pattern `v*-nightly.*`. A stable release runs the release workflow, tells the user
+when the release PR is open (nothing to do), puts a failed check in the Inbox with the failed jobs (the user fixes it
+on `release` or closes the PR), and tells the user when the release is published. While an earlier release PR is
+still open it starts nothing and says so in the Inbox: that one merges by itself once its checks pass, or needs fixing
+or closing. A nightly has no release PR, and the Inbox says when the pre-release is published. Nothing in the template
+is PDT's own: any project fills in its own workflow, inputs, branch and tag patterns (docs/user "Workflows").
 
 Agents start releases only this way, never with `gh workflow run`: the PM sees a project's release workflow in its
 briefing only when one is enabled for it, and PDT's prompts carry nothing about PDT's own release process (the
@@ -229,7 +230,7 @@ next nightly.
   green; a nightly tag at the head whose release never got published (that night failed) is built again.
 - **Cut one by hand**: the release workflow with channel `nightly` (`gh workflow run release.yml -f channel=nightly`,
   with `-f bump=minor` or `-f version=X.Y.Z` when the next release isn't a patch), or ask the PM for a nightly
-  release (Cut a release with `"inputs": {"channel": "nightly"}`, above). A manual run always builds, even when `main` hasn't changed.
+  release (Cut a release with `{"type": "prerelease"}`, above). A manual run always builds, even when `main` hasn't changed.
 - **What it does**: no release PR, and nothing is committed to `main`. It picks `X.Y.Z-nightly.YYYYMMDD`: `X.Y.Z` is
   the version the next release would have for the bump (a patch on the schedule), the date is UTC, and a day's
   second build is `.2`, then `.3`… (`scripts/version.sh next-nightly`). It tags the head of `main` with it, builds

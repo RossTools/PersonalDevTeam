@@ -3,6 +3,7 @@
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, ports, schema_of};
 use pdt_core::workflow::cond::Condition;
 use pdt_core::workflow::events::EventType;
+use pdt_core::workflow::inputs::{InputField, RunConfirm, apply, check_fields};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -72,6 +73,21 @@ impl NodeKind for EventTrigger {
 pub struct ManualConfig {
     /// The run's idempotency key (`{{trigger.date}}`); default: every run is new.
     pub run_key: Option<String>,
+    /// The fields Run now asks for (PDT-301); every manual start's input is checked against them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<InputField>>", optional)]
+    pub inputs: Vec<InputField>,
+    /// What Run now asks before it starts, e.g. for a stable release.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub confirm: Option<RunConfirm>,
+}
+
+impl ManualConfig {
+    /// The input checked against the declared fields (defaults filled in).
+    pub fn input(&self, input: &Value) -> Result<Value, String> {
+        apply(&self.inputs, input)
+    }
 }
 
 /// "Run now" (`POST /api/workflows/{id}/run`) and sub-workflow calls: the input is the trigger.
@@ -86,14 +102,17 @@ impl NodeKind for Manual {
             1,
             Category::Trigger,
             "Run now",
-            "Started by hand (Run now, the API) or by another workflow; its input is the trigger.",
+            "Started by hand (Run now, the API) or by another workflow; its input is the trigger. `inputs` declares the \
+             fields Run now asks for (each `{{trigger.<id>}}`): a start's input is checked against them, defaults \
+             filled in; `confirm` is asked before Run now starts.",
             &[("out", "Then")],
             false,
         )
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<ManualConfig>(config).map(|_| ())
+        let c: ManualConfig = parse(config)?;
+        check_fields(&c.inputs, c.confirm.as_ref())
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, _input: Value) -> BoxFut<'a, Result<Outcome, String>> {

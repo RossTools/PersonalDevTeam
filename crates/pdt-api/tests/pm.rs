@@ -948,3 +948,28 @@ async fn the_pm_attaches_a_pasted_image_and_a_file_to_tickets() {
     assert!(said.contains("can't read"), "{said}");
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
+
+/// PDT-301: a project's Cut a release, made from the template under any name, is the release workflow the PM's
+/// briefing names for it once it is on.
+#[tokio::test]
+async fn the_briefing_names_the_project_s_release_workflow() {
+    let env = setup(None).await;
+    let (s, w) = call(
+        &env.app,
+        "POST",
+        "/api/workflow-templates/builtin:cut-release/instantiate",
+        Some(json!({"params": {"workflow": "publish.yml"}, "name": "Ship it", "scope": "project",
+                    "projectId": env.project})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    let first = start_pm(&env, "Anything to release?").await;
+    wait_said(&env, &first, 1).await;
+    assert!(!instructions(&env, &first).contains("released with the workflow"), "off: not named");
+    call(&env.app, "PATCH", &format!("/api/workflows/{}", w["id"].as_str().unwrap()), Some(json!({"enabled": true})))
+        .await;
+    let on = start_pm(&env, "Release it").await;
+    wait_said(&env, &on, 1).await;
+    let text = instructions(&env, &on);
+    assert!(text.contains("released with the workflow `Ship it`"), "{text}");
+}

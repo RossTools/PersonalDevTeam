@@ -141,7 +141,7 @@ run of a GitHub Actions workflow. Some have settings of their own:
 
 - **On a schedule**: every so often, or at set times (a cron line, in your time zone).
 - **Webhook**: when another service calls PDT's address for a webhook connection.
-- **Run now**: only when you click **Run now** (or the PM runs it for you).
+- **Run now**: only when you click **Run now** (or the PM runs it for you). It can ask for inputs first (below).
 
 Every trigger can narrow which events count: only some projects, or only when a condition holds (say, the ticket has
 the label `ui`).
@@ -191,6 +191,22 @@ Pick a recent event of the trigger's kind, write one, or give a manual input. It
 why a trigger didn't match, and what each step would have done.
 
 **Run now** runs the saved version for real, for a workflow with a manual trigger.
+
+### Run now's inputs
+
+A **Run now** trigger can declare the inputs it takes, in its settings under **Inputs**. Each has an **id** (steps read
+it as `{{trigger.<id>}}`), a **label**, a **type** (text, number, true/false, or a choice from a list, each with a value
+and a label), a **default**, whether it is **required**, and a short **help** line. **Show if** shows a field only while
+another one has a value: Bump only for a stable release, say (`""` means the other field is empty).
+
+With inputs declared, **Run now** opens a form with them, defaults filled in, and starts the run with what you pick;
+on a phone it is in the workflow's **⋯**. Without any, it runs at once. A **confirm** text is asked before the run
+starts (it can name the inputs, `{{trigger.bump}}`); give it a **show if** to ask only for some runs. The outline shows
+what Run now asks for.
+
+The same check applies however a run starts (the form, the API, the PM, another workflow): defaults are filled in, a
+field that isn't shown is left out, and an input the trigger doesn't declare, or a value of the wrong kind, is refused
+with the list of inputs it takes.
 
 ### Share and copy
 
@@ -263,35 +279,36 @@ moves it to **Done** and removes its worktree, **keep** leaves it as it is.
 
 ### Cut a release
 
-**Cut a release** (a built-in workflow that comes with the GitHub plugin, off until you turn it on) runs your
-repository's release workflow and follows it through to the published release. It works with any release workflow that can be
-started by hand (`workflow_dispatch`): you say which one, with which inputs, each time you run it. Usually you ask the
-[PM](the-pm.md) for a release ("cut a minor release") and it runs this for you; you can also **Run now** it yourself
-with an input like:
+**Cut a release** (a template under **Releases**, with the GitHub plugin) runs a project's release workflow and follows
+it through to the published release. It works with any release workflow that can be started by hand
+(`workflow_dispatch`). Make one for each project you release:
 
-```json
-{
-  "workflow": "publish.yml",
-  "inputs": {"bump": "minor"},
-  "releaseBranch": "release-pr",
-  "tag": "v*"
-}
-```
+1. **New workflow** › **Cut a release**, in the project.
+2. **Release workflow**: its file in `.github/workflows` (`publish.yml`), and the **Branch it runs on** (`main`).
+3. **Stable release inputs**: the workflow's inputs for a stable release, as JSON. The default,
+   `{"bump": "{{trigger.bump}}", "version": "{{trigger.version}}"}`, passes the bump or the exact version you pick;
+   rename them to the workflow's own names. Empty ones are left out.
+4. **Release PR branch**: if the workflow opens a release pull request, the branch it opens it from. Then a release
+   pull request that is still open stops a new release (the Inbox says so), you are told when the new one is open, and
+   a failed check goes to the Inbox while it waits for the merge. Leave it empty when the workflow publishes the
+   release itself.
+5. **Stable tag pattern**: how to recognise the release it publishes, where `*` is any text (`v*`). Empty: the
+   repository's latest release.
+6. The other kind of release it makes, if any (a beta, a nightly): its **name**, its **inputs** as JSON
+   (`{"stage": "beta"}`) and its **tag pattern** (`v*-beta.*`; pre-releases count). It has no release pull request.
+7. **Run now offers first**: the kind the form starts on; the other kind, by default, which is the safe one.
+8. **Create workflow** and turn it on.
 
-- **workflow**: the release workflow's file in `.github/workflows`. Without it, nothing starts and you are told what
-  is missing.
-- **inputs**: the workflow's own inputs, named as the workflow names them (`bump`, `version`, `channel`: whatever it
-  takes).
-- **ref**: the branch it runs on, if not `main`.
-- **releaseBranch**: if your workflow opens a release pull request, the branch it opens it from. Then a release pull
-  request that is still open stops a new release (the Inbox says so), you are told when the new one is open, and a
-  failed check goes to the Inbox while it waits for the merge. Leave it out when the workflow publishes the release
-  itself.
-- **tag**: how to recognise the release it publishes, a pattern where `*` is any text and `?` one character (`v*`,
-  `v*-beta.*`). Pre-releases count when you give one. Leave it out to wait for the repository's latest release.
+**Run now** then asks which kind: the other kind, or **Stable** with an **Exact version** or, when that is empty, a
+**Bump** (patch, minor or major). A stable release asks you to confirm it first, naming the bump or version. Usually
+you ask the [PM](the-pm.md) for a release ("cut a minor release") and it runs this for you, with input like
+`{"type": "stable", "bump": "minor"}`.
 
 When the release is published, you get a notification and an Inbox item with its link. PDT itself merges and tags
 nothing: your workflow and GitHub do.
+
+Cut a release used to be a built-in workflow. One you turned on or ran stays as your own workflow, as it was; one
+you never used is removed. Make a new one from the template to get Run now's form.
 
 ### Report a missing scheduled release
 

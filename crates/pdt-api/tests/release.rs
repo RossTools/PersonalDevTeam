@@ -1,6 +1,6 @@
-//! PDT-194, PDT-214 and PDT-294 end to end: the built-in "Cut a release" runs the release workflow its input names,
-//! says the release PR is open, waits for it to merge (a failed check goes to the Inbox) and tells the user when the
-//! release is published; Report a missing scheduled release and PDT missing nightly (version 1 of its node). GitHub
+//! PDT-194, PDT-214, PDT-294 and PDT-301 end to end: "Cut a release", made from its template for a project, runs the
+//! project's release workflow for the kind of release Run now asks for, says the release PR is open, waits for it to
+//! merge (a failed check goes to the Inbox) and tells the user when the release is published; Report a missing scheduled release and PDT missing nightly (version 1 of its node). GitHub
 //! is `FakeForge`; the waits are cut short.
 
 mod common;
@@ -22,9 +22,11 @@ const REPO: &str = "example-org/thing";
 const WORKFLOW: &str = "publish.yml";
 const BRANCH: &str = "cut/release";
 
-/// Cut a release's input for this project, with the workflow's `inputs`, its release PR on [`BRANCH`].
-fn cut_input(env: &Env, inputs: Value) -> Value {
-    json!({"input": {"workflow": WORKFLOW, "inputs": inputs, "releaseBranch": BRANCH, "projectId": env.project}})
+/// Run now's body for a stable release with these inputs (`bump`, `version`).
+fn stable(inputs: Value) -> Value {
+    let mut input = json!({"type": "stable"});
+    input.as_object_mut().unwrap().extend(inputs.as_object().cloned().unwrap_or_default());
+    json!({"input": input})
 }
 
 struct Env {
@@ -103,10 +105,23 @@ fn pr(number: u32, state: PrState) -> ChangeRequest {
     }
 }
 
+/// Cut a release made for the project from its template: [`WORKFLOW`], its release PR on [`BRANCH`].
 async fn cut_release(env: &Env) -> Value {
+    cut_release_with(env, json!({"workflow": WORKFLOW, "releaseBranch": BRANCH})).await
+}
+
+/// Cut a release made for the project with these params.
+async fn cut_release_with(env: &Env, params: Value) -> Value {
     pdt_api::run_workflows(&env.state).await;
-    let (_, all) = call(&env.app, "GET", "/api/workflows", None).await;
-    all.as_array().unwrap().iter().find(|w| w["builtin"] == "cut-release").cloned().expect("installed")
+    let (s, w) = call(
+        &env.app,
+        "POST",
+        "/api/workflow-templates/builtin:cut-release/instantiate",
+        Some(json!({"params": params, "scope": "project", "projectId": env.project})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    w
 }
 
 async fn run(env: &Env, id: &str) -> Value {
@@ -171,7 +186,7 @@ async fn release_pr_open(env: &Env) -> String {
         &env.app,
         "POST",
         &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(cut_input(env, json!({"bump": "minor"}))),
+        Some(stable(json!({"bump": "minor"}))),
     )
     .await;
     let id = r["runId"].as_str().unwrap().to_string();
@@ -198,7 +213,7 @@ async fn cut_a_release_from_the_action_to_the_published_release() {
         &env.app,
         "POST",
         &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(cut_input(&env, json!({"bump": "minor"}))),
+        Some(stable(json!({"bump": "minor"}))),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{r}");
@@ -319,7 +334,7 @@ async fn a_release_pr_closed_unmerged_releases_nothing() {
         &env.app,
         "POST",
         &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(cut_input(&env, json!({"version": "1.0.0"}))),
+        Some(stable(json!({"version": "1.0.0"}))),
     )
     .await;
     let id = r["runId"].as_str().unwrap().to_string();
@@ -345,7 +360,7 @@ async fn the_builtin_dry_runs_without_calling_github() {
         &env.app,
         "POST",
         "/api/workflows/dry-run",
-        Some(json!({"workflowId": wf["id"], "event": {"type": "manual", "payload": cut_input(&env, json!({"bump": "patch"}))["input"]}})),
+        Some(json!({"workflowId": wf["id"], "event": {"type": "manual", "payload": stable(json!({"bump": "patch"}))["input"]}})),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{r}");
@@ -370,7 +385,7 @@ async fn an_open_release_pr_stops_a_new_release_before_the_action_runs() {
         &env.app,
         "POST",
         &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(cut_input(&env, json!({"bump": "minor"}))),
+        Some(stable(json!({"bump": "minor"}))),
     )
     .await;
     let id = r["runId"].as_str().unwrap().to_string();
@@ -384,62 +399,66 @@ async fn an_open_release_pr_stops_a_new_release_before_the_action_runs() {
     assert!(inbox_titles(&env).await.contains(&"Release PR #5 is still open".to_string()));
 }
 
-/// PDT-294: without a release workflow, Cut a release starts nothing and says what is missing.
+/// PDT-301: Run now takes only the inputs Cut a release declares, and names them when it refuses; without a release
+/// workflow there is no Cut a release to run.
 #[tokio::test]
-async fn a_cut_without_a_workflow_starts_nothing() {
+async fn run_now_refuses_input_the_form_does_not_ask_for() {
     let env = setup().await;
     let wf = cut_release(&env).await;
-    let (_, r) = call(
+    let url = format!("/api/workflows/{}/run", wf["id"].as_str().unwrap());
+    for (input, says) in [
+        (json!({"workflow": WORKFLOW}), "there is no input workflow"),
+        (json!({"type": "stable", "bump": "huge"}), "bump must be patch, minor or major"),
+        (json!({"type": "final"}), "type must be prerelease or stable"),
+    ] {
+        let (s, r) = call(&env.app, "POST", &url, Some(json!({"input": input}))).await;
+        assert_eq!(s, StatusCode::CONFLICT, "{r}");
+        let msg = r["message"].as_str().unwrap();
+        assert!(msg.contains(says) && msg.contains("type (prerelease or stable, required)"), "{msg}");
+    }
+    assert!(env.gh.ci.triggered.lock().unwrap().is_empty());
+    let (s, r) = call(
         &env.app,
         "POST",
-        &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(json!({"input": {"inputs": {"bump": "minor"}, "projectId": env.project}})),
+        "/api/workflow-templates/builtin:cut-release/instantiate",
+        Some(json!({"params": {}, "scope": "project", "projectId": env.project})),
     )
     .await;
-    let id = r["runId"].as_str().unwrap().to_string();
-    pdt_api::run_workflows(&env.state).await;
-    let r = run(&env, &id).await;
-    assert_eq!(r["status"], "succeeded", "{r}");
-    assert_eq!(r["steps"].as_array().unwrap().last().unwrap()["nodeId"], "not_configured", "{r}");
-    assert!(r["output"]["error"].as_str().unwrap().contains("workflow"), "{r}");
-    assert!(env.gh.ci.triggered.lock().unwrap().is_empty());
-    assert!(env.gh.calls.lock().unwrap().is_empty(), "nothing read either");
-    assert!(notified(&env).await.contains(&"Cut a release needs the release workflow".to_string()));
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{r}");
+    assert!(r["message"].as_str().unwrap().contains("Release workflow (workflow) is required"), "{r}");
 }
 
-/// PDT-294 (PDT-210, PDT-283 before it): without `releaseBranch` there is no release PR stage: it runs the workflow on
-/// the branch given, with its inputs, and waits for a newer release matching `tag`.
+/// PDT-301: the other kind of release (a beta here) is what Run now starts by default: the workflow on its branch with
+/// that kind's inputs, no release PR stage, and a wait for a newer release matching its tag pattern.
 #[tokio::test]
-async fn a_cut_without_a_release_branch_waits_for_the_matching_release() {
+async fn the_other_kind_of_release_runs_by_default_and_waits_for_its_tag() {
     let env = setup().await;
-    let wf = cut_release(&env).await;
+    let wf = cut_release_with(
+        &env,
+        json!({"workflow": "beta.yml", "ref": "develop", "releaseBranch": BRANCH, "preName": "Beta",
+               "preInputs": "{\"channel\": \"beta\", \"dry\": false}", "preTagPattern": "v*-beta.*"}),
+    )
+    .await;
     env.gh.publish(REPO, release("v0.2.0-beta.1"));
     // A release PR left open doesn't hold this up: it makes none.
     env.gh.set_pr(BRANCH, Some(pr(5, PrState::Open)));
-    let input = json!({"workflow": "beta.yml", "ref": "develop", "inputs": {"channel": "beta", "dry": false},
-                       "tag": "v*-beta.*", "projectId": env.project});
-    let (_, r) = call(
-        &env.app,
-        "POST",
-        &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(json!({"input": input})),
-    )
-    .await;
+    let (_, r) = call(&env.app, "POST", &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()), None).await;
     let id = r["runId"].as_str().unwrap().to_string();
     pdt_api::run_workflows(&env.state).await;
+    assert_eq!(run(&env, &id).await["trigger"], json!({"type": "prerelease"}), "the default filled in");
 
     let started = env.gh.ci.triggered.lock().unwrap().clone();
     let inputs =
         BTreeMap::from([("channel".to_string(), "beta".to_string()), ("dry".to_string(), "false".to_string())]);
     assert_eq!(started, [(REPO.to_string(), "beta.yml".to_string(), "develop".to_string(), inputs)]);
-    assert_eq!(waiting_at(&env, &id).await, "wait_direct");
+    assert_eq!(waiting_at(&env, &id).await, "pre_wait");
 
     time_passes(&env, &id).await;
-    assert_eq!(waiting_at(&env, &id).await, "wait_direct", "nothing newer yet");
+    assert_eq!(waiting_at(&env, &id).await, "pre_wait", "nothing newer yet");
     // A release that doesn't match the pattern is not the one.
     env.gh.publish(REPO, release("v0.2.0"));
     time_passes(&env, &id).await;
-    assert_eq!(waiting_at(&env, &id).await, "wait_direct", "not a beta");
+    assert_eq!(waiting_at(&env, &id).await, "pre_wait", "not a beta");
     env.gh.publish(REPO, release("v0.2.1-beta.1"));
     time_passes(&env, &id).await;
 
@@ -452,16 +471,16 @@ async fn a_cut_without_a_release_branch_waits_for_the_matching_release() {
     assert!(!calls.iter().any(|c| c.starts_with("merge ")), "{calls:?}");
 }
 
+/// PDT-294: without a release PR branch, a stable release has no PR stage: the workflow publishes it.
 #[tokio::test]
-async fn a_cut_without_a_release_branch_dry_runs_without_calling_github() {
+async fn a_stable_cut_without_a_release_branch_dry_runs_without_calling_github() {
     let env = setup().await;
-    let wf = cut_release(&env).await;
-    let payload = json!({"workflow": WORKFLOW, "inputs": {"bump": "patch"}, "projectId": env.project});
+    let wf = cut_release_with(&env, json!({"workflow": WORKFLOW})).await;
     let (s, r) = call(
         &env.app,
         "POST",
         "/api/workflows/dry-run",
-        Some(json!({"workflowId": wf["id"], "event": {"type": "manual", "payload": payload}})),
+        Some(json!({"workflowId": wf["id"], "event": {"type": "manual", "payload": stable(json!({}))["input"]}})),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{r}");
@@ -473,6 +492,24 @@ async fn a_cut_without_a_release_branch_dry_runs_without_calling_github() {
     assert!(nodes.contains(&"direct_dispatch") && nodes.contains(&"direct_released"), "{nodes:?}");
     assert!(!nodes.contains(&"dispatch"), "not the release PR path: {nodes:?}");
     assert!(env.gh.calls.lock().unwrap().is_empty());
+}
+
+/// PDT-301: the Cut a release built-in a host has from before is gone when it was never turned on or run, and kept as
+/// the user's own workflow (as it was) when it was on.
+#[tokio::test]
+async fn the_cut_release_builtin_is_retired() {
+    let unused = setup().await;
+    retired::install(&unused.state.store, retired::CUT_RELEASE, false).await;
+    pdt_api::run_workflows(&unused.state).await;
+    let (s, _) = call(&unused.app, "GET", &format!("/api/workflows/{}", retired::id(retired::CUT_RELEASE)), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "never used: removed");
+
+    let on = setup().await;
+    retired::install(&on.state.store, retired::CUT_RELEASE, true).await;
+    let wf = kept(&on, retired::CUT_RELEASE).await;
+    assert_eq!(wf["name"], "Cut a release");
+    let (_, all) = call(&on.app, "GET", "/api/workflows", None).await;
+    assert!(!all.as_array().unwrap().iter().any(|w| w["builtin"] == "cut-release"), "nothing installed");
 }
 
 /// A run of the release workflow on main (the scheduled nightly).

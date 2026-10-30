@@ -491,7 +491,8 @@ pub(crate) fn defs() -> Vec<Tool> {
         Tool {
             decl: ToolDecl::new("workflow_get", "Read a workflow").read_only().pm(),
             title: "Get a workflow",
-            description: "A workflow (by id or name) with its current document and validation issues.",
+            description: "A workflow (by id or name) with its current document and validation issues, and runInputs: \
+                          the fields its Run now trigger declares (what workflow_run takes).",
             schema: schema::<WorkflowGet>,
         },
         Tool {
@@ -528,9 +529,10 @@ pub(crate) fn defs() -> Vec<Tool> {
             decl: ToolDecl::new("workflow_run", "Run an enabled workflow now").asks().pm(),
             title: "Run a workflow",
             description: "Runs an enabled workflow that has a Run now trigger, in a project, with an input its steps \
-                          read as {{trigger.x}}: e.g. {\"environment\": \"staging\"} for a deploy workflow (its \
-                          description says what input it reads). The user confirms each call. Returns the run's id \
-                          (list_workflow_runs follows it).",
+                          read as {{trigger.x}}: e.g. {\"environment\": \"staging\"} for a deploy workflow. When the \
+                          trigger declares inputs (workflow_get's runInputs), the input must be those fields: defaults \
+                          fill in, and anything else is refused with the list; without, its description says what it \
+                          reads. The user confirms each call. Returns the run's id (list_workflow_runs follows it).",
             schema: schema::<WorkflowRun>,
         },
         Tool {
@@ -798,7 +800,13 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             };
             let w = crate::workflow::routes::load(st, &id).await.map_err(api)?;
             let d = crate::workflow::routes::detail(st, w).await.map_err(api)?;
-            serde_json::to_value(d).map_err(|e| e.to_string())
+            let mut v = serde_json::to_value(&d).map_err(|e| e.to_string())?;
+            // What workflow_run takes: the Run now trigger's declared inputs (PDT-301).
+            if let Some(n) = d.doc.nodes.iter().find(|n| n.kind == crate::workflow::nodes::trigger::MANUAL) {
+                let c = st.registry().catalog().current_config(n).unwrap_or_default();
+                v["runInputs"] = c.get("inputs").cloned().unwrap_or_else(|| json!([]));
+            }
+            Ok(v)
         }
         "workflow_export" => {
             let a: WorkflowExport = args(a)?;

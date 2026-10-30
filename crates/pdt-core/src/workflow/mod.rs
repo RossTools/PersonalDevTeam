@@ -9,6 +9,7 @@ pub mod diff;
 pub mod doc;
 pub mod dry;
 pub mod events;
+pub mod inputs;
 pub mod mcp;
 pub mod news;
 pub mod refs;
