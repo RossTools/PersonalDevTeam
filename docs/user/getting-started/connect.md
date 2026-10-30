@@ -19,8 +19,12 @@ agent**.
 
 ## Other agents (ACP)
 
-PDT can also run any agent that speaks the Agent Client Protocol (ACP). OhMyPi is built in: install `omp`, set up its
-model in omp, and PDT finds it.
+PDT can also run any agent that speaks the Agent Client Protocol (ACP). Three are built in, and PDT finds them once
+they're installed and signed in:
+
+- **Grok**: install Grok Build and run `grok login`.
+- **Cursor**: install the Cursor CLI and run `cursor-agent login`.
+- **OhMyPi**: install `omp`, run `omp login` (or set up its model in omp some other way).
 
 Google Antigravity is built in too, through Google's own ACP server. In **Settings › This host › Agents › ACP agents**,
 click **Install** beside Antigravity. PDT downloads the server from Google and checks it against the ACP registry
