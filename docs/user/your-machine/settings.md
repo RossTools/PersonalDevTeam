@@ -18,7 +18,7 @@ How PDT updates itself. See [Install and updates](install-and-updates.md#updates
 
 - **Version**: the version you run, with **Check for updates**, and what the last check found.
 - **Install updates**: **Install automatically when idle**, **Notify only** or **Manual (no checks)**.
-- **Update channel**: **Stable releases**, or **Experimental builds too**.
+- **Update channel**: **Stable releases**, or **Nightly builds too**.
 - **Check for updates**: how often PDT looks.
 - **Release repository**: where updates come from. Leave it empty; it's there in case PDT's releases ever move
   somewhere PDT can't follow.

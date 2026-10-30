@@ -60,8 +60,8 @@ they matter, mostly in [Install and updates](../your-machine/install-and-updates
 
 ## How do I get a feature or fix sooner?
 
-Switch **Settings › This host › Updates › Update channel** to **Experimental builds too** to get builds between
-releases. See [Release channels](../your-machine/install-and-updates.md#release-channels) for the catch.
+Switch **Settings › This host › Updates › Update channel** to **Nightly builds too** to get a new build every
+night. See [Release channels](../your-machine/install-and-updates.md#release-channels) for the catch.
 
 ## Can I go back to an older version?
 

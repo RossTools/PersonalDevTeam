@@ -5,7 +5,7 @@
 #   scripts/changelog.sh <version>               compile .changes/unreleased into CHANGELOG.md
 #   scripts/changelog.sh notes <version>         print <version>'s section of CHANGELOG.md (the release notes)
 #   scripts/changelog.sh preview                 print the notes the unreleased fragments would make, changing nothing
-#                                                (an experimental release's notes)
+#                                                (a nightly release's notes)
 #
 # A fragment is `.changes/unreleased/<TICKET>.md` (or `<TICKET>-<anything>.md` for a ticket's second note):
 #

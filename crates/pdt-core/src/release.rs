@@ -12,15 +12,26 @@ pub struct Version {
     pub patch: u64,
     /// A local build (`X.Y.Z-local`): older than every release.
     pub local: bool,
-    /// An experimental build's number (`X.Y.Z-exp.N`, PDT-210): a pre-release of `X.Y.Z`, older than `X.Y.Z` itself
-    /// and newer than `X.Y.Z-exp.M` for every M below N.
-    pub exp: Option<u64>,
+    /// A pre-release of `X.Y.Z` built from main (a nightly, or an older experimental build): older than `X.Y.Z`
+    /// itself.
+    pub pre: Option<Pre>,
+}
+
+/// The pre-releases PDT makes of main, in SemVer's order: `X.Y.Z-exp.N` < `X.Y.Z-nightly.D` < `X.Y.Z-nightly.D.2`
+/// < `X.Y.Z` ("exp" sorts before "nightly", and fewer identifiers before more).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Pre {
+    /// An experimental build (`X.Y.Z-exp.N`, PDT-210), as the release workflow made them before nightlies.
+    Exp(u64),
+    /// A nightly build (`X.Y.Z-nightly.YYYYMMDD`, PDT-283); `build` is the day's second, third… (`.2`, `.3`), 1 for
+    /// the first, which has no suffix.
+    Nightly { date: u64, build: u64 },
 }
 
 impl Version {
-    /// The order between releases (SemVer for the versions PDT makes): `X.Y.Z-exp.N` before `X.Y.Z`.
-    pub fn key(&self) -> (u64, u64, u64, u64) {
-        (self.major, self.minor, self.patch, self.exp.unwrap_or(u64::MAX))
+    /// The order between releases (SemVer for the versions PDT makes): its pre-releases before `X.Y.Z`.
+    pub fn key(&self) -> (u64, u64, u64, bool, Option<Pre>) {
+        (self.major, self.minor, self.patch, self.pre.is_none(), self.pre)
     }
 
     pub fn is_newer_than(&self, current: &Version) -> bool {
@@ -30,17 +41,20 @@ impl Version {
         current.local || self.key() > current.key()
     }
 
-    /// An experimental build (`X.Y.Z-exp.N`).
-    pub fn is_experimental(&self) -> bool {
-        self.exp.is_some()
+    /// A pre-release built from main: a nightly (`X.Y.Z-nightly.D`) or an older experimental build (`X.Y.Z-exp.N`).
+    pub fn is_nightly(&self) -> bool {
+        self.pre.is_some()
     }
 }
 
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}.{}.{}", self.major, self.minor, self.patch)?;
-        if let Some(n) = self.exp {
-            write!(f, "-exp.{n}")?;
+        match self.pre {
+            Some(Pre::Exp(n)) => write!(f, "-exp.{n}")?,
+            Some(Pre::Nightly { date, build: 1 }) => write!(f, "-nightly.{date}")?,
+            Some(Pre::Nightly { date, build }) => write!(f, "-nightly.{date}.{build}")?,
+            None => {}
         }
         if self.local {
             f.write_str("-local")?;
@@ -49,31 +63,44 @@ impl std::fmt::Display for Version {
     }
 }
 
-/// `X.Y.Z`, `vX.Y.Z`, `X.Y.Z-exp.N` (an experimental build) or `X.Y.Z-local`, with an optional `+build` suffix. Other
-/// pre-releases are not ours.
+/// `X.Y.Z`, `vX.Y.Z`, `X.Y.Z-nightly.YYYYMMDD[.N]` (a nightly build), `X.Y.Z-exp.N` (an experimental build) or
+/// `X.Y.Z-local`, with an optional `+build` suffix. Other pre-releases are not ours.
 pub fn parse_version(s: &str) -> Option<Version> {
     let s = s.trim();
     let s = s.strip_prefix('v').unwrap_or(s);
     let s = s.split('+').next()?;
-    let number = |p: &str| p.bytes().all(|b| b.is_ascii_digit()).then(|| p.parse::<u64>().ok()).flatten();
-    let (core, local, exp) = match s.split_once('-') {
+    // SemVer's numeric identifiers: digits, no leading zero.
+    let number = |p: &str| {
+        (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && (p == "0" || !p.starts_with('0')))
+            .then(|| p.parse::<u64>().ok())
+            .flatten()
+    };
+    let nightly = |rest: &str| -> Option<Pre> {
+        let (date, build) = match rest.split_once('.') {
+            Some((d, b)) => (number(d)?, number(b).filter(|b| *b >= 2)?),
+            None => (number(rest)?, 1),
+        };
+        (10_000_000..=99_999_999).contains(&date).then_some(Pre::Nightly { date, build })
+    };
+    let (core, local, pre) = match s.split_once('-') {
         Some((c, "local")) => (c, true, None),
-        Some((c, pre)) => (c, false, Some(number(pre.strip_prefix("exp.")?)?)),
+        Some((c, p)) => match (p.strip_prefix("exp."), p.strip_prefix("nightly.")) {
+            (Some(n), _) => (c, false, Some(Pre::Exp(number(n)?))),
+            (_, Some(rest)) => (c, false, Some(nightly(rest)?)),
+            _ => return None,
+        },
         None => (s, false, None),
     };
     let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
-    let v = Version { major: parts.next()??, minor: parts.next()??, patch: parts.next()??, local, exp };
+    let v = Version { major: parts.next()??, minor: parts.next()??, patch: parts.next()??, local, pre };
     parts.next().is_none().then_some(v)
 }
 
-/// Whether a host on `channel` takes a published release (PDT-210): the stable channel only full releases, the
-/// experimental one full releases and experimental pre-releases (`-exp.N`). Other pre-releases (a fork's test
-/// prefix) never count.
+/// Whether a host on `channel` takes a published release (PDT-210, PDT-283): the stable channel only full releases,
+/// the nightly one full releases and the nightly (and older experimental) pre-releases. Other pre-releases (a fork's
+/// test prefix) never count.
 pub fn on_channel(channel: UpdateChannel, version: &Version, prerelease: bool) -> bool {
-    matches!(
-        (channel, prerelease, version.is_experimental()),
-        (_, false, false) | (UpdateChannel::Experimental, true, true)
-    )
+    matches!((channel, prerelease, version.is_nightly()), (_, false, false) | (UpdateChannel::Nightly, true, true))
 }
 
 /// The newest of `releases` (version, pre-release) a host on `channel` takes, by SemVer: its index.
@@ -254,9 +281,9 @@ mod tests {
     #[test]
     fn versions_and_local_builds() {
         let v = |s| parse_version(s).unwrap();
-        assert_eq!(v("v0.1.42"), Version { major: 0, minor: 1, patch: 42, local: false, exp: None });
-        assert_eq!(v("0.1.0-local"), Version { major: 0, minor: 1, patch: 0, local: true, exp: None });
-        assert_eq!(v("0.1.3+abc"), Version { major: 0, minor: 1, patch: 3, local: false, exp: None });
+        assert_eq!(v("v0.1.42"), Version { major: 0, minor: 1, patch: 42, local: false, pre: None });
+        assert_eq!(v("0.1.0-local"), Version { major: 0, minor: 1, patch: 0, local: true, pre: None });
+        assert_eq!(v("0.1.3+abc"), Version { major: 0, minor: 1, patch: 3, local: false, pre: None });
         for bad in ["", "v", "1.2", "1.2.3.4", "0.1.0-rc.1", "latest", "0.x.1"] {
             assert_eq!(parse_version(bad), None, "{bad}");
         }
@@ -287,9 +314,9 @@ mod tests {
     #[test]
     fn experimental_builds_sort_before_their_release() {
         let v = |s| parse_version(s).unwrap();
-        assert_eq!(v("v0.2.1-exp.3"), Version { major: 0, minor: 2, patch: 1, local: false, exp: Some(3) });
+        assert_eq!(v("v0.2.1-exp.3"), Version { major: 0, minor: 2, patch: 1, local: false, pre: Some(Pre::Exp(3)) });
         assert_eq!(v("v0.2.1-exp.3").to_string(), "0.2.1-exp.3");
-        assert!(v("0.2.1-exp.3").is_experimental() && !v("0.2.1").is_experimental());
+        assert!(v("0.2.1-exp.3").is_nightly() && !v("0.2.1").is_nightly());
         for bad in ["0.2.1-exp", "0.2.1-exp.", "0.2.1-exp.x", "0.2.1-exp.-1", "0.2.1-exp.1.2", "0.2.1-exp.1-local"] {
             assert_eq!(parse_version(bad), None, "{bad}");
         }
@@ -303,23 +330,73 @@ mod tests {
         assert!(v("0.2.1-exp.1").is_newer_than(&v("0.2.1-local")));
     }
 
+    /// PDT-283: `X.Y.Z-nightly.YYYYMMDD`, `.2`, `.3`… for a day's later builds; above `X.Y.Z-exp.N`, below `X.Y.Z`.
+    #[test]
+    fn nightly_builds_sort_above_experimental_ones_and_before_their_release() {
+        let v = |s| parse_version(s).unwrap();
+        let n = |date, build| Some(Pre::Nightly { date, build });
+        assert_eq!(v("v0.3.1-nightly.20261030").pre, n(20261030, 1));
+        assert_eq!(v("0.3.1-nightly.20261030.2").pre, n(20261030, 2));
+        assert_eq!(v("v0.3.1-nightly.20261030").to_string(), "0.3.1-nightly.20261030");
+        assert_eq!(v("0.3.1-nightly.20261030.12").to_string(), "0.3.1-nightly.20261030.12");
+        assert!(v("0.3.1-nightly.20261030").is_nightly());
+        for bad in [
+            "0.3.1-nightly",
+            "0.3.1-nightly.",
+            "0.3.1-nightly.2026103",
+            "0.3.1-nightly.020261030",
+            "0.3.1-nightly.20261030.",
+            "0.3.1-nightly.20261030.1",
+            "0.3.1-nightly.20261030.02",
+            "0.3.1-nightly.20261030.2.3",
+            "0.3.1-nightly.x",
+            "0.3.1-nightly.20261030-local",
+        ] {
+            assert_eq!(parse_version(bad), None, "{bad}");
+        }
+        let order = [
+            "0.3.0",
+            "0.3.1-exp.1",
+            "0.3.1-exp.40",
+            "0.3.1-nightly.20261029",
+            "0.3.1-nightly.20261029.2",
+            "0.3.1-nightly.20261029.10",
+            "0.3.1-nightly.20261030",
+            "0.3.1",
+            "0.3.2-exp.1",
+            "0.3.2-nightly.20261101",
+        ];
+        for w in order.windows(2) {
+            assert!(v(w[1]).is_newer_than(&v(w[0])), "{} after {}", w[1], w[0]);
+            assert!(!v(w[0]).is_newer_than(&v(w[1])), "never a downgrade from {} to {}", w[1], w[0]);
+        }
+        // A host on an experimental build gets the next nightly of the same version.
+        assert!(v("0.3.1-nightly.20261030").is_newer_than(&v("0.3.1-exp.7")));
+        assert!(v("0.3.1-nightly.20261030").is_newer_than(&v("0.3.1-local")));
+    }
+
     #[test]
     fn each_channel_takes_its_releases() {
-        use UpdateChannel::{Experimental, Stable};
+        use UpdateChannel::{Nightly, Stable};
         let v = |s| parse_version(s).unwrap();
         let list = [(v("0.2.0"), false), (v("0.2.1-exp.2"), true), (v("0.2.1-exp.1"), true), (v("0.1.9"), false)];
         assert_eq!(newest_on_channel(Stable, &list), Some(0));
-        assert_eq!(newest_on_channel(Experimental, &list), Some(1));
-        // The stable release sorts above its experimental builds: the experimental channel moves to it.
-        let shipped = [(v("0.2.1-exp.2"), true), (v("0.2.1"), false)];
-        assert_eq!(newest_on_channel(Experimental, &shipped), Some(1));
-        // A pre-release that is not an experimental build (a fork's test prefix, an rc) is never taken, nor an
-        // experimental tag published as a full release on the stable channel.
-        assert!(!on_channel(Experimental, &v("0.3.0"), true));
+        assert_eq!(newest_on_channel(Nightly, &list), Some(1), "the old experimental builds count");
+        // The first nightly after the switch is newer than the experimental builds.
+        let switched = [(v("0.2.1-nightly.20261030"), true), (v("0.2.1-exp.2"), true), (v("0.2.0"), false)];
+        assert_eq!(newest_on_channel(Nightly, &switched), Some(0));
+        assert_eq!(newest_on_channel(Stable, &switched), Some(2));
+        // The stable release sorts above its pre-releases: the nightly channel moves to it.
+        let shipped = [(v("0.2.1-nightly.20261031.2"), true), (v("0.2.1"), false), (v("0.2.1-exp.2"), true)];
+        assert_eq!(newest_on_channel(Nightly, &shipped), Some(1));
+        // A pre-release that is not a nightly build (a fork's test prefix, an rc) is never taken, nor a nightly tag
+        // published as a full release on the stable channel.
+        assert!(!on_channel(Nightly, &v("0.3.0"), true));
         assert!(!on_channel(Stable, &v("0.2.1-exp.1"), true));
-        assert!(!on_channel(Stable, &v("0.2.1-exp.1"), false));
-        assert_eq!(newest_on_channel(Stable, &[(v("0.2.1-exp.1"), true)]), None);
-        assert_eq!(newest_on_channel(Experimental, &[]), None);
+        assert!(!on_channel(Stable, &v("0.2.1-nightly.20261030"), true));
+        assert!(!on_channel(Stable, &v("0.2.1-nightly.20261030"), false));
+        assert_eq!(newest_on_channel(Stable, &[(v("0.2.1-nightly.20261030"), true)]), None);
+        assert_eq!(newest_on_channel(Nightly, &[]), None);
     }
 
     #[test]

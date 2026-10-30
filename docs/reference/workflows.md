@@ -145,13 +145,21 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     commenting "Fixed in <key>; it ships in the next PDT release") or `wont_do` (→ `not_planned`, with a comment),
     both where `githubIssue` exists and with `runKey` `{{trigger.ticketId}}`: once per ticket, so moving it again
     changes nothing on GitHub. The release isn't known when a ticket moves to Done, so the comment doesn't name one.
+  - **PDT nightly release** (PDT-283; like PDT bug triage, installed, on, and offered as a template only where a
+    project's repository is `RELEASE_REPO`): `schedule` (cron `0 11 * * *` UTC, three hours after the release
+    workflow's nightly schedule; `catchUp`) → `github.workflow.latest` (`release` on `main` in `RELEASE_REPO`):
+    `failed` → `inbox.notice` (key `nightly-failed-<run id>-<attempt>`, so once per run: "The nightly release failed",
+    the run's link and failed jobs) and a warning `notify` → end; `running` → wait 30 minutes and read it again (16
+    times); `passed` (a night with nothing new on `main` passes too), `cancelled` or `none` → end, quietly. The release
+    workflow's newest run on `main` is the scheduled nightly's, or a manual run's when one came after it.
   - **Cut a release** (off, PDT-194, PDT-214): `manual` (Run now; the PM's `workflow_run` when the user asks for a release)
     with input `projectId` and `bump` (`patch`, `minor`, `major`) or `version` (`X.Y.Z`), and `channel` → `condition`
-    (`channel` is `experimental`?; PDT-210). Experimental: `github.release` with `prereleases` (the newest before,
-    `exp_before`) → `github.workflow.run` (`release.yml` on `main`, inputs `bump`, `version` and `channel:
-    experimental`; no release PR, so no review and no check for an open one) → every 2 minutes (four hours)
-    `github.release` with `prereleases` and `newerThan: {{steps.exp_before.tag}}` until the pre-release is published →
-    `notify` and an `inbox.notice` (`released-<tag>`, "Experimental release <tag> is published") → end with
+    (`channel` is `nightly`, or `experimental`, its old name?; PDT-210, PDT-283). Nightly: `github.release` with
+    `prereleases` (the newest before, `nightly_before`) → `github.workflow.run` (`release.yml` on `main`, inputs
+    `bump`, `version` and `channel: nightly`; no release PR, so no review and no check for an open one) → every 2
+    minutes (four hours) `github.release` with `prereleases` and `newerThan: {{steps.nightly_before.tag}}` until the
+    pre-release is published → `notify` and an `inbox.notice` (`released-<tag>`, "Nightly release <tag> is
+    published") → end with
     `{tag, url}`. Otherwise (stable, the default) → `github.release` (the
     latest before, `before`) → `github.change_request` on branch `release` (`dryRunPort: none`): `open` (an earlier
     release PR still open, which the Action would refuse to replace) → `inbox.notice` (`release-pr-open-<n>`: "Release
@@ -421,7 +429,10 @@ notify itself forever.
   release or one tag; with `newerThan`, a latest release with that tag, or an older version, is `none` (quiet), so it
   polls for the next one (a pre-release never counts, so with a test tag prefix, whose releases are pre-releases,
   a stable Cut a release never sees one published). With `prereleases` (PDT-210; not with `tag`) it reads the newest
-  published release, pre-releases included, as an experimental cut needs. Dry runs call nothing: `github.change_request` takes its `dryRunPort`, else
+  published release, pre-releases included, as a nightly cut needs. `github.workflow.latest` (PDT-283) reads the
+  newest Actions run of a workflow (by its name) on a branch (default `main`) and leaves by `passed`, `failed` (with
+  `failedJobs`), `running`, `cancelled` or `none`, with `id`, `attempt`, `url`, `headSha` and `createdAt`; a dry run
+  takes `passed`. Dry runs call nothing: `github.change_request` takes its `dryRunPort`, else
   `open` for a branch and `merged` for a number, `github.release` `found`.
 - Buildkite actions (`workflow/nodes/buildkite.rs`, client in `buildkite.rs`; bearer token, the connection's `url`
   or `https://api.buildkite.com`, `config.org`): `buildkite.retry` retries the build's failed retryable jobs (output

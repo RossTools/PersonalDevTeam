@@ -11,12 +11,17 @@ name: release
 # - Its merge (through the merge queue) runs `tag`, which tags the merge commit <prefix>X.Y.Z, then builds the
 #   bundles again from that commit (the PR's were built from another commit: the queue squashes), and `publish`
 #   makes the GitHub release with them, SHA256SUMS and the version's CHANGELOG.md section as its notes.
-# - Run by hand with channel `experimental` (PDT-210), `experimental` makes no PR and commits nothing: it picks
-#   X.Y.Z-exp.N (X.Y.Z the next version for the bump, or the exact version; N one more than the highest such tag) and
-#   tags the head of main with it. The bundles are built from that commit with the version set only in their checkout,
-#   and `publish` makes a GitHub pre-release, which only hosts on the experimental update channel install. Its notes
-#   preview the unreleased fragments (scripts/changelog.sh preview). Re-running failed jobs reuses the tag; re-running
-#   every job makes the next -exp.N.
+# - Every night at 08:00 UTC (the schedule), or run by hand with channel `nightly` (PDT-283; it replaced the
+#   experimental channel of PDT-210), `nightly` makes no PR and commits nothing: it picks X.Y.Z-nightly.YYYYMMDD (X.Y.Z
+#   the next version for the bump, a patch on the schedule, or the exact version; the date UTC; a day's second build
+#   .2, then .3…) and tags the head of main with it. The bundles are built from that commit with the version set only
+#   in their checkout, and `publish` makes a GitHub pre-release, which only hosts on the nightly update channel
+#   install, then deletes the nightlies (releases and tags) beyond the newest 14. Its notes preview the unreleased
+#   fragments (scripts/changelog.sh preview). On the schedule, a head of main that is already released (a published
+#   nightly or a stable release at that commit) publishes nothing, and the run ends green; a nightly tag there whose
+#   release never got published (a failed night) is built again. Re-running failed jobs reuses the tag; re-running
+#   every job of a manual run makes the day's next build. PDT's "PDT nightly release" workflow puts a failed scheduled
+#   run in the Inbox.
 #
 # Secrets: PDT_RELEASE_TOKEN (required), a token that can push branches, open pull requests and turn on their
 # auto-merge on this repository (a fine-grained token with Contents and Pull requests read and write, or a GitHub
@@ -27,6 +32,8 @@ name: release
 # Repo variable PDT_RELEASE_TAG_PREFIX (default `v`) is for a dry run on a fork: with any other prefix (`test-v`) the
 # release is published as a pre-release, which no PDT installs as an update.
 on:
+  schedule:
+    - cron: "0 8 * * *"
   workflow_dispatch:
     inputs:
       bump:
@@ -39,9 +46,9 @@ on:
         type: string
         default: ""
       channel:
-        description: stable (a release PR) or experimental (a pre-release of main's head, X.Y.Z-exp.N; nothing committed)
+        description: stable (a release PR) or nightly (a pre-release of main's head, X.Y.Z-nightly.YYYYMMDD; nothing committed)
         type: choice
-        options: [stable, experimental]
+        options: [stable, nightly]
         default: stable
   pull_request:
     types: [closed]
@@ -55,7 +62,7 @@ env:
 
 jobs:
   prepare:
-    if: github.event_name == 'workflow_dispatch' && inputs.channel != 'experimental'
+    if: github.event_name == 'workflow_dispatch' && inputs.channel != 'nightly'
     # One release PR at a time. Concurrency is per job, not per workflow: the workflow runs (and skips every job) for
     # every PR closed into main, and a workflow-level group would let such a run cancel a pending release run.
     concurrency:
@@ -178,16 +185,17 @@ jobs:
           scripts/release-tag.sh "$tag" "$SHA"
           { echo "tag=$tag"; echo "version=$version"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
 
-  experimental:
-    if: github.event_name == 'workflow_dispatch' && inputs.channel == 'experimental'
-    # One at a time, so two runs never pick the same -exp.N; its own group, so it never waits on a release PR.
+  nightly:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.channel == 'nightly')
+    # One at a time, so two runs never pick the same build; its own group, so it never waits on a release PR.
     concurrency:
-      group: release-experimental
+      group: release-nightly
       cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
+      skip: ${{ steps.tag.outputs.skip }}
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.tag.outputs.version }}
       sha: ${{ steps.tag.outputs.sha }}
@@ -198,41 +206,69 @@ jobs:
           echo "::error::Run the release workflow on ${{ github.event.repository.default_branch }}, not ${{ github.ref_name }}."
           exit 1
       - uses: actions/checkout@v7
-      - name: Tag the head of main X.Y.Z-exp.N
+      - name: Tag the head of main X.Y.Z-nightly.YYYYMMDD
         id: tag
         env:
           GH_TOKEN: ${{ github.token }}
-          BUMP: ${{ inputs.bump }}
+          BUMP: ${{ inputs.bump || 'patch' }}
           VERSION: ${{ inputs.version }}
           SHA: ${{ github.sha }}
+          SCHEDULED: ${{ github.event_name == 'schedule' }}
         run: |
-          if [ -n "$VERSION" ]; then base="${VERSION#v}"; else base="$(scripts/version.sh next "$BUMP")"; fi
-          # Read on its own, so a failed lookup stops the step (in a pipe its status would be lost, and GitHub's error
-          # body read as tags). No match is an empty list, not a 404.
-          refs="$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/${TAG_PREFIX}${base}-exp." --jq '.[].ref')"
-          version="$(printf '%s\n' "$refs" | sed 's#^refs/tags/##' | scripts/version.sh next-exp "$base")"
+          # Every tag with the prefix and the commit it points at (ours are lightweight). Read on its own, so a failed
+          # lookup stops the step (in a pipe its status would be lost, and GitHub's error body read as tags). No match
+          # is an empty list, not a 404.
+          refs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/${TAG_PREFIX}" \
+            --jq '.[] | "\(.ref | ltrimstr("refs/tags/")) \(.object.sha)"')"
+          tags="$(printf '%s\n' "$refs" | awk 'NF { print $1 }')"
+          at_head="$(printf '%s\n' "$refs" | awk -v sha="$SHA" '$2 == sha { print $1 }')"
+          tag=""
+          if [ "$SCHEDULED" = true ] && [ -n "$at_head" ]; then
+            # Main hasn't changed since a release: nothing to publish, unless it is a nightly whose release never got
+            # published (that night failed), which is built again.
+            for t in $at_head; do
+              case "$t" in *-nightly.*) ;; *) tag=""; break ;; esac
+              if gh release view "$t" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then tag=""; break; fi
+              tag="$t"
+            done
+            if [ -z "$tag" ]; then
+              echo "Main's head $SHA is released already ($(printf '%s ' "$at_head" | tr '\n' ' ')): no nightly tonight." |
+                tee -a "$GITHUB_STEP_SUMMARY"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            version="${tag#"$TAG_PREFIX"}"
+            echo "Building $tag again: it points at main's head but has no release." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            if [ -n "$VERSION" ]; then base="${VERSION#v}"; else base="$(scripts/version.sh next "$BUMP")"; fi
+            version="$(printf '%s\n' "$tags" | scripts/version.sh next-nightly "$base" "$(date -u +%Y%m%d)")"
+          fi
           # Refuses a version that is not newer than main's (in this checkout only: nothing is committed), and
           # fragments that the notes could not be made from.
           scripts/version.sh set "$version"
           scripts/changelog.sh check
-          tag="${TAG_PREFIX}${version}"
-          # Made with the workflow's token, so it starts no other workflow: this one builds and publishes it.
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$SHA" >/dev/null
-          echo "Tagged $tag at $SHA" | tee -a "$GITHUB_STEP_SUMMARY"
-          { echo "tag=$tag"; echo "version=$version"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
+          if [ -z "$tag" ]; then
+            tag="${TAG_PREFIX}${version}"
+            # Made with the workflow's token, so it starts no other workflow: this one builds and publishes it.
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$SHA" >/dev/null
+            echo "Tagged $tag at $SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          { echo "skip=false"; echo "tag=$tag"; echo "version=$version"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
 
   # The bundles, built from the tagged commit as release builds (the version as is, signed, notarized), as ci.yml's
-  # bundle jobs build them. An experimental release sets its version in their checkout. Each runs after `tag` (a
-  # stable release) or `experimental`, whichever ran.
+  # bundle jobs build them. A nightly release sets its version in their checkout. Each runs after `tag` (a stable
+  # release) or `nightly`, whichever ran (and didn't skip).
   bundle-macos:
     name: bundle (macos-latest, app)
-    needs: [tag, experimental]
-    if: ${{ !cancelled() && (needs.tag.result == 'success' || needs.experimental.result == 'success') }}
+    needs: [tag, nightly]
+    if: >-
+      ${{ !cancelled() && (needs.tag.result == 'success' ||
+      (needs.nightly.result == 'success' && needs.nightly.outputs.skip != 'true')) }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.tag.outputs.sha || needs.experimental.outputs.sha }}
+          ref: ${{ needs.tag.outputs.sha || needs.nightly.outputs.sha }}
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: false
@@ -240,7 +276,7 @@ jobs:
         with:
           bundles: app
           release: "true"
-          version: ${{ needs.experimental.outputs.version }}
+          version: ${{ needs.nightly.outputs.version }}
           signing-p12: ${{ secrets.MACOS_SIGNING_P12 }}
           signing-password: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
           notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
@@ -249,13 +285,15 @@ jobs:
 
   bundle-windows:
     name: bundle (windows-latest, nsis)
-    needs: [tag, experimental]
-    if: ${{ !cancelled() && (needs.tag.result == 'success' || needs.experimental.result == 'success') }}
+    needs: [tag, nightly]
+    if: >-
+      ${{ !cancelled() && (needs.tag.result == 'success' ||
+      (needs.nightly.result == 'success' && needs.nightly.outputs.skip != 'true')) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.tag.outputs.sha || needs.experimental.outputs.sha }}
+          ref: ${{ needs.tag.outputs.sha || needs.nightly.outputs.sha }}
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: false
@@ -263,12 +301,14 @@ jobs:
         with:
           bundles: nsis
           release: "true"
-          version: ${{ needs.experimental.outputs.version }}
+          version: ${{ needs.nightly.outputs.version }}
 
   bundle-linux:
     name: bundle (linux, ${{ matrix.arch }})
-    needs: [tag, experimental]
-    if: ${{ !cancelled() && (needs.tag.result == 'success' || needs.experimental.result == 'success') }}
+    needs: [tag, nightly]
+    if: >-
+      ${{ !cancelled() && (needs.tag.result == 'success' ||
+      (needs.nightly.result == 'success' && needs.nightly.outputs.skip != 'true')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -281,7 +321,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.tag.outputs.sha || needs.experimental.outputs.sha }}
+          ref: ${{ needs.tag.outputs.sha || needs.nightly.outputs.sha }}
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: false
@@ -289,10 +329,10 @@ jobs:
         with:
           bundles: linux
           release: "true"
-          version: ${{ needs.experimental.outputs.version }}
+          version: ${{ needs.nightly.outputs.version }}
 
   publish:
-    needs: [tag, experimental, bundle-macos, bundle-windows, bundle-linux]
+    needs: [tag, nightly, bundle-macos, bundle-windows, bundle-linux]
     if: >-
       ${{ !cancelled() && needs.bundle-macos.result == 'success' && needs.bundle-windows.result == 'success' &&
       needs.bundle-linux.result == 'success' }}
@@ -302,7 +342,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.tag.outputs.sha || needs.experimental.outputs.sha }}
+          ref: ${{ needs.tag.outputs.sha || needs.nightly.outputs.sha }}
       - uses: actions/download-artifact@v8
         with:
           pattern: bundle-*
@@ -318,17 +358,17 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.tag.outputs.tag || needs.experimental.outputs.tag }}
-          VERSION: ${{ needs.tag.outputs.version || needs.experimental.outputs.version }}
-          SHA: ${{ needs.tag.outputs.sha || needs.experimental.outputs.sha }}
-          EXPERIMENTAL: ${{ needs.experimental.result == 'success' }}
+          TAG: ${{ needs.tag.outputs.tag || needs.nightly.outputs.tag }}
+          VERSION: ${{ needs.tag.outputs.version || needs.nightly.outputs.version }}
+          SHA: ${{ needs.tag.outputs.sha || needs.nightly.outputs.sha }}
+          NIGHTLY: ${{ needs.nightly.result == 'success' }}
         run: |
-          # Only the real prefix makes a release hosts install; a test prefix's is a pre-release. An experimental
-          # release is always one: only hosts on the experimental channel take it.
-          pre=""; if [ "$TAG_PREFIX" != v ] || [ "$EXPERIMENTAL" = true ]; then pre="--prerelease"; fi
-          if [ "$EXPERIMENTAL" = true ]; then
+          # Only the real prefix makes a release hosts install; a test prefix's is a pre-release. A nightly release is
+          # always one: only hosts on the nightly channel take it.
+          pre=""; if [ "$TAG_PREFIX" != v ] || [ "$NIGHTLY" = true ]; then pre="--prerelease"; fi
+          if [ "$NIGHTLY" = true ]; then
             {
-              echo "Experimental build of main at \`$SHA\`: it may carry database migrations no stable release has yet."
+              echo "Nightly build of main at \`$SHA\`: it may carry database migrations no stable release has yet."
               echo
               echo "Not yet released:"
               echo
@@ -347,3 +387,23 @@ jobs:
               --notes-file "$RUNNER_TEMP/notes.md" $pre
           fi
           echo "Published $(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"
+      # The newest 14 nightlies stay (by version; the one just published among them): older ones lose their release
+      # and tag. Stable releases, their tags, the experimental builds before nightlies and other prefixes' tags are
+      # never touched.
+      - name: Keep the newest 14 nightlies
+        if: needs.nightly.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          refs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/${TAG_PREFIX}" \
+            --jq '.[].ref | ltrimstr("refs/tags/")')"
+          old="$(printf '%s\n' "$refs" | awk -v p="$TAG_PREFIX" 'index($0, p) == 1 && substr($0, length(p) + 1) ~ /^[0-9]/' |
+            scripts/version.sh prune-nightlies 14)"
+          for t in $old; do
+            if gh release view "$t" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release delete "$t" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            else
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$t"
+            fi
+            echo "Deleted $t" | tee -a "$GITHUB_STEP_SUMMARY"
+          done

@@ -29,6 +29,7 @@ pub const PDT_BUG_TRIAGE: &str = "pdt-bug-triage";
 pub const PDT_PR_REVIEW: &str = "pdt-pr-review";
 pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
 pub const CUT_RELEASE: &str = "cut-release";
+pub const PDT_NIGHTLY: &str = "pdt-nightly";
 
 pub const BUILTINS: &[Builtin] = &[
     Builtin { id: PR_NOTICES, enabled: true, category: Category::CiPr, doc: pr_notices },
@@ -47,6 +48,8 @@ pub const GITHUB_BUILTINS: &[Builtin] = &[
     Builtin { id: PDT_BUG_TRIAGE, enabled: true, category: Category::Issues, doc: pdt_bug_triage },
     // The same for outside pull requests (PDT-269): the Review outside pull requests template on PDT's repository.
     Builtin { id: PDT_PR_REVIEW, enabled: true, category: Category::Issues, doc: super::outside_prs::pdt_doc },
+    // And for the scheduled nightly release (PDT-283), which no PDT run starts: its failure goes to the Inbox.
+    Builtin { id: PDT_NIGHTLY, enabled: true, category: Category::Releases, doc: pdt_nightly },
     Builtin { id: GITHUB_ISSUE_DONE, enabled: true, category: Category::Issues, doc: github_issue_done },
     // Off until the user turns it on; the PM starts it (Run now) when the user asks for a release.
     Builtin { id: CUT_RELEASE, enabled: false, category: Category::Releases, doc: cut_release },
@@ -693,8 +696,8 @@ fn github_issue_done() -> WorkflowDoc {
 
 /// The release workflow a project's repository has (PDT-194; docs/SDLC.md "Releases"): run by hand with `bump`
 /// (patch, minor, major) or an exact `version`, it pushes branch [`RELEASE_BRANCH`] and opens the release PR from it.
-/// With `channel: experimental` (PDT-210) it opens no PR: it tags main's head `vX.Y.Z-exp.N` and publishes a
-/// pre-release.
+/// With `channel: nightly` (PDT-210, PDT-283) it opens no PR: it tags main's head `vX.Y.Z-nightly.YYYYMMDD` and
+/// publishes a pre-release, as it does by itself every night.
 pub const RELEASE_WORKFLOW: &str = "release.yml";
 pub const RELEASE_BRANCH: &str = "release";
 
@@ -713,8 +716,8 @@ const RELEASE_POLLS: u32 = 4 * 30;
 /// `version`, it runs the project's Release Action, whose release PR merges itself once its checks pass. It says
 /// when the PR is open, puts a failed check in the Inbox (the PR waits for a fix pushed to `release`, or to be
 /// closed), and says when the tag's release is published. PDT merges and tags nothing: the Action and GitHub do. With
-/// `channel: experimental` (PDT-210) there is no release PR: it runs the Action and says when the pre-release is
-/// published.
+/// `channel: nightly` (PDT-210, PDT-283; `experimental`, its old name, too) there is no release PR: it runs the Action
+/// and says when the pre-release is published.
 fn cut_release() -> WorkflowDoc {
     // A GitHub read that fails (the network, a rate limit) is tried again before the run fails.
     let retry = json!({"max": 5, "backoffMs": 60_000});
@@ -729,42 +732,42 @@ fn cut_release() -> WorkflowDoc {
                         the changelog and builds the bundles, and merges itself once its checks pass, which tags and \
                         publishes the release. You are told when the PR is open and when the release is out; a failed \
                         check goes to the Inbox (the PR stays open: push a fix to the release branch, or close it). \
-                        With channel experimental there is no release PR: it publishes a pre-release of main's head \
-                        (X.Y.Z-exp.N) that only hosts on the experimental update channel install, and you are told \
-                        when it is out. Run it (the PM does, when you ask for a release) with input \
+                        With channel nightly there is no release PR: it publishes a nightly build of main's head now \
+                        (X.Y.Z-nightly.YYYYMMDD, a pre-release, as the release workflow makes every night) that only \
+                        hosts on the nightly update channel install, and you are told when it is out. Run it (the PM does, when you ask for a release) with input \
                         {{\"bump\": \"minor\", \"channel\": \"stable\", \"projectId\": …}}."),
         "nodes": [
             {"id": "start", "kind": "manual", "version": 1, "position": {"x": -260, "y": 0}, "title": "Cut a release"},
             {"id": "channel", "kind": "condition", "version": 1, "position": {"x": 0, "y": 0},
-             "title": "Experimental?", "config": {"conditions": [
-                {"left": "{{trigger.channel}}", "op": "eq", "right": "experimental"}]}},
-            // Experimental (PDT-210): no release PR; the Action tags main's head and publishes a pre-release.
-            {"id": "exp_before", "kind": "github.release", "version": 1, "position": {"x": 260, "y": -260},
+             "title": "Nightly?", "config": {"conditions": [
+                {"left": "{{trigger.channel}}", "op": "in", "right": ["nightly", "experimental"]}]}},
+            // Nightly (PDT-210, PDT-283): no release PR; the Action tags main's head and publishes a pre-release.
+            {"id": "nightly_before", "kind": "github.release", "version": 1, "position": {"x": 260, "y": -260},
              "title": "Newest release before", "retry": retry, "config": {"prereleases": true}},
-            {"id": "exp_dispatch", "kind": "github.workflow.run", "version": 1, "position": {"x": 520, "y": -260},
-             "title": "Run the release workflow (experimental)", "config": {"workflow": RELEASE_WORKFLOW,
+            {"id": "nightly_dispatch", "kind": "github.workflow.run", "version": 1, "position": {"x": 520, "y": -260},
+             "title": "Run the release workflow (nightly)", "config": {"workflow": RELEASE_WORKFLOW,
                 "ref": "main", "inputs": {"bump": "{{trigger.bump}}", "version": "{{trigger.version}}",
-                "channel": "experimental"}}},
-            wait("wait_exp", 780, -260, "Wait for the pre-release", RELEASE_POLL_MS, RELEASE_POLLS),
-            {"id": "exp_published", "kind": "github.release", "version": 1, "position": {"x": 1040, "y": -260},
+                "channel": "nightly"}}},
+            wait("wait_nightly", 780, -260, "Wait for the pre-release", RELEASE_POLL_MS, RELEASE_POLLS),
+            {"id": "nightly_published", "kind": "github.release", "version": 1, "position": {"x": 1040, "y": -260},
              "title": "Pre-release published?", "retry": retry, "maxVisits": RELEASE_POLLS,
-             "config": {"prereleases": true, "newerThan": "{{steps.exp_before.tag}}"}},
-            {"id": "exp_notify", "kind": "notify", "version": 1, "position": {"x": 1300, "y": -260},
+             "config": {"prereleases": true, "newerThan": "{{steps.nightly_before.tag}}"}},
+            {"id": "nightly_notify", "kind": "notify", "version": 1, "position": {"x": 1300, "y": -260},
              "title": "Tell me it is out", "config": {
-                "title": "Experimental release {{steps.exp_published.tag}} is published",
-                "body": "{{steps.exp_published.name}} is out as a pre-release; hosts on the experimental update \
+                "title": "Nightly release {{steps.nightly_published.tag}} is published",
+                "body": "{{steps.nightly_published.name}} is out as a pre-release; hosts on the nightly update \
                          channel offer it.",
-                "link": "{{steps.exp_published.url}}"}},
-            {"id": "exp_tell", "kind": "inbox.notice", "version": 1, "position": {"x": 1560, "y": -260},
+                "link": "{{steps.nightly_published.url}}"}},
+            {"id": "nightly_tell", "kind": "inbox.notice", "version": 1, "position": {"x": 1560, "y": -260},
              "title": "Inbox: published", "config": {
-                "key": "released-{{steps.exp_published.tag}}",
-                "title": "Experimental release {{steps.exp_published.tag}} is published",
-                "text": "[{{steps.exp_published.name}}]({{steps.exp_published.url}}) is published as a pre-release \
-                         of main, with its bundles: hosts on the experimental update channel (Settings → Updates) \
-                         offer it, stable hosts ignore it."}},
-            {"id": "exp_released", "kind": "end", "version": 1, "position": {"x": 1820, "y": -260},
-             "title": "Released (experimental)",
-             "config": {"output": {"tag": "{{steps.exp_published.tag}}", "url": "{{steps.exp_published.url}}"}}},
+                "key": "released-{{steps.nightly_published.tag}}",
+                "title": "Nightly release {{steps.nightly_published.tag}} is published",
+                "text": "[{{steps.nightly_published.name}}]({{steps.nightly_published.url}}) is published as a \
+                         pre-release of main, with its bundles: hosts on the nightly update channel (Settings → \
+                         Updates) offer it, stable hosts ignore it."}},
+            {"id": "nightly_released", "kind": "end", "version": 1, "position": {"x": 1820, "y": -260},
+             "title": "Released (nightly)",
+             "config": {"output": {"tag": "{{steps.nightly_published.tag}}", "url": "{{steps.nightly_published.url}}"}}},
             {"id": "before", "kind": "github.release", "version": 1, "position": {"x": 260, "y": 0},
              "title": "Latest release before", "retry": retry, "config": {}},
             // The Action refuses while a release PR is open, and that PR isn't the release asked for: say so instead.
@@ -841,16 +844,16 @@ fn cut_release() -> WorkflowDoc {
         "edges": [
             {"from": "start", "to": "channel"},
             {"from": "channel", "port": "false", "to": "before"},
-            {"from": "channel", "port": "true", "to": "exp_before"},
-            {"from": "exp_before", "port": "found", "to": "exp_dispatch"},
-            {"from": "exp_before", "port": "none", "to": "exp_dispatch"},
-            {"from": "exp_dispatch", "to": "wait_exp"},
-            {"from": "wait_exp", "port": "done", "to": "exp_published"},
-            {"from": "exp_published", "port": "found", "to": "exp_notify"},
-            {"from": "exp_published", "port": "none", "to": "wait_exp"},
-            {"from": "exp_notify", "to": "exp_tell"},
-            {"from": "exp_tell", "port": "added", "to": "exp_released"},
-            {"from": "exp_tell", "port": "skipped", "to": "exp_released"},
+            {"from": "channel", "port": "true", "to": "nightly_before"},
+            {"from": "nightly_before", "port": "found", "to": "nightly_dispatch"},
+            {"from": "nightly_before", "port": "none", "to": "nightly_dispatch"},
+            {"from": "nightly_dispatch", "to": "wait_nightly"},
+            {"from": "wait_nightly", "port": "done", "to": "nightly_published"},
+            {"from": "nightly_published", "port": "found", "to": "nightly_notify"},
+            {"from": "nightly_published", "port": "none", "to": "wait_nightly"},
+            {"from": "nightly_notify", "to": "nightly_tell"},
+            {"from": "nightly_tell", "port": "added", "to": "nightly_released"},
+            {"from": "nightly_tell", "port": "skipped", "to": "nightly_released"},
             {"from": "before", "port": "found", "to": "open_already"},
             {"from": "before", "port": "none", "to": "open_already"},
             {"from": "open_already", "port": "open", "to": "still_open"},
@@ -889,6 +892,64 @@ fn cut_release() -> WorkflowDoc {
     }))
 }
 
+/// The release workflow's name as Actions shows it (its `name:`).
+const RELEASE_WORKFLOW_NAME: &str = "release";
+/// When PDT nightly release looks (UTC): three hours after the release workflow's 08:00 schedule, time for its
+/// bundles; a run still going is looked at again every half hour, for up to eight hours.
+const NIGHTLY_CHECK_CRON: &str = "0 11 * * *";
+const NIGHTLY_POLL_MS: u64 = 30 * 60_000;
+const NIGHTLY_POLLS: u32 = 16;
+
+/// PDT nightly release (PDT-283): the release workflow publishes a nightly of main by itself every night (docs/SDLC.md
+/// "Nightly releases"), so no Cut a release run waits for it. Every day after its schedule this reads the release
+/// workflow's newest run on main, and a failed one goes to the Inbox (once per run and attempt) with its failed jobs.
+/// A night with nothing new on main is a passed run that published nothing.
+fn pdt_nightly() -> WorkflowDoc {
+    doc(json!({
+        "name": "PDT nightly release",
+        "description": format!("Every day at 11:00 UTC, three hours after the release workflow's nightly schedule, \
+                        reads its newest run on main in {RELEASE_REPO}: a failed one goes to the Inbox with its failed \
+                        jobs, once per run. A run still going is looked at again every half hour."),
+        "nodes": [
+            {"id": "daily", "kind": "schedule", "version": 1, "position": {"x": 0, "y": 0}, "title": "Every day",
+             "config": {"cron": NIGHTLY_CHECK_CRON, "timezone": "UTC", "catchUp": true}},
+            {"id": "latest", "kind": "github.workflow.latest", "version": 1, "position": {"x": 260, "y": 0},
+             "title": "The nightly's run", "retry": {"max": 5, "backoffMs": 60_000}, "maxVisits": NIGHTLY_POLLS,
+             "config": {"repo": RELEASE_REPO, "workflow": RELEASE_WORKFLOW_NAME, "branch": "main"}},
+            {"id": "wait", "kind": "wait", "version": 1, "position": {"x": 260, "y": 200}, "title": "Still running",
+             "maxVisits": NIGHTLY_POLLS, "config": {"ms": NIGHTLY_POLL_MS}},
+            {"id": "tell", "kind": "inbox.notice", "version": 1, "position": {"x": 520, "y": -160},
+             "title": "Inbox: it failed", "config": {
+                "key": "nightly-failed-{{steps.latest.id}}-{{steps.latest.attempt}}",
+                "title": "The nightly release failed",
+                "text": "[The release workflow's run]({{steps.latest.url}}) on main (at `{{steps.latest.headSha}}`) \
+                         failed, so no nightly was published from it.\n\n{{steps.latest.failedJobs}}\n\nRe-run its \
+                         failed jobs on GitHub (that reuses its tag), or fix main: the next night's run tries again."}},
+            {"id": "notify", "kind": "notify", "version": 1, "position": {"x": 780, "y": -160},
+             "title": "Tell me it failed", "config": {
+                "title": "The nightly release failed",
+                "body": "No nightly was published: see its run.",
+                "level": "warning", "link": "{{steps.latest.url}}"}},
+            {"id": "failed", "kind": "end", "version": 1, "position": {"x": 1040, "y": -160}, "title": "Failed"},
+            {"id": "fine", "kind": "end", "version": 1, "position": {"x": 520, "y": 80}, "title": "Fine",
+             "config": {"quiet": true}},
+        ],
+        "edges": [
+            {"from": "daily", "to": "latest"},
+            {"from": "latest", "port": "failed", "to": "tell"},
+            {"from": "tell", "port": "added", "to": "notify"},
+            {"from": "tell", "port": "skipped", "to": "failed"},
+            {"from": "notify", "to": "failed"},
+            {"from": "latest", "port": "running", "to": "wait"},
+            {"from": "wait", "port": "done", "to": "latest"},
+            {"from": "latest", "port": "passed", "to": "fine"},
+            {"from": "latest", "port": "cancelled", "to": "fine"},
+            {"from": "latest", "port": "none", "to": "fine"},
+        ],
+        "settings": {"maxSteps": 3 * NIGHTLY_POLLS + 10},
+    }))
+}
+
 /// Whether a project on this host is PDT's own repository (the release repository): where bug triage runs.
 pub(crate) async fn builds_pdt(st: &AppState) -> bool {
     for p in st.store.list_projects().await.unwrap_or_default() {
@@ -902,7 +963,7 @@ pub(crate) async fn builds_pdt(st: &AppState) -> bool {
 /// Whether a built-in (and its template) is only for a host that builds PDT itself (PDT-226). One installed before
 /// that stays as it is.
 pub(crate) fn only_for_pdt(id: &str) -> bool {
-    id == PDT_BUG_TRIAGE || id == PDT_PR_REVIEW
+    id == PDT_BUG_TRIAGE || id == PDT_PR_REVIEW || id == PDT_NIGHTLY
 }
 
 /// Installs or updates the built-ins (once per pdtd; callers hold the engine lock).
@@ -995,6 +1056,18 @@ mod tests {
             !GITHUB_BUILTINS.iter().find(|b| b.id == CUT_RELEASE).unwrap().enabled,
             "off until the user turns it on"
         );
+    }
+
+    /// PDT-283: every port of PDT nightly release leads somewhere and every node is reached; it is only for PDT's own
+    /// repository.
+    #[test]
+    fn pdt_nightly_has_no_open_ports() {
+        let issues = validate(&pdt_nightly(), crate::integrations::test_registry().catalog());
+        let open = |i: &&pdt_core::workflow::validate::Issue| {
+            i.code == "unreachable" || (i.code == "open_port" && i.node.as_deref() != Some("wait"))
+        };
+        assert!(!issues.iter().any(|i| open(&i)), "{issues:?}");
+        assert!(only_for_pdt(PDT_NIGHTLY));
     }
 
     /// PDT-139: a notice nobody could be told goes on, to the Inbox and the ticket.

@@ -740,9 +740,9 @@ async fn an_update_lists_the_notes_of_every_release_since_the_installed_one() {
     assert_eq!(
         v["latest"]["releases"],
         json!([
-            {"version": "0.1.7", "tag": "v0.1.7", "experimental": false, "notes": "Notes for v0.1.7",
+            {"version": "0.1.7", "tag": "v0.1.7", "nightly": false, "notes": "Notes for v0.1.7",
              "publishedAt": "2026-10-15T00:00:00Z"},
-            {"version": "0.1.6", "tag": "v0.1.6", "experimental": false, "notes": "Notes for v0.1.6",
+            {"version": "0.1.6", "tag": "v0.1.6", "nightly": false, "notes": "Notes for v0.1.6",
              "publishedAt": "2026-10-15T00:00:00Z"}
         ]),
         "newest first, up to the latest release, no drafts: {v}"
@@ -783,12 +783,12 @@ async fn set_channel(app: &axum::Router, channel: &str) {
 }
 
 #[tokio::test]
-async fn only_an_experimental_host_is_offered_an_experimental_build_until_its_release_ships() {
+async fn only_a_nightly_host_is_offered_a_nightly_build_until_its_release_ships() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, fake) = setup_with(tmp.path(), true, "0.2.0").await;
     store_token(&state);
     *fake.latest_tag.lock().unwrap() = "v0.2.0".into();
-    fake.newer.lock().unwrap().push(("v0.2.1-exp.1".into(), true));
+    fake.newer.lock().unwrap().push(("v0.2.1-nightly.20261030".into(), true));
 
     // A stable host ignores it.
     let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
@@ -797,33 +797,58 @@ async fn only_an_experimental_host_is_offered_an_experimental_build_until_its_re
         (Some("stable"), Some("idle"), &Value::Null)
     );
 
-    // An experimental host offers it, with its own notes.
-    set_channel(&app, "experimental").await;
+    // A nightly host offers it, with its own notes.
+    set_channel(&app, "nightly").await;
     let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
-    assert_eq!((v["state"].as_str(), v["latest"]["version"].as_str()), (Some("available"), Some("0.2.1-exp.1")), "{v}");
-    assert_eq!(v["latest"]["experimental"], true);
+    assert_eq!(
+        (v["channel"].as_str(), v["state"].as_str(), v["latest"]["version"].as_str()),
+        (Some("nightly"), Some("available"), Some("0.2.1-nightly.20261030")),
+        "{v}"
+    );
+    assert_eq!(v["latest"]["nightly"], true);
     let notes: Vec<_> = v["latest"]["releases"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|r| (r["tag"].as_str(), r["experimental"].as_bool()))
+        .map(|r| (r["tag"].as_str(), r["nightly"].as_bool()))
         .collect();
-    assert_eq!(notes, [(Some("v0.2.1-exp.1"), Some(true))]);
+    assert_eq!(notes, [(Some("v0.2.1-nightly.20261030"), Some(true))]);
 
-    // Then the stable 0.2.1 once it exists: it sorts above its experimental builds.
+    // Then the stable 0.2.1 once it exists: it sorts above its nightlies.
     fake.newer.lock().unwrap().insert(0, ("v0.2.1".into(), false));
     let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
-    assert_eq!((v["latest"]["version"].as_str(), v["latest"]["experimental"].as_bool()), (Some("0.2.1"), Some(false)));
+    assert_eq!((v["latest"]["version"].as_str(), v["latest"]["nightly"].as_bool()), (Some("0.2.1"), Some(false)));
 }
 
+/// PDT-283: a host on an experimental build whose channel was set to experimental (the old name, as the API still
+/// takes it) is on the nightly channel and gets the next nightly.
 #[tokio::test]
-async fn back_on_stable_an_experimental_build_stays_until_a_newer_stable_release() {
+async fn an_experimental_host_gets_the_next_nightly() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, state, fake) = setup_with(tmp.path(), true, "0.2.1-exp.3").await;
     store_token(&state);
     *fake.latest_tag.lock().unwrap() = "v0.2.0".into();
+    fake.newer.lock().unwrap().push(("v0.2.1-nightly.20261030".into(), true));
+    fake.newer.lock().unwrap().push(("v0.2.1-exp.3".into(), true));
+    set_channel(&app, "experimental").await;
+    let (_, v) = call(&app, "GET", "/api/host/settings", None).await;
+    assert_eq!(v["settings"]["updateChannel"], "nightly", "{v}");
     let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
-    assert_eq!((v["currentExperimental"].as_bool(), v["channel"].as_str()), (Some(true), Some("stable")));
+    assert_eq!(
+        (v["currentNightly"].as_bool(), v["channel"].as_str(), v["latest"]["version"].as_str()),
+        (Some(true), Some("nightly"), Some("0.2.1-nightly.20261030")),
+        "{v}"
+    );
+}
+
+#[tokio::test]
+async fn back_on_stable_a_nightly_build_stays_until_a_newer_stable_release() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, fake) = setup_with(tmp.path(), true, "0.2.1-nightly.20261030").await;
+    store_token(&state);
+    *fake.latest_tag.lock().unwrap() = "v0.2.0".into();
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!((v["currentNightly"].as_bool(), v["channel"].as_str()), (Some(true), Some("stable")));
     assert_eq!((v["state"].as_str(), &v["latest"], &v["error"]), (Some("idle"), &Value::Null, &Value::Null), "{v}");
     let (s, v) = call(&app, "POST", "/api/host/update/install", Some(json!({"force": true}))).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("no_update")), "never a downgrade to 0.2.0");

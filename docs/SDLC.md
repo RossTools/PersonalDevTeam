@@ -134,7 +134,8 @@ settings, arrive the same way. `rust-toolchain.toml` is still bumped by hand.
 ## Releases
 
 Releases are deliberate: merges don't ship. A push to `main` runs no CI at all (the merge queue has just checked that
-tree), builds no bundle and publishes nothing. Experimental releases (below) are cut by hand too, never per merge.
+tree), builds no bundle and publishes nothing. Nightly releases (below) are built from `main` once a night (and by
+hand), never per merge.
 
 - **Versions are SemVer**, `X.Y.Z`. The source of truth is the workspace `version` in `Cargo.toml`;
   `desktop/src-tauri/tauri.conf.json` carries the same one. `scripts/version.sh` prints it and `scripts/version.sh
@@ -144,7 +145,7 @@ tree), builds no bundle and publishes nothing. Experimental releases (below) are
   reports `<version>-local`, which never counts as newer than a release.
 - **Updates** compare versions by SemVer and never install an older version than the one running. A host on the
   stable update channel (the default) reads GitHub's latest release (never a draft or pre-release); one on the
-  experimental channel also takes experimental pre-releases (`vX.Y.Z-exp.N`), whichever is newest
+  nightly channel also takes nightly pre-releases (`vX.Y.Z-nightly.YYYYMMDD`), whichever is newest
   (docs/reference/host.md "Update channel"). The update banner shows the notes of every release between the
   installed version and the new one.
 - **Bundles** (the signed macOS app, the Windows installer, the Linux tarball and AppImage) are built only for a
@@ -154,7 +155,7 @@ tree), builds no bundle and publishes nothing. Experimental releases (below) are
 
 ### Releasing
 
-The user decides when to release; there is no schedule. `.github/workflows/release.yml` does it in two halves:
+The user decides when to release stable versions; only nightlies have a schedule. `.github/workflows/release.yml` does it in two halves:
 
 0. **Screenshots** (when the UI changed since the last release): regenerate the website's screenshots with
    `node scripts/site-screenshots.mjs` (site/README.md "Screenshots") and merge them before starting, so the site
@@ -196,32 +197,46 @@ release is published.
 (nothing to do), puts a failed check in the Inbox with the failed jobs (the user fixes it on `release` or closes the
 PR), and tells the user when the release is published. While an earlier release PR is still open it starts nothing
 and says so in the Inbox: that one merges by itself once its checks pass, or needs fixing or closing. With
-`channel: experimental` it runs the workflow's experimental half (below): no release PR, and the Inbox says when
-the pre-release is published.
+`channel: nightly` it runs the workflow's nightly half (below) now: no release PR, and the Inbox says when the
+pre-release is published.
 
-### Experimental releases
+### Nightly releases
 
-An experimental release puts the head of `main` in the hands of hosts that opted in, between stable releases: to try
-a change on real machines before it ships to everyone, or to get a fix to one host now. It is cut by hand like a
-stable one, never per merge and never from a branch other than `main`.
+A nightly release puts the head of `main` in the hands of hosts that opted in, between stable releases: to try a
+change on real machines before it ships to everyone, or to get a fix to one host by the next morning. Nightlies
+replaced the experimental releases cut by hand (`vX.Y.Z-exp.N`, PDT-210); hosts on an experimental build move to the
+next nightly.
 
-- **Start it**: the release workflow with channel `experimental` (`gh workflow run release.yml -f channel=experimental`,
-  with `-f bump=minor` or `-f version=X.Y.Z` when the next release isn't a patch), or ask the PM for an experimental
-  release.
-- **What it does**: no release PR, and nothing is committed to `main`. It picks `X.Y.Z-exp.N`: `X.Y.Z` is the version
-  the next release would have for that bump, `N` one more than the highest `vX.Y.Z-exp.*` tag
-  (`scripts/version.sh next-exp`). It tags the head of `main` with it, builds the same signed and notarized bundles as
-  a stable release with that version set only in the build's checkout, and publishes a GitHub **pre-release** with
-  `SHA256SUMS`. Its notes are "Experimental build of main at `<sha>`" and a preview of the unreleased fragments
-  (`scripts/changelog.sh preview`, which leaves them in `.changes/unreleased/` for the stable release).
-- **Who gets it**: only hosts with Settings → Updates → Update channel set to experimental. Stable hosts ignore it.
-  When `X.Y.Z` ships as a stable release, it sorts above its `-exp.N` builds, so experimental hosts move to it.
-- **Migrations**: an experimental build can carry database migrations that no stable release has yet. A host never
-  downgrades, so one that installs an experimental build stays on experimental builds (or newer) until a newer stable
-  release exists, even when it goes back to the stable channel. Cut one only from a `main` whose migrations you're
-  happy to keep.
-- **Re-runs**: re-running the failed jobs reuses the tag; re-running every job makes the next `-exp.N`. A run that
-  failed before publishing leaves its tag behind, so the numbers may skip one.
+- **When**: the release workflow's schedule runs it every day at 08:00 UTC. When the head of `main` is already
+  released (the last nightly, or the stable release just merged, points at it) it publishes nothing and the run ends
+  green; a nightly tag at the head whose release never got published (that night failed) is built again.
+- **Cut one by hand**: the release workflow with channel `nightly` (`gh workflow run release.yml -f channel=nightly`,
+  with `-f bump=minor` or `-f version=X.Y.Z` when the next release isn't a patch), or ask the PM for a nightly
+  release (Cut a release with `channel: nightly`). A manual run always builds, even when `main` hasn't changed.
+- **What it does**: no release PR, and nothing is committed to `main`. It picks `X.Y.Z-nightly.YYYYMMDD`: `X.Y.Z` is
+  the version the next release would have for the bump (a patch on the schedule), the date is UTC, and a day's
+  second build is `.2`, then `.3`… (`scripts/version.sh next-nightly`). It tags the head of `main` with it, builds
+  the same signed and notarized bundles as a stable release with that version set only in the build's checkout, and
+  publishes a GitHub **pre-release** with `SHA256SUMS`. Its notes are "Nightly build of main at `<sha>`" and a preview
+  of the unreleased fragments (`scripts/changelog.sh preview`, which leaves them in `.changes/unreleased/` for the
+  stable release).
+- **Retention**: after publishing, it deletes the nightlies (release and tag) beyond the newest 14 by version
+  (`scripts/version.sh prune-nightlies`). Stable releases and their tags are never touched, nor the old `-exp.N`
+  builds or another prefix's tags.
+- **Who gets it**: only hosts with Settings → Updates → Update channel set to nightly (a host set to experimental is
+  on nightly). Stable hosts ignore it. When `X.Y.Z` ships as a stable release, it sorts above its nightlies (which
+  sort above its `-exp.N` builds), so nightly hosts move to it.
+- **Migrations**: a nightly build can carry database migrations that no stable release has yet. A host never
+  downgrades, so one that installs a nightly stays on nightlies (or newer) until a newer stable release exists, even
+  when it goes back to the stable channel. Merge to `main` only migrations you're happy to keep.
+- **A failed night**: on a host that builds PDT, the built-in "PDT nightly release" workflow reads the release
+  workflow's newest run on `main` every day at 11:00 UTC and puts a failed one in the Inbox ("The nightly release
+  failed", with its failed jobs), once per run.
+- **Re-runs**: re-running the failed jobs reuses the tag; re-running every job of a manual run makes the day's next
+  build. A run that failed before publishing leaves its tag behind (the next scheduled run on the same commit builds
+  it again), so the day's numbers may skip one.
+- **Dry run**: with `PDT_RELEASE_TAG_PREFIX` set (`test-v`), the nightlies are `test-vX.Y.Z-nightly.YYYYMMDD`, and
+  retention keeps that prefix's newest 14.
 
 ## Testing a branch in a dev instance
 

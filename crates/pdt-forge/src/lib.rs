@@ -442,7 +442,7 @@ pub trait Forge: Send + Sync {
     fn release(&self, _repo: &str, _tag: Option<&str>) -> Result<Option<Release>, ForgeError> {
         unsupported(self.name(), "releases")
     }
-    /// The newest published release, pre-releases included (an experimental build, PDT-210); None when there is none
+    /// The newest published release, pre-releases included (a nightly build, PDT-283); None when there is none
     /// ([`Capabilities::releases`]).
     fn newest_release(&self, _repo: &str) -> Result<Option<Release>, ForgeError> {
         unsupported(self.name(), "releases")

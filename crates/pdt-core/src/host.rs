@@ -23,9 +23,11 @@ pub enum UpdateChannel {
     /// Full releases only (GitHub's latest release).
     #[default]
     Stable,
-    /// The newest by SemVer of the full releases and the experimental pre-releases (`X.Y.Z-exp.N`), which are built
-    /// from main by hand and may carry migrations no stable release has yet.
-    Experimental,
+    /// The newest by SemVer of the full releases and the nightly pre-releases (`X.Y.Z-nightly.YYYYMMDD`, PDT-283;
+    /// the older experimental `X.Y.Z-exp.N` too), which are built from main and may carry migrations no stable
+    /// release has yet. Read from `experimental`, the channel's old name, too: a host set to it stays on it.
+    #[serde(alias = "experimental")]
+    Nightly,
 }
 
 /// Whether agent sessions get the host's API-key variables (spec §6 "Agent credentials").
@@ -84,7 +86,7 @@ pub struct HostSettings {
     /// The Tailscale login allowed to use this host remotely. `PDT_OWNER_LOGIN` overrides it.
     pub owner_login: Option<String>,
     pub update_policy: UpdatePolicy,
-    /// Stable or experimental releases. Never a downgrade: back on stable, a host stays on its experimental build
+    /// Stable or nightly releases. Never a downgrade: back on stable, a host stays on its nightly build
     /// until a newer stable release exists.
     pub update_channel: UpdateChannel,
     pub run_ports: PortRange,
@@ -594,10 +596,20 @@ mod tests {
         assert_eq!(s.update_channel, UpdateChannel::Stable, "hosts stay on stable");
     }
 
+    /// PDT-283: the experimental channel became nightly; a host saved on it reads as nightly and is saved so.
+    #[test]
+    fn the_experimental_channel_reads_as_nightly() {
+        let s: HostSettings = serde_json::from_str(r#"{"updateChannel":"experimental"}"#).unwrap();
+        assert_eq!(s.update_channel, UpdateChannel::Nightly);
+        assert!(serde_json::to_string(&s).unwrap().contains(r#""updateChannel":"nightly""#));
+        let p: HostSettingsPatch = serde_json::from_str(r#"{"updateChannel":"experimental"}"#).unwrap();
+        assert_eq!(p.update_channel, Some(UpdateChannel::Nightly));
+    }
+
     #[test]
     fn wire_names() {
         assert_eq!(serde_json::to_string(&UpdatePolicy::AutoWhenIdle).unwrap(), r#""auto_when_idle""#);
-        assert_eq!(serde_json::to_string(&UpdateChannel::Experimental).unwrap(), r#""experimental""#);
+        assert_eq!(serde_json::to_string(&UpdateChannel::Nightly).unwrap(), r#""nightly""#);
         assert_eq!(serde_json::to_string(&CredentialPolicy::PassThrough).unwrap(), r#""pass_through""#);
         for c in [CredentialPolicy::Subscription, CredentialPolicy::PassThrough] {
             assert_eq!(CredentialPolicy::parse(c.as_str()), Some(c));

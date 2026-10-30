@@ -122,6 +122,10 @@ export const plugins: IntegrationInfo[] = [
         "title": "Run a GitHub Actions workflow"
       },
       {
+        "id": "github.workflow.latest",
+        "title": "Read a workflow's latest run"
+      },
+      {
         "id": "github.change_request",
         "title": "Read a GitHub pull request"
       },
@@ -152,6 +156,10 @@ export const plugins: IntegrationInfo[] = [
       {
         "id": "pdt-pr-review",
         "title": "PDT pull request review"
+      },
+      {
+        "id": "pdt-nightly",
+        "title": "PDT nightly release"
       },
       {
         "id": "github-issue-done",

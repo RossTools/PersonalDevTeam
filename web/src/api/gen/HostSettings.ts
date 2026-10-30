@@ -15,7 +15,7 @@ export type HostSettings = { remoteAccess: boolean,
  */
 ownerLogin: string | null, updatePolicy: UpdatePolicy, 
 /**
- * Stable or experimental releases. Never a downgrade: back on stable, a host stays on its experimental build
+ * Stable or nightly releases. Never a downgrade: back on stable, a host stays on its nightly build
  * until a newer stable release exists.
  */
 updateChannel: UpdateChannel, runPorts: PortRange, maxConcurrentRuns: number, agentCredentials: CredentialPolicy, 

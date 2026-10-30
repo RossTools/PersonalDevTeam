@@ -140,8 +140,8 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   (`workflow_get` by name searches every project; `workflow_save` needs a project), and the asking tools
   `workflow_run` (`id` or `name`, `project`, `input`: runs an enabled workflow's Run now trigger with `projectId` added
   to the input; a disabled one is refused. The PM starts the built-in "Cut a release" with it, only when the user asks
-  for a release, adding `channel: experimental` for an experimental one: [workflows.md](workflows.md) "Workflows",
-  PDT-194, PDT-210),
+  for a release, adding `channel: nightly` for a nightly one now: [workflows.md](workflows.md) "Workflows",
+  PDT-194, PDT-210, PDT-283),
   `create_ticket` (a draft by default; the timeline gets "Created by the PM.", or by the session's persona), `edit_ticket` (closing ends the
   attempt and moving back to Draft, Ready or To do stops its work, as the API; `parent` takes a key or id, `""`
   detaches; another persona given the tool edits its own ticket freely, but another ticket only by its exact key,

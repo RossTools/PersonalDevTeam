@@ -17,7 +17,7 @@ call GitHub: they are not the forge.
 - Pull requests, merge settings and merges go through GraphQL (`/graphql`, Enterprise `/api/graphql`); Actions runs,
   jobs, logs, comments, reviews and issues through REST (`X-GitHub-Api-Version: 2022-11-28`), as do releases
   (`releases/latest`, `releases/tags/{tag}`; drafts and pre-releases don't count, a 404 is none; `newest_release`,
-  the first non-draft of `releases`, pre-releases included, for an experimental release, PDT-210) and starting a
+  the first non-draft of `releases`, pre-releases included, for a nightly release, PDT-283) and starting a
   workflow (`POST actions/workflows/{file}/dispatches`; GitHub Actions' `trigger`, PDT-194).
 - Merging turns on auto-merge (`enablePullRequestAutoMerge`, with the strategy unless a merge queue picks it). A pull
   request GitHub calls clean merges at once instead: with no strategy it joins the merge queue
