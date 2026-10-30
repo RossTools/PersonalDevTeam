@@ -33,6 +33,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **Text from outside is fenced.** Issue and PR text, webhook payloads and other outside fields (`EventType.outside`)
   are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions that read untrusted
   input run locked down (`persona::locked_down`: read-only tools, no secrets).
+- **What every user's agents read is about their project, not PDT's development.** The built-in personas'
+  instructions, the PM's prompt, the tools' descriptions and schemas (doc comments on their argument types too), the
+  agent context and the served guides name no ticket keys of PDT's own (examples use `ABC-12`), and nothing of PDT's own
+  changelog, release workflow, nightlies or repository. Release guidance reaches the PM only through its briefing, for
+  a project with an enabled release workflow. PDT's own process lives in AGENTS.md and docs/SDLC.md. pdtd's
+  `prompts_and_guides_carry_no_pdt_development_assumptions` checks it (with an allow list).
 - **Routes that act as the user need the UI token** (`x-ui-token`, new at each start; pdt-api `untrusted.rs`): admitting
   an external ticket, filing issues, the PM's approvals. An agent's `curl` can't do them.
 - **Fresh Codex launches in one folder stay at least 5 s apart**, or PDT can't tell their conversations apart.
