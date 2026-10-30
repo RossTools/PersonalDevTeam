@@ -124,6 +124,10 @@ pub struct HostSettings {
     pub devin_program: Option<String>,
     /// The ACP agents the user added (Settings → Agents → Add ACP agent; PDT-234), agent kinds `acp:<id>`.
     pub acp_agents: Vec<crate::acp_agent::AcpAgentConfig>,
+    /// The program to launch for a built-in ACP profile PDT installs (by profile id, PDT-239), instead of the one PDT
+    /// installed: one installed by hand (a full path, or `~/…`).
+    #[ts(type = "Record<string, string>")]
+    pub acp_programs: std::collections::BTreeMap<String, String>,
     /// The agents switched off in Settings → Agents (PDT-270): never offered, and no new session starts on them.
     /// Every agent is on unless it is here. The default agent never is.
     pub disabled_agents: Vec<AgentKind>,
@@ -166,6 +170,7 @@ impl Default for HostSettings {
             codex_program: None,
             devin_program: None,
             acp_agents: Vec::new(),
+            acp_programs: Default::default(),
             disabled_agents: Vec::new(),
             agent_models: Default::default(),
         }
@@ -250,6 +255,11 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub acp_agents: Option<Vec<crate::acp_agent::AcpAgentConfig>>,
+    /// Programs for the built-in ACP profiles it names (by id); the others keep theirs. Blank clears one (back to the
+    /// one PDT installs).
+    #[serde(default)]
+    #[ts(optional, type = "Record<string, string>")]
+    pub acp_programs: Option<std::collections::BTreeMap<String, String>>,
     /// The whole list of the agents switched off.
     #[serde(default)]
     #[ts(optional)]
@@ -392,12 +402,17 @@ impl HostSettings {
             (&p.devin_program, &mut s.devin_program),
         ] {
             if let Some(raw) = given {
-                let path = raw.trim();
-                if !path.is_empty() && !path.starts_with('~') && !std::path::Path::new(path).is_absolute() {
-                    return Err(HostSettingsError::BadProgram);
-                }
-                *field = (!path.is_empty()).then(|| path.to_string());
+                *field = program_path(raw)?;
             }
+        }
+        for (id, raw) in p.acp_programs.iter().flatten() {
+            if !crate::acp_agent::builtin_profiles().iter().any(|d| d.id == *id && d.installer.is_some()) {
+                return Err(HostSettingsError::UnknownAgent);
+            }
+            match program_path(raw)? {
+                Some(path) => s.acp_programs.insert(id.clone(), path),
+                None => s.acp_programs.remove(id),
+            };
         }
         if let Some(agents) = &p.acp_agents {
             s.acp_agents = crate::acp_agent::validate(agents)?;
@@ -452,6 +467,15 @@ impl HostSettings {
         }
         Ok(s)
     }
+}
+
+/// A program setting: a full path or one starting with `~`, trimmed; blank is none.
+fn program_path(raw: &str) -> Result<Option<String>, HostSettingsError> {
+    let path = raw.trim();
+    if !path.is_empty() && !path.starts_with('~') && !std::path::Path::new(path).is_absolute() {
+        return Err(HostSettingsError::BadProgram);
+    }
+    Ok((!path.is_empty()).then(|| path.to_string()))
 }
 
 /// The project's own choice when it has one, else the host's.
@@ -820,6 +844,22 @@ mod tests {
         let cleared = set.apply(&HostSettingsPatch { claude_program: Some(" ".into()), ..patch() }).unwrap();
         assert_eq!(cleared.claude_program, None);
         assert_eq!(cleared.devin_program.as_deref(), Some("~/bin/devin"));
+    }
+
+    #[test]
+    fn an_installed_acp_profiles_program_can_be_set_and_cleared() {
+        let s = HostSettings::default();
+        let one = |id: &str, path: &str| HostSettingsPatch {
+            acp_programs: Some([(id.to_string(), path.to_string())].into()),
+            ..patch()
+        };
+        let set = s.apply(&one("antigravity", " ~/agy/agy_acp_server.par ")).unwrap();
+        assert_eq!(set.acp_programs.get("antigravity").map(String::as_str), Some("~/agy/agy_acp_server.par"));
+        assert_eq!(set.apply(&one("antigravity", "agy")), Err(HostSettingsError::BadProgram));
+        // Only a profile PDT installs: the others name their command in their definition.
+        assert_eq!(s.apply(&one("cursor", "~/c")), Err(HostSettingsError::UnknownAgent));
+        assert_eq!(s.apply(&one("nope", "~/c")), Err(HostSettingsError::UnknownAgent));
+        assert!(set.apply(&one("antigravity", "")).unwrap().acp_programs.is_empty());
     }
 
     #[test]

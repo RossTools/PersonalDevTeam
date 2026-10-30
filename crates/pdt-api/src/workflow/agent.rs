@@ -773,32 +773,46 @@ enum Close {
 const CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// Closes a step's conversation, unless a step took it up meanwhile; once it is not at work (the turn that handed in
-/// the outcome ended) when `after_turn`. A terminal is left alone.
+/// the outcome ended) when `after_turn`. A message that goes in first keeps it open until the turn it starts ends; one
+/// sent after reopens it (PDT-188). A terminal is left alone.
 async fn close_after_turn(st: &AppState, session_id: &str, close: Close, after_turn: bool) {
     let deadline = tokio::time::Instant::now() + CLOSE_WAIT;
-    while after_turn
-        && crate::conversations::background(st, session_id).is_some_and(|b| b.busy)
-        && tokio::time::Instant::now() < deadline
-    {
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
-    let Ok(Some(s)) = st.store.get_session(session_id).await else { return };
-    if s.kind != SessionKind::AgentTui || s.mode != SessionMode::Conversation || s.status == SessionStatus::Finished {
-        return;
-    }
-    if matches!(st.store.active_agent_step(session_id).await, Ok(Some(_))) {
-        return;
-    }
-    match close {
-        Close::Stop => {
-            if let Err(e) = crate::sessions::stop(st, session_id).await {
-                tracing::warn!(session = %session_id, error = %e.message(), "could not stop a step's session");
-            } else {
-                tracing::info!(session = %session_id, "stopped a step's session after its outcome");
-            }
+    loop {
+        while after_turn
+            && crate::conversations::background(st, session_id).is_some_and(|b| b.busy)
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
-        Close::Park => {
-            crate::conversations::park_idle(st, session_id).await;
+        let Ok(Some(s)) = st.store.get_session(session_id).await else { return };
+        if s.kind != SessionKind::AgentTui || s.mode != SessionMode::Conversation || s.status == SessionStatus::Finished
+        {
+            return;
+        }
+        if matches!(st.store.active_agent_step(session_id).await, Ok(Some(_))) {
+            return;
+        }
+        tokio::time::sleep(st.conversations.close_pause).await;
+        // Past the wait (or cancelled), it is closed whatever it is doing.
+        let wait = after_turn && tokio::time::Instant::now() < deadline;
+        let closed = match close {
+            Close::Stop if wait => crate::sessions::stop_if_idle(st, session_id).await,
+            Close::Stop => crate::sessions::stop(st, session_id).await.map(|()| true),
+            Close::Park => Ok(crate::conversations::park_idle(st, session_id).await || !wait),
+        };
+        match closed {
+            Ok(true) => {
+                if close == Close::Stop {
+                    tracing::info!(session = %session_id, "stopped a step's session after its outcome");
+                }
+                return;
+            }
+            // A message went in meanwhile: wait for its turn.
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(session = %session_id, error = %e.message(), "could not stop a step's session");
+                return;
+            }
         }
     }
 }

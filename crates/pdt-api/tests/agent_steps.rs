@@ -23,6 +23,11 @@ struct Env {
 
 /// A project with a repo, served on a free local port (the agent's pdt-mcp calls come over TCP).
 async fn setup() -> Env {
+    setup_with(|_| {}).await
+}
+
+/// `setup`, with changes to the state its router serves.
+async fn setup_with(change: impl FnOnce(&mut AppState)) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -40,6 +45,7 @@ async fn setup() -> Env {
     state.conversations.background_grace = Duration::from_millis(500);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();
+    change(&mut state);
     let app = router(state.clone(), None);
     let served = app.clone();
     tokio::spawn(async move { axum::serve(listener, served).await });
@@ -383,6 +389,44 @@ async fn an_agent_step_ends_with_the_outcome_its_persona_submits() {
     assert_eq!(log.as_array().unwrap().len(), 1, "{log}");
     assert!(inbox(&env).await.is_empty());
     // PDT-183: a `new` step's session is done once its outcome is in.
+    session_finished(&env, &session).await;
+}
+
+/// PDT-188: a message sent to a `new` step's session just as its run ends (before the stop) is taken: the stop waits
+/// for the turn it starts, or the message reopens the session after it.
+#[tokio::test]
+async fn a_message_sent_as_a_steps_session_is_stopped_is_answered() {
+    // The message goes in between the session found idle and its stop.
+    let env = setup_with(|st| st.conversations.close_pause = Duration::from_millis(1500)).await;
+    let t = ticket(&env, "Late message").await;
+    let wf = create_workflow(
+        &env,
+        review_doc(r#"mcp: submit_outcome {"outcome": "approved", "summary": "Fine."}"#, json!({})),
+    )
+    .await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let r = run_ended(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r:#}");
+    let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "review").unwrap().clone();
+    let session = step["output"]["sessionId"].as_str().unwrap().to_string();
+    // Once the outcome's turn is over (the close is pausing), a turn longer than a closing process's grace (5 s), so a
+    // stop that doesn't wait for it kills it.
+    tick_until(&env, "the outcome's turn ended", || async {
+        let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+        (s["activity"] == "idle").then_some(s)
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+    assert_eq!(s["status"], "running", "the close is still pausing");
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": "compact:7000"})))
+            .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    tick_until(&env, "the answer", || async {
+        agent_says(&env, &session).await.iter().any(|m| m == "Compacted and carried on.").then_some(json!(null))
+    })
+    .await;
     session_finished(&env, &session).await;
 }
 

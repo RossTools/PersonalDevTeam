@@ -156,6 +156,8 @@ async fn run() -> anyhow::Result<()> {
         Some(bin) => std::sync::Arc::new(pdt_tailscale::TailscaleCli::new(bin.clone())),
         None => std::sync::Arc::new(pdt_tailscale::TailscaleCli::detect(state.platform.login_path.as_deref())),
     };
+    // Installs for the ACP profiles reach the network only here (PDT-239).
+    state.toolchains = std::sync::Arc::new(pdt_api::toolchains::Http::new());
     state.update = std::sync::Arc::new(
         pdt_api::UpdateService::with_disabled_reason(
             pdt_update::GITHUB_API,

@@ -116,10 +116,14 @@ stored in `session_events`; terminals keep their scrollback in memory. Every age
 `agent_context`, plus the project's agent instructions and the ticket), written to the session's folder and passed in
 the way each agent takes them. A session belongs to an attempt (the Coder's) or to a ticket (a workflow step's
 reviewer or QA). Claude, Codex and Devin terminals are resumed by their conversation ids after a restart;
-conversations never are. A built-in ACP agent (OhMyPi, Cursor, Grok) is a profile in pdt-core `acp_agent::builtin_profiles`
+conversations never are. A built-in ACP agent (OhMyPi, Cursor, Grok, Antigravity) is a profile in pdt-core `acp_agent::builtin_profiles`
 (command, mode map, flavor) plus, for what it adds to ACP, a flavor mapper in pdt-core `conversation/<agent>.rs` with
 recorded frames in `crates/pdt-core/tests/fixtures/<agent>/`; PDT keeps the session's permission mode by answering
-the agent's permission requests itself (`acp_agent::enforced_answer`).
+the agent's permission requests itself (`acp_agent::enforced_answer`). A profile with an `installer` (Antigravity) runs
+a program PDT installs from the ACP registry (pdt-core `acp_registry`, pdt-api `toolchains.rs`): Settings → Agents →
+Install downloads it from the agent's own site, checks the registry's sha256 and unpacks it, without running it, into
+`<data dir>/toolchains/<registry id>/<version>/`; Sign in asks the server to `authenticate`, and it keeps the
+credentials itself (notes: docs/superpowers/notes/antigravity-acp.md).
 
 **pdt-mcp.** PDT's MCP server at `/api/mcp` (pdt-api `mcp/`). Each session gets a token (its id, signed with a key in
 the data folder) and the tools of its persona; each tool calls the API route's own function. Tools that need the

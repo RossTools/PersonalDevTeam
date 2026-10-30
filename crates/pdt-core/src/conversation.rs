@@ -2,6 +2,7 @@
 //! user answers, the WebSocket frames, and activity derived from events. Pure.
 
 pub mod acp;
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod composer;

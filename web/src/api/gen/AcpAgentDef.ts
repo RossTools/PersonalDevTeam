@@ -12,4 +12,9 @@ icon: string | null, command: string, args: Array<string>, env: Array<EnvVar>,
 /**
  * It ships with PDT (it can't be edited or removed).
  */
-builtin: boolean, };
+builtin: boolean, 
+/**
+ * The ACP registry entry PDT installs its program from (Settings → Agents → Install), when it isn't one the user
+ * installs: `command` is then only a placeholder for the installed program (or the path set over it).
+ */
+installer: string | null, };

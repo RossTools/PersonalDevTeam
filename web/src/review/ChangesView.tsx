@@ -310,7 +310,7 @@ function FilePane({ worktreeId, file, threads, mode, narrow, phone, onMode, whol
     <CommentThread
       comments={[th.root, ...th.replies].map((cm: ReviewComment) => ({
         id: cm.id,
-        author: 'You',
+        author: cm.author === 'user' ? 'You' : cm.author,
         time: relativeTime(cm.createdAt),
         body: cm.body,
         draft: cm.sentAt === null,

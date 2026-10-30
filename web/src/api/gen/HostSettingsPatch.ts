@@ -42,6 +42,11 @@ claudeProgram?: string, codexProgram?: string, devinProgram?: string,
  */
 acpAgents?: Array<AcpAgentConfig>, 
 /**
+ * Programs for the built-in ACP profiles it names (by id); the others keep theirs. Blank clears one (back to the
+ * one PDT installs).
+ */
+acpPrograms?: Record<string, string>, 
+/**
  * The whole list of the agents switched off.
  */
 disabledAgents?: Array<AgentKind>, 

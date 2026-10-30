@@ -187,6 +187,11 @@ pub struct AppState {
     /// The integrations this build has and the ones this instance enabled (PDT-173). `new` has none of the optional
     /// ones; pdtd (and a test) sets the ones it was built with, then [`crate::integrations::load_enabled`].
     pub integrations: std::sync::Arc<crate::integrations::Integrations>,
+    /// Where the programs PDT installs for its ACP profiles come from (PDT-239). `new` has
+    /// [`crate::toolchains::Offline`]; only pdtd's production wiring reaches the network, and a test sets a fake.
+    pub toolchains: std::sync::Arc<dyn crate::toolchains::ToolchainSource>,
+    /// Serializes installs.
+    pub(crate) toolchain_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl AppState {
@@ -271,6 +276,8 @@ impl AppState {
             auto_start_failed: Default::default(),
             mcp: Default::default(),
             integrations: Default::default(),
+            toolchains: std::sync::Arc::new(crate::toolchains::Offline),
+            toolchain_lock: Default::default(),
             builtins_installed: Default::default(),
             mcp_key: Default::default(),
             personas_installed: Default::default(),
@@ -389,6 +396,8 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/shutdown", axum::routing::post(request_shutdown))
         .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
         .route("/host/network", axum::routing::put(crate::host::put_network))
+        .route("/host/acp-agents/{id}/install", axum::routing::post(crate::toolchains::post_install))
+        .route("/host/acp-agents/{id}/sign-in", axum::routing::post(crate::toolchains::post_sign_in))
         .route("/host/restart", axum::routing::post(crate::host::post_restart))
         .route("/host/whoami", get(crate::identity_guard::whoami))
         .route("/ui/token", get(crate::untrusted::ui_token))
