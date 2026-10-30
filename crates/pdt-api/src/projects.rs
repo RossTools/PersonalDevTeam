@@ -277,7 +277,8 @@ async fn checked_base(st: &AppState, id: &str, branch: String) -> Result<String,
     .map_err(ApiError::internal)?
 }
 
-/// Removes a project from PDT: stops its sessions and runs and forgets everything about it. Files are never touched.
+/// Removes a project from PDT: stops its sessions and runs and forgets everything about it (its tickets' attachments
+/// too). The project's own files are never touched.
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     for run in st.store.list_runs(&id).await? {
@@ -293,6 +294,8 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
         crate::sessions::discard(&st, &s.id).await;
     }
     st.store.delete_project(&id).await?;
+    // Its tickets' attachments are PDT's own files, not the project's.
+    crate::ticket_attachments::prune(&st).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

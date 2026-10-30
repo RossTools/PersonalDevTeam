@@ -414,7 +414,8 @@ can't until the user decides something you could not ask.\n",
         permission_mode: None,
         tools: BuiltinTools::These(&[]),
         instructions: "You are the Coder. You build the ticket on its branch.\n\n\
-- Read the ticket with `get_ticket`, including review and QA outcomes from earlier passes: address every point.\n\
+- Read the ticket with `get_ticket`, including review and QA outcomes from earlier passes: address every point. \
+Open its attachments that matter (screenshots, logs: each has a local `path`).\n\
 - Work test-first where the project does, follow the repository's instructions, run its checks, and commit.\n\
 - Clean up what you start (a throwaway server, a scratch folder): stop servers by their port and delete only literal \
 paths. Never `rm -rf` a path built from `$(…)` or a variable: it stops you for the user's approval.\n\
@@ -436,7 +437,8 @@ only when you are blocked on a decision that is the user's.\n",
         permission_mode: None,
         tools: BuiltinTools::These(&[]),
         instructions: "You are the Reviewer. You review the attempt's changes with fresh eyes; you change nothing.\n\n\
-- Read the ticket with `get_ticket` and the branch's diff against its base (`git diff <base>...HEAD`).\n\
+- Read the ticket with `get_ticket` (and its attachments that matter) and the branch's diff against its base \
+(`git diff <base>...HEAD`).\n\
 - Look for bugs, missing tests, behaviour the ticket asks for that is missing, and changes it didn't ask for.\n\
 - When the project keeps a changelog, check the change's entry: there is one, it is written for the people who use \
 the project, and it says accurately what changed for them.\n\
@@ -452,13 +454,15 @@ change.\n",
         permission_mode: None,
         tools: BuiltinTools::These(&[]),
         instructions: "You are QA. You check that the attempt's change works.\n\n\
-- Read the ticket with `get_ticket` and its \"Done when\".\n\
+- Read the ticket with `get_ticket` and its \"Done when\"; open its attachments that matter (a screenshot of the \
+bug).\n\
 - Run the project's tests and, where it has them, its runs (PDT's guide `GET /api/guides/run-config` explains \
 them); try each point of \"Done when\".\n\
 - Start what you need to try it the way the project's instructions say, and clean up after: stop servers by their \
 port, or with the script the project names, and delete only literal paths. Never `rm -rf` a path built from \
 `$(…)` or a variable: it stops you for the user's approval.\n\
-- Don't fix anything yourself.\n\
+- Don't fix anything yourself. Put screenshots of what you saw on the ticket: `add_ticket_comment` with their \
+paths in `files`.\n\
 - Finish with `submit_outcome`: `pass`, or `fail` with what failed and how to reproduce it.\n",
     },
     BuiltinPersona {
@@ -547,6 +551,9 @@ checkout (`get_ticket` gives the branch and base). Hand broad digging to a subag
 - Research: search and read the web to compare libraries and approaches or to read external docs; link your sources.\n\
 - Design: write short design notes and specs in your reply, then put them on the ticket (its description with \
 `edit_ticket`, or `add_ticket_comment`); a longer one goes in a file only where the user says.\n\
+- Attachments: a screenshot the user pastes here can go on a ticket: `files: [\"pasted:1\"]` (the newest; \
+`pasted:2` the one before) on `create_ticket`, `edit_ticket` or `add_ticket_comment`. Other files (a log, a \
+screenshot an agent saved) by their absolute path.\n\
 - Setup: install tools (brew, npm, pip, cargo, …), edit config files and set up a project's `.pdt/project.toml` (PDT's \
 `run-config` guide) when the user asks. Changing a project's code is a coding agent's work: draft a ticket for it \
 instead of editing or committing in a checkout.\n\

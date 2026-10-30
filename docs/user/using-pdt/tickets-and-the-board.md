@@ -47,6 +47,22 @@ Click a ticket to see it in a panel beside the list; **Open** gives it a tab of 
 and description, change the details, add links, and comment. Comments go on the ticket's **Activity**, along with
 everything else that happened to it: moves, starts, merges, agents' outcomes.
 
+## Screenshots and logs
+
+To show what's wrong, paste or drop a screenshot or a text file (a log, a JSON response, a config) into a ticket's
+description or a comment box, or pick one with the paperclip (**Attach files**). PDT uploads it and puts it in the
+text: an image shows in the comment, and a click opens it full size; a text file shows as a chip that opens it in a
+viewer. Each upload shows its progress, and one that fails says why until you dismiss it.
+
+PDT takes PNG, JPEG, GIF and WebP images up to 10 MB, and text files (`.txt`, `.log`, `.md`, `.json`, `.csv`,
+`.yaml`, `.toml` and other plain text) up to 1 MB, at most 50 per ticket. The ticket's **Attachments** list (beside
+the description; under **Links** on a phone) shows them all, with **Attach** to add one and a remove button for each.
+Deleting the ticket deletes its attachments.
+
+Agents working on the ticket see its attachments and open the images and files they need. QA can put screenshots
+of what it tried on the ticket, and [the PM](../automation/the-pm.md) can attach an image you paste into its chat
+to a ticket it creates or edits.
+
 ## Priority and labels
 
 **Priority** is **Urgent**, **High**, **Medium**, **Low** or **No priority**. It sorts and groups the backlog, and by
@@ -157,4 +173,4 @@ The top bar's title picks the project and saved filters; **Backlog** and **Board
 filters beside them. The board shows one column at a time: pick it from the chips, or swipe sideways. There's no
 dragging: long-press a row or card for its menu (move, rank, select). **＋** adds a ticket. A ticket opens full screen,
 with **Overview**, **Conversation** and **Changes**, and the stage's main action (**Start**, **Accept…**, **Open
-work**) at the bottom.
+work**) at the bottom. In **Comment…**, the paperclip attaches a photo or a file.

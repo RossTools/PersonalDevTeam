@@ -37,7 +37,9 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
 `pdt-dev`; debug builds default to it). `PDT_PORT` and `PDT_DATA_DIR` override them, and a lock file stops two pdtd
 sharing a data folder. Environment variables are read in `crates/pdtd/src/config.rs`. `GET /api/health` reports
 name, version, profile, port and build. The data folder holds `pdt.db`, `logs/`, `sessions/<id>/` (per-session files:
-instructions, agent settings, MCP config), `network.json` (port and allowed hosts, read before the database opens)
+instructions, agent settings, MCP config, `attachments/` for images pasted into a conversation), `tickets/<id>/attachments/`
+(a ticket's screenshots and text files, metadata in `ticket_attachments`; pdt-api `ticket_attachments.rs`, removed
+with the ticket by `prune`), `network.json` (port and allowed hosts, read before the database opens)
 and `backups/` (a copy taken before migrations).
 
 **Releases.** The version is the workspace version in `Cargo.toml` (repeated in `tauri.conf.json`); a build without

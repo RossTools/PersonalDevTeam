@@ -50,6 +50,7 @@ mod setup;
 mod slow;
 mod start;
 mod stop;
+mod ticket_attachments;
 mod tickets;
 mod todos;
 pub mod toolchains;

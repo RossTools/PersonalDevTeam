@@ -1,5 +1,5 @@
 // The pieces of a ticket's Overview, shared by the ticket tab (TicketView) and the backlog's peek sheet.
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, CircleCheck, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
@@ -16,6 +16,7 @@ import type { TicketEvent } from '../api/gen/TicketEvent';
 import type { TicketOverlap } from '../api/gen/TicketOverlap';
 import type { TicketStage } from '../api/gen/TicketStage';
 import { Composer } from '../common/Composer';
+import { insertAtCaret } from '../common/insertText';
 import { InlineRename } from '../common/InlineRename';
 import { Markdown } from '../common/Markdown';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
@@ -27,6 +28,7 @@ import { ParentField } from './PartsSection';
 import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole } from './model';
 import { invalidateTickets, pagedPoll, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
 import { AreaChips, AreasEditor } from './Areas';
+import { ATTACH_ACCEPT, AttachButton, attachmentMarkdown, UploadList, useAttachmentUploads } from './attachments';
 import { LabelsEditor } from './LabelsEditor';
 import { TicketPicker } from './TicketPicker';
 
@@ -125,6 +127,12 @@ export function TicketDescription({ ticket, onDirtyChange }: {
   const dirty = editing && edit.draft !== edit.base;
   const changedElsewhere = editing && edit.base !== ticket.description;
   const setDraft = (d: string) => setEdit((e) => (e ? { ...e, draft: d } : e));
+  const box = useRef<HTMLTextAreaElement>(null);
+  const { uploads, add, dismiss } = useAttachmentUploads(ticket.id);
+  const attach = async (files: File[]) => {
+    const snippets = (await add(files)).map(attachmentMarkdown);
+    if (snippets.length) setEdit((e) => (e ? { ...e, draft: insertAtCaret(e.draft, box.current, snippets.join('\n')) } : e));
+  };
   const begin = () => {
     setEdit({ draft: ticket.description, base: ticket.description });
     setMode('write');
@@ -176,12 +184,22 @@ export function TicketDescription({ ticket, onDirtyChange }: {
           />
           {mode === 'write' ? (
             <Textarea
+              ref={box}
               aria-label="Description"
               autoFocus
               rows={10}
               value={draft}
-              placeholder="Markdown: what and why, acceptance criteria…"
+              placeholder="Markdown: what and why, acceptance criteria… Paste or drop screenshots and logs."
               onChange={(e) => setDraft(e.target.value)}
+              onPaste={(e) => {
+                const files = [...e.clipboardData.files];
+                if (files.length) { e.preventDefault(); void attach(files); }
+              }}
+              onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }}
+              onDrop={(e) => {
+                const files = [...e.dataTransfer.files];
+                if (files.length) { e.preventDefault(); void attach(files); }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void save(); }
                 if (e.key === 'Escape' && !dirty) { e.preventDefault(); close(); }
@@ -203,8 +221,10 @@ export function TicketDescription({ ticket, onDirtyChange }: {
             </Alert>
           )}
           {error && <Alert tone="error">{error}</Alert>}
+          <UploadList uploads={uploads} onDismiss={dismiss} />
           <div className="flex items-center justify-end gap-2">
             <span className="mr-auto text-meta text-muted-foreground pointer-coarse:hidden">Markdown. ⌘/Ctrl+Enter saves.</span>
+            <AttachButton onFiles={(f) => void attach(f)} />
             <Button variant="ghost" onClick={close}>Cancel</Button>
             <Button type="submit" variant="primary" pending={pending} disabled={!dirty}>Save</Button>
           </div>
@@ -562,21 +582,43 @@ export function TicketTimeline({ ticketId, recent, composer = false }: { ticketI
       )}
       {loading ? <p className="text-xs text-muted-foreground">Loading…</p> : <Timeline items={items} aria-label="Activity" />}
       {composer && (
-        <Composer
-          label="Comment"
-          sendLabel="Comment"
-          submitOn="mod-enter"
-          rows={2}
-          autoFocus={false}
-          placeholder="Add a comment (Markdown). ⌘/Ctrl+Enter sends."
-          className="rounded-md border"
-          onSend={async (text) => {
-            await api.commentOnTicket(ticketId, text);
-            void qc.invalidateQueries({ queryKey: ticketKeys.events(ticketId) });
-          }}
-        />
+        <CommentComposer ticketId={ticketId} />
       )}
     </OverviewSection>
+  );
+}
+
+/**
+ * The comment box: pasted, dropped or picked screenshots and logs are attached and shown in the comment (PDT-300). On
+ * a phone the Attach button opens the photo library or files.
+ */
+export function CommentComposer({ ticketId, rows = 2, autoFocus = false, className = 'rounded-md border', onSent }: {
+  ticketId: string;
+  rows?: number;
+  autoFocus?: boolean;
+  className?: string;
+  onSent?: () => void;
+}) {
+  const qc = useQueryClient();
+  const { uploads, add, dismiss } = useAttachmentUploads(ticketId);
+  return (
+    <Composer
+      label="Comment"
+      sendLabel="Comment"
+      submitOn="mod-enter"
+      rows={rows}
+      autoFocus={autoFocus}
+      placeholder="Add a comment (Markdown; paste or drop screenshots and logs). ⌘/Ctrl+Enter sends."
+      className={className}
+      accept={ATTACH_ACCEPT}
+      onFiles={async (files) => (await add(files)).map(attachmentMarkdown)}
+      status={<UploadList uploads={uploads} onDismiss={dismiss} />}
+      onSend={async (text) => {
+        await api.commentOnTicket(ticketId, text);
+        void qc.invalidateQueries({ queryKey: ticketKeys.events(ticketId) });
+        onSent?.();
+      }}
+    />
   );
 }
 

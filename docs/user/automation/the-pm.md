@@ -17,6 +17,10 @@ looked yet.
 - **Talk to an agent**: "Tell the agent on ABC-12 to rebase before it pushes again."
 - **Run or write a workflow**: "Run the release workflow", "Write a workflow that posts merged tickets to Discord." A
   workflow it writes is a proposal you accept or discard (see [Workflows](workflows.md#share-and-copy)).
+- **Put a screenshot on a ticket**: paste it into the chat and say "Make a ticket for this bug, with the screenshot."
+  The image goes on the ticket as an attachment, and the agent that works on it opens it (see
+  [Screenshots and logs](../using-pdt/tickets-and-the-board.md#screenshots-and-logs)). Attaching asks no more than the
+  change it comes with.
 - **Report a bug in PDT itself**.
 
 It can also read and search your projects' code, use git, and search the web, as its agent normally would. With a

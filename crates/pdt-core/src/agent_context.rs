@@ -121,7 +121,10 @@ fn ticket_section(api: &str, t: &TicketWork, forge: Option<&ForgeNotes>) -> Stri
          - Follow-up work that turns up goes in a ticket of its own, not into this change (the project's instructions \
          say whether to ask first). Comment on the ticket with anything the user should know.\n\
          - Don't move the ticket to Done, remove its worktree or delete its branch unless the user asks: {SHORT_NAME} \
-         or the user does that once the work is merged.\n",
+         or the user does that once the work is merged.\n\
+         - When the ticket has attachments (screenshots, logs: `get_ticket` lists each with a local `path`), open the \
+         images and files that matter. To add one (a screenshot of what you tried), give `add_ticket_comment` its \
+         path in `files`.\n",
         id = t.ticket_id,
     );
     let has = |kind: &str| t.news.contains(kind);
@@ -273,6 +276,7 @@ mod tests {
         let t = on_ticket(&[]);
         assert!(t.contains("works on ticket WA-7 (`GET http://127.0.0.1:7420/api/tickets/t7`)"), "{t}");
         assert!(t.contains("Follow-up work") && t.contains("Don't move the ticket to Done"), "{t}");
+        assert!(t.contains("open the images and files that matter"), "{t}");
         assert!(!t.contains("Messages from") && !t.contains("forge watch"), "no workflow, no messages: {t}");
         let plain = session_instructions(&ctx(Some("pdt-WA-7-x")), None);
         assert!(!plain.contains("This session's ticket"), "{plain}");

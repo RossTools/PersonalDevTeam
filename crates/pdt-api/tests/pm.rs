@@ -911,3 +911,40 @@ async fn the_pm_stops_a_tickets_work_after_asking_and_its_links_hold_auto_start_
     assert_ne!(s["status"], "running");
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
+
+/// PDT-300: the user pastes a screenshot into the PM chat; the PM puts it on a new ticket (`pasted:1`) and a text file
+/// on an existing one by path. Each asks as the tool always does, nothing more.
+#[tokio::test]
+async fn the_pm_attaches_a_pasted_image_and_a_file_to_tickets() {
+    let env = setup(None).await;
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDRfake".to_vec();
+    let (s, _, _) = common::call_raw(&env.app, "POST", &format!("/api/sessions/{id}/attachments"), png.clone()).await;
+    assert_eq!(s, StatusCode::CREATED);
+
+    let said =
+        ask(&env, &id, r#"mcp: create_ticket {"project": "PX", "title": "Site bug", "files": ["pasted:1"]}"#).await;
+    assert!(said.contains("\"created\": true") && said.contains("\"mediaType\": \"image/png\""), "{said}");
+    let (_, list) = call(&env.app, "GET", "/api/tickets/PX-2/attachments", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(list[0]["actor"], "agent");
+    assert_eq!(list[0]["agent"]["persona"], "PM");
+
+    let log = env._tmp.path().join("server.log");
+    std::fs::write(&log, "panic at the disco\n").unwrap();
+    let call_json = json!({"ticket": "PX-1", "files": [log.to_string_lossy()]});
+    let said = ask(&env, &id, &format!("mcp: edit_ticket {call_json}")).await;
+    assert!(said.contains("\"updated\": true") && said.contains("server.log"), "{said}");
+    let (_, list) = call(&env.app, "GET", "/api/tickets/PX-1/attachments", None).await;
+    assert_eq!((&list[0]["name"], &list[0]["mediaType"]), (&json!("server.log"), &json!("text/plain")));
+
+    let missing = env._tmp.path().join("no-such-file.png");
+    let call_json = json!({"ticket": "PX-1", "files": [missing.to_string_lossy()]});
+    let said = ask(&env, &id, &format!("mcp: edit_ticket {call_json}")).await;
+    assert!(said.contains("can't read"), "{said}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}

@@ -477,6 +477,17 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/tickets/{id}/links", axum::routing::post(crate::tickets::add_link).delete(crate::tickets::remove_link))
         .route("/tickets/{id}/events", get(crate::tickets::events))
         .route("/tickets/{id}/comments", axum::routing::post(crate::tickets::comment))
+        .route(
+            "/tickets/{id}/attachments",
+            get(crate::ticket_attachments::list)
+                .post(crate::ticket_attachments::upload)
+                // Room for the largest image; anything bigger is refused with a clear error.
+                .layer(axum::extract::DefaultBodyLimit::max(pdt_core::conversation::composer::MAX_IMAGE_BYTES + 1)),
+        )
+        .route(
+            "/tickets/{id}/attachments/{attachment_id}",
+            get(crate::ticket_attachments::get).delete(crate::ticket_attachments::remove),
+        )
         .route("/tickets/{id}/parts", axum::routing::post(crate::parts::create))
         .route("/tickets/{id}/start", axum::routing::post(crate::start::start))
         .route("/tickets/{id}/refine", axum::routing::post(crate::tickets::refine))
