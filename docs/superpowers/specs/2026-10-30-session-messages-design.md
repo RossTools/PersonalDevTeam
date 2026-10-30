@@ -92,10 +92,13 @@ Exactly the outbox's rules (§1), with these choices:
 - **Queue, never steer.** A message waits for the receiver's turn to end; it never joins a running turn. An agent that
   needs to stop another one can't (as for the PM today); it asks the user.
 - **Rate limits and the host's cap** hold agents' messages, as they hold PDT's own.
-- **Finished sessions are refused** when sent to (as `send_to_session` does today). **Parked, interrupted or
-  stopped-but-not-finished conversations are not reopened** by an agent's message (`reopens: false`): only the user's
-  messages and the workflow cases of PDT-144 reopen. The message waits; after the outbox deadline it ends `untold`,
-  with the usual notification to the user.
+- **Parked conversations take it as usual.** A parked conversation is still a running session whose agent process
+  was closed after `IDLE_PARK` (15 minutes idle); the outbox starts the process again to deliver, as it does for
+  notices and the PM's messages today.
+- **Finished sessions are refused** when sent to (as `send_to_session` does today). **Stopped or interrupted
+  conversations are not reopened** by an agent's message (`reopens: false`): only the user's messages and the workflow
+  cases of PDT-144 reopen them. The message waits; after the outbox deadline it ends `untold`, with the usual
+  notification to the user.
 - **Addressed by ticket**, the receiver is picked at delivery, not when sending: a step's next session gets it if the
   one that was running ended.
 - **Terminals** get the text typed in by the outbox (bracketed paste and Enter, after the quiet time); conversations
@@ -193,5 +196,6 @@ type into another session. The tool table loses "the PM's" for `send_to_session`
 1. Agents' messages ask by default, with a per-project setting to let them through (§7) — or should they go through by
    default, as an exception like PR notices?
 2. Agents send only through pdt-mcp; no REST route, no UI "Send to session…" for now (§3).
-3. An agent's message never reopens a parked or stopped conversation; it waits and ends `untold` (§5).
+3. An agent's message never reopens a stopped or interrupted conversation; it waits and ends `untold` (§5). A parked
+   one (idle, its process closed) takes it as it takes notices today.
 4. The limits: 10 an hour per sender, 6 per pair between user messages, 16 000 characters (§7).
