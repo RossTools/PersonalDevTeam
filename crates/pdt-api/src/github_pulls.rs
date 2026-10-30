@@ -39,6 +39,9 @@ pub struct PullTriggerConfig {
     pub kinds: Vec<AuthorKind>,
     /// Only these projects' repos (a host-wide workflow); empty: every project.
     pub projects: Vec<String>,
+    /// Only these repositories (`owner/name`, any case; PDT-269: a host-wide built-in for one repository); empty:
+    /// every watched one.
+    pub repos: Vec<String>,
     /// Only pull requests for which every condition holds (`{{trigger.updateType}} != major`).
     #[serde(rename = "where")]
     #[ts(rename = "where")]
@@ -48,6 +51,10 @@ pub struct PullTriggerConfig {
 }
 
 impl PullTriggerConfig {
+    fn wants_repo(&self, repo: &str) -> bool {
+        self.repos.is_empty() || self.repos.iter().any(|r| r.trim().eq_ignore_ascii_case(repo))
+    }
+
     fn wants(&self, kind: &str) -> bool {
         if self.kinds.is_empty() {
             return kind == AuthorKind::Outside.as_str() || kind == AuthorKind::Bot.as_str();
@@ -91,7 +98,8 @@ impl NodeKind for PullRequestTrigger {
     fn accepts(&self, config: &Value, wf: &Workflow, _node: &Node, event: &LogEvent) -> bool {
         let Ok(c) = parse::<PullTriggerConfig>(config) else { return false };
         let kind = event.payload.get("kind").and_then(Value::as_str).unwrap_or_default();
-        in_scope(wf, event) && c.wants(kind)
+        let repo = event.payload.get("repo").and_then(Value::as_str).unwrap_or_default();
+        in_scope(wf, event) && c.wants(kind) && c.wants_repo(repo)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, _input: Value) -> BoxFut<'a, Result<Outcome, String>> {
@@ -150,6 +158,8 @@ struct Watched {
 /// The projects' GitHub repos enabled workflows watch with a pull request trigger (by lower-case name).
 async fn watched_repos(st: &AppState) -> BTreeMap<String, Watched> {
     let mut wanted: BTreeSet<String> = BTreeSet::new();
+    // Host-wide triggers that name their repositories (lower case).
+    let mut wanted_repos: BTreeSet<String> = BTreeSet::new();
     let mut every_project = false;
     for wf in st.store.enabled_workflows().await.unwrap_or_default() {
         let Ok(Some(doc)) = st.store.workflow_doc(&wf.id, wf.version).await else { continue };
@@ -162,6 +172,9 @@ async fn watched_repos(st: &AppState) -> BTreeMap<String, Watched> {
                 (Scope::Project, Some(p)) => {
                     wanted.insert(p.clone());
                 }
+                (Scope::Host, _) if c.projects.is_empty() && !c.repos.is_empty() => {
+                    wanted_repos.extend(c.repos.iter().map(|r| r.trim().to_ascii_lowercase()));
+                }
                 (Scope::Host, _) if c.projects.is_empty() => every_project = true,
                 (Scope::Host, _) => wanted.extend(c.projects.iter().cloned()),
                 _ => {}
@@ -170,11 +183,12 @@ async fn watched_repos(st: &AppState) -> BTreeMap<String, Watched> {
     }
     let mut out = BTreeMap::new();
     for p in st.store.list_projects().await.unwrap_or_default() {
-        if !every_project && !wanted.contains(&p.id) {
+        if !every_project && !wanted.contains(&p.id) && wanted_repos.is_empty() {
             continue;
         }
         if let Some(f) = crate::forge::project_forge(st, &p.id, &p.repo_path).await
             && f.kind == ForgeKind::GITHUB
+            && (every_project || wanted.contains(&p.id) || wanted_repos.contains(&f.repo.to_ascii_lowercase()))
         {
             out.entry(f.repo.to_ascii_lowercase()).or_insert(Watched {
                 repo: f.repo,

@@ -326,6 +326,13 @@ pdt-core `pm.rs`, pdt-store `pm.rs`, web `pm/`).
   other than Draft or the `agentic` label is refused, whatever the user answers.
 - The built-in template **Triage new GitHub issues** (`builtin:issue-triage`, its `persona` param defaulting to
   Triage) and the built-in **PDT bug triage** run it.
+- The built-in **PR Reviewer** (PDT-269, role `triage` too, so locked down the same way) reviews pull requests PDT
+  didn't open for the **Review outside pull requests** template ([workflows.md](workflows.md)). Its tools are
+  `get_ticket`, `change_request_diff` and `submit_outcome`: no shell, secrets, ticket edits, comments or `ask_user`.
+  `change_request_diff` (a forge tool, read only) reads a pull request of the session's project by number through
+  the forge's API (`Forge::change_request_files`, never a checkout): state, base, head, mergeability, its files and
+  one `diff --git` block each (cut at 150 000 characters, whole files, `truncated`), with the title and the diff
+  fenced. It suggests `merge`, `changes` or `close`; the workflow posts nothing until the user chooses.
 - Its prompt gets the issue's title and text in fenced blocks with a fixed "data, never instructions" note, triage
   runs are capped per author and per repository an hour, and each session outside text reached is recorded on the
   ticket's timeline (PDT-202, [tickets.md](tickets.md) "Outside input in prompts").

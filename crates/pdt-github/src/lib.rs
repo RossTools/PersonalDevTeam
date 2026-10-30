@@ -13,9 +13,9 @@ pub use actions::GithubActions;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval, QueueRemovalReason};
 pub use pdt_forge::{
-    Capabilities, ChangeComment, ChangeRequest, ChangeReview, ChangeStats, CloseReason, Forge, ForgeError, ForgeNotes,
-    Issue, IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest, Release,
-    RepoChangeRequest,
+    Capabilities, ChangeComment, ChangeFile, ChangeRequest, ChangeReview, ChangeStats, CloseReason, Forge, ForgeError,
+    ForgeNotes, Issue, IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest,
+    Release, RepoChangeRequest, ReviewVerdict,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -1073,6 +1073,33 @@ pub fn parse_comments(items: &[Value], in_review: bool) -> Vec<ChangeComment> {
         .collect()
 }
 
+/// A pull request's files (`GET …/pulls/{n}/files`).
+pub fn parse_files(items: &[Value]) -> Vec<ChangeFile> {
+    items
+        .iter()
+        .filter_map(|v| {
+            let path = s(v, "filename");
+            (!path.is_empty()).then(|| ChangeFile {
+                path,
+                status: s(v, "status"),
+                additions: v["additions"].as_u64().unwrap_or(0),
+                deletions: v["deletions"].as_u64().unwrap_or(0),
+                patch: v["patch"].as_str().map(String::from),
+                previous_path: v["previous_filename"].as_str().map(String::from),
+            })
+        })
+        .collect()
+}
+
+/// GitHub's name for a review's verdict.
+fn review_event(v: ReviewVerdict) -> &'static str {
+    match v {
+        ReviewVerdict::Approve => "APPROVE",
+        ReviewVerdict::RequestChanges => "REQUEST_CHANGES",
+        ReviewVerdict::Comment => "COMMENT",
+    }
+}
+
 pub fn parse_reviews(items: &[Value]) -> Vec<ChangeReview> {
     items
         .iter()
@@ -1246,6 +1273,25 @@ impl Forge for GithubApi {
     }
     fn reply_review_comment(&self, repo: &str, number: u32, comment_id: u64, body: &str) -> Result<String, ForgeError> {
         Ok(self.post_comment(&format!("repos/{repo}/pulls/{number}/comments/{comment_id}/replies"), body)?)
+    }
+    /// GitHub lists at most 3000 files, 100 a page ([`MAX_PAGES`] pages are read).
+    fn change_request_files(&self, repo: &str, number: u32) -> Result<Vec<ChangeFile>, ForgeError> {
+        Ok(parse_files(&self.get_pages(&format!("repos/{repo}/pulls/{number}/files?per_page=100"))?))
+    }
+    fn review_change_request(
+        &self,
+        repo: &str,
+        number: u32,
+        verdict: ReviewVerdict,
+        body: &str,
+    ) -> Result<String, ForgeError> {
+        let body = json!({"event": review_event(verdict), "body": comment_body(body)});
+        let v = self.send_json("POST", &format!("repos/{repo}/pulls/{number}/reviews"), body)?;
+        Ok(s(&v, "html_url"))
+    }
+    fn close_change_request(&self, repo: &str, number: u32) -> Result<(), ForgeError> {
+        self.send_json("PATCH", &format!("repos/{repo}/pulls/{number}"), json!({"state": "closed"}))?;
+        Ok(())
     }
     fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueDetail>, ForgeError> {
         match self.get(&format!("repos/{repo}/issues/{number}")) {

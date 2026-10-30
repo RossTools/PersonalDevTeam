@@ -28,6 +28,11 @@ pipelineStage?: PipelineStage,
  */
 approve?: string, 
 /**
+ * The ticket it is about, when the run has none of its own (PDT-269: a pull request's ticket made by an earlier
+ * step): the Inbox shows it, and the user's note with their choice goes on it.
+ */
+ticket?: string, 
+/**
  * An event that makes the question moot (e.g. the attempt merging): it takes `event` and closes the Inbox item.
  * Its conditions use `{{event.…}}` like a wait's.
  */

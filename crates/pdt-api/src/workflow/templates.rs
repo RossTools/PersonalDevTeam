@@ -132,6 +132,12 @@ pub fn builtin_templates(reg: &crate::integrations::Registry) -> Vec<Template> {
         ),
     ];
     out.push(issue_triage());
+    out.push(builtin(
+        super::outside_prs::ID,
+        Category::Issues,
+        super::outside_prs::params(),
+        super::outside_prs::doc(),
+    ));
     out.extend(reg.templates());
     out.push(builtin(super::pipeline::ID, Category::Tickets, super::pipeline::params(), super::pipeline::doc()));
     out.extend(super::builtins::all(reg).iter().map(of_builtin));
@@ -577,7 +583,7 @@ mod tests {
             assert!(errors.is_empty(), "{}: {errors:?}", t.id);
         }
         assert!(all.iter().any(|t| t.id == "builtin:pr-notices"));
-        for id in ["issue-triage", "pipeline", "comment-on-merge"] {
+        for id in ["issue-triage", "pipeline", "comment-on-merge", "review-outside-prs"] {
             assert!(all.iter().any(|t| t.id == format!("builtin:{id}")), "{id}");
         }
     }
@@ -599,6 +605,8 @@ mod tests {
         assert_eq!(of("pr-notices"), Some(Category::CiPr));
         assert_eq!(of("cut-release"), Some(Category::Releases));
         assert_eq!(of("issue-triage"), Some(Category::Issues));
+        assert_eq!(of("review-outside-prs"), Some(Category::Issues));
+        assert_eq!(of("pdt-pr-review"), Some(Category::Issues));
     }
 
     /// PDT-165: fine-grained `gh` tokens can't read checks, so no built-in prompt tells an agent to run `gh pr checks`
