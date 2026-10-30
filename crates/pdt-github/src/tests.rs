@@ -1035,3 +1035,48 @@ fn a_login_that_does_not_expire_never_renews() {
     assert_eq!(g.check_login(), Some(LoginCheck::Rejected));
     assert!(refreshes(&t).is_empty(), "{:?}", t.urls());
 }
+
+/// PDT-292: a workflow's completed runs (by file or by name), one run by id, and its failed jobs re-run.
+#[test]
+fn reads_a_workflows_completed_runs_and_one_run() {
+    let (g, t) = forge();
+    let run = r#"{"id":77,"run_attempt":1,"name":"release","status":"completed","conclusion":"failure",
+        "head_sha":"abc","head_branch":"v1.2.0","html_url":"https://github.com/o/r/actions/runs/77",
+        "created_at":"2026-10-30T08:17:00Z","updated_at":"2026-10-30T08:40:00Z","event":"workflow_dispatch",
+        "display_title":"Release v1.2.0","path":".github/workflows/release.yml"}"#;
+    t.ok(
+        "GET",
+        &format!("{API}/repos/o/r/actions/workflows/release.yml/runs?status=completed&per_page=50&branch=main"),
+        &format!(r#"{{"total_count":1,"workflow_runs":[{run}]}}"#),
+    );
+    let ci = GithubActions::new(g.clone());
+    let runs = ci.workflow_runs("o/r", "release.yml", Some("main")).unwrap();
+    assert_eq!(runs.len(), 1);
+    let r = &runs[0];
+    assert_eq!((r.run.id.as_str(), r.run.state, r.run.branch.as_str()), ("77", CiState::Failed, "v1.2.0"));
+    assert_eq!(
+        (r.event.as_str(), r.title.as_str(), r.path.as_str()),
+        ("workflow_dispatch", "Release v1.2.0", ".github/workflows/release.yml")
+    );
+    assert_eq!((r.updated_at.as_str(), r.version().as_deref()), ("2026-10-30T08:40:00Z", Some("v1.2.0")));
+
+    // By name: its id from the workflow list.
+    t.ok(
+        "GET",
+        &format!("{API}/repos/o/r/actions/workflows?per_page=100"),
+        r#"{"workflows":[{"id":5,"name":"ci"},{"id":9,"name":"Release"}]}"#,
+    );
+    t.ok("GET", &format!("{API}/repos/o/r/actions/workflows/9/runs?status=completed"), r#"{"workflow_runs":[]}"#);
+    assert!(ci.workflow_runs("o/r", "release", None).unwrap().is_empty());
+    t.ok("GET", &format!("{API}/repos/o/r/actions/workflows?per_page=100"), r#"{"workflows":[{"id":5,"name":"ci"}]}"#);
+    let e = ci.workflow_runs("o/r", "nightly", None).unwrap_err();
+    assert!(matches!(&e, ForgeError::Failed(m) if m.contains("no workflow named")), "{e:?}");
+
+    t.ok("GET", &format!("{API}/repos/o/r/actions/runs/77"), run);
+    assert_eq!(ci.workflow_run("o/r", "77").unwrap().unwrap().run.attempt, 1);
+    t.on("GET", &format!("{API}/repos/o/r/actions/runs/78"), Response::new(404, r#"{"message":"Not Found"}"#));
+    assert_eq!(ci.workflow_run("o/r", "78").unwrap(), None);
+    t.on("POST", &format!("{API}/repos/o/r/actions/runs/77/rerun-failed-jobs"), Response::new(201, "{}"));
+    ci.retry("o/r", &r.run, true).unwrap();
+    assert!(t.sent().last().unwrap().url.ends_with("/actions/runs/77/rerun-failed-jobs"));
+}

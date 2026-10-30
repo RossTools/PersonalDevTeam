@@ -211,6 +211,79 @@ pub(crate) fn issue_triage() -> Template {
     )
 }
 
+/// "Report failed workflow runs" (PDT-292): the GitHub plugin's template.
+pub const FAILED_RUNS: &str = "failed-workflow-runs";
+
+/// Failed runs of any one GitHub Actions workflow, however they were started, each in the Inbox once with its failed
+/// jobs and Re-run failed jobs (PDT-292): the GitHub plugin's template.
+pub(crate) fn failed_workflow_runs() -> Template {
+    builtin(
+        FAILED_RUNS,
+        Category::CiPr,
+        params(json!([
+            {"id": "workflow", "title": "Workflow", "type": "string", "required": true,
+             "description": "Its file (ci.yml, release.yml) or its name as GitHub Actions shows it."},
+            {"id": "repo", "title": "Repository", "type": "string", "default": "",
+             "description": "owner/name on GitHub; empty: the project's own repository."},
+            {"id": "branch", "title": "Branch", "type": "string", "default": "",
+             "description": "Only runs on this branch or tag; empty: every branch."},
+            {"id": "events", "title": "Started by", "type": "list", "default": [],
+             "description": "Only runs these started (schedule, workflow_dispatch, push, pull_request…); empty: \
+                             however they were started."},
+            {"id": "every", "title": "Check every", "type": "string", "default": crate::github_workflow_runs::DEFAULT_EVERY,
+             "description": "How often PDT looks at the workflow's runs: 30m, 1h…"},
+        ])),
+        doc(json!({
+            "name": "Report failed workflow runs",
+            "description": "Watches one GitHub Actions workflow and puts each of its failed runs in the Inbox, \
+                            however it was started (on a schedule, by hand, by a push): the run, its branch, what \
+                            started it, its version or tag, its failed jobs and a link, with Re-run failed jobs. The \
+                            item goes away by itself once a later attempt of the run passes. The first look only \
+                            records where the runs are.",
+            "nodes": [
+                {"id": "failed", "kind": "github.workflow.failed", "version": 1, "position": {"x": 0, "y": 0},
+                 "config": {"repo": "{{params.repo}}", "workflow": "{{params.workflow}}",
+                            "branch": "{{params.branch}}", "events": "{{params.events}}", "every": "{{params.every}}"}},
+                {"id": "watch", "kind": "github.workflow.watch", "version": 1, "position": {"x": 300, "y": 0},
+                 "title": "Inbox: the failed run", "retry": {"max": 5, "backoffMs": 60_000}, "maxVisits": 10,
+                 "config": {"repo": "{{trigger.repo}}", "runId": "{{trigger.runId}}",
+                            "after": "{{steps.rerun.attempt}}"}},
+                {"id": "rerun", "kind": "github.workflow.rerun", "version": 1, "position": {"x": 600, "y": -160},
+                 "title": "Re-run its failed jobs", "maxVisits": 10,
+                 "config": {"repo": "{{trigger.repo}}", "runId": "{{trigger.runId}}"}},
+                {"id": "rerun_failed", "kind": "inbox.notice", "version": 1, "position": {"x": 900, "y": -320},
+                 "title": "Inbox: it would not re-run", "config": {
+                    "key": "rerun-failed-{{trigger.repo}}-{{trigger.runId}}-{{trigger.attempt}}",
+                    "title": "Couldn't re-run {{trigger.workflow}}",
+                    "text": "PDT could not re-run the failed jobs of [{{trigger.title}}]({{trigger.url}}): \
+                             {{steps.rerun.error}}\n\nRe-run them on GitHub instead (Re-run jobs, Re-run failed \
+                             jobs): if the run fails again, it comes back to the Inbox."}},
+                {"id": "passed", "kind": "end", "version": 1, "position": {"x": 600, "y": 160},
+                 "title": "Passed on a re-run"},
+                {"id": "left", "kind": "end", "version": 1, "position": {"x": 600, "y": 320}, "title": "Left",
+                 "config": {"quiet": true}},
+                {"id": "not_rerun", "kind": "end", "version": 1, "position": {"x": 1200, "y": -320},
+                 "title": "Not re-run"},
+            ],
+            "edges": [
+                {"from": "failed", "to": "watch"},
+                {"from": "watch", "port": "rerun", "to": "rerun"},
+                {"from": "rerun", "to": "watch"},
+                {"from": "rerun", "port": "none", "to": "left"},
+                {"from": "rerun", "port": "error", "to": "rerun_failed"},
+                {"from": "rerun_failed", "port": "added", "to": "not_rerun"},
+                {"from": "rerun_failed", "port": "skipped", "to": "not_rerun"},
+                {"from": "watch", "port": "passed", "to": "passed"},
+                {"from": "watch", "port": "dismiss", "to": "left"},
+                {"from": "watch", "port": "cancelled", "to": "left"},
+                {"from": "watch", "port": "none", "to": "left"},
+                {"from": "watch", "port": "already", "to": "left"},
+                {"from": "watch", "port": "expired", "to": "left"},
+            ],
+        })),
+    )
+}
+
 /// The templates PDT ships that this host is offered: PDT bug triage only where a project is PDT's own repository
 /// (PDT-226).
 async fn offered_templates(st: &AppState) -> Vec<Template> {
@@ -580,7 +653,7 @@ mod tests {
             assert!(errors.is_empty(), "{}: {errors:?}", t.id);
         }
         assert!(all.iter().any(|t| t.id == "builtin:pr-notices"));
-        for id in ["issue-triage", "pipeline", "comment-on-merge", "review-outside-prs"] {
+        for id in ["issue-triage", "pipeline", "comment-on-merge", "review-outside-prs", FAILED_RUNS] {
             assert!(all.iter().any(|t| t.id == format!("builtin:{id}")), "{id}");
         }
     }
@@ -604,6 +677,7 @@ mod tests {
         assert_eq!(of("issue-triage"), Some(Category::Issues));
         assert_eq!(of("review-outside-prs"), Some(Category::Issues));
         assert_eq!(of("pdt-pr-review"), Some(Category::Issues));
+        assert_eq!(of(FAILED_RUNS), Some(Category::CiPr));
     }
 
     /// PDT-165: fine-grained `gh` tokens can't read checks, so no built-in prompt tells an agent to run `gh pr checks`
