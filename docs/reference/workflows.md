@@ -608,7 +608,9 @@ attempt's, whose `dedupe` keys still count.
 workflow_invalid`), `/versions`, `/versions/{v}`, `/diff?from=&to=` (nodes and edges added, removed, changed, and a
 unified diff), `/state`, `/run {input, runKey}`; `POST /api/workflows/validate {doc}` (issues: errors and warnings);
 `POST /api/workflows/dry-run {doc | workflowId, event {type, payload} | eventId}` (in memory: which triggers match,
-each step's input, port and output; actions report `would`).
+each step's input, port and output; actions report `would`). A step that reports `would` also gets a stand-in for
+each field of its kind's output schema it lacks (`<ticketId>` for text, 0, false, []), so later steps that read its
+output run on to the end (PDT-189); `inbox.admit` given such a stand-in ticket says it would ask.
 
 `POST /api/workflows/check {doc}` → `{issues, ports}`: validation plus each node's ports as its config gives them (a
 gate's choices, a switch's cases; `error` not listed). The builder calls it after every change.

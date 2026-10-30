@@ -570,6 +570,16 @@ async fn the_triage_workflow_validates_and_dry_runs() {
     assert_eq!(s, StatusCode::OK, "{d}");
     let text = d.to_string();
     assert!(text.contains(&format!("import {RELEASE_REPO}#7 as a ticket")), "{d}");
+    // PDT-189: the import's stand-in output reaches the steps that read it, and the dry run goes on to the end.
+    assert_eq!(d["run"]["status"], "succeeded", "{d}");
+    let step = |id: &str| d["run"]["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == id).cloned();
+    let import = step("import").expect("the import step");
+    assert_eq!(import["output"]["ticketId"], "<ticketId>", "{d}");
+    assert_eq!(step("notes").expect("the notes step")["input"]["ticket"], "<ticketId>", "{d}");
+    let tell = step("tell").expect("the tell step");
+    assert!(tell["input"]["body"].as_str().unwrap().contains("tracked as <ticketKey>"), "{d}");
+    assert_eq!(step("approve").expect("the approve step")["port"], "added", "{d}");
+    assert!(step("imported").is_some(), "{d}");
 }
 
 /// PDT-202: triage is capped per author and per repository an hour; runs over the cap are skipped, logged and summed
