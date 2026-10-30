@@ -1392,6 +1392,24 @@ impl Forge for GithubApi {
         }
         Ok(None)
     }
+    fn recent_releases(&self, repo: &str) -> Result<Vec<Release>, ForgeError> {
+        let list = self.get(&format!("repos/{repo}/releases?per_page=30"))?;
+        let mut out = vec![];
+        for v in list.as_array().into_iter().flatten() {
+            out.extend(parse_release_or_pre(v, true)?);
+        }
+        Ok(out)
+    }
+    /// GitHub's comparison of `base...head` (one commit asked for: only the count is read).
+    fn commits_ahead(&self, repo: &str, base: &str, head: &str) -> Result<Option<u64>, ForgeError> {
+        match self.get(&format!("repos/{repo}/compare/{}...{}?per_page=1", encode(base), encode(head))) {
+            Ok(v) => Ok(Some(
+                v["ahead_by"].as_u64().ok_or_else(|| GhError::BadAnswer("a comparison without ahead_by".into()))?,
+            )),
+            Err(GhError::Status(404, _)) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
 }
 
 #[cfg(test)]

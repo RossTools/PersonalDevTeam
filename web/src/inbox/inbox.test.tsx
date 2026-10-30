@@ -340,6 +340,18 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body).toEqual({ choice: 'reject', text: 'The button is the wrong colour' }));
   });
 
+  it('shows what a gate says beyond its question, links too (PDT-288)', () => {
+    stubApi({});
+    const nightly = item('n', {
+      ticketId: null, ticketKey: null, ticketTitle: null, title: "Tonight's nightly didn't run",
+      body: { workflow: 'PDT missing nightly', text: 'See [the release workflow\'s runs](https://github.com/o/r/actions/workflows/release.yml).' },
+      choices: [{ id: 'start', title: 'Start it', primary: true }, { id: 'ignore', title: 'Ignore', primary: false }],
+    });
+    renderWithQuery(<InboxView items={[nightly]} selectedId="n" onSelect={() => {}} />);
+    expect(screen.getByRole('link', { name: "the release workflow's runs" })).toHaveAttribute('href', 'https://github.com/o/r/actions/workflows/release.yml');
+    expect(screen.getByRole('button', { name: /Start it/ })).toBeInTheDocument();
+  });
+
   it('says when nothing waits', () => {
     renderWithQuery(<InboxView items={[]} selectedId={null} onSelect={() => {}} />);
     expect(screen.getByText(/Nothing waits on you/)).toBeInTheDocument();

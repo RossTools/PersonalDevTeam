@@ -113,6 +113,78 @@ pub fn newest_on_channel(channel: UpdateChannel, releases: &[(Version, bool)]) -
         .map(|(i, _)| i)
 }
 
+/// What the missing-nightly watch (PDT-288) finds for a day's nightly: the release workflow's schedule is
+/// best-effort, and GitHub sometimes never starts it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NightlyWatch {
+    /// A nightly for the day (or a later one) is published.
+    Published,
+    /// It is not the day's due time yet: the schedule may still run.
+    Early,
+    /// main has nothing the newest nightly or stable release lacks: the workflow would publish nothing.
+    Unchanged,
+    /// main changed, the due time has passed and no nightly for the day is published.
+    Missing,
+}
+
+/// A day as nightly tags write it (`20261030`) from `2026-10-30` or `20261030`.
+pub fn nightly_day(s: &str) -> Option<u64> {
+    let digits: String = s.trim().chars().filter(|c| *c != '-').collect();
+    let d = chrono::NaiveDate::parse_from_str(&digits, "%Y%m%d").ok()?;
+    d.format("%Y%m%d").to_string().parse().ok()
+}
+
+/// The UTC day of `ms` (`20261030`).
+pub fn utc_day(ms: i64) -> u64 {
+    let t = chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default();
+    t.format("%Y%m%d").to_string().parse().unwrap_or_default()
+}
+
+/// When `day` (`20261030`) reaches `hour` UTC, in ms.
+pub fn day_hour_ms(day: u64, hour: u32) -> i64 {
+    let Ok(d) = chrono::NaiveDate::parse_from_str(&day.to_string(), "%Y%m%d") else { return 0 };
+    d.and_hms_opt(hour.min(23), 0, 0).map_or(0, |t| t.and_utc().timestamp_millis())
+}
+
+/// The newest published nightly for `day` or a later one, among release tags.
+pub fn nightly_for_day<'a>(tags: &[&'a str], day: u64) -> Option<&'a str> {
+    let date = |t: &str| match parse_version(t)?.pre? {
+        Pre::Nightly { date, .. } => Some(date),
+        Pre::Exp(_) => None,
+    };
+    tags.iter().copied().filter(|t| date(t).is_some_and(|d| d >= day)).max_by_key(|t| parse_version(t).map(|v| v.key()))
+}
+
+/// What main is compared with to tell whether it changed: the newest nightly and the latest stable release among
+/// release tags (either may be missing).
+pub fn nightly_bases<'a>(tags: &[&'a str]) -> (Option<&'a str>, Option<&'a str>) {
+    let newest = |nightly: bool| {
+        tags.iter()
+            .copied()
+            .filter_map(|t| Some((t, parse_version(t)?)))
+            .filter(|(_, v)| {
+                !v.local && if nightly { matches!(v.pre, Some(Pre::Nightly { .. })) } else { v.pre.is_none() }
+            })
+            .max_by_key(|(_, v)| v.key())
+            .map(|(t, _)| t)
+    };
+    (newest(true), newest(false))
+}
+
+/// The watch's decision for `day` at `now_ms`, `due_hour` UTC being when its nightly should be out: published first
+/// (so an item clears whenever one appears), then nothing before the due time, then nothing when main didn't change.
+pub fn nightly_watch(now_ms: i64, day: u64, due_hour: u32, published: bool, main_changed: bool) -> NightlyWatch {
+    if published {
+        NightlyWatch::Published
+    } else if now_ms < day_hour_ms(day, due_hour) {
+        NightlyWatch::Early
+    } else if !main_changed {
+        NightlyWatch::Unchanged
+    } else {
+        NightlyWatch::Missing
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostOs {
     Windows,
@@ -277,6 +349,47 @@ pub fn parse_change(sha: &str, message: &str) -> Change {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PDT-288: the missing-nightly watch's decision.
+    #[test]
+    fn a_nightly_is_missing_only_when_main_changed_and_it_is_due() {
+        let day = nightly_day("2026-10-30").unwrap();
+        assert_eq!(day, 20261030);
+        assert_eq!(nightly_day("20261030"), Some(20261030));
+        assert_eq!(nightly_day("2026-13-01"), None);
+        assert_eq!(nightly_day("{{trigger.date}}"), None);
+        let at = |h: u32| day_hour_ms(day, h);
+        assert_eq!(at(10), 1_793_354_400_000, "2026-10-30T10:00:00Z");
+        assert_eq!(utc_day(at(10)), day);
+        assert_eq!(utc_day(at(0) - 1), 20261029);
+
+        use NightlyWatch::*;
+        // Before 10:00 UTC the schedule may still run (or run late).
+        assert_eq!(nightly_watch(at(10) - 1, day, 10, false, true), Early);
+        // Due, main changed, none published: missing.
+        assert_eq!(nightly_watch(at(10), day, 10, false, true), Missing);
+        assert_eq!(nightly_watch(at(23), day, 10, false, true), Missing);
+        // A day main didn't change: nothing to publish.
+        assert_eq!(nightly_watch(at(11), day, 10, false, false), Unchanged);
+        // Published (even early): the item clears.
+        assert_eq!(nightly_watch(at(11), day, 10, true, true), Published);
+        assert_eq!(nightly_watch(at(9), day, 10, true, true), Published);
+    }
+
+    #[test]
+    fn the_days_nightly_and_what_main_is_compared_with() {
+        let tags = ["v0.2.1-nightly.20261029", "v0.2.0", "v0.2.1-nightly.20261028.2", "v0.1.9", "test-v9.9.9"];
+        assert_eq!(nightly_for_day(&tags, 20261030), None);
+        assert_eq!(nightly_for_day(&tags, 20261029), Some("v0.2.1-nightly.20261029"));
+        assert_eq!(nightly_for_day(&tags, 20261028), Some("v0.2.1-nightly.20261029"), "a later day counts too");
+        let second = ["v0.2.1-nightly.20261030", "v0.2.1-nightly.20261030.2"];
+        assert_eq!(nightly_for_day(&second, 20261030), Some("v0.2.1-nightly.20261030.2"));
+        assert_eq!(nightly_for_day(&["v0.2.1-exp.3"], 0), None, "an experimental build is no nightly");
+
+        assert_eq!(nightly_bases(&tags), (Some("v0.2.1-nightly.20261029"), Some("v0.2.0")));
+        assert_eq!(nightly_bases(&["v0.2.0"]), (None, Some("v0.2.0")));
+        assert_eq!(nightly_bases(&[]), (None, None));
+    }
 
     #[test]
     fn versions_and_local_builds() {

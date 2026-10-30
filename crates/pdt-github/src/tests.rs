@@ -720,6 +720,20 @@ fn reads_releases_and_starts_workflows() {
     let r = g.newest_release("o/r").unwrap().unwrap();
     assert_eq!(r.tag, "v0.2.1-exp.2", "the newest, a pre-release too, never a draft");
 
+    // PDT-288: the recent ones (no drafts), and how far main is from a tag.
+    t.ok(
+        "GET",
+        &format!("{API}/repos/o/r/releases?per_page=30"),
+        r#"[{"tag_name":"v0.3.0","draft":true},{"tag_name":"v0.2.1-nightly.20261030","prerelease":true},
+            {"tag_name":"v0.2.0"}]"#,
+    );
+    let tags: Vec<String> = g.recent_releases("o/r").unwrap().into_iter().map(|r| r.tag).collect();
+    assert_eq!(tags, ["v0.2.1-nightly.20261030", "v0.2.0"]);
+    t.ok("GET", &format!("{API}/repos/o/r/compare/v0.2.0...main?per_page=1"), r#"{"ahead_by":3,"behind_by":0}"#);
+    assert_eq!(g.commits_ahead("o/r", "v0.2.0", "main").unwrap(), Some(3));
+    t.on("GET", &format!("{API}/repos/o/r/compare/nope...main?per_page=1"), Response::new(404, "{}"));
+    assert_eq!(g.commits_ahead("o/r", "nope", "main").unwrap(), None, "an unknown tag");
+
     t.on("POST", &format!("{API}/repos/o/r/actions/workflows/release.yml/dispatches"), Response::new(204, ""));
     let inputs = BTreeMap::from([("bump".to_string(), "minor".to_string())]);
     let ci = GithubActions::new(g.clone());

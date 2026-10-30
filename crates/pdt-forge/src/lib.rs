@@ -447,6 +447,16 @@ pub trait Forge: Send + Sync {
     fn newest_release(&self, _repo: &str) -> Result<Option<Release>, ForgeError> {
         unsupported(self.name(), "releases")
     }
+    /// The recent published releases, newest first, pre-releases included (never drafts; PDT-288)
+    /// ([`Capabilities::releases`]).
+    fn recent_releases(&self, _repo: &str) -> Result<Vec<Release>, ForgeError> {
+        unsupported(self.name(), "releases")
+    }
+    /// How many commits `head` has that `base` lacks (each a tag, a branch or a commit); None when either is unknown
+    /// (PDT-288: whether main changed since a release).
+    fn commits_ahead(&self, _repo: &str, _base: &str, _head: &str) -> Result<Option<u64>, ForgeError> {
+        unsupported(self.name(), "comparisons")
+    }
 }
 
 /// A forge plugin (PDT-241): a kind of forge, the remotes it handles, and the forge it opens for them.
@@ -628,6 +638,8 @@ pub mod testing {
         pub opened: Mutex<Vec<NewChangeRequest>>,
         /// Releases by repo, newest first (the first is the latest).
         pub releases: Mutex<HashMap<String, Vec<Release>>>,
+        /// [`Forge::commits_ahead`] by (repo, base, head); None (unknown) when unset.
+        pub ahead: Mutex<HashMap<(String, String, String), u64>>,
         /// [`Forge::change_request_files`] by number (none when unset).
         pub files: Mutex<HashMap<u32, Vec<ChangeFile>>>,
         /// Reviews submitted: repo, number, verdict, body.
@@ -664,6 +676,7 @@ pub mod testing {
                 added_labels: Default::default(),
                 opened: Default::default(),
                 releases: Default::default(),
+                ahead: Default::default(),
                 files: Default::default(),
                 reviews_submitted: Default::default(),
                 closed_changes: Default::default(),
@@ -724,6 +737,9 @@ pub mod testing {
         /// Publishes `release` in `repo`: it becomes the latest.
         pub fn publish(&self, repo: &str, release: Release) {
             self.releases.lock().unwrap().entry(repo.into()).or_default().insert(0, release);
+        }
+        pub fn set_ahead(&self, repo: &str, base: &str, head: &str, commits: u64) {
+            self.ahead.lock().unwrap().insert((repo.into(), base.into(), head.into()), commits);
         }
         /// Issue `number`'s comments so far.
         pub fn comments_on(&self, repo: &str, number: u64) -> Vec<String> {
@@ -1022,6 +1038,17 @@ pub mod testing {
             self.can(|c| c.releases, "releases")?;
             self.failing()?;
             Ok(self.releases.lock().unwrap().get(repo).and_then(|l| l.first().cloned()))
+        }
+        fn recent_releases(&self, repo: &str) -> Result<Vec<Release>, ForgeError> {
+            self.call(format!("recent releases {repo}"));
+            self.can(|c| c.releases, "releases")?;
+            self.failing()?;
+            Ok(self.releases.lock().unwrap().get(repo).cloned().unwrap_or_default())
+        }
+        fn commits_ahead(&self, repo: &str, base: &str, head: &str) -> Result<Option<u64>, ForgeError> {
+            self.call(format!("compare {repo} {base}...{head}"));
+            self.failing()?;
+            Ok(self.ahead.lock().unwrap().get(&(repo.into(), base.into(), head.into())).copied())
         }
     }
 }

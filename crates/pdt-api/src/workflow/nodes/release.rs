@@ -3,7 +3,8 @@
 //! `github.release` (read the latest release, or one tag). The built-in "Cut a release" polls the last two between
 //! waits, the pull request with its CI (PDT-214: the release PR merges itself, so a failed check is the news).
 //! `github.workflow.latest` reads a workflow's newest run on a branch: PDT nightly release reads the scheduled
-//! nightly's (PDT-283), which no PDT run starts.
+//! nightly's (PDT-283), which no PDT run starts. `github.nightly` watches for a day's nightly and puts a missing one
+//! in the Inbox until it is published (PDT-288).
 //! `repo` defaults to the run's project's GitHub repository.
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
@@ -694,6 +695,268 @@ impl NodeKind for GithubWorkflowLatest {
     }
 }
 
+// ---- github.nightly ----
+
+/// How often [`GithubNightly`] looks again while a nightly is missing.
+const NIGHTLY_LOOK_MS: u64 = 30 * 60_000;
+/// How long it watches a missing nightly at most: until shortly before the next day's check takes over.
+const NIGHTLY_WATCH_MS: i64 = 23 * 60 * 60_000 + 30 * 60_000;
+/// Its choices (ports): start the nightly, or leave it.
+const START: &str = "start";
+const IGNORE: &str = "ignore";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export)]
+pub struct GithubNightlyConfig {
+    /// The repository (`owner/name`); the run's project's when left out.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// The release workflow's file (`release.yml`): its runs are linked, and Start it runs it.
+    pub workflow: String,
+    /// The branch the nightly is built from (default `main`).
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// The day whose nightly to look for (`2026-10-30`, e.g. `{{trigger.date}}`); today (UTC) when left out.
+    #[serde(default)]
+    pub day: Option<String>,
+    /// The hour (UTC) the day's nightly should be out by (default 10).
+    #[serde(default)]
+    #[ts(optional)]
+    pub due_hour: Option<u32>,
+    /// The Inbox item's title (default "Tonight's nightly didn't run").
+    #[serde(default)]
+    #[ts(optional)]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GithubNightlyOutput {
+    /// The day looked at (`20261030`).
+    pub day: u64,
+    /// With `published`: the day's nightly.
+    pub tag: Option<String>,
+    pub url: Option<String>,
+    /// The release workflow's runs on GitHub.
+    pub runs_url: String,
+}
+
+/// What the watch read: the day's nightly, if published, and whether main has commits its newest nightly and stable
+/// release lack (asked only when it matters).
+struct NightlyRead {
+    published: Option<Release>,
+    changed: bool,
+    /// What main was compared with, for the item's text.
+    base: Option<String>,
+    ahead: u64,
+}
+
+async fn read_nightly(
+    forge: &Arc<dyn Forge>,
+    repo: &str,
+    branch: &str,
+    day: u64,
+    due: bool,
+) -> Result<NightlyRead, String> {
+    let (r, b) = (repo.to_string(), branch.to_string());
+    gh(forge, true, move |f| {
+        let releases = f.recent_releases(&r)?;
+        let tags: Vec<&str> = releases.iter().map(|x| x.tag.as_str()).collect();
+        let published =
+            pdt_core::release::nightly_for_day(&tags, day).and_then(|t| releases.iter().find(|x| x.tag == t));
+        let mut read = NightlyRead { published: published.cloned(), changed: false, base: None, ahead: 0 };
+        if read.published.is_some() || !due {
+            return Ok(read);
+        }
+        let (nightly, stable) = pdt_core::release::nightly_bases(&tags);
+        // Nothing released yet: anything on main is new.
+        read.changed = true;
+        for base in [nightly, stable].into_iter().flatten() {
+            match f.commits_ahead(&r, base, &b)? {
+                Some(0) => {
+                    read.changed = false;
+                    break;
+                }
+                Some(n) if read.base.is_none() => (read.base, read.ahead) = (Some(base.to_string()), n),
+                _ => {}
+            }
+        }
+        Ok(read)
+    })
+    .await
+}
+
+pub struct GithubNightly;
+
+impl NodeKind for GithubNightly {
+    fn spec(&self) -> KindSpec {
+        spec::<GithubNightlyConfig, GithubNightlyOutput>(
+            "github.nightly",
+            1,
+            Category::Action,
+            "Watch for the day's nightly",
+            "Looks for a day's nightly release (a published `X.Y.Z-nightly.YYYYMMDD` pre-release, PDT-288). \
+             `published` when there is one; before `dueHour` UTC `early`; `unchanged` when main has nothing its \
+             newest nightly or stable release lacks. Otherwise the nightly is missing: one Inbox item says so (once \
+             per workflow and day, else `already`), with Start it (`start`) and Ignore (`ignore`), and it looks \
+             again every half hour: the item closes by itself once the nightly is published (`published`), or \
+             after about a day (`expired`).",
+            &[
+                ("published", "Published"),
+                ("early", "Not due yet"),
+                ("unchanged", "main unchanged"),
+                (START, "Start it"),
+                (IGNORE, "Ignore"),
+                ("already", "Already in the Inbox"),
+                ("expired", "Never came"),
+            ],
+            false,
+        )
+    }
+
+    fn check(&self, config: &Value) -> Result<(), String> {
+        let c: GithubNightlyConfig = parse(config)?;
+        if c.workflow.trim().is_empty() {
+            return Err("workflow is empty: name its file (release.yml)".into());
+        }
+        if let Some(d) = nonblank(&c.day).filter(|d| !templated(d))
+            && pdt_core::release::nightly_day(d).is_none()
+        {
+            return Err(format!("day {d:?} is not a date (2026-10-30)"));
+        }
+        if c.due_hour.is_some_and(|h| h > 23) {
+            return Err("dueHour is an hour, 0 to 23".into());
+        }
+        check_repo(&c.repo)
+    }
+
+    fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
+        Box::pin(async move {
+            use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
+            use pdt_core::release::{NightlyWatch, nightly_day, nightly_watch, utc_day};
+            let c: GithubNightlyConfig = parse(&input)?;
+            let RepoOf { repo, forge, .. } = repo_of(cx, &c.repo).await?;
+            let workflow = c.workflow.trim().to_string();
+            let branch = nonblank(&c.branch).unwrap_or("main").to_string();
+            let now = crate::routes::now_ms();
+            // A look after the first keeps the first's day and start (its saved output).
+            let saved = |k: &str| cx.step.output.get(k).and_then(Value::as_i64);
+            let day = match saved("day") {
+                Some(d) => d as u64,
+                None => match nonblank(&c.day) {
+                    Some(d) => nightly_day(d).ok_or_else(|| format!("day {d:?} is not a date"))?,
+                    None => utc_day(now),
+                },
+            };
+            let since = saved("since").unwrap_or(now);
+            let due_hour = c.due_hour.unwrap_or(10);
+            let runs_url = format!("https://github.com/{repo}/actions/workflows/{workflow}");
+            let out = |tag: Option<&Release>| GithubNightlyOutput {
+                day,
+                tag: tag.map(|r| r.tag.clone()),
+                url: tag.map(|r| r.url.clone()),
+                runs_url: runs_url.clone(),
+            };
+            if cx.dry_run {
+                return Ok(Outcome::next(
+                    "unchanged",
+                    json!({"would": format!("look for {repo}'s nightly of {day}, due at {due_hour}:00 UTC")}),
+                ));
+            }
+            let title =
+                c.title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| "Tonight's nightly didn't run".into());
+            // It waits for the user's choice, and (`retry`) runs again at the next look: the item stays open while
+            // the step does, and closes when it leaves by any port.
+            let look_again = || {
+                let next = now + i64::try_from(NIGHTLY_LOOK_MS).unwrap_or(i64::MAX / 2);
+                let mut progress = serde_json::to_value(out(None)).unwrap_or_default();
+                progress["since"] = json!(since);
+                Outcome::Wait {
+                    wait: json!({"retry": true, "answer": {"question": title, "choices": [START, IGNORE]}}),
+                    until: Some(next.min(since + NIGHTLY_WATCH_MS)),
+                    timeout_port: None,
+                    output: progress,
+                }
+            };
+            let due = now >= pdt_core::release::day_hour_ms(day, due_hour);
+            let read = match read_nightly(&forge, &repo, &branch, day, due).await {
+                Ok(r) => r,
+                // While it watches (its item open), a failed look waits for the next one: each look is one of the
+                // step's attempts, so the node's retries would soon be used up.
+                Err(e) if saved("since").is_some() => {
+                    tracing::warn!(error = %e, "could not look for the day's nightly; looking again later");
+                    return Ok(look_again());
+                }
+                Err(e) => return Err(e),
+            };
+            let quiet = |port: &str| {
+                let mut o = serde_json::to_value(out(None)).unwrap_or_default();
+                o["quiet"] = json!(true);
+                Outcome::Next { port: port.into(), output: o }
+            };
+            match nightly_watch(now, day, due_hour, read.published.is_some(), read.changed) {
+                NightlyWatch::Published => return Ok(Outcome::next("published", out(read.published.as_ref()))),
+                NightlyWatch::Early => return Ok(quiet("early")),
+                NightlyWatch::Unchanged => return Ok(quiet("unchanged")),
+                NightlyWatch::Missing => {}
+            }
+            if now - since >= NIGHTLY_WATCH_MS {
+                return Ok(quiet("expired"));
+            }
+            let store = &cx.st.store;
+            let open = store.open_items_for_step(&cx.step.id).await.map_err(|e| e.to_string())?;
+            if open.is_empty() {
+                let date = format!("{}-{:02}-{:02}", day / 10_000, day / 100 % 100, day % 100);
+                let changed = match (&read.base, read.ahead) {
+                    (Some(b), n) if n > 0 => {
+                        format!("{branch} has {n} commit{} since {b}", if n == 1 { "" } else { "s" })
+                    }
+                    _ => format!("{branch} has changed since the last release"),
+                };
+                let text = format!(
+                    "No nightly for {date} was published by {due_hour:02}:00 UTC, though {changed}. GitHub's \
+                     scheduled runs are best-effort and sometimes never start.\n\nSee [the release workflow's \
+                     runs]({runs_url}). **Start it** runs `{workflow}` on {branch} with channel `nightly` as your \
+                     GitHub login; if your login can't start workflows, start it there (Run workflow, channel \
+                     `nightly`). This item goes away by itself once a nightly for the day is published."
+                );
+                let item = InboxItem {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    kind: InboxKind::Gate,
+                    group: InboxGroup::Gate,
+                    status: InboxStatus::Open,
+                    project_id: cx.run.project_id.clone(),
+                    ticket_id: None,
+                    ticket_key: None,
+                    ticket_title: None,
+                    attempt_id: None,
+                    session_id: None,
+                    run_id: Some(cx.run.id.clone()),
+                    step_id: Some(cx.step.id.clone()),
+                    persona_id: None,
+                    persona_name: None,
+                    title: title.clone(),
+                    body: json!({"question": title, "text": text, "url": runs_url, "workflow": cx.workflow.name,
+                                 "node": cx.node_title()}),
+                    choices: vec![InboxChoice::new(START, "Start it", true), InboxChoice::new(IGNORE, "Ignore", false)],
+                    resolution: Value::Null,
+                    created_at: now,
+                    resolved_at: None,
+                };
+                // Once per workflow and day: a second run the same day (a catch-up) leaves it to the first.
+                let key = format!("nightly-missing:{}:{day}", cx.workflow.id);
+                match store.add_inbox_item_once(&item, &key).await.map_err(|e| e.to_string())? {
+                    Some(_) => crate::notifications::kick(cx.st),
+                    None => return Ok(quiet("already")),
+                }
+            }
+            Ok(look_again())
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -724,6 +987,13 @@ mod tests {
         assert!(latest(json!({"workflow": "release", "branch": "main", "repo": "a/b"})).is_ok());
         assert!(latest(json!({"workflow": ""})).is_err());
         assert!(latest(json!({"workflow": "release", "repo": "nope"})).is_err());
+
+        let nightly = |v: Value| GithubNightly.check(&v);
+        assert!(nightly(json!({"workflow": "release.yml", "day": "{{trigger.date}}", "dueHour": 10})).is_ok());
+        assert!(nightly(json!({"workflow": "release.yml", "day": "2026-10-30"})).is_ok());
+        assert!(nightly(json!({"workflow": "release.yml", "day": "Friday"})).unwrap_err().contains("not a date"));
+        assert!(nightly(json!({"workflow": "release.yml", "dueHour": 24})).is_err());
+        assert!(nightly(json!({"workflow": " "})).is_err());
 
         let rel = |v: Value| GithubRelease.check(&v);
         assert!(rel(json!({})).is_ok());

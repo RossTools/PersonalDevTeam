@@ -30,6 +30,7 @@ pub const PDT_PR_REVIEW: &str = "pdt-pr-review";
 pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
 pub const CUT_RELEASE: &str = "cut-release";
 pub const PDT_NIGHTLY: &str = "pdt-nightly";
+pub const PDT_NIGHTLY_MISSING: &str = "pdt-nightly-missing";
 
 pub const BUILTINS: &[Builtin] = &[
     Builtin { id: PR_NOTICES, enabled: true, category: Category::CiPr, doc: pr_notices },
@@ -50,6 +51,8 @@ pub const GITHUB_BUILTINS: &[Builtin] = &[
     Builtin { id: PDT_PR_REVIEW, enabled: true, category: Category::Issues, doc: super::outside_prs::pdt_doc },
     // And for the scheduled nightly release (PDT-283), which no PDT run starts: its failure goes to the Inbox.
     Builtin { id: PDT_NIGHTLY, enabled: true, category: Category::Releases, doc: pdt_nightly },
+    // And for a night GitHub never ran it (PDT-288): a missing nightly goes to the Inbox, with Start it.
+    Builtin { id: PDT_NIGHTLY_MISSING, enabled: true, category: Category::Releases, doc: pdt_nightly_missing },
     Builtin { id: GITHUB_ISSUE_DONE, enabled: true, category: Category::Issues, doc: github_issue_done },
     // Off until the user turns it on; the PM starts it (Run now) when the user asks for a release.
     Builtin { id: CUT_RELEASE, enabled: false, category: Category::Releases, doc: cut_release },
@@ -894,7 +897,7 @@ fn cut_release() -> WorkflowDoc {
 
 /// The release workflow's name as Actions shows it (its `name:`).
 const RELEASE_WORKFLOW_NAME: &str = "release";
-/// When PDT nightly release looks (UTC): three hours after the release workflow's 08:00 schedule, time for its
+/// When PDT nightly release looks (UTC): about three hours after the release workflow's 08:17 schedule, time for its
 /// bundles; a run still going is looked at again every half hour, for up to eight hours.
 const NIGHTLY_CHECK_CRON: &str = "0 11 * * *";
 const NIGHTLY_POLL_MS: u64 = 30 * 60_000;
@@ -907,7 +910,7 @@ const NIGHTLY_POLLS: u32 = 16;
 fn pdt_nightly() -> WorkflowDoc {
     doc(json!({
         "name": "PDT nightly release",
-        "description": format!("Every day at 11:00 UTC, three hours after the release workflow's nightly schedule, \
+        "description": format!("Every day at 11:00 UTC, about three hours after the release workflow's nightly schedule, \
                         reads its newest run on main in {RELEASE_REPO}: a failed one goes to the Inbox with its failed \
                         jobs, once per run. A run still going is looked at again every half hour."),
         "nodes": [
@@ -950,6 +953,66 @@ fn pdt_nightly() -> WorkflowDoc {
     }))
 }
 
+/// When PDT missing nightly looks (UTC): the release workflow's schedule (08:17) should have published by then.
+const NIGHTLY_DUE_HOUR: u32 = 10;
+const NIGHTLY_DUE_CRON: &str = "0 10 * * *";
+
+/// PDT missing nightly (PDT-288): GitHub's scheduled runs are best-effort, and some nights it never starts the release
+/// workflow's, so PDT nightly release has no failed run to report. Every day at 10:00 UTC this looks for the day's
+/// nightly: when main changed since the newest nightly (or stable release) and none is published, one Inbox item says
+/// so, with Start it (the release workflow, channel nightly), and closes by itself once a nightly is published.
+fn pdt_nightly_missing() -> WorkflowDoc {
+    doc(json!({
+        "name": "PDT missing nightly",
+        "description": format!("Every day at {NIGHTLY_DUE_HOUR}:00 UTC, about two hours after the release \
+                        workflow's nightly schedule, looks for the day's nightly release of {RELEASE_REPO}. When \
+                        main changed since the last one and none is published, the Inbox says so, with Start it; \
+                        the item closes by itself once a nightly is published. Days main didn't change say nothing."),
+        "nodes": [
+            {"id": "daily", "kind": "schedule", "version": 1, "position": {"x": 0, "y": 0}, "title": "Every day",
+             "config": {"cron": NIGHTLY_DUE_CRON, "timezone": "UTC", "catchUp": true}},
+            {"id": "watch", "kind": "github.nightly", "version": 1, "position": {"x": 260, "y": 0},
+             "title": "The day's nightly", "retry": {"max": 5, "backoffMs": 60_000},
+             "config": {"repo": RELEASE_REPO, "workflow": RELEASE_WORKFLOW, "branch": "main",
+                        "day": "{{trigger.date}}", "dueHour": NIGHTLY_DUE_HOUR}},
+            {"id": "start", "kind": "github.workflow.run", "version": 1, "position": {"x": 520, "y": -160},
+             "title": "Run the release workflow (nightly)", "config": {"repo": RELEASE_REPO,
+                "workflow": RELEASE_WORKFLOW, "ref": "main", "inputs": {"channel": "nightly"}}},
+            {"id": "started", "kind": "notify", "version": 1, "position": {"x": 780, "y": -160},
+             "title": "Tell me it started", "config": {
+                "title": "Tonight's nightly is starting",
+                "body": "The release workflow runs on main with channel nightly; PDT nightly release reports it if it \
+                         fails.",
+                "link": "{{steps.watch.runsUrl}}"}},
+            {"id": "start_failed", "kind": "inbox.notice", "version": 1, "position": {"x": 780, "y": -320},
+             "title": "Inbox: it would not start", "config": {
+                "key": "nightly-start-failed-{{steps.watch.day}}",
+                "title": "Tonight's nightly didn't start",
+                "text": "PDT could not run the release workflow: {{steps.start.error}}\n\nStart it on GitHub \
+                         instead: [the release workflow]({{steps.watch.runsUrl}}), Run workflow on main with \
+                         channel `nightly`."}},
+            {"id": "done", "kind": "end", "version": 1, "position": {"x": 1040, "y": -160}, "title": "Started"},
+            {"id": "fine", "kind": "end", "version": 1, "position": {"x": 520, "y": 160}, "title": "Fine",
+             "config": {"quiet": true}},
+        ],
+        "edges": [
+            {"from": "daily", "to": "watch"},
+            {"from": "watch", "port": "start", "to": "start"},
+            {"from": "start", "to": "started"},
+            {"from": "start", "port": "error", "to": "start_failed"},
+            {"from": "started", "to": "done"},
+            {"from": "start_failed", "port": "added", "to": "done"},
+            {"from": "start_failed", "port": "skipped", "to": "done"},
+            {"from": "watch", "port": "published", "to": "fine"},
+            {"from": "watch", "port": "early", "to": "fine"},
+            {"from": "watch", "port": "unchanged", "to": "fine"},
+            {"from": "watch", "port": "ignore", "to": "fine"},
+            {"from": "watch", "port": "already", "to": "fine"},
+            {"from": "watch", "port": "expired", "to": "fine"},
+        ],
+    }))
+}
+
 /// Whether a project on this host is PDT's own repository (the release repository): where bug triage runs.
 pub(crate) async fn builds_pdt(st: &AppState) -> bool {
     for p in st.store.list_projects().await.unwrap_or_default() {
@@ -963,7 +1026,7 @@ pub(crate) async fn builds_pdt(st: &AppState) -> bool {
 /// Whether a built-in (and its template) is only for a host that builds PDT itself (PDT-226). One installed before
 /// that stays as it is.
 pub(crate) fn only_for_pdt(id: &str) -> bool {
-    id == PDT_BUG_TRIAGE || id == PDT_PR_REVIEW || id == PDT_NIGHTLY
+    id == PDT_BUG_TRIAGE || id == PDT_PR_REVIEW || id == PDT_NIGHTLY || id == PDT_NIGHTLY_MISSING
 }
 
 /// Installs or updates the built-ins (once per pdtd; callers hold the engine lock).
@@ -1068,6 +1131,13 @@ mod tests {
         };
         assert!(!issues.iter().any(|i| open(&i)), "{issues:?}");
         assert!(only_for_pdt(PDT_NIGHTLY));
+    }
+
+    #[test]
+    fn pdt_nightly_missing_has_no_open_ports() {
+        let issues = validate(&pdt_nightly_missing(), crate::integrations::test_registry().catalog());
+        assert!(!issues.iter().any(|i| i.code == "unreachable" || i.code == "open_port"), "{issues:?}");
+        assert!(only_for_pdt(PDT_NIGHTLY_MISSING));
     }
 
     /// PDT-139: a notice nobody could be told goes on, to the Inbox and the ticket.

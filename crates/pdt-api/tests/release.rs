@@ -495,3 +495,124 @@ async fn a_failed_nightly_goes_to_the_inbox_once() {
     let titles = inbox_titles(&env).await;
     assert_eq!(titles.iter().filter(|t| *t == "The nightly release failed").count(), 1, "{titles:?}");
 }
+
+/// PDT missing nightly, installed on a host that builds PDT, and a schedule firing for `date`'s 10:00 UTC look.
+async fn missing_nightly(env: &Env) -> (String, impl Fn(i64, &str) -> pdt_core::workflow::api::NewLogEvent) {
+    pdt_api::run_workflows(&env.state).await;
+    let (_, all) = call(&env.app, "GET", "/api/workflows", None).await;
+    let wf =
+        all.as_array().unwrap().iter().find(|w| w["builtin"] == "pdt-nightly-missing").cloned().expect("installed");
+    assert_eq!(wf["enabled"], true, "{wf}");
+    let id = wf["id"].as_str().unwrap().to_string();
+    let wf_id = id.clone();
+    let fire = move |slot: i64, date: &str| {
+        let payload = json!({"workflowId": wf_id, "nodeId": "daily", "slot": slot,
+                             "slotIso": format!("{date}T10:00:00Z"), "date": date});
+        pdt_core::workflow::api::NewLogEvent::new(
+            pdt_core::workflow::events::SCHEDULE_FIRED,
+            format!("schedule:test:{slot}"),
+            "scheduler",
+            payload,
+        )
+    };
+    (id, fire)
+}
+
+async fn fired(env: &Env, e: &pdt_core::workflow::api::NewLogEvent, slot: i64) {
+    env.state.store.emit_event(e, slot).await.unwrap().expect("logged");
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+}
+
+const MISSING: &str = "Tonight's nightly didn't run";
+
+async fn missing_items(env: &Env) -> Vec<Value> {
+    let (_, v) = call(&env.app, "GET", "/api/inbox", None).await;
+    v["items"].as_array().unwrap().iter().filter(|i| i["title"] == MISSING).cloned().collect()
+}
+
+/// PDT-288: a day main changed and no nightly is out by 10:00 UTC makes exactly one Inbox item, which closes once a
+/// nightly for the day is published; a day main didn't change makes none, nor does a look before the due time.
+#[tokio::test]
+async fn a_missing_nightly_goes_to_the_inbox_once_and_clears_when_published() {
+    let repo = pdt_core::brand::RELEASE_REPO;
+    let env = setup_on(repo).await;
+    let (wf, fire) = missing_nightly(&env).await;
+    env.gh.publish(repo, release("v0.2.0"));
+    env.gh.publish(repo, release("v0.2.1-nightly.20261029"));
+
+    // Nothing merged since the last nightly (a stable release since is older): nothing to say.
+    env.gh.set_ahead(repo, "v0.2.1-nightly.20261029", "main", 0);
+    env.gh.set_ahead(repo, "v0.2.0", "main", 5);
+    fired(&env, &fire(1, "2026-10-30"), 1).await;
+    assert!(missing_items(&env).await.is_empty());
+
+    // Merged since, and no nightly for the day: one item, with the runs and Start it.
+    env.gh.set_ahead(repo, "v0.2.1-nightly.20261029", "main", 2);
+    fired(&env, &fire(2, "2026-10-30"), 2).await;
+    let items = missing_items(&env).await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    let text = items[0]["body"]["text"].as_str().unwrap();
+    assert!(text.contains("2 commits since v0.2.1-nightly.20261029"), "{text}");
+    assert!(text.contains(&format!("https://github.com/{repo}/actions/workflows/release.yml")), "{text}");
+    let choices: Vec<&str> =
+        items[0]["choices"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(choices, ["start", "ignore"]);
+
+    // A catch-up the same day, and the watch's own next look, add none.
+    fired(&env, &fire(3, "2026-10-30"), 3).await;
+    let (_, list) = call(&env.app, "GET", &format!("/api/workflow-runs?workflow={wf}"), None).await;
+    let watching: Vec<String> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["status"] == "waiting")
+        .map(|r| r["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(watching.len(), 1, "{list}");
+    time_passes(&env, &watching[0]).await;
+    assert_eq!(missing_items(&env).await.len(), 1);
+    assert_eq!(waiting_at(&env, &watching[0]).await, "watch");
+
+    // The nightly is out (run by hand on GitHub): at the next look the item closes and the run ends quietly.
+    env.gh.publish(repo, release("v0.2.1-nightly.20261030"));
+    time_passes(&env, &watching[0]).await;
+    assert!(missing_items(&env).await.is_empty());
+    let r = run(&env, &watching[0]).await;
+    assert_eq!(r["status"], "quiet", "{r}");
+
+    // A look before the day's due time says nothing, whatever main did.
+    env.gh.set_ahead(repo, "v0.2.1-nightly.20261030", "main", 3);
+    fired(&env, &fire(4, "2099-01-01"), 4).await;
+    assert!(missing_items(&env).await.is_empty());
+}
+
+/// PDT-288: Start it runs the release workflow on main with channel nightly.
+#[tokio::test]
+async fn start_it_runs_the_nightly() {
+    let repo = pdt_core::brand::RELEASE_REPO;
+    let env = setup_on(repo).await;
+    let (_, fire) = missing_nightly(&env).await;
+    env.gh.publish(repo, release("v0.2.1-nightly.20261029"));
+    env.gh.set_ahead(repo, "v0.2.1-nightly.20261029", "main", 1);
+    fired(&env, &fire(1, "2026-10-30"), 1).await;
+    let items = missing_items(&env).await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", items[0]["id"].as_str().unwrap()),
+        Some(json!({"choice": "start"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    let inputs = BTreeMap::from([("channel".to_string(), "nightly".to_string())]);
+    let started = env.gh.ci.triggered.lock().unwrap().clone();
+    assert_eq!(started, [(repo.to_string(), "release.yml".to_string(), "main".to_string(), inputs)]);
+    assert!(missing_items(&env).await.is_empty());
+    assert!(notified(&env).await.contains(&"Tonight's nightly is starting".to_string()));
+}
