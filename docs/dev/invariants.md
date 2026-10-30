@@ -35,7 +35,7 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   input run locked down (`persona::locked_down`: read-only tools, no secrets).
 - **What every user's agents read is about their project, not PDT's development.** The built-in personas'
   instructions, the PM's prompt, the tools' descriptions and schemas (doc comments on their argument types too), the
-  agent context and the served guides name no ticket keys (`PDT-12`; examples use `ABC-12`), and nothing of PDT's own
+  agent context and the served guides name no ticket keys of PDT's own (examples use `ABC-12`), and nothing of PDT's own
   changelog, release workflow, nightlies or repository. Release guidance reaches the PM only through its briefing, for
   a project with an enabled release workflow. PDT's own process lives in AGENTS.md and docs/SDLC.md. pdtd's
   `prompts_and_guides_carry_no_pdt_development_assumptions` checks it (with an allow list).
