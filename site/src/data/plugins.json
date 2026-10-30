@@ -1,0 +1,831 @@
+{
+  "note": "Written by pdtd's integrations tests (exports_the_plugins_for_the_website). Do not edit it.",
+  "plugins": [
+    {
+      "builtIn": true,
+      "category": "general",
+      "connections": [
+        {
+          "description": "Lets another machine start workflows (the Webhook trigger).",
+          "fields": [],
+          "label": "Incoming webhook",
+          "secretHint": "The sender sends it as Authorization: Bearer <secret>, or signs with it like GitHub (X-Hub-Signature-256).",
+          "secretLabel": "Shared secret",
+          "secretOptional": false,
+          "setup": "An address other machines post to, to start workflows with a Webhook trigger. Each has a secret the sender must send.",
+          "url": false,
+          "urlHint": null,
+          "urlOptional": false
+        }
+      ],
+      "description": "Addresses other machines post to, to start workflows.",
+      "icon": {
+        "color": "#6b7080",
+        "letters": "WH"
+      },
+      "id": "webhook",
+      "label": "Incoming webhooks",
+      "login": false,
+      "projectSettings": null,
+      "steps": [],
+      "templates": [],
+      "tools": [],
+      "triggers": [
+        {
+          "description": "Starts when another machine posts to POST /api/hooks/<hook> on this host (locally or over Tailscale) with the hook's secret: a bearer token or a GitHub X-Hub-Signature-256.",
+          "id": "webhook",
+          "title": "Webhook"
+        }
+      ],
+      "workflows": []
+    },
+    {
+      "builtIn": true,
+      "category": "dev",
+      "connections": [],
+      "description": "Pull requests, CI, issues and releases for projects on GitHub, as your GitHub login.",
+      "icon": {
+        "color": "#24292f",
+        "letters": "GH"
+      },
+      "id": "github",
+      "label": "GitHub",
+      "login": true,
+      "projectSettings": null,
+      "steps": [
+        {
+          "description": "Makes a Draft ticket from a GitHub issue (its title, text, author and link), linked to it. When a ticket already links the issue nothing is made and the step leaves by `exists`: an issue is never imported twice. Output: `ticketId`, `ticketKey`, `issue` (owner/name#12) and `url`.",
+          "id": "github.import",
+          "title": "Import a GitHub issue"
+        },
+        {
+          "description": "Adds a comment to a GitHub issue: by repo and number, or a ticket's linked issue (`unlinked` when it has none). Its URL is `{{steps.<id>.url}}`.",
+          "id": "github.comment",
+          "title": "Comment on a GitHub issue"
+        },
+        {
+          "description": "Closes a GitHub issue (by repo and number, or a ticket's linked issue: `unlinked` when it has none) as `completed`, `not_planned` or `duplicate` (GitHub's Close as duplicate, of the issue `duplicateOf`). It adds `labels` (keeping the others) and `comment` first. An issue already closed counts as done: nothing is changed.",
+          "id": "github.close",
+          "title": "Close a GitHub issue"
+        },
+        {
+          "description": "Finds the ticket linked to a GitHub pull request (`exists`), or makes one (`created`): an external Draft in `project` with the pull request's title, text, author and link, linked to it, so it is never made twice. Without `create`, a pull request with no ticket leaves by `none`. Output: `ticketId`, `ticketKey`, `pr` (owner/name#12), `stage` and `closed` (Done or Won't do).",
+          "id": "github.pr.ticket",
+          "title": "The pull request's ticket"
+        },
+        {
+          "description": "Sets a pull request PDT didn't open to merge, as Merge does for an attempt's: auto-merge (GitHub holds it until the base branch's required checks pass) or the merge queue, with the strategy the repository allows (`queued`), or merged at once when GitHub can (`merged`). With `headSha`, only while its head is that commit (the one approved): `refused` with `code` `head_moved` otherwise. It never pushes to the pull request's branch: one that is closed, a draft or in conflict with its base leaves by `refused` with `code` and `reason`, as does a merge GitHub refuses.",
+          "id": "github.pr.merge",
+          "title": "Merge a GitHub pull request"
+        },
+        {
+          "description": "Submits a review of a pull request as PDT's GitHub login: `request_changes` (the default), `comment` or `approve`, with `body` (or `fallback` when it comes to nothing). Its URL is `{{steps.<id>.url}}`.",
+          "id": "github.pr.review",
+          "title": "Review a GitHub pull request"
+        },
+        {
+          "description": "Closes a pull request without merging it, adding `comment` first. One already closed or merged counts as done: nothing is changed.",
+          "id": "github.pr.close",
+          "title": "Close a GitHub pull request"
+        },
+        {
+          "description": "Starts a GitHub Actions workflow by hand (`workflow_dispatch`) on a branch (default `main`) with inputs, as PDT's GitHub login. The repository is the run's project's unless `repo` names one. GitHub doesn't say which run it started: read what it makes (a pull request, a release) with the other GitHub nodes.",
+          "id": "github.workflow.run",
+          "title": "Run a GitHub Actions workflow"
+        },
+        {
+          "description": "Reads a pull request by its head branch or its number and leaves by its state: `open`, `merged`, `closed`, or `none` when there is none. Output: `number`, `url`, `title`, `state`, `merged`, `headSha`. With `ci` (and `branch`, its head) it reads CI too: an open one whose check failed on its head, or that the merge queue removed for failed checks, leaves by `failed` with `failure` (`ci` or `queue`), `ciUrl` and `failedJobs`. Between waits it polls one (a dry run takes `dryRunPort`, else `open` for a branch, `merged` for a number).",
+          "id": "github.change_request",
+          "title": "Read a GitHub pull request"
+        },
+        {
+          "description": "Reads the latest published release (drafts and pre-releases don't count; with `prereleases`, the newest one, pre-releases included), or the one tagged `tag`. `found` with `tag`, `name`, `url` and `publishedAt`; `none` when there is none, or with `newerThan` when the latest is still that one. Between waits it polls for a release to be published.",
+          "id": "github.release",
+          "title": "Read a GitHub release"
+        },
+        {
+          "description": "Opens an issue in a project's GitHub repository, as PDT's GitHub login: from a ticket (`{{trigger.ticketId}}`; its title and description unless given, and the ticket links the issue), or in `project`'s repository. Output: `repo`, `number`, `issue` (owner/name#12), `url` and `ticketKey`.",
+          "id": "github.create_issue",
+          "title": "Create a GitHub issue"
+        }
+      ],
+      "templates": [
+        "Triage new GitHub issues",
+        "Review outside pull requests"
+      ],
+      "tools": [
+        {
+          "asks": true,
+          "does": "Open an issue on the project's forge",
+          "name": "issue_create",
+          "pm": true
+        }
+      ],
+      "triggers": [
+        {
+          "description": "A new issue in a GitHub repository: the ones in `repos` (any repo PDT's GitHub login can read), else the projects' own. Checked every minute; the first look at a repository only records where it is.",
+          "id": "github.issue.opened",
+          "title": "GitHub issue opened"
+        },
+        {
+          "description": "A pull request PDT didn't open (not a ticket's branch) on a project's GitHub repository: from a fork, a bot such as Dependabot, or a collaborator (`kind`). The first look at a repository only records the ones already open. Checked every minute on the projects' GitHub repositories; outsiders' and bots' unless `kinds` says otherwise. Its title and body are outside input.",
+          "id": "github.pull_request.opened",
+          "title": "Outside pull request opened"
+        },
+        {
+          "description": "New commits on a pull request PDT didn't open (its head moved): `previousHead` is where it was. Checked every minute on the projects' GitHub repositories; outsiders' and bots' unless `kinds` says otherwise. Its title and body are outside input.",
+          "id": "github.pull_request.pushed",
+          "title": "Outside pull request pushed"
+        },
+        {
+          "description": "A pull request PDT didn't open was closed or merged (`merged`). Checked every minute on the projects' GitHub repositories; outsiders' and bots' unless `kinds` says otherwise. Its title and body are outside input.",
+          "id": "github.pull_request.closed",
+          "title": "Outside pull request closed"
+        }
+      ],
+      "workflows": [
+        "PDT bug triage",
+        "PDT pull request review",
+        "Done closes the GitHub issue",
+        "Cut a release"
+      ]
+    },
+    {
+      "builtIn": true,
+      "category": "general",
+      "connections": [
+        {
+          "description": "A service the HTTP request action calls: its address and token.",
+          "fields": [],
+          "label": "HTTP service",
+          "secretHint": "Sent only to this address, the way “Send it as” says.",
+          "secretLabel": "Token or password",
+          "secretOptional": false,
+          "setup": "A service HTTP request steps call by name: its address, and a token PDT sends only to it.",
+          "url": true,
+          "urlHint": null,
+          "urlOptional": false
+        }
+      ],
+      "description": "Any HTTP API with a token, for HTTP request steps.",
+      "icon": {
+        "color": "#6b7080",
+        "letters": "{}"
+      },
+      "id": "http",
+      "label": "HTTP services",
+      "login": false,
+      "projectSettings": null,
+      "steps": [
+        {
+          "description": "Sends an HTTP request, through a connection (its URL and secret) or to a full URL. A status outside `expect` fails the step; the response is `{{steps.<id>.body}}`.",
+          "id": "http.request",
+          "title": "HTTP request"
+        }
+      ],
+      "templates": [],
+      "tools": [],
+      "triggers": [],
+      "workflows": []
+    },
+    {
+      "builtIn": true,
+      "category": "general",
+      "connections": [
+        {
+          "description": "An MCP server: its tools become workflow actions.",
+          "fields": [
+            "Runs as",
+            "Program",
+            "Arguments",
+            "Environment",
+            "Secret’s variable"
+          ],
+          "label": "MCP server",
+          "secretHint": "Optional. A program gets it in the environment variable named below; an HTTP server gets it as a bearer token.",
+          "secretLabel": "Secret",
+          "secretOptional": true,
+          "setup": "A Model Context Protocol server whose tools workflows call (each tool is an action in the catalog). PDT starts a program’s server when it is first used and stops it after 5 minutes idle.",
+          "url": false,
+          "urlHint": null,
+          "urlOptional": false
+        }
+      ],
+      "description": "Tools from MCP servers, as workflow actions.",
+      "icon": {
+        "color": "#6b7080",
+        "letters": "M"
+      },
+      "id": "mcp",
+      "label": "MCP servers",
+      "login": false,
+      "projectSettings": null,
+      "steps": [
+        {
+          "description": "Calls a tool of an MCP server (a connection of kind mcp). The output is the tool's structured content, else its text (parsed when it is JSON); a tool error fails the step.",
+          "id": "mcp.tool",
+          "title": "MCP tool"
+        }
+      ],
+      "templates": [],
+      "tools": [],
+      "triggers": [],
+      "workflows": []
+    },
+    {
+      "builtIn": false,
+      "category": "chat",
+      "connections": [
+        {
+          "description": "Posts to one Discord channel (Post to Discord).",
+          "fields": [],
+          "label": "Discord webhook",
+          "secretHint": "In Discord: the channel’s settings (Edit Channel) → Integrations → Webhooks → New Webhook → Copy Webhook URL. It looks like https://discord.com/api/webhooks/…",
+          "secretLabel": "Webhook URL",
+          "secretOptional": false,
+          "setup": "A channel that Post to Discord steps post to. In Discord, open the channel’s settings → Integrations → Webhooks → New Webhook, copy its URL, and add it here.",
+          "url": false,
+          "urlHint": null,
+          "urlOptional": false
+        },
+        {
+          "description": "Lets the PM manage a Discord server’s channels and webhooks.",
+          "fields": [],
+          "label": "Discord bot",
+          "secretHint": "Discord Developer Portal → your application → Bot → Reset Token → Copy.",
+          "secretLabel": "Bot token",
+          "secretOptional": false,
+          "setup": "A bot that lets the PM manage a Discord server: make and organise channels, and make the webhooks workflows post to. In the Discord Developer Portal, make an application, then under Bot reset its token and copy it. Invite the bot to your server with the link this dialog shows (Manage Channels, Manage Webhooks, Send Messages).",
+          "url": false,
+          "urlHint": null,
+          "urlOptional": false
+        }
+      ],
+      "description": "Post to Discord channels from workflows, and let the PM manage a Discord server through a bot.",
+      "icon": {
+        "color": "#5865f2",
+        "letters": "D"
+      },
+      "id": "discord",
+      "label": "Discord",
+      "login": false,
+      "projectSettings": null,
+      "steps": [
+        {
+          "description": "Posts a message to a Discord channel through a webhook connection (kind discord_webhook, its secret the webhook URL).",
+          "id": "discord.post",
+          "title": "Post to Discord"
+        },
+        {
+          "description": "Makes a text channel on a Discord server through a bot connection (kind discord_bot) unless the server has one called that.",
+          "id": "discord.channel.ensure",
+          "title": "Ensure a Discord channel"
+        }
+      ],
+      "templates": [
+        "New GitHub issues to Discord"
+      ],
+      "tools": [
+        {
+          "asks": false,
+          "does": "Look at the Discord server: its channels and webhooks",
+          "name": "discord_get",
+          "pm": true
+        },
+        {
+          "asks": true,
+          "does": "Create, rename, move or archive Discord channels",
+          "name": "discord_change",
+          "pm": true
+        },
+        {
+          "asks": true,
+          "does": "Make a Discord webhook for discord.post steps",
+          "name": "discord_webhook",
+          "pm": true
+        }
+      ],
+      "triggers": [],
+      "workflows": []
+    },
+    {
+      "builtIn": false,
+      "category": "dev",
+      "connections": [
+        {
+          "description": "Jira Cloud or Server / Data Center (projects link to it; the PM and the Jira actions).",
+          "fields": [
+            "Jira",
+            "Email",
+            "Field names",
+            "Epic Name field",
+            "Epic Link field",
+            "Sprint field",
+            "Backlog sections"
+          ],
+          "label": "Jira",
+          "secretHint": "Cloud: at id.atlassian.com → Security → Create and manage API tokens → Create API token. Server / Data Center: your profile → Personal Access Tokens → Create token (sent as a bearer token).",
+          "secretLabel": "API token or personal access token",
+          "secretOptional": false,
+          "setup": "A Jira Cloud site or a Jira Server / Data Center instance. A project links to it in its settings: issues assigned to you become tickets, and Done moves the issue. The PM and the Jira steps search, create, edit, move and comment on issues, and manage sprints and epics.",
+          "url": true,
+          "urlHint": "Your Jira Cloud site, or your Jira server’s address (https://jira.example.com).",
+          "urlOptional": false
+        }
+      ],
+      "description": "Link projects to Jira Cloud or Server / Data Center: issues assigned to you become tickets, Done moves the issue, and the PM and workflows search, edit and move issues, sprints and epics.",
+      "icon": {
+        "color": "#2684ff",
+        "letters": "J"
+      },
+      "id": "jira",
+      "label": "Jira",
+      "login": false,
+      "projectSettings": "Issues assigned to you in this scope become Draft tickets (checked every minute), and moving a linked ticket to Done moves its issue.",
+      "steps": [
+        {
+          "description": "Signs in with a Jira connection: `{{steps.<id>.user}}` is who it is; a connection that fails fails the step.",
+          "id": "jira.check",
+          "title": "Test Jira"
+        },
+        {
+          "description": "Issues a JQL query finds: `{{steps.<id>.issues}}` is a list of {key, summary, status, assignee, sprint, epic, placement, ticketId}; `{{steps.<id>.next}}` reads the next page.",
+          "id": "jira.search",
+          "title": "Search Jira"
+        },
+        {
+          "description": "One issue with its description and comments: `{{steps.<id>.status}}`, `{{steps.<id>.sprint.name}}`, `{{steps.<id>.fields.<mapped name>}}`.",
+          "id": "jira.issue",
+          "title": "Read a Jira issue"
+        },
+        {
+          "description": "Makes a Draft ticket from a Jira issue (its summary and description), linked to it. When a ticket already links the issue nothing is made and the step leaves by `exists`: an issue is never imported twice.",
+          "id": "jira.import",
+          "title": "Import a Jira issue"
+        },
+        {
+          "description": "Creates an issue in a Jira project; its key is `{{steps.<id>.key}}`.",
+          "id": "jira.create",
+          "title": "Create a Jira issue"
+        },
+        {
+          "description": "Changes an issue's fields or assignee; `{{steps.<id>.changed}}` lists the fields set.",
+          "id": "jira.edit",
+          "title": "Edit a Jira issue"
+        },
+        {
+          "description": "Adds a comment to a Jira issue; its id is `{{steps.<id>.commentId}}`.",
+          "id": "jira.comment",
+          "title": "Comment on a Jira issue"
+        },
+        {
+          "description": "The moves open to an issue now and the fields each needs: `{{steps.<id>.transitions}}`.",
+          "id": "jira.transitions",
+          "title": "Jira issue's transitions"
+        },
+        {
+          "description": "Moves a Jira issue (by key, or a ticket's linked issue) through the transition named `to`, or the one leading to that status, with the fields its screen needs (`fields`). An issue already there counts as done; no such transition from its status leaves by `unavailable`; a required field left out fails the step, naming it.",
+          "id": "jira.transition",
+          "title": "Move a Jira issue"
+        },
+        {
+          "description": "Jira's boards: `{{steps.<id>.boards}}` is a list of {id, name, type, project}.",
+          "id": "jira.boards",
+          "title": "Jira boards"
+        },
+        {
+          "description": "A board's sprints: `{{steps.<id>.active}}` is the active ones (backlog sections left out), `{{steps.<id>.sections}}` the backlog sections.",
+          "id": "jira.sprints",
+          "title": "Jira sprints"
+        },
+        {
+          "description": "A board's issues with where each sits: `{{steps.<id>.issues}}`, each with `placement` {area: sprint, section, future or backlog; sprint; status}.",
+          "id": "jira.board",
+          "title": "Jira board"
+        },
+        {
+          "description": "Moves issues into a sprint (the board's active one, one by name or id, or a backlog section) or back to the backlog.",
+          "id": "jira.sprint",
+          "title": "Move Jira issues to a sprint"
+        },
+        {
+          "description": "Puts issues in an epic, or takes them out of theirs (`epic` empty).",
+          "id": "jira.epic",
+          "title": "Set Jira issues' epic"
+        }
+      ],
+      "templates": [],
+      "tools": [
+        {
+          "asks": false,
+          "does": "Test a Jira connection",
+          "name": "jira_check",
+          "pm": true
+        },
+        {
+          "asks": false,
+          "does": "Search Jira with JQL",
+          "name": "jira_search",
+          "pm": true
+        },
+        {
+          "asks": false,
+          "does": "Read a Jira issue",
+          "name": "jira_issue",
+          "pm": true
+        },
+        {
+          "asks": true,
+          "does": "Import a Jira issue as a ticket",
+          "name": "jira_import",
+          "pm": true
+        },
+        {
+          "asks": true,
+          "does": "Create Jira issues and epics",
+          "name": "jira_create",
+          "pm": true
+        },
+        {
+          "asks": true,
+          "does": "Edit and assign Jira issues",
+          "name": "jira_edit",
+          "pm": true
+        },
+        {
+          "asks": true,
+          "does": "Comment on Jira issues",
+          "name": "jira_comment",
+          "pm": true
+        },
+        {
+          "asks": false,
+          "does": "See how a Jira issue can move",
+          "name": "jira_transitions",
+          "pm": true
+        },
+        {
+          "asks": true,
+          "does": "Move Jira issues through their workflow",
+          "name": "jira_transition",
+          "pm": true
+        },
+        {
+          "asks": false,
+          "does": "List Jira boards",
+          "name": "jira_boards",
+          "pm": true
+        },
+        {
+          "asks": false,
+          "does": "List a Jira board's sprints",
+          "name": "jira_sprints",
+          "pm": true
+        },
+        {
+          "asks": false,
+          "does": "See where issues sit on a Jira board",
+          "name": "jira_board",
+          "pm": true
+        },
+        {
+          "asks": true,
+          "does": "Move Jira issues between sprints and the backlog",
+          "name": "jira_sprint",
+          "pm": true
+        },
+        {
+          "asks": true,
+          "does": "Put Jira issues in an epic or take them out",
+          "name": "jira_epic",
+          "pm": true
+        }
+      ],
+      "triggers": [
+        {
+          "description": "A new issue in a project's Jira scope (checked every minute; linking a project only records where it is).",
+          "id": "jira.issue.created",
+          "title": "Jira issue created"
+        },
+        {
+          "description": "Someone changed fields of an issue in a project's Jira scope (`changed` names them).",
+          "id": "jira.issue.updated",
+          "title": "Jira issue updated"
+        },
+        {
+          "description": "An issue in a project's Jira scope moved to another status.",
+          "id": "jira.issue.transitioned",
+          "title": "Jira issue transitioned"
+        },
+        {
+          "description": "Someone commented on an issue in a project's Jira scope.",
+          "id": "jira.issue.commented",
+          "title": "Jira issue commented"
+        }
+      ],
+      "workflows": [
+        "Import assigned Jira issues",
+        "Done moves the Jira issue"
+      ]
+    },
+    {
+      "builtIn": false,
+      "category": "dev",
+      "connections": [
+        {
+          "description": "A Buildkite organization (CI of tickets’ branches; Buildkite actions).",
+          "fields": [
+            "Organization"
+          ],
+          "label": "Buildkite",
+          "secretHint": "In Buildkite: Personal Settings → API Access Tokens → New API Access Token, with Read Builds (and Write Builds to retry or start builds).",
+          "secretLabel": "API token",
+          "secretOptional": false,
+          "setup": "A Buildkite organization whose pipelines build a project’s branches (named in the project’s settings).",
+          "url": true,
+          "urlHint": "Leave empty for Buildkite’s own API.",
+          "urlOptional": true
+        }
+      ],
+      "description": "CI of tickets' branches from Buildkite pipelines, shown and acted on like the pull request's CI.",
+      "icon": {
+        "color": "#14cc80",
+        "letters": "BK"
+      },
+      "id": "buildkite",
+      "label": "Buildkite",
+      "login": false,
+      "projectSettings": "Builds of the tickets' branches show as their CI, and failures are told to the agent like GitHub's.",
+      "steps": [
+        {
+          "description": "Retries a Buildkite build's failed jobs, or rebuilds it when none can be retried.",
+          "id": "buildkite.retry",
+          "title": "Retry a Buildkite build"
+        },
+        {
+          "description": "Starts a build of a Buildkite pipeline for a branch (and commit); its number and URL are `{{steps.<id>.number}}` and `{{steps.<id>.url}}`.",
+          "id": "buildkite.trigger",
+          "title": "Start a Buildkite build"
+        }
+      ],
+      "templates": [],
+      "tools": [],
+      "triggers": [],
+      "workflows": []
+    },
+    {
+      "builtIn": false,
+      "category": "dev",
+      "connections": [],
+      "description": "Merge requests, pipelines, issues and releases for projects on gitlab.com or your own GitLab, as your GitLab login.",
+      "icon": {
+        "color": "#fc6d26",
+        "letters": "GL"
+      },
+      "id": "gitlab",
+      "label": "GitLab",
+      "login": true,
+      "projectSettings": null,
+      "steps": [],
+      "templates": [],
+      "tools": [],
+      "triggers": [],
+      "workflows": []
+    },
+    {
+      "builtIn": false,
+      "category": "media",
+      "connections": [
+        {
+          "description": "Films: search, add, what’s downloading (the Radarr actions).",
+          "fields": [
+            "Quality profile",
+            "Root folder"
+          ],
+          "label": "Radarr",
+          "secretHint": "In Radarr: Settings → General → Security → API Key.",
+          "secretLabel": "API key",
+          "secretOptional": false,
+          "setup": "A Radarr that Search, Add and queue steps use for films.",
+          "url": true,
+          "urlHint": null,
+          "urlOptional": false
+        },
+        {
+          "description": "Series: search, add, what’s downloading (the Sonarr actions).",
+          "fields": [
+            "Quality profile",
+            "Root folder"
+          ],
+          "label": "Sonarr",
+          "secretHint": "In Sonarr: Settings → General → Security → API Key.",
+          "secretLabel": "API key",
+          "secretOptional": false,
+          "setup": "A Sonarr that Search, Add and queue steps use for series.",
+          "url": true,
+          "urlHint": null,
+          "urlOptional": false
+        }
+      ],
+      "description": "Search Radarr and Sonarr, add films and series, and read their download queues from workflows.",
+      "icon": {
+        "color": "#e6a817",
+        "letters": "R"
+      },
+      "id": "arr",
+      "label": "Sonarr and Radarr",
+      "login": false,
+      "projectSettings": null,
+      "steps": [
+        {
+          "description": "Looks up films in Radarr by title: `{{steps.<id>.results}}` is a list of {tmdbId, title, year, inLibrary}.",
+          "id": "radarr.search",
+          "title": "Search Radarr"
+        },
+        {
+          "description": "Adds a film to Radarr by its tmdbId (quality profile and root folder from the connection unless given) and searches for it; takes `exists` when it is already in the library.",
+          "id": "radarr.add",
+          "title": "Add to Radarr"
+        },
+        {
+          "description": "What Radarr is downloading: `{{steps.<id>.items}}` is a list of {title, release, progress, eta, status}.",
+          "id": "radarr.queue",
+          "title": "Radarr queue"
+        },
+        {
+          "description": "Looks up series in Sonarr by title: `{{steps.<id>.results}}` is a list of {tvdbId, title, year, inLibrary}.",
+          "id": "sonarr.search",
+          "title": "Search Sonarr"
+        },
+        {
+          "description": "Adds a series to Sonarr by its tvdbId (quality profile and root folder from the connection unless given) and searches for it; takes `exists` when it is already in the library.",
+          "id": "sonarr.add",
+          "title": "Add to Sonarr"
+        },
+        {
+          "description": "What Sonarr is downloading: `{{steps.<id>.items}}` is a list of {title, release, progress, eta, status}.",
+          "id": "sonarr.queue",
+          "title": "Sonarr queue"
+        }
+      ],
+      "templates": [],
+      "tools": [],
+      "triggers": [],
+      "workflows": []
+    },
+    {
+      "builtIn": false,
+      "category": "media",
+      "connections": [
+        {
+          "description": "Films, series and anime: library, search, add, what’s downloading (the PM and the Scryer actions).",
+          "fields": [],
+          "label": "Scryer",
+          "secretHint": "In Scryer: Settings → API keys → Create. It starts with ska_.",
+          "secretLabel": "API key",
+          "secretOptional": false,
+          "setup": "A Scryer media manager (films, series and anime): the PM browses its library, looks titles up and adds them, and helps set Scryer up (indexers, download clients, settings) through its API; Search, Add, queue, library, Query and Change steps use it.",
+          "url": true,
+          "urlHint": "Scryer’s address, with its base path if it has one (http://nas/scryer).",
+          "urlOptional": false
+        }
+      ],
+      "description": "Films, series and anime from a Scryer media manager: workflow actions, and the PM's tools for its library and settings.",
+      "icon": {
+        "color": "#7c3aed",
+        "letters": "S"
+      },
+      "id": "scryer",
+      "label": "Scryer",
+      "login": false,
+      "projectSettings": null,
+      "steps": [
+        {
+          "description": "Titles in Scryer's library (a facet, words in the title, monitored or not): `{{steps.<id>.titles}}` is a list of {titleId, facet, name, year, monitored, library, status}.",
+          "id": "scryer.library",
+          "title": "Scryer library"
+        },
+        {
+          "description": "Looks up films, series and anime in Scryer's metadata by title: `{{steps.<id>.results}}` is a list of {facet, name, year, tvdbId, tmdbId, imdbId, inLibrary}.",
+          "id": "scryer.search",
+          "title": "Search Scryer"
+        },
+        {
+          "description": "What Scryer is downloading: `{{steps.<id>.items}}` is a list of {title, progress, status, secondsLeft, client}.",
+          "id": "scryer.queue",
+          "title": "Scryer queue"
+        },
+        {
+          "description": "Adds a film, series or anime to Scryer by its ids (from scryer.search), monitored unless told; takes `exists` when the library already has it.",
+          "id": "scryer.add",
+          "title": "Add to Scryer"
+        },
+        {
+          "description": "Runs a GraphQL query on Scryer (any of its settings and data), checked against Scryer's schema first: `{{steps.<id>.data}}` is what it answered, credentials redacted.",
+          "id": "scryer.query",
+          "title": "Query Scryer"
+        },
+        {
+          "description": "Runs one GraphQL mutation on Scryer (`createIndexerConfig`, `updateGeneralSettings`, `triggerJob`, …) with its arguments, checked against Scryer's schema first. A credential is `{\"$secret\": \"<connection>\"}`. `{{steps.<id>.result}}` is what it returned, credentials redacted.",
+          "id": "scryer.mutate",
+          "title": "Change Scryer"
+        }
+      ],
+      "templates": [],
+      "tools": [
+        {
+          "asks": false,
+          "does": "Browse the Scryer media library",
+          "name": "scryer_library",
+          "pm": true
+        },
+        {
+          "asks": false,
+          "does": "Look up films, series and anime to add to Scryer",
+          "name": "scryer_search",
+          "pm": true
+        },
+        {
+          "asks": false,
+          "does": "See what Scryer is downloading",
+          "name": "scryer_queue",
+          "pm": true
+        },
+        {
+          "asks": true,
+          "does": "Add a film, series or anime to Scryer",
+          "name": "scryer_add",
+          "pm": true
+        },
+        {
+          "asks": false,
+          "does": "Find Scryer's settings and operations in its API",
+          "name": "scryer_schema",
+          "pm": true
+        },
+        {
+          "asks": false,
+          "does": "Read anything from Scryer's API (settings, indexers, download clients)",
+          "name": "scryer_query",
+          "pm": true
+        },
+        {
+          "asks": true,
+          "does": "Change Scryer's settings through its API",
+          "name": "scryer_mutate",
+          "pm": true
+        }
+      ],
+      "triggers": [],
+      "workflows": []
+    },
+    {
+      "builtIn": false,
+      "category": "media",
+      "connections": [
+        {
+          "description": "A Plex library: search, what’s new, refresh (the Plex actions).",
+          "fields": [],
+          "label": "Plex server",
+          "secretHint": "In Plex Web: an item’s ⋯ → Get Info → View XML; the address that opens ends in X-Plex-Token=<token>.",
+          "secretLabel": "Plex token",
+          "secretOptional": false,
+          "setup": "A Plex Media Server that Search, Recently added and Refresh steps use.",
+          "url": true,
+          "urlHint": null,
+          "urlOptional": false
+        }
+      ],
+      "description": "Search a Plex server, list what it added lately and refresh its libraries from workflows.",
+      "icon": {
+        "color": "#cc7b19",
+        "letters": "P"
+      },
+      "id": "plex",
+      "label": "Plex",
+      "login": false,
+      "projectSettings": null,
+      "steps": [
+        {
+          "description": "Searches a Plex server's libraries: `{{steps.<id>.items}}` is a list of {title, type, year, ratingKey}.",
+          "id": "plex.search",
+          "title": "Search Plex"
+        },
+        {
+          "description": "The newest items in a Plex library section (or every section): `{{steps.<id>.items}}`.",
+          "id": "plex.recently_added",
+          "title": "Recently added to Plex"
+        },
+        {
+          "description": "Asks Plex to scan a library section (or every section) for new files.",
+          "id": "plex.refresh",
+          "title": "Refresh Plex"
+        }
+      ],
+      "templates": [],
+      "tools": [],
+      "triggers": [],
+      "workflows": []
+    }
+  ]
+}

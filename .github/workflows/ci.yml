@@ -226,9 +226,10 @@ jobs:
       - run: cargo nextest run --profile ci
       # pdtd with no integration built in (the run above has them all; PDT-173).
       - run: cargo nextest run --profile ci -p pdtd --no-default-features
+      # The TS types, the web tests' fixtures and the website's plugin list (site/src/data/plugins.json, PDT-281).
       - name: Generated TS types are committed
         run: |
-          out="$(git status --porcelain -- web/src/api/gen)"; if [ -n "$out" ]; then echo "Generated TS types are out of date:"; echo "$out"; exit 1; fi
+          out="$(git status --porcelain -- web/src/api/gen site/src/data)"; if [ -n "$out" ]; then echo "Generated files are out of date:"; echo "$out"; exit 1; fi
 
   web-linux:
     name: web (linux)

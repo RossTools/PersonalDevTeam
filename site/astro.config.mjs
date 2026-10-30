@@ -51,6 +51,8 @@ export default defineConfig({
             { label: 'Run configuration', slug: 'docs/run-config' },
           ],
         },
+        // The Plugins pages (src/pages/plugins/) stand outside the docs, like the landing page.
+        { label: 'Plugins', link: '/plugins/' },
       ],
     }),
   ],

@@ -1,4 +1,4 @@
-// Where the landing and Features pages link, under the site's base path (`import.meta.env.BASE_URL`).
+// Where the landing, Features and Plugins pages link, under the site's base path (`import.meta.env.BASE_URL`).
 
 export const REPO = 'https://github.com/RossTools/PersonalDevTeam';
 
@@ -8,10 +8,12 @@ export function siteLinks(baseUrl) {
   return {
     home,
     features: `${home}features/`,
+    plugins: `${home}plugins/`,
     docs: `${home}docs/`,
     doc: (path) => `${home}docs/${path}/`,
     changelog: `${REPO}/blob/main/CHANGELOG.md`,
     github: REPO,
     download: `${REPO}/releases/latest`,
+    requestPlugin: `${REPO}/issues/new?template=plugin.yml`,
   };
 }

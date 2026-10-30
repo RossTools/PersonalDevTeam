@@ -223,6 +223,69 @@ fn exports_the_plugins_for_the_web_tests() {
     }
 }
 
+/// The website's Plugins pages (PDT-281) read the plugins from `site/src/data/plugins.json`: Settings → Plugins' list
+/// with every integration on, with what each needs, its workflow triggers and steps (with their descriptions) and its
+/// tools. CI's check that the generated files are committed covers it.
+#[test]
+fn exports_the_plugins_for_the_website() {
+    let ints = pdt_api::Integrations::new(super::built());
+    let ids: Vec<String> = ints.built().iter().map(|i| i.id().to_string()).collect();
+    ints.enable(&ids);
+    let r = ints.registry();
+    let table = r.tool_table();
+    let part = |id: &str, title: &str| {
+        let description = r.catalog().spec(id).map(|s| s.description.clone()).unwrap_or_default();
+        json!({"id": id, "title": title, "description": description})
+    };
+    let is_trigger = |id: &str| r.catalog().spec(id).is_some_and(|s| json!(s.category) == "trigger");
+    let plugins: Vec<Value> = pdt_api::plugin_infos(&ints)
+        .into_iter()
+        .filter(|p| p.built)
+        .map(|p| {
+            let login = r.integrations().iter().find(|i| i.id() == p.id).and_then(|i| i.forge_kind()).is_some();
+            let connections: Vec<Value> = p
+                .connection_kinds
+                .iter()
+                .map(|k| {
+                    json!({"label": k.label, "description": k.description, "setup": k.setup, "url": k.url,
+                           "urlOptional": k.url_optional, "urlHint": k.url_hint, "secretLabel": k.secret_label,
+                           "secretHint": k.secret_hint, "secretOptional": k.secret_optional,
+                           "fields": k.fields.iter().map(|f| &f.label).collect::<Vec<_>>()})
+                })
+                .collect();
+            let (triggers, steps): (Vec<_>, Vec<_>) = p.node_kinds.iter().partition(|k| is_trigger(&k.id));
+            let tools: Vec<Value> = p
+                .tools
+                .iter()
+                .filter_map(|t| table.get(t))
+                .map(|d| json!({"name": d.name, "does": d.does, "pm": d.pm, "asks": d.asks}))
+                .collect();
+            json!({
+                "id": p.id, "label": p.label, "description": p.description, "category": p.category,
+                "icon": p.icon, "builtIn": p.core, "login": login, "connections": connections,
+                "triggers": triggers.iter().map(|k| part(&k.id, &k.title)).collect::<Vec<_>>(),
+                "steps": steps.iter().map(|k| part(&k.id, &k.title)).collect::<Vec<_>>(),
+                "templates": p.templates.iter().map(|t| &t.title).collect::<Vec<_>>(),
+                "workflows": p.workflows.iter().map(|w| &w.title).collect::<Vec<_>>(),
+                "tools": tools, "projectSettings": p.project_settings,
+            })
+        })
+        .collect();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../site/src/data/plugins.json");
+    let text = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&json!({
+            "note": "Written by pdtd's integrations tests (exports_the_plugins_for_the_website). Do not edit it.",
+            "plugins": plugins,
+        }))
+        .unwrap()
+    );
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+    }
+}
+
 #[test]
 fn every_tool_is_listed_once_with_an_object_schema() {
     let infos = registry().tool_infos();
