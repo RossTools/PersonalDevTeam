@@ -29,6 +29,9 @@ use tokio::sync::oneshot;
 const PROBE_EVERY: Duration = Duration::from_millis(300);
 /// The longest one readiness probe may take (a refused connection on Windows loopback can take seconds).
 const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+/// How long a restart waits for a stopped web run's port to come free before moving it to another one: on Windows a
+/// killed process can hold its listening socket for a moment after its terminal has exited (PDT-217).
+const PORT_RELEASE_WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 pub(crate) struct RunControl {
@@ -53,6 +56,23 @@ impl RunControl {
 
 pub(crate) fn port_is_free(p: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", p)).is_ok()
+}
+
+/// After stopping a web run to start it again: waits (up to [`PORT_RELEASE_WAIT`]) until its port is free, so the
+/// restart keeps the port instead of moving because the old process has not let go of it yet.
+pub(crate) async fn await_port_release(port: Option<u16>) {
+    let Some(p) = port else { return };
+    let deadline = tokio::time::Instant::now() + PORT_RELEASE_WAIT;
+    loop {
+        if tokio::task::spawn_blocking(move || port_is_free(p)).await.unwrap_or(true) {
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            tracing::warn!(port = p, "a stopped run's port is still in use; the run moves to another one");
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 fn remote_host(st: &AppState) -> Option<String> {
@@ -115,6 +135,9 @@ async fn restart_in_place(st: &AppState, id: &str) -> Result<(), String> {
     }
     let Some(run) = st.store.get_run(id).await.map_err(|e| e.to_string())? else { return Ok(()) };
     let def = crate::runs::definition_for(st, &run).await?;
+    if def.web {
+        await_port_release(run.port).await;
+    }
     let _start = st.run_start_lock.lock().await;
     let Some(run) = st.store.get_run(id).await.map_err(|e| e.to_string())? else { return Ok(()) };
     if run.state.is_active() || st.shutting_down.load(Ordering::SeqCst) {
@@ -634,5 +657,27 @@ pub async fn sweep_gone_runs(st: &AppState) {
             tracing::info!(run = %run.id, branch = %run.branch, "stopping a run whose branch or worktree is gone");
             stop(st, &run.id, Some("its branch or worktree is gone".into())).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A restart waits for its port while the stopped process still holds it, and goes on once it is let go.
+    #[tokio::test]
+    async fn a_restart_waits_for_its_port_to_be_let_go() {
+        let held = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = held.local_addr().unwrap().port();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            drop(held);
+        });
+        let started = std::time::Instant::now();
+        await_port_release(Some(port)).await;
+        assert!(started.elapsed() >= Duration::from_millis(400), "returned while the port was held");
+        assert!(port_is_free(port));
+        release.await.unwrap();
+        await_port_release(None).await;
     }
 }

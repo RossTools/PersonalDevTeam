@@ -50,6 +50,7 @@ async fn facts(st: &AppState) -> Result<SetupFacts, ApiError> {
         codex: c.codex.found && host.agent_on(AgentKind::Codex),
         devin: c.devin.found && host.agent_on(AgentKind::Devin),
         github_connected: crate::forge_login::connected(st, &pdt_core::forge::ForgeKind::GITHUB),
+        github_off: !st.integrations.is_enabled("github"),
         projects: st.store.list_projects().await?.len(),
     })
 }

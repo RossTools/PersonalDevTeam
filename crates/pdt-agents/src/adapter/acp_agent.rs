@@ -3,7 +3,7 @@
 //! and environment come from the definition; their modes from its mode map, else from the `availableModes` they
 //! advertise, else PDT keeps the mode itself (also the modes a built-in profile's map leaves out). PDT's instructions
 //! go in front of a new session's first prompt. What a built-in profile's agent adds to ACP comes from its flavor
-//! (`pdt_core::conversation::cursor`).
+//! (`pdt_core::conversation::omp`, `cursor`).
 
 use super::acp::AcpProfile;
 use super::{AdapterError, AgentAdapter, EventSink, LiveConversation, OpenSpec};

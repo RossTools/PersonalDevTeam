@@ -344,7 +344,8 @@ pub const CHECK_EVERY: Duration = Duration::from_secs(5 * 60);
 /// to the minute, and clears a refused account's mark once the forge accepts it again (then the pollers look at once).
 pub async fn check(st: &AppState) {
     let mut recovered = false;
-    for p in st.forges.plugins().to_vec() {
+    // Only the forges in use: a turned-off GitHub isn't called (PDT-251).
+    for p in st.forge_plugins() {
         if p.login().is_none() {
             continue;
         }

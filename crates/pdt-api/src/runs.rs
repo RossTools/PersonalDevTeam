@@ -328,11 +328,15 @@ pub(crate) async fn restart(
             .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()))?
     };
     let run = load(&st, &id).await?;
-    if run.state.is_active() && !run_manager::stop(&st, &id, None).await {
+    let was_active = run.state.is_active();
+    if was_active && !run_manager::stop(&st, &id, None).await {
         return Err(still_stopping());
     }
     let def =
         definition_for(&st, &run).await.map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_run_config", m))?;
+    if was_active && def.web {
+        run_manager::await_port_release(run.port).await;
+    }
     let _start = st.run_start_lock.lock().await;
     let run = load(&st, &id).await?;
     if run.state.is_active() {

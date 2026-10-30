@@ -3,8 +3,7 @@
 //! `cursor/ask_question` (multiple-choice questions) and `cursor/create_plan` (a plan to approve). What a built-in
 //! profile's flavor adds ([`AcpFlavor`]) is mapped here.
 
-use super::acp::{AcpExtensions, ExtAnswer, ExtQuestion, ExtRequest, PlainAcp};
-use crate::acp_agent::AcpFlavor;
+use super::acp::{AcpExtensions, ExtAnswer, ExtQuestion, ExtRequest};
 use serde_json::{Value, json};
 
 /// What Cursor adds to ACP.
@@ -125,59 +124,12 @@ pub fn session_missing(code: i64, message: &str) -> bool {
     code == -32602 && message.contains("not found")
 }
 
-macro_rules! by_flavor {
-    ($self:ident, $method:ident($($arg:expr),*)) => {
-        match $self {
-            AcpFlavor::Plain => PlainAcp.$method($($arg),*),
-            AcpFlavor::Cursor => CursorExtensions.$method($($arg),*),
-        }
-    };
-}
-
-/// A defined ACP agent's extensions: plain ACP, or what its built-in profile's agent adds.
-impl AcpExtensions for AcpFlavor {
-    fn name(&self) -> &str {
-        by_flavor!(self, name())
-    }
-
-    fn tool_name(&self, update: &Value) -> Option<String> {
-        by_flavor!(self, tool_name(update))
-    }
-
-    fn pdt_tool_prefix(&self) -> Option<&str> {
-        by_flavor!(self, pdt_tool_prefix())
-    }
-
-    fn raw_output(&self, update: &Value) -> Option<(String, Option<i32>)> {
-        by_flavor!(self, raw_output(update))
-    }
-
-    fn ext_request(&self, method: &str, params: &Value) -> Option<ExtRequest> {
-        by_flavor!(self, ext_request(method, params))
-    }
-
-    fn ext_answer(&self, method: &str, answer: &ExtAnswer) -> Value {
-        by_flavor!(self, ext_answer(method, answer))
-    }
-}
-
-impl AcpFlavor {
-    /// `session/load` failed with `code` and `message` because the agent has no saved session by that id (the
-    /// spec's resource-not-found, or the agent's own way of saying it).
-    pub fn session_missing(self, code: i64, message: &str) -> bool {
-        code == -32002
-            || match self {
-                AcpFlavor::Plain => false,
-                AcpFlavor::Cursor => session_missing(code, message),
-            }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::acp::{AcpMapper, AcpOut};
     use super::super::{AgentEvent, Answer, PermissionMode, RequestKind, ToolStatus, TurnPhase, TurnStatus};
     use super::*;
+    use crate::acp_agent::AcpFlavor;
     use std::collections::BTreeMap;
 
     /// `cursor-agent acp`'s answers to `initialize`, `session/new` (models cut to three), `session/set_mode` (plan,

@@ -406,8 +406,9 @@ async fn toggling_remote_access_updates_running_web_runs() {
     env.state.ptys.shutdown().await;
 }
 
-/// Waits until the web server on `port` answers with a body ending in `want`.
-async fn wait_body(port: u16, want: &str) {
+/// Waits (up to 30 s, well inside nextest's 120 s limit) until the web server on `port` answers with a body ending
+/// in `want`; on failure says what it last answered and where the run `id` is.
+async fn wait_body(app: &axum::Router, id: &str, port: u16, want: &str) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let get = async || -> std::io::Result<String> {
         let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
@@ -416,15 +417,19 @@ async fn wait_body(port: u16, want: &str) {
         s.read_to_string(&mut buf).await?;
         Ok(buf)
     };
-    for _ in 0..600 {
-        if let Ok(Ok(body)) = tokio::time::timeout(Duration::from_secs(2), get()).await
-            && body.ends_with(want)
-        {
-            return;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut last = String::new();
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_secs(2), get()).await {
+            Ok(Ok(body)) if body.ends_with(want) => return,
+            Ok(Ok(body)) => last = body,
+            Ok(Err(e)) => last = e.to_string(),
+            Err(_) => last = "no answer within 2 s".into(),
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    panic!("port {port} never answered {want}: {:?}", get().await);
+    let (_, r) = call(app, "GET", &format!("/api/runs/{id}"), None).await;
+    panic!("port {port} never answered {want} (last: {last:?}); the run: {r}");
 }
 
 /// Final review #9: a web run whose definition uses `$PDT_RUN_HOST` (a dev PDT's allowlist) restarts on its port when
@@ -441,14 +446,14 @@ async fn runs_that_use_the_run_host_restart_when_remote_access_changes_it() {
     let r = wait_state(&env.app, &host_run, &["ready"]).await;
     let port = r["port"].as_u64().unwrap() as u16;
     let plain = wait_state(&env.app, &plain_run, &["ready"]).await;
-    wait_body(port, "127.0.0.1").await;
+    wait_body(&env.app, &host_run, port, "127.0.0.1").await;
     let setup_txt = PathBuf::from(plain["dataDir"].as_str().unwrap()).join("setup.txt");
     std::fs::remove_file(&setup_txt).unwrap();
 
     let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
     let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    wait_body(port, "box.t.ts.net").await;
+    wait_body(&env.app, &host_run, port, "box.t.ts.net").await;
     let r = wait_state(&env.app, &host_run, &["ready"]).await;
     assert_eq!(
         (r["port"].as_u64(), r["url"].as_str()),
@@ -457,7 +462,7 @@ async fn runs_that_use_the_run_host_restart_when_remote_access_changes_it() {
 
     let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"remoteAccess": false}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    wait_body(port, "127.0.0.1").await;
+    wait_body(&env.app, &host_run, port, "127.0.0.1").await;
     let r = wait_state(&env.app, &host_run, &["ready"]).await;
     assert_eq!(r["url"], format!("http://127.0.0.1:{port}/"));
 
