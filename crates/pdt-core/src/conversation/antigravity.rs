@@ -14,6 +14,9 @@ pub struct AntigravityExtensions;
 /// gives pdt-mcp in `mcpServers`: `crate::mcp::SERVER_NAME`).
 const PDT_TOOL_PREFIX: &str = "mcp__pdt__";
 
+/// The `rawOutput` of an approved call it ran as another one (`AntigravityExtensions::ran_elsewhere`).
+const NEVER_EXECUTED: &str = "Tool call was approved but never executed.";
+
 fn s<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
     v.get(key).and_then(Value::as_str).map(str::trim).filter(|x| !x.is_empty())
 }
@@ -36,6 +39,13 @@ impl AcpExtensions for AntigravityExtensions {
 
     fn pdt_tool_prefix(&self) -> Option<&str> {
         Some(PDT_TOOL_PREFIX)
+    }
+
+    /// An edit it asked to approve and then ran as a call of its own (`<session>:<n>`, "Running edit_file", which has
+    /// no diff) ends the turn `failed` with `rawOutput` "Tool call was approved but never executed." (a new file in
+    /// Ask): shown done, with the diff it asked about.
+    fn ran_elsewhere(&self, update: &Value) -> bool {
+        update.get("rawOutput").and_then(Value::as_str).map(str::trim) == Some(NEVER_EXECUTED)
     }
 
     /// A command's result is `rawOutput` `{commandLine, workingDir, exitCode, combinedOutput}`.
@@ -219,8 +229,23 @@ mod tests {
             (title.as_str(), output.as_deref(), *exit_code, *status),
             ("ls", Some("README.md\tskills"), Some(0), ToolStatus::Done)
         );
-        let AgentEvent::ToolCall { diff, .. } = last_tool(&ev, "80c23d44dec449f3b6344563233dc1ad") else { panic!() };
+        // The new file's approved `create_file` ends "never executed" because it ran as `edit_file`: done, with its
+        // diff, and in the turn's diff (PDT-286).
+        let AgentEvent::ToolCall { diff, status, .. } = last_tool(&ev, "80c23d44dec449f3b6344563233dc1ad") else {
+            panic!()
+        };
         assert!(diff.as_deref().unwrap().contains("+hello world"), "{diff:?}");
+        assert_eq!(*status, ToolStatus::Done);
+        let AgentEvent::ToolCall { status, .. } = last_tool(&ev, ":4") else { panic!() };
+        assert_eq!(*status, ToolStatus::Done);
+        let turn_diff = ev.iter().find_map(|e| match e {
+            AgentEvent::TurnDiff { diff } => Some(diff.as_str()),
+            _ => None,
+        });
+        assert!(
+            turn_diff.is_some_and(|d| d.contains("+++ b/hello.txt") && d.contains("+hello world")),
+            "{turn_diff:?}"
+        );
         assert!(matches!(
             ev.last().unwrap(),
             AgentEvent::Turn { phase: TurnPhase::Ended, status: Some(TurnStatus::Completed), .. }
@@ -241,6 +266,24 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_edit_that_never_ran_stays_failed() {
+        // Refused for the user (Plan) or by them (Ask): "never executed" is not an edit that ran as another call.
+        let mut m = mapper(PermissionMode::Plan);
+        let (ev, _) = feed(&mut m, |_| None);
+        let AgentEvent::ToolCall { status, .. } = last_tool(&ev, "80c23d44dec449f3b6344563233dc1ad") else { panic!() };
+        assert_eq!(*status, ToolStatus::Failed);
+        let mut m = mapper(PermissionMode::Ask);
+        let (ev, _) = feed(&mut m, |e| match e {
+            AgentEvent::Request { tool, .. } if tool == "edit" => Some(Answer::Deny { message: None }),
+            AgentEvent::Request { .. } => Some(Answer::Approve { always: false }),
+            _ => None,
+        });
+        let AgentEvent::ToolCall { status, .. } = last_tool(&ev, "80c23d44dec449f3b6344563233dc1ad") else { panic!() };
+        assert_eq!(*status, ToolStatus::Failed);
+        assert!(!ev.iter().any(|e| matches!(e, AgentEvent::TurnDiff { .. })), "nothing was written");
+    }
+
+    #[test]
     fn its_frames_name_mcp_calls_and_read_command_output() {
         let call = json!({"_meta": {"mcp": {"tool": "get_ticket", "server": "pdt"}, "is_mcp_tool_call": true}});
         assert_eq!(AntigravityExtensions.tool_name(&call).as_deref(), Some("mcp__pdt__get_ticket"));
@@ -248,6 +291,9 @@ mod tests {
         let out = json!({"rawOutput": {"exitCode": 2, "combinedOutput": "no such file\r\n"}});
         assert_eq!(AntigravityExtensions.raw_output(&out), Some(("no such file".into(), Some(2))));
         assert_eq!(AntigravityExtensions.raw_output(&json!({"rawOutput": "Create hello.txt"})), None);
+        assert!(AntigravityExtensions.ran_elsewhere(&json!({"rawOutput": NEVER_EXECUTED})));
+        assert!(!AntigravityExtensions.ran_elsewhere(&json!({"rawOutput": "Permission denied"})));
+        assert!(!AcpFlavor::Cursor.ran_elsewhere(&json!({"rawOutput": NEVER_EXECUTED})));
         assert!(AcpFlavor::Antigravity.resolves_symlinks() && !AcpFlavor::Cursor.resolves_symlinks());
         assert!(needs_sign_in(-32000, "Authentication required: No authentication method selected."));
         assert!(!needs_sign_in(-32602, "Authentication required"));

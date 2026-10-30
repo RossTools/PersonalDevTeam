@@ -50,6 +50,10 @@ impl AcpExtensions for AcpFlavor {
         by_flavor!(self, rejected(update))
     }
 
+    fn ran_elsewhere(&self, update: &Value) -> bool {
+        by_flavor!(self, ran_elsewhere(update))
+    }
+
     fn session_option(&self) -> Option<&str> {
         by_flavor!(self, session_option())
     }

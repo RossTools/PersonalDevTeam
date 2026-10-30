@@ -13,7 +13,7 @@ use super::{
 };
 use crate::conversation::claude::AnswerError;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// What one message from the agent turns into.
 #[derive(Debug, Clone, PartialEq)]
@@ -135,6 +135,12 @@ pub trait AcpExtensions: std::fmt::Debug + Send {
 
     /// A failed call was the user's refusal.
     fn rejected(&self, _update: &Value) -> bool {
+        false
+    }
+
+    /// A failed edit call that the user approved and the agent then ran as another call (Antigravity's new file): it
+    /// is shown done, with its diff, instead of failed.
+    fn ran_elsewhere(&self, _update: &Value) -> bool {
         false
     }
 
@@ -295,6 +301,8 @@ pub struct AcpMapper<P> {
     message: Option<(String, String)>,
     thought: Option<(String, String)>,
     tools: HashMap<String, Tool>,
+    /// The running turn's calls whose approval was refused (by the user or for them).
+    refused: HashSet<String>,
     requests: HashMap<String, OpenRequest>,
     /// The plan the agent last wrote (plan mode): what an exit-plan request asks to approve.
     plan: Option<String>,
@@ -366,6 +374,7 @@ impl<P: AcpExtensions> AcpMapper<P> {
             message: None,
             thought: None,
             tools: HashMap::new(),
+            refused: HashSet::new(),
             requests: HashMap::new(),
             plan: None,
             turn_files: Vec::new(),
@@ -653,6 +662,7 @@ impl<P: AcpExtensions> AcpMapper<P> {
         self.turn = None;
         self.interrupt_requested = false;
         self.tools.clear();
+        self.refused.clear();
     }
 
     /// Expires open requests (`all`; else none): the turn ended or the process stopped.
@@ -913,6 +923,11 @@ impl<P: AcpExtensions> AcpMapper<P> {
                 Some("failed") if self.ext.rejected(u) => {
                     t.status = ToolStatus::Declined;
                 }
+                Some("failed")
+                    if t.kind.as_deref() == Some("edit") && !self.refused.contains(id) && self.ext.ran_elsewhere(u) =>
+                {
+                    t.status = ToolStatus::Done;
+                }
                 Some("failed") => t.status = ToolStatus::Failed,
                 _ => {}
             }
@@ -1020,6 +1035,9 @@ impl<P: AcpExtensions> AcpMapper<P> {
                         && let Some((option, _)) =
                             options.iter().find(|(_, k)| k == if allow { "allow_once" } else { "reject_once" })
                     {
+                        if let (false, Some(call)) = (allow, &tool_call_id) {
+                            self.refused.insert(call.clone());
+                        }
                         return vec![AcpOut::Respond {
                             id: rpc_id,
                             result: json!({"outcome": {"outcome": "selected", "optionId": option}}),
@@ -1175,6 +1193,9 @@ impl<P: AcpExtensions> AcpMapper<P> {
             (_, Answer::Plan { approve: false, feedback, .. }) => (selected(r.option("reject_once"))?, note(feedback)),
         };
         let r = self.requests.remove(request_id).expect("checked above");
+        if let (Answer::Deny { .. } | Answer::Plan { approve: false, .. }, Some(call)) = (answer, &r.tool_call_id) {
+            self.refused.insert(call.clone());
+        }
         let events = vec![self.request_event(request_id, &r, RequestState::Answered, Some(answer.clone()))];
         Ok(AcpAnswer { rpc_id: r.rpc_id, result, events, follow_up, mode: None })
     }
