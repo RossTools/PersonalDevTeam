@@ -14,7 +14,7 @@
 #   --report FILE  also write the report (Markdown) there
 #   --keep         keep the copy and the instance's log afterwards (their folder is printed)
 # Exit status: 0 when every check passes, 1 when one fails, 2 when the rehearsal could not run.
-# Needs: cargo (unless --bin), curl, jq, sqlite3. See docs/reference/host.md "Upgrade rehearsal".
+# Needs: cargo (unless --bin), curl, jq, sqlite3. See docs/SDLC.md "Upgrade rehearsal".
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -297,7 +297,7 @@ if [ "$UP" = 1 ]; then
   if [ "$(echo "$LOGIN" | jq -r .connected)" = false ]; then
     pass "with no token, Settings → This host → GitHub asks to connect"
     if [ "$(echo "$LOGIN" | jq -r .deviceFlow)" != true ]; then
-      note "Connect GitHub (the device flow) is off: no OAuth App client ID is built in, so only a pasted token signs in (docs/reference/github.md \"Registering PDT's OAuth App\")"
+      note "Connect GitHub (the device flow) is off: no OAuth App client ID is built in, so only a pasted token signs in (docs/dev/architecture.md \"GitHub\")"
     else
       pass "Connect GitHub (the device flow) is on: an OAuth App client ID is built in"
     fi

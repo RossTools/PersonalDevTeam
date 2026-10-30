@@ -149,7 +149,7 @@ branches = true                                   # optional: push ticket branch
 
 ### CI providers
 
-A project's CI can come from more than one place (PDT-242): its forge's own CI (GitHub Actions on GitHub, the
+A project's CI can come from more than one place: its forge's own CI (GitHub Actions on GitHub, the
 `[ci] command` on the local forge) and the CI integrations set up for it in its settings (Buildkite: a connection and
 pipelines). By default PDT reads all of them. `[ci] providers` picks which, by id, in order:
 

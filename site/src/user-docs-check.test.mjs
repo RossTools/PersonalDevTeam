@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { checkUserDocs, findInternalRefs, userDocFiles, USER_DOCS } from './user-docs-check.mjs';
-import { USER_SECTIONS } from './docs-pages.mjs';
+import { DEVELOPER_PAGES, USER_SECTIONS } from './docs-pages.mjs';
+
+const DOCS = path.join(USER_DOCS, '..');
 
 const hits = (text, file, allow) => findInternalRefs(text, file, allow).map((r) => `${r.rule}:${r.text}`);
 
@@ -43,4 +45,21 @@ test('every page in the sidebar exists, and every page is in the sidebar', () =>
   const listed = USER_SECTIONS.flatMap((s) => s.pages.map((p) => `${s.dir}/${p}.md`)).sort();
   for (const f of listed) assert.ok(existsSync(path.join(USER_DOCS, f)), `missing docs/user/${f}`);
   assert.deepEqual(userDocFiles(), listed);
+});
+
+test('the developer guide is in the sidebar, and every page of it is', () => {
+  for (const f of DEVELOPER_PAGES) assert.ok(existsSync(path.join(DOCS, f)), `missing docs/${f}`);
+  const dev = readdirSync(path.join(DOCS, 'dev')).filter((f) => f.endsWith('.md')).map((f) => `dev/${f}`);
+  assert.deepEqual(dev.sort(), DEVELOPER_PAGES.filter((f) => f.startsWith('dev/')).sort());
+});
+
+test('the developer guide and the guides pdtd serves name no tickets', () => {
+  const prompts = readdirSync(path.join(DOCS, 'prompts')).map((f) => `prompts/${f}`);
+  const files = [...DEVELOPER_PAGES, 'agent-guide.md', 'run-config.md', ...prompts];
+  const found = files.flatMap((f) =>
+    readFileSync(path.join(DOCS, f), 'utf8')
+      .split('\n')
+      .flatMap((line, i) => (line.match(/\bPDT-\d+\b/g) ?? []).map((k) => `docs/${f}:${i + 1}: ${k}`)),
+  );
+  assert.deepEqual(found, []);
 });

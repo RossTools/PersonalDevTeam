@@ -24,7 +24,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - crates/pdt-tailscale — tailscale CLI wrapper (serve, status)
 - crates/pdt-forge — the `Forge` trait (change requests, CI, merges, reviews, issues; declared capabilities) + `FakeForge`
 - crates/pdt-github — the GitHub forge over GitHub's REST and GraphQL APIs (no `gh`): an attempt's PR, Actions runs, merges, issues; the OAuth device-flow login
-- crates/pdt-int-* — the optional integrations (discord, jira, buildkite, arr, scryer, plex), one crate each on pdt-api's `sdk` and `Integration` trait; pdtd's cargo features, enabled per instance in Settings → Integrations (docs/reference/workflows.md "Integrations"). The only list naming them outside their crates is pdt-core `integration::KNOWN` (and pdtd's features)
+- crates/pdt-int-* — the optional integrations (discord, jira, buildkite, arr, scryer, plex), one crate each on pdt-api's `sdk` and `Integration` trait; pdtd's cargo features, enabled per instance in Settings → Plugins (docs/dev/architecture.md "Crates"). The only list naming them outside their crates is pdt-core `integration::KNOWN` (and pdtd's features)
 - crates/pdt-update — GitHub release client (token, verified downloads)
 - crates/pdt-host — the supervisor: runs pdtd, installs updates, rolls back
 - crates/pdtd — daemon binary (also `pdtd hook …` for agent hooks; demo seed in src/seed.rs; the integrations it is built with in src/integrations/)
@@ -34,7 +34,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - desktop/src-tauri — Tauri v2 tray app
 - site/ — the project website (Astro + Starlight; landing page, and the docs read in place from docs/), on GitHub Pages: site/README.md
 - scripts/ — release-stable, macOS signing/notarizing, sidecar staging
-- docs/ — user/ (the user docs the website publishes; style notes in its README, no internal references: `pnpm --filter site check-docs`), SDLC.md, run-config.md, agent-guide.md and prompts/ (the last three are served by pdtd: edit them as product text), reference/ (how each part of PDT behaves), superpowers/ (specs, plans, notes)
+- docs/ — user/ (the user docs the website publishes; style notes in its README, no internal references: `pnpm --filter site check-docs`), SDLC.md, run-config.md, agent-guide.md and prompts/ (the last three are served by pdtd: edit them as product text), dev/ (the developer guide: architecture, invariants, testing), superpowers/ (specs, plans, notes)
 
 ## Commands
 - Rust: `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt`
@@ -59,19 +59,11 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - The UI polls every 2 s, so components re-render constantly: effects must be idempotent, and never focus from an inline ref callback (use useRef + useEffect). Menus and popovers render in a portal (overflow containers clip them).
 - Shortcuts are Ctrl+] then a key (web/src/workspaces/keys.ts); never bind Ctrl+K (the terminal's kill-line). In terminals Shift+Enter sends ESC CR.
 
-## How PDT works (read the reference before changing a part)
-- **Host** — docs/reference/host.md: profiles and data dirs, `/api/health`, remote access over `tailscale serve` (owner-only, Host guard), the tray app, releases, updates through pdt-host (verified download, health check, rollback), pdt-host at login.
-- **Agent sessions** — docs/reference/agents.md: PDT's instructions to every agent (pdt-core `agent_context` + the project's agent instructions; built-in guides served from docs/ by pdt-api `guides.rs`), activity hooks, PTY terminals, Claude/Codex restart and resume, auto-resume, Devin, ACP agents (`acp:<id>`, added in Settings), host defaults (default agent and view).
-- **Conversations** — docs/reference/conversations.md: the structured view (Claude stream-json, a PDT-owned Codex app-server, Devin ACP), its events API, Conversation | Terminal switching, attachments, Make ticket.
-- **Tickets** — docs/reference/tickets.md: tickets and the board, parts (parent tickets), Start (branch `pdt-<KEY>-<n>-<slug>`, worktree, attempt, agent session), merge detection, PR/CI tracking and notices, areas and overlap.
-- **Workflows** — docs/reference/workflows.md: the event log, workflow documents and versions, the engine (runs, steps, waits, retries), the node catalog, built-in workflows (PR notices, finishing merged tickets), `session.send`'s outbox, `ticket.finish`, connections; agent steps (personas, outcomes, nudges, stalls, loop limits) and the Inbox (Phase 7b); the Pipeline template, project policies (who merges, approvals, running cap, auto-start), Board stages and the host cap on agents running a turn (Phase 7c).
-- **pdt-mcp** — docs/reference/agents.md "pdt-mcp": PDT's MCP server at `/api/mcp` (per-session tokens), its tools, and how each agent gets it per launch.
-- **The PM** — docs/reference/agents.md "The PM": the host-level project manager (host project, tools only, asking before acting, briefing, notes, journal checkpoints and daily updates).
-- **Secrets** — docs/reference/secrets.md: secrets agents and workflows use but never see (keychain values, Settings → Secrets, `request_secret` and the masked Inbox form, `run_with_secrets`, `write_secret_file`, `{{secret.x}}` in workflows), redaction of stored text and logs, the audit list.
-- **GitHub** — docs/reference/github.md: the forge over GitHub's API, the in-app login (OAuth device flow or a pasted token, scopes, registering the OAuth App, Enterprise hosts), rate limits, the "Connect GitHub" Inbox item, the forge tools agents use instead of `gh`.
-- **Review** — docs/reference/review.md: the Changes view, line comments, Send feedback, Approve, Merge.
-- **Workspaces, projects, worktrees, runs** — docs/reference/workspaces.md; run configuration in docs/run-config.md.
-- Invariants that are easy to break:
+## How PDT works (read the developer guide before changing a part)
+- docs/dev/architecture.md: the processes (pdt-host, pdtd, the tray, the web UI) and how they talk, the crates, the core model (projects, tickets, attempts, sessions, runs, workflows) and where each area lives.
+- docs/dev/invariants.md: the rules that are easy to break, each with where it is enforced. docs/dev/testing.md: how tests run and what they never touch.
+- What PDT does for its users is in docs/user (published on the website); run configuration in docs/run-config.md.
+- Invariants that are easy to break (the full list: docs/dev/invariants.md):
   - The user's own agent settings and config files are never edited; "Always allow" is session-only for every agent.
   - A session or run has at most one tab, and closing its tab stops and removes it.
   - One active attempt per ticket; parent tickets are never started (their parts are).
@@ -88,8 +80,8 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - Tests never touch port 7420 or the real data folders, never the real keychain (PDT_SECRET_STORE=memory), never the real Tailscale (`PDT_TAILSCALE_BIN`) or GitHub (`PDT_GITHUB_OFFLINE=1`, `GithubApi::offline()`, recorded answers, `FakeForge`), and use `fake-agent` instead of real agents. Never touch the Mac mini's old self-hosted runner (`~/actions-runner-pdt`).
 - Names (product, slug, daemon, ports, release repo, keychain service; also in user-facing UI text) live only in crates/pdt-core/src/brand.rs (+ desktop/src-tauri/tauri.conf.json, desktop/src-tauri/tauri.bundle.conf.json, desktop/src-tauri/windows/hooks.nsh and scripts/release-stable.*).
 - Never edit an applied migration (sqlx checksums them); add a new one, named by its UTC creation time: `crates/pdt-store/migrations/$(date -u +%Y%m%d%H%M%S)_<what>.sql` (not the next number: `0001`–`0029` are the old numbered ones, and a test fails on a new number or a duplicate version). Nothing lists migrations by hand (`sqlx::migrate!` embeds the folder), and one with an older timestamp than the last applied still applies, so branches merge in any order. Data backfills that run when the store opens (e.g. project keys) go in `Store::open`, not in a migration (tests that build their own migrator skip them).
-- `.pdt/project.toml` must stay readable by the stable PDT: a new top-level section waits until the stable release supports it (docs/reference/tickets.md "Areas and overlap").
+- `.pdt/project.toml` must stay readable by the stable PDT: a new top-level section waits until the stable release supports it (docs/dev/invariants.md "Code and data").
 - On Windows, run cargo from PowerShell, not Git Bash: Git Bash's `link` shadows MSVC `link.exe`.
 - The `codex` on PATH may be the Codex desktop app (an old version) shadowing the npm CLI; check `codex --version`.
 - New dependencies: add with `cargo add` / `pnpm add` (latest), never versions from memory.
-- When behaviour described in docs/reference changes, update that file in the same PR.
+- When behaviour changes, update the user docs (docs/user) and the developer guide (docs/dev) in the same PR.

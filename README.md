@@ -38,7 +38,7 @@ Releases are published on GitHub when they are cut (`vX.Y.Z`; merges to `main` d
 Windows, `*.app.tar.gz` for macOS, and `pdt-linux-<arch>.tar.gz` (headless) or `pdt-linux-<arch>.AppImage` for Linux
 (x86_64, aarch64). Run the installer on Windows; on macOS unpack the app into Applications and open it once; on Linux
 run the AppImage, or unpack the tarball and run `pdt/pdt-host install` (a systemd user service; see
-docs/reference/host.md "Linux" for starting at boot with `loginctl enable-linger`). From then on
+docs/user/your-machine/install-and-updates.md for starting at boot with `loginctl enable-linger`). From then on
 `pdt-host` starts at login and keeps `pdtd` running on http://127.0.0.1:7420. Updates install
 themselves after that. The repo is private, so release downloads need a GitHub token (stored in the OS keychain from
 Host settings).
@@ -88,8 +88,8 @@ memory when `PDT_SECRET_STORE=memory`.
 - [docs/user](docs/user): the user docs (Getting started and the rest), published on the website
 - [SECURITY.md](SECURITY.md): how to report a vulnerability privately (never in a public issue)
 - [AGENTS.md](AGENTS.md): the working guide for coding agents
-- [docs/reference](docs/reference): how each part of PDT behaves (host, agent sessions, conversations, tickets,
-  review, workspaces)
+- [docs/dev](docs/dev/architecture.md): the developer guide (how PDT is built, invariants that are easy to break,
+  testing rules)
 - [docs/SDLC.md](docs/SDLC.md): how a change goes from worktree to release
 - [docs/ROADMAP.md](docs/ROADMAP.md): where the roadmap lives now (PDT's own tickets)
 - [docs/run-config.md](docs/run-config.md): how to configure Run and Test for a project; [docs/prompts/set-up-project.md](docs/prompts/set-up-project.md) is a prompt that has an agent do it (built in: Settings → project → Set up with an agent)
