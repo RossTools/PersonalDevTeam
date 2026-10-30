@@ -4,6 +4,7 @@
 //! is `FakeForge`; the waits are cut short.
 
 mod common;
+mod retired;
 
 use axum::http::StatusCode;
 use common::{call, git};
@@ -40,6 +41,11 @@ async fn setup() -> Env {
 
 /// A project whose repository is `repo` on GitHub.
 async fn setup_on(gh_repo: &str) -> Env {
+    setup_with(gh_repo, &[]).await
+}
+
+/// [`setup_on`] on a host that has these retired built-ins from before PDT-295 (the maintainer's, now their own).
+async fn setup_with(gh_repo: &str, retired: &[&str]) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -49,6 +55,9 @@ async fn setup_on(gh_repo: &str) -> Env {
     git(&repo, &["commit", "-m", "init", "-q"]);
     git(&repo, &["remote", "add", "origin", &format!("https://github.com/{gh_repo}.git")]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+    for id in retired {
+        retired::install(&store, id, true).await;
+    }
     let mut state = AppState::new(store, tmp.path().join("data"));
     let gh = Arc::new(FakeForge::default());
     state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::testing::fake_github(&gh))]);
@@ -471,15 +480,21 @@ fn nightly_run(id: u64, state: CiState, at: &str) -> CiRun {
     CiRun { branch: "main".into(), created_at: at.into(), ..ci_run(id, "release", "def", state) }
 }
 
-/// PDT-283: PDT nightly release, on a host that builds PDT, reads the scheduled nightly's run each day and puts a
-/// failed one in the Inbox, once.
+/// The host's own copy of a retired built-in, once pdtd has kept it as the user's (PDT-295).
+async fn kept(env: &Env, builtin: &str) -> Value {
+    pdt_api::run_workflows(&env.state).await;
+    let (_, wf) = call(&env.app, "GET", &format!("/api/workflows/{}", retired::id(builtin)), None).await;
+    assert!(wf["builtin"].is_null(), "{wf}");
+    assert_eq!(wf["enabled"], true, "{wf}");
+    wf
+}
+
+/// PDT-283: PDT nightly release (the maintainer's own workflow since PDT-295) reads the scheduled nightly's run each
+/// day and puts a failed one in the Inbox, once.
 #[tokio::test]
 async fn a_failed_nightly_goes_to_the_inbox_once() {
-    let env = setup_on(pdt_core::brand::RELEASE_REPO).await;
-    pdt_api::run_workflows(&env.state).await;
-    let (_, all) = call(&env.app, "GET", "/api/workflows", None).await;
-    let wf = all.as_array().unwrap().iter().find(|w| w["builtin"] == "pdt-nightly").cloned().expect("installed");
-    assert_eq!(wf["enabled"], true, "{wf}");
+    let env = setup_with(pdt_core::brand::RELEASE_REPO, &[retired::NIGHTLY]).await;
+    let wf = kept(&env, retired::NIGHTLY).await;
     let fire = |slot: i64| {
         let payload = json!({"workflowId": wf["id"], "nodeId": "daily", "slot": slot,
                              "slotIso": "2026-10-30T11:00:00Z", "date": "2026-10-30"});
@@ -533,13 +548,10 @@ async fn a_failed_nightly_goes_to_the_inbox_once() {
     assert_eq!(titles.iter().filter(|t| *t == "The nightly release failed").count(), 1, "{titles:?}");
 }
 
-/// PDT missing nightly, installed on a host that builds PDT, and a schedule firing for `date`'s 10:00 UTC look.
+/// PDT missing nightly (the maintainer's own workflow since PDT-295), and a schedule firing for `date`'s 10:00 UTC
+/// look.
 async fn missing_nightly(env: &Env) -> (String, impl Fn(i64, &str) -> pdt_core::workflow::api::NewLogEvent) {
-    pdt_api::run_workflows(&env.state).await;
-    let (_, all) = call(&env.app, "GET", "/api/workflows", None).await;
-    let wf =
-        all.as_array().unwrap().iter().find(|w| w["builtin"] == "pdt-nightly-missing").cloned().expect("installed");
-    assert_eq!(wf["enabled"], true, "{wf}");
+    let wf = kept(env, retired::NIGHTLY_MISSING).await;
     let id = wf["id"].as_str().unwrap().to_string();
     let wf_id = id.clone();
     let fire = move |slot: i64, date: &str| {
@@ -574,7 +586,7 @@ async fn missing_items(env: &Env) -> Vec<Value> {
 #[tokio::test]
 async fn a_missing_nightly_goes_to_the_inbox_once_and_clears_when_published() {
     let repo = pdt_core::brand::RELEASE_REPO;
-    let env = setup_on(repo).await;
+    let env = setup_with(repo, &[retired::NIGHTLY_MISSING]).await;
     let (wf, fire) = missing_nightly(&env).await;
     env.gh.publish(repo, release("v0.2.0"));
     env.gh.publish(repo, release("v0.2.1-nightly.20261029"));
@@ -629,7 +641,7 @@ async fn a_missing_nightly_goes_to_the_inbox_once_and_clears_when_published() {
 #[tokio::test]
 async fn start_it_runs_the_nightly() {
     let repo = pdt_core::brand::RELEASE_REPO;
-    let env = setup_on(repo).await;
+    let env = setup_with(repo, &[retired::NIGHTLY_MISSING]).await;
     let (_, fire) = missing_nightly(&env).await;
     env.gh.publish(repo, release("v0.2.1-nightly.20261029"));
     env.gh.set_ahead(repo, "v0.2.1-nightly.20261029", "main", 1);

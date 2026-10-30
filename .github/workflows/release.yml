@@ -21,8 +21,9 @@ name: release
 #   fragments (scripts/changelog.sh preview). On the schedule, a head of main that is already released (a published
 #   nightly or a stable release at that commit) publishes nothing, and the run ends green; a nightly tag there whose
 #   release never got published (a failed night) is built again. Re-running failed jobs reuses the tag; re-running
-#   every job of a manual run makes the day's next build. PDT's "PDT nightly release" workflow puts a failed scheduled
-#   run in the Inbox, and "PDT missing nightly" a night with changes on main and no nightly by 10:00 UTC.
+#   every job of a manual run makes the day's next build. The maintainer's own PDT workflows "PDT nightly release" and
+#   "PDT missing nightly" put a failed scheduled run, and a night with changes on main and no nightly by 10:00 UTC, in
+#   the Inbox.
 #
 # Secrets: PDT_RELEASE_TOKEN (required), a token that can push branches, open pull requests and turn on their
 # auto-merge on this repository (a fine-grained token with Contents and Pull requests read and write, or a GitHub

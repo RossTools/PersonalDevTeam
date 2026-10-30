@@ -2,8 +2,8 @@
 //! repository's Release Action), `github.change_request` (read a pull request by branch or number) and
 //! `github.release` (read the latest release, or one tag). The built-in "Cut a release" polls the last two between
 //! waits, the pull request with its CI (PDT-214: the release PR merges itself, so a failed check is the news).
-//! `github.workflow.latest` reads a workflow's newest run on a branch: PDT nightly release reads the scheduled
-//! nightly's (PDT-283), which no PDT run starts. `github.nightly` watches for a day's scheduled release (any tag
+//! `github.workflow.latest` reads a workflow's newest run on a branch, e.g. a scheduled release's
+//! (PDT-283), which no PDT run starts. `github.nightly` watches for a day's scheduled release (any tag
 //! pattern, PDT-294; PDT's nightlies in version 1, PDT-288) and puts a missing one in the Inbox until it is published.
 //! `repo` defaults to the run's project's GitHub repository.
 

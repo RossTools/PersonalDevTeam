@@ -1,8 +1,10 @@
 //! PDT-154 end to end: bug reports from other PDT instances (issues labelled `from-pdt` on the release repository)
-//! come in through the built-in "PDT bug triage" (the Triage persona's step, played by `fake-agent`), and a linked ticket that
-//! finishes closes its issue (the built-in "Done closes the GitHub issue"). GitHub is `FakeForge`.
+//! come in through "PDT bug triage" (the Triage persona's step, played by `fake-agent`), and a linked ticket that
+//! finishes closes its issue (the built-in "Done closes the GitHub issue"). GitHub is `FakeForge`. "PDT bug triage" is
+//! the maintainer's own workflow, a built-in until PDT-295: the host here has it from before.
 
 mod common;
+mod retired;
 
 use axum::http::StatusCode;
 use common::{call, git};
@@ -38,6 +40,7 @@ async fn setup() -> Env {
     git(&repo, &["commit", "-m", "init", "-q"]);
     git(&repo, &["remote", "add", "origin", &format!("https://github.com/{RELEASE_REPO}.git")]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+    retired::install(&store, retired::BUG_TRIAGE, true).await;
     let mut state = AppState::new(store, tmp.path().join("data"));
     state.platform.claude_program = FAKE.to_string();
     state.platform.codex_program = FAKE.to_string();
@@ -81,6 +84,14 @@ async fn builtin(env: &Env, id: &str) -> Value {
     pdt_api::run_workflows(&env.state).await;
     let (_, all) = call(&env.app, "GET", "/api/workflows", None).await;
     all.as_array().unwrap().iter().find(|w| w["builtin"] == id).cloned().unwrap_or_else(|| panic!("no {id}: {all}"))
+}
+
+/// PDT bug triage, the host's own workflow since PDT-295.
+async fn triage(env: &Env) -> Value {
+    pdt_api::run_workflows(&env.state).await;
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{}", retired::id(retired::BUG_TRIAGE)), None).await;
+    assert!(w["builtin"].is_null(), "{w}");
+    w
 }
 
 async fn runs(env: &Env, wf: &str) -> Vec<Value> {
@@ -180,10 +191,8 @@ async fn move_ticket(env: &Env, id: &str, stage: &str) {
 #[tokio::test]
 async fn bug_reports_are_triaged_into_tickets_duplicates_and_rejections() {
     let env = setup().await;
-    let triage = builtin(&env, "pdt-bug-triage").await;
-    assert_eq!(triage["enabled"], true, "enabled where a project is the release repository");
-    let (s, _) = call(&env.app, "GET", "/api/workflow-templates/builtin:pdt-bug-triage", None).await;
-    assert_eq!(s, StatusCode::OK, "offered as a template there too (PDT-226)");
+    let triage = triage(&env).await;
+    assert_eq!(triage["enabled"], true, "still enabled");
     let wf = triage["id"].as_str().unwrap().to_string();
     // Four reports by one author: no triage cap here (PDT-202's has a test of its own).
     call(&env.app, "PUT", "/api/host/settings", Some(json!({"triagePerAuthorHour": 0}))).await;
@@ -528,7 +537,7 @@ async fn an_issue_is_imported_once_and_wont_do_closes_it_as_not_planned() {
 async fn a_forge_without_issues_reads_and_changes_none() {
     let env = setup().await;
     *env.gh.capabilities.lock().unwrap() = pdt_forge::Capabilities::NONE;
-    assert_eq!(builtin(&env, "pdt-bug-triage").await["enabled"], true);
+    assert_eq!(triage(&env).await["enabled"], true);
     look(&env, issue(1, "Old", &["from-pdt"])).await;
     look(&env, issue(2, "Crash on start", &["from-pdt"])).await;
     assert!(env.gh.calls.lock().unwrap().is_empty(), "{:?}", env.gh.calls.lock().unwrap());
@@ -552,16 +561,15 @@ async fn a_forge_without_issues_reads_and_changes_none() {
 async fn the_triage_workflow_validates_and_dry_runs() {
     let env = setup().await;
     pdt_api::run_workflows(&env.state).await;
-    for id in ["pdt-bug-triage", "github-issue-done"] {
-        let w = builtin(&env, id).await;
+    for w in [triage(&env).await, builtin(&env, "github-issue-done").await] {
         let wid = w["id"].as_str().unwrap();
         let (_, d) = call(&env.app, "GET", &format!("/api/workflows/{wid}"), None).await;
         let (s, v) = call(&env.app, "POST", "/api/workflows/validate", Some(json!({"doc": d["doc"]}))).await;
         assert_eq!(s, StatusCode::OK, "{v}");
         let errors: Vec<_> = v.as_array().unwrap().iter().filter(|i| i["severity"] == "error").collect();
-        assert!(errors.is_empty(), "{id}: {errors:?}");
+        assert!(errors.is_empty(), "{wid}: {errors:?}");
     }
-    let wid = builtin(&env, "pdt-bug-triage").await["id"].as_str().unwrap().to_string();
+    let wid = triage(&env).await["id"].as_str().unwrap().to_string();
     let event = json!({"type": "github.issue.opened", "payload": {
         "projectId": env.project, "repo": RELEASE_REPO, "number": 7, "title": "Crash", "body": "b",
         "url": "https://github.com/x/7", "author": "al", "labels": ["from-pdt"], "createdAt": "t"}});
@@ -587,7 +595,7 @@ async fn the_triage_workflow_validates_and_dry_runs() {
 #[tokio::test]
 async fn triage_over_the_hourly_cap_is_skipped_and_summed_up() {
     let env = setup().await;
-    let triage = builtin(&env, "pdt-bug-triage").await;
+    let triage = triage(&env).await;
     let wf = triage["id"].as_str().unwrap().to_string();
     let (s, v) =
         call(&env.app, "PUT", "/api/host/settings", Some(json!({"triagePerAuthorHour": 1, "triagePerRepoHour": 2})))

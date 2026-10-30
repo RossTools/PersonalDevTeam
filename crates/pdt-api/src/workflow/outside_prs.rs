@@ -2,8 +2,7 @@
 //! PDT-268) gets an external ticket; Dependabot's patch and minor updates merge on green CI; everything else is
 //! reviewed by the locked-down PR Reviewer from the diff the forge gives (never checked out), and waits in the Inbox
 //! for the user: Approve & merge, Request changes or Close. Nothing is posted on the pull request until the user
-//! chooses. A push to it reviews it again; one closed or merged outside PDT finishes its ticket to match. PDT's own
-//! repository gets it as a built-in ([`super::builtins::PDT_PR_REVIEW`]) where bug triage is (PDT-226).
+//! chooses. A push to it reviews it again; one closed or merged outside PDT finishes its ticket to match.
 
 use super::templates::{doc as parse_doc, params as parse_params};
 use pdt_core::outside_pr::DEPENDABOT;
@@ -440,19 +439,6 @@ pub fn doc() -> WorkflowDoc {
     doc_with(json!({}))
 }
 
-/// The built-in for PDT's own repository (PDT-226's rule: where bug triage is): the template with its defaults,
-/// host-wide, for that repository only.
-pub fn pdt_doc() -> WorkflowDoc {
-    let repo = pdt_core::brand::RELEASE_REPO;
-    let values = pdt_core::workflow::template::param_values(&params(), &serde_json::Map::new())
-        .expect("the template's defaults");
-    let mut d = pdt_core::workflow::template::fill(&doc_with(json!({"repos": [repo]})), &values)
-        .expect("the template fills in");
-    d.name = "PDT pull request review".into();
-    d.description = format!("{} Enabled where a project's repository is {repo}.", d.description);
-    d
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,16 +484,5 @@ mod tests {
         // The Dependabot rule names Dependabot and the bot kind.
         let rule = serde_json::to_string(&d.node("dependabot").unwrap().config).unwrap();
         assert!(rule.contains(DEPENDABOT) && rule.contains("\"bot\""), "{rule}");
-    }
-
-    #[test]
-    fn pdts_own_is_the_template_for_its_repository_with_the_defaults() {
-        let d = pdt_doc();
-        let opened = d.node("opened").unwrap();
-        assert_eq!(opened.config["repos"], json!([pdt_core::brand::RELEASE_REPO]));
-        let rule = &d.node("dependabot").unwrap().config["conditions"];
-        assert_eq!(rule[0]["left"], json!(true));
-        assert_eq!(rule[3]["right"], json!(["patch", "minor"]));
-        assert_eq!(d.node("review").unwrap().config["persona"], "PR Reviewer");
     }
 }

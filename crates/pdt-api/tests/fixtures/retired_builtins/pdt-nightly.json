@@ -1,0 +1,166 @@
+{
+  "name": "PDT nightly release",
+  "description": "Every day at 11:00 UTC, about three hours after the release workflow's nightly schedule, reads its newest run on main in RossTools/PersonalDevTeam: a failed one goes to the Inbox with its failed jobs, once per run. A run still going is looked at again every half hour.",
+  "nodes": [
+    {
+      "id": "daily",
+      "kind": "schedule",
+      "version": 1,
+      "title": "Every day",
+      "config": {
+        "catchUp": true,
+        "cron": "0 11 * * *",
+        "timezone": "UTC"
+      },
+      "position": {
+        "x": 0.0,
+        "y": 0.0
+      }
+    },
+    {
+      "id": "latest",
+      "kind": "github.workflow.latest",
+      "version": 1,
+      "title": "The nightly's run",
+      "config": {
+        "branch": "main",
+        "repo": "RossTools/PersonalDevTeam",
+        "workflow": "release"
+      },
+      "position": {
+        "x": 260.0,
+        "y": 0.0
+      },
+      "retry": {
+        "max": 5,
+        "backoffMs": 60000
+      },
+      "maxVisits": 16
+    },
+    {
+      "id": "wait",
+      "kind": "wait",
+      "version": 1,
+      "title": "Still running",
+      "config": {
+        "ms": 1800000
+      },
+      "position": {
+        "x": 260.0,
+        "y": 200.0
+      },
+      "maxVisits": 16
+    },
+    {
+      "id": "tell",
+      "kind": "inbox.notice",
+      "version": 1,
+      "title": "Inbox: it failed",
+      "config": {
+        "key": "nightly-failed-{{steps.latest.id}}-{{steps.latest.attempt}}",
+        "text": "[The release workflow's run]({{steps.latest.url}}) on main (at `{{steps.latest.headSha}}`) failed, so no nightly was published from it.\n\n{{steps.latest.failedJobs}}\n\nRe-run its failed jobs on GitHub (that reuses its tag), or fix main: the next night's run tries again.",
+        "title": "The nightly release failed"
+      },
+      "position": {
+        "x": 520.0,
+        "y": -160.0
+      }
+    },
+    {
+      "id": "notify",
+      "kind": "notify",
+      "version": 1,
+      "title": "Tell me it failed",
+      "config": {
+        "body": "No nightly was published: see its run.",
+        "level": "warning",
+        "link": "{{steps.latest.url}}",
+        "title": "The nightly release failed"
+      },
+      "position": {
+        "x": 780.0,
+        "y": -160.0
+      }
+    },
+    {
+      "id": "failed",
+      "kind": "end",
+      "version": 1,
+      "title": "Failed",
+      "config": null,
+      "position": {
+        "x": 1040.0,
+        "y": -160.0
+      }
+    },
+    {
+      "id": "fine",
+      "kind": "end",
+      "version": 1,
+      "title": "Fine",
+      "config": {
+        "quiet": true
+      },
+      "position": {
+        "x": 520.0,
+        "y": 80.0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "daily",
+      "port": "out",
+      "to": "latest"
+    },
+    {
+      "from": "latest",
+      "port": "failed",
+      "to": "tell"
+    },
+    {
+      "from": "tell",
+      "port": "added",
+      "to": "notify"
+    },
+    {
+      "from": "tell",
+      "port": "skipped",
+      "to": "failed"
+    },
+    {
+      "from": "notify",
+      "port": "out",
+      "to": "failed"
+    },
+    {
+      "from": "latest",
+      "port": "running",
+      "to": "wait"
+    },
+    {
+      "from": "wait",
+      "port": "done",
+      "to": "latest"
+    },
+    {
+      "from": "latest",
+      "port": "passed",
+      "to": "fine"
+    },
+    {
+      "from": "latest",
+      "port": "cancelled",
+      "to": "fine"
+    },
+    {
+      "from": "latest",
+      "port": "none",
+      "to": "fine"
+    }
+  ],
+  "settings": {
+    "maxSteps": 58,
+    "maxRuntimeMs": 604800000
+  }
+}

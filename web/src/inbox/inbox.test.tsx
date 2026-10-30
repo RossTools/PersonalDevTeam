@@ -215,7 +215,7 @@ describe('inbox', () => {
   it('shows a triaged ticket with its notes and issue: Enter approves it, Reject rejects it (PDT-225)', async () => {
     const triaged = item('a', {
       kind: 'admit', group: 'admit', runId: 'r', stepId: null, title: 'Crash on start',
-      body: { summary: 'Panics when the config is empty.', issue: 'https://github.com/o/r/issues/2', external: true, workflow: 'PDT bug triage' },
+      body: { summary: 'Panics when the config is empty.', issue: 'https://github.com/o/r/issues/2', external: true, workflow: 'Bug triage' },
       choices: [{ id: 'approve', title: 'Approve', primary: true }, { id: 'reject', title: 'Reject', primary: false }],
     });
     expect(grouped([gate, triaged]).map((g) => g.title)).toEqual(['Triaged tickets', 'Gates']);
@@ -344,7 +344,7 @@ describe('inbox', () => {
     stubApi({});
     const nightly = item('n', {
       ticketId: null, ticketKey: null, ticketTitle: null, title: "Tonight's nightly didn't run",
-      body: { workflow: 'PDT missing nightly', text: 'See [the release workflow\'s runs](https://github.com/o/r/actions/workflows/release.yml).' },
+      body: { workflow: 'Missing nightly', text: 'See [the release workflow\'s runs](https://github.com/o/r/actions/workflows/release.yml).' },
       choices: [{ id: 'start', title: 'Start it', primary: true }, { id: 'ignore', title: 'Ignore', primary: false }],
     });
     renderWithQuery(<InboxView items={[nightly]} selectedId="n" onSelect={() => {}} />);

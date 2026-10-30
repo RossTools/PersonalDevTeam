@@ -431,6 +431,16 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Makes a built-in an ordinary workflow (PDT-295): it keeps everything but its built-in id.
+    pub async fn detach_workflow_builtin(&self, id: &str, now: i64) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE workflows SET builtin = NULL, updated_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn delete_workflow(&self, id: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("DELETE FROM workflows WHERE id = ?").bind(id).execute(&self.pool).await?;
         Ok(r.rows_affected() > 0)

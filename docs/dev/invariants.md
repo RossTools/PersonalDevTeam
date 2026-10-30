@@ -111,6 +111,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   keys inside `[[run]]`, `[[test]]` and `[[area]]` are refused, so a new section waits until stable supports it.
 - **Names live only in `crates/pdt-core/src/brand.rs`** (plus the Tauri configs, the Windows installer hooks and the
   release scripts): product name, slug, daemon, ports, release repository, keychain service, also in UI text.
+- **PDT never special-cases its own repository or development process; PDT's own automation lives in the
+  maintainer's workflows.** Outside tests, only updates, bug reports and the release repository setting name the
+  release repository (`brand::RELEASE_REPO`; a test in pdt-core `brand.rs` lists where). Nothing is installed or
+  offered by what a project's repository is. The built-ins that once automated PDT's development are kept on the
+  hosts that had them as their own workflows (pdt-api `workflow/builtins.rs`, `RETIRED`); never ship such a built-in
+  again.
 - **Guides served by pdtd link to each other by API path**, never by repository path (a test checks).
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.
