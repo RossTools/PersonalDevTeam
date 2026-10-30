@@ -26,6 +26,9 @@ export const RULES = [
 export const ALLOW = [
   // GitHub Enterprise Server's API URL, which the reader types in.
   { file: 'getting-started/connect.md', contains: 'https://github.example.com/api/v3' },
+  { file: 'your-machine/github.md', contains: 'https://github.example.com/api/v3' },
+  // A tailnet address (`*.ts.net`), which the reader sees in Settings and opens on their phone.
+  { file: 'your-machine/remote-access.md', contains: '.your-tailnet.ts.net' },
 ];
 
 /** Every internal reference in `text` (the file at `file`, relative to docs/user/): `{ line, rule, text, why }`. */

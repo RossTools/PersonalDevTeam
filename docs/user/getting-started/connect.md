@@ -52,7 +52,7 @@ covers reading and merging pull requests, CI runs and issues in your public and 
 
 In **Settings › Plugins › GitHub** you can instead paste a token (a classic token with `repo`, or a fine-grained one
 with read and write on pull requests, issues and contents, and read on actions and metadata). If you use the GitHub
-CLI, `gh auth token` prints the one it has. Click **Test** to see who it signs in as, then **Save**.
+CLI, `gh auth token` prints the one it has. Click **Test** to see who it signs in as, then **Save login token**.
 
 For **GitHub Enterprise Server**, enter your server's API URL (like `https://github.example.com/api/v3`) with a
 token. You can be connected to github.com and Enterprise servers at the same time; each project uses the account for
