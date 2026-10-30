@@ -94,6 +94,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **A dev instance never reads stable's keychain entries**: keys outside the stable data folder are scoped by the data
   folder (pdt-api `secrets.rs`).
 - **On Linux the secret backend sticks to its data folder** (keychain or file); it never switches.
+- **Agents never attach secrets.** A file an agent attaches by path (`files` on `add_ticket_comment`,
+  `create_ticket`, `edit_ticket`) is resolved and checked by `pdt_core::ticket_attachment::path_refusal`: no dotfiles,
+  no key or credential folders, nothing in the data folder but conversation and ticket attachments. A session that triages outside input attaches nothing (`ticket_attachments::read_files`). Attachments are
+  never downloaded from outside issues or PRs, and a text attachment on an external ticket reaches agents fenced
+  (`get_ticket`).
 - **Nothing runs `gh` or `glab`.** Forges go through their crates over HTTP (`pdt_forge::transport`); agents use
   pdt-mcp's forge tools.
 

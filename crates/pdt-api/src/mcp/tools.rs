@@ -79,6 +79,12 @@ struct AddTicketComment {
     /// A ticket key or id; this session's ticket when left out.
     #[serde(default)]
     ticket: Option<String>,
+    /// Files to attach to the comment (images show in it, text files as links): absolute local paths (images: PNG,
+    /// JPEG, GIF, WebP up to 10 MB; UTF-8 text such as .txt, .log, .md, .json, .csv, .yaml, .toml up to 1 MB), or
+    /// `pasted:1` for the newest image the user pasted into
+    /// this conversation (`pasted:2` the one before). Never secrets: dotfiles and key folders are refused.
+    #[serde(default)]
+    files: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -298,6 +304,11 @@ struct CreateTicket {
     /// Make it a part of this ticket (key or id).
     #[serde(default)]
     parent: Option<String>,
+    /// Files to attach: absolute local paths (images: PNG, JPEG, GIF, WebP up to 10 MB; UTF-8 text such as .txt,
+    /// .log, .md, .json, .csv, .yaml, .toml up to 1 MB), or `pasted:1` for the newest image the user pasted into
+    /// this conversation (`pasted:2` the one before). Never secrets: dotfiles and key folders are refused.
+    #[serde(default)]
+    files: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -322,6 +333,11 @@ struct EditTicket {
     /// Make it a part of this ticket (key or id), or `""` to detach it from its parent.
     #[serde(default)]
     parent: Option<String>,
+    /// Files to attach: absolute local paths (images: PNG, JPEG, GIF, WebP up to 10 MB; UTF-8 text such as .txt,
+    /// .log, .md, .json, .csv, .yaml, .toml up to 1 MB), or `pasted:1` for the newest image the user pasted into
+    /// this conversation (`pasted:2` the one before). Never secrets: dotfiles and key folders are refused.
+    #[serde(default)]
+    files: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -383,8 +399,8 @@ pub(crate) fn defs() -> Vec<Tool> {
             decl: ToolDecl::new("get_ticket", "Read the ticket, its comments and attempt").read_only().pm(),
             title: "Get the ticket",
             description: "The ticket this session works on (or another, by key): description, stage, links, attempts, \
-                          comments, the outcomes earlier agent steps submitted, and, in a workflow step, what the step \
-                          allows.",
+                          comments, attachments (each with a local file path to open), the outcomes earlier agent \
+                          steps submitted, and, in a workflow step, what the step allows.",
             schema: schema::<GetTicket>,
         },
         Tool {
@@ -404,7 +420,8 @@ pub(crate) fn defs() -> Vec<Tool> {
         Tool {
             decl: ToolDecl::new("add_ticket_comment", "Comment on the ticket").pm(),
             title: "Comment on the ticket",
-            description: "Adds a comment to the ticket's timeline (this session's ticket unless you name one).",
+            description: "Adds a comment to the ticket's timeline (this session's ticket unless you name one), with \
+                          files attached by local path if you give `files` (a screenshot shows in the comment).",
             schema: schema::<AddTicketComment>,
         },
         Tool {
@@ -603,8 +620,9 @@ pub(crate) fn defs() -> Vec<Tool> {
         Tool {
             decl: ToolDecl::new("create_ticket", "Create tickets").asks().pm(),
             title: "Create a ticket",
-            description: "Adds a ticket to a project (a draft unless you give a stage), recorded as the PM's. The \
-                          user confirms each call unless the project lets you act.",
+            description: "Adds a ticket to a project (a draft unless you give a stage), recorded as the PM's, with \
+                          `files` attached (an image the user pasted here is `pasted:1`). The user confirms each call \
+                          unless the project lets you act.",
             schema: schema::<CreateTicket>,
         },
         Tool {
@@ -613,8 +631,8 @@ pub(crate) fn defs() -> Vec<Tool> {
             description: "Changes a ticket's title, description, stage, priority, labels or parent, recorded as the \
                           agent's. Outside the PM, a ticket other than the session's own needs its exact key \
                           (`ABC-12`), and one in progress or done keeps its title and description unless this \
-                          session created it: comment on it instead. The user confirms each call unless the project \
-                          lets you act.",
+                          session created it: comment on it instead. `files` attaches files to it (alone, or with \
+                          the changes). The user confirms each call unless the project lets you act.",
             schema: schema::<EditTicket>,
         },
         Tool {
@@ -700,14 +718,26 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         "add_ticket_comment" => {
             let a: AddTicketComment = args(a)?;
             let id = ticket_for(cx, a.ticket.as_deref()).await?;
-            let body = valid_comment(&a.body).map_err(|e| api(e.into()))?;
+            let mut body = valid_comment(&a.body).map_err(|e| api(e.into()))?;
+            let by = agent_by(st, cx.session).await;
+            let read = crate::ticket_attachments::read_files(st, cx.session, &a.files).await?;
+            let attached = crate::ticket_attachments::attach_read(st, &id, read, &by).await?;
+            let mut data = None;
+            if !attached.is_empty() {
+                let refs: Vec<String> = attached.iter().map(|a| a.markdown()).collect();
+                body = format!("{body}\n\n{}", refs.join("\n"));
+                data = Some(json!({"attachments": attached.iter().map(|a| &a.id).collect::<Vec<_>>()}));
+            }
             let e = st
                 .store
-                .add_comment_by(&id, &body, agent_by(st, cx.session).await, None, now_ms())
+                .add_comment_by(&id, &body, by, data, now_ms())
                 .await
                 .map_err(store)?
                 .ok_or("that ticket no longer exists")?;
-            Ok(json!({"commented": true, "eventId": e.id}))
+            let ids: Vec<String> = attached.iter().map(|a| a.id.clone()).collect();
+            st.store.set_attachments_event(&ids, &e.id).await.map_err(store)?;
+            Ok(json!({"commented": true, "eventId": e.id,
+                      "attachments": crate::ticket_attachments::attached_json(st, &attached)}))
         }
         "list_secrets" => {
             let _: NoArgs = args(a)?;
@@ -1051,12 +1081,15 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 blocked_by_previous: None,
             };
             let valid = pdt_core::ticket::ValidNewTicket { source, ..input.validate().map_err(|e| api(e.into()))? };
+            let read = crate::ticket_attachments::read_files(st, cx.session, &a.files).await?;
             let id = uuid::Uuid::now_v7().to_string();
+            let by_agent = agent_by(st, cx.session).await;
             let t = st
                 .store
-                .create_ticket_by(&id, &project, &valid, agent_by(st, cx.session).await, now_ms())
+                .create_ticket_by(&id, &project, &valid, by_agent.clone(), now_ms())
                 .await
                 .map_err(|e| api(e.into()))?;
+            let attached = crate::ticket_attachments::attach_read(st, &id, read, &by_agent).await?;
             let by = match pm {
                 true => "the PM".to_string(),
                 false => cx.session.persona.as_ref().map_or("an agent".into(), |p| format!("the {}", p.name)),
@@ -1066,7 +1099,8 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             if triaging {
                 crate::untrusted::record_triage(st, cx.session, &t.summary.id).await;
             }
-            Ok(json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage}))
+            Ok(json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage,
+                      "attachments": crate::ticket_attachments::attached_json(st, &attached)}))
         }
         "edit_ticket" => {
             let raw = a.clone();
@@ -1104,8 +1138,16 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 ..Default::default()
             };
             let valid = patch.validate().map_err(|e| api(e.into()))?;
-            if valid == Default::default() {
-                return Err("give at least one field to change".into());
+            let unchanged = valid == Default::default();
+            if unchanged && a.files.is_empty() {
+                return Err("give at least one field to change, or files to attach".into());
+            }
+            let read = crate::ticket_attachments::read_files(st, cx.session, &a.files).await?;
+            if unchanged {
+                let by = agent_by(st, cx.session).await;
+                let attached = crate::ticket_attachments::attach_read(st, &id, read, &by).await?;
+                return Ok(json!({"updated": true, "key": current.summary.key, "title": current.summary.title,
+                                 "attachments": crate::ticket_attachments::attached_json(st, &attached)}));
             }
             let since = now_ms();
             let mut by = agent_by(st, cx.session).await;
@@ -1128,8 +1170,10 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 Some(stage) => crate::stop::after_move(st, &id, stage, since, &by).await,
                 None => {}
             }
+            let attached = crate::ticket_attachments::attach_read(st, &id, read, &by).await?;
             Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage,
-                      "parent": t.summary.parent.map(|p| p.key)}))
+                      "parent": t.summary.parent.map(|p| p.key),
+                      "attachments": crate::ticket_attachments::attached_json(st, &attached)}))
         }
         "stop_ticket" => {
             let a: StopTicket = args(a)?;
@@ -1576,17 +1620,24 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
         _ => Value::Null,
     };
     // An external ticket's description is what someone outside PDT wrote (an imported issue, PDT-202): fenced.
-    let outside = (ticket.summary.source == TicketSource::External).then(|| {
-        let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
-        (fence.wrap(&ticket.description), fence.note())
-    });
+    let external = ticket.summary.source == TicketSource::External;
+    let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+    let outside = external.then(|| (fence.wrap(&ticket.description), fence.note()));
+    let attachments = attachments_of(st, id, external.then_some(&fence)).await?;
     let mut v = serde_json::to_value(ticket).map_err(|e| e.to_string())?;
     if let Some((description, note)) = outside {
         v["description"] = json!(description);
         v["outsideText"] = json!(format!(
-            "{note} This ticket came from outside PDT, so its description is in such a block (the tags are not part \
-             of it)."
+            "{note} This ticket came from outside PDT, so its description (and any text file attached to it) is in \
+             such a block (the tags are not part of it)."
         ));
+    }
+    if !attachments.is_empty() {
+        v["attachments"] = json!(attachments);
+        v["attachmentsNote"] = json!(
+            "The ticket has attachments: open the images and files that matter (each `path` is a local file you can \
+             read; an image opens with your file-reading or image-viewing tool)."
+        );
     }
     v["comments"] = json!(comments);
     v["history"] = json!(history);
@@ -1595,6 +1646,30 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
         v["step"] = step;
     }
     Ok(v)
+}
+
+/// A ticket's attachments for `get_ticket`: name, type, size, who added it and when, and the local file's path. On
+/// an external ticket (`fence` given) a text file's content comes fenced as outside input instead of its path.
+async fn attachments_of(st: &AppState, id: &str, fence: Option<&pdt_core::fence::Fence>) -> Result<Vec<Value>, String> {
+    let mut out = Vec::new();
+    for a in st.store.ticket_attachments(id).await.map_err(store)? {
+        let path = crate::ticket_attachments::path_of(st, &a);
+        let by = match (&a.agent, a.actor) {
+            (Some(g), Actor::Agent) => g.persona.clone().unwrap_or_else(|| "agent".into()),
+            (_, actor) => actor.as_str().to_string(),
+        };
+        let mut v = json!({"id": a.id, "name": a.name, "mediaType": a.media_type, "size": a.size, "by": by,
+                           "at": a.created_at});
+        match fence {
+            Some(f) if !a.is_image() => {
+                let text = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+                v["text"] = json!(f.wrap(&text));
+            }
+            _ => v["path"] = json!(path),
+        }
+        out.push(v);
+    }
+    Ok(out)
 }
 
 /// A review comment on the session's attempt's worktree, by its persona (or `agent`), already sent.

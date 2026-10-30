@@ -109,7 +109,10 @@ pub(crate) async fn update(
 
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     match st.store.delete_ticket(&id).await? {
-        DeleteTicket::Deleted => Ok(StatusCode::NO_CONTENT),
+        DeleteTicket::Deleted => {
+            crate::ticket_attachments::prune(&st).await;
+            Ok(StatusCode::NO_CONTENT)
+        }
         DeleteTicket::NotFound => Err(unknown_ticket()),
         DeleteTicket::Active => {
             let key = st.store.get_ticket_summary(&id).await?.map(|t| t.key).unwrap_or(id);
@@ -160,6 +163,9 @@ pub(crate) async fn bulk(
     }
     let since = now_ms();
     let count = st.store.bulk_tickets(&req.ids, &action, since).await?;
+    if matches!(action, ValidBulk::Delete) {
+        crate::ticket_attachments::prune(&st).await;
+    }
     if let ValidBulk::Stage(stage) = action
         && stage.is_closed()
     {

@@ -9,7 +9,6 @@ import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Ticket } from '../api/gen/Ticket';
 import { AgentDot } from '../common/AgentState';
-import { Composer } from '../common/Composer';
 import { Markdown } from '../common/Markdown';
 import { PartsStepper } from '../common/PartsStepper';
 import { PRIORITY_LABEL, PriorityIcon } from '../common/PriorityIcon';
@@ -30,9 +29,9 @@ import { agentLine } from './Board';
 import { isClosed } from './model';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
 import { prName } from './PullRequest';
-import { ticketKeys } from './queries';
 import { TicketBadges } from './TicketBadges';
-import { FoldedSectionContext, OverviewSection, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline } from './TicketParts';
+import { CommentComposer, FoldedSectionContext, OverviewSection, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline } from './TicketParts';
+import { TicketAttachments, useTicketAttachments } from './attachments';
 import { HubPanel, HubTabs, useSection } from './TicketView';
 
 /** The bottom bar's buttons: 48px, whatever the pointer. */
@@ -64,6 +63,7 @@ type Editing = { field: 'title' | 'description'; draft: string };
 
 export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDeleted: () => void }) {
   const qc = useQueryClient();
+  const attachments = useTicketAttachments(t.id).data ?? [];
   const confirm = useConfirm();
   const start = useStartTicket();
   const openTicket = useOpenTicket();
@@ -178,6 +178,7 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
               <Fold title={attempt ? 'Attempt' : 'Sessions'} summary={attemptSummary(t)}><AttemptSection ticket={t} compact /></Fold>
             )}
             <Fold title="Links" summary={t.links.length === 0 ? 'None' : `${t.links.length}`}><TicketLinks ticket={t} /></Fold>
+            <Fold title="Attachments" summary={attachments.length === 0 ? 'None' : `${attachments.length}`}><TicketAttachments ticketId={t.id} /></Fold>
             {t.overlaps.length > 0 && <Fold title="Overlaps" summary={overlapSummary(t)}><TicketOverlaps ticket={t} /></Fold>}
           </div>
           <div className="flex flex-col divide-y divide-border px-4 *:py-4">
@@ -216,18 +217,7 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
         {actions.map(action)}
       </div>
       <Sheet side="bottom" title="Comment" open={commenting} onOpenChange={setCommenting}>
-        <Composer
-          label="Comment"
-          sendLabel="Comment"
-          submitOn="mod-enter"
-          rows={4}
-          placeholder="Add a comment (Markdown)"
-          onSend={async (text) => {
-            await api.commentOnTicket(t.id, text);
-            void qc.invalidateQueries({ queryKey: ticketKeys.events(t.id) });
-            setCommenting(false);
-          }}
-        />
+        <CommentComposer ticketId={t.id} rows={4} autoFocus className="" onSent={() => setCommenting(false)} />
       </Sheet>
       {acceptingOpen && accept && primaryChoice && (
         <MergeConfirm item={accept} choice={primaryChoice} busy={accepting} onCancel={() => setAccepting(false)}

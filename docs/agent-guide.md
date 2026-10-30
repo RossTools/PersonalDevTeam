@@ -27,10 +27,10 @@ person confirms per call unless the project lets the PM act. Use them for what t
 
 | Tool | Does |
 |---|---|
-| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history (each `by` a persona, `user` or `system`, with an agent's `sessionId` and the `fromTicket` it works on), the outcomes earlier workflow steps submitted, and in a workflow step, the outcomes it allows |
+| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history (each `by` a persona, `user` or `system`, with an agent's `sessionId` and the `fromTicket` it works on), `attachments` (each `{id, name, mediaType, size, by, at, path}`: `path` is a local file to open; see "Attachments" below), the outcomes earlier workflow steps submitted, and in a workflow step, the outcomes it allows |
 | `submit_outcome` | `{outcome, summary, comments?}`: ends this session's workflow step with one of its outcomes; `comments` (`{file, line, endLine?, body}`) become line comments on the changes. `submitted` is refused while the worktree has uncommitted changes to tracked files, commits not pushed to its upstream, or a branch not pushed to `origin`: commit and push first |
 | `ask_user` | `{questions: [{question, choices?}]}`: puts questions in the person's Inbox; the answers come back as a message, so end your turn after asking |
-| `add_ticket_comment` | `{body, ticket?}`: a comment on the ticket's timeline, by the agent |
+| `add_ticket_comment` | `{body, ticket?, files?}`: a comment on the ticket's timeline, by the agent; `files` attaches local files to the ticket and shows them in the comment (see "Attachments") |
 | `list_secrets` | the secrets (API keys, tokens, passwords) this session may use: names and descriptions, never values |
 | `request_secret` | `{name, purpose}`: asks the person for a secret; they type it into PDT's Inbox, never the chat. You get `stored: true` once it is (at once if it already is), never the value: end your turn after asking |
 | `run_with_secrets` | `{command, env, cwd?, timeoutSecs?}`: runs a command line with `env` values `secret:<name>` set to the secrets; the output comes back with each value replaced by `[secret:<name>]` |
@@ -41,7 +41,7 @@ person confirms per call unless the project lets the PM act. Use them for what t
 | `get_overview`, `search_tickets`, `get_session`, `list_workflow_runs` | the PM's view of every project: open tickets per stage, tickets in progress with PR and CI, the Inbox, running sessions; ticket search; a session's state and last messages; workflow runs and their steps |
 | `search_notes`, `save_note`, `delete_note`, `write_journal` | the PM's memory: notes (host-wide or per project; pinned ones go in every PM briefing) and the journal entry each PM conversation keeps (checkpoints after a compaction and daily, the last one when the user closes it) |
 | `list_todos` | `{project?, done?}`: the person's own todo list (title, notes `body` in Markdown, done, project, linked ticket, due date `dueOn` and time `dueTime`, repeat rule `recurrence`, dates), read-only |
-| `create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session` | the PM's changes: a new ticket (a draft by default), an edit to any ticket (also its parent; outside the PM, another ticket than your own only by its exact key, and not the title or description of one in progress or done you didn't create; moving one at work back to Draft, Ready or To do stops its work), a link between two tickets (`blocks`, `blockedBy`, `relates`) or its removal, stopping a ticket's work (`{ticket, stage?, removeWorktree?, deleteBranch?}`: cancels its workflow runs, stops its sessions, abandons its attempt and moves it back to To do; `removeWorktree` also discards its worktree), a message to a session (delivered when it is idle, so it can't stop a busy agent); each waits for the person's yes unless the project lets the PM act |
+| `create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session` | the PM's changes: a new ticket (a draft by default), an edit to any ticket (also its parent; outside the PM, another ticket than your own only by its exact key, and not the title or description of one in progress or done you didn't create; moving one at work back to Draft, Ready or To do stops its work), a link between two tickets (`blocks`, `blockedBy`, `relates`) or its removal, stopping a ticket's work (`{ticket, stage?, removeWorktree?, deleteBranch?}`: cancels its workflow runs, stops its sessions, abandons its attempt and moves it back to To do; `removeWorktree` also discards its worktree), a message to a session (delivered when it is idle, so it can't stop a busy agent); `create_ticket` and `edit_ticket` take `files` too (see "Attachments"); each waits for the person's yes unless the project lets the PM act |
 
 Never ask the person to paste a secret into the chat, and never print, log or commit one: ask with `request_secret`
 and use it through `run_with_secrets` or `write_secret_file` (keep files they write out of git). PDT replaces every
@@ -67,6 +67,28 @@ backlog), `todo` (picked for the board), `in_progress`, `done`, `wont_do`. Prior
 | `GET /api/tickets/<id>/events` | the ticket's timeline, oldest first (`newestFirst=true` for newest first; `limit`, `cursor`; returns `{items, nextCursor}`). Comments are the items with `kind: "comment"`, their text in `body` |
 | `POST /api/tickets/<id>/comments` | `{body}`; your comment shows as an agent's (actor `agent`), not the person's, and is not sent back to you |
 | `POST /api/tickets/<id>/links` | `{kind: "blocks" \| "relates", to: <other ticket id>}` (this ticket blocks `to`) |
+
+### Attachments
+
+A ticket can hold screenshots and text files (PNG, JPEG, GIF and WebP images up to 10 MB; UTF-8 text such as
+`.txt`, `.log`, `.md`, `.json`, `.csv`, `.yaml`, `.toml` up to 1 MB; at most 50 per ticket). The person pastes or
+drops them into the description or a comment, where images show inline. `get_ticket` lists them with a local `path`:
+open the images and files that matter. Claude Code opens an image with its Read tool; Codex with its `view_image`
+tool; other agents with whatever file tool of theirs reads images (if none does, the name and the comment around it
+are what you have). On a ticket from outside PDT, a text file comes as `text`, fenced as outside input, instead of a
+path.
+
+To attach files, give their absolute paths in `files` (`add_ticket_comment`, `create_ticket`, `edit_ticket`), for
+example a screenshot of what you tried. `pasted:1` is the newest image the person pasted into this conversation
+(`pasted:2` the one before). Dotfiles (`.env`), key and credential folders (`.ssh`, `.aws`, keychains) and PDT's own
+data are refused, and a call with one bad file attaches none.
+
+| Call | Does |
+|---|---|
+| `GET /api/tickets/<id>/attachments` | the ticket's attachments, oldest first |
+| `POST /api/tickets/<id>/attachments?name=<file name>` | the body is the file; the bytes decide what it is. Returns the attachment |
+| `GET /api/tickets/<id>/attachments/<aid>` | the file (text always as `text/plain`) |
+| `DELETE /api/tickets/<id>/attachments/<aid>` | removes it |
 
 The person reviews your branch in PDT's Changes view and sends line comments back as one message that starts
 "Review feedback on <branch>": each comment names `file:line`, quotes the lines and says what to change. Address each

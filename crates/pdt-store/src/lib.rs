@@ -1,3 +1,4 @@
+mod attachments;
 mod error;
 mod event_log;
 mod events;
@@ -18,6 +19,7 @@ mod workflows;
 mod workspaces;
 mod worktrees;
 
+pub use attachments::AddAttachment;
 pub use error::StoreError;
 pub use event_log::{EVENT_RETENTION_MS, EventFilter};
 pub use events::{NewEvent, RAW_RETENTION_MS};

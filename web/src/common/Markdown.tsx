@@ -6,6 +6,7 @@ import rehypeSanitize from 'rehype-sanitize';
 import { Check } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { TicketKeysContext } from './ticketKeys';
+import { AttachmentImage, AttachmentLink, attachmentRef } from './AttachmentViews';
 
 interface MdNode {
   type: string;
@@ -62,7 +63,10 @@ const components: Components = {
   h5: ({ node: _n, ...p }) => <h5 {...p} className="mt-3 mb-1 text-xs font-semibold text-muted-foreground first:mt-0" />,
   h6: ({ node: _n, ...p }) => <h6 {...p} className="mt-3 mb-1 text-xs font-medium text-muted-foreground first:mt-0" />,
   p: ({ node: _n, ...p }) => <p {...p} className="my-2 first:mt-0 last:mb-0" />,
-  a: ({ node: _n, href, ...p }) => (
+  // A ticket's attached text file opens in a viewer (PDT-300).
+  a: ({ node: _n, href, ...p }) => attachmentRef(href) ? (
+    <AttachmentLink src={href!} name={typeof p.children === 'string' ? p.children : 'Attachment'}>{p.children}</AttachmentLink>
+  ) : (
     <a
       {...p}
       href={href}
@@ -98,7 +102,10 @@ const components: Components = {
   th: ({ node: _n, ...p }) => <th {...p} className="border border-border bg-muted px-2 py-1 text-left font-medium" />,
   td: ({ node: _n, ...p }) => <td {...p} className="border border-border px-2 py-1 align-top" />,
   del: ({ node: _n, ...p }) => <del {...p} className="text-muted-foreground" />,
-  img: ({ node: _n, alt, ...p }) => <img {...p} alt={alt ?? ''} className="my-2 max-w-full rounded-md" />,
+  // A ticket's attached image opens full size (PDT-300).
+  img: ({ node: _n, alt, ...p }) => typeof p.src === 'string' && attachmentRef(p.src)
+    ? <AttachmentImage src={p.src} alt={alt ?? ''} />
+    : <img {...p} alt={alt ?? ''} className="my-2 max-w-full rounded-md" />,
 };
 
 // A document to read (a note, PDT-143): roomier, with headings a step above the body and quieter list markers.

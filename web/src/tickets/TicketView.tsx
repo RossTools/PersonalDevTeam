@@ -25,6 +25,7 @@ import { useOpenChanges } from '../review/open';
 import { useDiffSize } from '../review/queries';
 import { useCheckMerge, useProjectForge, useTicket } from './queries';
 import { CreateIssueDialog } from './CreateIssueDialog';
+import { TicketAttachments } from './attachments';
 import { ExternalKeys } from './ExternalKeys';
 import {
   LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
@@ -234,6 +235,7 @@ export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticke
               <AttemptSection ticket={t} />
               <TicketOverlaps ticket={t} />
               <TicketLinks ticket={t} />
+              <TicketAttachments ticketId={t.id} />
             </aside>
           </div>
         </div>
