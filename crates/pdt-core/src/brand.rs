@@ -76,6 +76,67 @@ impl Profile {
 mod tests {
     use super::*;
 
+    /// PDT never special-cases its own repository (PDT-295; docs/dev/invariants.md): outside tests, only these name
+    /// the release repository, PDT as the vendor (updates, bug reports, the release repository setting).
+    const RELEASE_REPO_USERS: &[(&str, &str)] = &[
+        ("crates/pdt-core/src/brand.rs", "where it is defined"),
+        ("crates/pdt-core/src/host.rs", "the release repository setting (its override)"),
+        ("crates/pdt-api/src/update.rs", "updates and bug reports"),
+        ("crates/pdt-api/src/routes.rs", "updates and bug reports (the default update service)"),
+        ("crates/pdtd/src/main.rs", "updates and bug reports (pdtd's update service)"),
+        ("crates/pdt-int-discord/src/bot.rs", "Discord's User-Agent names the product's home"),
+    ];
+
+    /// The source files of the product (tests left out: `tests/`, `tests.rs`, a file's `#[cfg(test)]` part).
+    fn product_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let path = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if path.is_dir() {
+                if !["tests", "node_modules", "target", "gen"].contains(&name.as_str()) {
+                    product_sources(&path, out);
+                }
+            } else if (name.ends_with(".rs") && name != "tests.rs")
+                || ((name.ends_with(".ts") || name.ends_with(".tsx")) && !name.contains(".test."))
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Whether `text` names the release repository: the constants (not `PDT_RELEASE_REPO`, the override's variable),
+    /// or the repository itself.
+    fn names_release_repo(text: &str) -> bool {
+        let constant = text
+            .match_indices("RELEASE_REPO")
+            .any(|(i, _)| !text[..i].chars().next_back().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_'));
+        constant || text.to_ascii_lowercase().contains(&RELEASE_REPO.to_ascii_lowercase())
+    }
+
+    #[test]
+    fn only_updates_and_bug_reports_name_the_release_repository() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut files = vec![];
+        for dir in ["crates", "desktop/src-tauri/src", "web/src", "web/ui"] {
+            product_sources(&root.join(dir), &mut files);
+        }
+        let crates = files.iter().filter(|f| f.extension().is_some_and(|e| e == "rs")).count();
+        assert!(crates > 100, "found the sources ({crates})");
+        let mut found = vec![];
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap();
+            let product = text.split("#[cfg(test)]").next().unwrap_or_default();
+            let rel = f.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+            if names_release_repo(product) && !RELEASE_REPO_USERS.iter().any(|(p, _)| *p == rel) {
+                found.push(rel);
+            }
+        }
+        assert!(found.is_empty(), "name the release repository outside updates and bug reports: {found:?}");
+        assert!(names_release_repo("brand::RELEASE_REPO_ID") && names_release_repo("\"rosstools/personaldevteam\""));
+        assert!(!names_release_repo("PDT_RELEASE_REPO"));
+    }
+
     #[test]
     fn the_app_bundle_id_is_the_tauri_identifier() {
         let conf: serde_json::Value =

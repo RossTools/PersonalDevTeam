@@ -174,22 +174,6 @@ export const plugins: IntegrationInfo[] = [
     ],
     "workflows": [
       {
-        "id": "pdt-bug-triage",
-        "title": "PDT bug triage"
-      },
-      {
-        "id": "pdt-pr-review",
-        "title": "PDT pull request review"
-      },
-      {
-        "id": "pdt-nightly",
-        "title": "PDT nightly release"
-      },
-      {
-        "id": "pdt-nightly-missing",
-        "title": "PDT missing nightly"
-      },
-      {
         "id": "github-issue-done",
         "title": "Done closes the GitHub issue"
       },

@@ -103,7 +103,7 @@ async fn the_catalog_and_the_builtins_are_served() {
         .map(|w| (w["builtin"].as_str().unwrap(), w["enabled"].as_bool().unwrap()))
         .collect();
     assert_eq!(builtins.len(), 8, "no integration's built-ins until it is enabled: {list}");
-    // Bug triage is only where a project is PDT's own repository (PDT-154, PDT-226): neither installed nor offered.
+    // PDT's own development's are not built-ins (PDT-295): neither installed nor offered.
     assert!(builtins.contains(&("github-issue-done", true)) && !builtins.iter().any(|b| b.0 == "pdt-bug-triage"));
     let (_, templates) = call(&env.app, "GET", "/api/workflow-templates", None).await;
     assert!(!templates.to_string().contains("builtin:pdt-bug-triage"), "{templates}");

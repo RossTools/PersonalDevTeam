@@ -171,10 +171,6 @@
         }
       ],
       "workflows": [
-        "PDT bug triage",
-        "PDT pull request review",
-        "PDT nightly release",
-        "PDT missing nightly",
         "Done closes the GitHub issue",
         "Cut a release"
       ]

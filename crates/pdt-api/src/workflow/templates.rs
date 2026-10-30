@@ -284,14 +284,9 @@ pub(crate) fn failed_workflow_runs() -> Template {
     )
 }
 
-/// The templates PDT ships that this host is offered: PDT bug triage only where a project is PDT's own repository
-/// (PDT-226).
-async fn offered_templates(st: &AppState) -> Vec<Template> {
-    let mut out = builtin_templates(&st.registry());
-    if !super::builtins::builds_pdt(st).await {
-        out.retain(|t| !t.id.strip_prefix(BUILTIN_PREFIX).is_some_and(super::builtins::only_for_pdt));
-    }
-    out
+/// The templates PDT ships, for the integrations that are on.
+fn offered_templates(st: &AppState) -> Vec<Template> {
+    builtin_templates(&st.registry())
 }
 
 /// The templates (and built-in workflows, as templates) of the integrations this build has that are turned off (PDT's
@@ -301,12 +296,7 @@ fn off_templates(st: &AppState) -> Vec<(Template, bool)> {
         .off()
         .iter()
         .flat_map(|i| {
-            // PDT bug triage is only ever offered where PDT is built, which uses GitHub.
-            let workflows = i
-                .builtin_workflows()
-                .into_iter()
-                .filter(|b| !super::builtins::only_for_pdt(b.id))
-                .map(|b| (of_builtin(&b), true));
+            let workflows = i.builtin_workflows().into_iter().map(|b| (of_builtin(&b), true));
             i.templates().into_iter().map(|t| (t, false)).chain(workflows)
         })
         .collect()
@@ -314,7 +304,7 @@ fn off_templates(st: &AppState) -> Vec<(Template, bool)> {
 
 async fn find(st: &AppState, id: &str) -> Result<Template, ApiError> {
     if id.starts_with(BUILTIN_PREFIX) {
-        if let Some(t) = offered_templates(st).await.into_iter().find(|t| t.id == id) {
+        if let Some(t) = offered_templates(st).into_iter().find(|t| t.id == id) {
             return Ok(t);
         }
         return Err(
@@ -402,7 +392,6 @@ pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<GalleryT
     let everything = st.integrations.everything();
     let catalog = everything.catalog();
     let mut out: Vec<GalleryTemplate> = offered_templates(&st)
-        .await
         .into_iter()
         .map(|t| {
             let workflow = workflows.contains(&t.id);
@@ -676,7 +665,6 @@ mod tests {
         assert_eq!(of("cut-release"), Some(Category::Releases));
         assert_eq!(of("issue-triage"), Some(Category::Issues));
         assert_eq!(of("review-outside-prs"), Some(Category::Issues));
-        assert_eq!(of("pdt-pr-review"), Some(Category::Issues));
         assert_eq!(of(FAILED_RUNS), Some(Category::CiPr));
     }
 

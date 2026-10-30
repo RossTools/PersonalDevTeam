@@ -1,9 +1,11 @@
-//! PDT-269 end to end: pull requests PDT didn't open on PDT's own repository come in through the built-in "PDT pull
-//! request review" (the Review outside pull requests template): a ticket, the PR Reviewer's review (played by
-//! `fake-agent`), and the user's choice in the Inbox; Dependabot's patch and minor updates merge on green CI. GitHub
-//! is `FakeForge`.
+//! PDT-269 end to end: pull requests PDT didn't open on PDT's own repository come in through "PDT pull request review"
+//! (the Review outside pull requests template, filled in): a ticket, the PR Reviewer's review (played by `fake-agent`),
+//! and the user's choice in the Inbox; Dependabot's patch and minor updates merge on green CI. GitHub is `FakeForge`.
+//! "PDT pull request review" is the maintainer's own workflow, a built-in until PDT-295: the host here has it from
+//! before.
 
 mod common;
+mod retired;
 
 use axum::http::StatusCode;
 use common::{call, git};
@@ -30,7 +32,7 @@ struct Env {
 }
 
 /// A project whose repository is PDT's own, served on a free local port (the agent's pdt-mcp calls come over TCP),
-/// with the built-in enabled and its first look at the pull requests taken.
+/// with the workflow enabled and its first look at the pull requests taken.
 async fn setup() -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
@@ -41,6 +43,7 @@ async fn setup() -> Env {
     git(&repo, &["commit", "-m", "init", "-q"]);
     git(&repo, &["remote", "add", "origin", &format!("https://github.com/{RELEASE_REPO}.git")]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+    retired::install(&store, retired::PR_REVIEW, true).await;
     let mut state = AppState::new(store, tmp.path().join("data"));
     state.platform.claude_program = FAKE.to_string();
     state.platform.codex_program = FAKE.to_string();
@@ -68,9 +71,9 @@ async fn setup() -> Env {
     // Several pull requests by one author: no triage cap here.
     call(&app, "PUT", "/api/host/settings", Some(json!({"triagePerAuthorHour": 0}))).await;
     pdt_api::run_workflows(&state).await;
-    let (_, all) = call(&app, "GET", "/api/workflows", None).await;
-    let w = all.as_array().unwrap().iter().find(|w| w["builtin"] == "pdt-pr-review").cloned().expect("installed");
-    assert_eq!(w["enabled"], true, "enabled where a project is PDT's own repository");
+    let (_, w) = call(&app, "GET", &format!("/api/workflows/{}", retired::id(retired::PR_REVIEW)), None).await;
+    assert!(w["builtin"].is_null(), "the user's own: {w}");
+    assert_eq!(w["enabled"], true, "{w}");
     let wf = w["id"].as_str().unwrap().to_string();
     let env = Env { app, state, project, gh, wf, _tmp: tmp };
     look(&env, vec![]).await;
