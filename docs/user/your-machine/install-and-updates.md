@@ -81,11 +81,11 @@ repositories will do. It's kept in your system's keychain. The same token files 
 **Settings › This host › Updates › Update channel**:
 
 - **Stable releases**: full releases only. The default.
-- **Experimental builds too**: also the builds made between releases, to try what's coming. They can change the
-  database in ways no stable release understands yet, so once you've installed one you can't go back to an older
-  stable release.
+- **Nightly builds too**: also a build of the latest code every night it changed, to try what's coming. They can
+  change the database in ways no stable release understands yet, so once you've installed one you can't go back to an
+  older stable release.
 
-Switching back to **Stable releases** never installs an older version: you stay on the experimental build until a newer
+Switching back to **Stable releases** never installs an older version: you stay on the nightly build until a newer
 stable release comes out, then move to it. PDT never downgrades.
 
 ## Uninstall

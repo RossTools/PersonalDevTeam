@@ -13,9 +13,9 @@ import type { UpdateState } from "./UpdateState";
  */
 export type CheckResponse = { result: CheckResult, current: string, 
 /**
- * The installed version is an experimental build (`X.Y.Z-exp.N`).
+ * The installed version is a nightly build (`X.Y.Z-nightly.YYYYMMDD`, or an older `X.Y.Z-exp.N`).
  */
-currentExperimental: boolean, 
+currentNightly: boolean, 
 /**
  * The host's update channel (PDT-210).
  */

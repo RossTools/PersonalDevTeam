@@ -81,7 +81,7 @@ export function UpdateBanner() {
             }
           >
             Update to v{s.latest.version} available
-            {s.latest.experimental && <> <Badge>Experimental</Badge></>}
+            {s.latest.nightly && <> <Badge>Nightly</Badge></>}
             {install.isError && <span role="alert" className="text-destructive" title={install.error.message}> · {install.error.message}</span>}
           </Banner>
           {notesOpen && hasNotes && (
@@ -118,7 +118,7 @@ function ReleaseList({ releases, since }: { releases: ReleaseNotes[]; since: str
       {releases.length > 1 && <p className="font-medium">{releases.length} releases since v{since.replace(/\+.*$/, '').replace(/-local$/, '')}</p>}
       {releases.map((r) => (
         <section key={r.tag} aria-label={`v${r.version}`}>
-          <h3 className="flex items-center gap-2 font-medium">v{r.version} {r.experimental && <Badge>Experimental</Badge>}</h3>
+          <h3 className="flex items-center gap-2 font-medium">v{r.version} {r.nightly && <Badge>Nightly</Badge>}</h3>
           {r.notes.trim()
             ? <Markdown className="text-xs">{r.notes}</Markdown>
             : <p className="text-muted-foreground">No notes.</p>}

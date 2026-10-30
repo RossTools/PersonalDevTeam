@@ -15,7 +15,7 @@ tag: string | null,
  */
 newerThan: string | null, 
 /**
- * Instead of the latest release, the newest published one, pre-releases included (an experimental release,
- * PDT-210).
+ * Instead of the latest release, the newest published one, pre-releases included (a nightly release, PDT-210,
+ * PDT-283).
  */
 prereleases: boolean, };

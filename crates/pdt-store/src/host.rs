@@ -288,6 +288,29 @@ mod tests {
         assert_eq!(store.get_host_settings().await.unwrap(), s);
     }
 
+    /// PDT-283: a host saved on the experimental channel is on the nightly one, and is saved so next time.
+    #[tokio::test]
+    async fn a_stored_experimental_channel_reads_as_nightly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        sqlx::query("INSERT INTO host_settings (key, value) VALUES (?, ?)")
+            .bind(super::HOST_KEY)
+            .bind(r#"{"updateChannel":"experimental","updatePolicy":"auto_when_idle"}"#)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        let s = store.get_host_settings().await.unwrap();
+        assert_eq!(s.update_channel, pdt_core::host::UpdateChannel::Nightly);
+        assert_eq!(s.update_policy, UpdatePolicy::AutoWhenIdle);
+        store.put_host_settings(&s).await.unwrap();
+        let (raw,): (String,) = sqlx::query_as("SELECT value FROM host_settings WHERE key = ?")
+            .bind(super::HOST_KEY)
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert!(raw.contains(r#""updateChannel":"nightly""#), "{raw}");
+    }
+
     #[tokio::test]
     async fn unset_host_settings_use_the_given_defaults() {
         let tmp = tempfile::tempdir().unwrap();

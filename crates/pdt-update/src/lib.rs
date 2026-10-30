@@ -37,7 +37,7 @@ pub struct Asset {
 pub struct Release {
     pub tag: String,
     pub version: Version,
-    /// Published as a GitHub pre-release (an experimental build, PDT-210).
+    /// Published as a GitHub pre-release (a nightly build, PDT-283).
     pub prerelease: bool,
     pub notes: String,
     /// GitHub's `published_at`, unchanged (an ISO 8601 UTC string).
@@ -447,14 +447,15 @@ impl GitHubClient {
         let tag = r.tag_name.clone();
         let release = r
             .into_release()
-            .filter(|r| !r.version.is_experimental())
+            .filter(|r| !r.version.is_nightly())
             .ok_or_else(|| UpdateError::BadRelease(format!("tag {tag:?} is not vX.Y.Z")))?;
         Ok(Latest { release, token_expires_at })
     }
 
-    /// The release a host on `channel` updates to (PDT-210): on stable GitHub's latest release; on experimental the
-    /// newest by SemVer among the full releases and the experimental pre-releases (`vX.Y.Z-exp.N`) on the first page
-    /// of releases (GitHub lists them newest first), so a stable `X.Y.Z` wins over its own `-exp.N` builds.
+    /// The release a host on `channel` updates to (PDT-210, PDT-283): on stable GitHub's latest release; on nightly the
+    /// newest by SemVer among the full releases and the nightly pre-releases (`vX.Y.Z-nightly.YYYYMMDD`, and the
+    /// older `vX.Y.Z-exp.N`) on the first page of releases (GitHub lists them newest first; the release workflow
+    /// keeps 14 nightlies), so a stable `X.Y.Z` wins over its own nightlies.
     pub async fn newest(&self, token: &str, channel: UpdateChannel) -> Result<Latest, UpdateError> {
         if channel == UpdateChannel::Stable {
             return self.latest(token).await;
@@ -474,7 +475,7 @@ impl GitHubClient {
 
     /// The published releases after `after` up to and including `upto`, newest first (PDT-192): what an update from
     /// `after` brings. Drafts, pre-releases and tags that are not `vX.Y.Z` are left out, except `upto` itself when it
-    /// is an experimental build (its notes preview everything since the last release, so earlier ones would repeat
+    /// is a nightly build (its notes preview everything since the last release, so earlier ones would repeat
     /// them). GitHub lists releases newest
     /// first, so the pages stop at the first one with a release no newer than `after` (10 pages at most).
     pub async fn releases_between(
@@ -493,7 +494,7 @@ impl GitHubClient {
             let full = list.len() >= RELEASES_PER_PAGE;
             let mut reached = false;
             let listed = list.into_iter().filter(|r| !r.draft).filter_map(ReleaseJson::into_release);
-            for r in listed.filter(|r| r.version == *upto || (!r.prerelease && !r.version.is_experimental())) {
+            for r in listed.filter(|r| r.version == *upto || (!r.prerelease && !r.version.is_nightly())) {
                 if !r.version.is_newer_than(after) {
                     reached = true;
                 } else if !r.version.is_newer_than(upto) && !out.iter().any(|o| o.version == r.version) {

@@ -3,4 +3,4 @@
 /**
  * Which releases this host updates to (PDT-210).
  */
-export type UpdateChannel = "stable" | "experimental";
+export type UpdateChannel = "stable" | "nightly";

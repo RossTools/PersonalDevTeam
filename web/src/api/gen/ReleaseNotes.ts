@@ -5,9 +5,9 @@
  */
 export type ReleaseNotes = { version: string, tag: string, 
 /**
- * An experimental build: its notes preview the changes not yet in a stable release.
+ * A nightly build: its notes preview the changes not yet in a stable release.
  */
-experimental: boolean, notes: string, 
+nightly: boolean, notes: string, 
 /**
  * As GitHub sends it (ISO 8601 UTC).
  */

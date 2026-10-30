@@ -96,7 +96,7 @@ expect_eq "notes prints an older section" "$compiled" "$("$script" -C "$dir" not
 expect_eq "notes prints the newest section" $'### Added\n\n- Two.' "$("$script" -C "$dir" notes 0.4.1)"
 if "$script" -C "$dir" notes 0.4 >/dev/null 2>&1; then fail "notes for a version with no section should fail"; fi
 
-# --- preview: the notes compile would print, changing nothing (an experimental release's notes)
+# --- preview: the notes compile would print, changing nothing (a nightly release's notes)
 setup preview PDT-1.md $'---\nkind: fixed\n---\nOne.\n' PDT-2.md $'---\nkind: added\n---\nTwo.\n'
 before="$(cat "$dir/CHANGELOG.md")"
 expect_eq "preview prints the notes" $'### Added\n\n- Two.\n\n### Fixed\n\n- One.' "$("$script" -C "$dir" preview)"

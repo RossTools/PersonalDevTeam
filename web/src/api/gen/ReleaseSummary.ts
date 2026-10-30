@@ -4,9 +4,10 @@ import type { ReleaseNotes } from "./ReleaseNotes";
 
 export type ReleaseSummary = { version: string, tag: string, 
 /**
- * An experimental build (`X.Y.Z-exp.N`, a GitHub pre-release; PDT-210).
+ * A nightly build (`X.Y.Z-nightly.YYYYMMDD`, or an older experimental `X.Y.Z-exp.N`; a GitHub pre-release;
+ * PDT-210, PDT-283).
  */
-experimental: boolean, notes: string, 
+nightly: boolean, notes: string, 
 /**
  * GitHub's `published_at` as GitHub sends it (an ISO 8601 UTC string, e.g. `2026-10-15T00:00:00Z`), not Unix
  * ms: it is only displayed (ruling F17).

@@ -38,8 +38,9 @@ pub enum UpdateState {
 pub struct ReleaseSummary {
     pub version: String,
     pub tag: String,
-    /// An experimental build (`X.Y.Z-exp.N`, a GitHub pre-release; PDT-210).
-    pub experimental: bool,
+    /// A nightly build (`X.Y.Z-nightly.YYYYMMDD`, or an older experimental `X.Y.Z-exp.N`; a GitHub pre-release;
+    /// PDT-210, PDT-283).
+    pub nightly: bool,
     pub notes: String,
     /// GitHub's `published_at` as GitHub sends it (an ISO 8601 UTC string, e.g. `2026-10-15T00:00:00Z`), not Unix
     /// ms: it is only displayed (ruling F17).
@@ -59,8 +60,8 @@ pub struct ReleaseSummary {
 pub struct ReleaseNotes {
     pub version: String,
     pub tag: String,
-    /// An experimental build: its notes preview the changes not yet in a stable release.
-    pub experimental: bool,
+    /// A nightly build: its notes preview the changes not yet in a stable release.
+    pub nightly: bool,
     pub notes: String,
     /// As GitHub sends it (ISO 8601 UTC).
     pub published_at: Option<String>,
@@ -136,8 +137,8 @@ pub struct ReleaseRepo {
 #[ts(export)]
 pub struct UpdateStatus {
     pub current: String,
-    /// The installed version is an experimental build (`X.Y.Z-exp.N`).
-    pub current_experimental: bool,
+    /// The installed version is a nightly build (`X.Y.Z-nightly.YYYYMMDD`, or an older `X.Y.Z-exp.N`).
+    pub current_nightly: bool,
     /// The host's update channel (PDT-210).
     pub channel: UpdateChannel,
     pub state: UpdateState,
@@ -252,7 +253,7 @@ impl UpdateService {
             current: current.into(),
             status: Mutex::new(UpdateStatus {
                 current: current.into(),
-                current_experimental: parse_version(current).is_some_and(|v| v.is_experimental()),
+                current_nightly: parse_version(current).is_some_and(|v| v.is_nightly()),
                 channel: UpdateChannel::Stable,
                 state: if enabled { UpdateState::Idle } else { UpdateState::Disabled },
                 disabled_reason,
@@ -559,7 +560,7 @@ async fn releases_since(
         .into_iter()
         .map(|r| ReleaseNotes {
             version: r.version.to_string(),
-            experimental: r.version.is_experimental(),
+            nightly: r.version.is_nightly(),
             tag: r.tag,
             notes: r.notes,
             published_at: r.published_at,
@@ -626,7 +627,7 @@ fn set_found(
     s.latest = newer.then(|| ReleaseSummary {
         version: release.version.to_string(),
         tag: release.tag.clone(),
-        experimental: release.version.is_experimental(),
+        nightly: release.version.is_nightly(),
         notes: release.notes.clone(),
         published_at: release.published_at.clone(),
         changes,

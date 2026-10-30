@@ -11,7 +11,7 @@ export interface SectionInfo {
 
 /** This host's sections, in sidebar order. */
 export const HOST_SECTIONS: readonly SectionInfo[] = [
-  { label: 'Updates', terms: ['Version', 'Check for updates', 'Install updates', 'Update channel', 'Release repository', 'GitHub token', 'Experimental'] },
+  { label: 'Updates', terms: ['Version', 'Check for updates', 'Install updates', 'Update channel', 'Release repository', 'GitHub token', 'Nightly'] },
   {
     label: 'Agents',
     terms: [

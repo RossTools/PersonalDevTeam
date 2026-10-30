@@ -26,6 +26,11 @@ struct Env {
 }
 
 async fn setup() -> Env {
+    setup_on(REPO).await
+}
+
+/// A project whose repository is `repo` on GitHub.
+async fn setup_on(gh_repo: &str) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -33,7 +38,7 @@ async fn setup() -> Env {
     std::fs::write(repo.join("a.txt"), "one\n").unwrap();
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "init", "-q"]);
-    git(&repo, &["remote", "add", "origin", &format!("https://github.com/{REPO}.git")]);
+    git(&repo, &["remote", "add", "origin", &format!("https://github.com/{gh_repo}.git")]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = AppState::new(store, tmp.path().join("data"));
     let gh = Arc::new(FakeForge::default());
@@ -363,49 +368,48 @@ async fn an_open_release_pr_stops_a_new_release_before_the_action_runs() {
 }
 
 #[tokio::test]
-async fn an_experimental_cut_skips_the_release_pr_and_waits_for_the_pre_release() {
+async fn a_nightly_cut_skips_the_release_pr_and_waits_for_the_pre_release() {
     let env = setup().await;
     let wf = cut_release(&env).await;
     env.gh.publish(REPO, release("v0.2.0"));
-    // A release PR left open doesn't hold up an experimental release: it makes none.
+    // A release PR left open doesn't hold up a nightly release: it makes none.
     env.gh.set_pr("release", Some(pr(5, PrState::Open)));
     let (_, r) = call(
         &env.app,
         "POST",
         &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(json!({"input": {"bump": "patch", "channel": "experimental", "projectId": env.project}})),
+        Some(json!({"input": {"bump": "patch", "channel": "nightly", "projectId": env.project}})),
     )
     .await;
     let id = r["runId"].as_str().unwrap().to_string();
     pdt_api::run_workflows(&env.state).await;
 
     let started = env.gh.ci.triggered.lock().unwrap().clone();
-    let inputs = BTreeMap::from([
-        ("bump".to_string(), "patch".to_string()),
-        ("channel".to_string(), "experimental".to_string()),
-    ]);
+    let inputs =
+        BTreeMap::from([("bump".to_string(), "patch".to_string()), ("channel".to_string(), "nightly".to_string())]);
     assert_eq!(started, [(REPO.to_string(), "release.yml".to_string(), "main".to_string(), inputs)]);
-    assert_eq!(waiting_at(&env, &id).await, "wait_exp");
+    assert_eq!(waiting_at(&env, &id).await, "wait_nightly");
 
     time_passes(&env, &id).await;
-    assert_eq!(waiting_at(&env, &id).await, "wait_exp", "nothing newer yet");
-    env.gh.publish(REPO, release("v0.2.1-exp.1"));
+    assert_eq!(waiting_at(&env, &id).await, "wait_nightly", "nothing newer yet");
+    env.gh.publish(REPO, release("v0.2.1-nightly.20261030"));
     time_passes(&env, &id).await;
 
     let r = run(&env, &id).await;
     assert_eq!(r["status"], "succeeded", "{r}");
-    assert_eq!(r["output"]["tag"], "v0.2.1-exp.1");
+    assert_eq!(r["output"]["tag"], "v0.2.1-nightly.20261030");
     let titles = inbox_titles(&env).await;
-    assert!(titles.contains(&"Experimental release v0.2.1-exp.1 is published".to_string()), "{titles:?}");
+    assert!(titles.contains(&"Nightly release v0.2.1-nightly.20261030 is published".to_string()), "{titles:?}");
     assert!(!titles.iter().any(|t| t.contains("ready for review")), "no release PR to review: {titles:?}");
     let calls = env.gh.calls.lock().unwrap().clone();
     assert!(!calls.iter().any(|c| c.starts_with("merge ")), "{calls:?}");
 }
 
 #[tokio::test]
-async fn an_experimental_cut_dry_runs_without_calling_github() {
+async fn a_nightly_cut_dry_runs_without_calling_github() {
     let env = setup().await;
     let wf = cut_release(&env).await;
+    // `experimental`, the channel's old name (the PM may still say it), is a nightly too.
     let payload = json!({"bump": "patch", "channel": "experimental", "projectId": env.project});
     let (s, r) = call(
         &env.app,
@@ -420,7 +424,74 @@ async fn an_experimental_cut_dry_runs_without_calling_github() {
     let run = &r["run"];
     assert_eq!(run["status"], "succeeded", "{r}");
     let nodes: Vec<&str> = run["steps"].as_array().unwrap().iter().map(|s| s["nodeId"].as_str().unwrap()).collect();
-    assert!(nodes.contains(&"exp_dispatch") && nodes.contains(&"exp_released"), "{nodes:?}");
+    assert!(nodes.contains(&"nightly_dispatch") && nodes.contains(&"nightly_released"), "{nodes:?}");
     assert!(!nodes.contains(&"dispatch"), "not the stable path: {nodes:?}");
     assert!(env.gh.calls.lock().unwrap().is_empty());
+}
+
+/// A run of the release workflow on main (the scheduled nightly).
+fn nightly_run(id: u64, state: CiState, at: &str) -> CiRun {
+    CiRun { branch: "main".into(), created_at: at.into(), ..ci_run(id, "release", "def", state) }
+}
+
+/// PDT-283: PDT nightly release, on a host that builds PDT, reads the scheduled nightly's run each day and puts a
+/// failed one in the Inbox, once.
+#[tokio::test]
+async fn a_failed_nightly_goes_to_the_inbox_once() {
+    let env = setup_on(pdt_core::brand::RELEASE_REPO).await;
+    pdt_api::run_workflows(&env.state).await;
+    let (_, all) = call(&env.app, "GET", "/api/workflows", None).await;
+    let wf = all.as_array().unwrap().iter().find(|w| w["builtin"] == "pdt-nightly").cloned().expect("installed");
+    assert_eq!(wf["enabled"], true, "{wf}");
+    let fire = |slot: i64| {
+        let payload = json!({"workflowId": wf["id"], "nodeId": "daily", "slot": slot,
+                             "slotIso": "2026-10-30T11:00:00Z", "date": "2026-10-30"});
+        pdt_core::workflow::api::NewLogEvent::new(
+            pdt_core::workflow::events::SCHEDULE_FIRED,
+            format!("schedule:test:{slot}"),
+            "scheduler",
+            payload,
+        )
+    };
+
+    // A passed run (a night with nothing new on main publishes nothing, and passes): nothing to say.
+    env.gh.ci.set_runs("main", vec![nightly_run(40, CiState::Passed, "2026-10-29T08:00:00Z")]);
+    env.state.store.emit_event(&fire(1), 1).await.unwrap().expect("logged");
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    assert!(!inbox_titles(&env).await.iter().any(|t| t.contains("nightly")));
+
+    // The next night's failed: the Inbox says so, with its failed jobs; an older run and other workflows don't count.
+    env.gh.ci.set_runs(
+        "main",
+        vec![
+            nightly_run(40, CiState::Passed, "2026-10-29T08:00:00Z"),
+            nightly_run(41, CiState::Failed, "2026-10-30T08:00:00Z"),
+            CiRun {
+                branch: "main".into(),
+                created_at: "2026-10-30T09:00:00Z".into(),
+                ..ci_run(42, "pages", "def", CiState::Passed)
+            },
+        ],
+    );
+    env.gh.ci.set_jobs("41", &["bundle (macos-latest, app)"]);
+    env.state.store.emit_event(&fire(2), 2).await.unwrap().expect("logged");
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    let titles = inbox_titles(&env).await;
+    assert_eq!(titles.iter().filter(|t| *t == "The nightly release failed").count(), 1, "{titles:?}");
+    let (_, v) = call(&env.app, "GET", "/api/inbox", None).await;
+    let item = v["items"].as_array().unwrap().iter().find(|i| i["title"] == "The nightly release failed").unwrap();
+    let text = item.to_string();
+    assert!(text.contains("release: bundle (macos-latest, app)") && text.contains("/actions/runs/41"), "{item}");
+
+    // Looked at again (a catch-up), the same failed run is not news again.
+    env.state.store.emit_event(&fire(3), 3).await.unwrap().expect("logged");
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    let titles = inbox_titles(&env).await;
+    assert_eq!(titles.iter().filter(|t| *t == "The nightly release failed").count(), 1, "{titles:?}");
 }

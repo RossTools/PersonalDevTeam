@@ -2,6 +2,8 @@
 //! repository's Release Action), `github.change_request` (read a pull request by branch or number) and
 //! `github.release` (read the latest release, or one tag). The built-in "Cut a release" polls the last two between
 //! waits, the pull request with its CI (PDT-214: the release PR merges itself, so a failed check is the news).
+//! `github.workflow.latest` reads a workflow's newest run on a branch: PDT nightly release reads the scheduled
+//! nightly's (PDT-283), which no PDT run starts.
 //! `repo` defaults to the run's project's GitHub repository.
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
@@ -480,8 +482,8 @@ pub struct GithubReleaseConfig {
     /// release was started (`{{steps.before.tag}}`). Empty: any release counts.
     #[serde(default)]
     pub newer_than: Option<String>,
-    /// Instead of the latest release, the newest published one, pre-releases included (an experimental release,
-    /// PDT-210).
+    /// Instead of the latest release, the newest published one, pre-releases included (a nightly release, PDT-210,
+    /// PDT-283).
     #[serde(default)]
     pub prereleases: bool,
 }
@@ -569,6 +571,129 @@ impl NodeKind for GithubRelease {
     }
 }
 
+// ---- github.workflow.latest ----
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export)]
+pub struct GithubWorkflowLatestConfig {
+    /// The repository (`owner/name`); the run's project's when left out.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// The workflow's name as Actions shows it (its `name:`, e.g. `release`).
+    pub workflow: String,
+    /// The branch its runs are on (default `main`).
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GithubWorkflowLatestOutput {
+    /// The run's id (with `attempt`, which a re-run bumps: a key for "once per run").
+    pub id: String,
+    pub attempt: u32,
+    pub url: String,
+    pub head_sha: String,
+    /// When it started (RFC 3339).
+    pub created_at: String,
+    /// When `failed`: the failed jobs (`workflow: job`), as a Markdown list.
+    pub failed_jobs: Option<String>,
+}
+
+pub struct GithubWorkflowLatest;
+
+impl NodeKind for GithubWorkflowLatest {
+    fn spec(&self) -> KindSpec {
+        spec::<GithubWorkflowLatestConfig, GithubWorkflowLatestOutput>(
+            "github.workflow.latest",
+            1,
+            Category::Action,
+            "Read a workflow's latest run",
+            "Reads the newest GitHub Actions run of a workflow (by its name, `release`) on a branch (default `main`), \
+             however it was started (a schedule, by hand), and leaves by its state: `passed`, `failed` (with \
+             `failedJobs`), `running` (queued or running), `cancelled`, or `none` when there is no run.",
+            &[
+                ("passed", "Passed"),
+                ("failed", "Failed"),
+                ("running", "Running"),
+                ("cancelled", "Cancelled"),
+                ("none", "None"),
+            ],
+            false,
+        )
+    }
+
+    fn check(&self, config: &Value) -> Result<(), String> {
+        let c: GithubWorkflowLatestConfig = parse(config)?;
+        if c.workflow.trim().is_empty() {
+            return Err("workflow is empty: give its name (release)".into());
+        }
+        check_repo(&c.repo)
+    }
+
+    fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
+        Box::pin(async move {
+            let c: GithubWorkflowLatestConfig = parse(&input)?;
+            let RepoOf { repo, ci, .. } = repo_of(cx, &c.repo).await?;
+            let workflow = c.workflow.trim().to_string();
+            let branch = nonblank(&c.branch).unwrap_or("main").to_string();
+            if cx.dry_run {
+                return Ok(Outcome::next(
+                    "passed",
+                    json!({"would": format!("read the latest {workflow} run on {branch} of {repo}")}),
+                ));
+            }
+            let actions = ci.into_iter().find(|p| p.id() == pdt_core::pr::GITHUB_ACTIONS);
+            let actions = actions.ok_or_else(|| format!("{repo} has no GitHub Actions to read {workflow} from"))?;
+            let (r, w, b) = (repo.clone(), workflow.clone(), branch.clone());
+            let latest = tokio::task::spawn_blocking(move || {
+                let runs = actions.runs(&r, &b, None)?;
+                let Some(mut run) = runs
+                    .into_iter()
+                    .filter(|x| x.name == w && x.branch == b)
+                    .max_by(|x, y| x.created_at.cmp(&y.created_at))
+                else {
+                    return Ok(None);
+                };
+                // Which jobs failed is only for the message: a failed lookup leaves them out.
+                if run.state == CiState::Failed && run.failed_jobs.is_empty() {
+                    run.failed_jobs = pdt_forge::ci::failed_job_names(actions.as_ref(), &r, &run).unwrap_or_default();
+                }
+                Ok::<_, ForgeError>(Some(run))
+            })
+            .await
+            .map_err(|e| format!("the GitHub task failed: {e}"))?
+            .map_err(|e| format!("GitHub: {e}"))?;
+            let Some(run) = latest else {
+                return Ok(Outcome::Next { port: "none".into(), output: json!({"repo": repo, "quiet": true}) });
+            };
+            let port = match run.state {
+                CiState::Passed => "passed",
+                CiState::Failed => "failed",
+                CiState::Cancelled => "cancelled",
+                CiState::Queued | CiState::Running => "running",
+            };
+            let failed_jobs = (run.state == CiState::Failed).then(|| {
+                let jobs: Vec<String> = run.failed_jobs.iter().map(|j| format!("- {}: {j}", run.name)).collect();
+                if jobs.is_empty() { format!("- {}", run.name) } else { jobs.join("\n") }
+            });
+            Ok(Outcome::next(
+                port,
+                GithubWorkflowLatestOutput {
+                    id: run.id,
+                    attempt: run.attempt,
+                    url: run.url,
+                    head_sha: run.head_sha,
+                    created_at: run.created_at,
+                    failed_jobs,
+                },
+            ))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -593,6 +718,12 @@ mod tests {
         assert!(pr(json!({"branch": "b", "dryRunPort": "failed"})).is_ok());
         assert!(!GithubChangeRequest.ports(&json!({"branch": "b"})).contains(&"failed".to_string()));
         assert!(GithubChangeRequest.ports(&json!({"branch": "b", "ci": true})).contains(&"failed".to_string()));
+
+        let latest = |v: Value| GithubWorkflowLatest.check(&v);
+        assert!(latest(json!({"workflow": "release"})).is_ok());
+        assert!(latest(json!({"workflow": "release", "branch": "main", "repo": "a/b"})).is_ok());
+        assert!(latest(json!({"workflow": ""})).is_err());
+        assert!(latest(json!({"workflow": "release", "repo": "nope"})).is_err());
 
         let rel = |v: Value| GithubRelease.check(&v);
         assert!(rel(json!({})).is_ok());

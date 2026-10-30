@@ -55,7 +55,7 @@ const updatePolicies: { value: UpdatePolicy; label: string }[] = [
 ];
 const updateChannels: { value: UpdateChannel; label: string }[] = [
   { value: 'stable', label: 'Stable releases' },
-  { value: 'experimental', label: 'Experimental builds too' },
+  { value: 'nightly', label: 'Nightly builds too' },
 ];
 /** How often the host checks for updates, in minutes. */
 const checkIntervals: { value: number; label: string }[] = [
@@ -226,11 +226,11 @@ function Updates({ v }: { v: HostSettingsView }) {
   const repoNote = fromEnv ? `Set by PDT_RELEASE_REPO: ${where.repo}.`
     : where?.movedTo ? `GitHub says it moved (to ${where.movedTo}); PDT follows it.`
       : 'Where updates come from and bug reports go. PDT follows GitHub\'s redirects when it is renamed or moved: set another one only if it can\'t find it.';
-  // Never a downgrade: back on stable, an experimental build stays until a newer stable release exists.
-  const channelNote = v.settings.updateChannel === 'experimental'
-    ? 'Pre-releases of main (vX.Y.Z-exp.N), published by hand between releases, and every stable release. They can carry database migrations no stable release has yet, so this host can\'t go back to an older stable release.'
-    : u?.currentExperimental
-      ? `This host stays on the experimental build v${u.current} until a newer stable release exists.`
+  // Never a downgrade: back on stable, a nightly build stays until a newer stable release exists.
+  const channelNote = v.settings.updateChannel === 'nightly'
+    ? 'A build of main every night it changed (vX.Y.Z-nightly.YYYYMMDD), and every stable release. They can carry database migrations no stable release has yet, so this host can\'t go back to an older stable release.'
+    : u?.currentNightly
+      ? `This host stays on the nightly build v${u.current} until a newer stable release exists.`
       : 'Full releases only.';
   const saveRepo = async (r: string) => {
     await repoSave.saveText({ releaseRepo: r });
@@ -239,7 +239,7 @@ function Updates({ v }: { v: HostSettingsView }) {
   return (
     <Section label="Updates" description="New releases of PDT, from GitHub.">
       <SettingsRow
-        label={<span className="flex items-center gap-2">Version {u?.current ?? '…'} {u?.currentExperimental && <Badge>Experimental</Badge>}</span>}
+        label={<span className="flex items-center gap-2">Version {u?.current ?? '…'} {u?.currentNightly && <Badge>Nightly</Badge>}</span>}
         description={
           updatesOff ? `Updates are off: ${u.disabledReason ?? 'updates apply to the installed app'}.`
             : shownFound ? <span role="status"><CheckFound r={shownFound} fixToken={fixToken} /> {shownFound.kind !== 'cannotCheck' && checked}</span>
@@ -247,7 +247,7 @@ function Updates({ v }: { v: HostSettingsView }) {
               : checked
         }
       >
-        {u?.state === 'available' && u.latest && <Badge tone="accent">v{u.latest.version} available{u.latest.experimental ? ' (experimental)' : ''}</Badge>}
+        {u?.state === 'available' && u.latest && <Badge tone="accent">v{u.latest.version} available{u.latest.nightly ? ' (nightly)' : ''}</Badge>}
         {!updatesOff && <Button size="sm" pending={checking || u?.state === 'checking'} onClick={() => void checkNow()}>Check for updates</Button>}
       </SettingsRow>
       <SettingsRow label="Install updates">
