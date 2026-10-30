@@ -76,7 +76,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **A dev instance never reads stable's keychain entries**: keys outside the stable data folder are scoped by the data
   folder (pdt-api `secrets.rs`).
 - **On Linux the secret backend sticks to its data folder** (keychain or file); it never switches.
-- **Nothing runs `gh`.** GitHub goes through `crates/pdt-github`; agents use pdt-mcp's forge tools.
+- **Nothing runs `gh` or `glab`.** Forges go through their crates over HTTP (`pdt_forge::transport`); agents use
+  pdt-mcp's forge tools.
 
 ## Requests
 

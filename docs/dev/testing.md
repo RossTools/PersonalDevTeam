@@ -26,7 +26,7 @@ How PDT's own tests are run and what they must never touch. Before pushing, run 
 | The real data folders (`pdt`, `pdt-dev`) | A temp folder, as `PDT_DATA_DIR` |
 | The OS keychain | `PDT_SECRET_STORE=memory` |
 | Tailscale | `PDT_TAILSCALE_BIN` pointing at `fake-tailscale` (`crates/pdt-tailscale/src/bin`) or a missing file |
-| GitHub | `PDT_GITHUB_OFFLINE=1`, `GithubApi::offline()`, recorded answers (`pdt-github` `transport::testing::Recorded`), or `FakeForge` (`crates/pdt-forge`) |
+| GitHub, GitLab | `PDT_GITHUB_OFFLINE=1` (takes every forge offline), `GithubApi::offline()`, recorded answers (`pdt_forge::transport::testing::Recorded`), or `FakeForge` (`crates/pdt-forge`) |
 | Real agents | `fake-agent` (`crates/pdt-api/src/bin/fake-agent`: Claude, Codex app-server and ACP); `PDT_CLAUDE_PROGRAM`, `PDT_CODEX_PROGRAM`, `PDT_DEVIN_PROGRAM` name the program |
 | A real pdtd under pdt-host | `fake-pdtd` (`crates/pdt-host/src/bin`) |
 

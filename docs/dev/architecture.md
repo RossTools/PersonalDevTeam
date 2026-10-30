@@ -52,13 +52,13 @@ and `backups/` (a copy taken before migrations).
 | `pdt-git` | The git CLI: worktrees, branches, diffs, merge detection, local merges, pulls. |
 | `pdt-agents` | Running agents: PTYs (`pty.rs`), detached runs (`detached.rs`), launching (`launch.rs`), hooks, instruction files, MCP wiring, and the adapters in `adapter/` (Claude, Codex, Devin, ACP). |
 | `pdt-api` | The axum routes and everything that ties the crates together: `routes.rs` (the router and `AppState`), one module per area, the workflow engine and nodes (`workflow/`), pdt-mcp (`mcp/`), the integration SDK (`sdk.rs`, `integrations/`). Test fakes in `src/bin` (`fake-agent`, `fake-mcp`, `fake-command`). |
-| `pdt-forge` | The `Forge` trait (change requests, CI, merges, reviews, issues, with declared capabilities), `CiProvider`, the login store, and `FakeForge`. |
+| `pdt-forge` | The `Forge` trait (change requests, CI, merges, reviews, issues, with declared capabilities), `CiProvider`, the login store, the forges' shared HTTP `transport` (reqwest, `Offline`, recorded answers), and `FakeForge`. |
 | `pdt-github` | The GitHub forge over GitHub's REST and GraphQL APIs (nothing runs `gh`): pull requests, Actions, merges, issues, the OAuth device-flow login, rate limits. |
 | `pdt-tailscale` | The `tailscale` CLI (`serve`, `status`), and `fake-tailscale` for tests. |
 | `pdt-update` | The GitHub release client: finding a release, verified downloads. |
 | `pdt-host` | The supervisor: running pdtd, installing updates, rolling back, login registration. |
 | `pdtd` | The daemon binary: config, logging, the loops' wiring (`main.rs`), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
-| `pdt-int-*` | The optional integrations (discord, jira, buildkite, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
+| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
 
 Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients match on `code`. API types derive ts-rs
 and are generated into `web/src/api/gen`.
@@ -66,7 +66,7 @@ and are generated into `web/src/api/gen`.
 ## The model
 
 **Projects.** A repository and its main checkout, with a short key (`PDT`) used in ticket keys. The base branch
-defaults to the repository's default branch. The forge (GitHub, the local forge, or none) comes from
+defaults to the repository's default branch. The forge (GitHub, GitLab, the local forge, or none) comes from
 `.pdt/project.toml` or from the plugin that claims `origin`'s host; all forge access goes through pdt-api
 `forge::project_forge`. Two special kinds: `personal` (a folder with no repository: no worktrees or runs) and the
 hidden `host` project (key `_HOST`), which holds the PM's sessions.
@@ -96,7 +96,7 @@ forge says its PR merged; it counts only once the branch had commits of its own.
 the ticket to Done and cleans up the worktree, sessions, runs and workspace.
 
 **Pull requests and CI.** pdt-api `github.rs` reads each attempt's PR, and `ci.rs` each CI provider's runs (GitHub
-Actions, the local forge's command, Buildkite), into memory. What changed (CI failed or passed, a conflict, a drop
+Actions, GitLab CI, the local forge's command, Buildkite), into memory. What changed (CI failed or passed, a conflict, a drop
 from the merge queue, a merge) is logged as events, which the built-in PR notices workflow turns into messages to the
 agent.
 
@@ -156,6 +156,14 @@ RossTools organization with Device Flow on and token expiry off. To register ano
 GitHub → Settings → Developer settings → OAuth Apps → New OAuth App, any callback URL (the device flow never calls
 it), tick **Enable Device Flow**, and put its client ID in `brand.rs`; no client secret is needed.
 
+**GitLab.** An optional plugin (`crates/pdt-int-gitlab`, pdtd's `gitlab` feature) over GitLab's REST API (v4), for
+gitlab.com and self-hosted servers; nothing runs `glab`. It claims `origin` remotes on gitlab.com and on each host it
+has a login for (one account per host, a token with the `api` scope, or the device flow with `PDT_GITLAB_CLIENT_ID`),
+and can't be turned off while a project uses it. Merge requests are its change requests, a merge train (when the
+project has one) is the base branch's merge queue, and `GitlabCi` (provider id `gitlab_ci`) reads pipelines.
+`api.rs` is the client, `forge.rs` the `Forge`, `ci.rs` the CI provider, `plugin.rs` the claim and `login.rs` the
+login.
+
 ## Where to look
 
 | Area | Rust | Web |
@@ -164,7 +172,7 @@ it), tick **Enable Device Flow**, and put its client ID in `brand.rs`; no client
 | Projects, worktrees, runs | pdt-api `projects.rs`, `worktrees.rs`, `runs.rs`, `run_manager.rs`, `runconfig.rs`; pdt-core `runconfig.rs` | `web/src/projects`, `web/src/runs` |
 | Workspaces and tabs | pdt-api `workspaces.rs`; pdt-store `workspaces.rs` | `web/src/workspaces`, `web/src/shell` |
 | Tickets, Start, parts, merge detection | pdt-api `tickets.rs`, `start.rs`, `stop.rs`, `finish.rs`, `parts.rs`, `scheduler.rs`; pdt-core `ticket.rs`, `start.rs`, `parts.rs`, `policy.rs`; pdt-git `merge.rs` | `web/src/tickets` |
-| PRs, CI, forges | pdt-api `github.rs`, `ci.rs`, `forge.rs`, `local_forge.rs`; `crates/pdt-forge`, `crates/pdt-github` | `web/src/tickets`, `web/src/plugins` |
+| PRs, CI, forges | pdt-api `github.rs`, `ci.rs`, `forge.rs`, `local_forge.rs`; `crates/pdt-forge`, `crates/pdt-github`, `crates/pdt-int-gitlab` | `web/src/tickets`, `web/src/plugins` |
 | Review and merge | pdt-api `review.rs`; pdt-core `review.rs`; pdt-git `review.rs` | `web/src/review` |
 | Sessions and terminals | pdt-api `sessions.rs`, `pty_ws.rs`, `activity.rs`; `crates/pdt-agents` | `web/src/sessions`, `web/src/terminal` |
 | Conversations | pdt-api `conversations.rs`; pdt-core `conversation/`; pdt-agents `adapter/` | `web/src/conversation` |

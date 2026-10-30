@@ -10,6 +10,7 @@
 
 pub mod ci;
 pub mod login;
+pub mod transport;
 pub use ci::{CiCapabilities, CiConfig, CiProvider};
 pub use login::{ForgeAccount, ForgeLogin};
 

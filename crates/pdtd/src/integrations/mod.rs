@@ -2,6 +2,8 @@
 //! `pdt_core::integration::KNOWN`. Which of them an instance uses is its own setting (Settings → Plugins).
 
 use pdt_api::Integration;
+use pdt_forge::ForgePlugin;
+use pdt_forge::transport::Transport;
 use std::sync::Arc;
 
 // One push per feature, so a build without any is an empty list.
@@ -14,6 +16,8 @@ pub fn built() -> Vec<Arc<dyn Integration>> {
     out.push(Arc::new(pdt_int_jira::Jira));
     #[cfg(feature = "buildkite")]
     out.push(Arc::new(pdt_int_buildkite::Buildkite));
+    #[cfg(feature = "gitlab")]
+    out.push(Arc::new(pdt_int_gitlab::Gitlab));
     #[cfg(feature = "arr")]
     out.push(Arc::new(pdt_int_arr::Arr));
     #[cfg(feature = "scryer")]
@@ -23,11 +27,22 @@ pub fn built() -> Vec<Arc<dyn Integration>> {
     out
 }
 
+/// The forge plugins of the integrations built in (PDT-246: GitLab), each reaching its forge through `transport`. One
+/// counts while its integration is enabled.
+#[allow(unused_mut, unused_variables, clippy::vec_init_then_push)]
+pub fn forges(transport: Arc<dyn Transport>) -> Vec<Arc<dyn ForgePlugin>> {
+    let mut out: Vec<Arc<dyn ForgePlugin>> = vec![];
+    #[cfg(feature = "gitlab")]
+    out.push(Arc::new(pdt_int_gitlab::GitlabPlugin::new(Arc::new(pdt_int_gitlab::GitlabApi::new(transport)))));
+    out
+}
+
 #[cfg(all(
     test,
     feature = "discord",
     feature = "jira",
     feature = "buildkite",
+    feature = "gitlab",
     feature = "arr",
     feature = "scryer",
     feature = "plex"

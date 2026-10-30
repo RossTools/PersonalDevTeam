@@ -83,12 +83,13 @@ by name like runs. An invalid area makes the whole configuration invalid, as a b
 The same file can name the project's forge: where its pull requests, CI, reviews and issues live.
 
 ```toml
-forge = "github"                                  # or "local" (below), or "none": no pull requests, CI or issues are read; merges are local
+forge = "github"                                  # or "gitlab", "local" (below), or "none": no pull requests, CI or issues are read; merges are local
 ```
 
-The value is a forge plugin's id (`github`) or one of PDT's own (`local`, `none`). Without it, the project uses the
-forge whose plugin claims its `origin`'s host (GitHub claims github.com, and the GitHub Enterprise Server your GitHub
-login is for) and has none when no plugin does, so existing projects need nothing. It is read from the project's
+The value is a forge plugin's id (`github`, `gitlab`) or one of PDT's own (`local`, `none`). Without it, the project
+uses the forge whose plugin claims its `origin`'s host (GitHub claims github.com, and each GitHub Enterprise Server you
+have a GitHub login for; GitLab, while its plugin is on, gitlab.com and each GitLab server you have a GitLab login for)
+and has none when no plugin does, so existing projects need nothing. It is read from the project's
 **main checkout** plus the host overrides (the overrides' wins). A forge this PDT has no plugin for (written for a
 newer one), or one whose plugin is turned off, leaves the choice to the origin, even when it is the overrides' value
 over one the file names: overrides with `forge = "gitlab"` over a file's `forge = "local"` make the origin decide. A
@@ -149,13 +150,13 @@ branches = true                                   # optional: push ticket branch
 
 ### CI providers
 
-A project's CI can come from more than one place: its forge's own CI (GitHub Actions on GitHub, the
-`[ci] command` on the local forge) and the CI integrations set up for it in its settings (Buildkite: a connection and
+A project's CI can come from more than one place: its forge's own CI (GitHub Actions on GitHub, GitLab CI on
+GitLab, the `[ci] command` on the local forge) and the CI integrations set up for it in its settings (Buildkite: a connection and
 pipelines). By default PDT reads all of them. `[ci] providers` picks which, by id, in order:
 
 ```toml
 [ci]
-providers = ["github_actions", "buildkite"]       # github_actions, local, buildkite
+providers = ["github_actions", "buildkite"]       # github_actions, gitlab_ci, local, buildkite
 ```
 
 - The pull request's CI badge rolls up every listed provider's runs on its head, each provider's failures reach the

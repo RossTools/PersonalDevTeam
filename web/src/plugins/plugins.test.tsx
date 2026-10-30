@@ -25,6 +25,7 @@ const mixed = () => catalog({
   discord: { status: 'on' },
   jira: off,
   buildkite: off,
+  gitlab: off,
   scryer: { status: 'error', error: 'scryer: connection refused', errorConnection: 'c-scryer', checkable: true },
   plex: { enabled: false, built: false, status: 'not_built' },
 });
@@ -42,7 +43,7 @@ describe('plugins: the catalog’s filters', () => {
 
   it('counts each category after the search and tab, and groups in the catalog’s order', () => {
     const ps = mixed();
-    expect(categoryCounts(ps, NO_FILTER)).toEqual({ all: 10, dev: 3, chat: 1, media: 3, general: 3 });
+    expect(categoryCounts(ps, NO_FILTER)).toEqual({ all: 11, dev: 4, chat: 1, media: 3, general: 3 });
     expect(categoryCounts(ps, { ...NO_FILTER, tab: 'attention' })).toEqual({ all: 2, dev: 0, chat: 0, media: 2, general: 0 });
     expect(labels(filterPlugins(ps, { ...NO_FILTER, category: 'media' }))).toEqual(['arr', 'scryer', 'plex']);
     expect(groupPlugins(filterPlugins(ps, { ...NO_FILTER, q: 'workflows' })).map(([c]) => c)).toEqual(['dev', 'chat', 'media', 'general']);
@@ -96,10 +97,10 @@ describe('plugins: Settings → Plugins', () => {
     await userEvent.click(screen.getByRole('radio', { name: 'All' }));
     const chips = screen.getByRole('group', { name: 'Categories' });
     expect(within(chips).getByRole('button', { name: 'Chat 1' })).toBeInTheDocument();
-    await userEvent.click(within(chips).getByRole('button', { name: 'Dev 3' }));
+    await userEvent.click(within(chips).getByRole('button', { name: 'Dev 4' }));
     expect(screen.getByRole('group', { name: 'Jira' })).toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'Discord' })).toBeNull();
-    await userEvent.click(within(chips).getByRole('button', { name: 'All 10' }));
+    await userEvent.click(within(chips).getByRole('button', { name: 'All 11' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Search plugins' }), 'nothing like this');
     expect(screen.getByText('No plugins match.')).toBeInTheDocument();
   });
@@ -131,7 +132,7 @@ describe('plugins: Settings → Plugins', () => {
 
   it('turning on one that needs a connection asks for one; Later leaves it needing setup', async () => {
     const before = mixed();
-    const after = catalog({ discord: { status: 'on' }, buildkite: off, scryer: { status: 'on' }, plex: { built: false, enabled: false, status: 'not_built' } });
+    const after = catalog({ discord: { status: 'on' }, buildkite: off, gitlab: off, scryer: { status: 'on' }, plex: { built: false, enabled: false, status: 'not_built' } });
     const calls = stubApi({
       'GET /api/integrations': () => (calls.some((c) => c.method === 'PUT') ? after : before),
       'PUT /api/integrations': after,
@@ -219,6 +220,17 @@ describe('plugins: a plugin’s page', () => {
     renderWithQuery(<PluginPage id="github" onBack={() => {}} />);
     expect(await screen.findByText(/PDT needs your GitHub login/)).toBeInTheDocument();
     expect((await screen.findByRole('region', { name: 'GitHub logins' }))).toBeInTheDocument();
+  });
+
+  it('GitLab’s connection is its login too, and it stays on while a project’s forge is GitLab (PDT-246)', async () => {
+    const gitlab = catalog({ gitlab: { status: 'needs_setup', forgeProjects: [{ id: 'p2', key: 'APP', name: 'App' }] } });
+    stubApi({ 'GET /api/integrations': gitlab, 'GET /api/connections': [] });
+    renderWithQuery(<PluginPage id="gitlab" onBack={() => {}} />);
+    expect(await screen.findByText(/PDT needs your GitLab login and has none: connect GitLab below/)).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'GitLab logins' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Connections' })).toBeNull();
+    expect(screen.getByText(/GitLab is the forge of App/)).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Use GitLab' })).toBeDisabled();
   });
 
   it('GitHub stays on while a project uses it as its forge, and turns off when none does (PDT-251)', async () => {
