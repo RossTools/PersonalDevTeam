@@ -104,14 +104,14 @@
           "title": "Read a GitHub pull request"
         },
         {
-          "description": "Reads the latest published release (drafts and pre-releases don't count; with `prereleases`, the newest one, pre-releases included), or the one tagged `tag`. `found` with `tag`, `name`, `url` and `publishedAt`; `none` when there is none, or with `newerThan` when the latest is still that one. Between waits it polls for a release to be published.",
+          "description": "Reads the latest published release (drafts and pre-releases don't count; with `prereleases`, the newest one, pre-releases included; with `tagPattern`, the newest whose tag matches it, `*` any text, e.g. `v*-beta.*`), or the one tagged `tag`. `found` with `tag`, `name`, `url` and `publishedAt`; `none` when there is none, or with `newerThan` when the latest is still that one. Between waits it polls for a release to be published.",
           "id": "github.release",
           "title": "Read a GitHub release"
         },
         {
-          "description": "Looks for a day's nightly release (a published `X.Y.Z-nightly.YYYYMMDD` pre-release, PDT-288). `published` when there is one; before `dueHour` UTC `early`; `unchanged` when main has nothing its newest nightly or stable release lacks. Otherwise the nightly is missing: one Inbox item says so (once per workflow and day, else `already`), with Start it (`start`) and Ignore (`ignore`), and it looks again every half hour: the item closes by itself once the nightly is published (`published`), or after about a day (`expired`).",
+          "description": "Looks for a day's scheduled release: a published release (pre-releases included) whose tag matches `tagPattern` (`*` any text, `?` one character, `{date}` the day as `YYYYMMDD` or `YYYY-MM-DD`; without `{date}`, one published that day), the day's or a later one. `published` when there is one; before `dueBy` (UTC) `early`; with `onlyIfChanged` (the default), `unchanged` when the branch has nothing the newest matching release or the latest release lacks. Otherwise it is missing: one Inbox item says so (once per workflow and day, else `already`), with Start it (`start`, e.g. to a step that runs the workflow) and Ignore (`ignore`), and it looks again every half hour: the item closes by itself once the release is published (`published`), or after about a day (`expired`).",
           "id": "github.nightly",
-          "title": "Watch for the day's nightly"
+          "title": "Watch for a scheduled release"
         },
         {
           "description": "Opens an issue in a project's GitHub repository, as PDT's GitHub login: from a ticket (`{{trigger.ticketId}}`; its title and description unless given, and the ticket links the issue), or in `project`'s repository. Output: `repo`, `number`, `issue` (owner/name#12), `url` and `ticketKey`.",
@@ -121,6 +121,7 @@
       ],
       "templates": [
         "Triage new GitHub issues",
+        "Report a missing scheduled release",
         "Review outside pull requests"
       ],
       "tools": [

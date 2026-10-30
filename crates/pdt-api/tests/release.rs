@@ -1,6 +1,7 @@
-//! PDT-194 and PDT-214 end to end: the built-in "Cut a release" runs the project's release workflow, says the release
-//! PR is open, waits for it to merge itself (a failed check goes to the Inbox) and tells the user when the tag's
-//! release is published. GitHub is `FakeForge`; the waits are cut short.
+//! PDT-194, PDT-214 and PDT-294 end to end: the built-in "Cut a release" runs the release workflow its input names,
+//! says the release PR is open, waits for it to merge (a failed check goes to the Inbox) and tells the user when the
+//! release is published; Report a missing scheduled release and PDT missing nightly (version 1 of its node). GitHub
+//! is `FakeForge`; the waits are cut short.
 
 mod common;
 
@@ -16,6 +17,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 const REPO: &str = "example-org/thing";
+/// The project's release workflow and the branch it opens its release PR from: nothing PDT's own.
+const WORKFLOW: &str = "publish.yml";
+const BRANCH: &str = "cut/release";
+
+/// Cut a release's input for this project, with the workflow's `inputs`, its release PR on [`BRANCH`].
+fn cut_input(env: &Env, inputs: Value) -> Value {
+    json!({"input": {"workflow": WORKFLOW, "inputs": inputs, "releaseBranch": BRANCH, "projectId": env.project}})
+}
 
 struct Env {
     app: axum::Router,
@@ -140,7 +149,7 @@ fn ci_run(id: u64, workflow: &str, sha: &str, state: CiState) -> CiRun {
         state,
         url: format!("https://github.com/{REPO}/actions/runs/{id}"),
         head_sha: sha.into(),
-        branch: "release".into(),
+        branch: BRANCH.into(),
         created_at: format!("2026-10-28T12:00:{:02}Z", id % 60),
         failed_jobs: vec![],
     }
@@ -153,12 +162,12 @@ async fn release_pr_open(env: &Env) -> String {
         &env.app,
         "POST",
         &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(json!({"input": {"bump": "minor", "projectId": env.project}})),
+        Some(cut_input(env, json!({"bump": "minor"}))),
     )
     .await;
     let id = r["runId"].as_str().unwrap().to_string();
     pdt_api::run_workflows(&env.state).await;
-    env.gh.set_pr("release", Some(pr(7, PrState::Open)));
+    env.gh.set_pr(BRANCH, Some(pr(7, PrState::Open)));
     time_passes(env, &id).await;
     assert_eq!(waiting_at(env, &id).await, "wait_merge");
     id
@@ -180,7 +189,7 @@ async fn cut_a_release_from_the_action_to_the_published_release() {
         &env.app,
         "POST",
         &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(json!({"input": {"bump": "minor", "projectId": env.project}})),
+        Some(cut_input(&env, json!({"bump": "minor"}))),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{r}");
@@ -190,14 +199,14 @@ async fn cut_a_release_from_the_action_to_the_published_release() {
     // The release workflow runs on main with the bump (no version given: none sent).
     let started = env.gh.ci.triggered.lock().unwrap().clone();
     let inputs = BTreeMap::from([("bump".to_string(), "minor".to_string())]);
-    assert_eq!(started, [(REPO.to_string(), "release.yml".to_string(), "main".to_string(), inputs)]);
+    assert_eq!(started, [(REPO.to_string(), WORKFLOW.to_string(), "main".to_string(), inputs)]);
     assert_eq!(waiting_at(&env, &id).await, "wait_pr");
 
     // The last release's PR, merged, is not the new one: it keeps looking until one is open.
-    env.gh.set_pr("release", Some(pr(6, PrState::Merged)));
+    env.gh.set_pr(BRANCH, Some(pr(6, PrState::Merged)));
     time_passes(&env, &id).await;
     assert_eq!(waiting_at(&env, &id).await, "wait_pr");
-    env.gh.set_pr("release", Some(pr(7, PrState::Open)));
+    env.gh.set_pr(BRANCH, Some(pr(7, PrState::Open)));
     time_passes(&env, &id).await;
     assert_eq!(waiting_at(&env, &id).await, "wait_merge");
     // Told, not asked: the PR merges itself, so nothing waits in the Inbox.
@@ -205,10 +214,10 @@ async fn cut_a_release_from_the_action_to_the_published_release() {
     assert!(inbox_titles(&env).await.is_empty(), "{:?}", inbox_titles(&env).await);
 
     // Still open, its checks running; then merged, but the tag's release isn't out yet; then it is.
-    env.gh.set_runs("release", vec![ci_run(1, "ci", "abc", CiState::Running)]);
+    env.gh.set_runs(BRANCH, vec![ci_run(1, "ci", "abc", CiState::Running)]);
     time_passes(&env, &id).await;
     assert_eq!(waiting_at(&env, &id).await, "wait_merge");
-    env.gh.set_pr("release", Some(pr(7, PrState::Merged)));
+    env.gh.set_pr(BRANCH, Some(pr(7, PrState::Merged)));
     time_passes(&env, &id).await;
     assert_eq!(waiting_at(&env, &id).await, "wait_release");
     time_passes(&env, &id).await;
@@ -230,8 +239,7 @@ async fn a_failed_check_goes_to_the_inbox_and_the_release_waits_for_the_fix() {
     let id = release_pr_open(&env).await;
 
     // A bundle build fails on the PR's head: the Inbox says which, once, and it keeps waiting (not merged).
-    env.gh
-        .set_runs("release", vec![ci_run(1, "ci", "abc", CiState::Failed), ci_run(2, "lint", "abc", CiState::Passed)]);
+    env.gh.set_runs(BRANCH, vec![ci_run(1, "ci", "abc", CiState::Failed), ci_run(2, "lint", "abc", CiState::Passed)]);
     env.gh.set_jobs(1, &["bundle (macos-latest, app)"]);
     time_passes(&env, &id).await;
     assert_eq!(waiting_at(&env, &id).await, "wait_merge");
@@ -248,14 +256,14 @@ async fn a_failed_check_goes_to_the_inbox_and_the_release_waits_for_the_fix() {
     // A fix pushed to the release branch passes: it merges itself and is published.
     let mut fixed = pr(7, PrState::Open);
     fixed.head_sha = "def".into();
-    env.gh.set_pr("release", Some(fixed.clone()));
-    env.gh.set_runs("release", vec![ci_run(1, "ci", "abc", CiState::Failed), ci_run(3, "ci", "def", CiState::Passed)]);
+    env.gh.set_pr(BRANCH, Some(fixed.clone()));
+    env.gh.set_runs(BRANCH, vec![ci_run(1, "ci", "abc", CiState::Failed), ci_run(3, "ci", "def", CiState::Passed)]);
     time_passes(&env, &id).await;
     assert_eq!(waiting_at(&env, &id).await, "wait_merge");
     // Then the merge queue's run fails and removes it (auto-merge off): that is news too.
     fixed.queue_removal =
         Some(QueueRemoval { id: "q1".into(), reason: QueueRemovalReason::FailedChecks, by_queue: true });
-    env.gh.set_pr("release", Some(fixed.clone()));
+    env.gh.set_pr(BRANCH, Some(fixed.clone()));
     let mut queued = ci_run(4, "ci", "q-sha", CiState::Failed);
     queued.branch = "fake-queue/main/7/abcdef".into();
     *env.gh.ci.queue.lock().unwrap() = vec![queued];
@@ -270,7 +278,7 @@ async fn a_failed_check_goes_to_the_inbox_and_the_release_waits_for_the_fix() {
     fixed.queue_removal = None;
     fixed.auto_merge = true;
     fixed.state = PrState::Merged;
-    env.gh.set_pr("release", Some(fixed));
+    env.gh.set_pr(BRANCH, Some(fixed));
     time_passes(&env, &id).await;
     assert_eq!(waiting_at(&env, &id).await, "wait_release");
     env.gh.publish(REPO, release("v0.2.0"));
@@ -284,10 +292,10 @@ async fn a_failed_check_goes_to_the_inbox_and_the_release_waits_for_the_fix() {
 async fn a_failed_release_pr_closed_releases_nothing() {
     let env = setup().await;
     let id = release_pr_open(&env).await;
-    env.gh.set_runs("release", vec![ci_run(1, "ci", "abc", CiState::Failed)]);
+    env.gh.set_runs(BRANCH, vec![ci_run(1, "ci", "abc", CiState::Failed)]);
     time_passes(&env, &id).await;
     assert_eq!(inbox_titles(&env).await, ["Release PR #7 failed its checks".to_string()]);
-    env.gh.set_pr("release", Some(pr(7, PrState::Closed)));
+    env.gh.set_pr(BRANCH, Some(pr(7, PrState::Closed)));
     time_passes(&env, &id).await;
     let r = run(&env, &id).await;
     assert_eq!(r["status"], "succeeded", "{r}");
@@ -302,7 +310,7 @@ async fn a_release_pr_closed_unmerged_releases_nothing() {
         &env.app,
         "POST",
         &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(json!({"input": {"version": "1.0.0", "projectId": env.project}})),
+        Some(cut_input(&env, json!({"version": "1.0.0"}))),
     )
     .await;
     let id = r["runId"].as_str().unwrap().to_string();
@@ -310,9 +318,9 @@ async fn a_release_pr_closed_unmerged_releases_nothing() {
     let started = env.gh.ci.triggered.lock().unwrap().clone();
     assert_eq!(started[0].3, BTreeMap::from([("version".to_string(), "1.0.0".to_string())]));
 
-    env.gh.set_pr("release", Some(pr(9, PrState::Open)));
+    env.gh.set_pr(BRANCH, Some(pr(9, PrState::Open)));
     time_passes(&env, &id).await;
-    env.gh.set_pr("release", Some(pr(9, PrState::Closed)));
+    env.gh.set_pr(BRANCH, Some(pr(9, PrState::Closed)));
     time_passes(&env, &id).await;
     let r = run(&env, &id).await;
     assert_eq!(r["status"], "succeeded", "{r}");
@@ -328,7 +336,7 @@ async fn the_builtin_dry_runs_without_calling_github() {
         &env.app,
         "POST",
         "/api/workflows/dry-run",
-        Some(json!({"workflowId": wf["id"], "event": {"type": "manual", "payload": {"bump": "patch", "projectId": env.project}}})),
+        Some(json!({"workflowId": wf["id"], "event": {"type": "manual", "payload": cut_input(&env, json!({"bump": "patch"}))["input"]}})),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{r}");
@@ -348,12 +356,12 @@ async fn an_open_release_pr_stops_a_new_release_before_the_action_runs() {
     let env = setup().await;
     let wf = cut_release(&env).await;
     // An earlier release PR is still open: the Action would refuse, and that PR is not the bump asked for.
-    env.gh.set_pr("release", Some(pr(5, PrState::Open)));
+    env.gh.set_pr(BRANCH, Some(pr(5, PrState::Open)));
     let (_, r) = call(
         &env.app,
         "POST",
         &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(json!({"input": {"bump": "minor", "projectId": env.project}})),
+        Some(cut_input(&env, json!({"bump": "minor"}))),
     )
     .await;
     let id = r["runId"].as_str().unwrap().to_string();
@@ -367,18 +375,45 @@ async fn an_open_release_pr_stops_a_new_release_before_the_action_runs() {
     assert!(inbox_titles(&env).await.contains(&"Release PR #5 is still open".to_string()));
 }
 
+/// PDT-294: without a release workflow, Cut a release starts nothing and says what is missing.
 #[tokio::test]
-async fn a_nightly_cut_skips_the_release_pr_and_waits_for_the_pre_release() {
+async fn a_cut_without_a_workflow_starts_nothing() {
     let env = setup().await;
     let wf = cut_release(&env).await;
-    env.gh.publish(REPO, release("v0.2.0"));
-    // A release PR left open doesn't hold up a nightly release: it makes none.
-    env.gh.set_pr("release", Some(pr(5, PrState::Open)));
     let (_, r) = call(
         &env.app,
         "POST",
         &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
-        Some(json!({"input": {"bump": "patch", "channel": "nightly", "projectId": env.project}})),
+        Some(json!({"input": {"inputs": {"bump": "minor"}, "projectId": env.project}})),
+    )
+    .await;
+    let id = r["runId"].as_str().unwrap().to_string();
+    pdt_api::run_workflows(&env.state).await;
+    let r = run(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(r["steps"].as_array().unwrap().last().unwrap()["nodeId"], "not_configured", "{r}");
+    assert!(r["output"]["error"].as_str().unwrap().contains("workflow"), "{r}");
+    assert!(env.gh.ci.triggered.lock().unwrap().is_empty());
+    assert!(env.gh.calls.lock().unwrap().is_empty(), "nothing read either");
+    assert!(notified(&env).await.contains(&"Cut a release needs the release workflow".to_string()));
+}
+
+/// PDT-294 (PDT-210, PDT-283 before it): without `releaseBranch` there is no release PR stage: it runs the workflow on
+/// the branch given, with its inputs, and waits for a newer release matching `tag`.
+#[tokio::test]
+async fn a_cut_without_a_release_branch_waits_for_the_matching_release() {
+    let env = setup().await;
+    let wf = cut_release(&env).await;
+    env.gh.publish(REPO, release("v0.2.0-beta.1"));
+    // A release PR left open doesn't hold this up: it makes none.
+    env.gh.set_pr(BRANCH, Some(pr(5, PrState::Open)));
+    let input = json!({"workflow": "beta.yml", "ref": "develop", "inputs": {"channel": "beta", "dry": false},
+                       "tag": "v*-beta.*", "projectId": env.project});
+    let (_, r) = call(
+        &env.app,
+        "POST",
+        &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()),
+        Some(json!({"input": input})),
     )
     .await;
     let id = r["runId"].as_str().unwrap().to_string();
@@ -386,31 +421,33 @@ async fn a_nightly_cut_skips_the_release_pr_and_waits_for_the_pre_release() {
 
     let started = env.gh.ci.triggered.lock().unwrap().clone();
     let inputs =
-        BTreeMap::from([("bump".to_string(), "patch".to_string()), ("channel".to_string(), "nightly".to_string())]);
-    assert_eq!(started, [(REPO.to_string(), "release.yml".to_string(), "main".to_string(), inputs)]);
-    assert_eq!(waiting_at(&env, &id).await, "wait_nightly");
+        BTreeMap::from([("channel".to_string(), "beta".to_string()), ("dry".to_string(), "false".to_string())]);
+    assert_eq!(started, [(REPO.to_string(), "beta.yml".to_string(), "develop".to_string(), inputs)]);
+    assert_eq!(waiting_at(&env, &id).await, "wait_direct");
 
     time_passes(&env, &id).await;
-    assert_eq!(waiting_at(&env, &id).await, "wait_nightly", "nothing newer yet");
-    env.gh.publish(REPO, release("v0.2.1-nightly.20261030"));
+    assert_eq!(waiting_at(&env, &id).await, "wait_direct", "nothing newer yet");
+    // A release that doesn't match the pattern is not the one.
+    env.gh.publish(REPO, release("v0.2.0"));
+    time_passes(&env, &id).await;
+    assert_eq!(waiting_at(&env, &id).await, "wait_direct", "not a beta");
+    env.gh.publish(REPO, release("v0.2.1-beta.1"));
     time_passes(&env, &id).await;
 
     let r = run(&env, &id).await;
     assert_eq!(r["status"], "succeeded", "{r}");
-    assert_eq!(r["output"]["tag"], "v0.2.1-nightly.20261030");
+    assert_eq!(r["output"]["tag"], "v0.2.1-beta.1");
     let titles = inbox_titles(&env).await;
-    assert!(titles.contains(&"Nightly release v0.2.1-nightly.20261030 is published".to_string()), "{titles:?}");
-    assert!(!titles.iter().any(|t| t.contains("ready for review")), "no release PR to review: {titles:?}");
+    assert!(titles.contains(&"Release v0.2.1-beta.1 is published".to_string()), "{titles:?}");
     let calls = env.gh.calls.lock().unwrap().clone();
     assert!(!calls.iter().any(|c| c.starts_with("merge ")), "{calls:?}");
 }
 
 #[tokio::test]
-async fn a_nightly_cut_dry_runs_without_calling_github() {
+async fn a_cut_without_a_release_branch_dry_runs_without_calling_github() {
     let env = setup().await;
     let wf = cut_release(&env).await;
-    // `experimental`, the channel's old name (the PM may still say it), is a nightly too.
-    let payload = json!({"bump": "patch", "channel": "experimental", "projectId": env.project});
+    let payload = json!({"workflow": WORKFLOW, "inputs": {"bump": "patch"}, "projectId": env.project});
     let (s, r) = call(
         &env.app,
         "POST",
@@ -424,8 +461,8 @@ async fn a_nightly_cut_dry_runs_without_calling_github() {
     let run = &r["run"];
     assert_eq!(run["status"], "succeeded", "{r}");
     let nodes: Vec<&str> = run["steps"].as_array().unwrap().iter().map(|s| s["nodeId"].as_str().unwrap()).collect();
-    assert!(nodes.contains(&"nightly_dispatch") && nodes.contains(&"nightly_released"), "{nodes:?}");
-    assert!(!nodes.contains(&"dispatch"), "not the stable path: {nodes:?}");
+    assert!(nodes.contains(&"direct_dispatch") && nodes.contains(&"direct_released"), "{nodes:?}");
+    assert!(!nodes.contains(&"dispatch"), "not the release PR path: {nodes:?}");
     assert!(env.gh.calls.lock().unwrap().is_empty());
 }
 
@@ -615,4 +652,77 @@ async fn start_it_runs_the_nightly() {
     assert_eq!(started, [(repo.to_string(), "release.yml".to_string(), "main".to_string(), inputs)]);
     assert!(missing_items(&env).await.is_empty());
     assert!(notified(&env).await.contains(&"Tonight's nightly is starting".to_string()));
+}
+
+/// PDT-294: Report a missing scheduled release, made from its template for any tag scheme (here `snapshot-{date}`,
+/// reported whether or not the branch changed): a day with no release goes to the Inbox, and Start it runs the
+/// workflow on the branch with the inputs given; a day whose release is out says nothing.
+#[tokio::test]
+async fn the_missing_release_template_reports_and_starts_any_scheduled_release() {
+    let env = setup().await;
+    pdt_api::run_workflows(&env.state).await;
+    let params = json!({"repo": REPO, "workflow": "snapshot.yml", "branch": "develop",
+                        "tagPattern": "snapshot-{date}", "hour": 6, "onlyIfChanged": false,
+                        "inputs": "{\"kind\": \"snapshot\"}", "title": "No snapshot today"});
+    let (s, w) = call(
+        &env.app,
+        "POST",
+        "/api/workflow-templates/builtin:missing-scheduled-release/instantiate",
+        Some(json!({"params": params})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    let wf = w["id"].as_str().unwrap().to_string();
+    let (s, v) = call(&env.app, "PATCH", &format!("/api/workflows/{wf}"), Some(json!({"enabled": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let fire = |slot: i64, date: &str| {
+        let payload = json!({"workflowId": wf, "nodeId": "daily", "slot": slot,
+                             "slotIso": format!("{date}T06:00:00Z"), "date": date});
+        pdt_core::workflow::api::NewLogEvent::new(
+            pdt_core::workflow::events::SCHEDULE_FIRED,
+            format!("schedule:test:{slot}"),
+            "scheduler",
+            payload,
+        )
+    };
+    let items = || async {
+        let (_, v) = call(&env.app, "GET", "/api/inbox", None).await;
+        v["items"].as_array().unwrap().iter().filter(|i| i["title"] == "No snapshot today").cloned().collect::<Vec<_>>()
+    };
+
+    // The day before's release is out, the day's isn't: missing.
+    env.gh.publish(REPO, release("snapshot-2026-10-29"));
+    fired(&env, &fire(1, "2026-10-30"), 1).await;
+    let found = items().await;
+    assert_eq!(found.len(), 1, "{found:?}");
+    let text = found[0]["body"]["text"].as_str().unwrap();
+    assert!(
+        text.contains("No release matching `snapshot-{date}` for 2026-10-30 was published by 06:00 UTC."),
+        "{text}"
+    );
+    assert!(text.contains(&format!("https://github.com/{REPO}/actions/workflows/snapshot.yml")), "{text}");
+    assert!(!env.gh.calls.lock().unwrap().iter().any(|c| c.contains("ahead")), "the branch isn't compared");
+
+    // Start it: the workflow runs on the branch with the template's inputs.
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", found[0]["id"].as_str().unwrap()),
+        Some(json!({"choice": "start"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    let inputs = BTreeMap::from([("kind".to_string(), "snapshot".to_string())]);
+    let started = env.gh.ci.triggered.lock().unwrap().clone();
+    assert_eq!(started, [(REPO.to_string(), "snapshot.yml".to_string(), "develop".to_string(), inputs)]);
+    assert!(items().await.is_empty());
+    assert!(notified(&env).await.contains(&"The release workflow is starting".to_string()));
+
+    // The next day's (in the other date form) is out: nothing to say.
+    env.gh.publish(REPO, release("snapshot-20261031"));
+    fired(&env, &fire(2, "2026-10-31"), 2).await;
+    assert!(items().await.is_empty());
 }

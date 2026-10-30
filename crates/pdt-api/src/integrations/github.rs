@@ -65,6 +65,7 @@ impl Integration for Github {
         use crate::workflow::{outside_prs, templates};
         vec![
             templates::issue_triage(),
+            crate::workflow::builtins::missing_release_template(),
             templates::builtin(
                 outside_prs::ID,
                 pdt_core::workflow::template::Category::Issues,

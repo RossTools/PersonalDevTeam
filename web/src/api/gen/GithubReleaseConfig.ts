@@ -18,4 +18,10 @@ newerThan: string | null,
  * Instead of the latest release, the newest published one, pre-releases included (a nightly release, PDT-210,
  * PDT-283).
  */
-prereleases: boolean, };
+prereleases: boolean, 
+/**
+ * Instead of the latest release, the newest published one (pre-releases included) whose tag matches this glob
+ * (PDT-294): `*` any text, `?` one character, `{date}` a date (`v*`, `v*-beta.*`, `snapshot-{date}`). Blank: the
+ * latest release.
+ */
+tagPattern: string | null, };

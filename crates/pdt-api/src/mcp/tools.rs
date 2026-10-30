@@ -129,8 +129,8 @@ struct WorkflowRun {
     name: Option<String>,
     /// The project it runs in (its key or id): its `projectId` in the run's input.
     project: String,
-    /// The run's input, read as `{{trigger.x}}` (Cut a release: `bump` patch, minor or major, or `version` X.Y.Z;
-    /// `channel` stable or nightly).
+    /// The run's input, read as `{{trigger.x}}` (Cut a release: `workflow`, the release workflow's file; `inputs`, its
+    /// `workflow_dispatch` inputs; `releaseBranch` when it opens a release PR; `tag`, the release's tag pattern; `ref`).
     #[serde(default)]
     input: serde_json::Map<String, Value>,
 }
@@ -512,7 +512,8 @@ pub(crate) fn defs() -> Vec<Tool> {
             decl: ToolDecl::new("workflow_run", "Run an enabled workflow now").asks().pm(),
             title: "Run a workflow",
             description: "Runs an enabled workflow that has a Run now trigger, in a project, with an input its steps \
-                          read as {{trigger.x}}: e.g. the built-in Cut a release with {\"bump\": \"minor\"}, only when \
+                          read as {{trigger.x}}: e.g. the built-in Cut a release with {\"workflow\": \"publish.yml\", \
+                          \"inputs\": {\"bump\": \"minor\"}}, only when \
                           the user asks for a release. The user confirms each call. Returns the run's id \
                           (list_workflow_runs follows it).",
             schema: schema::<WorkflowRun>,
