@@ -17,5 +17,8 @@
     "@fontsource/jetbrains-mono": "^5.3.0",
     "astro": "^7.4.2",
     "unist-util-visit": "^5.2.0"
+  },
+  "devDependencies": {
+    "sharp": "^0.35.5"
   }
 }
