@@ -1,21 +1,17 @@
 // @ts-check
-import { readdirSync, readFileSync } from 'node:fs';
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { unified } from '@astrojs/markdown-remark';
 import { remarkDocsLinks } from './src/remark-docs-links.mjs';
-import { docId } from './src/docs-pages.mjs';
+import { docId, USER_SECTIONS } from './src/docs-pages.mjs';
 
-// Starlight's `autogenerate` only sees src/content/docs, and the docs live in the repository's docs/: list them here,
-// each labelled with the start of its title ("Host: daemon, desktop tray, …" -> "Host").
-const referenceDir = new URL('../docs/reference/', import.meta.url);
-const reference = readdirSync(referenceDir)
-  .filter((f) => f.endsWith('.md'))
-  .sort()
-  .map((f) => {
-    const title = /^#\s+(.+)$/m.exec(readFileSync(new URL(f, referenceDir), 'utf8'))?.[1] ?? f;
-    return { slug: docId(`reference/${f}`), label: title.split(/:| \(|,/)[0].trim() };
-  });
+// Starlight's `autogenerate` only sees src/content/docs, and the docs live in the repository's docs/: the user docs
+// sections are listed in docs-pages.mjs, each page labelled with its title. docs/reference/ is still published (other
+// docs link to it) but left out of the sidebar.
+const sections = USER_SECTIONS.map((s) => ({
+  label: s.label,
+  items: s.pages.map((p) => ({ slug: docId(`user/${s.dir}/${p}.md`) })),
+}));
 
 // The Pages workflow passes the deployed URL and path (actions/configure-pages); locally the site is served at /.
 // With a custom domain (site/public/CNAME) Pages serves it at the domain's root, and configure-pages says so.
@@ -47,6 +43,7 @@ export default defineConfig({
       },
       sidebar: [
         { label: 'Overview', link: '/docs/' },
+        ...sections,
         {
           label: 'Guides',
           items: [
@@ -55,7 +52,6 @@ export default defineConfig({
             { label: 'How we work on PDT', slug: 'docs/sdlc' },
           ],
         },
-        { label: 'Reference', items: reference },
       ],
     }),
   ],
