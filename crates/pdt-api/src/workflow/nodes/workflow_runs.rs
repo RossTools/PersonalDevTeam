@@ -149,6 +149,19 @@ fn job_list(run: &WorkflowRun, jobs: &[String]) -> String {
     jobs.iter().map(|j| format!("- {j}")).collect::<Vec<_>>().join("\n")
 }
 
+/// Text for inside a Markdown link's brackets: a run's title is its commit's or pull request's (outside input), and a
+/// bracket or backslash in it would break the link.
+fn link_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '[' | ']' | '\\') {
+            out.push('\\');
+        }
+        out.push(if c == '\n' { ' ' } else { c });
+    }
+    out
+}
+
 /// The item's text: what failed, where, and what Re-run does.
 fn item_text(run: &WorkflowRun, jobs: &str, can_rerun: bool) -> String {
     let attempt = if run.run.attempt > 1 { format!(" (attempt {})", run.run.attempt) } else { String::new() };
@@ -166,7 +179,7 @@ fn item_text(run: &WorkflowRun, jobs: &str, can_rerun: bool) -> String {
         "[{title}]({url}){attempt} of the **{workflow}** workflow failed.\n\n- Branch: `{branch}`\n- Started by \
          {by}{version}\n\nFailed jobs:\n\n{jobs}\n\n{rerun} This item goes away by itself once a later attempt of the \
          run passes.",
-        title = run.title,
+        title = link_text(&run.title),
         url = run.run.url,
         workflow = run.run.name,
         branch = run.run.branch,
@@ -470,6 +483,8 @@ mod tests {
         }
         assert!(!item_text(&run, &jobs, false).contains("**Re-run failed jobs**"));
         assert_eq!(job_list(&run, &[]), "- release");
+        run.title = "Fix [ci] (again)\nmore".into();
+        assert!(item_text(&run, &jobs, true).starts_with(r"[Fix \[ci\] (again) more](https://ci.example/"));
         assert_eq!(started_by("workflow_dispatch"), "hand (Run workflow)");
     }
 }

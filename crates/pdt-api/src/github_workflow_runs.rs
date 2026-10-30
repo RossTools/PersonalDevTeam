@@ -116,6 +116,10 @@ pub fn cursor_key(node: &str) -> String {
 /// One look at every enabled watch that is due. pdtd runs it with the 60 s poll. Never fails; problems are logged
 /// (a failing read once per watch until it works again) and the look is tried again on the next poll.
 pub async fn refresh_workflow_runs(st: &AppState) {
+    // The GitHub plugin's trigger: nothing to read while it is off.
+    if !st.integrations.is_enabled("github") {
+        return;
+    }
     for (wf, doc) in crate::workflow::engine::enabled_with_docs(st).await {
         let nodes: Vec<&Node> = doc.nodes.iter().filter(|n| n.kind == GITHUB_WORKFLOW_FAILED).collect();
         if nodes.is_empty() {

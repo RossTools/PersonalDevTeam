@@ -70,7 +70,7 @@ export const plugins: IntegrationInfo[] = [
     "status": "on",
     "error": null,
     "errorConnection": null,
-    "checkable": true,
+    "checkable": false,
     "connectionKinds": [],
     "nodeKinds": [
       {

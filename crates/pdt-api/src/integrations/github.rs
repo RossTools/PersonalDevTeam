@@ -102,14 +102,6 @@ impl Integration for Github {
     fn actions(&self) -> Vec<Arc<dyn AnyAction>> {
         vec![Arc::new(CreateIssue)]
     }
-
-    /// Failed runs of the CI workflows watched (PDT-292).
-    fn pollers(&self) -> Vec<super::Poller> {
-        fn run(st: crate::routes::AppState) -> BoxFut<'static, ()> {
-            Box::pin(async move { crate::refresh_workflow_runs(&st).await })
-        }
-        vec![super::Poller { name: "the workflow run check", run }]
-    }
 }
 
 // ---- github.create_issue / issue_create
