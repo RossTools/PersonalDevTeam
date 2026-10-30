@@ -17,6 +17,7 @@ import { PrBadge } from '../tickets/PullRequest';
 import { useOpenTicket } from '../tickets/actions';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 import { SessionTicketChip } from './SessionTicketChip';
+import { startedByStep } from '../sessions/status';
 import { applyDrop } from './WorkspaceBar';
 import { RowField } from '../common/RowField';
 
@@ -211,7 +212,7 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose, touch = 
   );
 }
 
-/** Every agent session with its state and where it is (the Sessions sidebar, the phone drawer). */
+/** Every agent session the user started, with its state and where it is (the Sessions sidebar, the phone drawer). */
 export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
   ws: WorkspacesApi;
   onRenameTab: (tabId: string) => void;
@@ -221,8 +222,9 @@ export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
   touch?: boolean;
 }) {
   const { openMenu, menu } = useMenuAt();
-  const agents = ws.allInfos
-    .filter((i) => i.session?.kind === 'agent_tui')
+  // The user's own conversations: a workflow step's session never, even in a tab (PDT-299).
+  const agents = ws.everyInfo
+    .filter((i) => i.session?.kind === 'agent_tui' && !startedByStep(i.session))
     .map((i) => ({ id: i.item.id, info: i, where: findTab(ws.workspaces, i.item) }))
     .sort((a, b) => {
       const wa = a.where ? a.where.workspace.position : Infinity;

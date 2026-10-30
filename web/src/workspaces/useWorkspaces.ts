@@ -156,8 +156,9 @@ export function useWorkspaces(routed?: RoutedChoice) {
   );
   // Every session and run, hidden ones included: what the favicon and title watch (PDT-262).
   const everyInfo = useMemo(() => [...infos.values()], [infos]);
-  // The lists' sessions and runs: a workflow step's session (a ticket's, or an ended one with no ticket) only while a
-  // tab holds it (PDT-263, PDT-290).
+  // The palette's and Bring here's sessions and runs: a workflow step's session (a ticket's, or an ended one with no
+  // ticket) only while a tab holds it (PDT-263, PDT-290). The Agents list leaves out every step's session, tab or not
+  // (`startedByStep`, PDT-299).
   const allInfos = useMemo(
     () => everyInfo.filter((i) => !i.session || !hiddenStepSession(i.session) || findTab(workspaces, i.item)),
     [everyInfo, workspaces],
