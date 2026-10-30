@@ -77,9 +77,10 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   Nothing is started; a database with any project is left alone; ignored outside the dev profile.
   `PDT_SEED=website` (PDT-273) seeds the website's screenshots instead: one made-up project, Acme Shop (key `SHOP`), in
   `<data dir>/website`, on the local forge, with a ticket in every Board stage (each started one with a worktree, an
-  open change request and a finished CI run on its head, so nothing is opened or run), an Accept gate in the Inbox, a
-  backlog with parts, links and an overlap, finished sessions (a Coder conversation), past runs and an enabled
-  workflow that only runs at 03:00 (crates/pdtd/src/seed/website.rs; `scripts/site-screenshots.mjs` uses it).
+  open change request and a finished CI run on its head, so nothing is opened or run), an Accept gate and an agent's
+  question in the Inbox, a backlog with parts, links and an overlap, finished sessions (a Coder conversation), the cart
+  branch's changes open in a tab with a line comment of yours on them, a PM conversation (PDT-280), past runs and an
+  enabled workflow that only runs at 03:00 (crates/pdtd/src/seed/website.rs; `scripts/site-screenshots.mjs` uses it).
 
 ## Get started (PDT-230)
 

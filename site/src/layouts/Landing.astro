@@ -1,0 +1,55 @@
+---
+// The frame of the pages outside Starlight (the landing page and Features): head, nav and footer.
+import '../styles/fonts.css';
+import '../styles/landing.css';
+import markOnDark from '../assets/pdt-mark-on-dark.svg?url';
+import { siteLinks } from '../links.mjs';
+
+interface Props {
+	title: string;
+	description: string;
+}
+
+const { title, description } = Astro.props;
+const links = siteLinks(import.meta.env.BASE_URL);
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link rel="icon" href={`${links.home}pdt-favicon-16.svg`} type="image/svg+xml" />
+		<title>{title}</title>
+		<meta name="description" content={description} />
+	</head>
+	<body>
+		<nav>
+			<div class="wrap">
+				<a class="logo" href={links.home}><img src={markOnDark} alt="pdt" /></a>
+				<ul>
+					<li><a href={`${links.home}#how`}>How it works</a></li>
+					<li><a href={links.features}>Features</a></li>
+					<li><a href={links.docs}>Docs</a></li>
+					<li><a href={links.changelog}>Changelog</a></li>
+				</ul>
+				<div class="right">
+					<a class="btn sm ghost" href={links.github}>GitHub</a>
+					<a class="btn sm primary" href={links.download}>Download</a>
+				</div>
+			</div>
+		</nav>
+
+		<slot />
+
+		<footer>
+			<div class="wrap">
+				<a class="logo" href={links.home}><img src={markOnDark} alt="pdt" /></a>
+				<span>Personal Dev Team · Open source</span>
+				<div class="links">
+					<a href={links.features}>Features</a><a href={links.docs}>Docs</a><a href={links.changelog}>Changelog</a><a href={links.github}>GitHub</a>
+				</div>
+			</div>
+		</footer>
+	</body>
+</html>
