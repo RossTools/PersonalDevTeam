@@ -183,7 +183,7 @@ flags (and how to run them, what an asking call acts on, its approval title, cre
 transcript), its lines of the PM's instructions, project settings, whether it is a project's CI provider, its members
 of the 60 s poll, its routes (under `/api`, 404 while it is off), its built-in workflows and its templates. PDT's own
 pieces are always on: core, forge (the forge tools, PDT-177), webhook (incoming), github (issues), http, mcp, bug_reports (`report_bug`), in pdt-api
-`integrations/`. The `Registry` gathers PDT's own and the enabled integrations, in that order, into the catalog,
+`integrations/`; but github can be turned off (PDT-251, `Integration::can_turn_off`: see [Plugins](#plugins-in-settings)). The `Registry` gathers PDT's own and the enabled integrations, in that order, into the catalog,
 `tools/list` and `tools/call`, the personas' tools (`GET /api/personas/tools`, the PM's set, which ask), the event
 types and `GET /api/connections/kinds`. An integration's tools are the PM's only with its `pm` flag, and in another
 persona's set only when the user picks them.
@@ -196,8 +196,9 @@ jira,…` leaves the rest out) and hands those it was built with to `Integration
 pdt-core `integration::KNOWN` is the one list naming them outside their crates (id, label, description, category, icon, connection kinds, node-kind
 prefixes). Which of them an instance uses is the host value `integrations.enabled` (a JSON list of ids):
 Settings → Plugins (the UI calls an integration a plugin, PDT-228; see [Plugins](#plugins-in-settings)). `PUT
-/api/integrations {enabled}` sets exactly those (422 for one this build lacks; PDT's own ids are ignored: they are
-always on). A disabled integration registers nothing (no connection
+/api/integrations {enabled, off?}` sets exactly those (422 for one this build lacks; PDT's own ids are ignored there).
+`off` lists PDT's own to turn off (PDT-251; only those that can be, GitHub, else 422; left out: as they are), kept as
+the host value `integrations.own_off`. A disabled integration registers nothing (no connection
 kinds, node kinds, triggers, tools, PM instructions, project settings, pollers, routes or built-ins); its connections,
 project links and workflows are kept. A connection of a turned-off integration's kind is refused (400, naming it), a
 project's settings leave its section out, and a workflow node of its kinds fails validation (and a run) with
@@ -677,7 +678,7 @@ Each template has a `category` for the New workflow gallery (PDT-229): `ciPr` (C
 `notifications`, `releases` or `other` (Blank and the user's own); every built-in declares its own (`builtin()`'s
 argument, `Builtin::category`). The list (`GET /api/workflow-templates`) adds to each what its card and preview show:
 `plugin` (`{id, label, on}`: the first optional integration whose node kinds it uses, else GitHub for a `github.*`
-kind; GitHub is always on), `builtinWorkflow` and `added` (one of PDT's built-in workflows, and whether this host has
+kind), `builtinWorkflow` and `added` (one of PDT's built-in workflows, and whether this host has
 it), `triggers` and `steps` (node titles, the kind's title when a node has none; ends left out). It also lists the
 templates and built-ins of integrations this build has that are turned off, with `plugin.on` false; instantiating one
 is `409 integration_disabled`. Node titles come from a catalog of every integration this build has
@@ -840,7 +841,8 @@ opening the first workflow. The workflow page shows the reference warnings in a 
 
 PDT-228 (`web/src/plugins/`). Settings → **Plugins** (`/settings/plugins`; the old `/settings/integrations` goes
 there) is the catalog of `GET /api/integrations`: PDT's own plugins (GitHub, Incoming webhooks, HTTP services, MCP
-servers: `core`, always on, "Built in" instead of a switch; PDT's core, forge tools and bug reports are not listed),
+servers: `core`, always on, "Built in" instead of a switch, but for GitHub's `canTurnOff`; PDT's core, forge tools
+and bug reports are not listed),
 then each optional integration this build has, then the known ones it lacks. Each has its `category` (`dev`, `chat`,
 `media`, `general`: from pdt-core `KNOWN`, or the own integration's `Integration::category`; one without is not a
 plugin), `icon` (letters on a colour), `description`, `connectionKinds` (enabled or not), `nodeKinds` (its triggers,
@@ -853,6 +855,17 @@ description), tabs All · On · Needs attention (with its count), category chips
 (localStorage `pdt.plugins.layout`; a phone always lists), grouped by category. A card's switch turns the plugin on
 or off; turning on one that comes back `needs_setup` opens the add-connection dialog for its first kind at once
 (Later closes it, leaving it in Needs setup). A dashed note leaves room for plugins installed from outside PDT.
+
+**Turning GitHub off** (PDT-251). GitHub is the one of PDT's own plugins with a switch (`canTurnOff`), for a host
+whose projects use another forge or none. It can't be turned off while a project's forge is GitHub (the project's
+`forge` in `.pdt/project.toml`, else its origin: `forge::project_forge`): its info lists those as `forgeProjects`,
+the switch is disabled with the reason, and `PUT /api/integrations` with `off: ["github"]` answers 409 `in_use`
+naming them. Off, it registers nothing: its triggers (`GITHUB_EVENT_TYPES` in pdt-core, apart from PDT's own) and
+steps, the `issue_create` tool, its built-ins (PDT bug triage, PDT pull request review, Close GitHub issues on
+Done, Cut a release: `builtins::GITHUB_BUILTINS`, hidden like a turned-off integration's) and the issue-triage and
+Review outside pull requests templates (in the gallery faded); the GitHub forge is not in use (`AppState::forge_plugins`), so no project gets it from its origin, the
+Connect GitHub Inbox item goes, the 5-minute login check skips it and the setup checklist's GitHub step counts as
+skipped. The login is kept. Updates and bug reports still call GitHub (they are not the forge).
 
 A plugin's page (`/settings/plugins/<id>`; a phone's drill-down): its icon, name, category, description, status and
 switch; a banner for Needs setup (Add a connection), Error (the error, with Test again, `POST

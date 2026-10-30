@@ -7,7 +7,7 @@ import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { ConnectionDialog } from '../connections/ConnectionDialog';
 import { useConnectionKinds } from '../connections/kinds';
-import { STATUS_LABEL, STATUS_TONE, enabledWith, pluginsKey, type Plugin } from './model';
+import { STATUS_LABEL, STATUS_TONE, enabledWith, offWith, pluginsKey, stuckOn, type Plugin } from './model';
 
 /** Every plugin (`GET /api/integrations`). */
 export const usePlugins = () => useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations });
@@ -33,13 +33,14 @@ export function PluginStatusBadge({ p }: { p: Plugin }) {
   return <Badge tone={STATUS_TONE[p.status]} className={cn(p.status === 'not_built' && 'border border-dashed border-border bg-transparent')}>{STATUS_LABEL[p.status]}</Badge>;
 }
 
-/** The switch, or "Built in" for one of PDT's own. */
+/** The switch, or "Built in" for one of PDT's own that is always on. One a project uses as its forge stays on. */
 export function PluginSwitch({ p, pending, onChange }: { p: Plugin; pending: boolean; onChange: (on: boolean) => void }) {
-  if (p.core) return <span className="shrink-0 text-xs text-muted-foreground">Built in</span>;
+  if (p.core && !p.canTurnOff) return <span className="shrink-0 text-xs text-muted-foreground">Built in</span>;
+  const stuck = stuckOn(p);
   return (
     // A card opens its page on click: the switch is not part of that.
-    <span className="flex shrink-0" onClick={(e) => e.stopPropagation()}>
-      <Switch aria-label={`Use ${p.label}`} checked={p.enabled} disabled={!p.built || pending} onChange={onChange} />
+    <span className="flex shrink-0" title={stuck ?? undefined} onClick={(e) => e.stopPropagation()}>
+      <Switch aria-label={`Use ${p.label}`} checked={p.enabled} disabled={!p.built || pending || stuck !== null} onChange={onChange} />
     </span>
   );
 }
@@ -67,7 +68,7 @@ export function usePluginSwitch(plugins: Plugin[]): { toggle: (p: Plugin, on: bo
   const qc = useQueryClient();
   const [asking, setAsking] = useState<{ p: Plugin; kind: string } | null>(null);
   const set = useMutation({
-    mutationFn: ({ enabled }: { enabled: string[]; id: string; on: boolean }) => api.setIntegrations(enabled),
+    mutationFn: ({ enabled, off }: { enabled: string[]; off: string[]; id: string; on: boolean }) => api.setIntegrations(enabled, off),
     onSuccess: (next, { id, on }) => {
       qc.setQueryData(pluginsKey, next);
       // Connection kinds, the node catalog, project settings and the personas' tools all follow what is on.
@@ -77,7 +78,7 @@ export function usePluginSwitch(plugins: Plugin[]): { toggle: (p: Plugin, on: bo
     },
   });
   return {
-    toggle: (p, on) => set.mutate({ enabled: enabledWith(plugins, p.id, on), id: p.id, on }),
+    toggle: (p, on) => set.mutate({ enabled: enabledWith(plugins, p.id, on), off: offWith(plugins, p.id, on), id: p.id, on }),
     pending: set.isPending,
     error: set.error,
     dialog: asking && <AskConnection p={asking.p} kind={asking.kind} onClose={() => setAsking(null)} />,

@@ -49,6 +49,12 @@ impl AcpExtensions for GrokExtensions {
     }
 }
 
+/// `session/load` failed because Grok has no saved session by that id: `-32603` "Path not found." (its session folder
+/// is missing).
+pub fn session_missing(code: i64, message: &str) -> bool {
+    code == -32603 && message.starts_with("Path not found")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,5 +309,21 @@ mod tests {
         assert_eq!(g.tool_name(&json!({"kind": "edit"})), None);
         assert!(g.rejected(&json!({"status": "failed", "_meta": {"toolNotRun": "rejected"}})));
         assert!(!g.rejected(&json!({"status": "failed"})));
+    }
+
+    #[test]
+    fn a_session_grok_has_not_saved_starts_a_new_one_and_the_flavor_reads_groks_fields() {
+        use crate::acp_agent::AcpFlavor;
+        // Recorded: loading an id grok has no session for.
+        assert!(AcpFlavor::Grok.session_missing(-32603, "Path not found."));
+        assert!(!AcpFlavor::Grok.session_missing(-32603, "Internal error"));
+        assert!(!AcpFlavor::Plain.session_missing(-32603, "Path not found."));
+        let f = AcpFlavor::Grok;
+        assert_eq!(
+            (f.name(), f.session_option(), f.pdt_tool_prefix()),
+            ("Grok", Some("allow-edits-session"), Some("pdt__"))
+        );
+        assert!(f.resolves_symlinks() && f.rejected(&json!({"_meta": {"toolNotRun": "rejected"}})));
+        assert_eq!((AcpFlavor::Omp.session_option(), AcpFlavor::Omp.pdt_tool_prefix()), (None, None));
     }
 }

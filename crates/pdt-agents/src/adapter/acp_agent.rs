@@ -1,28 +1,25 @@
 //! ACP agents defined as data (PDT-234; pdt-core `acp_agent`): a profile that ships with PDT or one the user added
 //! in Settings → Agents, run through the generic ACP adapter (`super::acp`) as plain ACP. Their command, arguments
 //! and environment come from the definition; their modes from its mode map, else from the `availableModes` they
-//! advertise, else PDT keeps the mode itself. PDT's instructions go in front of a new session's first prompt. What
-//! the agent adds to ACP comes from the definition's flavor (Grok's: pdt-core `conversation::grok`).
+//! advertise, else PDT keeps the mode itself. PDT's instructions go in front of a new session's first prompt. What a
+//! built-in profile's agent adds to ACP comes from its flavor (`pdt_core::conversation::omp`).
 
 use super::acp::AcpProfile;
 use super::{AdapterError, AgentAdapter, EventSink, LiveConversation, OpenSpec};
 use pdt_core::acp_agent::{AcpAgentDef, AcpFlavor};
 use pdt_core::conversation::PermissionMode;
-use pdt_core::conversation::acp::{AcpExtensions, PlainAcp};
-use pdt_core::conversation::grok::GrokExtensions;
 use pdt_core::session::AgentKind;
 use serde_json::Value;
 
-/// A defined ACP agent's profile, with the extensions `E` its flavor reads.
+/// A defined ACP agent's profile.
 #[derive(Debug, Clone)]
-pub struct DefinedProfile<E = PlainAcp> {
+pub struct DefinedProfile {
     pub kind: AgentKind,
     pub def: AcpAgentDef,
-    pub extensions: E,
 }
 
-impl<E: AcpExtensions + Clone + Sync + 'static> AcpProfile for DefinedProfile<E> {
-    type Extensions = E;
+impl AcpProfile for DefinedProfile {
+    type Extensions = AcpFlavor;
 
     fn agent(&self) -> AgentKind {
         self.kind
@@ -32,8 +29,8 @@ impl<E: AcpExtensions + Clone + Sync + 'static> AcpProfile for DefinedProfile<E>
         &self.def.label
     }
 
-    fn extensions(&self) -> E {
-        self.extensions.clone()
+    fn extensions(&self) -> AcpFlavor {
+        self.def.flavor
     }
 
     fn args(&self, _spec: &OpenSpec) -> Vec<String> {
@@ -56,6 +53,13 @@ impl<E: AcpExtensions + Clone + Sync + 'static> AcpProfile for DefinedProfile<E>
         self.def.modes.iter().find(|(_, i)| i == id).map(|(m, _)| *m)
     }
 
+    fn resume_fallback(&self, code: i64, message: &str) -> Option<String> {
+        self.def
+            .flavor
+            .session_missing(code, message)
+            .then(|| format!("{} had no saved conversation to resume, so this is a new one.", self.def.label))
+    }
+
     fn instructions_in_prompt(&self) -> bool {
         true
     }
@@ -67,12 +71,7 @@ pub struct DefinedAdapter(pub DefinedProfile);
 impl DefinedAdapter {
     /// The adapter for `def`, when its id is a valid agent kind.
     pub fn new(def: AcpAgentDef) -> Option<Self> {
-        Some(DefinedAdapter(DefinedProfile { kind: def.kind()?, def, extensions: PlainAcp }))
-    }
-
-    /// The profile with the extensions its flavor reads.
-    fn with<E: AcpExtensions + Clone>(&self, extensions: E) -> DefinedProfile<E> {
-        DefinedProfile { kind: self.0.kind, def: self.0.def.clone(), extensions }
+        Some(DefinedAdapter(DefinedProfile { kind: def.kind()?, def }))
     }
 }
 
@@ -83,10 +82,7 @@ impl AgentAdapter for DefinedAdapter {
     }
 
     async fn open(&self, spec: OpenSpec, sink: EventSink) -> Result<Box<dyn LiveConversation>, AdapterError> {
-        match self.0.def.flavor {
-            AcpFlavor::Plain => super::acp::open(self.0.clone(), spec, sink).await,
-            AcpFlavor::Grok => super::acp::open(self.with(GrokExtensions), spec, sink).await,
-        }
+        super::acp::open(self.0.clone(), spec, sink).await
     }
 
     async fn draft(&self, _spec: OpenSpec, _prompt: &str, _schema: &Value) -> Result<Value, AdapterError> {

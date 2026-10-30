@@ -75,6 +75,16 @@ export const connectionsOf = (p: Plugin, cs: Connection[]) => cs.filter((c) => p
 /** The ids to enable when `id` is switched to `on`: the optional plugins that are on now, changed by that one. */
 export const enabledWith = (ps: Plugin[], id: string, on: boolean) => ps.filter((p) => !p.core && (p.id === id ? on : p.enabled)).map((p) => p.id);
 
+/** The ids of PDT's own to turn off when `id` is switched to `on` (PDT-251): those off now, changed by that one. */
+export const offWith = (ps: Plugin[], id: string, on: boolean) => ps.filter((p) => p.canTurnOff && !(p.id === id ? on : p.enabled)).map((p) => p.id);
+
+/** Why a plugin that is on can't be turned off now: projects use it as their forge (PDT-251). */
+export function stuckOn(p: Plugin): string | null {
+  if (!p.enabled || !p.forgeProjects.length) return null;
+  const names = p.forgeProjects.map((x) => x.name).join(', ');
+  return `${p.label} is the forge of ${names}. To turn it off, give ${p.forgeProjects.length > 1 ? 'them' : 'it'} another forge first (forge = "local" or "none" in .pdt/project.toml).`;
+}
+
 export type PluginLayout = 'cards' | 'list';
 
 const LAYOUT_KEY = 'pdt.plugins.layout';

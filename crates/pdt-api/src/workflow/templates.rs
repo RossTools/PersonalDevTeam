@@ -131,13 +131,6 @@ pub fn builtin_templates(reg: &crate::integrations::Registry) -> Vec<Template> {
             })),
         ),
     ];
-    out.push(issue_triage());
-    out.push(builtin(
-        super::outside_prs::ID,
-        Category::Issues,
-        super::outside_prs::params(),
-        super::outside_prs::doc(),
-    ));
     out.extend(reg.templates());
     out.push(builtin(super::pipeline::ID, Category::Tickets, super::pipeline::params(), super::pipeline::doc()));
     out.extend(super::builtins::all(reg).iter().map(of_builtin));
@@ -161,8 +154,8 @@ ticket with create_ticket (project {{params.project}}): a clear title, then a de
 it asks for, scope and \"Done when\". If only the user can decide, ask with ask_user. Finish with submit_outcome; \
 with `drafted`, give the new ticket's key as `data`: `{\"ticket\": \"<its key>\"}`.";
 
-/// Issue triage by the PM (PDT-81).
-fn issue_triage() -> Template {
+/// Issue triage by the PM (PDT-81): the GitHub plugin's template.
+pub(crate) fn issue_triage() -> Template {
     builtin(
         "issue-triage",
         Category::Issues,
@@ -228,15 +221,19 @@ async fn offered_templates(st: &AppState) -> Vec<Template> {
     out
 }
 
-/// The templates (and built-in workflows, as templates) of the integrations this build has that are turned off, with
-/// each one's integration: the gallery shows them faded (PDT-229).
+/// The templates (and built-in workflows, as templates) of the integrations this build has that are turned off (PDT's
+/// own too, PDT-251), with each one's integration: the gallery shows them faded (PDT-229).
 fn off_templates(st: &AppState) -> Vec<(Template, bool)> {
     st.integrations
-        .built()
+        .off()
         .iter()
-        .filter(|i| !st.integrations.is_enabled(i.id()))
         .flat_map(|i| {
-            let workflows = i.builtin_workflows().into_iter().map(|b| (of_builtin(&b), true));
+            // PDT bug triage is only ever offered where PDT is built, which uses GitHub.
+            let workflows = i
+                .builtin_workflows()
+                .into_iter()
+                .filter(|b| !super::builtins::only_for_pdt(b.id))
+                .map(|b| (of_builtin(&b), true));
             i.templates().into_iter().map(|t| (t, false)).chain(workflows)
         })
         .collect()
@@ -303,7 +300,7 @@ fn gallery_entry(
     let plugin = plugin_of(&t.doc).map(|(id, label)| TemplatePlugin {
         id: id.into(),
         label: label.into(),
-        on: id == "github" || st.integrations.is_enabled(id),
+        on: st.integrations.is_enabled(id),
     });
     let (mut triggers, mut steps) = (vec![], vec![]);
     for n in &t.doc.nodes {

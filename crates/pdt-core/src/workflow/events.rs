@@ -201,37 +201,6 @@ pub const EVENT_TYPES: &[EventType] = &[
         outside: &["body"],
     },
     EventType {
-        id: GITHUB_ISSUE_OPENED,
-        title: "GitHub issue opened",
-        description: "A new issue in a watched GitHub repository (the first look at a repository only records where it \
-                      is).",
-        schema: schema_of::<GithubIssueOpened>,
-        outside: &["title", "body"],
-    },
-    EventType {
-        id: GITHUB_PR_OPENED,
-        title: "Outside pull request opened",
-        description: "A pull request PDT didn't open (not a ticket's branch) on a project's GitHub repository: from a \
-                      fork, a bot such as Dependabot, or a collaborator (`kind`). The first look at a repository only \
-                      records the ones already open.",
-        schema: schema_of::<GithubPullRequest>,
-        outside: &["title", "body"],
-    },
-    EventType {
-        id: GITHUB_PR_PUSHED,
-        title: "Outside pull request pushed",
-        description: "New commits on a pull request PDT didn't open (its head moved): `previousHead` is where it was.",
-        schema: schema_of::<GithubPullRequest>,
-        outside: &["title", "body"],
-    },
-    EventType {
-        id: GITHUB_PR_CLOSED,
-        title: "Outside pull request closed",
-        description: "A pull request PDT didn't open was closed or merged (`merged`).",
-        schema: schema_of::<GithubPullRequest>,
-        outside: &["title", "body"],
-    },
-    EventType {
         id: SCHEDULE_FIRED,
         title: "On a schedule",
         description: "Every interval, or at the times of a cron expression.",
@@ -270,9 +239,45 @@ pub const EVENT_TYPES: &[EventType] = &[
     },
 ];
 
+/// The GitHub plugin's event types (its triggers), apart from PDT's own: they leave the catalog while it is off
+/// (PDT-251).
+pub const GITHUB_EVENT_TYPES: &[EventType] = &[
+    EventType {
+        id: GITHUB_ISSUE_OPENED,
+        title: "GitHub issue opened",
+        description: "A new issue in a watched GitHub repository (the first look at a repository only records where it \
+                      is).",
+        schema: schema_of::<GithubIssueOpened>,
+        outside: &["title", "body"],
+    },
+    EventType {
+        id: GITHUB_PR_OPENED,
+        title: "Outside pull request opened",
+        description: "A pull request PDT didn't open (not a ticket's branch) on a project's GitHub repository: from a \
+                      fork, a bot such as Dependabot, or a collaborator (`kind`). The first look at a repository only \
+                      records the ones already open.",
+        schema: schema_of::<GithubPullRequest>,
+        outside: &["title", "body"],
+    },
+    EventType {
+        id: GITHUB_PR_PUSHED,
+        title: "Outside pull request pushed",
+        description: "New commits on a pull request PDT didn't open (its head moved): `previousHead` is where it was.",
+        schema: schema_of::<GithubPullRequest>,
+        outside: &["title", "body"],
+    },
+    EventType {
+        id: GITHUB_PR_CLOSED,
+        title: "Outside pull request closed",
+        description: "A pull request PDT didn't open was closed or merged (`merged`).",
+        schema: schema_of::<GithubPullRequest>,
+        outside: &["title", "body"],
+    },
+];
+
 /// One of PDT's own event types (every integration's: pdt-api's registry).
 pub fn event_type(id: &str) -> Option<&'static EventType> {
-    EVENT_TYPES.iter().find(|t| t.id == id)
+    EVENT_TYPES.iter().chain(GITHUB_EVENT_TYPES).find(|t| t.id == id)
 }
 
 /// The attempt an event is about.
@@ -766,7 +771,7 @@ mod tests {
     #[test]
     fn every_type_is_unique_and_has_a_schema() {
         let mut ids = std::collections::HashSet::new();
-        for t in EVENT_TYPES {
+        for t in EVENT_TYPES.iter().chain(GITHUB_EVENT_TYPES) {
             assert!(ids.insert(t.id), "{} twice", t.id);
             assert!(t.id.contains('.'));
             assert!((t.schema)().as_object().is_some_and(|o| o.contains_key("properties")), "{}", t.id);

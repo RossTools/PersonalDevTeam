@@ -58,7 +58,7 @@ impl AcpProfile for DevinProfile {
     }
 
     /// Devin saves a session only at its first prompt.
-    fn resume_fallback(&self, code: i64) -> Option<String> {
+    fn resume_fallback(&self, code: i64, _message: &str) -> Option<String> {
         (code == SESSION_NOT_FOUND).then(|| {
             "Devin had not saved this conversation (it saves one at the first message), so this is a new one."
                 .to_string()

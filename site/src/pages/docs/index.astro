@@ -1,33 +1,22 @@
 ---
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { USER_SECTIONS, docId } from '../../docs-pages.mjs';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
-const page = (id: string) => `${base}docs/${id}/`;
+const page = (id: string) => `${base}${id}/`;
 ---
 
-<StarlightPage frontmatter={{ title: 'PDT docs', description: 'How PDT works: guides and reference.' }}>
+<StarlightPage frontmatter={{ title: 'PDT docs', description: 'How to install PDT and get work done with it.' }}>
 	<p>
-		PDT (Personal Dev Team) runs coding agents on your machine: you write tickets, agents build, review and test them in
-		their own worktrees, and you approve what ships. These pages are the same Markdown the project keeps in its
-		repository.
+		PDT (Personal Dev Team) runs coding agents on your machine. You write tickets; agents build them in their own
+		worktrees, and you review and approve what ships. New here? Start with
+		<a href={page(docId('user/getting-started/what-is-pdt.md'))}>What PDT is</a>, then
+		<a href={page(docId('user/getting-started/install.md'))}>install it</a>.
 	</p>
-	<h2>Guides</h2>
 	<CardGrid>
-		<LinkCard title="Working in a PDT project" description="How an agent PDT starts finds PDT and uses its tickets, worktrees, runs and tests." href={page('agent-guide')} />
-		<LinkCard title="Run configuration" description="What Run and Test do on a branch or worktree, and .pdt/project.toml." href={page('run-config')} />
-		<LinkCard title="How we work on PDT" description="The day-to-day lifecycle: branches, checks, the changelog, releases." href={page('sdlc')} />
-	</CardGrid>
-	<h2>Reference</h2>
-	<CardGrid>
-		<LinkCard title="Host" description="The daemon, the tray app, releases, updates and remote access." href={page('reference/host')} />
-		<LinkCard title="Agent sessions" description="Terminals, instructions, activity, restart and the PM." href={page('reference/agents')} />
-		<LinkCard title="Conversations" description="The structured view of an agent session." href={page('reference/conversations')} />
-		<LinkCard title="Tickets" description="The board, parts, Start, pull requests and areas." href={page('reference/tickets')} />
-		<LinkCard title="Workflows" description="Events, the engine, agent steps, the pipeline and integrations." href={page('reference/workflows')} />
-		<LinkCard title="Review" description="The Changes view, line comments, Approve and Merge." href={page('reference/review')} />
-		<LinkCard title="Workspaces" description="Projects, worktrees and runs." href={page('reference/workspaces')} />
-		<LinkCard title="Secrets" description="Secrets agents and workflows use but never see." href={page('reference/secrets')} />
-		<LinkCard title="GitHub" description="The GitHub forge, the in-app login and rate limits." href={page('reference/github')} />
+		{USER_SECTIONS.map((s) => (
+			<LinkCard title={s.label} description={s.summary} href={page(docId(`user/${s.dir}/${s.pages[0]}.md`))} />
+		))}
 	</CardGrid>
 </StarlightPage>

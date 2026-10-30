@@ -72,6 +72,8 @@ pub struct SetupFacts {
     pub codex: bool,
     pub devin: bool,
     pub github_connected: bool,
+    /// The GitHub plugin is turned off (PDT-251): nothing to connect.
+    pub github_off: bool,
     pub projects: usize,
 }
 
@@ -108,7 +110,7 @@ impl StepState {
 pub struct SetupSteps {
     /// git and at least one agent are found.
     pub agents: StepState,
-    /// Connected, or skipped.
+    /// Connected, or skipped (also while the GitHub plugin is off).
     pub github: StepState,
     /// One project exists.
     pub project: StepState,
@@ -123,7 +125,7 @@ impl SetupSteps {
             // Connected wins over skipped: it says more.
             github: if f.github_connected {
                 StepState::Done
-            } else if s.github_skipped {
+            } else if s.github_skipped || f.github_off {
                 StepState::Skipped
             } else {
                 StepState::Todo
@@ -204,6 +206,8 @@ mod tests {
         assert_eq!(gh(&SetupState::default(), true), StepState::Done);
         assert_eq!(gh(&skipped, true), StepState::Done);
         assert!(StepState::Skipped.complete());
+        let off = SetupFacts { github_off: true, ..facts() };
+        assert_eq!(SetupSteps::read(&SetupState::default(), &off).github, StepState::Skipped, "GitHub turned off");
     }
 
     #[test]

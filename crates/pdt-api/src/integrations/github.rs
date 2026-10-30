@@ -1,6 +1,8 @@
 //! GitHub issues: the trigger on new issues in watched repositories and the GitHub actions (PDT-221: filing an issue,
 //! also the `issue_create` tool); and for cutting a release (PDT-194), starting a workflow and reading a pull request
-//! or a release. (An attempt's pull request and CI are PDT's own: [`super::core`].)
+//! or a release. (An attempt's pull request and CI are PDT's own: [`super::core`].) It can be turned off while no
+//! project uses the GitHub forge (PDT-251): then its triggers, steps, built-in workflows, template and tool are left
+//! out, and PDT stops calling GitHub.
 
 use super::Integration;
 use super::action::{Action, ActionCx, AnyAction, NodeFace, ToolFace, Via};
@@ -12,7 +14,7 @@ use crate::workflow::nodes::release::{GithubChangeRequest, GithubRelease, Github
 use pdt_core::integration::{Icon, PluginCategory, ToolDecl};
 use pdt_core::pm::AskTarget;
 use pdt_core::ticket::Actor;
-use pdt_core::workflow::events::{GITHUB_PR_CLOSED, GITHUB_PR_OPENED, GITHUB_PR_PUSHED};
+use pdt_core::workflow::events::{EventType, GITHUB_EVENT_TYPES, GITHUB_PR_CLOSED, GITHUB_PR_OPENED, GITHUB_PR_PUSHED};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
@@ -43,6 +45,31 @@ impl Integration for Github {
 
     fn forge_kind(&self) -> Option<pdt_core::forge::ForgeKind> {
         Some(pdt_core::forge::ForgeKind::GITHUB)
+    }
+
+    fn can_turn_off(&self) -> bool {
+        true
+    }
+
+    fn event_types(&self) -> &'static [EventType] {
+        GITHUB_EVENT_TYPES
+    }
+
+    fn builtin_workflows(&self) -> Vec<crate::workflow::builtins::Builtin> {
+        crate::workflow::builtins::GITHUB_BUILTINS.to_vec()
+    }
+
+    fn templates(&self) -> Vec<pdt_core::workflow::template::Template> {
+        use crate::workflow::{outside_prs, templates};
+        vec![
+            templates::issue_triage(),
+            templates::builtin(
+                outside_prs::ID,
+                pdt_core::workflow::template::Category::Issues,
+                outside_prs::params(),
+                outside_prs::doc(),
+            ),
+        ]
     }
 
     fn node_kinds(&self) -> Vec<Box<dyn NodeKind>> {

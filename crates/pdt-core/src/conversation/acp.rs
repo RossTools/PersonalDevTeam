@@ -138,6 +138,18 @@ pub trait AcpExtensions: std::fmt::Debug + Send {
     /// Orders a form's optional fields (required ones come first, in the schema's order); default: by name.
     fn order_fields(&self, _keys: &mut [String]) {}
 
+    /// A form field's `title` is its question and its `description` the question's header (OhMyPi's); false: the
+    /// description is the question and the title its header (Devin's).
+    fn question_in_title(&self) -> bool {
+        false
+    }
+
+    /// The form field that takes an answer in the user's own words to the question in field `key`, when the agent
+    /// gives each question one (OhMyPi's `<key>__other`); None: own words go in the question's field.
+    fn other_field(&self, _key: &str) -> Option<String> {
+        None
+    }
+
     /// A JSON-RPC error's `data` says a retry may work.
     fn retryable(&self, _data: &Value) -> bool {
         false
@@ -179,9 +191,21 @@ struct OpenRequest {
     options: Vec<(String, String)>,
     /// The option allowing the call for this session only, when the request offers one.
     always: Option<String>,
-    /// Question text → the form field that answers it, and whether it takes several.
-    fields: BTreeMap<String, (String, bool)>,
+    /// Question text → the form field that answers it.
+    fields: BTreeMap<String, FormField>,
     turn_id: Option<String>,
+}
+
+/// The form field answering one of an elicitation's questions.
+#[derive(Debug, Clone, PartialEq)]
+struct FormField {
+    key: String,
+    /// It takes several answers (an array).
+    multi: bool,
+    /// Its options' labels.
+    labels: Vec<String>,
+    /// The field for an answer in the user's own words, when the form has one apart (`AcpExtensions::other_field`).
+    other: Option<String>,
 }
 
 impl OpenRequest {
@@ -881,7 +905,20 @@ impl<P: AcpExtensions> AcpMapper<P> {
                 } else {
                     let (name, title, input, diff) = match &tool {
                         Some(t) => (t.tool.clone(), t.title.clone(), t.input.clone(), t.diff.clone()),
-                        None => ("tool".into(), String::new(), Value::Null, None),
+                        // Asked before the agent reported the call (OhMyPi does): the request's own call names it.
+                        None => {
+                            let call = p.get("toolCall").cloned().unwrap_or_default();
+                            let input = call.get("rawInput").cloned().unwrap_or(Value::Null);
+                            let title = input
+                                .get("command")
+                                .and_then(Value::as_str)
+                                .map(one_line)
+                                .or_else(|| s(&call, "title").map(|t| one_line(&t)))
+                                .unwrap_or_default();
+                            let name =
+                                self.ext.tool_name(&call).or_else(|| s(&call, "kind")).unwrap_or_else(|| "tool".into());
+                            (name, title, input, None)
+                        }
                     };
                     // PDT's own tools (pdt-mcp): the session only has those its persona allows, so they run
                     // without asking, as Claude's `--allowedTools` and Codex's approval mode do.
@@ -967,9 +1004,24 @@ impl<P: AcpExtensions> AcpMapper<P> {
             (RequestKind::Question, Answer::Question { answers }) => {
                 let mut content = serde_json::Map::new();
                 for (q, picked) in answers {
-                    let Some((field, multi)) = r.fields.get(q) else { continue };
-                    let v = if *multi { json!(picked) } else { json!(picked.first().cloned().unwrap_or_default()) };
-                    content.insert(field.clone(), v);
+                    let Some(f) = r.fields.get(q) else { continue };
+                    // Own words go in their own field when the form has one.
+                    let (chosen, own): (Vec<&String>, Vec<&String>) = match &f.other {
+                        Some(_) => picked.iter().partition(|p| f.labels.contains(p)),
+                        None => (picked.iter().collect(), Vec::new()),
+                    };
+                    let v = if f.multi {
+                        json!(chosen)
+                    } else {
+                        json!(chosen.first().copied().cloned().unwrap_or_default())
+                    };
+                    if f.multi || !chosen.is_empty() || f.other.is_none() {
+                        content.insert(f.key.clone(), v);
+                    }
+                    if let (Some(other), false) = (&f.other, own.is_empty()) {
+                        let own: Vec<&str> = own.iter().map(|o| o.as_str()).collect();
+                        content.insert(other.clone(), json!(own.join(", ")));
+                    }
                 }
                 (json!({"action": "accept", "content": content}), None)
             }
@@ -1000,8 +1052,9 @@ impl<P: AcpExtensions> AcpMapper<P> {
 
 /// An elicitation form's fields as PDT questions (`{question, header, options, multiSelect}`, as Claude's
 /// AskUserQuestion has them), with each question's field: the required ones first, then the rest in the order the
-/// agent's extensions give them.
-fn questions(p: &Value, ext: &impl AcpExtensions) -> (Vec<Value>, BTreeMap<String, (String, bool)>) {
+/// agent's extensions give them. A question's own-words field (`AcpExtensions::other_field`) is no question of its
+/// own.
+fn questions(p: &Value, ext: &impl AcpExtensions) -> (Vec<Value>, BTreeMap<String, FormField>) {
     let schema = p.get("requestedSchema").cloned().unwrap_or_default();
     let props = schema.get("properties").and_then(Value::as_object).cloned().unwrap_or_default();
     let mut keys: Vec<String> = schema
@@ -1012,9 +1065,12 @@ fn questions(p: &Value, ext: &impl AcpExtensions) -> (Vec<Value>, BTreeMap<Strin
     let mut rest: Vec<String> = props.keys().filter(|k| !keys.contains(k)).cloned().collect();
     ext.order_fields(&mut rest);
     keys.extend(rest);
+    let other = |key: &str| ext.other_field(key).filter(|o| props.contains_key(o));
+    let companions: Vec<String> = keys.iter().filter_map(|k| other(k)).collect();
+    keys.retain(|k| !companions.contains(k));
     let mut out = Vec::new();
     let mut fields = BTreeMap::new();
-    let only = props.len() == 1;
+    let only = keys.len() == 1;
     for key in keys {
         let Some(f) = props.get(&key) else { continue };
         let multi = f.get("type").and_then(Value::as_str) == Some("array");
@@ -1025,7 +1081,7 @@ fn questions(p: &Value, ext: &impl AcpExtensions) -> (Vec<Value>, BTreeMap<Strin
                     .iter()
                     .filter_map(|o| {
                         let label = o.get("const").and_then(Value::as_str)?;
-                        let description = s(o, "title").filter(|t| t != label);
+                        let description = s(o, "description").or_else(|| s(o, "title").filter(|t| t != label));
                         Some(json!({"label": label, "description": description}))
                     })
                     .collect()
@@ -1036,13 +1092,25 @@ fn questions(p: &Value, ext: &impl AcpExtensions) -> (Vec<Value>, BTreeMap<Strin
                     .map(|e| e.iter().filter_map(Value::as_str).map(|l| json!({"label": l})).collect())
                     .unwrap_or_default()
             };
-        let question = s(f, "description")
-            .or_else(|| only.then(|| s(p, "message")).flatten())
-            .or_else(|| s(f, "title"))
-            .unwrap_or_else(|| key.clone());
-        let header = s(f, "title").filter(|h| *h != question);
+        let message = || only.then(|| s(p, "message")).flatten();
+        let (question, header) = if ext.question_in_title() {
+            (message().or_else(|| s(f, "title")), s(f, "description"))
+        } else {
+            (s(f, "description").or_else(message).or_else(|| s(f, "title")), s(f, "title"))
+        };
+        let mut question = question.unwrap_or_else(|| key.clone());
+        // Each question answers one field: two with the same text are told apart.
+        let base = question.clone();
+        for n in 2.. {
+            if !fields.contains_key(&question) {
+                break;
+            }
+            question = format!("{base} ({n})");
+        }
+        let header = header.filter(|h| *h != question);
+        let labels = options.iter().filter_map(|o| o["label"].as_str().map(String::from)).collect();
         out.push(json!({"question": question, "header": header, "options": options, "multiSelect": multi}));
-        fields.insert(question, (key, multi));
+        fields.insert(question, FormField { key: key.clone(), multi, labels, other: other(&key) });
     }
     (out, fields)
 }

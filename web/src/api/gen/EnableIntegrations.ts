@@ -3,4 +3,9 @@
 /**
  * What `PUT /api/integrations` takes: the ids of the integrations to enable (the rest are disabled).
  */
-export type EnableIntegrations = { enabled: Array<string>, };
+export type EnableIntegrations = { enabled: Array<string>, 
+/**
+ * The ids of PDT's own to turn off (the rest of those that can be are turned on, PDT-251); left out: as they
+ * are.
+ */
+off?: Array<string>, };

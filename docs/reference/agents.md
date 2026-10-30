@@ -505,8 +505,8 @@ the id is 1–32 lowercase letters, digits and `-`, interned so `AgentKind` stay
 the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the built-in names are unchanged.
 
 - Definitions (pdt-core `acp_agent`): profiles that ship with PDT (`builtin_profiles()`: id, label, icon, command,
-  arguments, environment, a mode map and a flavor, the agent's own ACP fields PDT reads; Grok below, each harness's
-  ticket adds its own) and the user's, in host
+  arguments, environment, a mode map and a flavor, `AcpFlavor`, for what the agent adds to ACP; OhMyPi's and Grok's
+  so far, each harness's ticket adds its own; their ids can't be taken) and the user's, in host
   settings `acpAgents` (`[{id, label, command, args, env: [{name, value}]}]`, the whole list per `PUT
   /api/host/settings`; up to 32). Settings → This host → Agents → ACP agents adds, edits and removes them ("Add ACP
   agent": name, command, arguments one per line, `NAME=value` lines; the id comes from the name and never changes).
@@ -522,7 +522,9 @@ the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the
   command (`~` expanded, looked up on the login PATH) with its arguments and environment in the session's folder,
   pdt-mcp in `mcpServers`, and PDT's instructions as a text block in front of a new session's first prompt (logged
   without it). Resume is `session/load` when the agent advertises `loadSession`; otherwise a new session starts with a
-  notice. The model and its choices come from `configOptions`, in a `session/new` or `session/load` answer or a
+  notice, as it does when the agent's `session/load` says it has no such session (`-32002`, or the flavor's own way
+  of saying it, `AcpFlavor::session_missing`). An error's `data.details` is added to its message.
+  The model and its choices come from `configOptions`, in a `session/new` or `session/load` answer or a
   `config_option_update`.
 - Modes: a profile's mode map, else the `availableModes` the agent advertises in `session/new`/`session/load`
   (matched to PDT's by id or name: `default`/`ask`, `acceptEdits`/`code`, `plan`, `bypass`/`yolo`, …,
@@ -539,13 +541,34 @@ the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the
 - Tests: `fake-agent --plain acp` (with `--modes` it advertises its modes, with `--partial-modes` only `build` and
   `plan`; `mcp: <tool> <json>` calls pdt-mcp after asking) in pdt-api `tests/acp_plain.rs` and `tests/acp_agents.rs`.
 
+### OhMyPi (PDT-238)
+
+The built-in profile `acp:omp` ("OhMyPi") runs `omp acp` (notes: docs/superpowers/notes/omp-acp.md); the user installs
+`omp` and sets up its model in omp itself (with none, a prompt fails with "No model selected", shown in the turn's
+error).
+- Modes: it advertises `default` (PDT's Ask) and, while omp's plan mode is on, `plan` (Plan); PDT keeps Accept edits
+  and Bypass itself, with omp in `default`. omp asks (`session/request_permission`) only before `bash`, `delete`,
+  `move` and an edit that deletes or moves a file, so in Ask mode its other edits and writes run without asking.
+- pdt-mcp: omp connects to the `mcpServers` PDT passes in `session/new` and `session/load`, and calls a tool by
+  writing to `xd://mcp__<tool>` (a `write` call of kind `execute`; it never asks before one). Resume is `session/load` (it replays the conversation; omp saves a session at `session/new`).
+- Its flavor (pdt-core `conversation/omp.rs`): a tool call's `name` is its tool (`bash`, `edit`); its `ask` tool's
+  questions arrive as a form elicitation where each question is a field's `title` (its header the `description`) with
+  a `<field>__other` field beside it, which takes an answer in the user's own words (`AcpExtensions::question_in_title`,
+  `other_field`). Plan mode's approval is a one-question form ("Approve and execute" / "Refine plan").
+- It asks permission before it reports the call (`session/request_permission` comes before the `tool_call`): the
+  generic mapper then names the request from the request's own `toolCall` (its kind, `execute` for `bash`; its command
+  or title).
+- Tests: pdt-core `conversation::omp` on fixtures recorded from omp 18.14.0 in `tests/fixtures/omp/` (`start.jsonl`:
+  the handshake and a prompt with no model; `turn.jsonl`: an MCP call, a command, an edit and an `ask` form;
+  `plan.jsonl`: plan mode, its approval and the approved command). An omp persona has run a Code step end to end
+  (2026-10-29, on a scratch daemon).
+
 ### Grok Build (PDT-236)
 
 The built-in profile `acp:grok` ("Grok") runs `grok agent --no-leader stdio` (xAI's Grok Build CLI, `curl -fsSL
 https://x.ai/cli/install.sh | bash`, signed in with `grok`; checked against grok 1.0.70's `--help` and its bundled
 docs, `~/.grok/docs/user-guide/15-agent-mode.md`). `--no-leader` starts an agent of its own rather than joining a
-shared Grok leader process. What Grok adds to ACP is pdt-core `conversation/grok.rs` (`GrokExtensions`, the `Grok`
-flavor), recorded in `crates/pdt-core/tests/fixtures/grok`:
+shared Grok leader process. What Grok adds to ACP is pdt-core `conversation/grok.rs` (`GrokExtensions`, `AcpFlavor::Grok`), recorded in `crates/pdt-core/tests/fixtures/grok`:
 
 - Modes: Grok advertises no `availableModes` (its own ask / accept-edits / plan / always-approve modes are not
   reachable over ACP, except always-approve as `_meta.yoloMode` on `session/new`, which PDT doesn't use), so PDT
@@ -559,7 +582,8 @@ flavor), recorded in `crates/pdt-core/tests/fixtures/grok`:
   `use_tool` with `rawInput.tool_name` `<server>__<tool>`, so pdt-mcp's are `pdt__get_ticket`, … and run without
   asking. A refused call ends `failed` with `_meta.toolNotRun: "rejected"` (declined).
 - Resume: `loadSession` is advertised and `session/load` replays the history (dropped: PDT logged it). Grok saves a
-  session when it is created; loading one it doesn't have fails with -32603 "Path not found", reported as is.
+  session when it is created; loading one it doesn't have fails with -32603 "Path not found", which starts a new one
+  (`AcpFlavor::session_missing`).
 - Cancel: `session/cancel` ends the turn `cancelled`; MCP: stdio and HTTP servers in `mcpServers` both work. The
   model list is `configOptions.model` in the `session/new` answer (Grok sends no `config_option_update`).
 - Ignored: Grok's `_x.ai/*` notifications (setup phases, MCP status, retries after rate limits, queue, usage,

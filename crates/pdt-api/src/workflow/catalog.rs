@@ -271,6 +271,11 @@ impl Catalog {
                 "integration_missing",
                 format!("{kind} is part of the {} integration, which this {SHORT_NAME} was built without", i.label),
             ),
+            // GitHub's are only missing while it is turned off (PDT-251): a catalog with none of them.
+            None if kind.starts_with("github.") && !self.kinds.iter().any(|(s, _)| s.id.starts_with("github.")) => (
+                "integration_disabled",
+                format!("{kind} is part of the GitHub plugin, which is turned off (Settings → Plugins)"),
+            ),
             None => ("unknown_kind", format!("no node kind is called {kind}")),
         }
     }
@@ -368,6 +373,14 @@ mod tests {
 
     fn catalog() -> &'static Catalog {
         crate::integrations::test_registry().catalog()
+    }
+
+    /// PDT-251: a missing `github.*` kind is GitHub turned off only when the catalog has none of GitHub's.
+    #[test]
+    fn a_missing_github_kind_is_github_turned_off_only_while_it_is() {
+        assert_eq!(catalog().missing("github.isue.opened").0, "unknown_kind", "GitHub is on: a typo");
+        let off = Catalog::new(vec![], vec![]);
+        assert_eq!(off.missing("github.issue.opened").0, "integration_disabled");
     }
 
     #[test]

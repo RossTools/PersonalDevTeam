@@ -15,9 +15,19 @@ export type IntegrationInfo = { id: string, label: string, description: string, 
  */
 built: boolean, 
 /**
- * Part of PDT (GitHub, incoming webhooks, HTTP services, MCP servers): always on, no switch.
+ * Part of PDT (GitHub, incoming webhooks, HTTP services, MCP servers): always on, no switch, unless
+ * [`IntegrationInfo::can_turn_off`].
  */
-core: boolean, status: PluginStatus, 
+core: boolean, 
+/**
+ * One of PDT's own the user can turn off (GitHub, PDT-251), while no project uses it
+ * ([`IntegrationInfo::forge_projects`]).
+ */
+canTurnOff: boolean, 
+/**
+ * The projects whose forge it is, while it is on (PDT-251): a forge plugin can't be turned off while any does.
+ */
+forgeProjects: Array<PluginProject>, status: PluginStatus, 
 /**
  * What is failing, for [`PluginStatus::Error`]: the connection's name and its error.
  */

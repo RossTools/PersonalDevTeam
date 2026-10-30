@@ -1,6 +1,6 @@
 //! ACP agents (PDT-234): agents that speak the Agent Client Protocol, other than Devin, as agent kinds `acp:<id>`.
-//! Each is a definition: a profile that ships with PDT (Grok; each harness's ticket adds its own) or one the user added
-//! in Settings → Agents (label, command, arguments, environment). They run only as conversations.
+//! Each is a definition: a profile that ships with PDT (OhMyPi's and Grok's; each harness's ticket adds its own) or
+//! one the user added in Settings → Agents (label, command, arguments, environment). They run only as conversations.
 
 use crate::conversation::PermissionMode;
 use serde::{Deserialize, Serialize};
@@ -57,21 +57,22 @@ pub struct AcpAgentDef {
     #[ts(skip)]
     #[serde(skip)]
     pub modes: Vec<(PermissionMode, String)>,
-    /// It ships with PDT (it can't be edited or removed).
-    pub builtin: bool,
-    /// What the agent adds to ACP that PDT reads (a built-in profile's).
+    /// What the agent adds to ACP (a built-in profile's; the user's agents are plain ACP).
     #[ts(skip)]
     #[serde(skip)]
     pub flavor: AcpFlavor,
+    /// It ships with PDT (it can't be edited or removed).
+    pub builtin: bool,
 }
 
-/// The ACP an agent speaks: plain, or with an agent's own extra fields that PDT reads (its tool names, its
-/// session-only permission option, the name it gives pdt-mcp's tools).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// What an ACP agent adds to plain ACP, for the conversation mapper (`crate::conversation::omp`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AcpFlavor {
     #[default]
     Plain,
-    /// Grok Build (`crate::conversation::grok`).
+    /// OhMyPi's `omp acp` (notes: docs/superpowers/notes/omp-acp.md).
+    Omp,
+    /// Grok Build's `grok agent --no-leader stdio` (`crate::conversation::grok`).
     Grok,
 }
 
@@ -91,8 +92,8 @@ impl From<&AcpAgentConfig> for AcpAgentDef {
             args: c.args.clone(),
             env: c.env.clone(),
             modes: Vec::new(),
-            builtin: false,
             flavor: AcpFlavor::Plain,
+            builtin: false,
         }
     }
 }
@@ -116,7 +117,23 @@ fn grok() -> AcpAgentDef {
 
 /// The ACP profiles that ship with PDT. Each harness's own ticket adds its profile here.
 pub fn builtin_profiles() -> Vec<AcpAgentDef> {
-    vec![grok()]
+    vec![omp(), grok()]
+}
+
+/// OhMyPi (`omp acp`, PDT-238). Its modes come from those it advertises: `default` (Ask) and, when its plan mode is
+/// on, `plan`; PDT keeps Accept edits and Bypass itself.
+fn omp() -> AcpAgentDef {
+    AcpAgentDef {
+        id: "omp".into(),
+        label: "OhMyPi".into(),
+        icon: None,
+        command: "omp".into(),
+        args: vec!["acp".into()],
+        env: Vec::new(),
+        modes: Vec::new(),
+        flavor: AcpFlavor::Omp,
+        builtin: true,
+    }
 }
 
 /// Every ACP agent: the built-in profiles, then the user's (less any saved with a built-in profile's id before PDT
@@ -294,6 +311,24 @@ mod tests {
     }
 
     #[test]
+    fn omp_ships_built_in_and_its_id_is_taken() {
+        let d = find(&[], "omp").unwrap();
+        assert_eq!(
+            (d.label.as_str(), d.command.as_str(), d.args.as_slice()),
+            ("OhMyPi", "omp", &["acp".to_string()][..])
+        );
+        assert_eq!((d.builtin, d.flavor), (true, AcpFlavor::Omp));
+        assert_eq!(d.kind().unwrap().as_str(), "acp:omp");
+        assert_eq!(validate(&[agent("omp")]).unwrap_err(), AcpAgentError::DuplicateId("omp".into()));
+        // It advertises `default` and `plan`: PDT's Ask and Plan.
+        let available = json!([{"id": "default", "name": "Default"}, {"id": "plan", "name": "Plan"}]);
+        assert_eq!(
+            advertised_modes(&available),
+            vec![(PermissionMode::Ask, "default".into()), (PermissionMode::Plan, "plan".into())]
+        );
+    }
+
+    #[test]
     fn a_user_agent_is_found_by_id_with_no_mode_map() {
         let user = validate(&[agent("opencode")]).unwrap();
         let d = find(&user, "opencode").unwrap();
@@ -315,7 +350,7 @@ mod tests {
         let all = all(&[saved, agent("opencode")]);
         assert_eq!(
             all.iter().map(|d| (d.id.as_str(), d.builtin)).collect::<Vec<_>>(),
-            [("grok", true), ("opencode", false)]
+            [("omp", true), ("grok", true), ("opencode", false)]
         );
     }
 
