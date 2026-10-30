@@ -1,0 +1,92 @@
+---
+// The one-line install command (public/install.sh and install.ps1, served beside the site), with a tab per system and
+// a copy button. Its script picks the visitor's system and makes the page's "Download for …" buttons follow it
+// (`data-download-label`, and `data-os` on a row of buttons: the visitor's becomes the primary one). Without JS the
+// macOS tab shows, and the tabs are links to their panels (`:target` shows the one picked); there is no copy button.
+import { siteLinks } from '../links.mjs';
+import { OSES, installCommand } from '../install.mjs';
+
+interface Props {
+	/** Unique on the page: the panels' ids start with it. */
+	id: string;
+}
+
+const { id } = Astro.props;
+const links = siteLinks(import.meta.env.BASE_URL);
+const root = new URL(links.home, Astro.site);
+---
+
+<div class="install" data-install>
+	<div class="install-tabs" role="tablist" aria-label="Your system">
+		{OSES.map((os, i) => (
+			<a
+				class="install-tab"
+				role="tab"
+				href={`#${id}-${os.id}`}
+				data-os={os.id}
+				aria-controls={`${id}-${os.id}`}
+				aria-selected={i === 0 ? 'true' : 'false'}
+			>{os.label}</a>
+		))}
+	</div>
+	{OSES.map((os, i) => (
+		<div class={i === 0 ? 'install-panel default' : 'install-panel'} id={`${id}-${os.id}`} role="tabpanel" data-os={os.id}>
+			<div class="install-command">
+				<code>{installCommand(os.id, root)}</code>
+				<button type="button" class="install-copy" hidden aria-label={`Copy the ${os.label} command`}>Copy</button>
+			</div>
+			<p class="install-note">{os.note} Or <a href={links.download}>download it</a>.</p>
+		</div>
+	))}
+</div>
+
+<script>
+	import { detectOs, OSES } from '../install.mjs';
+
+	const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+	const os = detectOs(nav.userAgentData?.platform, navigator.userAgent);
+	const label = OSES.find((o) => o.id === os)!.label;
+
+	for (const box of document.querySelectorAll<HTMLElement>('[data-install]')) {
+		const tabs = [...box.querySelectorAll<HTMLAnchorElement>('.install-tab')];
+		const panels = [...box.querySelectorAll<HTMLElement>('.install-panel')];
+		const show = (id: string) => {
+			tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.os === id)));
+			panels.forEach((p) => (p.hidden = p.dataset.os !== id));
+		};
+		box.classList.add('ready');
+		tabs.forEach((t) =>
+			t.addEventListener('click', (e) => {
+				e.preventDefault();
+				show(t.dataset.os!);
+			}),
+		);
+		show(os);
+		for (const button of box.querySelectorAll<HTMLButtonElement>('.install-copy')) {
+			if (!navigator.clipboard) continue;
+			button.hidden = false;
+			button.addEventListener('click', async () => {
+				const text = button.parentElement!.querySelector('code')!.textContent!;
+				try {
+					await navigator.clipboard.writeText(text);
+					button.textContent = 'Copied';
+				} catch {
+					button.textContent = 'Select and copy';
+				}
+				setTimeout(() => (button.textContent = 'Copy'), 2000);
+			});
+		}
+	}
+
+	// "Download for …" follows the visitor's system.
+	for (const el of document.querySelectorAll<HTMLElement>('[data-download-label]')) el.textContent = `Download for ${label}`;
+	for (const row of document.querySelectorAll<HTMLElement>('[data-download-row]')) {
+		const buttons = [...row.querySelectorAll<HTMLElement>('[data-os]')];
+		buttons.forEach((b) => {
+			b.classList.toggle('primary', b.dataset.os === os);
+			b.classList.toggle('ghost', b.dataset.os !== os);
+		});
+		const mine = buttons.find((b) => b.dataset.os === os);
+		if (mine) row.prepend(mine);
+	}
+</script>
