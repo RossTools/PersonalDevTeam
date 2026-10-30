@@ -27,7 +27,11 @@ canTurnOff: boolean,
 /**
  * The projects whose forge it is, while it is on (PDT-251): a forge plugin can't be turned off while any does.
  */
-forgeProjects: Array<PluginProject>, status: PluginStatus, 
+forgeProjects: Array<PluginProject>, 
+/**
+ * The forge it provides (`github`, `gitlab`), whose logins its page shows (`/api/forges/{kind}/login`).
+ */
+forgeKind: string | null, status: PluginStatus, 
 /**
  * What is failing, for [`PluginStatus::Error`]: the connection's name and its error.
  */

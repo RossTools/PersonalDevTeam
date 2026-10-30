@@ -336,7 +336,9 @@ pdt-api `forge.rs`, `ci.rs` and `github.rs`, pure rules in pdt-core `pr.rs`.
   registers a `pdt_forge::ForgePlugin` (its kind, the hosts it claims, the `Forge` it opens) in the
   `pdt_forge::ForgeRegistry` on `AppState::forges`, and is used while the integration that declares its kind
   (`Integration::forge_kind`) is enabled. GitHub (`pdt_github::plugin::GithubPlugin`) claims github.com and the GitHub
-  Enterprise Server the login is for; the local forge is built in. Everything that reads a forge goes through
+  Enterprise Server the login is for; GitLab (`pdt_int_gitlab::GitlabPlugin`, PDT-246, docs/reference/gitlab.md)
+  gitlab.com and each GitLab server it has a login for, its merge trains as the merge queue
+  (`refs/merge-requests/<iid>/train`, "merge train"); the local forge is built in. Everything that reads a forge goes through
   `forge::project_forge` (the PR poller, merges, agents' tools, issue triage, the `github.*` nodes); a flow tied to no
   project (an issue trigger's `repos`, a node's `repo` in a run without a GitHub project) uses the forge's account
   (`AppState::forge_account`). Only the GitHub login uses the GitHub client directly. A forge declares its capabilities (`Forge::capabilities`:

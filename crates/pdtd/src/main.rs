@@ -130,15 +130,26 @@ async fn run() -> anyhow::Result<()> {
     state.allowed_hosts = pdt_api::AllowedHosts::new(cfg.allowed_hosts.clone());
     // Likewise the GitHub forge over the API (attempts' pull requests, CI, merges and issues); it signs in with the
     // login in the keychain, read in the background below.
-    if !cfg.github_offline {
-        let api = std::sync::Arc::new(pdt_github::GithubApi::new(std::sync::Arc::new(
-            pdt_github::transport::ReqwestTransport::current(),
-        )));
-        state.forges =
-            pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_github::plugin::GithubPlugin::new(api))]);
-    }
+    // The forge plugins of the integrations built in (GitLab) share its transport.
+    let forge_transport: std::sync::Arc<dyn pdt_forge::transport::Transport> = if cfg.github_offline {
+        std::sync::Arc::new(pdt_forge::transport::Offline)
+    } else {
+        std::sync::Arc::new(pdt_forge::transport::ReqwestTransport::current())
+    };
+    let mut forges = if cfg.github_offline {
+        state.forges.plugins().to_vec()
+    } else {
+        let api = std::sync::Arc::new(pdt_github::GithubApi::new(forge_transport.clone()));
+        vec![std::sync::Arc::new(pdt_github::plugin::GithubPlugin::new(api))
+            as std::sync::Arc<dyn pdt_forge::ForgePlugin>]
+    };
+    forges.extend(integrations::forges(forge_transport));
+    state.forges = pdt_forge::ForgeRegistry::new(forges);
     if let Some(id) = &cfg.github_client_id {
         state.github_client_id = id.clone();
+    }
+    if let Some(id) = &cfg.gitlab_client_id {
+        state.forge_client_ids.insert("gitlab".into(), id.clone());
     }
     // The real CLI is installed only here; `AppState::new` runs no tailscale command at all.
     state.tailscale = match &cfg.tailscale_bin {

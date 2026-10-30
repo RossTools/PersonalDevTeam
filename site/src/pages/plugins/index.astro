@@ -1,17 +1,18 @@
 ---
 // /plugins/: what PDT works with, as Settings → Plugins lists it (PDT-281), from the plugin list the app is built
 // with (src/plugins.mjs). The media plugins are on /plugins/media/.
-import SitePage from '../../layouts/SitePage.astro';
+import Landing from '../../layouts/Landing.astro';
 import PluginCatalog from '../../components/PluginCatalog.astro';
 import { PLUGINS, pluginsOn } from '../../plugins.mjs';
 import { siteLinks } from '../../links.mjs';
 import { docId } from '../../docs-pages.mjs';
 
 const links = siteLinks(import.meta.env.BASE_URL);
-const docs = `${links.root}${docId('user/automation/plugins.md')}/`;
+const docs = `${links.home}${docId('user/automation/plugins.md')}/`;
 ---
 
-<SitePage title="Plugins · PDT" description="The services PDT works with: forges, trackers, CI and chat, as workflow steps, triggers and tools for the PM.">
+<Landing title="Plugins · PDT" description="The services PDT works with: forges, trackers, CI and chat, as workflow steps, triggers and tools for the PM.">
+	<main><div class="wrap">
 	<div class="kicker">// plugins</div>
 	<h1>Plugins</h1>
 	<p class="lead">
@@ -23,10 +24,12 @@ const docs = `${links.root}${docId('user/automation/plugins.md')}/`;
 	</div>
 	<PluginCatalog plugins={pluginsOn(PLUGINS, false)} />
 	<p class="also">PDT also works with media servers and managers: <a href={`${links.plugins}media/`}>the media plugins</a>.</p>
-</SitePage>
+	</div></main>
+</Landing>
 
 <style>
-	h1 { font-size: clamp(34px, 5vw, 48px); line-height: 1.1; letter-spacing: -.02em; font-weight: 700; }
+	main { padding: 64px 0 96px; }
+	h1 { margin: 0; max-width: none; font-size: clamp(34px, 5vw, 48px); line-height: 1.1; letter-spacing: -.02em; font-weight: 700; }
 	.lead a, .also a { color: var(--accent-hi); }
 	.lead a:hover, .also a:hover { text-decoration: underline; }
 	.actions { margin-top: 20px; }

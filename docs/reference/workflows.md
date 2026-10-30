@@ -33,7 +33,7 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   `schedule.fired` and webhooks' `webhook.received` ("Sensors and webhooks"); 7e-2 the
   Jira sensor's `jira.issue.created`, `.updated`, `.transitioned` and `.commented`, and Buildkite's (a CI provider since PDT-242)
   `ci.run_failed` / `ci.run_passed`. Payload types: pdt-core `workflow/events.rs` (PDT's own types in `EVENT_TYPES`; Jira's in its crate, pdt-int-jira `core.rs`, registered by the Jira integration: "Integrations"). CI events carry
-  `provider` (the CI provider: `github_actions`, `local`, or the CI integration's id: `buildkite`; each run in `runs`
+  `provider` (the CI provider: `github_actions`, `gitlab_ci`, `local`, or the CI integration's id: `buildkite`; each run in `runs`
   names it too, with a text `id` and `name`) and the PR's `autoMerge` and `inMergeQueue`; CI and `pr.*` events
   carry `mergeRequested` (the open PR was set to merge and hasn't merged, PDT-104: [tickets.md](tickets.md)) and
   `agentWorking` (an agent step is open on the attempt); CI events also `mergeWaiting` (a workflow's merge waits for
@@ -190,7 +190,9 @@ persona's set only when the user picks them.
 
 **Integration crates and enabling them** (PDT-173). Each optional integration is a crate, `crates/pdt-int-<id>`:
 discord (webhooks, the bot and its tools, the templates that post to Discord), jira (with its sensor, import route and
-built-ins), buildkite (its CI sensor), arr (Radarr and Sonarr), scryer (with its tools and GraphQL schema) and plex.
+built-ins), buildkite (its CI sensor), gitlab (the GitLab forge and GitLab CI, PDT-246: [gitlab.md](gitlab.md); pdtd
+also registers its forge plugin, `GitlabPlugin`, used while it is enabled, and it can't be turned off while a
+project's forge is GitLab), arr (Radarr and Sonarr), scryer (with its tools and GraphQL schema) and plex.
 pdtd has a cargo feature per crate (all on by default, so releases have them all; `--no-default-features --features
 jira,…` leaves the rest out) and hands those it was built with to `Integrations::new` (pdtd `src/integrations/`).
 pdt-core `integration::KNOWN` is the one list naming them outside their crates (id, label, description, category, icon, connection kinds, node-kind

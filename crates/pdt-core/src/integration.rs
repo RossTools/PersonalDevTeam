@@ -180,6 +180,16 @@ pub const KNOWN: &[KnownIntegration] = &[
         kind_prefixes: &["buildkite."],
     },
     KnownIntegration {
+        id: "gitlab",
+        label: "GitLab",
+        description: "Merge requests, pipelines, issues and releases for projects on gitlab.com or your own GitLab, as \
+                      your GitLab login.",
+        category: PluginCategory::Dev,
+        icon: Icon { letters: "GL", color: "#fc6d26" },
+        connection_kinds: &[],
+        kind_prefixes: &[],
+    },
+    KnownIntegration {
         id: "arr",
         label: "Sonarr and Radarr",
         description: "Search Radarr and Sonarr, add films and series, and read their download queues from workflows.",

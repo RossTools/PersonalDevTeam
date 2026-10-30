@@ -1,6 +1,6 @@
 ---
 // /plugins/media/: the media plugins (Scryer, Plex, Sonarr and Radarr), apart from the main Plugins page (PDT-281).
-import SitePage from '../../layouts/SitePage.astro';
+import Landing from '../../layouts/Landing.astro';
 import PluginCatalog from '../../components/PluginCatalog.astro';
 import { PLUGINS, pluginsOn } from '../../plugins.mjs';
 import { siteLinks } from '../../links.mjs';
@@ -8,7 +8,8 @@ import { siteLinks } from '../../links.mjs';
 const links = siteLinks(import.meta.env.BASE_URL);
 ---
 
-<SitePage title="Media plugins · PDT" description="PDT's media plugins: media servers and managers, as workflow steps and tools for the PM.">
+<Landing title="Media plugins · PDT" description="PDT's media plugins: media servers and managers, as workflow steps and tools for the PM.">
+	<main><div class="wrap">
 	<div class="kicker"><a href={links.plugins}>// plugins</a> / media</div>
 	<h1>Media plugins</h1>
 	<p class="lead">
@@ -20,10 +21,12 @@ const links = siteLinks(import.meta.env.BASE_URL);
 	</div>
 	<PluginCatalog plugins={pluginsOn(PLUGINS, true)} />
 	<p class="also"><a href={links.plugins}>All the other plugins</a></p>
-</SitePage>
+	</div></main>
+</Landing>
 
 <style>
-	h1 { font-size: clamp(34px, 5vw, 48px); line-height: 1.1; letter-spacing: -.02em; font-weight: 700; }
+	main { padding: 64px 0 96px; }
+	h1 { margin: 0; max-width: none; font-size: clamp(34px, 5vw, 48px); line-height: 1.1; letter-spacing: -.02em; font-weight: 700; }
 	.kicker a:hover, .also a:hover { text-decoration: underline; }
 	.also a { color: var(--accent-hi); }
 	.actions { margin-top: 20px; }

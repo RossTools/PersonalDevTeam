@@ -1,7 +1,7 @@
 ---
 // /plugins/<id>/: one plugin (PDT-281): what it does, what it needs, its workflow triggers and steps, and its tools, from
 // the plugin list the app is built with (src/plugins.mjs).
-import SitePage from '../../layouts/SitePage.astro';
+import Landing from '../../layouts/Landing.astro';
 import PluginIcon from '../../components/PluginIcon.astro';
 import { CATEGORY_LABEL, OWN_PAGE, PLUGINS, inlineCode } from '../../plugins.mjs';
 import { siteLinks } from '../../links.mjs';
@@ -15,13 +15,14 @@ const { p } = Astro.props;
 const links = siteLinks(import.meta.env.BASE_URL);
 const media = OWN_PAGE.includes(p.category);
 const back = media ? { href: `${links.plugins}media/`, label: 'Media plugins' } : { href: links.plugins, label: 'Plugins' };
-const docs = `${links.root}${docId('user/automation/plugins.md')}/`;
-const workflowsDoc = `${links.root}${docId('user/automation/workflows.md')}/`;
+const docs = `${links.home}${docId('user/automation/plugins.md')}/`;
+const workflowsDoc = `${links.home}${docId('user/automation/workflows.md')}/`;
 const pmTools = p.tools.filter((t) => t.pm);
 const agentTools = p.tools.filter((t) => !t.pm);
 ---
 
-<SitePage title={`${p.label} · PDT plugins`} description={p.description}>
+<Landing title={`${p.label} · PDT plugins`} description={p.description}>
+	<main><div class="wrap">
 	<a class="back" href={back.href}>← {back.label}</a>
 	<header>
 		<PluginIcon icon={p.icon} size="lg" />
@@ -98,13 +99,15 @@ const agentTools = p.tools.filter((t) => !t.pm);
 
 		<p class="docs">More in the docs: <a href={docs}>Plugins and connections</a>.</p>
 	</div>
-</SitePage>
+	</div></main>
+</Landing>
 
 <style>
 	.back { font-size: 14px; color: var(--muted); }
 	.back:hover { color: var(--fg); }
 	header { display: flex; align-items: center; gap: 16px; margin-top: 24px; }
-	h1 { font-size: clamp(30px, 4vw, 40px); line-height: 1.1; letter-spacing: -.02em; font-weight: 700; }
+	main { padding: 64px 0 96px; }
+	h1 { margin: 0; max-width: none; font-size: clamp(30px, 4vw, 40px); line-height: 1.1; letter-spacing: -.02em; font-weight: 700; }
 	.meta { margin-top: 4px; font-size: 14px; color: var(--muted); }
 	.body { display: flex; flex-direction: column; gap: 40px; margin-top: 48px; max-width: 760px; }
 	h2 { font-size: 20px; font-weight: 600; letter-spacing: -.01em; margin-bottom: 12px; }

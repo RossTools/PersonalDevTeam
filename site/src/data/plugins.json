@@ -575,6 +575,25 @@
     },
     {
       "builtIn": false,
+      "category": "dev",
+      "connections": [],
+      "description": "Merge requests, pipelines, issues and releases for projects on gitlab.com or your own GitLab, as your GitLab login.",
+      "icon": {
+        "color": "#fc6d26",
+        "letters": "GL"
+      },
+      "id": "gitlab",
+      "label": "GitLab",
+      "login": true,
+      "projectSettings": null,
+      "steps": [],
+      "templates": [],
+      "tools": [],
+      "triggers": [],
+      "workflows": []
+    },
+    {
+      "builtIn": false,
       "category": "media",
       "connections": [
         {
