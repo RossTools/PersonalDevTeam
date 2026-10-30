@@ -194,6 +194,7 @@ impl NodeKind for Agent {
                 }
                 // What a real run would check first (PDT-152): the persona, and where the step runs.
                 let persona = crate::workflow::agent::step_persona(cx.st, &c.persona).await?;
+                crate::workflow::agent::agent_on(cx.st, &persona).await?;
                 let t = crate::workflow::agent::target(cx, &c, true).await?;
                 let would = format!(
                     "run {} ({} session{}) and wait for one of: {}",

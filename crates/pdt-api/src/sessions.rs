@@ -70,8 +70,14 @@ pub(crate) struct CreateSession {
 pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<Session, ApiError> {
     let valid = req.valid;
     let project = st.store.get_project(&valid.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    if let Some(agent) = valid.agent.filter(|a| a.is_acp()) {
-        crate::conversations::acp_agent(st, agent).await?;
+    if let Some(agent) = valid.agent {
+        if agent.is_acp() {
+            crate::conversations::acp_agent(st, agent).await?;
+        }
+        // A switched-off agent starts nothing new (PDT-270); its sessions already running carry on.
+        if let Some(why) = st.store.get_host_settings().await?.agent_off(agent) {
+            return Err(ApiError::new(StatusCode::BAD_REQUEST, "agent_off", why));
+        }
     }
     let (worktree_id, mut cwd, place) = match &valid.worktree_id {
         Some(wid) => {

@@ -336,6 +336,9 @@ pub(crate) async fn reference_issues(st: &AppState, doc: &WorkflowDoc) -> Vec<Is
         message,
     };
     let mut out = vec![];
+    // The personas' agents, for a step whose agent is switched off (PDT-270).
+    let host = st.store.get_host_settings().await.ok();
+    let personas = st.store.list_personas().await.unwrap_or_default();
     for r in name_refs(doc, &|k: &str| ref_fields(&st.registry(), k)) {
         match &r.kind {
             Some(kind) => {
@@ -378,7 +381,23 @@ pub(crate) async fn reference_issues(st: &AppState, doc: &WorkflowDoc) -> Vec<Is
             None if here.persona(&r.name).is_none() => {
                 out.push(warn("missing_persona", &r.node, format!("{}: no persona here is called {}", r.node, r.name)))
             }
-            None => {}
+            None => {
+                let by_agent = doc
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == r.node)
+                    .is_none_or(|n| n.config.get("owner").and_then(Value::as_str) != Some("user"));
+                let persona = personas.iter().find(|p| !p.archived && p.name.eq_ignore_ascii_case(r.name.trim()));
+                if let (true, Some(p), Some(host)) = (by_agent, persona, &host)
+                    && let Some(why) = host.agent_off(p.setup.agent)
+                {
+                    out.push(warn(
+                        "agent_off",
+                        &r.node,
+                        format!("{}: {} runs on an agent that is off: {why}", r.node, p.name),
+                    ));
+                }
+            }
         }
     }
     for n in &doc.nodes {

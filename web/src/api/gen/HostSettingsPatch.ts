@@ -42,6 +42,10 @@ claudeProgram?: string, codexProgram?: string, devinProgram?: string,
  */
 acpAgents?: Array<AcpAgentConfig>, 
 /**
+ * The whole list of the agents switched off.
+ */
+disabledAgents?: Array<AgentKind>, 
+/**
  * Default models for the agents it names; the others keep theirs. Blank clears one (back to the agent's own).
  */
 agentModels?: Partial<Record<AgentKind, string>>, };

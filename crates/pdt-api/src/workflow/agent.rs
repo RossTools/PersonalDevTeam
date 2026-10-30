@@ -118,6 +118,14 @@ pub(crate) async fn step_persona(st: &AppState, name: &str) -> R<Persona> {
     Ok(persona)
 }
 
+/// Err "Codex is switched off in Settings → Agents" when the persona's agent is.
+pub(crate) async fn agent_on(st: &AppState, persona: &Persona) -> R<()> {
+    match st.store.get_host_settings().await.map_err(err)?.agent_off(persona.setup.agent) {
+        Some(why) => Err(format!("{}: {why}", persona.name)),
+        None => Ok(()),
+    }
+}
+
 /// Runs an `agent` node: the loop limit, then the persona's session and its first message, then a wait for the
 /// outcome. A step re-run after a restart finds its binding and waits again.
 pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
@@ -156,6 +164,10 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         return loop_limit(cx, &c, &passes).await;
     }
     let persona = step_persona(st, &c.persona).await?;
+    // A switched-off agent fails the step (PDT-270): it never falls back to another agent.
+    if c.owner == Owner::Agent {
+        agent_on(st, &persona).await?;
+    }
     let t = target(cx, &c, false).await?;
     if let (Some(stage), Some((ticket_id, _, _))) = (c.pipeline_stage, &t.ticket)
         && let Err(e) = st.store.set_pipeline_stage(ticket_id, Some(stage)).await

@@ -122,6 +122,9 @@ pub struct HostSettings {
     pub devin_program: Option<String>,
     /// The ACP agents the user added (Settings → Agents → Add ACP agent; PDT-234), agent kinds `acp:<id>`.
     pub acp_agents: Vec<crate::acp_agent::AcpAgentConfig>,
+    /// The agents switched off in Settings → Agents (PDT-270): never offered, and no new session starts on them.
+    /// Every agent is on unless it is here. The default agent never is.
+    pub disabled_agents: Vec<AgentKind>,
     /// A default model for each agent (Settings → Agents, PDT-265). A session with no model of its own (nor its
     /// persona's) starts with it; an agent without one uses the agent's own default (`HostSettings::model_for`).
     #[ts(type = "Partial<Record<AgentKind, string>>")]
@@ -161,6 +164,7 @@ impl Default for HostSettings {
             codex_program: None,
             devin_program: None,
             acp_agents: Vec::new(),
+            disabled_agents: Vec::new(),
             agent_models: Default::default(),
         }
     }
@@ -244,6 +248,10 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub acp_agents: Option<Vec<crate::acp_agent::AcpAgentConfig>>,
+    /// The whole list of the agents switched off.
+    #[serde(default)]
+    #[ts(optional)]
+    pub disabled_agents: Option<Vec<AgentKind>>,
     /// Default models for the agents it names; the others keep theirs. Blank clears one (back to the agent's own).
     #[serde(default)]
     #[ts(optional, type = "Partial<Record<AgentKind, string>>")]
@@ -274,6 +282,8 @@ pub enum HostSettingsError {
     BadModel,
     #[error("that agent isn't one this host has")]
     UnknownAgent,
+    #[error("{0} is the default agent: pick another default before switching it off")]
+    DefaultAgentOff(String),
     #[error("{0}")]
     BadAcpAgent(#[from] crate::acp_agent::AcpAgentError),
 }
@@ -391,12 +401,31 @@ impl HostSettings {
             s.acp_agents = crate::acp_agent::validate(agents)?;
         }
         // The default agent is one the host has: naming a missing ACP agent fails, and removing the default one goes
-        // back to Claude.
+        // back to the first built-in agent that is on (Claude, usually).
         if s.default_agent.is_acp() && s.acp_agent(s.default_agent).is_none() {
             if p.default_agent.is_some() {
                 return Err(HostSettingsError::UnknownAgent);
             }
-            s.default_agent = AgentKind::Claude;
+            let off = p.disabled_agents.as_ref().unwrap_or(&s.disabled_agents);
+            s.default_agent = AgentKind::ALL.into_iter().find(|a| !off.contains(a)).unwrap_or(AgentKind::Claude);
+        }
+        if let Some(off) = &p.disabled_agents {
+            let mut list: Vec<AgentKind> = vec![];
+            for &a in off {
+                if a.is_acp() && s.acp_agent(a).is_none() {
+                    return Err(HostSettingsError::UnknownAgent);
+                }
+                if !list.contains(&a) {
+                    list.push(a);
+                }
+            }
+            s.disabled_agents = list;
+        }
+        // A removed ACP agent's switch goes with it.
+        let acp = s.acp_agents.clone();
+        s.disabled_agents.retain(|&a| !a.is_acp() || crate::acp_agent::find(&acp, a.acp_id().unwrap_or("")).is_some());
+        if s.disabled_agents.contains(&s.default_agent) {
+            return Err(HostSettingsError::DefaultAgentOff(s.agent_label(s.default_agent)));
         }
         if let Some(models) = &p.agent_models {
             for (&agent, model) in models {
@@ -437,6 +466,31 @@ impl HostSettings {
             AgentKind::Devin => self.devin_program.as_deref(),
             // Its command is in its definition (`acp_agent`).
             AgentKind::Acp(_) => None,
+        }
+    }
+
+    /// Whether the agent is switched on (Settings → Agents, PDT-270).
+    pub fn agent_on(&self, agent: AgentKind) -> bool {
+        !self.disabled_agents.contains(&agent)
+    }
+
+    /// Why a new session can't start on `agent` when it is switched off: "Codex is switched off in Settings → Agents".
+    pub fn agent_off(&self, agent: AgentKind) -> Option<String> {
+        (!self.agent_on(agent)).then(|| format!("{} is switched off in Settings → Agents", self.agent_label(agent)))
+    }
+
+    /// Every agent this host has and has switched on: the built-ins, then the ACP agents (built-in profiles, then the
+    /// user's).
+    pub fn enabled_agents(&self) -> Vec<AgentKind> {
+        let acp = crate::acp_agent::all(&self.acp_agents).into_iter().filter_map(|d| d.kind());
+        AgentKind::ALL.into_iter().chain(acp).filter(|&a| self.agent_on(a)).collect()
+    }
+
+    /// The agent's name: a built-in's, or an ACP agent's label (its id when this host has no such agent).
+    pub fn agent_label(&self, agent: AgentKind) -> String {
+        match self.acp_agent(agent) {
+            Some(d) => d.label,
+            None => agent.label().to_string(),
         }
     }
 
@@ -624,6 +678,60 @@ mod tests {
         assert_eq!(removed.default_agent, AgentKind::Claude);
         let bad = HostSettingsPatch { acp_agents: Some(vec![agent("Bad id")]), ..patch() };
         assert!(matches!(HostSettings::default().apply(&bad), Err(HostSettingsError::BadAcpAgent(_))));
+    }
+
+    #[test]
+    fn agents_switch_off_and_on_but_never_the_default() {
+        let s = HostSettings::default();
+        assert_eq!(s.enabled_agents()[..3], AgentKind::ALL, "every agent starts on");
+        let off = |a: Vec<AgentKind>| HostSettingsPatch { disabled_agents: Some(a), ..patch() };
+        let codex_off = s.apply(&off(vec![AgentKind::Codex, AgentKind::Codex])).unwrap();
+        assert_eq!(codex_off.disabled_agents, [AgentKind::Codex], "once");
+        assert!(!codex_off.agent_on(AgentKind::Codex) && codex_off.agent_on(AgentKind::Claude));
+        assert!(!codex_off.enabled_agents().contains(&AgentKind::Codex));
+        assert_eq!(
+            codex_off.agent_off(AgentKind::Codex).as_deref(),
+            Some("Codex is switched off in Settings → Agents")
+        );
+        assert_eq!(codex_off.agent_off(AgentKind::Claude), None);
+        assert_eq!(
+            s.apply(&off(vec![AgentKind::Claude])),
+            Err(HostSettingsError::DefaultAgentOff("Claude".into())),
+            "the default agent stays on"
+        );
+        assert_eq!(
+            codex_off.apply(&HostSettingsPatch { default_agent: Some(AgentKind::Codex), ..patch() }),
+            Err(HostSettingsError::DefaultAgentOff("Codex".into())),
+            "nor is one switched off made the default"
+        );
+        let moved = s
+            .apply(&HostSettingsPatch {
+                default_agent: Some(AgentKind::Codex),
+                disabled_agents: Some(vec![AgentKind::Claude]),
+                ..patch()
+            })
+            .unwrap();
+        assert_eq!(
+            (moved.default_agent, moved.disabled_agents.as_slice()),
+            (AgentKind::Codex, &[AgentKind::Claude][..])
+        );
+        assert!(codex_off.apply(&off(vec![])).unwrap().agent_on(AgentKind::Codex), "and back on");
+        let unknown = off(vec![AgentKind::parse("acp:nobody").unwrap()]);
+        assert_eq!(s.apply(&unknown), Err(HostSettingsError::UnknownAgent));
+    }
+
+    #[test]
+    fn a_removed_acp_agent_takes_its_switch_with_it() {
+        use crate::acp_agent::AcpAgentConfig;
+        let agent =
+            AcpAgentConfig { id: "gone".into(), label: "Gone".into(), command: "g".into(), args: vec![], env: vec![] };
+        let kind = AgentKind::parse("acp:gone").unwrap();
+        let s = HostSettings::default()
+            .apply(&HostSettingsPatch { acp_agents: Some(vec![agent]), disabled_agents: Some(vec![kind]), ..patch() })
+            .unwrap();
+        assert_eq!(s.agent_off(kind).as_deref(), Some("Gone is switched off in Settings → Agents"));
+        let removed = s.apply(&HostSettingsPatch { acp_agents: Some(vec![]), ..patch() }).unwrap();
+        assert!(removed.disabled_agents.is_empty());
     }
 
     #[test]

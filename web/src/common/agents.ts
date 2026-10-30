@@ -20,18 +20,30 @@ export function agentLabel(agent: AgentKind, acp: Pick<AcpAgentView, 'agent' | '
   return acp?.find((a) => a.agent === agent)?.label ?? agent.slice('acp:'.length);
 }
 
+const useHostSettings = () => useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings, staleTime: 60_000, retry: false });
+
 /** The host's ACP agents (from the host settings; none until they load). */
 export function useAcpAgents(): AcpAgentView[] {
-  const q = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings, staleTime: 60_000, retry: false });
-  return q.data?.acpAgents ?? [];
+  return useHostSettings().data?.acpAgents ?? [];
 }
 
-/** Every agent this host has (the built-ins, then its ACP agents) and their names. */
+/** The agents switched off in Settings → Agents (PDT-270; none until the host settings load). */
+export function useAgentsOff(): AgentKind[] {
+  return useHostSettings().data?.settings.disabledAgents ?? [];
+}
+
+/**
+ * The agents this host offers (the built-ins, then its ACP agents; a switched-off one left out, PDT-270) and their
+ * names. `on` tells whether one is switched on.
+ */
 export function useAgents() {
-  const acp = useAcpAgents();
+  const host = useHostSettings().data;
+  const acp = host?.acpAgents ?? [];
+  const off = host?.settings.disabledAgents ?? [];
   return {
     acp,
-    all: [...BUILTIN_AGENTS, ...acp.map((a) => a.agent)],
+    all: host?.enabledAgents ?? [...BUILTIN_AGENTS, ...acp.map((a) => a.agent)],
+    on: (agent: AgentKind) => !off.includes(agent),
     label: (agent: AgentKind) => agentLabel(agent, acp),
   };
 }
