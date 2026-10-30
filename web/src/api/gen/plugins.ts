@@ -138,6 +138,18 @@ export const plugins: IntegrationInfo[] = [
         "title": "Watch for a scheduled release"
       },
       {
+        "id": "github.workflow.failed",
+        "title": "GitHub workflow run failed"
+      },
+      {
+        "id": "github.workflow.watch",
+        "title": "Report a failed workflow run"
+      },
+      {
+        "id": "github.workflow.rerun",
+        "title": "Re-run a workflow run's failed jobs"
+      },
+      {
         "id": "github.create_issue",
         "title": "Create a GitHub issue"
       }
@@ -150,6 +162,10 @@ export const plugins: IntegrationInfo[] = [
       {
         "id": "builtin:missing-scheduled-release",
         "title": "Report a missing scheduled release"
+      },
+      {
+        "id": "builtin:failed-workflow-runs",
+        "title": "Report failed workflow runs"
       },
       {
         "id": "builtin:review-outside-prs",

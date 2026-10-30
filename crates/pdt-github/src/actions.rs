@@ -3,8 +3,11 @@
 //! the forge. The GitHub plugin registers it as GitHub's own CI.
 
 use crate::transport::encode;
-use crate::{CI_DIRS, GhError, GithubApi, RUN_LIMIT, failed, job_list, log_tail_lines, parse_runs, s};
+use crate::{
+    CI_DIRS, GhError, GithubApi, RUN_LIMIT, failed, job_list, log_tail_lines, parse_runs, parse_workflow_run, s,
+};
 use pdt_core::pr::{CiJob, CiRun, CiState, GITHUB_ACTIONS};
+use pdt_core::workflow_runs::WorkflowRun;
 use pdt_forge::{CiCapabilities, CiConfig, CiProvider, ForgeError};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -18,9 +21,29 @@ pub struct GithubActions {
     api: Arc<GithubApi>,
 }
 
+/// How many of a workflow's completed runs one look reads (PDT-292): a check every half hour sees far fewer.
+const WORKFLOW_RUN_LIMIT: u32 = 50;
+
 impl GithubActions {
     pub fn new(api: Arc<GithubApi>) -> Self {
         Self { api }
+    }
+
+    /// The workflow's id for the API: its file name (`release.yml`) or id as given, else the one whose name
+    /// (`release`) it is.
+    fn workflow_id(&self, repo: &str, workflow: &str) -> Result<String, ForgeError> {
+        let w = workflow.trim();
+        let file = w.rsplit('/').next().unwrap_or(w);
+        if file.ends_with(".yml") || file.ends_with(".yaml") || w.chars().all(|c| c.is_ascii_digit()) {
+            return Ok(file.to_string());
+        }
+        let v = self.api.get(&format!("repos/{repo}/actions/workflows?per_page=100"))?;
+        let list = v["workflows"].as_array().ok_or_else(|| GhError::BadAnswer("no workflows".into()))?;
+        list.iter()
+            .find(|x| x["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(w)))
+            .and_then(|x| x["id"].as_u64())
+            .map(|id| id.to_string())
+            .ok_or_else(|| ForgeError::Failed(format!("{repo} has no workflow named {w:?}")))
     }
 }
 
@@ -84,6 +107,32 @@ impl CiProvider for GithubActions {
             Err(GhError::Status(404, m)) => Err(ForgeError::Failed(format!(
                 "GitHub has no workflow {workflow} in {repo} (or PDT's GitHub login can't start it): {m}"
             ))),
+            Err(e) => Err(e.into()),
+        }
+    }
+    fn workflow_runs(&self, repo: &str, workflow: &str, branch: Option<&str>) -> Result<Vec<WorkflowRun>, ForgeError> {
+        let id = self.workflow_id(repo, workflow)?;
+        let mut path = format!(
+            "repos/{repo}/actions/workflows/{}/runs?status=completed&per_page={WORKFLOW_RUN_LIMIT}",
+            encode(&id)
+        );
+        if let Some(b) = branch.map(str::trim).filter(|b| !b.is_empty()) {
+            path.push_str(&format!("&branch={}", encode(b)));
+        }
+        let v = match self.api.get(&path) {
+            Ok(v) => v,
+            Err(GhError::Status(404, m)) => {
+                return Err(ForgeError::Failed(format!("GitHub has no workflow {workflow} in {repo}: {m}")));
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let list = v["workflow_runs"].as_array().ok_or_else(|| GhError::BadAnswer("no workflow_runs".into()))?;
+        Ok(list.iter().filter_map(parse_workflow_run).collect())
+    }
+    fn workflow_run(&self, repo: &str, id: &str) -> Result<Option<WorkflowRun>, ForgeError> {
+        match self.api.get(&format!("repos/{repo}/actions/runs/{}", encode(id))) {
+            Ok(v) => Ok(parse_workflow_run(&v)),
+            Err(GhError::Status(404, _)) => Ok(None),
             Err(e) => Err(e.into()),
         }
     }

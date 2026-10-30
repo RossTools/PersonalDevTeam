@@ -882,23 +882,37 @@ pub fn parse_merge_settings(data: &Value) -> Result<MergeSettings, GhError> {
 /// A workflow runs answer (`GET …/actions/runs`).
 pub fn parse_runs(v: &Value) -> Result<Vec<CiRun>, GhError> {
     let list = v["workflow_runs"].as_array().ok_or_else(|| GhError::BadAnswer("no workflow_runs".into()))?;
-    Ok(list
-        .iter()
-        .filter_map(|r| {
-            Some(CiRun {
-                provider: pdt_core::pr::GITHUB_ACTIONS.into(),
-                id: r["id"].as_u64()?.to_string(),
-                attempt: r["run_attempt"].as_u64().and_then(|a| u32::try_from(a).ok()).unwrap_or(1),
-                name: s(r, "name"),
-                state: CiRun::state_of(r["status"].as_str().unwrap_or(""), r["conclusion"].as_str().unwrap_or("")),
-                url: s(r, "html_url"),
-                head_sha: s(r, "head_sha"),
-                branch: s(r, "head_branch"),
-                created_at: s(r, "created_at"),
-                failed_jobs: vec![],
-            })
-        })
-        .collect())
+    Ok(list.iter().filter_map(parse_run).collect())
+}
+
+/// One run of a runs answer (or `GET …/actions/runs/{id}`).
+pub fn parse_run(r: &Value) -> Option<CiRun> {
+    Some(CiRun {
+        provider: pdt_core::pr::GITHUB_ACTIONS.into(),
+        id: r["id"].as_u64()?.to_string(),
+        attempt: r["run_attempt"].as_u64().and_then(|a| u32::try_from(a).ok()).unwrap_or(1),
+        name: s(r, "name"),
+        state: CiRun::state_of(r["status"].as_str().unwrap_or(""), r["conclusion"].as_str().unwrap_or("")),
+        url: s(r, "html_url"),
+        head_sha: s(r, "head_sha"),
+        branch: s(r, "head_branch"),
+        created_at: s(r, "created_at"),
+        failed_jobs: vec![],
+    })
+}
+
+/// One run with what a report on it needs (PDT-292): its workflow's file, what started it, its title.
+pub fn parse_workflow_run(r: &Value) -> Option<pdt_core::workflow_runs::WorkflowRun> {
+    let run = parse_run(r)?;
+    let title = match s(r, "display_title") {
+        t if t.is_empty() => run.name.clone(),
+        t => t,
+    };
+    let updated_at = match s(r, "updated_at") {
+        u if u.is_empty() => run.created_at.clone(),
+        u => u,
+    };
+    Some(pdt_core::workflow_runs::WorkflowRun { path: s(r, "path"), event: s(r, "event"), title, updated_at, run })
 }
 
 fn failed(job: &Value) -> bool {

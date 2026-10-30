@@ -138,7 +138,12 @@ gates. The engine (pdt-api `workflow/engine.rs`) matches new events to enabled w
 their steps; node kinds live in `workflow/nodes/` or in an integration's crate. Agent steps start a session with a
 persona and wait for its `submit_outcome`; messages to agents go through the outbox (`workflow/outbox.rs`), which
 waits for the agent to be idle. Built-in workflows (`workflow/builtins.rs`) and templates (the Pipeline:
-`workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. A project's policy
+`workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. Triggers on things
+outside PDT poll: new GitHub issues (`github_issues.rs`), outside pull requests (`github_pulls.rs`) and failed runs of a
+CI workflow (`github_workflow_runs.rs`: `github.workflow.failed`, read through `CiProvider::workflow_runs` since a
+`RunCursor` kept in the workflow's state, so a restart neither misses nor repeats a run). The template "Report failed
+workflow runs" follows each such run with `github.workflow.watch` (one gate item, Re-run failed jobs through
+`CiProvider::retry`, closed once a later attempt passes; `workflow/nodes/workflow_runs.rs`). A project's policy
 (pdt-core `policy.rs`) sets who merges, approvals, the running cap and auto-start; the host caps how many agents run a
 turn at once.
 

@@ -114,6 +114,16 @@
           "title": "Watch for a scheduled release"
         },
         {
+          "description": "Puts one Inbox item about a failed GitHub Actions run (`runId`) in the Inbox: its workflow, title, branch, what started it, its version or tag when it has one, its failed jobs and a link, with Re-run failed jobs (`rerun`) and Dismiss (`dismiss`). It looks at the run again every 10 minutes: the item closes by itself when a later attempt passes (`passed`), and a later failed attempt replaces it. After `watchFor` (default 7 days) it stops looking and the item waits for you. `cancelled` when the run was cancelled before it was reported, `none` when there is no such run, `already` when its attempt is in the Inbox already.",
+          "id": "github.workflow.watch",
+          "title": "Report a failed workflow run"
+        },
+        {
+          "description": "Re-runs the failed jobs of a GitHub Actions run (`runId`; every job with `allJobs`) as PDT's GitHub login, which needs the Actions write permission (else it fails: take its `error` port). Output: `runId`, the `attempt` it re-ran and the run's `url`. `none` when there is no such run.",
+          "id": "github.workflow.rerun",
+          "title": "Re-run a workflow run's failed jobs"
+        },
+        {
           "description": "Opens an issue in a project's GitHub repository, as PDT's GitHub login: from a ticket (`{{trigger.ticketId}}`; its title and description unless given, and the ticket links the issue), or in `project`'s repository. Output: `repo`, `number`, `issue` (owner/name#12), `url` and `ticketKey`.",
           "id": "github.create_issue",
           "title": "Create a GitHub issue"
@@ -122,6 +132,7 @@
       "templates": [
         "Triage new GitHub issues",
         "Report a missing scheduled release",
+        "Report failed workflow runs",
         "Review outside pull requests"
       ],
       "tools": [
@@ -152,6 +163,11 @@
           "description": "A pull request PDT didn't open was closed or merged (`merged`). Checked every minute on the projects' GitHub repositories; outsiders' and bots' unless `kinds` says otherwise. Its title and body are outside input.",
           "id": "github.pull_request.closed",
           "title": "Outside pull request closed"
+        },
+        {
+          "description": "A failed run of one GitHub Actions workflow (`workflow`, its file or name) in `repo` (else the project's), however it was started: on a schedule, by hand, by a push. Optionally only on `branch` and for some `events`. Checked every `every` (default 30 minutes); each failed attempt starts one run, and the first look only records where the runs are.",
+          "id": "github.workflow.failed",
+          "title": "GitHub workflow run failed"
         }
       ],
       "workflows": [

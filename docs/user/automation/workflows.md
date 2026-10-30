@@ -136,8 +136,8 @@ one back.
 ### Triggers
 
 A trigger starts a run. Each kind of event in PDT is one: a ticket moved, started, commented on or merged; CI failed or
-passed; a pull request conflicts, left the merge queue or merged; a new GitHub issue or outside pull request. Some have
-settings of their own:
+passed; a pull request conflicts, left the merge queue or merged; a new GitHub issue or outside pull request; a failed
+run of a GitHub Actions workflow. Some have settings of their own:
 
 - **On a schedule**: every so often, or at set times (a cron line, in your time zone).
 - **Webhook**: when another service calls PDT's address for a webhook connection.
@@ -232,6 +232,29 @@ new ticket, marks the issue a duplicate, or leaves it. Each draft waits in the I
 to **Approve** (to **To do**) or **Reject** (to **Won't do**). The first time it runs it only notes where the repository
 is, so old issues aren't triaged. Issues are written by other people, so triage runs locked down: see
 [Outside contributions](outside-contributions.md).
+
+### Report failed workflow runs
+
+PDT already tells a ticket's agent when CI fails on its pull request. Runs nobody is waiting for (a release workflow
+started from GitHub's Actions page, a nightly build on a schedule, a deploy after a push) can fail unnoticed. To get
+each failed run in the Inbox:
+
+1. Turn on the **GitHub** plugin and connect your GitHub login (see [Plugins and connections](plugins.md)).
+2. **New workflow** › **Report failed workflow runs** (under **CI & pull requests**).
+3. Fill in **Workflow**: its file (`release.yml`) or its name as GitHub Actions shows it. Leave **Repository** empty
+   for the project's own repository, or give another (`owner/name`).
+4. To narrow it, fill in **Branch** (`main`) and **Started by** (`schedule, workflow_dispatch` for scheduled and
+   manual runs only). **Check every** is how often PDT looks (every 30 minutes unless you change it).
+5. Pick the project, **Create workflow** and turn it on.
+
+For example, with **Workflow** `release.yml` and **Started by** `schedule`, a nightly release that fails puts one
+item in the Inbox: the run's title, its branch, what started it, its version or tag when it has one, its failed jobs,
+and a link to the run. **Re-run failed jobs** runs them again on GitHub as your GitHub login (if your login may not,
+the Inbox says so and you re-run them on GitHub). The item goes away by itself once a later attempt of the run passes,
+however it was re-run; if the re-run fails too, a new item takes its place. **Dismiss** leaves the run as it is.
+
+The first look only notes where the workflow's runs are, so runs from before you turned it on aren't reported. PDT
+keeps its place between looks, so a run that ends while PDT is stopped is reported when it starts again, once.
 
 ### Ask before finishing a merged ticket
 

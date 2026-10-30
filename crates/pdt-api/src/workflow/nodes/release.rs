@@ -46,7 +46,7 @@ fn nonblank(v: &Option<String>) -> Option<&str> {
 }
 
 /// A given `repo` must be owner/name (left alone while it is a template).
-fn check_repo(repo: &Option<String>) -> Result<(), String> {
+pub(crate) fn check_repo(repo: &Option<String>) -> Result<(), String> {
     match nonblank(repo) {
         Some(r) if !templated(r) && valid_repo(r).is_none() => Err(format!("{r:?} is not owner/name")),
         _ => Ok(()),
@@ -54,27 +54,46 @@ fn check_repo(repo: &Option<String>) -> Result<(), String> {
 }
 
 /// A repository, the forge it is read through and the CI it has ([`repo_of`]).
-struct RepoOf {
-    repo: String,
-    forge: Arc<dyn Forge>,
+pub(crate) struct RepoOf {
+    pub repo: String,
+    pub forge: Arc<dyn Forge>,
     /// The project's CI providers (PDT-242), else GitHub's own CI.
-    ci: Vec<Arc<dyn CiProvider>>,
+    pub ci: Vec<Arc<dyn CiProvider>>,
+}
+
+impl RepoOf {
+    /// Its GitHub Actions, or why it has none (`what` it was wanted for).
+    pub fn actions(&self, what: &str) -> Result<Arc<dyn CiProvider>, String> {
+        self.ci
+            .iter()
+            .find(|p| p.id() == pdt_core::pr::GITHUB_ACTIONS)
+            .cloned()
+            .ok_or_else(|| format!("{} has no GitHub Actions to {what}", self.repo))
+    }
 }
 
 /// The repository and the forge it is read through (PDT-241): the one given, through the run's project's forge when
 /// that is GitHub, else GitHub's account; without one, the run's project's on GitHub.
 async fn repo_of(cx: &StepCx<'_>, repo: &Option<String>) -> Result<RepoOf, String> {
-    let project = cx.run.project_id.as_deref();
+    repo_for(cx.st, cx.run.project_id.as_deref(), repo).await
+}
+
+/// [`repo_of`] for `project` (a workflow's, when no run asks).
+pub(crate) async fn repo_for(
+    st: &crate::routes::AppState,
+    project: Option<&str>,
+    repo: &Option<String>,
+) -> Result<RepoOf, String> {
     if let Some(r) = nonblank(repo) {
         valid_repo(r).ok_or_else(|| format!("{r:?} is not owner/name"))?;
-        let (forge, ci) = crate::forge::forge_and_ci_for(cx.st, &ForgeKind::GITHUB, project).await?;
+        let (forge, ci) = crate::forge::forge_and_ci_for(st, &ForgeKind::GITHUB, project).await?;
         return Ok(RepoOf { repo: r.to_string(), forge, ci });
     }
     let id = project.ok_or("give repo (owner/name): the run has no project to take it from")?;
-    let p = cx.st.store.get_project(id).await.map_err(|e| e.to_string())?.ok_or("the run's project is gone")?;
-    match crate::forge::project_forge(cx.st, id, &p.repo_path).await {
+    let p = st.store.get_project(id).await.map_err(|e| e.to_string())?.ok_or("the run's project is gone")?;
+    match crate::forge::project_forge(st, id, &p.repo_path).await {
         Some(f) if f.kind == ForgeKind::GITHUB => {
-            let ci = crate::ci::project_ci(cx.st, id, &p.repo_path, Some(&f)).await;
+            let ci = crate::ci::project_ci(st, id, &p.repo_path, Some(&f)).await;
             Ok(RepoOf { repo: f.repo, forge: f.api, ci })
         }
         _ => Err(format!("{} is not on GitHub: give repo (owner/name)", p.name)),

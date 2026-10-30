@@ -66,6 +66,7 @@ impl Integration for Github {
         vec![
             templates::issue_triage(),
             crate::workflow::builtins::missing_release_template(),
+            templates::failed_workflow_runs(),
             templates::builtin(
                 outside_prs::ID,
                 pdt_core::workflow::template::Category::Issues,
@@ -93,6 +94,9 @@ impl Integration for Github {
             Box::new(GithubChangeRequest),
             Box::new(GithubRelease),
             Box::new(GithubNightly),
+            Box::new(crate::github_workflow_runs::WorkflowFailed),
+            Box::new(crate::workflow::nodes::workflow_runs::GithubWorkflowWatch),
+            Box::new(crate::workflow::nodes::workflow_runs::GithubWorkflowRerun),
         ]
     }
 
