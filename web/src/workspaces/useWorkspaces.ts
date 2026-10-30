@@ -12,7 +12,7 @@ import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Workspace } from '../api/gen/Workspace';
 import type { Worktree } from '../api/gen/Worktree';
 import { isActive, runDot } from '../runs/runState';
-import { hiddenStepSession, toDot } from '../sessions/status';
+import { toDot } from '../sessions/status';
 import { useSameList } from '../common/useSameList';
 import { findTab, itemOf, openTabBody, resolveCurrent, type CurrentChoice, type Item } from './model';
 
@@ -154,14 +154,9 @@ export function useWorkspaces(routed?: RoutedChoice) {
           : infos.get(`${item.kind}:${item.id}`) ?? null,
     [infos, ticketInfos, changesInfos],
   );
-  // Every session and run, hidden ones included: what the favicon and title watch (PDT-262).
+  // Every session and run, workflow steps' included: what the palette, Bring here, the favicon and title read
+  // (PDT-262). The Agents list leaves out the steps' sessions itself (`startedByStep`, PDT-299).
   const everyInfo = useMemo(() => [...infos.values()], [infos]);
-  // The lists' sessions and runs: a workflow step's session (a ticket's, or an ended one with no ticket) only while a
-  // tab holds it (PDT-263, PDT-290).
-  const allInfos = useMemo(
-    () => everyInfo.filter((i) => !i.session || !hiddenStepSession(i.session) || findTab(workspaces, i.item)),
-    [everyInfo, workspaces],
-  );
 
   const [stored, setChoiceState] = useState<CurrentChoice>(loadChoice);
   const setChoice = useCallback((f: (c: CurrentChoice) => CurrentChoice) => {
@@ -299,7 +294,7 @@ export function useWorkspaces(routed?: RoutedChoice) {
 
   return {
     createWorkspace, renameWorkspace, moveWorkspace, deleteWorkspace,
-    projects: projectList, projectsLoaded: projects.isSuccess, workspaces, workspacesError: workspacesQ.error, workspace, tab, info, allInfos, everyInfo, ticketInfos,
+    projects: projectList, projectsLoaded: projects.isSuccess, workspaces, workspacesError: workspacesQ.error, workspace, tab, info, everyInfo, ticketInfos,
     selectWorkspace, selectTab, focusItem, placementFor, closeTab, moveTab, openIn, refresh,
     currentInfo: tab ? info(itemOf(tab)) : null,
   };

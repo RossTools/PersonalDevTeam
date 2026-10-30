@@ -27,11 +27,11 @@ changes.
 - The **Sessions** sidebar lists the workspaces, then the **Tickets** being worked on (with their pull request and
   the agent's state), then every **Agents** session. Right-click anything there (long-press on a touch screen) for its
   menu: rename, move, close.
-- The sessions a workflow starts for a ticket (its Coder, Reviewer, QA and the like) aren't in **Agents**, running or
-  ended: open them from the ticket's **Sessions** (under **Attempt**), or with **Open session** on the step in the
-  workflow's **Runs**. A workflow's session with no ticket stays listed while it runs. Sessions you start yourself,
-  from a ticket or not, are always listed, and so is any session a tab holds. A step that needs you still shows in
-  the **Inbox**.
+- **Agents** lists the conversations you started yourself, from a ticket's **Start** or not. The sessions a workflow
+  starts (a ticket's Coder, Reviewer and QA, a Triage or PM step) are never there, running or ended, even while a tab
+  holds them. Reach them from their tab (PDT opens one for each), the ticket's **Sessions** (under **Attempt**),
+  **Open session** on the step in the workflow's **Runs**, or by searching for them in the command palette or
+  **Bring here**. A step that needs you still shows in the **Inbox**.
 - Drag a tab to reorder it, or move it to another workspace from its menu. A session or run has one tab only: opening
   it somewhere else moves it there.
 - **Closing a tab stops what's in it and removes it.** For a session that means its terminal history is gone and it

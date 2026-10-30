@@ -95,7 +95,7 @@ export interface PaletteHandlers {
 
 export interface PaletteContext {
   workspaces: Workspace[];
-  /** Every session and run (WorkspacesApi.allInfos). */
+  /** Every session and run, workflow steps' included (WorkspacesApi.everyInfo). */
   infos: ItemInfo[];
   projects: Project[];
   /** The tab on screen. */
