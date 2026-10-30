@@ -75,6 +75,11 @@ pub struct GateConfig {
     #[serde(default)]
     #[ts(optional)]
     pub approve: Option<String>,
+    /// The ticket it is about, when the run has none of its own (PDT-269: a pull request's ticket made by an earlier
+    /// step): the Inbox shows it, and the user's note with their choice goes on it.
+    #[serde(default)]
+    #[ts(optional)]
+    pub ticket: Option<String>,
     /// An event that makes the question moot (e.g. the attempt merging): it takes `event` and closes the Inbox item.
     /// Its conditions use `{{event.…}}` like a wait's.
     #[serde(default)]
@@ -153,6 +158,9 @@ impl NodeKind for Gate {
                 ));
             }
             crate::workflow::nodes::set_stage(cx, c.pipeline_stage).await;
+            let ticket = cx.run.ticket_id.clone().or_else(|| {
+                c.ticket.as_deref().map(str::trim).filter(|t| !t.is_empty() && !t.contains("{{")).map(String::from)
+            });
             let group = match c.inbox {
                 GateInbox::Gate => InboxGroup::Gate,
                 GateInbox::Accept => InboxGroup::Accept,
@@ -163,7 +171,7 @@ impl NodeKind for Gate {
                 group,
                 status: InboxStatus::Open,
                 project_id: cx.run.project_id.clone(),
-                ticket_id: cx.run.ticket_id.clone(),
+                ticket_id: ticket.clone(),
                 ticket_key: None,
                 ticket_title: None,
                 attempt_id: cx.run.attempt_id.clone(),
@@ -185,7 +193,8 @@ impl NodeKind for Gate {
                 resolved_at: None,
             };
             cx.st.store.open_inbox_item(&item).await.map_err(|e| e.to_string())?;
-            let mut wait = json!({"answer": {"question": c.question, "choices": c.choices, "approve": c.approve}});
+            let mut wait = json!({"answer": {"question": c.question, "choices": c.choices, "approve": c.approve,
+                                             "ticket": ticket}});
             if let Some(e) = c.event {
                 wait["event"] = e.wait();
             }

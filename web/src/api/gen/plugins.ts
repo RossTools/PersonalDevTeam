@@ -96,6 +96,22 @@ export const plugins: IntegrationInfo[] = [
         "title": "Close a GitHub issue"
       },
       {
+        "id": "github.pr.ticket",
+        "title": "The pull request's ticket"
+      },
+      {
+        "id": "github.pr.merge",
+        "title": "Merge a GitHub pull request"
+      },
+      {
+        "id": "github.pr.review",
+        "title": "Review a GitHub pull request"
+      },
+      {
+        "id": "github.pr.close",
+        "title": "Close a GitHub pull request"
+      },
+      {
         "id": "github.workflow.run",
         "title": "Run a GitHub Actions workflow"
       },

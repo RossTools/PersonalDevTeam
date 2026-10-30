@@ -476,6 +476,41 @@ fn comments_and_replies_on_a_pr() {
     assert_eq!(body_of(&t.sent()[2])["body"].as_str().unwrap().chars().count(), MAX_COMMENT, "cut to the limit");
 }
 
+/// PDT-269: an outside pull request is read as its files' diffs, reviewed and closed through the API.
+#[test]
+fn reads_a_prs_files_reviews_and_closes_it() {
+    let (g, t) = forge();
+    t.ok(
+        "GET",
+        &format!("{API}/repos/o/r/pulls/7/files?per_page=100"),
+        r#"[{"filename":"src/a.rs","status":"modified","additions":2,"deletions":1,"patch":"@@ -1 +1,2 @@\n-a\n+b\n+c"},
+            {"filename":"logo.png","status":"added","additions":0,"deletions":0},
+            {"filename":"new.rs","previous_filename":"old.rs","status":"renamed","additions":0,"deletions":0,"patch":""}]"#,
+    );
+    let files = g.change_request_files("o/r", 7).unwrap();
+    assert_eq!(files.len(), 3);
+    assert_eq!((files[0].path.as_str(), files[0].status.as_str(), files[0].additions), ("src/a.rs", "modified", 2));
+    assert_eq!(files[0].patch.as_deref(), Some("@@ -1 +1,2 @@\n-a\n+b\n+c"));
+    assert_eq!(files[1].patch, None, "a binary file has no patch");
+    assert_eq!(files[2].previous_path.as_deref(), Some("old.rs"));
+
+    t.ok(
+        "POST",
+        &format!("{API}/repos/o/r/pulls/7/reviews"),
+        r#"{"html_url":"https://github.com/o/r/pull/7#pullrequestreview-9"}"#,
+    );
+    let url = g.review_change_request("o/r", 7, ReviewVerdict::RequestChanges, "Add a test").unwrap();
+    assert!(url.ends_with("pullrequestreview-9"));
+    let sent = t.sent();
+    assert_eq!(body_of(sent.last().unwrap()), json!({"event": "REQUEST_CHANGES", "body": "Add a test"}));
+
+    t.ok("PATCH", &format!("{API}/repos/o/r/pulls/7"), r#"{"state":"closed"}"#);
+    g.close_change_request("o/r", 7).unwrap();
+    let sent = t.sent();
+    let last = sent.last().unwrap();
+    assert_eq!((last.method, body_of(last)), ("PATCH", json!({"state": "closed"})));
+}
+
 #[test]
 fn opens_a_pull_request_and_names_an_unpushed_head() {
     let (g, t) = forge();
@@ -728,6 +763,18 @@ fn merges_turn_on_auto_merge_or_merge_a_clean_pr() {
 
     t.ok("POST", GQL, id).ok("POST", GQL, r#"{"errors":[{"message":"Auto merge is not allowed"}]}"#);
     assert!(matches!(g.merge("o/r", 7, None), Err(ForgeError::Failed(m)) if m.contains("not allowed")));
+
+    // PDT-269: only while the head is the one approved.
+    t.ok("POST", GQL, id).ok("POST", GQL, r#"{"data":{"enablePullRequestAutoMerge":{"clientMutationId":null}}}"#);
+    g.merge_head("o/r", 7, Some(MergeStrategy::Squash), Some("abc")).unwrap();
+    let sent = t.sent();
+    let last = body_of(sent.last().unwrap());
+    assert_eq!(last["variables"], json!({"id": "PR_7", "method": "SQUASH", "head": "abc"}));
+    assert!(last["query"].as_str().unwrap().contains("expectedHeadOid:$head"));
+    t.ok("POST", GQL, id).ok("POST", GQL, clean);
+    t.ok("PUT", &format!("{API}/repos/o/r/pulls/7/merge"), r#"{"merged":true}"#);
+    g.merge_head("o/r", 7, Some(MergeStrategy::Squash), Some("abc")).unwrap();
+    assert_eq!(body_of(t.sent().last().unwrap()), json!({"merge_method": "squash", "sha": "abc"}));
 }
 
 #[test]

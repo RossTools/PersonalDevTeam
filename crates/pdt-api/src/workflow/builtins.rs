@@ -26,6 +26,7 @@ pub const BASE_MOVED: &str = "base-moved";
 pub const PR_FEEDBACK: &str = "pr-feedback";
 pub const LATE_COMMITS: &str = "late-commits";
 pub const PDT_BUG_TRIAGE: &str = "pdt-bug-triage";
+pub const PDT_PR_REVIEW: &str = "pdt-pr-review";
 pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
 pub const CUT_RELEASE: &str = "cut-release";
 
@@ -39,6 +40,8 @@ pub const BUILTINS: &[Builtin] = &[
     // Installed (enabled) and offered as a template only on a host with a project whose repository is the release
     // repository, PDT's own (PDT-226).
     Builtin { id: PDT_BUG_TRIAGE, enabled: true, category: Category::Issues, doc: pdt_bug_triage },
+    // The same for outside pull requests (PDT-269): the Review outside pull requests template on PDT's repository.
+    Builtin { id: PDT_PR_REVIEW, enabled: true, category: Category::Issues, doc: super::outside_prs::pdt_doc },
     Builtin { id: GITHUB_ISSUE_DONE, enabled: true, category: Category::Issues, doc: github_issue_done },
     // Off until the user turns it on; the PM starts it (Run now) when the user asks for a release.
     Builtin { id: CUT_RELEASE, enabled: false, category: Category::Releases, doc: cut_release },
@@ -894,7 +897,7 @@ pub(crate) async fn builds_pdt(st: &AppState) -> bool {
 /// Whether a built-in (and its template) is only for a host that builds PDT itself (PDT-226). One installed before
 /// that stays as it is.
 pub(crate) fn only_for_pdt(id: &str) -> bool {
-    id == PDT_BUG_TRIAGE
+    id == PDT_BUG_TRIAGE || id == PDT_PR_REVIEW
 }
 
 /// Installs or updates the built-ins (once per pdtd; callers hold the engine lock).

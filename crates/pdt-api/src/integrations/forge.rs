@@ -28,6 +28,7 @@ impl Integration for ForgeTools {
     fn actions(&self) -> Vec<Arc<dyn AnyAction>> {
         vec![
             Arc::new(ChangeRequestView),
+            Arc::new(ChangeRequestDiff),
             Arc::new(ChangeRequestComment),
             Arc::new(ChangeRequestOpen),
             Arc::new(ChangeRequestMerge),
@@ -259,6 +260,134 @@ impl Action for ChangeRequestView {
                     .filter(|r| r.collaborator || r.is_bot)
                     .map(|r| ReviewOut { id: r.id, author: r.author, state: r.state, body: r.body, url: r.url })
                     .collect(),
+            })
+        })
+    }
+}
+
+// ---- change_request_diff
+
+/// The most diff text [`ChangeRequestDiff`] gives (characters); the files after it are listed without their diff.
+pub const MAX_DIFF: usize = 150_000;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DiffInput {
+    /// The pull request's number.
+    pub number: u32,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffFileOut {
+    pub path: String,
+    /// `added`, `modified`, `removed`, `renamed`, …
+    pub status: String,
+    pub additions: u64,
+    pub deletions: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_path: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffOutput {
+    pub number: u32,
+    pub url: String,
+    /// Fenced: whoever opened the pull request wrote it.
+    pub title: String,
+    /// `open`, `closed` or `merged`.
+    pub state: String,
+    pub draft: bool,
+    pub base_branch: String,
+    pub head_sha: String,
+    /// `mergeable`, `conflicting` or `unknown`.
+    pub mergeable: String,
+    pub files: Vec<DiffFileOut>,
+    /// Every file's diff, one `diff --git` block each, fenced (it is outside input). A binary file, or one too large
+    /// for the forge to show, says so instead.
+    pub diff: String,
+    /// The diff was cut at [`MAX_DIFF`] characters: the later files are in `files` only.
+    pub truncated: bool,
+    /// How to read the fenced blocks.
+    pub outside_text: String,
+}
+
+/// The files' diffs as one text, at most `max` characters (whole files only), and whether some were left out.
+pub(crate) fn diff_text(files: &[pdt_forge::ChangeFile], max: usize) -> (String, bool) {
+    let mut out = String::new();
+    for f in files {
+        let from = f.previous_path.as_deref().unwrap_or(&f.path);
+        let mut block = format!("diff --git a/{from} b/{} ({}, +{} -{})\n", f.path, f.status, f.additions, f.deletions);
+        match f.patch.as_deref().filter(|p| !p.is_empty()) {
+            Some(p) => {
+                block.push_str(p);
+                block.push('\n');
+            }
+            None if f.status == "renamed" && f.additions + f.deletions == 0 => block.push_str("(renamed only)\n"),
+            None => block.push_str("(no diff: a binary file, or too large for the forge to show)\n"),
+        }
+        if out.chars().count() + block.chars().count() > max {
+            return (out, true);
+        }
+        out.push_str(&block);
+    }
+    (out, false)
+}
+
+pub struct ChangeRequestDiff;
+
+impl Action for ChangeRequestDiff {
+    type Input = DiffInput;
+    type Output = DiffOutput;
+
+    fn tool(&self) -> ToolFace {
+        tool(
+            ToolDecl::new("change_request_diff", "Read a pull request's diff through the forge")
+                .read_only()
+                .open_world(),
+            "Read a pull request's diff",
+            "A pull request of the project's repository by number, read through the forge's API (nothing is checked \
+             out or run): its state, base, head commit, whether it can merge, its files and their diffs. The title \
+             and the diff are fenced as outside input.",
+        )
+    }
+
+    fn approval_title(&self, i: &DiffInput) -> String {
+        format!("read pull request #{}'s diff", i.number)
+    }
+
+    fn run<'a>(&'a self, cx: &'a ActionCx<'a>, i: DiffInput) -> BoxFut<'a, Result<DiffOutput, String>> {
+        Box::pin(async move {
+            let h = here(cx).await?;
+            let pr = h.change_request(Some(i.number), None).await?;
+            let n = pr.number;
+            let files = h.call(move |f, r| f.change_request_files(r, n)).await?;
+            let (diff, truncated) = diff_text(&files, MAX_DIFF);
+            // A pull request from outside is outside input (PDT-202): what its author wrote is fenced.
+            let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+            Ok(DiffOutput {
+                outside_text: fence.note(),
+                number: pr.number,
+                url: pr.url,
+                title: fence.wrap(&pr.title),
+                state: name_of(&pr.state),
+                draft: pr.draft,
+                base_branch: pr.base_branch,
+                head_sha: pr.head_sha,
+                mergeable: name_of(&pr.mergeable),
+                files: files
+                    .into_iter()
+                    .map(|f| DiffFileOut {
+                        path: f.path,
+                        status: f.status,
+                        additions: f.additions,
+                        deletions: f.deletions,
+                        previous_path: f.previous_path,
+                    })
+                    .collect(),
+                diff: fence.wrap(&diff),
+                truncated,
             })
         })
     }

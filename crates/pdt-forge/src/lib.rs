@@ -158,6 +158,43 @@ pub struct ChangeStats {
     pub deletions: u64,
 }
 
+/// One file a change request changes ([`Forge::change_request_files`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeFile {
+    pub path: String,
+    /// `added`, `modified`, `removed`, `renamed`, … (the forge's word).
+    pub status: String,
+    pub additions: u64,
+    pub deletions: u64,
+    /// Its unified diff hunks; None for a binary file or one too large for the forge to show.
+    pub patch: Option<String>,
+    /// A renamed file's old path.
+    pub previous_path: Option<String>,
+}
+
+/// What a review submitted on a change request says ([`Forge::review_change_request`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewVerdict {
+    Approve,
+    RequestChanges,
+    Comment,
+}
+
+impl ReviewVerdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReviewVerdict::Approve => "approve",
+            ReviewVerdict::RequestChanges => "request_changes",
+            ReviewVerdict::Comment => "comment",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        [ReviewVerdict::Approve, ReviewVerdict::RequestChanges, ReviewVerdict::Comment]
+            .into_iter()
+            .find(|v| v.as_str() == s.trim())
+    }
+}
+
 /// An issue (not a change request).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Issue {
@@ -298,6 +335,17 @@ pub trait Forge: Send + Sync {
     /// Sets change request `number` to merge once it may (auto-merge, or the merge queue), with `strategy` unless a
     /// merge queue picks it. One that can merge right away is merged.
     fn merge(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), ForgeError>;
+    /// [`Forge::merge`], only while its head is `head` (PDT-269: the commit the user approved), when given. A forge
+    /// that can't say so merges as [`Forge::merge`] does; its callers check the head first.
+    fn merge_head(
+        &self,
+        repo: &str,
+        number: u32,
+        strategy: Option<MergeStrategy>,
+        _head: Option<&str>,
+    ) -> Result<(), ForgeError> {
+        self.merge(repo, number, strategy)
+    }
     /// The login the forge is used as (the user themself): comments by it are the user's own.
     fn viewer_login(&self) -> Result<String, ForgeError> {
         unsupported(self.name(), "login")
@@ -338,6 +386,25 @@ pub trait Forge: Send + Sync {
     /// How many files, added and deleted lines change request `number` has.
     fn change_request_stats(&self, _repo: &str, _number: u32) -> Result<ChangeStats, ForgeError> {
         unsupported(self.name(), "change request lists")
+    }
+    /// The files change request `number` changes, with their diffs (PDT-269: an outside change request is reviewed
+    /// from these, never checked out).
+    fn change_request_files(&self, _repo: &str, _number: u32) -> Result<Vec<ChangeFile>, ForgeError> {
+        unsupported(self.name(), "change request diffs")
+    }
+    /// Submits a review of change request `number` with `body` (Markdown); its URL ([`Capabilities::reviews`]).
+    fn review_change_request(
+        &self,
+        _repo: &str,
+        _number: u32,
+        _verdict: ReviewVerdict,
+        _body: &str,
+    ) -> Result<String, ForgeError> {
+        unsupported(self.name(), "reviews")
+    }
+    /// Closes change request `number` without merging it.
+    fn close_change_request(&self, _repo: &str, _number: u32) -> Result<(), ForgeError> {
+        unsupported(self.name(), "change requests to close")
     }
     /// Issue `number`; None when there is none (or the forge can't see it).
     fn issue(&self, _repo: &str, _number: u64) -> Result<Option<IssueDetail>, ForgeError> {
@@ -560,6 +627,12 @@ pub mod testing {
         pub opened: Mutex<Vec<NewChangeRequest>>,
         /// Releases by repo, newest first (the first is the latest).
         pub releases: Mutex<HashMap<String, Vec<Release>>>,
+        /// [`Forge::change_request_files`] by number (none when unset).
+        pub files: Mutex<HashMap<u32, Vec<ChangeFile>>>,
+        /// Reviews submitted: repo, number, verdict, body.
+        pub reviews_submitted: Mutex<Vec<(String, u32, ReviewVerdict, String)>>,
+        /// Change requests closed: repo and number.
+        pub closed_changes: Mutex<Vec<(String, u32)>>,
         pub calls: Mutex<Vec<String>>,
     }
 
@@ -590,6 +663,9 @@ pub mod testing {
                 added_labels: Default::default(),
                 opened: Default::default(),
                 releases: Default::default(),
+                files: Default::default(),
+                reviews_submitted: Default::default(),
+                closed_changes: Default::default(),
                 calls: Default::default(),
             }
         }
@@ -777,6 +853,23 @@ pub mod testing {
                 queue: false,
             }))
         }
+        /// Refuses a head other than the change request's, as GitHub does.
+        fn merge_head(
+            &self,
+            repo: &str,
+            number: u32,
+            strategy: Option<MergeStrategy>,
+            head: Option<&str>,
+        ) -> Result<(), ForgeError> {
+            if let Some(h) = head {
+                let now = self.prs.lock().unwrap().values().find(|p| p.number == number).map(|p| p.head_sha.clone());
+                if now.is_some_and(|n| n != h) {
+                    self.call(format!("merge-refused {repo} {number} {h}"));
+                    return Err(ForgeError::Failed(format!("the head of #{number} is not {h}")));
+                }
+            }
+            self.merge(repo, number, strategy)
+        }
         fn merge(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), ForgeError> {
             self.call(format!("merge {repo} {number} {}", strategy.map_or("-", MergeStrategy::as_str)));
             match self.merge_error.lock().unwrap().clone() {
@@ -818,6 +911,35 @@ pub mod testing {
             self.call(format!("reviews {repo} {number}"));
             self.can(|c| c.reviews, "reviews")?;
             Ok(self.reviews.lock().unwrap().get(&number).cloned().unwrap_or_default())
+        }
+        fn change_request_files(&self, repo: &str, number: u32) -> Result<Vec<ChangeFile>, ForgeError> {
+            self.call(format!("files {repo} {number}"));
+            self.failing()?;
+            Ok(self.files.lock().unwrap().get(&number).cloned().unwrap_or_default())
+        }
+        fn review_change_request(
+            &self,
+            repo: &str,
+            number: u32,
+            verdict: ReviewVerdict,
+            body: &str,
+        ) -> Result<String, ForgeError> {
+            self.call(format!("review {repo} {number} {}", verdict.as_str()));
+            self.can(|c| c.reviews, "reviews")?;
+            self.failing()?;
+            let mut all = self.reviews_submitted.lock().unwrap();
+            all.push((repo.into(), number, verdict, body.into()));
+            Ok(format!("https://github.com/{repo}/pull/{number}#pullrequestreview-{}", all.len()))
+        }
+        /// Closes it in [`FakeForge::prs`] too.
+        fn close_change_request(&self, repo: &str, number: u32) -> Result<(), ForgeError> {
+            self.call(format!("close-pr {repo} {number}"));
+            self.failing()?;
+            self.closed_changes.lock().unwrap().push((repo.into(), number));
+            for p in self.prs.lock().unwrap().values_mut().filter(|p| p.number == number) {
+                p.state = PrState::Closed;
+            }
+            Ok(())
         }
         fn issue(&self, repo: &str, number: u64) -> Result<Option<IssueDetail>, ForgeError> {
             self.call(format!("issue {repo} {number}"));
