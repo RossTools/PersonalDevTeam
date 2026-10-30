@@ -98,7 +98,13 @@ PDT keeps your data when you uninstall it. To remove that too, see [Your data](y
 "/Applications/Personal Dev Team.app/Contents/MacOS/pdt-host" uninstall
 ```
 
-Then quit the tray icon and move **Personal Dev Team** from **Applications** to the Bin.
+Then quit the tray icon and move **Personal Dev Team** from **Applications** to the Bin. If you installed it with
+[the install command](../getting-started/install.md#install-with-one-command), it's in the **Applications** folder in
+your home folder instead:
+
+```sh
+"$HOME/Applications/Personal Dev Team.app/Contents/MacOS/pdt-host" uninstall
+```
 
 **Windows**: uninstall **Personal Dev Team** in **Settings › Apps › Installed apps**. That stops PDT and removes it
 from startup too.

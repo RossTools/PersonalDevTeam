@@ -34,7 +34,15 @@ Coming next (tracked as tickets in PDT itself): a pipeline of agent personas tha
 
 ## Install
 
-Releases are published on GitHub when they are cut (`vX.Y.Z`; merges to `main` don't ship): `*-setup.exe` for
+One command picks, verifies (against the release's `SHA256SUMS`) and installs the right release
+(docs/user/getting-started/install.md has the options, such as `--channel nightly`):
+
+```sh
+curl -fsSL https://pdt.dev/install.sh | sh        # macOS, Linux
+irm https://pdt.dev/install.ps1 | iex             # Windows (PowerShell)
+```
+
+Set `GITHUB_TOKEN` first while the repository is private. By hand: releases are published on GitHub when they are cut (`vX.Y.Z`; merges to `main` don't ship): `*-setup.exe` for
 Windows, `*.app.tar.gz` for macOS, and `pdt-linux-<arch>.tar.gz` (headless) or `pdt-linux-<arch>.AppImage` for Linux
 (x86_64, aarch64). Run the installer on Windows; on macOS unpack the app into Applications and open it once; on Linux
 run the AppImage, or unpack the tarball and run `pdt/pdt-host install` (a systemd user service; see

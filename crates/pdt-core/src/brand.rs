@@ -1,7 +1,8 @@
 //! The single source of product naming. A rename touches this file, desktop/src-tauri/tauri.conf.json
 //! (productName, identifier), desktop/src-tauri/tauri.bundle.conf.json (sidecars),
-//! desktop/src-tauri/windows/hooks.nsh (pdt-host.exe) and scripts/release-stable.* (product name, slug, port) only,
-//! and HOST_* / TRAY_* below. The release repository is RELEASE_REPO below.
+//! desktop/src-tauri/windows/hooks.nsh (pdt-host.exe), scripts/release-stable.* (product name, slug, port) and the
+//! one-line install scripts site/public/install.{sh,ps1} (product name, slug, port, release repository; a test checks)
+//! only, and HOST_* / TRAY_* below. The release repository is RELEASE_REPO below.
 
 pub const PRODUCT_NAME: &str = "Personal Dev Team";
 pub const SLUG: &str = "pdt";
@@ -81,6 +82,29 @@ mod tests {
             serde_json::from_str(include_str!("../../../desktop/src-tauri/tauri.conf.json")).unwrap();
         assert_eq!(conf["identifier"], APP_BUNDLE_ID);
         assert_eq!(conf["productName"], PRODUCT_NAME);
+    }
+
+    #[test]
+    fn the_install_scripts_use_these_names() {
+        let sh = include_str!("../../../site/public/install.sh");
+        for line in [
+            format!("repo=\"{RELEASE_REPO}\""),
+            format!("product=\"{PRODUCT_NAME}\""),
+            format!("slug=\"{SLUG}\""),
+            format!("port={STABLE_PORT}"),
+        ] {
+            assert!(sh.contains(&line), "install.sh lacks {line}");
+        }
+        assert!(HOST_BIN == format!("{SLUG}-host"), "install.sh runs $slug-host");
+        let ps1 = include_str!("../../../site/public/install.ps1");
+        for line in [
+            format!("$repo = '{RELEASE_REPO}'"),
+            format!("$product = '{PRODUCT_NAME}'"),
+            format!("$port = {STABLE_PORT}"),
+            format!("'{HOST_BIN}.exe'"),
+        ] {
+            assert!(ps1.contains(&line), "install.ps1 lacks {line}");
+        }
     }
 
     #[test]

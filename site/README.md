@@ -32,6 +32,14 @@ org can open it).
   `src/data/plugins.json`, which pdtd's integrations tests write from the same code the app lists its plugins from
   (`cargo test -p pdtd`): never edit it by hand. CI's check that generated files are committed fails when it is
   stale. "Request a plugin" opens the `plugin.yml` issue template.
+- `public/install.sh` (macOS and Linux) and `public/install.ps1` (Windows) are the one-line install scripts, served
+  from the site's root (`curl -fsSL https://pdt.dev/install.sh | sh`, `irm https://pdt.dev/install.ps1 | iex`). They
+  pick the release from GitHub's API, check it against its `SHA256SUMS` and install it as the user docs' install page
+  says by hand. `src/install.test.mjs` runs install.sh against a fake GitHub API with stubbed `uname`, `pdt-host` and
+  `loginctl` in a temp HOME; CI's `site` job also runs shellcheck and PSScriptAnalyzer on them. Their names (product,
+  repository, port) are brand names: a pdt-core test checks them. `src/components/InstallBox.astro` shows the command
+  (landing and Features pages): a tab per system, the visitor's picked by `src/install.mjs`, with a copy button, and
+  the page's "Download for …" buttons follow the visitor's system.
 - The "PDT is built by PDT" numbers and the version on the landing page are counted from git at build time
   (`src/stats.mjs`; a shallow clone falls back to fixed numbers).
 
