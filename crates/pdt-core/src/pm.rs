@@ -136,7 +136,8 @@ pub enum NoteKind {
     Note,
     /// A PM conversation's own entry: checkpoints while it runs, the last one as it ends.
     Journal,
-    /// The user's own note (PDT-126): never in a briefing, and the PM can find it but not write or delete it.
+    // PDT-126. (Doc comments here reach agents in the tools' schemas: no ticket keys.)
+    /// The user's own note: never in a briefing, and the PM can find it but not write or delete it.
     User,
 }
 
@@ -391,6 +392,8 @@ pub struct BriefProject {
     /// (stage label, open tickets in it), stages with none left out.
     pub stages: Vec<(String, u32)>,
     pub pm_acts: bool,
+    /// The enabled workflow that releases it (a Cut a release), by name; None when it has none.
+    pub release: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -825,8 +828,17 @@ pub fn briefing(d: &BriefingData) -> String {
         };
         let kind = if p.personal { " (personal, no repo)" } else { "" };
         let acts = if p.pm_acts { "; you may act here without asking" } else { "" };
-        format!("- {} (`{}`) in `{}`{kind}: {stages}{acts}", p.name, p.key, p.folder)
+        let release = p.release.as_ref().map(|w| format!("; released with the workflow `{w}`")).unwrap_or_default();
+        format!("- {} (`{}`) in `{}`{kind}: {stages}{acts}{release}", p.name, p.key, p.folder)
     });
+    if d.projects.iter().any(|p| p.release.is_some()) {
+        out.push_str(
+            "\nReleases happen only when the user asks for one: then start the project's release workflow (named \
+             above) with `workflow_run`, the project and the input its description names (`workflow_get`). Never run \
+             the forge's own release workflow directly. A project without one has no release process in PDT: ask the \
+             user how they release it.\n",
+        );
+    }
     out.push_str("\n## In flight\n\n");
     if d.in_flight.is_empty() {
         out.push_str("- Nothing in progress or in review.\n");
@@ -1209,6 +1221,7 @@ mod tests {
                 folder: "/w/pdt".into(),
                 stages: vec![("In progress".into(), 2), ("To do".into(), 5)],
                 pm_acts: true,
+                release: None,
             }],
             in_flight: vec![BriefTicket {
                 key: "PDT-81".into(),
@@ -1263,6 +1276,19 @@ mod tests {
         ] {
             assert!(b.contains(want), "missing {want:?} in\n{b}");
         }
+    }
+
+    /// Release guidance only for a project with a release workflow (PDT-296): a PM elsewhere gets none.
+    #[test]
+    fn only_a_project_with_a_release_workflow_gets_release_guidance() {
+        let mut d = data();
+        let b = briefing(&d);
+        assert!(!b.contains("release"), "no release workflow, no release guidance:\n{b}");
+        d.projects[0].release = Some("Cut a release".into());
+        let b = briefing(&d);
+        assert!(b.contains("you may act here without asking; released with the workflow `Cut a release`"), "{b}");
+        assert!(b.contains("Releases happen only when the user asks for one") && b.contains("`workflow_run`"), "{b}");
+        assert!(b.contains("Never run the forge's own release workflow directly"), "{b}");
     }
 
     #[test]

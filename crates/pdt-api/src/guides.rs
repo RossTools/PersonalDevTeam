@@ -64,6 +64,11 @@ const GUIDES: &[Guide] = &[
     },
 ];
 
+/// Every guide's name, in the list's order.
+pub fn guide_names() -> impl Iterator<Item = &'static str> {
+    GUIDES.iter().map(|g| g.info.name)
+}
+
 /// A guide's text as served, or None for an unknown name.
 pub fn guide_text(name: &str) -> Option<&'static str> {
     let g = GUIDES.iter().find(|g| g.info.name == name)?;
