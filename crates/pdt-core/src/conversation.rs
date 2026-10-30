@@ -7,6 +7,7 @@ pub mod codex;
 pub mod composer;
 pub mod devin;
 pub mod draft;
+pub mod grok;
 
 use crate::activity::Activity;
 use serde::{Deserialize, Serialize};

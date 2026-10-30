@@ -454,6 +454,8 @@ impl<P: AcpProfile> AcpLive<P> {
                 Ok(v) => {
                     loaded = true;
                     sh.settle_modes(&v);
+                    let outs = sh.mapper().on_session(&v);
+                    sh.emit(outs, None);
                 }
                 Err(e) => {
                     let Some(text) = sh.profile.resume_fallback(e.code) else { return Err(refused(e)) };
@@ -480,6 +482,8 @@ impl<P: AcpProfile> AcpLive<P> {
             *sh.session.lock().unwrap_or_else(|e| e.into_inner()) = id.clone();
             let _ = sh.sink.send(AdapterOutput::ExternalId(id));
             sh.settle_modes(&v);
+            let outs = sh.mapper().on_session(&v);
+            sh.emit(outs, None);
             if sh.profile.instructions_in_prompt() {
                 *sh.instructions.lock().unwrap_or_else(|e| e.into_inner()) =
                     spec.instructions.as_ref().map(|i| i.text.clone());
