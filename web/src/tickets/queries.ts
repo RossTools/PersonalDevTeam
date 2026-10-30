@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { keepPreviousData, useInfiniteQuery, useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import { useSameList } from '../common/useSameList';
 import type { Session } from '../api/gen/Session';
 import type { Ticket } from '../api/gen/Ticket';
@@ -56,15 +56,31 @@ export function useTicketPages(q: TicketQuery, enabled = true) {
 /** A ticket key (`PDT-12`), as a path names a ticket by (an id otherwise). */
 export const isTicketKey = (ref: string) => /^[A-Za-z][A-Za-z0-9]*-\d+$/.test(ref);
 
+/** The ticket a key names (`PDT-12`, any case), or null when no ticket has it. */
+export async function ticketByKey(key: string): Promise<Ticket | null> {
+  try {
+    return await api.getTicket(key);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  }
+}
+
 /**
  * The id of the ticket a path names, by key or id (PDT-111). Null while a key is being looked up, or when no ticket has
  * it (`missing`).
  */
 export function useTicketId(ref: string | null): { id: string | null; missing: boolean } {
   const byKey = !!ref && isTicketKey(ref);
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: ['ticket-by-key', ref?.toUpperCase() ?? ''],
-    queryFn: async () => (await api.listTickets({ q: ref!, limit: 5 })).items.find((t) => t.key.toUpperCase() === ref!.toUpperCase())?.id ?? null,
+    // pdtd looks a key up itself (PDT-271): a search's first page can miss a key that other tickets mention.
+    queryFn: async () => {
+      const t = await ticketByKey(ref!);
+      if (t) qc.setQueryData(ticketKeys.one(t.id), t);
+      return t?.id ?? null;
+    },
     enabled: byKey,
     // A key's ticket never changes, but a miss can (the ticket is made later, or the lookup ran before it synced).
     staleTime: (q) => (q.state.data ? Infinity : 0),

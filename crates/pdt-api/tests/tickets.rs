@@ -77,6 +77,15 @@ async fn tickets_are_created_listed_edited_and_deleted() {
 
     let (s, v) = call(&app, "GET", &format!("/api/tickets/{}", id(&b)), None).await;
     assert_eq!((s, v["description"].as_str()), (StatusCode::OK, Some("All of them")));
+    // By key too, in any case (PDT-271).
+    for key in ["PDT-2", "pdt-2"] {
+        let (s, v) = call(&app, "GET", &format!("/api/tickets/{key}"), None).await;
+        assert_eq!((s, v["id"].as_str()), (StatusCode::OK, Some(id(&b).as_str())), "{key}");
+    }
+    for unknown in ["PDT-99", "OTHER-2", "2"] {
+        let (s, v) = call(&app, "GET", &format!("/api/tickets/{unknown}"), None).await;
+        assert_eq!((s, v["code"].as_str()), (StatusCode::NOT_FOUND, Some("not_found")), "{unknown}: {v}");
+    }
     let (s, v) = call(
         &app,
         "PATCH",

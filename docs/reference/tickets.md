@@ -12,13 +12,16 @@ web/src/tickets. Review and merge are in [review.md](review.md).
   board), priority, labels (lower-case, no commas), areas (names from the project's `[[area]]` config; below), a
   fractional base-62 `rank` (pdt-core `rank`; a new ticket goes to the top of its stage unless `before`/`after` say
   otherwise), links `blocks`/`relates` (blocks cycles refused with 409 `link_cycle`), and an event timeline (comments
-  are events). Search is FTS5 on title/description keyed by `tickets.seq`, plus exact key/number matches.
+  are events). Search is FTS5 on title/description keyed by `tickets.seq`, plus exact key/number matches; a
+  query that is a full key (`PDT-12`) lists that ticket first (it leads the first page and leaves the sorted rows).
 - API:
   - `GET /api/tickets` (`project`, `q`, `stage`/`priority`/`label` as comma-separated lists, `sort`
     rank|priority|updated|created, `blocked`, `conflicts`, `parent=<id>|none`, `hasParts`, `closedAfter`, keyset `cursor`,
     `limit`; returns `{items, nextCursor, total}`).
   - `POST /api/projects/{id}/tickets`, `GET|PATCH|DELETE /api/tickets/{id}`, `POST /api/tickets/{id}/rank`
-    (`{before?, after?, to?: top|bottom}`), `POST /api/tickets/bulk` (all-or-nothing).
+    (`{before?, after?, to?: top|bottom}`), `POST /api/tickets/bulk` (all-or-nothing). `GET /api/tickets/{id}` also
+    takes a key (`PDT-12`, any case), which is how the web opens `/tickets/PDT-12` and ticket-key links; the other
+    routes take ids only.
   - `POST|DELETE /api/tickets/{id}/links`, `GET /api/tickets/{id}/events`, `POST /api/tickets/{id}/comments`,
     `GET /api/projects/{id}/labels`.
   - A comment's actor: PDT's UI sends `{body, by: "user"}`; a comment without `by` (any other caller, i.e. an agent's

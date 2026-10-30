@@ -10,7 +10,7 @@ use pdt_core::rank;
 use pdt_core::session::{AgentKind, SessionStatus};
 use pdt_core::start::attempt_branch;
 use pdt_core::ticket::{
-    Actor, AgentBy, AttemptSession, AttemptState, AttemptSummary, By, EventKind, EventPage, ExternalLink,
+    Actor, AgentBy, AttemptSession, AttemptState, AttemptSummary, By, EventKind, EventPage, ExternalLink, KeyRef,
     LinkDirection, LinkKind, LinkedTicket, MAX_LABELS, OverlapLevel, ParentFilter, PipelineStage, Priority, RankEdge,
     Ticket, TicketEvent, TicketFilter, TicketPage, TicketSort, TicketSource, TicketStage, TicketSummary, ValidBulk,
     ValidNewTicket, ValidPatch, format_key, parse_key,
@@ -415,6 +415,9 @@ fn push_filters(qb: &mut QueryBuilder<Sqlite>, f: &TicketFilter) {
         qb.push(")");
     }
 }
+
+/// The cursor after a first page that held only the ticket a searched key names: the sorted rows from their start.
+const AFTER_EXACT: &str = "x";
 
 /// Keyset cursors: the sort, then the last row's sort values and id.
 fn encode_cursor(sort: TicketSort, t: &TicketSummary) -> String {
@@ -1326,19 +1329,43 @@ impl Store {
         push_filters(&mut count, f);
         let (total,): (i64,) = count.build_query_as().fetch_one(&mut *conn).await?;
 
+        // A search for a key lists its ticket first (PDT-271): it leaves the sorted rows, and leads the first page.
+        let exact = match f.q.as_deref().and_then(parse_key) {
+            Some(KeyRef { key: Some(pk), number }) => {
+                let mut qb = QueryBuilder::<Sqlite>::new(summary_select());
+                push_filters(&mut qb, f);
+                qb.push(" AND p.key = ").push_bind(pk).push(" AND t.number = ").push_bind(i64::from(number));
+                qb.build().fetch_optional(&mut *conn).await?.as_ref().map(to_summary).transpose()?
+            }
+            _ => None,
+        };
+        let first = exact.as_ref().filter(|_| f.cursor.is_none());
+        let limit = f.limit as usize - usize::from(first.is_some());
+
         let mut qb = QueryBuilder::<Sqlite>::new(summary_select());
         push_filters(&mut qb, f);
-        if let Some(c) = &f.cursor {
+        if let Some(e) = &exact {
+            qb.push(" AND t.id != ").push_bind(e.id.clone());
+        }
+        if let Some(c) = f.cursor.as_deref().filter(|c| *c != AFTER_EXACT) {
             push_cursor(&mut qb, f.sort, c)?;
         }
         qb.push(order_by(f.sort));
-        qb.push(" LIMIT ").push_bind(f.limit as i64 + 1);
+        qb.push(" LIMIT ").push_bind(limit as i64 + 1);
         let rows = qb.build().fetch_all(&mut *conn).await?;
         let mut items = rows.iter().map(to_summary).collect::<Result<Vec<_>, _>>()?;
-        let more = items.len() > f.limit as usize;
-        items.truncate(f.limit as usize);
+        let more = items.len() > limit;
+        items.truncate(limit);
+        let next_cursor = match items.last() {
+            _ if !more => None,
+            Some(t) => Some(encode_cursor(f.sort, t)),
+            // A one-row first page holds only the key's ticket: the next starts the sorted rows.
+            None => Some(AFTER_EXACT.to_string()),
+        };
+        if let Some(e) = first {
+            items.insert(0, e.clone());
+        }
         decorate(&mut conn, &mut items).await?;
-        let next_cursor = if more { items.last().map(|t| encode_cursor(f.sort, t)) } else { None };
         Ok(TicketPage { items, next_cursor, total: u32::try_from(total).unwrap_or(u32::MAX) })
     }
 
@@ -2174,6 +2201,19 @@ impl Store {
         Ok(out)
     }
 
+    /// The id of the ticket a key names (`PDT-12`, any case). None for an unknown key or anything not a key.
+    pub async fn ticket_id_by_key(&self, key: &str) -> Result<Option<String>, StoreError> {
+        let Some(KeyRef { key: Some(pk), number }) = parse_key(key) else { return Ok(None) };
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT t.id FROM tickets t JOIN projects p ON p.id = t.project_id WHERE p.key = ? AND t.number = ?",
+        )
+        .bind(pk)
+        .bind(i64::from(number))
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(id,)| id))
+    }
+
     /// The id of a project's ticket by number.
     pub async fn ticket_id_by_number(&self, project_id: &str, number: u32) -> Result<Option<String>, StoreError> {
         let row: Option<(String,)> = sqlx::query_as("SELECT id FROM tickets WHERE project_id = ? AND number = ?")
@@ -2750,6 +2790,52 @@ mod tests {
         assert_eq!(ids(&store, q("sign")).await, ["a"]);
         store.delete_ticket("c").await.unwrap();
         assert_eq!(ids(&store, q("logout")).await, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn a_searched_key_lists_its_ticket_first_on_every_page_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        // PX-2 mentions PX-1, and PX-10 mentions PX-10 (which the search prefix-matches).
+        add(&store, "a", new("Mentions PX-1")).await;
+        for i in 2..=10 {
+            let t = match i {
+                2 => "Also PX-1".to_string(),
+                10 => "See PX-10".to_string(),
+                _ => format!("Ticket {i}"),
+            };
+            add(&store, &format!("t{i}"), new(&t)).await;
+        }
+        let first = store.ticket_id_by_key("PX-1").await.unwrap().unwrap();
+        assert_eq!(store.ticket_id_by_key("px-1").await.unwrap(), Some(first.clone()), "any case");
+        assert_eq!(store.ticket_id_by_key("PX-99").await.unwrap(), None);
+        assert_eq!(store.ticket_id_by_key("OTHER-1").await.unwrap(), None);
+        assert_eq!(store.ticket_id_by_key("12").await.unwrap(), None, "a key needs its project");
+        assert_eq!(first, "a");
+
+        // Updated, newest first (ties by id, descending): PX-1 ("a") sorts last.
+        let q = |limit, cursor| TicketQuery {
+            q: Some("px-1".into()),
+            sort: Some(TicketSort::Updated),
+            limit: Some(limit),
+            cursor,
+            ..in_project()
+        };
+        let all = ids(&store, q(50, None)).await;
+        assert_eq!(all, ["a", "t2", "t10"], "the key's ticket first, then the rest sorted");
+        for limit in [1, 2] {
+            let (mut got, mut cursor) = (vec![], None);
+            loop {
+                let page = store.query_tickets(&filter(q(limit, cursor))).await.unwrap();
+                assert_eq!(page.total as usize, all.len());
+                got.extend(page.items.into_iter().map(|t| t.id));
+                cursor = page.next_cursor;
+                if cursor.is_none() {
+                    break;
+                }
+            }
+            assert_eq!(got, all, "pages of {limit} list each ticket once, the key's first");
+        }
     }
 
     #[tokio::test]
