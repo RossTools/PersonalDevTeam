@@ -10,7 +10,9 @@ use crate::issues::{FiledIssue, NewForgeIssue};
 use crate::workflow::catalog::{BoxFut, NodeKind};
 use crate::workflow::nodes::github::{GithubClose, GithubComment, GithubImport};
 use crate::workflow::nodes::outside_pr::{PrClose, PrMerge, PrReview, PrTicket};
-use crate::workflow::nodes::release::{GithubChangeRequest, GithubRelease, GithubWorkflowLatest, GithubWorkflowRun};
+use crate::workflow::nodes::release::{
+    GithubChangeRequest, GithubNightly, GithubRelease, GithubWorkflowLatest, GithubWorkflowRun,
+};
 use pdt_core::integration::{Icon, PluginCategory, ToolDecl};
 use pdt_core::pm::AskTarget;
 use pdt_core::ticket::Actor;
@@ -89,6 +91,7 @@ impl Integration for Github {
             Box::new(GithubWorkflowLatest),
             Box::new(GithubChangeRequest),
             Box::new(GithubRelease),
+            Box::new(GithubNightly),
         ]
     }
 

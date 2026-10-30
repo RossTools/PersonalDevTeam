@@ -11,8 +11,9 @@ name: release
 # - Its merge (through the merge queue) runs `tag`, which tags the merge commit <prefix>X.Y.Z, then builds the
 #   bundles again from that commit (the PR's were built from another commit: the queue squashes), and `publish`
 #   makes the GitHub release with them, SHA256SUMS and the version's CHANGELOG.md section as its notes.
-# - Every night at 08:00 UTC (the schedule), or run by hand with channel `nightly` (PDT-283; it replaced the
-#   experimental channel of PDT-210), `nightly` makes no PR and commits nothing: it picks X.Y.Z-nightly.YYYYMMDD (X.Y.Z
+# - Every night at 08:17 UTC (the schedule; off the hour, PDT-288: GitHub often delays or drops top-of-the-hour
+#   runs), or run by hand with channel `nightly` (PDT-283; it replaced the experimental channel of PDT-210),
+#   `nightly` makes no PR and commits nothing: it picks X.Y.Z-nightly.YYYYMMDD (X.Y.Z
 #   the next version for the bump, a patch on the schedule, or the exact version; the date UTC; a day's second build
 #   .2, then .3…) and tags the head of main with it. The bundles are built from that commit with the version set only
 #   in their checkout, and `publish` makes a GitHub pre-release, which only hosts on the nightly update channel
@@ -21,7 +22,7 @@ name: release
 #   nightly or a stable release at that commit) publishes nothing, and the run ends green; a nightly tag there whose
 #   release never got published (a failed night) is built again. Re-running failed jobs reuses the tag; re-running
 #   every job of a manual run makes the day's next build. PDT's "PDT nightly release" workflow puts a failed scheduled
-#   run in the Inbox.
+#   run in the Inbox, and "PDT missing nightly" a night with changes on main and no nightly by 10:00 UTC.
 #
 # Secrets: PDT_RELEASE_TOKEN (required), a token that can push branches, open pull requests and turn on their
 # auto-merge on this repository (a fine-grained token with Contents and Pull requests read and write, or a GitHub
@@ -33,7 +34,7 @@ name: release
 # release is published as a pre-release, which no PDT installs as an update.
 on:
   schedule:
-    - cron: "0 8 * * *"
+    - cron: "17 8 * * *"
   workflow_dispatch:
     inputs:
       bump:

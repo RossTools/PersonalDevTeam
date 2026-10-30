@@ -305,6 +305,10 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
             {typeof item.body.workflow === 'string' && (
               <p className="text-meta text-muted-foreground">From workflow {item.body.workflow}</p>
             )}
+            {/* What the gate is about, when its step says more than its question (PDT-288: a missing nightly). */}
+            {typeof item.body.text === 'string' && (
+              <div className="rounded-md border border-border p-3 text-sm"><Markdown>{item.body.text}</Markdown></div>
+            )}
             <Textarea
               aria-label="Note (optional)"
               placeholder={item.ticketId ? 'A note with your choice (optional), e.g. what to change when you reject it' : 'A note with your choice (optional)'}

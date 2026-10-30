@@ -215,7 +215,8 @@ change on real machines before it ships to everyone, or to get a fix to one host
 replaced the experimental releases cut by hand (`vX.Y.Z-exp.N`); hosts on an experimental build move to the
 next nightly.
 
-- **When**: the release workflow's schedule runs it every day at 08:00 UTC. When the head of `main` is already
+- **When**: the release workflow's schedule runs it every day at 08:17 UTC (off the hour: GitHub's scheduled runs
+  are best-effort, and top-of-the-hour ones are often delayed or dropped). When the head of `main` is already
   released (the last nightly, or the stable release just merged, points at it) it publishes nothing and the run ends
   green; a nightly tag at the head whose release never got published (that night failed) is built again.
 - **Cut one by hand**: the release workflow with channel `nightly` (`gh workflow run release.yml -f channel=nightly`,
@@ -240,6 +241,13 @@ next nightly.
 - **A failed night**: on a host that builds PDT, the built-in "PDT nightly release" workflow reads the release
   workflow's newest run on `main` every day at 11:00 UTC and puts a failed one in the Inbox ("The nightly release
   failed", with its failed jobs), once per run.
+- **A night that never ran**: GitHub sometimes never starts a scheduled run at all, so there is no failed run to
+  report. On a host that builds PDT, the built-in "PDT missing nightly" workflow looks at 10:00 UTC: when `main` has
+  commits that the newest nightly and the latest stable release lack, and no nightly for the day (UTC) is published,
+  the Inbox says "Tonight's nightly didn't run", once a day, with a link to the release workflow's runs and **Start
+  it** (runs the release workflow with channel `nightly` as your GitHub login; when that fails, the Inbox says so and
+  links GitHub's Run workflow). It looks again every half hour, and the item closes by itself once a nightly for the
+  day is published (after about a day it gives up). Days `main` didn't change say nothing.
 - **Re-runs**: re-running the failed jobs reuses the tag; re-running every job of a manual run makes the day's next
   build. A run that failed before publishing leaves its tag behind (the next scheduled run on the same commit builds
   it again), so the day's numbers may skip one.

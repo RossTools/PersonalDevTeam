@@ -46,7 +46,7 @@ is), so a packaging break blocks the release PR rather than the tag; the merge q
 the release PR merges, release.yml's `tag` job tags the merge commit and the same workflow builds the bundles from
 it (its own jobs, not ci.yml's checks) and publishes the release. The tag is made with the workflow's token, so it
 starts no other workflow. The PR artifacts are not reused: the queue squash-merges, so the tagged commit is never
-the commit they were built from. On its 08:00 UTC schedule, or run with `channel: nightly` (PDT-283), its `nightly` job
+the commit they were built from. On its 08:17 UTC schedule, or run with `channel: nightly` (PDT-283), its `nightly` job
 instead tags the head of main `vX.Y.Z-nightly.YYYYMMDD` (the schedule skips a head that is released already), and
 the same bundle jobs build that commit with the version set in their checkout (the bundle action's `version` input;
 nothing is committed) for `publish` to make a GitHub pre-release and delete the nightlies beyond the newest 14. Each

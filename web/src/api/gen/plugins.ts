@@ -134,6 +134,10 @@ export const plugins: IntegrationInfo[] = [
         "title": "Read a GitHub release"
       },
       {
+        "id": "github.nightly",
+        "title": "Watch for the day's nightly"
+      },
+      {
         "id": "github.create_issue",
         "title": "Create a GitHub issue"
       }
@@ -160,6 +164,10 @@ export const plugins: IntegrationInfo[] = [
       {
         "id": "pdt-nightly",
         "title": "PDT nightly release"
+      },
+      {
+        "id": "pdt-nightly-missing",
+        "title": "PDT missing nightly"
       },
       {
         "id": "github-issue-done",

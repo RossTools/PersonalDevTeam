@@ -109,6 +109,11 @@
           "title": "Read a GitHub release"
         },
         {
+          "description": "Looks for a day's nightly release (a published `X.Y.Z-nightly.YYYYMMDD` pre-release, PDT-288). `published` when there is one; before `dueHour` UTC `early`; `unchanged` when main has nothing its newest nightly or stable release lacks. Otherwise the nightly is missing: one Inbox item says so (once per workflow and day, else `already`), with Start it (`start`) and Ignore (`ignore`), and it looks again every half hour: the item closes by itself once the nightly is published (`published`), or after about a day (`expired`).",
+          "id": "github.nightly",
+          "title": "Watch for the day's nightly"
+        },
+        {
           "description": "Opens an issue in a project's GitHub repository, as PDT's GitHub login: from a ticket (`{{trigger.ticketId}}`; its title and description unless given, and the ticket links the issue), or in `project`'s repository. Output: `repo`, `number`, `issue` (owner/name#12), `url` and `ticketKey`.",
           "id": "github.create_issue",
           "title": "Create a GitHub issue"
@@ -152,6 +157,7 @@
         "PDT bug triage",
         "PDT pull request review",
         "PDT nightly release",
+        "PDT missing nightly",
         "Done closes the GitHub issue",
         "Cut a release"
       ]
