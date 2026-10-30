@@ -111,7 +111,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
   });
   const { choices, error: configError } = useRunChoices(place?.projectId ?? '', place?.worktreeId ?? null);
   const start = useStartRun(place?.projectId ?? '', (runId) => void done({ kind: 'run', id: runId }, place!.projectId));
-  const others = ws.everyInfo.flatMap((i) => {
+  const others = ws.allInfos.flatMap((i) => {
     const where = findTab(ws.workspaces, i.item)?.workspace;
     return where?.id === workspace?.id ? [] : [{ info: i, workspaceName: where?.name ?? null }];
   });

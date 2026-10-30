@@ -29,9 +29,10 @@ changes.
   menu: rename, move, close.
 - **Agents** lists the conversations you started yourself, from a ticket's **Start** or not. The sessions a workflow
   starts (a ticket's Coder, Reviewer and QA, a Triage or PM step) are never there, running or ended, even while a tab
-  holds them. Reach them from their tab (PDT opens one for each), the ticket's **Sessions** (under **Attempt**),
-  **Open session** on the step in the workflow's **Runs**, or by searching for them in the command palette or
-  **Bring here**. A step that needs you still shows in the **Inbox**.
+  holds them. Reach them from their tab (PDT opens one for each, and the command palette and **Bring here** find it),
+  the ticket's **Sessions** (under **Attempt**), or **Open session** on the step in the workflow's **Runs**. Once
+  one's tab is closed, the palette and **Bring here** leave it out (except a running one with no ticket), so open it
+  from its ticket or run. A step that needs you still shows in the **Inbox**.
 - Drag a tab to reorder it, or move it to another workspace from its menu. A session or run has one tab only: opening
   it somewhere else moves it there.
 - **Closing a tab stops what's in it and removes it.** For a session that means its terminal history is gone and it

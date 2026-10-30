@@ -595,7 +595,7 @@ export function AppShell() {
   const acpAgents = useAcpAgents();
   const items = paletteOpen
     ? paletteItems({
-        workspaces: ws.workspaces, infos: [...ws.everyInfo, ...ws.ticketInfos], projects: ws.projects, tab: ws.tab, place, theme, handlers,
+        workspaces: ws.workspaces, infos: [...ws.allInfos, ...ws.ticketInfos], projects: ws.projects, tab: ws.tab, place, theme, handlers,
         tickets: looksLikeKey(keyQuery) ? ticketHits.data?.items ?? [] : [],
         ticketProjectId: view === 'tickets' ? backlog.projectId : null,
         issueRepo,

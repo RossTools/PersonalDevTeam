@@ -301,7 +301,8 @@ describe('workspaces', () => {
     await userEvent.click(d);
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/workspaces/wa/tabs', body: { sessionId: 'd' } }));
   });
-  // A ticket's running Coder and an ended Triage, both in tabs, and the user's own conversation on the same ticket.
+  // A ticket's running Coder in a tab and an ended one, an ended Triage in another workspace's tab, an ended one with no
+  // tab and a running one, and the user's own conversation on the same ticket.
   const stepSessions = () => {
     const forTicket = { attemptId: 'at1', ticket: { id: 't1', key: 'PDT-1' } };
     const step = (id: string, title: string, name: string, status: string, more: Record<string, unknown> = {}) =>
@@ -313,17 +314,19 @@ describe('workspaces', () => {
         step('c2', 'Coder done', 'Coder', 'finished', forTicket),
         step('t1', 'Triage in a tab', 'Triage', 'finished'),
         step('t2', 'Triage running', 'Triage', 'running'),
+        step('t3', 'Triage done', 'Triage', 'finished'),
         sess('u1', 'Started by hand', { kind: 'agent_tui', agent: 'claude', status: 'running', ...forTicket, persona: { id: 'co', name: 'Coder', version: 1, stepId: null } }),
       ],
       'GET /api/workspaces': [
-        { id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [tabOf('ta', 'wa', 'a', 0), tabOf('tc1', 'wa', 'c1', 1), tabOf('tt1', 'wa', 't1', 2)] },
+        { id: 'wa', name: 'Alpha', projectId: project.id, position: 0, createdAt: 1, tabs: [tabOf('ta', 'wa', 'a', 0), tabOf('tc1', 'wa', 'c1', 1)] },
+        { id: 'wr', name: 'Release', projectId: null, position: 1, createdAt: 2, tabs: [tabOf('tt1', 'wr', 't1', 0)] },
       ],
     };
   };
   const expectOnlyOwn = async (agents: HTMLElement) => {
     await within(agents).findByRole('row', { name: /Started by hand/ });
     expect(within(agents).getByRole('row', { name: /Claude A/ })).toBeInTheDocument();
-    for (const name of [/Coder in a tab/, /Coder done/, /Triage in a tab/, /Triage running/]) {
+    for (const name of [/Coder in a tab/, /Coder done/, /Triage in a tab/, /Triage running/, /Triage done/]) {
       expect(within(agents).queryByRole('row', { name })).not.toBeInTheDocument();
     }
   };
@@ -331,14 +334,32 @@ describe('workspaces', () => {
     stubWorkspaces(stepSessions());
     renderWithQuery(<AppShell />);
     await expectOnlyOwn(await screen.findByRole('region', { name: 'Agents' }));
-    // Their tabs stay, and the palette still finds them.
+    // Their tabs stay.
     expect(screen.getByRole('tab', { name: /Coder in a tab/ })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /Triage in a tab/ })).toBeInTheDocument();
+  });
+  it('finds a step session in the palette and Bring here only while a tab holds it (or it runs with no ticket)', async () => {
+    stubWorkspaces(stepSessions());
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Coder in a tab/ });
     await userEvent.keyboard('{Control>}]{/Control}k');
     const palette = await screen.findByRole('dialog', { name: 'Command palette' });
+    await userEvent.keyboard('Triage');
+    expect(await within(palette).findByRole('menuitem', { name: /Triage in a tab/ })).toBeInTheDocument();
+    expect(within(palette).getByRole('menuitem', { name: /Triage running/ })).toBeInTheDocument();
+    expect(within(palette).queryByRole('menuitem', { name: /Triage done/ })).not.toBeInTheDocument();
+    await userEvent.clear(within(palette).getByRole('searchbox'));
     await userEvent.keyboard('Coder');
     expect(await within(palette).findByRole('menuitem', { name: /Coder in a tab/ })).toBeInTheDocument();
-    expect(within(palette).getByRole('menuitem', { name: /Coder done/ })).toBeInTheDocument();
+    expect(within(palette).queryByRole('menuitem', { name: /Coder done/ })).not.toBeInTheDocument();
+    // The first Escape clears the query, the second closes.
+    await userEvent.keyboard('{Escape}{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument());
+    await userEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    const list = within(screen.getByRole('dialog', { name: 'New tab' })).getByRole('menu', { name: 'New tab choices' });
+    expect(await within(list).findByRole('menuitem', { name: /Triage in a tab/ })).toBeInTheDocument();
+    expect(within(list).getByRole('menuitem', { name: /Triage running/ })).toBeInTheDocument();
+    expect(within(list).queryByRole('menuitem', { name: /Triage done/ })).not.toBeInTheDocument();
+    expect(within(list).queryByRole('menuitem', { name: /Coder done/ })).not.toBeInTheDocument();
   });
   it('lists only the user\'s own conversations in the phone drawer\'s Agents', async () => {
     window.history.replaceState(null, '', '/sessions');

@@ -95,7 +95,7 @@ export interface PaletteHandlers {
 
 export interface PaletteContext {
   workspaces: Workspace[];
-  /** Every session and run, workflow steps' included (WorkspacesApi.everyInfo). */
+  /** The sessions and runs, a workflow step's only while a tab holds it (WorkspacesApi.allInfos). */
   infos: ItemInfo[];
   projects: Project[];
   /** The tab on screen. */

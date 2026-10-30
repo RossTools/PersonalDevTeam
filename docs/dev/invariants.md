@@ -63,9 +63,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **Only the user's ticket comments go to the agent**; the API refuses `by: "system"`.
 - **Hiding a session from the lists never hides it from attention.** The Agents list (the sidebar, the phone drawer
   and `/sessions`, all `AgentsSection` in web `workspaces/Sidebar.tsx`) leaves out every session a workflow step
-  started (`startedByStep`, web `sessions/status.ts`), tab or not; Bring here, the palette, the favicon and title read
-  `useWorkspaces.everyInfo`, every session, so a step session can still be found and one that needs the user still
-  shows.
+  started (`startedByStep`, web `sessions/status.ts`), tab or not. Bring here and the palette read
+  `useWorkspaces.allInfos`, which leaves out workflow step sessions for a ticket and ended ones with no ticket unless
+  a tab holds them (`hiddenStepSession`), so a step's tab can still be found without old steps piling up. The favicon
+  and title read `everyInfo`, every session, so a hidden step that needs the user still shows.
 
 ## Workflows
 
