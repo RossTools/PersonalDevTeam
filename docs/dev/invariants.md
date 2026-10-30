@@ -53,6 +53,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   completes when the agent that called it is stopped.
 - **Workflows hear of a Start only once its session exists** (`announce_start`).
 - **Only the user's ticket comments go to the agent**; the API refuses `by: "system"`.
+- **Hiding a session from the lists never hides it from attention.** The session lists (Agents, the phone drawer,
+  Bring here, the palette) read `useWorkspaces.allInfos`, which leaves out workflow step sessions for a ticket and
+  ended ones with no ticket unless a tab holds them (`hiddenStepSession`, web `sessions/status.ts`); the favicon and
+  title read `everyInfo`, every session, so a hidden step that needs the user still shows.
 
 ## Workflows
 

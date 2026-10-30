@@ -11,9 +11,11 @@ export function toDot(status: SessionStatus): Status {
 }
 
 /**
- * A workflow step's session with no ticket (Triage, a PM step) that has ended: the session lists leave it out
- * (PDT-263) unless a tab holds it. It stays, and opens from its run's step.
+ * A session a workflow step started that the session lists leave out unless a tab holds it: one for a ticket, running
+ * or ended (PDT-290; it opens from the ticket's Sessions), and one with no ticket (Triage, a PM step) once it has ended
+ * (PDT-263). Both open from their run's step. Sessions the user started are always listed.
  */
 export function hiddenStepSession(s: Pick<Session, 'persona' | 'attemptId' | 'ticket' | 'status'>): boolean {
-  return !!s.persona?.stepId && !s.attemptId && !s.ticket && s.status !== 'running';
+  if (!s.persona?.stepId) return false;
+  return !!s.attemptId || !!s.ticket || s.status !== 'running';
 }

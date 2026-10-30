@@ -10,9 +10,19 @@ describe('hiddenStepSession', () => {
     expect(hiddenStepSession({ ...step, status: 'interrupted' })).toBe(true);
   });
 
-  it('keeps running ones, ticket sessions and sessions no step started', () => {
+  it('hides a ticket\'s workflow step session, running or ended', () => {
+    const coder = { ...step, persona: { ...persona, name: 'Coder' }, attemptId: 'a', ticket: { id: 't', key: 'PDT-1' } };
+    expect(hiddenStepSession({ ...coder, status: 'running' })).toBe(true);
+    expect(hiddenStepSession(coder)).toBe(true);
+    expect(hiddenStepSession({ ...coder, status: 'interrupted' })).toBe(true);
+    expect(hiddenStepSession({ ...coder, attemptId: null, status: 'running' })).toBe(true);
+  });
+
+  it('keeps running ones with no ticket and sessions no step started', () => {
     expect(hiddenStepSession({ ...step, status: 'running' })).toBe(false);
-    expect(hiddenStepSession({ ...step, attemptId: 'a', ticket: { id: 't', key: 'PDT-1' } })).toBe(false);
+    const started = { ...step, persona: { ...persona, name: 'Coder', stepId: null }, attemptId: 'a', ticket: { id: 't', key: 'PDT-1' } };
+    expect(hiddenStepSession({ ...started, status: 'running' })).toBe(false);
+    expect(hiddenStepSession({ ...started, persona: null })).toBe(false);
     expect(hiddenStepSession({ ...step, persona: { ...persona, stepId: null } })).toBe(false);
     expect(hiddenStepSession({ ...step, persona: null })).toBe(false);
   });
