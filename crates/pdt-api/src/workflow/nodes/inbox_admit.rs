@@ -66,6 +66,10 @@ impl NodeKind for InboxAdmit {
         Box::pin(async move {
             let c: InboxAdmitConfig = parse(&input)?;
             let Some(given) = nonblank(&c.ticket) else { return Ok(skipped("no ticket to approve")) };
+            // A dry run's stand-in for a ticket an earlier step would make (PDT-189).
+            if cx.dry_run && pdt_core::workflow::dry::is_stand_in(given) {
+                return Ok(Outcome::next("added", json!({"would": format!("ask you to approve {given}")})));
+            }
             let id = crate::mcp::tools::resolve_ticket(cx.st, given, cx.run.project_id.as_deref()).await?;
             let store = &cx.st.store;
             let t = store.get_ticket_summary(&id).await.map_err(|e| e.to_string())?.ok_or("no such ticket")?;

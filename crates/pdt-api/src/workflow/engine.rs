@@ -11,6 +11,7 @@ use crate::routes::{AppState, now_ms};
 use pdt_core::workflow::api::{LogEvent, Run, RunStatus, Step, StepStatus, Workflow};
 use pdt_core::workflow::cond::all;
 use pdt_core::workflow::doc::{ERROR_PORT, WorkflowDoc};
+use pdt_core::workflow::dry::with_stand_ins;
 use pdt_core::workflow::refs::{resolve, resolve_keeping};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1272,6 +1273,12 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
         let result = kind.dry_run(&cx, input).await;
         let port = match result {
             Ok(Outcome::Next { port, output }) => {
+                // An action that only says what it would do still gives later steps the fields they read (PDT-189).
+                let output = if output.get("would").is_some() {
+                    with_stand_ins(output, &kind.spec().output_schema)
+                } else {
+                    output
+                };
                 ds.output = output.clone();
                 step.output = output;
                 Some(port)
