@@ -439,6 +439,16 @@ menus list the default agent's choices first, default view first (`byDefault` in
 "… with an agent" starts in the default view. pdtd's update loop re-reads the interval every minute, so a change
 applies without waiting out the old one.
 
+`agentModels` (PDT-265), Settings → This host → Agents "Default models": a model per agent kind (`{"claude":
+"opus"}`; a patch sets the agents it names, blank clears one; a removed ACP agent's goes with it). The model a session
+starts with is `HostSettings::model_for`: the session's own (picked in the composer, or its persona's, copied in when
+it is made) > the agent's default model > the agent CLI's own default. It is resolved at each launch, not stored on
+the session, so a conversation's "Default" follows the setting: conversations (and Make ticket's side request), workflow
+steps and the PM, and fresh Claude and Codex terminals (`--model`; a resumed terminal keeps its conversation's model,
+Devin's terminal takes none). Switching a live conversation back to "Default" sends the agent's default model when it
+has one. The composer's picker says what "Default" is ("Default (Opus)"); Settings lists the models the agent's
+conversations reported (`GET /api/agents/{agent}/capabilities`) and, until it has run one, takes a typed name.
+
 `maxAgentTurns` (4; 0: no cap; Phase 7c), Settings → This host → Agents "Agents running at once": the most agent
 sessions running a turn before PDT's own work waits for a slot ([workflows.md](workflows.md#pipeline-policies-and-scheduling-phase-7c)).
 

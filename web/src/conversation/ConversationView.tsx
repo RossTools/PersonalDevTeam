@@ -69,6 +69,7 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
   const agent = session.agent ?? 'claude';
   const agentName = useAgents().label(agent);
   const caps = useQuery({ queryKey: ['agent-capabilities', agent], queryFn: () => api.agentCapabilities(agent), staleTime: 60_000 });
+  const hostSettings = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings, staleTime: 60_000, retry: false });
 
   const refreshSessions = () => qc.invalidateQueries({ queryKey: ['sessions', session.projectId] });
   const patch = useMutation({
@@ -144,6 +145,7 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
         agentName={agentName}
         models={caps.data?.models ?? []}
         model={shownModel ?? null}
+        defaultModel={hostSettings.data?.settings.agentModels?.[agent] ?? null}
         onModel={(model) => patch.mutate({ model })}
         permissionModes={caps.data?.permissionModes ?? []}
         permissionMode={shownMode}

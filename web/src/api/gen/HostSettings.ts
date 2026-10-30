@@ -79,4 +79,9 @@ acpAgents: Array<AcpAgentConfig>,
  * The agents switched off in Settings → Agents (PDT-270): never offered, and no new session starts on them.
  * Every agent is on unless it is here. The default agent never is.
  */
-disabledAgents: Array<AgentKind>, };
+disabledAgents: Array<AgentKind>, 
+/**
+ * A default model for each agent (Settings → Agents, PDT-265). A session with no model of its own (nor its
+ * persona's) starts with it; an agent without one uses the agent's own default (`HostSettings::model_for`).
+ */
+agentModels: Partial<Record<AgentKind, string>>, };

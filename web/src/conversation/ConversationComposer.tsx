@@ -36,7 +36,26 @@ export const PERMISSION_LABEL: Record<PermissionMode, string> = {
 export const PERMISSION_MODES: PermissionMode[] = ['ask', 'accept_edits', 'plan', 'bypass'];
 
 /** The model picker's value for "the agent's default" (`model: null`). */
-const DEFAULT_MODEL = '__default__';
+export const DEFAULT_MODEL = '__default__';
+
+/**
+ * Pure: a model picker's choices: `defaultLabel` (`model: null`) first, then the agent's models, then `current` when
+ * it is none of them (set elsewhere).
+ */
+export function modelChoices(models: AgentModel[], current: string | null, defaultLabel: string): SelectOption[] {
+  const options: SelectOption[] = [
+    { value: DEFAULT_MODEL, label: defaultLabel },
+    ...models.filter((m) => m.value !== 'default').map((m) => ({ value: m.value, label: m.displayName })),
+  ];
+  if (current && !options.some((o) => o.value === current)) options.push({ value: current, label: current });
+  return options;
+}
+
+/** Pure: "Default model", or what it resolves to when the agent has a default model in Settings → Agents ("Default (Opus)"). */
+export function defaultModelLabel(models: AgentModel[], agentDefault: string | null | undefined): string {
+  if (!agentDefault) return 'Default model';
+  return `Default (${models.find((m) => m.value === agentDefault)?.displayName ?? agentDefault})`;
+}
 
 /** Ask / Accept edits / Plan / Bypass; Bypass shows in the destructive colour. */
 export function PermissionModeSelect({ value, onChange, modes = PERMISSION_MODES, disabled, size = 'sm', quiet = false, className, label = 'Permission mode' }: {
@@ -89,6 +108,8 @@ export interface ConversationComposerProps {
   models: AgentModel[];
   /** null: the agent's default. */
   model: string | null;
+  /** The agent's default model in Settings → Agents, which "Default model" stands for (null: the agent's own). */
+  defaultModel?: string | null;
   onModel: (m: string | null) => void;
   permissionModes: PermissionMode[];
   permissionMode: PermissionMode;
@@ -120,6 +141,7 @@ export function ConversationComposer({
   agentName = 'Claude',
   models,
   model,
+  defaultModel = null,
   onModel,
   permissionModes,
   permissionMode,
@@ -255,11 +277,7 @@ export function ConversationComposer({
   const broken = drafts.some((d) => d.error);
   const canSend = (!!text.trim() || drafts.length > 0) && !uploading && !broken;
 
-  const modelOptions: SelectOption[] = [
-    { value: DEFAULT_MODEL, label: 'Default model' },
-    ...models.filter((m) => m.value !== 'default').map((m) => ({ value: m.value, label: m.displayName })),
-  ];
-  if (model && !modelOptions.some((o) => o.value === model)) modelOptions.push({ value: model, label: model });
+  const modelOptions = modelChoices(models, model, defaultModelLabel(models, defaultModel));
 
   const send = async (now = false) => {
     if (!canSend || sending.current) return;

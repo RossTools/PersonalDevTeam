@@ -7,7 +7,7 @@ import type { ConversationState } from '../api/gen/ConversationState';
 import type { Session } from '../api/gen/Session';
 import { SessionView } from '../sessions/SessionView';
 import { Reply, renderWithQuery, stubApi } from '../test-utils';
-import { ConversationComposer, type ConversationComposerProps } from './ConversationComposer';
+import { ConversationComposer, defaultModelLabel, type ConversationComposerProps } from './ConversationComposer';
 import { ConversationView } from './ConversationView';
 import { FakeSocket } from './fakeSocket';
 import { MessageList } from './MessageList';
@@ -385,6 +385,13 @@ describe('ConversationComposer', () => {
     expect(p.onInterrupt).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent('Claude stopped');
     expect(screen.getByRole('alert')).toHaveTextContent('Send a message to start it again');
+  });
+
+  it("names the agent's default model on \"Default\"", async () => {
+    setup({ defaultModel: 'opus' });
+    expect(screen.getByRole('button', { name: /Model/ })).toHaveTextContent('Default (Opus)');
+    expect(defaultModelLabel([], 'gpt-5')).toBe('Default (gpt-5)');
+    expect(defaultModelLabel([], null)).toBe('Default model');
   });
 
   it('picks a model ("Default" is null) and a permission mode', async () => {

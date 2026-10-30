@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, EmptyState, RelativeTime, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
+import { useOpenSession } from '../tickets/actions';
 import type { WorkflowRun } from '../api/gen/WorkflowRun';
 import type { WorkflowRunDetail } from '../api/gen/WorkflowRunDetail';
 import type { WorkflowStep } from '../api/gen/WorkflowStep';
@@ -36,6 +37,12 @@ function waitingGate(s: WorkflowStep): Answer | null {
   return s.status === 'waiting' && w?.answer ? w.answer : null;
 }
 
+/** The session a step ran or told (an agent step's, `session.send`'s), from its output. */
+function stepSession(s: WorkflowStep): string | null {
+  const id = (s.output as { sessionId?: unknown } | null)?.sessionId;
+  return typeof id === 'string' ? id : null;
+}
+
 function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflowId: string; catalog: Catalog; viewOnly: boolean }) {
   const qc = useQueryClient();
   const run = useQuery({
@@ -58,13 +65,15 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
   const resume = useMutation({ mutationFn: () => api.resumeWorkflowRun(id), onSuccess: done });
   const cancel = useMutation({ mutationFn: () => api.cancelWorkflowRun(id), onSuccess: done });
   const answer = useMutation({ mutationFn: (a: { step: string; choice: string }) => api.answerWorkflowStep(id, a.step, a.choice), onSuccess: done });
+  const openSession = useOpenSession();
+  const open = useMutation({ mutationFn: (id: string) => api.getSession(id), onSuccess: (s) => openSession(s) });
   const [selected, setSelected] = useState<string | null>(null);
   if (run.error) return <Alert tone="error">The run could not be loaded: {run.error.message}</Alert>;
   if (!run.data) return <Skeleton lines={6} className="p-3" />;
   const r = run.data;
   const status = RUN_STATUS[r.status];
   const d = doc.data?.doc;
-  const error = retry.error ?? resume.error ?? cancel.error ?? answer.error;
+  const error = retry.error ?? resume.error ?? cancel.error ?? answer.error ?? open.error;
   const resumeNode = r.steps.find((s) => s.id === r.resumeFrom)?.nodeId;
   return (
     <section aria-label="Run" className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
@@ -95,6 +104,12 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
       {d && (
         <StepList doc={d} catalog={catalog} expandable={viewOnly} steps={[...r.steps].sort((a, b) => a.seq - b.seq).map((s) => {
           const gate = waitingGate(s);
+          const session = stepSession(s);
+          // Its session, which the session lists leave out once it ends with no ticket (PDT-263).
+          const openButton = session && (
+            <Button size="sm" variant="secondary" className="self-start" pending={open.isPending && open.variables === session}
+              onClick={() => open.mutate(session)}>Open session</Button>
+          );
           return {
             key: s.id, nodeId: s.nodeId, kind: s.kind, status: STEP_STATUS[s.status], port: s.port, error: s.error,
             input: s.input, output: s.output, attempts: s.attempts,
@@ -110,7 +125,7 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
                   ))}
                 </div>
               ),
-            } : {}),
+            } : openButton ? { actions: openButton } : {}),
           };
         })} />
       )}

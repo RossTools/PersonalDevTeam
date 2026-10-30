@@ -153,6 +153,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
             prompt.as_ref(),
             instructions.as_ref(),
             mcp.as_ref(),
+            st.store.get_host_settings().await?.model_for(session.agent, session.model.as_deref()).as_deref(),
         )
         .map_err(ApiError::from),
         Err(e) => Err(e),
@@ -397,7 +398,8 @@ async fn bind_codex_with(
 
 /// Spawns the session's process and records its exit when it ends. An agent's first prompt (fresh launches at
 /// creation only) is its last argument; an agent run through `cmd.exe` (a Windows `.cmd` shim, which would interpret
-/// the prompt's text) gets the prompt in `<session dir>/prompt.md` and a short prompt naming that file instead.
+/// the prompt's text) gets the prompt in `<session dir>/prompt.md` and a short prompt naming that file instead. `model`
+/// (fresh launches only: a resumed conversation keeps its own) goes to the agents whose terminal takes one.
 #[allow(clippy::too_many_arguments)]
 fn start_pty(
     st: &AppState,
@@ -409,6 +411,7 @@ fn start_pty(
     prompt: Option<&InitialPrompt>,
     instructions: Option<&pdt_agents::adapter::SessionInstructions>,
     mcp: Option<&pdt_agents::mcp::McpServer>,
+    model: Option<&str>,
 ) -> Result<(), PtyError> {
     // Claude: `--resume`/`--session-id` take its conversation id, which `/clear` moves off the session id.
     let l = launch(s.kind, s.agent, platform, resume, s.claude_conversation_id(), s.bypass_permissions);
@@ -437,6 +440,18 @@ fn start_pty(
                 args.splice(at..at, pdt_agents::mcp::codex_tui_args(m));
             }
             Some(AgentKind::Claude) => args.extend(pdt_agents::mcp::claude_args(m)),
+            Some(AgentKind::Devin | AgentKind::Acp(_)) | None => {}
+        }
+    }
+    if let Some(m) = model.filter(|_| s.kind == SessionKind::AgentTui) {
+        let flag = ["--model".to_string(), m.to_string()];
+        match s.agent {
+            Some(AgentKind::Codex) => {
+                let at = args.len() - launch_args.len();
+                args.splice(at..at, flag);
+            }
+            Some(AgentKind::Claude) => args.extend(flag),
+            // Devin's terminal takes no model flag; ACP agents have no terminal.
             Some(AgentKind::Devin | AgentKind::Acp(_)) | None => {}
         }
     }
@@ -697,7 +712,12 @@ pub(crate) async fn restart_locked(
     // Mark running before spawning, so an instant exit is recorded after (not before) this update.
     st.store.set_session_running(id).await?;
     let platform = st.agent_platform().await;
-    if let Err(e) = start_pty(st, &platform, &session, size, &resume, creds, None, instructions.as_ref(), mcp.as_ref())
+    let model = match resume {
+        Resume::Fresh => st.store.get_host_settings().await?.model_for(session.agent, session.model.as_deref()),
+        _ => None,
+    };
+    let (instructions, mcp) = (instructions.as_ref(), mcp.as_ref());
+    if let Err(e) = start_pty(st, &platform, &session, size, &resume, creds, None, instructions, mcp, model.as_deref())
     {
         // AlreadyExists means another run owns the session (it is running), so leave its status alone.
         if !matches!(e, PtyError::AlreadyExists(_)) {
