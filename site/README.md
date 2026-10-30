@@ -4,7 +4,8 @@ The project website: a landing page and the docs, built with [Astro](https://ast
 [Starlight](https://starlight.astro.build) and served by GitHub Pages (private for now: only members of the RossTools
 org can open it).
 
-- `src/pages/index.astro` is the landing page and `src/pages/features.astro` the Features page (`/features/`: a
+- `src/pages/index.astro` is the landing page (its hero's screenshots are a carousel, `src/components/ShotCarousel.astro`:
+  no library, no autoplay, and without JS the slides scroll sideways) and `src/pages/features.astro` the Features page (`/features/`: a
   section per area of PDT, each with its screenshots and a link to its user docs; the landing page's feature cards link
   to its sections). Both stand outside Starlight, in `src/layouts/Landing.astro` (head, nav, footer) with the styles in
   `src/styles/landing.css` and their links in `src/links.mjs`. The Features page's wording follows the user docs:

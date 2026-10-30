@@ -4,10 +4,10 @@ Answers to common questions about PDT, agents, costs and privacy.
 
 ## Does PDT need its own AI, or an AI account?
 
-PDT brings no AI of its own. It runs the coding agents you install (Claude Code, Codex, Devin, or any ACP agent),
-signed in as you, so they cost what they cost outside PDT: your subscription or your API usage. Running several
-agents at once uses your plan's limits faster; **Agents running at once** in **Settings › This host › Agents** caps
-it.
+PDT brings no AI of its own. It runs the coding agents you install (Claude Code, Codex, Devin, Grok, Cursor, OhMyPi,
+Antigravity, or any other ACP agent), signed in as you, so they cost what they cost outside PDT: your subscription or
+your API usage. Running several agents at once uses your plan's limits faster; **Agents running at once** in
+**Settings › This host › Agents** caps it.
 
 ## Is my code sent anywhere?
 
