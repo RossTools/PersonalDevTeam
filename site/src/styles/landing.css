@@ -113,25 +113,37 @@ ul.checks li { display: flex; gap: 12px; color: var(--muted); }
 ul.checks li::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-hi); margin-top: 9px; flex: none; }
 ul.checks b { color: var(--fg); font-weight: 500; }
 
-/* The install command (components/InstallBox.astro). Without JS the tabs are links and :target shows their panel. */
-.install { max-width: 620px; margin: 28px auto 0; text-align: left; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+/* The install command (components/InstallBox.astro). Without JS the tabs are links and :target shows their panel.
+   The panels share one grid cell and the unshown ones are only invisible, so the box is as wide as the longest command
+   (up to the page's width) whichever tab shows; the notes don't widen it. Where a command doesn't fit, it wraps. */
+.install { position: relative; display: grid; width: max-content; max-width: 100%; margin: 28px auto 0; text-align: left; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
 .install-tabs { display: flex; border-bottom: 1px solid var(--border); }
 .install-tab { padding: 8px 16px; font-size: 14px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .install-tab:hover { color: var(--fg); }
 .install-tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent-hi); }
 .install:not(.ready) .install-tab[aria-selected="true"] { color: var(--muted); border-bottom-color: transparent; }
 .install-tab:focus-visible, .install-copy:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: -2px; }
-.install-panel { display: none; padding: 14px 16px; }
-.install-panel.default, .install-panel:target, .install.ready .install-panel { display: block; }
-.install:has(.install-panel:target):not(.ready) .install-panel.default:not(:target) { display: none; }
-.install.ready .install-panel[hidden] { display: none; }
+.install-panel { grid-area: 2 / 1; visibility: hidden; padding: 14px 16px; }
+.install-panel.default, .install-panel:target, .install.ready .install-panel { visibility: visible; }
+.install:has(.install-panel:target):not(.ready) .install-panel.default:not(:target) { visibility: hidden; }
+.install.ready .install-panel[hidden] { display: block; visibility: hidden; }
 .install-command { display: flex; gap: 10px; align-items: center; background: #0a0b0d; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
-.install-command code { flex: 1; font: 14px var(--mono); color: var(--fg); overflow-x: auto; white-space: nowrap; }
-.install-copy { flex: none; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); font: 13px var(--sans); cursor: pointer; }
+.install-command code { flex: 1; font: 14px var(--mono); color: var(--fg); overflow-wrap: anywhere; }
+.install-pipe { white-space: nowrap; }
+.install-copy { flex: none; min-width: 66px; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); font: 13px var(--sans); cursor: pointer; }
 .install-copy:hover { background: var(--surface-2); }
-.install-note { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.install-note { width: 0; min-width: 100%; margin-top: 10px; font-size: 13px; color: var(--muted); }
 .install-note a { color: var(--accent-hi); }
 .install-note a:hover { text-decoration: underline; }
+/* Phones: Copy moves up beside the tabs and the command gets the panel's width, so it wraps onto two lines. */
+@media (max-width: 600px) {
+  .install-tabs { padding-right: 76px; }
+  .install-tab { padding: 8px 12px; }
+  .install-panel { padding: 12px; }
+  .install-command { padding: 10px; }
+  .install-command code { font-size: 12px; }
+  .install-copy { position: absolute; top: 6px; right: 8px; }
+}
 
 /* Final CTA */
 .final { text-align: center; padding: 120px 0; }

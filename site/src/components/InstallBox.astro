@@ -14,6 +14,13 @@ interface Props {
 const { id } = Astro.props;
 const links = siteLinks(import.meta.env.BASE_URL);
 const root = new URL(links.home, Astro.site);
+// Where a command wraps (phones), its `| sh` stays together on the last line; the text (and what Copy copies) is the
+// same.
+const commands = OSES.map((os) => {
+	const command = installCommand(os.id, root);
+	const at = command.lastIndexOf(' | ') + 1;
+	return { head: command.slice(0, at), pipe: command.slice(at) };
+});
 ---
 
 <div class="install" data-install>
@@ -32,7 +39,7 @@ const root = new URL(links.home, Astro.site);
 	{OSES.map((os, i) => (
 		<div class={i === 0 ? 'install-panel default' : 'install-panel'} id={`${id}-${os.id}`} role="tabpanel" data-os={os.id}>
 			<div class="install-command">
-				<code>{installCommand(os.id, root)}</code>
+				<code>{commands[i].head}<span class="install-pipe">{commands[i].pipe}</span></code>
 				<button type="button" class="install-copy" hidden aria-label={`Copy the ${os.label} command`}>Copy</button>
 			</div>
 			<p class="install-note">{os.note} Or <a href={links.download}>download it</a>.</p>
