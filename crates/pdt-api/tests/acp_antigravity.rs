@@ -14,7 +14,9 @@ use sha2::Digest;
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 #[cfg(unix)]
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
@@ -58,6 +60,7 @@ fn antigravity(v: &Value) -> Value {
     v["acpAgents"].as_array().unwrap().iter().find(|a| a["id"] == "antigravity").cloned().unwrap()
 }
 
+#[cfg(unix)]
 async fn events(app: &axum::Router, id: &str) -> Vec<Value> {
     let (_, v) = call(app, "GET", &format!("/api/sessions/{id}/events?after=0&limit=1000"), None).await;
     v.as_array().cloned().unwrap_or_default()
@@ -98,7 +101,10 @@ async fn antigravity_installs_verified_signs_in_and_runs_a_conversation() {
     #[cfg(unix)]
     let program = format!("#!/bin/sh\nFAKE_ACP_AUTH='{}' exec '{FAKE}' --plain acp\n", auth.display());
     #[cfg(not(unix))]
-    let program = "not run on Windows".to_string();
+    let program = {
+        let _ = &auth;
+        "not run on Windows".to_string()
+    };
     let zip = zip_of("agy_acp_server.par", program.as_bytes());
     let sha = hex::encode(sha2::Sha256::digest(&zip));
 
