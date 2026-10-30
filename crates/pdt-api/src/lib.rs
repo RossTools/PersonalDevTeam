@@ -14,6 +14,7 @@ pub mod forge_login;
 mod github;
 mod github_issues;
 mod github_pulls;
+mod github_workflow_runs;
 pub mod guides;
 mod hooks;
 mod host;
@@ -69,6 +70,7 @@ pub use error::ApiErrorBody;
 pub use github::refresh_prs;
 pub use github_issues::refresh_issues;
 pub use github_pulls::refresh_pulls;
+pub use github_workflow_runs::refresh_workflow_runs;
 pub use local_forge::run_local_ci_watch;
 
 /// Stops the MCP servers workflows use (pdtd is stopping).

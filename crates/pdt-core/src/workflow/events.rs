@@ -26,6 +26,7 @@ pub const GITHUB_ISSUE_OPENED: &str = "github.issue.opened";
 pub const GITHUB_PR_OPENED: &str = "github.pull_request.opened";
 pub const GITHUB_PR_PUSHED: &str = "github.pull_request.pushed";
 pub const GITHUB_PR_CLOSED: &str = "github.pull_request.closed";
+pub const GITHUB_WORKFLOW_FAILED: &str = "github.workflow.failed";
 pub const SCHEDULE_FIRED: &str = "schedule.fired";
 pub const WEBHOOK_RECEIVED: &str = "webhook.received";
 
@@ -272,6 +273,16 @@ pub const GITHUB_EVENT_TYPES: &[EventType] = &[
         description: "A pull request PDT didn't open was closed or merged (`merged`).",
         schema: schema_of::<GithubPullRequest>,
         outside: &["title", "body"],
+    },
+    EventType {
+        id: GITHUB_WORKFLOW_FAILED,
+        title: "GitHub workflow run failed",
+        description: "A run of one GitHub Actions workflow failed, however it was started (a schedule, by hand, a \
+                      push): each failed attempt once. Checked every `every` (default 30 minutes); the first look \
+                      only records where the runs are.",
+        schema: schema_of::<GithubWorkflowFailed>,
+        // A run's title is its commit's or pull request's, which a contributor may have written.
+        outside: &["title"],
     },
 ];
 
@@ -649,6 +660,38 @@ pub struct GithubPullRequest {
     pub previous_head: Option<String>,
     /// `closed`: it was merged.
     pub merged: bool,
+}
+
+/// `github.workflow.failed` (PDT-292): one failed attempt of a watched workflow's run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GithubWorkflowFailed {
+    /// The watching workflow and its trigger node.
+    pub workflow_id: String,
+    pub node_id: String,
+    /// The project whose repository it is, if any.
+    pub project_id: Option<String>,
+    /// `owner/name`.
+    pub repo: String,
+    /// The workflow's name as Actions shows it (`release`) and its file (`.github/workflows/release.yml`).
+    pub workflow: String,
+    pub path: String,
+    /// The run's id, and the attempt that failed (a re-run's is 2, 3…).
+    pub run_id: String,
+    pub attempt: u32,
+    pub title: String,
+    pub branch: String,
+    /// What started it: `schedule`, `workflow_dispatch`, `push`, `pull_request`…
+    pub event: String,
+    pub head_sha: String,
+    pub url: String,
+    /// The version or tag it is for (a tag it ran on, or one in its title), when it has one.
+    pub version: Option<String>,
+    /// The jobs that failed.
+    pub failed_jobs: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// `schedule.fired`.

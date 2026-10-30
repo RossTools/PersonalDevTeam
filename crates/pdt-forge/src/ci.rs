@@ -5,6 +5,7 @@
 
 use crate::ForgeError;
 use pdt_core::pr::{CiJob, CiRun};
+use pdt_core::workflow_runs::WorkflowRun;
 use std::collections::BTreeMap;
 
 /// What a CI provider can do beyond reading runs and their jobs.
@@ -77,6 +78,20 @@ pub trait CiProvider: Send + Sync {
     fn queue_runs(&self, _repo: &str) -> Result<Vec<CiRun>, ForgeError> {
         unsupported(self.label(), "merge queue")
     }
+    /// The recent completed runs of one workflow (its file name, `release.yml`, or its name), on `branch` or any,
+    /// however they were started, newest first (PDT-292).
+    fn workflow_runs(
+        &self,
+        _repo: &str,
+        _workflow: &str,
+        _branch: Option<&str>,
+    ) -> Result<Vec<WorkflowRun>, ForgeError> {
+        unsupported(self.label(), "workflow runs to read")
+    }
+    /// One run by its id, as its newest attempt stands (PDT-292); None when there is no such run.
+    fn workflow_run(&self, _repo: &str, _id: &str) -> Result<Option<WorkflowRun>, ForgeError> {
+        unsupported(self.label(), "workflow runs to read")
+    }
 }
 
 fn unsupported<T>(provider: &str, what: &str) -> Result<T, ForgeError> {
@@ -117,6 +132,8 @@ pub mod testing {
         pub triggered: Mutex<Vec<Triggered>>,
         /// Runs retried: id, failed only.
         pub retried: Mutex<Vec<(String, bool)>>,
+        /// Workflow runs, whatever their branch ([`CiProvider::workflow_runs`]): the newest attempt of each.
+        pub workflow_runs: Mutex<Vec<WorkflowRun>>,
         pub calls: Mutex<Vec<String>>,
     }
 
@@ -153,6 +170,7 @@ pub mod testing {
                 error: Default::default(),
                 triggered: Default::default(),
                 retried: Default::default(),
+                workflow_runs: Default::default(),
                 calls: Default::default(),
             }
         }
@@ -171,6 +189,38 @@ pub mod testing {
                 created_at: at.into(),
                 failed_jobs: vec![],
             }
+        }
+
+        /// A completed run `id` of the workflow in `path` (`.github/workflows/release.yml`), on `branch`, started by
+        /// `event`, its attempt `attempt` ending at `at`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn workflow_run(
+            &self,
+            id: &str,
+            attempt: u32,
+            path: &str,
+            branch: &str,
+            event: &str,
+            state: CiState,
+            at: &str,
+        ) -> WorkflowRun {
+            let name = path.rsplit('/').next().unwrap_or(path).trim_end_matches(".yml").trim_end_matches(".yaml");
+            let mut run = self.run(id, name, branch, "abc123", state, at);
+            run.attempt = attempt;
+            WorkflowRun {
+                run,
+                path: path.into(),
+                event: event.into(),
+                title: format!("{name} run {id}"),
+                updated_at: at.into(),
+            }
+        }
+
+        /// Puts `run` in (in place of an earlier attempt of it).
+        pub fn put_workflow_run(&self, run: WorkflowRun) {
+            let mut all = self.workflow_runs.lock().unwrap();
+            all.retain(|r| r.run.id != run.run.id);
+            all.push(run);
         }
 
         pub fn set_runs(&self, branch: &str, runs: Vec<CiRun>) {
@@ -263,6 +313,35 @@ pub mod testing {
             self.call(format!("queue {repo}"));
             self.can(|c| c.merge_queue, "merge queue")?;
             Ok(self.queue.lock().unwrap().clone())
+        }
+        fn workflow_runs(
+            &self,
+            repo: &str,
+            workflow: &str,
+            branch: Option<&str>,
+        ) -> Result<Vec<WorkflowRun>, ForgeError> {
+            self.call(format!("workflow runs {repo} {workflow}"));
+            if let Some(e) = self.error.lock().unwrap().clone() {
+                return Err(ForgeError::Failed(e));
+            }
+            let mut out: Vec<WorkflowRun> = self
+                .workflow_runs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| r.is_of(workflow) && branch.is_none_or(|b| r.run.branch == b))
+                .filter(|r| !matches!(r.run.state, CiState::Queued | CiState::Running))
+                .cloned()
+                .collect();
+            out.sort_by(|a, b| b.run.created_at.cmp(&a.run.created_at));
+            Ok(out)
+        }
+        fn workflow_run(&self, repo: &str, id: &str) -> Result<Option<WorkflowRun>, ForgeError> {
+            self.call(format!("workflow run {repo} {id}"));
+            if let Some(e) = self.error.lock().unwrap().clone() {
+                return Err(ForgeError::Failed(e));
+            }
+            Ok(self.workflow_runs.lock().unwrap().iter().find(|r| r.run.id == id).cloned())
         }
     }
 }

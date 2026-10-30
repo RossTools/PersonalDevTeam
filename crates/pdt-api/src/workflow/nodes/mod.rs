@@ -25,6 +25,7 @@ pub mod ticket;
 pub mod trigger;
 pub mod wait;
 pub mod webhook;
+pub mod workflow_runs;
 
 /// Sets the run's ticket's pipeline stage (the Board's column) when a step that has one starts.
 pub(crate) async fn set_stage(

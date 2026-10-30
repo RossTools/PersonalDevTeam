@@ -44,6 +44,7 @@ pub mod start;
 pub mod ticket;
 pub mod todo;
 pub mod workflow;
+pub mod workflow_runs;
 pub mod workspace;
 pub mod worktree;
 
