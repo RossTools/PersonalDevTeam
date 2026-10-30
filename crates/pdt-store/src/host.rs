@@ -58,6 +58,8 @@ impl ProjectSettings {
 
 /// Where the integrations this instance has enabled are kept (PDT-173): a JSON list of their ids.
 const ENABLED_INTEGRATIONS: &str = "integrations.enabled";
+/// PDT's own integrations this instance turned off (PDT-251: GitHub): a JSON list of their ids.
+const OWN_INTEGRATIONS_OFF: &str = "integrations.own_off";
 
 impl Store {
     pub async fn get_host_settings(&self) -> Result<HostSettings, StoreError> {
@@ -121,6 +123,16 @@ impl Store {
 
     pub async fn set_enabled_integrations(&self, ids: &[String]) -> Result<(), StoreError> {
         self.put_host_value(ENABLED_INTEGRATIONS, &serde_json::json!(ids)).await
+    }
+
+    /// PDT's own integrations this instance turned off (PDT-251), by id; none until the user turns one off.
+    pub async fn own_integrations_off(&self) -> Result<Vec<String>, StoreError> {
+        let v = self.get_host_value(OWN_INTEGRATIONS_OFF).await?;
+        Ok(v.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default())
+    }
+
+    pub async fn set_own_integrations_off(&self, ids: &[String]) -> Result<(), StoreError> {
+        self.put_host_value(OWN_INTEGRATIONS_OFF, &serde_json::json!(ids)).await
     }
 
     /// Decides which integrations an instance that has never chosen enables (PDT-173): the ones it already uses (a
@@ -355,6 +367,9 @@ mod tests {
         store.close().await;
         let store = crate::Store::open(&db).await.unwrap();
         assert_eq!(store.enabled_integrations().await.unwrap(), ["scryer"], "the user's choice is kept");
+        assert!(store.own_integrations_off().await.unwrap().is_empty(), "PDT's own are on");
+        store.set_own_integrations_off(&["github".into()]).await.unwrap();
+        assert_eq!(store.own_integrations_off().await.unwrap(), ["github"]);
     }
 
     #[tokio::test]

@@ -420,8 +420,9 @@ export const api = {
   connectionKinds: () => request<ConnectionKind[]>('/api/connections/kinds'),
   projectSettingsSchemas: () => request<ProjectSettingsSchema[]>('/api/integrations/project-settings'),
   listIntegrations: () => request<IntegrationInfo[]>('/api/integrations'),
-  setIntegrations: (enabled: string[]) =>
-    request<IntegrationInfo[]>('/api/integrations', { method: 'PUT', body: JSON.stringify({ enabled }) }),
+  /** Enables exactly `enabled` of the optional plugins and turns off `off` of PDT's own (the rest of them are on). */
+  setIntegrations: (enabled: string[], off: string[]) =>
+    request<IntegrationInfo[]>('/api/integrations', { method: 'PUT', body: JSON.stringify({ enabled, off }) }),
   /** Runs an enabled plugin's checks now (Test again), then lists the plugins. */
   checkIntegration: (id: string) => request<IntegrationInfo[]>(`/api/integrations/${enc(id)}/check`, { method: 'POST' }),
   createConnection: (c: ConnectionInput) => request<Connection>('/api/connections', { method: 'POST', body: JSON.stringify(c) }),

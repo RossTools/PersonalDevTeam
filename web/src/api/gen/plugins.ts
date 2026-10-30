@@ -14,6 +14,8 @@ export const plugins: IntegrationInfo[] = [
     "enabled": true,
     "built": true,
     "core": true,
+    "canTurnOff": false,
+    "forgeProjects": [],
     "status": "on",
     "error": null,
     "errorConnection": null,
@@ -61,6 +63,8 @@ export const plugins: IntegrationInfo[] = [
     "enabled": true,
     "built": true,
     "core": true,
+    "canTurnOff": true,
+    "forgeProjects": [],
     "status": "on",
     "error": null,
     "errorConnection": null,
@@ -128,8 +132,34 @@ export const plugins: IntegrationInfo[] = [
         "title": "Create a GitHub issue"
       }
     ],
-    "templates": [],
-    "workflows": [],
+    "templates": [
+      {
+        "id": "builtin:issue-triage",
+        "title": "Triage new GitHub issues"
+      },
+      {
+        "id": "builtin:review-outside-prs",
+        "title": "Review outside pull requests"
+      }
+    ],
+    "workflows": [
+      {
+        "id": "pdt-bug-triage",
+        "title": "PDT bug triage"
+      },
+      {
+        "id": "pdt-pr-review",
+        "title": "PDT pull request review"
+      },
+      {
+        "id": "github-issue-done",
+        "title": "Done closes the GitHub issue"
+      },
+      {
+        "id": "cut-release",
+        "title": "Cut a release"
+      }
+    ],
     "tools": [
       "issue_create"
     ],
@@ -151,6 +181,8 @@ export const plugins: IntegrationInfo[] = [
     "enabled": true,
     "built": true,
     "core": true,
+    "canTurnOff": false,
+    "forgeProjects": [],
     "status": "on",
     "error": null,
     "errorConnection": null,
@@ -198,6 +230,8 @@ export const plugins: IntegrationInfo[] = [
     "enabled": true,
     "built": true,
     "core": true,
+    "canTurnOff": false,
+    "forgeProjects": [],
     "status": "on",
     "error": null,
     "errorConnection": null,
@@ -313,6 +347,8 @@ export const plugins: IntegrationInfo[] = [
     "enabled": true,
     "built": true,
     "core": false,
+    "canTurnOff": false,
+    "forgeProjects": [],
     "status": "needs_setup",
     "error": null,
     "errorConnection": null,
@@ -394,6 +430,8 @@ export const plugins: IntegrationInfo[] = [
     "enabled": true,
     "built": true,
     "core": false,
+    "canTurnOff": false,
+    "forgeProjects": [],
     "status": "needs_setup",
     "error": null,
     "errorConnection": null,
@@ -616,6 +654,8 @@ export const plugins: IntegrationInfo[] = [
     "enabled": true,
     "built": true,
     "core": false,
+    "canTurnOff": false,
+    "forgeProjects": [],
     "status": "needs_setup",
     "error": null,
     "errorConnection": null,
@@ -677,6 +717,8 @@ export const plugins: IntegrationInfo[] = [
     "enabled": true,
     "built": true,
     "core": false,
+    "canTurnOff": false,
+    "forgeProjects": [],
     "status": "needs_setup",
     "error": null,
     "errorConnection": null,
@@ -792,6 +834,8 @@ export const plugins: IntegrationInfo[] = [
     "enabled": true,
     "built": true,
     "core": false,
+    "canTurnOff": false,
+    "forgeProjects": [],
     "status": "needs_setup",
     "error": null,
     "errorConnection": null,
@@ -878,6 +922,8 @@ export const plugins: IntegrationInfo[] = [
     "enabled": true,
     "built": true,
     "core": false,
+    "canTurnOff": false,
+    "forgeProjects": [],
     "status": "needs_setup",
     "error": null,
     "errorConnection": null,

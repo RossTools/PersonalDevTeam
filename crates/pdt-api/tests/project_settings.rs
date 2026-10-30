@@ -101,3 +101,57 @@ async fn integrations_this_build_lacks_are_listed_and_refused() {
     let ids: Vec<&str> = kinds.as_array().unwrap().iter().map(|k| k["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["webhook", "http", "mcp"]);
 }
+
+/// PDT-251: GitHub, one of PDT's own plugins, can be turned off while no project's forge is GitHub; off, its steps and
+/// triggers, built-in workflows and template are gone until it is on again, and the choice is kept.
+#[tokio::test]
+async fn github_turns_off_only_while_no_project_uses_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, _) = setup(tmp.path()).await;
+    let github = |v: &Value| v.as_array().unwrap().iter().find(|i| i["id"] == "github").unwrap().clone();
+    let kinds = |app: &axum::Router| {
+        let app = app.clone();
+        async move {
+            let (_, v) = call(&app, "GET", "/api/workflows/catalog", None).await;
+            v.as_array().unwrap().iter().filter_map(|k| k["id"].as_str().map(String::from)).collect::<Vec<_>>()
+        }
+    };
+    let (_, v) = call(&app, "GET", "/api/integrations", None).await;
+    let g = github(&v);
+    assert_eq!((&g["core"], &g["canTurnOff"], &g["enabled"]), (&json!(true), &json!(true), &json!(true)), "{g}");
+    assert_eq!(g["forgeProjects"], json!([]), "the project has no origin");
+    assert!(kinds(&app).await.iter().any(|k| k == "github.issue.opened"));
+
+    // Leaving `off` out keeps PDT's own as they are; naming one that can't be turned off is refused.
+    let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": []}))).await;
+    assert_eq!((s, github(&v)["enabled"].clone()), (StatusCode::OK, json!(true)));
+    let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": [], "off": ["mcp"]}))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+
+    let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": [], "off": ["github"]}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((github(&v)["enabled"].clone(), github(&v)["status"].clone()), (json!(false), json!("off")));
+    let left = kinds(&app).await;
+    assert!(!left.iter().any(|k| k.starts_with("github.")), "{left:?}");
+    let (_, w) = call(&app, "GET", "/api/workflows", None).await;
+    let builtins: Vec<&str> = w.as_array().unwrap().iter().filter_map(|w| w["builtin"].as_str()).collect();
+    assert!(!builtins.contains(&"github-issue-done") && !builtins.contains(&"cut-release"), "{builtins:?}");
+    let (s, v) = call(&app, "POST", "/api/workflow-templates/builtin:issue-triage/instantiate", Some(json!({}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("GitHub plugin"), "{v}");
+
+    // On again; then a project whose origin is on GitHub keeps it on until the project names another forge.
+    let (_, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": [], "off": []}))).await;
+    assert_eq!(github(&v)["enabled"], json!(true));
+    let repo = tmp.path().join("repo");
+    common::git(&repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+    let (_, v) = call(&app, "GET", "/api/integrations", None).await;
+    assert_eq!(github(&v)["forgeProjects"].as_array().unwrap().len(), 1, "{v}");
+    let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": [], "off": ["github"]}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("in_use")), "{v}");
+    assert!(v["message"].as_str().unwrap().contains("the forge of P"), "{v}");
+    std::fs::create_dir_all(repo.join(".pdt")).unwrap();
+    std::fs::write(repo.join(".pdt/project.toml"), "forge = \"local\"\n").unwrap();
+    let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": [], "off": ["github"]}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+}
