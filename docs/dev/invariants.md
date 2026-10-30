@@ -114,9 +114,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **PDT never special-cases its own repository or development process; PDT's own automation lives in the
   maintainer's workflows.** Outside tests, only updates, bug reports and the release repository setting name the
   release repository (`brand::RELEASE_REPO`; a test in pdt-core `brand.rs` lists where). Nothing is installed or
-  offered by what a project's repository is. The built-ins that automated PDT's development until PDT-295 are kept on
-  the hosts that had them as their own workflows (pdt-api `workflow/builtins.rs`, `RETIRED`); never ship such a
-  built-in again.
+  offered by what a project's repository is. The built-ins that once automated PDT's development are kept on the
+  hosts that had them as their own workflows (pdt-api `workflow/builtins.rs`, `RETIRED`); never ship such a built-in
+  again.
 - **Guides served by pdtd link to each other by API path**, never by repository path (a test checks).
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.
