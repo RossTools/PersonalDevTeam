@@ -1,0 +1,37 @@
+---
+// /plugins/: what PDT works with, as Settings → Plugins lists it (PDT-281), from the plugin list the app is built
+// with (src/plugins.mjs). The media plugins are on /plugins/media/.
+import Landing from '../../layouts/Landing.astro';
+import PluginCatalog from '../../components/PluginCatalog.astro';
+import { PLUGINS, pluginsOn } from '../../plugins.mjs';
+import { siteLinks } from '../../links.mjs';
+import { docId } from '../../docs-pages.mjs';
+
+const links = siteLinks(import.meta.env.BASE_URL);
+const docs = `${links.home}${docId('user/automation/plugins.md')}/`;
+---
+
+<Landing title="Plugins · PDT" description="The services PDT works with: forges, trackers, CI and chat, as workflow steps, triggers and tools for the PM.">
+	<main><div class="wrap">
+	<div class="kicker">// plugins</div>
+	<h1>Plugins</h1>
+	<p class="lead">
+		What PDT works with. Turn one on in Settings › Plugins and it adds its connections, workflow steps, templates and
+		tools for the PM. Every plugin here comes with PDT. <a href={docs}>How plugins and connections work</a>
+	</p>
+	<div class="actions">
+		<a class="btn sm ghost" href={links.requestPlugin}>Request a plugin</a>
+	</div>
+	<PluginCatalog plugins={pluginsOn(PLUGINS, false)} />
+	<p class="also">PDT also works with media servers and managers: <a href={`${links.plugins}media/`}>the media plugins</a>.</p>
+	</div></main>
+</Landing>
+
+<style>
+	main { padding: 64px 0 96px; }
+	h1 { margin: 0; max-width: none; font-size: clamp(34px, 5vw, 48px); line-height: 1.1; letter-spacing: -.02em; font-weight: 700; }
+	.lead a, .also a { color: var(--accent-hi); }
+	.lead a:hover, .also a:hover { text-decoration: underline; }
+	.actions { margin-top: 20px; }
+	.also { margin-top: 40px; font-size: 14px; color: var(--muted); }
+</style>

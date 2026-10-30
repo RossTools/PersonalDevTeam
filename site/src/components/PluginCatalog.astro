@@ -1,0 +1,108 @@
+---
+// The catalog as Settings → Plugins shows it (web/src/plugins/PluginsPage.tsx), in the site's own styles: a search, a
+// chip per category with its count (All first), and the plugins in cards grouped by category. Each card opens the
+// plugin's page. Without JavaScript every plugin shows; the search and chips only hide cards.
+import PluginIcon from './PluginIcon.astro';
+import { CATEGORY_LABEL, groupPlugins, type PLUGINS } from '../plugins.mjs';
+import { siteLinks } from '../links.mjs';
+
+interface Props {
+	plugins: (typeof PLUGINS)[number][];
+}
+const { plugins } = Astro.props;
+const { plugins: pluginsHref } = siteLinks(import.meta.env.BASE_URL);
+const groups = groupPlugins(plugins);
+---
+
+<div class="catalog" data-catalog>
+	<input class="search" type="search" placeholder="Search plugins" aria-label="Search plugins" data-search />
+	<div class="chips" role="group" aria-label="Categories">
+		<button type="button" class="chip" aria-pressed="true" data-chip="">All <span data-count="">{plugins.length}</span></button>
+		{groups.map(([c, ps]) => (
+			<button type="button" class="chip" aria-pressed="false" data-chip={c}>
+				{CATEGORY_LABEL[c]} <span data-count={c}>{ps.length}</span>
+			</button>
+		))}
+	</div>
+	{groups.map(([c, ps]) => (
+		<section class="group" aria-label={CATEGORY_LABEL[c]} data-group={c}>
+			<h3>{CATEGORY_LABEL[c]}</h3>
+			<div class="cards">
+				{ps.map((p) => (
+					<a class="card" href={`${pluginsHref}${p.id}/`} data-plugin data-category={p.category} data-text={`${p.label} ${p.description}`.toLowerCase()}>
+						<div class="head">
+							<PluginIcon icon={p.icon} />
+							<b>{p.label}</b>
+							{p.builtIn && <span class="tag">Built in</span>}
+						</div>
+						<p>{p.description}</p>
+					</a>
+				))}
+			</div>
+		</section>
+	))}
+	<p class="none" data-none hidden>No plugins match.</p>
+</div>
+
+<script>
+	// Search and category chips, as in the app: the chips count what the search leaves.
+	for (const root of document.querySelectorAll<HTMLElement>('[data-catalog]')) {
+		const search = root.querySelector<HTMLInputElement>('[data-search]')!;
+		const chips = [...root.querySelectorAll<HTMLButtonElement>('[data-chip]')];
+		const cards = [...root.querySelectorAll<HTMLElement>('[data-plugin]')];
+		let category = '';
+		const update = () => {
+			const q = search.value.trim().toLowerCase();
+			const counts: Record<string, number> = { '': 0 };
+			let shown = 0;
+			for (const card of cards) {
+				const c = card.dataset.category!;
+				const match = !q || card.dataset.text!.includes(q);
+				if (match) {
+					counts[''] += 1;
+					counts[c] = (counts[c] ?? 0) + 1;
+				}
+				const show = match && (!category || c === category);
+				card.hidden = !show;
+				if (show) shown += 1;
+			}
+			for (const g of root.querySelectorAll<HTMLElement>('[data-group]')) {
+				g.hidden = ![...g.querySelectorAll<HTMLElement>('[data-plugin]')].some((card) => !card.hidden);
+			}
+			for (const chip of chips) {
+				chip.setAttribute('aria-pressed', String(chip.dataset.chip === category));
+				root.querySelector(`[data-count="${chip.dataset.chip}"]`)!.textContent = String(counts[chip.dataset.chip!] ?? 0);
+			}
+			root.querySelector<HTMLElement>('[data-none]')!.hidden = shown > 0;
+		};
+		search.addEventListener('input', update);
+		for (const chip of chips) {
+			chip.addEventListener('click', () => {
+				category = chip.dataset.chip!;
+				update();
+			});
+		}
+	}
+</script>
+
+<style>
+	.catalog { display: flex; flex-direction: column; gap: 12px; margin-top: 40px; }
+	.search { height: 40px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); font: inherit; font-size: 15px; }
+	.search:focus { outline: none; border-color: var(--accent); }
+	.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+	.chip { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+	.chip span { opacity: .7; margin-left: 2px; }
+	.chip:hover { border-color: var(--accent); }
+	.chip[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: #eef2fb; }
+	.group { padding: 0; border: 0; display: flex; flex-direction: column; gap: 8px; }
+	.group[hidden], .card[hidden] { display: none; }
+	h3 { margin-top: 12px; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+	.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+	.card { display: flex; flex-direction: column; gap: 8px; min-height: 128px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); transition: border-color .12s; }
+	.card:hover, .card:focus-visible { border-color: var(--accent); outline: none; }
+	.head { display: flex; align-items: center; gap: 10px; }
+	.head b { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; }
+	.tag { font-size: 12px; color: var(--muted); }
+	.card p { font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+	.none { font-size: 14px; color: var(--muted); }
+</style>

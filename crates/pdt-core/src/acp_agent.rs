@@ -1,6 +1,7 @@
 //! ACP agents (PDT-234): agents that speak the Agent Client Protocol, other than Devin, as agent kinds `acp:<id>`.
-//! Each is a definition: a profile that ships with PDT (OhMyPi's and Cursor's; each harness's ticket adds its own) or
-//! one the user added in Settings → Agents (label, command, arguments, environment). They run only as conversations.
+//! Each is a definition: a profile that ships with PDT (OhMyPi's, Cursor's and Grok's; each harness's ticket adds its
+//! own) or one the user added in Settings → Agents (label, command, arguments, environment). They run only as
+//! conversations.
 
 use crate::conversation::PermissionMode;
 use serde::{Deserialize, Serialize};
@@ -84,6 +85,8 @@ pub enum AcpFlavor {
     Omp,
     /// Cursor's `cursor-agent acp` (notes: docs/superpowers/notes/cursor-acp.md).
     Cursor,
+    /// Grok Build's `grok agent --no-leader stdio` (`crate::conversation::grok`).
+    Grok,
 }
 
 impl AcpAgentDef {
@@ -115,9 +118,28 @@ impl From<&AcpAgentConfig> for AcpAgentDef {
     }
 }
 
+/// Grok Build (xAI): `grok agent --no-leader stdio` starts its ACP server on stdio as an agent of its own, not a
+/// client of a shared Grok leader. It advertises no session modes, so PDT keeps them by answering its permission
+/// requests.
+fn grok() -> AcpAgentDef {
+    AcpAgentDef {
+        id: "grok".into(),
+        label: "Grok".into(),
+        icon: None,
+        command: "grok".into(),
+        args: ["agent", "--no-leader", "stdio"].map(String::from).to_vec(),
+        env: Vec::new(),
+        modes: Vec::new(),
+        base_mode: None,
+        edits_unasked: false,
+        builtin: true,
+        flavor: AcpFlavor::Grok,
+    }
+}
+
 /// The ACP profiles that ship with PDT. Each harness's own ticket adds its profile here.
 pub fn builtin_profiles() -> Vec<AcpAgentDef> {
-    vec![omp(), cursor()]
+    vec![omp(), cursor(), grok()]
 }
 
 /// OhMyPi (`omp acp`, PDT-238). Its modes come from those it advertises: `default` (Ask) and, when its plan mode is
@@ -157,10 +179,13 @@ fn cursor() -> AcpAgentDef {
     }
 }
 
-/// Every ACP agent: the built-in profiles, then the user's.
+/// Every ACP agent: the built-in profiles, then the user's (less any saved with a built-in profile's id before PDT
+/// had that profile).
 pub fn all(user: &[AcpAgentConfig]) -> Vec<AcpAgentDef> {
     let mut defs = builtin_profiles();
-    defs.extend(user.iter().map(AcpAgentDef::from));
+    let user: Vec<AcpAgentDef> =
+        user.iter().filter(|u| !defs.iter().any(|d| d.id == u.id)).map(AcpAgentDef::from).collect();
+    defs.extend(user);
     defs
 }
 
@@ -371,6 +396,23 @@ mod tests {
         assert_eq!((d.label.as_str(), d.builtin, d.modes.len()), ("Open Code", false, 0));
         assert_eq!(d.kind().unwrap().as_str(), "acp:opencode");
         assert!(find(&user, "other").is_none());
+    }
+
+    #[test]
+    fn grok_ships_as_a_built_in_profile_that_a_users_agent_cannot_shadow() {
+        let d = find(&[], "grok").unwrap();
+        assert_eq!((d.label.as_str(), d.command.as_str(), d.builtin), ("Grok", "grok", true));
+        assert_eq!(d.args, vec!["agent", "--no-leader", "stdio"]);
+        assert_eq!((d.flavor, d.modes.len()), (AcpFlavor::Grok, 0), "PDT keeps its modes");
+        assert_eq!(d.kind().unwrap().as_str(), "acp:grok");
+        assert_eq!(validate(&[agent("grok")]).unwrap_err(), AcpAgentError::DuplicateId("grok".into()));
+        // One saved before Grok shipped is dropped rather than listed twice.
+        let saved = AcpAgentConfig { id: "grok".into(), ..agent("x") };
+        let all = all(&[saved, agent("opencode")]);
+        assert_eq!(
+            all.iter().map(|d| (d.id.as_str(), d.builtin)).collect::<Vec<_>>(),
+            [("omp", true), ("cursor", true), ("grok", true), ("opencode", false)]
+        );
     }
 
     #[test]

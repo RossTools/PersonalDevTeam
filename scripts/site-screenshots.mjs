@@ -1,4 +1,5 @@
-// The website's screenshots of PDT (PDT-273): the board, a workspace, the backlog and a workflow, taken from a
+// The website's screenshots of PDT (PDT-273, PDT-280): the board, a workspace, the backlog, a workflow, a ticket, a
+// branch's changes under review, a PM conversation, the Inbox, the Inbox on a phone, and Secrets, taken from a
 // throwaway pdtd seeded with the made-up "Acme Shop" project (`PDT_SEED=website`, crates/pdtd/src/seed/website.rs),
 // in the dark theme, and written as WebP to site/src/assets/screens/. Run it from the checkout after the builds:
 //
@@ -29,6 +30,8 @@ const out = resolve(outIdx >= 0 ? args[outIdx + 1] : join(root, 'site/src/assets
 // screens, and leaves the board's seven columns room for their titles.
 const VIEWPORT = { width: 1600, height: 1000 };
 const SCALE = 2;
+// The phone shot: an iPhone's viewport, at its own device scale.
+const devicesPhone = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true };
 
 for (const [path, build] of [['target/debug/pdtd', 'cargo build -p pdtd'], ['web/dist/index.html', 'pnpm --dir web build']]) {
   if (!existsSync(join(root, path))) {
@@ -97,11 +100,24 @@ async function stage() {
   await until('the dev server', async () => ['ready', 'running'].includes((await api(`/runs/${run.id}`)).state));
   const workspace = (await api('/workspaces')).find((w) => w.projectId === project.id);
   const coderTab = workspace.tabs.find((t) => t.item?.session === coder.id || t.sessionId === coder.id);
+  // The Reviewer's branch, open for review with the user's line comment.
+  const changesTab = workspace.tabs.find((t) => t.worktreeId === byTitle('Reviewer').worktreeId);
+  const tickets = (await api(`/tickets?project=${project.id}&limit=100`)).items;
+  const guest = tickets.find((t) => t.title === 'Guest checkout without an account');
+  const pm = (await api('/pm/sessions'))[0].session;
+  // Secrets for the Secrets page (the scratch daemon keeps them in memory): values nobody sees again.
+  for (const [name, description] of [
+    ['NPM_TOKEN', 'Publishes the shop\'s packages to npm.'],
+    ['STRIPE_TEST_KEY', 'The payment provider\'s test key, for checkout tests.'],
+    ['SMTP_PASSWORD', 'Sends the receipt emails from the staging mail server.'],
+  ]) {
+    await api('/secrets', { method: 'POST', body: JSON.stringify({ name, description, value: `sample-${name.toLowerCase()}-value` }) });
+  }
   const workflow = (await api('/workflows')).find((w) => w.name === 'Nightly dependency updates');
   const detail = await api(`/workflows/${workflow.id}`);
   // Issues show on the graph's nodes.
   if (detail.issues?.length) throw new Error(`the sample workflow has issues: ${JSON.stringify(detail.issues)}`);
-  return { project, workspace, coderTab, workflow };
+  return { project, workspace, coderTab, changesTab, guest, pm, workflow };
 }
 
 async function shoot(page, name, clip) {
@@ -134,7 +150,7 @@ async function nodesClip(page) {
 
 let browser;
 try {
-  const { project, workspace, coderTab, workflow } = await stage();
+  const { project, workspace, coderTab, changesTab, guest, pm, workflow } = await stage();
   mkdirSync(out, { recursive: true });
   browser = await chromium.launch();
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: SCALE, colorScheme: 'dark' });
@@ -157,6 +173,10 @@ try {
     const res = await route.fetch();
     await route.fulfill({ response: res, json: { ...(await res.json()), dev: false } });
   });
+  // Secrets as people keep them (the scratch daemon's are in memory): in the OS keychain.
+  await context.route('**/api/secrets/store', (route) =>
+    route.fulfill({ json: { backend: 'keychain', path: null, problem: null } }),
+  );
   const page = await context.newPage();
 
   // The board's lanes end about 750px down: a shorter window leaves no empty band under them.
@@ -175,6 +195,47 @@ try {
   await page.goto(`${base}/tickets`);
   await page.getByText('Fix price rounding in cart totals').waitFor();
   await shoot(page, 'backlog');
+
+  // A part of a parent ticket in QA, with its blockers, change request and sessions.
+  await page.goto(`${base}/tickets/${guest.id}`);
+  await page.getByText('An email address and a delivery address').first().waitFor();
+  // The ticket's panel alone (the site shows it beside the board), once it has slid in.
+  await page.waitForTimeout(1000);
+  await shoot(page, 'ticket', await page.getByRole('dialog').boundingBox());
+
+  await page.goto(`${base}/sessions/${workspace.id}/${changesTab.id}`);
+  await page.getByText('Cap the merged line').first().waitFor();
+  await shoot(page, 'review');
+
+  // The PM's answer and the Inbox take the top of the window: a shorter one leaves no empty band under them.
+  await page.setViewportSize({ width: VIEWPORT.width, height: 600 });
+  await page.goto(`${base}/pm/${pm.id}`);
+  await page.getByText('Three things wait on you').waitFor();
+  await shoot(page, 'pm');
+
+  await page.goto(`${base}/inbox`);
+  await page.getByText('attach a PDF invoice').first().waitFor();
+  // The list and the open item, without the empty right of the window (the site shows it beside the phone's).
+  await shoot(page, 'inbox', { x: 0, y: 0, width: 1100, height: 600 });
+
+  await page.goto(`${base}/settings/secrets`);
+  await page.getByText('STRIPE_TEST_KEY').first().waitFor();
+  await shoot(page, 'secrets');
+
+  await page.setViewportSize(VIEWPORT);
+
+  // The phone's Inbox, at an iPhone's size.
+  const phone = await browser.newContext({ ...devicesPhone, colorScheme: 'dark' });
+  await phone.addInitScript(() => localStorage.setItem('pdt.theme', 'dark'));
+  await phone.route('**/api/health', async (route) => {
+    const res = await route.fetch();
+    await route.fulfill({ response: res, json: { ...(await res.json()), dev: false } });
+  });
+  const phonePage = await phone.newPage();
+  await phonePage.goto(`${base}/inbox`);
+  await phonePage.getByText('attach a PDF invoice').first().waitFor();
+  await shoot(phonePage, 'phone');
+  await phone.close();
 
   // The graph alone, in a wider window so it fits at a size its node titles read at, cropped to its nodes.
   await page.setViewportSize({ width: 2000, height: 1000 });

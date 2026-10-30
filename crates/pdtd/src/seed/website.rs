@@ -271,7 +271,7 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
         .filter(|(_, i)| i.work.is_some())
         .map(|(n, i)| (n, branch_name(&tickets[n].1, i.title)))
         .collect();
-    let branches: Vec<(String, &'static str)> =
+    let branches: Vec<(String, Vec<(&'static str, &'static str)>)> =
         started.iter().map(|(n, b)| (b.clone(), change_for(items[*n].title))).collect();
     let repo_root = repo.root.clone();
     let heads = tokio::task::spawn_blocking(move || make_branches(&repo_root, &branches)).await??;
@@ -415,6 +415,65 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
         store.insert_run(&r).await?;
     }
 
+    // The user's line comment on the cart branch, sent to the agent on it, and the branch's changes open beside the
+    // sessions (the review screenshot).
+    let line = CART_JS.lines().position(|l| l == REVIEWED_LINE).expect("the reviewed line") + 1;
+    let line = u32::try_from(line)?;
+    store
+        .insert_review_comment(&pdt_core::review::ReviewComment {
+            id: id(),
+            worktree_id: cart_wt.id.clone(),
+            parent_id: None,
+            path: "src/cart.js".into(),
+            side: pdt_core::review::CommentSide::New,
+            line,
+            end_line: line,
+            line_text: REVIEWED_LINE.into(),
+            body: "Adding the two quantities can ask for more than we have in stock. Cap the merged line at the \
+                   product's stock, and add a test for it."
+                .into(),
+            author: "user".into(),
+            sent_at: Some(now - 18 * MINUTE),
+            session_id: Some(reviewer.id.clone()),
+            resolved_at: None,
+            created_at: now - 18 * MINUTE,
+            updated_at: now - 18 * MINUTE,
+        })
+        .await?;
+    if let Some(home) = store.project_workspace_id(&project.id).await? {
+        let changes = pdt_core::workspace::TabItem::Changes(cart_wt.id.clone());
+        store.open_tab(&id(), &home, &changes, None, now - 18 * MINUTE).await?;
+    }
+
+    // A question from the Coder on the receipt ticket, beside the Accept gate in the Inbox.
+    let (_, email_id, _, email_attempt, _) = attempt_of("Order confirmation email");
+    let ask = "Should the receipt attach a PDF invoice, or is the email's text enough?";
+    store
+        .open_inbox_item(&InboxItem {
+            id: id(),
+            kind: InboxKind::Question,
+            group: InboxGroup::Question,
+            status: InboxStatus::Open,
+            project_id: Some(project.id.clone()),
+            ticket_id: Some(email_id.clone()),
+            ticket_key: None,
+            ticket_title: None,
+            attempt_id: Some(email_attempt.clone()),
+            session_id: None,
+            run_id: None,
+            step_id: None,
+            persona_id: None,
+            persona_name: None,
+            title: ask.into(),
+            body: json!({"questions": [{"question": ask, "choices": ["Attach a PDF", "Text is enough"]}]}),
+            choices: vec![],
+            resolution: serde_json::Value::Null,
+            created_at: now - 10 * MINUTE,
+            resolved_at: None,
+        })
+        .await?;
+
+    seed_pm(store, data_dir, &by_title, now - 5 * MINUTE).await?;
     seed_workflow(store, &project.id, now - 7 * DAY).await?;
     Ok(true)
 }
@@ -431,17 +490,129 @@ fn branch_name(key: &str, title: &str) -> String {
     format!("pdt-{key}-{slug}")
 }
 
-/// The file an agent changed on each started ticket's branch.
-fn change_for(title: &str) -> &'static str {
+/// The files an agent changed on each started ticket's branch, with their new text.
+fn change_for(title: &str) -> Vec<(&'static str, &'static str)> {
     match title {
-        "Search products by name" => "src/search.js",
-        "Order confirmation email" => "src/checkout/receipt.js",
-        "Save the cart across visits" => "src/cart.js",
-        "Guest checkout without an account" => "src/checkout/guest.js",
-        "Apply discount codes at checkout" => "src/checkout/discounts.js",
-        _ => "src/stock.js",
+        "Search products by name" => vec![("src/catalog.js", CATALOG_JS)],
+        "Order confirmation email" => vec![("src/checkout/receipt.js", RECEIPT_JS)],
+        "Save the cart across visits" => vec![("src/cart.js", CART_JS), ("test/cart.test.js", CART_TEST_JS)],
+        "Guest checkout without an account" => vec![("src/checkout/guest.js", GUEST_JS)],
+        "Apply discount codes at checkout" => vec![("src/checkout/discounts.js", DISCOUNTS_JS)],
+        _ => vec![("src/stock.js", STOCK_JS)],
     }
 }
+
+/// The search branch's catalog: the Coder's conversation adds `search()`.
+const CATALOG_JS: &str = r#"export function render(products, grid) {
+  grid.replaceChildren(...products.map(card));
+}
+
+/** Products whose name or tags contain every word of the query. */
+export function search(products, query) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return products;
+  return products.filter((p) => {
+    const text = [p.name, ...p.tags].join(' ').toLowerCase();
+    return words.every((w) => text.includes(w));
+  });
+}
+
+export function card(p) {
+  const el = document.createElement('article');
+  el.textContent = `${p.name} · ${p.price}`;
+  return el;
+}
+"#;
+
+/// The cart branch's change, which the review screenshot shows with the user's comment on [`REVIEWED_LINE`].
+const CART_JS: &str = r#"const KEY = 'acme.cart';
+
+/** The cart as the last visit left it (empty when there is none, or it can't be read). */
+export function loadCart(storage = localStorage) {
+  try {
+    return JSON.parse(storage.getItem(KEY)) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveCart(cart, storage = localStorage) {
+  storage.setItem(KEY, JSON.stringify(cart));
+}
+
+/** Merges the saved cart into the account's on sign-in: a product in both keeps both quantities. */
+export function mergeCarts(saved, account) {
+  const merged = new Map(account.map((line) => [line.sku, { ...line }]));
+  for (const line of saved) {
+    const had = merged.get(line.sku);
+    if (had) had.qty += line.qty;
+    else merged.set(line.sku, { ...line });
+  }
+  return [...merged.values()];
+}
+
+export const cart = loadCart();
+"#;
+
+/// The line of [`CART_JS`] the user commented on.
+const REVIEWED_LINE: &str = "    if (had) had.qty += line.qty;";
+
+const CART_TEST_JS: &str = r#"import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { loadCart, mergeCarts, saveCart } from '../src/cart.js';
+
+const memory = () => {
+  const m = new Map();
+  return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, v) };
+};
+
+test('a saved cart comes back', () => {
+  const s = memory();
+  saveCart([{ sku: 'mug', qty: 2 }], s);
+  assert.deepEqual(loadCart(s), [{ sku: 'mug', qty: 2 }]);
+});
+
+test('signing in merges the two carts', () => {
+  const merged = mergeCarts([{ sku: 'mug', qty: 1 }], [{ sku: 'mug', qty: 2 }, { sku: 'tee', qty: 1 }]);
+  assert.deepEqual(merged, [{ sku: 'mug', qty: 3 }, { sku: 'tee', qty: 1 }]);
+});
+"#;
+
+const RECEIPT_JS: &str = r#"/** The receipt email for a paid order. */
+export function receipt(order) {
+  const lines = order.items.map((i) => `${i.qty} × ${i.name}  ${i.total}`);
+  return {
+    to: order.email,
+    subject: `Your Acme Shop order ${order.number}`,
+    text: [...lines, '', `Total: ${order.total}`, `Delivering to: ${order.address}`].join('\n'),
+  };
+}
+"#;
+
+const GUEST_JS: &str = r#"/** An order from someone without an account: an email and a delivery address are enough. */
+export function guestOrder(cart, { email, address }) {
+  if (!/^[^@\s]+@[^@\s]+$/.test(email)) throw new Error('Enter an email address for the receipt');
+  if (!address?.trim()) throw new Error('Enter a delivery address');
+  return { items: cart, email, address, guest: true };
+}
+"#;
+
+const DISCOUNTS_JS: &str = r#"/** Applies a discount code to a total, or says why it can't. */
+export function applyCode(total, code, codes, now = Date.now()) {
+  const c = codes[code.trim().toUpperCase()];
+  if (!c) return { total, error: 'That code is not valid' };
+  if (c.expires < now) return { total, error: 'That code has expired' };
+  return { total: Math.max(0, total - c.amount), code: code.toUpperCase() };
+}
+"#;
+
+const STOCK_JS: &str = r#"/** What a product page says under the price. */
+export function stockLabel(stock) {
+  if (stock <= 0) return { text: 'Out of stock', canAdd: false };
+  if (stock <= 3) return { text: `Only ${stock} left`, canAdd: true };
+  return { text: '', canAdd: true };
+}
+"#;
 
 /// The Coder's conversation on the search ticket: PDT's prompt, the agent reading and changing the catalog, its
 /// tests passing, and its answer.
@@ -568,6 +739,17 @@ async fn seed_conversation(store: &Store, session_id: &str, branch: &str, at: i6
             },
         ),
     ];
+    insert_events(store, session_id, turn, at, &events).await
+}
+
+/// A turn's events, 15 s apart from `at`.
+async fn insert_events(
+    store: &Store,
+    session_id: &str,
+    turn: &str,
+    at: i64,
+    events: &[(&str, AgentEvent)],
+) -> anyhow::Result<()> {
     for (i, (item, event)) in events.iter().enumerate() {
         let ne = pdt_store::NewEvent {
             ts: at + i as i64 * 15_000,
@@ -579,6 +761,123 @@ async fn seed_conversation(store: &Store, session_id: &str, branch: &str, at: i6
         store.upsert_session_event(session_id, ne).await?;
     }
     Ok(())
+}
+
+/// A PM conversation (the PM screenshot): the user asks what needs them, and the PM reads the board and the Inbox and
+/// answers, naming the sample's tickets by key.
+async fn seed_pm(
+    store: &Store,
+    data_dir: &Path,
+    by_title: &dyn Fn(&str) -> (String, String),
+    at: i64,
+) -> anyhow::Result<()> {
+    let dir = data_dir.join("pm");
+    std::fs::create_dir_all(&dir)?;
+    let folder = dir.to_string_lossy().into_owned();
+    let host = store.ensure_host_project(&uuid::Uuid::now_v7().to_string(), &folder, at - DAY).await?;
+    let key = |title: &str| by_title(title).1;
+    let session = Session {
+        id: uuid::Uuid::now_v7().to_string(),
+        project_id: host.id.clone(),
+        worktree_id: None,
+        kind: SessionKind::AgentTui,
+        agent: Some(AgentKind::Claude),
+        bypass_permissions: false,
+        title: "What needs me today?".into(),
+        cwd: folder,
+        status: SessionStatus::Finished,
+        exit_code: None,
+        created_at: at,
+        ended_at: Some(at + 2 * MINUTE),
+        external_session_id: None,
+        fresh_started_at: None,
+        activity: None,
+        attention_at: None,
+        last_viewed_at: None,
+        unseen: false,
+        attempt_id: None,
+        ticket: None,
+        mode: SessionMode::Conversation,
+        model: None,
+        permission_mode: Some(PermissionMode::Ask),
+        persona: None,
+    };
+    store.insert_session(&session).await?;
+    store.insert_pm_session(&session.id, at).await?;
+    let tool = |id: &str, tool: &str, title: &str, input: serde_json::Value, output: &str| AgentEvent::ToolCall {
+        id: id.into(),
+        tool: tool.into(),
+        title: title.into(),
+        input,
+        status: ToolStatus::Done,
+        output: Some(output.into()),
+        exit_code: None,
+        diff: None,
+        parent_id: None,
+    };
+    let (discounts, email, guest, rounding, checkout) = (
+        key("Apply discount codes at checkout"),
+        key("Order confirmation email"),
+        key("Guest checkout without an account"),
+        key("Fix price rounding in cart totals"),
+        key("Checkout v2"),
+    );
+    let answer = format!(
+        "Three things wait on you in Acme Shop, most urgent first:\n\n\
+         1. **{discounts}** *Apply discount codes at checkout* passed review and QA, and waits for your **Accept**.\n\
+         2. **{email}** *Order confirmation email*: its Coder asks whether the receipt should attach a PDF invoice \
+         (in your Inbox). Its CI also failed on the last push; the Coder is on it.\n\
+         3. **{guest}** *Guest checkout*: QA is waiting on a permission prompt to run the dev server.\n\n\
+         Otherwise the board is moving: six tickets in flight, two parts of **{checkout}** *Checkout v2* through \
+         review. One thing I'd change: **{rounding}** *Fix price rounding* is urgent and customers have seen it, but \
+         it is still in Ready. Shall I move it to To do so the Coder takes it next?"
+    );
+    let events: Vec<(&str, AgentEvent)> = vec![
+        ("turn:pm-1", AgentEvent::Turn { phase: TurnPhase::Started, status: None, duration_ms: None, reason: None }),
+        (
+            "u:pm-1",
+            AgentEvent::UserMessage {
+                text: "What needs me today?".into(),
+                images: vec![],
+                source: MessageSource::Pdt,
+                pdt: None,
+            },
+        ),
+        (
+            "t:pm-overview",
+            tool(
+                "pm-overview",
+                "mcp__pdt__get_overview",
+                "get_overview",
+                json!({}),
+                "Acme Shop: 6 in flight (Code 2, Review 1, QA 1, Accept 1, Merge 1), 3 to do, 5 ready, 6 draft; 2 open Inbox items",
+            ),
+        ),
+        (
+            "t:pm-search",
+            tool(
+                "pm-search",
+                "mcp__pdt__search_tickets",
+                "search_tickets",
+                json!({"stage": "ready", "priority": "urgent"}),
+                &format!("{rounding} Fix price rounding in cart totals (urgent, ready)"),
+            ),
+        ),
+        (
+            "m:pm-answer",
+            AgentEvent::AgentMessage { id: "pm-answer".into(), markdown: answer, phase: MessagePhase::Final },
+        ),
+        (
+            "turn-end:pm-1",
+            AgentEvent::Turn {
+                phase: TurnPhase::Ended,
+                status: Some(TurnStatus::Completed),
+                duration_ms: Some(21_000),
+                reason: None,
+            },
+        ),
+    ];
+    insert_events(store, &session.id, "pm-turn-1", at, &events).await
 }
 
 /// The workflow the Workflows screenshot shows: each night, if packages are outdated, an `agentic` ticket for the
@@ -703,14 +1002,16 @@ fn make_repo(root: &Path) -> anyhow::Result<SampleRepo> {
 }
 
 /// A worktree per started ticket, each with one commit of the agent's on its branch.
-fn make_branches(repo: &Path, branches: &[(String, &str)]) -> anyhow::Result<Vec<BranchHead>> {
+fn make_branches(repo: &Path, branches: &[(String, Vec<(&str, &str)>)]) -> anyhow::Result<Vec<BranchHead>> {
     let base = pdt_git::rev_parse(repo, "refs/heads/main").context("the sample repository's main")?;
     let mut out = Vec::new();
-    for (branch, file) in branches {
+    for (branch, files) in branches {
         let path = worktree_path(repo, branch);
         let start = pdt_git::add_worktree(repo, &path, branch, &base)?;
-        write(&path, file, &format!("// {branch}\nexport {{}};\n"))?;
-        let head = pdt_git::commit_all(&path, &format!("Add {file}"))?;
+        for (file, text) in files {
+            write(&path, file, text)?;
+        }
+        let head = pdt_git::commit_all(&path, &format!("Change {}", files[0].0))?;
         out.push(BranchHead { path, base: start, head });
     }
     Ok(out)
@@ -770,7 +1071,7 @@ mod tests {
             assert!(runs.iter().all(|r| r.state != CiState::Running && r.head_sha == change.head_sha));
             assert_eq!(runs.len(), 1);
         }
-        assert_eq!(store.open_inbox_items(None).await.unwrap().len(), 1, "the Accept gate");
+        assert_eq!(store.open_inbox_items(None).await.unwrap().len(), 2, "the Accept gate and a question");
 
         let sessions = store.list_sessions(&p.id).await.unwrap();
         assert_eq!(sessions.len(), 4);
@@ -778,6 +1079,17 @@ mod tests {
         let conv = sessions.iter().find(|s| s.mode == SessionMode::Conversation).unwrap();
         assert!(store.list_session_events(&conv.id, 0, 100).await.unwrap().len() > 10);
         assert!(store.list_active_runs().await.unwrap().is_empty());
+        // The cart branch's changes carry the user's comment on the line it names.
+        let cart = active.iter().find(|a| a.attempt.branch.contains("save-the-cart")).unwrap();
+        let wt = store.get_worktree(cart.attempt.worktree_id.as_deref().unwrap()).await.unwrap().unwrap();
+        let comments = store.list_review_comments(&wt.id).await.unwrap();
+        assert_eq!(comments.len(), 1);
+        let text = std::fs::read_to_string(Path::new(&wt.path).join(&comments[0].path)).unwrap();
+        assert_eq!(text.lines().nth(comments[0].line as usize - 1), Some(REVIEWED_LINE));
+        // A PM conversation in the host project, which lists no project.
+        let pm = store.list_pm_sessions().await.unwrap();
+        assert_eq!(pm.len(), 1);
+        assert!(store.list_session_events(&pm[0].session_id, 0, 100).await.unwrap().len() > 3);
         let workflows = store.list_workflows(None).await.unwrap();
         assert!(workflows.iter().any(|w| w.name == "Nightly dependency updates" && w.enabled));
         // A database with projects is left alone.

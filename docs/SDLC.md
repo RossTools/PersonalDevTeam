@@ -30,7 +30,7 @@ spec's development lifecycle (docs/superpowers/specs/2026-10-15-remote-host-desi
    Update. Agents never update, restart or stop the stable instance.
 8. **Clean up**: stop the branch's runs, then remove the worktree and branch (below). Move the ticket to Done (or let the
    merge banner do it) and add tickets for follow-ups the change turned up. Work that takes several PRs is a parent
-   ticket with one part per PR (PDT-38): each part has its own branch, worktree and PR, and its merge closes only that
+   ticket with one part per PR: each part has its own branch, worktree and PR, and its merge closes only that
    part; start the next one with Start next part on the parent, which moves to Done once every part is closed.
 
 ## Worktrees
@@ -126,7 +126,7 @@ settings, arrive the same way. `rust-toolchain.toml` is still bumped by hand.
 
 - Its PRs carry the `dependencies` and `no-changelog` labels (dependency bumps need no release note) and commit
   messages starting `deps:`.
-- They are outside PRs, not Pipeline attempts: PDT handles them with the external-PR workflow (PDT-269), an agent
+- They are outside PRs, not Pipeline attempts: PDT handles them with the external-PR workflow, an agent
   reviews each, and the user approves and merges it through the merge queue like any other PR. A major update may
   need code changes; make those on the Dependabot branch or in a ticket of their own.
 - GitHub Actions PRs change `.github/`, so they run the macOS and Windows checks too.
@@ -145,9 +145,8 @@ hand), never per merge.
   reports `<version>-local`, which never counts as newer than a release.
 - **Updates** compare versions by SemVer and never install an older version than the one running. A host on the
   stable update channel (the default) reads GitHub's latest release (never a draft or pre-release); one on the
-  nightly channel also takes nightly pre-releases (`vX.Y.Z-nightly.YYYYMMDD`), whichever is newest
-  (docs/reference/host.md "Update channel"). The update banner shows the notes of every release between the
-  installed version and the new one.
+  nightly channel also takes nightly pre-releases (`vX.Y.Z-nightly.YYYYMMDD`), whichever is newest. The update
+  banner shows the notes of every release between the installed version and the new one.
 - **Bundles** (the signed macOS app, the Windows installer, the Linux tarball and AppImage) are built only for a
   release (on the release PR and from the tag), or by hand to try a packaging change: run the `ci` workflow on the
   branch with "Build bundles" (`gh workflow run ci --ref <branch>`). Those are kept as workflow artifacts for a few
@@ -200,11 +199,20 @@ and says so in the Inbox: that one merges by itself once its checks pass, or nee
 `channel: nightly` it runs the workflow's nightly half (below) now: no release PR, and the Inbox says when the
 pre-release is published.
 
+### Moving the release repository
+
+Hosts reach the release repository by its numeric id (`RELEASE_REPO_ID` in `crates/pdt-core/src/brand.rs`), which
+survives renames and transfers; the name (`RELEASE_REPO`) is the fallback. To move it: ship a release with
+`RELEASE_REPO` set to the new `owner/name` first (the id stays), then rename or transfer it, and never create a
+repository under the old name again (that ends GitHub's redirects). Check a host afterwards: Settings → This host →
+Updates shows a recent "Last checked" and no error. A host that can't find it can be pointed at the new repository
+with the Release repository setting.
+
 ### Nightly releases
 
 A nightly release puts the head of `main` in the hands of hosts that opted in, between stable releases: to try a
 change on real machines before it ships to everyone, or to get a fix to one host by the next morning. Nightlies
-replaced the experimental releases cut by hand (`vX.Y.Z-exp.N`, PDT-210); hosts on an experimental build move to the
+replaced the experimental releases cut by hand (`vX.Y.Z-exp.N`); hosts on an experimental build move to the
 next nightly.
 
 - **When**: the release workflow's schedule runs it every day at 08:00 UTC. When the head of `main` is already
@@ -266,7 +274,12 @@ script without it, never run a built installer, never run `pdt-host install`/`un
 **Upgrade rehearsal:** before a release with migrations or plugin changes reaches the stable instance,
 `scripts/rehearse-upgrade.sh` runs this checkout's pdtd on port 7421 against a read-only copy of the stable data dir
 and reports whether migrations, integrations, connections, workflows (validate and dry run), tool lists and the GitHub
-login hold up (docs/reference/host.md "Upgrade rehearsal"). Stop a dev instance on 7421 first, or pass `--port`.
+login hold up. It copies the database with SQLite's online backup (safe while stable runs), plus `sessions/` and `pm/`,
+into a temp folder (`--keep` keeps it; `--from` picks another source; `--report FILE` saves the Markdown report), and
+starts pdtd with `PDT_REHEARSAL=1`: it migrates, installs the built-in workflows and personas and serves the API, but
+resumes nothing, starts no background loop, keeps secrets in memory and never acts on the copy's repos or
+connections. Exit status 0 when every check passes, 1 when one fails, 2 when it could not run. Stop a dev instance on
+7421 first, or pass `--port`.
 
 ## After merge
 

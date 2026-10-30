@@ -792,6 +792,12 @@ impl<P: AcpExtensions> AcpMapper<P> {
         out
     }
 
+    /// A `session/new` or `session/load` answer: its `configOptions` (the model and its choices), which some agents
+    /// (Grok) send only there.
+    pub fn on_session(&self, answer: &Value) -> Vec<AcpOut> {
+        answer.get("configOptions").map(|o| self.config_options(Some(o))).unwrap_or_default()
+    }
+
     fn config_options(&self, options: Option<&Value>) -> Vec<AcpOut> {
         let options = options.and_then(Value::as_array).cloned().unwrap_or_default();
         let find = |id: &str| options.iter().find(|o| s(o, "id").as_deref() == Some(id));
