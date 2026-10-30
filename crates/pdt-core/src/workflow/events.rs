@@ -23,6 +23,9 @@ pub const TICKET_OVERLAP_CLEARED: &str = "ticket.overlap_cleared";
 pub const PR_COMMENTED: &str = "pr.commented";
 pub const PR_REVIEWED: &str = "pr.reviewed";
 pub const GITHUB_ISSUE_OPENED: &str = "github.issue.opened";
+pub const GITHUB_PR_OPENED: &str = "github.pull_request.opened";
+pub const GITHUB_PR_PUSHED: &str = "github.pull_request.pushed";
+pub const GITHUB_PR_CLOSED: &str = "github.pull_request.closed";
 pub const SCHEDULE_FIRED: &str = "schedule.fired";
 pub const WEBHOOK_RECEIVED: &str = "webhook.received";
 
@@ -32,7 +35,11 @@ pub const TRIAGE_SKIPPED: &str = "triage.skipped";
 pub const TICKET_REFINE_REQUESTED: &str = "ticket.refine_requested";
 
 /// The event types that carry outside input (PDT-201): what someone outside PDT wrote. A run they start triages.
-pub const UNTRUSTED_EVENTS: &[&str] = &[GITHUB_ISSUE_OPENED, WEBHOOK_RECEIVED];
+pub const UNTRUSTED_EVENTS: &[&str] =
+    &[GITHUB_ISSUE_OPENED, GITHUB_PR_OPENED, GITHUB_PR_PUSHED, GITHUB_PR_CLOSED, WEBHOOK_RECEIVED];
+
+/// The pull request events (PDT-268): pull requests on a project's repository that PDT didn't open.
+pub const GITHUB_PR_EVENTS: &[&str] = &[GITHUB_PR_OPENED, GITHUB_PR_PUSHED, GITHUB_PR_CLOSED];
 
 /// Whether an event of type `kind` carries outside input.
 pub fn untrusted(kind: &str) -> bool {
@@ -199,6 +206,29 @@ pub const EVENT_TYPES: &[EventType] = &[
         description: "A new issue in a watched GitHub repository (the first look at a repository only records where it \
                       is).",
         schema: schema_of::<GithubIssueOpened>,
+        outside: &["title", "body"],
+    },
+    EventType {
+        id: GITHUB_PR_OPENED,
+        title: "Outside pull request opened",
+        description: "A pull request PDT didn't open (not a ticket's branch) on a project's GitHub repository: from a \
+                      fork, a bot such as Dependabot, or a collaborator (`kind`). The first look at a repository only \
+                      records the ones already open.",
+        schema: schema_of::<GithubPullRequest>,
+        outside: &["title", "body"],
+    },
+    EventType {
+        id: GITHUB_PR_PUSHED,
+        title: "Outside pull request pushed",
+        description: "New commits on a pull request PDT didn't open (its head moved): `previousHead` is where it was.",
+        schema: schema_of::<GithubPullRequest>,
+        outside: &["title", "body"],
+    },
+    EventType {
+        id: GITHUB_PR_CLOSED,
+        title: "Outside pull request closed",
+        description: "A pull request PDT didn't open was closed or merged (`merged`).",
+        schema: schema_of::<GithubPullRequest>,
         outside: &["title", "body"],
     },
     EventType {
@@ -578,6 +608,44 @@ pub struct GithubIssueOpened {
     pub created_at: String,
 }
 
+/// `github.pull_request.opened`, `github.pull_request.pushed` and `github.pull_request.closed` (PDT-268).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GithubPullRequest {
+    /// The project whose repository it is.
+    pub project_id: String,
+    /// `owner/name`.
+    pub repo: String,
+    pub number: u64,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub author: String,
+    /// `outside`, `bot` or `collaborator`.
+    pub kind: crate::outside_pr::AuthorKind,
+    /// The repository its branch is in (`owner/name`); none when that fork was deleted.
+    pub head_repo: Option<String>,
+    pub head_branch: String,
+    pub head_sha: String,
+    /// Its branch is in another repository.
+    pub fork: bool,
+    /// The branch it merges into.
+    pub base: String,
+    pub labels: Vec<String>,
+    pub draft: bool,
+    pub changed_files: u64,
+    pub additions: u64,
+    pub deletions: u64,
+    /// For a Dependabot update, what it bumps (`major`, `minor`, `patch`), when its title says.
+    pub update_type: Option<crate::outside_pr::UpdateType>,
+    pub created_at: String,
+    /// `pushed`: the head before the push.
+    pub previous_head: Option<String>,
+    /// `closed`: it was merged.
+    pub merged: bool,
+}
+
 /// `schedule.fired`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
@@ -704,6 +772,18 @@ mod tests {
             assert!((t.schema)().as_object().is_some_and(|o| o.contains_key("properties")), "{}", t.id);
         }
         assert!(event_type(PR_CONFLICT).is_some() && event_type("nope").is_none());
+    }
+
+    #[test]
+    fn outside_pull_requests_are_untrusted_and_their_text_fenced() {
+        for id in GITHUB_PR_EVENTS {
+            assert!(untrusted(id), "{id}");
+            assert_eq!(event_type(id).unwrap().outside, ["title", "body"], "{id}");
+        }
+        let schema = serde_json::to_value((event_type(GITHUB_PR_OPENED).unwrap().schema)()).unwrap();
+        for f in ["kind", "fork", "headRepo", "updateType", "changedFiles", "previousHead", "merged"] {
+            assert!(schema["properties"].get(f).is_some(), "{f}");
+        }
     }
 
     #[test]

@@ -28,7 +28,8 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
   and `attempt.started` are logged once Start has made its session (`announce_start`), so a Start that fails and is
   undone never runs a workflow for an attempt that is gone; an agent step's `outcome` timeline event
   becomes `agent.outcome` (`outcome`, `summary`, `persona`, `personaVersion`, `by`, `sessionId`, `runId`). Phase 7e
-  adds the PR poller's `pr.commented` and `pr.reviewed`, the issues sensor's `github.issue.opened`, the scheduler's
+  adds the PR poller's `pr.commented` and `pr.reviewed`, the issues sensor's `github.issue.opened` (and, PDT-268, the pull request sensor's `github.pull_request.opened`,
+  `.pushed` and `.closed`), the scheduler's
   `schedule.fired` and webhooks' `webhook.received` ("Sensors and webhooks"); 7e-2 the
   Jira sensor's `jira.issue.created`, `.updated`, `.transitioned` and `.commented`, and Buildkite's (a CI provider since PDT-242)
   `ci.run_failed` / `ci.run_passed`. Payload types: pdt-core `workflow/events.rs` (PDT's own types in `EVENT_TYPES`; Jira's in its crate, pdt-int-jira `core.rs`, registered by the Jira integration: "Integrations"). CI events carry
@@ -273,6 +274,7 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `schedule` (`every` or `cron` + `timezone`, `catchUp`, `where`, `runKey`; fires on its own `schedule.fired`) | `out` |
 | `webhook` (`hook`: a `webhook` connection, `where`, `runKey`; its own `webhook.received`) | `out` |
 | `github.issue.opened` (`repos`, else the projects' repos; `projects`, `where`, `runKey`) | `out` |
+| `github.pull_request.opened`, `.pushed`, `.closed` (`kinds`: `outside`, `bot`, `collaborator`, empty for outsiders' and bots'; `projects`, `where`, `runKey`) | `out` |
 | `command` (`program` and `args`, or `script` and `shell: sh \| bash \| zsh \| pwsh`; `cwd: scratch \| project \| attempt \| <full path>`, `input`, `env`, `parse: json \| text`) | `out` |
 | `http.request` (`connection`, `method`, `url`, `headers`, `query`, `body`, `expect: 2xx \| any \| [codes]`) | `out` |
 | `discord.post` (`connection`: `discord_webhook`, `content`, `username`, `embeds`, `thread`) | `out` |
@@ -728,6 +730,23 @@ opening the first workflow. The workflow page shows the reference warnings in a 
   100 a page, read back page by page to the last issue seen, up to 10 pages). The newest number logged per repo is
   kept in `host_settings` (`sensor.github_issues.<repo>`); the first look only records it (from one page). Event key `github:<repo>:issue:<n>`, payload `repo`, `number`, `title`, `body`, `url`, `author`, `labels`,
   `createdAt`, `projectId` (when it is a project's repo).
+- **Outside pull requests** (`github_pulls.rs` `refresh_pulls`, pdtd every 60 s; PDT-268): the GitHub repos of the
+  projects an enabled `github.pull_request.*` trigger's workflow covers, through GitHub's `…/pulls` API (all states,
+  most recently updated first, 100 a page, read back to the last update seen, up to 10 pages). Pull requests from
+  PDT's own branches (an attempt's in any state, or a worktree's, in the repository itself: pdt-store
+  `is_pdt_branch`) are left out; every other author is logged, with `kind` (`bot` for `[bot]` accounts, else
+  `collaborator` for the owner, members and collaborators, else `outside`), and the triggers start runs for outsiders'
+  and bots' unless their `kinds` list collaborators. `host_settings` `sensor.github_pulls.<repo>` keeps the last update
+  read, the first look's newest update (`baseline`) and the open ones' heads; the first look only records those. Later:
+  an open one PDT hadn't seen, created after the baseline, is `github.pull_request.opened` (key
+  `github:<repo>:pr:<n>:opened`); an open one whose head moved is `.pushed` (`…:head:<sha>`, `previousHead`); one seen
+  open that is now closed or merged is `.closed` (`merged`). One open from before the baseline (or reopened) is only
+  recorded. Payload `projectId`, `repo`, `number`, `title`, `body`, `url`, `author`, `kind`, `headRepo`, `headBranch`,
+  `headSha`, `fork`, `base`, `labels`, `draft`, `changedFiles`, `additions`, `deletions` (one more read of the pull
+  request, on opened and pushed), `updateType` (Dependabot's `major`/`minor`/`patch` from its title, pdt-core
+  `outside_pr::dependabot_update`; a pre-1.0 bump counts one step up), `createdAt`, `previousHead`, `merged`. The three
+  are untrusted (`title` and `body` fenced, triage-capped by `author` and `repo`); the mark moves only past what was
+  logged.
 - **PR comments and reviews** (`github.rs`): while an enabled workflow has a `pr.commented` or `pr.reviewed` trigger,
   the PR poller also reads each active attempt's open PR's conversation comments, review comments and reviews (the
   comments and the reviews side by side). The newest ids are kept per attempt (`sensor.pr_comments.<attempt>`),

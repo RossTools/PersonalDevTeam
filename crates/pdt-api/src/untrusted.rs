@@ -299,14 +299,15 @@ pub(crate) async fn record_triage(st: &AppState, s: &Session, ticket_id: &str) {
 
 const HOUR_MS: i64 = 60 * 60 * 1000;
 
-/// The triage cap a new issue (or webhook) is over (PDT-202): its author already started
+/// The triage cap a new issue, outside pull request (or webhook) is over (PDT-202): its author already started
 /// `triage_per_author_hour` triage runs in the last hour, or its repository (webhook) `triage_per_repo_hour`. None when
 /// it may be triaged. Counted in issues: one that started runs of several workflows is one.
 pub(crate) async fn triage_cap(st: &AppState, e: &LogEvent, trigger: &Value) -> Option<(TriageCap, u32)> {
     let h = st.store.get_host_settings().await.unwrap_or_default();
     let since = crate::routes::now_ms() - HOUR_MS;
     let s = |k: &str| trigger.get(k).and_then(Value::as_str).filter(|v| !v.is_empty());
-    let repo_field = if e.kind == ev::GITHUB_ISSUE_OPENED { "repo" } else { "hook" };
+    let from_repo = e.kind == ev::GITHUB_ISSUE_OPENED || ev::GITHUB_PR_EVENTS.contains(&e.kind.as_str());
+    let repo_field = if from_repo { "repo" } else { "hook" };
     let checks = [
         (TriageCap::Author, "author", s("author"), h.triage_per_author_hour),
         (TriageCap::Repo, repo_field, s(repo_field), h.triage_per_repo_hour),

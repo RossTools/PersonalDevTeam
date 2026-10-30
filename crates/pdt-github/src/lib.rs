@@ -13,8 +13,9 @@ pub use actions::GithubActions;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval, QueueRemovalReason};
 pub use pdt_forge::{
-    Capabilities, ChangeComment, ChangeRequest, ChangeReview, CloseReason, Forge, ForgeError, ForgeNotes, Issue,
-    IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest, Release,
+    Capabilities, ChangeComment, ChangeRequest, ChangeReview, ChangeStats, CloseReason, Forge, ForgeError, ForgeNotes,
+    Issue, IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest, Release,
+    RepoChangeRequest,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -965,6 +966,58 @@ pub fn read_issue_pages(
     Ok(out)
 }
 
+/// Reads pages of pull requests (most recently updated first, `page(n)` the items of page `n`) until one was updated
+/// before `since` or is the last: one page without `since`.
+pub fn read_pull_pages(
+    since: Option<&str>,
+    mut page: impl FnMut(u32) -> Result<Vec<Value>, GhError>,
+) -> Result<Vec<RepoChangeRequest>, GhError> {
+    let mut out = vec![];
+    for n in 1..=ISSUE_PAGES {
+        let items = page(n)?;
+        let prs: Vec<RepoChangeRequest> = items.iter().filter_map(parse_repo_pull).collect();
+        let reached = match since {
+            None => true,
+            Some(s) => prs.iter().any(|p| p.updated_at.as_str() < s),
+        };
+        out.extend(prs.into_iter().filter(|p| since.is_none_or(|s| p.updated_at.as_str() >= s)));
+        if reached || items.len() < ISSUE_PAGE {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// One pull request of a list (`GET …/pulls`).
+pub fn parse_repo_pull(v: &Value) -> Option<RepoChangeRequest> {
+    let state = match (v["state"].as_str(), v["merged_at"].is_string()) {
+        (Some("open"), _) => PrState::Open,
+        (_, true) => PrState::Merged,
+        _ => PrState::Closed,
+    };
+    Some(RepoChangeRequest {
+        number: v["number"].as_u64().and_then(|n| u32::try_from(n).ok())?,
+        title: s(v, "title"),
+        body: s(v, "body"),
+        url: s(v, "html_url"),
+        author: s(&v["user"], "login"),
+        is_bot: is_bot(&v["user"]),
+        collaborator: collaborator(v),
+        head_repo: v["head"]["repo"]["full_name"].as_str().map(String::from),
+        head_branch: s(&v["head"], "ref"),
+        head_sha: s(&v["head"], "sha"),
+        base_branch: s(&v["base"], "ref"),
+        labels: v["labels"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|l| l["name"].as_str().map(String::from)).collect())
+            .unwrap_or_default(),
+        state,
+        draft: v["draft"].as_bool().unwrap_or(false),
+        created_at: s(v, "created_at"),
+        updated_at: s(v, "updated_at"),
+    })
+}
+
 fn is_pr(v: &Value) -> bool {
     v.get("pull_request").is_some_and(|p| !p.is_null())
 }
@@ -1160,6 +1213,21 @@ impl Forge for GithubApi {
                 _ => Err(GhError::BadAnswer("issues are not an array".into())),
             }
         })?)
+    }
+    fn recent_change_requests(&self, repo: &str, since: Option<&str>) -> Result<Vec<RepoChangeRequest>, ForgeError> {
+        Ok(read_pull_pages(since, |n| {
+            let path =
+                format!("repos/{repo}/pulls?state=all&sort=updated&direction=desc&per_page={ISSUE_PAGE}&page={n}");
+            match self.get(&path)? {
+                Value::Array(items) => Ok(items),
+                _ => Err(GhError::BadAnswer("pull requests are not an array".into())),
+            }
+        })?)
+    }
+    fn change_request_stats(&self, repo: &str, number: u32) -> Result<ChangeStats, ForgeError> {
+        let v = self.get(&format!("repos/{repo}/pulls/{number}"))?;
+        let n = |k: &str| v[k].as_u64().unwrap_or(0);
+        Ok(ChangeStats { changed_files: n("changed_files"), additions: n("additions"), deletions: n("deletions") })
     }
     fn change_comments(&self, repo: &str, number: u32) -> Result<Vec<ChangeComment>, ForgeError> {
         let mut all =

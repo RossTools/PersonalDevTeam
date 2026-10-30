@@ -1984,6 +1984,22 @@ impl Store {
         row.as_ref().map(to_attempt_info).transpose()
     }
 
+    /// Whether `branch` is one of PDT's in project `project_id`: an attempt's (in any state) or a worktree's.
+    pub async fn is_pdt_branch(&self, project_id: &str, branch: &str) -> Result<bool, StoreError> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT (SELECT COUNT(*) FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
+               WHERE t.project_id = ? AND a.branch = ?) \
+             + (SELECT COUNT(*) FROM worktrees WHERE project_id = ? AND branch = ?)",
+        )
+        .bind(project_id)
+        .bind(branch)
+        .bind(project_id)
+        .bind(branch)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n > 0)
+    }
+
     /// Every active attempt, oldest first.
     pub async fn list_active_attempts(&self) -> Result<Vec<AttemptInfo>, StoreError> {
         let sql = format!("{ATTEMPT_INFO_SELECT} WHERE a.state = 'active' ORDER BY a.created_at, a.id");

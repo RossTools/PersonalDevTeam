@@ -11,6 +11,7 @@ use crate::workflow::nodes::release::{GithubChangeRequest, GithubRelease, Github
 use pdt_core::integration::{Icon, PluginCategory, ToolDecl};
 use pdt_core::pm::AskTarget;
 use pdt_core::ticket::Actor;
+use pdt_core::workflow::events::{GITHUB_PR_CLOSED, GITHUB_PR_OPENED, GITHUB_PR_PUSHED};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
@@ -46,6 +47,9 @@ impl Integration for Github {
     fn node_kinds(&self) -> Vec<Box<dyn NodeKind>> {
         vec![
             Box::new(crate::github_issues::IssueOpened),
+            Box::new(crate::github_pulls::PullRequestTrigger(GITHUB_PR_OPENED)),
+            Box::new(crate::github_pulls::PullRequestTrigger(GITHUB_PR_PUSHED)),
+            Box::new(crate::github_pulls::PullRequestTrigger(GITHUB_PR_CLOSED)),
             Box::new(GithubImport),
             Box::new(GithubComment),
             Box::new(GithubClose),

@@ -72,6 +72,18 @@ export const plugins: IntegrationInfo[] = [
         "title": "GitHub issue opened"
       },
       {
+        "id": "github.pull_request.opened",
+        "title": "Outside pull request opened"
+      },
+      {
+        "id": "github.pull_request.pushed",
+        "title": "Outside pull request pushed"
+      },
+      {
+        "id": "github.pull_request.closed",
+        "title": "Outside pull request closed"
+      },
+      {
         "id": "github.import",
         "title": "Import a GitHub issue"
       },
