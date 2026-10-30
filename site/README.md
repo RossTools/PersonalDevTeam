@@ -12,8 +12,8 @@ org can open it).
 - `src/pages/docs/index.astro` is the docs home: a card per section of the user docs. The docs pages themselves are
   the repository's Markdown, read in place from `../docs`: the user docs in `user/` (the main docs, at
   `/docs/<section>/<page>/`; their sections and pages, in sidebar order, are `USER_SECTIONS` in `src/docs-pages.mjs`,
-  and `docs/user/README.md` has the style notes for writing them), plus `agent-guide.md`, `run-config.md`, `SDLC.md`
-  and `reference/` (published, but `reference/` is no longer in the sidebar). `superpowers/`, `prompts/`,
+  and `docs/user/README.md` has the style notes for writing them), plus `agent-guide.md` and `run-config.md` (under Guides), and the
+  developer guide in `dev/` with `SDLC.md` (under Contributing, after its own page: `DEVELOPER_PAGES`). `superpowers/`, `prompts/`,
   `ROADMAP.md` and the READMEs in `user/` stay out. There is no copy step: edit the file in `docs/` and the next
   deploy shows it. A page's title is its first `# heading`; relative links between published docs point at their
   pages on the site, and links to anything else in the repository at the file on GitHub
