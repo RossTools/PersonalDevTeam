@@ -2,8 +2,8 @@
 
 What PDT relies on, checked against Cursor CLI `2026.10.22-27dcf5f` on macOS on 2026-10-29. Facts marked **live** were
 checked over stdio. The others were read from the CLI's bundled source (`~/.local/share/cursor-agent/versions/<v>/`,
-mostly `7096.index.js`, the ACP mode) and https://cursor.com/docs/cli/acp. The account used was on Cursor's Free plan,
-which answers every prompt with "Upgrade your plan to continue", so no live turn ran. Windows is untested.
+mostly `7096.index.js`, the ACP mode) and https://cursor.com/docs/cli/acp. Facts marked **QA** come from a live agent
+step on a scratch daemon on 2026-10-30, on a Free-plan account with model `default[]` (Auto). Windows is untested.
 
 ## Launch and handshake (live)
 
@@ -17,8 +17,9 @@ which answers every prompt with "Upgrade your plan to continue", so no live turn
 - `session/set_mode` works (undocumented): it reports `current_mode_update` and answers `{}`. An unknown id fails with
   `-32603` and `data.details` "Invalid mode ID: bogus. Valid modes: agent, plan, ask".
 - Models are set with `session/set_config_option` `{configId: "model", value}` (and `session/set_model`). An unknown
-  value fails with `-32602` and `data.message` "Invalid model value: …". Free-plan accounts can't use paid models
-  ("Upgrade your plan to continue" as an agent message, and the turn ends `end_turn`).
+  value fails with `-32602` and `data.message` "Invalid model value: …". On the Free plan only Auto (`default[]`)
+  runs (**QA**). With no model set, Cursor uses the account's default model (here composer-2.5), which answers
+  "Upgrade your plan to continue" as an agent message, and the turn ends `end_turn`.
 - Client-passed `mcpServers` (`type: "http"`, with headers) are honoured, although the docs mention only
   `.cursor/mcp.json`. Cursor connects at `session/new`, sending the `Authorization` header, then `initialize`,
   `notifications/initialized`, a GET for the SSE stream, and `tools/list` at the first prompt. No per-session
@@ -35,13 +36,20 @@ which answers every prompt with "Upgrade your plan to continue", so no live turn
 - The request's `toolCall.kind`: a write or edit is `edit` (with `diff` content), a delete is `edit`, a shell command is
   `execute` (title the command in backticks), a read is `read`, and an MCP call is `other` (title `<server>: <tool>`,
   content its arguments as JSON). Web fetches and searches are `fetch` and `search`.
-- What asks depends on Cursor's own permission settings (allowlist, `--force`). PDT never passes `--force`, and keeps
-  Ask, Accept edits and Bypass by answering requests itself (`acp_agent::enforced_answer`).
+- What asks depends on Cursor's own permission settings (`approvalMode` `allowlist` | `unrestricted` | `auto-review`,
+  the allowlist, `--force`). PDT never passes `--force`, and keeps Accept edits and Bypass by answering requests
+  itself (`acp_agent::enforced_answer`).
+- Edits in the workspace never ask (**QA**: an Edit-tool write of `bye.txt` sent a `tool_call` of kind `edit` with a
+  diff, and no permission request). Shell commands did ask. PDT can't keep Ask (it doesn't edit the user's Cursor
+  settings), so Cursor offers no Ask, and a session in Ask runs as Accept edits, as Devin's does.
+- Cursor asks before it reports the call with its `rawInput` (**QA**: the request came at seq 13, the `tool_call` at
+  seq 16). The request's own `toolCall.rawInput` already holds `{providerIdentifier: "pdt", toolName}`, so PDT names the
+  call from it.
 
 ## Tool calls (source)
 
 - `tool_call` has `title`, `kind`, `rawInput` and `locations`. For an MCP call, `rawInput` is
-  `{providerIdentifier, toolName, args}`. Some of Cursor's own tools give `_toolName` (`task`, `updateTodos`,
+  `{providerIdentifier, toolName, args}`, and `providerIdentifier` is the `mcpServers` name, `pdt` (**QA**). Some of Cursor's own tools give `_toolName` (`task`, `updateTodos`,
   `createPlan`, `askQuestion`).
 - A command's output is in `tool_call_update.rawOutput` `{exitCode, stdout, stderr}` with no `content`. An edit's
   completed update carries `diff` content (`path`, `oldText`, `newText`).
@@ -70,6 +78,4 @@ which answers every prompt with "Upgrade your plan to continue", so no live turn
 
 ## Not yet checked live
 
-A full turn on a paid plan: the order of `tool_call` against `request_permission`, whether `providerIdentifier` is the
-`mcpServers` name (`pdt`), which calls ask in `agent` mode by default, and `cursor/ask_question` / `cursor/create_plan`
-over the wire.
+`cursor/ask_question` and `cursor/create_plan` over the wire, and resuming a saved Cursor session.

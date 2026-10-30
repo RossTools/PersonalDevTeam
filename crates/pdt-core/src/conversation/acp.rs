@@ -835,7 +835,11 @@ impl<P: AcpExtensions> AcpMapper<P> {
             exit_plan: false,
             turn_id: turn,
         });
-        if new && let Some(n) = name {
+        // A call first reported without its name (only its kind) gets it from a later update.
+        let unnamed = before.as_ref().is_none_or(|b| Some(&b.tool) == b.kind.as_ref() || b.tool == "tool");
+        if (new || unnamed)
+            && let Some(n) = name
+        {
             t.tool = n;
         }
         if let Some(k) = s(u, "kind") {
@@ -968,7 +972,7 @@ impl<P: AcpExtensions> AcpMapper<P> {
                         turn_id: self.turn.clone(),
                     }
                 } else {
-                    let (name, title, input, diff) = match &tool {
+                    let (mut name, title, input, diff) = match &tool {
                         Some(t) => (t.tool.clone(), t.title.clone(), t.input.clone(), t.diff.clone()),
                         // Asked before the agent reported the call (OhMyPi does): the request's own call names it.
                         None => {
@@ -985,6 +989,11 @@ impl<P: AcpExtensions> AcpMapper<P> {
                             (name, title, input, None)
                         }
                     };
+                    // The request's own call names the tool when the agent's earlier report of it didn't (Cursor
+                    // asks before its `tool_call` has its `rawInput`).
+                    if let Some(own) = p.get("toolCall").and_then(|c| self.ext.tool_name(c)) {
+                        name = own;
+                    }
                     // PDT's own tools (pdt-mcp): the session only has those its persona allows, so they run
                     // without asking, as Claude's `--allowedTools` and Codex's approval mode do.
                     if self.ext.pdt_tool_prefix().is_some_and(|prefix| name.starts_with(prefix))

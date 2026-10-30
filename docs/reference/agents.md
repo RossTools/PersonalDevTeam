@@ -531,7 +531,10 @@ the template literal ``acp:${string}`` to `"claude" | "codex" | "devin"`, so the
   (`acp_agent::enforced_answer`, by the tool call's ACP kind): Bypass allows everything; reads, searches and thinking
   are allowed in every mode; Accept edits allows edits, deletes and moves; Plan rejects those and commands; the rest
   go to the user. A profile's map may cover only some modes and name a base mode (`AcpAgentDef::base_mode`,
-  `AcpProfile::base_mode`): the session still offers all four, and PDT keeps the rest with the agent in that mode.
+  `AcpProfile::base_mode`): the session still offers the others, and PDT keeps them with the agent in that mode. For
+  an agent that edits files without asking (`AcpAgentDef::edits_unasked`, `AcpProfile::asks_before_edits`), PDT can't
+  keep Ask: it offers no Ask (`AcpAgentDef::offered_modes`, also in `GET /api/agents/acp:<id>/capabilities`), and a
+  session or persona in Ask runs as Accept edits (as Devin's does).
 - A built-in profile's flavor (`AcpAgentDef::flavor`, pdt-core `AcpFlavor`) is what its agent adds to ACP, mapped in
   pdt-core `conversation/<agent>.rs`: tool names, output in `rawOutput`, its own blocking requests as PDT questions
   and plan approvals (`AcpExtensions::ext_request`/`ext_answer`), how it says a saved session is missing (resume
@@ -568,12 +571,16 @@ error).
 ### Cursor (PDT-237)
 
 The built-in profile `acp:cursor` ("Cursor") runs `cursor-agent acp` (notes: docs/superpowers/notes/cursor-acp.md); the
-user installs the Cursor CLI and signs in with `agent login` (PDT passes nothing). Cursor's Free plan answers every
-prompt "Upgrade your plan to continue".
-- Modes: Plan is Cursor's `plan`; Ask, Accept edits and Bypass are PDT's, with Cursor in its `agent` (the profile's
-  base mode; Cursor's `ask` is read-only Q&A, not PDT's Ask).
+user installs the Cursor CLI and signs in with `agent login` (PDT passes nothing). On Cursor's Free plan only Auto runs
+(model `default[]`); with no model set, Cursor's default model may answer "Upgrade your plan to continue".
+- Modes: Plan is Cursor's `plan`; Accept edits and Bypass are PDT's, with Cursor in its `agent` (the profile's base
+  mode; Cursor's `ask` is read-only Q&A, not PDT's Ask). Cursor's `agent` edits files in the workspace without asking
+  (only commands, and writes outside the workspace, ask), so Cursor offers no Ask: a session or persona in Ask runs as
+  Accept edits.
 - pdt-mcp: Cursor honours the `mcpServers` PDT passes (no `.cursor/mcp.json`); its MCP calls are named
-  `mcp__<server>__<tool>` from the call's `rawInput`, and pdt-mcp's run without asking. Cursor's "Allow always" writes
+  `mcp__<server>__<tool>` from the call's `rawInput`, and pdt-mcp's run without asking. Cursor asks before its
+  `tool_call` carries the `rawInput`, so the request's own `toolCall.rawInput` names the call (and a later update
+  names a call first reported by its kind only). Cursor's "Allow always" writes
   its own allowlist, so PDT never offers it.
 - Its flavor (pdt-core `conversation/cursor.rs`): `cursor/ask_question` is a PDT question (an answer in the user's own
   words skips it with them as the reason) and `cursor/create_plan` a plan approval: approving it puts the session in
@@ -582,4 +589,5 @@ prompt "Upgrade your plan to continue".
   (`-32602`, `Session "…" not found`) starts a new session with a notice.
 - Tests: pdt-core `conversation::cursor` on `tests/fixtures/cursor/` (`start.jsonl` recorded from Cursor CLI
   2026.10.22: the handshake, modes, a Free-plan prompt and a missing session; `turn.jsonl` and `plan.jsonl` built from
-  its source). No Cursor turn has run end to end yet (the account used is on the Free plan).
+  its source). A Cursor persona has run an agent step end to end (2026-10-30, on a scratch daemon, model
+  `default[]`).

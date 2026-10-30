@@ -65,6 +65,10 @@ impl AcpProfile for DefinedProfile {
         self.def.base_mode.as_deref()
     }
 
+    fn asks_before_edits(&self) -> bool {
+        !self.def.edits_unasked
+    }
+
     fn instructions_in_prompt(&self) -> bool {
         true
     }

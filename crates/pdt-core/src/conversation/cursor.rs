@@ -137,7 +137,8 @@ mod tests {
     /// (recorded from Cursor CLI 2026.10.22-27dcf5f).
     const START: &str = include_str!("../../tests/fixtures/cursor/start.jsonl");
     /// A turn in Cursor 2026.10.22's frames (from its ACP mode's source: the permission gate, the tool-call
-    /// presenter, `cursor/ask_question`): the prompt echoed back, a pdt-mcp call, a command, an edit, two questions.
+    /// presenter, `cursor/ask_question`): the prompt echoed back, two pdt-mcp calls (the second asked about before
+    /// its `tool_call` has its `rawInput`, as Cursor does live), a command, an edit, two questions.
     const TURN: &str = include_str!("../../tests/fixtures/cursor/turn.jsonl");
     /// Plan mode's `cursor/create_plan`, after the plan's to-dos as a `plan` update.
     const PLAN: &str = include_str!("../../tests/fixtures/cursor/plan.jsonl");
@@ -228,15 +229,16 @@ mod tests {
     }
 
     #[test]
-    fn a_cursor_turn_in_ask_runs_pdt_tools_asks_for_the_rest_and_maps_its_questions() {
-        let mut m = mapper(PermissionMode::Ask);
+    fn a_cursor_turn_runs_pdt_tools_and_edits_asks_for_commands_and_maps_its_questions() {
+        // Accept edits: what a Cursor session in Ask runs as (Cursor edits without asking).
+        let mut m = mapper(PermissionMode::AcceptEdits);
         let mut approvals = Vec::new();
         let (ev, sent, _) = feed(&mut m, TURN, |e| match e {
             AgentEvent::Request { request_kind: RequestKind::Approval, tool, can_always, .. } => {
                 // Cursor's "Allow always" writes its own allowlist; PDT never offers it.
                 assert!(!*can_always);
                 approvals.push(tool.clone());
-                Some(if tool == "execute" { Answer::Approve { always: false } } else { Answer::Deny { message: None } })
+                Some(Answer::Approve { always: false })
             }
             AgentEvent::Request { request_kind: RequestKind::Question, input, title, .. } => {
                 assert_eq!(title, "Which colour?");
@@ -255,13 +257,14 @@ mod tests {
             }
             _ => None,
         });
-        assert_eq!(approvals, ["execute", "edit"], "the pdt-mcp call never asks");
+        assert_eq!(approvals, ["execute"], "pdt-mcp calls and edits never ask");
         assert_eq!(
             sent,
             vec![
                 json!({"outcome": {"outcome": "selected", "optionId": "allow-once"}}),
                 json!({"outcome": {"outcome": "selected", "optionId": "allow-once"}}),
-                json!({"outcome": {"outcome": "selected", "optionId": "reject-once"}}),
+                json!({"outcome": {"outcome": "selected", "optionId": "allow-once"}}),
+                json!({"outcome": {"outcome": "selected", "optionId": "allow-once"}}),
                 json!({"outcome": {"outcome": "answered", "answers": [
                     {"questionId": "q1", "selectedOptionIds": ["blue"]},
                     {"questionId": "q2", "selectedOptionIds": ["tests", "bench"]},
@@ -273,6 +276,8 @@ mod tests {
         assert_eq!(users, 1);
         let AgentEvent::ToolCall { tool, status, .. } = last_tool(&ev, "tool_mcp1") else { panic!() };
         assert_eq!((tool.as_str(), *status), ("mcp__pdt__get_ticket", ToolStatus::Done));
+        let AgentEvent::ToolCall { tool, .. } = last_tool(&ev, "tool_mcp2") else { panic!() };
+        assert_eq!(tool, "mcp__pdt__submit_outcome", "named once its rawInput arrives");
         let AgentEvent::ToolCall { title, output, exit_code, .. } = last_tool(&ev, "tool_sh1") else { panic!() };
         assert_eq!((title.as_str(), output.as_deref(), *exit_code), ("ls", Some("README.md"), Some(0)));
         let AgentEvent::ToolCall { diff, .. } = last_tool(&ev, "tool_ed1") else { panic!() };
@@ -293,9 +298,9 @@ mod tests {
             }),
             _ => None,
         });
-        assert!(sent[..3].iter().all(|s| s["outcome"]["optionId"] == "allow-once"), "{sent:?}");
-        assert_eq!(sent[3]["outcome"]["outcome"], "skipped");
-        assert!(sent[3]["outcome"]["reason"].as_str().unwrap().contains("Which colour?: Green"));
+        assert!(sent[..4].iter().all(|s| s["outcome"]["optionId"] == "allow-once"), "{sent:?}");
+        assert_eq!(sent[4]["outcome"]["outcome"], "skipped");
+        assert!(sent[4]["outcome"]["reason"].as_str().unwrap().contains("Which colour?: Green"));
     }
 
     #[test]
@@ -307,7 +312,7 @@ mod tests {
             }
             _ => None,
         });
-        assert_eq!(sent[3], json!({"outcome": {"outcome": "skipped", "reason": "Pick for me"}}));
+        assert_eq!(sent[4], json!({"outcome": {"outcome": "skipped", "reason": "Pick for me"}}));
         // An open question when the turn is cancelled.
         let mut m = mapper(PermissionMode::Bypass);
         let _ = m.begin_prompt("go");

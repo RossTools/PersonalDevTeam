@@ -62,6 +62,11 @@ pub struct AcpAgentDef {
     #[ts(skip)]
     #[serde(skip)]
     pub base_mode: Option<String>,
+    /// The agent edits files in its workspace without asking (Cursor's `agent`): PDT can't keep Ask, so it offers no
+    /// Ask and a session in Ask runs as Accept edits (as Devin's does).
+    #[ts(skip)]
+    #[serde(skip)]
+    pub edits_unasked: bool,
     /// What the agent adds to ACP (a built-in profile's; the user's agents are plain ACP).
     #[ts(skip)]
     #[serde(skip)]
@@ -82,6 +87,11 @@ pub enum AcpFlavor {
 }
 
 impl AcpAgentDef {
+    /// The PDT modes a session on this agent offers: all of them, but Ask for an agent that edits without asking.
+    pub fn offered_modes(&self) -> Vec<PermissionMode> {
+        PermissionMode::ALL.into_iter().filter(|m| !(self.edits_unasked && *m == PermissionMode::Ask)).collect()
+    }
+
     pub fn kind(&self) -> Option<crate::session::AgentKind> {
         crate::session::AcpAgentId::new(&self.id).map(crate::session::AgentKind::Acp)
     }
@@ -98,6 +108,7 @@ impl From<&AcpAgentConfig> for AcpAgentDef {
             env: c.env.clone(),
             modes: Vec::new(),
             base_mode: None,
+            edits_unasked: false,
             flavor: AcpFlavor::Plain,
             builtin: false,
         }
@@ -121,6 +132,7 @@ fn omp() -> AcpAgentDef {
         env: Vec::new(),
         modes: Vec::new(),
         base_mode: None,
+        edits_unasked: false,
         flavor: AcpFlavor::Omp,
         builtin: true,
     }
@@ -139,6 +151,7 @@ fn cursor() -> AcpAgentDef {
         env: Vec::new(),
         modes: vec![(PermissionMode::Plan, "plan".into())],
         base_mode: Some("agent".into()),
+        edits_unasked: true,
         flavor: AcpFlavor::Cursor,
         builtin: true,
     }
@@ -344,6 +357,10 @@ mod tests {
         assert_eq!(d.kind().unwrap().as_str(), "acp:cursor");
         assert_eq!(d.modes, vec![(PermissionMode::Plan, "plan".to_string())]);
         assert_eq!(d.base_mode.as_deref(), Some("agent"));
+        // Cursor's `agent` edits without asking: no Ask (a session in Ask runs as Accept edits).
+        use PermissionMode::*;
+        assert_eq!(d.offered_modes(), vec![AcceptEdits, Plan, Bypass]);
+        assert_eq!(find(&[], "omp").unwrap().offered_modes(), PermissionMode::ALL.to_vec());
         assert_eq!(validate(&[agent("cursor")]).unwrap_err(), AcpAgentError::DuplicateId("cursor".into()));
     }
 
