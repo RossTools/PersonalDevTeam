@@ -52,7 +52,7 @@ pub struct Config {
     /// `PDT_UPDATES_UNSUPPORTED`: why the pdt-host that started this pdtd cannot install updates (e.g. the app runs
     /// from a read-only folder, PDT-51); updates are then off with that reason.
     pub updates_unsupported: Option<String>,
-    /// `PDT_SEED=demo`: fill an empty database with demo data at startup (dev instances only; `seed.rs`).
+    /// `PDT_SEED=demo` or `website`: fill an empty database with sample data at startup (dev instances only; `seed.rs`).
     pub seed: Option<Seed>,
     /// `PDT_REHEARSAL=1` (PDT-179, `scripts/rehearse-upgrade.sh`): a dev instance on a copy of a real data dir that
     /// only migrates it and serves the API. Nothing it does reaches beyond the copy: no run or session resumes, no
@@ -64,6 +64,8 @@ pub struct Config {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Seed {
     Demo,
+    /// The website's screenshots' sample project (`seed/website.rs`).
+    Website,
 }
 
 /// Why a dev instance never updates.
@@ -153,7 +155,8 @@ impl Config {
         let seed = match lookup("PDT_SEED").as_deref().map(str::trim) {
             None => None,
             Some("demo") => Some(Seed::Demo),
-            Some(other) => bail!("PDT_SEED must be \"demo\", not {other:?}"),
+            Some("website") => Some(Seed::Website),
+            Some(other) => bail!("PDT_SEED must be \"demo\" or \"website\", not {other:?}"),
         };
         Ok(Config {
             profile,
@@ -428,6 +431,7 @@ mod tests {
         assert_eq!(seed(&[]).unwrap(), None);
         assert_eq!(seed(&[("PDT_SEED", "")]).unwrap(), None);
         assert_eq!(seed(&[("PDT_SEED", " demo ")]).unwrap(), Some(Seed::Demo));
+        assert_eq!(seed(&[("PDT_SEED", "website")]).unwrap(), Some(Seed::Website));
         assert!(seed(&[("PDT_SEED", "lots")]).is_err());
     }
 

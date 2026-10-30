@@ -17,6 +17,23 @@ org can open it).
 - The "PDT is built by PDT" numbers and the version on the landing page are counted from git at build time
   (`src/stats.mjs`; a shallow clone falls back to fixed numbers).
 
+## Screenshots
+
+The landing page's screenshots of PDT (`src/assets/screens/`: the board, a workspace, the backlog and a workflow) are
+made by a script, never edited by hand. From the repository root (macOS or Linux), after the builds:
+
+```sh
+cargo build -p pdtd && pnpm --dir web build
+pnpm --dir web exec playwright-core install chromium   # once
+node scripts/site-screenshots.mjs
+```
+
+It starts a throwaway pdtd (`scripts/scratch-daemon.sh`, so never the PDT you use) seeded with a made-up sample
+project, Acme Shop (`PDT_SEED=website`, crates/pdtd/src/seed/website.rs), with GitHub offline, secrets in memory and
+a stand-in for every agent program; takes each screen in the dark theme at 1600 px wide and device scale 2; writes
+them as WebP; and stops the daemon. Astro's `<Image>` makes the sizes the page serves. Regenerate them when the UI
+changes (the release checklist in docs/SDLC.md says when); to change what they show, change the seed.
+
 ## Local development
 
 From the repository root, after `pnpm install`:

@@ -75,6 +75,11 @@ crates/pdt-update, crates/pdt-tailscale and desktop/; AGENTS.md has the rules th
   in `<data dir>/demo` (branches, a worktree with uncommitted work) and register them with ended sessions, past runs
   and Sample App tickets (ten, plus an "Accounts" parent with three of them as parts) (crates/pdtd/src/seed.rs).
   Nothing is started; a database with any project is left alone; ignored outside the dev profile.
+  `PDT_SEED=website` (PDT-273) seeds the website's screenshots instead: one made-up project, Acme Shop (key `SHOP`), in
+  `<data dir>/website`, on the local forge, with a ticket in every Board stage (each started one with a worktree, an
+  open change request and a finished CI run on its head, so nothing is opened or run), an Accept gate in the Inbox, a
+  backlog with parts, links and an overlap, finished sessions (a Coder conversation), past runs and an enabled
+  workflow that only runs at 03:00 (crates/pdtd/src/seed/website.rs; `scripts/site-screenshots.mjs` uses it).
 
 ## Get started (PDT-230)
 
