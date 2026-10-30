@@ -34,7 +34,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - desktop/src-tauri — Tauri v2 tray app
 - site/ — the project website (Astro + Starlight; landing page, and the docs read in place from docs/), on GitHub Pages: site/README.md
 - scripts/ — release-stable, macOS signing/notarizing, sidecar staging
-- docs/ — SDLC.md, run-config.md, agent-guide.md and prompts/ (the last three are served by pdtd: edit them as product text), reference/ (how each part of PDT behaves), superpowers/ (specs, plans, notes)
+- docs/ — user/ (the user docs the website publishes; style notes in its README, no internal references: `pnpm --filter site check-docs`), SDLC.md, run-config.md, agent-guide.md and prompts/ (the last three are served by pdtd: edit them as product text), reference/ (how each part of PDT behaves), superpowers/ (specs, plans, notes)
 
 ## Commands
 - Rust: `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt`

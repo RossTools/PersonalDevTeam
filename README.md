@@ -85,6 +85,7 @@ memory when `PDT_SECRET_STORE=memory`.
 
 ## Docs
 
+- [docs/user](docs/user): the user docs (Getting started and the rest), published on the website
 - [SECURITY.md](SECURITY.md): how to report a vulnerability privately (never in a public issue)
 - [AGENTS.md](AGENTS.md): the working guide for coding agents
 - [docs/reference](docs/reference): how each part of PDT behaves (host, agent sessions, conversations, tickets,

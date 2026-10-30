@@ -5,12 +5,19 @@ The project website: a landing page and the docs, built with [Astro](https://ast
 org can open it).
 
 - `src/pages/index.astro` is the landing page (its own page, outside Starlight).
-- `src/pages/docs/index.astro` is the docs overview. The docs pages themselves are the repository's Markdown, read in
-  place from `../docs`: `agent-guide.md`, `run-config.md`, `SDLC.md` and `reference/` (the list is
-  `src/docs-pages.mjs`; `superpowers/`, `prompts/` and `ROADMAP.md` stay out). There is no copy step: edit the file
-  in `docs/` and the next deploy shows it. A page's title is its first `# heading`; relative links between published
-  docs point at their pages on the site, and links to anything else in the repository at the file on GitHub
+- `src/pages/docs/index.astro` is the docs home: a card per section of the user docs. The docs pages themselves are
+  the repository's Markdown, read in place from `../docs`: the user docs in `user/` (the main docs, at
+  `/docs/<section>/<page>/`; their sections and pages, in sidebar order, are `USER_SECTIONS` in `src/docs-pages.mjs`,
+  and `docs/user/README.md` has the style notes for writing them), plus `agent-guide.md`, `run-config.md`, `SDLC.md`
+  and `reference/` (published, but `reference/` is no longer in the sidebar). `superpowers/`, `prompts/`,
+  `ROADMAP.md` and the READMEs in `user/` stay out. There is no copy step: edit the file in `docs/` and the next
+  deploy shows it. A page's title is its first `# heading`; relative links between published docs point at their
+  pages on the site, and links to anything else in the repository at the file on GitHub
   (`src/remark-docs-links.mjs`).
+- The user docs are for people who use PDT, so `src/user-docs-check.mjs` fails on internal references in them
+  (ticket keys, code paths and source files, crate names, API routes, specs, plan phases), with an allowlist for
+  legitimate exceptions. The site's tests run it, so the `site` CI job does; `pnpm --filter site check-docs` runs it
+  alone.
 - The theme is the app's: dark first (a first visit starts dark whatever the system prefers; the theme menu can switch
   it), `#0e0f12` / `#17181d` / `#e7e8ec` with the `#3561b8` accent, Inter and JetBrains Mono served with the site
   (`src/styles/`). The logo files in `src/assets/` and `public/` are the logo set, unchanged.
@@ -25,7 +32,8 @@ From the repository root, after `pnpm install`:
 pnpm --filter site dev      # http://localhost:4321, reloads on edits to site/ and docs/
 pnpm --filter site build    # into site/dist
 pnpm --filter site preview  # serve site/dist
-pnpm --filter site test     # the link-rewriting tests
+pnpm --filter site test     # the link-rewriting tests and the user docs check
+pnpm --filter site check-docs  # the user docs check alone
 ```
 
 ## Deploys

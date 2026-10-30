@@ -12,6 +12,13 @@ test('links between published docs go to their pages', () => {
   assert.equal(rewriteLink('reference/host.md', 'SDLC.md'), '/docs/reference/host/');
 });
 
+test('the user docs are the main docs, without user/ in their paths', () => {
+  assert.equal(rewriteLink('install.md', 'user/getting-started/first-run.md'), '/docs/getting-started/install/');
+  assert.equal(rewriteLink('../automation/the-pm.md#ask', 'user/getting-started/next-steps.md'), '/docs/automation/the-pm/#ask');
+  assert.equal(rewriteLink('README.md', 'user/getting-started/install.md'), `${REPO}/docs/user/getting-started/README.md`);
+  assert.equal(rewriteLink('../README.md', 'user/getting-started/install.md'), `${REPO}/docs/user/README.md`);
+});
+
 test('the base path is kept', () => {
   assert.equal(rewriteLink('tickets.md', 'reference/agents.md', '/pdt'), '/pdt/docs/reference/tickets/');
 });
@@ -34,5 +41,8 @@ test('which docs are published', () => {
   assert.ok(!isPublished('ROADMAP.md'));
   assert.ok(!isPublished('prompts/coder.md'));
   assert.ok(!isPublished('superpowers/specs/x.md'));
+  assert.ok(isPublished('user/getting-started/install.md'));
+  assert.ok(!isPublished('user/README.md'));
   assert.equal(docId('SDLC.md'), 'docs/sdlc');
+  assert.equal(docId('user/getting-started/install.md'), 'docs/getting-started/install');
 });
