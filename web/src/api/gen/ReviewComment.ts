@@ -19,7 +19,7 @@ endLine: number,
  */
 lineText: string, body: string, 
 /**
- * `user` (agent reviewers come in Phase 7).
+ * `user`, or the persona name of the agent session that wrote it (e.g. `Reviewer`).
  */
 author: string, 
 /**

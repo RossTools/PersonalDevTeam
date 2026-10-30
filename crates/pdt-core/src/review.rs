@@ -119,7 +119,7 @@ pub struct ReviewComment {
     /// The anchored lines when the comment was made, to find them again after the file changes.
     pub line_text: String,
     pub body: String,
-    /// `user` (agent reviewers come in Phase 7).
+    /// `user`, or the persona name of the agent session that wrote it (e.g. `Reviewer`).
     pub author: String,
     /// None while a draft.
     #[ts(type = "number | null")]

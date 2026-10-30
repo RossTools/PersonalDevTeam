@@ -110,6 +110,15 @@ describe('ChangesView', () => {
     expect(await screen.findByText('Sent 1 comment to the agent.')).toBeInTheDocument();
   });
 
+  it('names who wrote each comment: the user as You, an agent by its name', async () => {
+    stub({}, changes(), [comment(), comment({ id: 'c2', parentId: 'c1', body: 'Agreed, rename it', author: 'Reviewer' })]);
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    await userEvent.click(within(await findTree()).getByText('login.ts'));
+    expect(await screen.findByText('Agreed, rename it')).toBeInTheDocument();
+    expect(screen.getByText('You')).toBeInTheDocument();
+    expect(screen.getByText('Reviewer')).toBeInTheDocument();
+  });
+
   it('says why feedback could not be sent', async () => {
     stub({ 'POST /api/worktrees/w1/feedback': new Reply(409, { code: 'no_agent_session', message: 'no agent session works on this branch; start one first' }) }, changes(), [comment()]);
     renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
