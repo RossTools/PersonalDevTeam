@@ -51,7 +51,7 @@ export const KEY_HELP: [string, string][] = [
   ['1–9', 'Go to tab N'],
   ['n / p', 'Next / previous tab'],
   ['w', 'Switch workspace'],
-  ['x', 'Close the tab (the session keeps running)'],
+  ['x', 'Close the tab (stops its session or run)'],
   ['r', 'Rename the tab'],
   ['a', 'Next session that needs you'],
   ['k', 'Command palette (also ⌘K on a Mac)'],
