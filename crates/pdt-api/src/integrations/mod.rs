@@ -665,6 +665,8 @@ pub struct IntegrationInfo {
     pub can_turn_off: bool,
     /// The projects whose forge it is, while it is on (PDT-251): a forge plugin can't be turned off while any does.
     pub forge_projects: Vec<PluginProject>,
+    /// The forge it provides (`github`, `gitlab`), whose logins its page shows (`/api/forges/{kind}/login`).
+    pub forge_kind: Option<String>,
     pub status: PluginStatus,
     /// What is failing, for [`PluginStatus::Error`]: the connection's name and its error.
     pub error: Option<String>,
@@ -828,6 +830,7 @@ fn info(
         core,
         can_turn_off: core && i.can_turn_off(),
         forge_projects,
+        forge_kind: i.forge_kind().map(|k| k.to_string()),
         status,
         error,
         error_connection,
@@ -878,6 +881,7 @@ fn infos(ints: &Integrations, facts: &PluginFacts) -> Vec<IntegrationInfo> {
             core: false,
             can_turn_off: false,
             forge_projects: vec![],
+            forge_kind: None,
             status: PluginStatus::NotBuilt,
             error: None,
             error_connection: None,
@@ -934,6 +938,12 @@ pub(crate) async fn put(
         }
         if !ids.contains(&id) {
             ids.push(id);
+        }
+    }
+    // An optional forge plugin (GitLab) turned off: not while a project's forge is its, as for GitHub (PDT-251).
+    for i in st.integrations.built() {
+        if st.integrations.is_enabled(i.id()) && !ids.iter().any(|id| id == i.id()) {
+            turn_off_check(&st, i.as_ref()).await?;
         }
     }
     let off: Vec<String> = match input.off {

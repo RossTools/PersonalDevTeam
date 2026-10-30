@@ -103,8 +103,8 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
       {p.status === 'off' && p.canTurnOff && (
         <Alert tone="info">{p.label} is off: PDT doesn’t use it for pull requests, CI or issues, and its steps, triggers, tools and built-in workflows are gone until you turn it on. Updates and bug reports still go through GitHub.</Alert>
       )}
-      {p.status === 'needs_setup' && (p.id === 'github' ? (
-        <Alert tone="warning">PDT needs your GitHub login and has none: connect GitHub below.</Alert>
+      {p.status === 'needs_setup' && (p.forgeKind ? (
+        <Alert tone="warning">PDT needs your {p.label} login and has none: connect {p.label} below.</Alert>
       ) : (
         <Alert tone="warning" action={p.connectionKinds.length > 0 && <Button size="sm" variant="primary" onClick={addFirst}>Add a connection</Button>}>
           {p.label} is on but has no connection yet, so its steps and tools can’t do anything.
@@ -126,7 +126,7 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
       {check.error && <Alert tone="error">{check.error.message}</Alert>}
       {p.status === 'not_built' && <Alert tone="warning">This PDT was built without {p.label}. It can’t be turned on here.</Alert>}
 
-      {p.id === 'github' ? <ForgeLogin kind="github" label={p.label} /> : p.connectionKinds.length > 0 && (
+      {p.forgeKind && p.built ? <ForgeLogin kind={p.forgeKind} label={p.label} /> : p.connectionKinds.length > 0 && (
         <Section
           label="Connections"
           description={p.enabled ? 'Secrets stay in this machine’s keychain.' : `Turn ${p.label} on to add connections. Those it has are kept while it is off.`}

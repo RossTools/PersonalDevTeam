@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "desktop/src-tauri"]
-default-members = ["crates/pdt-core", "crates/pdt-git", "crates/pdt-store", "crates/pdt-api", "crates/pdt-agents", "crates/pdtd", "crates/pdt-tailscale", "crates/pdt-forge", "crates/pdt-github", "crates/pdt-update", "crates/pdt-host", "crates/pdt-int-discord", "crates/pdt-int-jira", "crates/pdt-int-buildkite", "crates/pdt-int-arr", "crates/pdt-int-scryer", "crates/pdt-int-plex"]
+default-members = ["crates/pdt-core", "crates/pdt-git", "crates/pdt-store", "crates/pdt-api", "crates/pdt-agents", "crates/pdtd", "crates/pdt-tailscale", "crates/pdt-forge", "crates/pdt-github", "crates/pdt-update", "crates/pdt-host", "crates/pdt-int-discord", "crates/pdt-int-jira", "crates/pdt-int-buildkite", "crates/pdt-int-arr", "crates/pdt-int-scryer", "crates/pdt-int-plex", "crates/pdt-int-gitlab"]
 
 [workspace.package]
 version = "0.3.0"
@@ -26,6 +26,7 @@ pdt-int-buildkite = { path = "crates/pdt-int-buildkite" }
 pdt-int-arr = { path = "crates/pdt-int-arr" }
 pdt-int-scryer = { path = "crates/pdt-int-scryer" }
 pdt-int-plex = { path = "crates/pdt-int-plex" }
+pdt-int-gitlab = { path = "crates/pdt-int-gitlab" }
 
 tokio = { version = "1.53.3", features = ["full"] }
 axum = { version = "0.8.9", features = ["ws"] }

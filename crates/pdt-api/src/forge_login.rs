@@ -137,7 +137,12 @@ fn login_of(p: &dyn ForgePlugin) -> &dyn ForgeLogin {
 
 /// The OAuth App PDT's device flow uses on `kind`'s public host; empty when it has none.
 fn client_id(st: &AppState, kind: &ForgeKind) -> String {
-    if *kind == ForgeKind::GITHUB { st.github_client_id.trim().to_string() } else { String::new() }
+    let id = if *kind == ForgeKind::GITHUB {
+        st.github_client_id.as_str()
+    } else {
+        st.forge_client_ids.get(kind.as_str()).map_or("", String::as_str)
+    };
+    id.trim().to_string()
 }
 
 fn flows(st: &AppState) -> std::sync::MutexGuard<'_, HashMap<String, LoginState>> {

@@ -22,9 +22,9 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - crates/pdt-agents — PTY terminals, detached runs, the agent adapters (`adapter/{claude,codex,devin}.rs`), hooks and instructions
 - crates/pdt-api — axum routes; errors are JSON {code, message}; pdt-mcp in `mcp/`; test fakes in src/bin (`fake-agent`)
 - crates/pdt-tailscale — tailscale CLI wrapper (serve, status)
-- crates/pdt-forge — the `Forge` trait (change requests, CI, merges, reviews, issues; declared capabilities) + `FakeForge`
+- crates/pdt-forge — the `Forge` trait (change requests, CI, merges, reviews, issues; declared capabilities) + `FakeForge`; the forges' HTTP `transport` (reqwest, `Offline`, recorded answers)
 - crates/pdt-github — the GitHub forge over GitHub's REST and GraphQL APIs (no `gh`): an attempt's PR, Actions runs, merges, issues; the OAuth device-flow login
-- crates/pdt-int-* — the optional integrations (discord, jira, buildkite, arr, scryer, plex), one crate each on pdt-api's `sdk` and `Integration` trait; pdtd's cargo features, enabled per instance in Settings → Integrations (docs/reference/workflows.md "Integrations"). The only list naming them outside their crates is pdt-core `integration::KNOWN` (and pdtd's features)
+- crates/pdt-int-* — the optional integrations (discord, jira, buildkite, gitlab, arr, scryer, plex), one crate each on pdt-api's `sdk` and `Integration` trait; pdtd's cargo features, enabled per instance in Settings → Integrations (docs/reference/workflows.md "Integrations"). The only list naming them outside their crates is pdt-core `integration::KNOWN` (and pdtd's features)
 - crates/pdt-update — GitHub release client (token, verified downloads)
 - crates/pdt-host — the supervisor: runs pdtd, installs updates, rolls back
 - crates/pdtd — daemon binary (also `pdtd hook …` for agent hooks; demo seed in src/seed.rs; the integrations it is built with in src/integrations/)
@@ -68,6 +68,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - **pdt-mcp** — docs/reference/agents.md "pdt-mcp": PDT's MCP server at `/api/mcp` (per-session tokens), its tools, and how each agent gets it per launch.
 - **The PM** — docs/reference/agents.md "The PM": the host-level project manager (host project, tools only, asking before acting, briefing, notes, journal checkpoints and daily updates).
 - **Secrets** — docs/reference/secrets.md: secrets agents and workflows use but never see (keychain values, Settings → Secrets, `request_secret` and the masked Inbox form, `run_with_secrets`, `write_secret_file`, `{{secret.x}}` in workflows), redaction of stored text and logs, the audit list.
+- **GitLab** — docs/reference/gitlab.md: the GitLab forge plugin (gitlab.com and self-hosted, merge trains) and GitLab CI.
 - **GitHub** — docs/reference/github.md: the forge over GitHub's API, the in-app login (OAuth device flow or a pasted token, scopes, registering the OAuth App, Enterprise hosts), rate limits, the "Connect GitHub" Inbox item, the forge tools agents use instead of `gh`.
 - **Review** — docs/reference/review.md: the Changes view, line comments, Send feedback, Approve, Merge.
 - **Workspaces, projects, worktrees, runs** — docs/reference/workspaces.md; run configuration in docs/run-config.md.

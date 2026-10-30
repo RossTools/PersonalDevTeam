@@ -42,7 +42,9 @@ export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
   const cancel = useMutation({ mutationFn: () => api.forgeCancelDevice(kind), onSuccess: set });
   const disconnect = useMutation({ mutationFn: (host: string) => api.forgeDisconnect(kind, host), onSuccess: set });
   const confirm = useConfirm();
-  const description = `The logins PDT reads pull requests, CI and issues with, and merges and comments as: one for each ${label} host.`;
+  // What the forge calls its change requests.
+  const changes = kind === 'gitlab' ? 'merge requests' : 'pull requests';
+  const description = `The logins PDT reads ${changes}, CI and issues with, and merges and comments as: one for each ${label} host.`;
   if (!v) {
     return (
       <Section label={`${label} logins`} description={description}>
@@ -54,7 +56,7 @@ export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
   const onDisconnect = async (a: ForgeAccountView) => {
     const { ok } = await confirm({
       title: `Disconnect ${label} on ${a.host}?`,
-      body: `PDT stops following pull requests and CI, merging and commenting on ${a.host} until you connect again. The login leaves the keychain; revoke it on ${label} too if you like.`,
+      body: `PDT stops following ${changes} and CI, merging and commenting on ${a.host} until you connect again. The login leaves the keychain; revoke it on ${label} too if you like.`,
       action: 'Disconnect',
       danger: true,
     });
@@ -73,7 +75,7 @@ export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
     <Section label={`${label} logins`} description={description}>
       {v.accounts.length === 0 && (
         <Alert tone="warning" title={`${label} is not connected.`}>
-          Until it is, PDT can’t follow pull requests or CI, merge, or let agents read CI logs and comment.
+          Until it is, PDT can’t follow {changes} or CI, merge, or let agents read CI logs and comment.
         </Alert>
       )}
       {v.accounts.map((a) => (

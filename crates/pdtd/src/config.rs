@@ -31,10 +31,14 @@ pub struct Config {
     /// `PDT_TAILSCALE_BIN`: the tailscale CLI to use instead of the detected one (tests point it at a fake or at
     /// nothing, so they never reach the machine's Tailscale).
     pub tailscale_bin: Option<PathBuf>,
-    /// `PDT_GITHUB_OFFLINE=1`: the GitHub forge never reaches the network (tests set it, so they never reach GitHub).
+    /// `PDT_GITHUB_OFFLINE=1`: the forges (GitHub's, GitLab's) never reach the network (tests set it, so they never reach
+    /// GitHub).
     pub github_offline: bool,
     /// `PDT_GITHUB_CLIENT_ID`: the OAuth App Connect GitHub signs in with, instead of the built-in one.
     pub github_client_id: Option<String>,
+    /// `PDT_GITLAB_CLIENT_ID`: an OAuth application on gitlab.com (device flow on) the GitLab login's device flow
+    /// signs in with; without it, gitlab.com takes a pasted token.
+    pub gitlab_client_id: Option<String>,
     /// `PDT_RELEASE_REPO`: the GitHub repository (`owner/name`) to take updates from and file bug reports on instead
     /// of the built-in one, whatever the host setting says (PDT-195's emergency override).
     pub release_repo: Option<String>,
@@ -136,6 +140,7 @@ impl Config {
         let tailscale_bin = lookup("PDT_TAILSCALE_BIN").map(PathBuf::from);
         let github_offline = lookup("PDT_GITHUB_OFFLINE").as_deref() == Some("1");
         let github_client_id = lookup("PDT_GITHUB_CLIENT_ID").filter(|c| !c.trim().is_empty());
+        let gitlab_client_id = lookup("PDT_GITLAB_CLIENT_ID").filter(|c| !c.trim().is_empty());
         let release_repo = match lookup("PDT_RELEASE_REPO").map(|r| r.trim().to_string()) {
             None => None,
             Some(r) if r.is_empty() => None,
@@ -170,6 +175,7 @@ impl Config {
             tailscale_bin,
             github_offline,
             github_client_id,
+            gitlab_client_id,
             release_repo,
             remote_https_port,
             claude_program,

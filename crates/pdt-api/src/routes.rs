@@ -74,6 +74,9 @@ pub struct AppState {
     /// The OAuth App the device flow signs in with ([`pdt_core::brand::GITHUB_OAUTH_CLIENT_ID`], or
     /// `PDT_GITHUB_CLIENT_ID`); empty: only a pasted token.
     pub github_client_id: String,
+    /// The OAuth App the device flow signs in with on another forge's public host, by forge kind (GitLab's from
+    /// `PDT_GITLAB_CLIENT_ID`: PDT has registered none on gitlab.com yet); none: a pasted token, or the user's own app.
+    pub forge_client_ids: std::collections::HashMap<String, String>,
     /// Each forge's device flow under way, or why its last login failed.
     pub(crate) forge_logins: std::sync::Arc<crate::forge_login::ForgeLogins>,
     /// Each attempt's pull request as last seen, and the notices waiting for their agent session.
@@ -224,6 +227,7 @@ impl AppState {
             forge_logins_account,
             github_account,
             github_client_id: pdt_core::brand::GITHUB_OAUTH_CLIENT_ID.into(),
+            forge_client_ids: Default::default(),
             forge_logins: Default::default(),
             pr_watch: Default::default(),
             local_ci: Default::default(),
