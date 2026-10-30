@@ -2,7 +2,9 @@
   --pdt-bg: #f2f3f6;
   --pdt-surface: #ffffff;
   --pdt-surface-2: #e6e8ed;
-  --pdt-band: rgba(15, 16, 20, 0.02);
+  /* Striped list rows (the ticket list, on the page background): lighter than the page, so they stay apart from the
+     hover fill (surface-2) and selection (accent-soft), which are darker (PDT-272). */
+  --pdt-band: rgba(255, 255, 255, 0.7);
   --pdt-border: #d5d8df;
   /* Control edges: the off switch's track, outline buttons, checkboxes, fields. 2.38:1 on white, below WCAG's 3:1 for
      controls on purpose (the user picked the softer setting, PDT-249). */
