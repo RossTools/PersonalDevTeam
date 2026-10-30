@@ -205,12 +205,24 @@ fn kill(child: &mut Option<Child>) {
     }
 }
 
+/// The process id of another pdt-host that has recorded itself as this data folder's supervisor since this one did
+/// (PDT-213). The lock should make that impossible, but a second supervisor once ran beside the first for days, and
+/// its pdtd kept the install folder's files open so every update failed: whichever started last stays, the other
+/// steps down. No record (tests, or one that cannot be read) is not another one.
+pub fn superseded_by(data_dir: &Path) -> Option<u32> {
+    let pid = std::fs::read_to_string(crate::register::pid_path(data_dir)).ok()?.trim().parse::<u32>().ok()?;
+    (pid != std::process::id()).then_some(pid)
+}
+
 /// Returns once pdtd has gone (our child exited, or an adopted one stopped answering three times in a row), or, when
-/// `notice_requests`, once an update request appears.
+/// `notice_requests`, once an update request appears, or once another pdt-host has taken over the data folder.
 fn watch(cfg: &HostConfig, child: &mut Option<Child>, stop: &AtomicBool, notice_requests: bool) {
     let mut misses = 0;
     while !stopped(stop) {
         if notice_requests && request_path(&cfg.data_dir).exists() {
+            return;
+        }
+        if superseded_by(&cfg.data_dir).is_some() {
             return;
         }
         if child.is_some() {
@@ -277,11 +289,20 @@ fn roll_back(cfg: &HostConfig, installer: &dyn Installer, version: &str, why: &s
     }
 }
 
+/// Restores the version kept by the backup, first stopping (and logging) what still runs from the install folder: what
+/// kept the new version from installing would keep the old one from coming back too (PDT-213).
+fn rollback(cfg: &HostConfig, installer: &dyn Installer) -> Result<(), String> {
+    for note in crate::install::stopped_notes(&installer.stop_strays()) {
+        log(cfg, &note);
+    }
+    installer.rollback()
+}
+
 /// Restores the previous version and the database it had (the new version may have migrated it, and the old one
 /// cannot open a migrated database). The database is restored even when the app could not be: it suits the old
 /// version, and the new one simply migrates it again.
 fn restore_previous(cfg: &HostConfig, installer: &dyn Installer) -> Result<(), String> {
-    let app = installer.rollback();
+    let app = rollback(cfg, installer);
     let db = dbsnap::restore(&cfg.data_dir).map_err(|e| format!("restoring the database: {e}"));
     match &db {
         Ok(true) => log(cfg, "restored the database from before the update"),
@@ -332,6 +353,13 @@ fn handle_update(
             format!("Update to v{v} was not installed: the running version did not stop"),
         );
     }
+    match installer.prepare() {
+        Ok(notes) => notes.iter().for_each(|n| log(cfg, n)),
+        Err(e) => {
+            log(cfg, &format!("install failed: {e}"));
+            return finish(UpdateOutcome::Failed, format!("Update to v{v} was not installed: {e}"));
+        }
+    }
     log(cfg, &format!("installing {v} (from {})", req.from_version));
     // Before anything changes, so a rollback can always put the database back as the running version knew it.
     if let Err(e) = dbsnap::take(&cfg.data_dir) {
@@ -350,7 +378,10 @@ fn handle_update(
         log(cfg, &format!("could not write the install marker: {e}"));
         return finish(UpdateOutcome::Failed, format!("Update to v{v} failed: could not record the install: {e}"));
     }
-    if let Err(e) = installer.install(&req.asset) {
+    if let Err(e) = installer.install(&req.asset).and_then(|()| {
+        // A reinstall of the running version leaves the same files, as it should.
+        if req.version == req.from_version { Ok(()) } else { installer.verify() }
+    }) {
         let (outcome, message) = roll_back(cfg, installer, v, &e);
         return finish(outcome, message);
     }
@@ -420,7 +451,7 @@ fn recover(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool) -> bo
                     return false;
                 }
                 log(cfg, &format!("{} is missing; restoring the previous version", cfg.pdtd_path().display()));
-                if let Err(e) = installer.rollback() {
+                if let Err(e) = rollback(cfg, installer) {
                     log(cfg, &format!("restoring the previous version failed: {e}"));
                 }
             }
@@ -455,8 +486,9 @@ fn restart_if_started_differently(cfg: &HostConfig, version: &str, stop: &Atomic
     false
 }
 
-/// Runs until `stop` is set (tests); in production it runs for the life of the process. `after_install` is called
-/// after a successful install (pdt-host's main uses it to replace itself last).
+/// Runs until `stop` is set (tests), or until another pdt-host records itself as this data folder's supervisor
+/// ([`superseded_by`]); in production it otherwise runs for the life of the process. `after_install` is called after
+/// a successful install (pdt-host's main uses it to replace itself last).
 pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after_install: &dyn Fn()) {
     let mut current = cfg.clone();
     let mut failures = 0u32;
@@ -467,6 +499,12 @@ pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after
     // A pdtd found running is checked once per host start (no restart loop).
     let mut env_checked = false;
     while !stopped(stop) {
+        if let Some(pid) = superseded_by(&cfg.data_dir) {
+            // Our pdtd keeps running: the other pdt-host adopts it (or, if it runs its own, this one's exits on the
+            // data folder's lock).
+            log(cfg, &format!("another pdt-host (process {pid}) supervises this data folder now; exiting"));
+            return;
+        }
         // Settings → Network's port, for the next pdtd (PDT-231).
         if child.is_none() {
             let before = current.port;
@@ -541,7 +579,10 @@ pub fn run(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool, after
         }
         let started = Instant::now();
         watch(cfg, &mut child, stop, !ignore_requests);
-        if stopped(stop) || (!ignore_requests && request_path(&cfg.data_dir).exists()) {
+        if stopped(stop)
+            || (!ignore_requests && request_path(&cfg.data_dir).exists())
+            || superseded_by(&cfg.data_dir).is_some()
+        {
             continue;
         }
         if started.elapsed() >= cfg.backoff.reset_after {

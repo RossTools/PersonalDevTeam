@@ -38,6 +38,37 @@ pub fn registered_program(os: Os, cfg: &HostConfig) -> PathBuf {
     if os == Os::Windows { installed_host_path(&cfg.data_dir) } else { bundled_host_path(&cfg.install_dir) }
 }
 
+/// Windows: the data folder copy a `run` started from the install folder (by the tray while the copy was being
+/// replaced, or by hand) hands over to, so pdt-host never runs from the folder an update replaces (PDT-213). `None`
+/// when it should supervise itself: another OS, the dev profile, no copy yet (first run), or it is the copy.
+pub fn copy_to_hand_over_to(os: Os, cfg: &HostConfig, exe: &Path) -> Option<PathBuf> {
+    if os != Os::Windows || cfg.dev {
+        return None;
+    }
+    let same = |a: &Path, b: &Path| match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    };
+    let copy = installed_host_path(&cfg.data_dir);
+    (copy.is_file() && same(exe, &bundled_host_path(&cfg.install_dir)) && !same(exe, &copy)).then_some(copy)
+}
+
+/// The arguments the data folder copy is started with by a `run` handing over to it: this `run`'s, with the install
+/// folder it resolved always named (without `--install-dir`, the copy would take its own folder for it).
+pub fn hand_over_args(args: &[String], install_dir: &Path) -> Vec<OsString> {
+    let mut out: Vec<OsString> = vec!["run".into()];
+    let mut rest = args.iter();
+    while let Some(a) = rest.next() {
+        if a == "--install-dir" {
+            rest.next();
+        } else {
+            out.push(a.into());
+        }
+    }
+    out.extend(["--install-dir".into(), install_dir.as_os_str().to_owned()]);
+    out
+}
+
 pub fn launch_agent_path(home: &Path) -> PathBuf {
     home.join("Library").join("LaunchAgents").join(format!("{HOST_LABEL}.plist"))
 }
@@ -658,6 +689,38 @@ mod tests {
 
     fn target(s: &Setup, os: Os) -> Target<'_> {
         Target { os, exe: &s.exe, home: Some(&s.home), config: Some(&s.config), replace: false }
+    }
+
+    #[test]
+    fn windows_hands_over_from_the_install_folder_to_the_data_folder_copy() {
+        let mut s = setup();
+        let installed = bundled_host_path(&s.cfg.install_dir);
+        let copy = installed_host_path(&s.cfg.data_dir);
+        std::fs::write(&installed, "host").unwrap();
+        assert_eq!(copy_to_hand_over_to(Os::Windows, &s.cfg, &installed), None, "no copy yet: it runs itself");
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        std::fs::write(&copy, "host").unwrap();
+        assert_eq!(copy_to_hand_over_to(Os::Windows, &s.cfg, &installed), Some(copy.clone()));
+        assert_eq!(copy_to_hand_over_to(Os::Windows, &s.cfg, &copy), None, "the copy runs itself");
+        assert_eq!(copy_to_hand_over_to(Os::Windows, &s.cfg, &s.exe), None, "a build elsewhere runs itself");
+        assert_eq!(copy_to_hand_over_to(Os::Mac, &s.cfg, &installed), None);
+        assert_eq!(copy_to_hand_over_to(Os::Linux, &s.cfg, &installed), None);
+        s.cfg.dev = true;
+        assert_eq!(copy_to_hand_over_to(Os::Windows, &s.cfg, &installed), None, "the dev profile runs itself");
+    }
+
+    #[test]
+    fn the_copy_always_gets_the_install_folder() {
+        let dir = std::env::temp_dir().join("P D T");
+        let want = |extra: &[&str]| {
+            let mut v: Vec<OsString> = vec!["run".into()];
+            v.extend(extra.iter().map(OsString::from));
+            v.extend(["--install-dir".into(), dir.clone().into_os_string()]);
+            v
+        };
+        assert_eq!(hand_over_args(&[], &dir), want(&[]), "started by hand, without --install-dir");
+        let given = ["--install-dir".to_string(), "elsewhere".to_string(), "--x".to_string()];
+        assert_eq!(hand_over_args(&given, &dir), want(&["--x"]), "the resolved folder replaces the given one");
     }
 
     /// Holds the data folder's pdt-host lock, as a running pdt-host does.
