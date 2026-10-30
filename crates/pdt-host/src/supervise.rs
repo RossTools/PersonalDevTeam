@@ -289,11 +289,20 @@ fn roll_back(cfg: &HostConfig, installer: &dyn Installer, version: &str, why: &s
     }
 }
 
+/// Restores the version kept by the backup, first stopping (and logging) what still runs from the install folder: what
+/// kept the new version from installing would keep the old one from coming back too (PDT-213).
+fn rollback(cfg: &HostConfig, installer: &dyn Installer) -> Result<(), String> {
+    for note in crate::install::stopped_notes(&installer.stop_strays()) {
+        log(cfg, &note);
+    }
+    installer.rollback()
+}
+
 /// Restores the previous version and the database it had (the new version may have migrated it, and the old one
 /// cannot open a migrated database). The database is restored even when the app could not be: it suits the old
 /// version, and the new one simply migrates it again.
 fn restore_previous(cfg: &HostConfig, installer: &dyn Installer) -> Result<(), String> {
-    let app = installer.rollback();
+    let app = rollback(cfg, installer);
     let db = dbsnap::restore(&cfg.data_dir).map_err(|e| format!("restoring the database: {e}"));
     match &db {
         Ok(true) => log(cfg, "restored the database from before the update"),
@@ -442,7 +451,7 @@ fn recover(cfg: &HostConfig, installer: &dyn Installer, stop: &AtomicBool) -> bo
                     return false;
                 }
                 log(cfg, &format!("{} is missing; restoring the previous version", cfg.pdtd_path().display()));
-                if let Err(e) = installer.rollback() {
+                if let Err(e) = rollback(cfg, installer) {
                     log(cfg, &format!("restoring the previous version failed: {e}"));
                 }
             }

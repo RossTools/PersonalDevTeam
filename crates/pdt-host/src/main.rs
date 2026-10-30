@@ -124,7 +124,7 @@ fn use_the_bundle(cfg: &HostConfig, exe: &std::path::Path, bundled: &std::path::
 fn hand_over_to_copy(cfg: &HostConfig, copy: &std::path::Path, args: &[String]) {
     log(cfg, &format!("started from the install folder; handing over to {}", copy.display()));
     let mut cmd = std::process::Command::new(copy);
-    cmd.arg("run").args(args);
+    cmd.args(pdt_host::register::hand_over_args(args, &cfg.install_dir));
     pdt_host::process::detached_no_window(&mut cmd);
     match cmd.spawn() {
         Ok(_) => std::process::exit(0),

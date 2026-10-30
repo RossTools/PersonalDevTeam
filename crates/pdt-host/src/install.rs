@@ -19,6 +19,11 @@ pub trait Installer {
     fn prepare(&self) -> Result<Vec<String>, String> {
         Ok(Vec::new())
     }
+    /// Stops what still runs from the install folder and would keep files from being replaced (Windows); returns what
+    /// it stopped, for the log. Called by `prepare`, and by pdt-host before every `rollback`.
+    fn stop_strays(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// Keeps what is needed to restore the current version. Changes nothing that runs: after an error nothing has
     /// changed and the update is abandoned.
     fn backup(&self) -> Result<(), String>;
@@ -183,13 +188,16 @@ impl Installer for NsisInstaller {
     /// Stops any pdtd or pdt-host still running from the install folder (PDT-213: a second pdt-host's pdtd kept
     /// pdtd.exe open, so the silent installer "succeeded" without replacing it), then checks pdtd can be replaced.
     fn prepare(&self) -> Result<Vec<String>, String> {
-        let stopped = stop_strays(&self.install_dir);
-        let notes = stopped.iter().map(|p| format!("stopped {p}, which ran from the install folder")).collect();
+        let stopped = self.stop_strays();
+        let notes = stopped_notes(&stopped);
         if let Some(e) = wait_replaceable(&self.daemon(), Duration::from_secs(10)) {
             let stopped = if stopped.is_empty() { String::new() } else { format!(" (stopped {})", stopped.join(", ")) };
             return Err(format!("{} is in use by another program{stopped}: {e}", self.daemon().display()));
         }
         Ok(notes)
+    }
+    fn stop_strays(&self) -> Vec<String> {
+        stop_strays(&self.install_dir)
     }
     fn backup(&self) -> Result<(), String> {
         replace_dir(&self.install_dir, &self.backup).map_err(|e| format!("backing up the install folder: {e}"))
@@ -205,13 +213,16 @@ impl Installer for NsisInstaller {
     }
     fn rollback(&self) -> Result<(), String> {
         let _tray = TrayPause::stop(&self.install_dir);
-        // What kept the new version from installing would keep the old one from coming back too.
-        stop_strays(&self.install_dir);
         replace_dir(&self.backup, &self.install_dir).map_err(|e| format!("restoring the previous version: {e}"))
     }
     fn backup_path(&self) -> Option<PathBuf> {
         Some(self.backup.clone())
     }
+}
+
+/// The log lines for the processes `Installer::stop_strays` stopped.
+pub fn stopped_notes(stopped: &[String]) -> Vec<String> {
+    stopped.iter().map(|p| format!("stopped {p}, which ran from the install folder")).collect()
 }
 
 /// An error when the installed pdtd is byte for byte the one backed up: the installer reported success without
