@@ -3,6 +3,47 @@
 What changed for people who use PDT, newest first. Each section is compiled from the changelog fragments the pull
 requests added (`.changes/`; docs/SDLC.md "Changelog") by `scripts/changelog.sh <version>`.
 
+## 0.4.0 (2026-10-30)
+
+### Added
+
+- Grok Build (xAI's `grok` CLI) is now a built-in agent: once `grok` is installed and signed in, pick "Grok" anywhere you pick an agent, including personas for workflow steps. It runs as a conversation, and PDT keeps Ask, Accept edits, Plan and Bypass for it by answering Grok's permission requests.
+- Cursor is now a built-in agent: once the Cursor CLI is installed and signed in (`agent login`), pick "Cursor" anywhere you pick an agent (a new tab, ticket Start, personas) to run it as a conversation, with PDT's tools, its command and edit approvals, its questions and its plans in PDT. Cursor edits files without asking, so it offers Accept edits, Plan and Bypass, and a session or persona set to Ask runs as Accept edits (commands still ask). On Cursor's Free plan, pick the Auto model.
+- OhMyPi (`omp`) is now a built-in agent: once `omp` is installed and has a model, pick "OhMyPi" anywhere you pick an agent (a new tab, ticket Start, personas) to run it as a conversation, with its questions in PDT. It asks before commands, deletes and moves; its other file edits run without asking, even in Ask mode. Errors from ACP agents now show their details (such as omp's "No model selected") instead of just "Internal error".
+- Google Antigravity is a built-in agent. In Settings → Agents, Install gets Google's Antigravity ACP server (checked against the ACP registry), Sign in uses your Google account, and then you can pick Antigravity for conversations and personas, with its models in the model picker.
+- GitLab plugin: projects on gitlab.com or your own GitLab server can use GitLab as their forge. Turn it on in Settings → Plugins → GitLab and sign in with an access token; PDT then follows each ticket's merge request and its GitLab CI pipelines, tells agents about failed jobs with their logs, and merges when the pipeline succeeds (on the merge train, where the project has merge trains on).
+- The GitHub plugin can be turned off in Settings → Plugins when none of your projects uses GitHub as its forge: PDT stops using GitHub for pull requests, CI and issues, and its workflow steps, triggers, built-in workflows and the Connect GitHub notice go away until you turn it back on (updates and bug reports still go through GitHub). While a project still uses GitHub, its page says which one.
+- Settings → Agents → Default models sets the model each agent starts with (for example Claude on Opus): new conversations, workflow steps, the PM and fresh Claude and Codex terminals use it unless the conversation or its persona picks a model, and the composer's picker shows it as "Default (Opus)".
+- A security policy (SECURITY.md): report vulnerabilities privately through GitHub's "Report a vulnerability" or to security@pdt.dev, never in a public issue.
+- Workflows can react to pull requests PDT didn't open on your projects' GitHub repositories: new triggers fire when one is opened (from a fork, by Dependabot or another bot), pushed to, or closed. They carry the author's kind, fork, size and, for Dependabot, whether the update is major, minor or patch; their title and body are treated as outside input, like new issues.
+- A new workflow template, Review outside pull requests: each pull request someone outside your repository (or a bot) opens gets a ticket, a locked-down PR Reviewer reviews it from GitHub's diff without checking it out, and your Inbox asks you to Approve & merge, Request changes or Close; nothing is posted on the pull request until you choose. Dependabot's patch and minor updates merge on their own once CI passes. It is on by default for PDT's own repository.
+- Settings → Agents has an on/off switch for each agent, including installed ones and ACP agents. A switched-off agent is no longer offered anywhere (ticket Start, new tab, the palette, personas, Get started) and no new session or workflow step starts on it; sessions already running carry on.
+- The website has a Plugins page: every plugin PDT comes with, by category like Settings › Plugins, with a page for each saying what it needs, its workflow triggers and steps and its tools. The media plugins have a page of their own, and "Request a plugin" opens an issue.
+- Install PDT with one command: `curl -fsSL https://pdt.dev/install.sh | sh` on macOS and Linux, `irm https://pdt.dev/install.ps1 | iex` on Windows. It picks the right release for your system (or a nightly build, or an exact version), checks it against the release's checksums and sets PDT up to start at login, without admin rights. The website shows the command for your system, with tabs for the others.
+
+### Changed
+
+- The favicon's blue dot now lights up only for conversations and terminals you started (and unread PM replies): agentic ticket steps (Coder, Reviewer, QA…) finishing no longer turn it on. They still show the red dot when they need you.
+- Finished Triage and other workflow-step sessions with no ticket no longer pile up in the Agents list. They are kept: open one from its workflow run's step with the new Open session button.
+- The website's Contributing section now has a short developer guide (how PDT is built, the rules a change must keep, and how its tests run) alongside how we work on PDT; the long per-part reference pages are gone.
+- Experimental builds are now nightly builds: a new pre-release of the latest code is published every night it changed (`vX.Y.Z-nightly.YYYYMMDD`), and the newest 14 are kept. The update channel is now called **Nightly builds too**; a host set to the experimental channel is on it already and gets the next nightly without any change.
+- The Agents list no longer shows the sessions a workflow starts for a ticket (Coder, Reviewer, QA and the like), running or finished. Open them from the ticket's Sessions or from the workflow run's step; one that needs you still shows in the Inbox. Sessions you start yourself stay listed.
+
+### Fixed
+
+- A message you send to a workflow step's session just as PDT closes it after the step's outcome is no longer lost: the session stays open until the agent has answered it, or reopens to take it.
+- A workflow's Dry run no longer fails at a step that reads what an earlier action would have made (such as the ticket PDT bug triage imports): the action's output gets stand-ins like `<ticketId>`, and the dry run goes on to the end.
+- On Windows, updates no longer fail over and over because a second pdt-host was running from the install folder and kept `pdtd.exe` open. Only one pdt-host now supervises a data folder, the updater stops anything still running from the install folder before installing, and an installer that leaves the old `pdtd.exe` in place is reported as such rather than as a failed health check. The keychain timeout message only mentions macOS on a Mac.
+- Restarting a web run, or remote access restarting one that uses `$PDT_RUN_HOST`, keeps it on its port on Windows instead of sometimes moving it to another one because the stopped server had not let go of the port yet.
+- A terminal Codex session that asks for approval again right after you answer it now shows "needs you" instead of sometimes staying "working".
+- A GitHub login made with an OAuth App whose tokens expire (your own app, or one on GitHub Enterprise) no longer dies after 8 hours: PDT renews the token before it expires, and Settings › Plugins › GitHub shows when it does. If GitHub refuses to renew it, the Inbox asks you to reconnect.
+- After an update that changes how PDT's host starts the server (like 0.2 → 0.3, which left Settings → Network → Port locked as "Set by PDT_PORT"), PDT now restarts the server once with the right settings, so you no longer need to restart it by hand.
+- On a phone, writing a note or a todo's notes with the keyboard open no longer leaves an empty band between the last line and the keyboard, and tapping the space below the text puts the cursor at its end.
+- Opening a ticket by its key (a `/tickets/PDT-18` link, a key in a description, a notification) no longer says "Ticket not found" for tickets that other tickets mention, and searching for a key lists that ticket first.
+- In light mode, the ticket list's alternate rows are now easy to tell apart, and a hovered or selected row still stands out from them.
+- The Changes view names who wrote each line comment: your own show as "You", and an agent's (such as the Reviewer's) show its name instead of "You".
+- PDT's nightly releases are scheduled for 08:17 UTC instead of the top of the hour, which GitHub often delays or skips. When a night's nightly still isn't out by 10:00 UTC though `main` changed, a host that builds PDT now puts "Tonight's nightly didn't run" in the Inbox, with Start it, and the item clears itself once a nightly is published.
+
 ## 0.3.0 (2026-10-29)
 
 ### Added
