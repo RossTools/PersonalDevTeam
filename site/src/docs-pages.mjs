@@ -25,8 +25,8 @@ export const USER_SECTIONS = [
   {
     dir: 'automation',
     label: 'Automation',
-    summary: 'Workflows, the PM, personas and approvals, plugins, and how Run and Test start your project.',
-    pages: ['workflows', 'the-pm', 'personas-and-approvals', 'plugins', 'run-configuration'],
+    summary: 'Workflows, the PM, personas and approvals, plugins, how Run and Test start your project, and outside contributions.',
+    pages: ['workflows', 'the-pm', 'personas-and-approvals', 'plugins', 'run-configuration', 'outside-contributions'],
   },
   {
     dir: 'your-machine',
