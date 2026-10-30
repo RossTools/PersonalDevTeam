@@ -253,10 +253,11 @@ next nightly.
 - **A night that never ran**: GitHub sometimes never starts a scheduled run at all, so there is no failed run to
   report. The maintainer's own "PDT missing nightly" workflow (the "Report a missing scheduled release" template does
   the same for any repository) looks at 10:00 UTC: when `main` has commits that the newest nightly and the latest
-  stable release lack, and no nightly for the day (UTC) is published, the Inbox says "Tonight's nightly didn't run", once a day, with a link to the release workflow's runs and **Start
-  it** (runs the release workflow with channel `nightly` as your GitHub login; when that fails, the Inbox says so and
-  links GitHub's Run workflow). It looks again every half hour, and the item closes by itself once a nightly for the
-  day is published (after about a day it gives up). Days `main` didn't change say nothing.
+  stable release lack, and no nightly for the day (UTC) is published, the Inbox says "Tonight's nightly didn't run",
+  once a day, with a link to the release workflow's runs and **Start it** (runs the release workflow with channel
+  `nightly` as your GitHub login; when that fails, the Inbox says so and links GitHub's Run workflow). It looks again
+  every half hour, and the item closes by itself once a nightly for the day is published (after about a day it gives
+  up). Days `main` didn't change say nothing.
 - **Re-runs**: re-running the failed jobs reuses the tag; re-running every job of a manual run makes the day's next
   build. A run that failed before publishing leaves its tag behind (the next scheduled run on the same commit builds
   it again), so the day's numbers may skip one.
