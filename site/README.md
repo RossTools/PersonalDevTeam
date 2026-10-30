@@ -12,8 +12,8 @@ org can open it).
 - `src/pages/docs/index.astro` is the docs home: a card per section of the user docs. The docs pages themselves are
   the repository's Markdown, read in place from `../docs`: the user docs in `user/` (the main docs, at
   `/docs/<section>/<page>/`; their sections and pages, in sidebar order, are `USER_SECTIONS` in `src/docs-pages.mjs`,
-  and `docs/user/README.md` has the style notes for writing them), plus `agent-guide.md`, `run-config.md`, `SDLC.md`
-  and `reference/` (published, but `reference/` is no longer in the sidebar). `superpowers/`, `prompts/`,
+  and `docs/user/README.md` has the style notes for writing them), plus `agent-guide.md` and `run-config.md` (under Guides), and the
+  developer guide in `dev/` with `SDLC.md` (under Contributing, after its own page: `DEVELOPER_PAGES`). `superpowers/`, `prompts/`,
   `ROADMAP.md` and the READMEs in `user/` stay out. There is no copy step: edit the file in `docs/` and the next
   deploy shows it. A page's title is its first `# heading`; relative links between published docs point at their
   pages on the site, and links to anything else in the repository at the file on GitHub
@@ -25,6 +25,12 @@ org can open it).
 - The theme is the app's: dark first (a first visit starts dark whatever the system prefers; the theme menu can switch
   it), `#0e0f12` / `#17181d` / `#e7e8ec` with the `#3561b8` accent, Inter and JetBrains Mono served with the site
   (`src/styles/`). The logo files in `src/assets/` and `public/` are the logo set, unchanged.
+- `src/pages/plugins/` are the Plugins pages, outside Starlight in the landing page's frame
+  (`src/layouts/Landing.astro`): `/plugins/` lists every plugin by category, as the app's Settings › Plugins does,
+  but the media ones, which are on `/plugins/media/`; each plugin has its page, `/plugins/<id>/`. They read
+  `src/data/plugins.json`, which pdtd's integrations tests write from the same code the app lists its plugins from
+  (`cargo test -p pdtd`): never edit it by hand. CI's check that generated files are committed fails when it is
+  stale. "Request a plugin" opens the `plugin.yml` issue template.
 - The "PDT is built by PDT" numbers and the version on the landing page are counted from git at build time
   (`src/stats.mjs`; a shallow clone falls back to fixed numbers).
 
