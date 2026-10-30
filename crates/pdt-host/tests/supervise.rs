@@ -456,7 +456,9 @@ fn an_installer_that_did_not_replace_pdtd_is_rolled_back() {
     let r = read_result(&data);
     assert_eq!(r.outcome, UpdateOutcome::RolledBack, "{}", r.message);
     assert!(r.message.contains("the installer did not replace pdtd"), "{}", r.message);
-    assert!(!read(&log_path(&cfg)).contains("health check"), "{}", read(&log_path(&cfg)));
+    // Not the update's health check (pdt-host's own startup check may have logged one, which is unrelated).
+    assert!(!r.message.contains("health check"), "{}", r.message);
+    assert!(!read(&log_path(&cfg)).contains("failed its health check"), "{}", read(&log_path(&cfg)));
     wait_version(port, "0.1.5", Duration::from_secs(30));
 }
 
