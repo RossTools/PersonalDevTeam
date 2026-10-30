@@ -138,6 +138,9 @@ web `src/workflows/`, `src/inbox/`, `src/personas/` and `web/ui/FlowGraph.tsx`.
     bug; a comment names it and the ticket), or `not_planned` naming the ticket when there is none → a
     `ticket.comment` on the existing ticket noting the extra report; no ticket is made. `reject` → `github.close`
     `not_planned` with the reason → `inbox.notice` (no attempt) so the user can overrule it (reopen and import).
+  - **PDT pull request review** (PDT-269; like PDT bug triage, installed, on, and offered as a template only where
+    a project's repository is `RELEASE_REPO`): the **Review outside pull requests** template (below) with its
+    defaults, host-wide, its triggers' `repos` `[RELEASE_REPO]` (`outside_prs::pdt_doc`).
   - **Done closes the GitHub issue** (on, PDT-154): `ticket.stage_changed` to `done` (→ `github.close` `completed`,
     commenting "Fixed in <key>; it ships in the next PDT release") or `wont_do` (→ `not_planned`, with a comment),
     both where `githubIssue` exists and with `runKey` `{{trigger.ticketId}}`: once per ticket, so moving it again
@@ -258,7 +261,7 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | one trigger per event type; `manual` (Run now, sub-workflows) — config `projects`, `where`, `runKey` | `out` |
 | `condition` (`conditions`, `match: all \| any`) | `true`, `false` |
 | `switch` (`value`, `cases [{port, equals}]`) | each case, `default` |
-| `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`, `inbox: gate \| accept`, `pipelineStage`, `approve`, `event {type, also, where, any}`: an event that ends the question, closing its Inbox item) | each choice, `unanswered`, `timeout`, `event` (with `event`) |
+| `gate` (`question`, `choices`, `ahead [{when, choice}]`, `ask: wait \| skip`, `timeoutMs`, `inbox: gate \| accept`, `pipelineStage`, `approve`, `ticket`: the ticket it is about when the run has none, PDT-269 (the Inbox item's, and where the user's note goes), `event {type, also, where, any}`: an event that ends the question, closing its Inbox item) | each choice, `unanswered`, `timeout`, `event` (with `event`) |
 | `agent` (`persona`, `prompt`, `outcomes [{id, description}]`, `session: new \| reuse \| own`, `ticket`, `attempt`, `maxTurns`, `maxRuntimeMs`, `nudges`, `backgroundWaitMs`, `loopLimit`, `owner: agent \| user`, `pipelineStage`; below) | each outcome (`dynamicPorts`), `timeout`, `stopped` |
 | `wait` (`ms`, `until`, or `event {type, also, where, any}` with `timeoutMs`; `also`: more event types that end it, `any`: with `where`, one of these holds too, PDT-151; `pipelineStage`) | `done`, `event`, `timeout` |
 | `workflow.call` (`workflow`, `input`) | `done`, `failed` |
@@ -275,7 +278,7 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `schedule` (`every` or `cron` + `timezone`, `catchUp`, `where`, `runKey`; fires on its own `schedule.fired`) | `out` |
 | `webhook` (`hook`: a `webhook` connection, `where`, `runKey`; its own `webhook.received`) | `out` |
 | `github.issue.opened` (`repos`, else the projects' repos; `projects`, `where`, `runKey`) | `out` |
-| `github.pull_request.opened`, `.pushed`, `.closed` (`kinds`: `outside`, `bot`, `collaborator`, empty for outsiders' and bots'; `projects`, `where`, `runKey`) | `out` |
+| `github.pull_request.opened`, `.pushed`, `.closed` (`kinds`: `outside`, `bot`, `collaborator`, empty for outsiders' and bots'; `projects`; `repos`: `owner/name`, any case, PDT-269; `where`, `runKey`) | `out` |
 | `command` (`program` and `args`, or `script` and `shell: sh \| bash \| zsh \| pwsh`; `cwd: scratch \| project \| attempt \| <full path>`, `input`, `env`, `parse: json \| text`) | `out` |
 | `http.request` (`connection`, `method`, `url`, `headers`, `query`, `body`, `expect: 2xx \| any \| [codes]`) | `out` |
 | `discord.post` (`connection`: `discord_webhook`, `content`, `username`, `embeds`, `thread`) | `out` |
@@ -299,8 +302,12 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `github.comment` (`repo` + `number`, or `ticket`: its linked issue; `body`) | `out`, `unlinked` |
 | `github.close` (`repo` + `number`, or `ticket`; `reason: completed \| not_planned \| duplicate`, `duplicateOf` with `duplicate`, `comment`, `labels`) | `out`, `unlinked` |
 | `github.create_issue` (`ticket`, or `project`; `title`, `body`, `labels`; PDT-221) | `filed` |
+| `github.pr.ticket` (`repo`, `number`, `project`, `title`, `url`, `author`, `body`, `create` default true; PDT-269; output `ticketId`, `ticketKey`, `pr`, `stage`, `closed`) | `created`, `exists`, `none` |
+| `github.pr.merge` (`repo`, `number`, `headSha`; PDT-269) | `queued`, `merged`, `refused` |
+| `github.pr.review` (`repo`, `number`, `verdict: request_changes \| comment \| approve`, `body`, `fallback`; PDT-269) | `out` |
+| `github.pr.close` (`repo`, `number`, `comment`; PDT-269) | `out` |
 | `github.workflow.run` (`repo`: default the run's project's, `workflow`: its file, `ref` default `main`, `inputs`; PDT-194) | `out` |
-| `github.change_request` (`repo`, `branch` or `number`, `dryRunPort`; PDT-194; output `number`, `url`, `title`, `state`, `merged`, `headSha`) | `open`, `merged`, `closed`, `none` |
+| `github.change_request` (`repo`, `branch` or `number`, `ci` (with `branch`; both with a number), `dryRunPort`; PDT-194; output `number`, `url`, `title`, `state`, `merged`, `headSha`, with `ci` also `ci`, `failure`, `ciUrl`, `failedJobs`). With `ci` and a number whose pull request is not the branch's newest (another fork's branch of the same name, PDT-269), CI is read on that pull request's own head | `open`, `merged`, `closed`, `none`, `failed` (with `ci`) |
 | `github.release` (`repo`, `tag` or the latest, `newerThan`, `prereleases`; PDT-194; output `tag`, `name`, `url`, `publishedAt`) | `found`, `none` |
 | `buildkite.retry` (`connection`, `build`: a build URL, or a number with `pipeline`) | `out` |
 | `buildkite.trigger` (`connection`, `pipeline`, `branch`, `commit` default `HEAD`, `message`, `env`) | `out` |
@@ -385,6 +392,20 @@ notify itself forever.
   labels}`. Neither is run again on its own. `github.create_issue` (an action, also the `issue_create` tool) files an
   issue through the project's forge, from `ticket` (which then links it) or in `project`'s repository
   ([github.md](github.md) "Filing issues").
+- Pull request actions (`workflow/nodes/outside_pr.rs`, PDT-269) act on a pull request PDT didn't open, through the
+  same GitHub forge, and never push to its branch. `github.pr.ticket` finds the ticket linked to it (`owner/name#12`,
+  the key an issue's would have: they share numbers) or makes an external Draft in `project` (title the pull
+  request's, description its text then "Pull request by @author: <url>"), recording the run's outside input on it;
+  without `create` one with no ticket leaves by `none` (quiet); a dry run's ticket is blank. `github.pr.merge` reads
+  the pull request: merged already is `merged`, closed, a draft or conflicting is `refused` (`code` `closed`,
+  `draft`, `conflict`, `missing`, or `forge` for a merge GitHub refuses, with `reason`), one already set to merge is
+  `queued`. With `headSha` (the commit approved) a head that moved is `refused` with `code` `head_moved`. Otherwise it
+  asks for the repository's strategy (none with a merge queue) and `Forge::merge_head` (auto-merge, the merge queue,
+  or a merge at once when GitHub can; GitHub gets the commit as `expectedHeadOid`, or `sha` for a merge at once, so a
+  push in between is refused there too), then `merged` or `queued`. `github.pr.review` submits a
+  review (`POST …/pulls/{n}/reviews`) with `body`, else `fallback` (one of them must come to text); output `{url,
+  verdict, body}`. `github.pr.close` posts `comment`, then closes it (`PATCH …/pulls/{n}` `state: closed`); one not
+  open counts as done (quiet, `alreadyClosed`). Neither of the last two is run again on its own.
 - Release actions (`workflow/nodes/release.rs`, PDT-194) go through the GitHub forge too (its `releases` capability
   for the workflow and release calls). Without `repo` they use the run's project's GitHub repository (its forge; a
   project not on GitHub is an error), so a host-wide workflow runs them in the project its Run now input names
@@ -628,9 +649,30 @@ Pipeline (below), New GitHub issues to Discord (7e; PDT-226 removed the template
 Brief follow-ups and Email processing; workflows made from them stay as they are), Triage new GitHub issues (PDT-81: `github.issue.opened` → an `agent` step of the
 locked-down Triage persona by default (PDT-201, [agents.md](agents.md)), `{{params.persona}}`, with outcomes `drafted` (it made a draft ticket in `{{params.project}}` with
 `create_ticket`, which asks first unless the project lets the PM act; an external Draft; `data` `{ticket}` its key →
-`inbox.admit`, PDT-225), `duplicate` and `ignored`, the last quiet), and
+`inbox.admit`, PDT-225), `duplicate` and `ignored`, the last quiet), Review outside pull requests (below), and
 the built-in workflows (PDT bug triage only where a project is PDT's own repository). A required text param with no default is checked as
 the reference itself. The user's are in `workflow_templates`.
+
+**Review outside pull requests** (`builtin:review-outside-prs`, category `issues`, PDT-269; `workflow/outside_prs.rs`):
+params `autoMerge` (default on), `autoMergeTypes` (default `["patch", "minor"]`) and `persona` (default the PR
+Reviewer, [agents.md](agents.md) "Triage"). `github.pull_request.opened` and `.pushed` (outsiders' and bots') →
+`github.pr.ticket` (finished already: quiet) → a condition: `autoMerge`, `kind` `bot`, author `dependabot[bot]` and
+`updateType` in `autoMergeTypes`. True → the CI loop: `wait` 2 min → `github.change_request` (`ci`, its head branch)
+→ the head still the trigger's `headSha` (a push ends the run quietly: the push's own run reviews the new head; a dry
+run counts as the same) → CI `passed` (a dry run counts as passed) → `github.pr.merge` (`headSha` the trigger's; a
+`head_moved` refusal ends quietly too) → end (the ticket finishes when GitHub reports it
+merged); still running → wait again (up to 360 times, 12 hours); failed, or the merge `refused` → the `blocked` gate.
+False (people, majors, grouped updates, other bots) → an `agent` step (the persona, a new session on the ticket, no
+attempt; the prompt has the pull request's fields, its title and text fenced, and asks for `change_request_diff`,
+outcomes `merge`, `changes`, `close` as a suggestion, `summary` the review, `data.feedback` for the author) →
+`ticket.comment` with the review → `github.change_request` (CI now) → the `decide` gate. Both gates (on the ticket,
+`gate.ticket`; choices `approve_merge`, `request_changes`, `close`; `event`: a push to or the close of this pull
+request makes them moot) lead: `approve_merge` → the CI loop; `request_changes` → `github.pr.review`
+`request_changes` with the user's note, else the review's feedback (`decide`) or why it can't merge (`blocked`) →
+end; the ticket stays open and the next push reviews it again; `close` → `github.pr.close` with the note as its
+comment → `ticket.move` Won't do. `github.pull_request.closed` → `github.pr.ticket` (`create: false`) → still open:
+merged → `ticket.finish` (Done), else `ticket.move` Won't do. Nothing is posted on a pull request but by the user's
+Request changes or Close, and only Dependabot's chosen updates merge without Approve (a unit test walks the graph).
 
 Each template has a `category` for the New workflow gallery (PDT-229): `ciPr` (CI & pull requests), `tickets`, `issues`,
 `notifications`, `releases` or `other` (Blank and the user's own); every built-in declares its own (`builtin()`'s
@@ -819,9 +861,9 @@ whose projects use another forge or none. It can't be turned off while a project
 `forge` in `.pdt/project.toml`, else its origin: `forge::project_forge`): its info lists those as `forgeProjects`,
 the switch is disabled with the reason, and `PUT /api/integrations` with `off: ["github"]` answers 409 `in_use`
 naming them. Off, it registers nothing: its triggers (`GITHUB_EVENT_TYPES` in pdt-core, apart from PDT's own) and
-steps, the `issue_create` tool, its built-ins (PDT bug triage, Close GitHub issues on Done, Cut a release:
-`builtins::GITHUB_BUILTINS`, hidden like a turned-off integration's) and the issue-triage template (in the gallery
-faded); the GitHub forge is not in use (`AppState::forge_plugins`), so no project gets it from its origin, the
+steps, the `issue_create` tool, its built-ins (PDT bug triage, PDT pull request review, Close GitHub issues on
+Done, Cut a release: `builtins::GITHUB_BUILTINS`, hidden like a turned-off integration's) and the issue-triage and
+Review outside pull requests templates (in the gallery faded); the GitHub forge is not in use (`AppState::forge_plugins`), so no project gets it from its origin, the
 Connect GitHub Inbox item goes, the 5-minute login check skips it and the setup checklist's GitHub step counts as
 skipped. The login is kept. Updates and bug reports still call GitHub (they are not the forge).
 
@@ -1036,7 +1078,7 @@ waits for the outcome the agent submits through pdt-mcp ([agents.md](agents.md) 
 versions of agent, model, instructions, permission mode (null: project override, else host default) and tools (pdt-mcp
 tools; empty: the default five). Every save (`PUT /api/personas/{id}`) is a new version; `PATCH` changes name, role,
 description, `archived`; `GET /versions`, `/versions/{v}`, `/diff?from=&to=` (the fields that changed and a unified
-diff). Built-ins Refiner, Coder, Reviewer, QA, Triage (locked down for untrusted input, PDT-201, [agents.md](agents.md))
+diff). Built-ins Refiner, Coder, Reviewer, QA, Triage and PR Reviewer (both locked down for untrusted input, PDT-201, PDT-269, [agents.md](agents.md))
 and PM (the project manager, [agents.md](agents.md#the-pm-pdt-81); permission mode `ask`, the PM's tools) (pdt-core `persona.rs`) are installed on the engine's first tick (and
 on `GET /api/personas`) and can be archived, not deleted (`409 builtin_persona`); a persona a workflow names can't be
 deleted (`409 persona_in_use`).

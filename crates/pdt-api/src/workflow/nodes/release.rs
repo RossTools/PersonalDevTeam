@@ -386,7 +386,7 @@ impl NodeKind for GithubChangeRequest {
                 let (r, b) = (repo.clone(), branch.clone());
                 let args = crate::github::ReadArgs {
                     forge: Some(forge.clone()),
-                    ci,
+                    ci: ci.clone(),
                     repo: r,
                     branch: b,
                     since: 0,
@@ -408,7 +408,8 @@ impl NodeKind for GithubChangeRequest {
                     let (port, out) = ci_output(pr);
                     return Ok(Outcome::next(port, out));
                 }
-                // The branch's newest is another pull request (a later release's): this one's state is enough.
+                // The branch's newest is another pull request (a later release's, or PDT-269 another fork's branch of
+                // the same name): this one by number, with the CI on its own head when it is open.
                 let found = match number {
                     Some(n) => {
                         let r = repo.clone();
@@ -416,10 +417,33 @@ impl NodeKind for GithubChangeRequest {
                     }
                     None => None,
                 };
-                return match found {
-                    Some(pr) => Ok(Outcome::next(state_name(pr.state), change_output(pr))),
-                    None => Ok(Outcome::Next { port: "none".into(), output: json!({"repo": repo, "quiet": true}) }),
+                let Some(pr) = found else {
+                    return Ok(Outcome::Next { port: "none".into(), output: json!({"repo": repo, "quiet": true}) });
                 };
+                if pr.state != PrState::Open {
+                    return Ok(Outcome::next(state_name(pr.state), change_output(pr)));
+                }
+                let (r, b, sha) = (repo.clone(), branch.clone(), pr.head_sha.clone());
+                let status = tokio::task::spawn_blocking(move || {
+                    let mut all = vec![];
+                    for p in &ci {
+                        all.extend(CiStatus::of(&p.runs(&r, &b, Some(&sha)).map_err(|e| e.to_string())?, &sha));
+                    }
+                    Ok::<_, String>(CiStatus::combine(all))
+                })
+                .await
+                .map_err(|e| format!("the CI task failed: {e}"))??;
+                let mut out = change_output(pr);
+                out.ci = status.as_ref().map(|c| c.state);
+                let port = match status.filter(|c| c.state == CiState::Failed) {
+                    Some(c) => {
+                        (out.failure, out.ci_url, out.failed_jobs) =
+                            (Some("ci".into()), Some(c.url.clone()), Some(failed_list(&c)));
+                        "failed"
+                    }
+                    None => "open",
+                };
+                return Ok(Outcome::next(port, out));
             }
             let by = match (nonblank(&c.branch), number_of(&c.number)) {
                 (Some(b), None) => Err(b.to_string()),

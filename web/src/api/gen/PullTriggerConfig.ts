@@ -11,6 +11,11 @@ kinds: Array<"outside" | "bot" | "collaborator">,
  */
 projects: Array<string>, 
 /**
+ * Only these repositories (`owner/name`, any case; PDT-269: a host-wide built-in for one repository); empty:
+ * every watched one.
+ */
+repos: Array<string>, 
+/**
  * Only pull requests for which every condition holds (`{{trigger.updateType}} != major`).
  */
 where: Array<Condition>, 

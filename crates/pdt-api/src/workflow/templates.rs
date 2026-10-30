@@ -580,7 +580,7 @@ mod tests {
             assert!(errors.is_empty(), "{}: {errors:?}", t.id);
         }
         assert!(all.iter().any(|t| t.id == "builtin:pr-notices"));
-        for id in ["issue-triage", "pipeline", "comment-on-merge"] {
+        for id in ["issue-triage", "pipeline", "comment-on-merge", "review-outside-prs"] {
             assert!(all.iter().any(|t| t.id == format!("builtin:{id}")), "{id}");
         }
     }
@@ -602,6 +602,8 @@ mod tests {
         assert_eq!(of("pr-notices"), Some(Category::CiPr));
         assert_eq!(of("cut-release"), Some(Category::Releases));
         assert_eq!(of("issue-triage"), Some(Category::Issues));
+        assert_eq!(of("review-outside-prs"), Some(Category::Issues));
+        assert_eq!(of("pdt-pr-review"), Some(Category::Issues));
     }
 
     /// PDT-165: fine-grained `gh` tokens can't read checks, so no built-in prompt tells an agent to run `gh pr checks`

@@ -100,6 +100,22 @@ export const plugins: IntegrationInfo[] = [
         "title": "Close a GitHub issue"
       },
       {
+        "id": "github.pr.ticket",
+        "title": "The pull request's ticket"
+      },
+      {
+        "id": "github.pr.merge",
+        "title": "Merge a GitHub pull request"
+      },
+      {
+        "id": "github.pr.review",
+        "title": "Review a GitHub pull request"
+      },
+      {
+        "id": "github.pr.close",
+        "title": "Close a GitHub pull request"
+      },
+      {
         "id": "github.workflow.run",
         "title": "Run a GitHub Actions workflow"
       },
@@ -120,12 +136,20 @@ export const plugins: IntegrationInfo[] = [
       {
         "id": "builtin:issue-triage",
         "title": "Triage new GitHub issues"
+      },
+      {
+        "id": "builtin:review-outside-prs",
+        "title": "Review outside pull requests"
       }
     ],
     "workflows": [
       {
         "id": "pdt-bug-triage",
         "title": "PDT bug triage"
+      },
+      {
+        "id": "pdt-pr-review",
+        "title": "PDT pull request review"
       },
       {
         "id": "github-issue-done",

@@ -1,5 +1,5 @@
 //! Workflows (Phase 7a, docs/superpowers/specs/2026-10-20-phase-7a-engine-design.md): the node catalog, the durable
-//! engine, `session.send`'s outbox, the built-ins, workflows kept in a repo, and the API.
+//! engine, `session.send`'s outbox, the built-ins (and the templates with their own module: the Pipeline, outside pull requests), workflows kept in a repo, and the API.
 
 pub(crate) mod agent;
 pub(crate) mod builtins;
@@ -7,6 +7,7 @@ pub(crate) mod catalog;
 pub(crate) mod engine;
 pub(crate) mod nodes;
 pub(crate) mod outbox;
+pub(crate) mod outside_prs;
 pub(crate) mod pipeline;
 pub(crate) mod repo;
 pub(crate) mod routes;

@@ -191,7 +191,13 @@ Agents read and answer on GitHub through PDT's tools instead of `gh` ([agents.md
 (auto-merge or the queue again after a queue drop, PDT-185), `ci_runs`, `ci_failed_logs`, `issue_view` and
 `issue_comment`, on the session's project forge and branch. They are in the default tool set, so the
 Coder, Reviewer and QA have them; the PM has `issue_view`. Agents still push with plain `git`. `issue_create` files an
-issue (below); it asks the user first.
+issue (below); it asks the user first. `change_request_diff` (PDT-269, not in the default set: the PR Reviewer's) reads a pull
+request's files and diffs (`GET /repos/{repo}/pulls/{n}/files`, `Forge::change_request_files`), fenced.
+
+Pull requests PDT didn't open (PDT-269) are reviewed and closed through the API too: `Forge::review_change_request`
+(`POST /repos/{repo}/pulls/{n}/reviews` with `event` `REQUEST_CHANGES`, `COMMENT` or `APPROVE`) and
+`Forge::close_change_request` (`PATCH /repos/{repo}/pulls/{n}` `state: closed`), the workflow nodes
+`github.pr.review` and `github.pr.close` ([workflows.md](workflows.md)).
 
 ## Filing issues (PDT-221)
 

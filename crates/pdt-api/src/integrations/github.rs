@@ -9,6 +9,7 @@ use super::action::{Action, ActionCx, AnyAction, NodeFace, ToolFace, Via};
 use crate::issues::{FiledIssue, NewForgeIssue};
 use crate::workflow::catalog::{BoxFut, NodeKind};
 use crate::workflow::nodes::github::{GithubClose, GithubComment, GithubImport};
+use crate::workflow::nodes::outside_pr::{PrClose, PrMerge, PrReview, PrTicket};
 use crate::workflow::nodes::release::{GithubChangeRequest, GithubRelease, GithubWorkflowRun};
 use pdt_core::integration::{Icon, PluginCategory, ToolDecl};
 use pdt_core::pm::AskTarget;
@@ -59,7 +60,16 @@ impl Integration for Github {
     }
 
     fn templates(&self) -> Vec<pdt_core::workflow::template::Template> {
-        vec![crate::workflow::templates::issue_triage()]
+        use crate::workflow::{outside_prs, templates};
+        vec![
+            templates::issue_triage(),
+            templates::builtin(
+                outside_prs::ID,
+                pdt_core::workflow::template::Category::Issues,
+                outside_prs::params(),
+                outside_prs::doc(),
+            ),
+        ]
     }
 
     fn node_kinds(&self) -> Vec<Box<dyn NodeKind>> {
@@ -71,6 +81,10 @@ impl Integration for Github {
             Box::new(GithubImport),
             Box::new(GithubComment),
             Box::new(GithubClose),
+            Box::new(PrTicket),
+            Box::new(PrMerge),
+            Box::new(PrReview),
+            Box::new(PrClose),
             Box::new(GithubWorkflowRun),
             Box::new(GithubChangeRequest),
             Box::new(GithubRelease),

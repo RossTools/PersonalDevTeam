@@ -57,6 +57,7 @@ fn the_tools_are_where_they_were() {
             "stop_ticket",
             "send_to_session",
             "change_request_view",
+            "change_request_diff",
             "change_request_comment",
             "change_request_open",
             "change_request_merge",
@@ -125,6 +126,7 @@ fn the_tools_are_where_they_were() {
             "add_review_comment",
             "update_ticket",
             "change_request_view",
+            "change_request_diff",
             "change_request_comment",
             "change_request_open",
             "change_request_merge",
@@ -139,10 +141,11 @@ fn the_tools_are_where_they_were() {
     let defaults: Vec<&str> = list.iter().filter(|x| x.default).map(|x| x.name.as_str()).collect();
     assert_eq!(defaults, pdt_core::persona::DEFAULT_TOOLS);
     let read_only: Vec<&str> = t.all().iter().filter(|d| d.read_only).map(|d| d.name).collect();
-    assert_eq!(read_only.len(), 31, "{read_only:?}");
+    assert_eq!(read_only.len(), 32, "{read_only:?}");
     let open: Vec<&str> = t.all().iter().filter(|d| d.open_world).map(|d| d.name).collect();
     let forge = [
         "change_request_view",
+        "change_request_diff",
         "change_request_comment",
         "change_request_open",
         "change_request_merge",
@@ -157,7 +160,7 @@ fn the_tools_are_where_they_were() {
         || n.starts_with("scryer_")
         || *n == "report_bug"
         || forge.contains(n)));
-    assert_eq!(open.len(), 34);
+    assert_eq!(open.len(), 35);
     let pm = pdt_core::persona::builtin_persona("pm").unwrap().setup(t);
     assert_eq!(pm.tool_set(t).len(), 59);
 }
