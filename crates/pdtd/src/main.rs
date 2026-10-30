@@ -73,10 +73,17 @@ async fn run() -> anyhow::Result<()> {
         // The dev profile's runs default to their own port range, apart from the stable instance's.
         .with_host_defaults(pdt_core::host::HostSettings::for_profile(cfg.profile))
         .with_redactor(redactor);
-    if cfg.seed == Some(config::Seed::Demo) {
+    if let Some(which) = cfg.seed {
         if cfg.profile == pdt_core::brand::Profile::Dev {
-            if seed::seed_demo(&store, &cfg.data_dir, jiff::Timestamp::now().as_millisecond()).await? {
-                tracing::info!(dir = %cfg.data_dir.join(seed::DEMO_DIR).display(), "seeded demo data (PDT_SEED=demo)");
+            let now = jiff::Timestamp::now().as_millisecond();
+            let (seeded, dir) = match which {
+                config::Seed::Demo => (seed::seed_demo(&store, &cfg.data_dir, now).await?, seed::DEMO_DIR),
+                config::Seed::Website => {
+                    (seed::website::seed_website(&store, &cfg.data_dir, now).await?, seed::website::WEBSITE_DIR)
+                }
+            };
+            if seeded {
+                tracing::info!(dir = %cfg.data_dir.join(dir).display(), seed = ?which, "seeded sample data (PDT_SEED)");
             }
         } else {
             tracing::warn!("PDT_SEED is ignored outside the dev profile");

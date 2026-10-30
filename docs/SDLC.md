@@ -156,6 +156,10 @@ tree), builds no bundle and publishes nothing. Experimental releases (below) are
 
 The user decides when to release; there is no schedule. `.github/workflows/release.yml` does it in two halves:
 
+0. **Screenshots** (when the UI changed since the last release): regenerate the website's screenshots with
+   `node scripts/site-screenshots.mjs` (site/README.md "Screenshots") and merge them before starting, so the site
+   shows what the release ships.
+
 1. **Start it**: Actions → release → Run workflow on `main`, with the bump (`patch`, `minor`; `major` only from 1.0.0
    on) or an exact version (`gh workflow run release.yml -f bump=minor`, or `-f version=1.0.0`). Or ask the PM, which
    runs PDT's "Cut a release" workflow (below). Starting it is the deliberate act: nobody reviews the release PR. To
