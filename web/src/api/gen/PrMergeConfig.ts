@@ -8,4 +8,9 @@ repo: string,
 /**
  * The pull request's number (`{{trigger.number}}`).
  */
-number: number | string, };
+number: number | string, 
+/**
+ * Merge only while its head is this commit (`{{trigger.headSha}}`: the one reviewed and approved). A push since
+ * leaves by `refused` with `code` `head_moved`, and GitHub is told the commit too, so one in between is refused.
+ */
+headSha: string | null, };

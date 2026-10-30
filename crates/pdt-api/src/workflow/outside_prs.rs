@@ -191,6 +191,23 @@ pub fn doc_with(trigger: Value) -> WorkflowDoc {
             n["retry"] = json!({"max": 5, "backoffMs": 60_000});
             n
         },
+        // A push ends the wait: the head reviewed (and approved) is gone, and the push's own run takes over.
+        {
+            let mut n = node(
+                "same_head",
+                "condition",
+                1450,
+                -230,
+                "Still the head approved?",
+                json!({
+                "match": "any", "conditions": [
+                    {"left": "{{steps.check_ci.headSha}}", "op": "eq", "right": "{{trigger.headSha}}"},
+                    // A dry run reads no pull request.
+                    {"left": "{{run.dryRun}}", "op": "truthy"}]}),
+            );
+            n["maxVisits"] = json!(CI_POLLS);
+            n
+        },
         {
             let mut n = node(
                 "passed",
@@ -207,11 +224,28 @@ pub fn doc_with(trigger: Value) -> WorkflowDoc {
             n
         },
         {
-            let mut n = node("merge", "github.pr.merge", 1840, -100, "Merge it", pr());
+            let mut n = node(
+                "merge",
+                "github.pr.merge",
+                1840,
+                -100,
+                "Merge it",
+                with_pr(json!({"headSha": "{{trigger.headSha}}"})),
+            );
             n["maxVisits"] = json!(10);
             n
         },
         end("merging", 2100, -100, "Set to merge", false),
+        // Pushed between the last CI read and the merge: the push's run reviews it again.
+        node(
+            "moved",
+            "condition",
+            2100,
+            -230,
+            "Pushed since?",
+            json!({"conditions": [
+            {"left": "{{steps.merge.code}}", "op": "eq", "right": "head_moved"}]}),
+        ),
         end("gone", 1580, -260, "Merged or closed meanwhile", true),
         gate("blocked", 2100, -360, "Didn't merge: ask me", BLOCKED),
         request(
@@ -328,10 +362,12 @@ pub fn doc_with(trigger: Value) -> WorkflowDoc {
         json!({"from": "finished", "port": "false", "to": "dependabot"}),
         json!({"from": "dependabot", "port": "true", "to": "wait_ci"}),
         json!({"from": "dependabot", "port": "false", "to": "review"}),
+        json!({"from": "wait_ci", "port": "timeout", "to": "check_ci"}),
         json!({"from": "wait_ci", "port": "done", "to": "check_ci"}),
         json!({"from": "wait_ci", "port": "event", "to": "check_ci"}),
-        json!({"from": "wait_ci", "port": "timeout", "to": "check_ci"}),
-        json!({"from": "check_ci", "port": "open", "to": "passed"}),
+        json!({"from": "check_ci", "port": "open", "to": "same_head"}),
+        json!({"from": "same_head", "port": "true", "to": "passed"}),
+        json!({"from": "same_head", "port": "false", "to": "superseded"}),
         json!({"from": "check_ci", "port": "failed", "to": "blocked"}),
         json!({"from": "check_ci", "port": "merged", "to": "gone"}),
         json!({"from": "check_ci", "port": "closed", "to": "gone"}),
@@ -340,7 +376,9 @@ pub fn doc_with(trigger: Value) -> WorkflowDoc {
         json!({"from": "passed", "port": "false", "to": "wait_ci"}),
         json!({"from": "merge", "port": "queued", "to": "merging"}),
         json!({"from": "merge", "port": "merged", "to": "merging"}),
-        json!({"from": "merge", "port": "refused", "to": "blocked"}),
+        json!({"from": "merge", "port": "refused", "to": "moved"}),
+        json!({"from": "moved", "port": "true", "to": "superseded"}),
+        json!({"from": "moved", "port": "false", "to": "blocked"}),
         json!({"from": "review", "port": "merge", "to": "note"}),
         json!({"from": "review", "port": "changes", "to": "note"}),
         json!({"from": "review", "port": "close", "to": "note"}),

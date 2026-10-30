@@ -254,6 +254,10 @@ pub struct PrMergeConfig {
     /// The pull request's number (`{{trigger.number}}`).
     #[ts(type = "number | string")]
     pub number: Value,
+    /// Merge only while its head is this commit (`{{trigger.headSha}}`: the one reviewed and approved). A push since
+    /// leaves by `refused` with `code` `head_moved`, and GitHub is told the commit too, so one in between is refused.
+    #[serde(default)]
+    pub head_sha: Option<String>,
 }
 
 pub struct PrMerge;
@@ -267,9 +271,10 @@ impl NodeKind for PrMerge {
             "Merge a GitHub pull request",
             "Sets a pull request PDT didn't open to merge, as Merge does for an attempt's: auto-merge (GitHub holds it \
              until the base branch's required checks pass) or the merge queue, with the strategy the repository \
-             allows (`queued`), or merged at once when GitHub can (`merged`). It never pushes to the pull request's \
-             branch: one that is closed, a draft or in conflict with its base leaves by `refused` with `code` and \
-             `reason`, as does a merge GitHub refuses.",
+             allows (`queued`), or merged at once when GitHub can (`merged`). With `headSha`, only while its head is \
+             that commit (the one approved): `refused` with `code` `head_moved` otherwise. It never pushes to the \
+             pull request's branch: one that is closed, a draft or in conflict with its base leaves by `refused` with \
+             `code` and `reason`, as does a merge GitHub refuses.",
             &[("queued", "Set to merge"), ("merged", "Merged"), ("refused", "Refused")],
             false,
         )
@@ -309,13 +314,20 @@ impl NodeKind for PrMerge {
                     format!("{repo}#{number} conflicts with {}: its author has to resolve it", pr.base_branch),
                 );
             }
+            let head = nonblank(&c.head_sha).map(String::from);
+            if let Some(h) = head.as_deref().filter(|h| *h != pr.head_sha) {
+                return refused(
+                    "head_moved",
+                    format!("{repo}#{number} was pushed to since {h} was approved: its head is {}", pr.head_sha),
+                );
+            }
             if pr.auto_merge || pr.in_merge_queue {
                 return Ok(Outcome::next("queued", json!({"already": true, "url": pr.url})));
             }
             let (r, base) = (repo.clone(), pr.base_branch.clone());
             let merged = gh(cx, move |f| {
                 let strategy = f.merge_settings(&r, &base)?.strategy();
-                f.merge(&r, number, strategy)?;
+                f.merge_head(&r, number, strategy, head.as_deref())?;
                 Ok(f.change_request_number(&r, number)?.is_some_and(|p| p.state == PrState::Merged))
             })
             .await;

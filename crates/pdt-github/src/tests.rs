@@ -763,6 +763,18 @@ fn merges_turn_on_auto_merge_or_merge_a_clean_pr() {
 
     t.ok("POST", GQL, id).ok("POST", GQL, r#"{"errors":[{"message":"Auto merge is not allowed"}]}"#);
     assert!(matches!(g.merge("o/r", 7, None), Err(ForgeError::Failed(m)) if m.contains("not allowed")));
+
+    // PDT-269: only while the head is the one approved.
+    t.ok("POST", GQL, id).ok("POST", GQL, r#"{"data":{"enablePullRequestAutoMerge":{"clientMutationId":null}}}"#);
+    g.merge_head("o/r", 7, Some(MergeStrategy::Squash), Some("abc")).unwrap();
+    let sent = t.sent();
+    let last = body_of(sent.last().unwrap());
+    assert_eq!(last["variables"], json!({"id": "PR_7", "method": "SQUASH", "head": "abc"}));
+    assert!(last["query"].as_str().unwrap().contains("expectedHeadOid:$head"));
+    t.ok("POST", GQL, id).ok("POST", GQL, clean);
+    t.ok("PUT", &format!("{API}/repos/o/r/pulls/7/merge"), r#"{"merged":true}"#);
+    g.merge_head("o/r", 7, Some(MergeStrategy::Squash), Some("abc")).unwrap();
+    assert_eq!(body_of(t.sent().last().unwrap()), json!({"merge_method": "squash", "sha": "abc"}));
 }
 
 #[test]

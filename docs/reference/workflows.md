@@ -302,11 +302,11 @@ own). After the kinds come the MCP tools' entries ("MCP tools as actions"), whic
 | `github.close` (`repo` + `number`, or `ticket`; `reason: completed \| not_planned \| duplicate`, `duplicateOf` with `duplicate`, `comment`, `labels`) | `out`, `unlinked` |
 | `github.create_issue` (`ticket`, or `project`; `title`, `body`, `labels`; PDT-221) | `filed` |
 | `github.pr.ticket` (`repo`, `number`, `project`, `title`, `url`, `author`, `body`, `create` default true; PDT-269; output `ticketId`, `ticketKey`, `pr`, `stage`, `closed`) | `created`, `exists`, `none` |
-| `github.pr.merge` (`repo`, `number`; PDT-269) | `queued`, `merged`, `refused` |
+| `github.pr.merge` (`repo`, `number`, `headSha`; PDT-269) | `queued`, `merged`, `refused` |
 | `github.pr.review` (`repo`, `number`, `verdict: request_changes \| comment \| approve`, `body`, `fallback`; PDT-269) | `out` |
 | `github.pr.close` (`repo`, `number`, `comment`; PDT-269) | `out` |
 | `github.workflow.run` (`repo`: default the run's project's, `workflow`: its file, `ref` default `main`, `inputs`; PDT-194) | `out` |
-| `github.change_request` (`repo`, `branch` or `number`, `dryRunPort`; PDT-194; output `number`, `url`, `title`, `state`, `merged`, `headSha`) | `open`, `merged`, `closed`, `none` |
+| `github.change_request` (`repo`, `branch` or `number`, `ci` (with `branch`; both with a number), `dryRunPort`; PDT-194; output `number`, `url`, `title`, `state`, `merged`, `headSha`, with `ci` also `ci`, `failure`, `ciUrl`, `failedJobs`). With `ci` and a number whose pull request is not the branch's newest (another fork's branch of the same name, PDT-269), CI is read on that pull request's own head | `open`, `merged`, `closed`, `none`, `failed` (with `ci`) |
 | `github.release` (`repo`, `tag` or the latest, `newerThan`, `prereleases`; PDT-194; output `tag`, `name`, `url`, `publishedAt`) | `found`, `none` |
 | `buildkite.retry` (`connection`, `build`: a build URL, or a number with `pipeline`) | `out` |
 | `buildkite.trigger` (`connection`, `pipeline`, `branch`, `commit` default `HEAD`, `message`, `env`) | `out` |
@@ -398,8 +398,10 @@ notify itself forever.
   without `create` one with no ticket leaves by `none` (quiet); a dry run's ticket is blank. `github.pr.merge` reads
   the pull request: merged already is `merged`, closed, a draft or conflicting is `refused` (`code` `closed`,
   `draft`, `conflict`, `missing`, or `forge` for a merge GitHub refuses, with `reason`), one already set to merge is
-  `queued`; otherwise it asks for the repository's strategy (none with a merge queue) and `Forge::merge` (auto-merge,
-  the merge queue, or a merge at once when GitHub can), then `merged` or `queued`. `github.pr.review` submits a
+  `queued`. With `headSha` (the commit approved) a head that moved is `refused` with `code` `head_moved`. Otherwise it
+  asks for the repository's strategy (none with a merge queue) and `Forge::merge_head` (auto-merge, the merge queue,
+  or a merge at once when GitHub can; GitHub gets the commit as `expectedHeadOid`, or `sha` for a merge at once, so a
+  push in between is refused there too), then `merged` or `queued`. `github.pr.review` submits a
   review (`POST …/pulls/{n}/reviews`) with `body`, else `fallback` (one of them must come to text); output `{url,
   verdict, body}`. `github.pr.close` posts `comment`, then closes it (`PATCH …/pulls/{n}` `state: closed`); one not
   open counts as done (quiet, `alreadyClosed`). Neither of the last two is run again on its own.
@@ -653,7 +655,9 @@ params `autoMerge` (default on), `autoMergeTypes` (default `["patch", "minor"]`)
 Reviewer, [agents.md](agents.md) "Triage"). `github.pull_request.opened` and `.pushed` (outsiders' and bots') →
 `github.pr.ticket` (finished already: quiet) → a condition: `autoMerge`, `kind` `bot`, author `dependabot[bot]` and
 `updateType` in `autoMergeTypes`. True → the CI loop: `wait` 2 min → `github.change_request` (`ci`, its head branch)
-→ CI `passed` (a dry run counts as passed) → `github.pr.merge` → end (the ticket finishes when GitHub reports it
+→ the head still the trigger's `headSha` (a push ends the run quietly: the push's own run reviews the new head; a dry
+run counts as the same) → CI `passed` (a dry run counts as passed) → `github.pr.merge` (`headSha` the trigger's; a
+`head_moved` refusal ends quietly too) → end (the ticket finishes when GitHub reports it
 merged); still running → wait again (up to 360 times, 12 hours); failed, or the merge `refused` → the `blocked` gate.
 False (people, majors, grouped updates, other bots) → an `agent` step (the persona, a new session on the ticket, no
 attempt; the prompt has the pull request's fields, its title and text fenced, and asks for `change_request_diff`,

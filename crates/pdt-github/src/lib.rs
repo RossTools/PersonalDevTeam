@@ -66,6 +66,12 @@ const AUTO_MERGE: &str = "mutation($id:ID!,$method:PullRequestMergeMethod){enabl
 
 const ENQUEUE: &str = "mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){clientMutationId}}";
 
+/// [`AUTO_MERGE`] and [`ENQUEUE`] only while the head is still `$head` (PDT-269: the commit the user approved).
+const AUTO_MERGE_AT: &str = "mutation($id:ID!,$method:PullRequestMergeMethod,$head:GitObjectID!){\
+enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:$method,expectedHeadOid:$head}){clientMutationId}}";
+const ENQUEUE_AT: &str = "mutation($id:ID!,$head:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,\
+expectedHeadOid:$head}){clientMutationId}}";
+
 /// The text of a call made before the user connected GitHub.
 pub fn not_connected() -> String {
     format!("GitHub is not connected: connect it in {SHORT_NAME}'s Settings › Plugins › GitHub")
@@ -637,11 +643,20 @@ impl GithubApi {
             .ok_or_else(|| GhError::BadAnswer(format!("no pull request #{number}")))
     }
 
-    fn merge_now(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), GhError> {
-        let body = match strategy {
+    fn merge_now(
+        &self,
+        repo: &str,
+        number: u32,
+        strategy: Option<MergeStrategy>,
+        head: Option<&str>,
+    ) -> Result<(), GhError> {
+        let mut body = match strategy {
             Some(s) => json!({"merge_method": s.as_str()}),
             None => json!({}),
         };
+        if let Some(h) = head {
+            body["sha"] = json!(h);
+        }
         self.send_json("PUT", &format!("repos/{repo}/pulls/{number}/merge"), body).map(|_| ())
     }
 
@@ -1212,17 +1227,36 @@ impl Forge for GithubApi {
         )?)
     }
     fn merge(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), ForgeError> {
+        self.merge_head(repo, number, strategy, None)
+    }
+    /// GraphQL's `expectedHeadOid`, and REST's `sha` for a merge at once.
+    fn merge_head(
+        &self,
+        repo: &str,
+        number: u32,
+        strategy: Option<MergeStrategy>,
+        head: Option<&str>,
+    ) -> Result<(), ForgeError> {
         let id = self.pr_node_id(repo, number)?;
         let method = strategy.map(merge_method);
-        match self.graphql(AUTO_MERGE, json!({"id": id, "method": method})) {
+        let (auto, enqueue, vars, queue_vars) = match head {
+            Some(h) => (
+                AUTO_MERGE_AT,
+                ENQUEUE_AT,
+                json!({"id": id, "method": method, "head": h}),
+                json!({"id": id, "head": h}),
+            ),
+            None => (AUTO_MERGE, ENQUEUE, json!({"id": id, "method": method}), json!({"id": id})),
+        };
+        match self.graphql(auto, vars) {
             Ok(_) => Ok(()),
             // GitHub refuses auto-merge for a PR that could merge now ("is in clean status"): merge it, through the
             // merge queue when no strategy is given (a queue picks it).
             Err(GhError::Status(200, m)) if m.contains("clean status") => {
-                if strategy.is_none() && self.graphql(ENQUEUE, json!({"id": id})).is_ok() {
+                if strategy.is_none() && self.graphql(enqueue, queue_vars).is_ok() {
                     return Ok(());
                 }
-                Ok(self.merge_now(repo, number, strategy)?)
+                Ok(self.merge_now(repo, number, strategy, head)?)
             }
             Err(e) => Err(e.into()),
         }

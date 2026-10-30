@@ -335,6 +335,17 @@ pub trait Forge: Send + Sync {
     /// Sets change request `number` to merge once it may (auto-merge, or the merge queue), with `strategy` unless a
     /// merge queue picks it. One that can merge right away is merged.
     fn merge(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), ForgeError>;
+    /// [`Forge::merge`], only while its head is `head` (PDT-269: the commit the user approved), when given. A forge
+    /// that can't say so merges as [`Forge::merge`] does; its callers check the head first.
+    fn merge_head(
+        &self,
+        repo: &str,
+        number: u32,
+        strategy: Option<MergeStrategy>,
+        _head: Option<&str>,
+    ) -> Result<(), ForgeError> {
+        self.merge(repo, number, strategy)
+    }
     /// The login the forge is used as (the user themself): comments by it are the user's own.
     fn viewer_login(&self) -> Result<String, ForgeError> {
         unsupported(self.name(), "login")
@@ -841,6 +852,23 @@ pub mod testing {
                 rebase: false,
                 queue: false,
             }))
+        }
+        /// Refuses a head other than the change request's, as GitHub does.
+        fn merge_head(
+            &self,
+            repo: &str,
+            number: u32,
+            strategy: Option<MergeStrategy>,
+            head: Option<&str>,
+        ) -> Result<(), ForgeError> {
+            if let Some(h) = head {
+                let now = self.prs.lock().unwrap().values().find(|p| p.number == number).map(|p| p.head_sha.clone());
+                if now.is_some_and(|n| n != h) {
+                    self.call(format!("merge-refused {repo} {number} {h}"));
+                    return Err(ForgeError::Failed(format!("the head of #{number} is not {h}")));
+                }
+            }
+            self.merge(repo, number, strategy)
         }
         fn merge(&self, repo: &str, number: u32, strategy: Option<MergeStrategy>) -> Result<(), ForgeError> {
             self.call(format!("merge {repo} {number} {}", strategy.map_or("-", MergeStrategy::as_str)));

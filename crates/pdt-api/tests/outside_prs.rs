@@ -532,3 +532,75 @@ async fn dry_runs_take_each_path() {
     let (closed, v) = dry("github.pull_request.closed", merged).await;
     assert!(closed.contains(&"find".into()), "{v}");
 }
+
+/// The review's finding: a push after Approve & merge but before CI passes must not merge the new, unreviewed head.
+#[tokio::test]
+async fn a_push_after_approve_merges_nothing_and_is_reviewed_again() {
+    let env = setup().await;
+    let mut seen = HashSet::new();
+    let pr = outside(14, "al", "Small fix", "patch-5", 1);
+    look(&env, vec![pr.clone()]).await;
+    let session = reviewer(&env, &mut seen).await;
+    let (run_id, step) = review(&env, &session, "merge", "").await;
+    answer(&env, &run_id, &step, "approve_merge", None).await;
+    assert_eq!(waiting(&env, &run_id).await.0, "wait_ci");
+
+    // The author pushes before CI passed, and the new head's CI passes.
+    let pushed = RepoChangeRequest { head_sha: "sha-14b".into(), updated_at: at(2), ..pr };
+    look(&env, vec![pushed]).await;
+    env.gh.set_runs("patch-5", vec![ci("patch-5", "sha-14b", CiState::Passed)]);
+    time_passes(&env, &run_id).await;
+    let r = run(&env, &run_id).await;
+    assert_eq!(r["status"], "quiet", "the approved run ends: {r}");
+    assert!(!env.gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge ")), "nothing merged");
+    // The push's own run reviews the new head and asks again.
+    let again = reviewer(&env, &mut seen).await;
+    assert!(first_prompt(&env, &again).await.contains("sha-14b"));
+}
+
+/// The merge itself is pinned to the approved head (a push between the last CI read and the merge).
+#[tokio::test]
+async fn the_merge_step_refuses_a_head_other_than_the_approved_one() {
+    let env = setup().await;
+    let p = outside(15, "al", "Fix", "patch-6", 1);
+    env.gh.set_pr("patch-6", Some(ChangeRequest { head_sha: "sha-15b".into(), ..change(&p) }));
+    let doc = json!({"name": "Merge", "nodes": [
+        {"id": "go", "kind": "manual", "version": 1},
+        {"id": "merge", "kind": "github.pr.merge", "version": 1,
+         "config": {"repo": RELEASE_REPO, "number": 15, "headSha": "sha-15"}},
+        {"id": "end", "kind": "end", "version": 1}],
+      "edges": [{"from": "go", "to": "merge"}, {"from": "merge", "port": "refused", "to": "end"}]});
+    let body = json!({"scope": "project", "projectId": env.project, "doc": doc, "enabled": true});
+    let (s, w) = call(&env.app, "POST", "/api/workflows", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    let (_, r) = call(&env.app, "POST", &format!("/api/workflows/{}/run", w["id"].as_str().unwrap()), None).await;
+    let id = r["runId"].as_str().unwrap().to_string();
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    let r = run(&env, &id).await;
+    let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "merge").cloned().unwrap();
+    assert_eq!((step["port"].as_str(), step["output"]["code"].as_str()), (Some("refused"), Some("head_moved")), "{r}");
+    assert!(!env.gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge ")), "nothing merged");
+}
+
+/// Two forks' branches of one name: CI is read on this pull request's own head, so it still merges.
+#[tokio::test]
+async fn ci_is_read_on_the_prs_own_head_when_another_pr_has_its_branch_name() {
+    let env = setup().await;
+    let mut seen = HashSet::new();
+    let pr = outside(16, "al", "Fix", "main", 1);
+    look(&env, vec![pr.clone()]).await;
+    // Another fork's newer pull request from a `main` branch too.
+    let other = outside(17, "bo", "Other", "main", 2);
+    env.gh.set_pr("main", Some(change(&other)));
+    env.gh.set_pr("al:main", Some(change(&pr)));
+    let session = reviewer(&env, &mut seen).await;
+    let (run_id, step) = review(&env, &session, "merge", "").await;
+    answer(&env, &run_id, &step, "approve_merge", None).await;
+    env.gh.set_runs("main", vec![ci("main", "sha-16", CiState::Passed)]);
+    time_passes(&env, &run_id).await;
+    assert_eq!(run(&env, &run_id).await["status"], "succeeded");
+    let calls = env.gh.calls.lock().unwrap().clone();
+    assert!(calls.iter().any(|c| c == &format!("merge {RELEASE_REPO} 16 squash")), "{calls:?}");
+}
