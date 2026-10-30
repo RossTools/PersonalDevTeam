@@ -1,0 +1,133 @@
+---
+// /plugins/<id>/: one plugin (PDT-281): what it does, what it needs, its workflow triggers and steps, and its tools, from
+// the plugin list the app is built with (src/plugins.mjs).
+import SitePage from '../../layouts/SitePage.astro';
+import PluginIcon from '../../components/PluginIcon.astro';
+import { CATEGORY_LABEL, OWN_PAGE, PLUGINS, inlineCode } from '../../plugins.mjs';
+import { siteLinks } from '../../links.mjs';
+import { docId } from '../../docs-pages.mjs';
+
+export function getStaticPaths() {
+	return PLUGINS.map((p) => ({ params: { id: p.id }, props: { p } }));
+}
+
+const { p } = Astro.props;
+const links = siteLinks(import.meta.env.BASE_URL);
+const media = OWN_PAGE.includes(p.category);
+const back = media ? { href: `${links.plugins}media/`, label: 'Media plugins' } : { href: links.plugins, label: 'Plugins' };
+const docs = `${links.root}${docId('user/automation/plugins.md')}/`;
+const workflowsDoc = `${links.root}${docId('user/automation/workflows.md')}/`;
+const pmTools = p.tools.filter((t) => t.pm);
+const agentTools = p.tools.filter((t) => !t.pm);
+---
+
+<SitePage title={`${p.label} · PDT plugins`} description={p.description}>
+	<a class="back" href={back.href}>← {back.label}</a>
+	<header>
+		<PluginIcon icon={p.icon} size="lg" />
+		<div>
+			<h1>{p.label}</h1>
+			<div class="meta">{CATEGORY_LABEL[p.category]}{p.builtIn ? ' · Built in' : ' · Turn it on in Settings › Plugins'}</div>
+		</div>
+	</header>
+	<p class="lead">{p.description}</p>
+
+	<div class="body">
+		<div class="block">
+			<h2>What it needs</h2>
+			{p.login && <p>A {p.label} login: sign in from PDT, or paste a token.</p>}
+			{!p.login && p.connections.length === 0 && <p>Nothing: it is part of PDT.</p>}
+			{p.connections.length > 0 && <p>{p.connections.length === 1 ? 'A connection:' : 'A connection of one of these kinds, for what you use:'}</p>}
+			{p.connections.map((c) => (
+				<div class="connection">
+					<b>{c.label}</b>
+					<p>{c.setup}</p>
+					<dl>
+						{c.url && (<><dt>Address{c.urlOptional && ' (optional)'}</dt><dd>{c.urlHint ?? 'The server’s address.'}</dd></>)}
+						<dt>{c.secretLabel}{c.secretOptional && ' (optional)'}</dt>
+						<dd>{c.secretHint}</dd>
+						{c.fields.length > 0 && (<><dt>Settings</dt><dd>{c.fields.join(', ')}</dd></>)}
+					</dl>
+				</div>
+			))}
+			{p.projectSettings && <p class="note"><b>For each project:</b> {p.projectSettings}</p>}
+		</div>
+
+		{p.triggers.length > 0 && (
+			<div class="block">
+				<h2>Workflow triggers</h2>
+				<p class="intro">Events that can start a <a href={workflowsDoc}>workflow</a>.</p>
+				<ul class="parts">{p.triggers.map((k) => <li><b>{k.title}</b>{k.description && <span set:html={inlineCode(k.description)} />}</li>)}</ul>
+			</div>
+		)}
+
+		{p.steps.length > 0 && (
+			<div class="block">
+				<h2>Workflow steps</h2>
+				<ul class="parts">{p.steps.map((k) => <li><b>{k.title}</b>{k.description && <span set:html={inlineCode(k.description)} />}</li>)}</ul>
+			</div>
+		)}
+
+		{(p.templates.length > 0 || p.workflows.length > 0) && (
+			<div class="block">
+				<h2>Ready-made workflows</h2>
+				<ul>
+					{p.workflows.map((w) => <li>{w} <span class="muted">(installed with it)</span></li>)}
+					{p.templates.map((t) => <li>{t} <span class="muted">(a template)</span></li>)}
+				</ul>
+			</div>
+		)}
+
+		{p.tools.length > 0 && (
+			<div class="block">
+				<h2>Tools</h2>
+				{pmTools.length > 0 && (
+					<>
+						<p class="intro">The PM can:</p>
+						<ul class="parts">{pmTools.map((t) => <li><code>{t.name}</code><span>{t.does}{t.asks && <em class="asks">asks you first</em>}</span></li>)}</ul>
+					</>
+				)}
+				{agentTools.length > 0 && (
+					<>
+						<p class="intro">{pmTools.length > 0 ? 'And agents, given them in a persona:' : 'Agents can, given them in a persona:'}</p>
+						<ul class="parts">{agentTools.map((t) => <li><code>{t.name}</code><span>{t.does}{t.asks && <em class="asks">asks you first</em>}</span></li>)}</ul>
+					</>
+				)}
+			</div>
+		)}
+
+		<p class="docs">More in the docs: <a href={docs}>Plugins and connections</a>.</p>
+	</div>
+</SitePage>
+
+<style>
+	.back { font-size: 14px; color: var(--muted); }
+	.back:hover { color: var(--fg); }
+	header { display: flex; align-items: center; gap: 16px; margin-top: 24px; }
+	h1 { font-size: clamp(30px, 4vw, 40px); line-height: 1.1; letter-spacing: -.02em; font-weight: 700; }
+	.meta { margin-top: 4px; font-size: 14px; color: var(--muted); }
+	.body { display: flex; flex-direction: column; gap: 40px; margin-top: 48px; max-width: 760px; }
+	h2 { font-size: 20px; font-weight: 600; letter-spacing: -.01em; margin-bottom: 12px; }
+	.block p, .block li { font-size: 15px; }
+	.block ul { padding-left: 20px; display: grid; gap: 6px; }
+	.intro { color: var(--muted); margin-bottom: 10px; }
+	.intro a, .docs a { color: var(--accent-hi); }
+	.intro a:hover, .docs a:hover { text-decoration: underline; }
+	ul.parts { list-style: none; padding: 0; gap: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+	ul.parts li { display: flex; flex-direction: column; gap: 2px; padding: 12px 16px; }
+	ul.parts li + li { border-top: 1px solid var(--border); }
+	ul.parts li b { font-weight: 600; }
+	ul.parts li span { font-size: 14px; color: var(--muted); }
+	code { font: 13px var(--mono); color: var(--fg); background: var(--surface-2); border-radius: 4px; padding: 1px 5px; }
+	ul.parts li > code { align-self: flex-start; }
+	.asks { margin-left: 8px; font-style: normal; font-size: 12px; color: var(--waiting); }
+	.connection { margin-top: 12px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+	.connection p { margin-top: 4px; color: var(--muted); font-size: 14px; }
+	dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin-top: 12px; font-size: 14px; }
+	dt { font-weight: 500; }
+	dd { margin: 0; color: var(--muted); }
+	.note { margin-top: 16px; color: var(--muted); }
+	.note b { color: var(--fg); font-weight: 500; }
+	.docs { font-size: 15px; color: var(--muted); }
+	@media (max-width: 600px) { dl { grid-template-columns: 1fr; } dd { margin-bottom: 6px; } }
+</style>

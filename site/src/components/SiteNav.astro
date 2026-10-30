@@ -1,0 +1,30 @@
+---
+// The nav of the pages outside Starlight (the landing page, the Plugins pages). `home`: the landing page itself, whose
+// sections the first links scroll to.
+import markOnDark from '../assets/pdt-mark-on-dark.svg?url';
+import { siteLinks } from '../links.mjs';
+
+interface Props {
+	home?: boolean;
+}
+const { home = false } = Astro.props;
+const links = siteLinks(import.meta.env.BASE_URL);
+const at = home ? '' : links.root;
+---
+
+<nav>
+	<div class="wrap">
+		<a class="logo" href={links.root}><img src={markOnDark} alt="pdt" /></a>
+		<ul>
+			<li><a href={`${at}#how`}>How it works</a></li>
+			<li><a href={`${at}#features`}>Features</a></li>
+			<li><a href={links.plugins}>Plugins</a></li>
+			<li><a href={links.docs}>Docs</a></li>
+			<li><a href={links.changelog}>Changelog</a></li>
+		</ul>
+		<div class="right">
+			<a class="btn sm ghost" href={links.github}>GitHub</a>
+			<a class="btn sm primary" href={links.download}>Download</a>
+		</div>
+	</div>
+</nav>

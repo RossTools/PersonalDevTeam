@@ -1,0 +1,16 @@
+---
+// A plugin's letters on its own colour (the brand's, from the plugin), as in Settings → Plugins.
+interface Props {
+	icon: { letters: string; color: string };
+	size?: 'md' | 'lg';
+}
+const { icon, size = 'md' } = Astro.props;
+---
+
+<span aria-hidden="true" class:list={['plugin-icon', size]} style={`background-color:${icon.color}`}>{icon.letters}</span>
+
+<style>
+	.plugin-icon { display: grid; place-items: center; flex: none; font-weight: 700; color: #fff; }
+	.md { width: 32px; height: 32px; border-radius: 8px; font-size: 13px; }
+	.lg { width: 48px; height: 48px; border-radius: 12px; font-size: 18px; }
+</style>

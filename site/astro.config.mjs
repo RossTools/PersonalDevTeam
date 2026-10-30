@@ -52,6 +52,8 @@ export default defineConfig({
             { label: 'How we work on PDT', slug: 'docs/sdlc' },
           ],
         },
+        // The Plugins pages (src/pages/plugins/) stand outside the docs, like the landing page.
+        { label: 'Plugins', link: '/plugins/' },
       ],
     }),
   ],
