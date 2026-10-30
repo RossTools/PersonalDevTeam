@@ -19,6 +19,11 @@
 //! OpenCode does. A prompt's last text block is what it does; text blocks before it are context (PDT's
 //! instructions for an ACP agent, which `who` then reports).
 //!
+//! `fake-agent agent --no-leader stdio` stands in for Grok Build (PDT-236; shapes from crates/pdt-core/tests/fixtures/
+//! grok): tool names in `_meta["x.ai/tool"]` (pdt-mcp's tools through `use_tool` as `pdt__<tool>`), Grok's option ids
+//! (`allow-once`, `reject-once`, and `allow-edits-session` on an edit), `_meta.toolNotRun` for a refusal, no modes,
+//! and `edit` asks before it edits.
+//!
 //! A session is saved at its first prompt (a marker file in the temp folder), as Devin does: loading one never
 //! prompted fails with -32016. Loading replays its history first, as Devin does.
 
@@ -33,8 +38,49 @@ static PLAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new
 static MODES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// `--partial-modes`: advertise only `build` and `plan`.
 static PARTIAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// `agent --no-leader stdio`: Grok's fields instead of Devin's.
+static GROK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A Devin-shaped message in Grok's terms.
+fn grok(v: &mut Value) {
+    if let Some(u) = v.pointer_mut("/params/update").and_then(Value::as_object_mut)
+        && let Some(meta) = u.remove("_meta")
+    {
+        if let Some(name) = meta["cognition.ai/inferenceToolName"].as_str() {
+            let tool = match name.strip_prefix("mcp__pdt__") {
+                Some(t) => {
+                    let input = u.get("rawInput").cloned().unwrap_or_default();
+                    u.insert("rawInput".into(), json!({"tool_name": format!("pdt__{t}"), "tool_input": input}));
+                    "use_tool".to_string()
+                }
+                None => name.to_string(),
+            };
+            u.insert("_meta".into(), json!({"x.ai/tool": {"name": tool}}));
+        }
+        if meta["cognition.ai/rejected"] == true {
+            u.insert("_meta".into(), json!({"toolNotRun": "rejected"}));
+        }
+    }
+    if let Some(e) = v.get_mut("error").and_then(Value::as_object_mut) {
+        e.remove("data");
+    }
+    if let Some(o) = v.pointer_mut("/params/options").and_then(Value::as_array_mut) {
+        o.retain(|o| o["optionId"] == "allow_once" || o["optionId"] == "reject_once" || o["optionId"] == "allow_edits");
+        for o in o.iter_mut() {
+            let id = match o["optionId"].as_str() {
+                Some("allow_edits") => "allow-edits-session",
+                Some(id) => &id.replace('_', "-"),
+                None => continue,
+            };
+            o["optionId"] = json!(id);
+        }
+    }
+}
 
 fn out(mut v: Value) {
+    if GROK.load(std::sync::atomic::Ordering::Relaxed) {
+        grok(&mut v);
+    }
     if PLAIN.load(std::sync::atomic::Ordering::Relaxed) {
         if let Some(u) = v.pointer_mut("/params/update").and_then(Value::as_object_mut) {
             u.remove("_meta");
@@ -214,7 +260,7 @@ impl Acp {
                 self.say(&format!("ran it ({picked})"));
             } else {
                 self.update(json!({"sessionUpdate": "tool_call_update", "toolCallId": call, "status": "failed",
-                    "_meta": {"cognition.ai/rejected": picked == "reject_once"}}));
+                    "_meta": {"cognition.ai/rejected": picked.starts_with("reject")}}));
                 self.say(&format!("not run ({picked})"));
             }
         } else if let Some(q) = text.strip_prefix("ask: ") {
@@ -242,6 +288,23 @@ impl Acp {
                 json!({"file_path": path}),
                 json!([{"type": "diff", "path": path, "oldText": "a\n", "newText": "b\n"}]),
             );
+            if GROK.load(std::sync::atomic::Ordering::Relaxed) {
+                let rid = format!("perm-{}", self.next);
+                out(json!({"jsonrpc": "2.0", "id": rid, "method": "session/request_permission", "params": {
+                    "sessionId": self.session, "toolCall": {"toolCallId": call, "kind": "edit"}, "options": [
+                        {"optionId": "allow_edits", "name": "Yes, allow all edits during this session",
+                         "kind": "allow_always"},
+                        {"optionId": "allow_once", "name": "Yes", "kind": "allow_once"},
+                        {"optionId": "reject_once", "name": "No", "kind": "reject_once"}]}}));
+                let Some(a) = self.wait_answer(&rid) else { return };
+                let picked = a["result"]["outcome"]["optionId"].as_str().unwrap_or("cancelled").to_string();
+                if !picked.starts_with("allow") {
+                    self.update(json!({"sessionUpdate": "tool_call_update", "toolCallId": call, "status": "failed",
+                        "_meta": {"cognition.ai/rejected": true}}));
+                    self.say(&format!("not edited ({picked})"));
+                    return self.end_turn(id);
+                }
+            }
             self.update(json!({"sessionUpdate": "tool_call_update", "toolCallId": call, "status": "completed"}));
             self.say("edited");
         } else if text == "slow" {
@@ -267,7 +330,7 @@ impl Acp {
                     {"optionId": "allow_once", "name": "Allow", "kind": "allow_once"},
                     {"optionId": "reject_once", "name": "Reject", "kind": "reject_once"}]}}));
             let Some(a) = self.wait_answer(&rid) else { return };
-            let reply = if a["result"]["outcome"]["optionId"] != "allow_once" {
+            let reply = if !a["result"]["outcome"]["optionId"].as_str().is_some_and(|o| o.starts_with("allow")) {
                 format!("mcp {tool} denied")
             } else {
                 match &self.mcp {
@@ -295,6 +358,10 @@ impl Acp {
         } else {
             self.say(&format!("echo: {text}"));
         }
+        self.end_turn(id);
+    }
+
+    fn end_turn(&mut self, id: Value) {
         self.update(json!({"sessionUpdate": "usage_update", "used": 1200, "size": 200000}));
         let stop = if self.cancelled { "cancelled" } else { "end_turn" };
         for pid in std::iter::once(id).chain(std::mem::take(&mut self.joined)) {
@@ -306,6 +373,7 @@ impl Acp {
 pub fn serve(args: &[String]) {
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     PLAIN.store(args.iter().any(|a| a == "--plain"), std::sync::atomic::Ordering::Relaxed);
+    GROK.store(args.get(1).is_some_and(|a| a == "agent"), std::sync::atomic::Ordering::Relaxed);
     MODES.store(args.iter().any(|a| a == "--modes"), std::sync::atomic::Ordering::Relaxed);
     let partial = args.iter().any(|a| a == "--partial-modes");
     PARTIAL.store(partial, std::sync::atomic::Ordering::Relaxed);

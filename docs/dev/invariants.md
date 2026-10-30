@@ -10,7 +10,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `notify` and `developer_instructions` are chained or prepended, never replaced (pdt-agents `hooks.rs`, `mcp.rs`,
   `adapter/`).
 - **"Always allow" is session-only for every agent** (Claude `destination: "session"`, Codex `acceptForSession`,
-  ACP `allow_session`), including switching mode after a plan.
+  ACP `allow_session`), including switching mode after a plan. An agent's own option that saves a rule beyond the
+  session (Cursor's "Allow always", Grok's `always-allow`) is never offered or picked.
 - **Children never inherit pdtd's `PDT_*` variables** (PDT sets the session's own afterwards), so a dev pdtd started
   in a stable-hosted terminal can't pick up the stable port or data folder. Agents also lose
   `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` under the subscription policy (pdt-core `session.rs`). Claude conversations
