@@ -40,8 +40,8 @@ Notes from running Google's Antigravity ACP server 1.4.5 (`agy-acp-server-1.4.5-
   is `rawOutput {commandLine, workingDir, exitCode, combinedOutput}`.
 - A new file (`kind: edit`, a `diff` content with `newText`) asks with Allow / Deny only. With client `fs` off, the
   server writes the file itself, under a second tool call (`<session>:<n>`, "Running edit_file"). At the end of the
-  turn the first one is closed `failed` "Tool call was approved but never executed." In auto_edit, only one card
-  appears.
+  turn the first one is closed `failed` "Tool call was approved but never executed." PDT shows that one done, with its
+  diff (`AcpExtensions::ran_elsewhere`), unless the edit was refused (PDT-286). In auto_edit, only one card appears.
 - "Allow Always" decisions live in memory for the session (`_allowed_tool_calls_by_session_id`), keyed on the exact
   command for commands. Writes are never cached.
 - Paths are reported with symlinks resolved (`/private/tmp/…`).
