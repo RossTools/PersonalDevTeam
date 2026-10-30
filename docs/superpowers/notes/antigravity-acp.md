@@ -1,8 +1,8 @@
 # Antigravity's ACP server (PDT-239)
 
 Notes from running Google's Antigravity ACP server 1.4.5 (`agy-acp-server-1.4.5-darwin-arm64.zip`, the ACP registry's
-`antigravity-acp` entry) by hand on macOS, signed in on the free tier, 2026-10-30. Reference:
-docs/reference/agents.md "Antigravity".
+`antigravity-acp` entry) by hand on macOS, signed in on the free tier, 2026-10-30. How PDT runs it: docs/dev/architecture.md
+(ACP agents) and pdt-core `conversation/antigravity.rs`.
 
 ## What it is
 - The `agy` CLI (1.4.10) has no ACP mode. Google publishes the ACP server separately, as a zip per platform holding

@@ -226,16 +226,10 @@ impl<P: AcpProfile> Shared<P> {
         })
     }
 
-    /// Learns the agent's models, and its modes, from a `session/new` or `session/load` answer (modes: a profile with none of its own, or
+    /// Learns the agent's modes from a `session/new` or `session/load` answer (a profile with none of its own, or
     /// one that covers only some of PDT's). The session offers all of PDT's modes: those the agent has no mode for,
     /// PDT keeps itself (`AcpLive::apply_mode`).
     fn settle_modes(&self, answer: &Value) {
-        // Published with the rest once the session has started (`start_session`).
-        for out in self.mapper().answer_models(answer) {
-            if let AcpOut::Models(models) = out {
-                self.caps.lock().unwrap_or_else(|e| e.into_inner()).models = models;
-            }
-        }
         let own = !self.profile.modes().is_empty();
         if own && self.profile.base_mode().is_none() {
             return;
@@ -502,6 +496,8 @@ impl<P: AcpProfile> AcpLive<P> {
                 Ok(v) => {
                     loaded = true;
                     sh.settle_modes(&v);
+                    let outs = sh.mapper().on_session(&v);
+                    sh.emit(outs, None);
                 }
                 Err(e) => {
                     let Some(text) = sh.profile.resume_fallback(e.code, &e.message) else { return Err(refused(e)) };
@@ -528,6 +524,8 @@ impl<P: AcpProfile> AcpLive<P> {
             *sh.session.lock().unwrap_or_else(|e| e.into_inner()) = id.clone();
             let _ = sh.sink.send(AdapterOutput::ExternalId(id));
             sh.settle_modes(&v);
+            let outs = sh.mapper().on_session(&v);
+            sh.emit(outs, None);
             if sh.profile.instructions_in_prompt() {
                 *sh.instructions.lock().unwrap_or_else(|e| e.into_inner()) =
                     spec.instructions.as_ref().map(|i| i.text.clone());

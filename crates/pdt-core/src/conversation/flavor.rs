@@ -1,9 +1,10 @@
 //! A defined ACP agent's extensions ([`AcpFlavor`]): plain ACP, or what its built-in profile's agent adds, mapped in
-//! that agent's module (`super::omp`, `super::cursor`, `super::antigravity`).
+//! that agent's module (`super::omp`, `super::cursor`, `super::grok`, `super::antigravity`).
 
 use super::acp::{AcpExtensions, ExtAnswer, ExtRequest, PlainAcp};
 use super::antigravity::{self, AntigravityExtensions};
 use super::cursor::{self, CursorExtensions};
+use super::grok::{self, GrokExtensions};
 use super::omp::{self, OmpExtensions};
 use crate::acp_agent::AcpFlavor;
 use serde_json::Value;
@@ -14,6 +15,7 @@ macro_rules! by_flavor {
             AcpFlavor::Plain => PlainAcp.$method($($arg),*),
             AcpFlavor::Omp => OmpExtensions.$method($($arg),*),
             AcpFlavor::Cursor => CursorExtensions.$method($($arg),*),
+            AcpFlavor::Grok => GrokExtensions.$method($($arg),*),
             AcpFlavor::Antigravity => AntigravityExtensions.$method($($arg),*),
         }
     };
@@ -22,10 +24,6 @@ macro_rules! by_flavor {
 impl AcpExtensions for AcpFlavor {
     fn name(&self) -> &str {
         by_flavor!(self, name())
-    }
-
-    fn resolves_symlinks(&self) -> bool {
-        by_flavor!(self, resolves_symlinks())
     }
 
     fn tool_name(&self, update: &Value) -> Option<String> {
@@ -42,6 +40,14 @@ impl AcpExtensions for AcpFlavor {
 
     fn pdt_tool_prefix(&self) -> Option<&str> {
         by_flavor!(self, pdt_tool_prefix())
+    }
+
+    fn resolves_symlinks(&self) -> bool {
+        by_flavor!(self, resolves_symlinks())
+    }
+
+    fn rejected(&self, update: &Value) -> bool {
+        by_flavor!(self, rejected(update))
     }
 
     fn session_option(&self) -> Option<&str> {
@@ -70,6 +76,7 @@ impl AcpFlavor {
                 AcpFlavor::Plain => false,
                 AcpFlavor::Omp => omp::session_missing(code, message),
                 AcpFlavor::Cursor => cursor::session_missing(code, message),
+                AcpFlavor::Grok => grok::session_missing(code, message),
                 AcpFlavor::Antigravity => false,
             }
     }

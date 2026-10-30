@@ -1,0 +1,24 @@
+# Linked from the website's Plugins page ("Request a plugin"). Don't add the `from-pdt` label: triage keys off it.
+name: Plugin request
+description: A service PDT could work with, as a plugin.
+labels: ["enhancement"]
+body:
+  - type: input
+    id: service
+    attributes:
+      label: The service
+      description: Its name, and a link to it or its API.
+    validations:
+      required: true
+  - type: textarea
+    id: use
+    attributes:
+      label: What you would use it for
+      description: What PDT should do with it. Workflow steps, triggers, tools for the PM, a link between projects and it.
+    validations:
+      required: true
+  - type: textarea
+    id: access
+    attributes:
+      label: How it is reached
+      description: Cloud or self-hosted, and how it signs you in (an API token, OAuth, a webhook URL), if you know.

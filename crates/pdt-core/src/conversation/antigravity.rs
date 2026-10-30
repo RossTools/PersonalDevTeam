@@ -176,7 +176,8 @@ mod tests {
             (model["category"].as_str(), model["currentValue"].as_str()),
             (Some("model"), Some("gemini-3.8-flash"))
         );
-        let models = mapper(PermissionMode::Ask).answer_models(new);
+        let outs = mapper(PermissionMode::Ask).on_session(new);
+        let models: Vec<&AcpOut> = outs.iter().filter(|o| matches!(o, AcpOut::Models(_))).collect();
         assert!(
             matches!(&models[..], [AcpOut::Models(m)] if m.len() == 1 && m[0].value == "gemini-3.8-flash"),
             "the picker's models come from session/new's answer: {models:?}"

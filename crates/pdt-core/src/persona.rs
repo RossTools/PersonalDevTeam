@@ -465,7 +465,7 @@ port, or with the script the project names, and delete only literal paths. Never
         id: "triage",
         name: "Triage",
         role: TRIAGE_ROLE,
-        description: "Reads issues from outside PDT and drafts tickets for them, locked down (PDT-201).",
+        description: "Reads issues from outside PDT and drafts tickets for them, locked down.",
         permission_mode: Some(PermissionMode::Ask),
         tools: BuiltinTools::These(TRIAGE_TOOLS),
         instructions: "You are Triage. You read an issue someone outside PDT wrote and decide what it needs.\n\n\
@@ -481,7 +481,7 @@ the `agentic` label. The user decides when it goes ahead.\n\
         id: "pr-reviewer",
         name: "PR Reviewer",
         role: TRIAGE_ROLE,
-        description: "Reviews pull requests from outside PDT through the forge's API, locked down (PDT-269).",
+        description: "Reviews pull requests from outside PDT through the forge's API, locked down.",
         permission_mode: Some(PermissionMode::Ask),
         tools: BuiltinTools::These(PR_REVIEWER_TOOLS),
         instructions: "You are the PR Reviewer. You review a pull request someone outside PDT opened (a contributor \

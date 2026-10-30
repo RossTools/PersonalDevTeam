@@ -6,11 +6,11 @@ import { remarkDocsLinks } from './src/remark-docs-links.mjs';
 import { docId, USER_SECTIONS } from './src/docs-pages.mjs';
 
 // Starlight's `autogenerate` only sees src/content/docs, and the docs live in the repository's docs/: the user docs
-// sections are listed in docs-pages.mjs, each page labelled with its title. docs/reference/ is still published (other
-// docs link to it) but left out of the sidebar.
+// sections are listed in docs-pages.mjs, each page labelled with its title. Contributing also lists the developer
+// guide (docs/dev/) and SDLC.md.
 const sections = USER_SECTIONS.map((s) => ({
   label: s.label,
-  items: s.pages.map((p) => ({ slug: docId(`user/${s.dir}/${p}.md`) })),
+  items: [...s.pages.map((p) => `user/${s.dir}/${p}.md`), ...(s.more ?? [])].map((f) => ({ slug: docId(f) })),
 }));
 
 // The Pages workflow passes the deployed URL and path (actions/configure-pages); locally the site is served at /.
@@ -49,9 +49,10 @@ export default defineConfig({
           items: [
             { label: 'Working in a PDT project', slug: 'docs/agent-guide' },
             { label: 'Run configuration', slug: 'docs/run-config' },
-            { label: 'How we work on PDT', slug: 'docs/sdlc' },
           ],
         },
+        // The Plugins pages (src/pages/plugins/) stand outside the docs, like the landing page.
+        { label: 'Plugins', link: '/plugins/' },
       ],
     }),
   ],
