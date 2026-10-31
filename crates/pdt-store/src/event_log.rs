@@ -224,6 +224,11 @@ pub(crate) async fn mirror_timeline(
                     actor: actor.as_str().into(),
                     attempt_id: attempt.map(|(a,)| a),
                     workflow_id: data.get("workflowId").and_then(|w| w.as_str()).map(String::from),
+                    by_session: data
+                        .pointer("/agent/sessionId")
+                        .or_else(|| data.get("sessionId"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
                 },
             )
         }

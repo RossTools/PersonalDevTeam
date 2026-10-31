@@ -869,6 +869,8 @@ pub async fn run_workflows(st: &AppState) {
         crate::scheduler::admit_waiting(st).await;
     }
     advance_all(st).await;
+    // Watches (PDT-319) queue their news before the outbox delivers.
+    crate::watches::tick(st).await;
     {
         let _engine = st.engine_lock.lock().await;
         super::outbox::deliver(st).await;

@@ -155,6 +155,15 @@ through the SDK's `pm` and `conversations` modules (start, send, close; every co
 `conversations::subscribe_all`; answering a request as the user). Its bot holds a Gateway websocket (`gateway.rs`) in
 an integration service (`Integration::services`, started once by pdtd, idle while the plugin is off).
 
+**Watches.** A ticket or workflow run that a PM conversation (its `watch` tool) or the user (the Watch toggle) wants to
+hear about (pdt-core `watch.rs`, pdt-store and pdt-api `watches.rs`, table `watches`). Each engine tick reads what
+happened to each watched target since its stored cursor: the event log (outcomes, comments, stage changes, merges, CI
+failures, queue drops), new Inbox items about it, and a run's status. It notes what the watch asked for, and tells a
+burst once it has been quiet for 15 s (at most a minute after the first). A conversation is told through the outbox
+(`reopens`, so a parked one wakes); the user, and a closed conversation's leftovers, get a `watch.event`
+notification. A `once` watch ends when its target finishes. A PM Reset moves the old
+conversation's watches to the fresh one (`watches::follow`); a tick during the reset waits for it.
+
 **Workflows.** Everything that happens is an event in the event log (`events`, keyed so a duplicate is dropped). A
 workflow is a versioned graph of nodes (pdt-core `workflow/`): a trigger, conditions, actions, waits, agent steps,
 gates. The engine (pdt-api `workflow/engine.rs`) matches new events to enabled workflows, starts runs, and advances
@@ -242,6 +251,7 @@ login.
 | Integrations | pdt-api `sdk.rs`, `integrations/`; `crates/pdt-int-*`; pdtd `src/integrations/` | `web/src/plugins`, `web/src/connections` |
 | Documents | pdt-api `documents/`; pdt-core `document.rs`; pdt-store `documents.rs` | `web/src/documents` |
 | The PM | pdt-api `pm.rs`; pdt-core `pm.rs`; pdt-store `pm.rs` | `web/src/pm` |
+| Watches | pdt-api `watches.rs`; pdt-core `watch.rs`; pdt-store `watches.rs` | `web/src/common/Watch.tsx` |
 | Secrets | pdt-api `vault.rs`, `secrets.rs`; pdt-core `secret.rs` | `web/src/secrets` |
 | Database | `crates/pdt-store` (`migrations/`, `migrate.rs`) | |
 | Design system | | `web/ui` (`web/ui/README.md`), shared app components in `web/src/common` |

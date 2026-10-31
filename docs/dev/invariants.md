@@ -28,6 +28,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   (pdt-api `workflow/outbox.rs`), which waits until a terminal has been idle with nobody typing, or a conversation is
   idle with nothing open; a message that can't be delivered ends `untold` and notifies the user. A session whose
   state is unknown (its hooks never fired) is never typed into.
+  **The one exception is a watch** (pdt-api `watches.rs`): a PM conversation that set one with its `watch` tool is
+  told about its target without asking anyone, since it only tells the conversation that asked. Its messages still
+  go through the outbox, and a closed conversation's go to the user's Inbox instead.
 - **Conversations are never auto-resumed**, and never as terminals. After a pdtd restart their running turn ends as
   interrupted; the UI offers Continue. Only interrupted terminal sessions are resumed by themselves. Background
   tasks a restart stopped (kept per session, `sessions.background_tasks`, moved to `stopped_background` by
