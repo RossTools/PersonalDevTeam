@@ -13,6 +13,9 @@ use ts_rs::TS;
 /// checkpoint (ms).
 pub const UPDATE_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
 
+/// How long a reset waits for the conversation's journal turn before it records none (PDT-308, ms).
+pub const RESET_WAIT_MS: i64 = 3 * 60 * 1000;
+
 /// What the journal is for, said in every request for it.
 const JOURNAL_WHAT: &str = "what you and the user are working on, what was decided, and the threads still open \
                             (under a `Still open` heading). It replaces this conversation's earlier entry, so write \
@@ -23,6 +26,14 @@ pub fn journal_request() -> String {
     format!(
         "[{SHORT_NAME}] The user closed this PM conversation, so it is ending. Write its journal entry with \
          `write_journal`: {JOURNAL_WHAT}. Then end your turn."
+    )
+}
+
+/// What PDT sends a PM conversation the user is resetting (PDT-308): a fresh one with its name starts from this entry.
+pub fn reset_request() -> String {
+    format!(
+        "[{SHORT_NAME}] The user is resetting this PM conversation: it ends, and a fresh conversation with the same \
+         name starts from your journal entry. Write it with `write_journal`: {JOURNAL_WHAT}. Then end your turn."
     )
 }
 
@@ -86,6 +97,8 @@ pub enum RotateReason {
     Age,
     /// The user closed it.
     User,
+    /// The user reset it (PDT-308): a fresh conversation with its name and settings carries on from its journal.
+    Reset,
 }
 
 impl RotateReason {
@@ -94,10 +107,13 @@ impl RotateReason {
             RotateReason::Context => "context",
             RotateReason::Age => "age",
             RotateReason::User => "user",
+            RotateReason::Reset => "reset",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        [RotateReason::Context, RotateReason::Age, RotateReason::User].into_iter().find(|r| r.as_str() == s)
+        [RotateReason::Context, RotateReason::Age, RotateReason::User, RotateReason::Reset]
+            .into_iter()
+            .find(|r| r.as_str() == s)
     }
 }
 
@@ -292,6 +308,10 @@ pub struct PmSessionInfo {
     /// Where it is held besides PDT: `discord` for one the user talks to through the Discord bot's DMs (PDT-304).
     #[serde(default)]
     pub via: Option<String>,
+    /// The conversation this one was reset from (PDT-308): ended, readable, with its own `resetFrom` when it was a
+    /// reset one too.
+    #[serde(default)]
+    pub reset_from: Option<String>,
 }
 
 /// `POST /api/pm/sessions`.
@@ -371,6 +391,8 @@ pub struct BriefingData {
     pub events: Vec<BriefEvent>,
     /// Newest first.
     pub journal: Vec<BriefJournal>,
+    /// The journal of the conversation this one was reset from (PDT-308): the briefing leads with it.
+    pub reset_from: Option<BriefJournal>,
     pub pinned: Vec<BriefNote>,
     /// The other open PM conversations (PDT-149), latest activity first.
     pub others: Vec<BriefConversation>,
@@ -819,6 +841,14 @@ pub fn briefing(d: &BriefingData) -> String {
         "# Briefing\n\nBuilt by {SHORT_NAME} when this session started. Look things up with your tools for anything \
          newer or more detailed.\n"
     );
+    if let Some(j) = &d.reset_from {
+        out.push_str(&format!(
+            "\n## This conversation before it was reset\n\nThe user reset this conversation ({}): it carries on from \
+             the journal it wrote then.\n\n{}\n",
+            ago(d.now, j.at),
+            j.body.trim()
+        ));
+    }
     out.push_str("\n## Projects\n\n");
     if d.projects.is_empty() {
         out.push_str("- None yet.\n");
@@ -1240,6 +1270,7 @@ mod tests {
                 event(8 * H + 2, "pr.ci_failed", None, json!({})),
             ],
             journal: vec![BriefJournal { at: 8 * H, body: "Talked about the PM.\n".into() }],
+            reset_from: None,
             pinned: vec![BriefNote { id: "n1".into(), project: None, title: "Prefers short answers".into() }],
             others: vec![
                 BriefConversation { title: "CB cutover".into(), at: 9 * H, summary: "Waiting on DNS.".into() },
@@ -1279,6 +1310,23 @@ mod tests {
         ] {
             assert!(b.contains(want), "missing {want:?} in\n{b}");
         }
+    }
+
+    /// PDT-308: a reset conversation's briefing leads with its journal from before the reset, ahead of the others.
+    #[test]
+    fn a_reset_conversation_starts_from_its_own_journal_first() {
+        let mut d = data();
+        assert!(!briefing(&d).contains("before it was reset"));
+        d.reset_from = Some(BriefJournal { at: 9 * H, body: "We were planning the cutover.\n".into() });
+        let b = briefing(&d);
+        let own = b.find("## This conversation before it was reset").expect(&b);
+        assert!(
+            b[own..].contains("(1 h ago): it carries on from the journal it wrote then.\n\nWe were planning"),
+            "{b}"
+        );
+        assert!(own < b.find("## Projects").unwrap() && own < b.find("## Journal").unwrap(), "first:\n{b}");
+        assert_eq!(RotateReason::parse("reset"), Some(RotateReason::Reset));
+        assert!(reset_request().contains("`write_journal`") && reset_request().contains("same name"));
     }
 
     /// Release guidance only for a project with a release workflow (PDT-296): a PM elsewhere gets none.

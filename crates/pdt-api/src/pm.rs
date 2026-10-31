@@ -80,16 +80,24 @@ async fn pm_state(st: &AppState) -> Result<PmState, ApiError> {
     let mut ended = vec![];
     // Newest first: the first open one is the newest (`current`, for clients that know only one).
     let mut current = None;
-    for row in st.store.list_pm_sessions().await? {
+    let rows = st.store.list_pm_sessions().await?;
+    let in_flight = st.pm_resets.lock().map(|r| r.clone()).unwrap_or_default();
+    for row in &rows {
         let Some(session) = st.store.get_session(&row.session_id).await? else { continue };
-        let is_open = row.rotation != Rotation::Done;
+        // One being reset stays listed (and in place) while its reset runs, until the fresh one takes its place
+        // (PDT-308). One whose reset never finished (pdtd stopped mid-way) is an ended conversation like a closed one.
+        let resetting = in_flight.contains(&row.session_id);
+        let is_open = row.rotation != Rotation::Done || resetting;
         if is_open && current.is_none() {
             current = Some(session.clone());
         }
-        let last_activity = if is_open {
-            st.store.last_session_event_ts(&row.session_id).await?.unwrap_or(row.created_at).max(row.created_at)
-        } else {
-            row.ended_at.unwrap_or(row.created_at)
+        let last_activity = match (is_open, row.listed_at) {
+            (false, _) => row.ended_at.unwrap_or(row.created_at),
+            (true, Some(at)) if row.reason == Some(RotateReason::Reset) => at,
+            (true, listed_at) => {
+                let base = listed_at.unwrap_or(row.created_at);
+                st.store.last_session_event_ts(&row.session_id).await?.unwrap_or(base).max(base)
+            }
         };
         let journal = st.store.session_journal(&row.session_id).await?.map(|n| n.body);
         let info = PmSessionInfo {
@@ -102,12 +110,19 @@ async fn pm_state(st: &AppState) -> Result<PmState, ApiError> {
             reason: row.reason,
             journal,
             via: row.via.clone(),
+            reset_from: row.reset_from.clone(),
         };
         if is_open { open.push(info) } else { ended.push(info) }
     }
     open.sort_by_key(|i| std::cmp::Reverse(i.last_activity));
     open.extend(ended);
     Ok(PmState { current, sessions: open })
+}
+
+/// When a PM conversation last had activity, as the list orders it.
+async fn last_activity(st: &AppState, id: &str) -> Result<i64, ApiError> {
+    let state = pm_state(st).await?;
+    Ok(state.sessions.iter().find(|i| i.session.id == id).map_or_else(now_ms, |i| i.last_activity))
 }
 
 /// `POST /api/pm/sessions`: a new PM conversation, beside the open ones (PDT-149: starting one ends none).
@@ -212,9 +227,130 @@ pub(crate) async fn close(State(st): State<AppState>, Path(id): Path<String>) ->
         // A checkpoint or update still waiting is overtaken by the journal request.
         drop_checkpoints(&st, &id).await;
         // The user's click: it reopens a parked conversation to write its journal.
-        ask_for_journal(&st, &s, true).await;
+        ask_for_journal(&st, &s, pm::journal_request(), true).await;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/pm/sessions/{id}/reset` (PDT-308): the conversation writes its journal and ends, and a fresh one with
+/// its title, agent, model, permission mode and list position carries on from that journal. Returns the fresh one.
+pub(crate) async fn reset(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Session>, ApiError> {
+    Ok(Json(reset_conversation(&st, &id).await?))
+}
+
+/// Resets a PM conversation the way the web's Reset does; the fresh conversation. The reset runs as a task of its
+/// own: a caller that goes away (a closed page, a dropped connection) doesn't stop it half-way.
+pub async fn reset_conversation(st: &AppState, id: &str) -> Result<Session, ApiError> {
+    if !st.pm_resets.lock().map_err(|_| ApiError::internal("the PM's resets are poisoned"))?.insert(id.to_string()) {
+        return Err(ApiError::new(StatusCode::CONFLICT, "pm_closed", "that PM conversation is already ending"));
+    }
+    let (st2, id2) = (st.clone(), id.to_string());
+    let task = tokio::spawn(async move {
+        let r = run_reset(&st2, &id2).await;
+        if let Ok(mut resets) = st2.pm_resets.lock() {
+            resets.remove(&id2);
+        }
+        r
+    });
+    task.await.map_err(|e| ApiError::internal(format!("the reset stopped: {e}")))?
+}
+
+async fn run_reset(st: &AppState, id: &str) -> Result<Session, ApiError> {
+    let (row, s) = pm_session(st, id).await?;
+    if row.rotation != Rotation::None {
+        return Err(ApiError::new(StatusCode::CONFLICT, "pm_closed", "that PM conversation is already ending"));
+    }
+    let listed_at = last_activity(st, id).await?;
+    st.store.set_pm_listed_at(id, listed_at).await?;
+    if st.store.last_session_event_ts(id).await?.is_none() {
+        // It never said anything: nothing to write down.
+        end_session(st, &s, Rotation::None, Some(RotateReason::Reset)).await;
+    } else if st
+        .store
+        .set_pm_rotation(id, Rotation::None, Rotation::Journal, Some(RotateReason::Reset), now_ms())
+        .await?
+    {
+        tracing::info!(session = %id, "resetting a PM conversation");
+        drop_checkpoints(st, id).await;
+        if s.status == SessionStatus::Finished {
+            // Its agent is gone: it can't write one.
+            end_session(st, &s, Rotation::Journal, None).await;
+        } else {
+            ask_for_journal(st, &s, pm::reset_request(), true).await;
+            wait_for_journal(st, &s).await;
+        }
+    } else {
+        return Err(ApiError::new(StatusCode::CONFLICT, "pm_closed", "that PM conversation is already ending"));
+    }
+    // The journal turn is no reply for the user (PDT-205, PDT-207).
+    let _ = st.store.mark_viewed(id, now_ms()).await;
+    // When this fails nothing takes its place: it is listed with the ended conversations.
+    reset_session(st, &s, &row, listed_at).await
+}
+
+/// Waits for a conversation being reset to write its journal and end (`turn_ended` ends it), up to
+/// `pm_reset_wait_ms`; then ends it with no journal.
+async fn wait_for_journal(st: &AppState, s: &Session) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(st.pm_reset_wait_ms.max(0) as u64);
+    loop {
+        let row = st.store.get_pm_session(&s.id).await.ok().flatten();
+        let done = row.as_ref().is_none_or(|r| r.rotation == Rotation::Done);
+        // The row is marked done just before a stand-in journal is written.
+        if done && matches!(st.store.session_journal(&s.id).await, Ok(Some(_))) {
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            if !done {
+                tracing::info!(session = %s.id, "a PM conversation being reset wrote no journal in time");
+                drop_waiting(st, &s.id, |m| m.dedupe.as_deref() == Some(pm::JOURNAL_KEY)).await;
+                end_session(st, s, Rotation::Journal, None).await;
+            }
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// The fresh conversation that carries on from `old` (PDT-308): its title, agent, model, permission mode, persona,
+/// folder and `via`, listed where it was, with a briefing that leads with its journal.
+async fn reset_session(st: &AppState, old: &Session, row: &PmSessionRow, listed_at: i64) -> Result<Session, ApiError> {
+    let project = host_project(st).await?;
+    let id = uuid::Uuid::now_v7().to_string();
+    // Written before the session starts, so its first instructions carry it.
+    let text = pm::briefing(&briefing_data(st, &id, Some(&old.id)).await?);
+    let path = st.data_dir.join("sessions").join(&id).join(BRIEFING_FILE);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| ApiError::internal(format!("making the session's folder: {e}")))?;
+    }
+    std::fs::write(&path, text).map_err(|e| ApiError::internal(format!("writing the briefing: {e}")))?;
+    let p = persona(st).await?;
+    let req = crate::sessions::CreateSession {
+        valid: ValidSession {
+            project_id: project.id.clone(),
+            worktree_id: None,
+            kind: SessionKind::AgentTui,
+            agent: old.agent.or(Some(p.setup.agent)),
+            bypass_permissions: old.bypass_permissions,
+            size: TerminalSize { cols: 120, rows: 30 },
+            initial_prompt: None,
+            mode: SessionMode::Conversation,
+            model: old.model.clone(),
+            permission_mode: old.permission_mode,
+        },
+        title: Some(old.title.clone()),
+        attempt_id: None,
+        ticket: None,
+        tab: None,
+        persona: old.persona.clone(),
+        cwd: Some(old.cwd.clone()),
+        id: Some(id),
+    };
+    let s = crate::sessions::create_session(st, req).await?;
+    st.store.insert_pm_reset(&s.id, s.created_at, &old.id, listed_at).await?;
+    if row.via.is_some() {
+        st.store.set_pm_via(&s.id, row.via.as_deref()).await?;
+    }
+    Ok(s)
 }
 
 /// The user wrote to a PM conversation: one still called [`pm::NEW_TITLE`] is named after the message.
@@ -256,6 +392,7 @@ async fn new_session(
         tab: None,
         persona: Some(SessionPersona { id: p.id.clone(), name: p.name.clone(), version: p.version, step_id: None }),
         cwd: Some(work_folder(st, &project.repo_path).await?),
+        id: None,
     };
     let s = crate::sessions::create_session(st, req).await?;
     st.store.insert_pm_session(&s.id, s.created_at).await?;
@@ -389,8 +526,13 @@ async fn checkpoint_waiting(st: &AppState, id: &str) -> bool {
 
 /// Drops a PM conversation's checkpoint request or update that is still waiting.
 async fn drop_checkpoints(st: &AppState, id: &str) {
+    drop_waiting(st, id, |m| is_checkpoint(m, id)).await;
+}
+
+/// Drops a PM conversation's waiting outbox messages that `which` picks.
+async fn drop_waiting(st: &AppState, id: &str, which: impl Fn(&pdt_store::SessionMessage) -> bool) {
     for m in st.store.waiting_session_messages().await.unwrap_or_default() {
-        if is_checkpoint(&m, id) {
+        if m.session_id.as_deref() == Some(id) && which(&m) {
             let _ = st.store.resolve_session_message(&m.id, None, now_ms()).await;
         }
     }
@@ -455,17 +597,17 @@ async fn update_data(st: &AppState, id: &str, row: &PmSessionRow, now: i64) -> R
     })
 }
 
-/// Asks a PM conversation the user closed (rotation `journal`) for its journal entry, through the outbox (7a's
+/// Asks a PM conversation the user closed or is resetting (rotation `journal`) for its journal entry with `text`, through the outbox (7a's
 /// delivery rule) so it never goes into a running turn; `reopens` wakes a parked one. Ends it at once when the
 /// request can't be queued.
-async fn ask_for_journal(st: &AppState, s: &Session, reopens: bool) {
+async fn ask_for_journal(st: &AppState, s: &Session, text: String, reopens: bool) {
     let m = pdt_store::SessionMessage {
         id: uuid::Uuid::now_v7().to_string(),
         attempt_id: None,
         session_id: Some(s.id.clone()),
         ticket_id: None,
         dedupe: Some(pm::JOURNAL_KEY.into()),
-        text: pm::journal_request(),
+        text,
         timeline: serde_json::Value::Null,
         run_id: None,
         step_id: None,
@@ -548,7 +690,8 @@ pub(crate) async fn instructions(st: &AppState, s: &Session) -> Result<String, A
     let briefing = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(_) => {
-            let text = pm::briefing(&briefing_data(st, &s.id).await?);
+            let reset_from = st.store.get_pm_session(&s.id).await?.and_then(|r| r.reset_from);
+            let text = pm::briefing(&briefing_data(st, &s.id, reset_from.as_deref()).await?);
             if let Some(dir) = path.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
@@ -654,7 +797,8 @@ async fn release_workflow(st: &AppState, workflows: &[Workflow], project_id: &st
     Ok(None)
 }
 
-async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, ApiError> {
+/// A new PM session's briefing; `reset_from`: the conversation it carries on from (PDT-308), whose journal leads it.
+async fn briefing_data(st: &AppState, session_id: &str, reset_from: Option<&str>) -> Result<BriefingData, ApiError> {
     let now = now_ms();
     let projects = st.store.list_projects().await?;
     let mut keys = std::collections::HashMap::new();
@@ -703,8 +847,13 @@ async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, 
         })
         .await?
         .into_iter()
+        .filter(|n| reset_from.is_none() || n.session_id.as_deref() != reset_from)
         .map(|n| BriefJournal { at: n.updated_at, body: n.body })
         .collect();
+    let own = match reset_from {
+        Some(id) => st.store.session_journal(id).await?.map(|n| BriefJournal { at: n.updated_at, body: n.body }),
+        None => None,
+    };
     let pinned = st
         .store
         .search_notes(&NoteFilter { kind: Some(NoteKind::Note), pinned: Some(true), limit: 100, ..Default::default() })
@@ -718,7 +867,7 @@ async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, 
         .collect();
     let mut others = vec![];
     for info in pm_state(st).await?.sessions {
-        if !info.open || info.session.id == session_id {
+        if !info.open || info.session.id == session_id || Some(info.session.id.as_str()) == reset_from {
             continue;
         }
         others.push(BriefConversation {
@@ -727,7 +876,18 @@ async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, 
             summary: last_said(st, &info.session.id).await?,
         });
     }
-    Ok(BriefingData { now, projects: out_projects, in_flight, inbox, since, events, journal, pinned, others })
+    Ok(BriefingData {
+        now,
+        projects: out_projects,
+        in_flight,
+        inbox,
+        since,
+        events,
+        journal,
+        reset_from: own,
+        pinned,
+        others,
+    })
 }
 
 /// The Inbox, for a briefing or an update.

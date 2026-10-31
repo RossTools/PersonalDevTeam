@@ -3,4 +3,4 @@
 /**
  * Why a PM session ended.
  */
-export type RotateReason = "context" | "age" | "user";
+export type RotateReason = "context" | "age" | "user" | "reset";

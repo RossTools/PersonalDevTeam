@@ -13,7 +13,7 @@ import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import type { RotateReason } from '../api/gen/RotateReason';
 import { InlineRename } from '../common/InlineRename';
 import { useTopBarActions } from '../shell/PhoneTopBar';
-import { earlier, firstLine, REASON_LABEL, shownConversation, usePm, usePmActions, useRefreshPm, viaLabel, type PmSelection } from './usePm';
+import { earlier, firstLine, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useRefreshPm, useShownRef, viaLabel, type PmSelection } from './usePm';
 
 /** The start box's unsent text, kept like a conversation's (it has no session yet). */
 export const PM_START_DRAFT = 'pm-start';
@@ -21,7 +21,8 @@ export const PM_START_DRAFT = 'pm-start';
 /**
  * The PM view's work area (PDT-81, PDT-149): the conversation on show (an ended one read-only, with its journal), the
  * list of ended ones, or the box whose first message starts a new conversation (also shown when none is open). On a
- * phone (PDT-113) the conversation is the whole screen: the top bar has its title, and ⋯ renames or closes it.
+ * phone (PDT-113) the conversation is the whole screen: the top bar has its title, and ⋯ renames, resets or closes it.
+ * A reset conversation (PDT-308) links to the one it carries on from, read-only.
  * The notes have a view of their own (PDT-143).
  */
 export function PmView({ selection, onSelect, onNew }: {
@@ -31,15 +32,26 @@ export function PmView({ selection, onSelect, onNew }: {
 }) {
   const pm = usePm();
   const phone = useMediaQuery(PHONE_QUERY);
+  const shown = selection === 'new' || selection === 'earlier' ? undefined
+    : shownConversation(pm.data?.sessions, pm.data?.current?.id, selection);
+  const onShow = useShownRef(shown?.session.id ?? null);
   if (pm.isPending) return <Skeleton lines={8} className="p-4" />;
   if (selection === 'earlier') return <EarlierSessions onSelect={onSelect} phone={phone} />;
-  const info = selection === 'new' ? undefined : shownConversation(pm.data?.sessions, pm.data?.current?.id, selection);
+  const info = shown;
   if (!info) return <PmStart phone={phone} onStarted={(s) => onSelect(s.id)} />;
-  return <Conversation key={info.session.id} info={info} phone={phone} onSelect={onSelect} onNew={onNew} />;
+  const previous = info.resetFrom ? pm.data?.sessions.find((s) => s.session.id === info.resetFrom) : undefined;
+  // A reset puts the fresh conversation on screen in the old one's place, if the old one is still on show (PDT-308).
+  const onReset = (old: string, fresh: string) => {
+    if (onShow.current === old) onSelect(fresh);
+  };
+  return <Conversation key={info.session.id} info={info} previous={previous} phone={phone} onSelect={onSelect} onNew={onNew} onReset={onReset} />;
 }
 
-function Conversation({ info, phone, onSelect, onNew }: {
+function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
   info: PmSessionInfo;
+  /** The conversation this one was reset from (PDT-308). */
+  previous?: PmSessionInfo;
+  onReset: (old: string, fresh: string) => void;
   phone: boolean;
   onSelect: (s: PmSelection) => void;
   onNew: () => void;
@@ -47,10 +59,11 @@ function Conversation({ info, phone, onSelect, onNew }: {
   const s = info.session;
   const ended = !info.open;
   const [renaming, setRenaming] = useState(false);
-  const { rename, close } = usePmActions(() => onSelect('current'));
+  const { rename, close, reset } = usePmActions(() => onSelect('current'), onReset);
   const canClose = info.rotation === 'none';
   useTopBarActions(phone && !ended ? () => [
     { label: 'Rename', onSelect: () => setRenaming(true) },
+    { label: 'Reset…', onSelect: () => reset(info), disabled: !canClose },
     { label: 'Close…', onSelect: () => close(info), disabled: !canClose },
   ] : null);
   const meta = [
@@ -83,17 +96,29 @@ function Conversation({ info, phone, onSelect, onNew }: {
           actions={(
             <>
               {!ended && <Button variant="ghost" size="sm" onClick={() => setRenaming(true)}>Rename</Button>}
+              {!ended && <Button variant="ghost" size="sm" disabled={!canClose} onClick={() => reset(info)}>Reset…</Button>}
               {!ended && <Button variant="ghost" size="sm" disabled={!canClose} onClick={() => close(info)}>Close…</Button>}
               <Button variant="ghost" size="sm" onClick={onNew}>New conversation</Button>
             </>
           )}
         />
       )}
+      {previous && (
+        <div className="border-b border-border px-2 py-1">
+          <Button variant="ghost" size="sm" onClick={() => onSelect(previous.session.id)}>
+            Previous conversation (reset {new Date(previous.lastActivity).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })})
+          </Button>
+        </div>
+      )}
       <ViewTracked session={s} />
       <ConversationView
         session={s}
         className="min-h-0 flex-1"
-        banner={info.rotation === 'journal' ? (
+        banner={resetting(info) ? (
+          <p role="status" className="px-4 pb-1 text-center text-meta text-muted-foreground">
+            Resetting: this conversation is writing its journal, then a fresh one starts from it here.
+          </p>
+        ) : info.rotation === 'journal' ? (
           <p role="status" className="px-4 pb-1 text-center text-meta text-muted-foreground">
             You closed this conversation: it is writing its journal, then it ends. Start a new one to carry on.
           </p>

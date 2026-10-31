@@ -27,4 +27,9 @@ journal: string | null,
 /**
  * Where it is held besides PDT: `discord` for one the user talks to through the Discord bot's DMs (PDT-304).
  */
-via: string | null, };
+via: string | null, 
+/**
+ * The conversation this one was reset from (PDT-308): ended, readable, with its own `resetFrom` when it was a
+ * reset one too.
+ */
+resetFrom: string | null, };

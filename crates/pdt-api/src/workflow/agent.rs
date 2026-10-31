@@ -541,6 +541,7 @@ async fn new_session(
             step_id: Some(cx.step.id.clone()),
         }),
         cwd,
+        id: None,
     };
     let s = crate::sessions::create_session(st, req).await.map_err(|e| e.message().to_string())?;
     if let Some((ticket_id, _, _)) = &t.ticket {

@@ -294,6 +294,7 @@ pub(crate) async fn start_ticket(
         tab: None,
         persona: None,
         cwd: personal.clone(),
+        id: None,
     };
     let session = match create_session(&st, req).await {
         Ok(s) => s,
