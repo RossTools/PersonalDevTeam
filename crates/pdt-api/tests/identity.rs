@@ -5,7 +5,7 @@ use pdt_api::{AppState, router};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-mod common;
+use crate::common;
 
 async fn req(app: &axum::Router, uri: &str, headers: &[(&str, &str)]) -> (StatusCode, Value) {
     let mut r = Request::builder().uri(uri);

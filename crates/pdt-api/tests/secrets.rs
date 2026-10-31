@@ -2,7 +2,7 @@
 //! when a message says `mcp: <tool> <json>`, and echoes anything else); pdtd's API is served on a local port so the
 //! agent can reach `/api/mcp`. Each test greps the database for the value at the end.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

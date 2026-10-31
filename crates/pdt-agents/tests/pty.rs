@@ -1,5 +1,4 @@
-#[path = "../../../test-support/port_blocks.rs"]
-mod port_blocks;
+use crate::port_blocks;
 
 use pdt_agents::{Attachment, PtyError, PtyEvent, PtyManager, SpawnSpec};
 use std::path::PathBuf;

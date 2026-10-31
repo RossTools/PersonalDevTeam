@@ -1,5 +1,5 @@
 //! The folder picker's API (PDT-5): `GET /api/host/folders` and `POST /api/host/folders`.
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

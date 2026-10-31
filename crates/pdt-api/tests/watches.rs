@@ -1,7 +1,7 @@
 //! PDT-319: watching a ticket or a workflow run. A PM conversation (`fake-agent` as Claude) watches with its `watch`
 //! tool and is told through the outbox; the user watches from the API and is told by `watch.event` notifications.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::call;
