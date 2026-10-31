@@ -865,7 +865,10 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let d = match a.id {
                 // An agent's change to a workflow is a proposal the user reviews (Phase 7d spec §6.2).
                 Some(id) => {
-                    let s = crate::workflow::routes::SaveWorkflow { doc: Some(a.doc), note: a.note, propose: true };
+                    let by =
+                        cx.session.persona.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| cx.session.title.clone());
+                    let by = Some(by).filter(|b| !b.trim().is_empty());
+                    let s = crate::workflow::routes::SaveWorkflow { doc: Some(a.doc), note: a.note, propose: true, by };
                     let Json(d) =
                         crate::workflow::routes::save(State(st.clone()), axum::extract::Path(id), Ok(Json(s)))
                             .await

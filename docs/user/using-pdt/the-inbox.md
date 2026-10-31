@@ -37,6 +37,10 @@ action, **o** opens the item's ticket, **e** dismisses it.
   a GitHub login to follow your pull requests: **Enter** opens the GitHub settings.
 - **Triaged tickets**: a workflow drafted a ticket from a new issue. **Approve** moves it to **To do**, **Reject** to
   **Won't do**. Moving it on the board yourself does the same.
+- **Workflow proposals**: an agent (the PM, say) changed one of your workflows. The change waits for you as a new
+  version: the item says who proposed it, their note and what changed. **Accept** makes it the workflow's current
+  version, **Discard** sets it aside, and **Open** shows the whole change in the workflow's **Versions** tab. The item
+  goes once you decide, here or in the workflow, or when the agent proposes a newer version instead.
 - **Gates**: a workflow asks you to decide before it goes on, or it's your turn to do a step by hand. A long question
   is titled by the workflow's step (**Ask me**, say); the whole question is below it, formatted, with its links (a
   pull request's review, for instance), and it scrolls while the choices stay in view. When the gate is about a pull

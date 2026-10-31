@@ -232,6 +232,30 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/inbox/a/answer').map((c) => c.body)).toContainEqual({ choice: 'reject' }));
   });
 
+  it("shows an agent's workflow proposal with its note and what changed: Enter accepts it, Discard discards it, Open opens it (PDT-320)", async () => {
+    const proposal = item('proposal:w1:2', {
+      kind: 'proposal', group: 'proposal', projectId: null, ticketId: null, ticketKey: null, ticketTitle: null, runId: null, stepId: null,
+      title: 'PM proposed version 2 of Scryer import sweeper',
+      body: { workflowId: 'w1', workflow: 'Scryer import sweeper', version: 2, current: 1, by: 'PM', note: 'Sweep every hour', summary: 'changed sweep', enabled: true },
+      choices: [{ id: 'discard', title: 'Discard', primary: false }, { id: 'accept', title: 'Accept', primary: true }],
+    });
+    expect(grouped([gate, proposal]).map((g) => g.title)).toEqual(['Workflow proposals', 'Gates']);
+    expect(dismissable(proposal)).toBe(false);
+    const calls = stubApi({ 'POST /api/inbox/proposal%3Aw1%3A2/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[proposal]} selectedId={proposal.id} onSelect={() => {}} />);
+    const region = screen.getByRole('region', { name: 'Workflow proposal' });
+    expect(region).toHaveTextContent('Sweep every hour');
+    expect(region).toHaveTextContent('changed sweep');
+    expect(region).toHaveTextContent('which runs from then on');
+    const answers = () => calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer')).map((c) => c.body);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(answers()).toEqual([{ choice: 'accept' }]));
+    await userEvent.click(within(region).getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(answers()).toContainEqual({ choice: 'discard' }));
+    await userEvent.click(within(region).getByRole('button', { name: 'Open' }));
+    expect(window.location.pathname).toBe('/workflows/w1/versions');
+  });
+
   it('shows a Codex PM\'s call with its arguments: Enter allows it, Deny denies it (PDT-256)', async () => {
     const call = item('c', {
       kind: 'confirm', group: 'approval', runId: null, stepId: null, title: 'Report a bug in PDT',

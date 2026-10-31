@@ -272,7 +272,7 @@ pub(crate) async fn import(st: &AppState, r: &ImportRequest, author: Author) -> 
             Some(existing) => {
                 let now = now_ms();
                 if author == Author::Agent {
-                    st.store.propose_workflow_version(&existing.id, &p.doc, author, &from, now).await?;
+                    st.store.propose_workflow_version(&existing.id, &p.doc, author, &from, None, now).await?;
                 } else {
                     st.store.save_workflow_version(&existing.id, &p.doc, author, &from, now).await?;
                 }

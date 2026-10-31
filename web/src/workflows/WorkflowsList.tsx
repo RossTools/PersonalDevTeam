@@ -65,7 +65,7 @@ export function WorkflowsList({ projects, current, onOpen, onNew }: {
                 leading={<StatusDot status={w.enabled ? 'running' : 'idle'} label={w.enabled ? 'On' : 'Off'} />}
                 trailing={
                   <span className="flex gap-1">
-                    {w.proposed !== null && <Badge tone="waiting">Proposed</Badge>}
+                    {w.proposed !== null && <Badge tone="waiting">Proposal waiting</Badge>}
                     {w.source === 'repo' && <Badge tone="neutral">Repo</Badge>}
                     {w.builtin && <Badge tone="neutral">Built in</Badge>}
                   </span>

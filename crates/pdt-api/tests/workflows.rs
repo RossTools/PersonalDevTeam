@@ -892,6 +892,69 @@ async fn an_agents_change_is_proposed_until_the_user_accepts_it() {
 }
 
 #[tokio::test]
+async fn a_proposal_waits_in_the_inbox_until_it_is_accepted_discarded_or_replaced() {
+    let env = setup().await;
+    let id = create(&env, gate_doc("mine")).await;
+    let propose = |name: &'static str| {
+        let path = format!("/api/workflows/{id}");
+        let app = env.app.clone();
+        // `by` is the agent's, set by workflow_save: a request can't name who proposed it.
+        let body = json!({"doc": gate_doc(name), "note": "tidier", "propose": true, "by": "Someone else"});
+        async move { call(&app, "PUT", &path, Some(body)).await }
+    };
+    let proposals = || {
+        let app = env.app.clone();
+        async move {
+            let (_, list) = call(&app, "GET", "/api/inbox", None).await;
+            list["items"].as_array().unwrap().iter().filter(|i| i["kind"] == "proposal").cloned().collect::<Vec<_>>()
+        }
+    };
+    assert!(proposals().await.is_empty());
+
+    propose("agent's").await;
+    let items = proposals().await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    let item = &items[0];
+    assert_eq!(item["id"], format!("proposal:{id}:2"));
+    assert_eq!(item["title"], "An agent proposed version 2 of mine");
+    assert_eq!(item["group"], "proposal");
+    assert_eq!(
+        (item["body"]["workflowId"].as_str(), item["body"]["note"].as_str()),
+        (Some(id.as_str()), Some("tidier"))
+    );
+    assert_eq!(item["body"]["summary"], "name, description or settings changed");
+    let choices: Vec<_> = item["choices"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(choices, ["discard", "accept"]);
+
+    // A newer proposal replaces it.
+    propose("newer").await;
+    let items = proposals().await;
+    assert_eq!(items.iter().map(|i| i["id"].as_str().unwrap()).collect::<Vec<_>>(), [format!("proposal:{id}:3")]);
+    let (s, _) =
+        call(&env.app, "POST", &format!("/api/inbox/proposal:{id}:2/answer"), Some(json!({"choice": "accept"}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "the replaced one can't be accepted");
+    let (s, _) =
+        call(&env.app, "POST", &format!("/api/inbox/proposal:{id}:3/answer"), Some(json!({"choice": "nope"}))).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+
+    let (s, r) =
+        call(&env.app, "POST", &format!("/api/inbox/proposal:{id}:3/answer"), Some(json!({"choice": "accept"}))).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    assert!(proposals().await.is_empty(), "accepted: it goes");
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{id}"), None).await;
+    assert_eq!((w["version"].as_u64(), w["name"].as_str()), (Some(3), Some("newer")));
+
+    propose("again").await;
+    assert_eq!(proposals().await.len(), 1);
+    let (s, r) =
+        call(&env.app, "POST", &format!("/api/inbox/proposal:{id}:4/answer"), Some(json!({"choice": "discard"}))).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    assert!(proposals().await.is_empty(), "discarded: it goes");
+    let (_, versions) = call(&env.app, "GET", &format!("/api/workflows/{id}/versions"), None).await;
+    assert_eq!((versions[0]["status"].as_str(), versions[0]["proposedBy"].as_str()), (Some("discarded"), None));
+}
+
+#[tokio::test]
 async fn templates_are_listed_saved_and_instantiated_disabled() {
     let env = setup().await;
     let (_, list) = call(&env.app, "GET", "/api/workflow-templates", None).await;
