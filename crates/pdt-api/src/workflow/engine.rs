@@ -43,6 +43,31 @@ impl RunLocks {
     }
 }
 
+/// What a step's body came to when writing it failed (PDT-323): a full disk. The step stays running in the store; the
+/// next time its run advances, this is written instead of running the body again (which may have done its work).
+#[derive(Default)]
+pub(crate) struct UnsavedResults(std::sync::Mutex<HashMap<String, Unsaved>>);
+
+struct Unsaved {
+    attempts: u32,
+    result: Result<Outcome, String>,
+    cut_short: bool,
+}
+
+impl UnsavedResults {
+    fn keep(&self, step: &Step, result: Result<Outcome, String>, cut_short: bool) {
+        let mut m = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        m.insert(step.id.clone(), Unsaved { attempts: step.attempts, result, cut_short });
+    }
+
+    /// The result kept for `step`, if it is the execution it came from.
+    fn take(&self, step: &Step) -> Option<(Result<Outcome, String>, bool)> {
+        let mut m = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let u = m.remove(&step.id)?;
+        (step.status == StepStatus::Running && u.attempts == step.attempts).then_some((u.result, u.cut_short))
+    }
+}
+
 /// Runs of one ticket (or attempt) go one at a time, as before PDT-128: one run's checks (is an agent on it?) see what
 /// the other's steps did. Runs of different tickets go side by side.
 fn lock_key(run: &Run) -> String {
@@ -314,6 +339,12 @@ async fn match_events(st: &AppState) {
                 }
                 if let Err(x) = start_run(st, wf, doc, &node.id, trigger.clone(), Some(e.id.clone()), key, None).await {
                     tracing::warn!(workflow = %wf.name, error = %x, "could not start a workflow run");
+                    // A failed write (a full disk): the event stays new and is matched again once writes work. The
+                    // runs it started already are not started twice: their run keys ran (PDT-323).
+                    if pdt_store::is_write_failure(&x) {
+                        st.store.note_write_failure(&x);
+                        return;
+                    }
                 }
             }
         }
@@ -330,11 +361,19 @@ async fn match_events(st: &AppState) {
                 resumed.insert(step.id.clone());
                 if let Err(x) = complete_step(st, step, "event", trigger.clone()).await {
                     tracing::warn!(step = %step.id, error = %x, "could not resume a waiting step");
+                    if pdt_store::is_write_failure(&x) {
+                        st.store.note_write_failure(&x);
+                        return;
+                    }
                 }
             }
         }
         if let Err(x) = st.store.mark_event_processed(e.seq, now_ms()).await {
             tracing::warn!(error = %x, "could not mark an event processed");
+            if let x @ pdt_store::StoreError::Write(_) = x {
+                st.store.note_error(x);
+                return;
+            }
         }
     }
 }
@@ -525,6 +564,14 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
             let e = format!("the run took more than {} steps", doc.settings.max_steps);
             return finish_run(st, &mut run, RunStatus::Failed, Value::Null, Some(e)).await;
         }
+        // Its result is known but could not be written (PDT-323): written now, the body is not run again.
+        if let Some((result, cut_short)) = st.unsaved_results.take(&step) {
+            tracing::info!(run = %run_id, node = %step.node_id, "writing a step's result that could not be written before");
+            if save(st, doc, &mut run, step, result, cut_short).await? {
+                return Ok(());
+            }
+            continue;
+        }
         let job = match claim(st, wf, doc, &mut run, step, &steps).await? {
             Claim::Ended => return Ok(()),
             Claim::Moved => continue,
@@ -576,11 +623,31 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
         // What the body recorded as it went (`StepCx::save_progress`) stays with the step for its next execution.
         let mut step = job.step;
         step.output = current.output;
-        if apply(st, doc, &mut run, step, result, cut_short).await? {
+        if save(st, doc, &mut run, step, result, cut_short).await? {
             return Ok(());
         }
     }
     Ok(())
+}
+
+/// [`apply`], keeping the result in memory when writing it failed (a full disk), to write it once writes work.
+async fn save(
+    st: &AppState,
+    doc: &WorkflowDoc,
+    run: &mut Run,
+    step: Step,
+    result: Result<Outcome, String>,
+    cut_short: bool,
+) -> R<bool> {
+    let kept = step.clone();
+    let r = apply(st, doc, run, step, result.clone(), cut_short).await;
+    if let Err(e) = &r
+        && pdt_store::is_write_failure(e)
+    {
+        st.store.note_write_failure(e);
+        st.unsaved_results.keep(&kept, result, cut_short);
+    }
+    r
 }
 
 /// A step claimed to run: what its body needs.
@@ -756,6 +823,9 @@ async fn look_back(st: &AppState, run: &Run, step: &Step) -> R<Option<LogEvent>>
 /// A step's `wait` while it waits to be retried after a timeout: it was cut short (`StepCx::rerun`).
 const CUT_SHORT: &str = "cutShort";
 
+/// A step's `wait` while it waits to be retried after a failed write: how many times it was (PDT-323).
+const STORE_RETRIES: &str = "storeRetries";
+
 /// A failed execution: retried while the node allows, then its error port, else the run fails. True when it ended.
 /// `definite`: it failed and did nothing (else it was cut short, by a timeout or a restart, and may have done its work:
 /// a kind that isn't safe to run again is not retried, PDT-131).
@@ -767,6 +837,20 @@ async fn fail_step(
     e: String,
     definite: bool,
 ) -> R<bool> {
+    // A write that failed (a full disk), not the step: it runs again after a backoff, without using up one of the
+    // node's retries, until writes work or the run's time is up (PDT-323).
+    if pdt_store::is_write_failure(&e) {
+        st.store.note_write_failure(&e);
+        let tries = step.wait.get(STORE_RETRIES).and_then(Value::as_u64).map_or(0, |n| u32::try_from(n).unwrap_or(0));
+        tracing::warn!(workflow = %run.workflow_name, run = %run.id, node = %step.node_id, error = %e, "a workflow step could not write: retrying it");
+        step.status = StepStatus::Waiting;
+        step.error = Some(e);
+        step.attempts = step.attempts.saturating_sub(1);
+        step.wait = json!({"retry": true, CUT_SHORT: !definite, STORE_RETRIES: tries + 1});
+        step.wake_at = Some(now_ms() + pdt_store::write_backoff_ms(tries));
+        st.store.put_step(&step).await.map_err(err)?;
+        return Ok(false);
+    }
     // An agent step whose session would not start no longer works on its attempt (PDT-129). One cut short after its
     // session started keeps its binding, so running it again goes on in that session instead of starting another.
     if step.kind == super::nodes::agent::KIND
@@ -845,6 +929,7 @@ async fn advance_all(st: &AppState) {
                 }
                 if let Err(e) = advance(&st, &run.id).await {
                     tracing::warn!(run = %run.id, error = %e, "a workflow run could not go on");
+                    st.store.note_write_failure(&e);
                 }
             }
         });
@@ -857,6 +942,17 @@ async fn advance_all(st: &AppState) {
 /// One engine tick: install built-ins (once), match new events, run steps, deliver session messages, run what they
 /// woke. pdtd runs it every 2 s; tests call it.
 pub async fn run_workflows(st: &AppState) {
+    // While writes fail (a full disk), the engine waits, trying again after a growing backoff (PDT-323); once they
+    // work, the events that could not be logged are logged, and matched like any other.
+    if st.store.write_failure().is_some() {
+        if !st.store.write_retry_due(now_ms()) || !st.store.probe_writes().await {
+            return;
+        }
+        tracing::info!("writes work again");
+    }
+    if let Err(e) = st.store.log_pending_events().await {
+        return tracing::warn!(error = %e, "could not log the events that waited to be logged");
+    }
     {
         let _engine = st.engine_lock.lock().await;
         super::builtins::ensure_installed(st).await;
