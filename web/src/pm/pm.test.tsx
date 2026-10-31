@@ -247,6 +247,7 @@ describe('the PM', () => {
     first.unmount();
     renderWithQuery(<PmView selection="c0" onSelect={() => {}} onNew={() => {}} />);
     expect(await screen.findByText(/This conversation ended because you reset it\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Resetting:/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Reset…' })).not.toBeInTheDocument();
   });
 });

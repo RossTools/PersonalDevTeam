@@ -46,8 +46,11 @@ export const earlier = (sessions: PmSessionInfo[]) => {
   return sessions.filter((s) => !s.open && !carriedOn.has(s.session.id));
 };
 
-/** Whether a conversation is writing its journal before a reset (PDT-308) rather than a close. */
-export const resetting = (info: PmSessionInfo) => info.rotation !== 'none' && info.reason === 'reset';
+/**
+ * Whether a conversation's reset is under way (PDT-308): it is writing its journal, or has just ended and its fresh one
+ * is starting (still open). An ended one that was reset is not.
+ */
+export const resetting = (info: PmSessionInfo) => info.open && info.rotation !== 'none' && info.reason === 'reset';
 
 /** A journal's first line, for list rows. */
 /** Where a conversation is held besides PDT, for its list row and header (PDT-304: the Discord bot's DMs). */
