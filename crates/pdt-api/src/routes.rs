@@ -631,6 +631,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
     let compression =
         tower_http::compression::CompressionLayer::new().quality(tower_http::compression::CompressionLevel::Precise(4));
     app.layer(compression)
+        .layer(axum::middleware::from_fn_with_state(guard_state.clone(), crate::error::note_write_failures))
         .layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
         .layer(axum::middleware::from_fn(crate::slow::log_slow))
 }

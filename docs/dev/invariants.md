@@ -99,7 +99,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   carries it (`pdt_store::is_write_failure`) makes `fail_step` wait and retry the step without using up one of its
   retries, an event whose run could not start stay unprocessed, and a step's result that could not be written wait in
   `UnsavedResults` (the body is not run again). Keep the store error's text in a node's error (`e.to_string()`, or
-  in a `format!`), never replace it with your own words.
+  in a `format!`), never replace it with your own words. A route answers it with 503 `write_failed` and its message
+  (`ApiError::write_failed`, also from `ApiError::internal` given its text), and the router's `note_write_failures`
+  records it, so the Inbox says so whoever wrote; a `BEGIN` that can't start (`Store::write_tx`) is recorded too.
 - **A step's setup error is never retried.** An error that waiting won't fix (no project, a bad repository) is made
   with `setup_error` (pdt-api `workflow/catalog.rs`; `repo_for_step` in `nodes/release.rs`), and `fail_step` skips the
   node's retries for it. A kind that works on the run's project says so in `NodeKind::needs_project`, so a manual start

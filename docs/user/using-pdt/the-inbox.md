@@ -32,7 +32,7 @@ Pick an item to see it and its choices beside the list. Keys: **j** / **k** down
   with it; it clears once the pull request is fixed or merged. **Connect GitHub** shows here too while PDT needs a
   GitHub login to follow your pull requests.
 - **PDT can't save changes**: its disk is full (with how much is free) or its database can't be written. Workflow
-  runs and events wait meanwhile. Free up space; PDT saves again on its own within seconds, starts what waited, and
+  runs and events wait meanwhile, and what you change says "PDT can't save changes" instead of saving. Free up space; PDT saves again on its own within seconds, starts what waited, and
   the item goes.
 - **Triaged tickets**: a workflow drafted a ticket from a new issue. **Approve** moves it to **To do**, **Reject** to
   **Won't do** (moving it on the board does the same).

@@ -76,7 +76,12 @@ impl Store {
     /// retry) when another connection wrote in between, e.g. a new conversation's first events while Start opens its
     /// tabs.
     pub(crate) async fn write_tx(&self) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>, sqlx::Error> {
-        self.pool.begin_with("BEGIN IMMEDIATE").await
+        // One that can't start (a full disk, a lock held too long) is a failed write, whoever asked (PDT-323).
+        self.pool.begin_with("BEGIN IMMEDIATE").await.inspect_err(|e| {
+            if health::is_write_error(e) {
+                self.note_write_failure(&format!("{WRITE_FAILED}: {e}"));
+            }
+        })
     }
 
     /// Opens (creating if needed) the database, backing up to `<db dir>/backups`

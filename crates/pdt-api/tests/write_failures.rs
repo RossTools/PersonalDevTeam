@@ -190,3 +190,24 @@ async fn a_result_that_could_not_be_written_is_written_without_running_the_step_
         assert_eq!(s, StatusCode::CREATED);
     }
 }
+
+#[tokio::test]
+async fn the_users_own_write_that_fails_says_so_and_raises_the_inbox_item() {
+    let env = setup().await;
+    let tid = ticket(&env).await;
+    disk_full(&env.db, "ticket_events", Some("1")).await;
+    let (s, e) = call(&env.app, "POST", &format!("/api/tickets/{tid}/comments"), Some(json!({"body": "hi"}))).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{e}");
+    assert_eq!(e["code"], "write_failed", "{e}");
+    assert!(e["message"].as_str().unwrap().starts_with("PDT can't save changes"), "{e}");
+    // Told at once, with no engine tick in between.
+    let item = storage_item(&env).await.expect("the Inbox says PDT can't save changes");
+    assert_eq!(item["body"]["diskFull"], true, "{item}");
+
+    disk_full(&env.db, "ticket_events", None).await;
+    after_backoff().await;
+    pdt_api::run_workflows(&env.state).await;
+    assert_eq!(storage_item(&env).await, None, "it goes once writes work");
+    let (s, _) = call(&env.app, "POST", &format!("/api/tickets/{tid}/comments"), Some(json!({"body": "hi"}))).await;
+    assert_eq!(s, StatusCode::CREATED);
+}
