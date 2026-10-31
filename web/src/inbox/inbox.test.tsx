@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -16,7 +16,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const item = (id: string, over: Partial<InboxItem> = {}): InboxItem => ({
   id, kind: 'gate', group: 'gate', status: 'open', projectId: 'p', ticketId: 't', ticketKey: 'PDT-7', ticketTitle: 'Pipeline',
-  attemptId: null, sessionId: null, runId: 'r', stepId: 's', personaId: null, personaName: null, title: `Item ${id}`,
+  attemptId: null, sessionId: null, runId: 'r', stepId: 's', personaId: null, personaName: null, changeRequest: null, title: `Item ${id}`,
   body: {}, choices: [], resolution: null, createdAt: Date.now(), resolvedAt: null, ...over,
 });
 
@@ -350,6 +350,38 @@ describe('inbox', () => {
     renderWithQuery(<InboxView items={[nightly]} selectedId="n" onSelect={() => {}} />);
     expect(screen.getByRole('link', { name: "the release workflow's runs" })).toHaveAttribute('href', 'https://github.com/o/r/actions/workflows/release.yml');
     expect(screen.getByRole('button', { name: /Start it/ })).toBeInTheDocument();
+  });
+
+  it('shows a gate\'s question as Markdown under a short title, with its pull request (PDT-306)', async () => {
+    const review = 'Your review:\n\n**[acme/app#314](https://github.com/acme/app/pull/314)** by bot\n\n**Risks:** none.\n\n' + 'More of the review. '.repeat(400);
+    const pr = item('pr', {
+      ticketId: 't', title: 'Ask me', changeRequest: { url: 'https://github.com/acme/app/pull/314', name: 'pull request' },
+      body: { workflow: 'PDT pull request review', question: review },
+      choices: [{ id: 'approve_merge', title: 'Approve merge', primary: true }, { id: 'close', title: 'Close', primary: false }],
+    });
+    stubApi({ 'GET /api/tickets/t': ticket(1) });
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    renderWithQuery(<InboxView items={[pr]} selectedId="pr" onSelect={() => {}} />);
+    expect(screen.getByRole('heading', { name: 'Ask me' })).toBeInTheDocument();
+    const question = screen.getByLabelText('Question');
+    const link = within(question).getByRole('link', { name: 'acme/app#314' });
+    expect(link).toHaveAttribute('href', 'https://github.com/acme/app/pull/314');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(within(question).getByText('Risks:').tagName).toBe('STRONG');
+    // However long the question, the choices sit outside the part that scrolls.
+    const choices = screen.getByRole('group', { name: 'Your choice' });
+    expect(within(choices).getByRole('button', { name: /Approve merge/ })).toBeInTheDocument();
+    expect(question.closest('.overflow-auto')).not.toContainElement(choices);
+    await userEvent.click(screen.getByRole('button', { name: 'Open pull request' }));
+    expect(open).toHaveBeenCalledWith('https://github.com/acme/app/pull/314', '_blank', 'noopener');
+    open.mockRestore();
+  });
+
+  it('offers no pull request for a gate that has none, and repeats no one-line question', () => {
+    stubApi({ 'GET /api/tickets/t': ticket(1) });
+    renderWithQuery(<InboxView items={[item('g1', { title: 'Ship it?', body: { question: 'Ship it?' }, choices: gate.choices })]} selectedId="g1" onSelect={() => {}} />);
+    expect(screen.queryByRole('button', { name: /Open pull request|Open merge request/ })).toBeNull();
+    expect(screen.queryByLabelText('Question')).toBeNull();
   });
 
   it('says when nothing waits', () => {

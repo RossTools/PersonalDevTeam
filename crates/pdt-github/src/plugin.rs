@@ -84,6 +84,10 @@ impl ForgePlugin for GithubPlugin {
     }
 
     /// On the remote's host: github.com, or the Enterprise Server's web host.
+    fn is_change_request_url(&self, url: &str) -> bool {
+        pdt_forge::github_pull_url(url).is_some_and(|host| self.claims_host(&host))
+    }
+
     fn links(&self, remote: &Remote, repo: &str) -> Option<ForgeLinks> {
         let host = if remote.host.eq_ignore_ascii_case("www.github.com") { "github.com" } else { &remote.host };
         let repo_url = format!("https://{host}/{repo}");
@@ -271,5 +275,15 @@ mod tests {
         assert_eq!(l.compare_url.as_deref(), Some("https://github.com/o/r/compare/{base}...{branch}?expand=1"));
         let ghe = pdt_core::git_url::parse_remote("https://ghe.example.com/team/app.git").unwrap();
         assert_eq!(p.links(&ghe, "team/app").unwrap().repo_url, "https://ghe.example.com/team/app");
+    }
+
+    #[test]
+    fn pull_request_pages_are_change_requests() {
+        let p = GithubPlugin::new(Arc::new(GithubApi::offline()));
+        assert_eq!(p.change_request_name(), "pull request");
+        assert!(p.is_change_request_url("https://github.com/o/r/pull/314"));
+        assert!(!p.is_change_request_url("https://github.com/o/r/issues/314"));
+        assert!(!p.is_change_request_url("https://github.com/o/r/pull/new"));
+        assert!(!p.is_change_request_url("https://gitlab.com/o/r/pull/314"));
     }
 }

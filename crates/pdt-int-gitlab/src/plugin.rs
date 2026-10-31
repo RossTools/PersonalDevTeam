@@ -6,7 +6,7 @@
 use crate::api::{GitlabApi, LoginCheck};
 use crate::ci::GitlabCi;
 use crate::login::{self, GITLAB_HOST};
-use pdt_core::git_url::Remote;
+use pdt_core::git_url::{Remote, parse_remote};
 use pdt_forge::login::{AccountState, DeviceCode, DevicePoll, LoginSpec, RenewHook, Whoami};
 use pdt_forge::{CiProvider, Forge, ForgeAccount, ForgeKind, ForgeLinks, ForgeLogin, ForgePlugin};
 use std::collections::BTreeMap;
@@ -94,6 +94,22 @@ impl ForgePlugin for GitlabPlugin {
     /// The project's full path, nested groups and all.
     fn repo_of(&self, remote: &Remote) -> Option<String> {
         if self.claims_host(&remote.host) { project_of(remote) } else { None }
+    }
+
+    fn change_request_name(&self) -> &'static str {
+        "merge request"
+    }
+
+    /// `https://<host>/<group…>/<project>/-/merge_requests/<n>`.
+    fn is_change_request_url(&self, url: &str) -> bool {
+        parse_remote(url).is_some_and(|r| {
+            let n = r.path.len();
+            n >= 5
+                && r.path[n - 3] == "-"
+                && r.path[n - 2] == "merge_requests"
+                && r.path[n - 1].parse::<u64>().is_ok()
+                && self.claims_host(&r.host)
+        })
     }
 
     fn links(&self, remote: &Remote, repo: &str) -> Option<ForgeLinks> {

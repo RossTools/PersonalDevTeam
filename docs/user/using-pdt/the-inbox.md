@@ -37,8 +37,11 @@ action, **o** opens the item's ticket, **e** dismisses it.
   a GitHub login to follow your pull requests: **Enter** opens the GitHub settings.
 - **Triaged tickets**: a workflow drafted a ticket from a new issue. **Approve** moves it to **To do**, **Reject** to
   **Won't do**. Moving it on the board yourself does the same.
-- **Gates**: a workflow asks you to decide before it goes on, or it's your turn to do a step by hand. Pick a choice;
-  the optional note goes on the ticket as your comment, so a "no" can say what to change.
+- **Gates**: a workflow asks you to decide before it goes on, or it's your turn to do a step by hand. A long question
+  is titled by the workflow's step (**Ask me**, say); the whole question is below it, formatted, with its links (a
+  pull request's review, for instance), and it scrolls while the choices stay in view. When the gate is about a pull
+  request, **Open pull request** opens it on its forge (**Open merge request** on GitLab). Pick a choice; the optional
+  note goes on the ticket as your comment, so a "no" can say what to change.
 - **Ready to accept**: the reviewing and testing agents passed a ticket's work, and it waits for you before it
   merges. Accepting it shows the pull request, its CI and the size of the change first; reject it with a note, and the
   note goes back to the coding agent.

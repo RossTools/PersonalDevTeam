@@ -180,7 +180,8 @@ impl NodeKind for Gate {
                 step_id: Some(cx.step.id.clone()),
                 persona_id: None,
                 persona_name: None,
-                title: c.question.clone(),
+                change_request: None,
+                title: pdt_core::inbox::gate_title(&cx.node.title, &c.question),
                 body: json!({"question": c.question, "workflow": cx.workflow.name, "node": cx.node_title()}),
                 choices: c
                     .choices

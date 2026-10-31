@@ -15,7 +15,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const item = (id: string, over: Partial<InboxItem> = {}): InboxItem => ({
   id, kind: 'gate', group: 'gate', status: 'open', projectId: 'p', ticketId: 't', ticketKey: 'PDT-7', ticketTitle: 'Pipeline',
-  attemptId: null, sessionId: null, runId: 'r', stepId: 's', personaId: null, personaName: null, title: `Item ${id}`,
+  attemptId: null, sessionId: null, runId: 'r', stepId: 's', personaId: null, personaName: null, changeRequest: null, title: `Item ${id}`,
   body: {}, choices: [], resolution: null, createdAt: Date.now(), resolvedAt: null, ...over,
 });
 
@@ -334,5 +334,23 @@ describe('phone triage', () => {
     await userEvent.click(bar().getByRole('button', { name: 'Passed' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Back to Inbox' }));
     expect(onList).toHaveBeenCalled();
+  });
+
+  it('shows a gate\'s question as Markdown, its merge request, and its decisions in the bar (PDT-306)', async () => {
+    const review = 'Your review:\n\n**[acme/app#314](https://github.com/acme/app/pull/314)** by bot\n\n**Risks:** none.\n\n' + 'More of the review. '.repeat(400);
+    const mr = item('mr', {
+      title: 'Ask me', changeRequest: { url: 'https://gitlab.com/g/app/-/merge_requests/9', name: 'merge request' },
+      body: { question: review }, choices: [{ id: 'approve', title: 'Approve', primary: true }, { id: 'close', title: 'Close', primary: false }],
+    });
+    triage([mr], 'mr');
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    expect(screen.getByRole('heading', { name: 'Ask me' })).toBeInTheDocument();
+    const question = screen.getByLabelText('Question');
+    expect(within(question).getByRole('link', { name: 'acme/app#314' })).toHaveAttribute('href', 'https://github.com/acme/app/pull/314');
+    expect(question.closest('.overflow-auto')).not.toContainElement(screen.getByRole('group', { name: 'Decision' }));
+    expect(barLabels()).toEqual(['Close', 'Approve']);
+    await userEvent.click(screen.getByRole('button', { name: 'Open merge request' }));
+    expect(open).toHaveBeenCalledWith('https://gitlab.com/g/app/-/merge_requests/9', '_blank', 'noopener');
+    open.mockRestore();
   });
 });

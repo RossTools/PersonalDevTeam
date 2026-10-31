@@ -18,7 +18,7 @@ const session = (id: string, more: Partial<Session> = {}): Session => ({
 const item = (id: string, kind: InboxItem['kind'], more: Partial<InboxItem> = {}): InboxItem => ({
   id, kind, group: kind === 'notice' ? 'notice' : kind === 'session' ? 'session' : 'question', status: 'open', projectId: 'p1',
   ticketId: null, ticketKey: null, ticketTitle: null, attemptId: null, sessionId: null, runId: null, stepId: null,
-  personaId: null, personaName: null, title: id, body: {}, choices: [], resolution: null, createdAt: 1, resolvedAt: null, ...more,
+  personaId: null, personaName: null, changeRequest: null, title: id, body: {}, choices: [], resolution: null, createdAt: 1, resolvedAt: null, ...more,
 });
 
 const pm = (s: Session, open = true): PmSessionInfo => ({

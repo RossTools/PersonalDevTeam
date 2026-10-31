@@ -8,7 +8,7 @@ const ev = (seq: number, event: AgentEvent): ConversationEvent => ({ seq, pos: s
 const message = (seq: number, markdown: string) => ev(seq, { kind: 'agent_message', id: `m${seq}`, markdown, phase: 'final' });
 const item = (over: Partial<InboxItem>): InboxItem => ({
   id: 'i', kind: 'question', group: 'question', status: 'open', projectId: 'p', ticketId: null, ticketKey: null, ticketTitle: null,
-  attemptId: null, sessionId: 's', runId: null, stepId: null, personaId: null, personaName: null, title: 'Which branch?', body: {},
+  attemptId: null, sessionId: 's', runId: null, stepId: null, personaId: null, personaName: null, changeRequest: null, title: 'Which branch?', body: {},
   choices: [], resolution: null, createdAt: 1, resolvedAt: null, ...over,
 });
 
