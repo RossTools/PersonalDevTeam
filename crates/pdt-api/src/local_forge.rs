@@ -444,6 +444,7 @@ impl LocalForge {
             step_id: None,
             persona_id: None,
             persona_name: None,
+            change_request: None,
             title: format!("{title}: change request #{}", change.number),
             body: serde_json::json!({"notice": null, "key": key, "text": text}),
             choices: vec![],

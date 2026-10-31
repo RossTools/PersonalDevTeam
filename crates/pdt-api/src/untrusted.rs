@@ -416,6 +416,7 @@ pub(crate) async fn skip_triage(
         step_id: None,
         persona_id: None,
         persona_name: None,
+        change_request: None,
         title,
         body: serde_json::json!({"notice": null, "key": key, "text": text, "workflow": wf.name}),
         choices: vec![],

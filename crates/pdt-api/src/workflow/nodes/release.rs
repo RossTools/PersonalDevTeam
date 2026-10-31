@@ -1130,6 +1130,7 @@ impl NodeKind for GithubNightly {
                     step_id: Some(cx.step.id.clone()),
                     persona_id: None,
                     persona_name: None,
+                    change_request: None,
                     title: title.clone(),
                     body: json!({"question": title, "text": text, "url": runs_url, "workflow": cx.workflow.name,
                                  "node": cx.node_title()}),

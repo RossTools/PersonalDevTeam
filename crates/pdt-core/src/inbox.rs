@@ -242,6 +242,11 @@ pub struct InboxItem {
     pub persona_id: Option<String>,
     /// Filled in by the API.
     pub persona_name: Option<String>,
+    /// The pull request (or a forge's merge request) a gate is about (PDT-306): its ticket's attempt's, the run
+    /// trigger's or its ticket's external link. Filled in by the API, never stored.
+    #[serde(default)]
+    pub change_request: Option<ChangeRequestLink>,
+    /// One line: a gate's step title or its question's first line (a long Markdown question goes in `body.question`).
     pub title: String,
     /// Kind-specific: `questions` (question), `question`/`choices` (gate), `outcomes`, `summary`, `turns`
     /// (stalled), `passes` (loop limit), `request` (approval), `notice`/`key`/`text`/`pr`/`url` (notice),
@@ -255,6 +260,62 @@ pub struct InboxItem {
     pub created_at: i64,
     #[ts(type = "number | null")]
     pub resolved_at: Option<i64>,
+}
+
+/// A change request's page on its forge, for the Inbox's Open pull request button.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ChangeRequestLink {
+    pub url: String,
+    /// What the forge calls it: `pull request`, GitLab's `merge request`.
+    pub name: String,
+}
+
+/// A title is at most this long (characters, with the ellipsis).
+pub const TITLE_CHARS: usize = 100;
+
+/// A gate's title (PDT-306): its question in plain words when that is one line, else its step's title, else its
+/// question's first line in plain words, cut to [`TITLE_CHARS`]. The whole question is the item's body.
+pub fn gate_title(step_title: &str, question: &str) -> String {
+    let line = plain_line(question);
+    let one_line = question.trim().lines().count() <= 1;
+    let step = step_title.trim();
+    let t = if one_line || step.is_empty() { cut(&line, TITLE_CHARS) } else { step.to_string() };
+    if t.is_empty() { "Your choice".to_string() } else { t }
+}
+
+/// The first line of Markdown `text` with no words, as plain text: links keep their text, and emphasis, code marks,
+/// heading, quote and list marks go.
+pub fn plain_line(text: &str) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line = line.trim_start_matches(['#', '>', '-', '*', '+', ' ']);
+    let mut out = String::new();
+    let mut rest = line;
+    // `[text](url)` → text; `![alt](url)` → alt.
+    while let Some(open) = rest.find('[') {
+        let Some(close) = rest[open..].find("](").map(|i| open + i) else { break };
+        let Some(end) = rest[close..].find(')').map(|i| close + i) else { break };
+        out.push_str(rest[..open].trim_end_matches('!'));
+        out.push_str(&rest[open + 1..close]);
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    let out: String = out.replace("**", "").replace("__", "").chars().filter(|c| !matches!(c, '`' | '*')).collect();
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `text` cut to `max` characters at a word, with "…".
+fn cut(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max - 1).collect();
+    let cut = match cut.rfind(char::is_whitespace) {
+        Some(i) if i > max / 2 => cut[..i].trim_end().to_string(),
+        _ => cut,
+    };
+    format!("{cut}…")
 }
 
 /// `GET /api/inbox`.
@@ -366,6 +427,7 @@ mod tests {
             step_id: None,
             persona_id: None,
             persona_name: None,
+            change_request: None,
             title: String::new(),
             body: Value::Null,
             choices: vec![],
@@ -410,6 +472,25 @@ mod tests {
         assert_eq!(v, vec![Question { question: "Why?".into(), choices: vec!["a".into()] }]);
         assert!(valid_questions(vec![q(" ")]).is_err());
         assert!(valid_questions((0..11).map(|_| q("x")).collect()).is_err());
+    }
+
+    #[test]
+    fn a_gate_is_titled_by_its_step_else_its_question_in_plain_words() {
+        let q = "**[acme/app#314](https://github.com/acme/app/pull/314)** by `bot`: Bump *tokio*\n\nCI: running";
+        assert_eq!(gate_title("Ask me", q), "Ask me");
+        // A short one-line question says more than its step's title.
+        assert_eq!(
+            gate_title("Merge blocked", "Merge blocked on `PDT-7`: no approval"),
+            "Merge blocked on PDT-7: no approval"
+        );
+        let long = gate_title("Merge blocked", &"word ".repeat(60));
+        assert!(long.starts_with("word") && long.ends_with('…'), "{long}");
+        assert_eq!(gate_title(" ", q), "acme/app#314 by bot: Bump tokio");
+        assert_eq!(gate_title("", "\n## Merge it?\n- more"), "Merge it?");
+        assert_eq!(gate_title("", ""), "Your choice");
+        let long = gate_title("", &"word ".repeat(60));
+        assert!(long.chars().count() <= TITLE_CHARS && long.ends_with('…'), "{long}");
+        assert_eq!(plain_line("![logo](x.png) and [a](b) [not a link"), "logo and a [not a link");
     }
 
     #[test]

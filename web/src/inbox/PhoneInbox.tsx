@@ -22,8 +22,11 @@ import { useProjectForge, useTicket } from '../tickets/queries';
 import { useOpenChanges } from '../review/open';
 import { answerApproval, UpdateView } from './InboxView';
 import { navigate } from '../shell/router';
-import { after, CONNECT_PATH, dismissable, KIND_LABEL, merges, noticeText, passesOf, questionsOf, resends, selectedUpdate, step } from './model';
+import { after, changeRequestLabel, CONNECT_PATH, dismissable, gateQuestion, KIND_LABEL, merges, noticeText, passesOf, questionsOf, resends, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
+
+/** Opens the pull request a gate is about on its forge, in a new tab. */
+const openChangeRequest = (item: InboxItem) => item.changeRequest && window.open(item.changeRequest.url, '_blank', 'noopener');
 
 /** The bottom bar's buttons: 48px, whatever the pointer. */
 const big = 'h-12 pointer-coarse:h-12 min-w-0 flex-1';
@@ -130,6 +133,7 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
   useTopBarActions(item ? () => [
     ...(item.sessionId && item.projectId ? [{ label: 'Open session', onSelect: () => openSession({ id: item.sessionId!, projectId: item.projectId! }) }] : []),
     ...(item.ticketId && item.projectId ? [{ label: 'Open ticket', onSelect: () => openTicket({ id: item.ticketId!, projectId: item.projectId! }) }] : []),
+    ...(item.changeRequest ? [{ label: changeRequestLabel(item)!, onSelect: () => openChangeRequest(item) }] : []),
     ...(dismissable(item) ? [{ label: 'Dismiss', onSelect: () => void dismiss() }] : []),
   ] : null);
 
@@ -382,6 +386,17 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
     case 'gate':
       content = (
         <>
+          {item.changeRequest && (
+            <div>
+              <Button variant="secondary" className="h-12 pointer-coarse:h-12" onClick={() => openChangeRequest(item)}>{changeRequestLabel(item)}</Button>
+            </div>
+          )}
+          {gateQuestion(item) && (
+            <div aria-label="Question" className="rounded-md border border-border p-3 text-sm"><Markdown>{gateQuestion(item)!}</Markdown></div>
+          )}
+          {typeof item.body.text === 'string' && (
+            <div className="rounded-md border border-border p-3 text-sm"><Markdown>{item.body.text}</Markdown></div>
+          )}
           {noteBox('Note (optional)', item.ticketId ? 'A note with your choice (optional), e.g. what to change when you reject it' : 'A note with your choice (optional)')}
           {item.ticketId && <p className="text-meta text-muted-foreground">A note goes on the ticket as your comment, so the agent working on it gets it.</p>}
         </>

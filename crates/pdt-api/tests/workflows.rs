@@ -1170,6 +1170,27 @@ async fn deleting_a_workflow_ends_its_runs_and_closes_their_inbox_items() {
 }
 
 #[tokio::test]
+async fn a_gate_is_titled_by_its_first_line_and_has_no_pull_request_of_its_own() {
+    let env = setup().await;
+    let question = "**Ship [v1.2](https://example.com/notes)?**\n\nThe notes:\n- one\n- two";
+    let id = create(
+        &env,
+        json!({"name": "ask", "nodes": [
+        {"id": "t", "kind": "manual", "version": 1},
+        {"id": "g", "kind": "gate", "version": 1, "config": {"question": question, "choices": ["yes"]}}],
+        "edges": [{"from": "t", "to": "g"}]}),
+    )
+    .await;
+    let run = run_now(&env, &id, json!({})).await;
+    assert_eq!(settle(&env, &run).await["status"], "waiting");
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    let gate = &inbox["items"][0];
+    assert_eq!(gate["title"], "Ship v1.2?", "{gate}");
+    assert_eq!(gate["body"]["question"], question, "{gate}");
+    assert!(gate["changeRequest"].is_null(), "{gate}");
+}
+
+#[tokio::test]
 async fn the_runtime_limit_ends_a_waiting_run_and_counts_from_a_retry() {
     // Long enough that a tick on a busy machine stays well inside it: the test waits it out once, not tick by tick.
     const LIMIT: i64 = 3000;

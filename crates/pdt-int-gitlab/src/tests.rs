@@ -599,6 +599,16 @@ fn links_are_on_the_servers_web_url() {
     assert_eq!(plugin.links(&remote, "team/app").unwrap().repo_url, "https://git.example.org:8443/team/app");
 }
 
+#[test]
+fn merge_request_pages_are_change_requests() {
+    let plugin = GitlabPlugin::new(Arc::new(GitlabApi::offline()));
+    assert_eq!(plugin.change_request_name(), "merge request");
+    assert!(plugin.is_change_request_url("https://gitlab.com/group/sub/app/-/merge_requests/12"));
+    assert!(!plugin.is_change_request_url("https://gitlab.com/group/app/-/issues/12"));
+    assert!(!plugin.is_change_request_url("https://gitlab.com/group/app/-/merge_requests/new"));
+    assert!(!plugin.is_change_request_url("https://elsewhere.example/group/app/-/merge_requests/12"));
+}
+
 /// The ticket's whole run on a gitlab.com project: its merge request opened, its pipeline read on the head, then
 /// merged when the pipeline succeeds, and seen merged.
 #[test]

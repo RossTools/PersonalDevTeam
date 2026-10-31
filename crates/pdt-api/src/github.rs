@@ -349,6 +349,11 @@ fn decorate_attempt(w: &PrWatch, a: &mut AttemptSummary) {
     }
 }
 
+/// The attempt's pull request as pdtd last saw it.
+pub(crate) fn attempt_pr(st: &AppState, attempt_id: &str) -> Option<pdt_core::pr::PullRequestStatus> {
+    watch(st).by_attempt.get(attempt_id).cloned()
+}
+
 /// Fills in `attempt.pr` of a backlog row.
 pub(crate) fn apply_summary(st: &AppState, t: &mut TicketSummary) {
     let w = watch(st);

@@ -273,6 +273,7 @@ async fn an_open_inbox_item_notifies_until_it_is_answered() {
         step_id: None,
         persona_id: None,
         persona_name: None,
+        change_request: None,
         title: "Accept the work?".into(),
         body: json!({}),
         choices: vec![InboxChoice::new("yes", "Accept", true)],

@@ -102,6 +102,17 @@ export function noticeText(item: InboxItem): string {
   return typeof item.body.text === 'string' ? item.body.text : item.title;
 }
 
+/** A gate's whole question (Markdown) when it says more than the item's title, which is one line (PDT-306). */
+export function gateQuestion(item: InboxItem): string | null {
+  const q = item.body.question;
+  return item.kind === 'gate' && typeof q === 'string' && q.trim() && q.trim() !== item.title.trim() ? q : null;
+}
+
+/** The button that opens the pull request a gate is about, in its forge's words: "Open merge request" on GitLab. */
+export function changeRequestLabel(item: InboxItem): string | null {
+  return item.changeRequest ? `Open ${item.changeRequest.name}` : null;
+}
+
 /** A triaged ticket's notes, the issue it came from and whether it came from outside PDT (PDT-225). */
 export function triageOf(item: InboxItem): { summary: string | null; issue: string | null; external: boolean } {
   const b = item.body;

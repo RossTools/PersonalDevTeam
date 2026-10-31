@@ -8,7 +8,9 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use pdt_core::conversation::{AgentEvent, RequestState};
-use pdt_core::inbox::{self, InboxAnswer, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxList, InboxStatus};
+use pdt_core::inbox::{
+    self, ChangeRequestLink, InboxAnswer, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxList, InboxStatus,
+};
 use pdt_core::pr::NoticeKind;
 use pdt_core::ticket::AttemptState;
 use serde::Deserialize;
@@ -32,19 +34,34 @@ pub(crate) async fn list(State(st): State<AppState>, Query(q): Query<ListQuery>)
     Ok(Json(InboxList { items, total }))
 }
 
-/// Ticket keys and titles, persona names.
+/// What [`decorate`] reads of an item's ticket.
+struct TicketFacts {
+    key: String,
+    title: String,
+    /// Its active (else latest) attempt.
+    attempt_id: Option<String>,
+    /// Its external links' URLs.
+    external: Vec<String>,
+}
+
+/// Ticket keys and titles, persona names, and a gate's pull request (PDT-306).
 pub(crate) async fn decorate(st: &AppState, items: &mut [InboxItem]) -> Result<(), ApiError> {
-    let mut tickets: HashMap<String, Option<(String, String)>> = HashMap::new();
+    let mut tickets: HashMap<String, Option<TicketFacts>> = HashMap::new();
     let mut personas: HashMap<String, Option<String>> = HashMap::new();
     for i in items.iter_mut() {
         if let Some(t) = &i.ticket_id {
             if !tickets.contains_key(t) {
-                let found = st.store.get_ticket(t).await?.map(|x| (x.summary.key.clone(), x.summary.title.clone()));
+                let found = st.store.get_ticket(t).await?.map(|x| TicketFacts {
+                    key: x.summary.key.clone(),
+                    title: x.summary.title.clone(),
+                    attempt_id: x.summary.attempt.as_ref().map(|a| a.id.clone()),
+                    external: x.summary.external.iter().map(|e| e.url.clone()).collect(),
+                });
                 tickets.insert(t.clone(), found);
             }
-            if let Some(Some((key, title))) = tickets.get(t) {
-                i.ticket_key = Some(key.clone());
-                i.ticket_title = Some(title.clone());
+            if let Some(Some(f)) = tickets.get(t) {
+                i.ticket_key = Some(f.key.clone());
+                i.ticket_title = Some(f.title.clone());
             }
         }
         if let Some(p) = &i.persona_id {
@@ -53,8 +70,52 @@ pub(crate) async fn decorate(st: &AppState, items: &mut [InboxItem]) -> Result<(
             }
             i.persona_name = personas.get(p).cloned().flatten();
         }
+        if i.kind == InboxKind::Gate {
+            // A gate opened before PDT-306 has its whole question as its title.
+            if i.title.contains('\n') || i.title.chars().count() > inbox::TITLE_CHARS {
+                let node = i.body.get("node").and_then(Value::as_str).unwrap_or_default();
+                i.title = inbox::gate_title(node, &i.title);
+            }
+            let ticket = i.ticket_id.as_ref().and_then(|t| tickets.get(t)).and_then(Option::as_ref);
+            i.change_request = change_request(st, i, ticket).await?;
+        }
     }
     Ok(())
+}
+
+/// The pull request a gate is about: its attempt's (else its ticket's attempt's), else the one its run's trigger or
+/// its ticket's external link names, when a forge in use says it is one of its change requests.
+async fn change_request(
+    st: &AppState,
+    item: &InboxItem,
+    ticket: Option<&TicketFacts>,
+) -> Result<Option<ChangeRequestLink>, ApiError> {
+    let plugins = st.forge_plugins();
+    let plugin_of = |url: &str| {
+        let host = pdt_core::git_url::parse_remote(url)?.host;
+        plugins.iter().find(|p| p.claims_host(&host)).cloned()
+    };
+    let link = |url: &str, name: Option<&str>| ChangeRequestLink {
+        url: url.to_string(),
+        name: name.unwrap_or("pull request").to_string(),
+    };
+    let attempt = item.attempt_id.as_deref().or(ticket.and_then(|t| t.attempt_id.as_deref()));
+    // The local forge's change request has no page to open.
+    if let Some(pr) = attempt.and_then(|a| crate::github::attempt_pr(st, a)).filter(|p| !p.local && !p.url.is_empty()) {
+        return Ok(Some(link(&pr.url, plugin_of(&pr.url).map(|p| p.change_request_name()))));
+    }
+    let mut urls = vec![];
+    if let Some(run) = &item.run_id
+        && let Some(r) = st.store.get_workflow_run(run).await?
+        && let Some(u) = r.trigger.get("url").and_then(Value::as_str)
+    {
+        urls.push(u.to_string());
+    }
+    urls.extend(ticket.map(|t| t.external.clone()).unwrap_or_default());
+    Ok(urls.iter().find_map(|u| {
+        let p = plugin_of(u).filter(|p| p.is_change_request_url(u))?;
+        Some(link(u, Some(p.change_request_name())))
+    }))
 }
 
 /// Sessions waiting on a permission prompt or a question, as items: their live `session.needs_you` notifications
@@ -90,6 +151,7 @@ async fn sessions_waiting(st: &AppState, project: Option<&str>) -> Result<Vec<In
             step_id: s.persona.as_ref().and_then(|p| p.step_id.clone()),
             persona_id: s.persona.as_ref().map(|p| p.id.clone()),
             persona_name: None,
+            change_request: None,
             title: s.title.clone(),
             body: json!({"sessionTitle": s.title, "agent": s.agent, "mode": s.mode, "notificationId": n.id}),
             choices: vec![],
@@ -155,6 +217,7 @@ let agents read CI logs. Connect {label} in Settings › Plugins › {label}.")}
         step_id: None,
         persona_id: None,
         persona_name: None,
+        change_request: None,
         title,
         body,
         choices: vec![],
@@ -206,6 +269,7 @@ pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Ve
                 step_id: s.persona.as_ref().and_then(|p| p.step_id.clone()),
                 persona_id: s.persona.as_ref().map(|p| p.id.clone()),
                 persona_name: None,
+                change_request: None,
                 title: if title.is_empty() { tool.clone() } else { title.clone() },
                 body: json!({"requestId": id, "sessionTitle": s.title, "request": e.event, "tool": tool,
                              "description": description, "input": input, "diff": diff}),

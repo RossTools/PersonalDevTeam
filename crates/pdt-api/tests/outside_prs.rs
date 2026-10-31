@@ -365,7 +365,10 @@ async fn a_fork_pr_gets_a_ticket_a_review_and_merges_once_approved_and_green() {
     let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
     let gate = inbox["items"].as_array().unwrap().iter().find(|i| i["kind"] == "gate").cloned().expect("asked");
     assert_eq!(gate["ticketId"], ticket.as_str(), "{gate}");
-    assert!(gate["title"].as_str().unwrap().contains("Suggests merge."), "{gate}");
+    // A short title, the whole question (Markdown) as the body, and the pull request to open (PDT-306).
+    assert_eq!(gate["title"], "Ask me", "{gate}");
+    assert!(gate["body"]["question"].as_str().unwrap().contains("Suggests merge."), "{gate}");
+    assert_eq!(gate["changeRequest"], json!({"url": pr.url, "name": "pull request"}), "{gate}");
     untouched(&env.gh);
 
     // Approve & merge: once CI passes on its head.
@@ -497,7 +500,9 @@ async fn a_dependabot_patch_whose_ci_fails_asks_the_user() {
     assert_eq!(waiting(&env, &id).await.0, "blocked");
     let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
     let gate = inbox["items"].as_array().unwrap().iter().find(|i| i["kind"] == "gate").cloned().expect("asked");
-    assert!(gate["title"].as_str().unwrap().contains("actions/runs/1"), "{gate}");
+    assert_eq!(gate["title"], "Didn't merge: ask me", "{gate}");
+    assert!(gate["body"]["question"].as_str().unwrap().contains("actions/runs/1"), "{gate}");
+    assert_eq!(gate["changeRequest"]["url"], format!("https://github.com/{RELEASE_REPO}/pull/13"), "{gate}");
     untouched(&env.gh);
 }
 
