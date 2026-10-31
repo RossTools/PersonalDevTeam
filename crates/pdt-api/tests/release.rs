@@ -775,3 +775,68 @@ async fn the_missing_release_template_reports_and_starts_any_scheduled_release()
     fired(&env, &fire(2, "2026-10-31"), 2).await;
     assert!(items().await.is_empty());
 }
+
+/// PDT-301: a host-wide Cut a release has no project of its own: Run now asks for one (`needsProject`), and a start
+/// without one is refused at once, saying so, instead of a run waiting on retries.
+#[tokio::test]
+async fn a_host_wide_cut_needs_a_project_to_run_in() {
+    let env = setup().await;
+    pdt_api::run_workflows(&env.state).await;
+    let (s, wf) = call(
+        &env.app,
+        "POST",
+        "/api/workflow-templates/builtin:cut-release/instantiate",
+        Some(json!({"params": {"workflow": WORKFLOW, "releaseBranch": BRANCH}, "scope": "host"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{wf}");
+    assert_eq!(wf["needsProject"], true, "{wf}");
+    assert_eq!(cut_release(&env).await["needsProject"], false, "a project's own has one");
+
+    let url = format!("/api/workflows/{}/run", wf["id"].as_str().unwrap());
+    let (s, e) = call(&env.app, "POST", &url, Some(stable(json!({"bump": "minor"})))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{e}");
+    assert!(e["message"].as_str().unwrap().contains("needs a project to run in"), "{e}");
+    let (_, runs) =
+        call(&env.app, "GET", &format!("/api/workflow-runs?workflow={}", wf["id"].as_str().unwrap()), None).await;
+    assert!(runs.as_array().unwrap().is_empty(), "no run started: {runs}");
+
+    // With the project picked, it runs there.
+    let mut body = stable(json!({"bump": "minor"}));
+    body["input"]["projectId"] = json!(env.project);
+    let (s, r) = call(&env.app, "POST", &url, Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    pdt_api::run_workflows(&env.state).await;
+    let started = env.gh.ci.triggered.lock().unwrap().clone();
+    assert_eq!(started.len(), 1, "{started:?}");
+    assert_eq!(started[0].0, REPO);
+}
+
+/// PDT-301: a step that can't run for its setup (here a repository that isn't owner/name) fails the run at once, its
+/// retries left unused: waiting won't fix it.
+#[tokio::test]
+async fn a_setup_error_fails_the_run_at_once() {
+    let env = setup().await;
+    let doc = json!({"name": "Read a release", "nodes": [
+        {"id": "start", "kind": "manual", "version": 1},
+        {"id": "read", "kind": "github.release", "version": 1, "retry": {"max": 5, "backoffMs": 60_000},
+         "config": {"repo": "{{trigger.repo}}"}},
+        {"id": "done", "kind": "end", "version": 1}],
+        "edges": [{"from": "start", "to": "read"}, {"from": "read", "port": "found", "to": "done"},
+                  {"from": "read", "port": "none", "to": "done"}]});
+    let (s, w) = call(&env.app, "POST", "/api/workflows", Some(json!({"doc": doc, "enabled": true}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    let (_, r) = call(
+        &env.app,
+        "POST",
+        &format!("/api/workflows/{}/run", w["id"].as_str().unwrap()),
+        Some(json!({"input": {"repo": "not a repo"}})),
+    )
+    .await;
+    let id = r["runId"].as_str().unwrap().to_string();
+    pdt_api::run_workflows(&env.state).await;
+    let r = run(&env, &id).await;
+    assert_eq!(r["status"], "failed", "{r}");
+    assert_eq!(r["error"], "read: \"not a repo\" is not owner/name", "{r}");
+    assert_eq!(r["steps"][1]["attempts"], 1, "not retried: {r}");
+}

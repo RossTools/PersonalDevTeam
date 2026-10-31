@@ -69,7 +69,8 @@ pub(crate) async fn doc_issues(st: &AppState, doc: &WorkflowDoc) -> Vec<Issue> {
 pub(crate) async fn detail(st: &AppState, w: Workflow) -> Result<WorkflowDetail, ApiError> {
     let doc = st.store.workflow_doc(&w.id, w.version).await?.ok_or_else(|| ApiError::not_found("workflow version"))?;
     let issues = doc_issues(st, &doc).await;
-    Ok(WorkflowDetail { workflow: w, doc, issues })
+    let needs_project = w.project_id.is_none() && super::catalog::doc_needs_project(st.registry().catalog(), &doc);
+    Ok(WorkflowDetail { workflow: w, doc, issues, needs_project })
 }
 
 pub(crate) async fn get_catalog(State(st): State<AppState>) -> Json<Vec<KindSpec>> {

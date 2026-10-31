@@ -7,7 +7,11 @@ import type { WorkflowDoc } from "./WorkflowDoc";
 /**
  * A workflow with its current document and what validation says about it.
  */
-export type WorkflowDetail = { doc: WorkflowDoc, issues: Array<Issue>, id: string, name: string, description: string, scope: Scope, projectId: string | null, enabled: boolean, 
+export type WorkflowDetail = { doc: WorkflowDoc, issues: Array<Issue>, 
+/**
+ * Its steps work on the run's project, and its scope gives none: Run now asks for one (PDT-301).
+ */
+needsProject: boolean, id: string, name: string, description: string, scope: Scope, projectId: string | null, enabled: boolean, 
 /**
  * The built-in template it was installed from.
  */

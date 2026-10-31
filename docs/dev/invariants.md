@@ -89,6 +89,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `workflow/nodes/trigger.rs`, the rules in pdt-core `workflow/inputs.rs`), which fills defaults, drops hidden fields
   and refuses anything undeclared. The web form (`web/src/workflows/runInputs.ts`) mirrors the rules for display
   only; the server's check is the one that counts. Never start a manual run around it.
+- **A step's setup error is never retried.** An error that waiting won't fix (no project, a bad repository) is made
+  with `setup_error` (pdt-api `workflow/catalog.rs`; `repo_for_step` in `nodes/release.rs`), and `fail_step` skips the
+  node's retries for it. A kind that works on the run's project says so in `NodeKind::needs_project`, so a manual start
+  of a workflow without a project is refused and Run now asks for one (`WorkflowDetail::needs_project`).
 - **Built-in workflows, templates and personas follow newer versions only while the user hasn't edited them.** Repo
   workflows (`.pdt/workflows/`) are read-only through the API; imported and instantiated workflows start disabled.
 

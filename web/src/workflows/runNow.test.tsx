@@ -1,6 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Project } from '../api/gen/Project';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { TopBarActionsContext, type TopBarActions } from '../shell/PhoneTopBar';
 import { Reply, renderWithQuery, stubApi, type Call } from '../test-utils';
@@ -88,6 +89,41 @@ describe('Run now', () => {
     await userEvent.click(within(dlg).getByRole('button', { name: 'Run now' }));
     await waitFor(() => expect(runs(calls).map((c) => c.body)).toEqual([{ input: { type: 'prerelease' } }]));
     expect(await within(dlg).findByText("Cut a release can't run with that input")).toBeInTheDocument();
+  });
+
+  it('asks for the project when a host-wide workflow needs one, the one in view first', async () => {
+    const projects = [
+      { id: 'p1', name: 'App', key: 'APP', kind: 'repo' },
+      { id: 'p2', name: 'Site', key: 'SITE', kind: 'repo' },
+      { id: 'p3', name: 'Notes', key: 'NOTE', kind: 'personal' },
+    ] as unknown as Project[];
+    const calls = stubApi({
+      'GET /api/workflows/w1': detail({ name: 'Cut a release', doc: doc(RELEASE), needsProject: true }),
+      'POST /api/workflows/check': { issues: [], ports: {} },
+      'POST /api/workflows/w1/run': { runId: null },
+    });
+    renderWithQuery(<WorkflowPage id="w1" catalog={CATALOG} projects={projects} onOpen={() => {}} projectInView="p2" />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Run now' }));
+    const dlg = await screen.findByRole('dialog', { name: 'Run Cut a release' });
+    expect(within(dlg).getByRole('button', { name: /Project/ })).toHaveTextContent('Site');
+    await userEvent.click(within(dlg).getByRole('button', { name: 'Run now' }));
+    await waitFor(() => expect(runs(calls).map((c) => c.body)).toEqual([{ input: { type: 'prerelease', projectId: 'p2' } }]));
+  });
+
+  it('needs a project picked when none is in view, even without declared inputs', async () => {
+    const calls = stubApi({
+      'GET /api/workflows/w1': detail({ name: 'Report', doc: doc({}), needsProject: true }),
+      'POST /api/workflows/check': { issues: [], ports: {} },
+      'POST /api/workflows/w1/run': { runId: null },
+    });
+    renderWithQuery(<WorkflowPage id="w1" catalog={CATALOG} projects={[{ id: 'p1', name: 'App', kind: 'repo' } as unknown as Project]} onOpen={() => {}} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Run now' }));
+    const dlg = await screen.findByRole('dialog', { name: 'Run Report' });
+    expect(within(dlg).getByRole('button', { name: 'Run now' })).toBeDisabled();
+    await userEvent.click(within(dlg).getByRole('button', { name: /Project/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'App' }));
+    await userEvent.click(within(dlg).getByRole('button', { name: 'Run now' }));
+    await waitFor(() => expect(runs(calls).map((c) => c.body)).toEqual([{ input: { projectId: 'p1' } }]));
   });
 
   it('is in ⋯ on a phone, with the same form', async () => {

@@ -19,5 +19,5 @@ export const DOC: WorkflowDoc = {
 
 export const detail = (over: Partial<WorkflowDetail> = {}): WorkflowDetail => ({
   id: 'w1', name: DOC.name, description: DOC.description, scope: 'host', projectId: null, enabled: false, builtin: null,
-  source: 'host', repoFile: null, version: 1, proposed: null, createdAt: 1, updatedAt: 1, doc: DOC, issues: [], ...over,
+  source: 'host', repoFile: null, version: 1, proposed: null, createdAt: 1, updatedAt: 1, doc: DOC, issues: [], needsProject: false, ...over,
 });

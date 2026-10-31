@@ -7,7 +7,9 @@
 //! pattern, PDT-294; PDT's nightlies in version 1, PDT-288) and puts a missing one in the Inbox until it is published.
 //! `repo` defaults to the run's project's GitHub repository.
 
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{
+    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, repo_missing, setup_error, spec,
+};
 use pdt_core::forge::ForgeKind;
 use pdt_core::github_issue::valid_repo;
 use pdt_core::pr::{CiState, CiStatus, PrState, PullRequestStatus, QueueRemovalReason};
@@ -73,30 +75,51 @@ impl RepoOf {
 }
 
 /// The repository and the forge it is read through (PDT-241): the one given, through the run's project's forge when
-/// that is GitHub, else GitHub's account; without one, the run's project's on GitHub.
-async fn repo_of(cx: &StepCx<'_>, repo: &Option<String>) -> Result<RepoOf, String> {
-    repo_for(cx.st, cx.run.project_id.as_deref(), repo).await
+/// that is GitHub, else GitHub's account; without one, the run's project's on GitHub. For a workflow step, so a
+/// missing project or repository is a setup error ([`setup_error`]): the run fails at once (PDT-301).
+pub(crate) async fn repo_for_step(cx: &StepCx<'_>, repo: &Option<String>) -> Result<RepoOf, String> {
+    resolve_repo(cx.st, cx.run.project_id.as_deref(), repo)
+        .await
+        .map_err(|(setup, e)| if setup { setup_error(e) } else { e })
 }
 
-/// [`repo_of`] for `project` (a workflow's, when no run asks).
 pub(crate) async fn repo_for(
     st: &crate::routes::AppState,
     project: Option<&str>,
     repo: &Option<String>,
 ) -> Result<RepoOf, String> {
+    resolve_repo(st, project, repo).await.map_err(|(_, e)| e)
+}
+
+/// The repository, or why not: `(true, …)` when it is the setup's fault (none given and no project to take it from,
+/// the project gone or not on GitHub, a repo that isn't owner/name).
+async fn resolve_repo(
+    st: &crate::routes::AppState,
+    project: Option<&str>,
+    repo: &Option<String>,
+) -> Result<RepoOf, (bool, String)> {
+    let passing = |e: String| (false, e);
     if let Some(r) = nonblank(repo) {
-        valid_repo(r).ok_or_else(|| format!("{r:?} is not owner/name"))?;
-        let (forge, ci) = crate::forge::forge_and_ci_for(st, &ForgeKind::GITHUB, project).await?;
+        valid_repo(r).ok_or_else(|| (true, format!("{r:?} is not owner/name")))?;
+        let (forge, ci) = crate::forge::forge_and_ci_for(st, &ForgeKind::GITHUB, project).await.map_err(passing)?;
         return Ok(RepoOf { repo: r.to_string(), forge, ci });
     }
-    let id = project.ok_or("give repo (owner/name): the run has no project to take it from")?;
-    let p = st.store.get_project(id).await.map_err(|e| e.to_string())?.ok_or("the run's project is gone")?;
+    let id = project.ok_or((
+        true,
+        "give repo (owner/name): the run has no project to take it from (start it in a project)".to_string(),
+    ))?;
+    let p = st
+        .store
+        .get_project(id)
+        .await
+        .map_err(|e| passing(e.to_string()))?
+        .ok_or((true, "the run's project is gone".to_string()))?;
     match crate::forge::project_forge(st, id, &p.repo_path).await {
         Some(f) if f.kind == ForgeKind::GITHUB => {
             let ci = crate::ci::project_ci(st, id, &p.repo_path, Some(&f)).await;
             Ok(RepoOf { repo: f.repo, forge: f.api, ci })
         }
-        _ => Err(format!("{} is not on GitHub: give repo (owner/name)", p.name)),
+        _ => Err((true, format!("{} is not on GitHub: give repo (owner/name)", p.name))),
     }
 }
 
@@ -163,6 +186,10 @@ fn inputs_of(v: &Option<Value>) -> Result<BTreeMap<String, String>, String> {
 pub struct GithubWorkflowRun;
 
 impl NodeKind for GithubWorkflowRun {
+    fn needs_project(&self, config: &Value) -> bool {
+        repo_missing(config)
+    }
+
     fn spec(&self) -> KindSpec {
         spec::<GithubWorkflowRunConfig, Value>(
             "github.workflow.run",
@@ -199,7 +226,7 @@ impl NodeKind for GithubWorkflowRun {
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: GithubWorkflowRunConfig = parse(&input)?;
-            let RepoOf { repo, ci, .. } = repo_of(cx, &c.repo).await?;
+            let RepoOf { repo, ci, .. } = repo_for_step(cx, &c.repo).await?;
             let workflow = c.workflow.trim().to_string();
             if workflow.is_empty() {
                 return Err("workflow is empty: name its file (publish.yml)".into());
@@ -363,6 +390,10 @@ fn ci_output(pr: PullRequestStatus) -> (&'static str, GithubChangeRequestOutput)
 pub struct GithubChangeRequest;
 
 impl NodeKind for GithubChangeRequest {
+    fn needs_project(&self, config: &Value) -> bool {
+        repo_missing(config)
+    }
+
     fn spec(&self) -> KindSpec {
         spec::<GithubChangeRequestConfig, GithubChangeRequestOutput>(
             "github.change_request",
@@ -416,7 +447,7 @@ impl NodeKind for GithubChangeRequest {
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: GithubChangeRequestConfig = parse(&input)?;
-            let RepoOf { repo, forge, ci } = repo_of(cx, &c.repo).await?;
+            let RepoOf { repo, forge, ci } = repo_for_step(cx, &c.repo).await?;
             if cx.dry_run {
                 // The number may come from a step a dry run didn't really run.
                 let (default, would) = match nonblank(&c.branch) {
@@ -562,6 +593,10 @@ fn newer(tag: &str, than: Option<&str>) -> bool {
 pub struct GithubRelease;
 
 impl NodeKind for GithubRelease {
+    fn needs_project(&self, config: &Value) -> bool {
+        repo_missing(config)
+    }
+
     fn spec(&self) -> KindSpec {
         spec::<GithubReleaseConfig, GithubReleaseOutput>(
             "github.release",
@@ -599,7 +634,7 @@ impl NodeKind for GithubRelease {
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: GithubReleaseConfig = parse(&input)?;
-            let RepoOf { repo, forge, .. } = repo_of(cx, &c.repo).await?;
+            let RepoOf { repo, forge, .. } = repo_for_step(cx, &c.repo).await?;
             let tag = nonblank(&c.tag).map(String::from);
             let than = nonblank(&c.newer_than).map(String::from);
             let pattern = match nonblank(&c.tag_pattern) {
@@ -670,6 +705,10 @@ pub struct GithubWorkflowLatestOutput {
 pub struct GithubWorkflowLatest;
 
 impl NodeKind for GithubWorkflowLatest {
+    fn needs_project(&self, config: &Value) -> bool {
+        repo_missing(config)
+    }
+
     fn spec(&self) -> KindSpec {
         spec::<GithubWorkflowLatestConfig, GithubWorkflowLatestOutput>(
             "github.workflow.latest",
@@ -701,7 +740,7 @@ impl NodeKind for GithubWorkflowLatest {
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: GithubWorkflowLatestConfig = parse(&input)?;
-            let RepoOf { repo, ci, .. } = repo_of(cx, &c.repo).await?;
+            let RepoOf { repo, ci, .. } = repo_for_step(cx, &c.repo).await?;
             let workflow = c.workflow.trim().to_string();
             let branch = nonblank(&c.branch).unwrap_or("main").to_string();
             if cx.dry_run {
@@ -906,6 +945,10 @@ fn iso_day(day: u64) -> String {
 pub struct GithubNightly;
 
 impl NodeKind for GithubNightly {
+    fn needs_project(&self, config: &Value) -> bool {
+        repo_missing(config)
+    }
+
     fn spec(&self) -> KindSpec {
         spec::<GithubNightlyConfig, GithubNightlyOutput>(
             "github.nightly",
@@ -969,7 +1012,7 @@ impl NodeKind for GithubNightly {
                 ScheduledWatch, TagPattern, parse_day, parse_time_of_day, scheduled_watch, utc_day,
             };
             let c: GithubNightlyConfig = parse(&input)?;
-            let RepoOf { repo, forge, .. } = repo_of(cx, &c.repo).await?;
+            let RepoOf { repo, forge, .. } = repo_for_step(cx, &c.repo).await?;
             let workflow = c.workflow.trim().to_string();
             if workflow.is_empty() {
                 return Err("workflow is empty: name its file (publish.yml)".into());

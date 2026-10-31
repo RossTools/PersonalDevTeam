@@ -109,6 +109,9 @@ pub struct WorkflowDetail {
     pub workflow: Workflow,
     pub doc: WorkflowDoc,
     pub issues: Vec<Issue>,
+    /// Its steps work on the run's project, and its scope gives none: Run now asks for one (PDT-301).
+    #[serde(default)]
+    pub needs_project: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

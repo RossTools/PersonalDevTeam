@@ -3,8 +3,8 @@
 //! closes it by itself once a later attempt of the run passes; `github.workflow.rerun` re-runs a run's failed jobs.
 //! The template "Report failed workflow runs" puts them after the `github.workflow.failed` trigger.
 
-use super::release::{RepoOf, check_repo, repo_for};
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use super::release::{RepoOf, check_repo, repo_for_step};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, repo_missing, spec};
 use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
 use pdt_core::pr::CiState;
 use pdt_core::workflow::schedule::parse_every;
@@ -190,6 +190,10 @@ fn item_text(run: &WorkflowRun, jobs: &str, can_rerun: bool) -> String {
 pub struct GithubWorkflowWatch;
 
 impl NodeKind for GithubWorkflowWatch {
+    fn needs_project(&self, config: &Value) -> bool {
+        repo_missing(config)
+    }
+
     fn spec(&self) -> KindSpec {
         spec::<GithubWorkflowWatchConfig, GithubWorkflowWatchOutput>(
             "github.workflow.watch",
@@ -230,7 +234,7 @@ impl NodeKind for GithubWorkflowWatch {
             let c: GithubWorkflowWatchConfig = parse(&input)?;
             let id = text_of(&c.run_id).ok_or("runId is empty")?;
             let after: u32 = text_of(&c.after).and_then(|a| a.parse().ok()).unwrap_or(0);
-            let of: RepoOf = repo_for(cx.st, cx.run.project_id.as_deref(), &c.repo).await?;
+            let of: RepoOf = repo_for_step(cx, &c.repo).await?;
             if cx.dry_run {
                 return Ok(Outcome::next(
                     "passed",
@@ -390,6 +394,10 @@ pub struct GithubWorkflowRerunOutput {
 pub struct GithubWorkflowRerun;
 
 impl NodeKind for GithubWorkflowRerun {
+    fn needs_project(&self, config: &Value) -> bool {
+        repo_missing(config)
+    }
+
     fn spec(&self) -> KindSpec {
         spec::<GithubWorkflowRerunConfig, GithubWorkflowRerunOutput>(
             "github.workflow.rerun",
@@ -419,7 +427,7 @@ impl NodeKind for GithubWorkflowRerun {
         Box::pin(async move {
             let c: GithubWorkflowRerunConfig = parse(&input)?;
             let id = text_of(&c.run_id).ok_or("runId is empty")?;
-            let of = repo_for(cx.st, cx.run.project_id.as_deref(), &c.repo).await?;
+            let of = repo_for_step(cx, &c.repo).await?;
             let which = if c.all_jobs { "every job" } else { "the failed jobs" };
             if cx.dry_run {
                 return Ok(Outcome::next(

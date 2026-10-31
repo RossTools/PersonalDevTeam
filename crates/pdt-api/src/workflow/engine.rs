@@ -781,7 +781,12 @@ async fn fail_step(
         }
     }
     let node = doc.node(&step.node_id);
-    let retry = node.and_then(|n| n.retry);
+    // The workflow's setup (no project, no repository) won't come right by waiting: no retry (PDT-301).
+    let (setup, e) = match super::catalog::setup_split(&e) {
+        (true, msg) => (true, msg.to_string()),
+        (false, _) => (false, e),
+    };
+    let retry = node.and_then(|n| n.retry).filter(|_| !setup);
     tracing::info!(workflow = %run.workflow_name, run = %run.id, node = %step.node_id, error = %e, "a workflow step failed");
     step.error = Some(e.clone());
     let safe = definite || st.registry().catalog().get(&step.kind).is_none_or(|k| k.rerun_safe(&step.input));
@@ -893,6 +898,15 @@ pub(crate) async fn start_manual(
     let node = doc.nodes.iter().find(|n| n.kind == MANUAL).ok_or("the workflow has no Run now trigger")?;
     let manual = manual_config(st, node)?;
     let trigger = manual.input(&input).map_err(|e| format!("{} can't run with that input: {e}", wf.name))?;
+    if wf.project_id.is_none()
+        && trigger.get("projectId").and_then(Value::as_str).is_none_or(str::is_empty)
+        && super::catalog::doc_needs_project(st.registry().catalog(), &doc)
+    {
+        return Err(format!(
+            "{} needs a project to run in (its steps work on the run's project): give projectId",
+            wf.name
+        ));
+    }
     let configured = manual.run_key;
     let key = run_key
         .or_else(|| {
@@ -1284,7 +1298,7 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
         fence_input(&reg, kind.agent_text(), &config, &ctx, &mut input);
         ds.input = input.clone();
         let cx = StepCx { st, workflow: wf, run: &run, step: &step, node, ctx: &ctx, dry_run: true, rerun: false };
-        let result = kind.dry_run(&cx, input).await;
+        let result = kind.dry_run(&cx, input).await.map_err(|e| super::catalog::setup_split(&e).1.to_string());
         let port = match result {
             Ok(Outcome::Next { port, output }) => {
                 // An action that only says what it would do still gives later steps the fields they read (PDT-189).

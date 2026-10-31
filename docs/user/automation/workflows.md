@@ -208,6 +208,13 @@ The same check applies however a run starts (the form, the API, the PM, another 
 field that isn't shown is left out, and an input the trigger doesn't declare, or a value of the wrong kind, is refused
 with the list of inputs it takes.
 
+A workflow for this host (not one project's) whose steps work on the run's project, such as a GitHub step without a
+repository, needs a project to run in: its Run now form asks for **Project**, starting on the project you have open.
+A start without one (through the API, say) is refused, saying so.
+
+A step that can't run because of how the workflow is set up (no project to work on, a repository that isn't
+`owner/name`, a project that isn't on GitHub) fails the run at once with that message, instead of trying again first.
+
 ### Share and copy
 
 - **Save as template…** (in the workflow's **⋯**) keeps a copy to start new workflows from; your templates show in

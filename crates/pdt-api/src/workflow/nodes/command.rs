@@ -2,7 +2,7 @@
 //! JSON from stdout, in a scratch folder, the project's checkout or the attempt's worktree. A non-zero exit is an error
 //! (so retries and the error port apply); the node's time limit kills the whole process tree.
 
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, setup_error, spec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -121,6 +121,10 @@ pub fn scratch_dir(data_dir: &Path, run_id: &str) -> PathBuf {
 }
 
 impl NodeKind for Command {
+    fn needs_project(&self, config: &Value) -> bool {
+        config.get("cwd").and_then(Value::as_str).is_some_and(|c| c.trim() == "project")
+    }
+
     fn spec(&self) -> KindSpec {
         spec::<CommandConfig, CommandOutput>(
             "command",
@@ -185,8 +189,13 @@ async fn working_dir(cx: &StepCx<'_>, cwd: &str) -> Result<PathBuf, String> {
             Ok(d)
         }
         "project" => {
-            let id = cx.run.project_id.as_deref().ok_or("the run has no project")?;
-            let p = st.store.get_project(id).await.map_err(|e| e.to_string())?.ok_or("the run's project is gone")?;
+            let id = cx.run.project_id.as_deref().ok_or_else(|| setup_error("the run has no project to run in"))?;
+            let p = st
+                .store
+                .get_project(id)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| setup_error("the run's project is gone"))?;
             Ok(PathBuf::from(p.repo_path))
         }
         "attempt" => {
