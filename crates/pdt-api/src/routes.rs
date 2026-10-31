@@ -168,6 +168,9 @@ pub struct AppState {
     pub(crate) mcp: std::sync::Arc<crate::mcp_client::McpPool>,
     /// How often a PM conversation in use gets its daily update and journal checkpoint (PDT-167; tests shorten it).
     pub pm_update_every_ms: i64,
+    /// How long a watch's notes wait for more before they are told, and the longest they wait (PDT-319; tests
+    /// shorten them).
+    pub watch_wait_ms: (i64, i64),
     /// How long a reset waits for the conversation's journal before it records none (PDT-308).
     pub pm_reset_wait_ms: i64,
     /// The PM conversations a reset is running for (PDT-308): one stays listed in place until its fresh one exists.
@@ -290,6 +293,7 @@ impl AppState {
             mcp_key: Default::default(),
             personas_installed: Default::default(),
             pm_update_every_ms: pdt_core::pm::UPDATE_EVERY_MS,
+            watch_wait_ms: (pdt_core::watch::QUIET_MS, pdt_core::watch::MAX_WAIT_MS),
             pm_reset_wait_ms: pdt_core::pm::RESET_WAIT_MS,
             pm_resets: Default::default(),
             notifier: Default::default(),
@@ -594,6 +598,8 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/pm/notes", get(crate::pm::list_notes).post(crate::pm::create_note))
         .route("/pm/notes/{id}", get(crate::pm::get_note).patch(crate::pm::patch_note).delete(crate::pm::delete_note))
         .route("/todos", get(crate::todos::list).post(crate::todos::create))
+        .route("/watches", get(crate::watches::list).post(crate::watches::create))
+        .route("/watches/{id}", axum::routing::delete(crate::watches::delete))
         .route("/todos/{id}", axum::routing::patch(crate::todos::patch).delete(crate::todos::delete))
         .route("/inbox", get(crate::inbox::list))
         .route("/inbox/{id}/answer", axum::routing::post(crate::inbox::answer))

@@ -15,4 +15,8 @@ attemptId: string | null,
 /**
  * The workflow whose run wrote it for the user (a note with a gate's choice, which that run passes on itself).
  */
-workflowId: string | null, };
+workflowId: string | null, 
+/**
+ * The agent session that wrote it (an agent's comment through pdt-mcp), so a watching PM conversation skips its own.
+ */
+bySession: string | null, };
