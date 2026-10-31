@@ -1,4 +1,4 @@
-//! Ticket parts (PDT-38; docs/superpowers/specs/2026-10-19-ticket-parts-design.md): a ticket that takes several PRs
+//! Ticket parts (PDT-38): a ticket that takes several PRs
 //! is a parent whose parts are child tickets, one level deep. The rules here are pure: which ticket may be a parent,
 //! the parent's roll-up, which part Start picks next, and whether a parent may close.
 

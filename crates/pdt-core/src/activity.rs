@@ -165,7 +165,7 @@ pub fn tick_with(activity: Activity, w: &Watch, expects_hooks: bool, now: i64, t
     (activity == Activity::Working && now - w.last_output_ms >= t.quiet_after_ms).then_some(Signal::Quiet)
 }
 
-/// Lines of Codex's approval prompt, as verified in Task 1 (docs/superpowers/notes/phase-2-agent-signals.md).
+/// Lines of Codex's approval prompt.
 /// Compared after `strip_ansi` + `squash`, because the TUI redraws with cursor moves instead of spaces, and ConPTY
 /// skips characters already on screen ("Would you like to run" arrives as "Wou…d"), so only verified tails are used.
 pub const CODEX_APPROVAL_MARKERS: &[&str] = &[

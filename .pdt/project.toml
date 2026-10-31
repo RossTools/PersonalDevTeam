@@ -26,7 +26,7 @@ name    = "web"
 command = "pnpm --dir web test"
 
 
-# Areas (docs/run-config.md "Areas"): parts of PDT that two tickets in flight at once would both touch. Starting a
+# Areas (docs/user/automation/run-configuration.md "Areas"): parts of PDT that two tickets in flight at once would both touch. Starting a
 # ticket warns when its areas or changed files overlap another active ticket's; only `migrations` is exclusive (two
 # branches changing the schema at once can clash, even with timestamped migration names).
 [[area]]
@@ -53,7 +53,8 @@ paths = ["crates/pdt-agents/**", "crates/pdt-api/src/pty_ws.rs", "crates/pdt-api
 [[area]]
 name  = "runs"
 paths = ["crates/pdt-core/src/run.rs", "crates/pdt-core/src/runconfig.rs", "crates/pdt-store/src/runs.rs",
-         "crates/pdt-api/src/run*.rs", "web/src/runs/**", "docs/run-config.md"]
+         "crates/pdt-api/src/run*.rs", "web/src/runs/**", "docs/run-config.md",
+         "docs/user/automation/run-configuration.md"]
 
 [[area]]
 name  = "workspaces"

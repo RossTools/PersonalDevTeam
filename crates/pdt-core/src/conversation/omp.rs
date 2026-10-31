@@ -1,4 +1,4 @@
-//! OhMyPi's `omp acp` (PDT-238; notes: docs/superpowers/notes/omp-acp.md): plain ACP (`super::acp`) plus a tool call's
+//! OhMyPi's `omp acp` (PDT-238): plain ACP (`super::acp`) plus a tool call's
 //! `name`, and its `ask` tool's forms, where each question is a field's `title` (its header the `description`) with a
 //! `<field>__other` field beside it for an answer in the user's own words. What a built-in profile's flavor adds
 //! ([`AcpFlavor`]) is mapped here.

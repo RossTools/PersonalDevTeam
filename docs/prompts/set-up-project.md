@@ -3,8 +3,8 @@
 PDT has this prompt built in: **Set up with an agent** in a project's Settings (Runs on this host) starts a session
 with it, and `GET /api/guides/set-up-project` serves it. By hand: start a Claude Code or Codex session from PDT in the
 project (its main checkout or a worktree), and paste everything below the line. It finds the project through PDT
-itself, so nothing needs filling in. The reference it follows is [../run-config.md](../run-config.md)
-(`GET /api/guides/run-config`).
+itself, so nothing needs filling in. The reference it follows is
+[../user/automation/run-configuration.md](../user/automation/run-configuration.md) (`GET /api/guides/run-config`).
 
 ---
 
@@ -15,9 +15,9 @@ starts the app for development, and a **Test** for each test suite.
 and this session's id; terminal sessions also have `$PDT_HOOK_PORT` and `$PDT_SESSION_ID`.
 `GET /api/sessions/<session id>` gives this session's `projectId` and `worktreeId`. (If you have neither, this session
 didn't come from PDT: use port 7420 and match `repoPath` in `GET /api/projects` to the repo root.) The full reference
-for the configuration is `GET /api/guides/run-config`. Read `GET /api/projects/<projectId>/run-config?worktreeId=<worktreeId>` (leave
-out `worktreeId` when null): it shows any existing `.pdt/project.toml` (`file`), host overrides (`overrides`), and
-the merged result or an `error`. If a working configuration already exists, say so and ask what to change.
+is `GET /api/guides/run-config`. Read `GET /api/projects/<projectId>/run-config?worktreeId=<worktreeId>` (leave out
+`worktreeId` when null): any existing `.pdt/project.toml` (`file`), host overrides (`overrides`), and the merged
+`effective` or an `error`. If a working configuration already exists, say so and ask what to change.
 
 **2. Learn how the project runs.** Read the README and contributing docs, and the build files: package.json scripts,
 Cargo.toml, pyproject/requirements, Makefile, justfile, docker-compose, Procfile, `.env.example`, CI workflows (CI
@@ -47,24 +47,25 @@ name    = "unit"
 command = "..."                     # passes on exit 0
 ```
 
-PDT sets `PORT`, `PDT_RUN_DATA`, `PDT_RUN_URL`, `PDT_RUN_HOST` (the hostname the link uses: the tailnet name when
-remote access is on, else 127.0.0.1) and `PDT_RUN_BRANCH`, and expands only those, as `$NAME` or `${NAME}`, in
-`setup`, `command` and `env`. Steps run in the checkout with `sh -c` (macOS/Linux) or a generated `.cmd` (Windows),
-with the host's normal environment. Rules:
+PDT sets `PORT` and `PDT_RUN_URL` (web runs), `PDT_RUN_DATA` (with `data`), `PDT_RUN_HOST` (the hostname the link
+uses: the tailnet name when remote access is on, else 127.0.0.1) and `PDT_RUN_BRANCH`, and expands only those, as
+`$NAME` or `${NAME}`, in `setup`, `command` and `env`. Steps run in the checkout with `sh -c` (macOS/Linux) or a
+generated `.cmd` (Windows), with the host's normal environment. Rules:
 - The server must listen on `$PORT`. Bind it to 127.0.0.1 where the framework allows.
 - If the server checks the Host header, allow `$PDT_RUN_HOST` (through a flag or env var; don't edit the project's
   own config files for this unless I agree).
 - Point app state at `$PDT_RUN_DATA` when the app supports it, and set `data = true`.
 - Set `detach = true` only for a long-lived app I use day to day (a desktop app on the main checkout) that must
   not be killed when PDT updates. Its output goes to a log, and it takes no typed input.
-- Never put secrets in it, and never forward a variable PDT doesn't set (`X = "$SOMETHING"` passes the literal text).
-- Prefer plain commands on PATH, joined with `&&`; no `||`, `;` or pipes (Windows doesn't split them).
+- Never put secrets in it, and don't forward a variable PDT doesn't set through `env` (`X = "$SOMETHING"` passes
+  the literal text).
+- Prefer plain commands on PATH, joined with `&&`; no `||`, `;` or pipes (they don't work on Windows).
 
 **Where to save it:** as **host overrides** unless I say otherwise. They live only in PDT, so the repo isn't
 touched: `GET /api/projects/<projectId>/settings`, then
 `PUT /api/projects/<projectId>/settings` with `{"agentCredentials": <the value you read>, "runOverrides": "<the TOML>"}`
 (the PUT replaces both fields). If I'd rather commit it, write `.pdt/project.toml` instead, on a branch, not on
-`main`.
+the base branch.
 
 **4. Check it.**
 - `GET .../run-config` again: `error` must be null and `effective` must show your entries.

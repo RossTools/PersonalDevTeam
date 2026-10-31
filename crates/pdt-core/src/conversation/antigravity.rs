@@ -1,4 +1,4 @@
-//! Google's Antigravity ACP server (`agy_acp_server`, PDT-239; notes: docs/superpowers/notes/antigravity-acp.md):
+//! Google's Antigravity ACP server (`agy_acp_server`, PDT-239):
 //! plain ACP (`super::acp`) plus its MCP calls' server and tool in `_meta.mcp`, a command's output in `rawOutput`
 //! (`{exitCode, combinedOutput}`), and an "Allow Always" that lasts only as long as its session (it keeps it in
 //! memory). What a built-in profile's flavor adds ([`AcpFlavor`](crate::acp_agent::AcpFlavor)) is mapped here.

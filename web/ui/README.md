@@ -1,8 +1,5 @@
 # web/ui — PDT's component library
 
-Spec: docs/superpowers/specs/2026-10-17-design-system-ux-design.md (§3 principles, §4 tokens, §5 inventory, §6 patterns).
-Plan: docs/superpowers/plans/2026-10-17-phase-3c-1-design-system.md. Mockup of the kit: the "PDT UX pass" canvas.
-
 ## Layout
 
 - `tokens.css` — every colour and token (`--pdt-*`), light and dark. The only place colours are defined.

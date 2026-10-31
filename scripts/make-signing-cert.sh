@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Makes PDT's self-signed macOS code-signing certificate, once: the stopgap until a Developer ID certificate is set
 # up. Every release is signed with it (scripts/sign-macos.sh). It has no Team ID, so the keychain still asks after
-# every update (docs/superpowers/notes/developer-id.md), and it does not satisfy Gatekeeper.
+# every update (docs/SDLC.md "Signing"), and it does not satisfy Gatekeeper.
 #
 # usage: scripts/make-signing-cert.sh <output dir>
 # Writes <output dir>/pdt-signing.p12 and pdt-signing.password, and prints how to store them as the GitHub secrets

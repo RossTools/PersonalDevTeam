@@ -1,4 +1,4 @@
-//! Codex's `codex app-server` protocol for one thread (notes: docs/superpowers/notes/phase-5-agent-protocols.md):
+//! Codex's `codex app-server` protocol for one thread:
 //! notifications and server requests → normalized events, and answers → JSON-RPC results. Pure; the adapter in
 //! pdt-agents owns the server process and the connection.
 

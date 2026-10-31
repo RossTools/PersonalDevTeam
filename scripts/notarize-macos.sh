@@ -3,7 +3,7 @@
 # "unidentified developer" warning. Run after scripts/sign-macos.sh.
 #
 # usage: scripts/notarize-macos.sh <path/to/App.app>
-# Needs an App Store Connect API key (docs/superpowers/notes/developer-id.md):
+# Needs an App Store Connect API key (docs/SDLC.md "Signing"):
 #   MACOS_NOTARY_KEY (base64 of the AuthKey_<id>.p8 file), MACOS_NOTARY_KEY_ID, MACOS_NOTARY_ISSUER.
 set -euo pipefail
 

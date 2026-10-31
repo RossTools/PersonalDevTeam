@@ -72,8 +72,8 @@ runs:
         pnpm --dir desktop exec tauri build --config "$GITHUB_WORKSPACE/desktop/src-tauri/tauri.bundle.conf.json" \
           --bundles "$bundles"
     # One certificate signs every macOS release (scripts/sign-macos.sh). With a Developer ID certificate the keychain
-    # trusts every release; a self-signed one still makes it ask after each update (docs/superpowers/notes/
-    # developer-id.md). Releases must be signed; other builds are signed when the secret is available to them.
+    # trusts every release; a self-signed one still makes it ask after each update (docs/SDLC.md
+    # "Signing"). Releases must be signed; other builds are signed when the secret is available to them.
     - name: Sign the app bundle
       if: inputs.bundles == 'app'
       shell: bash
