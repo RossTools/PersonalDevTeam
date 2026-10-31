@@ -101,7 +101,8 @@ async fn run() -> anyhow::Result<()> {
         let sample = pdt_api::documents::testing::FakeProvider::new("sample", "Sample (in memory)");
         sample.put("Launch plan", pdt_core::document::DocumentKind::Doc, "# Launch plan\n\n## Goal\n\nShip it.\n");
         sample.put("Budget", pdt_core::document::DocumentKind::Sheet, "");
-        state.documents = pdt_api::documents::DocumentProviders::new(vec![std::sync::Arc::new(sample)]);
+        state.documents =
+            pdt_api::documents::DocumentProviders::new(vec![state.local.clone(), std::sync::Arc::new(sample)]);
     }
     pdt_api::load_enabled_integrations(&state).await?;
     tracing::info!(built = ?state.integrations.built().iter().map(|i| i.id()).collect::<Vec<_>>(),

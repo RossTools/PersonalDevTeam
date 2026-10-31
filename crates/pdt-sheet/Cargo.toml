@@ -1,0 +1,16 @@
+[package]
+name = "pdt-sheet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "PDT's local sheets on IronCalc: .xlsx and .csv in and out, cells, formats, sort and filter, live diffs"
+
+[dependencies]
+csv = "1.4.0"
+ironcalc = "=0.9.1"
+pdt-core.workspace = true
+zip = { version = "9.2.0", default-features = false, features = ["deflate-flate2"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

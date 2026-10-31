@@ -3,7 +3,8 @@
 
 use crate::{Store, StoreError};
 use pdt_core::document::{
-    Document, DocumentFilter, DocumentKind, DocumentProject, DocumentTicket, ProjectDocumentSettings,
+    ChartSpec, CommentAnchor, CommentReply, Document, DocumentComment, DocumentFilter, DocumentKind, DocumentProject,
+    DocumentTicket, ProjectDocumentSettings,
 };
 use pdt_core::ticket::Actor;
 use sqlx::Row;
@@ -245,9 +246,163 @@ impl Store {
     }
 }
 
+/// A comment or reply to keep ([`Store::add_document_comment`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewDocumentComment {
+    pub id: String,
+    pub document_id: String,
+    /// The comment it replies to.
+    pub parent_id: Option<String>,
+    pub anchor: Option<CommentAnchor>,
+    pub author: String,
+    pub actor: Actor,
+    pub body: String,
+    pub created_at: i64,
+}
+
+impl Store {
+    /// PDT's record of a provider's file, by the provider's reference.
+    pub async fn document_by_ref(&self, provider: &str, reference: &str) -> Result<Option<Document>, StoreError> {
+        let id: Option<(String,)> = sqlx::query_as("SELECT id FROM documents WHERE provider = ? AND provider_ref = ?")
+            .bind(provider)
+            .bind(reference)
+            .fetch_optional(&self.pool)
+            .await?;
+        match id {
+            Some((id,)) => self.get_document(&id).await,
+            None => Ok(None),
+        }
+    }
+
+    /// Keeps a comment, or a reply to one (false when the document, or the comment replied to, is gone).
+    pub async fn add_document_comment(&self, c: &NewDocumentComment) -> Result<bool, StoreError> {
+        if let Some(parent) = &c.parent_id {
+            let top: Option<(Option<String>,)> =
+                sqlx::query_as("SELECT parent_id FROM document_comments WHERE id = ? AND document_id = ?")
+                    .bind(parent)
+                    .bind(&c.document_id)
+                    .fetch_optional(&self.pool)
+                    .await?;
+            // Replies hang off the top comment only.
+            if !matches!(top, Some((None,))) {
+                return Ok(false);
+            }
+        }
+        let r = sqlx::query(
+            "INSERT INTO document_comments (id, document_id, parent_id, anchor, author, actor, body, created_at)              SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM documents WHERE id = ?)",
+        )
+        .bind(&c.id)
+        .bind(&c.document_id)
+        .bind(&c.parent_id)
+        .bind(c.anchor.as_ref().map(|a| serde_json::to_string(a).expect("an anchor serializes")))
+        .bind(&c.author)
+        .bind(c.actor.as_str())
+        .bind(&c.body)
+        .bind(c.created_at)
+        .bind(&c.document_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// A document's comments, oldest first, each with its replies.
+    pub async fn document_comments(&self, document_id: &str) -> Result<Vec<DocumentComment>, StoreError> {
+        let rows = sqlx::query(
+            "SELECT id, parent_id, anchor, author, body, resolved, created_at FROM document_comments              WHERE document_id = ? ORDER BY created_at, id",
+        )
+        .bind(document_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out: Vec<DocumentComment> = Vec::new();
+        let mut replies: Vec<(String, CommentReply)> = Vec::new();
+        for r in &rows {
+            let id: String = r.try_get("id")?;
+            let author: String = r.try_get("author")?;
+            let body: String = r.try_get("body")?;
+            let created_at: i64 = r.try_get("created_at")?;
+            match r.try_get::<Option<String>, _>("parent_id")? {
+                Some(parent) => replies.push((parent, CommentReply { id, author, body, created_at: Some(created_at) })),
+                None => {
+                    let anchor: Option<CommentAnchor> =
+                        r.try_get::<Option<String>, _>("anchor")?.and_then(|j| serde_json::from_str(&j).ok());
+                    out.push(DocumentComment {
+                        id,
+                        author,
+                        body,
+                        quote: anchor.as_ref().map(CommentAnchor::label),
+                        anchor,
+                        resolved: r.try_get::<i64, _>("resolved")? != 0,
+                        created_at: Some(created_at),
+                        replies: vec![],
+                    });
+                }
+            }
+        }
+        for (parent, reply) in replies {
+            if let Some(c) = out.iter_mut().find(|c| c.id == parent) {
+                c.replies.push(reply);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Resolves a comment, or opens it again; false when it is gone.
+    pub async fn resolve_document_comment(
+        &self,
+        document_id: &str,
+        id: &str,
+        resolved: bool,
+    ) -> Result<bool, StoreError> {
+        let r = sqlx::query(
+            "UPDATE document_comments SET resolved = ? WHERE id = ? AND document_id = ? AND parent_id IS NULL",
+        )
+        .bind(resolved as i64)
+        .bind(id)
+        .bind(document_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// A sheet's charts, in order.
+    pub async fn document_charts(&self, document_id: &str) -> Result<Vec<ChartSpec>, StoreError> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT spec FROM document_charts WHERE document_id = ? ORDER BY position, chart_id")
+                .bind(document_id)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().filter_map(|(j,)| serde_json::from_str(&j).ok()).collect())
+    }
+
+    /// Adds a chart (last), or replaces the one with its id in place.
+    pub async fn put_document_chart(&self, document_id: &str, chart: &ChartSpec) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO document_charts (document_id, chart_id, spec, position)              VALUES (?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM document_charts WHERE document_id = ?))              ON CONFLICT(document_id, chart_id) DO UPDATE SET spec = excluded.spec",
+        )
+        .bind(document_id)
+        .bind(&chart.id)
+        .bind(serde_json::to_string(chart).expect("a chart serializes"))
+        .bind(document_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Removes a chart; false when there was none.
+    pub async fn delete_document_chart(&self, document_id: &str, chart_id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("DELETE FROM document_charts WHERE document_id = ? AND chart_id = ?")
+            .bind(document_id)
+            .bind(chart_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pdt_core::document::{ChartKind, ChartSeries};
     use pdt_core::ticket::NewTicket;
 
     async fn store_with_ticket(dir: &std::path::Path) -> Store {
@@ -341,5 +496,64 @@ mod tests {
         let d = store.get_document("d1").await.unwrap().unwrap();
         assert!(d.projects.is_empty(), "the document stays, unlinked");
         assert_eq!(store.project_document_settings("p").await.unwrap(), ProjectDocumentSettings::default());
+    }
+
+    #[tokio::test]
+    async fn comments_and_charts_are_kept_with_their_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_ticket(dir.path()).await;
+        store.add_document(&doc("d1", "Budget", DocumentKind::Sheet, "local", 1)).await.unwrap();
+        assert_eq!(store.document_by_ref("local", "ref-d1").await.unwrap().unwrap().id, "d1");
+        assert!(store.document_by_ref("google", "ref-d1").await.unwrap().is_none());
+
+        let c = |id: &str, parent: Option<&str>, at: i64| NewDocumentComment {
+            id: id.into(),
+            document_id: "d1".into(),
+            parent_id: parent.map(str::to_string),
+            anchor: parent.is_none().then(|| CommentAnchor::Cell { sheet: "Sheet1".into(), range: "B3".into() }),
+            author: "You".into(),
+            actor: Actor::User,
+            body: format!("body {id}"),
+            created_at: at,
+        };
+        assert!(store.add_document_comment(&c("c1", None, 1)).await.unwrap());
+        assert!(store.add_document_comment(&c("r1", Some("c1"), 2)).await.unwrap());
+        assert!(!store.add_document_comment(&c("r2", Some("r1"), 3)).await.unwrap(), "no replies to replies");
+        assert!(
+            !store
+                .add_document_comment(&NewDocumentComment { document_id: "gone".into(), ..c("x", None, 4) })
+                .await
+                .unwrap()
+        );
+        assert!(store.resolve_document_comment("d1", "c1", true).await.unwrap());
+        assert!(!store.resolve_document_comment("d1", "r1", true).await.unwrap());
+        let all = store.document_comments("d1").await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert!(all[0].resolved);
+        assert_eq!(all[0].quote.as_deref(), Some("Sheet1!B3"));
+        assert_eq!(all[0].replies.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["r1"]);
+
+        let chart = |id: &str, title: &str| ChartSpec {
+            id: id.into(),
+            kind: ChartKind::Bar,
+            title: title.into(),
+            sheet: "Sheet1".into(),
+            categories: "A2:A4".into(),
+            series: vec![ChartSeries { name: "S".into(), values: "B2:B4".into() }],
+            anchor: "F2".into(),
+            width: 480,
+            height: 300,
+        };
+        store.put_document_chart("d1", &chart("a", "One")).await.unwrap();
+        store.put_document_chart("d1", &chart("b", "Two")).await.unwrap();
+        store.put_document_chart("d1", &chart("a", "One again")).await.unwrap();
+        let charts = store.document_charts("d1").await.unwrap();
+        assert_eq!(charts.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), ["One again", "Two"]);
+        assert!(store.delete_document_chart("d1", "b").await.unwrap());
+        assert!(!store.delete_document_chart("d1", "b").await.unwrap());
+
+        store.delete_document("d1").await.unwrap();
+        assert!(store.document_comments("d1").await.unwrap().is_empty());
+        assert!(store.document_charts("d1").await.unwrap().is_empty());
     }
 }
