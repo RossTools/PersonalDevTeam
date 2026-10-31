@@ -202,3 +202,9 @@ pub async fn fail_events(db: &std::path::Path, kind: Option<&str>) {
 pub mod issues;
 pub mod pm;
 pub mod workflows;
+
+/// One pass of auto-start: the pickup watch tells what can start, then the engine runs "Pick up tickets".
+pub async fn pick_up(st: &pdt_api::AppState) {
+    pdt_api::watch_pickup(st).await;
+    pdt_api::run_workflows(st).await;
+}

@@ -168,7 +168,7 @@ where
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         pdt_api::run_workflows(&env.state).await;
-        pdt_api::schedule_tickets(&env.state).await;
+        common::pick_up(&env.state).await;
         if let Some(v) = done().await {
             return v;
         }
@@ -318,7 +318,7 @@ async fn a_refined_external_ticket_waits_in_ready_for_the_user() {
     assert_eq!(v["admitted"], false);
     for _ in 0..5 {
         pdt_api::run_workflows(&env.state).await;
-        pdt_api::schedule_tickets(&env.state).await;
+        common::pick_up(&env.state).await;
     }
     assert_eq!(get_ticket(&env, &t).await["stage"], "ready", "auto-start never takes it");
 
@@ -391,7 +391,7 @@ async fn auto_start_waits_until_a_ticket_has_been_quiet_for_the_start_delay() {
 
     // Just created: auto-start leaves it, and the ticket (and the list) says when it will take it.
     let a = todo(&env, "A").await;
-    pdt_api::schedule_tickets(&env.state).await;
+    common::pick_up(&env.state).await;
     let v = get_ticket(&env, &a).await;
     assert_eq!(v["stage"], "todo");
     let at = v["autoStartAt"].as_i64().expect("waiting out the delay");
@@ -426,14 +426,14 @@ async fn auto_start_waits_until_a_ticket_has_been_quiet_for_the_start_delay() {
         (v["stage"] == "in_progress").then_some(v)
     })
     .await;
-    pdt_api::schedule_tickets(&env.state).await;
+    common::pick_up(&env.state).await;
     assert_eq!(get_ticket(&env, &c).await["stage"], "todo", "still blocked by B");
 
     // 0: at once.
     settings(&env, json!({"startDelaySeconds": 0})).await;
     let d = todo(&env, "D").await;
     assert_eq!(get_ticket(&env, &d).await["autoStartAt"], Value::Null);
-    pdt_api::schedule_tickets(&env.state).await;
+    common::pick_up(&env.state).await;
     assert_eq!(get_ticket(&env, &d).await["stage"], "in_progress");
 }
 
@@ -456,7 +456,8 @@ async fn auto_start_takes_the_most_urgent_ticket_first_unless_the_project_says_r
     let env = setup().await;
     let (_, v) = call(&env.app, "GET", &format!("/api/projects/{}/settings", env.project), None).await;
     assert_eq!(v["policy"]["autoStartOrder"], "priority", "most urgent first unless the project says otherwise");
-    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 10, "startDelaySeconds": 0})).await;
+    // One at a time: each raise of the cap lets the next one start (PDT-327: `slot.freed`).
+    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 1, "startDelaySeconds": 0})).await;
     // No host cap on agents running a turn: each start's session keeps working.
     let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"maxAgentTurns": 0}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -468,13 +469,17 @@ async fn auto_start_takes_the_most_urgent_ticket_first_unless_the_project_says_r
     let high = todo_at(&env, "High", "high").await;
     let medium_later = todo_at(&env, "Medium later", "medium").await;
     let medium = todo_at(&env, "Medium", "medium").await;
-    pdt_api::schedule_tickets(&env.state).await;
+    common::pick_up(&env.state).await;
     assert_eq!(stage(high.clone()).await, "in_progress", "the high-priority ticket first");
     assert_eq!(stage(medium.clone()).await, "todo");
-    pdt_api::schedule_tickets(&env.state).await;
+    common::pick_up(&env.state).await;
+    assert_eq!(stage(medium.clone()).await, "todo", "at the cap");
+    settings(&env, json!({"maxRunningAttempts": 2})).await;
+    common::pick_up(&env.state).await;
     assert_eq!(stage(medium.clone()).await, "in_progress", "then rank within a priority");
     assert_eq!(stage(medium_later.clone()).await, "todo");
-    pdt_api::schedule_tickets(&env.state).await;
+    settings(&env, json!({"maxRunningAttempts": 3})).await;
+    common::pick_up(&env.state).await;
     assert_eq!(stage(medium_later).await, "in_progress");
 
     // By rank: today's order, whatever the priority.
@@ -483,7 +488,8 @@ async fn auto_start_takes_the_most_urgent_ticket_first_unless_the_project_says_r
     assert_eq!(v["policy"]["autoStartOrder"], "rank");
     let urgent = todo_at(&env, "Urgent", "urgent").await;
     let low = todo_at(&env, "Low", "low").await;
-    pdt_api::schedule_tickets(&env.state).await;
+    settings(&env, json!({"maxRunningAttempts": 4})).await;
+    common::pick_up(&env.state).await;
     assert_eq!(stage(low).await, "in_progress", "the first in rank");
     assert_eq!(stage(urgent).await, "todo");
     let (s, v) =
@@ -1710,7 +1716,7 @@ async fn moving_a_started_ticket_back_to_todo_stops_its_work_and_auto_start_take
     assert!(env.state.store.active_agent_steps().await.unwrap().iter().all(|a| a.ticket_id.as_deref() != Some(&t)));
     for _ in 0..3 {
         pdt_api::run_workflows(&env.state).await;
-        pdt_api::schedule_tickets(&env.state).await;
+        common::pick_up(&env.state).await;
     }
     assert_eq!(get_ticket(&env, &t).await["stage"], "todo", "still blocked");
 

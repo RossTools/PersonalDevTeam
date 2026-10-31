@@ -16,6 +16,7 @@ pub mod mcp_tool;
 pub mod merge;
 pub mod notify;
 pub mod outside_pr;
+pub mod pickup;
 pub mod release;
 pub mod schedule;
 pub mod session_send;

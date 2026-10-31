@@ -13,6 +13,7 @@ These come with PDT. You can turn them off, edit them or copy them, but not dele
 
 | Workflow | What it does | Starts |
 | --- | --- | --- |
+| **Pick up tickets** | Auto-start: starts each project's next ticket, with the project's auto-start settings. See [Pick up tickets](#pick-up-tickets). | On |
 | **PR notices** | Tells a ticket's agent when its pull request's CI fails, it conflicts with the base branch, it falls out of the merge queue, or it merges. When the pull request was set to merge, the agent fixes it and PDT merges it again. | On |
 | **Finish merged tickets** | Moves a ticket to **Done** and cleans up once its branch merges, when you asked for that at **Merge…**. | On |
 | **Commits pushed after a merge** | Asks you whether to open a follow-up ticket when an agent pushes to a branch that already merged. | On |
@@ -98,6 +99,40 @@ You set these when you create it; afterwards each lives in its step (click the s
 What any workflow may merge is the project's policy, set apart from workflows: see
 [Approvals and merging](personas-and-approvals.md#approvals-and-merging).
 
+## Pick up tickets
+
+**Pick up tickets** is auto-start. It runs when a ticket can start (it has gone the quiet period unchanged, or its
+last blocker closed), when there's room for another (a ticket in flight merged or was abandoned, the project's cap
+rose, an agent slot freed up), and every minute. It has three steps:
+
+1. **Find tickets to start** lists the project's tickets that could start, in order: the stages, labels, priority and
+   areas to take, whether to leave out blocked, conflicting and parent tickets, and the order (`priority`, `rank` or
+   `age`).
+2. **Choose tickets to start** keeps to the caps (per project, and optionally per area or label), the quiet period,
+   and passes over a ticket that failed to start until it changes. The run shows why it passed over each one.
+3. **Start the ticket** starts the first one still free, with the agent, permission mode and view you give it (your
+   defaults otherwise), handed to the project's workflow (the Pipeline) or to an agent session of its own.
+
+A setting left empty is the project's auto-start setting (**Settings**, on the project's page), so with the project's
+auto-start off it starts nothing. Set one in the step and it applies whatever the project says. **Dry run** shows what
+it would start without starting it.
+
+### Only `agentic` tickets
+
+1. Open **Pick up tickets**, then **Duplicate** in its **⋯**, and set the copy's **Project** to the project.
+2. In **Find tickets to start**, set **Labels** to `agentic`.
+3. Turn the copy on, and turn the built-in off (or leave the project's other tickets to it by setting **Exclude
+   labels** to `agentic` in the built-in, so the two don't share them).
+
+### Ready tickets only at night
+
+1. **Duplicate** **Pick up tickets** for the project.
+2. Delete its triggers but **Every minute**, and change that one to a cron line: `*/10 0-6 * * *` (every ten minutes
+   from midnight to 7 a.m.).
+3. In **Find tickets to start**, set **Stages** to `ready`. In **Choose tickets to start**, set **Cap** (say `3`) for a
+   different cap at night.
+4. Turn it on. The built-in still takes **To do** tickets during the day.
+
 ## Edit a workflow
 
 A workflow page edits one draft three ways:
@@ -163,7 +198,8 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
 **Add node** lists every step, grouped:
 
 - **Act on tickets**: **Comment on the ticket**, **Move the ticket**, **Create a ticket**, **Finish the ticket** (stop
-  its runs, remove its worktree), **Merge the attempt**.
+  its runs, remove its worktree), **Merge the attempt**, and **Find tickets to start**, **Choose tickets to start** and
+  **Start the ticket** (see [Pick up tickets](#pick-up-tickets)).
 - **Talk to agents**: **Tell the agent** messages the ticket's agent once it's between turns; an **Agent step** has a
   persona do a piece of work.
 - **Decide**: **If** (yes or no), **Switch** (one exit per value), **Wait** (for a time, or an event with a time

@@ -303,14 +303,14 @@ async fn low_disk_space_warns_in_the_inbox_and_pauses_auto_start_when_critical()
     .await;
     assert_eq!(s, StatusCode::CREATED, "{t}");
     let id = t["id"].as_str().unwrap();
-    pdt_api::schedule_tickets(&env.state).await;
+    common::pick_up(&env.state).await;
     let t = call(&env.app, "GET", &format!("/api/tickets/{id}"), None).await.1;
     assert_eq!((t["stage"].as_str(), &t["autoStartAt"]), (Some("todo"), &Value::Null), "{t}");
 
     // Space again: the warning goes, and auto-start takes the ticket.
     env.free.store(100 * GB, Ordering::SeqCst);
     assert!(inbox().await.is_empty());
-    pdt_api::schedule_tickets(&env.state).await;
+    common::pick_up(&env.state).await;
     let t = call(&env.app, "GET", &format!("/api/tickets/{id}"), None).await.1;
     assert_eq!(t["stage"], "in_progress", "{t}");
     for s in call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await.1.as_array().unwrap()

@@ -34,6 +34,8 @@ pub const AGENT_OUTCOME: &str = "agent.outcome";
 pub const OUTSIDE_INPUT: &str = "session.outside_input";
 pub const TRIAGE_SKIPPED: &str = "triage.skipped";
 pub const TICKET_REFINE_REQUESTED: &str = "ticket.refine_requested";
+pub const TICKET_STARTABLE: &str = "ticket.startable";
+pub const SLOT_FREED: &str = "slot.freed";
 
 /// The event types that carry outside input (PDT-201): what someone outside PDT wrote. A run they start triages.
 pub const UNTRUSTED_EVENTS: &[&str] =
@@ -154,6 +156,24 @@ pub const EVENT_TYPES: &[EventType] = &[
         title: "Ticket moved",
         description: "A ticket moved to another stage.",
         schema: schema_of::<TicketStageChanged>,
+        outside: &[],
+    },
+    EventType {
+        id: TICKET_STARTABLE,
+        title: "Ticket can start",
+        description: "In a project with auto-start on, a To do or Ready ticket became one auto-start could take: it \
+                      went the project's start delay unchanged, or its last blocker or conflict cleared (once each \
+                      time; again after PDT restarts).",
+        schema: schema_of::<TicketStartable>,
+        outside: &[],
+    },
+    EventType {
+        id: SLOT_FREED,
+        title: "Room to start another",
+        description: "In a project with auto-start on, fewer tickets are in flight (an attempt merged or was \
+                      abandoned) or its cap rose; or an agent slot freed on this host (`reason`: `attempt`, `cap` or \
+                      `agent`; an agent slot has no project).",
+        schema: schema_of::<SlotFreed>,
         outside: &[],
     },
     EventType {
@@ -797,6 +817,40 @@ pub struct TicketRefineRequested {
     pub stage: String,
     /// `user` or `agent`.
     pub actor: String,
+}
+
+/// `ticket.startable` (PDT-327). The ticket is `ticket`, not `ticketId`: a pickup run it starts may start another
+/// ticket, so the run isn't the ticket's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketStartable {
+    pub project_id: String,
+    pub ticket: StartableTicket,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct StartableTicket {
+    pub id: String,
+    pub key: String,
+    pub title: String,
+    /// `todo` or `ready`.
+    pub stage: String,
+    pub priority: String,
+    pub labels: Vec<String>,
+}
+
+/// `slot.freed` (PDT-327).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SlotFreed {
+    /// The project with fewer tickets in flight; none for an agent slot (the host's).
+    pub project_id: Option<String>,
+    /// `attempt`, `cap` or `agent`.
+    pub reason: String,
 }
 
 #[cfg(test)]

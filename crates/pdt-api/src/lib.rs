@@ -93,7 +93,7 @@ pub use overlap::refresh_overlaps;
 pub use remote::{RemoteStatus, RemoteWatch, apply_remote_access, run_remote_watch};
 pub use routes::{AppState, Health, router};
 pub use run_manager::{log_path as run_log_path, resume_runs, sweep_gone_runs};
-pub use scheduler::{run_scheduler, schedule_tickets};
+pub use scheduler::{run_pickup_watch, watch_pickup};
 pub use sessions::{ResumePlan, plan_resume_interrupted, resume_interrupted};
 pub use start::check_merges;
 pub use storage::{auto_cleanup, run_storage};
