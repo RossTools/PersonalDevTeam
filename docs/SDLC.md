@@ -227,7 +227,7 @@ next nightly.
 - **When**: every night, started from outside GitHub: a scheduler dispatches the release workflow on `main` with
   channel `nightly` and `scheduled: true` (`gh workflow run release.yml -f channel=nightly -f scheduled=true`, or a
   PDT workflow on a schedule that runs it). This repository's is the maintainer's own "PDT nightly" workflow (08:17
-  UTC). The workflow has no GitHub `schedule:` (PDT-307): GitHub's scheduled runs are best-effort, stopped firing
+  UTC). The workflow has no GitHub `schedule:`: GitHub's scheduled runs are best-effort, stopped firing
   altogether, and one that started again could race the outside run into a duplicate nightly. With `scheduled`, when
   the head of `main` is already released (the last nightly, or the stable release just merged, points at it) it
   publishes nothing and the run ends green; a nightly tag at the head whose release never got published (that night
