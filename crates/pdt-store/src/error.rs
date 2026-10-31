@@ -4,6 +4,9 @@ pub enum StoreError {
     Conflict(String),
     #[error(transparent)]
     Db(sqlx::Error),
+    /// A write the database could not make now (a full disk, an I/O error, a lock held too long): it may work later.
+    #[error("PDT can't save changes: {0}")]
+    Write(sqlx::Error),
     #[error(transparent)]
     Migrate(#[from] sqlx::migrate::MigrateError),
     #[error(transparent)]
@@ -18,6 +21,9 @@ impl From<sqlx::Error> for StoreError {
             && db.is_unique_violation()
         {
             return StoreError::Conflict(db.message().to_string());
+        }
+        if crate::health::is_write_error(&e) {
+            return StoreError::Write(e);
         }
         StoreError::Db(e)
     }

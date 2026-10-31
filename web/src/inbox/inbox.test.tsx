@@ -287,6 +287,18 @@ describe('inbox', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/settings/plugins/github'));
   });
 
+  it('says PDT can’t save changes, with what to do, and it is not dismissed', () => {
+    const storage = item('storage', {
+      kind: 'storage', group: 'notice', projectId: null, ticketId: null, runId: null, stepId: null,
+      title: "PDT can't save changes: the disk is full",
+      body: { text: "The disk with PDT's data is full (12 MB free). Free up space on it.", diskFull: true, freeBytes: 12582912 },
+    });
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[storage]} selectedId="storage" onSelect={() => {}} />);
+    expect(screen.getByRole('region', { name: "Can't save changes" })).toHaveTextContent('(12 MB free)');
+    expect(dismissable(storage)).toBe(false);
+  });
+
   it('asks the user to do a manual stage and pick its outcome, with their note as the summary', async () => {
     const manual = item('m', {
       kind: 'manual', title: 'Your turn: Review', personaName: 'Reviewer',
