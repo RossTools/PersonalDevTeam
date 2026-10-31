@@ -3,8 +3,8 @@
 //! merge (a failed check goes to the Inbox) and tells the user when the release is published; Report a missing scheduled release and PDT missing nightly (version 1 of its node). GitHub
 //! is `FakeForge`; the waits are cut short.
 
-mod common;
-mod retired;
+use crate::common;
+use crate::retired;
 
 use axum::http::StatusCode;
 use common::{call, git};

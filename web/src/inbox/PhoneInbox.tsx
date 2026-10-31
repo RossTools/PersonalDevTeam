@@ -360,6 +360,14 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
       content = <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>;
       bar = <DecisionBar busy={busy} decisions={[{ id: 'settings', title: 'Open GitHub settings', primary: true }]} onPick={() => navigate(CONNECT_PATH)} />;
       break;
+    case 'storage':
+      content = (
+        <>
+          <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
+          <p className="text-sm text-muted-foreground">It goes away on its own once PDT can save again.</p>
+        </>
+      );
+      break;
     case 'notice':
       content = (
         <>

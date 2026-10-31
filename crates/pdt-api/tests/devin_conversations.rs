@@ -1,6 +1,6 @@
 //! Devin conversations end to end (PDT-55), with `fake-agent acp` standing in for `devin acp`.
 
-mod common;
+use crate::common;
 
 use common::{call, git};
 use pdt_api::{AppState, router};

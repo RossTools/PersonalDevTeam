@@ -1,6 +1,6 @@
 //! Ticket Start, attempts and merge detection (tickets spec §5, §6), with stand-in agents.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{argv_agent, call, git, recorded_launches};

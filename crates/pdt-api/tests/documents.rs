@@ -3,7 +3,7 @@
 //! folder; and `get_ticket` listing a ticket's documents (`fake-agent` stands in for Claude and calls pdt-mcp tools
 //! when a message says `mcp: <tool> <json>`).
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

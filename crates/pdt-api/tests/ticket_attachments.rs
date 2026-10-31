@@ -2,7 +2,7 @@
 //! their paths in `get_ticket`, and removed with the ticket. `fake-agent` stands in for Claude (it calls pdt-mcp tools
 //! when a message says `mcp: <tool> <json>`).
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, call_raw, git};

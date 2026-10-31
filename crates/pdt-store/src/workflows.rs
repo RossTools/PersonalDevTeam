@@ -536,6 +536,10 @@ impl Store {
     }
 
     pub async fn start_workflow_run(&self, run: &Run, steps: &[Step]) -> Result<bool, StoreError> {
+        self.noted(self.start_workflow_run_unnoted(run, steps).await)
+    }
+
+    async fn start_workflow_run_unnoted(&self, run: &Run, steps: &[Step]) -> Result<bool, StoreError> {
         let mut tx = self.write_tx().await?;
         let r = sqlx::query(
             "INSERT INTO workflow_runs (id, workflow_id, version, status, run_key, trigger_event_id, trigger_node, \
@@ -654,6 +658,10 @@ impl Store {
     /// step done and nothing after it: the step's open Inbox items close, its agent binding is done, and its run, if
     /// waiting, wakes.
     pub async fn complete_workflow_step(&self, step: &Step, next: &[Step], now: i64) -> Result<(), StoreError> {
+        self.noted(self.complete_workflow_step_unnoted(step, next, now).await)
+    }
+
+    async fn complete_workflow_step_unnoted(&self, step: &Step, next: &[Step], now: i64) -> Result<(), StoreError> {
         let mut tx = self.write_tx().await?;
         put_step(&mut tx, &self.redactor, step).await?;
         for n in next {
@@ -717,6 +725,10 @@ impl Store {
 
     /// Adds or replaces a step.
     pub async fn put_step(&self, s: &Step) -> Result<(), StoreError> {
+        self.noted(self.put_step_unnoted(s).await)
+    }
+
+    async fn put_step_unnoted(&self, s: &Step) -> Result<(), StoreError> {
         let mut conn = self.pool.acquire().await?;
         put_step(&mut conn, &self.redactor, s).await
     }

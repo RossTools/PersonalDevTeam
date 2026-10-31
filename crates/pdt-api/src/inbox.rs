@@ -28,6 +28,7 @@ pub(crate) async fn list(State(st): State<AppState>, Query(q): Query<ListQuery>)
     items.extend(approvals(&st, q.project.as_deref()).await?);
     items.extend(sessions_waiting(&st, q.project.as_deref()).await?);
     items.extend(connect_forge(&st));
+    items.extend(storage(&st));
     items.extend(proposals(&st, q.project.as_deref()).await?);
     decorate(&st, &mut items).await?;
     inbox::sort(&mut items);
@@ -177,6 +178,16 @@ pub(crate) fn connect_forge(st: &AppState) -> Vec<InboxItem> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// PDT can't save changes (PDT-323): one item while writes fail, with what is free on the disk with PDT's data when
+/// it is full. Not stored, as nothing can be; it goes once a write works again.
+pub(crate) fn storage(st: &AppState) -> Option<InboxItem> {
+    let f = st.store.write_failure()?;
+    let full = pdt_store::is_disk_full(&f.message);
+    // The data folder, or the nearest folder above it that exists.
+    let free = full.then(|| st.data_dir.ancestors().find_map(|d| fs4::available_space(d).ok())).flatten();
+    Some(inbox::storage_item(&f.message, full, free, f.since))
 }
 
 /// `host`: an account on another host than the forge's public one (PDT-244), with an item of its own.

@@ -2,7 +2,7 @@
 //! `.pushed` and `.closed` (untrusted: their title and body are fenced where they reach an agent). GitHub is
 //! `FakeForge`.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

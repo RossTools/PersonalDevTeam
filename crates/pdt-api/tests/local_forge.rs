@@ -3,7 +3,7 @@
 //! and CI passes PDT merges it into the base itself. Nothing touches the network: there is no remote, and the GitHub
 //! forge is the one that runs nothing.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{argv_agent, call, git};

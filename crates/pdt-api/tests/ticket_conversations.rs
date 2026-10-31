@@ -1,7 +1,7 @@
 //! Tickets and conversations (structured agents spec §10, Phase 5d): Start in conversation mode, Make ticket's draft
 //! and Start from a chat, with `fake-agent` as `claude` and `codex app-server`.
 
-mod common;
+use crate::common;
 
 use common::{call, git};
 use pdt_api::{AppState, router};

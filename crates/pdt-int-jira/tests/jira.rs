@@ -2,8 +2,7 @@
 //! (assigned ones by the built-in, any one by key, never twice), Done moving the issue, and the Jira actions. Jira is
 //! a fake local server.
 
-#[path = "../../pdt-api/tests/common/mod.rs"]
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::extract::State;
