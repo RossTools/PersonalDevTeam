@@ -84,7 +84,14 @@ free-form. A tab holds exactly one session, run, ticket or worktree's changes, a
 
 **Worktrees.** Each branch PDT works on gets a worktree at `<repo>/.worktrees/<branch, / replaced by ->`
 (pdt-core `worktree.rs`). Deleting one is refused while a session, run or active attempt uses it, or while it has
-uncommitted changes (unless forced).
+uncommitted changes (unless forced). Storage (pdt-api `storage.rs`, rules in pdt-core `storage.rs`): the `storage`
+loop (every 60 s) measures each worktree whose size is missing or 30 minutes old in a task of its own (one at a time;
+`AppState::storage` keeps the sizes in memory, so a restart measures again), and hourly runs the automatic cleanup,
+which cleans or removes finished tickets' worktrees per the project's `project_settings.storage`. A project's build
+output is `[storage] build_output` from its main checkout's run configuration, else detected from the files at its
+root (`detect_build_output`). Free space comes from `AppState::disk_space` (fs4, installed by pdtd; `AppState::new` reads none, tests set a fake) for the data
+folder and each project's folder, grouped by device (`storage::disk_id`) with the least free space any read; below the host's `low_disk_gb` the Inbox lists a `low_disk` item, below
+`critical_disk_gb` the scheduler starts nothing and `autoStartAt` is left out.
 
 **Runs.** A run is a `[[run]]` or `[[test]]` from `.pdt/project.toml` (plus host overrides; the user docs' Run configuration page)
 started in a checkout, on a port from the host's range. Runs live in PTYs, or detached (`detach = true`) so they
@@ -243,6 +250,7 @@ login.
 | --- | --- | --- |
 | Host, settings, updates, remote access | pdt-api `host.rs`, `update.rs`, `remote.rs`, guards (`host_guard.rs`, `identity_guard.rs`, `untrusted.rs`); `crates/pdt-host`; `crates/pdt-update` | `web/src/host`, `web/src/setup` |
 | Projects, worktrees, runs | pdt-api `projects.rs`, `worktrees.rs`, `runs.rs`, `run_manager.rs`, `runconfig.rs`; pdt-core `runconfig.rs` | `web/src/projects`, `web/src/runs` |
+| Storage and disk space | pdt-api `storage.rs`; pdt-core `storage.rs`; pdt-git `is_disposable` | `web/src/host/StorageSettings.tsx`, `web/src/projects/worktreeStorage.tsx` |
 | Workspaces and tabs | pdt-api `workspaces.rs`; pdt-store `workspaces.rs` | `web/src/workspaces`, `web/src/shell` |
 | Tickets, Start, parts, merge detection | pdt-api `tickets.rs`, `start.rs`, `stop.rs`, `finish.rs`, `parts.rs`, `scheduler.rs`; pdt-core `ticket.rs`, `start.rs`, `parts.rs`, `policy.rs`; pdt-git `merge.rs` | `web/src/tickets` |
 | PRs, CI, forges | pdt-api `github.rs`, `ci.rs`, `forge.rs`, `local_forge.rs`; `crates/pdt-forge`, `crates/pdt-github`, `crates/pdt-int-gitlab` | `web/src/tickets`, `web/src/plugins` |

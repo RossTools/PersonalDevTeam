@@ -65,6 +65,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   policy's approval; a person's merge skips those gates (pdt-api `review::merge_attempt`, pdt-core `policy.rs`).
   Where the forge can't hold a merge (no auto-merge), a person's merge waits for green CI too, and PDT's own merge once
   it passes is that person's request: it skips the policy, as the forge's auto-merge would (`review::merge_held`).
+- **Cleaning build output never removes code or work.** A build output path is removed only when git ignores it and
+  tracks nothing in it (pdt-git `is_disposable`, checked per path by pdt-api `storage::clean_checkout`), and never
+  while a session or run works in the worktree. The automatic cleanup touches only worktrees of closed tickets with no
+  active attempt, and removes a worktree only through `remove_worktree` without force or deleting the branch.
 - **Finish never discards uncommitted changes** unless asked (`discardChanges`), and runs in its own task so it
   completes when the agent that called it is stopped.
 - **Workflows hear of a Start only once its session exists** (`announce_start`).

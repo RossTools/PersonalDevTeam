@@ -266,12 +266,58 @@ impl Store {
     }
 }
 
+impl Store {
+    /// A project's automatic worktree cleanup (defaults until it is set).
+    pub async fn get_project_storage(
+        &self,
+        project_id: &str,
+    ) -> Result<pdt_core::storage::StorageSettings, StoreError> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT storage FROM project_settings WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        match row {
+            None => Ok(Default::default()),
+            Some((v,)) => serde_json::from_str(&v).map_err(|e| StoreError::Corrupt(format!("storage settings: {e}"))),
+        }
+    }
+
+    pub async fn put_project_storage(
+        &self,
+        project_id: &str,
+        s: &pdt_core::storage::StorageSettings,
+    ) -> Result<(), StoreError> {
+        // The row gets the other settings as they read now, so a project with none keeps its defaults.
+        let current = self.get_project_settings(project_id).await?;
+        self.put_project_settings(project_id, &current).await?;
+        sqlx::query("UPDATE project_settings SET storage = ? WHERE project_id = ?")
+            .bind(serde_json::to_string(s).expect("storage settings serialize"))
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::worktrees::tests::store_with_project;
     use crate::{ProjectSettings, StoreError};
     use pdt_core::host::{CredentialPolicy, HostSettings, UpdatePolicy};
     use serde_json::json;
+
+    #[tokio::test]
+    async fn project_storage_defaults_then_roundtrips_and_keeps_the_other_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        let defaults = pdt_core::storage::StorageSettings::default();
+        assert_eq!(store.get_project_storage("p").await.unwrap(), defaults);
+        let s = pdt_core::storage::StorageSettings { clean_after_days: 0, remove_after_days: 9 };
+        store.put_project_storage("p", &s).await.unwrap();
+        assert_eq!(store.get_project_storage("p").await.unwrap(), s);
+        assert_eq!(store.get_project_settings("p").await.unwrap(), ProjectSettings::default());
+        assert!(store.put_project_storage("missing", &s).await.is_err());
+    }
 
     #[tokio::test]
     async fn host_settings_default_then_roundtrip() {

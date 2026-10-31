@@ -43,6 +43,7 @@ pub mod secret;
 pub mod session;
 pub mod setup;
 pub mod start;
+pub mod storage;
 pub mod ticket;
 pub mod ticket_attachment;
 pub mod todo;

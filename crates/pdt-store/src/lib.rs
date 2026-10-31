@@ -36,6 +36,7 @@ pub use tickets::{AttemptInfo, DeleteTicket, OverlapRow, PartRow, StartedAttempt
 pub use todos::TodoFilter;
 pub use workflows::{RUN_RETENTION_MS, RunFilter, SessionMessage};
 pub use workspaces::DeleteWorkspace;
+pub use worktrees::WorktreeTicketRow;
 
 use pdt_core::project::Project;
 use sqlx::migrate::Migrator;

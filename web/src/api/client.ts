@@ -59,6 +59,10 @@ import type { ProviderFile } from './gen/ProviderFile';
 import type { Session } from './gen/Session';
 import type { NewTodo } from './gen/NewTodo';
 import type { Todo } from './gen/Todo';
+import type { StorageView } from './gen/StorageView';
+import type { StorageSettings } from './gen/StorageSettings';
+import type { CleanResult } from './gen/CleanResult';
+import type { CleanAllResult } from './gen/CleanAllResult';
 import type { TodoPatch } from './gen/TodoPatch';
 import type { NewWatch } from './gen/NewWatch';
 import type { WatchInfo } from './gen/WatchInfo';
@@ -266,6 +270,13 @@ export const api = {
   deleteProject: (id: string) => request<void>(`/api/projects/${enc(id)}`, { method: 'DELETE' }),
   removeWorktree: (id: string, opts: { force?: boolean; deleteBranch?: boolean } = {}) =>
     request<void>(`/api/worktrees/${enc(id)}?force=${opts.force ? 'true' : 'false'}&deleteBranch=${opts.deleteBranch ? 'true' : 'false'}`, { method: 'DELETE' }),
+  storage: (project?: string) => request<StorageView>(`/api/storage${queryString({ project })}`),
+  refreshStorage: () => request<void>('/api/storage/refresh', { method: 'POST' }),
+  cleanWorktree: (id: string) => request<CleanResult>(`/api/worktrees/${enc(id)}/clean`, { method: 'POST' }),
+  cleanFinished: (project?: string) =>
+    request<CleanAllResult>(`/api/storage/clean-finished${queryString({ project })}`, { method: 'POST' }),
+  putProjectStorage: (projectId: string, s: StorageSettings) =>
+    request<StorageSettings>(`/api/projects/${enc(projectId)}/storage`, { method: 'PUT', body: JSON.stringify(s) }),
   listFiles: (projectId: string, worktreeId: string | null, path: string) =>
     request<FileEntry[]>(`/api/projects/${enc(projectId)}/files?${filesQuery(worktreeId, path)}`),
   fileContent: (projectId: string, worktreeId: string | null, path: string) =>
