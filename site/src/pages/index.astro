@@ -10,6 +10,7 @@ import backlogShot from '../assets/screens/backlog.webp';
 import workflowsShot from '../assets/screens/workflows.webp';
 import { siteLinks } from '../links.mjs';
 import { repoStats } from '../stats.mjs';
+import { NAME, SHORT_NAME, SITE_NAME } from '../brand.mjs';
 
 const links = siteLinks(import.meta.env.BASE_URL);
 const base = links.home;
@@ -44,13 +45,12 @@ const shots = [
 ---
 
 <Landing
-	title="PDT: a dev team that lives on your machine"
-	description="Write the ticket. Agents build it in their own worktrees, review it, test it and open the PR. You approve what ships."
+	description={`${SITE_NAME} runs coding agents on your machine. Write the ticket. Agents build it in their own worktrees, review it, test it and open the PR. You approve what ships.`}
 >
 <header class="hero">
 	<div class="grid-dots"></div>
 	<div class="wrap" style="position:relative">
-		<div class="eyebrow">{stats.version && <b>{stats.version}</b>} Open source · macOS, Windows & Linux</div>
+		<div class="eyebrow">{stats.version && <b>{stats.version}</b>} {SHORT_NAME} · {NAME} · Open source · macOS, Windows & Linux</div>
 		<h1>A dev team that lives <em>on your machine.</em></h1>
 		<p class="sub">Write the ticket. Agents build it in their own worktrees, review it, test it and open the PR. You approve what ships.</p>
 		<div class="cta">

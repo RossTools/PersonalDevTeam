@@ -4,6 +4,7 @@ import starlight from '@astrojs/starlight';
 import { unified } from '@astrojs/markdown-remark';
 import { remarkDocsLinks } from './src/remark-docs-links.mjs';
 import { docId, USER_SECTIONS } from './src/docs-pages.mjs';
+import { SHORT_NAME, SITE_NAME, TAGLINE } from './src/brand.mjs';
 
 // Starlight's `autogenerate` only sees src/content/docs, and the docs live in the repository's docs/: the user docs
 // sections are listed in docs-pages.mjs, each page labelled with its title. Contributing also lists the developer
@@ -27,8 +28,8 @@ export default defineConfig({
   },
   integrations: [
     starlight({
-      title: 'PDT',
-      description: 'Personal Dev Team: a dev team that lives on your machine.',
+      title: SHORT_NAME,
+      description: `${SITE_NAME}: ${TAGLINE}.`,
       logo: {
         dark: './src/assets/pdt-mark-on-dark.svg',
         light: './src/assets/pdt-mark-on-light.svg',
