@@ -3,6 +3,31 @@
 What changed for people who use PDT, newest first. Each section is compiled from the changelog fragments the pull
 requests added (`.changes/`; docs/SDLC.md "Changelog") by `scripts/changelog.sh <version>`.
 
+## 0.5.0 (2026-10-31)
+
+### Added
+
+- A new workflow template, **Report failed workflow runs**, watches any GitHub Actions workflow of a project (a release, a nightly build, a deploy) and puts each failed run in the Inbox, however it was started: its title, branch, what started it, its version or tag, its failed jobs and a link, with **Re-run failed jobs**. The item clears itself once a later attempt of the run passes.
+- Tickets take attachments: paste or drop a screenshot or a text file (a log, JSON, a config) into a ticket's description or a comment, and images show inline while text files open in a viewer. Agents working on the ticket open them, QA can attach its own screenshots, and the PM can put an image you paste into its chat on a ticket.
+- A Run now trigger can declare the inputs it takes (text, numbers, switches, choices, shown only when another field has a value), with defaults and an optional confirmation. Run now then opens a form for them, on a phone too, and every start (Run now, the API, the PM) is checked against them, so a wrong or unknown input is refused with the list of what the workflow takes. A workflow for the whole host whose steps work on a project asks which project to run in, and a step that can't run because of the workflow's setup (no project, a bad repository) fails at once instead of retrying for minutes.
+
+### Changed
+
+- Cut a release works with any project's release workflow: you (or the PM) give it the workflow file, its inputs, the release pull request's branch (if there is one) and the release's tag pattern, instead of it assuming PDT's own. The new **Report a missing scheduled release** template tells you when a scheduled release workflow didn't publish the day's release, for any tag scheme; workflows built on the old nightly check keep working.
+- PDT no longer installs or offers workflows only for PDT's own repository (PDT bug triage, PDT pull request review, PDT nightly release, PDT missing nightly). If you have them, they stay as your own workflows, as you had them (on or off), and PDT no longer updates them; the Triage new GitHub issues, Review outside pull requests, Report failed workflow runs and Report a missing scheduled release templates do the same for any repository.
+- The PM and your agents no longer get PDT's own release and changelog habits in their instructions: the PM gives release guidance only for a project with an enabled release workflow (such as Cut a release), and starts that workflow when you ask for a release.
+- The **Agents** list in the sidebar and the phone menu now shows only the conversations you started. Sessions a workflow starts (Coder, Reviewer, QA, Triage and the like) stay in their tabs, which the command palette finds, and open from their ticket or their run.
+- Cut a release is now a template you fill in once per project: its release workflow, inputs, release pull request branch and tag patterns, and the name of its other kind of release (a beta or nightly). Run now asks which kind to release, the safe pre-release first, and a stable release asks you to confirm the bump or version. An existing Cut a release you turned on stays as your own workflow; one you never used is removed.
+- The website now says what PDT stands for (Personal Dev Team) at the top of the landing page, beside the logo, and in page titles and link previews.
+
+### Fixed
+
+- The keyboard shortcut help now says that Ctrl+] x stops the tab's session or run when it closes the tab, instead of saying it keeps running.
+- In an Antigravity conversation in Ask, a new file you approve no longer shows a red failed edit card: the edit shows as done, with its diff, and the file is in the turn's changes.
+- The website's install box is now as wide as its command, so the command no longer scrolls sideways; on a phone it wraps onto the next line, and Copy still copies it as one line.
+- Merge… works on GitHub repositories without a merge queue or auto-merge: PDT merges the pull request at once when its CI passed, or itself as soon as CI passes (the badge says **Merging when CI passes**), from the Merge dialog and from workflows alike. Repositories with a merge queue or auto-merge merge as before.
+- On the website, picking macOS in the install box no longer turns the panel blue in browsers whose extensions style common class names.
+
 ## 0.4.0 (2026-10-30)
 
 ### Added
