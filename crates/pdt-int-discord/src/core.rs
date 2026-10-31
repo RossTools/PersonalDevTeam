@@ -15,14 +15,20 @@ pub const ARCHIVE_CATEGORY: &str = "Archive";
 
 const MAX_NAME: usize = 100;
 
-/// A `discord_bot` connection's config: the server it manages, and whether the PM may change it without asking.
+/// A `discord_bot` connection's config: the server it manages, whether the PM may change it without asking, and who
+/// may talk to the PM through the bot's DMs (PDT-304).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BotConfig {
     pub guild_id: String,
     pub pm_acts: bool,
+    /// The user's Discord user id (`config.dmUserId`): set, the bot holds a Gateway connection and passes their DMs to
+    /// the PM. Nobody else's are read.
+    pub dm_user_id: Option<String>,
+    /// Inbox items are sent as DMs too (`config.dmInbox`).
+    pub dm_inbox: bool,
 }
 
-/// Checks a `discord_bot` connection's config (`guildId`: the server's id, digits).
+/// Checks a `discord_bot` connection's config (`guildId`: the server's id, digits; `dmUserId`, when given, a user's).
 pub fn bot_config(config: &Value) -> Result<BotConfig, String> {
     let guild = config.get("guildId").and_then(Value::as_str).map(str::trim).unwrap_or_default();
     if guild.is_empty() {
@@ -31,7 +37,18 @@ pub fn bot_config(config: &Value) -> Result<BotConfig, String> {
     if !guild.chars().all(|c| c.is_ascii_digit()) {
         return Err(format!("{guild} is not a Discord server id (it is all digits)"));
     }
-    Ok(BotConfig { guild_id: guild.into(), pm_acts: config.get("pmActs").and_then(Value::as_bool) == Some(true) })
+    let user = config.get("dmUserId").and_then(Value::as_str).map(str::trim).filter(|u| !u.is_empty());
+    if let Some(u) = user
+        && !u.chars().all(|c| c.is_ascii_digit())
+    {
+        return Err(format!("{u} is not a Discord user id (it is all digits)"));
+    }
+    Ok(BotConfig {
+        guild_id: guild.into(),
+        pm_acts: config.get("pmActs").and_then(Value::as_bool) == Some(true),
+        dm_user_id: user.map(String::from),
+        dm_inbox: user.is_some() && config.get("dmInbox").and_then(Value::as_bool) == Some(true),
+    })
 }
 
 /// What a channel is (Discord's channel types, the ones a server has).
@@ -240,8 +257,13 @@ mod tests {
     fn a_bot_connection_names_its_server() {
         assert_eq!(
             bot_config(&json!({"guildId": " 123 ", "pmActs": true})),
-            Ok(BotConfig { guild_id: "123".into(), pm_acts: true })
+            Ok(BotConfig { guild_id: "123".into(), pm_acts: true, ..Default::default() })
         );
+        // Talking to the PM in DMs needs the user's id (PDT-304); Inbox items as DMs only with it.
+        let dms = bot_config(&json!({"guildId": "1", "dmUserId": " 77 ", "dmInbox": true})).unwrap();
+        assert_eq!((dms.dm_user_id.as_deref(), dms.dm_inbox), (Some("77"), true));
+        assert!(!bot_config(&json!({"guildId": "1", "dmUserId": "", "dmInbox": true})).unwrap().dm_inbox);
+        assert!(bot_config(&json!({"guildId": "1", "dmUserId": "me"})).unwrap_err().contains("user id"));
         assert!(!bot_config(&json!({"guildId": "1"})).unwrap().pm_acts);
         assert!(bot_config(&json!({})).unwrap_err().contains("server's id"));
         assert!(bot_config(&json!({"guildId": "my server"})).unwrap_err().contains("all digits"));

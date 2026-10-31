@@ -21,9 +21,9 @@ use pdt_core::acp_agent::AcpAgentDef;
 use pdt_core::activity::{Activity, needs_attention};
 use pdt_core::conversation::draft::{DRAFT_PROMPT, TicketDraft, draft_schema};
 use pdt_core::conversation::{
-    ActivityFacts, AgentCapabilities, AgentEvent, AnswerRequest, BackgroundTask, ConversationServerMessage,
-    ConversationState, Delivery, DeltaField, NoticeLevel, PendingMessage, PermissionMode, RequestState, SendMessage,
-    SessionMode, TurnPhase, TurnStatus, conversation_activity, valid_message,
+    ActivityFacts, AgentCapabilities, AgentEvent, AnswerRequest, BackgroundTask, ConversationEvent,
+    ConversationServerMessage, ConversationState, Delivery, DeltaField, NoticeLevel, PendingMessage, PermissionMode,
+    RequestState, SendMessage, SessionMode, TurnPhase, TurnStatus, conversation_activity, valid_message,
 };
 use pdt_core::host::CredentialPolicy;
 use pdt_core::session::AcpAgentId;
@@ -64,6 +64,8 @@ pub struct Conversations {
     pub close_pause: Duration,
     /// PDT's `codex app-server`, made on first use.
     codex: Arc<std::sync::OnceLock<Arc<CodexServer>>>,
+    /// Every conversation's stored events as they happen, with their session's id ([`subscribe_all`]).
+    all: broadcast::Sender<(String, ConversationEvent)>,
 }
 
 impl Default for Conversations {
@@ -78,6 +80,7 @@ impl Default for Conversations {
             background_grace: Duration::from_secs(10),
             close_pause: Duration::ZERO,
             codex: Default::default(),
+            all: broadcast::channel(1024).0,
         }
     }
 }
@@ -641,6 +644,7 @@ async fn append(
             _ => false,
         }
     };
+    let _ = st.conversations.all.send((c.id.clone(), row.clone()));
     let _ = c.tx.send(ConversationServerMessage::Event { event: row });
     if state_changed {
         c.push_state();
@@ -841,6 +845,36 @@ pub(crate) fn is_live_or_waiting(st: &AppState, s: &Session) -> bool {
     };
     let state = c.state();
     state.live || state.turn_running || !state.pending.is_empty()
+}
+
+/// Every conversation's stored events from now on, each with its session's id (an integration that holds PM
+/// conversations elsewhere follows them, PDT-304). A receiver that falls behind skips what it missed.
+pub fn subscribe_all(st: &AppState) -> broadcast::Receiver<(String, ConversationEvent)> {
+    st.conversations.all.subscribe()
+}
+
+/// Whether a loaded conversation is running a turn or has a message on its way to one.
+pub fn is_working(st: &AppState, id: &str) -> bool {
+    let Some(c) = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned() else {
+        return false;
+    };
+    let s = c.state();
+    s.turn_running || !s.pending.is_empty()
+}
+
+/// The user's answer to one of a conversation's open requests, given elsewhere than PDT's web (PDT-304: a button in
+/// Discord that only the user's own account can press): it counts as theirs, the same as an answer from the web.
+pub async fn answer_as_user(
+    st: &AppState,
+    session_id: &str,
+    request_id: &str,
+    answer: &pdt_core::conversation::Answer,
+) -> Result<(), ApiError> {
+    let session = conversation_session(st, session_id).await?;
+    answer_request(st, &session, request_id, answer).await?;
+    let approved = matches!(answer, pdt_core::conversation::Answer::Approve { .. });
+    st.grants.answered(&session.id, request_id, approved);
+    Ok(())
 }
 
 /// Whether a conversation's agent process is running (false: parked, or not loaded).

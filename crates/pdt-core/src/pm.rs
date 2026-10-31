@@ -289,6 +289,9 @@ pub struct PmSessionInfo {
     pub reason: Option<RotateReason>,
     /// Its journal entry: the latest checkpoint, or the one it wrote as it ended.
     pub journal: Option<String>,
+    /// Where it is held besides PDT: `discord` for one the user talks to through the Discord bot's DMs (PDT-304).
+    #[serde(default)]
+    pub via: Option<String>,
 }
 
 /// `POST /api/pm/sessions`.

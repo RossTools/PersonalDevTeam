@@ -73,6 +73,10 @@ impl Notifier {
     pub(crate) fn take_expected_exit(&self, session_id: &str) -> bool {
         self.killed.lock().unwrap_or_else(|e| e.into_inner()).remove(session_id)
     }
+    /// Every notification change from now on (an integration that passes them on, PDT-304).
+    pub fn subscribe(&self) -> broadcast::Receiver<(Change, Notification)> {
+        self.tx.subscribe()
+    }
     fn send(&self, change: Change, n: &Notification) {
         let _ = self.tx.send((change, n.clone()));
     }

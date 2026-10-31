@@ -23,7 +23,7 @@ The optional plugins:
 
 | Plugin | Adds |
 | --- | --- |
-| **Discord** | Post to Discord channels from workflows, and let the PM manage a Discord server through a bot. |
+| **Discord** | Post to Discord channels from workflows, let the PM manage a Discord server through a bot, and talk to the PM in the bot's DMs ([Talk to it from Discord](the-pm.md#talk-to-it-from-discord)). |
 | **Jira** | Link projects to Jira Cloud or Server / Data Center: issues assigned to you become tickets, and moving a ticket to Done moves its issue. |
 | **Buildkite** | CI of tickets' branches from Buildkite pipelines, shown and acted on like the pull request's CI. |
 | **Sonarr and Radarr** | Search Radarr and Sonarr, add films and series, and read their download queues from workflows. |

@@ -59,6 +59,17 @@ impl Bot {
 
     /// One request; a 429 waits Discord's `retry_after` and tries again.
     async fn call(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value, String> {
+        self.call_with(method, path, body, None).await
+    }
+
+    /// One request, with a file (name, text) when given (sent as multipart, the JSON as `payload_json`).
+    async fn call_with(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        file: Option<(&str, &str)>,
+    ) -> Result<Value, String> {
         let url = format!("{}{path}", self.base);
         for _ in 0..TRIES {
             let mut req =
@@ -70,8 +81,21 @@ impl Bot {
                         env!("CARGO_PKG_VERSION")
                     ),
                 );
-            if let Some(b) = &body {
-                req = req.json(b);
+            match (&body, file) {
+                (b, Some((name, text))) => {
+                    let mut payload = b.clone().unwrap_or_else(|| json!({}));
+                    payload["attachments"] = json!([{"id": 0, "filename": name}]);
+                    let part = reqwest::multipart::Part::text(text.to_string())
+                        .file_name(name.to_string())
+                        .mime_str("text/plain; charset=utf-8")
+                        .map_err(|e| e.to_string())?;
+                    let form = reqwest::multipart::Form::new()
+                        .text("payload_json", payload.to_string())
+                        .part("files[0]", part);
+                    req = req.multipart(form);
+                }
+                (Some(b), None) => req = req.json(b),
+                (None, None) => {}
             }
             let resp = req.send().await.map_err(|e| format!("Discord: {}", send_error(e)))?;
             let status = resp.status().as_u16();
@@ -98,6 +122,47 @@ impl Bot {
             }
         }
         Err("Discord kept rate-limiting the request".into())
+    }
+
+    /// The Gateway's address (PDT-304).
+    pub async fn gateway_url(&self) -> Result<String, String> {
+        let v = self.call(Method::GET, "/gateway/bot", None).await?;
+        v["url"].as_str().map(String::from).ok_or_else(|| "Discord gave no Gateway address".into())
+    }
+
+    /// The DM channel with a user (made when there is none).
+    pub async fn open_dm(&self, user_id: &str) -> Result<String, String> {
+        let v = self.call(Method::POST, "/users/@me/channels", Some(json!({"recipient_id": user_id}))).await?;
+        v["id"].as_str().map(String::from).ok_or_else(|| "Discord's answer had no channel".into())
+    }
+
+    /// Posts a message (`body`: Discord's, such as `content` and `components`), with a text file when given; returns
+    /// its id.
+    pub async fn send(&self, channel_id: &str, body: Value, file: Option<(&str, &str)>) -> Result<String, String> {
+        let path = format!("/channels/{channel_id}/messages");
+        let v = self.call_with(Method::POST, &path, Some(body), file).await?;
+        v["id"].as_str().map(String::from).ok_or_else(|| "Discord's answer had no message".into())
+    }
+
+    /// Changes a message the bot sent.
+    pub async fn edit(&self, channel_id: &str, message_id: &str, body: Value) -> Result<(), String> {
+        let path = format!("/channels/{channel_id}/messages/{message_id}");
+        self.call(Method::PATCH, &path, Some(body)).await.map(|_| ())
+    }
+
+    /// Shows "typing…" in a channel for 10 s or until the bot posts.
+    pub async fn typing(&self, channel_id: &str) -> Result<(), String> {
+        self.call(Method::POST, &format!("/channels/{channel_id}/typing"), None).await.map(|_| ())
+    }
+
+    /// Answers an interaction (a slash command, a button press, an autocomplete).
+    pub async fn reply(&self, id: &str, token: &str, body: Value) -> Result<(), String> {
+        self.call(Method::POST, &format!("/interactions/{id}/{token}/callback"), Some(body)).await.map(|_| ())
+    }
+
+    /// Sets the application's global slash commands.
+    pub async fn set_commands(&self, application_id: &str, commands: Value) -> Result<(), String> {
+        self.call(Method::PUT, &format!("/applications/{application_id}/commands"), Some(commands)).await.map(|_| ())
     }
 
     /// The server's name.

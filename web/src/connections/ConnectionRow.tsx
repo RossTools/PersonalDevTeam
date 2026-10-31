@@ -26,6 +26,32 @@ export function McpToolsLine({ c }: { c: Connection }) {
   );
 }
 
+const DM_STATE: Record<string, string> = {
+  connected: 'Connected',
+  connecting: 'Connecting…',
+  retrying: 'Reconnecting',
+  failed: 'Not connected',
+  off: 'Off',
+};
+
+/** A Discord bot's DMs with the PM (PDT-304): whether its Gateway connection is up, or why not. */
+export function DiscordDmLine({ c }: { c: Connection }) {
+  const dm = useQuery({ queryKey: ['discord-dm'], queryFn: () => api.discordDm(), refetchInterval: 5_000 });
+  const d = dm.data;
+  const mine = d?.connection === c.name;
+  const state = mine ? d.state : 'off';
+  const why = mine ? d.error : null;
+  return (
+    <p role="status" className="w-full pl-2 text-xs text-muted-foreground">
+      DMs with the PM: <span className={state === 'failed' ? 'text-destructive' : state === 'connected' ? 'text-foreground' : undefined}>
+        {dm.isError ? 'unknown' : DM_STATE[state] ?? state}
+      </span>
+      {why && <span className={state === 'failed' ? 'text-destructive' : undefined}>: {why}</span>}
+      {!mine && d?.connection && <span> (another bot, {d.connection}, holds them)</span>}
+    </p>
+  );
+}
+
 /** What a connection is, in a line: a webhook's address, a channel, a server, or its URL. */
 export function connectionDetails(c: Connection): string {
   if (c.kind === 'webhook') return hookUrl(c.name);
@@ -55,6 +81,7 @@ export function ConnectionRow({ c, onEdit, onDelete }: { c: Connection; onEdit: 
         </p>
       )}
       {c.kind === 'mcp' && <McpToolsLine c={c} />}
+      {c.kind === 'discord_bot' && typeof c.config.dmUserId === 'string' && c.config.dmUserId !== '' && <DiscordDmLine c={c} />}
     </div>
   );
 }

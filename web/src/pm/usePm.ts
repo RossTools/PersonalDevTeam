@@ -37,6 +37,8 @@ export const openConversations = (sessions: PmSessionInfo[]) => sessions.filter(
 export const earlier = (sessions: PmSessionInfo[]) => sessions.filter((s) => !s.open);
 
 /** A journal's first line, for list rows. */
+/** Where a conversation is held besides PDT, for its list row and header (PDT-304: the Discord bot's DMs). */
+export const viaLabel = (info: PmSessionInfo) => (info.via === 'discord' ? 'via Discord' : null);
 export const firstLine = (text: string | null) => (text ?? '').split('\n').find((l) => l.trim())?.replace(/^#+\s*/, '') ?? '';
 
 /**

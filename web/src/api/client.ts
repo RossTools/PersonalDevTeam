@@ -112,6 +112,7 @@ import type { SecretPatch } from './gen/SecretPatch';
 import type { SecretStoreInfo } from './gen/SecretStoreInfo';
 import type { SecretUse } from './gen/SecretUse';
 import type { ConnectionInput } from './gen/ConnectionInput';
+import type { DmStatus } from './gen/DmStatus';
 import type { McpTools } from './gen/McpTools';
 import type { NewWorkflow } from './gen/NewWorkflow';
 import type { SaveWorkflow } from './gen/SaveWorkflow';
@@ -462,6 +463,8 @@ export const api = {
     request<Connection>(`/api/connections/${enc(id)}/secret`, { method: 'PUT', body: JSON.stringify({ secret }) }),
   /** An MCP server's tools as last listed (null before the first listing). */
   connectionTools: (id: string) => request<McpTools | null>(`/api/connections/${enc(id)}/tools`),
+  /** The Discord bot's DM link to the PM (PDT-304): which connection holds it and its state. */
+  discordDm: () => request<DmStatus>('/api/discord/dm'),
   /** Lists an MCP server's tools now. */
   refreshConnectionTools: (id: string) => request<McpTools>(`/api/connections/${enc(id)}/tools`, { method: 'POST' }),
   listWorkflowTemplates: () => request<GalleryTemplate[]>('/api/workflow-templates'),

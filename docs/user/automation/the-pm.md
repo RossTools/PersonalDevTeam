@@ -61,6 +61,39 @@ Some things always ask, whatever the setting:
 - moving a ticket that came from outside PDT (an issue, say) onto the board, or labelling it `agentic`;
 - reporting a bug in PDT.
 
+## Talk to it from Discord
+
+With the **Discord** plugin on, you can DM the PM from your phone or anywhere Discord runs.
+
+1. In the [Discord Developer Portal](https://discord.com/developers/applications), open your bot's application →
+   **Bot**, and under **Privileged Gateway Intents** turn on **Message Content Intent**.
+2. Add a **Discord bot** connection (or edit yours), and fill in **Your Discord user ID**: in Discord, turn on
+   Developer Mode (Settings → Advanced), then right-click your name → **Copy User ID**.
+3. Save. The connection says **DMs with the PM: Connected** once the bot is online.
+
+Now DM the bot, "What's in flight?" for example. Your messages go to your current Discord conversation, an ordinary PM
+conversation marked **via Discord** in PDT's list; the first message starts one. While the PM works you see
+"typing…", and its reply arrives as a DM (a long one in several messages, a very long one as a `.md` file). When the
+answer comes from a different conversation than the last message, it starts with that conversation's name.
+
+In the DMs, these commands manage conversations:
+
+- `/new [topic]` starts a new conversation and makes it the current one.
+- `/list` shows the open conversations.
+- `/switch` talks to another one (it suggests them as you type).
+- `/close` closes the current one: the PM writes its journal entry, and your next message starts a new conversation.
+
+When the PM asks before doing something, the DM shows what it wants to do with **Approve** and **Decline** buttons.
+The same request is in PDT too: whichever you answer first counts, and the other then says so. Questions the PM asks
+show their answers as buttons; you can also type an answer.
+
+Only your Discord account can talk to the PM or press its buttons: other people's DMs are ignored, and so are messages
+in server channels. Turn on **Also send Inbox items as DMs** on the connection to get the Inbox's needs-you items
+(a stalled step, a question) as DMs too.
+
+The bot reconnects by itself when Discord's connection drops or PDT restarts. If it can't (a wrong token, Message
+Content Intent off), the connection says why.
+
 ## Notes and the PM's memory
 
 Open **Notes** in the rail (**Ctrl+]** then **o**). **Mine | PM's memory** switches between two kinds:

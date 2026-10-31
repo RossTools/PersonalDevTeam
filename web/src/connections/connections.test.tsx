@@ -109,8 +109,45 @@ describe('connections', () => {
     await userEvent.click(save);
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
-      name: 'home', kind: 'discord_bot', url: '', config: { guildId: '42', applicationId: '7', pmActs: true },
+      name: 'home', kind: 'discord_bot', url: '', config: { guildId: '42', applicationId: '7', dmUserId: '', dmInbox: false, pmActs: true },
     });
+  });
+
+  it('lets a Discord bot pass its user\'s DMs to the PM, and shows whether they are connected', async () => {
+    const bot = { ...conn('home', 'discord_bot'), config: { guildId: '42', applicationId: '7', dmUserId: '' } };
+    const calls = stub({
+      'GET /api/connections': [bot],
+      'PATCH /api/connections/c-home': { ...bot, config: { ...bot.config, dmUserId: '77', dmInbox: true } },
+      'GET /api/discord/dm': { connection: 'home', state: 'failed', error: 'Discord refused the Message Content intent', since: 0 },
+    });
+    renderWithQuery(page('discord'));
+    expect(await screen.findByText('home')).toBeTruthy();
+    expect(screen.queryByText(/DMs with the PM/)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByRole('switch', { name: /Inbox items/ })).toBeNull();
+    await userEvent.type(within(dialog).getByLabelText('Your Discord user ID'), 'me');
+    const save = within(dialog).getByRole('button', { name: 'Save' });
+    expect(save.hasAttribute('disabled') || save.getAttribute('aria-disabled') === 'true').toBe(true);
+    await userEvent.clear(within(dialog).getByLabelText('Your Discord user ID'));
+    await userEvent.type(within(dialog).getByLabelText('Your Discord user ID'), '77');
+    await userEvent.click(within(dialog).getByRole('switch', { name: /Inbox items/ }));
+    await userEvent.click(save);
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
+    expect(calls.find((c) => c.method === 'PATCH')?.body).toMatchObject({
+      config: { guildId: '42', applicationId: '7', dmUserId: '77', dmInbox: true },
+    });
+  });
+
+  it('shows why a Discord bot\'s DMs are not connected', async () => {
+    const bot = { ...conn('home', 'discord_bot'), config: { guildId: '42', dmUserId: '77' } };
+    stub({
+      'GET /api/connections': [bot],
+      'GET /api/discord/dm': { connection: 'home', state: 'failed', error: 'Discord refused the Message Content intent', since: 0 },
+    });
+    renderWithQuery(page('discord'));
+    const line = await screen.findByText(/DMs with the PM/);
+    await waitFor(() => expect(line.textContent).toBe('DMs with the PM: Not connected: Discord refused the Message Content intent'));
   });
 
   it('sets up Scryer: its address, an API key, and whether the PM acts without asking', async () => {

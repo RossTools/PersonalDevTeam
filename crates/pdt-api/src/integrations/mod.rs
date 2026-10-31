@@ -75,6 +75,36 @@ pub struct Poller {
     pub run: fn(AppState) -> BoxFut<'static, ()>,
 }
 
+/// A task an integration runs for as long as pdtd does (PDT-304: the Discord bot's Gateway connection), started once
+/// when pdtd starts whether the integration is enabled or not: it checks [`Integrations::is_enabled`] itself and
+/// idles while it is off. Its name is for the logs.
+pub struct Service {
+    pub name: &'static str,
+    pub run: fn(AppState) -> BoxFut<'static, ()>,
+}
+
+/// Starts every built integration's [`Integration::services`]. One that panics is logged and started again a minute
+/// later, until pdtd stops.
+pub fn start_services(st: &AppState) {
+    for int in st.integrations.built() {
+        for svc in int.services() {
+            let st = st.clone();
+            tokio::spawn(async move {
+                loop {
+                    let ended = crate::loops::contain(svc.name, None, (svc.run)(st.clone())).await;
+                    if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    if !matches!(ended, crate::loops::Ended::Panicked) {
+                        tracing::warn!(service = svc.name, "an integration's service ended; starting it again");
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                }
+            });
+        }
+    }
+}
+
 /// What an integration adds to PDT. Everything but its id and label is optional: an integration declares only what it
 /// has.
 pub trait Integration: Send + Sync {
@@ -177,6 +207,11 @@ pub trait Integration: Send + Sync {
 
     /// Its members of the 60 s poll, run after PDT's own checks.
     fn pollers(&self) -> Vec<Poller> {
+        vec![]
+    }
+
+    /// What it runs for as long as pdtd does ([`Service`]).
+    fn services(&self) -> Vec<Service> {
         vec![]
     }
 
