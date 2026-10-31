@@ -336,7 +336,8 @@ pub enum DocumentEdit {
     /// `font.u` / `font.strike` (`true`/`false`), `font.color` / `fill.color` (`#RRGGBB`), `num_fmt` (`#,##0.00`,
     /// `0%`), `alignment.horizontal` (`left`, `center`, `right`), `alignment.wrap_text` (`true`).
     SetStyle { sheet: String, range: String, style: String, value: String },
-    /// Sorts the rows of a range by one of its columns (a letter, `B`), keeping formulas pointing at the moved rows.
+    /// Sorts the rows of a range (blank: the sheet's used rows below its first, the header) by one of its columns (a
+    /// letter, `B`); formulas in the rows move with them as if copied.
     Sort {
         sheet: String,
         range: String,
@@ -344,8 +345,8 @@ pub enum DocumentEdit {
         #[serde(default)]
         descending: bool,
     },
-    /// Shows only the rows of a range whose cell in `column` shows one of `values` (hides the others); no values
-    /// shows every row of the range again.
+    /// Shows only the rows of a range (blank: the used rows below the header) whose cell in `column` shows one of
+    /// `values` (hides the others); no values shows every row of the range again.
     Filter {
         sheet: String,
         range: String,
@@ -515,7 +516,7 @@ impl CommentAnchor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct NewComment {
+pub struct DocumentCommentInput {
     pub body: String,
     #[serde(default)]
     #[ts(optional)]

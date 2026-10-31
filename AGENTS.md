@@ -36,6 +36,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - crates/pdt-github — the GitHub forge over GitHub's REST and GraphQL APIs (no `gh`): an attempt's PR, Actions runs, merges, issues; the OAuth device-flow login
 - crates/pdt-int-* — the optional integrations (discord, jira, buildkite, gitlab, arr, scryer, plex), one crate each on pdt-api's `sdk` and `Integration` trait; pdtd's cargo features, enabled per instance in Settings → Plugins (docs/dev/architecture.md "Crates"). The only list naming them outside their crates is pdt-core `integration::KNOWN` (and pdtd's features)
 - crates/pdt-update — GitHub release client (token, verified downloads)
+- crates/pdt-sheet — local sheets on IronCalc (`.xlsx`/`.csv`, cells, formats, sort/filter, live diffs); same IronCalc version as web's `@ironcalc/workbook`
 - crates/pdt-host — the supervisor: runs pdtd, installs updates, rolls back
 - crates/pdtd — daemon binary (also `pdtd hook …` for agent hooks; demo seed in src/seed.rs; the integrations it is built with in src/integrations/)
 - test-support — shared test helpers (`port_blocks.rs`)

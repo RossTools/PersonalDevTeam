@@ -94,14 +94,17 @@ data are refused, and a call with one bad file attaches none.
 
 Design docs, plans and spreadsheets live outside the repo as documents, linked to projects and tickets. `get_ticket`
 lists the ticket's documents: read its design doc before you start. A doc reads as Markdown, a sheet as its sheets
-of cells (each with its `value` and, if it has one, its `formula`).
+of cells (each with its `value` as shown, computed, and, if it has one, its `formula`). A `local` document is a file
+PDT keeps (a `.md`, or a `.xlsx`): change it through the API below, so a person with it open sees your change at once.
 
 | Call | Does |
 |---|---|
 | `GET /api/documents?ticket=<key>&project=<key>&kind=doc\|sheet&q=<words>` | documents, the most recently changed first, with their `projects` and `tickets` |
 | `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows}]}` |
-| `POST /api/documents/<id>/edits` | `{edits: [...]}`, in order: `{op: "replace_text", markdown}`, `{op: "append_text", markdown}`, `{op: "set_cells", sheet, cell: "B3", values: [["1", "=A1*2"]]}`, `{op: "add_sheet", name}` |
-| `GET /api/documents/<id>/comments` | its comments with their replies; `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves |
+| `POST /api/documents/<id>/edits` | `{edits: [...]}`, in order (a sheet's list is all or none): `{op: "replace_text", markdown}`, `{op: "append_text", markdown}`, `{op: "set_cells", sheet, cell: "B3", values: [["1", "=A1*2"]]}` (`""` clears a cell), `{op: "add_sheet", name}`, `{op: "rename_sheet", sheet, name}`, `{op: "delete_sheet", sheet}`, `{op: "set_style", sheet, range: "A1:C1", style, value}` (`style`: `font.b`, `font.i`, `font.color`, `fill.color` with `#RRGGBB`, `num_fmt` like `#,##0.00` or `0%`, `alignment.horizontal`), `{op: "sort", sheet, range, column: "B", descending}` and `{op: "filter", sheet, range, column, values: [...]}` (`range` `""`: the rows below the header; `values` `[]` shows all), `{op: "set_chart", chart: {kind: "bar"\|"line"\|"area"\|"pie"\|"scatter", title, sheet, categories: "A2:A5", series: [{name, values: "B2:B5"}], anchor: "F2"}}` (give its `id` to replace one), `{op: "delete_chart", id}` |
+| `GET /api/documents/<id>/charts` | a sheet's charts, each `{spec, labels, values}` with the numbers it draws |
+| `GET /api/documents/<id>/comments` | its comments with their replies and `anchor` (`{on: "heading", heading}`, `{on: "text", quote}` or `{on: "cell", sheet, range}`); `POST …/comments` `{body, anchor}` adds one, `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves, `…/reopen` opens it again |
+| `GET /api/documents/<id>/export?format=md\|xlsx\|csv[&sheet=]` | the document as a file |
 | `POST /api/tickets/<id>/design-doc` | makes the ticket's design doc from the template, linked to it |
 
 The person reviews your branch in PDT's Changes view and sends line comments back as one message that starts

@@ -138,6 +138,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   offered by what a project's repository is. The built-ins that once automated PDT's development are kept on the
   hosts that had them as their own workflows (pdt-api `workflow/builtins.rs`, `RETIRED`); never ship such a built-in
   again. Cut a release is a template (filled in per project), not a built-in.
+- **IronCalc is one version on both sides**: pdt-sheet's `ironcalc` (pinned with `=`) and web's
+  `@ironcalc/workbook` exchange IronCalc's bytes and diffs, so they are updated together (pdt-sheet's
+  `the_web_ui_runs_the_same_ironcalc` checks).
 - **Guides served by pdtd link to each other by API path**, never by repository path (a test checks).
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.

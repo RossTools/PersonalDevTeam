@@ -122,6 +122,10 @@ pub trait DocumentProvider: Send + Sync {
     fn resolve<'a>(&'a self, _reference: &'a str, _comment: &'a str) -> BoxFut<'a, ProviderResult<()>> {
         unsupported(&format!("{} has no comments", self.label()))
     }
+    /// Opens a resolved comment again.
+    fn reopen<'a>(&'a self, _reference: &'a str, _comment: &'a str) -> BoxFut<'a, ProviderResult<()>> {
+        unsupported(&format!("{} can't reopen comments", self.label()))
+    }
     /// Its version or etag now, which changes whenever it does (change detection); by default the file's.
     fn version<'a>(&'a self, reference: &'a str) -> BoxFut<'a, ProviderResult<Option<String>>> {
         Box::pin(async move { Ok(self.file(reference).await?.version) })

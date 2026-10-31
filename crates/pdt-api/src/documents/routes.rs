@@ -10,9 +10,9 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::document::{
-    ChartView, CommentReply, Document, DocumentComment, DocumentContent, DocumentEdit, DocumentFilter, DocumentKind,
-    NewComment, ProjectDocumentSettings, ProviderFile, ProviderInfo, clean_title, design_doc, documents_folder,
-    effective_provider,
+    ChartView, CommentReply, Document, DocumentComment, DocumentCommentInput, DocumentContent, DocumentEdit,
+    DocumentFilter, DocumentKind, ProjectDocumentSettings, ProviderFile, ProviderInfo, clean_title, design_doc,
+    documents_folder, effective_provider,
 };
 use pdt_core::ticket::{Actor, By};
 use pdt_store::{AddDocument, DocumentLink};
@@ -572,7 +572,7 @@ fn comment_body(body: &str) -> Result<String, ApiError> {
 pub(crate) async fn add_comment(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    payload: Result<Json<NewComment>, JsonRejection>,
+    payload: Result<Json<DocumentCommentInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<DocumentComment>), ApiError> {
     let Json(c) = payload?;
     let body = comment_body(&c.body)?;
@@ -601,6 +601,16 @@ pub(crate) async fn resolve(
 ) -> Result<StatusCode, ApiError> {
     let (d, p) = with_comments(&st, &id).await?;
     p.resolve(&d.provider_ref, &comment).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/documents/{id}/comments/{comment}/reopen`.
+pub(crate) async fn reopen(
+    State(st): State<AppState>,
+    Path((id, comment)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let (d, p) = with_comments(&st, &id).await?;
+    p.reopen(&d.provider_ref, &comment).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

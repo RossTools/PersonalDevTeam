@@ -555,6 +555,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/documents/{id}/assets/{*path}", get(crate::documents::routes::asset))
         .route("/documents/{id}/comments/{comment}/replies", axum::routing::post(crate::documents::routes::reply))
         .route("/documents/{id}/comments/{comment}/resolve", axum::routing::post(crate::documents::routes::resolve))
+        .route("/documents/{id}/comments/{comment}/reopen", axum::routing::post(crate::documents::routes::reopen))
         .route("/tickets/{id}/parts", axum::routing::post(crate::parts::create))
         .route("/tickets/{id}/start", axum::routing::post(crate::start::start))
         .route("/tickets/{id}/refine", axum::routing::post(crate::tickets::refine))

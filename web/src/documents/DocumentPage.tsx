@@ -1,20 +1,39 @@
-import { useState } from 'react';
+import { lazy, Suspense, useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pencil, Plus, X } from 'lucide-react';
 import { Alert, Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, SegmentedControl, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
+import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
+import type { CommentAnchor } from '../api/gen/CommentAnchor';
 import type { DocumentContent } from '../api/gen/DocumentContent';
+import type { ProviderInfo } from '../api/gen/ProviderInfo';
 import type { Sheet } from '../api/gen/Sheet';
 import { ProjectKey } from '../common/BranchChip';
 import { InlineRename } from '../common/InlineRename';
-import { Markdown } from '../common/Markdown';
 import { actionError, runAction } from '../common/useAction';
 import { useOpenTicket } from '../tickets/actions';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { TicketPicker } from '../tickets/TicketPicker';
+import { DocEditor } from './DocEditor';
+import { DocumentComments, headingsOf } from './DocumentComments';
 import { KindIcon } from './LinkedDocuments';
 import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders } from './queries';
+
+// IronCalc's editor (and its WASM) loads only when a sheet opens.
+const SheetEditor = lazy(() => import('./SheetEditor'));
+
+type SheetHandle = { selection: () => CommentAnchor | null; show: (a: CommentAnchor) => void; sheet: () => string };
+
+/** Downloads a file pdtd serves. */
+function download(url: string) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
 
 /** Who added it, for people. */
 function addedBy(d: Document): string {
@@ -52,10 +71,18 @@ function SheetTable({ sheet }: { sheet: Sheet }) {
   );
 }
 
-function Content({ content }: { content: DocumentContent }) {
+function Content({ id, content, provider, onSheet }: { id: string; content: DocumentContent; provider?: ProviderInfo; onSheet: (h: SheetHandle | null) => void }) {
   const [sheet, setSheet] = useState(0);
+  const live = !!provider?.capabilities.live;
   if (content.kind === 'doc') {
-    return content.markdown.trim() ? <Markdown>{content.markdown}</Markdown> : <p className="text-xs text-muted-foreground">This document is empty.</p>;
+    return <DocEditor id={id} markdown={content.markdown} version={content.version ?? null} editable={live && provider.capabilities.edit} />;
+  }
+  if (live) {
+    return (
+      <Suspense fallback={<Skeleton lines={8} label="Opening the sheet" />}>
+        <SheetEditor id={id} onReady={onSheet} />
+      </Suspense>
+    );
   }
   const shown = content.sheets[Math.min(sheet, content.sheets.length - 1)];
   return (
@@ -91,6 +118,8 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
   const [renaming, setRenaming] = useState(false);
   const [linkingTicket, setLinkingTicket] = useState(false);
+  const [sheetHandle, setSheetHandle] = useState<SheetHandle | null>(null);
+  const onSheet = useCallback((h: SheetHandle | null) => setSheetHandle(h), []);
   const content = useDocumentContent(id);
   const d = doc.data;
   const provider = d ? providers.data?.providers.find((p) => p.id === d.provider) : undefined;
@@ -117,9 +146,17 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
     settle();
     onGone();
   });
+  const local = d?.provider === 'local';
+  const exports = (): MenuEntry[] => !d ? [] : d.kind === 'doc'
+    ? [{ label: 'Export as Markdown (.md)', onSelect: () => download(api.documentExportUrl(id, 'md')) }]
+    : [
+        ...(local ? [{ label: 'Export as Excel (.xlsx)', onSelect: () => download(api.documentExportUrl(id, 'xlsx')) }] : []),
+        { label: sheetHandle ? `Export “${sheetHandle.sheet()}” as CSV (.csv)` : 'Export as CSV (.csv)', onSelect: () => download(api.documentExportUrl(id, 'csv', sheetHandle?.sheet())) },
+      ];
   const entries = (): MenuEntry[] => [
     { label: 'Rename', onSelect: () => setRenaming(true) },
     { label: 'Read again', onSelect: () => void qc.invalidateQueries({ queryKey: documentKeys.content(id) }) },
+    ...exports(),
     { separator: true },
     { label: 'Remove from PDT…', onSelect: () => remove(false), danger: true },
     ...(provider?.capabilities.delete ? [{ label: 'Delete document…', onSelect: () => remove(true), danger: true }] : []),
@@ -141,7 +178,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const unlinked = (projects.data ?? []).filter((p) => !d.projects.some((l) => l.id === p.id));
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <article aria-label={d.title} className="mx-auto flex max-w-4xl flex-col gap-4 p-4">
+      <article aria-label={d.title} className={cn('mx-auto flex flex-col gap-4 p-4', d.kind === 'sheet' && provider?.capabilities.live ? 'max-w-none' : 'max-w-4xl')}>
         <header className="flex flex-col gap-1">
           <div className="flex min-w-0 items-center gap-2">
             <KindIcon kind={d.kind} />
@@ -217,8 +254,17 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
         <section aria-label="Content" className="flex flex-col gap-2">
           {content.isPending && <Skeleton lines={6} label="Reading the document" />}
           {content.isError && <Alert tone="error">{provider?.label ?? d.provider} could not read it: {actionError(content.error)}</Alert>}
-          {content.data && <Content content={content.data.content} />}
+          {content.data && <Content id={id} content={content.data.content} provider={provider} onSheet={onSheet} />}
         </section>
+
+        {provider?.capabilities.comments && content.data && (
+          <DocumentComments
+            id={id}
+            headings={content.data.content.kind === 'doc' ? headingsOf(content.data.content.markdown) : undefined}
+            selection={content.data.content.kind === 'sheet' && sheetHandle ? sheetHandle.selection : undefined}
+            onShow={sheetHandle ? sheetHandle.show : undefined}
+          />
+        )}
       </article>
       {linkingTicket && (
         <Dialog open onOpenChange={(o) => !o && setLinkingTicket(false)} title={`Link “${d.title}” to a ticket`} size="md">

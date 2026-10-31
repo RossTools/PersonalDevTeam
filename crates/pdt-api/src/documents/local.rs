@@ -76,6 +76,7 @@ struct Live {
 #[ts(export)]
 pub struct DiffsApplied {
     /// The change's number.
+    #[ts(type = "number")]
     pub seq: u64,
     /// Someone else changed the sheet since the view's last change: it should load the sheet again (it has both
     /// changes) and say so.
@@ -499,6 +500,15 @@ impl LocalProvider {
         Ok(self.store.document_by_ref(ID, reference).await.map_err(failed)?.ok_or(ProviderError::NotFound)?.id)
     }
 
+    async fn set_resolved(&self, reference: &str, comment: &str, resolved: bool) -> ProviderResult<()> {
+        let id = self.document_id(reference).await?;
+        if !self.store.resolve_document_comment(&id, comment, resolved).await.map_err(failed)? {
+            return Err(ProviderError::NotFound);
+        }
+        self.comments_changed(reference);
+        Ok(())
+    }
+
     fn read_now(&self, reference: &str) -> ProviderResult<DocumentContent> {
         let (path, kind) = self.path(reference)?;
         match kind {
@@ -611,7 +621,18 @@ impl DocumentProvider for LocalProvider {
             let (path, kind) = self.path(reference)?;
             let title = match self.store.document_by_ref(ID, reference).await.map_err(failed)? {
                 Some(d) => d.title,
-                None => path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+                None => {
+                    // A file PDT doesn't know yet is only taken from a local documents folder.
+                    let file = path.canonicalize().map_err(|_| ProviderError::NotFound)?;
+                    let inside =
+                        self.folders().await?.iter().any(|f| f.canonicalize().is_ok_and(|f| file.starts_with(f)));
+                    if !inside {
+                        return Err(ProviderError::Invalid(
+                            "PDT imports local files from the local documents folders only".into(),
+                        ));
+                    }
+                    path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+                }
             };
             Ok(ProviderFile {
                 reference: reference.into(),
@@ -648,7 +669,7 @@ impl DocumentProvider for LocalProvider {
                     found.push((when, ProviderFile { reference, title, kind: k, url: None, version: None }));
                 }
             }
-            found.sort_by(|a, b| b.0.cmp(&a.0));
+            found.sort_by_key(|f| std::cmp::Reverse(f.0));
             Ok(found.into_iter().map(|(_, f)| f).collect())
         })
     }
@@ -785,14 +806,11 @@ impl DocumentProvider for LocalProvider {
     }
 
     fn resolve<'a>(&'a self, reference: &'a str, comment: &'a str) -> BoxFut<'a, ProviderResult<()>> {
-        Box::pin(async move {
-            let id = self.document_id(reference).await?;
-            if !self.store.resolve_document_comment(&id, comment, true).await.map_err(failed)? {
-                return Err(ProviderError::NotFound);
-            }
-            self.comments_changed(reference);
-            Ok(())
-        })
+        Box::pin(self.set_resolved(reference, comment, true))
+    }
+
+    fn reopen<'a>(&'a self, reference: &'a str, comment: &'a str) -> BoxFut<'a, ProviderResult<()>> {
+        Box::pin(self.set_resolved(reference, comment, false))
     }
 
     fn version<'a>(&'a self, reference: &'a str) -> BoxFut<'a, ProviderResult<Option<String>>> {

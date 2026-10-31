@@ -135,6 +135,10 @@ async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
     let (_, all) = call(&env.app, "GET", &format!("/api/documents/{id}/comments"), None).await;
     assert_eq!(all.as_array().unwrap().len(), 2, "{all}");
     assert_eq!((&all[0]["resolved"], &all[0]["replies"][0]["body"]), (&json!(true), &json!("Yes.")));
+    let (s, _) = call(&env.app, "POST", &format!("/api/documents/{id}/comments/{cid}/reopen"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (_, all) = call(&env.app, "GET", &format!("/api/documents/{id}/comments"), None).await;
+    assert_eq!(all[0]["resolved"], false);
     assert_eq!(all[1]["quote"], "“by hand”");
     let (s, _) = call(&env.app, "POST", &format!("/api/documents/{id}/comments"), Some(json!({"body": " "}))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
@@ -165,6 +169,27 @@ async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
     // The local provider finds its files to import, and deleting removes the file and its images.
     let (_, files) = call(&env.app, "GET", "/api/documents/providers/local/files?q=launch", None).await;
     assert_eq!(files.as_array().unwrap().len(), 2, "{files}");
+    // A file dropped into the folder can be imported; one elsewhere on the machine can't.
+    let dropped = path.with_file_name("Dropped in.md");
+    std::fs::write(&dropped, "# Hi\n").unwrap();
+    let (s, d) = call(
+        &env.app,
+        "POST",
+        "/api/documents/import",
+        Some(json!({"provider": "local", "reference": dropped.to_string_lossy()})),
+    )
+    .await;
+    assert_eq!((s, &d["title"]), (StatusCode::CREATED, &json!("Dropped in")), "{d}");
+    let outside = env.tmp.path().join("elsewhere.md");
+    std::fs::write(&outside, "secret").unwrap();
+    let (s, _) = call(
+        &env.app,
+        "POST",
+        "/api/documents/import",
+        Some(json!({"provider": "local", "reference": outside.to_string_lossy()})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
     let (s, _) = call(&env.app, "DELETE", &format!("/api/documents/{id}?file=true"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
     assert!(!path.exists() && !path.with_file_name("Launch plan.assets").exists());

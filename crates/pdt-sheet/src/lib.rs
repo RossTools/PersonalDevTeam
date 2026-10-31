@@ -27,6 +27,9 @@ pub const READ_LIMIT: (usize, usize) = (2000, 200);
 
 pub type Result<T> = std::result::Result<T, String>;
 
+/// A zero-based (row, column).
+type Place = (usize, usize);
+
 /// A workbook: IronCalc's model of one `.xlsx`.
 pub struct Workbook {
     model: UserModel<'static>,
@@ -290,8 +293,20 @@ impl Workbook {
         })
     }
 
+    /// A range to sort or filter: as given, or for none the sheet's used rows below its first (the header).
+    fn table(&self, sheet: u32, range: &str) -> Result<String> {
+        if !range.trim().is_empty() {
+            return Ok(range.to_string());
+        }
+        let (rows, cols) = self.used(sheet)?;
+        if rows < 2 {
+            return Err("there are no rows below the first to sort or filter".into());
+        }
+        Ok(format!("A2:{}", cell_name(rows as usize - 1, cols as usize - 1)))
+    }
+
     /// The zero-based column `column` names, checked to be inside the range.
-    fn key_column(range: &str, column: &str) -> Result<(usize, (usize, usize), (usize, usize))> {
+    fn key_column(range: &str, column: &str) -> Result<(usize, Place, Place)> {
         let ((r1, c1), (r2, c2)) = parse_range(range).ok_or_else(|| format!("{range} is not a range"))?;
         let key = parse_column(column).ok_or_else(|| format!("{column} is not a column"))?;
         if key < c1 || key > c2 {
@@ -300,13 +315,14 @@ impl Workbook {
         Ok((key, (r1, c1), (r2, c2)))
     }
 
-    /// Sorts the range's rows by one of its columns: numbers before text before empty cells, text without regard to
+    /// Sorts the range's rows (none: the used rows below the first) by one of its columns: numbers before text before empty cells, text without regard to
     /// case. As spreadsheets do, the range's cells are rewritten in their new order, a formula's references shifting
     /// with it as if copied (`=B2-C2` moved to row 4 is `=B4-C4`), and formats move with their cells; formulas
     /// elsewhere keep pointing at the same cells. Rows hidden by a filter are shown first.
     pub fn sort(&mut self, sheet: &str, range: &str, column: &str, descending: bool) -> Result<()> {
         let i = self.sheet_index(sheet)?;
-        let (key, (r1, c1), (r2, c2)) = Self::key_column(range, column)?;
+        let range = self.table(i, range)?;
+        let (key, (r1, c1), (r2, c2)) = Self::key_column(&range, column)?;
         let (first, last) = (r1 as i32 + 1, r2 as i32 + 1);
         let (left, right) = (c1 as i32 + 1, c2 as i32 + 1);
         self.model.set_rows_hidden(i, first, last, false)?;
@@ -384,7 +400,8 @@ impl Workbook {
     /// of the range again.
     pub fn filter(&mut self, sheet: &str, range: &str, column: &str, values: &[String]) -> Result<()> {
         let i = self.sheet_index(sheet)?;
-        let (key, (r1, _), (r2, _)) = Self::key_column(range, column)?;
+        let range = self.table(i, range)?;
+        let (key, (r1, _), (r2, _)) = Self::key_column(&range, column)?;
         let (first, last) = (r1 as i32 + 1, r2 as i32 + 1);
         self.model.set_rows_hidden(i, first, last, false)?;
         if values.is_empty() {
@@ -449,7 +466,7 @@ impl Workbook {
 /// The separator a CSV file uses: whichever of `,`, `;` and tab its first line has most of.
 fn sniff_delimiter(text: &str) -> u8 {
     let first = text.lines().next().unwrap_or("");
-    [b',', b';', b'\t'].into_iter().max_by_key(|d| first.bytes().filter(|b| b == d).count()).unwrap_or(b',')
+    b",;\t".iter().copied().max_by_key(|d| first.bytes().filter(|b| b == d).count()).unwrap_or(b',')
 }
 
 /// What PDT's sheets don't keep from a `.xlsx` (IronCalc drops them on import): charts, images and drawings, pivot

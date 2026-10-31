@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, CommandList, Dialog, Field, Input, SegmentedControl, Select, type CommandItem } from '@ui';
+import { Upload } from 'lucide-react';
+import { Alert, Button, CommandList, Dialog, Field, Input, SegmentedControl, Select, toast, type CommandItem } from '@ui';
 import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
 import type { DocumentKind } from '../api/gen/DocumentKind';
@@ -119,7 +120,7 @@ export function NewDocumentDialog({ projects, projectId = null, ticket, onClose,
 
 /**
  * Import or link: pick a provider that can search, then one of its files; PDT records it (or finds the record it has)
- * and links it to the project or ticket.
+ * and links it to the project or ticket. Or a file from the computer (`.md`, `.xlsx`, `.csv`), made a local document.
  */
 export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImported }: {
   projectId?: string | null;
@@ -140,6 +141,25 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
     enabled: chosen !== null,
   });
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const hasLocal = (providers.data?.providers ?? []).some((p) => p.id === 'local');
+  const upload = async (file: File) => {
+    setError(null);
+    setUploading(true);
+    try {
+      const r = await api.uploadDocument(file, ticket ? { ticketId: ticket.id } : { projectId });
+      invalidateDocuments(qc);
+      if (r.dropped.length > 0) {
+        toast.info(`“${r.document.title}” is imported without its ${r.dropped.join(', ')}: PDT's sheets don't keep those.`);
+      }
+      onImported(r.document);
+    } catch (e) {
+      setError(actionError(e));
+    } finally {
+      setUploading(false);
+    }
+  };
   const items: CommandItem[] = (files.data ?? []).map((f) => ({
     id: f.reference,
     label: f.title,
@@ -190,6 +210,26 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
           />
         )}
         {error && <Alert tone="error">{error}</Alert>}
+        {hasLocal && (
+          <div className="flex items-center gap-2 border-t border-border pt-2">
+            <Button variant="secondary" size="sm" disabled={uploading} onClick={() => fileInput.current?.click()}>
+              <Upload aria-hidden /> {uploading ? 'Importing…' : 'From your computer…'}
+            </Button>
+            <span className="text-meta text-muted-foreground">A .md file becomes a doc; .xlsx or .csv a sheet.</span>
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".md,.markdown,.txt,.xlsx,.csv,.tsv"
+              aria-label="File to import"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (f) void upload(f);
+              }}
+            />
+          </div>
+        )}
       </div>
     </Dialog>
   );

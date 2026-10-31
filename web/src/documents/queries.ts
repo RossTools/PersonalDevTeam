@@ -14,6 +14,8 @@ export const documentKeys = {
   list: (f: DocumentFilter) => ['documents', 'list', f] as const,
   one: (id: string) => ['documents', 'one', id] as const,
   content: (id: string) => ['documents', 'content', id] as const,
+  comments: (id: string) => ['documents', 'comments', id] as const,
+  charts: (id: string) => ['documents', 'charts', id] as const,
   providers: (project: string | null) => ['documents', 'providers', project] as const,
 };
 
@@ -57,4 +59,14 @@ export function invalidateDocuments(qc: QueryClient) {
 /** Shows a document in the Documents view. */
 export function openDocument(id: string) {
   navigate(routePath({ view: 'documents', doc: id }));
+}
+
+/** A document's comments (refetched when its event stream says they changed, and with the rest of the UI). */
+export function useDocumentComments(id: string, enabled: boolean) {
+  return useQuery({ queryKey: documentKeys.comments(id), queryFn: () => api.documentComments(id), enabled, refetchInterval: POLL, retry: false });
+}
+
+/** A local sheet's charts with their numbers (refetched after every change). */
+export function useDocumentCharts(id: string, enabled: boolean) {
+  return useQuery({ queryKey: documentKeys.charts(id), queryFn: () => api.documentCharts(id), enabled, retry: false });
 }

@@ -3,19 +3,20 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Document } from '../api/gen/Document';
 import type { DocumentProvidersView } from '../api/gen/DocumentProvidersView';
-import { renderWithQuery, stubApi } from '../test-utils';
+import { editorText, renderWithQuery, Reply, setEditorText, stubApi } from '../test-utils';
 import { TicketDocuments } from '../tickets/TicketDocuments';
 import { ticket } from '../tickets/fixtures';
 import { DocumentPage } from './DocumentPage';
 import { DocumentsList, useDocumentsFilters } from './DocumentsList';
 import { NewDocumentDialog } from './DocumentDialogs';
+import { anchorLabel, headingsOf } from './DocumentComments';
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-const all = { docs: true, sheets: true, create: true, search: true, edit: true, rename: true, delete: true, comments: true, embed: false };
+const all = { docs: true, sheets: true, create: true, search: true, edit: true, rename: true, delete: true, comments: true, embed: false, charts: false, live: false };
 
 const providers: DocumentProvidersView = {
   providers: [
@@ -151,5 +152,66 @@ describe('documents', () => {
     const table = await screen.findByRole('table');
     expect(within(table).getByRole('columnheader', { name: 'B' })).toBeInTheDocument();
     expect(within(table).getByText('12')).toHaveAttribute('title', '=6*2');
+  });
+
+  it('a local doc is written in Write, saved as typed on top of its version, and a clash asks', async () => {
+    const local = { id: 'local', label: 'Local', capabilities: { ...all, rename: false, charts: true, live: true } };
+    let saves = 0;
+    const calls = stubApi({
+      'GET /api/documents/d3': doc('d3', 'Notes', { provider: 'local' }),
+      'GET /api/documents/d3/content': { content: { kind: 'doc', markdown: '# Notes\n\n## Goal\n', version: 'v1' }, embedUrl: null },
+      'GET /api/documents/d3/comments': [],
+      'GET /api/documents/providers': { ...providers, providers: [local] },
+      'GET /api/projects': [project],
+      'POST /api/documents/d3/edits': () => (++saves === 2 ? new Reply(409, { code: 'conflict', message: 'changed' }) : { version: `v${saves + 1}` }),
+    });
+    renderWithQuery(<DocumentPage id="d3" phone={false} onGone={() => {}} />);
+    expect(await screen.findByRole('heading', { name: 'Goal', level: 2 })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: 'Write' }));
+    const box = await screen.findByRole('textbox', { name: 'Document text' });
+    expect(editorText(box)).toBe('# Notes\n\n## Goal\n');
+    setEditorText(box, '# Notes\n\n## Goal\n\nShip it.\n');
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1), { timeout: 3000 });
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ edits: [{ op: 'replace_text', markdown: '# Notes\n\n## Goal\n\nShip it.\n' }], baseVersion: 'v1' });
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+
+    // Someone else saved in between: nothing is overwritten until the user says.
+    setEditorText(box, 'Mine\n');
+    expect(await screen.findByText('This document changed while you were writing', {}, { timeout: 3000 })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Keep mine' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(3));
+    const last = calls.filter((c) => c.method === 'POST').at(-1)!;
+    expect(last.body).toEqual({ edits: [{ op: 'replace_text', markdown: 'Mine\n' }] });
+    await waitFor(() => expect(screen.queryByText('This document changed while you were writing')).not.toBeInTheDocument());
+  });
+
+  it('comments go on a heading of a doc, and show where they are', async () => {
+    const calls = stubApi({
+      'GET /api/documents/d1': doc('d1', 'Plan'),
+      'GET /api/documents/d1/content': { content: { kind: 'doc', markdown: '# Plan\n\n## Goal\n\nShip it.\n', version: '1' }, embedUrl: null },
+      'GET /api/documents/d1/comments': () => calls.some((c) => c.method === 'POST')
+        ? [{ id: 'c1', author: 'You', body: 'Which goal?', quote: 'Goal', anchor: { on: 'heading', heading: 'Goal' }, resolved: false, createdAt: Date.now(), replies: [] }]
+        : [],
+      'POST /api/documents/d1/comments': { id: 'c1' },
+      'GET /api/documents/providers': providers,
+      'GET /api/projects': [project],
+    });
+    renderWithQuery(<DocumentPage id="d1" phone={false} onGone={() => {}} />);
+    const section = await screen.findByRole('region', { name: 'Comments' });
+    expect(await within(section).findByText('No comments yet.')).toBeInTheDocument();
+    await userEvent.click(within(section).getByRole('button', { name: 'Comment' }));
+    await userEvent.click(within(section).getByRole('button', { name: /Comment on/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Heading: Goal' }));
+    await userEvent.type(within(section).getByRole('textbox', { name: 'New comment' }), 'Which goal?');
+    await userEvent.click(within(section).getByRole('button', { name: 'Comment' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ body: 'Which goal?', anchor: { on: 'heading', heading: 'Goal' }, by: 'user' }));
+    expect(await within(section).findByText('Which goal?')).toBeInTheDocument();
+    expect(within(section).getByText('Goal')).toBeInTheDocument();
+  });
+
+  it('headings and anchors read as people see them', () => {
+    expect(headingsOf('# A\n\n```\n# not one\n```\n## B ##\n#nope\n')).toEqual(['A', 'B']);
+    expect(anchorLabel({ on: 'cell', sheet: 'Sheet1', range: 'B3:C4' })).toBe('Sheet1!B3:C4');
+    expect(anchorLabel({ on: 'text', quote: 'ship' })).toBe('“ship”');
   });
 });

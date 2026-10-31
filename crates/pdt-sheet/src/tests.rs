@@ -106,6 +106,10 @@ fn sorting_rewrites_the_rows_and_keeps_formulas_right() {
     wb.sort("Sheet1", "A2:D4", "a", false).unwrap();
     assert_eq!(shown(&wb, "Sheet1", "A2:A4"), vec![vec!["Q1".to_string()], vec!["Q2".into()], vec!["Q3".into()]]);
     assert!(wb.sort("Sheet1", "A2:B4", "D", false).is_err());
+    // No range: the rows below the header, total included.
+    wb.sort("Sheet1", "", "B", true).unwrap();
+    assert_eq!(shown(&wb, "Sheet1", "A2:A2"), vec![vec!["Total".to_string()]]);
+    assert!(Workbook::new("e").unwrap().sort("Sheet1", "", "A", false).is_err());
 }
 
 #[test]
