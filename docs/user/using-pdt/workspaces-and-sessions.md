@@ -133,6 +133,12 @@ PDT keeps working when your browser closes. When PDT itself restarts (after an u
   before is gone; the agent's conversation isn't.
 - **Conversations** keep their whole history. A turn that was running is marked interrupted: click **Continue** to
   carry on. Nothing is sent to an agent without you (or a workflow you turned on).
+- **Background tasks don't survive a restart.** Whatever an agent left running in the background (a long test run,
+  a command it watches, a background sub-agent) stops with it and never reports back. PDT tells the agent so, with a
+  list of what stopped, so it starts again what it still needs instead of waiting for ever: a workflow step's agent
+  hears at once (that counts as one of the step's nudges), and your own conversation hears with the next message you
+  send or **Continue**, which its view says until then. Terminal sessions don't tell PDT about their background tasks,
+  so PDT can't tell their agent.
 - **Runs** set to run on their own (`detach = true` in the run configuration) keep running; others stop, and
   **Restart** starts them again.
 - A message you were typing but hadn't sent stays in that browser tab.

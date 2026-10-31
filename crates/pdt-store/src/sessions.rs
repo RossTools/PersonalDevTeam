@@ -1,6 +1,6 @@
 use crate::{Store, StoreError};
 use pdt_core::activity::Activity;
-use pdt_core::conversation::{PermissionMode, SessionMode};
+use pdt_core::conversation::{BackgroundTask, PermissionMode, SessionMode};
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
 use pdt_core::ticket::{SessionTicket, format_key};
 use sqlx::Row;
@@ -349,6 +349,70 @@ impl Store {
         .await?;
         Ok(r.rows_affected())
     }
+
+    /// A conversation's background tasks as the agent last reported them (PDT-311): kept so a restart knows what it
+    /// stopped. None run: cleared.
+    pub async fn set_session_background(&self, id: &str, tasks: &[BackgroundTask]) -> Result<bool, StoreError> {
+        let json = (!tasks.is_empty()).then(|| serde_json::to_string(tasks).expect("tasks serialize"));
+        let r = sqlx::query("UPDATE sessions SET background_tasks = ? WHERE id = ?")
+            .bind(json)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// The previous pdtd stopped every session's background tasks: they move to `stopped_background` (added to any
+    /// not told yet), until the agent is told. Returns the sessions that had some.
+    pub async fn retire_session_background(&self) -> Result<Vec<String>, StoreError> {
+        let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, background_tasks, stopped_background FROM sessions WHERE background_tasks IS NOT NULL",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut ids = Vec::new();
+        for (id, running, stopped) in rows {
+            let mut all: Vec<BackgroundTask> = parse_tasks(stopped.as_deref());
+            for t in parse_tasks(Some(&running)) {
+                if !all.iter().any(|k| k.id == t.id) {
+                    all.push(t);
+                }
+            }
+            let json = (!all.is_empty()).then(|| serde_json::to_string(&all).expect("tasks serialize"));
+            sqlx::query("UPDATE sessions SET background_tasks = NULL, stopped_background = ? WHERE id = ?")
+                .bind(json)
+                .bind(&id)
+                .execute(&self.pool)
+                .await?;
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
+    /// The background tasks a restart stopped that the session's agent has not been told about.
+    pub async fn stopped_background(&self, id: &str) -> Result<Vec<BackgroundTask>, StoreError> {
+        let v: Option<Option<String>> = sqlx::query_scalar("SELECT stopped_background FROM sessions WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(parse_tasks(v.flatten().as_deref()))
+    }
+
+    /// Sets (or, empty, clears) what `stopped_background` returns.
+    pub async fn set_stopped_background(&self, id: &str, tasks: &[BackgroundTask]) -> Result<bool, StoreError> {
+        let json = (!tasks.is_empty()).then(|| serde_json::to_string(tasks).expect("tasks serialize"));
+        let r = sqlx::query("UPDATE sessions SET stopped_background = ? WHERE id = ?")
+            .bind(json)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+}
+
+/// A stored task list; an unreadable one is none (it only ever informs a notice).
+fn parse_tasks(json: Option<&str>) -> Vec<BackgroundTask> {
+    json.and_then(|j| serde_json::from_str(j).ok()).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -470,6 +534,31 @@ pub(crate) mod tests {
         assert!(store.switch_session_mode("a", SessionMode::Terminal, None).await.unwrap());
         assert_eq!(store.history_from("a").await.unwrap(), None);
         assert!(!store.switch_session_mode("zz", SessionMode::Terminal, None).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn background_tasks_are_kept_and_retired_by_a_restart() {
+        use pdt_core::conversation::BackgroundTask;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store.insert_session(&session("a", 1)).await.unwrap();
+        store.insert_session(&session("b", 2)).await.unwrap();
+        let task =
+            |id: &str| BackgroundTask { id: id.into(), description: format!("task {id}"), kind: "local_bash".into() };
+        store.set_session_background("a", &[task("t1")]).await.unwrap();
+        store.set_session_background("b", &[task("t2")]).await.unwrap();
+        store.set_session_background("b", &[]).await.unwrap();
+        assert_eq!(store.retire_session_background().await.unwrap(), ["a"], "b's ended before the restart");
+        assert_eq!(store.stopped_background("a").await.unwrap(), [task("t1")]);
+        assert!(store.stopped_background("b").await.unwrap().is_empty());
+        // Another restart before the agent was told adds to what it is told.
+        store.set_session_background("a", &[task("t1"), task("t3")]).await.unwrap();
+        store.retire_session_background().await.unwrap();
+        assert_eq!(store.stopped_background("a").await.unwrap(), [task("t1"), task("t3")]);
+        assert!(store.retire_session_background().await.unwrap().is_empty(), "nothing runs any more");
+        store.set_stopped_background("a", &[]).await.unwrap();
+        assert!(store.stopped_background("a").await.unwrap().is_empty());
+        assert!(store.stopped_background("zz").await.unwrap().is_empty());
     }
 
     #[tokio::test]

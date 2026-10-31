@@ -153,6 +153,8 @@ struct ConvState {
     limited_until: Option<i64>,
     /// The agent's background tasks still running: the process is not parked while there are any.
     background_tasks: Vec<BackgroundTask>,
+    /// Background tasks a restart of PDT stopped, until the agent is told with the next message (PDT-311).
+    stopped_background: Vec<BackgroundTask>,
 }
 
 impl ConvState {
@@ -169,6 +171,7 @@ impl ConvState {
             terminal_open: self.terminal_open,
             billing: self.billing.clone(),
             background_tasks: self.background_tasks.clone(),
+            stopped_background: self.stopped_background.clone(),
         }
     }
 
@@ -263,6 +266,7 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
         return Ok(c.clone());
     }
     let has_history = st.store.last_session_event_seq(&session.id).await? > 0;
+    let stopped_background = st.store.stopped_background(&session.id).await?;
     let c = Arc::new(Conv {
         id: session.id.clone(),
         tx: broadcast::channel(1024).0,
@@ -286,6 +290,7 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
             billing: None,
             limited_until: None,
             background_tasks: Vec::new(),
+            stopped_background,
         }),
         activity_write: tokio::sync::Mutex::new(()),
         sending: tokio::sync::RwLock::new(()),
@@ -460,6 +465,10 @@ async fn pump(
             }
             AdapterOutput::History(turns) => import_history(&st, &c, &turns).await,
             AdapterOutput::BackgroundTasks(tasks) => {
+                // Kept with the session, so a restart knows what it stopped (PDT-311).
+                if let Err(e) = st.store.set_session_background(&c.id, &tasks).await {
+                    tracing::warn!(session = %c.id, error = %e, "could not record the background tasks");
+                }
                 {
                     let mut s = c.state();
                     s.background_tasks = tasks;
@@ -478,6 +487,15 @@ async fn pump(
                     if slot.as_ref().is_some_and(|(_, g)| *g == generation) {
                         *slot = None;
                     }
+                }
+                // Ended with its process; one PDT's shutdown ended stays recorded, for the agent to be told after
+                // the restart (PDT-311).
+                let had_background = !c.state().background_tasks.is_empty();
+                if had_background
+                    && !st.shutting_down.load(std::sync::atomic::Ordering::SeqCst)
+                    && let Err(e) = st.store.set_session_background(&c.id, &[]).await
+                {
+                    tracing::warn!(session = %c.id, error = %e, "could not clear the background tasks");
                 }
                 {
                     let mut s = c.state();
@@ -738,6 +756,7 @@ async fn send_message(
     let c = conv(st, session).await?;
     let _sending = c.sending.read().await;
     let live = ensure_live(st, &c, session).await?;
+    tell_stopped_background(st, &c, live.as_ref()).await;
     let pending = PendingMessage {
         id: outbox.map_or_else(|| uuid::Uuid::now_v7().to_string(), String::from),
         text: text.to_string(),
@@ -769,6 +788,60 @@ async fn send_message(
         return Err(adapter_error(e));
     }
     Ok(pending)
+}
+
+/// Background tasks a restart stopped (PDT-311): the agent hears of it just before the message that reopened it, so it
+/// does not wait on them for ever. Never sent on its own: it goes along with a message the user or a workflow sends.
+async fn tell_stopped_background(st: &AppState, c: &Arc<Conv>, live: &dyn LiveConversation) {
+    let stopped = std::mem::take(&mut c.state().stopped_background);
+    if stopped.is_empty() {
+        return;
+    }
+    let names: Vec<String> = stopped.iter().map(|t| t.description.clone()).collect();
+    let text = pdt_core::conversation::restart_notice(&names);
+    let pending = PendingMessage {
+        id: uuid::Uuid::now_v7().to_string(),
+        text: text.clone(),
+        delivery: Delivery::Next,
+        images: Vec::new(),
+        notice: true,
+        pdt: None,
+    };
+    c.state().pending.push(pending.clone());
+    match live.send(&Outgoing { text, images: Vec::new() }, Delivery::Next).await {
+        Ok(()) => {
+            if let Err(e) = st.store.set_stopped_background(&c.id, &[]).await {
+                tracing::warn!(session = %c.id, error = %e, "could not record the stopped tasks as told");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(session = %c.id, error = %e, "could not tell the agent its background tasks stopped");
+            let mut s = c.state();
+            s.pending.retain(|p| p.id != pending.id);
+            s.stopped_background = stopped;
+        }
+    }
+    c.push_state();
+}
+
+/// Takes the background tasks a restart stopped that the session's agent was not told about yet, so the caller tells
+/// it in its own words (a workflow step's notice, PDT-311).
+pub(crate) async fn take_stopped_background(st: &AppState, id: &str) -> Vec<BackgroundTask> {
+    let loaded = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned();
+    let mut tasks = match &loaded {
+        Some(c) => std::mem::take(&mut c.state().stopped_background),
+        None => Vec::new(),
+    };
+    if tasks.is_empty() {
+        tasks = st.store.stopped_background(id).await.unwrap_or_default();
+    }
+    if let Err(e) = st.store.set_stopped_background(id, &[]).await {
+        tracing::warn!(session = %id, error = %e, "could not record the stopped tasks as told");
+    }
+    if let Some(c) = loaded {
+        c.push_state();
+    }
+    tasks
 }
 
 /// Whether PDT may send a message of its own now (a PR notice, spec §14): no turn running, nothing asked or queued,
@@ -1447,6 +1520,12 @@ pub(crate) async fn terminal_conversation_moved(
 /// After a pdtd restart: a turn that was running ends as interrupted and open requests expire (spec §9). Run before
 /// serving.
 pub async fn recover_conversations(st: &AppState) {
+    // Every background task the previous pdtd's agents ran ended with them (PDT-311).
+    match st.store.retire_session_background().await {
+        Ok(ids) if !ids.is_empty() => tracing::info!(sessions = ids.len(), "a restart stopped background tasks"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "could not record the background tasks a restart stopped"),
+    }
     // Messages a conversation had not echoed when the previous pdtd stopped never reached it (PDT-129).
     crate::workflow::outbox::recover(st).await;
     let sessions = match st.store.list_sessions_by_status(SessionStatus::Interrupted).await {
