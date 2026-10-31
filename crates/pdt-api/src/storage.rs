@@ -349,31 +349,73 @@ pub struct DiskView {
     pub level: DiskLevel,
 }
 
-/// The disks with PDT's data folder and each project's folder, one entry per disk (told apart by their sizes).
+/// Which disk a folder is on (the nearest folder above it that exists): its device on Unix, its volume (drive or
+/// share) elsewhere; None when it can't be read.
+pub fn disk_id(path: &FsPath) -> Option<String> {
+    let existing = path.ancestors().find(|d| d.exists())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(std::fs::metadata(existing).ok()?.dev().to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        match std::fs::canonicalize(existing).ok()?.components().next()? {
+            std::path::Component::Prefix(p) => Some(p.as_os_str().to_string_lossy().to_ascii_uppercase()),
+            _ => None,
+        }
+    }
+}
+
+/// One entry per disk from what each folder's probe read: folders on the same disk (by `disk_id`; without one, by
+/// equal sizes) go together, with the least free space any of them read, since each was read at its own moment.
+fn group_disks(found: Vec<(String, Option<String>, DiskSpace)>, low_gb: u32, critical_gb: u32) -> Vec<DiskView> {
+    let mut groups: Vec<(Option<String>, DiskView)> = vec![];
+    for (folder, id, space) in found {
+        let same = |(gid, d): &&mut (Option<String>, DiskView)| match (&id, gid) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => d.space == space,
+            _ => false,
+        };
+        match groups.iter_mut().find(same) {
+            Some((_, d)) => {
+                if !d.folders.contains(&folder) {
+                    d.folders.push(folder);
+                }
+                if space.free < d.space.free {
+                    d.space = space;
+                }
+            }
+            None => groups.push((id, DiskView { folders: vec![folder], space, level: DiskLevel::Ok })),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(_, mut d)| {
+            d.level = disk_level(d.space.free, low_gb, critical_gb);
+            d
+        })
+        .collect()
+}
+
+/// The disks with PDT's data folder and each project's folder, one entry per disk.
 pub(crate) async fn disks(st: &AppState) -> Vec<DiskView> {
     let host = st.store.get_host_settings().await.unwrap_or_default();
     let mut folders = vec![st.data_dir.clone()];
     folders.extend(st.store.list_projects().await.unwrap_or_default().into_iter().map(|p| PathBuf::from(p.repo_path)));
     let probe = st.disk_space.clone();
     let found = tokio::task::spawn_blocking(move || {
-        folders.into_iter().filter_map(|f| probe(&f).map(|s| (f, s))).collect::<Vec<_>>()
+        folders
+            .into_iter()
+            .filter_map(|f| {
+                let space = probe(&f)?;
+                Some((f.to_string_lossy().into_owned(), disk_id(&f), space))
+            })
+            .collect::<Vec<_>>()
     })
     .await
     .unwrap_or_default();
-    let mut out: Vec<DiskView> = vec![];
-    for (folder, space) in found {
-        let folder = folder.to_string_lossy().into_owned();
-        match out.iter_mut().find(|d| d.space == space) {
-            Some(d) if !d.folders.contains(&folder) => d.folders.push(folder),
-            Some(_) => {}
-            None => out.push(DiskView {
-                folders: vec![folder],
-                space,
-                level: disk_level(space.free, host.low_disk_gb, host.critical_disk_gb),
-            }),
-        }
-    }
-    out
+    group_disks(found, host.low_disk_gb, host.critical_disk_gb)
 }
 
 /// Whether auto-start waits: a disk PDT uses is below the critical threshold.
@@ -709,6 +751,33 @@ mod tests {
         assert!(total >= build + 10_000, "{total} {build}");
         let (_, none) = measure(d, &[]);
         assert_eq!(none, 0);
+    }
+
+    #[test]
+    fn folders_on_one_disk_are_one_disk_whatever_each_read_free() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = (tmp.path().join("a"), tmp.path().join("b/not/yet"));
+        std::fs::create_dir_all(&a).unwrap();
+        assert!(disk_id(&a).is_some());
+        assert_eq!(disk_id(&a), disk_id(&b), "a folder that doesn't exist yet is on its parent's disk");
+        let gb = pdt_core::storage::GB;
+        let space = |free| DiskSpace { free: free * gb, total: 500 * gb };
+        let d = group_disks(
+            vec![
+                ("/data".into(), Some("1".into()), space(30)),
+                ("/work/a".into(), Some("1".into()), space(19)),
+                ("/ext".into(), Some("2".into()), space(19)),
+                ("/x".into(), None, space(40)),
+                ("/y".into(), None, space(40)),
+            ],
+            20,
+            5,
+        );
+        assert_eq!(d.len(), 3, "{d:?}");
+        assert_eq!(d[0].folders, ["/data", "/work/a"]);
+        assert_eq!((d[0].space.free, d[0].level), (19 * gb, DiskLevel::Low), "the least free it read");
+        assert_eq!(d[1].folders, ["/ext"]);
+        assert_eq!(d[2].folders, ["/x", "/y"]);
     }
 
     #[test]

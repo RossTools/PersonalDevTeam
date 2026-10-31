@@ -90,7 +90,7 @@ loop (every 60 s) measures each worktree whose size is missing or 30 minutes old
 which cleans or removes finished tickets' worktrees per the project's `project_settings.storage`. A project's build
 output is `[storage] build_output` from its main checkout's run configuration, else detected from the files at its
 root (`detect_build_output`). Free space comes from `AppState::disk_space` (fs4; tests set their own) for the data
-folder and each project's folder; below the host's `low_disk_gb` the Inbox lists a `low_disk` item, below
+folder and each project's folder, grouped by device (`storage::disk_id`) with the least free space any read; below the host's `low_disk_gb` the Inbox lists a `low_disk` item, below
 `critical_disk_gb` the scheduler starts nothing and `autoStartAt` is left out.
 
 **Runs.** A run is a `[[run]]` or `[[test]]` from `.pdt/project.toml` (plus host overrides; the user docs' Run configuration page)
