@@ -3,4 +3,4 @@
 /**
  * Where an item is listed, most urgent first (UX spec §8.4).
  */
-export type InboxGroup = "question" | "approval" | "session" | "stalled" | "loop_limit" | "notice" | "admit" | "gate" | "accept";
+export type InboxGroup = "question" | "approval" | "session" | "stalled" | "loop_limit" | "notice" | "admit" | "proposal" | "gate" | "accept";

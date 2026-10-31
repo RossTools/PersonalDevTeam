@@ -3,7 +3,12 @@ import type { Author } from "./Author";
 import type { VersionStatus } from "./VersionStatus";
 import type { WorkflowDoc } from "./WorkflowDoc";
 
-export type WorkflowVersion = { workflowId: string, version: number, author: Author, status: VersionStatus, note: string, createdAt: number, 
+export type WorkflowVersion = { workflowId: string, version: number, author: Author, status: VersionStatus, note: string, 
+/**
+ * Who proposed it (PDT-320): the agent's persona, else its session's title. None for the user's versions and
+ * imported proposals.
+ */
+proposedBy: string | null, createdAt: number, 
 /**
  * Only when one version is asked for.
  */

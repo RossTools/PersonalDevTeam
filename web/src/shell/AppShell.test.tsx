@@ -1296,12 +1296,12 @@ describe('phone', () => {
     await userEvent.click(await within(open).findByText('CB cutover'));
     expect(here()).toBe('/pm/pm2');
     expect(within(bar()).getByRole('heading', { name: 'CB cutover' })).toBeInTheDocument();
-    // The conversation adds Rename and Close… once it shows, which can come after the title: look again until it has.
+    // The conversation adds Rename, Reset… and Close… once it shows, which can come after the title: look again until it has.
     await waitFor(async () => {
       await userEvent.click(within(bar()).getByRole('button', { name: 'Screen actions' }));
       const items = screen.getAllByRole('menuitem').map((m) => m.textContent);
       await userEvent.keyboard('{Escape}');
-      expect(items).toEqual(['New conversation', 'Ended conversations', 'Rename', 'Close…']);
+      expect(items).toEqual(['New conversation', 'Ended conversations', 'Rename', 'Reset…', 'Close…']);
     });
     await userEvent.click(within(bar()).getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(here()).toBe('/pm'));

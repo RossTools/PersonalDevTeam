@@ -59,4 +59,12 @@ describe('DiffViewer', () => {
     render(<DiffViewer diff="" />);
     expect(screen.getByText('No changes.')).toBeInTheDocument();
   });
+
+  it('scrolls long lines sideways, or wraps them with wrap', () => {
+    const { rerender } = render(<DiffViewer diff={TWO_FILES} />);
+    expect(screen.getByText('more').closest('td')?.className).toContain('whitespace-pre');
+    expect(screen.getByText('more').closest('td')?.className).not.toContain('whitespace-pre-wrap');
+    rerender(<DiffViewer diff={TWO_FILES} wrap />);
+    expect(screen.getByText('more').closest('td')?.className).toMatch(/whitespace-pre-wrap.*wrap-anywhere/);
+  });
 });

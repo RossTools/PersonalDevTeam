@@ -225,8 +225,11 @@ A step that can't run because of how the workflow is set up (no project to work 
 - A project can keep workflows in its repository, under `.pdt/workflows/`. PDT adds each one, off, marked
   **In the repo**; it can't be edited in PDT, only in the repository.
 
-The PM can write a workflow for you too: what it saves is a proposal you review in **Versions** and **Accept** or
-**Discard**.
+The PM can write a workflow for you too: what it saves is a proposal you **Accept** or **Discard**. It shows in
+the Inbox under **Workflow proposals**, as **Proposal waiting** in the list of workflows, and in a banner on the
+workflow with **Review** (its **Versions** tab, with the whole change), **Discard** and **Accept**. Accepting replaces
+any changes you haven't saved, so PDT asks first. You can accept or discard a proposal on a phone too, though you
+can't edit workflows there.
 
 ## Examples
 

@@ -14,6 +14,7 @@ import { Markdown } from '../common/Markdown';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { SecretRequest } from './SecretRequest';
 import { TriagedTicket } from './TriagedTicket';
+import { WorkflowProposal } from './WorkflowProposal';
 import { ConfirmCall } from './ConfirmCall';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { useOpenSession, useOpenTicket } from '../tickets/actions';
@@ -22,7 +23,7 @@ import { useProjectForge, useTicket } from '../tickets/queries';
 import { useOpenChanges } from '../review/open';
 import { answerApproval, UpdateView } from './InboxView';
 import { navigate } from '../shell/router';
-import { after, changeRequestLabel, CONNECT_PATH, dismissable, gateQuestion, KIND_LABEL, merges, noticeText, passesOf, questionsOf, resends, selectedUpdate, step } from './model';
+import { after, changeRequestLabel, CONNECT_PATH, dismissable, gateQuestion, KIND_LABEL, merges, noticeText, passesOf, proposalPath, questionsOf, resends, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
 
 /** Opens the pull request a gate is about on its forge, in a new tab. */
@@ -377,6 +378,17 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
       break;
     case 'confirm':
       content = <ConfirmCall item={item} />;
+      bar = <DecisionBar busy={busy} decisions={itemChoices} onPick={(choice) => void onAnswer({ choice })} />;
+      break;
+    case 'proposal':
+      content = (
+        <>
+          <WorkflowProposal item={item} />
+          <div>
+            <Button variant="secondary" className="h-12 pointer-coarse:h-12" onClick={() => navigate(proposalPath(item))}>Open</Button>
+          </div>
+        </>
+      );
       bar = <DecisionBar busy={busy} decisions={itemChoices} onPick={(choice) => void onAnswer({ choice })} />;
       break;
     case 'admit':

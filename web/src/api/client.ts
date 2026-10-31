@@ -597,6 +597,11 @@ export const api = {
     request<Session>(`/api/pm/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   /** Closes a PM conversation: it writes its journal, then ends. */
   closePm: (id: string) => request<void>(`/api/pm/sessions/${enc(id)}`, { method: 'DELETE' }),
+  /**
+   * Resets a PM conversation (PDT-308): it writes its journal and ends, and the fresh one it returns carries on with
+   * its name and settings. Answers once the journal is written (up to a few minutes).
+   */
+  resetPm: (id: string) => request<Session>(`/api/pm/sessions/${enc(id)}/reset`, { method: 'POST' }),
   pmNotes: (q: { q?: string; project?: string; kind?: NoteKind; limit?: number } = {}) => request<PmNote[]>(`/api/pm/notes${queryString(q)}`),
   pmNote: (id: string) => request<PmNote>(`/api/pm/notes/${enc(id)}`),
   createPmNote: (n: NewNote) => request<PmNote>('/api/pm/notes', { method: 'POST', body: JSON.stringify(n) }),

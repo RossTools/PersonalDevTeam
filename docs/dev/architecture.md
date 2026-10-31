@@ -4,6 +4,8 @@ The developer guide: what a contributor (a person or a coding agent) needs to fi
 covers the processes, the crates, the core model and where each area lives. The rules that are easy to break are in
 [invariants.md](invariants.md), the testing rules in [testing.md](testing.md), and how a change goes from branch to
 release in [SDLC.md](../SDLC.md). What PDT does for its users is in the user docs; this guide doesn't repeat it.
+Write this guide about how the code works today and the rules it keeps, without ticket history or decision logs;
+the rules for every kind of doc are in AGENTS.md ("Writing docs").
 
 ## Processes
 
@@ -141,7 +143,9 @@ the data folder) and the tools of its persona; each tool calls the API route's o
 user's say are asked in the agent's own prompt where it supports that, or through the Inbox.
 
 **The PM.** A host-level project manager: conversations in the host project, with the PM persona's tools (those
-flagged `pm`) and a briefing built when the session starts (pdt-api `pm.rs`, pdt-core `pm.rs`). A conversation can be
+flagged `pm`) and a briefing built when the session starts (pdt-api `pm.rs`, pdt-core `pm.rs`). Close and Reset end
+one after its journal; a reset starts its successor (`pm_sessions.reset_from`) with the same settings, briefed from
+that journal. A conversation can be
 held elsewhere too (`pm_sessions.via`): the Discord integration passes the user's DMs to one (pdt-int-discord `dm.rs`),
 through the SDK's `pm` and `conversations` modules (start, send, close; every conversation's events as they are stored,
 `conversations::subscribe_all`; answering a request as the user). Its bot holds a Gateway websocket (`gateway.rs`) in
@@ -153,8 +157,8 @@ happened to each watched target since its stored cursor: the event log (outcomes
 failures, queue drops), new Inbox items about it, and a run's status. It notes what the watch asked for, and tells a
 burst once it has been quiet for 15 s (at most a minute after the first). A conversation is told through the outbox
 (`reopens`, so a parked one wakes); the user, and a closed conversation's leftovers, get a `watch.event`
-notification. A `once` watch ends when its target finishes. `watches::follow` moves a conversation's watches to one
-that takes its place.
+notification. A `once` watch ends when its target finishes. A PM Reset moves the old
+conversation's watches to the fresh one (`watches::follow`); a tick during the reset waits for it.
 
 **Workflows.** Everything that happens is an event in the event log (`events`, keyed so a duplicate is dropped). A
 workflow is a versioned graph of nodes (pdt-core `workflow/`): a trigger, conditions, actions, waits, agent steps,
@@ -175,8 +179,11 @@ turn at once.
 questions, gates, stalled steps, secrets to enter, confirmations. An item's `title` is one line; a gate's question
 (Markdown) is in `body.question`, and `inbox::decorate` adds what is computed per request: ticket key and title,
 persona name, and a gate's `changeRequest` (its attempt's pull request, else the run trigger's or the ticket's external
-link that a forge plugin's `is_change_request_url` accepts, named by its `change_request_name`). Notifications
-(`notifications.rs`) are the transient kind.
+link that a forge plugin's `is_change_request_url` accepts, named by its `change_request_name`). Some items are not
+stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, and workflow proposals
+(`inbox::proposals`: one per workflow with a proposed version, id `proposal:<workflow>:<version>`, answered
+by `inbox::answer` with the Versions tab's accept and discard). Notifications (`notifications.rs`) are the transient
+kind.
 
 **Secrets.** Values live in the OS keychain (or, on Linux without a Secret Service, a file only the user can read) and
 in memory; agents and workflows refer to them by name (`run_with_secrets`, `write_secret_file`, `{{secret.x}}` in a

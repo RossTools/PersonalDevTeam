@@ -42,6 +42,14 @@ once.
 - **Close…** ends a conversation: the PM first writes a short journal entry (what was done, what's still open), then
   the conversation becomes read-only. The newest ended ones are listed below the open ones, with **All ended
   conversations** for the rest.
+- **Reset…** starts a conversation fresh when it has grown long, and keeps it: the PM writes its journal entry, then a
+  new conversation takes its place with the same name, agent, model and permission mode, in the same spot in the list
+  and on screen. The new one starts from that journal entry. A **Previous conversation** link at its top opens the old
+  history read-only (after several resets, each links to the one before).
+
+Close or reset? **Close** when the topic is done: the conversation ends and later ones only see its journal. **Reset**
+when the topic carries on but the conversation has become slow or muddled: you keep the conversation and lose only its
+long history.
 
 A conversation doesn't end on its own. When it gets long, the agent condenses its own history and PDT asks it to write
 a journal checkpoint first, so nothing important is lost.

@@ -311,9 +311,24 @@ async fn tick_one(st: &AppState, mut w: Watch, inbox: &[pdt_core::inbox::InboxIt
     w.pending.sort_by_key(|n| n.at);
 
     let ending = finished && w.once;
-    let closed = match &w.session_id {
-        Some(sid) => conversation_closed(st, sid).await,
+    let closed = match w.session_id.clone() {
         None => false,
+        Some(sid) => match watcher(st, &sid).await {
+            Watcher::Open => false,
+            Watcher::Closed => true,
+            // Mid-reset: the news waits for the fresh conversation.
+            Watcher::Resetting => {
+                if before != (w.cursor, w.inbox_since, w.run_status.clone(), w.pending.len()) {
+                    st.store.set_watch_progress(&w).await?;
+                }
+                return Ok(());
+            }
+            Watcher::ResetTo(fresh) => {
+                follow(st, &sid, &fresh).await;
+                w.session_id = Some(fresh);
+                false
+            }
+        },
     };
     let (quiet, max) = st.watch_wait_ms;
     if !w.pending.is_empty() && (closed || ending || watch::due(&w.pending, now, quiet, max)) {
@@ -328,12 +343,36 @@ async fn tick_one(st: &AppState, mut w: Watch, inbox: &[pdt_core::inbox::InboxIt
     Ok(())
 }
 
-/// Whether a PM conversation is gone or closed (its rotation done).
-async fn conversation_closed(st: &AppState, sid: &str) -> bool {
+/// Where a watching PM conversation stands.
+enum Watcher {
+    Open,
+    /// Closed or gone: its news goes to the user.
+    Closed,
+    /// Being reset: the fresh conversation doesn't exist yet.
+    Resetting,
+    /// Reset: the fresh conversation that carries on from it.
+    ResetTo(String),
+}
+
+async fn watcher(st: &AppState, sid: &str) -> Watcher {
+    if st.pm_resets.lock().is_ok_and(|r| r.contains(sid)) {
+        return Watcher::Resetting;
+    }
     match st.store.get_pm_session(sid).await {
-        Ok(Some(row)) => row.rotation == Rotation::Done,
-        Ok(None) => !matches!(st.store.get_session(sid).await, Ok(Some(_))),
-        Err(_) => false,
+        Ok(Some(row)) if row.rotation != Rotation::Done => Watcher::Open,
+        Ok(Some(row)) if row.reason == Some(pdt_core::pm::RotateReason::Reset) => {
+            let rows = st.store.list_pm_sessions().await.unwrap_or_default();
+            match rows.into_iter().find(|r| r.reset_from.as_deref() == Some(sid)) {
+                Some(fresh) => Watcher::ResetTo(fresh.session_id),
+                // A reset that never made its fresh conversation.
+                None => Watcher::Closed,
+            }
+        }
+        Ok(Some(_)) => Watcher::Closed,
+        Ok(None) if matches!(st.store.get_session(sid).await, Ok(Some(_))) => Watcher::Open,
+        Ok(None) => Watcher::Closed,
+        // Unknown: try again next tick.
+        Err(_) => Watcher::Resetting,
     }
 }
 

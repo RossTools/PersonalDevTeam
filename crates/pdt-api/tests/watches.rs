@@ -198,22 +198,39 @@ async fn a_closed_conversations_watch_tells_the_user_and_ends() {
 }
 
 #[tokio::test]
-async fn watches_follow_a_conversation_that_takes_another_ones_place() {
+async fn watches_follow_a_reset_conversation() {
     let env = env().await;
     let t = ticket_id(&env).await;
     let old = start_pm(&env, "who").await;
     wait_said(&env, &old, 1).await;
     ask(&env, &old, r#"mcp: watch {"ticket": "PX-1", "events": ["outcome"]}"#).await;
-    let fresh = start_pm(&env, "who").await;
-    wait_said(&env, &fresh, 1).await;
-    pdt_api::follow_watches(&env.state, &old, &fresh).await;
-    use pdt_core::pm::Rotation;
-    env.state.store.set_pm_rotation(&old, Rotation::None, Rotation::Done, None, now()).await.unwrap();
+    // Reset, ticking the engine (and the watches) while it waits for the journal.
+    let (app, url) = (env.app.clone(), format!("/api/pm/sessions/{old}/reset"));
+    let reset = tokio::spawn(async move { call(&app, "POST", &url, None).await });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !reset.is_finished() {
+        assert!(Instant::now() < deadline, "the reset never answered");
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let (s, v) = reset.await.unwrap();
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let fresh = v["id"].as_str().unwrap().to_string();
+    let w = watches_of(&env, &t).await;
+    assert_eq!(w.len(), 1, "{w:?}");
+    assert_eq!(w[0]["sessionId"], fresh.as_str(), "the watch carried over");
+
     outcome(&env, &t, "submitted", "Carried over").await;
     let t1 = wait_told(&env, &fresh, 1).await;
     assert!(t1[0].ends_with("the Coder reported `submitted`: Carried over."), "{t1:?}");
     assert!(watch_notifications(&env.app).await.is_empty(), "not the user: the fresh conversation");
-    for id in [old, fresh] {
+
+    // Moved by hand too (anything else that puts a conversation in another's place).
+    let other = start_pm(&env, "who").await;
+    wait_said(&env, &other, 1).await;
+    pdt_api::follow_watches(&env.state, &fresh, &other).await;
+    assert_eq!(watches_of(&env, &t).await[0]["sessionId"], other.as_str());
+    for id in [old, fresh, other] {
         call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     }
 }

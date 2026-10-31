@@ -32,7 +32,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   told about its target without asking anyone, since it only tells the conversation that asked. Its messages still
   go through the outbox, and a closed conversation's go to the user's Inbox instead.
 - **Conversations are never auto-resumed**, and never as terminals. After a pdtd restart their running turn ends as
-  interrupted; the UI offers Continue. Only interrupted terminal sessions are resumed by themselves.
+  interrupted; the UI offers Continue. Only interrupted terminal sessions are resumed by themselves. Background
+  tasks a restart stopped (kept per session, `sessions.background_tasks`, moved to `stopped_background` by
+  `recover_conversations`) are told to the agent only along with the next message the user or a workflow sends
+  (pdt-api `conversations.rs` `tell_stopped_background`); a workflow step waiting on them gets that message at once,
+  as an automatic nudge (`workflow/agent.rs` `restarted_while_waiting`). Terminals don't report background tasks, so
+  their agents aren't told.
 - **Text from outside is fenced.** Issue and PR text, webhook payloads and other outside fields (`EventType.outside`)
   are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions that read untrusted
   input run locked down (`persona::locked_down`: read-only tools, no secrets).

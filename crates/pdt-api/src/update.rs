@@ -636,9 +636,9 @@ fn set_found(
     s.state = resting(s);
 }
 
-/// What makes the host busy (spec §3.3): agents working or of unknown activity, runs setting up. A store error
-/// counts as busy, so an automatic update never starts on a guess.
-pub(crate) async fn busy_reasons(st: &AppState) -> Vec<String> {
+/// What makes the host busy (spec §3.3): agents working, of unknown activity or waiting on background tasks, runs
+/// setting up. A store error counts as busy, so an automatic update never starts on a guess.
+pub async fn busy_reasons(st: &AppState) -> Vec<String> {
     let mut out = Vec::new();
     match st.store.list_sessions_by_status(SessionStatus::Running).await {
         Ok(sessions) => {
@@ -647,7 +647,12 @@ pub(crate) async fn busy_reasons(st: &AppState) -> Vec<String> {
                 match s.activity {
                     Some(Activity::Working) => out.push(format!("{name} is working")),
                     Some(Activity::Unknown) => out.push(format!("{name} may be working (activity unknown)")),
-                    _ => {}
+                    // Idle between turns, but an update would stop the tasks it waits on (PDT-311).
+                    _ => match crate::conversations::background(st, &s.id).filter(|b| b.live).map(|b| b.tasks.len()) {
+                        Some(1) => out.push(format!("{name} is waiting on 1 background task")),
+                        Some(n) if n > 1 => out.push(format!("{name} is waiting on {n} background tasks")),
+                        _ => {}
+                    },
                 }
             }
         }

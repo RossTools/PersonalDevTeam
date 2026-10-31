@@ -35,6 +35,13 @@ export function backgroundLine(tasks: { description: string }[]): string | null 
   return tasks.length === 1 ? `Running in the background: ${names}` : `${tasks.length} running in the background: ${names}`;
 }
 
+/** Background tasks a restart of PDT stopped: the agent hears of them with the next message (PDT-311). */
+export function stoppedLine(tasks: { description: string }[]): string | null {
+  if (tasks.length === 0) return null;
+  const names = tasks.map((t) => t.description || 'a task').join(', ');
+  return `Background tasks stopped by the restart: ${names}. The agent is told with your next message.`;
+}
+
 /**
  * An agent session shown as a conversation (spec §7): the message list over the composer. Sending also reopens a
  * parked, stopped or ended conversation, so there is no separate restart flow.
@@ -99,6 +106,7 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
   const interrupt = () => void runAction(() => api.interruptSession(session.id));
   const usage = latestUsage(conv.rows);
   const background = backgroundLine(state?.backgroundTasks ?? []);
+  const stopped = stoppedLine(state?.stoppedBackground ?? []);
   const searchFiles = useCallback((q: string) => api.sessionFiles(session.id, q), [session.id]);
   const upload = useCallback((file: File) => api.uploadAttachment(session.id, file), [session.id]);
   const imageUrl = useCallback((id: string) => api.attachmentUrl(session.id, id), [session.id]);
@@ -129,6 +137,11 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
       {background && (
         <p className="truncate px-4 pb-1 text-center text-meta text-muted-foreground" role="status" title={background}>
           {background}
+        </p>
+      )}
+      {stopped && (
+        <p className="truncate px-4 pb-1 text-center text-meta text-muted-foreground" role="status" title={stopped}>
+          {stopped}
         </p>
       )}
       {conv.status === 'reconnecting' && (

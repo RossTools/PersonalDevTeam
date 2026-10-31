@@ -456,6 +456,22 @@ describe('ConversationView', () => {
     expect(screen.queryByText(/in the background/)).not.toBeInTheDocument();
   });
 
+  it('says which background tasks a restart stopped, until the agent is told', () => {
+    stubApi({ 'GET /api/agents/claude/capabilities': caps });
+    renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
+    const ci = { id: 'b1', description: 'Wait for CI', kind: 'local_bash' };
+    act(() => {
+      server().open();
+      server().send({ type: 'state', state: { ...idle, stoppedBackground: [ci] } });
+      server().send({ type: 'ready' });
+    });
+    expect(
+      screen.getByText('Background tasks stopped by the restart: Wait for CI. The agent is told with your next message.'),
+    ).toBeInTheDocument();
+    act(() => server().send({ type: 'state', state: idle }));
+    expect(screen.queryByText(/stopped by the restart/)).not.toBeInTheDocument();
+  });
+
   it('answers requests, and says so when another device got there first', async () => {
     const calls = stubApi({
       'GET /api/agents/claude/capabilities': caps,

@@ -973,3 +973,175 @@ async fn the_briefing_names_the_project_s_release_workflow() {
     let text = instructions(&env, &on);
     assert!(text.contains("released with the workflow `Ship it`"), "{text}");
 }
+
+/// Resets a PM conversation, ticking the engine (which delivers the journal request) until the reset answers; the
+/// fresh conversation.
+async fn reset_pm(env: &Env, id: &str) -> Value {
+    let (app, url) = (env.app.clone(), format!("/api/pm/sessions/{id}/reset"));
+    let reset = tokio::spawn(async move { call(&app, "POST", &url, None).await });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !reset.is_finished() {
+        assert!(Instant::now() < deadline, "the reset never answered");
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let (s, v) = reset.await.unwrap();
+    assert_eq!(s, StatusCode::OK, "{v}");
+    v
+}
+
+/// PDT-308: Reset ends a conversation with its journal and starts a fresh one with its title, settings and place in
+/// the list, whose briefing leads with that journal; the old one stays readable.
+#[tokio::test]
+async fn a_reset_conversation_carries_on_fresh_with_its_name_settings_and_journal() {
+    let env = setup(None).await;
+    let first = start_pm(&env, "Plan the CB cutover").await;
+    wait_said(&env, &first, 1).await;
+    let said =
+        ask(&env, &first, r#"mcp: write_journal {"body": "We were planning the cutover. Still open: DNS."}"#).await;
+    assert!(said.contains("\"written\": true"), "{said}");
+    let (s, _) = call(&env.app, "PATCH", &format!("/api/pm/sessions/{first}"), Some(json!({"title": "Cutover"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    // Another conversation, more recently active, and the PM persona since switched to Codex.
+    let other = start_pm(&env, "Something newer").await;
+    wait_said(&env, &other, 1).await;
+    let (_, personas) = call(&env.app, "GET", "/api/personas", None).await;
+    let pm = personas.as_array().unwrap().iter().find(|p| p["builtin"] == "pm").unwrap().clone();
+    let mut setup = pm["setup"].clone();
+    setup["agent"] = json!("codex");
+    let (s, v) = call(&env.app, "PUT", &format!("/api/personas/{}", pm["id"].as_str().unwrap()), Some(setup)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let old = pm_info(&env, &first).await;
+    let order = |list: &Value| -> Vec<String> {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["open"] == true)
+            .map(|i| i["title"].as_str().unwrap().into())
+            .collect()
+    };
+    let (_, before) = call(&env.app, "GET", "/api/pm/sessions", None).await;
+    assert_eq!(order(&before), ["Something newer", "Cutover"]);
+
+    let fresh = reset_pm(&env, &first).await;
+    let id = fresh["id"].as_str().unwrap().to_string();
+    assert_ne!(id, first);
+    // The same title, agent, model, permission mode and persona.
+    assert_eq!(fresh["title"], "Cutover");
+    for key in ["agent", "model", "permissionMode", "bypassPermissions", "persona", "cwd"] {
+        assert_eq!(fresh[key], old["session"][key], "{key}");
+    }
+    assert_eq!(fresh["agent"], "claude", "not the persona's agent now");
+
+    // The old one asked for its journal, ended with reason `reset` and stays readable, unread by nobody.
+    assert!(agent_says(&env, &first).await.iter().any(|m| m.contains("The user is resetting this PM conversation")));
+    assert_eq!(pdt_says(&env, &first).await.last().unwrap().0, "journal", "the request shows collapsed");
+    let ended = pm_info(&env, &first).await;
+    assert_eq!((ended["open"].as_bool(), ended["rotation"].as_str()), (Some(false), Some("done")));
+    assert_eq!((ended["reason"].as_str(), ended["session"]["status"].as_str()), (Some("reset"), Some("finished")));
+    assert_eq!(ended["session"]["unseen"], false, "the journal turn is no reply");
+    assert_eq!(ended["journal"], "We were planning the cutover. Still open: DNS.");
+    assert!(user_says(&env, &first).await.contains(&"Plan the CB cutover".to_string()), "the transcript is kept");
+
+    // The fresh one knows where it came from, sits where the old one was, and starts from its journal first.
+    let info = pm_info(&env, &id).await;
+    assert_eq!((info["open"].as_bool(), info["resetFrom"].as_str()), (Some(true), Some(first.as_str())));
+    let (_, after) = call(&env.app, "GET", "/api/pm/sessions", None).await;
+    assert_eq!(order(&after), ["Something newer", "Cutover"], "no jump in the list");
+    assert_eq!(info["lastActivity"], old["lastActivity"]);
+    ask(&env, &id, "Where were we?").await;
+    let text = instructions(&env, &id);
+    let own = text.find("## This conversation before it was reset").expect(&text);
+    assert!(text[own..].contains("We were planning the cutover. Still open: DNS."), "{text}");
+    assert!(own < text.find("## Projects").unwrap(), "{text}");
+    assert!(!text.contains("- Cutover ("), "not listed as another open conversation: {text}");
+    assert_eq!(pm_info(&env, &id).await["title"], "Cutover", "its first message doesn't rename it");
+
+    // Resetting it again chains back one by one; resetting an ended one is refused.
+    let (s, _) = call(&env.app, "POST", &format!("/api/pm/sessions/{first}/reset"), None).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    let again = reset_pm(&env, &id).await;
+    let third = again["id"].as_str().unwrap().to_string();
+    assert_eq!(pm_info(&env, &third).await["resetFrom"], id.as_str());
+    assert_eq!(pm_info(&env, &id).await["resetFrom"], first.as_str());
+    let (s, _) = call(&env.app, "POST", "/api/pm/sessions/nope/reset", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    for id in [&other, &third] {
+        call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    }
+}
+
+/// PDT-308: a conversation that writes no journal in time ends with `(no journal)` before the fresh one starts; one
+/// that never said anything is reset at once.
+#[tokio::test]
+async fn a_reset_records_no_journal_after_its_wait() {
+    let env = setup_with(None, |st| st.pm_reset_wait_ms = 300).await;
+    let first = start_pm(&env, "hello").await;
+    wait_said(&env, &first, 1).await;
+    // Nothing ticks the engine: the journal request is never delivered.
+    let (s, fresh) = call(&env.app, "POST", &format!("/api/pm/sessions/{first}/reset"), None).await;
+    assert_eq!(s, StatusCode::OK, "{fresh}");
+    let ended = pm_info(&env, &first).await;
+    assert_eq!((ended["reason"].as_str(), ended["journal"].as_str()), (Some("reset"), Some("(no journal)")));
+    let id = fresh["id"].as_str().unwrap().to_string();
+    let text = std::fs::read_to_string(env.state.data_dir.join("sessions").join(&id).join("briefing.md")).unwrap();
+    assert!(text.contains("## This conversation before it was reset") && text.contains("(no journal)"), "{text}");
+    pdt_api::run_workflows(&env.state).await;
+    assert!(
+        !agent_says(&env, &first).await.iter().any(|m| m.contains("resetting")),
+        "the dropped request is never sent"
+    );
+
+    // One that never said anything has nothing to write down.
+    let (_, blank) = call(&env.app, "POST", "/api/pm/sessions", Some(json!({"title": "Blank"}))).await;
+    let blank = blank["id"].as_str().unwrap().to_string();
+    let (s, v) = call(&env.app, "POST", &format!("/api/pm/sessions/{blank}/reset"), None).await;
+    assert_eq!((s, v["title"].as_str()), (StatusCode::OK, Some("Blank")));
+    let info = pm_info(&env, &blank).await;
+    assert_eq!((info["reason"].as_str(), info["journal"].is_null()), (Some("reset"), true));
+    for id in [&id, v["id"].as_str().unwrap()] {
+        call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    }
+}
+
+/// PDT-308: a reset carries on when its caller goes away mid-way (a closed page, a dropped connection), and one that
+/// never finished (pdtd stopped mid-way) is listed as ended, not as resetting forever.
+#[tokio::test]
+async fn an_abandoned_reset_still_finishes_and_an_unfinished_one_counts_as_ended() {
+    let env = setup(None).await;
+    let first = start_pm(&env, "hello").await;
+    wait_said(&env, &first, 1).await;
+    let (app, url) = (env.app.clone(), format!("/api/pm/sessions/{first}/reset"));
+    let request = tokio::spawn(async move { call(&app, "POST", &url, None).await });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while pm_info(&env, &first).await["rotation"] != "journal" {
+        assert!(Instant::now() < deadline, "the reset never started");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let resetting = pm_info(&env, &first).await;
+    assert_eq!((resetting["open"].as_bool(), resetting["reason"].as_str()), (Some(true), Some("reset")));
+    request.abort();
+    let fresh = loop {
+        let (_, list) = call(&env.app, "GET", "/api/pm/sessions", None).await;
+        if let Some(i) = list.as_array().unwrap().iter().find(|i| i["resetFrom"] == first.as_str()) {
+            break i.clone();
+        }
+        assert!(Instant::now() < deadline, "the abandoned reset never finished: {list}");
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!((fresh["open"].as_bool(), fresh["title"].as_str()), (Some(true), Some("hello")));
+    assert_eq!(pm_info(&env, &first).await["open"], false);
+
+    // A reset cut short after its conversation ended, with no fresh one: ended, not "resetting".
+    let other = start_pm(&env, "again").await;
+    wait_said(&env, &other, 1).await;
+    let ended = pdt_core::pm::Rotation::Done;
+    let reset = Some(pdt_core::pm::RotateReason::Reset);
+    assert!(env.state.store.set_pm_rotation(&other, pdt_core::pm::Rotation::None, ended, reset, 1).await.unwrap());
+    let info = pm_info(&env, &other).await;
+    assert_eq!((info["open"].as_bool(), info["reason"].as_str()), (Some(false), Some("reset")));
+    for id in [fresh["session"]["id"].as_str().unwrap(), &other] {
+        call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    }
+}

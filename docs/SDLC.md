@@ -57,18 +57,18 @@ instance by hand (below).
 
 ## Checks before pushing
 
-Run in the worktree, all of them (CI runs the same set):
+Run `scripts/check.sh` in the worktree: it runs what CI runs, cheap checks first, and stops at the first failure.
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test                      # also regenerates web/src/api/gen; commit any changes there
-pnpm --dir web typecheck
-pnpm --dir web test
-pnpm --dir web build
-cargo clippy -p pdt-desktop --all-targets -- -D warnings   # only if desktop/ changed; needs the web build
-cargo test -p pdt-desktop                                  # likewise
+scripts/check.sh               # everything: changelog and version, the docs check and website, lint, web, cargo test
+scripts/check.sh --docs        # a docs-only change: the changelog, the docs check, the website's tests and build
+scripts/check.sh --no-rust     # skip fmt, clippy and cargo test; --no-web and --no-site skip those groups
+scripts/check.sh --only lint   # just some groups (changelog, site, lint, web, test); CI's lint and web jobs do this
 ```
+
+`cargo test` also regenerates web/src/api/gen (and the website's plugin list): commit them, or the check fails as CI
+would. When desktop/ changed, also run `cargo clippy -p pdt-desktop --all-targets -- -D warnings` and
+`cargo test -p pdt-desktop` (after the web build).
 
 **Watching CI:** usually unnecessary (auto-merge waits for it). When you do need a result, run the watch in the
 background (or with Monitor), not as a long foreground wait, and use the Actions run, not `gh pr checks`. The `gh` token here is fine-grained, and fine-grained tokens

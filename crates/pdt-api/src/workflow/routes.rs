@@ -175,6 +175,11 @@ pub struct SaveWorkflow {
     /// Propose the version instead (an agent's change): it waits for the user to accept it (Phase 7d spec §6.2).
     #[serde(default)]
     pub propose: bool,
+    /// Who proposes it (PDT-320): set by `workflow_save` from the agent's session, never by a request.
+    #[serde(skip)]
+    #[ts(skip)]
+    #[schemars(skip)]
+    pub by: Option<String>,
 }
 
 /// `PUT /api/workflows/{id}`: a new version, or with `propose` a proposal.
@@ -194,7 +199,7 @@ pub(crate) async fn save(
     }
     checked(&st, &doc)?;
     if s.propose {
-        st.store.propose_workflow_version(&id, &doc, Author::Agent, &s.note, now_ms()).await?;
+        st.store.propose_workflow_version(&id, &doc, Author::Agent, &s.note, s.by.as_deref(), now_ms()).await?;
     } else {
         st.store.save_workflow_version(&id, &doc, Author::User, &s.note, now_ms()).await?;
     }

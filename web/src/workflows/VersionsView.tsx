@@ -1,16 +1,23 @@
 // Versions (Phase 7d spec §6.2): every version with who wrote it, a diff against the current one, Restore, and Accept or
-// Discard for a version an agent proposed.
+// Discard for a version an agent proposed. The version's header (with its buttons) stays in view above its diff, which
+// wraps rather than widening the pane (PDT-320).
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, DiffViewer, EmptyState, RelativeTime, Skeleton, useConfirm } from '@ui';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { Alert, Badge, Button, DiffViewer, EmptyState, RelativeTime, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { Author } from '../api/gen/Author';
 import type { DocDiff } from '../api/gen/DocDiff';
 import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
 import type { WorkflowVersion } from '../api/gen/WorkflowVersion';
+import { useProposal } from './useProposal';
 
 const AUTHOR: Record<Author, string> = { user: 'You', builtin: 'PDT', repo: 'The repo file', agent: 'An agent' };
+
+/** Who wrote a version: an agent's proposal names the agent (its persona or session) when PDT knows it. */
+function author(v: WorkflowVersion): string {
+  return v.author === 'agent' && v.proposedBy ? v.proposedBy : AUTHOR[v.author];
+}
 
 function Summary({ d }: { d: DocDiff }) {
   const parts = [
@@ -27,12 +34,11 @@ export function VersionsView({ w, dirty, readOnly, onChanged, initial }: {
   w: WorkflowDetail;
   /** The draft has unsaved changes (Restore and Accept replace it). */
   dirty: boolean;
+  /** No Restore (a phone, or a workflow in the repo). Accept and Discard stay: deciding on a proposal is no editing. */
   readOnly?: boolean;
   onChanged: (d: WorkflowDetail) => void;
   initial?: number | null;
 }) {
-  const qc = useQueryClient();
-  const confirm = useConfirm();
   const versions = useQuery({ queryKey: ['workflow-versions', w.id], queryFn: () => api.workflowVersions(w.id) });
   const [picked, setPicked] = useState<number | null>(initial ?? null);
   const list = versions.data ?? [];
@@ -47,14 +53,8 @@ export function VersionsView({ w, dirty, readOnly, onChanged, initial }: {
     enabled: !!v && from !== to,
     staleTime: Infinity,
   });
-  const done = (d: WorkflowDetail) => {
-    qc.setQueryData(['workflow', w.id], d);
-    void qc.invalidateQueries({ queryKey: ['workflows'] });
-    void qc.invalidateQueries({ queryKey: ['workflow-versions', w.id] });
-    onChanged(d);
-  };
-  const replaceDraft = async (action: string) =>
-    !dirty || (await confirm({ title: `${action} and lose your unsaved changes?`, body: 'The editor has changes that are not saved.', action, danger: true })).ok;
+  const proposal = useProposal(w, dirty, (d) => { setPicked(null); onChanged(d); });
+  const { done, replaceDraft } = proposal;
   const restore = useMutation({
     mutationFn: async (n: number) => {
       const doc = (await api.workflowVersion(w.id, n)).doc!;
@@ -62,12 +62,10 @@ export function VersionsView({ w, dirty, readOnly, onChanged, initial }: {
     },
     onSuccess: done,
   });
-  const accept = useMutation({ mutationFn: (n: number) => api.acceptWorkflowVersion(w.id, n), onSuccess: (d) => { setPicked(null); done(d); } });
-  const discard = useMutation({ mutationFn: (n: number) => api.discardWorkflowVersion(w.id, n), onSuccess: (d) => { setPicked(null); done(d); } });
-  const error = restore.error ?? accept.error ?? discard.error;
+  const error = restore.error ?? proposal.error;
   if (versions.isLoading) return <Skeleton lines={6} className="p-3" />;
   return (
-    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
       <nav aria-label="Versions" className="max-h-56 shrink-0 overflow-auto border-b border-border md:max-h-none md:w-72 md:border-r md:border-b-0">
         <ul className="flex flex-col p-1">
           {list.map((x) => (
@@ -80,24 +78,25 @@ export function VersionsView({ w, dirty, readOnly, onChanged, initial }: {
                   {x.status === 'proposed' && <Badge tone="waiting">Proposed</Badge>}
                   {x.status === 'discarded' && <Badge tone="neutral">Discarded</Badge>}
                 </span>
-                <span className="truncate text-meta text-muted-foreground">{AUTHOR[x.author]} · <RelativeTime time={x.createdAt} />{x.note ? ` · ${x.note}` : ''}</span>
+                <span className="truncate text-meta text-muted-foreground">{author(x)} · <RelativeTime time={x.createdAt} />{x.note ? ` · ${x.note}` : ''}</span>
               </button>
             </li>
           ))}
         </ul>
       </nav>
-      <section aria-label="Version" className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
+      <section aria-label="Version" className="flex min-h-0 min-w-0 flex-1 flex-col">
         {!v ? <EmptyState>No versions.</EmptyState> : (
           <>
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-sm font-medium">
-                v{v.version}{v.version === w.version ? ' (current)' : ''} · {AUTHOR[v.author]}
+            {/* Outside the scrolling body: its buttons stay in view however long or wide the diff is. */}
+            <div role="toolbar" aria-label="Version actions" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+              <h3 className="min-w-0 text-sm font-medium">
+                v{v.version}{v.version === w.version ? ' (current)' : ''} · {author(v)}
               </h3>
               <span className="ml-auto flex gap-1">
-                {!readOnly && v.status === 'proposed' && (
+                {v.status === 'proposed' && w.source !== 'repo' && (
                   <>
-                    <Button size="sm" variant="secondary" pending={discard.isPending} onClick={() => discard.mutate(v.version)}>Discard</Button>
-                    <Button size="sm" variant="primary" pending={accept.isPending} onClick={async () => { if (await replaceDraft('Accept')) accept.mutate(v.version); }}>Accept</Button>
+                    <Button size="sm" variant="secondary" pending={proposal.discarding} onClick={() => proposal.discard(v.version)}>Discard</Button>
+                    <Button size="sm" variant="primary" pending={proposal.accepting} onClick={() => void proposal.accept(v.version)}>Accept</Button>
                   </>
                 )}
                 {!readOnly && v.status !== 'proposed' && v.version !== w.version && (
@@ -106,18 +105,23 @@ export function VersionsView({ w, dirty, readOnly, onChanged, initial }: {
                 )}
               </span>
             </div>
-            {v.status === 'proposed' && (
-              <Alert tone="info">An agent proposed this change. Accepting makes it the current version{w.enabled ? ', which runs from then on' : ''}.</Alert>
-            )}
-            {error && <Alert tone="error">{error.message}</Alert>}
-            {from === to ? <p className="text-sm text-muted-foreground">The first version.</p>
-              : diff.data ? (
-                <>
-                  <p className="text-meta text-muted-foreground">v{from} → v{to}</p>
-                  <Summary d={diff.data} />
-                  {diff.data.unified ? <DiffViewer diff={diff.data.unified} hideHeaders /> : <p className="text-sm text-muted-foreground">No differences.</p>}
-                </>
-              ) : diff.error ? <Alert tone="error">{diff.error.message}</Alert> : <Skeleton lines={6} />}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-auto p-3">
+              {v.status === 'proposed' && (
+                <Alert tone="info">
+                  {v.proposedBy ?? 'An agent'} proposed this change{v.note ? `: ${v.note.trim().replace(/[.!?]+$/, '')}.` : '.'} Accepting makes it the current
+                  version{w.enabled ? ', which runs from then on' : ''}.
+                </Alert>
+              )}
+              {error && <Alert tone="error">{error.message}</Alert>}
+              {from === to ? <p className="text-sm text-muted-foreground">The first version.</p>
+                : diff.data ? (
+                  <>
+                    <p className="text-meta text-muted-foreground">v{from} → v{to}</p>
+                    <Summary d={diff.data} />
+                    {diff.data.unified ? <DiffViewer diff={diff.data.unified} hideHeaders wrap /> : <p className="text-sm text-muted-foreground">No differences.</p>}
+                  </>
+                ) : diff.error ? <Alert tone="error">{diff.error.message}</Alert> : <Skeleton lines={6} />}
+            </div>
           </>
         )}
       </section>

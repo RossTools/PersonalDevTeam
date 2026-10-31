@@ -7,8 +7,8 @@ use pdt_core::project::{HOST_PROJECT_KEY, Project, ProjectKind};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{QueryBuilder, Row, Sqlite};
 
-const PM_SESSION_COLUMNS: &str =
-    "session_id, rotation, reason, created_at, ended_at, COALESCE(caught_up_at, created_at) AS caught_up_at, via";
+const PM_SESSION_COLUMNS: &str = "session_id, rotation, reason, created_at, ended_at, COALESCE(caught_up_at, created_at) AS caught_up_at, via, \
+     reset_from, listed_at";
 
 const NOTE_COLUMNS: &str = "n.id, n.project_id, n.kind, n.title, n.body, n.pinned, n.session_id, n.created_at, \
                             n.updated_at";
@@ -52,6 +52,11 @@ pub struct PmSessionRow {
     pub caught_up_at: i64,
     /// Where it is held besides PDT (PDT-304: `discord`).
     pub via: Option<String>,
+    /// The conversation it was reset from (PDT-308).
+    pub reset_from: Option<String>,
+    /// Where it sits in the list (PDT-308): a reset one's until it has activity of its own (the last activity of the one
+    /// it was reset from), and one being reset's while it writes its journal.
+    pub listed_at: Option<i64>,
 }
 
 fn to_pm_session(r: &SqliteRow) -> Result<PmSessionRow, StoreError> {
@@ -65,6 +70,8 @@ fn to_pm_session(r: &SqliteRow) -> Result<PmSessionRow, StoreError> {
         ended_at: r.try_get("ended_at")?,
         caught_up_at: r.try_get("caught_up_at")?,
         via: r.try_get("via")?,
+        reset_from: r.try_get("reset_from")?,
+        listed_at: r.try_get("listed_at")?,
     })
 }
 
@@ -207,6 +214,37 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// A PM session that is the reset of `from` (PDT-308), listed at `listed_at` until it has activity of its own.
+    pub async fn insert_pm_reset(
+        &self,
+        session_id: &str,
+        now: i64,
+        from: &str,
+        listed_at: i64,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO pm_sessions (session_id, created_at, reset_from, listed_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(session_id)
+        .bind(now)
+        .bind(from)
+        .bind(listed_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Keeps a PM session the user is resetting where it is in the list (`listed_at`, its last activity before the
+    /// reset) while it writes its journal (PDT-308).
+    pub async fn set_pm_listed_at(&self, session_id: &str, at: i64) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE pm_sessions SET listed_at = ? WHERE session_id = ?")
+            .bind(at)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Every PM session, newest first.
     pub async fn list_pm_sessions(&self) -> Result<Vec<PmSessionRow>, StoreError> {
         let sql = format!("SELECT {PM_SESSION_COLUMNS} FROM pm_sessions ORDER BY created_at DESC, session_id DESC");
@@ -323,7 +361,7 @@ mod tests {
         store.insert_pm_session("s1", 10).await.unwrap();
         let row = store.get_pm_session("s1").await.unwrap().unwrap();
         assert_eq!((row.rotation, row.reason, row.ended_at, row.caught_up_at), (Rotation::None, None, None, 10));
-        assert_eq!(row.via, None);
+        assert_eq!((row.via, row.reset_from, row.listed_at), (None, None, None));
         // Held in Discord's DMs too (PDT-304).
         assert!(store.set_pm_via("s1", Some("discord")).await.unwrap());
         assert_eq!(store.get_pm_session("s1").await.unwrap().unwrap().via.as_deref(), Some("discord"));
@@ -346,5 +384,14 @@ mod tests {
         store.insert_note(&j).await.unwrap();
         assert_eq!(store.session_journal("s1").await.unwrap().map(|n| n.id).as_deref(), Some("j"));
         assert_eq!(store.list_pm_sessions().await.unwrap().len(), 1);
+
+        // A reset (PDT-308): the new one knows the one it carries on from, and the list position it keeps.
+        let s2 = pdt_core::session::Session { project_id: h.id.clone(), ..crate::sessions::tests::session("s2", 20) };
+        store.insert_session(&s2).await.unwrap();
+        store.insert_pm_reset("s2", 20, "s1", 12).await.unwrap();
+        let row = store.get_pm_session("s2").await.unwrap().unwrap();
+        assert_eq!((row.reset_from.as_deref(), row.listed_at), (Some("s1"), Some(12)));
+        assert!(store.set_pm_listed_at("s1", 12).await.unwrap());
+        assert_eq!(store.get_pm_session("s1").await.unwrap().unwrap().listed_at, Some(12));
     }
 }

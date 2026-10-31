@@ -39,6 +39,11 @@ fn prompt_key(step_id: &str) -> String {
     format!("{PROMPT_KEY}{step_id}")
 }
 
+/// The dedupe key of the notice a step gets when a restart stopped the background tasks it waited on (PDT-311).
+fn restart_key(step_id: &str) -> String {
+    format!("restarted:{step_id}")
+}
+
 /// What an agent node's step resolves to before it starts.
 pub(crate) struct Target {
     project_id: String,
@@ -536,6 +541,7 @@ async fn new_session(
             step_id: Some(cx.step.id.clone()),
         }),
         cwd,
+        id: None,
     };
     let s = crate::sessions::create_session(st, req).await.map_err(|e| e.message().to_string())?;
     if let Some((ticket_id, _, _)) = &t.ticket {
@@ -561,6 +567,8 @@ struct Delivery {
 
 const USER: Delivery = Delivery { by_user: true, reopens: true };
 const PDT: Delivery = Delivery { by_user: false, reopens: false };
+/// PDT's own message that reopens the conversation a restart interrupted (PDT-311).
+const PDT_REOPENS: Delivery = Delivery { by_user: false, reopens: true };
 
 /// Queues a message to a session through the outbox (7a's delivery rule: never into a running turn).
 async fn queue_message(
@@ -1161,6 +1169,32 @@ async fn background_settled(st: &AppState, session_id: &str, step_id: &str) {
     outcome_less_turn(st, a, &step, session_id).await;
 }
 
+/// PDT restarted while the step waited on background tasks (PDT-311): they died with the agent's process and will
+/// never report back. The agent is told so, its conversation reopening to take it (an automatic nudge); with none
+/// left, the step stalls saying why.
+async fn restarted_while_waiting(st: &AppState, mut a: AgentStep, session: &Session) {
+    if a.nudges >= a.auto_nudges {
+        let why = format!("PDT restarted while it waited on background tasks: {}.", a.background.join(", "));
+        return stall(st, a, &why).await;
+    }
+    let stopped = crate::conversations::take_stopped_background(st, &session.id).await;
+    let tasks: Vec<String> =
+        if stopped.is_empty() { a.background.clone() } else { stopped.into_iter().map(|t| t.description).collect() };
+    a.nudges += 1;
+    a.background_since = None;
+    a.background.clear();
+    a.updated_at = now_ms();
+    if let Err(e) = st.store.put_agent_step(&a).await {
+        return tracing::warn!(step = %a.step_id, error = %e, "could not write an agent step's binding");
+    }
+    let text = pdt_core::conversation::restart_notice(&tasks);
+    let key = Some(restart_key(&a.step_id));
+    if let Err(e) = queue_message(st, session, &text, key, a.ticket_id.clone(), PDT_REOPENS).await {
+        tracing::warn!(session = %session.id, error = %e, "could not tell a step its background tasks stopped");
+    }
+    tracing::info!(step = %a.step_id, tasks = tasks.len(), "a restart stopped the background tasks a step waited on");
+}
+
 /// Why a step that waited on background tasks too long stalls.
 fn background_why(a: &AgentStep, now: i64) -> String {
     let mins = (now - a.background_since.unwrap_or(now)).max(0) / 60_000;
@@ -1258,6 +1292,18 @@ pub(crate) async fn sweep(st: &AppState) {
             }
             continue;
         }
+        // Waiting on background tasks when PDT restarted (PDT-311): the agent is told they stopped, not left waiting.
+        if a.state == AgentStepState::Working
+            && a.background_since.is_some()
+            && let Some(sid) = a.session_id.as_deref()
+            && let Ok(Some(s)) = st.store.get_session(sid).await
+            && s.mode == SessionMode::Conversation
+            && s.status == SessionStatus::Interrupted
+            && waiting_step(st, &a).await.is_ok()
+        {
+            restarted_while_waiting(st, a, &s).await;
+            continue;
+        }
         // The step's message to a reused session (PDT-144): while it waits to go in (a conversation a restart
         // interrupted reopens to take it, a terminal about to resume waits for it), the step waits too; one that never
         // reached the session since the step last went on (a Nudge) stalls it at once, saying so.
@@ -1267,7 +1313,16 @@ pub(crate) async fn sweep(st: &AppState) {
             }
             _ => None,
         };
-        let on_its_way = prompt.as_ref().is_some_and(|m| m.status == "waiting" || m.status == "sending");
+        // So is the notice that a restart stopped its background tasks, on its way to reopen it (PDT-311).
+        let notice = match (&a.state, &a.session_id) {
+            (AgentStepState::Working, Some(sid)) => {
+                st.store.latest_session_message(sid, &restart_key(&a.step_id)).await.ok().flatten()
+            }
+            _ => None,
+        };
+        let on_its_way = [&prompt, &notice]
+            .iter()
+            .any(|m| m.as_ref().is_some_and(|m| m.status == "waiting" || m.status == "sending"));
         let untold = prompt
             .as_ref()
             .filter(|m| m.status == "untold" && m.resolved_at.unwrap_or(0) >= a.updated_at)
@@ -1462,6 +1517,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         // Answered by `inbox::answer`, which knows whether the user's own click sent it.
         InboxKind::Admit => Err("approve or reject a triaged ticket from PDT's Inbox".into()),
         InboxKind::Confirm => Err("allow or deny an agent's call from PDT's Inbox".into()),
+        InboxKind::Proposal => Err("accept or discard a workflow proposal from PDT's Inbox".into()),
     }
 }
 

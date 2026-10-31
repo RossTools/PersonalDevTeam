@@ -27,4 +27,8 @@ billing?: string,
 /**
  * Background tasks still running.
  */
-backgroundTasks: Array<BackgroundTask>, };
+backgroundTasks: Array<BackgroundTask>, 
+/**
+ * Background tasks a restart of PDT stopped, until the agent is told (with the next message, PDT-311).
+ */
+stoppedBackground?: Array<BackgroundTask>, };

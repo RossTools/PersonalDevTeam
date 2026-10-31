@@ -5,10 +5,19 @@ Instructions for coding agents (Claude Code reads this through CLAUDE.md, Codex 
 Personal command center for agentic development: tickets + pipeline board, Claude Code / Codex / Devin sessions, review, terminals.
 Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature specs beside it, plans in docs/superpowers/plans). Roadmap: this project's tickets in the stable PDT (key `PDT`; `curl -s '127.0.0.1:7420/api/tickets?project=<id>'`, ranked; the Board shows what is picked and in flight). Add or update tickets through the API when work finishes or new work turns up; docs/ROADMAP.md only points there.
 
+## Writing docs
+- **User docs (`docs/user`)**: what the user does and how PDT behaves, task-first and concise (style notes: docs/user/README.md).
+  - **Never** ticket keys (`PDT-123`), code paths, API routes, internal history ("before …", "we decided …"), or reasoning, unless the reason is core to how something works.
+  - The docs check (`pnpm --filter site check-docs`, in `scripts/check.sh`) catches some of this; the rest is on you.
+- **Developer guide (`docs/dev`)**: how the code works and the invariants. No ticket history or decision logs.
+- **Ticket keys and reasoning go in** the PR description, commit messages, code comments where useful, and the ticket itself.
+- **Changelog fragments**: one or two sentences for users, no ticket keys in the text.
+- **No design specs or plans in the repo**: don't add to `docs/superpowers/` or make `docs/**/specs` or `plans` folders. Designs go on the ticket (its description or comments).
+
 ## Workflow (full version: docs/SDLC.md)
 - Every change gets its own branch and worktree, created through the stable PDT so its sessions and Run know it: find the project id with `curl -s 127.0.0.1:7420/api/projects` (match `repoPath`), then `POST 127.0.0.1:7420/api/projects/<id>/worktrees` with `{"branch":"..."}`. That makes the branch (from `main`) and the folder `.worktrees/<branch, / replaced by ->`; `cd` in and start. Never commit on `main` in the main checkout.
 - A fresh worktree needs `pnpm install --frozen-lockfile` once, and its first cargo build is slow (empty `target/`).
-- Before pushing, run the CI checks: fmt, clippy, `cargo test` (commit web/src/api/gen), web typecheck/test/build.
+- Before pushing, run `scripts/check.sh`: what CI runs (changelog and version, the docs check and website, fmt, clippy, web typecheck/test/build, `cargo test`; commit web/src/api/gen). Docs-only changes: `scripts/check.sh --docs`. `--no-rust`, `--no-web`, `--no-site` skip groups (docs/SDLC.md "Checks before pushing").
 - Every PR adds a changelog fragment, `.changes/unreleased/<TICKET>.md`: front matter `kind: added | changed | fixed | breaking | internal`, then one or two sentences for people who use PDT (what changed for them, not the code). Several per ticket: `<TICKET>-<anything>.md`. Check with `scripts/changelog.sh check`. A PR that only changes docs, CI or tests gets the `no-changelog` label instead, or CI fails (docs/SDLC.md "Changelog").
 - CI (docs/superpowers/notes/ci.md): Linux checks on every PR; macOS checks in the merge queue (on a PR only with the `macos` label or a `.github/` change); Windows checks only with the `windows` label or a change to their files; bundles only on the release PR (and by hand, and from a release's tag). A merge to main runs no CI and ships no app (only pages.yml redeploys the website when `site/**` or `docs/**` changed): releases are deliberate (docs/SDLC.md "Releases"). The version is Cargo.toml's workspace version, repeated in tauri.conf.json (`scripts/version.sh check`); only a release PR changes it. Label a PR `windows` for any path, process or file-system change. Docs-only PRs (only `docs/**`, `site/**` and `*.md`, except the guides pdtd builds in) skip every job but `changes` and `site` (the website build, which runs whenever `site/**` or `docs/**` changes; pages.yml deploys it from main, site/README.md). Job names are the ruleset's required checks: don't rename them.
 - PR against `main`; the user tests the branch with Run → pdt. When the user says merge, `gh pr merge <n> --auto` (no `--squash`: the merge queue sets the method) instead of watching CI in a shell: once the PR's checks pass it joins main's merge queue, which runs CI again on main plus the PR and squash-merges it. The branch never needs updating with main; a PR the queue drops (a conflict with main or a failed queue run) needs fixing and merging again. Then clean up (docs/SDLC.md "After merge").
@@ -35,7 +44,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
 - desktop/src-tauri — Tauri v2 tray app
 - site/ — the project website (Astro + Starlight; landing page, and the docs read in place from docs/), on GitHub Pages: site/README.md
 - scripts/ — release-stable, macOS signing/notarizing, sidecar staging
-- docs/ — user/ (the user docs the website publishes; style notes in its README, no internal references: `pnpm --filter site check-docs`), SDLC.md, run-config.md, agent-guide.md and prompts/ (the last three are served by pdtd: edit them as product text), dev/ (the developer guide: architecture, invariants, testing), superpowers/ (specs, plans, notes)
+- docs/ — user/ (the user docs the website publishes; style notes in its README; rules above in "Writing docs"), SDLC.md, run-config.md, agent-guide.md and prompts/ (the last three are served by pdtd: edit them as product text), dev/ (the developer guide: architecture, invariants, testing), superpowers/ (specs, plans, notes)
 
 ## Commands
 - Rust: `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt`
