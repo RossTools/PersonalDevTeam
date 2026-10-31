@@ -1,6 +1,7 @@
 // One workflow (Phase 7d spec §2): the header (Enabled, Dry run, Run now, ⋯), the draft bar, and the Graph, Outline,
 // Text, Runs and Versions views. The three builder views edit one draft; Save makes a version. On a phone it is
-// view-only (PDT-120): Outline first, nothing that edits, and Enable/Disable under the top bar's ⋯.
+// view-only (PDT-120): Outline first, nothing that edits, and Enable/Disable under the top bar's ⋯; an agent's proposal
+// can still be accepted or discarded there (PDT-320).
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Redo2, Undo2 } from 'lucide-react';
@@ -29,6 +30,7 @@ import { scopeLabel } from './scope';
 import { TextView } from './TextView';
 import { copyExport } from './transfer';
 import { useCheck, useDraft } from './useDraft';
+import { useProposal } from './useProposal';
 import { VersionsView } from './VersionsView';
 
 export type WorkflowTab = 'graph' | 'outline' | 'text' | 'runs' | 'versions';
@@ -143,6 +145,7 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
   ] : null);
   const draft = useDraft(w.doc, `${w.id}:${w.version}`);
   const check = useCheck(draft.doc).data;
+  const proposal = useProposal(w, draft.dirty, () => draft.discard());
   const errors = hasErrors(check);
   // A node removed in another view (or by undo) closes its panel.
   useEffect(() => {
@@ -247,8 +250,18 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
         </Banner>
       )}
       {w.proposed !== null && (
-        <Banner tone="waiting" actions={<Button size="sm" variant="secondary" onClick={() => setTab('versions')}>Review</Button>}>
-          An agent proposed version {w.proposed}.
+        <Banner tone="waiting" actions={
+          <>
+            {tab !== 'versions' && <Button size="sm" variant="ghost" onClick={() => setTab('versions')}>Review</Button>}
+            {w.source !== 'repo' && (
+              <>
+                <Button size="sm" variant="secondary" pending={proposal.discarding} onClick={() => proposal.discard(w.proposed!)}>Discard</Button>
+                <Button size="sm" variant="primary" pending={proposal.accepting} onClick={() => void proposal.accept(w.proposed!)}>Accept</Button>
+              </>
+            )}
+          </>
+        }>
+          An agent proposed version {w.proposed}.{proposal.error ? ` ${proposal.error.message}` : ''}
         </Banner>
       )}
       {draft.dirty && (

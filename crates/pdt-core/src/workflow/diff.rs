@@ -46,6 +46,29 @@ pub fn diff(a: &WorkflowDoc, b: &WorkflowDoc, a_label: &str, b_label: &str) -> D
     d
 }
 
+impl DocDiff {
+    /// What changed, in a line (the Inbox's proposal item, PDT-320; the Versions tab says the same).
+    pub fn summary(&self) -> String {
+        let mut parts = vec![];
+        if !self.nodes_added.is_empty() {
+            parts.push(format!("added {}", self.nodes_added.join(", ")));
+        }
+        if !self.nodes_removed.is_empty() {
+            parts.push(format!("removed {}", self.nodes_removed.join(", ")));
+        }
+        if !self.nodes_changed.is_empty() {
+            parts.push(format!("changed {}", self.nodes_changed.join(", ")));
+        }
+        if !self.edges_added.is_empty() || !self.edges_removed.is_empty() {
+            parts.push(format!("{} edges added, {} removed", self.edges_added.len(), self.edges_removed.len()));
+        }
+        if self.meta_changed {
+            parts.push("name, description or settings changed".into());
+        }
+        if parts.is_empty() { "Only positions changed.".into() } else { parts.join(" · ") }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,5 +96,10 @@ mod tests {
         assert!(d.unified.starts_with("--- v1\n+++ v2\n"), "{}", d.unified);
         assert!(d.unified.contains("+  \"name\": \"w2\""));
         assert!(diff(&a, &a, "a", "a").unified.is_empty());
+        assert_eq!(
+            d.summary(),
+            "added new · removed gone · changed s · 1 edges added, 1 removed · name, description or settings changed"
+        );
+        assert_eq!(diff(&a, &a, "a", "a").summary(), "Only positions changed.");
     }
 }

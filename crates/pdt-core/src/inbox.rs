@@ -40,6 +40,9 @@ pub enum InboxKind {
     /// A call to one of PDT's asking tools from an agent that can't ask in its own prompt (Codex, Devin; PDT-256):
     /// Allow runs the call as the user's yes, Deny tells the agent no. Either way the agent hears the result.
     Confirm,
+    /// A workflow version an agent proposed (PDT-320): Accept or Discard. Not stored: listed while the proposal waits,
+    /// so it goes once it is accepted, discarded or replaced by a newer one.
+    Proposal,
 }
 
 impl InboxKind {
@@ -58,6 +61,7 @@ impl InboxKind {
             InboxKind::Connect => "connect",
             InboxKind::Admit => "admit",
             InboxKind::Confirm => "confirm",
+            InboxKind::Proposal => "proposal",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -75,6 +79,7 @@ impl InboxKind {
             Self::Connect,
             Self::Admit,
             Self::Confirm,
+            Self::Proposal,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -96,13 +101,15 @@ pub enum InboxGroup {
     Notice,
     /// Triaged tickets waiting for the user's approval (PDT-225).
     Admit,
+    /// Workflow versions agents proposed (PDT-320).
+    Proposal,
     Gate,
     /// A gate with `inbox: accept`: the work is done and waits for the user's Accept.
     Accept,
 }
 
 impl InboxGroup {
-    pub const ALL: [InboxGroup; 9] = [
+    pub const ALL: [InboxGroup; 10] = [
         InboxGroup::Question,
         InboxGroup::Approval,
         InboxGroup::Session,
@@ -110,6 +117,7 @@ impl InboxGroup {
         InboxGroup::LoopLimit,
         InboxGroup::Notice,
         InboxGroup::Admit,
+        InboxGroup::Proposal,
         InboxGroup::Gate,
         InboxGroup::Accept,
     ];
@@ -122,6 +130,7 @@ impl InboxGroup {
             InboxGroup::LoopLimit => "loop_limit",
             InboxGroup::Notice => "notice",
             InboxGroup::Admit => "admit",
+            InboxGroup::Proposal => "proposal",
             InboxGroup::Gate => "gate",
             InboxGroup::Accept => "accept",
         }
@@ -138,6 +147,7 @@ impl InboxGroup {
             InboxGroup::LoopLimit => "Loop limit",
             InboxGroup::Notice => "Unheard notices",
             InboxGroup::Admit => "Triaged tickets",
+            InboxGroup::Proposal => "Workflow proposals",
             InboxGroup::Gate => "Gates",
             InboxGroup::Accept => "Ready to accept",
         }
@@ -221,6 +231,21 @@ pub const REJECT: &str = "reject";
 pub const ALLOW: &str = "allow";
 /// An asking tool call's Deny.
 pub const DENY: &str = "deny";
+/// A workflow proposal's Accept: it becomes the current version (PDT-320).
+pub const ACCEPT: &str = "accept";
+/// A workflow proposal's Discard: it is set aside.
+pub const DISCARD: &str = "discard";
+
+/// A workflow proposal's item id (PDT-320): one per workflow and proposed version.
+pub fn proposal_id(workflow_id: &str, version: u32) -> String {
+    format!("proposal:{workflow_id}:{version}")
+}
+
+/// The workflow and version a proposal's item id names.
+pub fn parse_proposal_id(id: &str) -> Option<(&str, u32)> {
+    let (w, v) = id.strip_prefix("proposal:")?.rsplit_once(':')?;
+    Some((w, v.parse().ok()?)).filter(|(w, _)| !w.is_empty())
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -500,5 +525,16 @@ mod tests {
         assert_eq!(choice_outcome(NUDGE), None);
         assert_eq!(InboxGroup::parse("loop_limit"), Some(InboxGroup::LoopLimit));
         assert_eq!(InboxKind::parse(InboxKind::Stalled.as_str()), Some(InboxKind::Stalled));
+    }
+
+    #[test]
+    fn a_proposal_id_names_its_workflow_and_version() {
+        let id = proposal_id("01ab", 3);
+        assert_eq!(parse_proposal_id(&id), Some(("01ab", 3)));
+        assert_eq!(parse_proposal_id("proposal:01ab:x"), None);
+        assert_eq!(parse_proposal_id("proposal::3"), None);
+        assert_eq!(parse_proposal_id("gate:01ab:3"), None);
+        assert_eq!(InboxKind::parse("proposal"), Some(InboxKind::Proposal));
+        assert_eq!(InboxGroup::parse("proposal"), Some(InboxGroup::Proposal));
     }
 }

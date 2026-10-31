@@ -302,6 +302,7 @@ impl Store {
         doc: &WorkflowDoc,
         author: Author,
         note: &str,
+        by: Option<&str>,
         now: i64,
     ) -> Result<Option<u32>, StoreError> {
         let body = serde_json::to_string(doc).map_err(|e| corrupt("workflow doc", e))?;
@@ -314,8 +315,8 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         sqlx::query(
-            "INSERT INTO workflow_versions (workflow_id, version, doc, author, note, created_at, status) \
-             VALUES (?, ?, ?, ?, ?, ?, 'proposed')",
+            "INSERT INTO workflow_versions (workflow_id, version, doc, author, note, created_at, status, proposed_by) \
+             VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?)",
         )
         .bind(id)
         .bind(next)
@@ -323,6 +324,7 @@ impl Store {
         .bind(author.as_str())
         .bind(note)
         .bind(now)
+        .bind(by)
         .execute(&mut *tx)
         .await?;
         // The workflow's `updated_at` stays: a proposal changes nothing that runs until it is accepted, and a schedule
@@ -459,21 +461,22 @@ impl Store {
 
     /// Every version, newest first, without documents.
     pub async fn list_workflow_versions(&self, id: &str) -> Result<Vec<WorkflowVersion>, StoreError> {
-        let rows: Vec<(i64, String, String, String, i64)> = sqlx::query_as(
-            "SELECT version, author, status, note, created_at FROM workflow_versions WHERE workflow_id = ? \
+        let rows: Vec<(i64, String, String, String, Option<String>, i64)> = sqlx::query_as(
+            "SELECT version, author, status, note, proposed_by, created_at FROM workflow_versions WHERE workflow_id = ? \
              ORDER BY version DESC",
         )
         .bind(id)
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()
-            .map(|(v, author, status, note, created_at)| {
+            .map(|(v, author, status, note, proposed_by, created_at)| {
                 Ok(WorkflowVersion {
                     workflow_id: id.into(),
                     version: u32::try_from(v).unwrap_or(0),
                     author: Author::parse(&author).ok_or_else(|| corrupt("version author", &author))?,
                     status: VersionStatus::parse(&status).ok_or_else(|| corrupt("version status", &status))?,
                     note,
+                    proposed_by,
                     created_at,
                     doc: None,
                 })
@@ -1268,13 +1271,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = store_with_project(dir.path()).await;
         store.insert_workflow(&wf("w", Scope::Host, None), &doc("one"), Author::User, "").await.unwrap();
-        assert_eq!(store.propose_workflow_version("w", &doc("agent"), Author::Agent, "a", 7).await.unwrap(), Some(2));
+        assert_eq!(
+            store.propose_workflow_version("w", &doc("agent"), Author::Agent, "a", None, 7).await.unwrap(),
+            Some(2)
+        );
         let w = store.get_workflow("w").await.unwrap().unwrap();
         assert_eq!((w.name.as_str(), w.version, w.proposed), ("one", 1, Some(2)), "the current version stays");
         assert_eq!(w.updated_at, 5, "a proposal is no change to what runs (a schedule's baseline stays)");
         // A save meanwhile takes the next number; a newer proposal sets the older one aside.
         assert_eq!(store.save_workflow_version("w", &doc("mine"), Author::User, "", 8).await.unwrap(), Some(3));
-        assert_eq!(store.propose_workflow_version("w", &doc("agent 2"), Author::Agent, "", 9).await.unwrap(), Some(4));
+        assert_eq!(
+            store.propose_workflow_version("w", &doc("agent 2"), Author::Agent, "", Some("PM"), 9).await.unwrap(),
+            Some(4)
+        );
         assert_eq!(store.workflow_version_status("w", 2).await.unwrap(), Some(VersionStatus::Discarded));
         assert!(!store.accept_workflow_version("w", 2, 10).await.unwrap(), "a discarded one can't be accepted");
         assert!(store.accept_workflow_version("w", 4, 10).await.unwrap());
@@ -1282,6 +1291,8 @@ mod tests {
         assert_eq!((w.name.as_str(), w.version, w.proposed), ("agent 2", 4, None));
         let statuses: Vec<_> =
             store.list_workflow_versions("w").await.unwrap().iter().map(|v| (v.version, v.status)).collect();
+        let by: Vec<_> = store.list_workflow_versions("w").await.unwrap().into_iter().map(|v| v.proposed_by).collect();
+        assert_eq!(by, [Some("PM".to_string()), None, None, None], "who proposed it stays with the version");
         assert_eq!(
             statuses,
             [
@@ -1291,11 +1302,11 @@ mod tests {
                 (1, VersionStatus::Saved)
             ]
         );
-        assert_eq!(store.propose_workflow_version("w", &doc("x"), Author::Agent, "", 11).await.unwrap(), Some(5));
+        assert_eq!(store.propose_workflow_version("w", &doc("x"), Author::Agent, "", None, 11).await.unwrap(), Some(5));
         assert!(store.discard_workflow_version("w", 5).await.unwrap());
         assert!(!store.discard_workflow_version("w", 5).await.unwrap());
         assert_eq!(store.get_workflow("w").await.unwrap().unwrap().proposed, None);
-        assert_eq!(store.propose_workflow_version("nope", &doc("x"), Author::Agent, "", 11).await.unwrap(), None);
+        assert_eq!(store.propose_workflow_version("nope", &doc("x"), Author::Agent, "", None, 11).await.unwrap(), None);
     }
 
     #[tokio::test]

@@ -170,8 +170,11 @@ turn at once.
 questions, gates, stalled steps, secrets to enter, confirmations. An item's `title` is one line; a gate's question
 (Markdown) is in `body.question`, and `inbox::decorate` adds what is computed per request: ticket key and title,
 persona name, and a gate's `changeRequest` (its attempt's pull request, else the run trigger's or the ticket's external
-link that a forge plugin's `is_change_request_url` accepts, named by its `change_request_name`). Notifications
-(`notifications.rs`) are the transient kind.
+link that a forge plugin's `is_change_request_url` accepts, named by its `change_request_name`). Some items are not
+stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, and workflow proposals
+(`inbox::proposals`: one per workflow with a proposed version, id `proposal:<workflow>:<version>`, answered
+by `inbox::answer` with the Versions tab's accept and discard). Notifications (`notifications.rs`) are the transient
+kind.
 
 **Secrets.** Values live in the OS keychain (or, on Linux without a Secret Service, a file only the user can read) and
 in memory; agents and workflows refer to them by name (`run_with_secrets`, `write_secret_file`, `{{secret.x}}` in a
