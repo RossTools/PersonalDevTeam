@@ -65,6 +65,9 @@ pub struct AppState {
     /// with no network ([`pdt_github::GithubApi::offline`]); only pdtd's production wiring installs one that reaches
     /// GitHub; a test sets a fake (`pdt_forge::HostedForge`). The forge logins sign the plugins in (PDT-244).
     pub forges: pdt_forge::ForgeRegistry,
+    /// PDT's own document providers (PDT-314); the enabled integrations add theirs (`crate::documents::providers`).
+    /// `new` has none; a test sets a fake (`crate::documents::testing::FakeProvider`).
+    pub documents: crate::documents::DocumentProviders,
     /// The keychain account of this instance's forge logins (see `secrets::forge_logins_account`), kept apart from
     /// the stable instance's as `update_token_account` is.
     pub forge_logins_account: String,
@@ -233,6 +236,7 @@ impl AppState {
             forges: pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_github::plugin::GithubPlugin::new(
                 std::sync::Arc::new(pdt_github::GithubApi::offline()),
             ))]),
+            documents: Default::default(),
             forge_logins_account,
             github_account,
             github_client_id: pdt_core::brand::GITHUB_OAUTH_CLIENT_ID.into(),
@@ -457,6 +461,10 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
             "/projects/{id}/settings",
             get(crate::project_settings::get_settings).put(crate::project_settings::put_settings),
         )
+        .route(
+            "/projects/{id}/document-settings",
+            get(crate::documents::routes::get_settings).put(crate::documents::routes::put_settings),
+        )
         .route("/projects/{id}/run-config", get(crate::runconfig::get_config))
         .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))
         .route("/projects/{id}/sessions", get(sessions::list))
@@ -494,6 +502,26 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
             "/tickets/{id}/attachments/{attachment_id}",
             get(crate::ticket_attachments::get).delete(crate::ticket_attachments::remove),
         )
+        .route("/tickets/{id}/design-doc", axum::routing::post(crate::documents::routes::design))
+        .route("/documents", get(crate::documents::routes::list).post(crate::documents::routes::create))
+        .route("/documents/import", axum::routing::post(crate::documents::routes::import))
+        .route("/documents/providers", get(crate::documents::routes::list_providers))
+        .route("/documents/providers/{provider}/files", get(crate::documents::routes::search))
+        .route(
+            "/documents/{id}",
+            get(crate::documents::routes::get)
+                .patch(crate::documents::routes::rename)
+                .delete(crate::documents::routes::remove),
+        )
+        .route(
+            "/documents/{id}/links",
+            axum::routing::post(crate::documents::routes::link).delete(crate::documents::routes::unlink),
+        )
+        .route("/documents/{id}/content", get(crate::documents::routes::content))
+        .route("/documents/{id}/edits", axum::routing::post(crate::documents::routes::edit))
+        .route("/documents/{id}/comments", get(crate::documents::routes::comments))
+        .route("/documents/{id}/comments/{comment}/replies", axum::routing::post(crate::documents::routes::reply))
+        .route("/documents/{id}/comments/{comment}/resolve", axum::routing::post(crate::documents::routes::resolve))
         .route("/tickets/{id}/parts", axum::routing::post(crate::parts::create))
         .route("/tickets/{id}/start", axum::routing::post(crate::start::start))
         .route("/tickets/{id}/refine", axum::routing::post(crate::tickets::refine))

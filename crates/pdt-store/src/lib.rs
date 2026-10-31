@@ -1,4 +1,5 @@
 mod attachments;
+mod documents;
 mod error;
 mod event_log;
 mod events;
@@ -20,6 +21,7 @@ mod workspaces;
 mod worktrees;
 
 pub use attachments::AddAttachment;
+pub use documents::{AddDocument, DocumentLink};
 pub use error::StoreError;
 pub use event_log::{EVENT_RETENTION_MS, EventFilter};
 pub use events::{NewEvent, RAW_RETENTION_MS};

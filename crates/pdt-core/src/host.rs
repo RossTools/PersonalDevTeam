@@ -135,6 +135,11 @@ pub struct HostSettings {
     /// persona's) starts with it; an agent without one uses the agent's own default (`HostSettings::model_for`).
     #[ts(type = "Partial<Record<AgentKind, string>>")]
     pub agent_models: std::collections::BTreeMap<AgentKind, String>,
+    /// The provider new documents go to (PDT-314) unless their project names one; none: the first PDT has.
+    pub documents_provider: Option<String>,
+    /// Where local documents go (a full path, or `~/…`) unless their project names a folder; none: `documents` in
+    /// PDT's data folder.
+    pub documents_dir: Option<String>,
 }
 
 /// A GitHub `owner/name`: two non-empty parts of letters, digits, `-`, `_` and `.`, neither `.` nor `..`.
@@ -173,6 +178,8 @@ impl Default for HostSettings {
             acp_programs: Default::default(),
             disabled_agents: Vec::new(),
             agent_models: Default::default(),
+            documents_provider: None,
+            documents_dir: None,
         }
     }
 }
@@ -268,6 +275,14 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional, type = "Partial<Record<AgentKind, string>>")]
     pub agent_models: Option<std::collections::BTreeMap<AgentKind, String>>,
+    /// Blank clears it (back to the first provider PDT has).
+    #[serde(default)]
+    #[ts(optional)]
+    pub documents_provider: Option<String>,
+    /// Blank clears it (back to PDT's data folder).
+    #[serde(default)]
+    #[ts(optional)]
+    pub documents_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -296,6 +311,10 @@ pub enum HostSettingsError {
     UnknownAgent,
     #[error("{0} is the default agent: pick another default before switching it off")]
     DefaultAgentOff(String),
+    #[error("that isn't a document provider's id")]
+    BadDocumentsProvider,
+    #[error("the documents folder must be a full path (or start with ~ for your home folder)")]
+    BadDocumentsDir,
     #[error("{0}")]
     BadAcpAgent(#[from] crate::acp_agent::AcpAgentError),
 }
@@ -388,6 +407,17 @@ impl HostSettings {
         }
         if let Some(b) = p.bug_reports {
             s.bug_reports = b;
+        }
+        if let Some(raw) = &p.documents_provider {
+            let id = raw.trim();
+            if !id.is_empty() && !crate::document::is_provider_id(id) {
+                return Err(HostSettingsError::BadDocumentsProvider);
+            }
+            s.documents_provider = (!id.is_empty()).then(|| id.to_string());
+        }
+        if let Some(raw) = &p.documents_dir {
+            s.documents_dir =
+                crate::document::clean_folder(Some(raw)).map_err(|_| HostSettingsError::BadDocumentsDir)?;
         }
         if let Some(r) = &p.release_repo {
             let r = r.trim();
@@ -876,5 +906,31 @@ mod tests {
         assert_eq!(s.projects_dir.as_deref(), Some("~/code"));
         let bad = s.apply(&HostSettingsPatch { projects_dir: Some("code".into()), ..patch() });
         assert_eq!(bad, Err(HostSettingsError::BadProjectsDir));
+    }
+
+    #[test]
+    fn the_documents_settings_are_set_and_cleared() {
+        let s = HostSettings::default()
+            .apply(&HostSettingsPatch {
+                documents_provider: Some(" google ".into()),
+                documents_dir: Some("~/Documents/pdt".into()),
+                ..patch()
+            })
+            .unwrap();
+        assert_eq!(s.documents_provider.as_deref(), Some("google"));
+        assert_eq!(s.documents_dir.as_deref(), Some("~/Documents/pdt"));
+        let s = s
+            .apply(&HostSettingsPatch {
+                documents_provider: Some("".into()),
+                documents_dir: Some(" ".into()),
+                ..patch()
+            })
+            .unwrap();
+        assert_eq!((s.documents_provider, s.documents_dir), (None, None));
+        let bad = HostSettings::default().apply(&HostSettingsPatch { documents_dir: Some("docs".into()), ..patch() });
+        assert_eq!(bad, Err(HostSettingsError::BadDocumentsDir));
+        let bad =
+            HostSettings::default().apply(&HostSettingsPatch { documents_provider: Some("A B".into()), ..patch() });
+        assert_eq!(bad, Err(HostSettingsError::BadDocumentsProvider));
     }
 }

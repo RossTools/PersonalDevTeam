@@ -8,7 +8,7 @@ fails. This README is not published.
 | Folder | Section |
 | --- | --- |
 | `getting-started/` | Getting started: install, first run, connecting agents and GitHub, a first project and ticket |
-| `using-pdt/` | Using PDT: tickets and the board, workspaces and sessions, review and merge, the Inbox |
+| `using-pdt/` | Using PDT: tickets and the board, workspaces and sessions, review and merge, the Inbox, documents |
 | `automation/` | Automation: workflows, the PM, personas and approvals, plugins, run configuration, outside contributions |
 | `your-machine/` | Your machine: running and updating PDT, remote access and the phone, GitHub, secrets, settings, data |
 | `troubleshooting/` | Troubleshooting & FAQ |

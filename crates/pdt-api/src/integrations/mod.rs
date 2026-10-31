@@ -193,6 +193,11 @@ pub trait Integration: Send + Sync {
         None
     }
 
+    /// The document providers it provides (PDT-314: Google's Docs and Sheets), used while it is enabled.
+    fn document_providers(&self) -> Vec<Arc<dyn crate::documents::DocumentProvider>> {
+        Vec::new()
+    }
+
     /// The forge it provides (PDT-241), if it is one: the forge plugin of this kind in [`AppState::forges`] is used
     /// while it is enabled, and Settings → Plugins shows its login's state.
     fn forge_kind(&self) -> Option<pdt_core::forge::ForgeKind> {

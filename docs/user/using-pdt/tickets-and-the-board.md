@@ -52,6 +52,12 @@ Limits: PNG, JPEG, GIF and WebP images up to 10 MB; plain-text files (`.txt`, `.
 Agents working on the ticket can open its attachments, QA can attach screenshots of what it tried, and
 [the PM](../automation/the-pm.md) can attach an image you paste into its chat.
 
+## Design docs and other documents
+
+A ticket's **Documents** section lists the docs and sheets linked to it. **Create design doc** makes one from a short
+template and links it; **Add** links one PDT already has, makes a new one or imports one. Agents working on the ticket
+read its design doc first. See [Documents](documents.md).
+
 ## Priority and labels
 
 **Priority** (**Urgent**, **High**, **Medium**, **Low**, **No priority**) sorts and groups the backlog and, by default,

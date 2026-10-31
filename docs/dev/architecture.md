@@ -194,6 +194,18 @@ RossTools organization with Device Flow on and token expiry off. To register ano
 GitHub → Settings → Developer settings → OAuth Apps → New OAuth App, any callback URL (the device flow never calls
 it), tick **Enable Device Flow**, and put its client ID in `brand.rs`; no client secret is needed.
 
+**Documents.** Docs and sheets kept by a provider, linked to projects and tickets. PDT keeps a record of
+each (`documents`, `document_projects`, `document_tickets`; pdt-store `documents.rs`) and asks the provider for the
+rest. A provider implements pdt-api's `documents::DocumentProvider` (like a forge, it declares
+`ProviderCapabilities`: list and read always; search, create, edit, rename, delete, comments and an embed URL when
+it can) and comes from `AppState::documents` (PDT's own) or an enabled integration's
+`Integration::document_providers`. The provider and local folder of a new document are the project's
+(`project_document_settings`), else the host's (`HostSettings::documents_provider`, `documents_dir`), else the first
+provider and `<data dir>/documents` (pdt-core `document.rs`, pure). `documents::testing::FakeProvider` keeps
+documents in memory for tests; with `PDT_SEED=demo` a dev pdtd registers one as "Sample". The routes are in
+`documents/routes.rs`; `get_ticket` lists a ticket's documents and the ticket section of the instructions says to read
+its design doc.
+
 **GitLab.** An optional plugin (`crates/pdt-int-gitlab`, pdtd's `gitlab` feature) over GitLab's REST API (v4), for
 gitlab.com and self-hosted servers; nothing runs `glab`. It claims `origin` remotes on gitlab.com and on each host it
 has a login for (one account per host, a token with the `api` scope, or the device flow with `PDT_GITLAB_CLIENT_ID`),
@@ -218,6 +230,7 @@ login.
 | pdt-mcp and personas | pdt-api `mcp/`, `personas.rs`; pdt-core `persona.rs`, `mcp.rs` | `web/src/personas` |
 | Workflows, Inbox, notifications | pdt-api `workflow/`, `inbox.rs`, `notifications.rs`; pdt-core `workflow/`; pdt-store `workflows.rs`, `event_log.rs` | `web/src/workflows`, `web/src/inbox`, `web/src/notifications` |
 | Integrations | pdt-api `sdk.rs`, `integrations/`; `crates/pdt-int-*`; pdtd `src/integrations/` | `web/src/plugins`, `web/src/connections` |
+| Documents | pdt-api `documents/`; pdt-core `document.rs`; pdt-store `documents.rs` | `web/src/documents` |
 | The PM | pdt-api `pm.rs`; pdt-core `pm.rs`; pdt-store `pm.rs` | `web/src/pm` |
 | Secrets | pdt-api `vault.rs`, `secrets.rs`; pdt-core `secret.rs` | `web/src/secrets` |
 | Database | `crates/pdt-store` (`migrations/`, `migrate.rs`) | |

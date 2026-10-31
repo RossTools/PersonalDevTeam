@@ -25,7 +25,7 @@ for what they cover, and the API for the rest. Which tools a session has depends
 
 | Tool | Does |
 |---|---|
-| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history, `attachments` (each with a local `path`), earlier steps' outcomes, and in a workflow step the outcomes it allows |
+| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history, `attachments` (each with a local `path`), `documents` (each `{id, title, kind, provider, url, read}`; see "Documents"), earlier steps' outcomes, and in a workflow step the outcomes it allows |
 | `submit_outcome` | `{outcome, summary, comments?, data?}`: ends this session's workflow step; `comments` (`{file, line, endLine?, body}`) become line comments on the changes, `data` holds fields the step's prompt asks for. `submitted` is refused while the worktree has uncommitted changes to tracked files, or commits or a branch not pushed: commit and push first |
 | `ask_user` | `{questions: [{question, choices?}]}`: questions in the person's Inbox; the answers come back as a message, so end your turn |
 | `add_ticket_comment` | `{body, ticket?, files?}`: a comment on the ticket's timeline, by the agent, with files attached |
@@ -91,6 +91,20 @@ none.
 | `GET /api/tickets/<id>/attachments` | the attachments, oldest first |
 | `POST /api/tickets/<id>/attachments?name=<file name>` | the body is the file (its bytes decide the type); returns the attachment |
 | `GET` · `DELETE /api/tickets/<id>/attachments/<aid>` | the file (text as `text/plain`) · removes it |
+
+### Documents
+
+Design docs, plans and spreadsheets live outside the repo as documents, linked to projects and tickets. `get_ticket`
+lists the ticket's documents: read its design doc before you start. A doc reads as Markdown, a sheet as its sheets
+of cells (each with its `value` and, if it has one, its `formula`).
+
+| Call | Does |
+|---|---|
+| `GET /api/documents?ticket=<key>&project=<key>&kind=doc\|sheet&q=<words>` | documents, the most recently changed first, with their `projects` and `tickets` |
+| `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows}]}` |
+| `POST /api/documents/<id>/edits` | `{edits: [...]}`, in order: `{op: "replace_text", markdown}`, `{op: "append_text", markdown}`, `{op: "set_cells", sheet, cell: "B3", values: [["1", "=A1*2"]]}`, `{op: "add_sheet", name}` |
+| `GET /api/documents/<id>/comments` | its comments with their replies; `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves |
+| `POST /api/tickets/<id>/design-doc` | makes the ticket's design doc from the template, linked to it |
 
 ### Review feedback
 

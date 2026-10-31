@@ -30,6 +30,8 @@ export type Route =
    * (`/notes/<id>`) or a new one (`note: 'new'`, `/notes/new`). A note's path doesn't say whose it is.
    */
   | { view: 'notes'; memory: boolean; note: string | null }
+  /** Documents (PDT-314): the list, and one document by id (`/documents/<id>`). */
+  | { view: 'documents'; doc: string | null }
   | { view: 'workflows'; target: WorkflowTarget }
   | { view: 'personas'; personaId: string | null }
   /**
@@ -65,6 +67,8 @@ export function parseRoute(pathname: string, search = ''): Route {
       return { view: 'pm', pm: a ?? 'current' };
     case 'notes':
       return a === 'pm' ? { view: 'notes', memory: true, note: null } : { view: 'notes', memory: false, note: a };
+    case 'documents':
+      return { view: 'documents', doc: a };
     case 'sessions':
       return { view: 'sessions', workspaceId: a, tabId: a ? b : null };
     case 'inbox':
@@ -117,6 +121,8 @@ export function routePath(r: Route): string {
       return r.pm === 'current' ? '/pm' : `/pm/${enc(r.pm)}`;
     case 'notes':
       return r.note ? `/notes/${enc(r.note)}` : r.memory ? '/notes/pm' : '/notes';
+    case 'documents':
+      return r.doc ? `/documents/${enc(r.doc)}` : '/documents';
     case 'sessions':
       return r.workspaceId ? `/sessions/${enc(r.workspaceId)}${r.tabId ? `/${enc(r.tabId)}` : ''}` : '/sessions';
     case 'inbox':
@@ -162,6 +168,7 @@ export function viewRoute(view: ViewId): Route {
     case 'inbox': return { view, itemId: null };
     case 'tickets': return { view, board: false, ticket: null };
     case 'notes': return { view, memory: false, note: null };
+    case 'documents': return { view, doc: null };
     case 'workflows': return { view, target: null };
     case 'personas': return { view, personaId: null };
     case 'files': return { view, path: null, project: null, worktree: null };
@@ -182,6 +189,7 @@ export function isDetail(r: Route): boolean {
     case 'inbox': return r.itemId !== null;
     case 'tickets': return r.ticket !== null;
     case 'notes': return r.note !== null;
+    case 'documents': return r.doc !== null;
     case 'workflows': return r.target !== null;
     case 'personas': return r.personaId !== null;
     case 'files': return r.path !== null;

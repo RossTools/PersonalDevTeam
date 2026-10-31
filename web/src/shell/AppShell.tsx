@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, NotebookPen, PanelBottom, Plus } from 'lucide-react';
+import { ChevronDown, FileText, NotebookPen, PanelBottom, Plus } from 'lucide-react';
 import { api } from '../api/client';
 import { branchUrl } from '../projects/forgeLinks';
 import { Button, EmptyState, IconButton, Link, List, ListRow, Sheet, Skeleton, useConfirm, useThemePref, type MenuEntry } from '@ui';
@@ -69,6 +69,8 @@ import { PmList } from '../pm/PmList';
 import { pmUnread, shownConversation, usePm, type PmSelection } from '../pm/usePm';
 import { NotesList } from '../notes/NotesList';
 import { useNotesFilters } from '../notes/useNotes';
+import { DocumentsList, useDocumentsFilters } from '../documents/DocumentsList';
+import { ImportDocumentDialog, NewDocumentDialog } from '../documents/DocumentDialogs';
 import type { Whose } from '../notes/model';
 import { useInbox } from '../inbox/useInbox';
 import { triageTitle } from '../inbox/model';
@@ -92,7 +94,7 @@ const CHOICE: Record<Exclude<NewKind, AcpKind>, Choice> = { claude: 'Claude', cl
 
 /** On a phone, the views whose list column is their top-level screen (PDT-112). The PM's and the Tickets' lists open
  * in a sheet instead: from ⋯ (earlier sessions) and from the title (projects and filters). */
-const PHONE_LIST_SCREENS: readonly ViewId[] = ['pm', 'sessions', 'inbox', 'notes', 'workflows', 'personas', 'files', 'settings'];
+const PHONE_LIST_SCREENS: readonly ViewId[] = ['pm', 'sessions', 'inbox', 'notes', 'documents', 'workflows', 'personas', 'files', 'settings'];
 
 /** The Settings page of plugins (PDT-228). */
 const PLUGINS = 'plugins';
@@ -129,6 +131,7 @@ const InboxView = lazy(() => import('../inbox/InboxView').then((m) => ({ default
 const PhoneInboxItem = lazy(() => import('../inbox/PhoneInbox').then((m) => ({ default: m.PhoneInboxItem })));
 const PersonaPage = lazy(() => import('../personas/PersonaPage').then((m) => ({ default: m.PersonaPage })));
 const PmView = lazy(() => import('../pm/PmView').then((m) => ({ default: m.PmView })));
+const DocumentPage = lazy(() => import('../documents/DocumentPage').then((m) => ({ default: m.DocumentPage })));
 const NoteScreen = lazy(() => import('../notes/NotePage').then((m) => ({ default: m.NoteScreen })));
 
 export function AppShell() {
@@ -225,6 +228,11 @@ export function AppShell() {
   const notesList = (whose: Whose): Route => ({ view: 'notes', memory: whose === 'note', note: null });
   const openNote = useCallback((id: string) => go({ view: 'notes', memory: false, note: id }), []);
   const newNote = () => go({ view: 'notes', memory: notes.whose === 'note', note: 'new' });
+  // The Documents view (PDT-314): the document on show, the list's filters, and New or Import open.
+  const documents = useDocumentsFilters();
+  const docId = route.view === 'documents' ? route.doc : null;
+  const openDoc = useCallback((id: string) => go({ view: 'documents', doc: id }), []);
+  const [docDialog, setDocDialog] = useState<'new' | 'import' | null>(null);
   const confirm = useConfirm();
   const inbox = useInbox();
   const inboxItems = inbox.data?.items ?? [];
@@ -632,6 +640,8 @@ export function AppShell() {
     <PmList selection={pmSelection} onSelect={(sel) => { setPmSelection(sel); setSheetOpen(false); }} onNew={newPmSession} />
   ) : view === 'notes' ? (
     <NotesList filters={notes} selectedId={noteId} onOpen={openNote} onNew={newNote} onWhose={(w) => go(notesList(w))} />
+  ) : view === 'documents' ? (
+    <DocumentsList filters={documents} selectedId={docId} onOpen={openDoc} onNew={() => setDocDialog('new')} onImport={() => setDocDialog('import')} />
   ) : view === 'personas' ? (
     <PersonasList selectedId={personaId} onSelect={(id) => { setPersonaId(id); setSheetOpen(false); }} />
   ) : view === 'tickets' ? (
@@ -725,6 +735,7 @@ export function AppShell() {
   : view === 'pm' && detail ? (pmSelection === 'earlier' ? 'Ended conversations' : pmSelection === 'new' ? 'New conversation'
     : shownConversation(pm.data?.sessions, pm.data?.current?.id, pmSelection)?.title ?? label)
   : view === 'notes' && detail ? (noteId === 'new' ? 'New note' : 'Note')
+  : view === 'documents' && detail ? 'Document'
   : label;
   function settingsTitle(): string {
     switch (settingsPage.kind) {
@@ -823,7 +834,7 @@ export function AppShell() {
             dots={{ inbox: unreadUpdates, pm: pmDot }}
             theme={{ value: theme, onChange: setTheme }}
           />
-          <aside aria-label={`${label} list`} className={cn('flex min-h-0 w-72 flex-col border-r border-border', view === 'notes' && 'w-80')}>
+          <aside aria-label={`${label} list`} className={cn('flex min-h-0 w-72 flex-col border-r border-border', (view === 'notes' || view === 'documents') && 'w-80')}>
             <div className="flex-1 overflow-auto px-1">{list}</div>
           </aside>
         </>
@@ -863,6 +874,14 @@ export function AppShell() {
             title={newTicket.title}
             onClose={() => setNewTicket(null)}
           /></Suspense>
+        )}
+        {docDialog === 'new' && (
+          <NewDocumentDialog projects={ws.projects} projectId={documents.project || null} onClose={() => setDocDialog(null)}
+            onCreated={(d) => { setDocDialog(null); openDoc(d.id); }} />
+        )}
+        {docDialog === 'import' && (
+          <ImportDocumentDialog projectId={documents.project || null} onClose={() => setDocDialog(null)}
+            onImported={(d) => { setDocDialog(null); openDoc(d.id); }} />
         )}
         {newIssue && (
           <Suspense fallback={null}><CreateIssueDialog projectId={newIssue.projectId} repo={newIssue.repo} onClose={() => setNewIssue(null)} /></Suspense>
@@ -946,6 +965,19 @@ export function AppShell() {
               ) : (
                 <EmptyState icon={<NotebookPen />} className="mt-16 border-0" action={<Button size="sm" onClick={newNote}>New note</Button>}>
                   {notes.whose === 'note' ? 'Pick a note from the PM’s memory, or add one.' : 'Pick a note, or start a new one.'}
+                </EmptyState>
+              )
+            ) : view === 'documents' ? (
+              docId ? (
+                <Suspense fallback={<Skeleton lines={8} className="p-4" />}><DocumentPage
+                  key={docId}
+                  id={docId}
+                  phone={phone}
+                  onGone={() => (phone ? goBack(routePath(viewRoute('documents'))) : go(viewRoute('documents'), { replace: true }))}
+                /></Suspense>
+              ) : (
+                <EmptyState icon={<FileText />} className="mt-16 border-0" action={<Button size="sm" onClick={() => setDocDialog('new')}>New document</Button>}>
+                  Pick a document, or make one.
                 </EmptyState>
               )
             ) : view === 'personas' ? (
