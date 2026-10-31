@@ -53,4 +53,12 @@ disabledAgents?: Array<AgentKind>,
 /**
  * Default models for the agents it names; the others keep theirs. Blank clears one (back to the agent's own).
  */
-agentModels?: Partial<Record<AgentKind, string>>, };
+agentModels?: Partial<Record<AgentKind, string>>, 
+/**
+ * Blank clears it (back to the first provider PDT has).
+ */
+documentsProvider?: string, 
+/**
+ * Blank clears it (back to PDT's data folder).
+ */
+documentsDir?: string, };

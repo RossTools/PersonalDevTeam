@@ -13,6 +13,7 @@ import { useProjectSettingsSections } from '../runs/ProjectSettingsPanel';
 import { SettingsScreens, type SettingsSection } from '../common/SettingsScreens';
 import { repoUrl } from './forgeLinks';
 import { useOpenChanges } from '../review/open';
+import { ProjectDocuments } from '../documents/DocumentSettings';
 
 /**
  * Name, key and base branch, each saved as it changes (PDT-231): text on blur or Enter, the branch at once. Folder and
@@ -214,6 +215,7 @@ export function ProjectPage({ project, onRemoved, drill = false, section = null,
     { label: 'General', node: <General project={project} onKeyChange={onKeyChange} /> },
     ...(project.kind !== 'personal' ? [{ label: 'Worktrees', node: <Worktrees project={project} /> }] : []),
     ...panel.sections,
+    { label: 'Documents', node: <ProjectDocuments project={project} /> },
     { label: 'Danger zone', node: <RemoveProject project={project} onRemoved={onRemoved} /> },
   ];
   return (

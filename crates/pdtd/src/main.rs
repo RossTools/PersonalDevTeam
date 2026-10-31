@@ -95,6 +95,14 @@ async fn run() -> anyhow::Result<()> {
     }
     let mut state = AppState::new(store.clone(), cfg.data_dir.clone());
     state.integrations = std::sync::Arc::new(pdt_api::Integrations::new(integrations::built()));
+    // The demo data has a document provider to try the Documents view with (PDT-314): it keeps them in memory, so
+    // what is made in it is gone after a restart. Its two sample files are there to import.
+    if cfg.profile == pdt_core::brand::Profile::Dev && cfg.seed == Some(config::Seed::Demo) {
+        let sample = pdt_api::documents::testing::FakeProvider::new("sample", "Sample (in memory)");
+        sample.put("Launch plan", pdt_core::document::DocumentKind::Doc, "# Launch plan\n\n## Goal\n\nShip it.\n");
+        sample.put("Budget", pdt_core::document::DocumentKind::Sheet, "");
+        state.documents = pdt_api::documents::DocumentProviders::new(vec![std::sync::Arc::new(sample)]);
+    }
     pdt_api::load_enabled_integrations(&state).await?;
     tracing::info!(built = ?state.integrations.built().iter().map(|i| i.id()).collect::<Vec<_>>(),
                    enabled = ?state.integrations.enabled(), "integrations");

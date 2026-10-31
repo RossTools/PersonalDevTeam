@@ -37,6 +37,7 @@ import {
 import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketId, useTicketPages } from './queries';
 import { LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle } from './TicketParts';
 import type { BacklogState } from './useBacklog';
+import { TicketDocuments } from './TicketDocuments';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Filter chips
@@ -309,6 +310,7 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirt
         <TicketDescription key={t.id} ticket={t} onDirtyChange={onDirtyChange} />
         <PartsSection ticket={t} />
         <TicketLinks ticket={t} />
+        <TicketDocuments ticket={t} />
         <TicketTimeline ticketId={t.id} recent={5} />
       </div>
     )

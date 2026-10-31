@@ -63,6 +63,12 @@ Agents working on the ticket see its attachments and open the images and files t
 of what it tried on the ticket, and [the PM](../automation/the-pm.md) can attach an image you paste into its chat
 to a ticket it creates or edits.
 
+## Design docs and other documents
+
+A ticket's **Documents** section lists the docs and sheets linked to it. **Create design doc** makes one from a short
+template and links it; **Add** links one PDT already has, makes a new one or imports one. Agents working on the ticket
+read its design doc first. See [Documents](documents.md).
+
 ## Priority and labels
 
 **Priority** is **Urgent**, **High**, **Medium**, **Low** or **No priority**. It sorts and groups the backlog, and by

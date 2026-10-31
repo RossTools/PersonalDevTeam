@@ -27,7 +27,7 @@ person confirms per call unless the project lets the PM act. Use them for what t
 
 | Tool | Does |
 |---|---|
-| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history (each `by` a persona, `user` or `system`, with an agent's `sessionId` and the `fromTicket` it works on), `attachments` (each `{id, name, mediaType, size, by, at, path}`: `path` is a local file to open; see "Attachments" below), the outcomes earlier workflow steps submitted, and in a workflow step, the outcomes it allows |
+| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history (each `by` a persona, `user` or `system`, with an agent's `sessionId` and the `fromTicket` it works on), `attachments` (each `{id, name, mediaType, size, by, at, path}`: `path` is a local file to open; see "Attachments" below), `documents` (each `{id, title, kind, provider, url, read}`; see "Documents" below), the outcomes earlier workflow steps submitted, and in a workflow step, the outcomes it allows |
 | `submit_outcome` | `{outcome, summary, comments?}`: ends this session's workflow step with one of its outcomes; `comments` (`{file, line, endLine?, body}`) become line comments on the changes. `submitted` is refused while the worktree has uncommitted changes to tracked files, commits not pushed to its upstream, or a branch not pushed to `origin`: commit and push first |
 | `ask_user` | `{questions: [{question, choices?}]}`: puts questions in the person's Inbox; the answers come back as a message, so end your turn after asking |
 | `add_ticket_comment` | `{body, ticket?, files?}`: a comment on the ticket's timeline, by the agent; `files` attaches local files to the ticket and shows them in the comment (see "Attachments") |
@@ -89,6 +89,20 @@ data are refused, and a call with one bad file attaches none.
 | `POST /api/tickets/<id>/attachments?name=<file name>` | the body is the file; the bytes decide what it is. Returns the attachment |
 | `GET /api/tickets/<id>/attachments/<aid>` | the file (text always as `text/plain`) |
 | `DELETE /api/tickets/<id>/attachments/<aid>` | removes it |
+
+### Documents
+
+Design docs, plans and spreadsheets live outside the repo as documents, linked to projects and tickets. `get_ticket`
+lists the ticket's documents: read its design doc before you start. A doc reads as Markdown, a sheet as its sheets
+of cells (each with its `value` and, if it has one, its `formula`).
+
+| Call | Does |
+|---|---|
+| `GET /api/documents?ticket=<key>&project=<key>&kind=doc\|sheet&q=<words>` | documents, the most recently changed first, with their `projects` and `tickets` |
+| `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows}]}` |
+| `POST /api/documents/<id>/edits` | `{edits: [...]}`, in order: `{op: "replace_text", markdown}`, `{op: "append_text", markdown}`, `{op: "set_cells", sheet, cell: "B3", values: [["1", "=A1*2"]]}`, `{op: "add_sheet", name}` |
+| `GET /api/documents/<id>/comments` | its comments with their replies; `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves |
+| `POST /api/tickets/<id>/design-doc` | makes the ticket's design doc from the template, linked to it |
 
 The person reviews your branch in PDT's Changes view and sends line comments back as one message that starts
 "Review feedback on <branch>": each comment names `file:line`, quotes the lines and says what to change. Address each

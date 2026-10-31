@@ -1,0 +1,345 @@
+//! Documents (PDT-314): PDT's records of the documents providers keep, their links to projects and tickets, and each
+//! project's documents settings.
+
+use crate::{Store, StoreError};
+use pdt_core::document::{
+    Document, DocumentFilter, DocumentKind, DocumentProject, DocumentTicket, ProjectDocumentSettings,
+};
+use pdt_core::ticket::Actor;
+use sqlx::Row;
+use sqlx::sqlite::SqliteRow;
+
+const SELECT: &str = "SELECT d.id, d.title, d.kind, d.provider, d.provider_ref, d.url, d.actor, d.agent, d.created_at, \
+                      d.updated_at FROM documents d";
+
+fn to_document(r: &SqliteRow) -> Result<Document, StoreError> {
+    let kind: String = r.try_get("kind")?;
+    let actor: String = r.try_get("actor")?;
+    Ok(Document {
+        id: r.try_get("id")?,
+        title: r.try_get("title")?,
+        kind: DocumentKind::parse(&kind).unwrap_or(DocumentKind::Doc),
+        provider: r.try_get("provider")?,
+        provider_ref: r.try_get("provider_ref")?,
+        url: r.try_get("url")?,
+        actor: Actor::parse(&actor).unwrap_or(Actor::Agent),
+        agent: r.try_get::<Option<String>, _>("agent")?.and_then(|j| serde_json::from_str(&j).ok()),
+        created_at: r.try_get("created_at")?,
+        updated_at: r.try_get("updated_at")?,
+        projects: Vec::new(),
+        tickets: Vec::new(),
+    })
+}
+
+/// What adding a document did.
+#[derive(Debug, PartialEq)]
+pub enum AddDocument {
+    Added,
+    /// PDT has a record of that provider's file already: this one.
+    Exists(String),
+}
+
+/// A link to add or remove.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DocumentLink {
+    Project(String),
+    Ticket(String),
+}
+
+impl Store {
+    /// Records a document (its links are added with [`Store::link_document`]); a provider's file is recorded once.
+    pub async fn add_document(&self, d: &Document) -> Result<AddDocument, StoreError> {
+        let mut tx = self.write_tx().await?;
+        let had: Option<(String,)> = sqlx::query_as("SELECT id FROM documents WHERE provider = ? AND provider_ref = ?")
+            .bind(&d.provider)
+            .bind(&d.provider_ref)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if let Some((id,)) = had {
+            return Ok(AddDocument::Exists(id));
+        }
+        sqlx::query(
+            "INSERT INTO documents (id, title, kind, provider, provider_ref, url, actor, agent, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&d.id)
+        .bind(&d.title)
+        .bind(d.kind.as_str())
+        .bind(&d.provider)
+        .bind(&d.provider_ref)
+        .bind(&d.url)
+        .bind(d.actor.as_str())
+        .bind(d.agent.as_ref().map(|g| serde_json::to_string(g).expect("an agent serializes")))
+        .bind(d.created_at)
+        .bind(d.updated_at)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(AddDocument::Added)
+    }
+
+    /// One document with its links.
+    pub async fn get_document(&self, id: &str) -> Result<Option<Document>, StoreError> {
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!("{SELECT} WHERE d.id = ?")))
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        let Some(row) = row else { return Ok(None) };
+        let mut d = to_document(&row)?;
+        self.fill_links(std::slice::from_mut(&mut d)).await?;
+        Ok(Some(d))
+    }
+
+    /// The documents a filter lets through, with their links, the most recently changed first.
+    pub async fn list_documents(&self, f: &DocumentFilter) -> Result<Vec<Document>, StoreError> {
+        let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(SELECT);
+        qb.push(" WHERE 1 = 1");
+        if let Some(p) = &f.project {
+            qb.push(" AND d.id IN (SELECT document_id FROM document_projects WHERE project_id = ")
+                .push_bind(p)
+                .push(")");
+        }
+        if let Some(t) = &f.ticket {
+            qb.push(" AND d.id IN (SELECT document_id FROM document_tickets WHERE ticket_id = ").push_bind(t).push(")");
+        }
+        if let Some(k) = f.kind {
+            qb.push(" AND d.kind = ").push_bind(k.as_str());
+        }
+        if let Some(p) = &f.provider {
+            qb.push(" AND d.provider = ").push_bind(p);
+        }
+        for word in f.q.as_deref().unwrap_or_default().split_whitespace() {
+            let escaped = word.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            qb.push(" AND d.title LIKE ").push_bind(format!("%{escaped}%")).push(" ESCAPE '\\'");
+        }
+        qb.push(" ORDER BY d.updated_at DESC, d.id DESC");
+        let rows = qb.build().fetch_all(&self.pool).await?;
+        let mut out = rows.iter().map(to_document).collect::<Result<Vec<_>, _>>()?;
+        self.fill_links(&mut out).await?;
+        Ok(out)
+    }
+
+    async fn fill_links(&self, docs: &mut [Document]) -> Result<(), StoreError> {
+        for d in docs {
+            d.projects = sqlx::query(
+                "SELECT p.id, p.key, p.name FROM document_projects dp JOIN projects p ON p.id = dp.project_id \
+                 WHERE dp.document_id = ? ORDER BY p.name",
+            )
+            .bind(&d.id)
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(|r| Ok(DocumentProject { id: r.try_get("id")?, key: r.try_get("key")?, name: r.try_get("name")? }))
+            .collect::<Result<_, StoreError>>()?;
+            d.tickets = sqlx::query(
+                "SELECT t.id, p.key || '-' || t.number AS key, t.title, t.project_id FROM document_tickets dt \
+                 JOIN tickets t ON t.id = dt.ticket_id JOIN projects p ON p.id = t.project_id \
+                 WHERE dt.document_id = ? ORDER BY p.key, t.number",
+            )
+            .bind(&d.id)
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(|r| {
+                Ok(DocumentTicket {
+                    id: r.try_get("id")?,
+                    key: r.try_get("key")?,
+                    title: r.try_get("title")?,
+                    project_id: r.try_get("project_id")?,
+                })
+            })
+            .collect::<Result<_, StoreError>>()?;
+        }
+        Ok(())
+    }
+
+    /// Links a document to a project or ticket; false when the document, project or ticket is gone. Linking twice is
+    /// fine.
+    pub async fn link_document(&self, id: &str, link: &DocumentLink, now: i64) -> Result<bool, StoreError> {
+        let (table, column, target_table) = match link {
+            DocumentLink::Project(_) => ("document_projects", "project_id", "projects"),
+            DocumentLink::Ticket(_) => ("document_tickets", "ticket_id", "tickets"),
+        };
+        let (DocumentLink::Project(target) | DocumentLink::Ticket(target)) = link;
+        let mut tx = self.write_tx().await?;
+        let found: Option<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT 1 FROM documents d, {target_table} x WHERE d.id = ? AND x.id = ?"
+        )))
+        .bind(id)
+        .bind(target)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if found.is_none() {
+            return Ok(false);
+        }
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO {table} (document_id, {column}) VALUES (?, ?) ON CONFLICT DO NOTHING"
+        )))
+        .bind(id)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE documents SET updated_at = ? WHERE id = ?").bind(now).bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Removes a link; false when there was none.
+    pub async fn unlink_document(&self, id: &str, link: &DocumentLink) -> Result<bool, StoreError> {
+        let (sql, target) = match link {
+            DocumentLink::Project(p) => ("DELETE FROM document_projects WHERE document_id = ? AND project_id = ?", p),
+            DocumentLink::Ticket(t) => ("DELETE FROM document_tickets WHERE document_id = ? AND ticket_id = ?", t),
+        };
+        let r = sqlx::query(sql).bind(id).bind(target).execute(&self.pool).await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Renames a document's record; false when it is gone.
+    pub async fn rename_document(&self, id: &str, title: &str, now: i64) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE documents SET title = ?, updated_at = ? WHERE id = ?")
+            .bind(title)
+            .bind(now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Marks a document changed (its content changed at the provider).
+    pub async fn touch_document(&self, id: &str, now: i64) -> Result<(), StoreError> {
+        sqlx::query("UPDATE documents SET updated_at = ? WHERE id = ?").bind(now).bind(id).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Forgets a document and its links (the provider's file is the caller's); false when it is gone.
+    pub async fn delete_document(&self, id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("DELETE FROM documents WHERE id = ?").bind(id).execute(&self.pool).await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// A project's documents settings (none set: the host's).
+    pub async fn project_document_settings(&self, project_id: &str) -> Result<ProjectDocumentSettings, StoreError> {
+        let row: Option<(Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT provider, folder FROM project_document_settings WHERE project_id = ?")
+                .bind(project_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|(provider, folder)| ProjectDocumentSettings { provider, folder }).unwrap_or_default())
+    }
+
+    pub async fn put_project_document_settings(
+        &self,
+        project_id: &str,
+        s: &ProjectDocumentSettings,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO project_document_settings (project_id, provider, folder) VALUES (?, ?, ?) \
+             ON CONFLICT(project_id) DO UPDATE SET provider = excluded.provider, folder = excluded.folder",
+        )
+        .bind(project_id)
+        .bind(&s.provider)
+        .bind(&s.folder)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pdt_core::ticket::NewTicket;
+
+    async fn store_with_ticket(dir: &std::path::Path) -> Store {
+        let store = crate::worktrees::tests::store_with_project(dir).await;
+        let t = NewTicket { title: "T".into(), ..Default::default() }.validate().unwrap();
+        store.create_ticket("t1", "p", &t, 1).await.unwrap();
+        store
+    }
+
+    fn doc(id: &str, title: &str, kind: DocumentKind, provider: &str, at: i64) -> Document {
+        Document {
+            id: id.into(),
+            title: title.into(),
+            kind,
+            provider: provider.into(),
+            provider_ref: format!("ref-{id}"),
+            url: None,
+            actor: Actor::User,
+            agent: None,
+            created_at: at,
+            updated_at: at,
+            projects: vec![],
+            tickets: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn documents_are_kept_linked_filtered_and_forgotten() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_ticket(dir.path()).await;
+        assert_eq!(
+            store.add_document(&doc("d1", "Design 50%", DocumentKind::Doc, "local", 1)).await.unwrap(),
+            AddDocument::Added
+        );
+        store.add_document(&doc("d2", "Budget", DocumentKind::Sheet, "google", 2)).await.unwrap();
+        let mut again = doc("d3", "Same file", DocumentKind::Doc, "local", 3);
+        again.provider_ref = "ref-d1".into();
+        assert_eq!(store.add_document(&again).await.unwrap(), AddDocument::Exists("d1".into()));
+
+        assert!(store.link_document("d1", &DocumentLink::Project("p".into()), 5).await.unwrap());
+        assert!(store.link_document("d1", &DocumentLink::Project("p".into()), 5).await.unwrap());
+        assert!(store.link_document("d1", &DocumentLink::Ticket("t1".into()), 5).await.unwrap());
+        assert!(!store.link_document("d1", &DocumentLink::Ticket("nope".into()), 5).await.unwrap());
+        assert!(!store.link_document("nope", &DocumentLink::Project("p".into()), 5).await.unwrap());
+
+        let d1 = store.get_document("d1").await.unwrap().unwrap();
+        assert_eq!(d1.projects.len(), 1);
+        assert_eq!(d1.tickets.len(), 1);
+        assert!(d1.tickets[0].key.ends_with("-1"), "{:?}", d1.tickets);
+        assert_eq!(d1.updated_at, 5);
+
+        let all = store.list_documents(&DocumentFilter::default()).await.unwrap();
+        assert_eq!(all.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), ["d1", "d2"]);
+        let f = |f: DocumentFilter| {
+            let store = store.clone();
+            async move { store.list_documents(&f).await.unwrap().into_iter().map(|d| d.id).collect::<Vec<_>>() }
+        };
+        assert_eq!(f(DocumentFilter { ticket: Some("t1".into()), ..Default::default() }).await, ["d1"]);
+        assert_eq!(f(DocumentFilter { project: Some("p".into()), ..Default::default() }).await, ["d1"]);
+        assert_eq!(f(DocumentFilter { kind: Some(DocumentKind::Sheet), ..Default::default() }).await, ["d2"]);
+        assert_eq!(f(DocumentFilter { provider: Some("google".into()), ..Default::default() }).await, ["d2"]);
+        assert_eq!(f(DocumentFilter { q: Some("bud".into()), ..Default::default() }).await, ["d2"]);
+        assert!(f(DocumentFilter { q: Some("%".into()), ..Default::default() }).await == ["d1"]);
+
+        assert!(store.unlink_document("d1", &DocumentLink::Ticket("t1".into())).await.unwrap());
+        assert!(!store.unlink_document("d1", &DocumentLink::Ticket("t1".into())).await.unwrap());
+        assert!(store.rename_document("d2", "Budget 2027", 9).await.unwrap());
+        assert_eq!(store.get_document("d2").await.unwrap().unwrap().title, "Budget 2027");
+        assert!(store.delete_document("d2").await.unwrap());
+        assert!(store.get_document("d2").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn links_go_with_their_ticket_or_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_ticket(dir.path()).await;
+        store.add_document(&doc("d1", "Design", DocumentKind::Doc, "local", 1)).await.unwrap();
+        store.link_document("d1", &DocumentLink::Ticket("t1".into()), 2).await.unwrap();
+        store.link_document("d1", &DocumentLink::Project("p".into()), 2).await.unwrap();
+        store
+            .put_project_document_settings(
+                "p",
+                &ProjectDocumentSettings { provider: Some("google".into()), folder: None },
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.project_document_settings("p").await.unwrap().provider.as_deref(), Some("google"));
+        store.delete_ticket("t1").await.unwrap();
+        assert!(store.get_document("d1").await.unwrap().unwrap().tickets.is_empty());
+        store.delete_project("p").await.unwrap();
+        let d = store.get_document("d1").await.unwrap().unwrap();
+        assert!(d.projects.is_empty(), "the document stays, unlinked");
+        assert_eq!(store.project_document_settings("p").await.unwrap(), ProjectDocumentSettings::default());
+    }
+}

@@ -124,7 +124,9 @@ fn ticket_section(api: &str, t: &TicketWork, forge: Option<&ForgeNotes>) -> Stri
          or the user does that once the work is merged.\n\
          - When the ticket has attachments (screenshots, logs: `get_ticket` lists each with a local `path`), open the \
          images and files that matter. To add one (a screenshot of what you tried), give `add_ticket_comment` its \
-         path in `files`.\n",
+         path in `files`.\n\
+         - When documents are linked to the ticket (`get_ticket` lists them), read its design doc first: \
+         `GET {api}/documents/<id>/content` gives a doc as Markdown.\n",
         id = t.ticket_id,
     );
     let has = |kind: &str| t.news.contains(kind);
@@ -277,6 +279,7 @@ mod tests {
         assert!(t.contains("works on ticket WA-7 (`GET http://127.0.0.1:7420/api/tickets/t7`)"), "{t}");
         assert!(t.contains("Follow-up work") && t.contains("Don't move the ticket to Done"), "{t}");
         assert!(t.contains("open the images and files that matter"), "{t}");
+        assert!(t.contains("read its design doc first"), "{t}");
         assert!(!t.contains("Messages from") && !t.contains("forge watch"), "no workflow, no messages: {t}");
         let plain = session_instructions(&ctx(Some("pdt-WA-7-x")), None);
         assert!(!plain.contains("This session's ticket"), "{plain}");
