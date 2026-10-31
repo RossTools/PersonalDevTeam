@@ -37,8 +37,9 @@ fi
 
 kib() { du -sk "$1" 2>/dev/null | cut -f1; }
 
-# Whether nothing under a path was written in the last N days.
-stale() { [ -z "$(find "$1" -mtime "-$days" -print -quit 2>/dev/null)" ]; }
+# Whether nothing under a path was written in the last N days. With 0 days everything is (GNU and BSD find read
+# `-mtime -0` differently).
+stale() { [ "$days" -eq 0 ] || [ -z "$(find "$1" -mtime "-$days" -print -quit 2>/dev/null)" ]; }
 
 remove() {
   if [ "$dry_run" -eq 1 ]; then
