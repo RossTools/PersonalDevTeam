@@ -3,7 +3,7 @@ import { Plus } from 'lucide-react';
 import { Alert, IconButton, List, ListRow, Skeleton, Spinner, relativeTime, useMenuAt } from '@ui';
 import { InlineRename } from '../common/InlineRename';
 import { RowField } from '../common/RowField';
-import { earlier, firstLine, isUnread, openConversations, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, viaLabel, type PmSelection } from './usePm';
+import { earlier, firstLine, isUnread, openConversations, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useShownRef, viaLabel, type PmSelection } from './usePm';
 
 const heading = 'flex items-center px-3 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
 /** Ended conversations the list shows; the rest are under "All ended conversations". */
@@ -26,11 +26,12 @@ export function PmList({ selection, onSelect, onNew }: {
   const shown = shownConversation(sessions, pm.data?.current?.id, selection)?.session.id ?? null;
   const { openMenu, menu } = useMenuAt();
   const [renaming, setRenaming] = useState<string | null>(null);
+  const onShow = useShownRef(shown);
   const { rename, close, reset } = usePmActions((id) => {
     if (id === shown) onSelect('current');
   }, (id, fresh) => {
-    // The fresh conversation takes the old one's place on screen too (PDT-308).
-    if (id === shown) onSelect(fresh);
+    // The fresh conversation takes the old one's place on screen too, if it is still there (PDT-308).
+    if (id === onShow.current) onSelect(fresh);
   });
   return (
     <div className="flex flex-col gap-0.5 py-1">

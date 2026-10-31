@@ -13,7 +13,7 @@ import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import type { RotateReason } from '../api/gen/RotateReason';
 import { InlineRename } from '../common/InlineRename';
 import { useTopBarActions } from '../shell/PhoneTopBar';
-import { earlier, firstLine, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useRefreshPm, viaLabel, type PmSelection } from './usePm';
+import { earlier, firstLine, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useRefreshPm, useShownRef, viaLabel, type PmSelection } from './usePm';
 
 /** The start box's unsent text, kept like a conversation's (it has no session yet). */
 export const PM_START_DRAFT = 'pm-start';
@@ -32,18 +32,26 @@ export function PmView({ selection, onSelect, onNew }: {
 }) {
   const pm = usePm();
   const phone = useMediaQuery(PHONE_QUERY);
+  const shown = selection === 'new' || selection === 'earlier' ? undefined
+    : shownConversation(pm.data?.sessions, pm.data?.current?.id, selection);
+  const onShow = useShownRef(shown?.session.id ?? null);
   if (pm.isPending) return <Skeleton lines={8} className="p-4" />;
   if (selection === 'earlier') return <EarlierSessions onSelect={onSelect} phone={phone} />;
-  const info = selection === 'new' ? undefined : shownConversation(pm.data?.sessions, pm.data?.current?.id, selection);
+  const info = shown;
   if (!info) return <PmStart phone={phone} onStarted={(s) => onSelect(s.id)} />;
   const previous = info.resetFrom ? pm.data?.sessions.find((s) => s.session.id === info.resetFrom) : undefined;
-  return <Conversation key={info.session.id} info={info} previous={previous} phone={phone} onSelect={onSelect} onNew={onNew} />;
+  // A reset puts the fresh conversation on screen in the old one's place, if the old one is still on show (PDT-308).
+  const onReset = (old: string, fresh: string) => {
+    if (onShow.current === old) onSelect(fresh);
+  };
+  return <Conversation key={info.session.id} info={info} previous={previous} phone={phone} onSelect={onSelect} onNew={onNew} onReset={onReset} />;
 }
 
-function Conversation({ info, previous, phone, onSelect, onNew }: {
+function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
   info: PmSessionInfo;
   /** The conversation this one was reset from (PDT-308). */
   previous?: PmSessionInfo;
+  onReset: (old: string, fresh: string) => void;
   phone: boolean;
   onSelect: (s: PmSelection) => void;
   onNew: () => void;
@@ -51,8 +59,7 @@ function Conversation({ info, previous, phone, onSelect, onNew }: {
   const s = info.session;
   const ended = !info.open;
   const [renaming, setRenaming] = useState(false);
-  // A reset puts the fresh conversation on screen in this one's place (PDT-308).
-  const { rename, close, reset } = usePmActions(() => onSelect('current'), (_, fresh) => onSelect(fresh));
+  const { rename, close, reset } = usePmActions(() => onSelect('current'), onReset);
   const canClose = info.rotation === 'none';
   useTopBarActions(phone && !ended ? () => [
     { label: 'Rename', onSelect: () => setRenaming(true) },

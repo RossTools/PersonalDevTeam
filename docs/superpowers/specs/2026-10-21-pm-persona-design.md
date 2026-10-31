@@ -127,9 +127,11 @@ kept in step by triggers. API: `GET /api/pm/notes?q=&project=&kind=`, `POST /api
   conversation with the old one's title, agent, model, permission mode, persona, folder and `via`, its row
   `reset_from` the old one, and returns it. Its briefing (written to `briefing.md` before the session starts) leads
   with the old journal under "This conversation before it was reset". `listed_at` keeps both in place in the list: the
-  old one while it writes its journal (it counts as open until its successor exists), the new one until it has
-  activity of its own. A reset conversation's journal turn never marks it unread, and the reset ones are left out of
-  the ended list (each is linked from its successor).
+  old one while it writes its journal, the new one until it has activity of its own. The reset runs in a task of its
+  own (a caller that goes away doesn't stop it), and the old one counts as open while that task runs
+  (`AppState::pm_resets`), so it never leaves the list before its successor is in it. One whose reset never finished
+  (pdtd stopped mid-way) is an ordinary ended conversation. A reset conversation's journal turn never marks it unread,
+  and a reset one with a successor is left out of the ended list (its successor links to it).
 - The ended conversation shows, in place of its composer, why it ended (`reason`; `context` and `age` are kept for
   conversations that ended before PDT-167), its journal, and **New conversation**.
 - `pm_sessions`: session id, `rotation` (`none` | `journal` | `done`), `reason`, `caught_up_at`, timestamps.

@@ -197,19 +197,41 @@ describe('the PM', () => {
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith('c3'));
   });
 
-  it('shows a conversation being reset as resetting, never unread, and leaves reset ones out of Ended', async () => {
+  it('shows a conversation being reset as resetting, never unread; Ended leaves out a reset one that carries on', async () => {
     const old = info({ ...session('c0', 1), title: 'CB cutover' }, { open: false, rotation: 'done', reason: 'reset', journal: 'Before.' });
+    const cut = info({ ...session('c9', 1), title: 'Cut short' }, { open: false, rotation: 'done', reason: 'reset', journal: 'Half.' });
     stubApi({ 'GET /api/pm': { current: live('c2', 'A PDT bug'), sessions: [
       info(live('c2', 'A PDT bug')),
-      info(live('c1', 'CB cutover', { unseen: true, activity: 'idle', attentionAt: 5 }), { rotation: 'journal', reason: 'reset' }),
+      info(live('c1', 'CB cutover', { unseen: true, activity: 'idle', attentionAt: 5 }), { rotation: 'journal', reason: 'reset', resetFrom: 'c0' }),
       old,
+      cut,
     ] } satisfies PmState });
     renderWithQuery(<PmList selection="c2" onSelect={() => {}} onNew={() => {}} />);
     const open = await screen.findByRole('grid', { name: 'PM conversations' });
     const row = await within(open).findByRole('row', { name: /CB cutover/ });
     expect(row).toHaveTextContent('Resetting…');
     expect(within(row).queryByRole('img', { name: 'New reply' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('grid', { name: 'Ended PM conversations' })).not.toBeInTheDocument();
+    // c0 is reachable from c1; c9's reset never finished, so it is listed like a closed one.
+    const ended = screen.getByRole('grid', { name: 'Ended PM conversations' });
+    expect(within(ended).getAllByRole('row').map((r) => r.getAttribute('aria-label') ?? r.textContent)).toEqual(['Cut short']);
+  });
+
+  it('stays on the conversation the user moved to while a reset ran', async () => {
+    let answer: (s: Session) => void = () => {};
+    stubApi({
+      ...conversationRoutes,
+      'GET /api/pm': two,
+      'POST /api/pm/sessions/c1/reset': () => new Promise<Session>((r) => { answer = r; }),
+    });
+    const onSelect = vi.fn();
+    const view = renderWithQuery(<PmView selection="c1" onSelect={onSelect} onNew={() => {}} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Reset…' }));
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Reset' }));
+    view.rerender(<PmView selection="c2" onSelect={onSelect} onNew={() => {}} />);
+    expect(await screen.findByRole('heading', { name: 'A PDT bug' })).toBeInTheDocument();
+    answer(live('c3', 'CB cutover'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onSelect).not.toHaveBeenCalledWith('c3');
   });
 
   it('links a reset conversation to the one before it, which opens read-only', async () => {

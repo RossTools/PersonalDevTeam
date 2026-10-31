@@ -81,11 +81,12 @@ async fn pm_state(st: &AppState) -> Result<PmState, ApiError> {
     // Newest first: the first open one is the newest (`current`, for clients that know only one).
     let mut current = None;
     let rows = st.store.list_pm_sessions().await?;
-    let reset: std::collections::HashSet<&str> = rows.iter().filter_map(|r| r.reset_from.as_deref()).collect();
+    let in_flight = st.pm_resets.lock().map(|r| r.clone()).unwrap_or_default();
     for row in &rows {
         let Some(session) = st.store.get_session(&row.session_id).await? else { continue };
-        // One being reset stays listed (and in place) until the fresh one takes its place (PDT-308).
-        let resetting = row.reason == Some(RotateReason::Reset) && !reset.contains(row.session_id.as_str());
+        // One being reset stays listed (and in place) while its reset runs, until the fresh one takes its place
+        // (PDT-308). One whose reset never finished (pdtd stopped mid-way) is an ended conversation like a closed one.
+        let resetting = in_flight.contains(&row.session_id);
         let is_open = row.rotation != Rotation::Done || resetting;
         if is_open && current.is_none() {
             current = Some(session.clone());
@@ -237,8 +238,24 @@ pub(crate) async fn reset(State(st): State<AppState>, Path(id): Path<String>) ->
     Ok(Json(reset_conversation(&st, &id).await?))
 }
 
-/// Resets a PM conversation the way the web's Reset does; the fresh conversation.
+/// Resets a PM conversation the way the web's Reset does; the fresh conversation. The reset runs as a task of its
+/// own: a caller that goes away (a closed page, a dropped connection) doesn't stop it half-way.
 pub async fn reset_conversation(st: &AppState, id: &str) -> Result<Session, ApiError> {
+    if !st.pm_resets.lock().map_err(|_| ApiError::internal("the PM's resets are poisoned"))?.insert(id.to_string()) {
+        return Err(ApiError::new(StatusCode::CONFLICT, "pm_closed", "that PM conversation is already ending"));
+    }
+    let (st2, id2) = (st.clone(), id.to_string());
+    let task = tokio::spawn(async move {
+        let r = run_reset(&st2, &id2).await;
+        if let Ok(mut resets) = st2.pm_resets.lock() {
+            resets.remove(&id2);
+        }
+        r
+    });
+    task.await.map_err(|e| ApiError::internal(format!("the reset stopped: {e}")))?
+}
+
+async fn run_reset(st: &AppState, id: &str) -> Result<Session, ApiError> {
     let (row, s) = pm_session(st, id).await?;
     if row.rotation != Rotation::None {
         return Err(ApiError::new(StatusCode::CONFLICT, "pm_closed", "that PM conversation is already ending"));
@@ -267,12 +284,8 @@ pub async fn reset_conversation(st: &AppState, id: &str) -> Result<Session, ApiE
     }
     // The journal turn is no reply for the user (PDT-205, PDT-207).
     let _ = st.store.mark_viewed(id, now_ms()).await;
-    let fresh = reset_session(st, &s, &row, listed_at).await;
-    if fresh.is_err() {
-        // Nothing takes its place: it is an ended conversation like a closed one.
-        let _ = st.store.set_pm_rotation(id, Rotation::Done, Rotation::Done, Some(RotateReason::User), now_ms()).await;
-    }
-    fresh
+    // When this fails nothing takes its place: it is listed with the ended conversations.
+    reset_session(st, &s, &row, listed_at).await
 }
 
 /// Waits for a conversation being reset to write its journal and end (`turn_ended` ends it), up to

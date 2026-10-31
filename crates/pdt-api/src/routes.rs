@@ -167,6 +167,8 @@ pub struct AppState {
     pub pm_update_every_ms: i64,
     /// How long a reset waits for the conversation's journal before it records none (PDT-308).
     pub pm_reset_wait_ms: i64,
+    /// The PM conversations a reset is running for (PDT-308): one stays listed in place until its fresh one exists.
+    pub(crate) pm_resets: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Makes and clears notifications (PDT-108), and streams them.
     pub notifier: std::sync::Arc<crate::notifications::Notifier>,
     /// The background loops' last passes (PDT-127), for `/api/health` and `host.loop_stale`.
@@ -285,6 +287,7 @@ impl AppState {
             personas_installed: Default::default(),
             pm_update_every_ms: pdt_core::pm::UPDATE_EVERY_MS,
             pm_reset_wait_ms: pdt_core::pm::RESET_WAIT_MS,
+            pm_resets: Default::default(),
             notifier: Default::default(),
             loops: Default::default(),
             poll_part_limit: crate::loops::POLL_PART_LIMIT,

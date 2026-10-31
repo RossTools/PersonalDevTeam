@@ -1103,3 +1103,45 @@ async fn a_reset_records_no_journal_after_its_wait() {
         call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     }
 }
+
+/// PDT-308: a reset carries on when its caller goes away mid-way (a closed page, a dropped connection), and one that
+/// never finished (pdtd stopped mid-way) is listed as ended, not as resetting forever.
+#[tokio::test]
+async fn an_abandoned_reset_still_finishes_and_an_unfinished_one_counts_as_ended() {
+    let env = setup(None).await;
+    let first = start_pm(&env, "hello").await;
+    wait_said(&env, &first, 1).await;
+    let (app, url) = (env.app.clone(), format!("/api/pm/sessions/{first}/reset"));
+    let request = tokio::spawn(async move { call(&app, "POST", &url, None).await });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while pm_info(&env, &first).await["rotation"] != "journal" {
+        assert!(Instant::now() < deadline, "the reset never started");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let resetting = pm_info(&env, &first).await;
+    assert_eq!((resetting["open"].as_bool(), resetting["reason"].as_str()), (Some(true), Some("reset")));
+    request.abort();
+    let fresh = loop {
+        let (_, list) = call(&env.app, "GET", "/api/pm/sessions", None).await;
+        if let Some(i) = list.as_array().unwrap().iter().find(|i| i["resetFrom"] == first.as_str()) {
+            break i.clone();
+        }
+        assert!(Instant::now() < deadline, "the abandoned reset never finished: {list}");
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!((fresh["open"].as_bool(), fresh["title"].as_str()), (Some(true), Some("hello")));
+    assert_eq!(pm_info(&env, &first).await["open"], false);
+
+    // A reset cut short after its conversation ended, with no fresh one: ended, not "resetting".
+    let other = start_pm(&env, "again").await;
+    wait_said(&env, &other, 1).await;
+    let ended = pdt_core::pm::Rotation::Done;
+    let reset = Some(pdt_core::pm::RotateReason::Reset);
+    assert!(env.state.store.set_pm_rotation(&other, pdt_core::pm::Rotation::None, ended, reset, 1).await.unwrap());
+    let info = pm_info(&env, &other).await;
+    assert_eq!((info["open"].as_bool(), info["reason"].as_str()), (Some(false), Some("reset")));
+    for id in [fresh["session"]["id"].as_str().unwrap(), &other] {
+        call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    }
+}

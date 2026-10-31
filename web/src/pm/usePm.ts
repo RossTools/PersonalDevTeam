@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConfirm } from '@ui';
 import { api } from '../api/client';
@@ -38,10 +38,13 @@ export const REASON_LABEL: Record<RotateReason, string> = {
 export const openConversations = (sessions: PmSessionInfo[]) => sessions.filter((s) => s.open);
 
 /**
- * The conversations that ended, newest first. A reset one is left out (PDT-308): the conversation that carries on
- * links to it.
+ * The conversations that ended, newest first. A reset one is left out when a conversation carries on from it (PDT-308):
+ * that one links to it. One whose reset never finished is listed like a closed one.
  */
-export const earlier = (sessions: PmSessionInfo[]) => sessions.filter((s) => !s.open && s.reason !== 'reset');
+export const earlier = (sessions: PmSessionInfo[]) => {
+  const carriedOn = new Set(sessions.map((s) => s.resetFrom).filter(Boolean));
+  return sessions.filter((s) => !s.open && !carriedOn.has(s.session.id));
+};
 
 /** Whether a conversation is writing its journal before a reset (PDT-308) rather than a close. */
 export const resetting = (info: PmSessionInfo) => info.rotation !== 'none' && info.reason === 'reset';
@@ -67,6 +70,17 @@ export const pmUnread = (sessions: PmSessionInfo[] | undefined, shown: string | 
 export function shownConversation(sessions: PmSessionInfo[] | undefined, current: string | null | undefined, selection: PmSelection) {
   const id = selection === 'current' ? current : selection;
   return id ? sessions?.find((s) => s.session.id === id) : undefined;
+}
+
+/**
+ * The conversation on show now (null once the view is gone), for an action that answers later: a reset that takes
+ * minutes switches the screen to the fresh conversation only if the old one is still on show (PDT-308).
+ */
+export function useShownRef(shown: string | null) {
+  const ref = useRef<string | null>(shown);
+  useEffect(() => { ref.current = shown; }, [shown]);
+  useEffect(() => () => { ref.current = null; }, []);
+  return ref;
 }
 
 /**
