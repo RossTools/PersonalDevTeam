@@ -1,4 +1,5 @@
-//! Helpers shared by the pdt-api integration tests (`mod common;`). Each test binary uses a subset.
+//! Helpers shared by the integration tests of pdt-api and the integrations (`mod common;` in their `tests/main.rs`).
+//! Each uses a subset.
 #![allow(dead_code)]
 
 use axum::body::Body;

@@ -73,6 +73,9 @@ Add or update tickets through the API when work finishes or new work turns up.
 ## Commands
 - Rust: `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt`. CI runs `cargo nextest run` (each test
   in its own process); nextest isn't installed locally. `cargo test` writes the TS types into web/src/api/gen.
+- Integration tests: one binary per crate, `tests/main.rs` with a `mod` per `tests/*.rs` file (add new files there;
+  `--test integration <file>::` runs one). Build output per worktree, sccache, and `scripts/clean-targets.sh` (removes
+  build output unused for 7 days across worktrees): docs/dev/testing.md "Build output".
 - Web: `pnpm --dir web dev | test | typecheck | build`. `cargo test -p pdt-desktop` needs `pnpm --dir web build` first.
 - Component gallery: `pnpm --dir web dev`, then `/gallery.html`. PR screenshots for web/ui: `node web/scripts/ui-screenshots.mjs <out dir>`
   (needs `pnpm --dir web exec playwright-core install chromium` once).

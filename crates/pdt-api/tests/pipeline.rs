@@ -2,7 +2,7 @@
 //! submitting outcomes through pdt-mcp; project policies, auto-start, manual stages, Board stages and the host's cap
 //! on agents running a turn.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git, mark_pushed};

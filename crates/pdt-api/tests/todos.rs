@@ -1,7 +1,7 @@
 //! PDT-125: the user's todo list over the API: add, edit, check off, reorder, link to a project or ticket, delete.
 //! PDT-140: due dates, and the one reminder each makes. PDT-227: a Markdown body.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

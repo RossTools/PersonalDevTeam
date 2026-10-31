@@ -2,7 +2,7 @@
 //! its connection, persona and project remapped; the check report; name clashes; several workflows in one paste; a
 //! bare document; and the errors for text that isn't an export.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

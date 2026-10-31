@@ -2,7 +2,7 @@
 //! `notify`, the brief archive and MCP tools. External services are local fake servers and `FakeForge`. (Each
 //! integration's actions are tested in its own crate, `crates/pdt-int-<id>`.)
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

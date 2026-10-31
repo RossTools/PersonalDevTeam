@@ -51,6 +51,7 @@ check_changelog() {
   step scripts/version.test.sh
   step scripts/release-tag.test.sh
   step scripts/scratch-daemon.test.sh
+  step scripts/clean-targets.test.sh
 }
 
 check_site() {

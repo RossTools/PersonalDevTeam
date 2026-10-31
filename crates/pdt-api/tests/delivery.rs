@@ -3,7 +3,7 @@
 //! `unknown` gets its messages resolved untold (with a notification) once the outbox's deadline passes. `fake-agent`
 //! stands in for Claude.
 
-mod common;
+use crate::common;
 
 use common::call;
 use pdt_api::{AppState, router};

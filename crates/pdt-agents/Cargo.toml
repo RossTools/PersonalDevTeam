@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+# One integration test binary (tests/main.rs) rather than one per file: each links all of PDT (docs/dev/testing.md).
+autotests = false
 
 [dependencies]
 async-trait = "0.1.92"
@@ -30,3 +32,7 @@ libc = "0.2.190"
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
+
+[[test]]
+name = "integration"
+path = "tests/main.rs"
