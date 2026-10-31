@@ -4,9 +4,17 @@ import type { Priority } from "./Priority";
 import type { TicketStage } from "./TicketStage";
 
 /**
- * A chosen ticket, with the project cap it was chosen under (the start checks it again).
+ * A chosen ticket, with the caps it was chosen under (the start checks them again, under its lock).
  */
-export type Pick = { cap: number, id: string, projectId: string, key: string, title: string, stage: TicketStage, priority: Priority, labels: Array<string>, areas: Array<string>, rank: string, 
+export type Pick = { cap: number, 
+/**
+ * The area caps that bind it: those of its own areas.
+ */
+areaCaps: { [key in string]: number }, 
+/**
+ * The label caps that bind it: those of its own labels.
+ */
+labelCaps: { [key in string]: number }, id: string, projectId: string, key: string, title: string, stage: TicketStage, priority: Priority, labels: Array<string>, areas: Array<string>, rank: string, 
 /**
  * The worst overlap with work in flight, and the keys of the tickets it overlaps.
  */

@@ -122,7 +122,8 @@ pub(crate) async fn start_ticket(
     // The project's cap on running attempts (Phase 7c §4).
     let policy = st.store.get_project_settings(&ticket.summary.project_id).await?.policy;
     let active = st.store.count_active_attempts(&ticket.summary.project_id).await?;
-    let over_cap = policy.over_cap(active);
+    // A workflow's start that checked its own cap (PDT-327) may go over the project's: the step's cap is the one.
+    let over_cap = !v.cap_checked && policy.over_cap(active);
     if (!blockers.is_empty() || !overlaps.is_empty() || over_cap) && v.mode == StartMode::Check {
         let mut why = vec![];
         if !blockers.is_empty() {

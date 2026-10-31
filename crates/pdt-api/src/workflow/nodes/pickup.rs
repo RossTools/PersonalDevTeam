@@ -364,15 +364,18 @@ impl StartConfig {
         })
     }
 
-    /// The tickets to try, in order, each with the cap it was chosen under (if any).
-    fn tickets(&self) -> Result<Vec<(String, Option<u32>)>, String> {
-        fn one(v: &Value) -> Result<(String, Option<u32>), String> {
+    /// The tickets to try, in order, each with the caps it was chosen under (choose's picks; none for an id).
+    fn tickets(&self) -> Result<Vec<(String, Option<Caps>)>, String> {
+        fn one(v: &Value) -> Result<(String, Option<Caps>), String> {
             match v {
                 Value::String(s) if !s.trim().is_empty() => Ok((s.trim().to_string(), None)),
                 Value::Object(m) => {
                     let id = m.get("id").and_then(Value::as_str).ok_or("a ticket without an id")?;
-                    let cap = m.get("cap").and_then(Value::as_u64).and_then(|c| u32::try_from(c).ok());
-                    Ok((id.to_string(), cap))
+                    let caps = match m.get("cap") {
+                        Some(_) => Some(serde_json::from_value::<Caps>(v.clone()).map_err(|e| format!("a pick: {e}"))?),
+                        None => None,
+                    };
+                    Ok((id.to_string(), caps))
                 }
                 _ => Err("ticket is not a ticket's id, nor choose's tickets".into()),
             }
@@ -382,6 +385,17 @@ impl StartConfig {
             v => one(v).map(|t| vec![t]),
         }
     }
+}
+
+/// The caps a pick was chosen under (`pickup::Pick`'s), checked again under the pickup lock.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Caps {
+    cap: u32,
+    #[serde(default)]
+    area_caps: BTreeMap<String, u32>,
+    #[serde(default)]
+    label_caps: BTreeMap<String, u32>,
 }
 
 struct StartFields {
@@ -438,7 +452,7 @@ impl NodeKind for Start {
                 cx.rerun.then(|| cx.step.output.get(TRYING).and_then(Value::as_str).map(String::from)).flatten();
             let (mut started, mut skipped, mut failed) = (vec![], vec![], vec![]);
             let mut per: HashMap<String, u32> = HashMap::new();
-            for (id, cap) in tickets {
+            for (id, caps) in tickets {
                 let Some(t) = cx.st.store.get_ticket_summary(&id).await.map_err(|e| e.to_string())? else {
                     skipped.push(json!({"ticketId": id, "reason": "no such ticket"}));
                     continue;
@@ -456,10 +470,23 @@ impl NodeKind for Start {
                     }
                     continue;
                 }
-                if let Some(cap) = cap {
-                    let active = cx.st.store.count_active_attempts(&t.project_id).await.map_err(|e| e.to_string())?;
-                    if active >= cap {
-                        skipped.push(note(&format!("the project is at its cap ({active} of {cap} in flight)")));
+                // The caps it was chosen under, again now that no other pickup start runs: another run may have
+                // started a ticket since this one chose.
+                if let Some(caps) = &caps {
+                    let in_flight = in_flight(cx.st, &t.project_id).await?;
+                    let active = u32::try_from(in_flight.len()).unwrap_or(u32::MAX);
+                    if active >= caps.cap {
+                        skipped.push(note(&format!("the project is at its cap ({active} of {} in flight)", caps.cap)));
+                        continue;
+                    }
+                    let pick = pdt_core::pickup::Pick {
+                        ticket: PickupTicket::from(&t),
+                        cap: caps.cap,
+                        area_caps: caps.area_caps.clone(),
+                        label_caps: caps.label_caps.clone(),
+                    };
+                    if let Some((what, name, cap)) = pick.full_at(&in_flight) {
+                        skipped.push(note(&format!("{what} {name} is at its cap of {cap}")));
                         continue;
                     }
                 }
@@ -497,10 +524,10 @@ impl NodeKind for Start {
                     cols: None,
                     rows: None,
                 };
-                let v = match input.validate() {
-                    Ok(v) => v,
-                    Err(e) => return Err(e.to_string()),
-                };
+                let mut v = input.validate().map_err(|e| e.to_string())?;
+                // Checked just now, with the cap it was chosen under: a step's cap above the project's running cap
+                // holds (Start still refuses for blockers and overlaps).
+                v.cap_checked = caps.is_some();
                 cx.save_progress(&json!({TRYING: t.id})).await?;
                 match crate::start::start_ticket(cx.st, t.id.clone(), v, Starter::Auto).await {
                     Ok(r) => {
@@ -551,7 +578,7 @@ impl NodeKind for Start {
 }
 
 /// What a dry run would start: the first ticket of each project.
-async fn dry_run(st: &AppState, tickets: &[(String, Option<u32>)], per_project: u32) -> Vec<String> {
+async fn dry_run(st: &AppState, tickets: &[(String, Option<Caps>)], per_project: u32) -> Vec<String> {
     let mut per: HashMap<String, u32> = HashMap::new();
     let mut out = vec![];
     for (id, _) in tickets {

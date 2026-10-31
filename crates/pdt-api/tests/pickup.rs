@@ -303,3 +303,90 @@ async fn a_dry_run_of_pick_up_tickets_says_what_it_would_start_and_starts_nothin
     assert_eq!(step("start")["output"]["would"], json!([format!("start {key}")]));
     assert_eq!(stage(&env, &t).await, "todo");
 }
+
+/// The docs' "Ready tickets only at night": a step's cap above the project's running cap holds; Start doesn't refuse
+/// for the project's cap, and the ticket isn't passed over as failed.
+#[tokio::test]
+async fn a_steps_cap_above_the_projects_running_cap_holds() {
+    let env = setup().await;
+    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 1, "startDelaySeconds": 0})).await;
+    let mut doc = pickup_by_hand();
+    doc["nodes"][1]["config"] = json!({"stages": ["ready"]});
+    doc["nodes"][2]["config"]["cap"] = json!(3);
+    let wf = workflow(&env, doc).await;
+    let x = ticket(&env, "X", "ready").await;
+    let y = ticket(&env, "Y", "ready").await;
+    let z = ticket(&env, "Z", "ready").await;
+    let mut ports = vec![];
+    for _ in 0..4 {
+        let (_, r) = call(&env.app, "POST", &format!("/api/workflows/{wf}/run"), Some(json!({}))).await;
+        pdt_api::run_workflows(&env.state).await;
+        let (_, run) =
+            call(&env.app, "GET", &format!("/api/workflow-runs/{}", r["runId"].as_str().unwrap()), None).await;
+        let start = run["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "start").cloned();
+        ports.push(start.map(|s| s["port"].clone()).unwrap_or(Value::Null));
+    }
+    assert_eq!(active_attempts(&env, &[&x, &y, &z]).await, 3, "three, over the project's cap of one");
+    assert_eq!(ports[..3], [json!("started"), json!("started"), json!("started")], "{ports:?}");
+    assert_eq!(ports[3], Value::Null, "the fourth chose none: at the step's cap");
+    // Start's own check still holds the project's cap for a person's Start.
+    let w = ticket(&env, "W", "todo").await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{w}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("start_blocked")), "{v}");
+}
+
+/// What another pickup run started since a pick was chosen counts: `ticket.start` checks the pick's project, area and
+/// label caps again under its lock, and skips it (not a failure) when one is full.
+#[tokio::test]
+async fn a_stale_pick_is_checked_again_and_skipped_when_a_cap_filled_since() {
+    let env = setup().await;
+    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 5, "startDelaySeconds": 0})).await;
+    let (_, t) = call(
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": "In flight", "stage": "todo", "labels": ["agentic"]})),
+    )
+    .await;
+    let busy = t["id"].as_str().unwrap().to_string();
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{busy}/start"),
+        Some(json!({"agent": "claude", "noSession": true})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let next = ticket(&env, "Next", "todo").await;
+    let start_with = |pick: Value| {
+        json!({"name": "Start a pick", "nodes": [
+            {"id": "go", "kind": "manual", "version": 1},
+            {"id": "start", "kind": "ticket.start", "version": 1, "config": {"ticket": [pick]}}],
+         "edges": [{"from": "go", "to": "start"}]})
+    };
+    let run = |doc: Value| {
+        let env = &env;
+        async move {
+            let wf = workflow(env, doc).await;
+            let (_, r) = call(&env.app, "POST", &format!("/api/workflows/{wf}/run"), Some(json!({}))).await;
+            pdt_api::run_workflows(&env.state).await;
+            let (_, run) =
+                call(&env.app, "GET", &format!("/api/workflow-runs/{}", r["runId"].as_str().unwrap()), None).await;
+            run["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "start").unwrap().clone()
+        }
+    };
+    // Chosen under a cap of one, before `busy` started: the project is at it now.
+    let step = run(start_with(json!({"id": next, "cap": 1}))).await;
+    assert_eq!(step["port"], "skipped", "{step}");
+    assert_eq!(step["output"]["skipped"][0]["reason"], "the project is at its cap (1 of 1 in flight)");
+    // A label cap the ticket in flight fills (the pick has the label too).
+    let (s, v) = call(&env.app, "PATCH", &format!("/api/tickets/{next}"), Some(json!({"labels": ["agentic"]}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let step = run(start_with(json!({"id": next, "cap": 5, "labelCaps": {"agentic": 1}}))).await;
+    assert_eq!(step["output"]["skipped"][0]["reason"], "label agentic is at its cap of 1", "{step}");
+    let step = run(start_with(json!({"id": next, "cap": 5, "areaCaps": {}, "labelCaps": {"agentic": 2}}))).await;
+    assert_eq!(step["port"], "started", "{step}");
+    assert_eq!(stage(&env, &next).await, "in_progress");
+}

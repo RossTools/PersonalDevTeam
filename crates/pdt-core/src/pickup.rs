@@ -284,7 +284,7 @@ pub struct Passed {
     pub why: String,
 }
 
-/// A chosen ticket, with the project cap it was chosen under (the start checks it again).
+/// A chosen ticket, with the caps it was chosen under (the start checks them again, under its lock).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -293,6 +293,26 @@ pub struct Pick {
     #[ts(flatten)]
     pub ticket: PickupTicket,
     pub cap: u32,
+    /// The area caps that bind it: those of its own areas.
+    pub area_caps: BTreeMap<String, u32>,
+    /// The label caps that bind it: those of its own labels.
+    pub label_caps: BTreeMap<String, u32>,
+}
+
+impl Pick {
+    /// The area or label cap that `active` (the project's tickets in flight) is at, if any: `("area", "web", 1)`.
+    pub fn full_at<'a>(&'a self, active: &[ActiveTicket]) -> Option<(&'static str, &'a str, u32)> {
+        let count = |pick: &dyn Fn(&ActiveTicket) -> &Vec<String>, name: &str| {
+            active.iter().filter(|a| pick(a).iter().any(|x| x == name)).count()
+        };
+        let at = |caps: &'a BTreeMap<String, u32>, pick: &dyn Fn(&ActiveTicket) -> &Vec<String>| {
+            caps.iter().find(|(n, c)| count(pick, n) >= usize::try_from(**c).unwrap_or(usize::MAX))
+        };
+        if let Some((n, c)) = at(&self.area_caps, &|a| &a.areas) {
+            return Some(("area", n, *c));
+        }
+        at(&self.label_caps, &|a| &a.labels).map(|(n, c)| ("label", n.as_str(), *c))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -339,7 +359,17 @@ pub fn choose(projects: &[PickupProject], rules: &ChooseRules, failed: &HashMap<
                 Some(reason) => {
                     out.passed.push(Passed { id: t.id.clone(), key: t.key.clone(), why: reason.describe(), reason })
                 }
-                None => out.chosen.push(Pick { ticket: t.clone(), cap }),
+                None => {
+                    let binding = |caps: &BTreeMap<String, u32>, of: &[String]| -> BTreeMap<String, u32> {
+                        caps.iter().filter(|(n, _)| of.contains(n)).map(|(n, c)| (n.clone(), *c)).collect()
+                    };
+                    out.chosen.push(Pick {
+                        area_caps: binding(&rules.area_caps, &t.areas),
+                        label_caps: binding(&rules.label_caps, &t.labels),
+                        ticket: t.clone(),
+                        cap,
+                    })
+                }
             }
         }
     }
@@ -577,6 +607,16 @@ mod tests {
         assert_eq!(c.passed[0].reason, PassedReason::AreaCap { area: "web".into(), cap: 1 });
         assert_eq!(c.passed[1].reason, PassedReason::LabelCap { label: "agentic".into(), cap: 1 });
         assert_eq!(c.chosen[0].cap, 5);
+        // The pick carries the caps that bind it (none here: `b` has neither area nor label capped), and a pick that
+        // has one says when the tickets in flight fill it.
+        assert!(c.chosen[0].area_caps.is_empty() && c.chosen[0].label_caps.is_empty());
+        let free = ChooseRules { area_caps: BTreeMap::from([("web".into(), 2)]), ..ChooseRules::auto_start() };
+        let c = choose(std::slice::from_ref(&p), &free, &HashMap::new(), LATER);
+        let a = c.chosen.iter().find(|p| p.ticket.id == "a").unwrap();
+        assert_eq!(a.area_caps, BTreeMap::from([("web".to_string(), 2)]));
+        assert_eq!(a.full_at(&p.active), None);
+        let two = [p.active[0].clone(), ActiveTicket { id: "y".into(), ..p.active[0].clone() }];
+        assert_eq!(a.full_at(&two), Some(("area", "web", 2)));
         // The step's cap wins over the project's.
         let c = choose(std::slice::from_ref(&p), &ChooseRules { cap: Some(1), ..rules }, &HashMap::new(), LATER);
         assert!(c.chosen.is_empty());

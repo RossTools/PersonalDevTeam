@@ -456,31 +456,26 @@ async fn auto_start_takes_the_most_urgent_ticket_first_unless_the_project_says_r
     let env = setup().await;
     let (_, v) = call(&env.app, "GET", &format!("/api/projects/{}/settings", env.project), None).await;
     assert_eq!(v["policy"]["autoStartOrder"], "priority", "most urgent first unless the project says otherwise");
-    // One at a time: each raise of the cap lets the next one start (PDT-327: `slot.freed`).
-    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 1, "startDelaySeconds": 0})).await;
+    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 10, "startDelaySeconds": 0})).await;
     // No host cap on agents running a turn: each start's session keeps working.
     let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"maxAgentTurns": 0}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    let stage = |id: String| {
-        let env = &env;
-        async move { get_ticket(env, &id).await["stage"].as_str().unwrap().to_string() }
+    // The tickets in the order they started (the event log's order).
+    let started_in_order = || async {
+        let (_, v) = call(&env.app, "GET", "/api/events?type=attempt.started&limit=100", None).await;
+        let mut ids: Vec<String> =
+            v.as_array().unwrap().iter().map(|e| e["ticketId"].as_str().unwrap().to_string()).collect();
+        ids.reverse();
+        ids
     };
-    // A new To do ticket goes to the top: the medium ones rank above the high one, `medium` first.
+    // A new To do ticket goes to the top: the medium ones rank above the high one, `medium` first. Since PDT-327 the
+    // pickup starts every ticket it may in one pass (the old loop started one per project every 10 s), in the same
+    // order: the high-priority ticket first, then rank within a priority.
     let high = todo_at(&env, "High", "high").await;
     let medium_later = todo_at(&env, "Medium later", "medium").await;
     let medium = todo_at(&env, "Medium", "medium").await;
     common::pick_up(&env.state).await;
-    assert_eq!(stage(high.clone()).await, "in_progress", "the high-priority ticket first");
-    assert_eq!(stage(medium.clone()).await, "todo");
-    common::pick_up(&env.state).await;
-    assert_eq!(stage(medium.clone()).await, "todo", "at the cap");
-    settings(&env, json!({"maxRunningAttempts": 2})).await;
-    common::pick_up(&env.state).await;
-    assert_eq!(stage(medium.clone()).await, "in_progress", "then rank within a priority");
-    assert_eq!(stage(medium_later.clone()).await, "todo");
-    settings(&env, json!({"maxRunningAttempts": 3})).await;
-    common::pick_up(&env.state).await;
-    assert_eq!(stage(medium_later).await, "in_progress");
+    assert_eq!(started_in_order().await, [high.clone(), medium.clone(), medium_later.clone()]);
 
     // By rank: today's order, whatever the priority.
     settings(&env, json!({"autoStartOrder": "rank"})).await;
@@ -488,10 +483,8 @@ async fn auto_start_takes_the_most_urgent_ticket_first_unless_the_project_says_r
     assert_eq!(v["policy"]["autoStartOrder"], "rank");
     let urgent = todo_at(&env, "Urgent", "urgent").await;
     let low = todo_at(&env, "Low", "low").await;
-    settings(&env, json!({"maxRunningAttempts": 4})).await;
     common::pick_up(&env.state).await;
-    assert_eq!(stage(low).await, "in_progress", "the first in rank");
-    assert_eq!(stage(urgent).await, "todo");
+    assert_eq!(started_in_order().await[3..], [low, urgent], "the first in rank first");
     let (s, v) =
         call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"autoStartOrder": "x"})))
             .await;

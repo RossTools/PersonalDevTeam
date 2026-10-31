@@ -197,8 +197,10 @@ emits the triggers, for projects with auto-start on: `ticket.startable` once per
 (`policy::startable` and the start delay over; what it told is kept in `AppState::pickup_watch`, so a restart tells
 again), and `slot.freed` when a project has fewer tickets in flight, its cap rose, or the host's free agent slots went
 from none to some. `ticket.start` holds `AppState::pickup_lock` while it checks and starts, so concurrent pickup runs
-neither start a ticket twice (the store's one-active-attempt rule is the backstop) nor go over the cap they were chosen
-under; it takes the first of each project's chosen tickets still free. A failed start is skipped until the ticket
+neither start a ticket twice (the store's one-active-attempt rule is the backstop) nor go over the caps a pick was
+chosen under (project, area and label, carried on each pick); it takes the first of each project's chosen tickets
+still free. Having checked the cap itself, it sets `ValidStart::cap_checked`, so Start doesn't refuse for the
+project's running cap (a step's cap may be higher) while still refusing for blockers and overlaps. A failed start is skipped until the ticket
 changes (`AppState::auto_start_failed`), unless it failed to write (a full disk), which the next run tries again. The
 watch also announces starts left half-done: an active attempt whose `started` timeline event never reached the event
 log (pdtd stopped, or the write failed, between `start_attempt` and `announce_start`), once it is two minutes old
