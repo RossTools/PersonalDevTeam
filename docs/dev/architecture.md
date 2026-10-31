@@ -168,7 +168,7 @@ questions, gates, stalled steps, secrets to enter, confirmations. An item's `tit
 persona name, and a gate's `changeRequest` (its attempt's pull request, else the run trigger's or the ticket's external
 link that a forge plugin's `is_change_request_url` accepts, named by its `change_request_name`). Some items are not
 stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, and workflow proposals
-(`inbox::proposals`, PDT-320: one per workflow with a proposed version, id `proposal:<workflow>:<version>`, answered
+(`inbox::proposals`: one per workflow with a proposed version, id `proposal:<workflow>:<version>`, answered
 by `inbox::answer` with the Versions tab's accept and discard). Notifications (`notifications.rs`) are the transient
 kind.
 
