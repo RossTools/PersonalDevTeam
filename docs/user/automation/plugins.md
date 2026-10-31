@@ -26,6 +26,7 @@ The optional plugins:
 | **Discord** | Post to Discord channels from workflows, let the PM manage a Discord server through a bot, and talk to the PM in the bot's DMs ([Talk to it from Discord](the-pm.md#talk-to-it-from-discord)). |
 | **Jira** | Link projects to Jira Cloud or Server / Data Center: issues assigned to you become tickets, and moving a ticket to Done moves its issue. |
 | **Buildkite** | CI of tickets' branches from Buildkite pipelines, shown and acted on like the pull request's CI. |
+| **Google** | Google Docs and Sheets as documents: pick files from your Drive, make new ones, and let agents edit them and answer their comments ([Google Docs and Sheets](../using-pdt/documents.md#google-docs-and-sheets)). |
 | **Sonarr and Radarr** | Search Radarr and Sonarr, add films and series, and read their download queues from workflows. |
 | **Scryer** | Films, series and anime from a Scryer media manager, in workflows and for the PM. |
 | **Plex** | Search a Plex server, list what it added lately and refresh its libraries from workflows. |

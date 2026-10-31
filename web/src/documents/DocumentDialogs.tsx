@@ -6,6 +6,7 @@ import type { Document } from '../api/gen/Document';
 import type { DocumentKind } from '../api/gen/DocumentKind';
 import type { Project } from '../api/gen/Project';
 import { actionError } from '../common/useAction';
+import { pickFromDrive, useGoogleAccounts } from './google';
 import { KIND_LABEL, invalidateDocuments, useDocumentProviders, useDocuments } from './queries';
 
 const KINDS: { value: DocumentKind; label: string }[] = [
@@ -140,27 +141,48 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
     enabled: chosen !== null,
   });
   const [error, setError] = useState<string | null>(null);
+  const google = useGoogleAccounts(false, chosen === 'google');
+  const pickers = (google.data ?? []).filter((a) => a.signedIn && a.picker);
+  // Google's picker covers the page: the dialog steps aside while it is open.
+  const [picking, setPicking] = useState(false);
   const items: CommandItem[] = (files.data ?? []).map((f) => ({
     id: f.reference,
     label: f.title,
     detail: KIND_LABEL[f.kind],
     keywords: query ? [query] : [],
   }));
+  const importOne = (provider: string, reference: string) => api.importDocument({
+    provider,
+    reference,
+    ...(ticket ? { ticketId: ticket.id } : projectId ? { projectId } : {}),
+  });
   const pick = async (reference: string) => {
     if (!chosen) return;
     setError(null);
     try {
-      const d = await api.importDocument({
-        provider: chosen,
-        reference,
-        ...(ticket ? { ticketId: ticket.id } : projectId ? { projectId } : {}),
-      });
+      const d = await importOne(chosen, reference);
       invalidateDocuments(qc);
       onImported(d);
     } catch (e) {
       setError(actionError(e));
     }
   };
+  const pickFromGoogle = async (connectionId: string) => {
+    setError(null);
+    setPicking(true);
+    try {
+      const picked = await pickFromDrive(connectionId);
+      let last: Document | null = null;
+      for (const f of picked) last = await importOne('google', `${connectionId}/${f.id}`);
+      invalidateDocuments(qc);
+      if (last) onImported(last);
+    } catch (e) {
+      setError(actionError(e));
+    } finally {
+      setPicking(false);
+    }
+  };
+  if (picking) return null;
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()} title={ticket ? `Import a document to ${ticket.key}` : 'Import a document'} size="md">
       <div className="flex flex-col gap-2">
@@ -174,6 +196,18 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
             onChange={setProvider}
           />
         )}
+        {chosen === 'google' && google.isSuccess && (pickers.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {pickers.map((a) => (
+              <Button key={a.connectionId} size="sm" variant="primary" onClick={() => void pickFromGoogle(a.connectionId)}>
+                Pick from Google Drive{pickers.length > 1 ? ` (${a.email ?? a.name})` : ''}
+              </Button>
+            ))}
+            <span className="text-xs text-muted-foreground">Or choose one PDT already has access to:</span>
+          </div>
+        ) : (
+          <Alert tone="info">To pick any file from your Drive, sign in to Google in Settings → Plugins → Google and give the account a picker API key and project number.</Alert>
+        ))}
         {providers.isSuccess && searchers.length === 0 ? (
           <Alert tone="info">No document provider here can look for files to import. Turn on a documents plugin in Settings → Plugins.</Alert>
         ) : (

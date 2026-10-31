@@ -9,6 +9,7 @@ pub use crate::mcp::tools::Cx;
 pub use crate::notifications::on_event;
 pub use crate::overlap::decorate as decorate_ticket;
 pub use crate::routes::{AppState, now_ms};
+pub use crate::untrusted::from_ui;
 pub use crate::workflow::builtins::Builtin;
 pub use crate::workflow::catalog::{
     BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, ports, schema_of, spec,

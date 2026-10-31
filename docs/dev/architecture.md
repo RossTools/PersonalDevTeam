@@ -62,7 +62,7 @@ and `backups/` (a copy taken before migrations).
 | `pdt-update` | The GitHub release client: finding a release, verified downloads. |
 | `pdt-host` | The supervisor: running pdtd, installing updates, rolling back, login registration. |
 | `pdtd` | The daemon binary: config, logging, the loops' wiring (`main.rs`), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
-| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
+| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
 
 Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients match on `code`. API types derive ts-rs
 and are generated into `web/src/api/gen`.
@@ -202,6 +202,29 @@ documents in memory for tests; with `PDT_SEED=demo` a dev pdtd registers one as 
 `documents/routes.rs`; `get_ticket` lists a ticket's documents and the ticket section of the instructions says to read
 its design doc.
 
+Edits are pdt-core's `DocumentEdit` (`document_edit.rs`, pure): provider-neutral operations on a doc's text
+(whole, appended, find and replace, after a heading, a heading's section) and on a sheet (values and formulas,
+sheets, formats, borders, widths, freezing, conditional formats, validation, charts, sorting, filters), with A1
+ranges. Each provider maps them to its own API and answers `Unsupported` for the ones it can't do.
+`GET /api/documents/{id}/version` is the provider's version (Google's Drive counter), which the document page polls to
+read the content again when it changes.
+
+**Google.** An optional plugin (`crates/pdt-int-google`, pdtd's `google` feature), the `google` document provider.
+Each Google account is a `google` connection (the user's OAuth client ID in its config, the client secret as its
+secret, the picker's API key and project number, the folder for new files); signing in (`oauth.rs`: the authorization
+code flow with PKCE, the `drive.file` scope only) keeps the refresh token and email as a secret of their own
+(`connection:<id>:google`, `accounts.rs`), so editing the connection keeps them. A document's reference is
+`<connection id>/<file id>`. `api.rs` is the client (an access token per account in memory, renewed once on a 401;
+Google's errors as `ProviderError`, a rate limit as `Busy`, which the API answers 429), over pdt-forge's blocking
+`Transport` (tests use recorded answers). `drive.rs` has the files, a Doc's Markdown (Drive's export), a Sheet's
+cells, comments and versions; `docs.rs` turns Markdown into Docs `batchUpdate` requests (inserted from the last block
+at one index, UTF-16 indexes, sections found in `documents.get`'s structure); `sheets.rs` maps sheet edits to
+`batchUpdate` requests and `values.batchUpdate` writes (`USER_ENTERED`), in order. `routes.rs` signs in and out
+(`/api/google/…`; the callback page is where Google sends the browser back) and gives the browser Google's file
+picker's token; signing in and the picker are for the web app only (its UI token). The web app loads the picker
+(`web/src/documents/google.tsx`); a picked file is imported like any other. The document page embeds the provider's
+`embed_url` (Google's editor, with `authuser`) and falls back to PDT's own reading.
+
 **GitLab.** An optional plugin (`crates/pdt-int-gitlab`, pdtd's `gitlab` feature) over GitLab's REST API (v4), for
 gitlab.com and self-hosted servers; nothing runs `glab`. It claims `origin` remotes on gitlab.com and on each host it
 has a login for (one account per host, a token with the `api` scope, or the device flow with `PDT_GITLAB_CLIENT_ID`),
@@ -226,7 +249,7 @@ login.
 | pdt-mcp and personas | pdt-api `mcp/`, `personas.rs`; pdt-core `persona.rs`, `mcp.rs` | `web/src/personas` |
 | Workflows, Inbox, notifications | pdt-api `workflow/`, `inbox.rs`, `notifications.rs`; pdt-core `workflow/`; pdt-store `workflows.rs`, `event_log.rs` | `web/src/workflows`, `web/src/inbox`, `web/src/notifications` |
 | Integrations | pdt-api `sdk.rs`, `integrations/`; `crates/pdt-int-*`; pdtd `src/integrations/` | `web/src/plugins`, `web/src/connections` |
-| Documents | pdt-api `documents/`; pdt-core `document.rs`; pdt-store `documents.rs` | `web/src/documents` |
+| Documents | pdt-api `documents/`; pdt-core `document.rs`, `document_edit.rs`; pdt-store `documents.rs`; `crates/pdt-int-google` | `web/src/documents` |
 | The PM | pdt-api `pm.rs`; pdt-core `pm.rs`; pdt-store `pm.rs` | `web/src/pm` |
 | Secrets | pdt-api `vault.rs`, `secrets.rs`; pdt-core `secret.rs` | `web/src/secrets` |
 | Database | `crates/pdt-store` (`migrations/`, `migrate.rs`) | |

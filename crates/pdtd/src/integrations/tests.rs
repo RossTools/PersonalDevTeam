@@ -178,6 +178,7 @@ fn the_connection_kinds_are_the_pages_kinds_in_order() {
             "discord_bot",
             "jira",
             "buildkite",
+            "google",
             "radarr",
             "sonarr",
             "scryer",

@@ -7,6 +7,7 @@ import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import { ConnectionDialog, connectionsKey } from '../connections/ConnectionDialog';
 import { ConnectionRow } from '../connections/ConnectionRow';
+import { GoogleSignIn } from '../documents/google';
 import { ForgeLogin } from './ForgeLogin';
 import { CATEGORY_LABEL, connectionsOf, pluginsKey, stuckOn, type Plugin } from './model';
 import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch, usePlugins } from './parts';
@@ -141,6 +142,7 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
               : <p className="text-sm text-muted-foreground">None yet.</p>}
         </Section>
       )}
+      {p.id === 'google' && p.enabled && p.built && <GoogleSignIn />}
       {connections.error && <Alert tone="error">Connections could not be loaded: {connections.error.message}</Alert>}
       {remove.error && <Alert tone="error">{remove.error.message}</Alert>}
 

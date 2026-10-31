@@ -3,6 +3,7 @@
 //! (title, kind, which provider holds it and the provider's reference) and its links; the content stays with the
 //! provider. Pure: the types, titles, provider ids, settings and the design doc template.
 
+pub use crate::document_edit::*;
 use crate::ticket::{Actor, AgentBy};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -306,21 +307,6 @@ impl DocumentContent {
             DocumentContent::Doc { version, .. } | DocumentContent::Sheet { version, .. } => version.as_deref(),
         }
     }
-}
-
-/// A change to a document's content.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(tag = "op", rename_all = "snake_case")]
-#[ts(export)]
-pub enum DocumentEdit {
-    /// A text document's whole content, as Markdown.
-    ReplaceText { markdown: String },
-    /// Markdown added at a text document's end.
-    AppendText { markdown: String },
-    /// Values written into a sheet from `cell` (`B3`) across and down; a value starting with `=` is a formula.
-    SetCells { sheet: String, cell: String, values: Vec<Vec<String>> },
-    /// A new, empty sheet.
-    AddSheet { name: String },
 }
 
 /// A reply in a comment's thread.

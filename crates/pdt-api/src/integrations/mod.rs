@@ -194,7 +194,7 @@ pub trait Integration: Send + Sync {
     }
 
     /// The document providers it provides (PDT-314: Google's Docs and Sheets), used while it is enabled.
-    fn document_providers(&self) -> Vec<Arc<dyn crate::documents::DocumentProvider>> {
+    fn document_providers(&self, _st: &AppState) -> Vec<Arc<dyn crate::documents::DocumentProvider>> {
         Vec::new()
     }
 

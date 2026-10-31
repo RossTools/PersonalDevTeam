@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pencil, Plus, X } from 'lucide-react';
 import { Alert, Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, SegmentedControl, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
@@ -14,7 +14,7 @@ import { useOpenTicket } from '../tickets/actions';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { KindIcon } from './LinkedDocuments';
-import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders } from './queries';
+import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders, useDocumentVersion } from './queries';
 
 /** Who added it, for people. */
 function addedBy(d: Document): string {
@@ -75,6 +75,21 @@ function Content({ content }: { content: DocumentContent }) {
   );
 }
 
+type View = 'live' | 'pdt';
+const VIEW_KEY = 'pdt.documents.view';
+
+/** The provider's own editor, embedded (Google's), live: what agents change shows as they change it. */
+function LiveEditor({ url, title, provider }: { url: string; title: string; provider: string }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <iframe src={url} title={`${title} in ${provider}`} allow="clipboard-read; clipboard-write" className="h-[75dvh] w-full rounded-md border border-border bg-card" />
+      <p className="text-xs text-muted-foreground">
+        Asks you to sign in, or stays blank? This browser keeps {provider}’s sign-in out of pages inside PDT: switch to Read in PDT, or open it in {provider}.
+      </p>
+    </div>
+  );
+}
+
 const linkHeading = 'text-2xs font-semibold tracking-wider text-muted-foreground uppercase';
 
 /**
@@ -94,6 +109,22 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const content = useDocumentContent(id);
   const d = doc.data;
   const provider = d ? providers.data?.providers.find((p) => p.id === d.provider) : undefined;
+  const embedUrl = content.data?.embedUrl ?? null;
+  const [view, setView] = useState<View>(() => (localStorage.getItem(VIEW_KEY) === 'pdt' ? 'pdt' : 'live'));
+  const live = embedUrl !== null && view === 'live';
+  // PDT's own view reads the document again when it changes (the embedded editor follows changes itself).
+  const version = useDocumentVersion(id, content.isSuccess && !live);
+  const shownVersion = content.data?.content.version ?? null;
+  const nowVersion = version.data?.version ?? null;
+  useEffect(() => {
+    if (nowVersion !== null && shownVersion !== null && nowVersion !== shownVersion) {
+      void qc.invalidateQueries({ queryKey: documentKeys.content(id) });
+    }
+  }, [qc, id, nowVersion, shownVersion]);
+  const pickView = (v: View) => {
+    localStorage.setItem(VIEW_KEY, v);
+    setView(v);
+  };
   const settle = () => invalidateDocuments(qc);
   const rename = (title: string) => void runAction(async () => {
     await api.renameDocument(id, title);
@@ -217,7 +248,19 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
         <section aria-label="Content" className="flex flex-col gap-2">
           {content.isPending && <Skeleton lines={6} label="Reading the document" />}
           {content.isError && <Alert tone="error">{provider?.label ?? d.provider} could not read it: {actionError(content.error)}</Alert>}
-          {content.data && <Content content={content.data.content} />}
+          {content.data && embedUrl !== null && (
+            <SegmentedControl
+              aria-label="How to show it"
+              size="sm"
+              className="self-start"
+              options={[{ value: 'live', label: `${provider?.label ?? d.provider} editor` }, { value: 'pdt', label: 'Read in PDT' }]}
+              value={view}
+              onChange={(v) => pickView(v as View)}
+            />
+          )}
+          {content.data && (live
+            ? <LiveEditor url={embedUrl} title={d.title} provider={provider?.label ?? d.provider} />
+            : <Content content={content.data.content} />)}
         </section>
       </article>
       {linkingTicket && (

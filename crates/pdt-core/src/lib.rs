@@ -8,6 +8,7 @@ pub mod brand;
 pub mod bug_report;
 pub mod conversation;
 pub mod document;
+pub mod document_edit;
 pub mod fence;
 pub mod forge;
 pub mod git_url;

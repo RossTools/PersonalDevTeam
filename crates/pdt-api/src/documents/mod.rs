@@ -28,6 +28,9 @@ pub enum ProviderError {
     /// The edit or input doesn't fit the document (a cell that isn't one, a sheet it lacks).
     #[error("{0}")]
     Invalid(String),
+    /// The service is limiting how often PDT may call it: try again later.
+    #[error("{0}")]
+    Busy(String),
     /// Anything else (the service is down, a sign-in expired).
     #[error("{0}")]
     Failed(String),
@@ -109,7 +112,7 @@ pub trait DocumentProvider: Send + Sync {
         Box::pin(async move { Ok(self.file(reference).await?.version) })
     }
     /// A page that shows it inside PDT, when the provider has one.
-    fn embed_url(&self, _reference: &str) -> Option<String> {
+    fn embed_url(&self, _reference: &str, _kind: DocumentKind) -> Option<String> {
         None
     }
 
@@ -137,7 +140,7 @@ impl DocumentProviders {
 pub fn providers(st: &AppState) -> Vec<Arc<dyn DocumentProvider>> {
     let mut out: Vec<Arc<dyn DocumentProvider>> = st.documents.list().to_vec();
     for i in st.registry().integrations() {
-        for p in i.document_providers() {
+        for p in i.document_providers(st) {
             if !out.iter().any(|o| o.id() == p.id()) {
                 out.push(p);
             }
@@ -265,7 +268,15 @@ pub mod testing {
         Box::pin(async move { r })
     }
 
+    fn find_sheet<'s>(sheets: &'s mut [Sheet], name: &str) -> ProviderResult<&'s mut Sheet> {
+        sheets
+            .iter_mut()
+            .find(|s| s.name == name)
+            .ok_or_else(|| ProviderError::Invalid(format!("there is no sheet called {name}")))
+    }
+
     fn apply_edit(content: &mut DocumentContent, edit: DocumentEdit) -> ProviderResult<()> {
+        let op = edit.op();
         match (content, edit) {
             (DocumentContent::Doc { markdown, .. }, DocumentEdit::ReplaceText { markdown: m }) => *markdown = m,
             (DocumentContent::Doc { markdown, .. }, DocumentEdit::AppendText { markdown: m }) => {
@@ -274,17 +285,24 @@ pub mod testing {
                 }
                 markdown.push_str(&m);
             }
+            (DocumentContent::Doc { markdown, .. }, DocumentEdit::ReplaceAll { find, replace, .. }) => {
+                *markdown = markdown.replace(&find, &replace);
+            }
             (DocumentContent::Sheet { sheets, .. }, DocumentEdit::AddSheet { name }) => {
                 if sheets.iter().any(|s| s.name == name) {
                     return Err(ProviderError::Invalid(format!("there is a sheet called {name} already")));
                 }
                 sheets.push(sheet(&name));
             }
+            (DocumentContent::Sheet { sheets, .. }, DocumentEdit::RenameSheet { sheet, name }) => {
+                find_sheet(sheets, &sheet)?.name = name;
+            }
+            (DocumentContent::Sheet { sheets, .. }, DocumentEdit::DeleteSheet { sheet }) => {
+                find_sheet(sheets, &sheet)?;
+                sheets.retain(|s| s.name != sheet);
+            }
             (DocumentContent::Sheet { sheets, .. }, DocumentEdit::SetCells { sheet: name, cell, values }) => {
-                let s = sheets
-                    .iter_mut()
-                    .find(|s| s.name == name)
-                    .ok_or_else(|| ProviderError::Invalid(format!("there is no sheet called {name}")))?;
+                let s = find_sheet(sheets, &name)?;
                 let (row, col) =
                     parse_cell(&cell).ok_or_else(|| ProviderError::Invalid(format!("{cell} is not a cell")))?;
                 for (i, line) in values.into_iter().enumerate() {
@@ -304,12 +322,13 @@ pub mod testing {
                     }
                 }
             }
-            (DocumentContent::Doc { .. }, _) => {
+            (DocumentContent::Doc { .. }, e) if !e.is_text() => {
                 return Err(ProviderError::Unsupported("a text document has no sheets or cells".into()));
             }
-            (DocumentContent::Sheet { .. }, _) => {
+            (DocumentContent::Sheet { .. }, e) if e.is_text() => {
                 return Err(ProviderError::Unsupported("a spreadsheet has no text to change".into()));
             }
+            _ => return Err(ProviderError::Unsupported(format!("the in-memory provider can't {op}"))),
         }
         Ok(())
     }
