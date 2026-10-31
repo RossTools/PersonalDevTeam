@@ -266,6 +266,7 @@ fn own() -> Vec<Arc<dyn Integration>> {
     vec![
         Arc::new(core::Core),
         Arc::new(forge::ForgeTools),
+        Arc::new(crate::documents::tools::DocumentTools),
         Arc::new(webhook::Webhook),
         Arc::new(github::Github),
         Arc::new(http::Http),

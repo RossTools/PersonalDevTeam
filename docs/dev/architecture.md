@@ -200,7 +200,17 @@ it can) and comes from `AppState::documents` (PDT's own) or an enabled integrati
 provider and `<data dir>/documents` (pdt-core `document.rs`, pure). `documents::testing::FakeProvider` keeps
 documents in memory for tests; with `PDT_SEED=demo` a dev pdtd registers one as "Sample". The routes are in
 `documents/routes.rs`; `get_ticket` lists a ticket's documents and the ticket section of the instructions says to read
-its design doc.
+its design doc. Edits are provider-neutral `DocumentEdit` operations (pdt-core `document.rs`): a provider maps each to its own API and
+answers `Unsupported` for one it can't do; pdt-core `document_ops.rs` applies the text ones to Markdown and the sheet
+ones to plain cells, for providers that keep content in memory or as Markdown. The agent tools (`documents_list`,
+`doc_read`, `doc_edit`, `sheet_read`, `sheet_edit`, `document_create`, `document_open_beside`, comments) are actions
+of the `documents` integration (pdt-api `documents/tools.rs`); the writes ask, with `AskTarget::Document` (a project
+the document is linked to lets the PM act) or the project or ticket they name, and comments come fenced as outside
+input. The documents open beside a conversation are `documents_beside` rows (session, document, position, who opened
+it, when it was focused: the newest focused is the tab shown), served at `/api/sessions/{id}/documents`; the web's
+`DocumentsBesideLayout` (`web/src/documents/BesidePanel.tsx`) wraps the agent and PM conversation views, and
+`DocumentBody` reads a document again whenever its `updatedAt` moves (an edit through PDT touches it) and lights what
+changed.
 
 **GitLab.** An optional plugin (`crates/pdt-int-gitlab`, pdtd's `gitlab` feature) over GitLab's REST API (v4), for
 gitlab.com and self-hosted servers; nothing runs `glab`. It claims `origin` remotes on gitlab.com and on each host it

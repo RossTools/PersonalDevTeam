@@ -347,6 +347,8 @@ pub enum AskTarget {
     /// A ticket id or key.
     Ticket(String),
     Session(String),
+    /// A document by id (PDT-317): the PM acts without asking when a project it is linked to lets it.
+    Document(String),
     /// A connection of `kind` by name (None: the only one of its kind), whose `config.pmActs` says whether the PM
     /// acts without asking (an integration's tools, through their connection).
     Connection {

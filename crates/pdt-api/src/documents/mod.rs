@@ -7,6 +7,7 @@
 //! ([`crate::Integration::document_providers`]); [`providers`] lists them.
 
 pub(crate) mod routes;
+pub(crate) mod tools;
 
 use crate::routes::AppState;
 use crate::workflow::catalog::BoxFut;
@@ -154,7 +155,7 @@ pub fn provider(st: &AppState, id: &str) -> Option<Arc<dyn DocumentProvider>> {
 /// An in-memory provider for tests and the demo data: docs and sheets, search, edits, comments.
 pub mod testing {
     use super::*;
-    use pdt_core::document::{Cell, Sheet, parse_cell};
+    use pdt_core::document::Sheet;
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
@@ -258,60 +259,25 @@ pub mod testing {
     }
 
     fn sheet(name: &str) -> Sheet {
-        Sheet { name: name.into(), rows: vec![] }
+        Sheet { name: name.into(), ..Default::default() }
     }
 
     fn ready<'a, T: Send + 'a>(r: ProviderResult<T>) -> BoxFut<'a, ProviderResult<T>> {
         Box::pin(async move { r })
     }
 
+    /// Text edits as Markdown, sheet edits on plain cells (pdt-core's `document_ops`): formats, conditional
+    /// formats and filters are unsupported, as a provider without them answers.
     fn apply_edit(content: &mut DocumentContent, edit: DocumentEdit) -> ProviderResult<()> {
-        match (content, edit) {
-            (DocumentContent::Doc { markdown, .. }, DocumentEdit::ReplaceText { markdown: m }) => *markdown = m,
-            (DocumentContent::Doc { markdown, .. }, DocumentEdit::AppendText { markdown: m }) => {
-                if !markdown.is_empty() && !markdown.ends_with('\n') {
-                    markdown.push('\n');
-                }
-                markdown.push_str(&m);
-            }
-            (DocumentContent::Sheet { sheets, .. }, DocumentEdit::AddSheet { name }) => {
-                if sheets.iter().any(|s| s.name == name) {
-                    return Err(ProviderError::Invalid(format!("there is a sheet called {name} already")));
-                }
-                sheets.push(sheet(&name));
-            }
-            (DocumentContent::Sheet { sheets, .. }, DocumentEdit::SetCells { sheet: name, cell, values }) => {
-                let s = sheets
-                    .iter_mut()
-                    .find(|s| s.name == name)
-                    .ok_or_else(|| ProviderError::Invalid(format!("there is no sheet called {name}")))?;
-                let (row, col) =
-                    parse_cell(&cell).ok_or_else(|| ProviderError::Invalid(format!("{cell} is not a cell")))?;
-                for (i, line) in values.into_iter().enumerate() {
-                    for (j, v) in line.into_iter().enumerate() {
-                        let (r, c) = (row + i, col + j);
-                        if s.rows.len() <= r {
-                            s.rows.resize(r + 1, Vec::new());
-                        }
-                        if s.rows[r].len() <= c {
-                            s.rows[r].resize(c + 1, Cell::default());
-                        }
-                        s.rows[r][c] = match v.strip_prefix('=') {
-                            // The fake computes nothing: a formula shows itself.
-                            Some(_) => Cell { value: v.clone(), formula: Some(v) },
-                            None => Cell { value: v, formula: None },
-                        };
-                    }
-                }
-            }
-            (DocumentContent::Doc { .. }, _) => {
-                return Err(ProviderError::Unsupported("a text document has no sheets or cells".into()));
-            }
-            (DocumentContent::Sheet { .. }, _) => {
-                return Err(ProviderError::Unsupported("a spreadsheet has no text to change".into()));
-            }
-        }
-        Ok(())
+        use pdt_core::document_ops::{EditError, apply_doc_edit, apply_sheet_edit};
+        let r = match content {
+            DocumentContent::Doc { markdown, .. } => apply_doc_edit(markdown, &edit).map(|m| *markdown = m),
+            DocumentContent::Sheet { sheets, .. } => apply_sheet_edit(sheets, edit),
+        };
+        r.map_err(|e| match e {
+            EditError::Unsupported(m) => ProviderError::Unsupported(m),
+            EditError::Invalid(m) => ProviderError::Invalid(m),
+        })
     }
 
     impl DocumentProvider for FakeProvider {

@@ -659,6 +659,15 @@ pub(crate) async fn acts_without_asking(st: &AppState, target: &AskTarget) -> bo
             .await
             .is_ok_and(|c| pm::connection_lets_pm_act(&c.config));
     }
+    if let AskTarget::Document(d) = target {
+        let Ok(Some(d)) = st.store.get_document(d).await else { return false };
+        for p in &d.projects {
+            if st.store.get_project_settings(&p.id).await.is_ok_and(|s| s.policy.pm_acts) {
+                return true;
+            }
+        }
+        return false;
+    }
     let project = match target {
         AskTarget::Project(p) => project_id(st, p).await.ok(),
         AskTarget::Ticket(t) => match crate::mcp::tools::resolve_ticket(st, t, None).await {
@@ -666,7 +675,7 @@ pub(crate) async fn acts_without_asking(st: &AppState, target: &AskTarget) -> bo
             Err(_) => None,
         },
         AskTarget::Session(s) => st.store.get_session(s).await.ok().flatten().map(|s| s.project_id),
-        AskTarget::Connection { .. } | AskTarget::Always => None,
+        AskTarget::Connection { .. } | AskTarget::Document(_) | AskTarget::Always => None,
     };
     let Some(project) = project else { return false };
     st.store.get_project_settings(&project).await.is_ok_and(|s| s.policy.pm_acts)

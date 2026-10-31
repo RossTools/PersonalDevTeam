@@ -65,6 +65,18 @@ fn the_tools_are_where_they_were() {
             "ci_failed_logs",
             "issue_view",
             "issue_comment",
+            "documents_list",
+            "document_get",
+            "doc_read",
+            "doc_edit",
+            "sheet_read",
+            "sheet_edit",
+            "document_create",
+            "document_link",
+            "comments_list",
+            "comment_reply",
+            "comment_resolve",
+            "document_open_beside",
             "issue_create",
             "report_bug",
             "discord_get",
@@ -104,6 +116,12 @@ fn the_tools_are_where_they_were() {
             "unlink_tickets",
             "stop_ticket",
             "send_to_session",
+            "doc_edit",
+            "sheet_edit",
+            "document_create",
+            "document_link",
+            "comment_reply",
+            "comment_resolve",
             "issue_create",
             "report_bug",
             "discord_change",
@@ -141,7 +159,7 @@ fn the_tools_are_where_they_were() {
     let defaults: Vec<&str> = list.iter().filter(|x| x.default).map(|x| x.name.as_str()).collect();
     assert_eq!(defaults, pdt_core::persona::DEFAULT_TOOLS);
     let read_only: Vec<&str> = t.all().iter().filter(|d| d.read_only).map(|d| d.name).collect();
-    assert_eq!(read_only.len(), 32, "{read_only:?}");
+    assert_eq!(read_only.len(), 37, "{read_only:?}");
     let open: Vec<&str> = t.all().iter().filter(|d| d.open_world).map(|d| d.name).collect();
     let forge = [
         "change_request_view",
@@ -162,7 +180,7 @@ fn the_tools_are_where_they_were() {
         || forge.contains(n)));
     assert_eq!(open.len(), 35);
     let pm = pdt_core::persona::builtin_persona("pm").unwrap().setup(t);
-    assert_eq!(pm.tool_set(t).len(), 59);
+    assert_eq!(pm.tool_set(t).len(), 71);
 }
 
 #[test]

@@ -1301,7 +1301,7 @@ describe('phone', () => {
       await userEvent.click(within(bar()).getByRole('button', { name: 'Screen actions' }));
       const items = screen.getAllByRole('menuitem').map((m) => m.textContent);
       await userEvent.keyboard('{Escape}');
-      expect(items).toEqual(['New conversation', 'Ended conversations', 'Rename', 'Reset…', 'Close…']);
+      expect(items).toEqual(['New conversation', 'Ended conversations', 'Rename', 'Open a document beside…', 'Reset…', 'Close…']);
     });
     await userEvent.click(within(bar()).getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(here()).toBe('/pm'));

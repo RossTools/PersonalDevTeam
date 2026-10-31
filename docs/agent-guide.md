@@ -22,8 +22,9 @@ no authentication, and reports errors as `{code, message}`.
 
 Most sessions PDT starts also get PDT's MCP server, named `pdt` (in Claude its tools are `mcp__pdt__<tool>`). Its
 tools know which session is calling, so they need no session, ticket or attempt ids, and they run without asking,
-except the PM's `create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket` and `send_to_session`, which the
-person confirms per call unless the project lets the PM act. Use them for what they cover; the API above stays available for everything else.
+except the PM's `create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket` and `send_to_session`, and
+the document tools that write (`doc_edit`, `sheet_edit`, `document_create`, `document_link`, `comment_reply`,
+`comment_resolve`), which the person confirms per call unless the project lets the PM act. Use them for what they cover; the API above stays available for everything else.
 
 | Tool | Does |
 |---|---|
@@ -41,6 +42,9 @@ person confirms per call unless the project lets the PM act. Use them for what t
 | `get_overview`, `search_tickets`, `get_session`, `list_workflow_runs` | the PM's view of every project: open tickets per stage, tickets in progress with PR and CI, the Inbox, running sessions; ticket search; a session's state and last messages; workflow runs and their steps |
 | `search_notes`, `save_note`, `delete_note`, `write_journal` | the PM's memory: notes (host-wide or per project; pinned ones go in every PM briefing) and the journal entry each PM conversation keeps (checkpoints after a compaction and daily, the last one when the user closes it) |
 | `list_todos` | `{project?, done?}`: the person's own todo list (title, notes `body` in Markdown, done, project, linked ticket, due date `dueOn` and time `dueTime`, repeat rule `recurrence`, dates), read-only |
+| `documents_list`, `document_get`, `doc_read`, `sheet_read`, `comments_list` | documents (see "Documents" below): list them by project, ticket, kind or title words; one's details and open comments; a doc as Markdown (`heading` reads one section); a sheet's sheets, charts and cells (`sheet`, `range`); its comments, fenced as outside input |
+| `doc_edit`, `sheet_edit`, `document_create`, `document_link`, `comment_reply`, `comment_resolve` | changes to documents: `{document, edits}` (see "Documents" for the operations; `doc_edit` answers with a diff, `sheet_edit` with new charts' ids), a new doc or sheet linked to a ticket or project (the session's own ticket by default; `openBeside` opens it beside the conversation), a link (or `unlink`), a reply in a comment's thread, a comment resolved |
+| `document_open_beside` | `{document}`: opens it in a tab beside this conversation, for the person to watch your edits land |
 | `create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session` | the PM's changes: a new ticket (a draft by default), an edit to any ticket (also its parent; outside the PM, another ticket than your own only by its exact key, and not the title or description of one in progress or done you didn't create; moving one at work back to Draft, Ready or To do stops its work), a link between two tickets (`blocks`, `blockedBy`, `relates`) or its removal, stopping a ticket's work (`{ticket, stage?, removeWorktree?, deleteBranch?}`: cancels its workflow runs, stops its sessions, abandons its attempt and moves it back to To do; `removeWorktree` also discards its worktree), a message to a session (delivered when it is idle, so it can't stop a busy agent); `create_ticket` and `edit_ticket` take `files` too (see "Attachments"); each waits for the person's yes unless the project lets the PM act |
 
 Never ask the person to paste a secret into the chat, and never print, log or commit one: ask with `request_secret`
@@ -93,16 +97,39 @@ data are refused, and a call with one bad file attaches none.
 ### Documents
 
 Design docs, plans and spreadsheets live outside the repo as documents, linked to projects and tickets. `get_ticket`
-lists the ticket's documents: read its design doc before you start. A doc reads as Markdown, a sheet as its sheets
-of cells (each with its `value` and, if it has one, its `formula`).
+lists the ticket's documents: read its design doc before you start. When you're asked for a spec, a plan or a design,
+write it as a document linked to the ticket (`document_create`), never as a file in the repository. A doc reads as
+Markdown, a sheet as its sheets of cells (each with its `value` and, if it has one, its `formula`) and charts. A
+`document` is given by id or exact title.
+
+Edits are a list of operations, applied in order; an operation the document's provider can't do fails with a message
+saying so, and the rest after it don't run:
+
+- Docs: `{op: "replace_section", heading, markdown}` (the body under a heading, up to the next one of its level),
+  `{op: "insert_after_heading", heading, markdown}`, `{op: "append_text", markdown}`, `{op: "replace_string", find,
+  replace, all?}` (the text must appear once unless `all`), `{op: "table_append_row", heading?, table?, cells}` and
+  `{op: "table_set_cell", heading?, table?, row, column, value}` (the `table`th table from 1, or the first under
+  `heading`; `row` counts body rows from 1, `column` is a header's text or a number), `{op: "replace_text", markdown}`
+  (the whole document).
+- Sheets: `{op: "set_cells", sheet, cell: "B3", values: [["1", "=A1*2"]]}`, `{op: "add_sheet", name}`,
+  `{op: "rename_sheet", sheet, name}`, `{op: "delete_sheet", sheet}`, `{op: "format_range", sheet, range: "A1:C1",
+  format: {bold?, italic?, underline?, color?, background?, size?, numberFormat?, horizontal?, vertical?, wrap?}}`,
+  `{op: "conditional_format", sheet, range, when, format}`, `{op: "add_chart", sheet, id?, chart: {kind: "column" |
+  "bar" | "line" | "area" | "pie" | "scatter", data: "A1:C10", title?, anchor?}}` (the data's first column is the
+  categories, its first row the series' names), `{op: "update_chart", id, chart}`, `{op: "delete_chart", id}`,
+  `{op: "sort", sheet, range, by: [{column: "B", descending?}], header?}`, `{op: "filter", sheet, range, column,
+  when}`, `{op: "clear_filter", sheet}`. A `when` is `{type: "greater_than" | "less_than" | "equal_to" |
+  "not_equal_to", value}`, `{type: "between", min, max}`, `{type: "text_contains", text}`, `{type: "empty"}`,
+  `{type: "not_empty"}` or `{type: "formula", formula}`.
 
 | Call | Does |
 |---|---|
 | `GET /api/documents?ticket=<key>&project=<key>&kind=doc\|sheet&q=<words>` | documents, the most recently changed first, with their `projects` and `tickets` |
-| `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows}]}` |
-| `POST /api/documents/<id>/edits` | `{edits: [...]}`, in order: `{op: "replace_text", markdown}`, `{op: "append_text", markdown}`, `{op: "set_cells", sheet, cell: "B3", values: [["1", "=A1*2"]]}`, `{op: "add_sheet", name}` |
+| `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows, charts}]}` |
+| `POST /api/documents/<id>/edits` | `{edits: [...]}` (the operations above): `{version, charts}` |
 | `GET /api/documents/<id>/comments` | its comments with their replies; `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves |
 | `POST /api/tickets/<id>/design-doc` | makes the ticket's design doc from the template, linked to it |
+| `GET /api/sessions/<id>/documents` | the documents open beside a conversation: `{tabs: [{document, by}], active}`; `POST` `{documentId}` opens one (or shows its tab), `PUT` `{documentIds}` orders them, `DELETE …/documents/<doc>` closes one |
 
 The person reviews your branch in PDT's Changes view and sends line comments back as one message that starts
 "Review feedback on <branch>": each comment names `file:line`, quotes the lines and says what to change. Address each
