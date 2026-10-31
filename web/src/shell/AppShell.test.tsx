@@ -65,7 +65,7 @@ describe('AppShell', () => {
     stubApi({ 'GET /api/projects': [], ...hostRoutes });
     renderWithQuery(<AppShell />);
     const rail = screen.getByRole('navigation', { name: 'Views' });
-    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Project manager', 'Sessions', 'Inbox', 'Tickets', 'Notes', 'Workflows', 'Personas', 'Files', 'Settings', 'Expand side rail']);
+    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Project manager', 'Sessions', 'Inbox', 'Tickets', 'Notes', 'Documents', 'Workflows', 'Personas', 'Files', 'Settings', 'Expand side rail']);
     for (const name of ['Board', 'Search']) {
       expect(within(rail).queryByRole('button', { name })).not.toBeInTheDocument();
     }
@@ -859,7 +859,7 @@ describe('settings page', () => {
     await userEvent.click(await within(nav).findByRole('button', { name: /Alpha/ }));
     const group = within(nav).getByRole('group', { name: 'Alpha' });
     expect(within(group).getAllByRole('button').map((b) => b.textContent))
-      .toEqual(['General', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Danger zone']);
+      .toEqual(['General', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Documents', 'Danger zone']);
     // One section per screen, under a breadcrumb.
     await userEvent.click(within(group).getByRole('button', { name: 'Review' }));
     const main = screen.getByRole('main');
@@ -955,7 +955,7 @@ describe('phone', () => {
     const d = await openDrawer();
     const nav = within(d).getByRole('navigation', { name: 'Views' });
     await waitFor(() => expect(within(nav).getAllByRole('button').map((b) => b.getAttribute('aria-label')))
-      .toEqual(['Project manager', 'Sessions', 'Inbox (3)', 'Tickets', 'Notes', 'Workflows', 'Personas', 'Files']));
+      .toEqual(['Project manager', 'Sessions', 'Inbox (3)', 'Tickets', 'Notes', 'Documents', 'Workflows', 'Personas', 'Files']));
     expect(within(nav).getByRole('button', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
     expect(within(d).getByRole('button', { name: 'Settings' })).toBeInTheDocument();
     expect(within(d).getByText('Host connected')).toBeInTheDocument();
@@ -1180,7 +1180,7 @@ describe('phone', () => {
     expect(here()).toBe('/settings/projects/ALP');
     const sections = await within(main).findByRole('grid', { name: 'Sections' });
     expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual([
-      'General', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Danger zone',
+      'General', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Documents', 'Danger zone',
     ]);
     expect(topBar).toHaveTextContent('Alpha');
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
@@ -1204,7 +1204,7 @@ describe('phone', () => {
     const main = screen.getByRole('main');
     const sections = await within(main).findByRole('grid', { name: 'Sections' });
     expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual([
-      'Updates', 'Agents', 'Network', 'Remote access', 'Runs', 'Projects folder', 'Appearance', 'Bug reports', 'Checks', 'Setup', 'Danger zone',
+      'Updates', 'Agents', 'Network', 'Remote access', 'Runs', 'Projects folder', 'Documents', 'Appearance', 'Bug reports', 'Checks', 'Setup', 'Danger zone',
     ]);
     await userEvent.click(within(sections).getByRole('row', { name: /Runs/ }));
     expect(here()).toBe('/settings/host/runs');

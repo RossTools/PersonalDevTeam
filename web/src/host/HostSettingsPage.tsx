@@ -24,6 +24,7 @@ import { useAgents, useAgentsOff } from '../common/agents';
 import { AcpAgents } from './AcpAgents';
 import { agentsOff, AgentSwitch, offNote, switchBlocked } from './AgentSwitch';
 import { BugReportDialog } from './BugReportDialog';
+import { documentKeys, useDocumentProviders } from '../documents/queries';
 
 /** The stored token's state as a badge (never the token itself). */
 function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeTone; text: string } {
@@ -697,6 +698,55 @@ function ProjectsFolder({ v }: { v: HostSettingsView }) {
   );
 }
 
+/** "The first provider PDT has" in the default provider's picker. */
+const FIRST = 'first';
+
+/** Where new documents go (PDT-314): the default provider and the local documents folder; projects can set their own. */
+function Documents({ v }: { v: HostSettingsView }) {
+  const qc = useQueryClient();
+  const providers = useDocumentProviders();
+  const provider = useSaveSettings();
+  const folder = useSaveSettings();
+  const saved = v.settings.documentsDir ?? '';
+  const [dir, setDir] = useState<string | null>(null);
+  const settle = () => void qc.invalidateQueries({ queryKey: documentKeys.all });
+  const commit = (value: string) => {
+    if (value.trim() === saved) return setDir(null);
+    void folder.save({ documentsDir: value }).then((ok) => {
+      if (ok) setDir(null);
+      settle();
+    });
+  };
+  const list = providers.data?.providers ?? [];
+  const first = list[0]?.label;
+  return (
+    <Section label="Documents" description="Where new docs and sheets go, unless their project says otherwise.">
+      <SettingsRow label="Default provider" description={list.length === 0 ? 'No document provider yet: turn on a documents plugin.' : 'New documents go here.'}>
+        <SaveNote s={provider} />
+        <Select
+          aria-label="Default provider"
+          className="w-56 max-w-full"
+          disabled={list.length === 0}
+          options={[{ value: FIRST, label: first ? `The first (${first})` : 'None' }, ...list.map((p) => ({ value: p.id, label: p.label }))]}
+          value={v.settings.documentsProvider ?? FIRST}
+          onChange={(id) => void provider.save({ documentsProvider: id === FIRST ? '' : id }).then(settle)}
+        />
+      </SettingsRow>
+      <SettingsRow stacked label="Local documents folder" description={<>Where documents kept on this machine go. Blank: PDT's data folder. <SaveNote s={folder} /></>}>
+        <FolderField
+          aria-label="Local documents folder"
+          title="Local documents folder"
+          placeholder={providers.data?.folder ?? ''}
+          start={saved || (providers.data?.folder ?? '')}
+          value={dir ?? saved}
+          onChange={setDir}
+          onCommit={commit}
+        />
+      </SettingsRow>
+    </Section>
+  );
+}
+
 function Checks() {
   const qc = useQueryClient();
   const agents = useAgents();
@@ -856,6 +906,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,
     'Runs': <Runs v={v} />,
     'Projects folder': <ProjectsFolder v={v} />,
+    'Documents': <Documents v={v} />,
     'Appearance': <Appearance />,
     'Bug reports': <BugReports v={v} />,
     'Checks': <Checks />,

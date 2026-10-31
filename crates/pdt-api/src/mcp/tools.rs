@@ -406,8 +406,8 @@ pub(crate) fn defs() -> Vec<Tool> {
             decl: ToolDecl::new("get_ticket", "Read the ticket, its comments and attempt").read_only().pm(),
             title: "Get the ticket",
             description: "The ticket this session works on (or another, by key): description, stage, links, attempts, \
-                          comments, attachments (each with a local file path to open), the outcomes earlier agent \
-                          steps submitted, and, in a workflow step, what the step allows.",
+                          comments, attachments (each with a local file path to open), linked documents, the outcomes \
+                          earlier agent steps submitted, and, in a workflow step, what the step allows.",
             schema: schema::<GetTicket>,
         },
         Tool {
@@ -1697,6 +1697,14 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
         v["attachmentsNote"] = json!(
             "The ticket has attachments: open the images and files that matter (each `path` is a local file you can \
              read; an image opens with your file-reading or image-viewing tool)."
+        );
+    }
+    let documents = crate::documents::routes::for_agent(st, id).await.map_err(api)?;
+    if !documents.is_empty() {
+        v["documents"] = json!(documents);
+        v["documentsNote"] = json!(
+            "Documents are linked to this ticket. Read its design doc (and any other that matters) before you start: \
+             `GET <PDT's API>/documents/<id>/content` gives a doc as Markdown, a sheet as its cells."
         );
     }
     v["comments"] = json!(comments);

@@ -33,6 +33,8 @@ import { prName } from './PullRequest';
 import { TicketBadges } from './TicketBadges';
 import { CommentComposer, FoldedSectionContext, OverviewSection, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline } from './TicketParts';
 import { TicketAttachments, useTicketAttachments } from './attachments';
+import { TicketDocuments } from './TicketDocuments';
+import { useDocuments } from '../documents/queries';
 import { HubPanel, HubTabs, useSection } from './TicketView';
 
 /** The bottom bar's buttons: 48px, whatever the pointer. */
@@ -65,6 +67,7 @@ type Editing = { field: 'title' | 'description'; draft: string };
 export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDeleted: () => void }) {
   const qc = useQueryClient();
   const attachments = useTicketAttachments(t.id).data ?? [];
+  const documents = useDocuments({ ticket: t.id }).data ?? [];
   const confirm = useConfirm();
   const start = useStartTicket();
   const openTicket = useOpenTicket();
@@ -181,6 +184,7 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
               <Fold title={attempt ? 'Attempt' : 'Sessions'} summary={attemptSummary(t)}><AttemptSection ticket={t} compact /></Fold>
             )}
             <Fold title="Links" summary={t.links.length === 0 ? 'None' : `${t.links.length}`}><TicketLinks ticket={t} /></Fold>
+            <Fold title="Documents" summary={documents.length === 0 ? 'None' : `${documents.length}`}><TicketDocuments ticket={t} /></Fold>
             <Fold title="Attachments" summary={attachments.length === 0 ? 'None' : `${attachments.length}`}><TicketAttachments ticketId={t.id} /></Fold>
             {t.overlaps.length > 0 && <Fold title="Overlaps" summary={overlapSummary(t)}><TicketOverlaps ticket={t} /></Fold>}
             {watches && watches.length > 0 && (

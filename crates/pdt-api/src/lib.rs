@@ -5,6 +5,7 @@ mod checks;
 mod ci;
 mod connection_health;
 mod conversations;
+pub mod documents;
 mod error;
 mod files;
 mod finish;

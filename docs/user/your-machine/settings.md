@@ -73,6 +73,12 @@ See [Run configuration](../automation/run-configuration.md).
 
 Where a repository you add by **Clone URL** is cloned to (`~/work` unless you change it).
 
+### Documents
+
+The **Default provider** new [documents](../using-pdt/documents.md) go to (the first one PDT has, unless you pick
+one), and the **Local documents folder** where documents kept on this machine are saved (PDT's data folder unless you
+change it). A project can set its own.
+
 ### Appearance
 
 **Theme**: **System**, **Dark** or **Light**. It's kept in this browser, so your phone can differ from your computer.
@@ -129,4 +135,6 @@ Each project has its own sections. A personal project (one without a repository)
   acts without asking. See [Workflows](../automation/workflows.md#pipeline-settings) and
   [Personas and approvals](../automation/personas-and-approvals.md#approvals-and-merging).
 - **Plugins**: which Jira project, Buildkite pipeline or other service this project's issues and CI live in.
+- **Documents**: the [documents](../using-pdt/documents.md) linked to the project, with **Add**, and its own
+  **Default provider** and **Local documents folder** (blank: this host's).
 - **Danger zone**: **Remove this project**. PDT forgets it and stops its sessions and runs; the files on disk stay.
