@@ -23,10 +23,13 @@ fails. This README is not published.
 - **UI names in bold, exactly as PDT shows them**, including capitals and the ellipsis: **New ticket**, **Merge…**,
   **Settings › This host › Agents**. Check the app when unsure; don't paraphrase a button.
 - **No internal references.** No ticket keys, code paths or source files, API routes, specs or plan phases: say what
-  the reader sees and does. `pnpm --filter site check-docs` (and the site's tests in CI) fails on them; a legitimate
+  the reader sees and does. No history ("before …", "we decided …") and no reasoning, unless the reason is core to
+  how something works: that belongs in the pull request and the ticket. The full rules are in AGENTS.md ("Writing
+  docs"); `scripts/check.sh --docs` runs the docs check before you push. `pnpm --filter site check-docs` (and the site's tests in CI) fails on them; a legitimate
   exception goes in `ALLOW` in `site/src/user-docs-check.mjs`.
 - **Link between pages** with relative links (`../using-pdt/review-and-merge.md#merge`); the site turns them into
   page links.
-- **Screenshots** where they help a reader find something, not as decoration: take them with the docs screenshot
-  script (PDT-273), on a scratch daemon with the demo data, so they match the current app and can be retaken.
+- **Screenshots** where they help a reader find something, not as decoration: take them with the screenshot
+  script (`scripts/site-screenshots.mjs`), on a scratch daemon with the demo data, so they match the current app and
+  can be retaken.
 - Plain Markdown, no front matter. Keep the stubs' one-line summary until the page is written.

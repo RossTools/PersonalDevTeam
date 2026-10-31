@@ -4,6 +4,8 @@ The developer guide: what a contributor (a person or a coding agent) needs to fi
 covers the processes, the crates, the core model and where each area lives. The rules that are easy to break are in
 [invariants.md](invariants.md), the testing rules in [testing.md](testing.md), and how a change goes from branch to
 release in [SDLC.md](../SDLC.md). What PDT does for its users is in the user docs; this guide doesn't repeat it.
+Write this guide about how the code works today and the rules it keeps, without ticket history or decision logs;
+the rules for every kind of doc are in AGENTS.md ("Writing docs").
 
 ## Processes
 
