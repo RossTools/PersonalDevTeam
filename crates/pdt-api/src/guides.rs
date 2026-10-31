@@ -41,7 +41,12 @@ const GUIDES: &[Guide] = &[
             title: "Run configuration",
             summary: "How runs, tests and areas are configured: .pdt/project.toml and host overrides.",
         },
-        text: include_str!("../../../docs/run-config.md"),
+        // The user page, then what only agents need (the API): one home for the format, for people and agents.
+        text: concat!(
+            include_str!("../../../docs/user/automation/run-configuration.md"),
+            "\n",
+            include_str!("../../../docs/run-config.md")
+        ),
         prompt: false,
     },
     Guide {
@@ -107,6 +112,15 @@ mod tests {
         assert!(t.starts_with("Set up this project"), "{}", &t[..80]);
         assert!(!t.contains("paste"), "the note for people is left out");
         assert!(guide_text("set-up-workflow").unwrap().starts_with("Help me write"));
+    }
+
+    #[test]
+    fn the_run_config_guide_is_the_user_page_then_the_api() {
+        let t = guide_text("run-config").unwrap();
+        assert!(t.starts_with("# Run configuration\n"), "{}", &t[..80]);
+        let api = t.find("## For agents").expect("the agents' part");
+        assert!(t.find("## Pitfalls").is_some_and(|p| p < api), "the user page comes first");
+        assert!(t[api..].contains("GET /api/projects/{id}/run-config"));
     }
 
     #[test]

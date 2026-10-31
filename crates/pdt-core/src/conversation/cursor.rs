@@ -1,4 +1,4 @@
-//! Cursor's `cursor-agent acp` (PDT-237; notes: docs/superpowers/notes/cursor-acp.md): plain ACP (`super::acp`) plus
+//! Cursor's `cursor-agent acp` (PDT-237): plain ACP (`super::acp`) plus
 //! its tool calls' `rawInput` (an MCP call names its server and tool there), and its own blocking requests:
 //! `cursor/ask_question` (multiple-choice questions) and `cursor/create_plan` (a plan to approve). What a built-in
 //! profile's flavor adds ([`AcpFlavor`]) is mapped here.

@@ -1,4 +1,4 @@
-//! Ticket parts in the API (PDT-38; docs/superpowers/specs/2026-10-19-ticket-parts-design.md): the parents' roll-up
+//! Ticket parts in the API (PDT-38): the parents' roll-up
 //! on every ticket response (it needs the in-memory PR state, so it is computed here, like overlap), the part a
 //! parent's "Start next part" picks, a part's prompt context, and `POST /api/tickets/{id}/parts`.
 

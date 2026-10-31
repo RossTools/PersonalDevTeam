@@ -13,15 +13,15 @@ org can open it).
 - `src/pages/docs/index.astro` is the docs home: a card per section of the user docs. The docs pages themselves are
   the repository's Markdown, read in place from `../docs`: the user docs in `user/` (the main docs, at
   `/docs/<section>/<page>/`; their sections and pages, in sidebar order, are `USER_SECTIONS` in `src/docs-pages.mjs`,
-  and `docs/user/README.md` has the style notes for writing them), plus `agent-guide.md` and `run-config.md` (under Guides), and the
-  developer guide in `dev/` with `SDLC.md` (under Contributing, after its own page: `DEVELOPER_PAGES`). `superpowers/`, `prompts/`,
-  `ROADMAP.md` and the READMEs in `user/` stay out. There is no copy step: edit the file in `docs/` and the next
+  and `docs/user/README.md` has the style notes for writing them), plus `agent-guide.md` (under Guides), and the
+  developer guide in `dev/` with `SDLC.md` (under Contributing, after its own page: `DEVELOPER_PAGES`). `prompts/`,
+  `run-config.md` (the agents' part of the run-config guide) and the READMEs in `user/` stay out. There is no copy step: edit the file in `docs/` and the next
   deploy shows it. A page's title is its first `# heading`; relative links between published docs point at their
   pages on the site, and links to anything else in the repository at the file on GitHub
   (`src/remark-docs-links.mjs`).
 - The user docs are for people who use PDT, so `src/user-docs-check.mjs` fails on internal references in them
   (ticket keys, code paths and source files, crate names, API routes, specs, plan phases), with an allowlist for
-  legitimate exceptions. The site's tests run it, so the `site` CI job does; `pnpm --filter site check-docs` runs it
+  legitimate exceptions, and on any file under `docs/` in a `superpowers`, `specs` or `plans` folder. The site's tests run it, so the `site` CI job does; `pnpm --filter site check-docs` runs it
   alone.
 - The theme is the app's: dark first (a first visit starts dark whatever the system prefers; the theme menu can switch
   it), `#0e0f12` / `#17181d` / `#e7e8ec` with the `#3561b8` accent, Inter and JetBrains Mono served with the site
@@ -82,7 +82,7 @@ a custom domain.
 
 On pull requests and in the merge queue, `ci.yml`'s `site` job builds it whenever `site/**` or `docs/**` (or the pnpm
 lockfile) changes. A pull request that only changes `site/`, `docs/` or Markdown runs only `changes` and `site`
-(docs/superpowers/notes/ci.md).
+(docs/SDLC.md "CI").
 
 Before the first deploy, in the repository's Settings → Pages: set Source to **GitHub Actions** and visibility to
 **Private**.
