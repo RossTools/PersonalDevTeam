@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { checkUserDocs, findInternalRefs, userDocFiles, USER_DOCS } from './user-docs-check.mjs';
+import { checkUserDocs, designDocs, findInternalRefs, userDocFiles, USER_DOCS } from './user-docs-check.mjs';
 import { DEVELOPER_PAGES, USER_SECTIONS } from './docs-pages.mjs';
 
 const DOCS = path.join(USER_DOCS, '..');
@@ -62,4 +63,21 @@ test('the developer guide and the guides pdtd serves name no tickets', () => {
       .flatMap((line, i) => (line.match(/\bPDT-\d+\b/g) ?? []).map((k) => `docs/${f}:${i + 1}: ${k}`)),
   );
   assert.deepEqual(found, []);
+});
+
+test('docs/ holds no design specs or plans', () => {
+  assert.deepEqual(designDocs(), []);
+});
+
+test('finds design specs and plans anywhere under docs/', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'pdt-docs-'));
+  try {
+    for (const f of ['superpowers/notes/x.md', 'dev/specs/a.md', 'plans/b.md', 'user/x/explains-plans.md', 'dev/c.md']) {
+      mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      writeFileSync(path.join(dir, f), '# x\n');
+    }
+    assert.deepEqual(designDocs(dir), ['dev/specs/a.md', 'plans/b.md', 'superpowers/notes/x.md']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -6,7 +6,7 @@
 # (the program's designated requirement) and its partition list. A Developer ID signature carries a Team ID, and the
 # partition list trusts the team (`teamid:<id>`), so every release reads the update token without a prompt once it
 # has been allowed. A self-signed certificate has no Team ID: the partition list then names each build's exact code
-# hash (`cdhash:<hash>`), so every update asks again (docs/superpowers/notes/developer-id.md). An ad-hoc signature
+# hash (`cdhash:<hash>`), so every update asks again (docs/SDLC.md "Signing"). An ad-hoc signature
 # fails the access rule as well.
 #
 # usage: scripts/sign-macos.sh <path/to/App.app>

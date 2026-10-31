@@ -24,8 +24,8 @@ test('the base path is kept', () => {
 });
 
 test('links to unpublished files go to GitHub', () => {
-  assert.equal(rewriteLink('ROADMAP.md', 'SDLC.md'), `${REPO}/docs/ROADMAP.md`);
-  assert.equal(rewriteLink('superpowers/notes/ci.md', 'SDLC.md'), `${REPO}/docs/superpowers/notes/ci.md`);
+  assert.equal(rewriteLink('run-config.md', 'SDLC.md'), `${REPO}/docs/run-config.md`);
+  assert.equal(rewriteLink('prompts/set-up-project.md', 'SDLC.md'), `${REPO}/docs/prompts/set-up-project.md`);
   assert.equal(rewriteLink('../../AGENTS.md#rules', 'dev/architecture.md'), `${REPO}/AGENTS.md#rules`);
 });
 
@@ -39,9 +39,8 @@ test('which docs are published', () => {
   assert.ok(isPublished('SDLC.md'));
   assert.ok(isPublished('dev/architecture.md'));
   assert.ok(!isPublished('reference/tickets.md'));
-  assert.ok(!isPublished('ROADMAP.md'));
+  assert.ok(!isPublished('run-config.md'));
   assert.ok(!isPublished('prompts/coder.md'));
-  assert.ok(!isPublished('superpowers/specs/x.md'));
   assert.ok(isPublished('user/getting-started/install.md'));
   assert.ok(!isPublished('user/README.md'));
   assert.equal(docId('SDLC.md'), 'docs/sdlc');

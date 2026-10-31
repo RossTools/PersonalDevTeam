@@ -2,10 +2,10 @@
 
 Give agents and workflows the keys and tokens they need without them ever seeing the values.
 
-An agent sometimes needs an API key, a token or a password: to publish a package, call a service, or log in to
-something while it tests. Pasting it into the conversation would put it in the transcript, the logs and the model's
-context. A **secret** in PDT is kept in your machine's keychain instead. Agents and workflows *use* it by name, and
-PDT fills in the value only where it's needed.
+An agent sometimes needs an API key, a token or a password: to publish a package, call a service, or log in while it
+tests. Pasted into the conversation, it would end up in the transcript, the logs and the model's context. A
+**secret** is kept in your machine's keychain instead: agents and workflows use it by name, and PDT fills in the value
+only where it's needed.
 
 ## Add a secret
 
@@ -43,19 +43,18 @@ use secrets at all. See [Outside contributions](../automation/outside-contributi
 ## How workflows use them
 
 In a workflow step, write `{{secret.NAME}}` where the value goes (a header, a URL, a request body). PDT fills it in
-only as the step runs; the step's record keeps the reference, not the value. Only references you write in the step
-itself are filled in: a reference that arrives in data (an issue's text, say) is passed on as written, so nobody can
-get a secret sent somewhere by writing its name into an issue. Agent steps can't take secrets this way; the agent
-uses its tools instead. See [Workflows](../automation/workflows.md#steps).
+only as the step runs; the step's record keeps the reference, not the value. Only references written in the step
+itself are filled in: one that arrives in data (an issue's text, say) is passed on as written. Agent steps can't take
+secrets this way; the agent uses its tools instead. See [Workflows](../automation/workflows.md#steps).
 
 ## What's kept out
 
 PDT replaces every secret's value with `[secret:NAME]` everywhere it stores or shows text: conversations, ticket
 comments, workflow runs, the Inbox, notifications, its own logs, and bug reports' log excerpts.
 
-What PDT can't reach, it can't clean up: the agent's own transcript files, the scrollback of a terminal session, and
-what a command does with the value once it has it. Agents are told to use the tools above and never print a
-secret; still, only give an agent the secrets its work needs.
+PDT can't clean what it doesn't hold: the agent's own transcript files, a terminal session's scrollback, and what a
+command does with the value once it has it. Agents are told never to print a secret; still, give an agent only the
+secrets its work needs.
 
 ## Who used a secret
 
@@ -69,7 +68,7 @@ Each secret shows when it was last used and by whom. **Uses** lists every use: w
 - **Linux**: the Secret Service (GNOME Keyring or KWallet) when there is one. On a machine without one (a server with
   no desktop session, usually), PDT keeps values in a file in its data folder that only you can read. The top of
   **Settings › Secrets** says which: **Secrets: system keyring** or **Secrets: file in the data folder**, with its
-  path. PDT sticks with the choice it made the first time, so it never splits secrets between the two.
+  path. PDT keeps to the one it chose the first time.
 
 PDT's GitHub login and its update token are kept the same way. None of them is in PDT's database, so a copy of its
 data folder holds no secrets (except the Linux file above).

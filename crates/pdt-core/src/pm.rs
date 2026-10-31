@@ -1,4 +1,4 @@
-//! The project manager (PDT-81, docs/superpowers/specs/2026-10-21-pm-persona-design.md): a host-level conversation
+//! The project manager (PDT-81): a host-level conversation
 //! with PDT's tools only. PDT owns its memory: the briefing every new PM session starts with (rendered here from data
 //! pdt-api gathers), notes searched with FTS5, journal checkpoints and daily updates. Pure.
 

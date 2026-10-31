@@ -8,8 +8,8 @@ rather not) commit an AGENTS.md or CLAUDE.md to still gets a workflow.
 ---
 
 Help me write the **agent instructions** for this project in PDT (Personal Dev Team, which started this session). PDT
-keeps them on this host, not in the repository, and adds them to every Claude Code, Codex and Devin session it starts in the
-project, after the repository's own CLAUDE.md / AGENTS.md. They are how I want agents to work here.
+keeps them on this host, not in the repository, and adds them to the instructions of every agent session it starts in
+the project, next to the repository's own CLAUDE.md / AGENTS.md. They are how I want agents to work here.
 
 **1. Find PDT and this project.** PDT's instructions for this session name its API (`http://127.0.0.1:<port>/api`)
 and this session's id. `GET /api/sessions/<session id>` gives the `projectId`. Read `GET /api/guides/agents` (what
@@ -30,9 +30,9 @@ check commands (format, lint, test, build) from CI.
   ticket alone?
 - Anything about this codebase an agent keeps getting wrong.
 
-**4. Write and save them.** Short and direct, as a Markdown list grouped under a few headings, only what is specific
-to this project and not already in the repository's own instructions (at most a page; PDT's own context, such as its
-API address and this project's id, is added separately). Show me the text, and once I agree, save it:
+**4. Write and save them.** Short and direct, as a Markdown list under a few headings, only what is specific to this
+project and not already in the repository's own instructions (at most a page; PDT adds its own context, such as its
+API address and this project's id, separately). Show me the text, and once I agree, save it:
 `PUT /api/projects/<projectId>/settings` with `{"agentCredentials": <the value you read>, "runOverrides": <the value
 you read>, "agentInstructions": "<the text>"}` (the PUT replaces `agentCredentials` and `runOverrides`, so send back
 what you read). Then `GET` the settings again to check it was saved.

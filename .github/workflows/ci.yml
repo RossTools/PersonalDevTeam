@@ -29,7 +29,7 @@ env:
   # CI never debugs its builds: no debug info makes compiling, linking and the cache much smaller and faster.
   CARGO_PROFILE_DEV_DEBUG: "0"
 
-# What a pull request, and its run in the merge queue, waits for (docs/superpowers/notes/ci.md):
+# What a pull request, and its run in the merge queue, waits for (docs/SDLC.md "CI"):
 # - nothing but `changes` and `site` when it only touches docs and the website (`docs/**`, `site/**` or any `*.md`,
 #   except the guides pdtd builds in): every other job is skipped.
 # - site: builds the website (site/, Astro + Starlight) when `site/**` or `docs/**` changes (the site reads docs/ in
@@ -114,7 +114,7 @@ jobs:
           # not be read) counts as code, so CI never skips by accident.
           code=true
           if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^(docs|site)/|\.md$' \
-            && ! printf '%s\n' "$files" | grep -qE '^docs/(agent-guide\.md|run-config\.md|prompts/)'; then code=false; fi
+            && ! printf '%s\n' "$files" | grep -qE '^docs/(agent-guide\.md|run-config\.md|prompts/|user/automation/run-configuration\.md)'; then code=false; fi
           windows=false
           if has windows || { [ "$code" = true ] && printf '%s\n' "$files" | grep -qiE '(^|/)windows/|\.ps1$|\.cmd$|^\.github/'; }; then windows=true; fi
           # macOS: always in the queue; on a PR only with the label or a change to CI itself.

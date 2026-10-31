@@ -1,8 +1,9 @@
 // Keeps the user docs (docs/user/) free of references only the people building PDT understand: ticket keys, code paths,
-// API routes, specs and plan phases. `pnpm --filter site test` runs it (so the `site` CI job does), and
+// API routes, specs and plan phases; and keeps design specs and plans (a `superpowers`, `specs` or `plans` folder)
+// out of docs/. `pnpm --filter site test` runs it (so the `site` CI job does), and
 // `pnpm --filter site check-docs` runs it alone. The READMEs in docs/user/ (notes for whoever writes the docs) are not
 // published and not checked; nor are the agent-facing guides (agent-guide.md, prompts/), which live outside docs/user.
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,7 +12,7 @@ export const USER_DOCS = fileURLToPath(new URL('../../docs/user/', import.meta.u
 /** What counts as an internal reference, each with why it doesn't belong in a user doc. */
 export const RULES = [
   { name: 'ticket key', pattern: /\bPDT-\d+\b/g, why: 'say what changed, not which ticket changed it' },
-  { name: 'code path', pattern: /\b(crates|web\/src|web\/ui|desktop\/src-tauri|docs\/superpowers)\//g, why: 'readers use the app, not its source' },
+  { name: 'code path', pattern: /\b(crates|web\/src|web\/ui|desktop\/src-tauri)\//g, why: 'readers use the app, not its source' },
   { name: 'source file', pattern: /\w\.(rs|tsx?)\b/g, why: 'readers use the app, not its source' },
   { name: 'crate', pattern: /\bpdt-(core|api|store|agents|git|forge|github|update|tailscale|int-[a-z]+)\b/g, why: 'name the part of PDT the reader sees' },
   { name: 'API route', pattern: /\/api\//g, why: 'describe the screen or the action, not the route behind it' },
@@ -53,6 +54,17 @@ export function userDocFiles(dir = USER_DOCS) {
     .sort();
 }
 
+/**
+ * Design specs and plans don't live in the repository (they go on the ticket), so any file under docs/ in a
+ * `superpowers`, `specs` or `plans` folder is reported, relative to `docs`, sorted.
+ */
+export function designDocs(docs = path.join(USER_DOCS, '..')) {
+  return readdirSync(docs, { recursive: true })
+    .map((f) => String(f).split(path.sep).join('/'))
+    .filter((f) => /(^|\/)(superpowers|specs|plans)\//.test(f) && statSync(path.join(docs, f)).isFile())
+    .sort();
+}
+
 /** Every internal reference in the user docs, as `file:line: …` lines. */
 export function checkUserDocs(dir = USER_DOCS) {
   return userDocFiles(dir).flatMap((f) =>
@@ -63,6 +75,12 @@ export function checkUserDocs(dir = USER_DOCS) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  const designs = designDocs();
+  if (designs.length) {
+    console.error(designs.map((f) => `docs/${f}`).join('\n'));
+    console.error('\nDesign specs and plans go on the ticket, not in the repository (AGENTS.md "Writing docs").');
+    process.exit(1);
+  }
   const problems = checkUserDocs();
   if (problems.length) {
     console.error(`${problems.join('\n')}\n\n${problems.length} internal reference(s) in the user docs. Rewrite them for`);
