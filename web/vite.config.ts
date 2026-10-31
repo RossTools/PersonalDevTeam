@@ -27,7 +27,8 @@ export default defineConfig({
   plugins: [appPathFallback, react(), tailwindcss(), { ...optimizeLocales.vite({ locales: ['en-US'] }), enforce: 'pre' }],
   resolve: { alias: { '@ui': fileURLToPath(new URL('./ui', import.meta.url)) } },
   // Dev server talks to the *dev* daemon (PDT_PROFILE=dev → port 7421).
-  server: { proxy: { '/api': { target: 'http://127.0.0.1:7421', ws: true } } },
+  // PDT-313 throwaway: /spike goes to spikes/sheet's `serve` (SPIKE_PORT, default 7499).
+  server: { proxy: { '/api': { target: 'http://127.0.0.1:7421', ws: true }, '/spike': { target: `http://127.0.0.1:${process.env.SPIKE_PORT ?? 7499}` } } },
   // CI's Windows runner is several times slower than a dev machine: tests there get more time (src/test-setup.ts
   // does the same for Testing Library's waits).
   test: { environment: 'jsdom', setupFiles: ['./src/test-setup.ts'], css: false, testTimeout: process.env.CI ? 30_000 : 10_000 },

@@ -1,0 +1,19 @@
+[package]
+name = "pdt-sheet-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "PDT-313 throwaway: IronCalc in the daemon (read/write .xlsx, live diffs to the browser)"
+
+# Not part of PDT's workspace: a throwaway, built on its own.
+[workspace]
+
+[dependencies]
+axum = "0.8.9"
+base64 = "0.23.1"
+futures-util = "0.3.34"
+ironcalc = "=0.9.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
