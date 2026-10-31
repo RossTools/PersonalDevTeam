@@ -132,6 +132,19 @@ pub fn unpushed(dir: &Path) -> Result<Unpushed, GitError> {
     Ok(Unpushed { changed, upstream, ahead, unpushed_branch })
 }
 
+/// Whether `rel` (`/`-separated, below the checkout at `dir`) is safe to delete as build output: git ignores it and
+/// tracks nothing in it, so neither committed files nor work waiting to be committed can be lost.
+pub fn is_disposable(dir: &Path, rel: &str) -> Result<bool, GitError> {
+    if !run(dir, &["ls-files", "-z", "--", rel])?.is_empty() {
+        return Ok(false);
+    }
+    match git_with_env(dir, &["check-ignore", "-q", "--", rel], &[])? {
+        Ok(_) => Ok(true),
+        Err(f) if f.code == Some(1) => Ok(false),
+        Err(f) => Err(GitError::Command(f.stderr)),
+    }
+}
+
 /// `git worktree remove [--force] <path>`.
 pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> Result<(), GitError> {
     let p = path.to_string_lossy();
@@ -222,6 +235,29 @@ mod tests {
         std::fs::write(dir.join("README.md"), "hi\n").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "init"]);
+    }
+
+    #[test]
+    fn only_ignored_untracked_paths_are_disposable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("work");
+        repo(&dir);
+        std::fs::write(dir.join(".gitignore"), "/target\nnode_modules/\n").unwrap();
+        for d in ["target/debug", "web/node_modules/x", "dist", "kept"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        std::fs::write(dir.join("kept/a.txt"), "a").unwrap();
+        std::fs::write(dir.join("dist/out.js"), "x").unwrap();
+        git(&dir, &["add", ".gitignore", "kept"]);
+        git(&dir, &["commit", "-q", "-m", "more"]);
+        assert!(is_disposable(&dir, "target").unwrap());
+        assert!(is_disposable(&dir, "web/node_modules").unwrap());
+        assert!(!is_disposable(&dir, "dist").unwrap(), "not ignored: untracked work");
+        assert!(!is_disposable(&dir, "kept").unwrap(), "tracked");
+        // Ignored, but a file in it was committed anyway.
+        std::fs::write(dir.join("target/forced.txt"), "f").unwrap();
+        git(&dir, &["add", "-f", "target/forced.txt"]);
+        assert!(!is_disposable(&dir, "target").unwrap());
     }
 
     #[test]

@@ -98,4 +98,12 @@ documentsProvider: string | null,
  * Where local documents go (a full path, or `~/…`) unless their project names a folder; none: `documents` in
  * PDT's data folder.
  */
-documentsDir: string | null, };
+documentsDir: string | null, 
+/**
+ * Free space (GB) below which the Inbox warns that a disk with PDT's data or a project is running out; 0: off.
+ */
+lowDiskGb: number, 
+/**
+ * Free space (GB) below which auto-start waits until space is freed; 0: off.
+ */
+criticalDiskGb: number, };

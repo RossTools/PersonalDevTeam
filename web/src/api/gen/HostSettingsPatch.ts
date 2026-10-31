@@ -61,4 +61,12 @@ documentsProvider?: string,
 /**
  * Blank clears it (back to PDT's data folder).
  */
-documentsDir?: string, };
+documentsDir?: string, 
+/**
+ * 0 turns the warning off.
+ */
+lowDiskGb?: number, 
+/**
+ * 0 turns the pause off.
+ */
+criticalDiskGb?: number, };

@@ -33,6 +33,23 @@ The main things in it:
 Your secrets, the GitHub login and the update token are in your system's keychain, not in the folder. Your
 repositories and their worktrees stay where they are, in your projects folder.
 
+## Disk space
+
+Each ticket works in its own worktree, and each worktree builds on its own: a Rust `target` folder or `node_modules`
+can take gigabytes per worktree. Worktrees stay after a ticket is done, so PDT cleans up after them.
+
+- **Settings › This host › Storage** shows how much is free on each disk PDT uses and what each worktree takes,
+  build output apart. Sizes are measured in the background every half hour; **Measure again** does it now.
+- **Clean** removes a worktree's build output (the project's [build output folders](../automation/run-configuration.md#storage)
+  that git ignores), never your code or uncommitted work. Its next build starts from scratch.
+- **Clean all finished** cleans every Done or Won't do ticket's worktree at once.
+- On its own, PDT cleans a finished ticket's worktree two days after it is done. Change that per project in its
+  **Worktrees** settings with **Clean build output after**, and set **Remove worktree after** to remove the worktree
+  itself too (its branch stays; a worktree with uncommitted changes is kept). Worktrees a ticket still works in, and
+  ones that belong to no ticket, are never touched.
+- When a disk has less than 20 GB free, the Inbox says so. Below 5 GB, auto-start starts no new tickets until there is
+  more space; agents already running carry on. Change both in **Settings › This host › Storage** (0 turns one off).
+
 ## Logs
 
 The logs are in the `logs` folder of the data folder:
