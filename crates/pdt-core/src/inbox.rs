@@ -45,6 +45,9 @@ pub enum InboxKind {
     Proposal,
     /// PDT can't save changes (a full disk, PDT-323). Not stored (it couldn't be): listed while writes fail.
     Storage,
+    /// A disk with PDT's data or a project's checkouts is running low on space (PDT-324), with Clean actions. Not
+    /// stored: listed while it lasts.
+    LowDisk,
 }
 
 impl InboxKind {
@@ -65,6 +68,7 @@ impl InboxKind {
             InboxKind::Confirm => "confirm",
             InboxKind::Proposal => "proposal",
             InboxKind::Storage => "storage",
+            InboxKind::LowDisk => "low_disk",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -84,6 +88,7 @@ impl InboxKind {
             Self::Confirm,
             Self::Proposal,
             Self::Storage,
+            Self::LowDisk,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -289,6 +294,57 @@ pub fn storage_item(message: &str, disk_full: bool, free: Option<u64>, since: i6
         change_request: None,
         title: title.into(),
         body: serde_json::json!({"text": text, "error": message, "diskFull": disk_full, "freeBytes": free}),
+        choices: vec![],
+        resolution: Value::Null,
+        created_at: since,
+        resolved_at: None,
+    }
+}
+
+/// The id of the item that says a disk is running low ([`low_disk_item`]); a critically low one has its own, so
+/// getting there is told again.
+pub const LOW_DISK_ID: &str = "low_disk";
+pub const CRITICAL_DISK_ID: &str = "low_disk:critical";
+
+/// The item that says a disk is running low (PDT-324): the fullest disk's free bytes and the folders on it,
+/// `critical` when it is below the critical threshold (auto-start waits then), since `since`.
+pub fn low_disk_item(free: u64, folders: &[String], critical: bool, since: i64) -> InboxItem {
+    let free_text = human_bytes(free);
+    let title = if critical {
+        format!("The disk is almost full ({free_text} free): auto-start is paused")
+    } else {
+        format!("Disk space is low ({free_text} free)")
+    };
+    let on = match folders {
+        [] => String::new(),
+        [one] => format!(" (with `{one}`)"),
+        many => format!(" (with {})", many.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ")),
+    };
+    let mut text = format!(
+        "The disk{on} has {free_text} free. Worktrees' build output is usually what fills it: clean it in Settings › \
+         Storage, or clean every finished ticket's worktree at once."
+    );
+    if critical {
+        text.push_str(" Until there is more space, auto-start starts no new tickets; agents already running carry on.");
+    }
+    InboxItem {
+        id: if critical { CRITICAL_DISK_ID } else { LOW_DISK_ID }.into(),
+        kind: InboxKind::LowDisk,
+        group: InboxGroup::Notice,
+        status: InboxStatus::Open,
+        project_id: None,
+        ticket_id: None,
+        ticket_key: None,
+        ticket_title: None,
+        attempt_id: None,
+        session_id: None,
+        run_id: None,
+        step_id: None,
+        persona_id: None,
+        persona_name: None,
+        change_request: None,
+        title,
+        body: serde_json::json!({"text": text, "freeBytes": free, "folders": folders, "critical": critical}),
         choices: vec![],
         resolution: Value::Null,
         created_at: since,
@@ -604,6 +660,24 @@ mod tests {
         assert_eq!(human_bytes(1536), "1.5 KB");
         assert_eq!(human_bytes(300 * 1024 * 1024), "300 MB");
         assert_eq!(human_bytes(5 * 1024 * 1024 * 1024 / 2), "2.5 GB");
+    }
+
+    #[test]
+    fn the_low_disk_item_says_what_is_free_and_whether_auto_start_waits() {
+        let gb = 1024 * 1024 * 1024;
+        let low = low_disk_item(12 * gb, &["/work".into()], false, 7);
+        assert_eq!(
+            (low.id.as_str(), low.kind, low.group, low.created_at),
+            (LOW_DISK_ID, InboxKind::LowDisk, InboxGroup::Notice, 7)
+        );
+        assert_eq!(low.title, "Disk space is low (12 GB free)");
+        let text = low.body["text"].as_str().unwrap();
+        assert!(text.contains("(with `/work`)") && !text.contains("auto-start"), "{text}");
+        let critical = low_disk_item(3 * gb, &["/a".into(), "/b".into()], true, 7);
+        assert_eq!(critical.id, CRITICAL_DISK_ID);
+        assert_eq!(critical.title, "The disk is almost full (3.0 GB free): auto-start is paused");
+        let text = critical.body["text"].as_str().unwrap();
+        assert!(text.contains("`/a`, `/b`") && text.contains("auto-start starts no new tickets"), "{text}");
     }
 
     #[test]

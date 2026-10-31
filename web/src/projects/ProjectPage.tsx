@@ -3,9 +3,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
 import { Alert, Badge, Button, EmptyState, Link, Section, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
 import { AutoSaveText, SaveStatus, useSaveState } from '../common/AutoSave';
-import { api, ApiError } from '../api/client';
+import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import type { Worktree } from '../api/gen/Worktree';
+import type { StorageSettings } from '../api/gen/StorageSettings';
+import type { WorktreeStorage } from '../api/gen/WorktreeStorage';
+import { TicketKey } from '../common/TicketKey';
+import { CleanButton, formatBytes, sizeText, StageBadge, useRemoveWorktree, useStorage } from './worktreeStorage';
 import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { branchOptions } from '../common/branchOptions';
 import { useAction } from '../common/useAction';
@@ -79,56 +83,19 @@ function General({ project, onKeyChange }: { project: Project; onKeyChange?: (ke
   );
 }
 
-function WorktreeRow({ project, wt }: { project: Project; wt: Worktree }) {
+function WorktreeRow({ project, wt, storage }: { project: Project; wt: Worktree; storage: WorktreeStorage | null }) {
   const qc = useQueryClient();
-  const confirm = useConfirm();
   const openChanges = useOpenChanges();
-  const settle = () => {
-    void qc.invalidateQueries({ queryKey: ['worktrees', project.id] });
-    void qc.invalidateQueries({ queryKey: ['sessions', project.id] });
-    void qc.invalidateQueries({ queryKey: ['workspaces'] });
-  };
+  const size = storage?.size ?? null;
   const [forget, forgetting] = useAction(async () => {
     try {
       await api.removeWorktree(wt.id, { force: false, deleteBranch: false });
     } finally {
-      settle();
+      void qc.invalidateQueries({ queryKey: ['worktrees', project.id] });
+      void qc.invalidateQueries({ queryKey: ['storage'] });
     }
   });
-  const [remove, removing] = useAction(async () => {
-    const first = await confirm({
-      title: `Remove worktree ${wt.branch}?`,
-      body: 'The worktree folder is deleted and its ended sessions are forgotten.',
-      action: 'Remove worktree',
-      danger: true,
-      checkbox: { label: 'Also delete the branch' },
-    });
-    if (!first.ok) return;
-    try {
-      await api.removeWorktree(wt.id, { force: false, deleteBranch: first.checked });
-    } catch (e) {
-      if (!(e instanceof ApiError && e.code === 'worktree_dirty')) {
-        settle();
-        throw e;
-      }
-      // Uncommitted changes: ask again, saying what is lost.
-      const again = await confirm({
-        title: `${wt.branch} has uncommitted changes`,
-        body: 'This worktree has uncommitted changes. Removing it discards them.',
-        action: 'Remove anyway',
-        danger: true,
-        checkbox: { label: 'Also delete the branch', defaultChecked: first.checked },
-      });
-      if (!again.ok) return;
-      try {
-        await api.removeWorktree(wt.id, { force: true, deleteBranch: again.checked });
-      } finally {
-        settle();
-      }
-      return;
-    }
-    settle();
-  });
+  const [remove, removing] = useRemoveWorktree(wt, size);
   return (
     <li className="flex flex-col gap-1 px-4 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -138,32 +105,71 @@ function WorktreeRow({ project, wt }: { project: Project; wt: Worktree }) {
           base={project.baseBranch}
           {...(wt.missing ? {} : { onReview: () => openChanges({ id: wt.id, projectId: project.id }) })}
         />
+        {storage?.ticket && <TicketKey ticketKey={storage.ticket.key} title={storage.ticket.title} />}
+        {storage?.ticket && <StageBadge stage={storage.ticket.stage} />}
         {wt.missing && <Badge tone="waiting">folder missing</Badge>}
         <span className="flex-1" />
         {!wt.missing && <Button size="sm" variant="ghost" onClick={() => openChanges({ id: wt.id, projectId: project.id })}>Review changes</Button>}
+        {!wt.missing && <CleanButton id={wt.id} label="Clean" />}
         {wt.missing ? (
           <Button size="sm" pending={forgetting} onClick={() => void forget()}>Forget</Button>
         ) : (
           <Button size="sm" pending={removing} onClick={() => void remove()}><Trash2 aria-hidden /> Remove…</Button>
         )}
       </div>
-      <span className="truncate font-mono text-meta text-muted-foreground" title={wt.path}>{wt.path}</span>
+      <span className="flex flex-wrap gap-x-3 text-meta text-muted-foreground">
+        <span className="min-w-0 truncate font-mono" title={wt.path}>{wt.path}</span>
+        {!wt.missing && <span>{sizeText(size)}</span>}
+      </span>
     </li>
+  );
+}
+
+function days(text: string): number {
+  if (!/^\d+$/.test(text) || Number(text) > 365) throw new Error('a whole number of days up to 365 (0: never)');
+  return Number(text);
+}
+
+/** The project's automatic cleanup of finished tickets' worktrees. */
+function Cleanup({ project, settings }: { project: Project; settings: StorageSettings }) {
+  const qc = useQueryClient();
+  const save = async (s: Partial<StorageSettings>) => {
+    await api.putProjectStorage(project.id, { ...settings, ...s });
+    await qc.invalidateQueries({ queryKey: ['storage'] });
+  };
+  return (
+    <>
+      <SettingsRow label="Clean build output after" description="Days after a ticket is Done or Won't do that its worktree's build output is removed (0: never).">
+        <AutoSaveText aria-label="Clean build output after (days)" inputMode="numeric" className="w-20" value={String(settings.cleanAfterDays)}
+          onSave={(t) => save({ cleanAfterDays: days(t) })} />
+      </SettingsRow>
+      <SettingsRow label="Remove worktree after" description="Days after a ticket is Done or Won't do that its worktree is removed; its branch stays (0: never). Worktrees with uncommitted changes are kept.">
+        <AutoSaveText aria-label="Remove worktree after (days)" inputMode="numeric" className="w-20" value={String(settings.removeAfterDays)}
+          onSave={(t) => save({ removeAfterDays: days(t) })} />
+      </SettingsRow>
+    </>
   );
 }
 
 function Worktrees({ project }: { project: Project }) {
   const list = useQuery({ queryKey: ['worktrees', project.id], queryFn: () => api.listWorktrees(project.id) });
+  const storage = useStorage(project.id);
+  const mine = storage.data?.projects.find((p) => p.projectId === project.id) ?? null;
+  const byId = new Map((mine?.worktrees ?? []).map((w) => [w.id, w]));
+  const description = mine && mine.worktrees.length > 0
+    ? `Checkouts in .worktrees, one per branch: ${formatBytes(mine.total)}${mine.build ? `, ${formatBytes(mine.build)} of it build output` : ''}. Removing one deletes its folder.`
+    : 'Checkouts in .worktrees, one per branch. Removing one deletes its folder.';
   return (
-    <Section label="Worktrees" description="Checkouts in .worktrees, one per branch. Removing one deletes its folder.">
+    <Section label="Worktrees" description={description}>
       {list.isPending && <Skeleton lines={3} label="Loading worktrees" />}
       {list.isError && <Alert tone="error">Worktrees could not be loaded: {list.error.message}</Alert>}
       {list.data?.length === 0 && <EmptyState>No worktrees. Running a branch makes one.</EmptyState>}
       {!!list.data?.length && (
         <ul data-flush className="flex flex-col divide-y divide-border">
-          {list.data.map((w) => <WorktreeRow key={w.id} project={project} wt={w} />)}
+          {list.data.map((w) => <WorktreeRow key={w.id} project={project} wt={w} storage={byId.get(w.id) ?? null} />)}
         </ul>
       )}
+      {mine && <Cleanup project={project} settings={mine.settings} />}
     </Section>
   );
 }

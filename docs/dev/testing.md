@@ -54,6 +54,7 @@ Each worktree has its own `target/`, so its size multiplies by the number of wor
 | Tailscale | `PDT_TAILSCALE_BIN` pointing at `fake-tailscale` (`crates/pdt-tailscale/src/bin`) or a missing file |
 | GitHub, GitLab | `PDT_GITHUB_OFFLINE=1` (takes every forge offline), `GithubApi::offline()`, recorded answers (`pdt_forge::transport::testing::Recorded`), or `FakeForge` (`crates/pdt-forge`) |
 | Real agents | `fake-agent` (`crates/pdt-api/src/bin/fake-agent`: Claude, Codex app-server and ACP); `PDT_CLAUDE_PROGRAM`, `PDT_CODEX_PROGRAM`, `PDT_DEVIN_PROGRAM` name the program |
+| The machine's free disk space | `AppState::new` reads none (no disk is ever low); set `AppState::disk_space` to a fake |
 | A real pdtd under pdt-host | `fake-pdtd` (`crates/pdt-host/src/bin`) |
 
 A new daemon test copies the harness in `crates/pdtd/tests/common`: it drops every inherited `PDT_*` variable, then

@@ -299,6 +299,25 @@ describe('inbox', () => {
     expect(dismissable(storage)).toBe(false);
   });
 
+  it('warns of low disk space, cleans finished worktrees, and opens Settings › Storage', async () => {
+    const low = item('low_disk', {
+      kind: 'low_disk', group: 'notice', projectId: null, ticketId: null, runId: null, stepId: null,
+      title: 'Disk space is low (12 GB free)',
+      body: { text: 'The disk (with `/work`) has 12 GB free.', freeBytes: 12884901888, folders: ['/work'], critical: false },
+    });
+    const calls = stubApi({
+      'GET /api/inbox': { items: [], total: 0 },
+      'POST /api/storage/clean-finished': { cleaned: 2, freed: 3221225472, skipped: [] },
+    });
+    renderWithQuery(<InboxView items={[low]} selectedId="low_disk" onSelect={() => {}} />);
+    expect(screen.getByRole('region', { name: 'Low disk space' })).toHaveTextContent('12 GB free');
+    expect(dismissable(low)).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Clean all finished' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/storage/clean-finished')).toBe(true));
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(window.location.pathname).toBe('/settings/host/storage'));
+  });
+
   it('asks the user to do a manual stage and pick its outcome, with their note as the summary', async () => {
     const manual = item('m', {
       kind: 'manual', title: 'Your turn: Review', personaName: 'Reviewer',

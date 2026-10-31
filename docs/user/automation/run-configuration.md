@@ -186,6 +186,21 @@ providers = ["github_actions", "buildkite"]   # github_actions, gitlab_ci, local
 The pull request's CI badge rolls up every listed provider, each one's failures reach the agent, and an automated
 merge waits until each has passed. An empty list means no CI; the host overrides' list replaces the file's.
 
+## Storage
+
+Which folders of a checkout are build output, for cleaning worktrees (**Settings › This host › Storage**):
+
+```toml
+[storage]
+build_output = ["target", "**/node_modules", "web/dist"]
+```
+
+Each entry is a path inside the checkout, or `**/<name>` for a folder of that name at any depth. Without the
+section PDT detects the usual ones from the files at the checkout's root: `target` for Cargo and Maven,
+`node_modules`, `dist`, `.next` and `.turbo` for npm, `.venv` and `__pycache__` for Python, `build` for Gradle and
+CMake. Cleaning only removes what git ignores and holds no tracked files, so it never touches your code or your
+uncommitted work. The host overrides' list replaces the file's.
+
 ## Pitfalls
 
 - **Use `$PORT`.** A web server on a fixed port never shows as ready, and two branches would clash. Pass the port by

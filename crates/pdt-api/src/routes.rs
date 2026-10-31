@@ -166,6 +166,11 @@ pub struct AppState {
     pub(crate) personas_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Tickets auto-start failed to start, with their `updated_at` then: skipped until they change.
     pub(crate) auto_start_failed: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
+    /// Worktrees' sizes as last measured, and the storage loop's state (PDT-324).
+    pub(crate) storage: std::sync::Arc<crate::storage::StorageState>,
+    /// Reads a disk's free space. `new` reads none (no disk is ever low), so tests never depend on the machine's own
+    /// disk; only pdtd's production wiring installs the OS's (`storage::os_disk_space`), and a test sets a fake.
+    pub disk_space: crate::storage::DiskProbe,
     /// MCP servers PDT is a client of (Phase 7e-3): their live clients and cached tools.
     pub(crate) mcp: std::sync::Arc<crate::mcp_client::McpPool>,
     /// How often a PM conversation in use gets its daily update and journal checkpoint (PDT-167; tests shorten it).
@@ -288,6 +293,8 @@ impl AppState {
             engine_tick_wait: std::time::Duration::from_secs(10 * 60),
             workflow_docs: Default::default(),
             auto_start_failed: Default::default(),
+            storage: Default::default(),
+            disk_space: std::sync::Arc::new(|_| None),
             mcp: Default::default(),
             integrations: Default::default(),
             toolchains: std::sync::Arc::new(crate::toolchains::Offline),
@@ -456,6 +463,11 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/projects/{id}/files/rename", axum::routing::post(crate::files::rename))
         .route("/projects/{id}/files/tell", axum::routing::post(crate::files::tell))
         .route("/worktrees/{id}", axum::routing::delete(worktrees::remove))
+        .route("/worktrees/{id}/clean", axum::routing::post(crate::storage::clean))
+        .route("/storage", get(crate::storage::view))
+        .route("/storage/refresh", axum::routing::post(crate::storage::refresh))
+        .route("/storage/clean-finished", axum::routing::post(crate::storage::clean_finished))
+        .route("/projects/{id}/storage", axum::routing::put(crate::storage::put_settings))
         .route("/worktrees/{id}/changes", get(crate::review::changes))
         .route("/worktrees/{id}/changes/file", get(crate::review::file))
         .route("/worktrees/{id}/comments", get(crate::review::list_comments).post(crate::review::create_comment))

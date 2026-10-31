@@ -34,6 +34,10 @@ Pick an item to see it and its choices beside the list. Keys: **j** / **k** down
 - **PDT can't save changes**: its disk is full (with how much is free) or its database can't be written. Workflow
   runs and events wait meanwhile, and what you change says "PDT can't save changes" instead of saving. Free up space; PDT saves again on its own within seconds, starts what waited, and
   the item goes.
+- **Low disk space**: a disk with PDT's data or a project is running out of space (with how much is free).
+  **Open Storage** shows what each worktree takes; **Clean all finished** removes finished tickets' build output. When
+  it is almost full, auto-start waits too. The item goes once there is more space (see
+  [Disk space](../your-machine/your-data.md#disk-space)).
 - **Triaged tickets**: a workflow drafted a ticket from a new issue. **Approve** moves it to **To do**, **Reject** to
   **Won't do** (moving it on the board does the same).
 - **Workflow proposals**: an agent (the PM, say) changed one of your workflows. The item says who proposed it, their
