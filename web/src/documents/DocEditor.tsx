@@ -56,23 +56,47 @@ export function DocEditor({ id, markdown, version, editable }: DocEditorProps) {
 
   const reread = useCallback(() => qc.invalidateQueries({ queryKey: documentKeys.content(id) }), [qc, id]);
 
+  // A save on its way, the versions this editor saved (their `changed` events are its own), and a change from
+  // elsewhere that arrived during a save (looked at once it is back).
+  const inFlight = useRef(false);
+  const ours = useRef(new Set<string>());
+  const heldBack = useRef<string | null>(null);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+
+  const changedElsewhere = useCallback((v: string) => {
+    if (v === base.current || ours.current.has(v)) return;
+    if (dirtyRef.current) setConflict(true);
+    else void reread();
+  }, [reread]);
+
   const save = useCallback(async (overwrite = false) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setSaving(true);
+    // What goes to pdtd: typing that comes in while it's on its way stays unsaved, for the next save.
+    const sent = textRef.current;
     try {
-      const r = await api.editDocument(id, [{ op: 'replace_text', markdown: textRef.current }], overwrite ? null : base.current);
+      const r = await api.editDocument(id, [{ op: 'replace_text', markdown: sent }], overwrite ? null : base.current);
       base.current = r.version;
-      setDirty(false);
+      if (r.version) ours.current.add(r.version);
+      dirtyRef.current = textRef.current !== sent;
+      setDirty(dirtyRef.current);
       setConflict(false);
       setSaveError(null);
       qc.setQueryData<DocumentRead>(documentKeys.content(id), (d) =>
-        d && d.content.kind === 'doc' ? { ...d, content: { ...d.content, markdown: textRef.current, version: r.version } } : d);
+        d && d.content.kind === 'doc' ? { ...d, content: { ...d.content, markdown: sent, version: r.version } } : d);
     } catch (e) {
       if (e instanceof ApiError && e.code === 'conflict') setConflict(true);
       else setSaveError(actionError(e));
     } finally {
+      inFlight.current = false;
       setSaving(false);
+      const v = heldBack.current;
+      heldBack.current = null;
+      if (v) changedElsewhere(v);
     }
-  }, [id, qc]);
+  }, [id, qc, changedElsewhere]);
 
   // Save a pause after typing (not while a conflict waits for the user).
   useEffect(() => {
@@ -82,9 +106,10 @@ export function DocEditor({ id, markdown, version, editable }: DocEditorProps) {
   }, [dirty, conflict, saving, text, save]);
 
   useDocumentEvents(id, editable, (e) => {
-    if (e.type !== 'changed' || e.version === base.current) return;
-    if (dirty) setConflict(true);
-    else void reread();
+    if (e.type !== 'changed') return;
+    // pdtd tells of this editor's own save before its answer comes back: wait for the answer to tell them apart.
+    if (inFlight.current) heldBack.current = e.version;
+    else changedElsewhere(e.version);
   }, () => void reread());
 
   const takeTheirs = async () => {

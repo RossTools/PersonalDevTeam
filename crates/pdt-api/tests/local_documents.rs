@@ -336,6 +336,18 @@ async fn an_open_sheet_is_live_both_ways() {
         raw(&env, "POST", &format!("/api/documents/{id}/sheet/diffs?view=v1&seq=0"), b"junk".to_vec()).await;
     assert_eq!(s, StatusCode::CONFLICT);
 
+    // PDT's own saves are not changes from outside; a write by another program reloads the open sheet.
+    while rx.try_recv().is_ok() {}
+    env.state.local.check_external(&reference);
+    assert!(rx.try_recv().is_err(), "its own save is not news");
+    let mut outside = Workbook::open(std::path::Path::new(&reference)).unwrap();
+    outside.set_cells("Sheet1", "E1", &[vec!["by hand".into()]]).unwrap();
+    outside.save(std::path::Path::new(&reference)).unwrap();
+    env.state.local.check_external(&reference);
+    assert!(matches!(next_event(&mut rx), DocEvent::Reload { .. }));
+    let (_, c) = call(&env.app, "GET", &format!("/api/documents/{id}/content"), None).await;
+    assert_eq!(c["content"]["sheets"][0]["rows"][0][4]["value"], "by hand", "{c}");
+
     // The stream as a browser reads it: an agent's change arrives as a `diffs` event.
     let req = Request::builder().uri(format!("/api/documents/{id}/events?view=v2")).body(Body::empty()).unwrap();
     let res = env.app.clone().oneshot(req).await.unwrap();

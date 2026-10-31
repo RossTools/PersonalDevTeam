@@ -98,6 +98,8 @@ pub struct LocalProvider {
     events: Mutex<HashMap<String, broadcast::Sender<DocEvent>>>,
     /// Each file's version as PDT last wrote or read it, to notice changes made outside PDT.
     known: Mutex<HashMap<String, String>>,
+    /// Per doc: held while its file is read and remembered or written, so those don't interleave.
+    doc_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -173,7 +175,15 @@ fn number(v: &Value) -> Option<f64> {
 
 impl LocalProvider {
     pub fn new(store: Store, data_dir: PathBuf, home: Option<PathBuf>) -> Self {
-        Self { store, data_dir, home, live: Default::default(), events: Default::default(), known: Default::default() }
+        Self {
+            store,
+            data_dir,
+            home,
+            live: Default::default(),
+            events: Default::default(),
+            known: Default::default(),
+            doc_locks: Default::default(),
+        }
     }
 
     /// The file a reference names, checked to be a doc or sheet that exists.
@@ -291,27 +301,49 @@ impl LocalProvider {
     /// sheet is read again and its views reload.
     pub fn check_external(&self, reference: &str) {
         let Ok((path, kind)) = self.path(reference) else { return };
-        let Ok(bytes) = std::fs::read(&path) else { return };
-        let v = version_of(&bytes);
-        let before = lock(&self.known).get(reference).cloned();
-        if before.as_deref() == Some(v.as_str()) {
-            return;
-        }
-        self.remember(reference, &v);
-        let Some(_) = before else { return };
         match kind {
-            DocumentKind::Doc => self.send(reference, DocEvent::Changed { version: v }),
+            DocumentKind::Doc => {
+                // Read, compare and remember under the doc's lock, so a save (which holds it while it writes and
+                // remembers) can't land in between and make the old file look like a change.
+                let doc = self.doc_lock(reference);
+                let _held = lock(&doc);
+                let Ok(bytes) = std::fs::read(&path) else { return };
+                if let Some(v) = self.changed_outside(reference, &bytes) {
+                    self.send(reference, DocEvent::Changed { version: v });
+                }
+            }
             DocumentKind::Sheet => {
-                let Some(l) = lock(&self.live).get(reference).cloned() else { return };
+                let Some(l) = lock(&self.live).get(reference).cloned() else {
+                    // Not open: nothing to reload; what the file is now is read when it opens.
+                    return;
+                };
+                // The same for a live sheet: its saves hold its lock while they write and remember.
+                let mut l = lock(&l);
+                let Ok(bytes) = std::fs::read(&path) else { return };
+                if self.changed_outside(reference, &bytes).is_none() {
+                    return;
+                }
                 let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
                 let Ok(mut wb) = Workbook::from_xlsx(&bytes, &name) else { return };
                 wb.flush();
-                let mut l = lock(&l);
                 l.wb = wb;
                 l.seq += 1;
                 self.send(reference, DocEvent::Reload { seq: l.seq });
             }
         }
+    }
+
+    /// The file's new version when it differs from the one PDT last wrote or read (and remembers it); none when it
+    /// is the same, or PDT hadn't seen the file yet.
+    fn changed_outside(&self, reference: &str, bytes: &[u8]) -> Option<String> {
+        let v = version_of(bytes);
+        let before = lock(&self.known).insert(reference.to_string(), v.clone());
+        (before.is_some() && before.as_deref() != Some(v.as_str())).then_some(v)
+    }
+
+    /// The lock a doc's file is read, written and remembered under.
+    fn doc_lock(&self, reference: &str) -> Arc<Mutex<()>> {
+        lock(&self.doc_locks).entry(reference.to_string()).or_default().clone()
     }
 
     /// A sheet's charts with the numbers they draw, read from the live model.
@@ -513,6 +545,8 @@ impl LocalProvider {
         let (path, kind) = self.path(reference)?;
         match kind {
             DocumentKind::Doc => {
+                let doc = self.doc_lock(reference);
+                let _held = lock(&doc);
                 let bytes = std::fs::read(&path).map_err(failed)?;
                 let v = version_of(&bytes);
                 self.remember(reference, &v);
@@ -535,6 +569,8 @@ impl LocalProvider {
 
     fn apply_text(&self, reference: &str, edits: Vec<DocumentEdit>) -> ProviderResult<String> {
         let (path, _) = self.path(reference)?;
+        let doc = self.doc_lock(reference);
+        let _held = lock(&doc);
         let mut text = String::from_utf8_lossy(&std::fs::read(&path).map_err(failed)?).into_owned();
         for e in edits {
             match e {

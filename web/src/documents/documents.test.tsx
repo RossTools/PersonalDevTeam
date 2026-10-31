@@ -185,6 +185,39 @@ describe('documents', () => {
     await waitFor(() => expect(screen.queryByText('This document changed while you were writing')).not.toBeInTheDocument());
   });
 
+  it('typing while a save is on its way is saved next, not lost', async () => {
+    const local = { id: 'local', label: 'Local', capabilities: { ...all, rename: false, charts: true, live: true } };
+    let release: (() => void) | null = null;
+    let saves = 0;
+    const calls = stubApi({
+      'GET /api/documents/d4': doc('d4', 'Draft', { provider: 'local' }),
+      'GET /api/documents/d4/content': { content: { kind: 'doc', markdown: 'A\n', version: 'v1' }, embedUrl: null },
+      'GET /api/documents/d4/comments': [],
+      'GET /api/documents/providers': { ...providers, providers: [local] },
+      'GET /api/projects': [project],
+      'POST /api/documents/d4/edits': () => {
+        saves += 1;
+        if (saves > 1) return { version: `v${saves + 1}` };
+        return new Promise((resolve) => { release = () => resolve({ version: 'v2' }); });
+      },
+    });
+    renderWithQuery(<DocumentPage id="d4" phone={false} onGone={() => {}} />);
+    await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
+    const box = await screen.findByRole('textbox', { name: 'Document text' });
+    setEditorText(box, 'AB\n');
+    await waitFor(() => expect(release).not.toBeNull(), { timeout: 3000 });
+    // More typing while the first save is on its way.
+    setEditorText(box, 'ABC\n');
+    release!();
+    expect(await screen.findByText('Unsaved changes')).toBeInTheDocument();
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(2), { timeout: 3000 });
+    const posts = calls.filter((c) => c.method === 'POST');
+    expect(posts[0]!.body).toEqual({ edits: [{ op: 'replace_text', markdown: 'AB\n' }], baseVersion: 'v1' });
+    expect(posts[1]!.body).toEqual({ edits: [{ op: 'replace_text', markdown: 'ABC\n' }], baseVersion: 'v2' });
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(editorText(box)).toBe('ABC\n');
+  });
+
   it('comments go on a heading of a doc, and show where they are', async () => {
     const calls = stubApi({
       'GET /api/documents/d1': doc('d1', 'Plan'),
