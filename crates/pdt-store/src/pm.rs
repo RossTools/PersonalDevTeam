@@ -8,7 +8,7 @@ use sqlx::sqlite::SqliteRow;
 use sqlx::{QueryBuilder, Row, Sqlite};
 
 const PM_SESSION_COLUMNS: &str =
-    "session_id, rotation, reason, created_at, ended_at, COALESCE(caught_up_at, created_at) AS caught_up_at";
+    "session_id, rotation, reason, created_at, ended_at, COALESCE(caught_up_at, created_at) AS caught_up_at, via";
 
 const NOTE_COLUMNS: &str = "n.id, n.project_id, n.kind, n.title, n.body, n.pinned, n.session_id, n.created_at, \
                             n.updated_at";
@@ -50,6 +50,8 @@ pub struct PmSessionRow {
     pub ended_at: Option<i64>,
     /// When it was last brought up to date: its briefing (`created_at`) or its last daily update (PDT-167).
     pub caught_up_at: i64,
+    /// Where it is held besides PDT (PDT-304: `discord`).
+    pub via: Option<String>,
 }
 
 fn to_pm_session(r: &SqliteRow) -> Result<PmSessionRow, StoreError> {
@@ -62,6 +64,7 @@ fn to_pm_session(r: &SqliteRow) -> Result<PmSessionRow, StoreError> {
         created_at: r.try_get("created_at")?,
         ended_at: r.try_get("ended_at")?,
         caught_up_at: r.try_get("caught_up_at")?,
+        via: r.try_get("via")?,
     })
 }
 
@@ -194,6 +197,16 @@ impl Store {
         row.as_ref().map(to_pm_session).transpose()
     }
 
+    /// Records where a PM session is held besides PDT (PDT-304: `discord`); None: only in PDT.
+    pub async fn set_pm_via(&self, session_id: &str, via: Option<&str>) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE pm_sessions SET via = ? WHERE session_id = ?")
+            .bind(via)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Every PM session, newest first.
     pub async fn list_pm_sessions(&self) -> Result<Vec<PmSessionRow>, StoreError> {
         let sql = format!("SELECT {PM_SESSION_COLUMNS} FROM pm_sessions ORDER BY created_at DESC, session_id DESC");
@@ -310,6 +323,11 @@ mod tests {
         store.insert_pm_session("s1", 10).await.unwrap();
         let row = store.get_pm_session("s1").await.unwrap().unwrap();
         assert_eq!((row.rotation, row.reason, row.ended_at, row.caught_up_at), (Rotation::None, None, None, 10));
+        assert_eq!(row.via, None);
+        // Held in Discord's DMs too (PDT-304).
+        assert!(store.set_pm_via("s1", Some("discord")).await.unwrap());
+        assert_eq!(store.get_pm_session("s1").await.unwrap().unwrap().via.as_deref(), Some("discord"));
+        assert!(!store.set_pm_via("nope", Some("discord")).await.unwrap());
         // Brought up to date once per time it was last at (PDT-167).
         assert!(store.set_pm_caught_up("s1", 10, 11).await.unwrap());
         assert!(!store.set_pm_caught_up("s1", 10, 12).await.unwrap(), "another caller moved it first");

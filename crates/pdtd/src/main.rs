@@ -264,6 +264,8 @@ async fn run() -> anyhow::Result<()> {
         let st = state.clone();
         async move { pdt_api::prompt_local_network(&st).await }
     });
+    // What the integrations run for as long as pdtd does (PDT-304: the Discord bot's Gateway connection).
+    pdt_api::start_services(&state);
     // Auto-start of To do / Ready tickets, per project policy (Phase 7c).
     tokio::spawn(pdt_api::run_scheduler(state.clone()));
     // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as (spec §3.1).

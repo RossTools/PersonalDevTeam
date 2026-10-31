@@ -22,7 +22,7 @@ const item = (id: string, kind: InboxItem['kind'], more: Partial<InboxItem> = {}
 });
 
 const pm = (s: Session, open = true): PmSessionInfo => ({
-  session: s, open, title: s.title, unseen: s.unseen, lastActivity: 1, rotation: 'none', reason: null, journal: null,
+  session: s, open, title: s.title, unseen: s.unseen, lastActivity: 1, rotation: 'none', reason: null, journal: null, via: null,
 });
 
 const runInfo = (id: string, unseen: boolean): ItemInfo => ({

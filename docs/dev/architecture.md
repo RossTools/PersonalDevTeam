@@ -141,7 +141,11 @@ the data folder) and the tools of its persona; each tool calls the API route's o
 user's say are asked in the agent's own prompt where it supports that, or through the Inbox.
 
 **The PM.** A host-level project manager: conversations in the host project, with the PM persona's tools (those
-flagged `pm`) and a briefing built when the session starts (pdt-api `pm.rs`, pdt-core `pm.rs`).
+flagged `pm`) and a briefing built when the session starts (pdt-api `pm.rs`, pdt-core `pm.rs`). A conversation can be
+held elsewhere too (`pm_sessions.via`): the Discord integration passes the user's DMs to one (pdt-int-discord `dm.rs`),
+through the SDK's `pm` and `conversations` modules (start, send, close; every conversation's events as they are stored,
+`conversations::subscribe_all`; answering a request as the user). Its bot holds a Gateway websocket (`gateway.rs`) in
+an integration service (`Integration::services`, started once by pdtd, idle while the plugin is off).
 
 **Workflows.** Everything that happens is an event in the event log (`events`, keyed so a duplicate is dropped). A
 workflow is a versioned graph of nodes (pdt-core `workflow/`): a trigger, conditions, actions, waits, agent steps,

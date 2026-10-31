@@ -4,7 +4,7 @@
 
 pub use crate::error::ApiError;
 pub use crate::integrations::action::{Action, ActionCx, AnyAction, ConnectionFace, NodeFace, ToolFace, Via};
-pub use crate::integrations::{Integration, Poller, Registry, Tool, tool_info};
+pub use crate::integrations::{Integration, Poller, Registry, Service, Tool, tool_info};
 pub use crate::mcp::tools::Cx;
 pub use crate::notifications::on_event;
 pub use crate::overlap::decorate as decorate_ticket;
@@ -38,4 +38,14 @@ pub mod connections {
 /// [`crate::Integration::ci_provider`]).
 pub mod ci {
     pub use crate::github::{attempt_ref, merge_refused, merge_requested, run_refs, watched_pr};
+}
+
+/// PM conversations, for an integration that holds them elsewhere too (PDT-304: Discord's DMs).
+pub mod pm {
+    pub use crate::pm::{close_conversation, conversations, send_from_user, set_via, start_conversation};
+}
+
+/// Conversations' events and requests, for an integration that follows them (PDT-304).
+pub mod conversations {
+    pub use crate::conversations::{answer_as_user, is_working, subscribe_all};
 }

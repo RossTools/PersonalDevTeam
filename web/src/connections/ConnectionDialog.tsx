@@ -57,6 +57,8 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, descrip
   const [settings, setSettings] = useState(() => settingsText(kindOf(kinds, kind), connection?.config));
   const [guildId, setGuildId] = useState(str(connection?.config.guildId));
   const [appId, setAppId] = useState(str(connection?.config.applicationId));
+  const [dmUserId, setDmUserId] = useState(str(connection?.config.dmUserId));
+  const [dmInbox, setDmInbox] = useState(connection?.config.dmInbox === true);
   const [pmActs, setPmActs] = useState(connection?.config.pmActs === true);
   // A new connection made by an earlier Save whose secret step failed: Save again updates it instead of making a
   // second one with the same name.
@@ -70,7 +72,8 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, descrip
     mutationFn: async () => {
       const own: Record<string, unknown> = k?.auth
         ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) }
-        : k?.discordBot ? { guildId: guildId.trim(), applicationId: appId.trim() } : fieldsConfig(k?.fields ?? [], settings);
+        : k?.discordBot ? { guildId: guildId.trim(), applicationId: appId.trim(), dmUserId: dmUserId.trim(), dmInbox: dmUserId.trim() !== '' && dmInbox }
+          : fieldsConfig(k?.fields ?? [], settings);
       if (k?.pmActs) own.pmActs = pmActs;
       // Keeps what PDT put there (a webhook the PM made records its channel), but not a setting the form left empty.
       const kept = Object.fromEntries(Object.entries(connection?.config ?? {}).filter(([key]) => !k?.fields?.some((f) => f.key === key)));
@@ -99,7 +102,7 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, descrip
   const needsSecret = !existing?.hasSecret && kind !== 'http' && !k?.secretOptional;
   const fieldsFilled = (k?.fields ?? []).every((f) => f.optional || !fieldShown(f, settings) || (settings[f.key] ?? '').trim() !== '');
   const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!askUrl || k?.urlOptional || url.trim() !== '')
-    && (!k?.discordBot || /^\d+$/.test(guildId.trim())) && fieldsFilled;
+    && (!k?.discordBot || (/^\d+$/.test(guildId.trim()) && /^\d*$/.test(dmUserId.trim()))) && fieldsFilled;
   return (
     <Dialog
       open
@@ -156,6 +159,15 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, descrip
                 <Link href={discordInviteUrl(appId.trim())} external className="break-all text-xs">{discordInviteUrl(appId.trim())}</Link>
                 <div className="text-xs text-muted-foreground">Open it, pick the server, and keep the permissions it asks for.</div>
               </Alert>
+            )}
+            <Field
+              label="Your Discord user ID (optional)"
+              hint="To talk to the PM in the bot's DMs: with Developer Mode on, right-click your name → Copy User ID. Only this account's DMs and button presses reach the PM. It needs Message Content Intent on (Developer Portal → Bot → Privileged Gateway Intents)."
+            >
+              <Input aria-label="Your Discord user ID" inputMode="numeric" value={dmUserId} onChange={(e) => setDmUserId(e.target.value)} />
+            </Field>
+            {dmUserId.trim() !== '' && (
+              <Switch checked={dmInbox} onChange={setDmInbox}>Also send Inbox items (stalled, needs input) as DMs</Switch>
             )}
           </>
         )}

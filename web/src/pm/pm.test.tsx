@@ -19,7 +19,7 @@ const session = (id: string, createdAt: number): Session => ({
 });
 
 const info = (s: Session, more: Partial<PmSessionInfo> = {}): PmSessionInfo => ({
-  session: s, open: true, title: s.title, unseen: s.unseen, lastActivity: s.createdAt, rotation: 'none', reason: null, journal: null, ...more,
+  session: s, open: true, title: s.title, unseen: s.unseen, lastActivity: s.createdAt, rotation: 'none', reason: null, journal: null, via: null, ...more,
 });
 
 const endedOne = info({ ...session('s1', Date.UTC(2026, 9, 20, 9)), title: 'Old plans' }, { open: false, rotation: 'done', reason: 'age', journal: '## Today\nPlanned the PM.' });
@@ -60,6 +60,14 @@ describe('the PM', () => {
     expect(onSelect).toHaveBeenCalledWith('c1');
     await userEvent.click(within(old).getByText('Today'));
     expect(onSelect).toHaveBeenCalledWith('s1');
+  });
+
+  it('marks a conversation held in the Discord bot\'s DMs', async () => {
+    stubApi({ 'GET /api/pm': { ...two, sessions: [info(live('c2', 'A PDT bug'), { via: 'discord' }), ...two.sessions.slice(1)] } });
+    renderWithQuery(<PmList selection="current" onSelect={() => {}} onNew={() => {}} />);
+    const open = await screen.findByRole('grid', { name: 'PM conversations' });
+    expect(await within(open).findByRole('row', { name: /A PDT bug/ })).toHaveTextContent('via Discord');
+    expect(within(open).getByRole('row', { name: /CB cutover/ })).not.toHaveTextContent('via Discord');
   });
 
   it('dots a conversation that finished a turn in the background, and the dot goes once it is opened', async () => {

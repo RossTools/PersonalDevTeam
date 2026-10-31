@@ -3579,6 +3579,7 @@ name = "pdt-int-discord"
 version = "0.5.0"
 dependencies = [
  "axum",
+ "futures-util",
  "http-body-util",
  "pdt-api",
  "pdt-core",
@@ -3591,6 +3592,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "tower",
  "tracing",
  "tracing-subscriber",
@@ -4278,6 +4280,7 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "mime_guess",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",
@@ -5977,7 +5980,9 @@ checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
 dependencies = [
  "futures-util",
  "log",
+ "native-tls",
  "tokio",
+ "tokio-native-tls",
  "tungstenite 0.30.0",
 ]
 
@@ -6326,6 +6331,7 @@ dependencies = [
  "http",
  "httparse",
  "log",
+ "native-tls",
  "rand 0.10.3",
  "sha1 0.11.0",
  "thiserror 2.0.21",

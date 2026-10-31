@@ -23,4 +23,8 @@ lastActivity: number, rotation: Rotation, reason: RotateReason | null,
 /**
  * Its journal entry: the latest checkpoint, or the one it wrote as it ended.
  */
-journal: string | null, };
+journal: string | null, 
+/**
+ * Where it is held besides PDT: `discord` for one the user talks to through the Discord bot's DMs (PDT-304).
+ */
+via: string | null, };

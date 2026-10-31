@@ -1,20 +1,25 @@
 //! Discord (PDT-98): webhooks that Post to Discord steps post to, and a bot the PM manages a server with (its tools
-//! and the `discord.channel.ensure` action), and the templates that post to Discord. pdtd's `discord` feature.
+//! and the `discord.channel.ensure` action), and the templates that post to Discord. The bot also lets the user talk
+//! to the PM in its DMs (PDT-304: a Gateway connection, `dm.rs`). pdtd's `discord` feature.
 
 mod bot;
+mod chat;
 mod core;
+mod dm;
+mod gateway;
 mod post;
 mod templates;
 
 use crate::core::DISCORD_BOT;
 use crate::post::DISCORD_WEBHOOK;
-use pdt_api::sdk::{AnyAction, Integration, NodeKind};
+use pdt_api::sdk::{AnyAction, AppState, Integration, NodeKind, Service};
 use pdt_core::integration::ConnectionKind;
 use pdt_core::workflow::template::Template;
 use serde_json::Value;
 use std::sync::Arc;
 
 pub use bot::{EnsureChannelConfig, EnsureChannelOutput};
+pub use dm::{DmStatus, status as dm_status};
 pub use post::{DiscordConfig, DiscordOutput, split_content};
 
 pub struct Discord;
@@ -59,9 +64,13 @@ impl Integration for Discord {
                 setup: "A bot that lets the PM manage a Discord server: make and organise channels, and make the \
                         webhooks workflows post to. In the Discord Developer Portal, make an application, then under \
                         Bot reset its token and copy it. Invite the bot to your server with the link this dialog \
-                        shows (Manage Channels, Manage Webhooks, Send Messages)."
+                        shows (Manage Channels, Manage Webhooks, Send Messages). Give it your Discord user ID to talk \
+                        to the PM in the bot’s DMs; that needs Message Content Intent turned on under Bot → \
+                        Privileged Gateway Intents."
                     .into(),
-                description: "Lets the PM manage a Discord server’s channels and webhooks.".into(),
+                description: "Lets the PM manage a Discord server’s channels and webhooks, and you talk to the PM in \
+                              the bot’s DMs."
+                    .into(),
                 url: false,
                 secret_label: "Bot token".into(),
                 secret_hint: "Discord Developer Portal → your application → Bot → Reset Token → Copy.".into(),
@@ -76,6 +85,14 @@ impl Integration for Discord {
         vec![Box::new(post::Discord), Box::new(bot::EnsureChannel)]
     }
 
+    fn services(&self) -> Vec<Service> {
+        vec![Service { name: "the Discord DM link", run: dm_service }]
+    }
+
+    fn routes(&self) -> Option<axum::Router<AppState>> {
+        Some(axum::Router::new().route("/discord/dm", axum::routing::get(dm::status_route)))
+    }
+
     fn actions(&self) -> Vec<Arc<dyn AnyAction>> {
         bot::actions()
     }
@@ -88,6 +105,10 @@ impl Integration for Discord {
     fn pm_prompt(&self) -> Option<&'static str> {
         Some(PM_PROMPT)
     }
+}
+
+fn dm_service(st: AppState) -> pdt_api::sdk::BoxFut<'static, ()> {
+    dm::service(st)
 }
 
 /// What the PM's prompt says about the Discord tools.

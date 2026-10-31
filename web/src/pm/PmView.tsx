@@ -13,7 +13,7 @@ import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import type { RotateReason } from '../api/gen/RotateReason';
 import { InlineRename } from '../common/InlineRename';
 import { useTopBarActions } from '../shell/PhoneTopBar';
-import { earlier, firstLine, REASON_LABEL, shownConversation, usePm, usePmActions, useRefreshPm, type PmSelection } from './usePm';
+import { earlier, firstLine, REASON_LABEL, shownConversation, usePm, usePmActions, useRefreshPm, viaLabel, type PmSelection } from './usePm';
 
 /** The start box's unsent text, kept like a conversation's (it has no session yet). */
 export const PM_START_DRAFT = 'pm-start';
@@ -57,6 +57,7 @@ function Conversation({ info, phone, onSelect, onNew }: {
     `Started ${relativeTime(s.createdAt)}`,
     ended ? `ended: ${info.reason ? REASON_LABEL[info.reason] : 'ended'}` : null,
     s.persona ? `${s.persona.name} v${s.persona.version}` : null,
+    viaLabel(info),
   ].filter(Boolean).join(' · ');
   const renameField = (
     <InlineRename

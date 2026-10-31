@@ -101,6 +101,7 @@ async fn pm_state(st: &AppState) -> Result<PmState, ApiError> {
             rotation: row.rotation,
             reason: row.reason,
             journal,
+            via: row.via.clone(),
         };
         if is_open { open.push(info) } else { ended.push(info) }
     }
@@ -120,7 +121,54 @@ pub(crate) async fn start(
         Some(t) => clean_title(t).ok_or_else(|| bad("a title is 1 to 100 characters"))?,
         None => pm::conversation_title(text.as_deref().unwrap_or("")),
     };
-    Ok((StatusCode::CREATED, Json(new_session(&st, title, text).await?)))
+    Ok((StatusCode::CREATED, Json(new_session(&st, title, text, None).await?)))
+}
+
+// ---- for integrations that hold PM conversations elsewhere (PDT-304: Discord's DMs) ----
+
+/// Every PM conversation, the open ones first.
+pub async fn conversations(st: &AppState) -> Result<Vec<PmSessionInfo>, ApiError> {
+    Ok(pm_state(st).await?.sessions)
+}
+
+/// A new PM conversation held `via` an integration too (`discord`), titled `title` or after its first message, which
+/// it is sent.
+pub async fn start_conversation(
+    st: &AppState,
+    title: Option<&str>,
+    text: Option<String>,
+    via: &str,
+) -> Result<Session, ApiError> {
+    let text = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let title = match title.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => clean_title(t).ok_or_else(|| bad("a title is 1 to 100 characters"))?,
+        None => pm::conversation_title(text.as_deref().unwrap_or("")),
+    };
+    new_session(st, title, text, Some(via)).await
+}
+
+/// Marks a PM conversation held `via` an integration too (None: only in PDT).
+pub async fn set_via(st: &AppState, id: &str, via: Option<&str>) -> Result<(), ApiError> {
+    pm_session(st, id).await?;
+    st.store.set_pm_via(id, via).await?;
+    Ok(())
+}
+
+/// The user's message to an open PM conversation, from elsewhere: queued as the next turn while one runs, the same as
+/// the web's.
+pub async fn send_from_user(st: &AppState, id: &str, text: &str) -> Result<(), ApiError> {
+    let (row, s) = pm_session(st, id).await?;
+    if row.rotation != Rotation::None {
+        return Err(ApiError::new(StatusCode::CONFLICT, "pm_closed", "that PM conversation is closed"));
+    }
+    crate::conversations::send_user_message(st, &s, text).await?;
+    user_wrote(st, &s, text).await;
+    Ok(())
+}
+
+/// Closes a PM conversation the way the web's Close does: it writes its journal entry, then ends.
+pub async fn close_conversation(st: &AppState, id: &str) -> Result<(), ApiError> {
+    close(State(st.clone()), Path(id.to_string())).await.map(|_| ())
 }
 
 /// A PM conversation by id (404 for any other session).
@@ -179,7 +227,12 @@ pub(crate) async fn user_wrote(st: &AppState, s: &Session, text: &str) {
     }
 }
 
-async fn new_session(st: &AppState, title: String, first: Option<String>) -> Result<Session, ApiError> {
+async fn new_session(
+    st: &AppState,
+    title: String,
+    first: Option<String>,
+    via: Option<&str>,
+) -> Result<Session, ApiError> {
     let project = host_project(st).await?;
     let p = persona(st).await?;
     let mode = p.setup.permission_mode.unwrap_or(PermissionMode::Ask);
@@ -206,6 +259,9 @@ async fn new_session(st: &AppState, title: String, first: Option<String>) -> Res
     };
     let s = crate::sessions::create_session(st, req).await?;
     st.store.insert_pm_session(&s.id, s.created_at).await?;
+    if via.is_some() {
+        st.store.set_pm_via(&s.id, via).await?;
+    }
     if let Some(text) = first {
         crate::conversations::send_user_message(st, &s, &text).await?;
     }
