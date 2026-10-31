@@ -102,7 +102,11 @@ Actions, GitLab CI, the local forge's command, Buildkite), into memory. What cha
 from the merge queue, a merge) is logged as events, which the built-in PR notices workflow turns into messages to the
 agent.
 
-**Review.** The Changes view diffs the worktree against its merge base with the base branch (pdt-git `review.rs`).
+**Review.** The Changes view diffs the worktree against its merge base with the base branch (pdt-git `review.rs`;
+each file says whether it is uncommitted, and generated: `linguist-generated` in `.gitattributes` or a lockfile). The
+web view shows every file on one scrolling page (`ChangesView` → a `FileSection` per file): a file's diff is drawn
+only once it nears the visible part of the page and dropped again far away (`review/lazy.ts`), keeping its height, and
+generated, binary and very large files start behind Load diff.
 Line comments are drafts until Send feedback sends them, as one message, to the attempt's agent. Approve records a
 review at the branch head. Merge (pdt-api `review::merge_attempt`, shared with the `attempt.merge` workflow node)
 checks the project's policy first, then turns on the forge's auto-merge or merge queue, or merges locally when there

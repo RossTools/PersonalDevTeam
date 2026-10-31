@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, File, Folder, MessageSquare } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { DiffStat, List, ListRow, TreeView, type TreeChildren, type TreeNode } from '@ui';
+import { DiffStat, TreeView, type TreeChildren, type TreeNode } from '@ui';
 import type { ChangedFile } from '../api/gen/ChangedFile';
 import type { ChangeStatus } from '../api/gen/ChangeStatus';
 
@@ -47,7 +47,24 @@ function FileMarks({ file: f, comments: n, seen }: { file: ChangedFile; comments
   );
 }
 
-/** The changed files, one folder level per directory path (as GitHub groups them): status, +/−, comments, viewed. */
+/** The files by folder: each folder's files (folders in path order), then the top-level ones. */
+function byFolder(files: ChangedFile[]): [string, ChangedFile[]][] {
+  const byDir = new Map<string, ChangedFile[]>();
+  for (const f of files) {
+    const d = dirOf(f.path);
+    byDir.set(d, [...(byDir.get(d) ?? []), f]);
+  }
+  const dirs = [...byDir.keys()].filter((d) => d !== '').sort();
+  return [...dirs, ...(byDir.has('') ? [''] : [])].map((d) => [d, byDir.get(d)!]);
+}
+
+/** The files in the order the list shows them (the Changes page shows them in the same order). */
+export const inListOrder = (files: ChangedFile[]): ChangedFile[] => byFolder(files).flatMap(([, fs]) => fs);
+
+/**
+ * The changed files, one folder level per directory path (as GitHub groups them): status, +/−, comments, viewed. The
+ * Changes page's navigator: `selected` is the file in view, kept in sight as the page scrolls.
+ */
 export function FileList({ files, selected, onSelect, comments, viewed, className }: FileListProps) {
   const items = useMemo(() => {
     const leaf = (f: ChangedFile): Node => {
@@ -63,27 +80,39 @@ export function FileList({ files, selected, onSelect, comments, viewed, classNam
         trailing: <FileMarks file={f} comments={n} seen={seen} />,
       };
     };
-    const byDir = new Map<string, ChangedFile[]>();
-    for (const f of files) {
-      const d = dirOf(f.path);
-      byDir.set(d, [...(byDir.get(d) ?? []), f]);
-    }
-    const dirs = [...byDir.keys()].filter((d) => d !== '').sort();
-    const top: Node[] = dirs.map((d) => ({
+    return byFolder(files).flatMap(([d, fs]): Node[] => (d === '' ? fs.map(leaf) : [{
       id: `dir:${d}`,
       label: `${d}/`,
       hasChildren: true,
       icon: <Folder aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />,
-      children: (byDir.get(d) ?? []).map(leaf),
-    }));
-    return [...top, ...(byDir.get('') ?? []).map(leaf)];
+      children: fs.map(leaf),
+    }]));
   }, [files, comments, viewed]);
   // Folders start open; the ones the user closes stay closed.
   const [closed, setClosed] = useState<Set<string>>(() => new Set());
   const dirIds = items.filter((n) => n.hasChildren).map((n) => n.id);
   const expanded = dirIds.filter((id) => !closed.has(id));
   const useChildren = (n: Node): TreeChildren<Node> => ({ status: 'ready', items: n.children ?? [] });
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selected) return;
+    // A frame later: the tree draws its rows after its first render.
+    const id = requestAnimationFrame(() => {
+      const row = [...(box.current?.querySelectorAll<HTMLElement>('[role="row"][data-key]') ?? [])].find((r) => r.dataset.key === selected);
+      row?.scrollIntoView?.({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [selected]);
   return (
+    // The tree only reports a change of selection: a click on the file already in view scrolls back to its top too.
+    <div
+      ref={box}
+      className="flex min-h-0 flex-1 flex-col"
+      onClick={(e) => {
+        const key = (e.target as HTMLElement).closest<HTMLElement>('[role="row"][data-key]')?.dataset.key;
+        if (key && key === selected) onSelect(key);
+      }}
+    >
     <TreeView<Node>
       aria-label="Changed files"
       items={items}
@@ -95,26 +124,6 @@ export function FileList({ files, selected, onSelect, comments, viewed, classNam
       renderEmpty={() => <p className="p-3 text-xs text-muted-foreground">No changes yet.</p>}
       className={className}
     />
-  );
-}
-
-/**
- * The changed files as a screen of their own (phones, PDT-116): one row per file (its name, the folder under it, the
- * same marks as the tree), in path order; a tap opens the file.
- */
-export function PhoneFileList({ files, onSelect, comments, viewed }: Omit<FileListProps, 'selected' | 'className'>) {
-  return (
-    <List aria-label="Changed files" onAction={onSelect} className="min-h-0 flex-1 overflow-auto p-1"
-      renderEmpty={() => <p className="p-3 text-xs text-muted-foreground">No changes yet.</p>}>
-      {files.map((f) => {
-        const seen = viewed(f);
-        return (
-          <ListRow key={f.path} id={f.path} title={nameOf(f.path)} textValue={f.path}
-            secondary={f.oldPath ? `${f.oldPath} →` : dirOf(f.path) || undefined}
-            className={cn(f.status === 'deleted' && 'line-through', seen && 'text-muted-foreground')}
-            trailing={<FileMarks file={f} comments={comments[f.path] ?? 0} seen={seen} />} />
-        );
-      })}
-    </List>
+    </div>
   );
 }

@@ -41,6 +41,8 @@ export interface CodeDiffProps {
    * the picked lines show "+".
    */
   touch?: boolean;
+  /** A line to show (a link to it): its collapsed run opens, it is picked and scrolled to the middle of the screen. */
+  reveal?: { side: CommentSide; line: number } | null;
 }
 
 const setAnchors = StateEffect.define<{ line: number; id: string }[]>();
@@ -335,7 +337,7 @@ function textOf(doc: Text, line: number, endLine: number): string {
  * line number picks that line and Shift+click extends the pick; "+" in the gutter (on the picked lines when it is one
  * of them) or `c` on picked or selected lines asks for a new comment.
  */
-export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, renderAnchor, onComment, touch = false }: CodeDiffProps) {
+export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, renderAnchor, onComment, touch = false, reveal = null }: CodeDiffProps) {
   const host = useRef<HTMLDivElement>(null);
   const containers = useRef(new Map<string, HTMLElement>()).current;
   const views = useRef<{ old: EditorView | null; new: EditorView }>(null);
@@ -522,6 +524,25 @@ export function CodeDiff({ path, oldText, newText, mode, wholeFile, anchors, ren
     for (const a of anchorsRef.current) roRef.current?.observe(container(a.id));
     place();
   }, [anchorKey]);
+
+  // After the editors are built (the effects above run first), and again when the line asked for changes.
+  const revealKey = reveal ? `${reveal.side}:${reveal.line}:${mode}:${wholeFile}` : '';
+  useEffect(() => {
+    const vs = views.current;
+    if (!reveal || !vs) return;
+    let view = vs.new;
+    let line = reveal.line;
+    if (reveal.side === 'old') {
+      if (vs.old) view = vs.old;
+      else line = oldToNewLine(getChunks(vs.new.state)?.chunks ?? [], EditorState.create({ doc: oldText }).doc, vs.new.state.doc, line);
+    }
+    if (line < 1 || line > view.state.doc.lines) return;
+    const pos = view.state.doc.line(line).from;
+    const starts = collapsedHolding(view, [pos]);
+    if (starts.length) view.dispatch({ effects: starts.map((p) => uncollapseUnchanged.of(p)) });
+    pick(view, pickRange(line, line));
+    view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(line).from, { y: 'center' }) });
+  }, [revealKey]);
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key !== 'c' || e.metaKey || e.ctrlKey || e.altKey) return;

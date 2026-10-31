@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { EditorView } from '@codemirror/view';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ChangedFile } from '../api/gen/ChangedFile';
 import type { Changes } from '../api/gen/Changes';
 import type { MergePreview } from '../api/gen/MergePreview';
 import type { ReviewComment } from '../api/gen/ReviewComment';
@@ -21,9 +22,9 @@ const changes = (over: Partial<Changes> = {}): Changes => ({
   attemptId: 'a1', ticketId: 't1', attemptActive: true, approved: false,
   // In path order, as the API sends them.
   files: [
-    { path: 'README.md', oldPath: null, status: 'added', untracked: true, binary: false, added: 2, removed: 0, version: ':c' },
-    { path: 'src/login.ts', oldPath: null, status: 'modified', untracked: false, binary: false, added: 3, removed: 1, version: 'a:b' },
-    { path: 'src/old.ts', oldPath: null, status: 'deleted', untracked: false, binary: false, added: 0, removed: 4, version: 'd:' },
+    { path: 'README.md', oldPath: null, status: 'added', untracked: true, binary: false, added: 2, removed: 0, version: ':c', generated: false, uncommitted: true },
+    { path: 'src/login.ts', oldPath: null, status: 'modified', untracked: false, binary: false, added: 3, removed: 1, version: 'a:b', generated: false, uncommitted: false },
+    { path: 'src/old.ts', oldPath: null, status: 'deleted', untracked: false, binary: false, added: 0, removed: 4, version: 'd:', generated: false, uncommitted: false },
   ],
   ...over,
 });
@@ -52,19 +53,64 @@ function stub(extra: Parameters<typeof stubApi>[0] = {}, c: Changes = changes(),
   });
 }
 
+const region = (path: string) => screen.getByRole('region', { name: path });
+const findRegion = (path: string) => screen.findByRole('region', { name: path });
+const treeRow = (tree: HTMLElement, name: string) => within(tree).getByText(name).closest('[role="row"]')!;
+const fileCalls = (calls: Call[]) => calls.filter((c) => c.path.startsWith('/api/worktrees/w1/changes/file')).map((c) => new URL(c.path, 'http://x').searchParams.get('path'));
+
+/** jsdom lays nothing out: each file's section sits 1000px below the one before. */
+function layout(order = ['src/login.ts', 'src/old.ts', 'README.md']) {
+  vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (this: HTMLElement) {
+    const p = this.dataset.path;
+    return p ? Math.max(0, order.indexOf(p)) * 1000 : 0;
+  });
+}
+
+/** An IntersectionObserver that says which sections are near the visible page. */
+function nearOnly(near: (path: string | null) => boolean) {
+  class FakeObserver {
+    constructor(private cb: IntersectionObserverCallback) {}
+    observe(el: Element) {
+      this.cb([{ target: el, isIntersecting: near(el.getAttribute('data-path')) } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+    }
+    unobserve() {}
+    disconnect() {}
+    takeRecords() { return []; }
+  }
+  vi.stubGlobal('IntersectionObserver', FakeObserver);
+}
+
 describe('ChangesView', () => {
-  it('lists the changed files by folder with their counts and opens the first', async () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('shows every changed file on one page, in the file list\'s order (by folder), with the list beside it', async () => {
     stub();
     renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
     const tree = await findTree();
     expect(within(tree).getByText('src/')).toBeInTheDocument();
     expect(within(tree).getByText('login.ts')).toBeInTheDocument();
-    expect(within(tree).getByText('README.md')).toBeInTheDocument();
     expect(screen.getByText(/3 files vs/)).toBeInTheDocument();
-    expect(screen.getByText('0 / 3 viewed')).toBeInTheDocument();
-    // The first file is shown.
-    expect(await screen.findByRole('checkbox', { name: 'Viewed' })).toBeInTheDocument();
-    expect(screen.getByText('untracked')).toBeInTheDocument();
+    expect(screen.getByText(/0 \/ 3 viewed/)).toBeInTheDocument();
+    const sections = await screen.findAllByRole('region', { name: /\.(md|ts)$/ });
+    expect(sections.map((s) => s.getAttribute('aria-label'))).toEqual(['src/login.ts', 'src/old.ts', 'README.md']);
+    for (const s of sections) expect(within(s).getByRole('checkbox', { name: 'Viewed' })).toBeInTheDocument();
+    expect(within(region('README.md')).getByText('untracked')).toBeInTheDocument();
+    // Every file's diff is drawn (nothing here says which are near).
+    await waitFor(() => expect(screen.getAllByTestId('code-diff')).toHaveLength(3));
+    // One layout for the whole page.
+    expect(screen.getAllByRole('radiogroup', { name: 'Diff layout' })).toHaveLength(1);
+  });
+
+  it('marks a file uncommitted in its header', async () => {
+    const c = changes();
+    c.files[1] = { ...c.files[1]!, uncommitted: true };
+    stub({}, c);
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    expect(await within(await findRegion('src/login.ts')).findByText('Uncommitted')).toBeInTheDocument();
+    expect(within(region('src/old.ts')).queryByText('Uncommitted')).not.toBeInTheDocument();
   });
 
   it('shows a Markdown file rendered, before and after side by side', async () => {
@@ -72,48 +118,195 @@ describe('ChangesView', () => {
       'GET /api/worktrees/w1/changes/file': { path: 'README.md', old: '# Old title\n', new: '# New title\n', binary: false, tooLarge: false },
     });
     renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
-    await userEvent.click(await screen.findByRole('radio', { name: 'Rendered' }));
+    const readme = await findRegion('README.md');
+    await userEvent.click(within(readme).getByRole('radio', { name: 'Rendered' }));
     expect(within(screen.getByRole('region', { name: 'Before' })).getByRole('heading', { name: 'Old title' })).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'After' })).getByRole('heading', { name: 'New title' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Whole file' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('radio', { name: 'Diff' }));
+    expect(within(readme).queryByRole('button', { name: 'Whole file' })).not.toBeInTheDocument();
+    // Other files keep their diff and their own options.
+    expect(within(region('src/login.ts')).getByRole('button', { name: 'Whole file' })).toBeInTheDocument();
+    expect(within(region('src/login.ts')).queryByRole('radio', { name: 'Rendered' })).not.toBeInTheDocument();
+    await userEvent.click(within(readme).getByRole('radio', { name: 'Diff' }));
     expect(screen.queryByRole('region', { name: 'After' })).not.toBeInTheDocument();
-    // Not offered for other files.
-    await userEvent.click(within(await findTree()).getByText('login.ts'));
-    expect(await screen.findByRole('checkbox', { name: 'Viewed' })).toBeInTheDocument();
-    expect(screen.queryByRole('radio', { name: 'Rendered' })).not.toBeInTheDocument();
   });
 
-  it('marks a file viewed, which survives a reload until the file changes', async () => {
+  it('collapses a file marked viewed, which survives a reload until the file changes', async () => {
     stub();
     const { unmount } = renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
-    await userEvent.click(await screen.findByRole('checkbox', { name: 'Viewed' }));
-    expect(screen.getByText('1 / 3 viewed')).toBeInTheDocument();
+    const login = await findRegion('src/login.ts');
+    await waitFor(() => expect(within(login).getByTestId('code-diff')).toBeInTheDocument());
+    await userEvent.click(within(login).getByRole('checkbox', { name: 'Viewed' }));
+    expect(screen.getByText(/1 \/ 3 viewed/)).toBeInTheDocument();
+    expect(within(login).queryByTestId('file-body')).not.toBeInTheDocument();
+    expect(within(login).getByRole('button', { name: 'Expand src/login.ts' })).toHaveAttribute('aria-expanded', 'false');
+    // The chevron opens it again without unmarking it.
+    await userEvent.click(within(login).getByRole('button', { name: 'Expand src/login.ts' }));
+    expect(within(login).getByTestId('file-body')).toBeInTheDocument();
+    expect(within(login).getByRole('checkbox', { name: 'Viewed' })).toBeChecked();
     unmount();
+
+    vi.unstubAllGlobals();
+    stub();
+    const again = renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    expect(await screen.findByText(/1 \/ 3 viewed/)).toBeInTheDocument();
+    expect(within(await findRegion('src/login.ts')).queryByTestId('file-body')).not.toBeInTheDocument();
+    // Unticking opens it.
+    await userEvent.click(within(region('src/login.ts')).getByRole('checkbox', { name: 'Viewed' }));
+    expect(within(region('src/login.ts')).getByTestId('file-body')).toBeInTheDocument();
+    await userEvent.click(within(region('src/login.ts')).getByRole('checkbox', { name: 'Viewed' }));
+    again.unmount();
+
     vi.unstubAllGlobals();
     const c = changes();
-    c.files[0] = { ...c.files[0]!, version: ':changed' };
+    c.files[1] = { ...c.files[1]!, version: 'a:changed' };
     stub({}, c);
     renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
-    expect(await screen.findByText('0 / 3 viewed')).toBeInTheDocument();
+    expect(await screen.findByText(/0 \/ 3 viewed/)).toBeInTheDocument();
+    expect(within(await findRegion('src/login.ts')).getByTestId('file-body')).toBeInTheDocument();
   });
 
-  it('counts drafts, lists a thread whose lines are gone as outdated, and sends the feedback', async () => {
+  it('scrolls to a file picked in the list, follows the scroll, and puts the file in the address', async () => {
+    layout();
+    stub();
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    const tree = await findTree();
+    const page = screen.getByTestId('changes-page');
+    await waitFor(() => expect(treeRow(tree, 'login.ts')).toHaveAttribute('aria-selected', 'true'));
+    await userEvent.click(within(tree).getByText('README.md'));
+    expect(page.scrollTop).toBe(2000);
+    expect(treeRow(tree, 'README.md')).toHaveAttribute('aria-selected', 'true');
+    expect(new URLSearchParams(window.location.search).get('file')).toBe('README.md');
+    // Scroll-spy: scrolling back up highlights the file in view.
+    page.scrollTop = 1200;
+    fireEvent.scroll(page);
+    await waitFor(() => expect(treeRow(tree, 'old.ts')).toHaveAttribute('aria-selected', 'true'));
+    expect(treeRow(tree, 'README.md')).not.toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('moves between files with ] and [, and v marks the file in view viewed and moves on', async () => {
+    layout();
+    stub();
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    const tree = await findTree();
+    const page = screen.getByTestId('changes-page');
+    page.focus();
+    await userEvent.keyboard(']');
+    expect(page.scrollTop).toBe(1000);
+    expect(treeRow(tree, 'old.ts')).toHaveAttribute('aria-selected', 'true');
+    await userEvent.keyboard(']');
+    expect(page.scrollTop).toBe(2000);
+    await userEvent.keyboard(']'); // the last file: stays
+    expect(page.scrollTop).toBe(2000);
+    await userEvent.keyboard('[[');
+    await userEvent.keyboard('[[');
+    expect(page.scrollTop).toBe(0);
+    await userEvent.keyboard('v');
+    expect(within(region('src/login.ts')).getByRole('checkbox', { name: 'Viewed' })).toBeChecked();
+    expect(within(region('src/login.ts')).queryByTestId('file-body')).not.toBeInTheDocument();
+    expect(page.scrollTop).toBe(1000);
+    expect(treeRow(tree, 'old.ts')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('opens a link to a file at that file', async () => {
+    layout();
+    window.history.replaceState(null, '', '/sessions/ws/tab?file=src%2Fold.ts&line=2');
+    stub();
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    const tree = await findTree();
+    await waitFor(() => expect(screen.getByTestId('changes-page').scrollTop).toBe(1000));
+    expect(treeRow(tree, 'old.ts')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('can hide the file list', async () => {
+    stub();
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    await findTree();
+    await userEvent.click(screen.getByRole('button', { name: 'Hide the file list' }));
+    expect(screen.queryByRole('treegrid', { name: 'Changed files' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'src/login.ts' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Show the file list' }));
+    expect(await findTree()).toBeInTheDocument();
+  });
+
+  it('draws only the diffs near the visible page', async () => {
+    nearOnly((path) => path === 'README.md');
+    const calls = stub();
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    expect(await within(await findRegion('README.md')).findByTestId('code-diff')).toBeInTheDocument();
+    expect(within(region('src/login.ts')).queryByTestId('code-diff')).not.toBeInTheDocument();
+    expect(within(region('src/old.ts')).queryByTestId('code-diff')).not.toBeInTheDocument();
+    // The others hold their place, and their sides aren't fetched yet.
+    expect(within(region('src/login.ts')).getByTestId('file-body')).toBeInTheDocument();
+    expect(fileCalls(calls)).toEqual(['README.md']);
+  });
+
+  it('starts generated, lock, binary and very large files collapsed behind Load diff', async () => {
+    const file = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({
+      path, oldPath: null, status: 'modified', untracked: false, binary: false, added: 2, removed: 1, version: path, generated: false, uncommitted: false, ...over,
+    });
+    const calls = stub({}, changes({
+      files: [
+        file('gen/api.ts', { generated: true }),
+        file('img.png', { binary: true }),
+        file('pnpm-lock.yaml', { generated: true, added: 300 }),
+        file('src/big.ts', { added: 4000 }),
+        file('src/small.ts'),
+      ],
+    }));
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    const lock = await findRegion('pnpm-lock.yaml');
+    expect(within(lock).getByText('A generated file; its diff is hidden.')).toBeInTheDocument();
+    expect(within(lock).getByText('generated')).toBeInTheDocument();
+    expect(within(region('gen/api.ts')).getByRole('button', { name: 'Load diff' })).toBeInTheDocument();
+    expect(within(region('src/big.ts')).getByText('A large diff; it is hidden.')).toBeInTheDocument();
+    expect(within(region('img.png')).getByText('A binary file; there is no text diff.')).toBeInTheDocument();
+    expect(within(region('img.png')).queryByRole('button', { name: 'Load diff' })).not.toBeInTheDocument();
+    expect(await within(region('src/small.ts')).findByTestId('code-diff')).toBeInTheDocument();
+    expect(fileCalls(calls)).toEqual(['src/small.ts']);
+    await userEvent.click(within(lock).getByRole('button', { name: 'Load diff' }));
+    expect(await within(lock).findByTestId('code-diff')).toBeInTheDocument();
+  });
+
+  it('counts drafts, lists a thread whose lines are gone as outdated in its file, and sends the feedback', async () => {
     const calls = stub({ 'POST /api/worktrees/w1/feedback': { sessionId: 's1', sent: 1 } }, changes(), [comment()]);
     renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
     expect(await screen.findByText('1 draft comment')).toBeInTheDocument();
-    await userEvent.click(within(await findTree()).getByText('login.ts'));
-    expect(await screen.findByText('The lines this was on have changed.')).toBeInTheDocument();
-    expect(screen.getByText('Rename this')).toBeInTheDocument();
+    const login = await findRegion('src/login.ts');
+    expect(await within(login).findByText('The lines this was on have changed.')).toBeInTheDocument();
+    expect(within(login).getByText('Rename this')).toBeInTheDocument();
+    expect(within(region('README.md')).queryByText('Rename this')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Send feedback/ }));
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/worktrees/w1/feedback')).toBe(true));
     expect(await screen.findByText('Sent 1 comment to the agent.')).toBeInTheDocument();
   });
 
+  it('anchors a thread under its line in its own file, and a new comment goes to that file', async () => {
+    const calls = stub({ 'POST /api/worktrees/w1/comments': comment({ id: 'c2', line: 3, endLine: 3, body: 'Why c?' }) }, changes(),
+      [comment({ line: 2, endLine: 2, lineText: 'B', body: 'Rename this' })]);
+    renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+    const login = await findRegion('src/login.ts');
+    const thread = await within(login).findByText('Rename this');
+    expect(thread.closest('.cm-review-anchor')).not.toBeNull();
+    expect(within(login).queryByText('The lines this was on have changed.')).not.toBeInTheDocument();
+    const editor = await waitFor(() => {
+      const el = login.querySelectorAll('.cm-editor');
+      if (el.length === 0) throw new Error('no editor yet');
+      return el[el.length - 1] as HTMLElement;
+    });
+    const view = EditorView.findFromDOM(editor)!;
+    const y = (n: number) => view.documentTop + view.lineBlockAt(view.state.doc.line(n).from).top + 1;
+    fireEvent.mouseDown(editor.querySelector('.cm-comment-gutter')!, { clientY: y(3) });
+    const box = await within(login).findByRole('textbox', { name: 'Comment on line 3' });
+    await userEvent.type(box, 'Why c?');
+    await userEvent.click(within(login).getByRole('button', { name: 'Comment' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/worktrees/w1/comments')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/api/worktrees/w1/comments')?.body)
+      .toMatchObject({ path: 'src/login.ts', side: 'new', line: 3, endLine: 3, lineText: 'c', body: 'Why c?' });
+  });
+
   it('names who wrote each comment: the user as You, an agent by its name', async () => {
     stub({}, changes(), [comment(), comment({ id: 'c2', parentId: 'c1', body: 'Agreed, rename it', author: 'Reviewer' })]);
     renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
-    await userEvent.click(within(await findTree()).getByText('login.ts'));
     expect(await screen.findByText('Agreed, rename it')).toBeInTheDocument();
     expect(screen.getByText('You')).toBeInTheDocument();
     expect(screen.getByText('Reviewer')).toBeInTheDocument();
@@ -139,19 +332,19 @@ describe('ChangesView', () => {
     expect(screen.queryByRole('button', { name: /^Approve/ })).not.toBeInTheDocument();
   });
 
-  it('keeps showing the first file when another one comes before it', async () => {
+  it('keeps the file in view when another one comes before it', async () => {
     stub();
     const { qc } = renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
     const tree = await findTree();
-    const row = (name: string) => within(tree).getByText(name).closest('[role="row"]')!;
-    await waitFor(() => expect(row('README.md')).toHaveAttribute('aria-selected', 'true'));
+    await waitFor(() => expect(treeRow(tree, 'login.ts')).toHaveAttribute('aria-selected', 'true'));
     const c = changes();
     act(() => qc.setQueryData(changesKey('w1'), {
-      ...c, files: [{ path: 'AUTHORS', oldPath: null, status: 'added', untracked: true, binary: false, added: 1, removed: 0, version: ':a' }, ...c.files],
+      ...c, files: [{ path: 'src/auth.ts', oldPath: null, status: 'added', untracked: true, binary: false, added: 1, removed: 0, version: ':a', generated: false, uncommitted: true }, ...c.files],
     }));
-    await within(tree).findByText('AUTHORS');
-    expect(row('README.md')).toHaveAttribute('aria-selected', 'true');
-    expect(row('AUTHORS')).not.toHaveAttribute('aria-selected', 'true');
+    await within(tree).findByText('auth.ts');
+    expect(screen.getAllByRole('region', { name: /\.(md|ts)$/ })[0]).toHaveAttribute('aria-label', 'src/auth.ts');
+    expect(treeRow(tree, 'login.ts')).toHaveAttribute('aria-selected', 'true');
+    expect(treeRow(tree, 'auth.ts')).not.toHaveAttribute('aria-selected', 'true');
   });
 
   it('offers no Approve or Merge for a worktree without an active attempt', async () => {
@@ -166,49 +359,25 @@ describe('ChangesView', () => {
 describe('ChangesView on a phone', () => {
   const asPhone = () =>
     vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} }));
-  const fileName = () => screen.getByRole('checkbox', { name: 'Viewed', hidden: true }).closest('header')!.querySelector('.font-mono')!.textContent;
-  const swipe = (el: Element, dx: number) => {
-    fireEvent.touchStart(el, { touches: [{ clientX: 200, clientY: 300 }] });
-    fireEvent.touchEnd(el, { changedTouches: [{ clientX: 200 + dx, clientY: 310 }] });
-  };
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.history.replaceState(null, '', '/');
+  });
 
-  it('lists the files as a screen; a file opens its own, swipes and buttons step through, Back returns', async () => {
+  it('shows the same single page, with Jump to file instead of the list', async () => {
     asPhone();
+    layout();
     stub();
     renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
-    const list = await screen.findByRole('grid', { name: 'Changed files' });
-    expect(screen.queryByRole('checkbox', { name: 'Viewed' })).not.toBeInTheDocument();
-    expect(within(list).getByRole('row', { name: /login\.ts/ })).toHaveTextContent('src');
-    await userEvent.click(within(list).getByRole('row', { name: /login\.ts/ }));
-    expect(await screen.findByRole('checkbox', { name: 'Viewed' })).toBeInTheDocument();
-    expect(fileName()).toBe('src/login.ts');
-    expect(screen.queryByRole('grid', { name: 'Changed files' })).not.toBeInTheDocument();
-    expect(screen.getByText('2 of 3')).toBeInTheDocument();
+    const sections = await screen.findAllByRole('region', { name: /\.(md|ts)$/ });
+    expect(sections).toHaveLength(3);
+    expect(screen.queryByRole('treegrid', { name: 'Changed files' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Files' })).not.toBeInTheDocument();
     // No split layout on a phone.
     expect(screen.queryByRole('radio', { name: 'Split' })).not.toBeInTheDocument();
-
-    const nav = screen.getByRole('navigation', { name: 'Files' });
-    swipe(nav, -120);
-    await waitFor(() => expect(fileName()).toBe('src/old.ts'));
-    expect(screen.getByRole('button', { name: 'Next file' })).toBeDisabled();
-    swipe(nav, -120); // the last file: stays
-    expect(fileName()).toBe('src/old.ts');
-    swipe(nav, 30); // too short to count
-    expect(fileName()).toBe('src/old.ts');
-    swipe(nav, 120);
-    await waitFor(() => expect(fileName()).toBe('src/login.ts'));
-    await userEvent.click(screen.getByRole('button', { name: 'Previous file' }));
-    await waitFor(() => expect(fileName()).toBe('README.md'));
-    expect(screen.getByRole('button', { name: 'Previous file' })).toBeDisabled();
-
-    // Back (the browser's, the top bar's ←) walks out to the list.
-    window.history.back();
-    expect(await screen.findByRole('grid', { name: 'Changed files' })).toBeInTheDocument();
-    expect(screen.queryByRole('checkbox', { name: 'Viewed' })).not.toBeInTheDocument();
-    // All files does too.
-    await userEvent.click(within(screen.getByRole('grid', { name: 'Changed files' })).getByRole('row', { name: /old\.ts/ }));
-    await userEvent.click(await screen.findByRole('button', { name: /All files/ }));
-    expect(await screen.findByRole('grid', { name: 'Changed files' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Jump to file/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'README.md' }));
+    expect(screen.getByTestId('changes-page').scrollTop).toBe(2000);
   });
 
   it('shows threads inline and writes a new comment in a bottom sheet', async () => {
@@ -216,26 +385,20 @@ describe('ChangesView on a phone', () => {
     const calls = stub({ 'POST /api/worktrees/w1/comments': comment({ id: 'c2', line: 3, endLine: 3, body: 'Why c?' }) }, changes(),
       [comment({ line: 2, endLine: 2, lineText: 'B', body: 'Rename this' })]);
     renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
-    await userEvent.click(within(await screen.findByRole('grid', { name: 'Changed files' })).getByRole('row', { name: /login\.ts/ }));
-    expect(await screen.findByText('Rename this')).toBeInTheDocument();
+    const login = await findRegion('src/login.ts');
+    expect(await within(login).findByText('Rename this')).toBeInTheDocument();
     expect(screen.queryByText('The lines this was on have changed.')).not.toBeInTheDocument();
 
     const editor = await waitFor(() => {
-      const el = document.querySelector('.cm-editor');
+      const el = login.querySelector('.cm-editor');
       if (!el) throw new Error('no editor yet');
       return el as HTMLElement;
     });
     const view = EditorView.findFromDOM(editor)!;
     const y = (n: number) => view.documentTop + view.lineBlockAt(view.state.doc.line(n).from).top + 1;
-    fireEvent.mouseDown(document.querySelector('.cm-comment-gutter')!, { clientY: y(3) });
+    fireEvent.mouseDown(editor.querySelector('.cm-comment-gutter')!, { clientY: y(3) });
     const sheet = await screen.findByRole('dialog', { name: 'Comment on line 3' });
     await userEvent.type(within(sheet).getByRole('textbox'), 'Why c?');
-    // A swipe on the open sheet stays there: the file and the draft are kept.
-    swipe(within(sheet).getByText('Comment on line 3'), -120);
-    swipe(within(sheet).getByText('Comment on line 3'), 120);
-    expect(fileName()).toBe('src/login.ts');
-    expect(screen.getByRole('dialog', { name: 'Comment on line 3' })).toBeInTheDocument();
-    expect(within(sheet).getByRole('textbox')).toHaveValue('Why c?');
     await userEvent.click(within(sheet).getByRole('button', { name: 'Comment' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/worktrees/w1/comments')).toBe(true));
     expect(calls.find((c) => c.method === 'POST' && c.path === '/api/worktrees/w1/comments')?.body)
@@ -247,12 +410,12 @@ describe('ChangesView on a phone', () => {
     stub({ 'POST /api/worktrees/w1/comments': new Reply(500, { code: 'internal', message: 'database is locked' }) }, changes(),
       [comment({ line: 2, endLine: 2, lineText: 'B', body: 'Rename this' })]);
     renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
-    await userEvent.click(within(await findTree()).getByText('login.ts'));
-    expect(await screen.findByText('Rename this')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Reply' }));
-    const box = screen.getByRole('textbox', { name: 'Reply' });
+    const login = await findRegion('src/login.ts');
+    expect(await within(login).findByText('Rename this')).toBeInTheDocument();
+    await userEvent.click(within(login).getByRole('button', { name: 'Reply' }));
+    const box = within(login).getByRole('textbox', { name: 'Reply' });
     await userEvent.type(box, 'Use `login()`');
-    await userEvent.click(screen.getByRole('button', { name: 'Reply' }));
+    await userEvent.click(within(login).getByRole('button', { name: 'Reply' }));
     expect(await screen.findByText('database is locked')).toBeInTheDocument();
     expect(box).toHaveValue('Use `login()`');
   });

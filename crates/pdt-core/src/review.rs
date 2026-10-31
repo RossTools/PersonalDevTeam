@@ -31,6 +31,26 @@ pub struct ChangedFile {
     pub removed: u32,
     /// Changes whenever either side of the file does ("Viewed" resets then).
     pub version: String,
+    /// Made by a tool, not written by hand: marked `linguist-generated` in `.gitattributes`, or a package manager's
+    /// lockfile ([`is_lockfile`]). The Changes view starts it collapsed.
+    pub generated: bool,
+    /// Not committed yet (staged, unstaged or untracked).
+    pub uncommitted: bool,
+}
+
+/// Lockfiles package managers write (`Cargo.lock`, `yarn.lock`, `package-lock.json`, `pnpm-lock.yaml`…), by name.
+pub fn is_lockfile(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.ends_with(".lock")
+        || matches!(
+            name,
+            "package-lock.json"
+                | "npm-shrinkwrap.json"
+                | "pnpm-lock.yaml"
+                | "bun.lockb"
+                | "go.sum"
+                | "packages.lock.json"
+        )
 }
 
 /// `GET /api/worktrees/{id}/changes`.
@@ -469,6 +489,24 @@ pub fn open_pr_message(branch: &str, base: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn knows_common_lockfiles_by_name() {
+        for p in [
+            "Cargo.lock",
+            "web/yarn.lock",
+            "Gemfile.lock",
+            "package-lock.json",
+            "a/pnpm-lock.yaml",
+            "go.sum",
+            "uv.lock",
+        ] {
+            assert!(is_lockfile(p), "{p}");
+        }
+        for p in ["src/lock.rs", "lockfile.md", "package.json", "pnpm-lock.yaml.bak", "docs/locks/a.txt"] {
+            assert!(!is_lockfile(p), "{p}");
+        }
+    }
 
     fn item(path: &str, line: u32, end: u32, text: &str, body: &str) -> FeedbackItem {
         FeedbackItem {

@@ -20,6 +20,10 @@ pub struct DiffEntry {
     pub removed: u32,
     /// Changes whenever either side of the file does (both sides' blob ids).
     pub version: String,
+    /// Marked `linguist-generated` in `.gitattributes` (as GitHub reads it).
+    pub generated: bool,
+    /// Differs from `HEAD` (staged, unstaged or untracked): not committed yet.
+    pub uncommitted: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +137,8 @@ pub fn diff_files(worktree: &Path, merge_base: &str) -> Result<Vec<DiffEntry>, G
                 added: 0,
                 removed: 0,
                 version: new_blob,
+                generated: false,
+                uncommitted: false,
             },
         );
     }
@@ -185,6 +191,8 @@ pub fn diff_files(worktree: &Path, merge_base: &str) -> Result<Vec<DiffEntry>, G
                 added,
                 removed: 0,
                 version: String::new(),
+                generated: false,
+                uncommitted: true,
             },
         );
     }
@@ -196,6 +204,31 @@ pub fn diff_files(worktree: &Path, merge_base: &str) -> Result<Vec<DiffEntry>, G
         for (path, oid) in hash_later.iter().zip(String::from_utf8_lossy(&out).lines()) {
             if let Some(e) = entries.get_mut(path) {
                 e.version = oid.trim().to_string();
+            }
+        }
+    }
+    // Files that differ from `HEAD` are not committed yet.
+    let head = run_bytes(worktree, &["-c", "core.quotepath=off", "diff", "--name-only", "-z", "HEAD", "--"], None)?;
+    for path in nul_fields(&head) {
+        if let Some(e) = entries.get_mut(&path) {
+            e.uncommitted = true;
+        }
+    }
+
+    // `linguist-generated`, in one git call. Read from the working tree's `.gitattributes`; no answer marks nothing.
+    if !entries.is_empty() {
+        let input = entries.keys().map(|p| format!("{p}\0")).collect::<String>();
+        if let Ok(Ok(out)) =
+            git_bytes(worktree, &["check-attr", "-z", "--stdin", "linguist-generated"], Some(input.as_bytes()))
+        {
+            // `-z`: path, attribute, value, each NUL-terminated.
+            let fields: Vec<String> = out.split(|b| *b == 0).map(|s| String::from_utf8_lossy(s).into_owned()).collect();
+            for [path, _attr, value] in fields.as_chunks::<3>().0 {
+                if matches!(value.as_str(), "set" | "true")
+                    && let Some(e) = entries.get_mut(path)
+                {
+                    e.generated = true;
+                }
             }
         }
     }
@@ -536,6 +569,12 @@ mod tests {
             ]
         );
         assert!(files.iter().all(|f| f.version.contains(':')));
+        let uncommitted: Vec<_> = files.iter().filter(|f| f.uncommitted).map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            uncommitted,
+            ["a.txt", "gone.txt", "img.bin", "web/new.tsx"],
+            "staged, deleted and untracked; not committed"
+        );
     }
 
     #[test]
@@ -553,6 +592,24 @@ mod tests {
         write(&wt, ".gitlab-ci.yml", b"test:\n  script: [make]\n");
         commit_all(&wt, "gitlab ci");
         assert!(has_files_under(&wt, "HEAD", ".gitlab-ci.yml"), "a file");
+    }
+
+    #[test]
+    fn marks_files_gitattributes_call_generated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_repo, wt, base) = setup(tmp.path());
+        write(
+            &wt,
+            ".gitattributes",
+            b"gen/** linguist-generated\n*.pb.go linguist-generated=true\nkeep.pb.go -linguist-generated\n",
+        );
+        write(&wt, "gen/api.ts", b"x\n");
+        write(&wt, "svc.pb.go", b"x\n");
+        write(&wt, "keep.pb.go", b"x\n");
+        write(&wt, "a.txt", b"hand\n");
+        let generated: Vec<_> =
+            diff_files(&wt, &base).unwrap().into_iter().filter(|f| f.generated).map(|f| f.path).collect();
+        assert_eq!(generated, ["gen/api.ts", "svc.pb.go"]);
     }
 
     #[test]

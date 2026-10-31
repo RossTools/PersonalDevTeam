@@ -49,6 +49,7 @@
   /* Cards on the page (Section cards, board tickets): light only, so white cards stand off the page. */
   --pdt-shadow-card: 0 1px 2px rgba(15, 16, 20, 0.06), 0 0 0 1px rgba(15, 16, 20, 0.02);
   /* Not per theme: layers, control heights, motion. */
+  --pdt-z-sticky: 10;
   --pdt-z-popover: 30;
   --pdt-z-dialog: 40;
   --pdt-z-menu: 50;

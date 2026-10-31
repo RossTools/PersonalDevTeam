@@ -56,7 +56,7 @@ describe('ticket tab', () => {
     const changes = {
       worktreeId: 'w1', branch: attempt.branch, base: 'main', mergeBase: 'abc', head: 'def', dirty: false, attemptId: 'a1', ticketId: 't1',
       attemptActive: true, approved: false,
-      files: [{ path: 'a.ts', oldPath: null, status: 'modified', untracked: false, binary: false, added: 7, removed: 2, version: '1' }],
+      files: [{ path: 'a.ts', oldPath: null, status: 'modified', untracked: false, binary: false, added: 7, removed: 2, version: '1', generated: false, uncommitted: false }],
     };
     stub({ 'GET /api/tickets/t1': active, 'POST /api/tickets/t1/check-merge': active, 'GET /api/worktrees/w1/changes': changes, 'GET /api/worktrees/w1/comments': [] });
     const { unmount } = view();
