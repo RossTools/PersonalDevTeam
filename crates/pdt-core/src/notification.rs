@@ -112,13 +112,16 @@ pub enum NotificationKind {
     HostLoopStale,
     #[serde(rename = "todo.due")]
     TodoDue,
+    /// Something happened to a ticket or run the user watches (PDT-319).
+    #[serde(rename = "watch.event")]
+    WatchEvent,
 }
 
 use NotificationKind as K;
 
 impl NotificationKind {
     /// In Settings order: Needs you, then Updates.
-    pub const ALL: [NotificationKind; 20] = [
+    pub const ALL: [NotificationKind; 21] = [
         K::SessionNeedsYou,
         K::InboxQuestion,
         K::InboxApproval,
@@ -139,6 +142,7 @@ impl NotificationKind {
         K::ConnectionFailed,
         K::HostLoopStale,
         K::TodoDue,
+        K::WatchEvent,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -163,6 +167,7 @@ impl NotificationKind {
             K::ConnectionFailed => "connection.failed",
             K::HostLoopStale => "host.loop_stale",
             K::TodoDue => "todo.due",
+            K::WatchEvent => "watch.event",
         }
     }
 
@@ -206,6 +211,7 @@ impl NotificationKind {
             | K::ConnectionFailed
             | K::HostLoopStale
             | K::TodoDue => Show::Toast,
+            K::WatchEvent => Show::Desktop,
             K::SessionTurnEnded => Show::Dot,
             K::SessionExited | K::PrCiFailed | K::PrConflict | K::PrQueueLeft | K::PrMerged | K::WorkflowFailed => {
                 Show::Inbox
@@ -245,6 +251,7 @@ impl NotificationKind {
             K::ConnectionFailed => "Connection failing",
             K::HostLoopStale => "Background task stalled",
             K::TodoDue => "Todo due",
+            K::WatchEvent => "Watched",
         }
     }
 
@@ -274,6 +281,9 @@ impl NotificationKind {
             K::ConnectionFailed => "A sensor could not use a connection (a revoked token, the service down).",
             K::HostLoopStale => "One of PDT's background tasks (PR checks, the workflow engine…) stopped running.",
             K::TodoDue => "One of your todos comes due (its day starts, or its time comes).",
+            K::WatchEvent => {
+                "A ticket or workflow run you watch finished, failed, got an outcome or a comment, or waits on you."
+            }
         }
     }
 
@@ -284,7 +294,7 @@ impl NotificationKind {
             (InboxKind::Approval | InboxKind::Confirm, _) => K::InboxApproval,
             (InboxKind::Stalled | InboxKind::TimedOut, _) => K::InboxStalled,
             (InboxKind::LoopLimit, _) => K::InboxLoopLimit,
-            (InboxKind::Notice | InboxKind::Connect, _) => K::InboxNotice,
+            (InboxKind::Notice | InboxKind::Connect | InboxKind::Storage | InboxKind::LowDisk, _) => K::InboxNotice,
             (InboxKind::Manual, _) => K::InboxManual,
             (InboxKind::Gate | InboxKind::Session | InboxKind::Admit | InboxKind::Proposal, _) => K::InboxGate,
         }

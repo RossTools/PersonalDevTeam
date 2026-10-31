@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};
@@ -82,7 +82,7 @@ async fn a_project_without_a_file_has_an_empty_config() {
         (v["file"].clone(), v["effective"].clone()),
         (
             Value::Null,
-            json!({"runs": [], "tests": [], "areas": [], "forge": null, "ci": null, "ciProviders": null, "push": null, "ignored": []})
+            json!({"runs": [], "tests": [], "areas": [], "forge": null, "ci": null, "ciProviders": null, "push": null, "buildOutput": null, "ignored": []})
         )
     );
 }

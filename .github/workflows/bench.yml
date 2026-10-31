@@ -1,5 +1,5 @@
 name: bench
-# Times the CI work on several runners, cold then warm, to compare hosts (docs/superpowers/notes/runners.md).
+# Times the CI work on several runners, cold then warm, to compare hosts (docs/SDLC.md "CI").
 # On demand only: it spends minutes, and larger or third-party runners are paid per minute.
 #
 # Runner list, first one set wins: the `runners` input, the repo variable PDT_BENCH_RUNNERS, else the default below.

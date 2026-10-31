@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use ts_rs::TS;
 
 /// The top-level sections (and keys) this PDT understands. Any other is skipped (see [`parse`]).
-const SECTIONS: [&str; 6] = ["run", "test", "area", "forge", "ci", "push"];
+const SECTIONS: [&str; 7] = ["run", "test", "area", "forge", "ci", "push", "storage"];
 
 /// Unknown top-level keys are skipped by serde (no `deny_unknown_fields` here, unlike the entries).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -29,6 +29,9 @@ pub struct ConfigFile {
     /// `[push]`: the remote the local forge pushes the base branch to after each merge (PDT-245).
     #[serde(default)]
     pub push: Option<PushFile>,
+    /// `[storage]`: which paths of a checkout are build output, for cleaning worktrees.
+    #[serde(default)]
+    pub storage: Option<StorageFile>,
     /// Top-level sections this PDT does not know (e.g. written for a newer PDT), skipped rather than refused.
     #[serde(skip)]
     pub ignored: Vec<String>,
@@ -48,6 +51,13 @@ pub struct CiFile {
 pub struct PushFile {
     pub remote: Option<String>,
     pub branches: Option<bool>,
+}
+
+/// `[storage]` as written: `build_output = ["target", "**/node_modules", "web/dist"]`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageFile {
+    pub build_output: Option<Vec<String>>,
 }
 
 /// A plain git remote for the local forge (PDT-245): after CI passes and the branch merges into its base, PDT pushes
@@ -142,6 +152,9 @@ pub struct RunConfig {
     pub ci_providers: Option<Vec<String>>,
     /// `[push]`: the remote the local forge pushes to (the overrides' fields win); None: it pushes nowhere.
     pub push: Option<PushDef>,
+    /// `[storage] build_output`: the checkout's build output paths (the overrides' list wins); None: detected from
+    /// the files at the checkout's root (`pdt_core::storage::detect_build_output`).
+    pub build_output: Option<Vec<String>>,
     /// Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
     pub ignored: Vec<String>,
 }
@@ -194,6 +207,8 @@ pub enum RunConfigError {
     BadCiProvider(String),
     #[error("\"{0}\" in [push] remote is not a git remote name")]
     BadPushRemote(String),
+    #[error("{0}")]
+    BadBuildOutput(String),
 }
 
 /// Parses a configuration. Unknown top-level sections are skipped and listed in `ignored`, so a file written for a
@@ -344,9 +359,20 @@ pub fn merge(file: Option<ConfigFile>, overrides: Option<ConfigFile>) -> Result<
     let command = |c: Option<CiFile>| c.and_then(|c| c.command).map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
     let ci = command(over.ci).or(command(file.ci)).map(|command| CiDef { command });
     let push = merge_push(file.push, over.push)?;
+    let output = |s: &Option<StorageFile>| {
+        s.as_ref()
+            .and_then(|s| s.build_output.as_deref())
+            .map(crate::storage::build_output_paths)
+            .transpose()
+            .map_err(RunConfigError::BadBuildOutput)
+    };
+    let build_output = match output(&over.storage)? {
+        Some(o) => Some(o),
+        None => output(&file.storage)?,
+    };
     let mut ignored = file.ignored;
     ignored.extend(over.ignored.into_iter().filter(|s| !ignored.contains(s)).collect::<Vec<_>>());
-    Ok(RunConfig { runs, tests, areas, forge, ci, ci_providers, push, ignored })
+    Ok(RunConfig { runs, tests, areas, forge, ci, ci_providers, push, build_output, ignored })
 }
 
 /// `[push]` with the overrides' fields over the file's; None without a remote (a blank one is none).
@@ -794,6 +820,20 @@ paths = ["web/ui/**", " "]
         );
         assert!(matches!(bad("[[area]]\nname = \"a\"\npaths = [\"src/[\"]\n"), RunConfigError::BadGlob { .. }));
         assert!(parse("[[area]]\nname = \"a\"\npaths = [\"x\"]\nexclusiv = true\n", Source::File).is_err());
+    }
+
+    #[test]
+    fn storage_declares_build_output_and_the_overrides_win() {
+        let file = parse("[storage]\nbuild_output = [\"target\", \"**/node_modules\"]\n", Source::File).unwrap();
+        assert!(file.ignored.is_empty());
+        let c = merge(Some(file.clone()), None).unwrap();
+        assert_eq!(c.build_output, Some(vec!["target".to_string(), "**/node_modules".to_string()]));
+        let over = parse("[storage]\nbuild_output = [\"web/dist\"]\n", Source::Overrides).unwrap();
+        assert_eq!(merge(Some(file), Some(over)).unwrap().build_output, Some(vec!["web/dist".to_string()]));
+        assert_eq!(merge(None, None).unwrap().build_output, None);
+        let bad = parse("[storage]\nbuild_output = [\"../x\"]\n", Source::File).unwrap();
+        assert!(matches!(merge(Some(bad), None), Err(RunConfigError::BadBuildOutput(_))));
+        assert!(parse("[storage]\nbuild = []\n", Source::File).is_err());
     }
 
     #[test]

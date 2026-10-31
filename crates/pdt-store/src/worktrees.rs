@@ -9,6 +9,23 @@ fn to_worktree((id, project_id, branch, path, base_commit, created_at): Worktree
 
 const COLUMNS: &str = "id, project_id, branch, path, base_commit, created_at";
 
+/// A worktree's ticket: the one of the attempt working in it (its active one, else the newest).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorktreeTicketRow {
+    pub worktree_id: String,
+    pub ticket_id: String,
+    /// `ABC-12`.
+    pub ticket_key: String,
+    pub title: String,
+    pub stage: pdt_core::ticket::TicketStage,
+    pub closed_at: Option<i64>,
+    pub attempt_active: bool,
+    /// That attempt ended merged.
+    pub merged: bool,
+}
+
+type TicketRow = (String, String, String, i64, String, String, Option<i64>, String);
+
 impl Store {
     pub async fn insert_worktree(&self, w: &Worktree) -> Result<(), StoreError> {
         sqlx::query(
@@ -36,6 +53,36 @@ impl Store {
     pub async fn delete_worktree(&self, id: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("DELETE FROM worktrees WHERE id = ?").bind(id).execute(&self.pool).await?;
         Ok(r.rows_affected() > 0)
+    }
+
+    /// Each worktree of the project that an attempt worked in, with that attempt's ticket.
+    pub async fn worktree_tickets(&self, project_id: &str) -> Result<Vec<WorktreeTicketRow>, StoreError> {
+        let rows: Vec<TicketRow> = sqlx::query_as(
+            "SELECT w.id, t.id, COALESCE(p.key, ''), t.number, t.title, t.stage, t.closed_at, a.state \
+             FROM worktrees w JOIN projects p ON p.id = w.project_id \
+             JOIN attempts a ON a.id = (SELECT x.id FROM attempts x WHERE x.worktree_id = w.id \
+                                        ORDER BY x.state = 'active' DESC, x.created_at DESC LIMIT 1) \
+             JOIN tickets t ON t.id = a.ticket_id \
+             WHERE w.project_id = ?",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|(worktree_id, ticket_id, pkey, number, title, stage, closed_at, state)| {
+                Ok(WorktreeTicketRow {
+                    worktree_id,
+                    ticket_id,
+                    ticket_key: pdt_core::ticket::format_key(&pkey, u32::try_from(number).unwrap_or(0)),
+                    title,
+                    stage: pdt_core::ticket::TicketStage::parse(&stage)
+                        .ok_or_else(|| StoreError::Corrupt(format!("ticket stage {stage:?}")))?,
+                    closed_at,
+                    attempt_active: state == "active",
+                    merged: state == "merged",
+                })
+            })
+            .collect()
     }
 
     pub async fn get_worktree(&self, id: &str) -> Result<Option<Worktree>, StoreError> {

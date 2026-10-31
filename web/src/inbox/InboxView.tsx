@@ -23,6 +23,22 @@ import { navigate } from '../shell/router';
 import { after, changeRequestLabel, CONNECT_PATH, dismissable, gateQuestion, KIND_LABEL, noticeText, passesOf, primary, proposalPath, questionsOf, resends, selectedUpdate, step } from './model';
 import { useClearUpdate, useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
+import { STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
+
+/** A disk running low (PDT-324): what is free, Clean all finished, and Settings › Storage. */
+function LowDisk({ item, onOpen }: { item: InboxItem; onOpen: () => void }) {
+  const [clean, cleaning] = useCleanFinished();
+  return (
+    <section aria-label="Low disk space" className="flex flex-col gap-3">
+      <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
+      <p className="text-sm text-muted-foreground">It goes away on its own once there is more space.</p>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" onClick={onOpen}>Open Storage <Kbd>↵</Kbd></Button>
+        <Button pending={cleaning} onClick={() => void clean()}>Clean all finished</Button>
+      </div>
+    </section>
+  );
+}
 
 /**
  * Keys typed into a field, or with a dialog or menu open, are not the Inbox's; nor is Enter on a focused button or
@@ -101,6 +117,7 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
       return;
     }
     if (item.kind === 'connect') return void navigate(CONNECT_PATH);
+    if (item.kind === 'low_disk') return void navigate(STORAGE_PATH);
     if (p && item.kind !== 'approval') void answer({ choice: p });
   };
 
@@ -200,6 +217,13 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
             </div>
           </section>
         )}
+        {item.kind === 'storage' && (
+          <section aria-label="Can't save changes" className="flex flex-col gap-3">
+            <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
+            <p className="text-sm text-muted-foreground">It goes away on its own once PDT can save again.</p>
+          </section>
+        )}
+        {item.kind === 'low_disk' && <LowDisk item={item} onOpen={doPrimary} />}
         {item.kind === 'notice' && (
           <section aria-label="Unheard notice" className="flex flex-col gap-3">
             {item.attemptId ? (

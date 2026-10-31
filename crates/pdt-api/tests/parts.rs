@@ -1,7 +1,7 @@
 //! Ticket parts (PDT-38): parents are started through their next part, parts carry their parent in the prompt and
 //! share its workspace, and parents roll up and close after their parts. Stand-in agents.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{argv_agent, call, git, recorded_launches};

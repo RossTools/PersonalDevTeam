@@ -43,6 +43,11 @@ pub enum InboxKind {
     /// A workflow version an agent proposed (PDT-320): Accept or Discard. Not stored: listed while the proposal waits,
     /// so it goes once it is accepted, discarded or replaced by a newer one.
     Proposal,
+    /// PDT can't save changes (a full disk, PDT-323). Not stored (it couldn't be): listed while writes fail.
+    Storage,
+    /// A disk with PDT's data or a project's checkouts is running low on space (PDT-324), with Clean actions. Not
+    /// stored: listed while it lasts.
+    LowDisk,
 }
 
 impl InboxKind {
@@ -62,6 +67,8 @@ impl InboxKind {
             InboxKind::Admit => "admit",
             InboxKind::Confirm => "confirm",
             InboxKind::Proposal => "proposal",
+            InboxKind::Storage => "storage",
+            InboxKind::LowDisk => "low_disk",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -80,6 +87,8 @@ impl InboxKind {
             Self::Admit,
             Self::Confirm,
             Self::Proposal,
+            Self::Storage,
+            Self::LowDisk,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -235,6 +244,113 @@ pub const DENY: &str = "deny";
 pub const ACCEPT: &str = "accept";
 /// A workflow proposal's Discard: it is set aside.
 pub const DISCARD: &str = "discard";
+
+/// The id of the item that says PDT can't save changes ([`storage_item`]).
+pub const STORAGE_ID: &str = "storage";
+
+/// `bytes` for people: "512 MB", "1.5 GB".
+pub fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
+    let mut v = bytes as f64;
+    let mut unit = 0;
+    while v >= 1024.0 && unit < UNITS.len() - 1 {
+        v /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 || v >= 10.0 { format!("{v:.0} {}", UNITS[unit]) } else { format!("{v:.1} {}", UNITS[unit]) }
+}
+
+/// The item that says PDT can't save changes while writes fail (PDT-323): `message` the latest failure's,
+/// `disk_full` when it says the disk is full, then with what is free on the disk with PDT's data (`free`, bytes).
+pub fn storage_item(message: &str, disk_full: bool, free: Option<u64>, since: i64) -> InboxItem {
+    let title = if disk_full { "PDT can't save changes: the disk is full" } else { "PDT can't save changes" };
+    let text = if disk_full {
+        let free = free.map(|b| format!(" ({} free)", human_bytes(b))).unwrap_or_default();
+        format!(
+            "The disk with PDT's data is full{free}, so PDT can't save anything: workflow runs, events and \
+             conversations wait. Free up space on it; PDT saves again on its own within seconds, and starts what waited."
+        )
+    } else {
+        format!(
+            "PDT can't save to its database: `{message}`. Workflow runs and events wait, and PDT tries again every few \
+             seconds; this goes away once saving works."
+        )
+    };
+    InboxItem {
+        id: STORAGE_ID.into(),
+        kind: InboxKind::Storage,
+        group: InboxGroup::Notice,
+        status: InboxStatus::Open,
+        project_id: None,
+        ticket_id: None,
+        ticket_key: None,
+        ticket_title: None,
+        attempt_id: None,
+        session_id: None,
+        run_id: None,
+        step_id: None,
+        persona_id: None,
+        persona_name: None,
+        change_request: None,
+        title: title.into(),
+        body: serde_json::json!({"text": text, "error": message, "diskFull": disk_full, "freeBytes": free}),
+        choices: vec![],
+        resolution: Value::Null,
+        created_at: since,
+        resolved_at: None,
+    }
+}
+
+/// The id of the item that says a disk is running low ([`low_disk_item`]); a critically low one has its own, so
+/// getting there is told again.
+pub const LOW_DISK_ID: &str = "low_disk";
+pub const CRITICAL_DISK_ID: &str = "low_disk:critical";
+
+/// The item that says a disk is running low (PDT-324): the fullest disk's free bytes and the folders on it,
+/// `critical` when it is below the critical threshold (auto-start waits then), since `since`.
+pub fn low_disk_item(free: u64, folders: &[String], critical: bool, since: i64) -> InboxItem {
+    let free_text = human_bytes(free);
+    let title = if critical {
+        format!("The disk is almost full ({free_text} free): auto-start is paused")
+    } else {
+        format!("Disk space is low ({free_text} free)")
+    };
+    let on = match folders {
+        [] => String::new(),
+        [one] => format!(" (with `{one}`)"),
+        many => format!(" (with {})", many.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ")),
+    };
+    let mut text = format!(
+        "The disk{on} has {free_text} free. Worktrees' build output is usually what fills it: clean it in Settings › \
+         Storage, or clean every finished ticket's worktree at once."
+    );
+    if critical {
+        text.push_str(" Until there is more space, auto-start starts no new tickets; agents already running carry on.");
+    }
+    InboxItem {
+        id: if critical { CRITICAL_DISK_ID } else { LOW_DISK_ID }.into(),
+        kind: InboxKind::LowDisk,
+        group: InboxGroup::Notice,
+        status: InboxStatus::Open,
+        project_id: None,
+        ticket_id: None,
+        ticket_key: None,
+        ticket_title: None,
+        attempt_id: None,
+        session_id: None,
+        run_id: None,
+        step_id: None,
+        persona_id: None,
+        persona_name: None,
+        change_request: None,
+        title,
+        body: serde_json::json!({"text": text, "freeBytes": free, "folders": folders, "critical": critical}),
+        choices: vec![],
+        resolution: Value::Null,
+        created_at: since,
+        resolved_at: None,
+    }
+}
 
 /// A workflow proposal's item id (PDT-320): one per workflow and proposed version.
 pub fn proposal_id(workflow_id: &str, version: u32) -> String {
@@ -536,5 +652,47 @@ mod tests {
         assert_eq!(parse_proposal_id("gate:01ab:3"), None);
         assert_eq!(InboxKind::parse("proposal"), Some(InboxKind::Proposal));
         assert_eq!(InboxGroup::parse("proposal"), Some(InboxGroup::Proposal));
+    }
+
+    #[test]
+    fn sizes_read_as_people_say_them() {
+        assert_eq!(human_bytes(0), "0 bytes");
+        assert_eq!(human_bytes(1536), "1.5 KB");
+        assert_eq!(human_bytes(300 * 1024 * 1024), "300 MB");
+        assert_eq!(human_bytes(5 * 1024 * 1024 * 1024 / 2), "2.5 GB");
+    }
+
+    #[test]
+    fn the_low_disk_item_says_what_is_free_and_whether_auto_start_waits() {
+        let gb = 1024 * 1024 * 1024;
+        let low = low_disk_item(12 * gb, &["/work".into()], false, 7);
+        assert_eq!(
+            (low.id.as_str(), low.kind, low.group, low.created_at),
+            (LOW_DISK_ID, InboxKind::LowDisk, InboxGroup::Notice, 7)
+        );
+        assert_eq!(low.title, "Disk space is low (12 GB free)");
+        let text = low.body["text"].as_str().unwrap();
+        assert!(text.contains("(with `/work`)") && !text.contains("auto-start"), "{text}");
+        let critical = low_disk_item(3 * gb, &["/a".into(), "/b".into()], true, 7);
+        assert_eq!(critical.id, CRITICAL_DISK_ID);
+        assert_eq!(critical.title, "The disk is almost full (3.0 GB free): auto-start is paused");
+        let text = critical.body["text"].as_str().unwrap();
+        assert!(text.contains("`/a`, `/b`") && text.contains("auto-start starts no new tickets"), "{text}");
+    }
+
+    #[test]
+    fn the_storage_item_says_the_disk_is_full_and_what_is_free() {
+        let i = storage_item("PDT can't save changes: database or disk is full", true, Some(12 * 1024 * 1024), 5);
+        assert_eq!(
+            (i.id.as_str(), i.kind, i.group, i.created_at),
+            (STORAGE_ID, InboxKind::Storage, InboxGroup::Notice, 5)
+        );
+        assert_eq!(i.title, "PDT can't save changes: the disk is full");
+        let text = i.body["text"].as_str().unwrap();
+        assert!(text.contains("(12 MB free)"), "{text}");
+        let other = storage_item("PDT can't save changes: disk I/O error", false, None, 5);
+        assert_eq!(other.title, "PDT can't save changes");
+        assert!(other.body["text"].as_str().unwrap().contains("disk I/O error"));
+        assert_eq!(InboxKind::parse("storage"), Some(InboxKind::Storage));
     }
 }

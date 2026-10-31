@@ -27,6 +27,8 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   admit: 'Triaged ticket',
   confirm: 'Agent call',
   proposal: 'Workflow proposal',
+  storage: "Can't save",
+  low_disk: 'Low disk space',
 };
 
 /** The items of each group that has any, in the API's order. */

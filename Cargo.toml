@@ -43,3 +43,12 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.28.0", features = ["v7"] }
 jiff = "0.2.38"
+
+# Debug builds (and `cargo test`) keep line tables only, so backtraces still show file and line, and no debug info for
+# dependencies: full debug info made every test binary ~160 MB (docs/dev/testing.md "Build output"). For a debugger
+# that shows variables, build with CARGO_PROFILE_DEV_DEBUG=full.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

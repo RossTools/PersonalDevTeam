@@ -43,6 +43,14 @@ impl Store {
         session_id: &str,
         e: NewEvent<'_>,
     ) -> Result<ConversationEvent, StoreError> {
+        self.noted(self.upsert_session_event_unnoted(session_id, e).await)
+    }
+
+    async fn upsert_session_event_unnoted(
+        &self,
+        session_id: &str,
+        e: NewEvent<'_>,
+    ) -> Result<ConversationEvent, StoreError> {
         let body = serde_json::to_string(e.event).map_err(|err| StoreError::Corrupt(err.to_string()))?;
         let redacted = self.redactor.text(&body);
         let event = match &redacted {

@@ -3,7 +3,7 @@
 //! agent step whose pdt-mcp call runs without asking, and PDT keeping each permission mode by answering Grok's
 //! permission requests (Grok has no modes of its own over ACP), then resuming it.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

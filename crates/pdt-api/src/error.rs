@@ -49,15 +49,50 @@ impl ApiError {
     }
 
     pub fn internal(err: impl std::fmt::Display) -> Self {
-        tracing::error!(error = %err, "internal error");
+        let msg = err.to_string();
+        if pdt_store::is_write_failure(&msg) {
+            return Self::write_failed(msg);
+        }
+        tracing::error!(error = %msg, "internal error");
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal error")
+    }
+
+    /// A write the database could not make (a full disk, PDT-323): 503 with what it said, which
+    /// [`note_write_failures`] records, so the Inbox says PDT can't save changes.
+    pub fn write_failed(msg: impl Into<String>) -> Self {
+        let msg = msg.into();
+        tracing::error!(error = %msg, "a write failed");
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, "write_failed", msg)
     }
 }
 
+/// A response's failed write ([`ApiError::write_failed`]), for [`note_write_failures`].
+#[derive(Clone)]
+struct WriteFailed(String);
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(ApiErrorBody { code: self.code.into(), message: self.message })).into_response()
+        let failed = (self.code == "write_failed").then(|| WriteFailed(self.message.clone()));
+        let mut r = (self.status, Json(ApiErrorBody { code: self.code.into(), message: self.message })).into_response();
+        if let Some(f) = failed {
+            r.extensions_mut().insert(f);
+        }
+        r
     }
+}
+
+/// Middleware: a request that failed to write records it in the store (PDT-323), so the user hears of a full disk
+/// from their own clicks too, not only once the engine writes.
+pub(crate) async fn note_write_failures(
+    axum::extract::State(st): axum::extract::State<crate::routes::AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let r = next.run(req).await;
+    if let Some(WriteFailed(msg)) = r.extensions().get::<WriteFailed>() {
+        st.store.note_write_failure(msg);
+    }
+    r
 }
 
 impl From<ValidationError> for ApiError {
@@ -151,6 +186,7 @@ impl From<StoreError> for ApiError {
     fn from(e: StoreError) -> Self {
         match e {
             StoreError::Conflict(_) => Self::new(StatusCode::CONFLICT, "conflict", "this record already exists"),
+            e @ StoreError::Write(_) => Self::write_failed(e.to_string()),
             other => Self::internal(other),
         }
     }

@@ -2,9 +2,8 @@
 //! browsing and adding after a yes, and setting Scryer up through its GraphQL API with credentials kept out of what
 //! PDT stores.
 
-#[path = "../../pdt-api/tests/common/mod.rs"]
-mod common;
-mod fake_scryer;
+use crate::common;
+use crate::fake_scryer;
 
 use axum::http::StatusCode;
 use common::call;

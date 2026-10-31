@@ -4,8 +4,8 @@
 //! "PDT pull request review" is the maintainer's own workflow, a built-in until PDT-295: the host here has it from
 //! before.
 
-mod common;
-mod retired;
+use crate::common;
+use crate::retired;
 
 use axum::http::StatusCode;
 use common::{call, git};

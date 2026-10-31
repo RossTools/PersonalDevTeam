@@ -3,7 +3,7 @@
 //! (`pdt_github::transport::testing::Recorded`) or `FakeForge`; `fake-agent` stands in for Claude (it calls pdt-mcp
 //! tools when a message says `mcp: <tool> <json>`).
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, call_as_ui, git};

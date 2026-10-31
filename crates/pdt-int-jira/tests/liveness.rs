@@ -1,8 +1,7 @@
 //! The Jira check's liveness (PDT-127): its calls end within their timeout against a server that never answers, and
 //! the poll's later members still run after it.
 
-#[path = "../../pdt-api/tests/common/mod.rs"]
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

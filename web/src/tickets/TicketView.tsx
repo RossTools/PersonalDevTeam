@@ -8,6 +8,7 @@ import { BranchChip } from '../common/BranchChip';
 import { PriorityIcon } from '../common/PriorityIcon';
 import { StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
+import { WatchButton } from '../common/Watch';
 import { runAction } from '../common/useAction';
 import { AttemptSection, MergedBanner } from './Attempt';
 import {
@@ -29,7 +30,7 @@ import { TicketAttachments } from './attachments';
 import { TicketDocuments } from './TicketDocuments';
 import { ExternalKeys } from './ExternalKeys';
 import {
-  LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle,
+  LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle, TicketWatchers,
 } from './TicketParts';
 
 export type HubTab = 'overview' | 'conversation' | 'changes';
@@ -140,6 +141,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
       }
       actions={
         <>
+          <WatchButton of={{ ticket: ticket.id }} />
           {canStart(ticket) && (
             <Button variant="primary" size="sm" onClick={() => start(ticket, { here: true })}>
               <Play aria-hidden /> Start
@@ -233,6 +235,7 @@ export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticke
             </div>
             <aside aria-label="Ticket details" className="flex min-w-0 flex-col self-start rounded-md border border-border bg-card px-3 divide-y divide-border *:py-3">
               <TicketDetails ticket={t} />
+              <TicketWatchers ticketId={t.id} />
               <AttemptSection ticket={t} />
               <TicketOverlaps ticket={t} />
               <TicketLinks ticket={t} />

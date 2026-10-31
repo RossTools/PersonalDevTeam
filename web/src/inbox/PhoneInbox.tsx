@@ -25,6 +25,7 @@ import { answerApproval, UpdateView } from './InboxView';
 import { navigate } from '../shell/router';
 import { after, changeRequestLabel, CONNECT_PATH, dismissable, gateQuestion, KIND_LABEL, merges, noticeText, passesOf, proposalPath, questionsOf, resends, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
+import { STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
 
 /** Opens the pull request a gate is about on its forge, in a new tab. */
 const openChangeRequest = (item: InboxItem) => item.changeRequest && window.open(item.changeRequest.url, '_blank', 'noopener');
@@ -214,6 +215,7 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
   const [takingOver, setTakingOver] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
+  const [cleanFinished, cleaning] = useCleanFinished();
   const withNote = (choice: string) => void onAnswer({ choice, ...(note.trim() ? { text: note } : {}) });
   const pick = (choice: string) => (merges(item, choice) ? setConfirming(choice) : withNote(choice));
   const itemChoices: Decision[] = item.choices.map((c) => ({ id: c.id, title: capital(c.title), primary: c.primary }));
@@ -359,6 +361,24 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
     case 'connect':
       content = <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>;
       bar = <DecisionBar busy={busy} decisions={[{ id: 'settings', title: 'Open GitHub settings', primary: true }]} onPick={() => navigate(CONNECT_PATH)} />;
+      break;
+    case 'low_disk':
+      content = (
+        <>
+          <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
+          <p className="text-sm text-muted-foreground">It goes away on its own once there is more space.</p>
+        </>
+      );
+      bar = <DecisionBar busy={cleaning} decisions={[{ id: 'open', title: 'Open Storage', primary: true }, { id: 'clean', title: 'Clean all finished' }]}
+        onPick={(id) => (id === 'clean' ? void cleanFinished() : navigate(STORAGE_PATH))} />;
+      break;
+    case 'storage':
+      content = (
+        <>
+          <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
+          <p className="text-sm text-muted-foreground">It goes away on its own once PDT can save again.</p>
+        </>
+      );
       break;
     case 'notice':
       content = (

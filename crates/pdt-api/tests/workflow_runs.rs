@@ -2,7 +2,7 @@
 //! run (however it was started) in the Inbox once with its failed jobs and Re-run failed jobs, and clears the item once
 //! a later attempt passes. GitHub is `FakeForge`'s CI; the looks are forced instead of waited for.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

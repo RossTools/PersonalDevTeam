@@ -2,7 +2,7 @@
 //! in for Claude (it calls pdt-mcp tools when a message says `mcp: <tool> <json>`). pdtd's API is served on a local
 //! port so the agent can reach `/api/mcp`.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

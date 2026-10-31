@@ -1,7 +1,7 @@
 //! Review (Phase 6): a worktree's changes, line comments, Send feedback into the coder session, Approve and Merge,
 //! with `fake-agent` as `claude` and a fake GitHub.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};
