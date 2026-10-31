@@ -56,7 +56,7 @@ and `backups/` (a copy taken before migrations).
 | Crate | Its job |
 | --- | --- |
 | `pdt-core` | The domain: types, rules and pure functions, no I/O. Tickets, ranks, parts, policies, overlap, PR and CI state, the workflow model (documents, references, validation, dry runs), agent instructions (`agent_context`), launch command lines, conversation frame mapping, secrets' redaction, brand constants (`brand.rs`). Most unit tests live here. |
-| `pdt-store` | SQLite through sqlx: one module per table group, migrations in `migrations/`, data backfills in `Store::open`. |
+| `pdt-store` | SQLite through sqlx: one module per table group, migrations in `migrations/`, data backfills in `Store::open`, failed writes and recovering from them in `health.rs`. |
 | `pdt-git` | The git CLI: worktrees, branches, diffs, merge detection, local merges, pulls. |
 | `pdt-agents` | Running agents: PTYs (`pty.rs`), detached runs (`detached.rs`), launching (`launch.rs`), hooks, instruction files, MCP wiring, and the adapters in `adapter/` (Claude, Codex, Devin, ACP). |
 | `pdt-api` | The axum routes and everything that ties the crates together: `routes.rs` (the router and `AppState`), one module per area, the workflow engine and nodes (`workflow/`), pdt-mcp (`mcp/`), the integration SDK (`sdk.rs`, `integrations/`). Test fakes in `src/bin` (`fake-agent`, `fake-mcp`, `fake-command`). |
@@ -158,7 +158,10 @@ an integration service (`Integration::services`, started once by pdtd, idle whil
 **Workflows.** Everything that happens is an event in the event log (`events`, keyed so a duplicate is dropped). A
 workflow is a versioned graph of nodes (pdt-core `workflow/`): a trigger, conditions, actions, waits, agent steps,
 gates. The engine (pdt-api `workflow/engine.rs`) matches new events to enabled workflows, starts runs, and advances
-their steps; node kinds live in `workflow/nodes/` or in an integration's crate. Agent steps start a session with a
+their steps; node kinds live in `workflow/nodes/` or in an integration's crate. While writes fail (a full disk), the
+engine's tick waits, writing a probe row (`Store::probe_writes`) after a backoff of 2 s doubling to 30 s; once one
+works, events that could not be logged (kept in memory by `emit_event`) are logged, and unprocessed events start their
+runs, each once by its run key. Agent steps start a session with a
 persona and wait for its `submit_outcome`; messages to agents go through the outbox (`workflow/outbox.rs`), which
 waits for the agent to be idle. Built-in workflows (`workflow/builtins.rs`) and templates (the Pipeline:
 `workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. Triggers on things
@@ -175,7 +178,8 @@ questions, gates, stalled steps, secrets to enter, confirmations. An item's `tit
 (Markdown) is in `body.question`, and `inbox::decorate` adds what is computed per request: ticket key and title,
 persona name, and a gate's `changeRequest` (its attempt's pull request, else the run trigger's or the ticket's external
 link that a forge plugin's `is_change_request_url` accepts, named by its `change_request_name`). Some items are not
-stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, and workflow proposals
+stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, "PDT can't save changes"
+(`inbox::storage`, while `Store::write_failure` says writes fail), and workflow proposals
 (`inbox::proposals`: one per workflow with a proposed version, id `proposal:<workflow>:<version>`, answered
 by `inbox::answer` with the Versions tab's accept and discard). Notifications (`notifications.rs`) are the transient
 kind.

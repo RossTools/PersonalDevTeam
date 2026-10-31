@@ -147,6 +147,8 @@ pub struct AppState {
     /// One lock per run, held while the engine advances it (node bodies included) and by the commands that act on
     /// one of its steps, so they never see a step half-run. Taken before `engine_lock`.
     pub(crate) run_locks: std::sync::Arc<crate::workflow::engine::RunLocks>,
+    /// Steps' results the engine could not write (PDT-323), written once writes work.
+    pub(crate) unsaved_results: std::sync::Arc<crate::workflow::engine::UnsavedResults>,
     /// Agent steps start one at a time (the host's running cap), though runs advance side by side.
     pub(crate) agent_step_start: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// How many runs advance at once.
@@ -277,6 +279,7 @@ impl AppState {
             conversations: Default::default(),
             engine_lock: Default::default(),
             run_locks: Default::default(),
+            unsaved_results: Default::default(),
             agent_step_start: Default::default(),
             engine_runs: std::sync::Arc::new(tokio::sync::Semaphore::new(crate::workflow::engine::CONCURRENT_RUNS)),
             engine_tick_wait: std::time::Duration::from_secs(10 * 60),

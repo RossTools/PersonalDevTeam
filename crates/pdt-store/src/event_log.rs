@@ -51,6 +51,17 @@ pub(crate) async fn emit_in(conn: &mut SqliteConnection, e: &NewLogEvent, now: i
     Ok(r.rows_affected() > 0)
 }
 
+/// Adds `e` (already redacted), logged at `now`: the new event, or None for a duplicate.
+pub(crate) async fn emit_now(store: &Store, e: &NewLogEvent, now: i64) -> Result<Option<LogEvent>, StoreError> {
+    let mut conn = store.pool.acquire().await?;
+    if !emit_in(&mut conn, e, now).await? {
+        return Ok(None);
+    }
+    let sql = format!("SELECT {COLUMNS} FROM events WHERE type = ? AND key = ?");
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(&e.kind).bind(&e.key).fetch_one(&mut *conn).await?;
+    to_event(&row).map(Some)
+}
+
 /// What `GET /api/events` filters on.
 #[derive(Debug, Clone, Default)]
 pub struct EventFilter {
@@ -69,7 +80,8 @@ pub struct EventFilter {
 
 impl Store {
     /// Adds an event unless one with its key is logged: the new event, or None for a duplicate. Known secrets' values
-    /// are redacted from its payload (PDT-158).
+    /// are redacted from its payload (PDT-158). One that can't be written (a full disk) is kept in memory and logged
+    /// once writes work again (`log_pending_events`, PDT-323), and the error is returned.
     pub async fn emit_event(&self, e: &NewLogEvent, now: i64) -> Result<Option<LogEvent>, StoreError> {
         let redacted;
         let e = if self.redactor.is_empty() {
@@ -78,13 +90,13 @@ impl Store {
             redacted = NewLogEvent { payload: self.redactor.json(&e.payload), ..e.clone() };
             &redacted
         };
-        let mut conn = self.pool.acquire().await?;
-        if !emit_in(&mut conn, e, now).await? {
-            return Ok(None);
+        match self.noted(emit_now(self, e, now).await) {
+            Err(err @ StoreError::Write(_)) => {
+                self.keep_pending_event(e, now);
+                Err(err)
+            }
+            r => r,
         }
-        let sql = format!("SELECT {COLUMNS} FROM events WHERE type = ? AND key = ?");
-        let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(&e.kind).bind(&e.key).fetch_one(&mut *conn).await?;
-        to_event(&row).map(Some)
     }
 
     pub async fn get_log_event(&self, id: &str) -> Result<Option<LogEvent>, StoreError> {
