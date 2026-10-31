@@ -19,7 +19,7 @@ const session = (id: string, createdAt: number): Session => ({
 });
 
 const info = (s: Session, more: Partial<PmSessionInfo> = {}): PmSessionInfo => ({
-  session: s, open: true, title: s.title, unseen: s.unseen, lastActivity: s.createdAt, rotation: 'none', reason: null, journal: null, via: null, ...more,
+  session: s, open: true, title: s.title, unseen: s.unseen, lastActivity: s.createdAt, rotation: 'none', reason: null, journal: null, via: null, resetFrom: null, ...more,
 });
 
 const endedOne = info({ ...session('s1', Date.UTC(2026, 9, 20, 9)), title: 'Old plans' }, { open: false, rotation: 'done', reason: 'age', journal: '## Today\nPlanned the PM.' });
@@ -166,5 +166,65 @@ describe('the PM', () => {
     expect(screen.queryByRole('button', { name: 'Close…' })).not.toBeInTheDocument();
     await userEvent.click(screen.getAllByRole('button', { name: 'New conversation' })[0]);
     expect(onNew).toHaveBeenCalled();
+  });
+
+  it('resets the conversation on show after asking, and puts the fresh one in its place', async () => {
+    const calls = stubApi({
+      ...conversationRoutes,
+      'GET /api/pm': two,
+      'POST /api/pm/sessions/c1/reset': live('c3', 'CB cutover'),
+    });
+    const onSelect = vi.fn();
+    renderWithQuery(<PmView selection="c1" onSelect={onSelect} onNew={() => {}} />);
+    expect(await screen.findByRole('heading', { name: 'CB cutover' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reset…' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Starts this conversation fresh. Its journal is kept and the new one starts from it.');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Reset' }));
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith('c3'));
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/pm/sessions/c1/reset')).toBe(true);
+  });
+
+  it('resets from the list\'s menu, and the open row follows only when it was on show', async () => {
+    stubApi({ 'GET /api/pm': two, 'POST /api/pm/sessions/c1/reset': live('c3', 'CB cutover') });
+    const onSelect = vi.fn();
+    renderWithQuery(<PmList selection="c1" onSelect={onSelect} onNew={() => {}} />);
+    const open = await screen.findByRole('grid', { name: 'PM conversations' });
+    const row = await within(open).findByRole('row', { name: /CB cutover/ });
+    await userEvent.pointer({ keys: '[MouseRight]', target: row });
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Reset…' }));
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Reset' }));
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith('c3'));
+  });
+
+  it('shows a conversation being reset as resetting, never unread, and leaves reset ones out of Ended', async () => {
+    const old = info({ ...session('c0', 1), title: 'CB cutover' }, { open: false, rotation: 'done', reason: 'reset', journal: 'Before.' });
+    stubApi({ 'GET /api/pm': { current: live('c2', 'A PDT bug'), sessions: [
+      info(live('c2', 'A PDT bug')),
+      info(live('c1', 'CB cutover', { unseen: true, activity: 'idle', attentionAt: 5 }), { rotation: 'journal', reason: 'reset' }),
+      old,
+    ] } satisfies PmState });
+    renderWithQuery(<PmList selection="c2" onSelect={() => {}} onNew={() => {}} />);
+    const open = await screen.findByRole('grid', { name: 'PM conversations' });
+    const row = await within(open).findByRole('row', { name: /CB cutover/ });
+    expect(row).toHaveTextContent('Resetting…');
+    expect(within(row).queryByRole('img', { name: 'New reply' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('grid', { name: 'Ended PM conversations' })).not.toBeInTheDocument();
+  });
+
+  it('links a reset conversation to the one before it, which opens read-only', async () => {
+    const at = Date.UTC(2026, 9, 30, 9);
+    const old = info({ ...session('c0', 1), title: 'CB cutover' }, { open: false, rotation: 'done', reason: 'reset', journal: 'Before.', lastActivity: at });
+    const fresh = info(live('c1', 'CB cutover'), { resetFrom: 'c0' });
+    stubApi({ ...conversationRoutes, 'GET /api/pm': { current: fresh.session, sessions: [fresh, old] } satisfies PmState });
+    const onSelect = vi.fn();
+    const first = renderWithQuery(<PmView selection="c1" onSelect={onSelect} onNew={() => {}} />);
+    const link = await screen.findByRole('button', { name: /^Previous conversation \(reset .*2026/ });
+    await userEvent.click(link);
+    expect(onSelect).toHaveBeenCalledWith('c0');
+    first.unmount();
+    renderWithQuery(<PmView selection="c0" onSelect={() => {}} onNew={() => {}} />);
+    expect(await screen.findByText(/This conversation ended because you reset it\./)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reset…' })).not.toBeInTheDocument();
   });
 });

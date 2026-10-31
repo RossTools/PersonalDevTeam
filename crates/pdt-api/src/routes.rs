@@ -165,6 +165,8 @@ pub struct AppState {
     pub(crate) mcp: std::sync::Arc<crate::mcp_client::McpPool>,
     /// How often a PM conversation in use gets its daily update and journal checkpoint (PDT-167; tests shorten it).
     pub pm_update_every_ms: i64,
+    /// How long a reset waits for the conversation's journal before it records none (PDT-308).
+    pub pm_reset_wait_ms: i64,
     /// Makes and clears notifications (PDT-108), and streams them.
     pub notifier: std::sync::Arc<crate::notifications::Notifier>,
     /// The background loops' last passes (PDT-127), for `/api/health` and `host.loop_stale`.
@@ -282,6 +284,7 @@ impl AppState {
             mcp_key: Default::default(),
             personas_installed: Default::default(),
             pm_update_every_ms: pdt_core::pm::UPDATE_EVERY_MS,
+            pm_reset_wait_ms: pdt_core::pm::RESET_WAIT_MS,
             notifier: Default::default(),
             loops: Default::default(),
             poll_part_limit: crate::loops::POLL_PART_LIMIT,
@@ -556,6 +559,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/pm", get(crate::pm::state))
         .route("/pm/sessions", get(crate::pm::list).post(crate::pm::start))
         .route("/pm/sessions/{id}", axum::routing::patch(crate::pm::patch).delete(crate::pm::close))
+        .route("/pm/sessions/{id}/reset", axum::routing::post(crate::pm::reset))
         .route("/pm/notes", get(crate::pm::list_notes).post(crate::pm::create_note))
         .route("/pm/notes/{id}", get(crate::pm::get_note).patch(crate::pm::patch_note).delete(crate::pm::delete_note))
         .route("/todos", get(crate::todos::list).post(crate::todos::create))

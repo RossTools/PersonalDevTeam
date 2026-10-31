@@ -121,6 +121,15 @@ kept in step by triggers. API: `GET /api/pm/notes?q=&project=&kind=`, `POST /api
   `write_journal`… Then end your turn." (`pm_sessions.rotation = 'journal'`, reason `user`). When that turn ends
   (journal written or not), PDT ends the session (`rotation = 'done'`, stopped; a missing journal is recorded as
   "(no journal)").
+- **Resetting** (PDT-308, `POST /api/pm/sessions/{id}/reset`). The same as closing, with reason `reset` and the request
+  "[PDT] The user is resetting this PM conversation…", but the call waits (up to `RESET_WAIT_MS`, 3 min) for the
+  conversation to end; on time-out it drops the request and ends it with "(no journal)". It then starts a fresh
+  conversation with the old one's title, agent, model, permission mode, persona, folder and `via`, its row
+  `reset_from` the old one, and returns it. Its briefing (written to `briefing.md` before the session starts) leads
+  with the old journal under "This conversation before it was reset". `listed_at` keeps both in place in the list: the
+  old one while it writes its journal (it counts as open until its successor exists), the new one until it has
+  activity of its own. A reset conversation's journal turn never marks it unread, and the reset ones are left out of
+  the ended list (each is linked from its successor).
 - The ended conversation shows, in place of its composer, why it ended (`reason`; `context` and `age` are kept for
   conversations that ended before PDT-167), its journal, and **New conversation**.
 - `pm_sessions`: session id, `rotation` (`none` | `journal` | `done`), `reason`, `caught_up_at`, timestamps.

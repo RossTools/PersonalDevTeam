@@ -42,7 +42,9 @@ pub mod ci {
 
 /// PM conversations, for an integration that holds them elsewhere too (PDT-304: Discord's DMs).
 pub mod pm {
-    pub use crate::pm::{close_conversation, conversations, send_from_user, set_via, start_conversation};
+    pub use crate::pm::{
+        close_conversation, conversations, reset_conversation, send_from_user, set_via, start_conversation,
+    };
 }
 
 /// Conversations' events and requests, for an integration that follows them (PDT-304).

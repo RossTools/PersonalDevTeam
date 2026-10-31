@@ -1297,7 +1297,7 @@ describe('phone', () => {
     expect(here()).toBe('/pm/pm2');
     expect(within(bar()).getByRole('heading', { name: 'CB cutover' })).toBeInTheDocument();
     await userEvent.click(within(bar()).getByRole('button', { name: 'Screen actions' }));
-    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New conversation', 'Ended conversations', 'Rename', 'Close…']);
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['New conversation', 'Ended conversations', 'Rename', 'Reset…', 'Close…']);
     await userEvent.keyboard('{Escape}');
     await userEvent.click(within(bar()).getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(here()).toBe('/pm'));

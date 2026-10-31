@@ -23,18 +23,28 @@ export function useRefreshPm() {
  */
 export type PmSelection = 'current' | 'earlier' | 'new' | (string & {});
 
-/** Why a conversation ended, after "because". Only the user's Close ends one now (PDT-167); the others are older. */
+/**
+ * Why a conversation ended, after "because". Only the user's Close and Reset end one now (PDT-167, PDT-308); the
+ * others are older.
+ */
 export const REASON_LABEL: Record<RotateReason, string> = {
   context: 'its context filled up',
   age: 'it was a day old',
   user: 'you closed it',
+  reset: 'you reset it',
 };
 
 /** The conversations still open, the most recently active first (the API's order). */
 export const openConversations = (sessions: PmSessionInfo[]) => sessions.filter((s) => s.open);
 
-/** The conversations that ended, newest first. */
-export const earlier = (sessions: PmSessionInfo[]) => sessions.filter((s) => !s.open);
+/**
+ * The conversations that ended, newest first. A reset one is left out (PDT-308): the conversation that carries on
+ * links to it.
+ */
+export const earlier = (sessions: PmSessionInfo[]) => sessions.filter((s) => !s.open && s.reason !== 'reset');
+
+/** Whether a conversation is writing its journal before a reset (PDT-308) rather than a close. */
+export const resetting = (info: PmSessionInfo) => info.rotation !== 'none' && info.reason === 'reset';
 
 /** A journal's first line, for list rows. */
 /** Where a conversation is held besides PDT, for its list row and header (PDT-304: the Discord bot's DMs). */
@@ -43,11 +53,11 @@ export const firstLine = (text: string | null) => (text ?? '').split('\n').find(
 
 /**
  * Whether a PM conversation has a reply the user hasn't seen (PDT-145): its turn ended since they last looked, it
- * isn't running a turn now, and it isn't the one on screen (`shown`; opening it marks it seen). An ended
+ * isn't running a turn now, and it isn't the one on screen (`shown`; opening it marks it seen). An ending or ended
  * conversation's last turn is its journal, not a reply.
  */
-export const isUnread = ({ session: s, open }: PmSessionInfo, shown: string | null) =>
-  open && s.unseen && s.activity !== 'working' && s.id !== shown;
+export const isUnread = ({ session: s, open, rotation }: PmSessionInfo, shown: string | null) =>
+  open && rotation === 'none' && s.unseen && s.activity !== 'working' && s.id !== shown;
 
 /** Whether any PM conversation is unread: the rail's dot. */
 export const pmUnread = (sessions: PmSessionInfo[] | undefined, shown: string | null) =>
@@ -59,8 +69,11 @@ export function shownConversation(sessions: PmSessionInfo[] | undefined, current
   return id ? sessions?.find((s) => s.session.id === id) : undefined;
 }
 
-/** Renaming and closing a PM conversation (closing asks first). `onClosed` runs once it is closing. */
-export function usePmActions(onClosed?: (id: string) => void) {
+/**
+ * Renaming, closing and resetting a PM conversation (closing and resetting ask first). `onClosed` runs once it is
+ * closing, `onReset` with the fresh conversation once a reset is done (PDT-308).
+ */
+export function usePmActions(onClosed?: (id: string) => void, onReset?: (id: string, fresh: string) => void) {
   const refresh = useRefreshPm();
   const confirm = useConfirm();
   const rename = useCallback((id: string, title: string) => {
@@ -82,5 +95,19 @@ export function usePmActions(onClosed?: (id: string) => void) {
       onClosed?.(info.session.id);
     });
   }, [confirm, refresh, onClosed]);
-  return { rename, close };
+  const reset = useCallback((info: PmSessionInfo) => {
+    void runAction(async () => {
+      const { ok } = await confirm({
+        title: `Reset “${info.title}”?`,
+        body: 'Starts this conversation fresh. Its journal is kept and the new one starts from it.',
+        action: 'Reset',
+      });
+      if (!ok) return;
+      // It answers once the journal is written: the conversation shows it resetting meanwhile.
+      const fresh = await api.resetPm(info.session.id);
+      await refresh();
+      onReset?.(info.session.id, fresh.id);
+    });
+  }, [confirm, refresh, onReset]);
+  return { rename, close, reset };
 }

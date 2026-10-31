@@ -44,6 +44,7 @@ pub(crate) async fn create(
         tab: Some(input.tab),
         persona: None,
         cwd: None,
+        id: None,
     };
     Ok((StatusCode::CREATED, Json(create_session(&st, req).await?)))
 }
@@ -63,6 +64,9 @@ pub(crate) struct CreateSession {
     pub persona: Option<pdt_core::session::SessionPersona>,
     /// Where it runs instead of the worktree or main checkout (a Personal project's ticket folder).
     pub cwd: Option<String>,
+    /// Its id, when the caller prepared its data folder first (a reset PM conversation's briefing, PDT-308); a new one
+    /// when None.
+    pub id: Option<String>,
 }
 
 /// Makes a session and starts its process (`POST /api/sessions` and ticket Start): the row, the terminal (with the
@@ -98,7 +102,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         && valid.mode == SessionMode::Terminal;
     let fresh_started_at = if codex { Some(wait_for_fresh_codex_slot(st, &cwd).await) } else { None };
     let session = Session {
-        id: uuid::Uuid::now_v7().to_string(),
+        id: req.id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string()),
         project_id: project.id,
         worktree_id,
         kind: valid.kind,
