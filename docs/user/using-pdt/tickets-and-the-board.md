@@ -155,6 +155,9 @@ Auto-start skips parents, blocked or conflicting tickets, and outside tickets yo
 agent, view and permission mode (**Settings › This host › Agents**), or the project's workflow if it has one. Starting
 a ticket yourself is never delayed.
 
+While a disk PDT uses is almost full, auto-start starts nothing new (see
+[Disk space](../your-machine/your-data.md#disk-space)).
+
 ## On a phone
 
 The top bar's title picks the project and saved filters, with **Backlog**, **Board**, search and filters below. The

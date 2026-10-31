@@ -87,6 +87,10 @@ pub(crate) async fn workflow_listens(st: &AppState, project_id: &str, event_type
 /// One pass of auto-start: in each project that asks for it, the next candidate while it is under its cap, once it
 /// has gone the project's start delay unchanged. A ticket that fails to start is skipped until it changes.
 pub async fn schedule_tickets(st: &AppState) {
+    // A disk almost full: nothing new starts until space is freed; what runs carries on (PDT-324).
+    if crate::storage::auto_start_paused(st).await {
+        return;
+    }
     let Ok(projects) = st.store.list_projects().await else { return };
     for p in projects {
         let Ok(settings) = st.store.get_project_settings(&p.id).await else { continue };
@@ -258,13 +262,15 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
 /// project's policy.
 pub(crate) async fn apply_auto_start(st: &AppState, items: &mut [TicketSummary]) {
     let now = crate::routes::now_ms();
+    // No countdown while auto-start waits for disk space.
+    let paused = !items.is_empty() && crate::storage::auto_start_paused(st).await;
     let mut policies: HashMap<String, Option<pdt_core::policy::ProjectPolicy>> = HashMap::new();
     for t in items {
         if !policies.contains_key(&t.project_id) {
             let p = st.store.get_project_settings(&t.project_id).await.ok().map(|s| s.policy);
             policies.insert(t.project_id.clone(), p);
         }
-        t.auto_start_at = policies[&t.project_id].as_ref().and_then(|p| auto_start_at(p, t, now));
+        t.auto_start_at = policies[&t.project_id].as_ref().filter(|_| !paused).and_then(|p| auto_start_at(p, t, now));
     }
 }
 

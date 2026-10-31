@@ -72,6 +72,8 @@ pub const DEFAULT_TRIAGE_PER_AUTHOR: u32 = 3;
 /// How many triage runs one repository's issues (or one webhook) start an hour; 0 is no cap.
 pub const DEFAULT_TRIAGE_PER_REPO: u32 = 20;
 const TRIAGE_LIMIT: u32 = 1000;
+/// The highest low-disk threshold, in GB.
+const MAX_DISK_GB: u32 = 10_000;
 const MAX_RUNS_LIMIT: u32 = 32;
 const MAX_PORTS_IN_RANGE: u32 = 1000;
 pub const DEFAULT_UPDATE_CHECK_MINUTES: u32 = 60;
@@ -140,6 +142,10 @@ pub struct HostSettings {
     /// Where local documents go (a full path, or `~/…`) unless their project names a folder; none: `documents` in
     /// PDT's data folder.
     pub documents_dir: Option<String>,
+    /// Free space (GB) below which the Inbox warns that a disk with PDT's data or a project is running out; 0: off.
+    pub low_disk_gb: u32,
+    /// Free space (GB) below which auto-start waits until space is freed; 0: off.
+    pub critical_disk_gb: u32,
 }
 
 /// A GitHub `owner/name`: two non-empty parts of letters, digits, `-`, `_` and `.`, neither `.` nor `..`.
@@ -180,6 +186,8 @@ impl Default for HostSettings {
             agent_models: Default::default(),
             documents_provider: None,
             documents_dir: None,
+            low_disk_gb: crate::storage::DEFAULT_LOW_DISK_GB,
+            critical_disk_gb: crate::storage::DEFAULT_CRITICAL_DISK_GB,
         }
     }
 }
@@ -283,6 +291,14 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub documents_dir: Option<String>,
+    /// 0 turns the warning off.
+    #[serde(default)]
+    #[ts(optional)]
+    pub low_disk_gb: Option<u32>,
+    /// 0 turns the pause off.
+    #[serde(default)]
+    #[ts(optional)]
+    pub critical_disk_gb: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -315,6 +331,8 @@ pub enum HostSettingsError {
     BadDocumentsProvider,
     #[error("the documents folder must be a full path (or start with ~ for your home folder)")]
     BadDocumentsDir,
+    #[error("the low-disk thresholds must be between 0 (off) and 10000 GB")]
+    BadDiskThreshold,
     #[error("{0}")]
     BadAcpAgent(#[from] crate::acp_agent::AcpAgentError),
 }
@@ -401,6 +419,14 @@ impl HostSettings {
             if let Some(n) = given {
                 if n > TRIAGE_LIMIT {
                     return Err(HostSettingsError::BadTriageCap);
+                }
+                *field = n;
+            }
+        }
+        for (given, field) in [(p.low_disk_gb, &mut s.low_disk_gb), (p.critical_disk_gb, &mut s.critical_disk_gb)] {
+            if let Some(n) = given {
+                if n > MAX_DISK_GB {
+                    return Err(HostSettingsError::BadDiskThreshold);
                 }
                 *field = n;
             }

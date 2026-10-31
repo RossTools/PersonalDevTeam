@@ -24,6 +24,11 @@ ciProviders: Array<string> | null,
  */
 push: PushDef | null, 
 /**
+ * `[storage] build_output`: the checkout's build output paths (the overrides' list wins); None: detected from
+ * the files at the checkout's root (`pdt_core::storage::detect_build_output`).
+ */
+buildOutput: Array<string> | null, 
+/**
  * Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
  */
 ignored: Array<string>, };
