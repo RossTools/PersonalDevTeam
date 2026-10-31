@@ -24,6 +24,7 @@ import { useAgents, useAgentsOff } from '../common/agents';
 import { AcpAgents } from './AcpAgents';
 import { agentsOff, AgentSwitch, offNote, switchBlocked } from './AgentSwitch';
 import { BugReportDialog } from './BugReportDialog';
+import { Storage } from './StorageSettings';
 import { documentKeys, useDocumentProviders } from '../documents/queries';
 
 /** The stored token's state as a badge (never the token itself). */
@@ -905,6 +906,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
     'Network': <Network v={v} />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,
     'Runs': <Runs v={v} />,
+    'Storage': <Storage v={v} />,
     'Projects folder': <ProjectsFolder v={v} />,
     'Documents': <Documents v={v} />,
     'Appearance': <Appearance />,

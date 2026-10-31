@@ -141,7 +141,8 @@ sessions aren't in the sidebar's **Agents** list; open them here or from the tic
 - **Retry from the failed step** runs a failed run again from where it stopped, with the same ticket and data.
 - **Resume from** restarts an agent step that stopped or timed out, in the same session, with an optional note.
 
-Failed runs also show in the Inbox's **Updates**.
+Failed runs also show in the Inbox's **Updates**. To hear when one run finishes, fails or waits on you, click the eye
+(**Watch**) beside its status, or ask the PM to watch it.
 
 ## Reference
 

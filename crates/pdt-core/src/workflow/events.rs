@@ -502,6 +502,9 @@ pub struct TicketCommented {
     /// The workflow whose run wrote it for the user (a note with a gate's choice, which that run passes on itself).
     #[serde(default)]
     pub workflow_id: Option<String>,
+    /// The agent session that wrote it (an agent's comment through pdt-mcp), so a watching PM conversation skips its own.
+    #[serde(default)]
+    pub by_session: Option<String>,
 }
 
 /// `ticket.overlap_found`.
@@ -844,6 +847,7 @@ mod tests {
             actor: "user".into(),
             attempt_id: None,
             workflow_id: None,
+            by_session: None,
         };
         assert_eq!(serde_json::to_value(&e).unwrap()["ticketKey"], "PDT-1");
         let a = AttemptEvent {

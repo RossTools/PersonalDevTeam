@@ -3,7 +3,7 @@
 //! Sign in asks the installed program to `authenticate`, and a conversation runs on it. The archive's program is a
 //! script that starts `fake-agent --plain acp`.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

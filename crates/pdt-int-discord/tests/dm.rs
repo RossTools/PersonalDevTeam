@@ -1,8 +1,7 @@
 //! Talking to the PM through the Discord bot's DMs (PDT-304) end to end, with `fake-agent` standing in for Claude and
 //! a fake Discord: its REST API and a Gateway websocket that the test feeds DMs, slash commands and button presses.
 
-#[path = "../../pdt-api/tests/common/mod.rs"]
-mod common;
+use crate::common;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::StatusCode;

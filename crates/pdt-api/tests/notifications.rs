@@ -1,7 +1,7 @@
 //! Notifications (PDT-108): rows made from sessions' state and the Inbox, cleared when their cause goes away, the
 //! per-kind settings and the stream.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -194,7 +194,7 @@ async fn settings_list_every_kind_and_keep_inbox_kinds_findable() {
     let (app, _) = setup(tmp.path()).await;
     let (_, kinds) = call(&app, "GET", "/api/notifications/settings", None).await;
     let kinds = kinds.as_array().unwrap();
-    assert_eq!(kinds.len(), 20);
+    assert_eq!(kinds.len(), 21);
     let gate = kinds.iter().find(|k| k["kind"] == "inbox.gate").unwrap();
     assert_eq!((&gate["show"], &gate["allowed"]), (&json!("toast"), &json!(["inbox", "toast", "desktop"])));
     let (s, e) = call(&app, "PATCH", "/api/notifications/settings", Some(json!({"inbox.gate": "off"}))).await;

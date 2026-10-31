@@ -2,7 +2,7 @@
 //! Agents, found by the checks, picked for a persona, running a workflow agent step (prompt, permission request,
 //! outcome), and a conversation of its own (cancel, resume).
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

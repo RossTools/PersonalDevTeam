@@ -1,7 +1,7 @@
 //! Devin terminal sessions (PDT-54; conversations: devin_conversations.rs) with a stand-in `devin`: launch flags, the per-session config with PDT's hook,
 //! the conversation id its SessionStart hook reports, and resuming it.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{argv_agent, call, git, recorded_launches};

@@ -1,0 +1,68 @@
+//! The crate's integration tests in one binary, each `tests/*.rs` file a module of it (Cargo.toml sets
+//! `autotests = false`): a binary per file linked all of PDT and its dependencies again for each one.
+
+#[path = "../../../test-support/all_listed.rs"]
+mod all_listed;
+mod common;
+#[path = "../../../test-support/port_blocks.rs"]
+mod port_blocks;
+mod retired;
+
+mod acp_agents;
+mod acp_antigravity;
+mod acp_grok;
+mod acp_plain;
+mod activity;
+mod agent_steps;
+mod api;
+mod bug_reports;
+mod checks;
+mod codex_conversations;
+mod conversations;
+mod delivery;
+mod devin;
+mod devin_conversations;
+mod documents;
+mod folders;
+mod forge;
+mod git_integration;
+mod github_pulls;
+mod github_triage;
+mod host;
+mod identity;
+mod integrations;
+mod liveness;
+mod local_forge;
+mod mcp_servers;
+mod notifications;
+mod outside_prs;
+mod parts;
+mod personas;
+mod pipeline;
+mod pm;
+mod pr;
+mod project_settings;
+mod pty_ws;
+mod release;
+mod remote;
+mod retired_builtins;
+mod review;
+mod runconfig;
+mod runs;
+mod secrets;
+mod sessions;
+mod setup;
+mod start;
+mod storage;
+mod ticket_attachments;
+mod ticket_conversations;
+mod tickets;
+mod todos;
+mod update;
+mod watches;
+mod workflow_runs;
+mod workflow_transfer;
+mod workflows;
+mod workspaces;
+mod worktrees;
+mod write_failures;

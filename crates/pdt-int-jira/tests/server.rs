@@ -4,8 +4,7 @@
 //! backlog sections, epics through the Epic Name and Epic Link fields, and the PM using the same actions. Jira is a
 //! fake local server.
 
-#[path = "../../pdt-api/tests/common/mod.rs"]
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::extract::State;

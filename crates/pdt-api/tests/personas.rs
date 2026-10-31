@@ -1,7 +1,7 @@
 //! PDT-100: built-in personas follow newer templates field by field. A field the user changed stays theirs, every
 //! other field follows; `GET /api/personas/{id}/template` shows the template for "Load PDT's template".
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::call;

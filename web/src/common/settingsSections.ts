@@ -23,6 +23,10 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
   { label: 'Network', terms: ['Port', 'Allowed hosts', 'Restart', 'PDT_PORT', 'PDT_ALLOWED_HOSTS'] },
   { label: 'Remote access', terms: ['Serve on the tailnet', 'Tailscale', 'Owner', 'Status'] },
   { label: 'Runs', terms: ['Ports', 'Max concurrent runs'] },
+  {
+    label: 'Storage',
+    terms: ['Disk space', 'Free space', 'Worktrees', 'Build output', 'Clean all finished', 'Low-disk warning', 'Pause auto-start below'],
+  },
   { label: 'Projects folder', terms: ['Folder', 'Clone by URL'] },
   { label: 'Documents', terms: ['Default provider', 'Local documents folder', 'Docs', 'Sheets'] },
   { label: 'Appearance', terms: ['Theme', 'Dark', 'Light', 'System'] },
@@ -44,7 +48,7 @@ export const HOST_PAGES = [
 /** A project's sections, in sidebar order; the ones a Personal project (no repository) lacks are marked. */
 const PROJECT_SECTIONS: readonly (SectionInfo & { repoOnly?: true })[] = [
   { label: 'General', terms: ['Name', 'Key', 'Base branch', 'Repository folder', 'GitHub'] },
-  { label: 'Worktrees', terms: ['Remove worktree', 'Review changes'], repoOnly: true },
+  { label: 'Worktrees', terms: ['Remove worktree', 'Review changes', 'Clean build output', 'Automatic cleanup', 'Disk space'], repoOnly: true },
   { label: 'Runs on this host', terms: ['Repository configuration', 'Host overrides', 'TOML', 'Set up with an agent'], repoOnly: true },
   { label: 'Agent instructions', terms: ['Instructions', 'CLAUDE.md', 'AGENTS.md'] },
   { label: 'Agents', terms: ['Agent credentials', 'Agent permission mode for workflow steps'] },

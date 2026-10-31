@@ -147,6 +147,8 @@ pub struct AppState {
     /// One lock per run, held while the engine advances it (node bodies included) and by the commands that act on
     /// one of its steps, so they never see a step half-run. Taken before `engine_lock`.
     pub(crate) run_locks: std::sync::Arc<crate::workflow::engine::RunLocks>,
+    /// Steps' results the engine could not write (PDT-323), written once writes work.
+    pub(crate) unsaved_results: std::sync::Arc<crate::workflow::engine::UnsavedResults>,
     /// Agent steps start one at a time (the host's running cap), though runs advance side by side.
     pub(crate) agent_step_start: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// How many runs advance at once.
@@ -164,10 +166,18 @@ pub struct AppState {
     pub(crate) personas_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Tickets auto-start failed to start, with their `updated_at` then: skipped until they change.
     pub(crate) auto_start_failed: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
+    /// Worktrees' sizes as last measured, and the storage loop's state (PDT-324).
+    pub(crate) storage: std::sync::Arc<crate::storage::StorageState>,
+    /// Reads a disk's free space. `new` reads none (no disk is ever low), so tests never depend on the machine's own
+    /// disk; only pdtd's production wiring installs the OS's (`storage::os_disk_space`), and a test sets a fake.
+    pub disk_space: crate::storage::DiskProbe,
     /// MCP servers PDT is a client of (Phase 7e-3): their live clients and cached tools.
     pub(crate) mcp: std::sync::Arc<crate::mcp_client::McpPool>,
     /// How often a PM conversation in use gets its daily update and journal checkpoint (PDT-167; tests shorten it).
     pub pm_update_every_ms: i64,
+    /// How long a watch's notes wait for more before they are told, and the longest they wait (PDT-319; tests
+    /// shorten them).
+    pub watch_wait_ms: (i64, i64),
     /// How long a reset waits for the conversation's journal before it records none (PDT-308).
     pub pm_reset_wait_ms: i64,
     /// The PM conversations a reset is running for (PDT-308): one stays listed in place until its fresh one exists.
@@ -277,11 +287,14 @@ impl AppState {
             conversations: Default::default(),
             engine_lock: Default::default(),
             run_locks: Default::default(),
+            unsaved_results: Default::default(),
             agent_step_start: Default::default(),
             engine_runs: std::sync::Arc::new(tokio::sync::Semaphore::new(crate::workflow::engine::CONCURRENT_RUNS)),
             engine_tick_wait: std::time::Duration::from_secs(10 * 60),
             workflow_docs: Default::default(),
             auto_start_failed: Default::default(),
+            storage: Default::default(),
+            disk_space: std::sync::Arc::new(|_| None),
             mcp: Default::default(),
             integrations: Default::default(),
             toolchains: std::sync::Arc::new(crate::toolchains::Offline),
@@ -290,6 +303,7 @@ impl AppState {
             mcp_key: Default::default(),
             personas_installed: Default::default(),
             pm_update_every_ms: pdt_core::pm::UPDATE_EVERY_MS,
+            watch_wait_ms: (pdt_core::watch::QUIET_MS, pdt_core::watch::MAX_WAIT_MS),
             pm_reset_wait_ms: pdt_core::pm::RESET_WAIT_MS,
             pm_resets: Default::default(),
             notifier: Default::default(),
@@ -449,6 +463,11 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/projects/{id}/files/rename", axum::routing::post(crate::files::rename))
         .route("/projects/{id}/files/tell", axum::routing::post(crate::files::tell))
         .route("/worktrees/{id}", axum::routing::delete(worktrees::remove))
+        .route("/worktrees/{id}/clean", axum::routing::post(crate::storage::clean))
+        .route("/storage", get(crate::storage::view))
+        .route("/storage/refresh", axum::routing::post(crate::storage::refresh))
+        .route("/storage/clean-finished", axum::routing::post(crate::storage::clean_finished))
+        .route("/projects/{id}/storage", axum::routing::put(crate::storage::put_settings))
         .route("/worktrees/{id}/changes", get(crate::review::changes))
         .route("/worktrees/{id}/changes/file", get(crate::review::file))
         .route("/worktrees/{id}/comments", get(crate::review::list_comments).post(crate::review::create_comment))
@@ -595,6 +614,8 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/pm/notes", get(crate::pm::list_notes).post(crate::pm::create_note))
         .route("/pm/notes/{id}", get(crate::pm::get_note).patch(crate::pm::patch_note).delete(crate::pm::delete_note))
         .route("/todos", get(crate::todos::list).post(crate::todos::create))
+        .route("/watches", get(crate::watches::list).post(crate::watches::create))
+        .route("/watches/{id}", axum::routing::delete(crate::watches::delete))
         .route("/todos/{id}", axum::routing::patch(crate::todos::patch).delete(crate::todos::delete))
         .route("/inbox", get(crate::inbox::list))
         .route("/inbox/{id}/answer", axum::routing::post(crate::inbox::answer))
@@ -629,6 +650,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
     let compression =
         tower_http::compression::CompressionLayer::new().quality(tower_http::compression::CompressionLevel::Precise(4));
     app.layer(compression)
+        .layer(axum::middleware::from_fn_with_state(guard_state.clone(), crate::error::note_write_failures))
         .layer(axum::middleware::from_fn_with_state(guard_state, crate::identity_guard::guard))
         .layer(axum::middleware::from_fn(crate::slow::log_slow))
 }

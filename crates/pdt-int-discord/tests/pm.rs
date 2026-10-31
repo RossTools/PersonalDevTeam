@@ -1,8 +1,7 @@
 //! The PM's Discord tools end to end (PDT-98), with `fake-agent` standing in for Claude and a fake Discord: setting
 //! up a channel and its webhook after a yes, which a workflow then posts to.
 
-#[path = "../../pdt-api/tests/common/mod.rs"]
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::call;

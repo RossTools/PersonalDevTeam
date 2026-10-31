@@ -3,7 +3,7 @@
 //! remote server signs in with OAuth against a fake authorization server (registration, PKCE, refresh, revocation →
 //! Inbox).
 
-mod common;
+use crate::common;
 
 use axum::extract::{Form, Query, State};
 use axum::http::{HeaderMap, StatusCode};

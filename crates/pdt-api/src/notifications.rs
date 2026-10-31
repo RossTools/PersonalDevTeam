@@ -219,6 +219,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
     items.extend(crate::inbox::connect_forge(st));
     items.extend(crate::mcp_oauth::inbox_items(st).await);
     items.extend(crate::inbox::proposals(st, None).await?);
+    items.extend(crate::storage::low_disk(st).await);
     let fresh: Vec<&InboxItem> = items.iter().filter(|i| !live.contains_key(&inbox_key(&i.id))).collect();
     let mut fresh: Vec<InboxItem> = fresh.into_iter().cloned().collect();
     crate::inbox::decorate(st, &mut fresh).await?;
@@ -242,6 +243,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
                 | InboxKind::Notice
                 | InboxKind::Connect
                 | InboxKind::McpSignIn
+                | InboxKind::LowDisk
         ) {
             Severity::Warning
         } else {

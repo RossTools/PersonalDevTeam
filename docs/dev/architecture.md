@@ -56,7 +56,7 @@ and `backups/` (a copy taken before migrations).
 | Crate | Its job |
 | --- | --- |
 | `pdt-core` | The domain: types, rules and pure functions, no I/O. Tickets, ranks, parts, policies, overlap, PR and CI state, the workflow model (documents, references, validation, dry runs), agent instructions (`agent_context`), launch command lines, conversation frame mapping, secrets' redaction, brand constants (`brand.rs`). Most unit tests live here. |
-| `pdt-store` | SQLite through sqlx: one module per table group, migrations in `migrations/`, data backfills in `Store::open`. |
+| `pdt-store` | SQLite through sqlx: one module per table group, migrations in `migrations/`, data backfills in `Store::open`, failed writes and recovering from them in `health.rs`. |
 | `pdt-git` | The git CLI: worktrees, branches, diffs, merge detection, local merges, pulls. |
 | `pdt-agents` | Running agents: PTYs (`pty.rs`), detached runs (`detached.rs`), launching (`launch.rs`), hooks, instruction files, MCP wiring, and the adapters in `adapter/` (Claude, Codex, Devin, ACP). |
 | `pdt-api` | The axum routes and everything that ties the crates together: `routes.rs` (the router and `AppState`), one module per area, the workflow engine and nodes (`workflow/`), pdt-mcp (`mcp/`), the integration SDK (`sdk.rs`, `integrations/`). Test fakes in `src/bin` (`fake-agent`, `fake-mcp`, `fake-command`). |
@@ -84,7 +84,14 @@ free-form. A tab holds exactly one session, run, ticket or worktree's changes, a
 
 **Worktrees.** Each branch PDT works on gets a worktree at `<repo>/.worktrees/<branch, / replaced by ->`
 (pdt-core `worktree.rs`). Deleting one is refused while a session, run or active attempt uses it, or while it has
-uncommitted changes (unless forced).
+uncommitted changes (unless forced). Storage (pdt-api `storage.rs`, rules in pdt-core `storage.rs`): the `storage`
+loop (every 60 s) measures each worktree whose size is missing or 30 minutes old in a task of its own (one at a time;
+`AppState::storage` keeps the sizes in memory, so a restart measures again), and hourly runs the automatic cleanup,
+which cleans or removes finished tickets' worktrees per the project's `project_settings.storage`. A project's build
+output is `[storage] build_output` from its main checkout's run configuration, else detected from the files at its
+root (`detect_build_output`). Free space comes from `AppState::disk_space` (fs4, installed by pdtd; `AppState::new` reads none, tests set a fake) for the data
+folder and each project's folder, grouped by device (`storage::disk_id`) with the least free space any read; below the host's `low_disk_gb` the Inbox lists a `low_disk` item, below
+`critical_disk_gb` the scheduler starts nothing and `autoStartAt` is left out.
 
 **Runs.** A run is a `[[run]]` or `[[test]]` from `.pdt/project.toml` (plus host overrides; the user docs' Run configuration page)
 started in a checkout, on a port from the host's range. Runs live in PTYs, or detached (`detach = true`) so they
@@ -172,10 +179,22 @@ through the SDK's `pm` and `conversations` modules (start, send, close; every co
 `conversations::subscribe_all`; answering a request as the user). Its bot holds a Gateway websocket (`gateway.rs`) in
 an integration service (`Integration::services`, started once by pdtd, idle while the plugin is off).
 
+**Watches.** A ticket or workflow run that a PM conversation (its `watch` tool) or the user (the Watch toggle) wants to
+hear about (pdt-core `watch.rs`, pdt-store and pdt-api `watches.rs`, table `watches`). Each engine tick reads what
+happened to each watched target since its stored cursor: the event log (outcomes, comments, stage changes, merges, CI
+failures, queue drops), new Inbox items about it, and a run's status. It notes what the watch asked for, and tells a
+burst once it has been quiet for 15 s (at most a minute after the first). A conversation is told through the outbox
+(`reopens`, so a parked one wakes); the user, and a closed conversation's leftovers, get a `watch.event`
+notification. A `once` watch ends when its target finishes. A PM Reset moves the old
+conversation's watches to the fresh one (`watches::follow`); a tick during the reset waits for it.
+
 **Workflows.** Everything that happens is an event in the event log (`events`, keyed so a duplicate is dropped). A
 workflow is a versioned graph of nodes (pdt-core `workflow/`): a trigger, conditions, actions, waits, agent steps,
 gates. The engine (pdt-api `workflow/engine.rs`) matches new events to enabled workflows, starts runs, and advances
-their steps; node kinds live in `workflow/nodes/` or in an integration's crate. Agent steps start a session with a
+their steps; node kinds live in `workflow/nodes/` or in an integration's crate. While writes fail (a full disk), the
+engine's tick waits, writing a probe row (`Store::probe_writes`) after a backoff of 2 s doubling to 30 s; once one
+works, events that could not be logged (kept in memory by `emit_event`) are logged, and unprocessed events start their
+runs, each once by its run key. Agent steps start a session with a
 persona and wait for its `submit_outcome`; messages to agents go through the outbox (`workflow/outbox.rs`), which
 waits for the agent to be idle. Built-in workflows (`workflow/builtins.rs`) and templates (the Pipeline:
 `workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. Triggers on things
@@ -192,7 +211,8 @@ questions, gates, stalled steps, secrets to enter, confirmations. An item's `tit
 (Markdown) is in `body.question`, and `inbox::decorate` adds what is computed per request: ticket key and title,
 persona name, and a gate's `changeRequest` (its attempt's pull request, else the run trigger's or the ticket's external
 link that a forge plugin's `is_change_request_url` accepts, named by its `change_request_name`). Some items are not
-stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, and workflow proposals
+stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, "PDT can't save changes"
+(`inbox::storage`, while `Store::write_failure` says writes fail), and workflow proposals
 (`inbox::proposals`: one per workflow with a proposed version, id `proposal:<workflow>:<version>`, answered
 by `inbox::answer` with the Versions tab's accept and discard). Notifications (`notifications.rs`) are the transient
 kind.
@@ -237,6 +257,7 @@ login.
 | --- | --- | --- |
 | Host, settings, updates, remote access | pdt-api `host.rs`, `update.rs`, `remote.rs`, guards (`host_guard.rs`, `identity_guard.rs`, `untrusted.rs`); `crates/pdt-host`; `crates/pdt-update` | `web/src/host`, `web/src/setup` |
 | Projects, worktrees, runs | pdt-api `projects.rs`, `worktrees.rs`, `runs.rs`, `run_manager.rs`, `runconfig.rs`; pdt-core `runconfig.rs` | `web/src/projects`, `web/src/runs` |
+| Storage and disk space | pdt-api `storage.rs`; pdt-core `storage.rs`; pdt-git `is_disposable` | `web/src/host/StorageSettings.tsx`, `web/src/projects/worktreeStorage.tsx` |
 | Workspaces and tabs | pdt-api `workspaces.rs`; pdt-store `workspaces.rs` | `web/src/workspaces`, `web/src/shell` |
 | Tickets, Start, parts, merge detection | pdt-api `tickets.rs`, `start.rs`, `stop.rs`, `finish.rs`, `parts.rs`, `scheduler.rs`; pdt-core `ticket.rs`, `start.rs`, `parts.rs`, `policy.rs`; pdt-git `merge.rs` | `web/src/tickets` |
 | PRs, CI, forges | pdt-api `github.rs`, `ci.rs`, `forge.rs`, `local_forge.rs`; `crates/pdt-forge`, `crates/pdt-github`, `crates/pdt-int-gitlab` | `web/src/tickets`, `web/src/plugins` |
@@ -249,6 +270,7 @@ login.
 | Integrations | pdt-api `sdk.rs`, `integrations/`; `crates/pdt-int-*`; pdtd `src/integrations/` | `web/src/plugins`, `web/src/connections` |
 | Documents | pdt-api `documents/`; pdt-core `document.rs`; pdt-store `documents.rs` | `web/src/documents` |
 | The PM | pdt-api `pm.rs`; pdt-core `pm.rs`; pdt-store `pm.rs` | `web/src/pm` |
+| Watches | pdt-api `watches.rs`; pdt-core `watch.rs`; pdt-store `watches.rs` | `web/src/common/Watch.tsx` |
 | Secrets | pdt-api `vault.rs`, `secrets.rs`; pdt-core `secret.rs` | `web/src/secrets` |
 | The user's MCP servers | pdt-api `agent_mcp.rs`, `mcp_oauth.rs`, `mcp_servers.rs`, `mcp_client.rs`; pdt-core `mcp_servers.rs`; pdt-agents `mcp.rs` | `web/src/mcp` |
 | Database | `crates/pdt-store` (`migrations/`, `migrate.rs`) | |

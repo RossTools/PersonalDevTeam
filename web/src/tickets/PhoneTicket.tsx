@@ -10,6 +10,7 @@ import type { InboxItem } from '../api/gen/InboxItem';
 import type { Ticket } from '../api/gen/Ticket';
 import { AgentDot } from '../common/AgentState';
 import { Markdown } from '../common/Markdown';
+import { useWatches, watchEntry, Watchers } from '../common/Watch';
 import { PartsStepper } from '../common/PartsStepper';
 import { PRIORITY_LABEL, PriorityIcon } from '../common/PriorityIcon';
 import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
@@ -106,7 +107,9 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
   };
   useTopBarEdit(editing ? { canSave, saving, onSave: () => void save(), onCancel: () => { setEditing(null); setError(null); } } : null);
 
+  const watches = useWatches({ ticket: t.id }).data;
   useTopBarActions((): MenuEntry[] => [
+    watchEntry(qc, { ticket: t.id }, watches),
     ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
     { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
     { submenu: 'Priority', entries: priorityEntries(qc, t) },
@@ -184,6 +187,9 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
             <Fold title="Documents" summary={documents.length === 0 ? 'None' : `${documents.length}`}><TicketDocuments ticket={t} /></Fold>
             <Fold title="Attachments" summary={attachments.length === 0 ? 'None' : `${attachments.length}`}><TicketAttachments ticketId={t.id} /></Fold>
             {t.overlaps.length > 0 && <Fold title="Overlaps" summary={overlapSummary(t)}><TicketOverlaps ticket={t} /></Fold>}
+            {watches && watches.length > 0 && (
+              <Fold title="Watching" summary={`${watches.length}`}><Watchers of={{ ticket: t.id }} /></Fold>
+            )}
           </div>
           <div className="flex flex-col divide-y divide-border px-4 *:py-4">
             <OverviewSection

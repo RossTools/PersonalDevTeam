@@ -28,6 +28,8 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   confirm: 'Agent call',
   proposal: 'Workflow proposal',
   mcp_sign_in: 'Sign in again',
+  storage: "Can't save",
+  low_disk: 'Low disk space',
 };
 
 /** The items of each group that has any, in the API's order. */

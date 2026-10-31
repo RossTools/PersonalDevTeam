@@ -100,7 +100,10 @@ documentsProvider: string | null,
  */
 documentsDir: string | null, 
 /**
- * Settings → MCP servers → "Use only PDT's MCP servers" (PDT-322): sessions ignore the agents' own MCP configs
- * where the agent can.
+ * Free space (GB) below which the Inbox warns that a disk with PDT's data or a project is running out; 0: off.
  */
-mcpOnlyPdt: boolean, };
+lowDiskGb: number, 
+/**
+ * Free space (GB) below which auto-start waits until space is freed; 0: off.
+ */
+criticalDiskGb: number, };

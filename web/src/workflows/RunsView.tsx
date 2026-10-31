@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, EmptyState, RelativeTime, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
+import { WatchButton, Watchers } from '../common/Watch';
 import { useOpenSession } from '../tickets/actions';
 import type { WorkflowRun } from '../api/gen/WorkflowRun';
 import type { WorkflowRunDetail } from '../api/gen/WorkflowRunDetail';
@@ -83,6 +84,7 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
         <span className="text-meta text-muted-foreground">
           version {r.version} · started <RelativeTime time={r.startedAt} />{r.endedAt ? ` · took ${duration(r.endedAt - r.startedAt)}` : ''}
         </span>
+        <span className={cn('flex gap-1', viewOnly && 'ml-auto')}><WatchButton of={{ run: r.id }} /></span>
         {!viewOnly && <span className="ml-auto flex gap-1">
           {resumeNode && (
             <Button size="sm" variant="primary" onClick={() => resume.mutate()} pending={resume.isPending}
@@ -94,6 +96,7 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
           )}
         </span>}
       </div>
+      <Watchers of={{ run: r.id }} />
       {r.error && <Alert tone="error">{r.error}</Alert>}
       {error && <Alert tone="error">{error.message}</Alert>}
       {d && !viewOnly && (

@@ -69,6 +69,16 @@ which wins over the setting, so you can't change it here. See
 
 See [Run configuration](../automation/run-configuration.md).
 
+### Storage
+
+Free space on each disk PDT uses, and what each project's worktrees take, with their build output apart.
+
+- **Clean** or **Remove…** a worktree, or **Clean all finished** tickets' worktrees at once.
+- **Low-disk warning**: below this much free space (20 GB unless you change it), the Inbox warns you.
+- **Pause auto-start below**: below this (5 GB), auto-start starts no new tickets.
+
+See [Disk space](your-data.md#disk-space).
+
 ### Projects folder
 
 Where a repository you add by **Clone URL** is cloned to (`~/work` unless you change it).
@@ -127,7 +137,9 @@ Each project has its own sections. A personal project (one without a repository)
 
 - **General**: its **Name**, its **Key** (the letters in its ticket numbers), the **Base branch** work starts from,
   and its **Repository folder**.
-- **Worktrees**: the checkouts PDT made for its branches. Remove one you no longer need, or open its changes.
+- **Worktrees**: the checkouts PDT made for its branches, each with its ticket and size. Open one's changes,
+  **Clean** its build output or remove it. **Clean build output after** and **Remove worktree after** set the
+  [automatic cleanup](your-data.md#disk-space) of finished tickets' worktrees.
 - **Runs on this host**: what **Run** and **Test** start, from the repository's file plus overrides kept on this
   machine. See [Run configuration](../automation/run-configuration.md).
 - **Agent instructions**: extra instructions for every agent in this project, on top of the repository's own
