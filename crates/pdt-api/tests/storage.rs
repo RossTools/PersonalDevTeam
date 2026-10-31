@@ -1,7 +1,7 @@
 //! Worktree storage (PDT-324): sizes measured in the background, cleaning build output, the automatic cleanup of
 //! finished tickets' worktrees, and low disk space (an Inbox item; auto-start waits while it is critical).
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};
