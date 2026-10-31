@@ -19,7 +19,7 @@ import { prHref } from '../tickets/PullRequest';
 import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
 import { navigate } from '../shell/router';
-import { after, CONNECT_PATH, dismissable, KIND_LABEL, noticeText, passesOf, primary, questionsOf, resends, selectedUpdate, step } from './model';
+import { after, changeRequestLabel, CONNECT_PATH, dismissable, gateQuestion, KIND_LABEL, noticeText, passesOf, primary, questionsOf, resends, selectedUpdate, step } from './model';
 import { useClearUpdate, useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
 
@@ -146,6 +146,11 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
             {item.ticketId && item.projectId && (
               <Button variant="ghost" size="sm" onClick={() => openTicket({ id: item.ticketId!, projectId: item.projectId! })}>
                 Open ticket <Kbd>o</Kbd>
+              </Button>
+            )}
+            {item.changeRequest && (
+              <Button variant="ghost" size="sm" onClick={() => window.open(item.changeRequest!.url, '_blank', 'noopener')}>
+                {changeRequestLabel(item)}
               </Button>
             )}
             {item.sessionId && item.projectId && item.kind !== 'session' && (
@@ -300,31 +305,40 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
             <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice })} />
           </section>
         )}
-        {(item.kind === 'gate') && (
+        {item.kind === 'gate' && (
           <section aria-label="Gate" className="flex flex-col gap-3">
             {typeof item.body.workflow === 'string' && (
               <p className="text-meta text-muted-foreground">From workflow {item.body.workflow}</p>
+            )}
+            {/* The whole question, when the title is only its step's name or first line (PDT-306: a pull request's review). */}
+            {gateQuestion(item) && (
+              <div aria-label="Question" className="rounded-md border border-border p-3 text-sm"><Markdown>{gateQuestion(item)!}</Markdown></div>
             )}
             {/* What the gate is about, when its step says more than its question (PDT-288: a missing nightly). */}
             {typeof item.body.text === 'string' && (
               <div className="rounded-md border border-border p-3 text-sm"><Markdown>{item.body.text}</Markdown></div>
             )}
-            <Textarea
-              aria-label="Note (optional)"
-              placeholder={item.ticketId ? 'A note with your choice (optional), e.g. what to change when you reject it' : 'A note with your choice (optional)'}
-              value={nudge}
-              onChange={(e) => setNudge(e.target.value)}
-              rows={3}
-            />
-            {item.ticketId && (
-              <p className="text-meta text-muted-foreground">
-                A note goes on the ticket as your comment, so the agent working on it gets it.
-              </p>
-            )}
-            <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice, ...(nudge.trim() ? { text: nudge } : {}) })} />
           </section>
         )}
       </div>
+      {/* A gate's decision stays in view below its question, however long the question is. */}
+      {item.kind === 'gate' && (
+        <div role="group" aria-label="Your choice" className="flex shrink-0 flex-col gap-3 border-t border-border p-4">
+          <Textarea
+            aria-label="Note (optional)"
+            placeholder={item.ticketId ? 'A note with your choice (optional), e.g. what to change when you reject it' : 'A note with your choice (optional)'}
+            value={nudge}
+            onChange={(e) => setNudge(e.target.value)}
+            rows={3}
+          />
+          {item.ticketId && (
+            <p className="text-meta text-muted-foreground">
+              A note goes on the ticket as your comment, so the agent working on it gets it.
+            </p>
+          )}
+          <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice, ...(nudge.trim() ? { text: nudge } : {}) })} />
+        </div>
+      )}
     </div>
   );
 }
@@ -474,7 +488,8 @@ function TicketWork({ item }: { item: InboxItem }) {
   const mine = (t?.sessions ?? []).filter((x) => attempt && x.attemptId === attempt.id);
   const coder = mine.find((x) => x.status === 'running') ?? mine[0];
   const start = useStartRun(projectId, (id) => tabs.openRun({ id, projectId }));
-  const pr = attempt?.pr ?? null;
+  // A gate's pull request has its own button by Open ticket.
+  const pr = item.changeRequest ? null : attempt?.pr ?? null;
   if (!item.ticketId || !item.projectId || (!worktreeId && !coder && !pr)) return null;
   const run = (choice: string) => {
     const tab = tabs.placementNear(item.ticketId!);

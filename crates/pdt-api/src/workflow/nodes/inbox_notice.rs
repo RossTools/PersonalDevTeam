@@ -109,6 +109,7 @@ impl NodeKind for InboxNotice {
                 step_id: None,
                 persona_id: None,
                 persona_name: None,
+                change_request: None,
                 title,
                 body: json!({
                     "notice": kind, "key": c.key, "text": c.text, "pr": pr, "url": notice.get("url"),

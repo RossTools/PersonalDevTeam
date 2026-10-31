@@ -99,6 +99,7 @@ impl NodeKind for InboxAdmit {
                 step_id: None,
                 persona_id: None,
                 persona_name: None,
+                change_request: None,
                 title: t.title.clone(),
                 body: json!({
                     "summary": nonblank(&c.summary), "issue": nonblank(&c.issue),

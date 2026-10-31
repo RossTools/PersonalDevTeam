@@ -2563,6 +2563,7 @@ mod tests {
             step_id: None,
             persona_id: None,
             persona_name: None,
+            change_request: None,
             title: "Approve?".into(),
             body: json!({}),
             choices: vec![],

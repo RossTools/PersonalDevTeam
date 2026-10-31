@@ -467,6 +467,15 @@ pub trait Forge: Send + Sync {
     }
 }
 
+/// The host of a GitHub pull request's page (`https://<host>/<owner>/<repo>/pull/<n>`); None for any other URL.
+pub fn github_pull_url(url: &str) -> Option<String> {
+    let r = pdt_core::git_url::parse_remote(url)?;
+    match r.path.as_slice() {
+        [_, _, pull, n] if pull == "pull" && n.parse::<u64>().is_ok() => Some(r.host),
+        _ => None,
+    }
+}
+
 /// A forge plugin (PDT-241): a kind of forge, the remotes it handles, and the forge it opens for them.
 pub trait ForgePlugin: Send + Sync {
     /// Its id, which `.pdt/project.toml`'s `forge = "…"` names.
@@ -479,6 +488,14 @@ pub trait ForgePlugin: Send + Sync {
     /// The forge's name for the repository at `remote` (GitHub's `owner/name`); None when it isn't one of its own.
     fn repo_of(&self, remote: &pdt_core::git_url::Remote) -> Option<String> {
         if self.claims_host(&remote.host) { remote.owner_repo() } else { None }
+    }
+    /// What the forge calls a change request, for people (PDT-306): `pull request`, GitLab's `merge request`.
+    fn change_request_name(&self) -> &'static str {
+        "pull request"
+    }
+    /// Whether `url` is a change request's page on this forge (an external ticket's link to a pull request).
+    fn is_change_request_url(&self, _url: &str) -> bool {
+        false
     }
     /// Where the repository `repo` at `remote` is on the forge's website; None when it has none to link to.
     fn links(&self, _remote: &pdt_core::git_url::Remote, _repo: &str) -> Option<ForgeLinks> {
@@ -537,6 +554,10 @@ impl ForgePlugin for HostedForge {
     }
     fn claims_host(&self, host: &str) -> bool {
         self.hosts.iter().any(|h| h.eq_ignore_ascii_case(host))
+    }
+    /// GitHub's `https://<host>/<owner>/<repo>/pull/<n>`.
+    fn is_change_request_url(&self, url: &str) -> bool {
+        github_pull_url(url).is_some_and(|host| self.claims_host(&host))
     }
     /// The repository's page at `https://<host>/<repo>`, without branch or compare pages.
     fn links(&self, remote: &pdt_core::git_url::Remote, repo: &str) -> Option<ForgeLinks> {

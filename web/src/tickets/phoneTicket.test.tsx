@@ -25,7 +25,7 @@ const inProgress = ticket(1, {
 });
 const gate: InboxItem = {
   id: 'g1', kind: 'gate', group: 'accept', status: 'open', projectId: project.id, ticketId: 't1', ticketKey: 'ALP-1', ticketTitle: 'Fix login',
-  attemptId: 'a1', sessionId: null, runId: 'r1', stepId: null, personaId: null, personaName: null, title: 'Accept ALP-1?', body: {},
+  attemptId: 'a1', sessionId: null, runId: 'r1', stepId: null, personaId: null, personaName: null, changeRequest: null, title: 'Accept ALP-1?', body: {},
   choices: [{ id: 'reject', title: 'reject', primary: false }, { id: 'merge', title: 'merge', primary: true }], resolution: null, createdAt: 1, resolvedAt: null,
 };
 
