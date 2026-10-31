@@ -98,7 +98,7 @@ impl Store {
             .foreign_keys(true);
         // No ping before handing out an idle connection: a local SQLite connection doesn't go stale, and on Windows
         // that ping could stall a checkout indefinitely under load (with idle connections in the pool), hanging the
-        // request that needed it (docs/superpowers/notes/known-limits.md).
+        // request that needed it.
         let pool = SqlitePoolOptions::new().max_connections(8).test_before_acquire(false).connect_with(options).await?;
         migrate::backup_if_pending(&pool, migrator, backup_dir).await?;
         migrator.run(&pool).await?;

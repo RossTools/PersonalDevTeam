@@ -12,4 +12,4 @@ You've installed PDT, connected an agent, added a project and taken a ticket fro
   before you accept it. See [Workflows](../automation/workflows.md).
 - **Check in from your phone.** Set up remote access over Tailscale. See
   [Remote access](../your-machine/remote-access.md).
-- **Something not working?** See [Troubleshooting](../troubleshooting/troubleshooting.md).
+- **Something not working?** See [Troubleshooting and FAQ](../troubleshooting/troubleshooting.md).

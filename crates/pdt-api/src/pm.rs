@@ -1,4 +1,4 @@
-//! The project manager (PDT-81, docs/superpowers/specs/2026-10-21-pm-persona-design.md): PM sessions in the host
+//! The project manager (PDT-81): PM sessions in the host
 //! project, the briefing pdtd writes into each new one, journal checkpoints and daily updates, closing with a journal
 //! entry, the notes routes, and the project policy that answers the PM's asking tools for the user.
 
