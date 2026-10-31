@@ -10,6 +10,7 @@ import { actionError } from '../common/useAction';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { SecretRequest } from './SecretRequest';
 import { TriagedTicket } from './TriagedTicket';
+import { WorkflowProposal } from './WorkflowProposal';
 import { ConfirmCall } from './ConfirmCall';
 import { useOpenSession, useOpenTicket } from '../tickets/actions';
 import { useOpenChanges } from '../review/open';
@@ -19,7 +20,7 @@ import { prHref } from '../tickets/PullRequest';
 import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
 import { navigate } from '../shell/router';
-import { after, changeRequestLabel, CONNECT_PATH, dismissable, gateQuestion, KIND_LABEL, noticeText, passesOf, primary, questionsOf, resends, selectedUpdate, step } from './model';
+import { after, changeRequestLabel, CONNECT_PATH, dismissable, gateQuestion, KIND_LABEL, noticeText, passesOf, primary, proposalPath, questionsOf, resends, selectedUpdate, step } from './model';
 import { useClearUpdate, useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
 
@@ -297,6 +298,15 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
           <section aria-label="Triaged ticket" className="flex flex-col gap-3">
             <TriagedTicket item={item} />
             <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice })} />
+          </section>
+        )}
+        {item.kind === 'proposal' && (
+          <section aria-label="Workflow proposal" className="flex flex-col gap-3">
+            <WorkflowProposal item={item} />
+            <div className="flex flex-wrap items-center gap-2">
+              <Choices item={item} busy={busy} onPick={(choice) => void answer({ choice })} />
+              <Button variant="ghost" onClick={() => navigate(proposalPath(item))}>Open</Button>
+            </div>
           </section>
         )}
         {item.kind === 'confirm' && (

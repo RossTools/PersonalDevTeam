@@ -1,6 +1,7 @@
 import type { InboxGroup } from '../api/gen/InboxGroup';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { InboxKind } from '../api/gen/InboxKind';
+import { routePath } from '../shell/route';
 
 /** The Inbox's groups, most urgent first (UX spec §8.4), as the API sorts them. */
 export const GROUPS: { id: InboxGroup; title: string }[] = [
@@ -11,6 +12,7 @@ export const GROUPS: { id: InboxGroup; title: string }[] = [
   { id: 'loop_limit', title: 'Loop limit' },
   { id: 'notice', title: 'Unheard notices' },
   { id: 'admit', title: 'Triaged tickets' },
+  { id: 'proposal', title: 'Workflow proposals' },
   { id: 'gate', title: 'Gates' },
   { id: 'accept', title: 'Ready to accept' },
 ];
@@ -24,6 +26,7 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   connect: 'Connect',
   admit: 'Triaged ticket',
   confirm: 'Agent call',
+  proposal: 'Workflow proposal',
 };
 
 /** The items of each group that has any, in the API's order. */
@@ -132,6 +135,23 @@ export function confirmOf(item: InboxItem): { tool: string; agent: string | null
     session: typeof b.sessionTitle === 'string' && b.sessionTitle ? b.sessionTitle : null,
     input: JSON.stringify(b.input ?? {}, null, 2),
   };
+}
+
+/** A workflow version an agent proposed (PDT-320): the workflow, the version, who proposed it, their note and what changed. */
+export function proposalOf(item: InboxItem): { workflowId: string; workflow: string; version: number; note: string; summary: string } {
+  const b = item.body;
+  return {
+    workflowId: typeof b.workflowId === 'string' ? b.workflowId : '',
+    workflow: typeof b.workflow === 'string' ? b.workflow : '',
+    version: typeof b.version === 'number' ? b.version : 0,
+    note: typeof b.note === 'string' ? b.note : '',
+    summary: typeof b.summary === 'string' ? b.summary : '',
+  };
+}
+
+/** Where a proposal's Open goes: its workflow's Versions tab, which shows the whole change. */
+export function proposalPath(item: InboxItem): string {
+  return routePath({ view: 'workflows', target: { kind: 'workflow', id: proposalOf(item).workflowId, tab: 'versions' } });
 }
 
 /** An Update's id in the Inbox's selection (Needs-you items use their own ids). */

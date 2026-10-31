@@ -266,6 +266,20 @@ describe('phone triage', () => {
     await waitFor(() => expect(answered(calls)).toEqual({ choice: 'passed', text: 'Works' }));
   });
 
+  it("accepts an agent's workflow proposal from the bar (PDT-320)", async () => {
+    const proposal = item('proposal:w1:2', {
+      kind: 'proposal', group: 'proposal', projectId: null, ticketId: null, ticketKey: null, ticketTitle: null, runId: null, stepId: null,
+      title: 'PM proposed version 2 of Scryer import sweeper',
+      body: { workflowId: 'w1', workflow: 'Scryer import sweeper', version: 2, note: 'Sweep every hour', summary: 'changed sweep' },
+      choices: [{ id: 'discard', title: 'Discard', primary: false }, { id: 'accept', title: 'Accept', primary: true }],
+    });
+    const { calls } = triage([proposal], proposal.id, { 'POST /api/inbox/proposal%3Aw1%3A2/answer': {} });
+    expect(screen.getByText('Sweep every hour')).toBeInTheDocument();
+    expect(barLabels()).toEqual(['Discard', 'Accept']);
+    await userEvent.click(bar().getByRole('button', { name: 'Accept' }));
+    await waitFor(() => expect(answered(calls)).toEqual({ choice: 'accept' }));
+  });
+
   it('has Open session for a session waiting', () => {
     triage([waiting], 'session:sess');
     expect(barLabels()).toEqual(['Open session']);

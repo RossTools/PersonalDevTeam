@@ -49,7 +49,9 @@ PDT then runs it whenever its trigger happens. Turning it off stops new runs; ru
 A template whose plugin is off is faded; its preview links to the plugin so you can turn it on.
 
 To have an agent write one for you, ask [the PM](the-pm.md) ("Write a workflow that posts merged tickets to
-Discord"). It saves a proposal: open **Versions** on the workflow and **Accept** or **Discard** it.
+Discord"). It saves a proposal, which waits in the Inbox under **Workflow proposals** and in a banner on the workflow
+(**Proposal waiting** in the list): **Review** shows the whole change in **Versions**, then **Accept** or **Discard**
+it, on a phone too. Accepting replaces changes you haven't saved, so PDT asks first.
 
 ## The Pipeline
 

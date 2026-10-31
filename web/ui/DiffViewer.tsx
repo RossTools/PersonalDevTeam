@@ -113,18 +113,21 @@ export interface DiffViewerProps {
   diff: string;
   /** Leave out the file header (a single file already named around it, e.g. in a tool row). */
   hideHeaders?: boolean;
+  /** Wrap long lines instead of scrolling them sideways (a JSON document's long strings, PDT-320). */
+  wrap?: boolean;
   className?: string;
 }
 
 /**
  * A read-only unified diff: per-file headers with "+N −M", hunks with old/new line-number gutters and add/remove
- * shading. Long lines scroll sideways within their file. (Phase 6 adds split view and comments.)
+ * shading. Long lines scroll sideways within their file, or wrap with `wrap`; either way the viewer never grows wider
+ * than its container. (Phase 6 adds split view and comments.)
  */
-export function DiffViewer({ diff, hideHeaders = false, className }: DiffViewerProps) {
+export function DiffViewer({ diff, hideHeaders = false, wrap = false, className }: DiffViewerProps) {
   const files = parseDiff(diff);
   if (files.length === 0) return <p className={cn('text-xs text-muted-foreground', className)}>No changes.</p>;
   return (
-    <div className={cn('flex flex-col gap-2', className)}>
+    <div className={cn('flex min-w-0 flex-col gap-2', className)}>
       {files.map((f, fi) => (
         <section key={`${f.path}:${fi}`} aria-label={f.path || 'Diff'} className="overflow-hidden rounded-md border border-border bg-card">
           {!hideHeaders && f.path && (
@@ -146,7 +149,7 @@ export function DiffViewer({ diff, hideHeaders = false, className }: DiffViewerP
                     <tr key={`${hi}:${li}`} data-kind={l.kind} className={ROW[l.kind]}>
                       <td className={cn('w-px px-1.5 text-right whitespace-nowrap tabular-nums select-none', NUM[l.kind])}>{l.old ?? ''}</td>
                       <td className={cn('w-px px-1.5 text-right whitespace-nowrap tabular-nums select-none', NUM[l.kind])}>{l.new ?? ''}</td>
-                      <td className="pr-2 whitespace-pre">
+                      <td className={cn('pr-2', wrap ? 'whitespace-pre-wrap wrap-anywhere' : 'whitespace-pre')}>
                         <span aria-hidden className={cn('inline-block w-3 select-none', SIGN_TONE[l.kind])}>{SIGN[l.kind]}</span>
                         <span className="sr-only">{l.kind === 'add' ? 'Added: ' : l.kind === 'del' ? 'Removed: ' : ''}</span>
                         {l.text}

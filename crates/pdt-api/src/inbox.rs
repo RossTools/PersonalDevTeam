@@ -28,6 +28,7 @@ pub(crate) async fn list(State(st): State<AppState>, Query(q): Query<ListQuery>)
     items.extend(approvals(&st, q.project.as_deref()).await?);
     items.extend(sessions_waiting(&st, q.project.as_deref()).await?);
     items.extend(connect_forge(&st));
+    items.extend(proposals(&st, q.project.as_deref()).await?);
     decorate(&st, &mut items).await?;
     inbox::sort(&mut items);
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
@@ -227,6 +228,68 @@ let agents read CI logs. Connect {label} in Settings › Plugins › {label}.")}
     })
 }
 
+/// Workflow versions agents proposed (PDT-320), one item per workflow: who proposed it, their note and what changed,
+/// with Accept and Discard. Not stored: the item goes once the proposal is accepted, discarded or replaced. With a
+/// project, the workflows that apply to it.
+pub(crate) async fn proposals(st: &AppState, project: Option<&str>) -> Result<Vec<InboxItem>, ApiError> {
+    let mut out = vec![];
+    for w in st.store.list_workflows(project).await? {
+        let Some(v) = w.proposed else { continue };
+        let Some(version) = st.store.list_workflow_versions(&w.id).await?.into_iter().find(|x| x.version == v) else {
+            continue;
+        };
+        let (Some(current), Some(proposed)) =
+            (st.store.workflow_doc(&w.id, w.version).await?, st.store.workflow_doc(&w.id, v).await?)
+        else {
+            continue;
+        };
+        let summary = pdt_core::workflow::diff::diff(&current, &proposed, "", "").summary();
+        let by = version.proposed_by.clone().unwrap_or_else(|| "An agent".into());
+        out.push(InboxItem {
+            id: inbox::proposal_id(&w.id, v),
+            kind: InboxKind::Proposal,
+            group: InboxGroup::Proposal,
+            status: InboxStatus::Open,
+            project_id: w.project_id.clone(),
+            ticket_id: None,
+            ticket_key: None,
+            ticket_title: None,
+            attempt_id: None,
+            session_id: None,
+            run_id: None,
+            step_id: None,
+            persona_id: None,
+            persona_name: None,
+            change_request: None,
+            title: format!("{by} proposed version {v} of {}", w.name),
+            body: json!({"workflowId": w.id, "workflow": w.name, "version": v, "current": w.version,
+                         "by": version.proposed_by, "note": version.note, "summary": summary, "enabled": w.enabled}),
+            choices: vec![
+                InboxChoice::new(inbox::DISCARD, "Discard", false),
+                InboxChoice::new(inbox::ACCEPT, "Accept", true),
+            ],
+            resolution: Value::Null,
+            created_at: version.created_at,
+            resolved_at: None,
+        });
+    }
+    Ok(out)
+}
+
+/// Accept or Discard on a workflow proposal's item (PDT-320): the same as the workflow's Versions tab.
+async fn answer_proposal(st: &AppState, id: &str, choice: Option<&str>) -> Result<Json<Value>, ApiError> {
+    use crate::workflow::routes;
+    let (workflow, version) = inbox::parse_proposal_id(id).ok_or_else(|| ApiError::not_found("inbox item"))?;
+    let path = Path((workflow.to_string(), version));
+    let Json(d) = match choice {
+        Some(inbox::ACCEPT) => routes::accept(State(st.clone()), path).await?,
+        Some(inbox::DISCARD) => routes::discard(State(st.clone()), path).await?,
+        _ => return Err(bad("choose Accept or Discard")),
+    };
+    crate::notifications::kick(st);
+    Ok(Json(json!({"workflowId": workflow, "version": d.workflow.version, "accepted": choice == Some(inbox::ACCEPT)})))
+}
+
 /// The open permission requests of live conversations, as items.
 pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Vec<InboxItem>, ApiError> {
     let mut out = vec![];
@@ -308,6 +371,9 @@ pub(crate) async fn answer(
     }
     if id.starts_with("session:") {
         return Err(bad("answer the session in its tab"));
+    }
+    if id.starts_with("proposal:") {
+        return answer_proposal(&st, &id, a.choice.as_deref()).await;
     }
     let item = load(&st, &id).await?;
     if let Some(c) = &a.choice

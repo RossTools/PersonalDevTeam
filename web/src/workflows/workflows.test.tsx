@@ -84,6 +84,41 @@ describe('workflow page', () => {
     expect(screen.getByText('An agent proposed version 3.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add node' })).not.toBeInTheDocument();
   });
+
+  it("accepts or discards an agent's proposal from its banner", async () => {
+    const calls = stubApi({
+      'GET /api/workflows/w1': detail({ proposed: 2 }),
+      'POST /api/workflows/check': check,
+      'POST /api/workflows/w1/versions/2/accept': detail({ version: 2 }),
+      'POST /api/workflows/w1/versions/2/discard': detail(),
+    });
+    renderWithQuery(<WorkflowPage id="w1" catalog={CATALOG} projects={[]} onOpen={() => {}} />);
+    const banner = (await screen.findByText(/An agent proposed version 2/)).closest('[data-tone]') as HTMLElement;
+    expect(within(banner).getByRole('button', { name: 'Review' })).toBeInTheDocument();
+    expect(within(banner).getByRole('button', { name: 'Accept' })).toBeInTheDocument();
+    await userEvent.click(within(banner).getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/workflows/w1/versions/2/discard')).toBe(true));
+    // Discarded: the banner goes.
+    await waitFor(() => expect(screen.queryByText(/An agent proposed version 2/)).not.toBeInTheDocument());
+  });
+
+  it('asks before Accept replaces unsaved changes', async () => {
+    const calls = stubApi({
+      'GET /api/workflows/w1': detail({ proposed: 2 }),
+      'POST /api/workflows/check': check,
+      'POST /api/workflows/w1/versions/2/accept': detail({ version: 2 }),
+    });
+    renderWithQuery(<WorkflowPage id="w1" catalog={CATALOG} projects={[]} onOpen={() => {}} />);
+    const name = within(await screen.findByRole('region', { name: 'Workflow details' })).getByRole('textbox', { name: 'Name' });
+    await userEvent.type(name, ' edited');
+    expect(screen.getByRole('region', { name: 'Unsaved changes' })).toBeInTheDocument();
+    const banner = screen.getByText(/An agent proposed version 2/).closest('[data-tone]') as HTMLElement;
+    await userEvent.click(within(banner).getByRole('button', { name: 'Accept' }));
+    const ask = await screen.findByRole('alertdialog', { name: /Accept and lose your unsaved changes/ });
+    await userEvent.click(within(ask).getByRole('button', { name: 'Accept' }));
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/workflows/w1/versions/2/accept')).toBe(true));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Unsaved changes' })).not.toBeInTheDocument());
+  });
 });
 
 describe('workflow page on a phone', () => {
@@ -125,6 +160,29 @@ describe('workflow page on a phone', () => {
     expect(within(ask).queryByRole('button', { name: 'Dry run first' })).not.toBeInTheDocument();
     await userEvent.click(within(ask).getByRole('button', { name: 'Turn on' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ enabled: true }));
+  });
+
+  it("accepts an agent's proposal, from the banner and the Versions tab, though it edits nothing", async () => {
+    stubPhone();
+    const calls = stubApi({
+      'GET /api/workflows/w1': detail({ proposed: 2 }),
+      'POST /api/workflows/check': check,
+      'GET /api/workflows/w1/versions': [
+        { workflowId: 'w1', version: 2, author: 'agent', status: 'proposed', note: 'add a step', proposedBy: 'PM', createdAt: 2 },
+        { workflowId: 'w1', version: 1, author: 'user', status: 'saved', note: '', proposedBy: null, createdAt: 1 },
+      ],
+      'GET /api/workflows/w1/diff': { nodesAdded: ['note'], nodesRemoved: [], nodesChanged: [], edgesAdded: [], edgesRemoved: [], metaChanged: false, unified: '--- v1\n+++ v2\n@@ -1,1 +1,2 @@\n {\n+  "x": 1\n' },
+      'POST /api/workflows/w1/versions/2/accept': detail({ version: 2 }),
+    });
+    renderWithQuery(<WorkflowPage id="w1" catalog={CATALOG} projects={[]} onOpen={() => {}} />);
+    const banner = (await screen.findByText(/An agent proposed version 2/)).closest('[data-tone]') as HTMLElement;
+    expect(within(banner).getByRole('button', { name: 'Accept' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: 'Versions' }));
+    const bar = await screen.findByRole('toolbar', { name: 'Version actions' });
+    expect(within(bar).getByText(/v2 · PM/)).toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+    await userEvent.click(within(bar).getByRole('button', { name: 'Accept' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/workflows/w1/versions/2/accept')).toBe(true));
   });
 });
 
@@ -267,6 +325,28 @@ describe('versions', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Accept' }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(calls.some((c) => c.path === '/api/workflows/w1/versions/2/accept')).toBe(true);
+  });
+
+  it('keeps Accept and Discard above the diff, which wraps its long lines instead of widening the pane', async () => {
+    const long = `+  "prompt": "${'a very long line '.repeat(40)}"`;
+    stubApi({
+      'GET /api/workflows/w1/versions': [
+        { workflowId: 'w1', version: 2, author: 'agent', status: 'proposed', note: '', proposedBy: null, createdAt: 2 },
+        { workflowId: 'w1', version: 1, author: 'user', status: 'saved', note: '', proposedBy: null, createdAt: 1 },
+      ],
+      'GET /api/workflows/w1/diff': { nodesAdded: [], nodesRemoved: [], nodesChanged: ['ci'], edgesAdded: [], edgesRemoved: [], metaChanged: false, unified: `--- v1\n+++ v2\n@@ -1,1 +1,2 @@\n {\n${long}\n` },
+    });
+    renderWithQuery(<VersionsView w={detail({ proposed: 2 })} dirty={false} onChanged={() => {}} />);
+    const line = await screen.findByText(/a very long line/);
+    const bar = screen.getByRole('toolbar', { name: 'Version actions' });
+    expect(within(bar).getByRole('button', { name: 'Accept' })).toBeInTheDocument();
+    // The buttons sit outside the box that scrolls, and nothing in the pane may grow wider than it.
+    const scroller = line.closest('.overflow-auto') as HTMLElement;
+    expect(scroller).not.toBeNull();
+    expect(scroller.contains(bar)).toBe(false);
+    expect(scroller.className).toContain('min-w-0');
+    expect(screen.getByRole('region', { name: 'Version' }).className).toContain('min-w-0');
+    expect(line.closest('td')?.className).toMatch(/whitespace-pre-wrap.*wrap-anywhere/);
   });
 });
 

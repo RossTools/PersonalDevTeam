@@ -123,6 +123,10 @@ pub struct WorkflowVersion {
     pub author: Author,
     pub status: VersionStatus,
     pub note: String,
+    /// Who proposed it (PDT-320): the agent's persona, else its session's title. None for the user's versions and
+    /// imported proposals.
+    #[serde(default)]
+    pub proposed_by: Option<String>,
     #[ts(type = "number")]
     pub created_at: i64,
     /// Only when one version is asked for.

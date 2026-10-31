@@ -33,6 +33,9 @@ Pick an item to see it and its choices beside the list. Keys: **j** / **k** down
   GitHub login to follow your pull requests.
 - **Triaged tickets**: a workflow drafted a ticket from a new issue. **Approve** moves it to **To do**, **Reject** to
   **Won't do** (moving it on the board does the same).
+- **Workflow proposals**: an agent (the PM, say) changed one of your workflows. The item says who proposed it, their
+  note and what changed. **Accept** makes it the current version, **Discard** sets it aside, **Open** shows the whole
+  change in the workflow's **Versions** tab. The item goes once you decide, or when a newer proposal replaces it.
 - **Gates**: a workflow wants your decision, or it's your turn to do a step by hand. The full question is shown
   formatted, with its links. **Open pull request** opens a gate's pull request (**Open merge request** on GitLab). Pick
   a choice; the optional note goes on the ticket as your comment, so a "no" can say what to change.
