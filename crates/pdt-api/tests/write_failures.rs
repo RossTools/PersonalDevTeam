@@ -2,7 +2,7 @@
 //! once only; a step that failed to write is retried without using up a retry; a step's result that could not be
 //! written is written without running the step again; and the Inbox says PDT can't save changes while it can't.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

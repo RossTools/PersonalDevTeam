@@ -63,3 +63,4 @@ mod workflow_transfer;
 mod workflows;
 mod workspaces;
 mod worktrees;
+mod write_failures;
