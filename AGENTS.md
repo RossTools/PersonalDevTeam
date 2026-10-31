@@ -69,7 +69,7 @@ Spec: docs/superpowers/specs/2026-10-14-personal-dev-team-design.md (feature spe
   - A session or run has at most one tab, and closing its tab stops and removes it.
   - One active attempt per ticket; parent tickets are never started (their parts are).
   - PR state and file overlaps are computed in memory and added to ticket responses, not stored.
-  - Conversations are never auto-resumed as terminals, and nothing is sent to an agent without the user's click or a workflow the user enabled (built-ins such as PR notices are enabled by default and can be turned off).
+  - Conversations are never auto-resumed as terminals, and nothing is sent to an agent without the user's click or a workflow the user enabled (built-ins such as PR notices are enabled by default and can be turned off). The exception: a PM conversation's own `watch` tells that conversation about what it watches, without asking.
   - Guides served by pdtd link to each other by API path, never by repo path (a test checks).
 
 ## Rules

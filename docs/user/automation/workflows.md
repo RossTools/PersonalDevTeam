@@ -112,7 +112,8 @@ When a run fails, **Retry from the failed step** runs it again from where it sto
 When an agent step stopped or ran out of time, **Resume from** that step starts it again in the same session, with an
 optional note from you. You can resume a timed-out step from the Inbox too.
 
-Failed runs also show in the Inbox's **Updates**.
+Failed runs also show in the Inbox's **Updates**. To hear when one run finishes, fails or waits on you, click the eye
+(**Watch**) beside its status, or ask the PM to watch it.
 
 ## Build or change a workflow
 

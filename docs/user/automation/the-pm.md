@@ -15,6 +15,8 @@ looked yet.
 - **Say what's going on**: "What's in flight?", "Why is ABC-12 stuck?", "What needs me?" It reads the board, pull
   requests and CI, running agents and the Inbox.
 - **Talk to an agent**: "Tell the agent on ABC-12 to rebase before it pushes again."
+- **Keep an eye on something**: "Tell me when ABC-12's agent reports", "Let me know when the release run finishes."
+  It watches the ticket or run (see [Watch a ticket or run](#watch-a-ticket-or-run)).
 - **Run or write a workflow**: "Run the release workflow", "Write a workflow that posts merged tickets to Discord." A
   workflow it writes is a proposal you accept or discard (see [Workflows](workflows.md#share-and-copy)).
 - **Put a screenshot on a ticket**: paste it into the chat and say "Make a ticket for this bug, with the screenshot."
@@ -60,6 +62,19 @@ Some things always ask, whatever the setting:
 
 - moving a ticket that came from outside PDT (an issue, say) onto the board, or labelling it `agentic`;
 - reporting a bug in PDT.
+
+## Watch a ticket or run
+
+Ask the PM to keep an eye on a ticket or a workflow run and it watches it for you: when the ticket's agent reports,
+the ticket is done or closed, its work merges, CI fails, or it waits on you (or the run succeeds, fails or is
+cancelled), PDT tells that conversation, and the PM tells you. It doesn't keep checking: it hears once it happens.
+Several things at once arrive together, and the message waits until the PM has finished what it's doing.
+
+Watching asks nothing: it only tells the PM's own conversation. Unless you ask for more, the watch ends once the ticket
+or run is finished. A ticket or run the PM watches says so (**Watched by PM “Release”**), and the **×** beside it stops
+that watch. If you close the conversation, what it hadn't heard yet comes to your Inbox instead, and the watch ends.
+
+To watch something yourself, see [Watch a ticket](../using-pdt/tickets-and-the-board.md#watch-a-ticket).
 
 ## Talk to it from Discord
 
