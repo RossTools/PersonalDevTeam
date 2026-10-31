@@ -24,6 +24,7 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
   { label: 'Remote access', terms: ['Serve on the tailnet', 'Tailscale', 'Owner', 'Status'] },
   { label: 'Runs', terms: ['Ports', 'Max concurrent runs'] },
   { label: 'Projects folder', terms: ['Folder', 'Clone by URL'] },
+  { label: 'Documents', terms: ['Default provider', 'Local documents folder', 'Docs', 'Sheets'] },
   { label: 'Appearance', terms: ['Theme', 'Dark', 'Light', 'System'] },
   { label: 'Bug reports', terms: ['Send reports to', 'Report a bug'] },
   { label: 'Checks', terms: ['git', 'tailscale', 'claude', 'codex', 'devin', 'Run checks again'] },
@@ -52,6 +53,7 @@ const PROJECT_SECTIONS: readonly (SectionInfo & { repoOnly?: true })[] = [
     terms: ['Who may merge', 'Approval', 'Labels that merge without approval', 'Green CI', 'Running tickets at once', 'Auto-start', 'Quiet period', 'The PM acts without asking'],
   },
   { label: 'Plugins', terms: ['Jira', 'Buildkite', 'Connection'], repoOnly: true },
+  { label: 'Documents', terms: ['Default provider', 'Local documents folder', 'Design doc', 'Docs', 'Sheets'] },
   { label: 'Danger zone', terms: ['Remove this project'] },
 ];
 

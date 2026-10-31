@@ -40,6 +40,12 @@ pub mod ci {
     pub use crate::github::{attempt_ref, merge_refused, merge_requested, run_refs, watched_pr};
 }
 
+/// Document providers (PDT-314: Google's Docs and Sheets, [`crate::Integration::document_providers`]).
+pub mod documents {
+    pub use crate::documents::{DocumentProvider, NewFile, ProviderError, ProviderResult};
+    pub use pdt_core::document::*;
+}
+
 /// PM conversations, for an integration that holds them elsewhere too (PDT-304: Discord's DMs).
 pub mod pm {
     pub use crate::pm::{close_conversation, conversations, send_from_user, set_via, start_conversation};

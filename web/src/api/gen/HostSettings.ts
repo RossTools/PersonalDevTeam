@@ -89,4 +89,13 @@ disabledAgents: Array<AgentKind>,
  * A default model for each agent (Settings → Agents, PDT-265). A session with no model of its own (nor its
  * persona's) starts with it; an agent without one uses the agent's own default (`HostSettings::model_for`).
  */
-agentModels: Partial<Record<AgentKind, string>>, };
+agentModels: Partial<Record<AgentKind, string>>, 
+/**
+ * The provider new documents go to (PDT-314) unless their project names one; none: the first PDT has.
+ */
+documentsProvider: string | null, 
+/**
+ * Where local documents go (a full path, or `~/…`) unless their project names a folder; none: `documents` in
+ * PDT's data folder.
+ */
+documentsDir: string | null, };
