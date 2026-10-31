@@ -154,7 +154,7 @@ hand), never per merge.
 
 ### Releasing
 
-The user decides when to release stable versions; only nightlies have a schedule. `.github/workflows/release.yml` does it in two halves:
+The user decides when to release stable versions; only nightlies are started every night (from outside GitHub). `.github/workflows/release.yml` does it in two halves:
 
 0. **Screenshots** (when the UI changed since the last release): regenerate the website's screenshots with
    `node scripts/site-screenshots.mjs` (site/README.md "Screenshots") and merge them before starting, so the site
@@ -224,15 +224,21 @@ change on real machines before it ships to everyone, or to get a fix to one host
 replaced the experimental releases cut by hand (`vX.Y.Z-exp.N`); hosts on an experimental build move to the
 next nightly.
 
-- **When**: the release workflow's schedule runs it every day at 08:17 UTC (off the hour: GitHub's scheduled runs
-  are best-effort, and top-of-the-hour ones are often delayed or dropped). When the head of `main` is already
-  released (the last nightly, or the stable release just merged, points at it) it publishes nothing and the run ends
-  green; a nightly tag at the head whose release never got published (that night failed) is built again.
+- **When**: every night, started from outside GitHub: a scheduler dispatches the release workflow on `main` with
+  channel `nightly` and `scheduled: true` (`gh workflow run release.yml -f channel=nightly -f scheduled=true`, or a
+  PDT workflow on a schedule that runs it). This repository's is the maintainer's own "PDT nightly" workflow (08:17
+  UTC). The workflow has no GitHub `schedule:`: GitHub's scheduled runs are best-effort, stopped firing
+  altogether, and one that started again could race the outside run into a duplicate nightly. With `scheduled`, when
+  the head of `main` is already released (the last nightly, or the stable release just merged, points at it) it
+  publishes nothing and the run ends green; a nightly tag at the head whose release never got published (that night
+  failed) is built again (`scripts/nightly-tag.sh`). `scheduled` with channel `stable` fails: stable releases are
+  only started by hand.
 - **Cut one by hand**: the release workflow with channel `nightly` (`gh workflow run release.yml -f channel=nightly`,
   with `-f bump=minor` or `-f version=X.Y.Z` when the next release isn't a patch), or ask the PM for a nightly
-  release (Cut a release with `{"type": "prerelease"}`, above). A manual run always builds, even when `main` hasn't changed.
+  release (Cut a release with `{"type": "prerelease"}`, above). A manual run (without `scheduled`) always builds, even
+  when `main` hasn't changed.
 - **What it does**: no release PR, and nothing is committed to `main`. It picks `X.Y.Z-nightly.YYYYMMDD`: `X.Y.Z` is
-  the version the next release would have for the bump (a patch on the schedule), the date is UTC, and a day's
+  the version the next release would have for the bump (a patch unless the run says otherwise), the date is UTC, and a day's
   second build is `.2`, then `.3`… (`scripts/version.sh next-nightly`). It tags the head of `main` with it, builds
   the same signed and notarized bundles as a stable release with that version set only in the build's checkout, and
   publishes a GitHub **pre-release** with `SHA256SUMS`. Its notes are "Nightly build of main at `<sha>`" and a preview
@@ -251,8 +257,8 @@ next nightly.
   special-cases its own repository) reads the release workflow's newest run on `main` every day at 11:00 UTC and puts
   a failed one in the Inbox ("The nightly release failed", with its failed jobs), once per run. The "Report failed
   workflow runs" template does the same for any repository.
-- **A night that never ran**: GitHub sometimes never starts a scheduled run at all, so there is no failed run to
-  report. The maintainer's own "PDT missing nightly" workflow (the "Report a missing scheduled release" template does
+- **A night that never ran**: the scheduler may not start a run at all (its host was off, say), so there is no
+  failed run to report. The maintainer's own "PDT missing nightly" workflow (the "Report a missing scheduled release" template does
   the same for any repository) looks at 10:00 UTC: when `main` has commits that the newest nightly and the latest
   stable release lack, and no nightly for the day (UTC) is published, the Inbox says "Tonight's nightly didn't run",
   once a day, with a link to the release workflow's runs and **Start it** (runs the release workflow with channel
@@ -260,7 +266,7 @@ next nightly.
   every half hour, and the item closes by itself once a nightly for the day is published (after about a day it gives
   up). Days `main` didn't change say nothing.
 - **Re-runs**: re-running the failed jobs reuses the tag; re-running every job of a manual run makes the day's next
-  build. A run that failed before publishing leaves its tag behind (the next scheduled run on the same commit builds
+  build. A run that failed before publishing leaves its tag behind (the next `scheduled` run on the same commit builds
   it again), so the day's numbers may skip one.
 - **Dry run**: with `PDT_RELEASE_TAG_PREFIX` set (`test-v`), the nightlies are `test-vX.Y.Z-nightly.YYYYMMDD`, and
   retention keeps that prefix's newest 14.
