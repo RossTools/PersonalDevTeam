@@ -84,6 +84,15 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   drops the URL (it can carry a secret).
 - **Event payloads are an API.** Users' workflows read them as `{{trigger.x}}`; renaming a field breaks them silently.
 - **`_pdt.*` state keys are PDT's own.**
+- **Every manual start checks the Run now trigger's declared inputs.** Run now, `POST /api/workflows/{id}/run`, the
+  PM's `workflow_run`, a `workflow.call` and a manual dry run all go through `ManualConfig::input` (pdt-api
+  `workflow/nodes/trigger.rs`, the rules in pdt-core `workflow/inputs.rs`), which fills defaults, drops hidden fields
+  and refuses anything undeclared. The web form (`web/src/workflows/runInputs.ts`) mirrors the rules for display
+  only; the server's check is the one that counts. Never start a manual run around it.
+- **A step's setup error is never retried.** An error that waiting won't fix (no project, a bad repository) is made
+  with `setup_error` (pdt-api `workflow/catalog.rs`; `repo_for_step` in `nodes/release.rs`), and `fail_step` skips the
+  node's retries for it. A kind that works on the run's project says so in `NodeKind::needs_project`, so a manual start
+  of a workflow without a project is refused and Run now asks for one (`WorkflowDetail::needs_project`).
 - **Built-in workflows, templates and personas follow newer versions only while the user hasn't edited them.** Repo
   workflows (`.pdt/workflows/`) are read-only through the API; imported and instantiated workflows start disabled.
 
@@ -123,7 +132,7 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   release repository (`brand::RELEASE_REPO`; a test in pdt-core `brand.rs` lists where). Nothing is installed or
   offered by what a project's repository is. The built-ins that once automated PDT's development are kept on the
   hosts that had them as their own workflows (pdt-api `workflow/builtins.rs`, `RETIRED`); never ship such a built-in
-  again.
+  again. Cut a release is a template (filled in per project), not a built-in.
 - **Guides served by pdtd link to each other by API path**, never by repository path (a test checks).
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.

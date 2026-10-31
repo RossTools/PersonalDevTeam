@@ -834,9 +834,9 @@ pub fn briefing(d: &BriefingData) -> String {
     if d.projects.iter().any(|p| p.release.is_some()) {
         out.push_str(
             "\nReleases happen only when the user asks for one: then start the project's release workflow (named \
-             above) with `workflow_run`, the project and the input its description names (`workflow_get`). Never run \
-             the forge's own release workflow directly. A project without one has no release process in PDT: ask the \
-             user how they release it.\n",
+             above) with `workflow_run`, the project and the inputs it declares (`workflow_get`'s runInputs). Never \
+             run the forge's own release workflow directly. A project without one has no release process in PDT: ask \
+             the user how they release it.\n",
         );
     }
     out.push_str("\n## In flight\n\n");

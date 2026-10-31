@@ -22,6 +22,8 @@ import { GraphView } from './GraphView';
 import { hasErrors, type Catalog } from './model';
 import { NodePanel } from './NodePanel';
 import { OutlineView } from './OutlineView';
+import { RunNowDialog } from './RunNowDialog';
+import { runForm, type RunValues } from './runInputs';
 import { RunsView } from './RunsView';
 import { scopeLabel } from './scope';
 import { TextView } from './TextView';
@@ -86,6 +88,8 @@ export interface WorkflowPageProps {
   onOpen: (target: { kind: 'workflow' | 'template'; id: string } | null) => void;
   /** The tab and run shown, when something else holds them (the app's route, PDT-111); without it the page keeps its own. */
   view?: WorkflowPageView;
+  /** The project in view: Run now's default when the workflow asks for one. */
+  projectInView?: string | null;
 }
 
 export interface WorkflowPageView {
@@ -95,15 +99,15 @@ export interface WorkflowPageView {
   onChange: (tab: WorkflowTab, runId: string | null) => void;
 }
 
-export function WorkflowPage({ id, catalog, projects, onOpen, view }: WorkflowPageProps) {
+export function WorkflowPage({ id, catalog, projects, onOpen, view, projectInView }: WorkflowPageProps) {
   // Polled, so a proposal or a save made elsewhere shows (the draft is never replaced while it has changes).
   const w = useQuery({ queryKey: ['workflow', id], queryFn: () => api.getWorkflow(id), refetchInterval: 5000 });
   if (w.error) return <Alert tone="error" className="m-3">The workflow could not be loaded: {w.error.message}</Alert>;
   if (!w.data) return <Skeleton lines={8} className="p-4" />;
-  return <Loaded w={w.data} catalog={catalog} projects={projects} onOpen={onOpen} view={view} />;
+  return <Loaded w={w.data} catalog={catalog} projects={projects} onOpen={onOpen} view={view} projectInView={projectInView} />;
 }
 
-function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & Omit<WorkflowPageProps, 'id'>) {
+function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: WorkflowDetail } & Omit<WorkflowPageProps, 'id'>) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const phone = useMediaQuery(PHONE_QUERY);
@@ -122,11 +126,17 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
   const [note, setNote] = useState('');
   const [templating, setTemplating] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // Run now's form is open (the workflow declares inputs or a confirmation).
+  const [asking, setAsking] = useState(false);
   // Workflows are view-only on a phone.
   const readOnly = w.source === 'repo' || phone;
   const enable = useEnable(w);
   const blocked = hasErrors({ issues: w.issues, ports: {} }) ? 'Fix the errors first' : null;
+  const hasManual = w.doc.nodes.some((n) => n.kind === 'manual');
+  // Run now runs the saved version, so its form is the saved trigger's; it asks for the project when the steps need one.
+  const form = runForm(w.doc) ?? (w.needsProject ? { fields: [], confirm: null } : null);
   useTopBarActions(phone ? () => [
+    ...(hasManual ? [{ label: 'Run now', onSelect: () => startRun() }] : []),
     w.enabled
       ? { label: 'Disable', onSelect: () => enable.toggle.mutate(false, { onError: (e) => toast.error(e.message) }) }
       : { label: 'Enable…', disabled: !!blocked, onSelect: () => enable.setAsking(true) },
@@ -149,15 +159,21 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
     onSuccess: (d) => { setNote(''); saved(d); toast.success(`Saved version ${d.version}`); },
   });
   const runNow = useMutation({
-    mutationFn: () => api.runWorkflow(w.id, {}),
+    mutationFn: (input: RunValues) => api.runWorkflow(w.id, input),
     onSuccess: (r) => {
+      setAsking(false);
       void qc.invalidateQueries({ queryKey: ['workflow-runs'] });
       if (r.runId) setRunId(r.runId); else toast.info('A run with that key already ran');
     },
-    onError: (e) => toast.error(e.message),
+    // The form shows its own error.
+    onError: (e) => { if (!form) toast.error(e.message); },
   });
-
-  const hasManual = w.doc.nodes.some((n) => n.kind === 'manual');
+  // Without declared inputs (or a confirmation) Run now starts at once.
+  const startRun = () => {
+    runNow.reset();
+    if (form) setAsking(true);
+    else runNow.mutate({});
+  };
   const menu = (): MenuEntry[] => [
     { label: 'Copy export', onSelect: () => void copyExport([w.id]) },
     { label: 'Export…', onSelect: () => setExporting(true) },
@@ -215,7 +231,7 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
           <>
             <EnableSwitch w={w} catalog={catalog} onDryRun={() => setDryRun(true)} blocked={blocked} />
             <Button size="sm" variant="secondary" onClick={() => setDryRun(true)}>Dry run</Button>
-            {hasManual && <Button size="sm" variant="secondary" disabled={draft.dirty} pending={runNow.isPending} onClick={() => runNow.mutate()}
+            {hasManual && <Button size="sm" variant="secondary" disabled={draft.dirty} pending={runNow.isPending && !asking} onClick={startRun}
               title={draft.dirty ? 'Save first: Run now runs the saved version' : undefined}>Run now</Button>}
             <MenuButton label="More workflow actions" entries={menu} />
           </>
@@ -274,6 +290,11 @@ function Loaded({ w, catalog, projects, onOpen, view }: { w: WorkflowDetail } & 
       )}
       {phone && <EnableDialog w={w} catalog={catalog} enable={enable} />}
       {dryRun && <DryRunDialog open onOpenChange={setDryRun} doc={draft.doc} workflowId={w.id} catalog={catalog} />}
+      {asking && form && (
+        <RunNowDialog name={w.name} form={form} projects={w.needsProject ? projects : undefined} project={projectInView}
+          pending={runNow.isPending} error={runNow.error?.message ?? null}
+          onRun={(input) => runNow.mutate(input)} onClose={() => setAsking(false)} />
+      )}
       {exporting && <ExportDialog ids={[w.id]} onClose={() => setExporting(false)} />}
       {templating && <SaveAsTemplateDialog w={w} doc={draft.doc} onClose={() => setTemplating(false)} onSaved={(tid) => { setTemplating(false); void qc.invalidateQueries({ queryKey: ['workflow-templates'] }); onOpen({ kind: 'template', id: tid }); }} />}
     </div>

@@ -6,7 +6,7 @@
 //! passes, the commands); a node's body runs outside it, holding only its run's lock, and runs advance side by side.
 
 use super::catalog::{Category, Outcome, StepCx, parse};
-use super::nodes::trigger::{MANUAL, SharedTrigger};
+use super::nodes::trigger::{MANUAL, ManualConfig, SharedTrigger};
 use crate::routes::{AppState, now_ms};
 use pdt_core::workflow::api::{LogEvent, Run, RunStatus, Step, StepStatus, Workflow};
 use pdt_core::workflow::cond::all;
@@ -781,7 +781,12 @@ async fn fail_step(
         }
     }
     let node = doc.node(&step.node_id);
-    let retry = node.and_then(|n| n.retry);
+    // The workflow's setup (no project, no repository) won't come right by waiting: no retry (PDT-301).
+    let (setup, e) = match super::catalog::setup_split(&e) {
+        (true, msg) => (true, msg.to_string()),
+        (false, _) => (false, e),
+    };
+    let retry = node.and_then(|n| n.retry).filter(|_| !setup);
     tracing::info!(workflow = %run.workflow_name, run = %run.id, node = %step.node_id, error = %e, "a workflow step failed");
     step.error = Some(e.clone());
     let safe = definite || st.registry().catalog().get(&step.kind).is_none_or(|k| k.rerun_safe(&step.input));
@@ -891,13 +896,18 @@ pub(crate) async fn start_manual(
 ) -> R<Option<String>> {
     let doc = st.store.workflow_doc(&wf.id, wf.version).await.map_err(err)?.ok_or("the workflow has no document")?;
     let node = doc.nodes.iter().find(|n| n.kind == MANUAL).ok_or("the workflow has no Run now trigger")?;
-    let trigger = if input.is_null() { json!({}) } else { input };
-    let configured = st
-        .registry()
-        .catalog()
-        .current_config(node)
-        .ok()
-        .and_then(|c| c.get("runKey").and_then(|k| k.as_str()).map(String::from));
+    let manual = manual_config(st, node)?;
+    let trigger = manual.input(&input).map_err(|e| format!("{} can't run with that input: {e}", wf.name))?;
+    if wf.project_id.is_none()
+        && trigger.get("projectId").and_then(Value::as_str).is_none_or(str::is_empty)
+        && super::catalog::doc_needs_project(st.registry().catalog(), &doc)
+    {
+        return Err(format!(
+            "{} needs a project to run in (its steps work on the run's project): give projectId",
+            wf.name
+        ));
+    }
+    let configured = manual.run_key;
     let key = run_key
         .or_else(|| {
             configured.and_then(|k| resolve(&Value::String(k), &json!({"trigger": trigger})).as_str().map(String::from))
@@ -905,6 +915,12 @@ pub(crate) async fn start_manual(
         .unwrap_or_else(|| format!("manual:{}", uuid::Uuid::now_v7()));
     let _engine = st.engine_lock.lock().await;
     start_run(st, wf, &doc, &node.id, trigger, None, key, None).await
+}
+
+/// A Run now trigger's config at its kind's current version.
+fn manual_config(st: &AppState, node: &pdt_core::workflow::doc::Node) -> R<ManualConfig> {
+    let config = st.registry().catalog().current_config(node)?;
+    parse(&config)
 }
 
 /// Starts a sub-workflow for a `workflow.call` step (once per step).
@@ -916,7 +932,8 @@ pub(crate) async fn start_child(cx: &StepCx<'_>, workflow_id: &str, input: Value
     let node =
         doc.nodes.iter().find(|n| n.kind == MANUAL).ok_or_else(|| format!("{} has no Run now trigger", wf.name))?;
     let key = format!("call:{}", cx.step.id);
-    let trigger = if input.is_null() { json!({}) } else { input };
+    let trigger =
+        manual_config(st, node)?.input(&input).map_err(|e| format!("{} can't run with that input: {e}", wf.name))?;
     match start_run(st, &wf, &doc, &node.id, trigger, None, key.clone(), Some((&cx.run.id, &cx.step.id))).await? {
         Some(id) => Ok(id),
         None => Ok(st.store.workflow_run_by_key(&wf.id, &key).await.map_err(err)?.map(|r| r.id).unwrap_or_default()),
@@ -1158,12 +1175,21 @@ pub struct DryRun {
 
 /// Runs `doc` against `event` in memory: conditions evaluate, actions say what they would do.
 pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, event: DryEvent) -> DryRun {
-    let trigger = match event.payload {
-        Value::Object(mut m) => {
+    // Run now's input as a real run gets it: checked against the declared inputs, defaults filled in (PDT-301).
+    let manual = doc.nodes.iter().find(|n| n.kind == MANUAL).filter(|_| event.kind == MANUAL);
+    let trigger = match (manual, event.payload) {
+        (Some(node), payload) => match manual_config(st, node).and_then(|c| c.input(&payload)) {
+            Ok(t) => t,
+            Err(e) => {
+                let refused = DryTrigger { node: node.id.clone(), matched: false, reason: Some(e) };
+                return DryRun { triggers: vec![refused], steps: vec![], status: None };
+            }
+        },
+        (None, Value::Object(mut m)) => {
             m.insert("type".into(), json!(event.kind));
             Value::Object(m)
         }
-        other => json!({"payload": other, "type": event.kind}),
+        (None, other) => json!({"payload": other, "type": event.kind}),
     };
     let ctx0 = json!({"trigger": trigger});
     let mut out = DryRun { triggers: vec![], steps: vec![], status: None };
@@ -1272,7 +1298,7 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
         fence_input(&reg, kind.agent_text(), &config, &ctx, &mut input);
         ds.input = input.clone();
         let cx = StepCx { st, workflow: wf, run: &run, step: &step, node, ctx: &ctx, dry_run: true, rerun: false };
-        let result = kind.dry_run(&cx, input).await;
+        let result = kind.dry_run(&cx, input).await.map_err(|e| super::catalog::setup_split(&e).1.to_string());
         let port = match result {
             Ok(Outcome::Next { port, output }) => {
                 // An action that only says what it would do still gives later steps the fields they read (PDT-189).

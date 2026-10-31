@@ -571,23 +571,31 @@ pub(crate) async fn in_flight(
     Ok(page.items)
 }
 
-/// The enabled release workflow (Cut a release, or the user's copy of it) that runs in a project, by name (PDT-296):
-/// the PM's only release guidance comes with it.
-fn release_workflow(st: &AppState, workflows: &[Workflow], project_id: &str) -> Option<String> {
+/// The enabled release workflow (Cut a release, made from its template, or a copy) that runs in a project, by name
+/// (PDT-296, PDT-301): the PM's only release guidance comes with it.
+async fn release_workflow(st: &AppState, workflows: &[Workflow], project_id: &str) -> Result<Option<String>, ApiError> {
     let reg = st.registry();
-    workflows
-        .iter()
-        .filter(|w| w.enabled && !crate::workflow::builtins::hidden(&reg, w))
-        .filter(|w| {
-            w.builtin.as_deref() == Some(crate::workflow::builtins::CUT_RELEASE)
-                || w.name.eq_ignore_ascii_case("Cut a release")
-        })
-        .find(|w| match w.scope {
+    let template = format!("{}{}", crate::workflow::templates::BUILTIN_PREFIX, crate::workflow::builtins::CUT_RELEASE);
+    for w in workflows.iter().filter(|w| w.enabled && !crate::workflow::builtins::hidden(&reg, w)) {
+        let here = match w.scope {
             Scope::Project => w.project_id.as_deref() == Some(project_id),
             Scope::Host => true,
             Scope::Personal => false,
-        })
-        .map(|w| w.name.clone())
+        };
+        if !here {
+            continue;
+        }
+        let from_template = st
+            .store
+            .workflow_state(&w.id)
+            .await?
+            .get(crate::workflow::templates::TEMPLATE_STATE)
+            .is_some_and(|t| t["id"] == template.as_str());
+        if from_template || w.name.eq_ignore_ascii_case("Cut a release") {
+            return Ok(Some(w.name.clone()));
+        }
+    }
+    Ok(None)
 }
 
 async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, ApiError> {
@@ -599,7 +607,7 @@ async fn briefing_data(st: &AppState, session_id: &str) -> Result<BriefingData, 
     for p in &projects {
         keys.insert(p.id.clone(), p.key.clone());
         let pm_acts = st.store.get_project_settings(&p.id).await?.policy.pm_acts;
-        let release = if p.is_personal() { None } else { release_workflow(st, &workflows, &p.id) };
+        let release = if p.is_personal() { None } else { release_workflow(st, &workflows, &p.id).await? };
         out_projects.push(BriefProject {
             name: p.name.clone(),
             key: p.key.clone(),

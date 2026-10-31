@@ -131,6 +131,7 @@
       ],
       "templates": [
         "Triage new GitHub issues",
+        "Cut a release",
         "Report a missing scheduled release",
         "Report failed workflow runs",
         "Review outside pull requests"
@@ -171,8 +172,7 @@
         }
       ],
       "workflows": [
-        "Done closes the GitHub issue",
-        "Cut a release"
+        "Done closes the GitHub issue"
       ]
     },
     {

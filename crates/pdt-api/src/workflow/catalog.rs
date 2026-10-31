@@ -4,7 +4,7 @@
 use crate::routes::AppState;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::workflow::api::{LogEvent, Run, Scope, Step, Workflow};
-use pdt_core::workflow::doc::{ERROR_PORT, Node};
+use pdt_core::workflow::doc::{ERROR_PORT, Node, WorkflowDoc};
 use pdt_core::workflow::validate::{KindFacts, Kinds};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
@@ -197,6 +197,40 @@ pub trait NodeKind: Send + Sync {
     fn rerun_safe(&self, _input: &Value) -> bool {
         true
     }
+
+    /// Whether a node with this (unresolved) config works on the run's project (a GitHub step without `repo`): a
+    /// workflow with one needs a project to run in, which Run now asks for when its scope gives none (PDT-301).
+    fn needs_project(&self, _config: &Value) -> bool {
+        false
+    }
+}
+
+/// Marks a step's error as the workflow's setup (no project, no repository), not a passing failure: it is never
+/// retried, so the run fails at once with the message (PDT-301).
+const SETUP: &str = "\u{1}setup\u{1}";
+
+pub fn setup_error(msg: impl std::fmt::Display) -> String {
+    format!("{SETUP}{msg}")
+}
+
+/// Whether an error is a setup error ([`setup_error`]), and its message without the mark.
+pub fn setup_split(e: &str) -> (bool, &str) {
+    match e.strip_prefix(SETUP) {
+        Some(rest) => (true, rest),
+        None => (false, e),
+    }
+}
+
+/// Whether a config leaves `repo` out (or blank), so the step takes the run's project's.
+pub fn repo_missing(config: &Value) -> bool {
+    config.get("repo").and_then(Value::as_str).is_none_or(|r| r.trim().is_empty())
+}
+
+/// Whether any node of `doc` works on the run's project ([`NodeKind::needs_project`]).
+pub fn doc_needs_project(catalog: &Catalog, doc: &WorkflowDoc) -> bool {
+    doc.nodes
+        .iter()
+        .any(|n| catalog.get(&n.kind).is_some_and(|k| catalog.current_config(n).is_ok_and(|c| k.needs_project(&c))))
 }
 
 /// Whether an event is in a workflow's scope: a project workflow's own project, any for a host one, none for a

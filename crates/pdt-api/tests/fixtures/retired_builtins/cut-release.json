@@ -1,0 +1,672 @@
+{
+  "name": "Cut a release",
+  "description": "Runs the project's release workflow (release.yml) with a bump kind (patch, minor or major) or an exact version: it opens a release PR that sets the version, compiles the changelog and builds the bundles, and merges itself once its checks pass, which tags and publishes the release. You are told when the PR is open and when the release is out; a failed check goes to the Inbox (the PR stays open: push a fix to the release branch, or close it). With channel nightly there is no release PR: it publishes a nightly build of main's head now (X.Y.Z-nightly.YYYYMMDD, a pre-release, as the release workflow makes every night) that only hosts on the nightly update channel install, and you are told when it is out. Run it (the PM does, when you ask for a release) with input {\"bump\": \"minor\", \"channel\": \"stable\", \"projectId\": \u2026}.",
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "manual",
+      "version": 1,
+      "title": "Cut a release",
+      "config": null,
+      "position": {
+        "x": -260.0,
+        "y": 0.0
+      }
+    },
+    {
+      "id": "channel",
+      "kind": "condition",
+      "version": 1,
+      "title": "Nightly?",
+      "config": {
+        "conditions": [
+          {
+            "left": "{{trigger.channel}}",
+            "op": "in",
+            "right": [
+              "nightly",
+              "experimental"
+            ]
+          }
+        ]
+      },
+      "position": {
+        "x": 0.0,
+        "y": 0.0
+      }
+    },
+    {
+      "id": "nightly_before",
+      "kind": "github.release",
+      "version": 1,
+      "title": "Newest release before",
+      "config": {
+        "prereleases": true
+      },
+      "position": {
+        "x": 260.0,
+        "y": -260.0
+      },
+      "retry": {
+        "max": 5,
+        "backoffMs": 60000
+      }
+    },
+    {
+      "id": "nightly_dispatch",
+      "kind": "github.workflow.run",
+      "version": 1,
+      "title": "Run the release workflow (nightly)",
+      "config": {
+        "inputs": {
+          "bump": "{{trigger.bump}}",
+          "channel": "nightly",
+          "version": "{{trigger.version}}"
+        },
+        "ref": "main",
+        "workflow": "release.yml"
+      },
+      "position": {
+        "x": 520.0,
+        "y": -260.0
+      }
+    },
+    {
+      "id": "wait_nightly",
+      "kind": "wait",
+      "version": 1,
+      "title": "Wait for the pre-release",
+      "config": {
+        "ms": 120000
+      },
+      "position": {
+        "x": 780.0,
+        "y": -260.0
+      },
+      "maxVisits": 120
+    },
+    {
+      "id": "nightly_published",
+      "kind": "github.release",
+      "version": 1,
+      "title": "Pre-release published?",
+      "config": {
+        "newerThan": "{{steps.nightly_before.tag}}",
+        "prereleases": true
+      },
+      "position": {
+        "x": 1040.0,
+        "y": -260.0
+      },
+      "retry": {
+        "max": 5,
+        "backoffMs": 60000
+      },
+      "maxVisits": 120
+    },
+    {
+      "id": "nightly_notify",
+      "kind": "notify",
+      "version": 1,
+      "title": "Tell me it is out",
+      "config": {
+        "body": "{{steps.nightly_published.name}} is out as a pre-release; hosts on the nightly update channel offer it.",
+        "link": "{{steps.nightly_published.url}}",
+        "title": "Nightly release {{steps.nightly_published.tag}} is published"
+      },
+      "position": {
+        "x": 1300.0,
+        "y": -260.0
+      }
+    },
+    {
+      "id": "nightly_tell",
+      "kind": "inbox.notice",
+      "version": 1,
+      "title": "Inbox: published",
+      "config": {
+        "key": "released-{{steps.nightly_published.tag}}",
+        "text": "[{{steps.nightly_published.name}}]({{steps.nightly_published.url}}) is published as a pre-release of main, with its bundles: hosts on the nightly update channel (Settings \u2192 Updates) offer it, stable hosts ignore it.",
+        "title": "Nightly release {{steps.nightly_published.tag}} is published"
+      },
+      "position": {
+        "x": 1560.0,
+        "y": -260.0
+      }
+    },
+    {
+      "id": "nightly_released",
+      "kind": "end",
+      "version": 1,
+      "title": "Released (nightly)",
+      "config": {
+        "output": {
+          "tag": "{{steps.nightly_published.tag}}",
+          "url": "{{steps.nightly_published.url}}"
+        }
+      },
+      "position": {
+        "x": 1820.0,
+        "y": -260.0
+      }
+    },
+    {
+      "id": "before",
+      "kind": "github.release",
+      "version": 1,
+      "title": "Latest release before",
+      "config": {},
+      "position": {
+        "x": 260.0,
+        "y": 0.0
+      },
+      "retry": {
+        "max": 5,
+        "backoffMs": 60000
+      }
+    },
+    {
+      "id": "open_already",
+      "kind": "github.change_request",
+      "version": 1,
+      "title": "A release PR still open?",
+      "config": {
+        "branch": "release",
+        "dryRunPort": "none"
+      },
+      "position": {
+        "x": 390.0,
+        "y": 200.0
+      },
+      "retry": {
+        "max": 5,
+        "backoffMs": 60000
+      }
+    },
+    {
+      "id": "still_open",
+      "kind": "inbox.notice",
+      "version": 1,
+      "title": "Inbox: one is still open",
+      "config": {
+        "key": "release-pr-open-{{steps.open_already.number}}",
+        "text": "No new release was started: [{{steps.open_already.title}}]({{steps.open_already.url}}) is still open, and the release workflow opens only one release PR at a time. It merges by itself once its checks pass (that release ships); if they failed, push a fix to the release branch or close it. Then run Cut a release again.",
+        "title": "Release PR #{{steps.open_already.number}} is still open"
+      },
+      "position": {
+        "x": 650.0,
+        "y": 200.0
+      }
+    },
+    {
+      "id": "not_started",
+      "kind": "end",
+      "version": 1,
+      "title": "Not started",
+      "config": null,
+      "position": {
+        "x": 910.0,
+        "y": 200.0
+      }
+    },
+    {
+      "id": "dispatch",
+      "kind": "github.workflow.run",
+      "version": 1,
+      "title": "Run the release workflow",
+      "config": {
+        "inputs": {
+          "bump": "{{trigger.bump}}",
+          "version": "{{trigger.version}}"
+        },
+        "ref": "main",
+        "workflow": "release.yml"
+      },
+      "position": {
+        "x": 520.0,
+        "y": 0.0
+      }
+    },
+    {
+      "id": "wait_pr",
+      "kind": "wait",
+      "version": 1,
+      "title": "Wait for the release PR",
+      "config": {
+        "ms": 30000
+      },
+      "position": {
+        "x": 780.0,
+        "y": 0.0
+      },
+      "maxVisits": 40
+    },
+    {
+      "id": "find_pr",
+      "kind": "github.change_request",
+      "version": 1,
+      "title": "Release PR opened?",
+      "config": {
+        "branch": "release"
+      },
+      "position": {
+        "x": 1040.0,
+        "y": 0.0
+      },
+      "retry": {
+        "max": 5,
+        "backoffMs": 60000
+      },
+      "maxVisits": 40
+    },
+    {
+      "id": "tell_pr",
+      "kind": "notify",
+      "version": 1,
+      "title": "Tell me it is open",
+      "config": {
+        "body": "{{steps.find_pr.title}} merges by itself once its checks pass, which publishes it.",
+        "link": "{{steps.find_pr.url}}",
+        "title": "Release PR #{{steps.find_pr.number}} is open"
+      },
+      "position": {
+        "x": 1300.0,
+        "y": 0.0
+      }
+    },
+    {
+      "id": "wait_merge",
+      "kind": "wait",
+      "version": 1,
+      "title": "Wait for the merge",
+      "config": {
+        "ms": 300000
+      },
+      "position": {
+        "x": 1560.0,
+        "y": 0.0
+      },
+      "maxVisits": 4032
+    },
+    {
+      "id": "check_pr",
+      "kind": "github.change_request",
+      "version": 1,
+      "title": "Release PR merged?",
+      "config": {
+        "branch": "release",
+        "ci": true,
+        "dryRunPort": "merged",
+        "number": "{{steps.find_pr.number}}"
+      },
+      "position": {
+        "x": 1820.0,
+        "y": 0.0
+      },
+      "retry": {
+        "max": 5,
+        "backoffMs": 60000
+      },
+      "maxVisits": 4032
+    },
+    {
+      "id": "tell_failed",
+      "kind": "inbox.notice",
+      "version": 1,
+      "title": "Inbox: a check failed",
+      "config": {
+        "key": "release-pr-{{steps.check_pr.number}}-{{steps.check_pr.failure}}-{{steps.check_pr.headSha}}",
+        "text": "[{{steps.check_pr.title}}]({{steps.check_pr.url}}) didn't merge: [a check failed]({{steps.check_pr.ciUrl}}).\n\n{{steps.check_pr.failedJobs}}\n\nIt stays open, and nothing is released. Push a fix to the release branch (it merges by itself once its checks pass; after the merge queue removed it, turn auto-merge on again), or close it, which ends this release.",
+        "title": "Release PR #{{steps.check_pr.number}} failed its checks"
+      },
+      "position": {
+        "x": 1820.0,
+        "y": -200.0
+      },
+      "maxVisits": 4032
+    },
+    {
+      "id": "notify_failed",
+      "kind": "notify",
+      "version": 1,
+      "title": "Tell me it failed",
+      "config": {
+        "body": "It stays open and nothing is released: fix it or close it.",
+        "level": "warning",
+        "link": "{{steps.check_pr.ciUrl}}",
+        "title": "Release PR #{{steps.check_pr.number}} failed its checks"
+      },
+      "position": {
+        "x": 1560.0,
+        "y": -200.0
+      },
+      "maxVisits": 4032
+    },
+    {
+      "id": "wait_release",
+      "kind": "wait",
+      "version": 1,
+      "title": "Wait for the release",
+      "config": {
+        "ms": 120000
+      },
+      "position": {
+        "x": 2080.0,
+        "y": 0.0
+      },
+      "maxVisits": 120
+    },
+    {
+      "id": "published",
+      "kind": "github.release",
+      "version": 1,
+      "title": "Release published?",
+      "config": {
+        "newerThan": "{{steps.before.tag}}"
+      },
+      "position": {
+        "x": 2340.0,
+        "y": 0.0
+      },
+      "retry": {
+        "max": 5,
+        "backoffMs": 60000
+      },
+      "maxVisits": 120
+    },
+    {
+      "id": "notify",
+      "kind": "notify",
+      "version": 1,
+      "title": "Tell me it is out",
+      "config": {
+        "body": "{{steps.published.name}} is out; hosts offer it as an update.",
+        "link": "{{steps.published.url}}",
+        "title": "Release {{steps.published.tag}} is published"
+      },
+      "position": {
+        "x": 2600.0,
+        "y": 0.0
+      }
+    },
+    {
+      "id": "tell_released",
+      "kind": "inbox.notice",
+      "version": 1,
+      "title": "Inbox: published",
+      "config": {
+        "key": "released-{{steps.published.tag}}",
+        "text": "[{{steps.published.name}}]({{steps.published.url}}) is published with its notes and bundles; hosts offer it as an update.",
+        "title": "Release {{steps.published.tag}} is published"
+      },
+      "position": {
+        "x": 2860.0,
+        "y": 0.0
+      }
+    },
+    {
+      "id": "released",
+      "kind": "end",
+      "version": 1,
+      "title": "Released",
+      "config": {
+        "output": {
+          "tag": "{{steps.published.tag}}",
+          "url": "{{steps.published.url}}"
+        }
+      },
+      "position": {
+        "x": 3120.0,
+        "y": 0.0
+      }
+    },
+    {
+      "id": "dropped",
+      "kind": "notify",
+      "version": 1,
+      "title": "Tell me it was closed",
+      "config": {
+        "body": "Nothing was released. Run Cut a release again for a new one.",
+        "level": "warning",
+        "link": "{{steps.find_pr.url}}",
+        "title": "Release PR #{{steps.find_pr.number}} was closed without merging"
+      },
+      "position": {
+        "x": 2080.0,
+        "y": 200.0
+      }
+    },
+    {
+      "id": "not_released",
+      "kind": "end",
+      "version": 1,
+      "title": "Not released",
+      "config": null,
+      "position": {
+        "x": 2340.0,
+        "y": 200.0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "start",
+      "port": "out",
+      "to": "channel"
+    },
+    {
+      "from": "channel",
+      "port": "false",
+      "to": "before"
+    },
+    {
+      "from": "channel",
+      "port": "true",
+      "to": "nightly_before"
+    },
+    {
+      "from": "nightly_before",
+      "port": "found",
+      "to": "nightly_dispatch"
+    },
+    {
+      "from": "nightly_before",
+      "port": "none",
+      "to": "nightly_dispatch"
+    },
+    {
+      "from": "nightly_dispatch",
+      "port": "out",
+      "to": "wait_nightly"
+    },
+    {
+      "from": "wait_nightly",
+      "port": "done",
+      "to": "nightly_published"
+    },
+    {
+      "from": "nightly_published",
+      "port": "found",
+      "to": "nightly_notify"
+    },
+    {
+      "from": "nightly_published",
+      "port": "none",
+      "to": "wait_nightly"
+    },
+    {
+      "from": "nightly_notify",
+      "port": "out",
+      "to": "nightly_tell"
+    },
+    {
+      "from": "nightly_tell",
+      "port": "added",
+      "to": "nightly_released"
+    },
+    {
+      "from": "nightly_tell",
+      "port": "skipped",
+      "to": "nightly_released"
+    },
+    {
+      "from": "before",
+      "port": "found",
+      "to": "open_already"
+    },
+    {
+      "from": "before",
+      "port": "none",
+      "to": "open_already"
+    },
+    {
+      "from": "open_already",
+      "port": "open",
+      "to": "still_open"
+    },
+    {
+      "from": "open_already",
+      "port": "none",
+      "to": "dispatch"
+    },
+    {
+      "from": "open_already",
+      "port": "merged",
+      "to": "dispatch"
+    },
+    {
+      "from": "open_already",
+      "port": "closed",
+      "to": "dispatch"
+    },
+    {
+      "from": "still_open",
+      "port": "added",
+      "to": "not_started"
+    },
+    {
+      "from": "still_open",
+      "port": "skipped",
+      "to": "not_started"
+    },
+    {
+      "from": "dispatch",
+      "port": "out",
+      "to": "wait_pr"
+    },
+    {
+      "from": "wait_pr",
+      "port": "done",
+      "to": "find_pr"
+    },
+    {
+      "from": "find_pr",
+      "port": "open",
+      "to": "tell_pr"
+    },
+    {
+      "from": "find_pr",
+      "port": "none",
+      "to": "wait_pr"
+    },
+    {
+      "from": "find_pr",
+      "port": "merged",
+      "to": "wait_pr"
+    },
+    {
+      "from": "find_pr",
+      "port": "closed",
+      "to": "wait_pr"
+    },
+    {
+      "from": "tell_pr",
+      "port": "out",
+      "to": "wait_merge"
+    },
+    {
+      "from": "wait_merge",
+      "port": "done",
+      "to": "check_pr"
+    },
+    {
+      "from": "check_pr",
+      "port": "open",
+      "to": "wait_merge"
+    },
+    {
+      "from": "check_pr",
+      "port": "failed",
+      "to": "tell_failed"
+    },
+    {
+      "from": "tell_failed",
+      "port": "added",
+      "to": "notify_failed"
+    },
+    {
+      "from": "tell_failed",
+      "port": "skipped",
+      "to": "wait_merge"
+    },
+    {
+      "from": "notify_failed",
+      "port": "out",
+      "to": "wait_merge"
+    },
+    {
+      "from": "check_pr",
+      "port": "merged",
+      "to": "wait_release"
+    },
+    {
+      "from": "check_pr",
+      "port": "closed",
+      "to": "dropped"
+    },
+    {
+      "from": "check_pr",
+      "port": "none",
+      "to": "dropped"
+    },
+    {
+      "from": "dropped",
+      "port": "out",
+      "to": "not_released"
+    },
+    {
+      "from": "wait_release",
+      "port": "done",
+      "to": "published"
+    },
+    {
+      "from": "published",
+      "port": "found",
+      "to": "notify"
+    },
+    {
+      "from": "published",
+      "port": "none",
+      "to": "wait_release"
+    },
+    {
+      "from": "notify",
+      "port": "out",
+      "to": "tell_released"
+    },
+    {
+      "from": "tell_released",
+      "port": "added",
+      "to": "released"
+    },
+    {
+      "from": "tell_released",
+      "port": "skipped",
+      "to": "released"
+    }
+  ],
+  "settings": {
+    "maxSteps": 12436,
+    "maxRuntimeMs": 1382400000
+  }
+}

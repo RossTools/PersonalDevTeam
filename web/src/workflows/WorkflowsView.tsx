@@ -9,10 +9,12 @@ import { TemplatePage } from './TemplatePage';
 import { WorkflowPage } from './WorkflowPage';
 import type { WorkflowTarget } from './WorkflowsList';
 
-export function WorkflowsView({ target, onOpen, projects, creating, onCreate }: {
+export function WorkflowsView({ target, onOpen, projects, projectInView, creating, onCreate }: {
   target: WorkflowTarget;
   onOpen: (t: WorkflowTarget) => void;
   projects: Project[];
+  /** The project in view (Run now's default when a workflow asks for one). */
+  projectInView?: string | null;
   /** The New workflow dialog is open (with a template picked). */
   creating: { templateId?: string } | null;
   onCreate: (c: { templateId?: string } | null) => void;
@@ -20,7 +22,7 @@ export function WorkflowsView({ target, onOpen, projects, creating, onCreate }: 
   const catalog = useQuery({ queryKey: ['workflow-catalog'], queryFn: () => api.workflowCatalog(), staleTime: Infinity });
   const body = catalog.error ? <Alert tone="error" className="m-3">The node catalog could not be loaded: {catalog.error.message}</Alert>
     : !catalog.data ? <Skeleton lines={8} className="p-4" />
-      : target?.kind === 'workflow' ? <WorkflowPage key={target.id} id={target.id} catalog={catalog.data} projects={projects} onOpen={onOpen}
+      : target?.kind === 'workflow' ? <WorkflowPage key={target.id} id={target.id} catalog={catalog.data} projects={projects} onOpen={onOpen} projectInView={projectInView}
           view={{ tab: target.tab, runId: target.runId ?? null, onChange: (tab, runId) => onOpen({ kind: 'workflow', id: target.id, tab, ...(runId ? { runId } : {}) }) }} />
         : target?.kind === 'template' ? <TemplatePage key={target.id} id={target.id} catalog={catalog.data} onUse={(templateId) => onCreate({ templateId })} onDeleted={() => onOpen(null)} />
           : (

@@ -41,7 +41,8 @@ impl NodeKind for StateSet {
             1,
             Category::Action,
             "Remember",
-            "Stores a value in the workflow's state, read back as {{state.<key>}} in later runs. With `add`, counts \
+            "Stores a value in the workflow's state, read back as {{state.<key>}} in later runs (and as the output's \
+             `value` in this one). With `add`, counts \
              instead: the key's number plus `add`, also in the output's `value` (a key per attempt, \
              `tries.{{trigger.attemptId}}`, counts per attempt).",
             &[("out", "Then")],
@@ -82,7 +83,8 @@ impl NodeKind for StateSet {
                 return Ok(Outcome::next("out", out));
             }
             if cx.dry_run {
-                return Ok(Outcome::next("out", json!({"would": format!("set state {} to {}", c.key, c.value)})));
+                let would = format!("set state {} to {}", c.key, c.value);
+                return Ok(Outcome::next("out", json!({"would": would, "value": c.value})));
             }
             let written = cx
                 .st
@@ -90,7 +92,7 @@ impl NodeKind for StateSet {
                 .set_workflow_state(&cx.workflow.id, &c.key, &c.value, c.if_missing.or(false), now_ms())
                 .await
                 .map_err(|e| e.to_string())?;
-            Ok(Outcome::next("out", json!({"written": written, "quiet": true})))
+            Ok(Outcome::next("out", json!({"written": written, "value": c.value, "quiet": true})))
         })
     }
 }

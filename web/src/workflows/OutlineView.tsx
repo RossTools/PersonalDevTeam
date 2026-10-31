@@ -9,6 +9,7 @@ import type { WorkflowCheck } from '../api/gen/WorkflowCheck';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { KindIcon, KindList } from './KindPicker';
 import type { PathOverlay } from './GraphView';
+import { fieldLabel, runForm } from './runInputs';
 import {
   addNode, canMove, issuesOf, kindOf, moveInChain, newNode, nodeTitle, onlyPort, outline, portsOf, removeNode,
   spotAfter, type Catalog, type OutlineBranch, type OutlineItem,
@@ -105,6 +106,9 @@ export function OutlineView({ doc, onChange, catalog, check, selected, onSelect,
     }
     const issues = issuesOf(check, it.id);
     const status = path?.status.get(it.id);
+    // Run now's declared inputs (PDT-301).
+    const inputs = node.kind === 'manual' ? runForm({ ...doc, nodes: [node] })?.fields ?? [] : [];
+    const asks = inputs.map(fieldLabel).join(', ');
     return (
       <li key={it.path}>
         <div className={cn('flex items-center gap-1 rounded-md', selected === it.id && 'bg-accent')}>
@@ -121,6 +125,7 @@ export function OutlineView({ doc, onChange, catalog, check, selected, onSelect,
           {/* Read-only, its one entry (Edit) is the row's own tap. */}
           {edit && <MenuButton label={`Actions for ${title}`} size="sm" entries={() => menu(it.id)} />}
         </div>
+        {asks && <p className="truncate px-2 pl-8 text-meta text-muted-foreground">Asks for {asks}</p>}
         {it.branches.length > 0 && <ul className="ml-4 border-l border-border pl-2">{it.branches.map(branch)}</ul>}
       </li>
     );

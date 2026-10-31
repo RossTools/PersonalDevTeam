@@ -102,14 +102,16 @@ async fn the_catalog_and_the_builtins_are_served() {
         .iter()
         .map(|w| (w["builtin"].as_str().unwrap(), w["enabled"].as_bool().unwrap()))
         .collect();
-    assert_eq!(builtins.len(), 8, "no integration's built-ins until it is enabled: {list}");
+    assert_eq!(builtins.len(), 7, "no integration's built-ins until it is enabled: {list}");
     // PDT's own development's are not built-ins (PDT-295): neither installed nor offered.
     assert!(builtins.contains(&("github-issue-done", true)) && !builtins.iter().any(|b| b.0 == "pdt-bug-triage"));
     let (_, templates) = call(&env.app, "GET", "/api/workflow-templates", None).await;
     assert!(!templates.to_string().contains("builtin:pdt-bug-triage"), "{templates}");
     let (s, _) = call(&env.app, "GET", "/api/workflow-templates/builtin:pdt-bug-triage", None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
-    assert!(builtins.contains(&("late-commits", true)) && builtins.contains(&("cut-release", false)));
+    assert!(builtins.contains(&("late-commits", true)) && !builtins.iter().any(|b| b.0 == "cut-release"));
+    // Cut a release is a template since PDT-301, made per project.
+    assert!(templates.to_string().contains("builtin:cut-release"), "{templates}");
     assert!(builtins.contains(&("pr-notices", true)) && builtins.contains(&("base-moved", false)));
     let id = list[0]["id"].as_str().unwrap();
     let (s, e) = call(&env.app, "DELETE", &format!("/api/workflows/{id}"), None).await;
@@ -188,6 +190,56 @@ async fn a_manual_run_branches_remembers_state_and_honours_its_key() {
     assert_eq!((r["status"].as_str(), ports(&r)), (Some("quiet"), vec!["t:out".to_string(), "big:false".to_string()]));
     let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?workflow={id}"), None).await;
     assert_eq!(runs.as_array().unwrap().len(), 3);
+}
+
+/// PDT-301: a Run now trigger's declared inputs: a start gets their defaults, a field hidden by its showIf is left
+/// out, and unknown or invalid input is refused naming the fields; bad declarations don't validate.
+#[tokio::test]
+async fn run_now_checks_the_declared_inputs() {
+    let env = setup().await;
+    let doc = json!({"name": "deploy", "nodes": [
+        {"id": "t", "kind": "manual", "version": 1, "config": {"runKey": "{{trigger.env}}-{{trigger.day}}", "inputs": [
+            {"id": "env", "label": "Environment", "type": "choice", "default": "staging", "required": true,
+             "choices": [{"value": "staging"}, {"value": "production", "label": "Production"}]},
+            {"id": "day", "type": "number", "default": 1},
+            {"id": "why", "type": "text", "required": true, "showIf": {"field": "env", "equals": "production"}}],
+         "confirm": {"text": "Deploy to {{trigger.env}}?", "showIf": {"field": "env", "equals": "production"}}}},
+        {"id": "done", "kind": "end", "version": 1, "config": {"output": "{{trigger}}"}}],
+        "edges": [{"from": "t", "to": "done"}]});
+    let id = create(&env, doc.clone()).await;
+    let r1 = run_now(&env, &id, Value::Null).await;
+    pdt_api::run_workflows(&env.state).await;
+    assert_eq!(run(&env, &r1).await["trigger"], json!({"env": "staging", "day": 1}), "the defaults");
+
+    let url = format!("/api/workflows/{id}/run");
+    for (input, says) in [
+        (json!({"environment": "staging"}), "there is no input environment"),
+        (json!({"env": "prod"}), "env must be staging or production"),
+        (json!({"env": "production"}), "why (why) is required"),
+        (json!({"day": "soon"}), "day must be a number"),
+    ] {
+        let (s, e) = call(&env.app, "POST", &url, Some(json!({"input": input}))).await;
+        assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("cannot_run")), "{e}");
+        let msg = e["message"].as_str().unwrap();
+        assert!(msg.contains(says), "{msg}");
+        assert!(
+            msg.contains(
+                "env (staging or production, required), day (a number), why (text, required, when env is production)"
+            ),
+            "{msg}"
+        );
+    }
+    let r2 = run_now(&env, &id, json!({"env": "production", "why": "fix", "day": "2", "projectId": env.project})).await;
+    pdt_api::run_workflows(&env.state).await;
+    let r = run(&env, &r2).await;
+    assert_eq!(r["trigger"], json!({"env": "production", "day": 2, "why": "fix", "projectId": env.project}));
+    assert_eq!(r["runKey"], "production-2", "the key reads the checked input");
+
+    // A declaration that makes no sense is an error in validation.
+    let mut bad = doc.clone();
+    bad["nodes"][0]["config"]["inputs"][2]["showIf"]["field"] = json!("later");
+    let (_, issues) = call(&env.app, "POST", "/api/workflows/validate", Some(json!({"doc": bad}))).await;
+    assert!(issues.to_string().contains("showIf names later, which is no earlier field"), "{issues}");
 }
 
 #[tokio::test]
