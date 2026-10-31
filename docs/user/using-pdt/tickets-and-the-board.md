@@ -98,6 +98,16 @@ in the same area as one in progress shows an overlap, and its **Overlaps** secti
 both branches change. An overlap in an exclusive area (database migrations, say) is a conflict. See
 [Run configuration](../automation/run-configuration.md).
 
+## Watch a ticket
+
+To hear about a ticket without opening it, click the eye (**Watch**) at the top of its page (on a phone, **Watch** in
+the **⋯** menu). You're told in the Inbox's **Updates**, and on the desktop if you allow notifications, when the ticket
+is done or closed, its work merges, CI fails or the merge queue drops it, or something about it waits on you. The watch
+ends once the ticket is finished; click the eye again to stop sooner.
+
+The ticket's **Watching** section lists who watches it: you, and any PM conversation you asked to keep an eye on it.
+**×** beside one stops that watch. A workflow run has the same eye, on its page under the workflow's **Runs**.
+
 ## Search and filters
 
 - **Search tickets** matches titles and descriptions; type a key (`ABC-12`) to jump to that ticket.

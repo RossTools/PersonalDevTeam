@@ -28,6 +28,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   (pdt-api `workflow/outbox.rs`), which waits until a terminal has been idle with nobody typing, or a conversation is
   idle with nothing open; a message that can't be delivered ends `untold` and notifies the user. A session whose
   state is unknown (its hooks never fired) is never typed into.
+  **The one exception is a watch** (pdt-api `watches.rs`): a PM conversation that set one with its `watch` tool is
+  told about its target without asking anyone, since it only tells the conversation that asked. Its messages still
+  go through the outbox, and a closed conversation's go to the user's Inbox instead.
 - **Conversations are never auto-resumed**, and never as terminals. After a pdtd restart their running turn ends as
   interrupted; the UI offers Continue. Only interrupted terminal sessions are resumed by themselves. Background
   tasks a restart stopped (kept per session, `sessions.background_tasks`, moved to `stopped_background` by
@@ -94,6 +97,14 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `workflow/nodes/trigger.rs`, the rules in pdt-core `workflow/inputs.rs`), which fills defaults, drops hidden fields
   and refuses anything undeclared. The web form (`web/src/workflows/runInputs.ts`) mirrors the rules for display
   only; the server's check is the one that counts. Never start a manual run around it.
+- **A failed write is not a step's failure.** A write the database can't make (a full disk, an I/O error, a lock held
+  too long) is a `StoreError::Write`, whose message starts with `WRITE_FAILED` ("PDT can't save changes"); text that
+  carries it (`pdt_store::is_write_failure`) makes `fail_step` wait and retry the step without using up one of its
+  retries, an event whose run could not start stay unprocessed, and a step's result that could not be written wait in
+  `UnsavedResults` (the body is not run again). Keep the store error's text in a node's error (`e.to_string()`, or
+  in a `format!`), never replace it with your own words. A route answers it with 503 `write_failed` and its message
+  (`ApiError::write_failed`, also from `ApiError::internal` given its text), and the router's `note_write_failures`
+  records it, so the Inbox says so whoever wrote; a `BEGIN` that can't start (`Store::write_tx`) is recorded too.
 - **A step's setup error is never retried.** An error that waiting won't fix (no project, a bad repository) is made
   with `setup_error` (pdt-api `workflow/catalog.rs`; `repo_for_step` in `nodes/release.rs`), and `fail_step` skips the
   node's retries for it. A kind that works on the run's project says so in `NodeKind::needs_project`, so a manual start
@@ -126,6 +137,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 
 ## Code and data
 
+- **Transactions go through sqlx's `Transaction`** (`Store::write_tx`, `pool.begin`), never a hand-written `BEGIN`.
+  The pool's `after_release` closes any connection still in a transaction (pdt-store `health.rs`): after a full disk
+  SQLite rolls a transaction back itself, sqlx's own ROLLBACK then fails, and the connection would refuse every later
+  `BEGIN`.
 - **Never edit an applied migration** (sqlx checksums them); add a new one named by its UTC creation time. Data
   backfills that run when the store opens go in `Store::open`.
 - **`.pdt/project.toml` must stay readable by the stable release.** Unknown top-level sections are skipped, but unknown

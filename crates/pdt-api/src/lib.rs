@@ -58,6 +58,7 @@ pub mod toolchains;
 mod untrusted;
 pub mod update;
 pub mod vault;
+mod watches;
 mod workflow;
 mod workspaces;
 mod worktrees;
@@ -95,6 +96,7 @@ pub use scheduler::{run_scheduler, schedule_tickets};
 pub use sessions::{ResumePlan, plan_resume_interrupted, resume_interrupted};
 pub use start::check_merges;
 pub use update::{UpdateService, run_update_loop};
+pub use watches::{follow as follow_watches, tick as tick_watches, tick_at as tick_watches_at};
 pub use workflow::{
     engine::{install_builtins, run_workflows},
     maintain_workflows,

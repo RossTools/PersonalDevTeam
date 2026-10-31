@@ -3,6 +3,7 @@ mod documents;
 mod error;
 mod event_log;
 mod events;
+mod health;
 mod host;
 mod inbox;
 mod local_forge;
@@ -16,6 +17,7 @@ mod secrets;
 mod sessions;
 mod tickets;
 mod todos;
+mod watches;
 mod workflows;
 mod workspaces;
 mod worktrees;
@@ -25,6 +27,7 @@ pub use documents::{AddDocument, DocumentLink, NewDocumentComment};
 pub use error::StoreError;
 pub use event_log::{EVENT_RETENTION_MS, EventFilter};
 pub use events::{NewEvent, RAW_RETENTION_MS};
+pub use health::{WRITE_FAILED, WriteFailure, is_disk_full, is_write_failure, write_backoff_ms};
 pub use host::ProjectSettings;
 pub use local_forge::{LocalChange, LocalCiRun};
 pub use notifications::NotificationFilter;
@@ -47,6 +50,8 @@ pub struct Store {
     /// Known secrets' values, replaced in the text the store keeps (transcripts, comments, steps, runs, the Inbox):
     /// PDT-158. Shared with pdt-api and the log writer (see `with_redactor`).
     redactor: std::sync::Arc<pdt_core::secret::Redactor>,
+    /// Writes failing, and the events waiting to be logged once they work (PDT-323).
+    health: std::sync::Arc<health::WriteHealth>,
 }
 
 pub(crate) type ProjectRow = (String, String, String, String, i64, Option<String>, String);
@@ -72,7 +77,12 @@ impl Store {
     /// retry) when another connection wrote in between, e.g. a new conversation's first events while Start opens its
     /// tabs.
     pub(crate) async fn write_tx(&self) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>, sqlx::Error> {
-        self.pool.begin_with("BEGIN IMMEDIATE").await
+        // One that can't start (a full disk, a lock held too long) is a failed write, whoever asked (PDT-323).
+        self.pool.begin_with("BEGIN IMMEDIATE").await.inspect_err(|e| {
+            if health::is_write_error(e) {
+                self.note_write_failure(&format!("{WRITE_FAILED}: {e}"));
+            }
+        })
     }
 
     /// Opens (creating if needed) the database, backing up to `<db dir>/backups`
@@ -99,10 +109,17 @@ impl Store {
         // No ping before handing out an idle connection: a local SQLite connection doesn't go stale, and on Windows
         // that ping could stall a checkout indefinitely under load (with idle connections in the pool), hanging the
         // request that needed it.
-        let pool = SqlitePoolOptions::new().max_connections(8).test_before_acquire(false).connect_with(options).await?;
+        // A connection is never handed out, or kept, inside a transaction (PDT-323): `health::release_clean`.
+        let pool = SqlitePoolOptions::new()
+            .max_connections(8)
+            .test_before_acquire(false)
+            .after_release(|conn, _| Box::pin(health::release_clean(conn)))
+            .before_acquire(|conn, _| Box::pin(async move { Ok(!sqlx::Connection::is_in_transaction(conn)) }))
+            .connect_with(options)
+            .await?;
         migrate::backup_if_pending(&pool, migrator, backup_dir).await?;
         migrator.run(&pool).await?;
-        Ok(Store { pool, host_defaults: Default::default(), redactor: Default::default() })
+        Ok(Store { pool, host_defaults: Default::default(), redactor: Default::default(), health: Default::default() })
     }
 
     /// Copies the WAL into the database and empties it (`wal_checkpoint(TRUNCATE)`). SQLite's own checkpoints can

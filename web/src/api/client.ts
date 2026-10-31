@@ -68,6 +68,8 @@ import type { Session } from './gen/Session';
 import type { NewTodo } from './gen/NewTodo';
 import type { Todo } from './gen/Todo';
 import type { TodoPatch } from './gen/TodoPatch';
+import type { NewWatch } from './gen/NewWatch';
+import type { WatchInfo } from './gen/WatchInfo';
 import type { SessionMode } from './gen/SessionMode';
 import type { TerminalSize } from './gen/TerminalSize';
 import type { CheckResponse } from './gen/CheckResponse';
@@ -716,5 +718,12 @@ export const api = {
     patch: (id: string, p: TodoPatch) => request<Todo>(`/api/todos/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
     /** `series` (a repeating todo): `only` skips to the next one, `series` stops it repeating. */
     remove: (id: string, series?: 'only' | 'series') => request<void>(`/api/todos/${enc(id)}${queryString({ series })}`, { method: 'DELETE' }),
+  },
+  /** Watches (PDT-319): who hears about a ticket or a workflow run. */
+  watches: {
+    list: (q: { ticket?: string; run?: string; session?: string }) => request<WatchInfo[]>(`/api/watches${queryString(q)}`),
+    /** The user's watch (one per target: watching again changes its events). */
+    create: (w: NewWatch) => request<WatchInfo>('/api/watches', { method: 'POST', body: JSON.stringify(w) }),
+    remove: (id: string) => request<void>(`/api/watches/${enc(id)}`, { method: 'DELETE' }),
   },
 };

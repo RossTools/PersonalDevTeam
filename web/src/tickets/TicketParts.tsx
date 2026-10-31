@@ -22,6 +22,7 @@ import { Markdown } from '../common/Markdown';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
+import { useWatches, Watchers } from '../common/Watch';
 import { actionError, useAction } from '../common/useAction';
 import { moveTicket, patchTicket, useOpenSession, useOpenTicket } from './actions';
 import { ParentField } from './PartsSection';
@@ -336,6 +337,17 @@ export function TicketOverlaps({ ticket }: { ticket: Ticket }) {
       <ul aria-label="Overlaps" className="flex flex-col gap-3">
         {ticket.overlaps.map((o) => <OverlapRow key={o.ticketId} ticket={ticket} overlap={o} />)}
       </ul>
+    </OverviewSection>
+  );
+}
+
+/** Who watches the ticket (PDT-319), with remove; nothing when nobody does. */
+export function TicketWatchers({ ticketId }: { ticketId: string }) {
+  const watches = useWatches({ ticket: ticketId }).data ?? [];
+  if (watches.length === 0) return null;
+  return (
+    <OverviewSection title="Watching">
+      <Watchers of={{ ticket: ticketId }} />
     </OverviewSection>
   );
 }

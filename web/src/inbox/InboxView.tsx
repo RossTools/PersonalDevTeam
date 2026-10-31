@@ -200,6 +200,12 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
             </div>
           </section>
         )}
+        {item.kind === 'storage' && (
+          <section aria-label="Can't save changes" className="flex flex-col gap-3">
+            <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
+            <p className="text-sm text-muted-foreground">It goes away on its own once PDT can save again.</p>
+          </section>
+        )}
         {item.kind === 'notice' && (
           <section aria-label="Unheard notice" className="flex flex-col gap-3">
             {item.attemptId ? (
