@@ -5,7 +5,11 @@ covers the processes, the crates, the core model and where each area lives. The 
 [invariants.md](invariants.md), the testing rules in [testing.md](testing.md), and how a change goes from branch to
 release in [SDLC.md](../SDLC.md). What PDT does for its users is in the user docs; this guide doesn't repeat it.
 Write this guide about how the code works today and the rules it keeps, without ticket history or decision logs;
-the rules for every kind of doc are in AGENTS.md ("Writing docs").
+the rules for every kind of doc are in AGENTS.md ("Writing docs"). Designs for new work go on its ticket.
+
+PDT is single-user today, but nothing in it should stop several users, hosting it as a service, or running it from
+any machine: one web UI serves the browser, the tray and the phone; a Rust daemon owns all the state and work; the
+code is split into crates so a feature lands in one place.
 
 ## Processes
 
@@ -82,7 +86,7 @@ free-form. A tab holds exactly one session, run, ticket or worktree's changes, a
 (pdt-core `worktree.rs`). Deleting one is refused while a session, run or active attempt uses it, or while it has
 uncommitted changes (unless forced).
 
-**Runs.** A run is a `[[run]]` or `[[test]]` from `.pdt/project.toml` (plus host overrides; `docs/run-config.md`)
+**Runs.** A run is a `[[run]]` or `[[test]]` from `.pdt/project.toml` (plus host overrides; the user docs' Run configuration page)
 started in a checkout, on a port from the host's range. Runs live in PTYs, or detached (`detach = true`) so they
 outlive pdtd and are reattached after a restart.
 
@@ -136,7 +140,7 @@ the agent's permission requests itself (`acp_agent::enforced_answer`). A profile
 a program PDT installs from the ACP registry (pdt-core `acp_registry`, pdt-api `toolchains.rs`): Settings → Agents →
 Install downloads it from the agent's own site, checks the registry's sha256 and unpacks it, without running it, into
 `<data dir>/toolchains/<registry id>/<version>/`; Sign in asks the server to `authenticate`, and it keeps the
-credentials itself (notes: docs/superpowers/notes/antigravity-acp.md).
+credentials itself.
 
 **pdt-mcp.** PDT's MCP server at `/api/mcp` (pdt-api `mcp/`). Each session gets a token (its id, signed with a key in
 the data folder) and the tools of its persona; each tool calls the API route's own function. Tools that need the
@@ -207,7 +211,7 @@ login.
 | Review and merge | pdt-api `review.rs`; pdt-core `review.rs`; pdt-git `review.rs` | `web/src/review` |
 | Sessions and terminals | pdt-api `sessions.rs`, `pty_ws.rs`, `activity.rs`; `crates/pdt-agents` | `web/src/sessions`, `web/src/terminal` |
 | Conversations | pdt-api `conversations.rs`; pdt-core `conversation/`; pdt-agents `adapter/` | `web/src/conversation` |
-| Agent instructions and guides | pdt-core `agent_context.rs`; pdt-api `guides.rs` (serves `docs/agent-guide.md`, `docs/run-config.md`, `docs/prompts/`) | |
+| Agent instructions and guides | pdt-core `agent_context.rs`; pdt-api `guides.rs` (serves `docs/agent-guide.md`, the run-config guide (`docs/user/automation/run-configuration.md` then `docs/run-config.md`), `docs/prompts/`) | |
 | pdt-mcp and personas | pdt-api `mcp/`, `personas.rs`; pdt-core `persona.rs`, `mcp.rs` | `web/src/personas` |
 | Workflows, Inbox, notifications | pdt-api `workflow/`, `inbox.rs`, `notifications.rs`; pdt-core `workflow/`; pdt-store `workflows.rs`, `event_log.rs` | `web/src/workflows`, `web/src/inbox`, `web/src/notifications` |
 | Integrations | pdt-api `sdk.rs`, `integrations/`; `crates/pdt-int-*`; pdtd `src/integrations/` | `web/src/plugins`, `web/src/connections` |
@@ -216,6 +220,3 @@ login.
 | Database | `crates/pdt-store` (`migrations/`, `migrate.rs`) | |
 | Design system | | `web/ui` (`web/ui/README.md`), shared app components in `web/src/common` |
 | Website | | `site/` (`site/README.md`) |
-
-Design notes and plans for larger features are in `docs/superpowers/` (specs and plans); they record how a feature
-was designed, not necessarily how it works today. Today's code and this guide win where they differ.

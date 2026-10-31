@@ -85,13 +85,13 @@ pub struct AcpAgentDef {
 pub enum AcpFlavor {
     #[default]
     Plain,
-    /// OhMyPi's `omp acp` (notes: docs/superpowers/notes/omp-acp.md).
+    /// OhMyPi's `omp acp`.
     Omp,
-    /// Cursor's `cursor-agent acp` (notes: docs/superpowers/notes/cursor-acp.md).
+    /// Cursor's `cursor-agent acp`.
     Cursor,
     /// Grok Build's `grok agent --no-leader stdio` (`crate::conversation::grok`).
     Grok,
-    /// Google's Antigravity ACP server (notes: docs/superpowers/notes/antigravity-acp.md).
+    /// Google's Antigravity ACP server.
     Antigravity,
 }
 

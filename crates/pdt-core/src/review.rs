@@ -1,4 +1,4 @@
-//! Review (Phase 6; docs/superpowers/specs/2026-10-19-review-design.md): a worktree's changes, line comments, the
+//! Review (Phase 6): a worktree's changes, line comments, the
 //! feedback message sent to the coder session, and merging.
 
 use serde::{Deserialize, Serialize};

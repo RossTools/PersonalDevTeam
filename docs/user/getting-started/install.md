@@ -1,139 +1,99 @@
 # Install PDT
 
-PDT runs on macOS, Windows and Linux. The quickest way to install it is one command in a terminal, below; or download
-it from the [releases page](https://github.com/RossTools/PersonalDevTeam/releases) and
-[install it by hand](#install-by-hand). Then go on to [the first run](first-run.md).
-
-You also need [git](https://git-scm.com/downloads) and at least one coding agent. You can install those before or
-after PDT: the first run checks for them ([Connect agents and GitHub](connect.md)).
+PDT runs on macOS (Apple silicon), Windows and Linux (`x86_64` or `aarch64`, glibc 2.35 or newer, such as Ubuntu
+22.04 or later). You also need [git](https://git-scm.com/downloads) and at least one coding agent, before or after
+installing PDT: [the first run](first-run.md) checks for them.
 
 ## Install with one command
 
-The command downloads the latest release for your system, checks it against the release's published checksums
-(and stops without installing anything if they don't match), installs it without needing admin rights, and starts
-it. If PDT is already installed it says so and changes nothing: PDT updates itself
-([Updates](#updates)).
+The command downloads the latest release for your system, checks it against the release's checksums (and installs
+nothing if they don't match), installs it without admin rights and starts it. If PDT is already installed, it changes
+nothing.
 
-### macOS
-
-In Terminal:
+**macOS and Linux**, in a terminal:
 
 ```sh
 curl -fsSL https://pdt.dev/install.sh | sh
 ```
 
-It installs **Personal Dev Team** into the **Applications** folder in your home folder and opens it once, which
-starts it and adds it to your login items. PDT for macOS needs a Mac with Apple silicon.
+- On macOS it installs **Personal Dev Team** into the **Applications** folder in your home folder and opens it, which
+  adds it to your login items.
+- On Linux it installs into `~/.local/opt/pdt` as a systemd user service that starts now and when you log in. On a
+  machine without a desktop it offers to keep PDT running after you log out and start it at boot.
 
-### Linux
-
-```sh
-curl -fsSL https://pdt.dev/install.sh | sh
-```
-
-It installs PDT into `~/.local/opt/pdt` and registers it as a systemd user service, which starts it now and whenever
-you log in. On a machine without a desktop, such as a server you reach over SSH, it offers to keep PDT running after
-you log out and start it at boot (lingering, below). It needs an `x86_64` or `aarch64` processor and glibc 2.35 or
-newer (Ubuntu 22.04 or later, or similar), and says so if your system doesn't have them.
-
-### Windows
-
-In PowerShell:
+**Windows**, in PowerShell:
 
 ```powershell
 irm https://pdt.dev/install.ps1 | iex
 ```
 
-It downloads the installer and runs it silently. PDT is installed for you only, starts, and starts again when you
-log in.
+It runs the installer silently, for you only. PDT starts now and when you log in.
 
 ### Options
 
-On macOS and Linux, put the options after `sh -s --`:
+On macOS and Linux, put options after `sh -s --`:
 
 ```sh
 curl -fsSL https://pdt.dev/install.sh | sh -s -- --channel nightly
 ```
 
-- `--channel nightly`: the newest [nightly build](../your-machine/install-and-updates.md#release-channels) instead
-  of the newest stable release. To keep getting nightly builds afterwards, choose them in PDT's update settings.
+- `--channel nightly`: the newest [nightly build](../your-machine/updates.md#release-channels). To keep getting
+  nightly builds, choose them in PDT's update settings too.
 - `--version 0.3.0`: that exact release.
 - `--force`: install again over an existing install.
 - `--yes`: answer yes to its question (on Linux, whether to keep PDT running after you log out).
 
-On Windows, `irm | iex` can't take options, so set them first, in the same PowerShell window:
+On Windows, set environment variables first, in the same PowerShell window:
 
 ```powershell
 $env:PDT_CHANNEL = 'nightly'   # or: $env:PDT_VERSION = '0.3.0'; $env:PDT_FORCE = '1'
 irm https://pdt.dev/install.ps1 | iex
 ```
 
-The same variables (`PDT_CHANNEL`, `PDT_VERSION`, `PDT_FORCE`, and `PDT_YES`) work on macOS and Linux too. If
-downloading the releases needs a GitHub token, set `GITHUB_TOKEN` to one that can read the repository before you
-run the command.
+`PDT_CHANNEL`, `PDT_VERSION`, `PDT_FORCE` and `PDT_YES` work on macOS and Linux too. If downloading the releases needs
+a GitHub token, set `GITHUB_TOKEN` first.
 
 ## Install by hand
 
-Download the file for your system from the
-[releases page](https://github.com/RossTools/PersonalDevTeam/releases) and install it as below.
+Download the file for your system from the [releases page](https://github.com/RossTools/PersonalDevTeam/releases).
 
-### macOS
+**macOS**:
 
 1. Download the file ending in `.app.tar.gz`.
-2. Unpack it and move **Personal Dev Team** into **Applications**. Run it from there, not from your Downloads folder
-   or a disk image: PDT can't update itself from those.
-3. Open it once. PDT starts, opens in your browser and adds itself to the menu bar. From now on it starts when you
-   log in.
+2. Unpack it and move **Personal Dev Team** into **Applications** (not your Downloads folder or a disk image: PDT
+   can't update itself from there).
+3. Open it. PDT starts, opens in your browser and adds itself to the menu bar and your login items.
 
-macOS may ask whether Personal Dev Team can find devices on your local network. Allow it if you'll connect PDT to
-anything on your network; you can change it later in **System Settings › Privacy & Security › Local Network**.
+If macOS asks whether Personal Dev Team can find devices on your local network, allow it if you'll connect PDT to
+anything on your network. You can change it later in **System Settings › Privacy & Security › Local Network**.
 
-### Windows
+**Windows**: download the file ending in `-setup.exe` and run it. PDT starts, opens in your browser and adds itself
+to the system tray and your startup apps.
 
-1. Download the file ending in `-setup.exe`.
-2. Run it. PDT starts, opens in your browser and adds itself to the system tray. From now on it starts when you log
-   in.
-
-### Linux
-
-There are two downloads for each processor (`x86_64` and `aarch64`); you need glibc 2.35 or newer (Ubuntu 22.04 or
-later, or similar).
-
-**On a desktop**, download `pdt-linux-<arch>.AppImage`, make it executable and run it:
+**Linux desktop**: download `pdt-linux-<arch>.AppImage`, make it executable and run it. It sets itself up to start
+at login and opens in your browser.
 
 ```sh
 chmod +x pdt-linux-x86_64.AppImage
 ./pdt-linux-x86_64.AppImage
 ```
 
-PDT sets itself up to start when you log in, then opens in your browser.
-
-**On a server or without a desktop**, download `pdt-linux-<arch>.tar.gz`, unpack it somewhere you own and register
-it:
+**Linux server** (no desktop): download `pdt-linux-<arch>.tar.gz`, unpack it into a folder you own (not one owned
+by root such as `/opt`: PDT updates itself by replacing that folder) and register it as a systemd user service:
 
 ```sh
 mkdir -p ~/.local/opt
 tar -xzf pdt-linux-x86_64.tar.gz -C ~/.local/opt
 ~/.local/opt/pdt/pdt-host install
+loginctl enable-linger "$USER"   # keep it running when you're logged out, from boot
 ```
 
-That installs PDT as a systemd user service. A user service stops when you log out; to keep PDT running from boot,
-run this once:
-
-```sh
-loginctl enable-linger "$USER"
-```
-
-Then open `http://127.0.0.1:7420` in a browser on that machine, or set up remote access to reach it from elsewhere.
-
-Unpack it into a folder you can write to (like `~/.local/opt`), not one owned by root such as `/opt`: PDT updates
-itself by replacing that folder.
+Open `http://127.0.0.1:7420` on that machine, or set up [remote access](../your-machine/remote-access.md) to reach
+it from your laptop or phone.
 
 ## Updates
 
-PDT keeps itself up to date. It checks for a new release every hour, installs it when PDT is idle, checks that the new
-version starts properly, and goes back to the version you had if it doesn't. **Settings › This host › Updates** shows
-the version you have and has **Check for updates**; if a check can't reach the releases, it says why.
+PDT updates itself: see [Running and updating PDT](../your-machine/updates.md).
 
 ## Next
 

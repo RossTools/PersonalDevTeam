@@ -9,112 +9,44 @@ looked yet.
 ## What to ask it
 
 - **Plan a feature**: "Plan dark mode for the web app into tickets." It reads the code, drafts the tickets in its
-  reply, and creates them (as **Draft**s) once you agree, split into parts and linked in order when that helps.
+  reply, and creates them as **Draft**s once you agree, split into parts and linked in order when that helps.
 - **Write or refine a ticket**: "Turn my note about slow search into a ticket with a Done when."
 - **Tidy the backlog**: "Which tickets are duplicates or out of date?", "Rank the bugs by how much they hurt."
 - **Say what's going on**: "What's in flight?", "Why is ABC-12 stuck?", "What needs me?" It reads the board, pull
-  requests and CI, running agents and the Inbox.
+  requests, CI, running agents and the Inbox.
 - **Talk to an agent**: "Tell the agent on ABC-12 to rebase before it pushes again."
-- **Run or write a workflow**: "Run the release workflow", "Write a workflow that posts merged tickets to Discord." A
-  workflow it writes is a proposal you accept or discard (see [Workflows](workflows.md#share-and-copy)).
+- **Run or write a workflow**: "Cut a minor release", "Write a workflow that posts merged tickets to Discord." A
+  workflow it writes is a proposal you accept or discard in the workflow's **Versions**.
 - **Put a screenshot on a ticket**: paste it into the chat and say "Make a ticket for this bug, with the screenshot."
-  The image goes on the ticket as an attachment, and the agent that works on it opens it (see
-  [Screenshots and logs](../using-pdt/tickets-and-the-board.md#screenshots-and-logs)). Attaching asks no more than the
-  change it comes with.
+  The agent that works on the ticket opens the image (see
+  [Screenshots and logs](../using-pdt/tickets-and-the-board.md#screenshots-and-logs)).
 - **Report a bug in PDT itself**.
 
-It can also read and search your projects' code, use git, and search the web, as its agent normally would. With a
-plugin on (Jira, Discord…), it can use that service too: see [Plugins and connections](plugins.md).
+It can also read and search your projects' code, use git and search the web. With a plugin on (Jira, Discord…), it
+can use that service too: see [Plugins and connections](plugins.md).
+
+For a release, the PM uses the project's enabled release workflow, such as
+[Cut a release](workflows.md#cut-a-release). For a project without one, tell it how you release.
 
 The PM runs as the **PM** persona: change its agent, model or instructions in **Personas** (see
 [Personas and approvals](personas-and-approvals.md)).
 
 ## Conversations
 
-Keep one conversation per topic: a release, a feature, a clean-up. Each has its own history, and several can be open at
-once.
+Keep one conversation per topic (a release, a feature, a clean-up). Several can be open at once, each with its own
+history. The list shows the open ones, most recently active first; an unread reply is in bold with a dot, and a
+working one shows a spinner.
 
-- **New conversation** starts one. Its first message names it; **Rename** changes the name.
-- The list on the left has the open conversations, the most recently active first. One with a reply you haven't read
-  is in bold; one that's working shows a spinner.
-- **Close…** ends a conversation: the PM first writes a short journal entry (what was done, what's still open), then
-  the conversation becomes read-only. The newest ended ones are listed below the open ones, with **All ended
-  conversations** for the rest.
-- **Reset…** starts a conversation fresh when it has grown long, and keeps it: the PM writes its journal entry, then a
-  new conversation takes its place with the same name, agent, model and permission mode, in the same spot in the list
-  and on screen. The new one starts from that journal entry. A **Previous conversation** link at its top opens the old
-  history read-only (after several resets, each links to the one before).
+- **New conversation** starts one; its first message names it. **Rename** (in a conversation's menu) changes the name.
+- **Close…** when the topic is done: the PM writes a short journal entry (what was done, what's still open) and the
+  conversation becomes read-only. The newest ended ones are listed under **Ended**, the rest under **All ended
+  conversations**.
+- **Reset…** when the topic carries on but the conversation has grown long or muddled: the PM writes its journal
+  entry, and a fresh conversation takes its place with the same name, agent, model and permission mode, starting from
+  that entry. **Previous conversation** at its top opens the old history, read-only.
 
-Close or reset? **Close** when the topic is done: the conversation ends and later ones only see its journal. **Reset**
-when the topic carries on but the conversation has become slow or muddled: you keep the conversation and lose only its
-long history.
-
-A conversation doesn't end on its own. When it gets long, the agent condenses its own history and PDT asks it to write
-a journal checkpoint first, so nothing important is lost.
-
-## When it asks first
-
-Before the PM creates, edits, stops or links a ticket, messages an agent, or runs or saves a workflow, it asks you. An
-approval card shows in the conversation (and under **Approvals** in the Inbox) with exactly what it's about to do.
-**Allow** lets it go ahead; **Deny** tells it no. (With Codex or Devin as the PM's agent, the card is in the Inbox
-only.)
-
-Reading never asks, and nor do its own notes: it can look at anything without stopping you.
-
-To let it act on a project's tickets without asking, turn on **The PM acts without asking** in **Settings**, on the
-project's page, under **Pipeline and policies**. A plugin's connection can have the same setting, for that service.
-
-Some things always ask, whatever the setting:
-
-- moving a ticket that came from outside PDT (an issue, say) onto the board, or labelling it `agentic`;
-- reporting a bug in PDT.
-
-## Talk to it from Discord
-
-With the **Discord** plugin on, you can DM the PM from your phone or anywhere Discord runs.
-
-1. In the [Discord Developer Portal](https://discord.com/developers/applications), open your bot's application →
-   **Bot**, and under **Privileged Gateway Intents** turn on **Message Content Intent**.
-2. Add a **Discord bot** connection (or edit yours), and fill in **Your Discord user ID**: in Discord, turn on
-   Developer Mode (Settings → Advanced), then right-click your name → **Copy User ID**.
-3. Save. The connection says **DMs with the PM: Connected** once the bot is online.
-
-Now DM the bot, "What's in flight?" for example. Your messages go to your current Discord conversation, an ordinary PM
-conversation marked **via Discord** in PDT's list; the first message starts one. While the PM works you see
-"typing…", and its reply arrives as a DM (a long one in several messages, a very long one as a `.md` file). When the
-answer comes from a different conversation than the last message, it starts with that conversation's name.
-
-In the DMs, these commands manage conversations:
-
-- `/new [topic]` starts a new conversation and makes it the current one.
-- `/list` shows the open conversations.
-- `/switch` talks to another one (it suggests them as you type).
-- `/close` closes the current one: the PM writes its journal entry, and your next message starts a new conversation.
-
-When the PM asks before doing something, the DM shows what it wants to do with **Approve** and **Decline** buttons.
-The same request is in PDT too: whichever you answer first counts, and the other then says so. Questions the PM asks
-show their answers as buttons; you can also type an answer.
-
-Only your Discord account can talk to the PM or press its buttons: other people's DMs are ignored, and so are messages
-in server channels. Turn on **Also send Inbox items as DMs** on the connection to get the Inbox's needs-you items
-(a stalled step, a question) as DMs too.
-
-The bot reconnects by itself when Discord's connection drops or PDT restarts. If it can't (a wrong token, Message
-Content Intent off), the connection says why.
-
-## Notes and the PM's memory
-
-Open **Notes** in the rail (**Ctrl+]** then **o**). **Mine | PM's memory** switches between two kinds:
-
-- **Mine**: your own notes and ideas. The PM can find and read them when it searches, but never changes or deletes
-  them. **Make a ticket** on a note turns it into a draft ticket.
-- **PM's memory**: what the PM saves to remember: decisions, how a project works, what you prefer. You can read, edit
-  and delete them.
-
-**Pin** a note in the PM's memory and it's in every PM conversation from the start. Pinning one of your own only lists
-it first.
-
-A note is host-wide or belongs to one project. Notes save as you type.
+A conversation never ends on its own. When it gets long, the agent condenses its history, writing a journal
+checkpoint first so nothing important is lost.
 
 ## What it knows when it starts
 
@@ -122,12 +54,62 @@ Each new conversation starts with a briefing: your projects and their tickets by
 Inbox, what happened since the last conversation started, the last few journal entries, the other open conversations,
 and the pinned notes. So you can ask "what's new?" without explaining anything.
 
-A project with an enabled release workflow (such as Cut a release) is listed with it, and the PM starts that workflow
-when you ask for a release. For a project without one, the PM has no release instructions: tell it how you release.
+About once a day, a conversation you've written to since is brought up to date: what happened to each ticket (moved,
+merged, CI failed…), what waits in the Inbox, and what other conversations noted as still open. It shows as one line,
+"PDT brought this conversation up to date", which opens to the full text.
 
-## The daily update
+## When it asks first
 
-A conversation you keep using doesn't go stale. About once a day, when you've written to it since, PDT brings it up to
-date: what happened to each ticket (moved, merged, CI failed…), what waits in the Inbox, and what the other
-conversations noted as still open. In the conversation it shows as one quiet line, "PDT brought this conversation up to
-date", which opens to the full text.
+Before the PM creates, edits, stops or links a ticket, messages an agent, or runs or saves a workflow, it asks you. An
+approval card in the conversation (and under **Approvals** in the Inbox) says exactly what it's about to do: **Allow**
+or **Deny**. With Codex or Devin as the PM's agent, the card is in the Inbox only.
+
+Reading never asks, and nor does writing its own notes.
+
+To let it act on a project's tickets without asking, turn on **The PM acts without asking** in **Settings**, on the
+project's page, under **Pipeline and policies**. A plugin's connection can have the same setting for its service.
+
+These always ask, whatever the setting:
+
+- moving a ticket that came from outside PDT (an issue, say) onto the board, or labelling it `agentic`;
+- reporting a bug in PDT.
+
+## Notes and the PM's memory
+
+Open **Notes** in the rail (**Ctrl+]** then **o**). **Mine | PM's memory** switches between:
+
+- **Mine**: your own notes and ideas. The PM can find and read them but never changes or deletes them. **Make a
+  ticket** turns a note into a draft ticket.
+- **PM's memory**: what the PM saves to remember (decisions, how a project works, what you prefer). You can read, edit
+  and delete them.
+
+**Pin** a note in the PM's memory to put it in every PM conversation from the start; pinning one of yours only lists
+it first. A note is host-wide or belongs to one project, and saves as you type.
+
+## Talk to it from Discord
+
+With the **Discord** plugin on, you can DM the PM from anywhere Discord runs.
+
+1. In the [Discord Developer Portal](https://discord.com/developers/applications), open your bot's application →
+   **Bot**, and under **Privileged Gateway Intents** turn on **Message Content Intent**.
+2. Add a **Discord bot** connection (or edit yours) and fill in **Your Discord user ID**: in Discord, turn on
+   Developer Mode (Settings → Advanced), then right-click your name → **Copy User ID**.
+3. Save. The connection shows **DMs with the PM: Connected** once the bot is online; if it can't connect (a wrong
+   token, Message Content Intent off), it says why.
+
+Now DM the bot ("What's in flight?"). Your messages go to your current Discord conversation, an ordinary PM
+conversation marked **via Discord** in PDT. You see "typing…" while it works, and the reply comes as a DM (a very long
+one as a `.md` file), headed with the conversation's name when it isn't the one you last wrote to.
+
+DM commands:
+
+- `/new [topic]` starts a conversation and makes it current.
+- `/list` shows the open conversations.
+- `/switch` moves to another one (it suggests them as you type).
+- `/close` closes the current one; your next message starts a new one.
+
+Approval requests come with **Approve** and **Decline** buttons, and the PM's questions with a button per answer (or
+type one). The same request is in PDT: whichever you answer first counts.
+
+Only your Discord account can talk to the PM or press its buttons; other people's DMs and server channels are ignored.
+Turn on **Also send Inbox items (stalled, needs input) as DMs** on the connection to get those in Discord too.

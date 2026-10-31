@@ -1,5 +1,7 @@
-//! WebSocket bridge between a browser terminal (xterm.js) and a PTY session. See the protocol in
-//! docs/superpowers/plans/2026-10-15-phase-1-terminals.md, decision 9.
+//! WebSocket bridge between a browser terminal (xterm.js) and a PTY session. Server to client: binary frames carry
+//! output, starting with the scrollback; a text frame `{"type":"exit","code":N}` reports the exit; close code 4000
+//! means "you fell behind; reconnect". Client to server: binary frames carry input, text frames JSON control messages
+//! (`{"type":"resize","cols","rows"}`).
 
 use crate::error::ApiError;
 use crate::routes::AppState;

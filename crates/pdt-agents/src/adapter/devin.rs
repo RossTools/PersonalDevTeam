@@ -1,4 +1,4 @@
-//! Devin through `devin acp`, an Agent Client Protocol server on stdio (notes: docs/superpowers/notes/devin-cli.md):
+//! Devin through `devin acp`, an Agent Client Protocol server on stdio:
 //! the generic ACP adapter (`super::acp`) with Devin's profile, its arguments, modes and resume fallback.
 
 use super::acp::AcpProfile;

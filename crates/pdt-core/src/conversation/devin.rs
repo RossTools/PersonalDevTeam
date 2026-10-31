@@ -1,4 +1,4 @@
-//! Devin's `devin acp` (notes: docs/superpowers/notes/devin-cli.md): the Agent Client Protocol mapping (`super::acp`)
+//! Devin's `devin acp`: the Agent Client Protocol mapping (`super::acp`)
 //! with what Devin adds to it, its `cognition.ai/*` extra fields, its tool and option names, and its modes.
 
 use super::PermissionMode;

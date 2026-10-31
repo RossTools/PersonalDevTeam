@@ -1,4 +1,4 @@
-//! Claude Code's `claude -p` stream-json protocol (notes: docs/superpowers/notes/phase-5-agent-protocols.md): stdout
+//! Claude Code's `claude -p` stream-json protocol: stdout
 //! frames → normalized events, and the lines PDT writes to stdin. Pure; the adapter in pdt-agents owns the process.
 
 use super::{

@@ -23,7 +23,7 @@ Open **Settings › Plugins › GitHub** (or the **Connect GitHub** step in **Ge
 2. Paste it under **Or paste a token** and click **Test**: PDT says who it signs in as and its scopes.
 3. Click **Save login token**.
 
-Either way the login goes into your system's keychain. PDT never shows it to agents, and never writes it to its logs.
+Either way the login goes into your system's keychain. Agents never see it, and it never goes into PDT's logs.
 
 ### Private repositories of an organization
 
@@ -60,10 +60,9 @@ through PDT's tools as you, and agents ask before filing an issue.
 
 ## Rate limits
 
-GitHub limits how many requests an account makes an hour. PDT keeps its requests down (it reuses answers GitHub says
-haven't changed, which don't count), but many projects with busy CI can still use the limit up. When it does, PDT
-stops calling GitHub until the time GitHub gives, and its errors say **GitHub's rate limit is used up until HH:MM
-UTC**. Pull request and CI status catch up by themselves afterwards.
+GitHub limits how many requests an account makes an hour, and many projects with busy CI can use the limit up. When
+that happens, PDT stops calling GitHub until the time GitHub gives, and its errors say **GitHub's rate limit is used up
+until HH:MM UTC**. Pull request and CI status catch up by themselves afterwards.
 
 ## When GitHub stops accepting the login
 
@@ -83,7 +82,7 @@ until you connect again. PDT stays authorized on GitHub until you revoke it ther
 
 Click **Skip, my projects aren't on GitHub** in **Get started**, or just don't sign in. Everything but pull requests
 works the same: when you merge a ticket, PDT merges its branch into your base branch locally. See
-[Run configuration](../automation/run-configuration.md#without-github).
+[Run configuration](../automation/run-configuration.md).
 
 If no project uses GitHub, you can turn the GitHub plugin off in **Settings › Plugins**. PDT still reads GitHub for
 its own updates.

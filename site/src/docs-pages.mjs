@@ -1,9 +1,10 @@
 // Which of the repository's docs/ the site publishes, and where each lands. Shared by the content collection
 // (content.config.ts), the link rewriting (remark-docs-links.mjs), the sidebar (astro.config.mjs) and the docs home.
-// superpowers/, prompts/, ROADMAP.md and the READMEs in docs/user/ (notes for whoever writes the docs) stay out.
+// prompts/, run-config.md (the agents' part of the run-config guide, which follows the user page) and the READMEs in
+// docs/user/ (notes for whoever writes the docs) stay out.
 
 /** Globs under docs/. */
-export const DOCS = ['agent-guide.md', 'run-config.md', 'SDLC.md', 'dev/*.md', 'user/*/*.md', '!user/**/README.md'];
+export const DOCS = ['agent-guide.md', 'SDLC.md', 'dev/*.md', 'user/*/*.md', '!user/**/README.md'];
 
 /** The developer guide (docs/dev/) and how we work on PDT, in sidebar order: the Contributing section's other pages. */
 export const DEVELOPER_PAGES = ['dev/architecture.md', 'dev/invariants.md', 'dev/testing.md', 'SDLC.md'];
@@ -35,13 +36,13 @@ export const USER_SECTIONS = [
     dir: 'your-machine',
     label: 'Your machine',
     summary: 'Updates, remote access from a phone or another computer, GitHub, secrets, settings and where your data lives.',
-    pages: ['install-and-updates', 'remote-access', 'github', 'secrets', 'settings', 'your-data'],
+    pages: ['updates', 'remote-access', 'github', 'secrets', 'settings', 'your-data'],
   },
   {
     dir: 'troubleshooting',
     label: 'Troubleshooting & FAQ',
     summary: 'What to check when something goes wrong, and answers to common questions.',
-    pages: ['troubleshooting', 'faq'],
+    pages: ['troubleshooting'],
   },
   {
     dir: 'contributing',
@@ -64,7 +65,7 @@ export function docId(entry) {
 /** Whether a path relative to docs/ (`dev/architecture.md`) is one the site publishes. */
 export function isPublished(path) {
   return (
-    ['agent-guide.md', 'run-config.md', 'SDLC.md'].includes(path) ||
+    ['agent-guide.md', 'SDLC.md'].includes(path) ||
     /^dev\/[^/]+\.md$/.test(path) ||
     (/^user\/[^/]+\/[^/]+\.md$/.test(path) && !path.endsWith('/README.md'))
   );

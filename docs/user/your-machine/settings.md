@@ -14,14 +14,13 @@ Every setting saves as you change it: a moment of **Saved** beside it says so. T
 
 ### Updates
 
-How PDT updates itself. See [Install and updates](install-and-updates.md#updates) for what each choice does.
+How PDT updates itself. See [Updates](updates.md#updates) for what each choice does.
 
 - **Version**: the version you run, with **Check for updates**, and what the last check found.
 - **Install updates**: **Install automatically when idle**, **Notify only** or **Manual (no checks)**.
 - **Update channel**: **Stable releases**, or **Nightly builds too**.
 - **Check for updates**: how often PDT looks.
-- **Release repository**: where updates come from. Leave it empty; it's there in case PDT's releases ever move
-  somewhere PDT can't follow.
+- **Release repository**: where updates come from. Leave it empty.
 - **GitHub token**: the token PDT reads releases and files bug reports with, kept in your keychain.
 
 ### Agents
@@ -48,10 +47,11 @@ How PDT updates itself. See [Install and updates](install-and-updates.md#updates
 Where PDT listens. Changes apply when PDT restarts: a banner offers **Restart now**, and **Network** shows a
 **restart** badge until then. Sessions are interrupted and resume when PDT is back.
 
-- **Port**: PDT's port, 7420 unless you change it. Change it if something else needs 7420. After a restart on a new
+- **Port**: PDT's port, 7420 unless you change it (if something else needs 7420, say). After a restart on a new
   port, the page reopens itself there.
 - **Allowed hosts**: other names you open PDT by on this machine (an alias in your hosts file, say), with `:port` when
-  needed. `localhost` and your tailnet name are always allowed.
+  needed. `localhost` and your tailnet name are always allowed; PDT refuses a page opened by any other name, so that
+  websites can't reach it through your browser.
 
 A setting marked **env** is set by an environment variable PDT was started with (`PDT_PORT`, `PDT_ALLOWED_HOSTS`),
 which wins over the setting, so you can't change it here. See
@@ -59,8 +59,8 @@ which wins over the setting, so you can't change it here. See
 
 ### Remote access
 
-Reach PDT from your phone over Tailscale: **Serve on the tailnet**, its **Status** and address, and the **Owner**,
-the only Tailscale user let in. See [Remote access and your phone](remote-access.md).
+**Serve on the tailnet**, its **Status** and address, and the **Owner**. See
+[Remote access and your phone](remote-access.md).
 
 ### Runs
 
@@ -79,9 +79,9 @@ Where a repository you add by **Clone URL** is cloned to (`~/work` unless you ch
 
 ### Bug reports
 
-Where **Report a bug…** sends a report about PDT: **Automatic** (a GitHub issue on PDT's repository), **GitHub issue**,
-**Local ticket** (a draft ticket here, nothing sent anywhere) or **Off**. The report form shows what it includes
-before you send it, and logs are cleaned of secrets, tokens and your machine's names.
+**Send reports to**: where **Report a bug…** sends a report about PDT: **Automatic** (a GitHub issue on PDT's
+repository), **GitHub issue**, **Local ticket** (a draft ticket here, nothing sent anywhere) or **Off**. The report
+form shows what it includes before you send it, and its logs are cleaned of secrets, tokens and your machine's names.
 
 ### Checks
 
@@ -103,13 +103,12 @@ notifications** for this device. See [The Inbox](../using-pdt/the-inbox.md#notif
 
 ## Plugins and All connections
 
-Turn PDT's plugins on and off (GitHub, Jira, Buildkite, Discord and others), and manage their connections. The GitHub
-plugin is also where you sign in to GitHub. See [Plugins and connections](../automation/plugins.md) and
-[GitHub and other forges](github.md).
+Turn plugins on and off and manage their connections; the GitHub plugin is where you sign in to GitHub. See
+[Plugins and connections](../automation/plugins.md) and [GitHub and other forges](github.md).
 
 ## Secrets
 
-Keys and tokens agents and workflows can use without seeing them. See [Secrets](secrets.md).
+Keys and tokens that agents and workflows use without seeing them. See [Secrets](secrets.md).
 
 ## A project's settings
 
