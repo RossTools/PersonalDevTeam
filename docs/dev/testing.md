@@ -17,6 +17,32 @@ How PDT's own tests are run and what they must never touch. Before pushing, run 
 - **Core logic is test-first.** Rules live in pdt-core as pure functions, so most of them are unit tests there; the
   routes are tested through the router in `crates/pdt-api/tests/` (helpers in `tests/common`: `call`, and
   `call_as_ui` for routes that need the UI token); the daemon end to end in `crates/pdtd/tests/`.
+- **One integration test binary per crate:** a crate's `tests/*.rs` files are modules of its `tests/main.rs` (the
+  `integration` target; Cargo.toml sets `autotests = false`), not a binary each. A new file needs `mod <name>;` there;
+  a test in each `main.rs` (`test-support/all_listed.rs`) fails when one is left out. Shared helpers (`common`,
+  `port_blocks`) are declared once in `main.rs` and imported with `use crate::common;`. A test that changes the
+  process environment gets its own `[[test]]` target instead (pdt-api's `checks_env`). Run one file's tests with
+  `cargo test -p pdt-api --test integration pm::`.
+
+## Build output
+
+Each worktree has its own `target/`, so its size multiplies by the number of worktrees. To keep it down:
+
+- **Less debug info:** the dev profile (also `cargo test`'s) keeps line tables only for PDT's crates, so backtraces
+  still show file and line, and none for dependencies (the workspace `Cargo.toml`). For a debugger that shows
+  variables, build with `CARGO_PROFILE_DEV_DEBUG=full`.
+- **One test binary per crate** (above): each links all of PDT and its dependencies.
+- **A shared compile cache (optional):** install [sccache](https://github.com/mozilla/sccache) (`brew install
+  sccache`, `cargo install sccache --locked`) and set `RUSTC_WRAPPER=sccache` in your shell profile, or
+  `build.rustc-wrapper = "sccache"` in `~/.cargo/config.toml`. The repository doesn't set it, so builds without
+  sccache keep working. Worktrees then share compiled dependencies instead of each building them again. sccache can't
+  cache crates built incrementally, which PDT's own crates are in the dev profile: those still build per worktree.
+  `CARGO_INCREMENTAL=0` caches them too, and drops `target/debug/incremental`, at the cost of slower rebuilds after
+  an edit. Don't share one `CARGO_TARGET_DIR` between worktrees: agents building at once would wait on cargo's lock.
+- **Stale artifacts:** `scripts/clean-targets.sh` removes build output cargo hasn't written for 7 days
+  (`--days N`) from the main checkout's `target/` and every `.worktrees/*/target`, or from the folders given;
+  `--dry-run` lists it. Cargo rebuilds what it needs later (from sccache when set up). A worktree's `cargo clean`
+  removes all of its own.
 
 ## What tests never touch
 

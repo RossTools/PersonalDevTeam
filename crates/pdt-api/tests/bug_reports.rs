@@ -1,7 +1,7 @@
 //! Report a bug (PDT-153): issues on the release repository with the update token, local Draft tickets on the instance
 //! PDT is developed on (no GitHub request), errors, the nonce, and redacted diagnostics. GitHub is a local fake.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::issues::{FakeIssues, READ_ONLY, TOKEN};

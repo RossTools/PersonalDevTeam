@@ -1,7 +1,7 @@
 //! Notifications (PDT-108): rows made from sessions' state and the Inbox, cleared when their cause goes away, the
 //! per-kind settings and the stream.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

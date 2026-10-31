@@ -1,6 +1,6 @@
 //! Conversation sessions end to end, with `fake-agent` standing in for `claude -p` (structured agents spec §12).
 
-mod common;
+use crate::common;
 
 use common::{PNG, call, call_raw, git, park_once_idle};
 use futures_util::StreamExt;
@@ -768,7 +768,7 @@ async fn at_suggests_files_from_the_sessions_folder() {
 async fn api_keys_are_scrubbed_from_the_agent() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;
-    // SAFETY: tests in this binary that read the environment don't depend on this variable.
+    // SAFETY: the tests that read the environment don't depend on this variable.
     unsafe { std::env::set_var("ANTHROPIC_API_KEY", "sk-test") };
     let id = new_conversation(&env, json!({"initialPrompt": "env: ANTHROPIC_API_KEY"})).await["id"]
         .as_str()

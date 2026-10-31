@@ -139,6 +139,7 @@ jobs:
       - run: scripts/release-tag.test.sh
       - run: scripts/nightly-tag.test.sh
       - run: scripts/scratch-daemon.test.sh
+      - run: scripts/clean-targets.test.sh
       - name: The pull request adds a changelog fragment
         env:
           GH_TOKEN: ${{ github.token }}

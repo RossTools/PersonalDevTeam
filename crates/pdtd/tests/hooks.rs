@@ -1,6 +1,6 @@
 //! `pdtd hook …`: the agent hook subcommand, alone and against a real daemon. Never touches the stable instance.
 
-mod common;
+use crate::common;
 use common::*;
 use std::io::Write;
 use std::path::{Path, PathBuf};

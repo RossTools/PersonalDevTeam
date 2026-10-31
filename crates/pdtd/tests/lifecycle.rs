@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-mod common;
+use crate::common;
 use common::*;
 
 #[test]

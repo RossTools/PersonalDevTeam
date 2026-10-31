@@ -2,7 +2,7 @@
 //! sensor's calls ending within their timeout, and the poll going on past a hung one, are tested with an
 //! integration's check, in its crate.)
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};

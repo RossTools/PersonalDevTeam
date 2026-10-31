@@ -2,8 +2,7 @@
 //! secret kept out of errors and logs), `discord.channel.ensure`, the templates that post to Discord, and the PM's
 //! Discord tools. Discord is a local fake server.
 
-#[path = "../../pdt-api/tests/common/mod.rs"]
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::call;

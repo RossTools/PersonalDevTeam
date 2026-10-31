@@ -1,6 +1,6 @@
 //! Pull requests and CI of ticket attempts (PDT-25), with a fake GitHub and a stand-in agent.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::{argv_agent, call, git};
