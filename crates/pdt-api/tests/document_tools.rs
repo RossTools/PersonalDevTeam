@@ -4,8 +4,7 @@
 //! (`fake-agent` stands in for Claude: it calls pdt-mcp tools when a message says `mcp: <tool> <json>`, asking first
 //! for tools `--allowedTools` leaves out).
 
-mod common;
-
+use crate::common;
 use axum::http::StatusCode;
 use common::call;
 use common::pm::*;

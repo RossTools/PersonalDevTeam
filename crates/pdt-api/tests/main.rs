@@ -22,6 +22,7 @@ mod conversations;
 mod delivery;
 mod devin;
 mod devin_conversations;
+mod document_tools;
 mod documents;
 mod folders;
 mod forge;
