@@ -635,7 +635,7 @@ pub(crate) fn defs() -> Vec<Tool> {
                           (an agent step reported), `comment` (someone else commented), `needs_you` (it waits on \
                           the user), `failed` (CI failed, the merge queue dropped it, the run failed); default \
                           finished, failed and needs_you. With `once` (default true) the watch ends when the target \
-                          finishes. Use it when the user asks you to keep an eye on something, instead of checking \
+                          finishes (one already finished is refused). Use it when the user asks you to keep an eye on something, instead of checking \
                           again and again. It asks nobody: only this conversation is told.",
             schema: schema::<crate::watches::NewWatch>,
         },

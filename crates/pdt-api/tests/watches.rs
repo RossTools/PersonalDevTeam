@@ -198,6 +198,41 @@ async fn a_closed_conversations_watch_tells_the_user_and_ends() {
 }
 
 #[tokio::test]
+async fn news_during_a_closing_conversations_journal_turn_goes_to_the_user() {
+    let env = env().await;
+    let t = ticket_id(&env).await;
+    let pm = start_pm(&env, "who").await;
+    wait_said(&env, &pm, 1).await;
+    ask(&env, &pm, r#"mcp: watch {"ticket": "PX-1", "events": ["outcome"]}"#).await;
+    // The user closed it: it is writing its journal (rotation `journal`) when the news comes.
+    use pdt_core::pm::{RotateReason, Rotation};
+    let closing =
+        env.state.store.set_pm_rotation(&pm, Rotation::None, Rotation::Journal, Some(RotateReason::User), now());
+    assert!(closing.await.unwrap());
+    outcome(&env, &t, "submitted", "During the journal").await;
+    pdt_api::tick_watches(&env.state).await;
+    let n = watch_notifications(&env.app).await;
+    assert_eq!(n.len(), 1, "{n:?}");
+    assert!(n[0]["body"].as_str().unwrap().contains("was closed, so you're told instead"), "{}", n[0]);
+    let queued = env.state.store.waiting_session_messages().await.unwrap();
+    assert!(queued.iter().all(|m| !m.text.starts_with("[PDT] Watched")), "nothing into the closing conversation");
+    assert!(watches_of(&env, &t).await.is_empty(), "the watch ended");
+    call(&env.app, "POST", &format!("/api/sessions/{pm}/kill"), None).await;
+}
+
+#[tokio::test]
+async fn a_once_watch_of_a_finished_target_is_refused() {
+    let env = env().await;
+    let t = ticket_id(&env).await;
+    let (s, _) = call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "done"}))).await;
+    assert!(s.is_success());
+    let (s, v) = call(&env.app, "POST", "/api/watches", Some(json!({"ticket": t}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("already_finished")), "{v}");
+    let (s, v) = call(&env.app, "POST", "/api/watches", Some(json!({"ticket": t, "once": false}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+}
+
+#[tokio::test]
 async fn watches_follow_a_reset_conversation() {
     let env = env().await;
     let t = ticket_id(&env).await;

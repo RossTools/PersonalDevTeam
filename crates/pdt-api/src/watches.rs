@@ -80,13 +80,28 @@ pub(crate) async fn watch(st: &AppState, input: &NewWatch, session: Option<&str>
         WatchTarget::Run => st.store.get_workflow_run(&target_id).await?.map(|r| r.status.as_str().to_string()),
         WatchTarget::Ticket => None,
     };
+    let once = input.once.unwrap_or(true);
+    // A `once` watch ends when its target finishes: one that already has would never end.
+    if once {
+        let finished = match target {
+            WatchTarget::Run => run_status.as_deref().is_some_and(watch::run_finished),
+            WatchTarget::Ticket => st.store.get_ticket(&target_id).await?.is_some_and(|t| t.summary.stage.is_closed()),
+        };
+        if finished {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "already_finished",
+                "it has already finished, so there is nothing to wait for (give `once: false` to hear if it starts again)",
+            ));
+        }
+    }
     let w = Watch {
         id: uuid::Uuid::now_v7().to_string(),
         target,
         target_id,
         session_id: session.map(String::from),
         events: watch::events_or_default(input.events.as_deref()),
-        once: input.once.unwrap_or(true),
+        once,
         cursor,
         inbox_since: now,
         run_status,
@@ -359,7 +374,10 @@ async fn watcher(st: &AppState, sid: &str) -> Watcher {
         return Watcher::Resetting;
     }
     match st.store.get_pm_session(sid).await {
-        Ok(Some(row)) if row.rotation != Rotation::Done => Watcher::Open,
+        Ok(Some(row)) if row.rotation == Rotation::None => Watcher::Open,
+        // The user closed it and it is writing its journal (a reset's journal turn is caught above): its news goes
+        // to the user, never into the closing conversation, which would hold up its end.
+        Ok(Some(row)) if row.rotation == Rotation::Journal => Watcher::Closed,
         Ok(Some(row)) if row.reason == Some(pdt_core::pm::RotateReason::Reset) => {
             let rows = st.store.list_pm_sessions().await.unwrap_or_default();
             match rows.into_iter().find(|r| r.reset_from.as_deref() == Some(sid)) {
