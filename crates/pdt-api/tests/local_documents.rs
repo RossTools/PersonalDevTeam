@@ -2,7 +2,7 @@
 //! created, read, edited (formulas, formats, sort, filter, charts), commented on, updated live (an agent's edit reaches
 //! an open view's stream; a view's IronCalc diffs reach the file), exported and imported.
 
-mod common;
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
