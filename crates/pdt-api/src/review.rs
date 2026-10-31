@@ -103,6 +103,7 @@ pub(crate) async fn changes(State(st): State<AppState>, Path(id): Path<String>) 
         files: files
             .into_iter()
             .map(|f| ChangedFile {
+                generated: f.generated || pdt_core::review::is_lockfile(&f.path),
                 path: f.path,
                 old_path: f.old_path,
                 status: to_status(f.status),
@@ -110,6 +111,7 @@ pub(crate) async fn changes(State(st): State<AppState>, Path(id): Path<String>) 
                 binary: f.binary,
                 added: f.added,
                 removed: f.removed,
+                uncommitted: f.uncommitted,
                 version: f.version,
             })
             .collect(),

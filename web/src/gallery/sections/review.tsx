@@ -20,11 +20,11 @@ function Demo({ label, children }: { label: string; children: ReactNode }) {
 }
 
 const FILES: ChangedFile[] = [
-  { path: 'README.md', oldPath: null, status: 'modified', untracked: false, binary: false, added: 4, removed: 1, version: '1' },
-  { path: 'crates/pdt-git/src/review.rs', oldPath: null, status: 'added', untracked: true, binary: false, added: 310, removed: 0, version: '2' },
-  { path: 'crates/pdt-git/src/lib.rs', oldPath: null, status: 'modified', untracked: false, binary: false, added: 12, removed: 3, version: '3' },
-  { path: 'web/src/review/old.ts', oldPath: null, status: 'deleted', untracked: false, binary: false, added: 0, removed: 40, version: '4' },
-  { path: 'web/src/review/Moved.tsx', oldPath: 'web/src/Moved.tsx', status: 'renamed', untracked: false, binary: false, added: 2, removed: 2, version: '5' },
+  { path: 'README.md', oldPath: null, status: 'modified', untracked: false, binary: false, added: 4, removed: 1, version: '1', generated: false, uncommitted: false },
+  { path: 'crates/pdt-git/src/review.rs', oldPath: null, status: 'added', untracked: true, binary: false, added: 310, removed: 0, version: '2', generated: false, uncommitted: false },
+  { path: 'crates/pdt-git/src/lib.rs', oldPath: null, status: 'modified', untracked: false, binary: false, added: 12, removed: 3, version: '3', generated: false, uncommitted: false },
+  { path: 'web/src/review/old.ts', oldPath: null, status: 'deleted', untracked: false, binary: false, added: 0, removed: 40, version: '4', generated: false, uncommitted: false },
+  { path: 'web/src/review/Moved.tsx', oldPath: 'web/src/Moved.tsx', status: 'renamed', untracked: false, binary: false, added: 2, removed: 2, version: '5', generated: false, uncommitted: false },
 ];
 
 const OLD = `fn main() {

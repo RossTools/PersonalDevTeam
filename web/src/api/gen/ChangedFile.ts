@@ -20,4 +20,13 @@ untracked: boolean, binary: boolean, added: number, removed: number,
 /**
  * Changes whenever either side of the file does ("Viewed" resets then).
  */
-version: string, };
+version: string, 
+/**
+ * Made by a tool, not written by hand: marked `linguist-generated` in `.gitattributes`, or a package manager's
+ * lockfile ([`is_lockfile`]). The Changes view starts it collapsed.
+ */
+generated: boolean, 
+/**
+ * Not committed yet (staged, unstaged or untracked).
+ */
+uncommitted: boolean, };

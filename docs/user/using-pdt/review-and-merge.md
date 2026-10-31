@@ -10,20 +10,32 @@ in a session's header, **Review changes** in a branch's menu (click the branch n
 **Settings**.
 
 It shows everything on the branch against the base branch: committed, staged, not yet committed, and new files not
-added to git yet (marked **Uncommitted** while there are any). The changed files are listed on the left; the diff of
-the one you pick is on the right.
+added to git yet. Like a pull request's **Files changed** on GitHub, every changed file is on one page you can scroll
+straight through. Each file has a header that stays at the top while you read it: its path (`old → new` for a
+rename), `+added −removed`, **Uncommitted** when it has changes not committed yet, and its options.
 
-- **Split** or **Unified** lays the diff out side by side or in one column (narrow windows always get unified).
-- **Changes only** folds the lines that didn't change; **Whole file** shows them all.
-- A Markdown file can be shown as **Diff** or **Rendered** (before and after, side by side).
-- Tick **Viewed** on a file to mark it read. It stays ticked in this browser until the file changes again.
-- Keys: **]** and **[** for the next and previous file, **v** to mark it viewed, **c** to comment on the picked lines.
+- The file list on the left takes you around: click a file to jump to it. The file you're reading is highlighted as
+  you scroll, with its comment count and a tick once viewed. The button at the top left hides the list to give the
+  diff the whole width.
+- **Split** or **Unified** (at the top) lays out every diff side by side or in one column (narrow windows always get
+  unified).
+- In a file's header, **Changes only** folds the lines that didn't change and **Whole file** shows them all; a
+  Markdown file can be shown as **Diff** or **Rendered** (before and after, side by side). The arrow collapses or
+  expands the file.
+- Tick **Viewed** on a file to mark it read: it collapses, and stays ticked in this browser until the file changes
+  again. Untick it to open it.
+- Generated files (lockfiles such as `Cargo.lock` or `pnpm-lock.yaml`, and paths marked `linguist-generated` in
+  `.gitattributes`), very large diffs and binary files start collapsed: **Load diff** shows one.
+- Keys: **]** and **[** jump to the next and previous file, **v** marks the file you're reading viewed and moves to the
+  next, **c** comments on the picked lines.
+- The address follows the file you pick (`?file=` and the file's path), so a reload or a copied link opens the page at that
+  file. Add `&line=12` to point at a line (`&side=old` for a removed one).
 
 ## Comment and send feedback
 
 1. Click a line number to pick the line; **Shift+click** another to pick a range.
 2. Click **+** beside the picked lines (or press **c**) and write your comment (Markdown). Comments are drafts until
-   you send them; the bar above the diff counts them ("3 draft comments").
+   you send them; the bar at the top counts them ("3 draft comments").
 3. Click **Send feedback**. PDT sends every draft to the agent working on the branch in one message, with the file
    and lines of each, and the agent gets back to work. The comments are recorded on the ticket's **Activity** too.
 
@@ -113,5 +125,5 @@ You can also just tell the agent yourself, in its session.
 
 ## On a phone
 
-The changed files are a screen of their own; tap one for its diff, and swipe sideways for the next or previous file.
-Tap a line number to pick it, tap another to extend the pick, then **+** to comment.
+The Changes view is the same single page, with each file's header staying at the top as you scroll. **Jump to file**
+lists the files to go straight to one. Tap a line number to pick it, tap another to extend the pick, then **+** to comment.

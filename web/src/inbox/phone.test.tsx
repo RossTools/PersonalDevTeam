@@ -288,7 +288,7 @@ describe('phone triage', () => {
       id: 't',
       attempts: [{ id: 'a1', branch: 'b', baseBranch: 'main', worktreeId: 'w1', state: 'active', createdAt: 1, endedAt: null, lastHead: null, workspaceId: null, pr, ci: null }],
     });
-    const file = (path: string, added: number, removed: number) => ({ path, oldPath: null, status: 'modified', untracked: false, binary: false, added, removed, version: path });
+    const file = (path: string, added: number, removed: number) => ({ path, oldPath: null, status: 'modified', untracked: false, binary: false, added, removed, version: path, generated: false, uncommitted: false });
     const { calls } = triage([accept], 'acc', {
       'GET /api/tickets/t': t,
       'GET /api/worktrees/w1/changes': { worktreeId: 'w1', branch: 'b', base: 'main', mergeBase: 'x', head: 'y', dirty: false,

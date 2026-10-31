@@ -13,6 +13,8 @@ export interface SplitPaneProps {
   max?: number;
   /** The divider's accessible name. */
   label?: string;
+  /** Hides the start pane and the divider; `end` stays mounted where it is (its scroll and state are kept). */
+  hideStart?: boolean;
   className?: string;
 }
 
@@ -40,7 +42,7 @@ function store(id: string, n: number) {
  * Two panes side by side with a draggable divider (a `separator` that also moves with Left/Right, Home/End). The start
  * pane's width is kept per browser.
  */
-export function SplitPane({ id, start, end, defaultSize = 280, min = 160, max = 640, label = 'Resize', className }: SplitPaneProps) {
+export function SplitPane({ id, start, end, defaultSize = 280, min = 160, max = 640, label = 'Resize', hideStart = false, className }: SplitPaneProps) {
   const clamp = (n: number) => Math.min(max, Math.max(min, n));
   const [size, setSize] = useState(() => clamp(stored(id) ?? defaultSize));
   const drag = useRef<{ x: number; size: number } | null>(null);
@@ -69,24 +71,28 @@ export function SplitPane({ id, start, end, defaultSize = 280, min = 160, max = 
   };
   return (
     <div className={cn('flex min-h-0 min-w-0 flex-1', className)}>
-      <div className="flex min-h-0 shrink-0 flex-col overflow-hidden" style={{ width: size }}>
-        {start}
-      </div>
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label={label}
-        aria-valuenow={Math.round(size)}
-        aria-valuemin={min}
-        aria-valuemax={max}
-        tabIndex={0}
-        onKeyDown={onKeyDown}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        className="w-1 shrink-0 cursor-col-resize touch-none border-l border-border outline-none hover:bg-accent focus-visible:bg-primary"
-      />
+      {!hideStart && (
+        <>
+          <div className="flex min-h-0 shrink-0 flex-col overflow-hidden" style={{ width: size }}>
+            {start}
+          </div>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={label}
+            aria-valuenow={Math.round(size)}
+            aria-valuemin={min}
+            aria-valuemax={max}
+            tabIndex={0}
+            onKeyDown={onKeyDown}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            className="w-1 shrink-0 cursor-col-resize touch-none border-l border-border outline-none hover:bg-accent focus-visible:bg-primary"
+          />
+        </>
+      )}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{end}</div>
     </div>
   );

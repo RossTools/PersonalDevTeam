@@ -29,7 +29,7 @@ Plan: docs/superpowers/plans/2026-10-17-phase-3c-1-design-system.md. Mockup of t
   - overlays: `bg-backdrop`; shadows `shadow-popover`, `shadow-dialog`, `shadow-card` (cards on the page; none in dark).
 - No raw colours (hex, rgb, `bg-black/…`, `bg-white`), no `text-[…px]`, no `z-[…]`. Type sizes: `text-2xs` (10px
   labels), `text-meta` (11px secondary lines), `text-xs` (12), `text-sm` (14), `text-base` (16), and `text-title` (30px, a document's title: a note's). Layers:
-  `z-(--pdt-z-popover)`, `z-(--pdt-z-dialog)`, `z-(--pdt-z-menu)`, `z-(--pdt-z-toast)`. A test (`src/lint.test.ts`)
+  `z-(--pdt-z-sticky)` (sticky headers inside a scrolling pane), `z-(--pdt-z-popover)`, `z-(--pdt-z-dialog)`, `z-(--pdt-z-menu)`, `z-(--pdt-z-toast)`. A test (`src/lint.test.ts`)
   enforces this outside `tokens.css`.
 - Sizes: controls are `h-control-sm` (24px) or `h-control-md` (28px, the default); on touch screens
   `pointer-coarse:h-control-touch` (44px) / `pointer-coarse:min-w-control-touch` for icon buttons. Corners
