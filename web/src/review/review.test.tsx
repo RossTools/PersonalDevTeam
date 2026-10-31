@@ -217,15 +217,30 @@ describe('ChangesView', () => {
     expect(treeRow(tree, 'old.ts')).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('can hide the file list', async () => {
+  it('can hide the file list, keeping the page where it was', async () => {
+    layout();
     stub();
     renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
-    await findTree();
+    const tree = await findTree();
+    const page = screen.getByTestId('changes-page');
+    await userEvent.click(within(tree).getByText('old.ts'));
+    expect(page.scrollTop).toBe(1000);
+    const old = region('src/old.ts');
+    await userEvent.click(within(old).getByRole('button', { name: 'Whole file' }));
+
     await userEvent.click(screen.getByRole('button', { name: 'Hide the file list' }));
     expect(screen.queryByRole('treegrid', { name: 'Changed files' })).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'src/login.ts' })).toBeInTheDocument();
+    expect(screen.queryByRole('separator', { name: 'Resize the file list' })).not.toBeInTheDocument();
+    // The same page, not a new one: its scroll, its sections and their choices stay.
+    expect(screen.getByTestId('changes-page')).toBe(page);
+    expect(page.scrollTop).toBe(1000);
+    expect(region('src/old.ts')).toBe(old);
+    expect(within(old).getByRole('button', { name: 'Changes only' })).toBeInTheDocument();
+
     await userEvent.click(screen.getByRole('button', { name: 'Show the file list' }));
-    expect(await findTree()).toBeInTheDocument();
+    expect(screen.getByTestId('changes-page')).toBe(page);
+    expect(page.scrollTop).toBe(1000);
+    expect(treeRow(await findTree(), 'old.ts')).toHaveAttribute('aria-selected', 'true');
   });
 
   it('draws only the diffs near the visible page', async () => {

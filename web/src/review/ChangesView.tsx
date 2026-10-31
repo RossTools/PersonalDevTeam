@@ -246,7 +246,6 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
   }
   const c = changes.data;
   const viewedCount = files.filter(isViewed).length;
-  const showList = !phone && !listHidden && files.length > 0;
   const toggleList = () => {
     setListHidden(!listHidden);
     try { localStorage.setItem(LIST_KEY, listHidden ? 'shown' : 'hidden'); } catch { /* storage blocked */ }
@@ -346,11 +345,13 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
         }
       />
       {toolbar}
-      {showList ? (
+      {/* The page keeps its place in the tree when the list is hidden, so it keeps its scroll and drawn diffs. */}
+      {phone ? page : (
         <SplitPane
           id="review-files"
           label="Resize the file list"
           defaultSize={300}
+          hideStart={listHidden || files.length === 0}
           start={
             <FileList
               files={files}
@@ -363,7 +364,7 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
           }
           end={page}
         />
-      ) : page}
+      )}
       {merging && t && c.attemptId && <MergeDialog ticket={t} attemptId={c.attemptId} onClose={() => setMerging(false)} />}
     </div>
   );
