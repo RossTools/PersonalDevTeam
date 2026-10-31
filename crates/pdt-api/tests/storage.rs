@@ -129,6 +129,18 @@ async fn measured(env: &Env) -> Value {
     }
 }
 
+/// Tests never read the machine's own disk: a state that sets no probe has no disks, so nothing is ever low.
+#[tokio::test]
+async fn a_state_without_a_probe_sees_no_disks_and_never_warns() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+    let app = router(AppState::new(store, tmp.path().join("data")), None);
+    let (_, v) = call(&app, "GET", "/api/storage", None).await;
+    assert_eq!((v["disks"].clone(), v["autoStartPaused"].clone()), (json!([]), json!(false)));
+    let (_, inbox) = call(&app, "GET", "/api/inbox", None).await;
+    assert!(!inbox["items"].as_array().unwrap().iter().any(|i| i["kind"] == "low_disk"), "{inbox}");
+}
+
 #[tokio::test]
 async fn the_storage_view_measures_worktrees_and_their_build_output() {
     let env = setup().await;

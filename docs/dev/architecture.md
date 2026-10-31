@@ -89,7 +89,7 @@ loop (every 60 s) measures each worktree whose size is missing or 30 minutes old
 `AppState::storage` keeps the sizes in memory, so a restart measures again), and hourly runs the automatic cleanup,
 which cleans or removes finished tickets' worktrees per the project's `project_settings.storage`. A project's build
 output is `[storage] build_output` from its main checkout's run configuration, else detected from the files at its
-root (`detect_build_output`). Free space comes from `AppState::disk_space` (fs4; tests set their own) for the data
+root (`detect_build_output`). Free space comes from `AppState::disk_space` (fs4, installed by pdtd; `AppState::new` reads none, tests set a fake) for the data
 folder and each project's folder, grouped by device (`storage::disk_id`) with the least free space any read; below the host's `low_disk_gb` the Inbox lists a `low_disk` item, below
 `critical_disk_gb` the scheduler starts nothing and `autoStartAt` is left out.
 

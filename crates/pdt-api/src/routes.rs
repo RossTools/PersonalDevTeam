@@ -168,7 +168,8 @@ pub struct AppState {
     pub(crate) auto_start_failed: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
     /// Worktrees' sizes as last measured, and the storage loop's state (PDT-324).
     pub(crate) storage: std::sync::Arc<crate::storage::StorageState>,
-    /// Reads a disk's free space: the OS's (`storage::os_disk_space`); tests set their own.
+    /// Reads a disk's free space. `new` reads none (no disk is ever low), so tests never depend on the machine's own
+    /// disk; only pdtd's production wiring installs the OS's (`storage::os_disk_space`), and a test sets a fake.
     pub disk_space: crate::storage::DiskProbe,
     /// MCP servers PDT is a client of (Phase 7e-3): their live clients and cached tools.
     pub(crate) mcp: std::sync::Arc<crate::mcp_client::McpPool>,
@@ -293,7 +294,7 @@ impl AppState {
             workflow_docs: Default::default(),
             auto_start_failed: Default::default(),
             storage: Default::default(),
-            disk_space: std::sync::Arc::new(crate::storage::os_disk_space),
+            disk_space: std::sync::Arc::new(|_| None),
             mcp: Default::default(),
             integrations: Default::default(),
             toolchains: std::sync::Arc::new(crate::toolchains::Offline),

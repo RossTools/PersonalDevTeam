@@ -166,6 +166,8 @@ async fn run() -> anyhow::Result<()> {
     };
     // Installs for the ACP profiles reach the network only here (PDT-239).
     state.toolchains = std::sync::Arc::new(pdt_api::toolchains::Http::new());
+    // The machine's real free space: `AppState::new` reads none, so tests never see this disk (PDT-324).
+    state.disk_space = std::sync::Arc::new(pdt_api::storage::os_disk_space);
     state.update = std::sync::Arc::new(
         pdt_api::UpdateService::with_disabled_reason(
             pdt_update::GITHUB_API,
