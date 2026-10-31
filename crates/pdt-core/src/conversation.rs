@@ -482,6 +482,20 @@ pub struct BackgroundTask {
     pub kind: String,
 }
 
+/// What PDT tells an agent whose background tasks a restart of PDT stopped (PDT-311): they died with its process and
+/// will never report back, so it would otherwise wait on them for ever.
+pub fn restart_notice(tasks: &[String]) -> String {
+    let list = if tasks.is_empty() {
+        "the ones you were waiting on".to_string()
+    } else {
+        tasks.iter().map(|t| if t.trim().is_empty() { "a task" } else { t.trim() }).collect::<Vec<_>>().join(", ")
+    };
+    format!(
+        "[PDT] PDT restarted and your background tasks were stopped: {list}. They are not running and won't report \
+         back. Start again whatever you still need, then carry on."
+    )
+}
+
 /// What a conversation is doing, pushed to every viewer on change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -514,6 +528,10 @@ pub struct ConversationState {
     /// Background tasks still running.
     #[serde(default)]
     pub background_tasks: Vec<BackgroundTask>,
+    /// Background tasks a restart of PDT stopped, until the agent is told (with the next message, PDT-311).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<BackgroundTask>>", optional)]
+    pub stopped_background: Vec<BackgroundTask>,
 }
 
 /// Server → client frames on `WS /api/sessions/{id}/events`.
@@ -659,6 +677,17 @@ pub fn valid_message(text: &str, images: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_restart_notice_names_the_stopped_tasks() {
+        let n = restart_notice(&["Wait for CI".into(), " ".into()]);
+        assert_eq!(
+            n,
+            "[PDT] PDT restarted and your background tasks were stopped: Wait for CI, a task. They are not running \
+             and won't report back. Start again whatever you still need, then carry on."
+        );
+        assert!(restart_notice(&[]).contains("stopped: the ones you were waiting on."));
+    }
 
     #[test]
     fn a_hit_limit_holds_until_it_resets() {

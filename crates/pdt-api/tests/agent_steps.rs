@@ -1223,6 +1223,118 @@ async fn a_hung_background_task_stalls_at_the_cap_and_a_late_outcome_closes_the_
     assert!(inbox(&env).await.is_empty(), "the Stalled item closed");
 }
 
+/// An orderly pdtd restart (an update): the old pdtd stops its agents, background tasks and all, and a new one on the
+/// same store recovers and serves on.
+async fn restart(env: Env) -> Env {
+    let Env { state: old, project, _tmp: tmp, .. } = env;
+    old.shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
+    old.store.mark_running_interrupted(1).await.unwrap();
+    pdt_api::shutdown_conversations(&old).await;
+    let mut state = AppState::new(old.store.clone(), tmp.path().join("data"));
+    state.platform = old.platform.clone();
+    state.conversations.notice_quiet = Duration::ZERO;
+    state.conversations.background_grace = Duration::from_millis(500);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    state.listen_port = listener.local_addr().unwrap().port();
+    pdt_api::recover_conversations(&state).await;
+    let app = router(state.clone(), None);
+    let served = app.clone();
+    tokio::spawn(async move { axum::serve(listener, served).await });
+    Env { app, state, project, _tmp: tmp }
+}
+
+/// The messages a session's agent took (echoed).
+async fn agent_took(env: &Env, session: &str) -> Vec<String> {
+    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
+    v.as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["event"]["kind"] == "user_message")
+        .map(|e| e["event"]["text"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+const RESTARTED: &str = "[PDT] PDT restarted and your background tasks were stopped: Sleep in the background.";
+
+/// PDT-311: a session waiting on a background task keeps the host busy, so an update when idle waits for it.
+#[tokio::test]
+async fn a_session_waiting_on_a_background_task_keeps_the_host_busy() {
+    let env = setup().await;
+    let t = ticket(&env, "Busy").await;
+    let wf = create_workflow(&env, review_doc("bg: 600000", json!({}))).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    step_session(&env, &id).await;
+    tick_until(&env, "the wait on the task", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+        (v["agent"]["state"] == "background").then_some(Value::Null)
+    })
+    .await;
+    let busy = pdt_api::update::busy_reasons(&env.state).await;
+    assert!(busy.iter().any(|b| b.ends_with("is waiting on 1 background task")), "{busy:?}");
+}
+
+/// PDT-311: PDT restarts while a step waits on a background task. The task died with the agent, so the step's
+/// conversation reopens to hear so (an automatic nudge) instead of the step stalling as stopped; its turn is then
+/// judged as usual.
+#[tokio::test]
+async fn a_restart_while_a_step_waits_on_a_background_task_tells_the_agent() {
+    let env = setup().await;
+    let t = ticket(&env, "Restarted").await;
+    let wf = create_workflow(&env, review_doc("bg: 600000", json!({}))).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let session = step_session(&env, &id).await;
+    tick_until(&env, "the wait on the task", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+        (v["agent"]["state"] == "background").then_some(Value::Null)
+    })
+    .await;
+    let env = restart(env).await;
+    tick_until(&env, "the restart notice", || async {
+        agent_took(&env, &session).await.iter().any(|m| m.trim().starts_with(RESTARTED)).then_some(Value::Null)
+    })
+    .await;
+    // The notice was the step's one automatic nudge: its turn ending without an outcome stalls it, saying so.
+    let stalled =
+        tick_until(&env, "the stall", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "stalled") })
+            .await;
+    assert_eq!(stalled["body"]["why"], "Its turn ended without an outcome.", "{stalled}");
+    assert_eq!(stalled["body"]["nudges"].as_u64(), Some(1));
+    assert_eq!(agent_took(&env, &session).await.iter().filter(|m| m.contains("PDT restarted")).count(), 1);
+    call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
+}
+
+/// PDT-311: with no automatic nudge left, a step a restart left waiting on stopped background tasks stalls, saying so.
+#[tokio::test]
+async fn a_restart_stalls_a_waiting_step_with_no_nudges_left_saying_why() {
+    let env = setup().await;
+    let t = ticket(&env, "No nudges").await;
+    let wf = create_workflow(&env, review_doc("bg: 600000", json!({"nudges": 0}))).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let session = step_session(&env, &id).await;
+    tick_until(&env, "the wait on the task", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+        (v["agent"]["state"] == "background").then_some(Value::Null)
+    })
+    .await;
+    let env = restart(env).await;
+    let stalled =
+        tick_until(&env, "the stall", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "stalled") })
+            .await;
+    assert_eq!(
+        stalled["body"]["why"], "PDT restarted while it waited on background tasks: Sleep in the background.",
+        "{stalled}"
+    );
+    // The user's Nudge reopens it, and the agent hears of the stopped task with it.
+    let item = stalled["id"].as_str().unwrap();
+    let (s, v) = call(&env.app, "POST", &format!("/api/inbox/{item}/answer"), Some(json!({"choice": "nudge"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    tick_until(&env, "the restart notice", || async {
+        agent_took(&env, &session).await.iter().any(|m| m.trim().starts_with(RESTARTED)).then_some(Value::Null)
+    })
+    .await;
+    call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
+}
+
 /// Ticks the engine for `ms`.
 async fn tick_for(env: &Env, ms: u64) {
     let until = Instant::now() + Duration::from_millis(ms);

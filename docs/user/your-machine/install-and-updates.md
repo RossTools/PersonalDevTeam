@@ -46,15 +46,16 @@ Turning off **Start at login** in the tray only stops the tray icon coming back;
 PDT checks for a new release every hour. What it does when it finds one is up to you, in **Settings › This host ›
 Updates › Install updates**:
 
-- **Install automatically when idle** (the default): it installs the update as soon as no agent is working and no run
-  is setting up. A version that failed to install once isn't tried again on its own.
+- **Install automatically when idle** (the default): it installs the update as soon as no agent is working or waiting
+  on background tasks, and no run is setting up. A version that failed to install once isn't tried again on its own.
 - **Notify only**: a banner at the top of PDT says **Update to v… available**. **Release notes** shows what's new in
   every release since yours; **Update** installs it.
 - **Manual (no checks)**: PDT doesn't check. **Check for updates** still checks when you click it.
 
 **Check for updates** sets how often it looks (every 15 minutes to once a day).
 
-When you install an update by hand while an agent is working, PDT says what's busy and asks before going ahead.
+When you install an update by hand while an agent is working or waiting on background tasks, PDT says what's busy
+and asks before going ahead.
 Sessions resume afterwards.
 
 ### What happens during an update
