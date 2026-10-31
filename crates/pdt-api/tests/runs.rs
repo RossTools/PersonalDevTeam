@@ -1,6 +1,5 @@
-mod common;
-#[path = "../../../test-support/port_blocks.rs"]
-mod port_blocks;
+use crate::common;
+use crate::port_blocks;
 
 use axum::http::StatusCode;
 use common::{call, git};

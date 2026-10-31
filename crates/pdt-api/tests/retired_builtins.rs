@@ -1,8 +1,8 @@
 //! PDT-295: PDT never special-cases its own repository. The built-ins it shipped for its own development are gone: a
 //! host that has one keeps it as its own workflow, as it was, and no host gets one, whatever its projects are.
 
-mod common;
-mod retired;
+use crate::common;
+use crate::retired;
 
 use axum::http::StatusCode;
 use common::{call, git};

@@ -1,7 +1,7 @@
 //! Get started (PDT-230): first-run detection, steps ticked off from real state, skipping GitHub, dismissing, and the
 //! agent program set by hand.
 
-mod common;
+use crate::common;
 
 use axum::http::StatusCode;
 use common::call;

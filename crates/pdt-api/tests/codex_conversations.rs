@@ -1,6 +1,6 @@
 //! Codex conversations end to end, with `fake-agent app-server` standing in for `codex app-server` (plan 5b).
 
-mod common;
+use crate::common;
 
 use common::{PNG, call, call_raw, git, park_once_idle};
 use futures_util::{SinkExt, StreamExt};

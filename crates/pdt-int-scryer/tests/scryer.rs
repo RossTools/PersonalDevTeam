@@ -1,9 +1,8 @@
 //! Scryer through the API (PDT-147, PDT-150): its actions, any query or mutation checked against its schema, and dry
 //! runs that call nothing. Scryer is a local fake server.
 
-#[path = "../../pdt-api/tests/common/mod.rs"]
-mod common;
-mod fake_scryer;
+use crate::common;
+use crate::fake_scryer;
 
 use axum::http::StatusCode;
 use common::call;
