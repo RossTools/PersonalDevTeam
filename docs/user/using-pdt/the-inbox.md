@@ -30,7 +30,8 @@ Pick an item to see it and its choices beside the list. Keys: **j** / **k** down
 - **Unheard notices**: pull request trouble (CI failed, a conflict, out of the merge queue) with no agent running to
   hear it (see [Pull request and CI status](review-and-merge.md#pull-request-and-ci-status)). **Open ticket** to deal
   with it; it clears once the pull request is fixed or merged. **Connect GitHub** shows here too while PDT needs a
-  GitHub login to follow your pull requests.
+  GitHub login to follow your pull requests, and **Sign in to … again** while an MCP server's sign-in no longer works
+  (see [MCP servers](../your-machine/mcp-servers.md#sign-in-with-oauth)).
 - **Triaged tickets**: a workflow drafted a ticket from a new issue. **Approve** moves it to **To do**, **Reject** to
   **Won't do** (moving it on the board does the same).
 - **Workflow proposals**: an agent (the PM, say) changed one of your workflows. The item says who proposed it, their

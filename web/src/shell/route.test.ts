@@ -46,6 +46,7 @@ describe('routes', () => {
     ['/settings/plugins', { view: 'settings', page: { kind: 'plugins', id: null } }],
     ['/settings/plugins/jira', { view: 'settings', page: { kind: 'plugins', id: 'jira' } }],
     ['/settings/secrets', { view: 'settings', page: { kind: 'secrets' } }],
+    ['/settings/mcp-servers', { view: 'settings', page: { kind: 'mcp-servers' } }],
     ['/settings/notifications', { view: 'settings', page: { kind: 'notifications' } }],
     ['/settings/projects/PDT', { view: 'settings', page: { kind: 'project', key: 'PDT', section: null } }],
     ['/settings/projects/PDT/worktrees', { view: 'settings', page: { kind: 'project', key: 'PDT', section: 'worktrees' } }],

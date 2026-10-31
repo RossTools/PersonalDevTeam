@@ -43,6 +43,9 @@ pub enum InboxKind {
     /// A workflow version an agent proposed (PDT-320): Accept or Discard. Not stored: listed while the proposal waits,
     /// so it goes once it is accepted, discarded or replaced by a newer one.
     Proposal,
+    /// An MCP server's OAuth sign-in was revoked or expired (PDT-322): Sign in again in Settings → MCP servers. Not
+    /// stored: listed while it lasts.
+    McpSignIn,
 }
 
 impl InboxKind {
@@ -62,6 +65,7 @@ impl InboxKind {
             InboxKind::Admit => "admit",
             InboxKind::Confirm => "confirm",
             InboxKind::Proposal => "proposal",
+            InboxKind::McpSignIn => "mcp_sign_in",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -80,6 +84,7 @@ impl InboxKind {
             Self::Admit,
             Self::Confirm,
             Self::Proposal,
+            Self::McpSignIn,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)

@@ -217,6 +217,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
     let mut items = st.store.open_inbox_items(None).await?;
     items.extend(approvals);
     items.extend(crate::inbox::connect_forge(st));
+    items.extend(crate::mcp_oauth::inbox_items(st).await);
     items.extend(crate::inbox::proposals(st, None).await?);
     let fresh: Vec<&InboxItem> = items.iter().filter(|i| !live.contains_key(&inbox_key(&i.id))).collect();
     let mut fresh: Vec<InboxItem> = fresh.into_iter().cloned().collect();
@@ -235,7 +236,12 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
         n.body = with_ticket(&what, i.ticket_key.as_deref());
         n.severity = if matches!(
             i.kind,
-            InboxKind::Stalled | InboxKind::TimedOut | InboxKind::LoopLimit | InboxKind::Notice | InboxKind::Connect
+            InboxKind::Stalled
+                | InboxKind::TimedOut
+                | InboxKind::LoopLimit
+                | InboxKind::Notice
+                | InboxKind::Connect
+                | InboxKind::McpSignIn
         ) {
             Severity::Warning
         } else {

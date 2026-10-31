@@ -105,6 +105,24 @@ pub(crate) async fn values_for(
     who: User<'_>,
     usage: &Usage,
 ) -> Result<HashMap<String, String>, String> {
+    values_checked(st, names, Some(who), usage).await
+}
+
+/// [`values_for`] for the user's own use (Settings → MCP servers → Test): no project or persona limit applies.
+pub(crate) async fn values_for_user(
+    st: &AppState,
+    names: &[String],
+    usage: &Usage,
+) -> Result<HashMap<String, String>, String> {
+    values_checked(st, names, None, usage).await
+}
+
+async fn values_checked(
+    st: &AppState,
+    names: &[String],
+    who: Option<User<'_>>,
+    usage: &Usage,
+) -> Result<HashMap<String, String>, String> {
     let mut out = HashMap::new();
     for n in names {
         if out.contains_key(n) {
@@ -113,7 +131,7 @@ pub(crate) async fn values_for(
         let s = st.store.secret_by_name(n).await.map_err(|e| e.to_string())?.ok_or_else(|| {
             format!("no secret is called {n}: the user adds it in Settings → Secrets (agents ask with request_secret)")
         })?;
-        if !s.allows(who) {
+        if who.is_some_and(|w| !s.allows(w)) {
             return Err(format!(
                 "the secret {} may not be used here: the user can allow it in Settings → Secrets",
                 s.name

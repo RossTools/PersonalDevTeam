@@ -146,6 +146,23 @@ credentials itself.
 the data folder) and the tools of its persona; each tool calls the API route's own function. Tools that need the
 user's say are asked in the agent's own prompt where it supports that, or through the Inbox.
 
+**The user's MCP servers.** `mcp` connections (Settings → MCP servers) reach agents beside pdt-mcp. Their
+`config.agents` (pdt-core `mcp_servers::AgentAccess`) says who gets one (the PM, ticket and workflow sessions with an
+optional persona list, sessions the user starts, project limits) and each tool's mode (allow, ask, block); a
+locked-down session gets none. pdt-api `agent_mcp.rs` picks a session's servers and resolves each (header and env
+values that name PDT secrets, the connection's own secret, an OAuth bearer token) into a pdt-agents
+`mcp::ExtraServer`, which `mcp::server_for` adds to the session's `McpServer`. pdt-agents `mcp.rs` writes each agent's
+form: Claude's `--mcp-config` file plus `--allowedTools`/`--disallowedTools` (a server whose tools share one mode is
+named whole, `mcp__<name>`), Codex's `mcp_servers.<name>` (a thread's `config`, or a terminal's `-c` inline table with
+secrets passed through its environment: `env_vars`, `env_http_headers`), ACP's `mcpServers` filtered by the agent's
+`mcpCapabilities`. "Use only PDT's MCP servers" (`HostSettings::mcp_only_pdt`) adds `--strict-mcp-config` and switches
+off the servers in the user's own Codex config. The session's instructions get `mcp_servers::context_note`. PDT's
+own client (`mcp_client.rs`: workflows' `mcp.tool`, Test) starts servers from the same resolution. OAuth
+(`mcp_oauth.rs`): protected resource and authorization server discovery, dynamic client registration or the user's
+client id, PKCE, the callback `/api/mcp-oauth/callback` on the origin the UI sent; tokens in the secret store
+(`mcp-oauth:<connection id>`) and the redactor, refreshed when due (at launch and every minute), and a refusal marks
+the sign-in failed, which lists an `mcp_sign_in` Inbox item. Agents get the token current at launch.
+
 **The PM.** A host-level project manager: conversations in the host project, with the PM persona's tools (those
 flagged `pm`) and a briefing built when the session starts (pdt-api `pm.rs`, pdt-core `pm.rs`). Close and Reset end
 one after its journal; a reset starts its successor (`pm_sessions.reset_from`) with the same settings, briefed from
@@ -233,6 +250,7 @@ login.
 | Documents | pdt-api `documents/`; pdt-core `document.rs`; pdt-store `documents.rs` | `web/src/documents` |
 | The PM | pdt-api `pm.rs`; pdt-core `pm.rs`; pdt-store `pm.rs` | `web/src/pm` |
 | Secrets | pdt-api `vault.rs`, `secrets.rs`; pdt-core `secret.rs` | `web/src/secrets` |
+| The user's MCP servers | pdt-api `agent_mcp.rs`, `mcp_oauth.rs`, `mcp_servers.rs`, `mcp_client.rs`; pdt-core `mcp_servers.rs`; pdt-agents `mcp.rs` | `web/src/mcp` |
 | Database | `crates/pdt-store` (`migrations/`, `migrate.rs`) | |
 | Design system | | `web/ui` (`web/ui/README.md`), shared app components in `web/src/common` |
 | Website | | `site/` (`site/README.md`) |

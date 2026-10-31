@@ -98,4 +98,9 @@ documentsProvider: string | null,
  * Where local documents go (a full path, or `~/…`) unless their project names a folder; none: `documents` in
  * PDT's data folder.
  */
-documentsDir: string | null, };
+documentsDir: string | null, 
+/**
+ * Settings → MCP servers → "Use only PDT's MCP servers" (PDT-322): sessions ignore the agents' own MCP configs
+ * where the agent can.
+ */
+mcpOnlyPdt: boolean, };

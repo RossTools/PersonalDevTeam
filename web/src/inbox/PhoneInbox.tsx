@@ -23,7 +23,7 @@ import { useProjectForge, useTicket } from '../tickets/queries';
 import { useOpenChanges } from '../review/open';
 import { answerApproval, UpdateView } from './InboxView';
 import { navigate } from '../shell/router';
-import { after, changeRequestLabel, CONNECT_PATH, dismissable, gateQuestion, KIND_LABEL, merges, noticeText, passesOf, proposalPath, questionsOf, resends, selectedUpdate, step } from './model';
+import { after, changeRequestLabel, CONNECT_PATH, MCP_SERVERS_PATH, dismissable, gateQuestion, KIND_LABEL, merges, noticeText, passesOf, proposalPath, questionsOf, resends, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
 
 /** Opens the pull request a gate is about on its forge, in a new tab. */
@@ -359,6 +359,10 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession
     case 'connect':
       content = <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>;
       bar = <DecisionBar busy={busy} decisions={[{ id: 'settings', title: 'Open GitHub settings', primary: true }]} onPick={() => navigate(CONNECT_PATH)} />;
+      break;
+    case 'mcp_sign_in':
+      content = <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>;
+      bar = <DecisionBar busy={busy} decisions={[{ id: 'settings', title: 'Open MCP servers', primary: true }]} onPick={() => navigate(MCP_SERVERS_PATH)} />;
       break;
     case 'notice':
       content = (

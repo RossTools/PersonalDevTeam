@@ -4,7 +4,7 @@ What each section of Settings changes, for this machine and for each project.
 
 Open **Settings** in the rail (on a phone, in the **☰** menu). The list on the left has three parts:
 **This host** (the machine running PDT), a few pages of their own (**Notifications**, **Plugins**, **All
-connections**, **Secrets**), and each project. **Search settings** at the top finds a section by its name or any
+connections**, **Secrets**, **MCP servers**), and each project. **Search settings** at the top finds a section by its name or any
 setting on it.
 
 Every setting saves as you change it: a moment of **Saved** beside it says so. Tokens and secrets have their own
@@ -115,6 +115,11 @@ Turn plugins on and off and manage their connections; the GitHub plugin is where
 ## Secrets
 
 Keys and tokens that agents and workflows use without seeing them. See [Secrets](secrets.md).
+
+## MCP servers
+
+MCP servers every agent gets, signed in once, with each tool allowed, asked or blocked. See
+[MCP servers](mcp-servers.md).
 
 ## A project's settings
 

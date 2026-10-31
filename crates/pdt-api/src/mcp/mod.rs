@@ -146,6 +146,13 @@ pub(crate) async fn server_for(st: &AppState, s: &Session) -> Option<pdt_agents:
         claude_config: None,
         pm: crate::pm::is_pm_session(st, s).await,
         locked: locked_down(st, s).await,
+        // The user's MCP servers (PDT-322); `agent_mcp::targeted` gives a locked-down session none.
+        extra: crate::agent_mcp::servers_for(st, s).await,
+        only_pdt: st.store.get_host_settings().await.map(|h| h.mcp_only_pdt).unwrap_or(false),
+        codex_user_servers: match (s.agent, st.platform.codex_home.as_deref()) {
+            (Some(AgentKind::Codex), Some(home)) => pdt_agents::mcp::codex_config_servers(home),
+            _ => vec![],
+        },
     };
     if s.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude {
         let dir: PathBuf = st.data_dir.join("sessions").join(&s.id);

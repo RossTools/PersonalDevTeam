@@ -61,4 +61,4 @@ documentsProvider?: string,
 /**
  * Blank clears it (back to PDT's data folder).
  */
-documentsDir?: string, };
+documentsDir?: string, mcpOnlyPdt?: boolean, };

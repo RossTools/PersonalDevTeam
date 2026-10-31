@@ -140,6 +140,9 @@ pub struct HostSettings {
     /// Where local documents go (a full path, or `~/…`) unless their project names a folder; none: `documents` in
     /// PDT's data folder.
     pub documents_dir: Option<String>,
+    /// Settings → MCP servers → "Use only PDT's MCP servers" (PDT-322): sessions ignore the agents' own MCP configs
+    /// where the agent can.
+    pub mcp_only_pdt: bool,
 }
 
 /// A GitHub `owner/name`: two non-empty parts of letters, digits, `-`, `_` and `.`, neither `.` nor `..`.
@@ -180,6 +183,7 @@ impl Default for HostSettings {
             agent_models: Default::default(),
             documents_provider: None,
             documents_dir: None,
+            mcp_only_pdt: false,
         }
     }
 }
@@ -283,6 +287,9 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub documents_dir: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub mcp_only_pdt: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -407,6 +414,9 @@ impl HostSettings {
         }
         if let Some(b) = p.bug_reports {
             s.bug_reports = b;
+        }
+        if let Some(b) = p.mcp_only_pdt {
+            s.mcp_only_pdt = b;
         }
         if let Some(raw) = &p.documents_provider {
             let id = raw.trim();

@@ -28,6 +28,7 @@ pub(crate) async fn list(State(st): State<AppState>, Query(q): Query<ListQuery>)
     items.extend(approvals(&st, q.project.as_deref()).await?);
     items.extend(sessions_waiting(&st, q.project.as_deref()).await?);
     items.extend(connect_forge(&st));
+    items.extend(crate::mcp_oauth::inbox_items(&st).await);
     items.extend(proposals(&st, q.project.as_deref()).await?);
     decorate(&st, &mut items).await?;
     inbox::sort(&mut items);
