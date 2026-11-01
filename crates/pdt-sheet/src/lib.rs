@@ -14,7 +14,7 @@ use ironcalc::base::types::{Color, Dxf, DxfFont};
 use ironcalc::export::save_xlsx_to_writer;
 use ironcalc::import::load_from_xlsx_bytes;
 use pdt_core::document::{
-    Cell, CellCondition, CellFormat, HAlign, Sheet, SortKey, VAlign, cell_name, parse_column, parse_range,
+    BorderStyle, Cell, CellCondition, CellFormat, HAlign, Sheet, SortKey, VAlign, cell_name, parse_column, parse_range,
 };
 use std::io::Cursor;
 use std::path::Path;
@@ -382,6 +382,48 @@ impl Workbook {
             self.set_style(sheet, range, path, &value)?;
         }
         Ok(())
+    }
+
+    /// Borders around a range (`inner`: between its cells too); [`BorderStyle::None`] takes them away.
+    pub fn borders(
+        &mut self,
+        sheet: &str,
+        range: &str,
+        style: BorderStyle,
+        color: Option<&str>,
+        inner: bool,
+    ) -> Result<()> {
+        let area = self.area(sheet, range)?;
+        let color = hex(color.unwrap_or("#000000"))?;
+        let (line, kind) = match style {
+            BorderStyle::Solid => ("thin", if inner { "All" } else { "Outer" }),
+            BorderStyle::Thick => ("thick", if inner { "All" } else { "Outer" }),
+            BorderStyle::Dashed => ("mediumdashed", if inner { "All" } else { "Outer" }),
+            BorderStyle::Dotted => ("dotted", if inner { "All" } else { "Outer" }),
+            BorderStyle::Double => ("double", if inner { "All" } else { "Outer" }),
+            BorderStyle::None => ("thin", "None"),
+        };
+        // IronCalc builds a border only from its JSON (its own tests do the same).
+        let json = format!(r#"{{"item": {{"style": "{line}", "color": "{color}"}}, "type": "{kind}"}}"#);
+        let border: ironcalc::base::BorderArea = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        self.model.set_area_with_border(&area, &border)
+    }
+
+    /// Sets the width of columns (`B`, or `B:D`) in pixels.
+    pub fn column_width(&mut self, sheet: &str, columns: &str, width: u32) -> Result<()> {
+        let i = self.sheet_index(sheet)?;
+        let (a, b) = columns.split_once(':').unwrap_or((columns, columns));
+        let first = parse_column(a).ok_or_else(|| format!("{a} is not a column (A, B, …)"))?;
+        let last = parse_column(b).ok_or_else(|| format!("{b} is not a column (A, B, …)"))?;
+        let (first, last) = (first.min(last) as i32 + 1, first.max(last) as i32 + 1);
+        self.model.set_columns_width(i, first, last, f64::from(width.clamp(5, 2000)))
+    }
+
+    /// Keeps the first `rows` and `columns` in view while scrolling (0 unfreezes).
+    pub fn freeze(&mut self, sheet: &str, rows: u32, columns: u32) -> Result<()> {
+        let i = self.sheet_index(sheet)?;
+        self.model.set_frozen_rows_count(i, rows.min(1000) as i32)?;
+        self.model.set_frozen_columns_count(i, columns.min(100) as i32)
     }
 
     /// Shows a format on the range's cells that meet the condition (a conditional format, kept in the file).

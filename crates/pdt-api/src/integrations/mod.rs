@@ -193,8 +193,19 @@ pub trait Integration: Send + Sync {
         None
     }
 
+    /// A connection of one of its kinds is being deleted (PDT-316): forget, and where it can take back, what it keeps
+    /// for it apart from the connection's own secret (Google's sign-in). Runs whether the integration is enabled or
+    /// not, before the connection goes; problems are only logged, the delete goes on.
+    fn connection_deleted<'a>(
+        &'a self,
+        _st: &'a AppState,
+        _connection: &'a pdt_core::workflow::api::Connection,
+    ) -> BoxFut<'a, ()> {
+        Box::pin(async {})
+    }
+
     /// The document providers it provides (PDT-314: Google's Docs and Sheets), used while it is enabled.
-    fn document_providers(&self) -> Vec<Arc<dyn crate::documents::DocumentProvider>> {
+    fn document_providers(&self, _st: &AppState) -> Vec<Arc<dyn crate::documents::DocumentProvider>> {
         Vec::new()
     }
 

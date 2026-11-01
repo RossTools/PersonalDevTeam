@@ -120,19 +120,24 @@ saying so, and the rest after it don't run:
   "bar" | "line" | "area" | "pie" | "scatter", data: "A1:C10", title?, anchor?}}` (the data's first column is the
   categories, its first row the series' names), `{op: "update_chart", id, chart}`, `{op: "delete_chart", id}`,
   `{op: "sort", sheet, range, by: [{column: "B", descending?}], header?}`, `{op: "filter", sheet, range, column,
-  when}`, `{op: "clear_filter", sheet}`. A `when` is `{type: "greater_than" | "less_than" | "equal_to" |
+  when}`, `{op: "clear_filter", sheet}`, `{op: "set_borders", sheet, range, style?: "solid" | "thick" | "dashed" |
+  "dotted" | "double" | "none", color?, inner?}`, `{op: "column_width", sheet, columns: "B:D", width}` (pixels),
+  `{op: "freeze", sheet, rows?, columns?}`, `{op: "validate", sheet, range, rule, strict?}` (a `rule` is
+  `{type: "one_of", values}`, `{type: "checkbox"}`, `{type: "date"}` or `{type: "matches", when}`). A `when` is `{type: "greater_than" | "less_than" | "equal_to" |
   "not_equal_to", value}`, `{type: "between", min, max}`, `{type: "text_contains", text}`, `{type: "empty"}`,
   `{type: "not_empty"}` or `{type: "formula", formula}`.
 
 A `local` document is a file PDT keeps (a `.md`, or a `.xlsx` computed by a real spreadsheet engine: formats,
-conditional formats, sort and filter all work, and `sort`/`filter` with `range` `""` take the sheet's used cells).
-Change it through PDT, so a person with it open sees your change at once; a sheet's list of edits is all or none.
+conditional formats, borders, column widths, frozen panes, sort and filter all work; `validate` doesn't yet, and
+`sort`/`filter` with `range` `""` take the sheet's used cells). Change it through PDT, so a person with it open sees
+your change at once; a sheet's list of edits is all or none.
 
 | Call | Does |
 |---|---|
 | `GET /api/documents?ticket=<key>&project=<key>&kind=doc\|sheet&q=<words>` | documents, the most recently changed first, with their `projects` and `tickets` |
 | `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows, charts}]}` |
 | `POST /api/documents/<id>/edits` | `{edits: [...]}` (the operations above): `{version, charts}` |
+| `GET /api/documents/<id>/version` | `{version}`: it changes whenever the document does, edits made at the provider too |
 | `GET /api/documents/<id>/charts` | a local sheet's charts, each `{sheet, chart, labels, series: [{name, values}]}` with the numbers it draws |
 | `GET /api/documents/<id>/comments` | its comments with their replies and `anchor` (`{on: "heading", heading}`, `{on: "text", quote}` or `{on: "cell", sheet, range}`); `POST …/comments` `{body, anchor}` adds one, `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves, `…/reopen` opens it again |
 | `GET /api/documents/<id>/export?format=md\|xlsx\|csv[&sheet=]` | the document as a file |

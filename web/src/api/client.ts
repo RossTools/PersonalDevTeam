@@ -52,6 +52,10 @@ import type { DocumentProvidersView } from './gen/DocumentProvidersView';
 import type { DocumentRead } from './gen/DocumentRead';
 import type { DocumentsBeside } from './gen/DocumentsBeside';
 import type { DocumentKind } from './gen/DocumentKind';
+import type { EditResult } from './gen/EditResult';
+import type { GoogleAccount } from './gen/GoogleAccount';
+import type { GooglePicker } from './gen/GooglePicker';
+import type { GoogleSignInStart } from './gen/GoogleSignInStart';
 import type { ImportDocument } from './gen/ImportDocument';
 import type { NewDocument } from './gen/NewDocument';
 import type { ProjectDocumentSettings } from './gen/ProjectDocumentSettings';
@@ -61,7 +65,6 @@ import type { DiffsApplied } from './gen/DiffsApplied';
 import type { DocumentComment } from './gen/DocumentComment';
 import type { DocumentCommentInput } from './gen/DocumentCommentInput';
 import type { DocumentEdit } from './gen/DocumentEdit';
-import type { EditResult } from './gen/EditResult';
 import type { SavedImage } from './gen/SavedImage';
 import type { UploadedDocument } from './gen/UploadedDocument';
 import type { ProviderFile } from './gen/ProviderFile';
@@ -500,6 +503,18 @@ export const api = {
       headers: { 'content-type': 'application/octet-stream' },
       body: file,
     }),
+  /** Its version now (cheap): an open page reads it again when this changes. */
+  documentVersion: (id: string) => request<EditResult>(`/api/documents/${enc(id)}/version`),
+  /** The Google plugin's accounts (PDT-316). */
+  googleAccounts: () => request<GoogleAccount[]>('/api/google/accounts'),
+  /** Where the browser signs in to Google; Google sends it back to `origin`. */
+  googleSignIn: (connectionId: string, origin: string) =>
+    request<GoogleSignInStart>(`/api/google/accounts/${enc(connectionId)}/sign-in`, { method: 'POST', body: JSON.stringify({ origin }) }, { asUser: true }),
+  googleSignOut: (connectionId: string) =>
+    request<void>(`/api/google/accounts/${enc(connectionId)}/sign-in`, { method: 'DELETE' }, { asUser: true }),
+  /** What Google's file picker needs in the browser. */
+  googlePicker: (connectionId: string) =>
+    request<GooglePicker>(`/api/google/accounts/${enc(connectionId)}/picker`, undefined, { asUser: true }),
   /** A ticket's design doc, from the template, in its project's default provider. */
   createDesignDoc: (ticketId: string) =>
     request<Document>(`/api/tickets/${enc(ticketId)}/design-doc`, { method: 'POST', body: JSON.stringify({ by: 'user' }) }),

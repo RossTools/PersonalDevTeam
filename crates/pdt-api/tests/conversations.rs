@@ -2,7 +2,7 @@
 
 use crate::common;
 
-use common::{PNG, call, call_raw, git, park_once_idle};
+use common::{PNG, call, call_raw, disk_full, git, park_once_idle};
 use futures_util::StreamExt;
 use pdt_api::{AppState, router, with_host_guard};
 use pdt_store::Store;
@@ -835,4 +835,159 @@ async fn the_events_socket_replays_then_streams_live() {
     assert_eq!((st.as_u16(), v["code"].as_str()), (409, Some("not_conversation")));
     call(&env.app, "POST", &format!("/api/sessions/{}/kill", shell["id"].as_str().unwrap()), None).await;
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// Serves the app on a free port (the events socket needs a real connection): the port.
+async fn serve(state: &AppState) -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let app = with_host_guard(router(state.clone(), None), vec![format!("127.0.0.1:{port}")]);
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    port
+}
+
+/// What the events socket replays, up to `ready`.
+async fn replayed(port: u16, id: &str) -> Vec<Value> {
+    let url = format!("ws://127.0.0.1:{port}/api/sessions/{id}/events?after=0");
+    let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    let mut frames = Vec::new();
+    loop {
+        let m = tokio::time::timeout(Duration::from_secs(10), ws.next()).await.unwrap().unwrap().unwrap();
+        let v: Value = serde_json::from_str(m.to_text().unwrap()).unwrap();
+        let ready = v["type"] == "ready";
+        frames.push(v);
+        if ready {
+            return frames;
+        }
+    }
+}
+
+#[tokio::test]
+async fn events_that_could_not_be_stored_wait_and_are_stored_in_order_and_the_message_leaves_the_queue() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let port = serve(&env.state).await;
+    let id = new_conversation(&env, json!({"initialPrompt": "one"})).await["id"].as_str().unwrap().to_string();
+    wait_turns(&env, &id, 1).await;
+    let before = events(&env, &id).await.len();
+    // The disk fills: no conversation event can be stored.
+    disk_full(&tmp.path().join("pdt.db"), "session_events", Some("1")).await;
+    send(&env, &id, "two").await;
+    // The agent took the message and answered: it leaves the queue and the turn ends, though nothing was stored.
+    wait_activity(&env, &id, "idle").await;
+    assert_eq!(events(&env, &id).await.len(), before, "nothing stored yet");
+    let frames = replayed(port, &id).await;
+    let state = frames.iter().rev().find(|f| f["type"] == "state").unwrap();
+    assert_eq!(state["state"]["pending"], json!([]), "not shown as queued");
+    assert_eq!(state["state"]["turnRunning"], false);
+    assert!(!frames.iter().any(|f| f["type"] == "delta"), "no streamed text is left over: {frames:#?}");
+
+    // Writes work again: the waiting events are stored, in the order they came, once each.
+    disk_full(&tmp.path().join("pdt.db"), "session_events", None).await;
+    let all = wait_turns(&env, &id, 2).await;
+    assert_eq!(all.len(), before + 4, "the usage row is updated in place: {all:#?}");
+    assert_eq!(all[6]["event"]["text"], "two");
+    assert_eq!(agent_text(&all), ["echo: one", "echo: two"]);
+    // Stored in the order they happened (the usage row, updated, too).
+    let mut by_seq = all.clone();
+    by_seq.sort_by_key(|e| e["seq"].as_i64());
+    let kinds: Vec<&str> = by_seq[before - 1..].iter().map(|e| e["event"]["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["turn", "user_message", "agent_message", "usage", "turn"], "{by_seq:#?}");
+    // A viewer that reconnects sees each once, in order.
+    let frames = replayed(port, &id).await;
+    let replay: Vec<&str> = frames
+        .iter()
+        .filter(|f| f["type"] == "event")
+        .filter_map(|f| f["event"]["event"]["text"].as_str().or(f["event"]["event"]["markdown"].as_str()))
+        .collect();
+    assert_eq!(replay, ["one", "echo: one", "two", "echo: two"]);
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+#[tokio::test]
+async fn a_gap_left_by_lost_writes_is_filled_in_from_claudes_transcript() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = new_conversation(&env, json!({})).await["id"].as_str().unwrap().to_string();
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    // What Claude saved: two turns. PDT stored the first and the end of the second; the prompt and the first reply of
+    // the second were lost (its writes failed and pdtd stopped before they were retried).
+    write_transcript(
+        &env,
+        &id,
+        &[
+            prompt("p-1", "hello"),
+            said("a-1", "msg-1", "hi"),
+            json!({"type": "system", "uuid": "d-1", "subtype": "turn_duration", "durationMs": 10}),
+            prompt("p-2", "clean up"),
+            said("a-2", "msg-2", "Recommended now: delete the build folders"),
+            json!({"type": "assistant", "uuid": "a-3", "message": {"id": "msg-3", "content": [{"type": "tool_use",
+                "id": "tool-1", "name": "Bash", "input": {"command": "ls"}}]}}),
+            json!({"type": "user", "uuid": "a-4", "message": {"role": "user", "content": [{"type": "tool_result",
+                "tool_use_id": "tool-1", "content": "ok"}]}}),
+            said("a-5", "msg-4", "Done."),
+        ],
+    );
+    let st = &env.state.store;
+    use pdt_core::conversation::*;
+    let start = AgentEvent::Turn { phase: TurnPhase::Started, status: None, duration_ms: None, reason: None };
+    let end = AgentEvent::Turn {
+        phase: TurnPhase::Ended,
+        status: Some(TurnStatus::Completed),
+        duration_ms: None,
+        reason: None,
+    };
+    let user =
+        |t: &str| AgentEvent::UserMessage { text: t.into(), images: vec![], source: MessageSource::Pdt, pdt: None };
+    let say =
+        |id: &str, t: &str| AgentEvent::AgentMessage { id: id.into(), markdown: t.into(), phase: MessagePhase::Final };
+    let rows = [
+        ("turn:p-1", "p-1", start.clone()),
+        ("u:p-1", "p-1", user("hello")),
+        ("m:msg-1", "p-1", say("msg-1", "hi")),
+        ("turn-end:p-1", "p-1", end.clone()),
+        ("turn:p-2", "p-2", start),
+        ("m:msg-4", "p-2", say("msg-4", "Done.")),
+        ("turn-end:p-2", "p-2", end),
+    ];
+    for (item, turn, event) in &rows {
+        let e = pdt_store::NewEvent { ts: 5, item_id: Some(item), turn_id: Some(turn), event, raw: None };
+        st.upsert_session_event(&id, e).await.unwrap();
+    }
+    // The next pdtd fills the gap in as the conversation loads, once.
+    let mut fresh = AppState::new(st.clone(), tmp.path().join("data"));
+    fresh.platform = env.state.platform.clone();
+    let port = serve(&fresh).await;
+    replayed(port, &id).await;
+    replayed(port, &id).await;
+    let all = events(&env, &id).await;
+    let items: Vec<&str> = all.iter().map(|e| e["itemId"].as_str().unwrap()).collect();
+    assert_eq!(
+        items,
+        [
+            "turn:p-1",
+            "u:p-1",
+            "m:msg-1",
+            "turn-end:p-1",
+            "turn:p-2",
+            "u:p-2",
+            "m:msg-2",
+            "t:tool-1",
+            "m:msg-4",
+            "turn-end:p-2"
+        ],
+        "{all:#?}"
+    );
+    let lost = &all[5]["event"];
+    assert_eq!((lost["text"].as_str(), lost["source"].as_str()), (Some("clean up"), Some("pdt")));
+    assert_eq!(all[7]["event"]["status"], "done");
+    // A viewer replaying from scratch gets each row once, in order.
+    let frames = replayed(port, &id).await;
+    let replay: Vec<&str> =
+        frames.iter().filter(|f| f["type"] == "event").map(|f| f["event"]["itemId"].as_str().unwrap()).collect();
+    let mut sorted = frames.iter().filter(|f| f["type"] == "event").collect::<Vec<_>>();
+    sorted.sort_by_key(|f| f["event"]["pos"].as_i64());
+    let by_pos: Vec<&str> = sorted.iter().map(|f| f["event"]["itemId"].as_str().unwrap()).collect();
+    assert_eq!(replay.len(), 10);
+    assert_eq!(by_pos, items);
 }

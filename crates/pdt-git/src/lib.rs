@@ -10,12 +10,14 @@ mod merge;
 mod pull;
 mod remote;
 mod review;
+mod update;
 pub use changes::*;
 pub use manage::*;
 pub use merge::*;
 pub use pull::*;
 pub use remote::*;
 pub use review::*;
+pub use update::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RepoInfo {
@@ -174,7 +176,11 @@ pub fn add_worktree(repo: &Path, path: &Path, branch: &str, base: &str) -> Resul
     }
     let path_str = path.to_string_lossy();
     match git_with_env(repo, &["worktree", "add", "-b", branch, &path_str, &sha], &[])? {
-        Ok(_) => Ok(sha),
+        Ok(_) => {
+            // PDT-328: a conflict resolved once in a worktree is resolved the same way next time.
+            let _ = enable_rerere(repo);
+            Ok(sha)
+        }
         Err(f) if f.stderr.contains("already exists") && f.stderr.contains("branch") => {
             Err(GitError::BranchExists(branch.to_string()))
         }
@@ -283,6 +289,7 @@ pub fn add_worktree_for_branch(repo: &Path, path: &Path, branch: &str) -> Result
     if let Err(f) = git_with_env(repo, &args, &[])? {
         return Err(GitError::Command(f.stderr));
     }
+    let _ = enable_rerere(repo);
     match git_with_env(path, &["rev-parse", "HEAD"], &[])? {
         Ok(sha) => Ok(sha),
         Err(f) => Err(GitError::Command(f.stderr)),

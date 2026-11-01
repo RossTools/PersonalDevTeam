@@ -625,6 +625,14 @@ impl LocalProvider {
                 parse_range(&chart.data).map(|_| ()).ok_or_else(|| format!("{} is not a range", chart.data))
             }
             DocumentEdit::DeleteChart { .. } => Ok(()),
+            DocumentEdit::SetBorders { sheet, range, style, color, inner } => {
+                l.wb.borders(sheet, range, *style, color.as_deref(), *inner)
+            }
+            DocumentEdit::ColumnWidth { sheet, columns, width } => l.wb.column_width(sheet, columns, *width),
+            DocumentEdit::Freeze { sheet, rows, columns } => l.wb.freeze(sheet, *rows, *columns),
+            DocumentEdit::Validate { .. } => {
+                Err(format!("{UNSUPPORTED}PDT's local sheets have no data validation yet: leave validate out"))
+            }
             e => Err(format!("{UNSUPPORTED}{} is for text documents, and this is a spreadsheet", e.op())),
         });
         if let Err(e) = r {

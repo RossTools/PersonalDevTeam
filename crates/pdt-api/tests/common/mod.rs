@@ -268,3 +268,21 @@ pub async fn pick_up(st: &pdt_api::AppState) {
     pdt_api::watch_pickup(st).await;
     pdt_api::run_workflows(st).await;
 }
+
+/// Makes inserts into `table` (those `when` picks) fail as SQLite does when the disk is full: the statement fails and
+/// SQLite rolls the whole transaction back itself. None: they work again.
+pub async fn disk_full(db: &std::path::Path, table: &str, when: Option<&str>) {
+    use sqlx::Connection;
+    let opts = sqlx::sqlite::SqliteConnectOptions::new().filename(db);
+    let mut c = sqlx::SqliteConnection::connect_with(&opts).await.unwrap();
+    let name = format!("test_full_{table}");
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP TRIGGER IF EXISTS {name}"))).execute(&mut c).await.unwrap();
+    if let Some(when) = when {
+        let sql = format!(
+            "CREATE TRIGGER {name} BEFORE INSERT ON {table} WHEN {when} \
+             BEGIN SELECT RAISE(ROLLBACK, 'database or disk is full'); END"
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&mut c).await.unwrap();
+    }
+    c.close().await.unwrap();
+}

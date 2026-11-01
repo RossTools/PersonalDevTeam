@@ -2,6 +2,7 @@
 // and timeline wording.
 import type { LinkedTicket } from '../api/gen/LinkedTicket';
 import type { Priority } from '../api/gen/Priority';
+import type { MergeUpdateHow } from '../api/gen/MergeUpdateHow';
 import type { NoticeKind } from '../api/gen/NoticeKind';
 import type { TicketEvent } from '../api/gen/TicketEvent';
 import type { TicketQuery } from '../api/gen/TicketQuery';
@@ -271,6 +272,31 @@ export function eventTitle(e: TicketEvent): string {
       return `${d.persona ?? 'Agent'}: ${d.outcome ?? '?'}${d.by === 'user' ? ' (taken over by you)' : ''}`;
     }
     case 'outside_input': return outsideInputTitle((e.data ?? {}) as OutsideInputData);
+    case 'merge_update': return mergeUpdateTitle((e.data ?? {}) as MergeUpdateData);
+  }
+}
+
+/** What a `merge_update` event records (crates/pdt-api/src/workflow/nodes/conflicts.rs). */
+export interface MergeUpdateData {
+  how?: MergeUpdateHow;
+  base?: string;
+  files?: string[];
+  regenerated?: string[];
+  pr?: number | null;
+}
+
+const count = (n: number, what: string) => `${n} ${what}${n === 1 ? '' : 's'}`;
+
+/** How the branch was brought up to date with its base at merge time, or a conflict left for then. */
+function mergeUpdateTitle(d: MergeUpdateData): string {
+  const base = d.base ? ` ${d.base}` : ' the base';
+  switch (d.how) {
+    case 'deferred': return `Conflicts with the base branch${d.pr ? ` (PR #${d.pr})` : ''} · resolved at merge time`;
+    case 'clean': return `Updated with${base} · merged cleanly, no agent`;
+    case 'regenerated': return `Updated with${base} · regenerated ${(d.regenerated ?? []).join(', ') || 'generated files'}, no agent`;
+    case 'conflict': return `Conflicts with${base} in ${count(d.files?.length ?? 0, 'file')} · sent to the agent`;
+    case 'agent': return `Conflicts with${base} resolved by the agent`;
+    default: return 'Updated with the base branch';
   }
 }
 

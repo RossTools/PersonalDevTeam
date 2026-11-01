@@ -761,6 +761,80 @@ export const plugins: IntegrationInfo[] = [
     "projects": []
   },
   {
+    "id": "google",
+    "label": "Google",
+    "description": "Google Docs and Sheets as documents: pick files from your Drive, make new ones, and let agents edit them (formulas, formatting and charts too) and answer their comments.",
+    "category": "documents",
+    "icon": {
+      "letters": "G",
+      "color": "#4285f4"
+    },
+    "enabled": true,
+    "built": true,
+    "core": false,
+    "canTurnOff": false,
+    "forgeProjects": [],
+    "forgeKind": null,
+    "status": "needs_setup",
+    "error": null,
+    "errorConnection": null,
+    "checkable": false,
+    "connectionKinds": [
+      {
+        "id": "google",
+        "label": "Google account",
+        "plural": "Google accounts",
+        "setup": "One per Google account, with your own OAuth client from Google Cloud. Save it, then Sign in with Google below. PDT sees only the files it makes and those you pick.",
+        "description": "A Google account for Docs and Sheets (drive.file: only files PDT makes or you pick).",
+        "url": false,
+        "secretLabel": "OAuth client secret",
+        "secretHint": "The OAuth client's secret, shown with its ID in Google Cloud.",
+        "generate": false,
+        "auth": false,
+        "secretOptional": false,
+        "urlOptional": false,
+        "fields": [
+          {
+            "key": "clientId",
+            "label": "OAuth client ID",
+            "hint": "The OAuth client's ID (Google Cloud → APIs & Services → Credentials).",
+            "placeholder": "1234-abc.apps.googleusercontent.com",
+            "optional": false
+          },
+          {
+            "key": "apiKey",
+            "label": "Picker API key",
+            "hint": "An API key of the same Google Cloud project, for Google's file picker. Without it you can't pick files from your Drive.",
+            "placeholder": "AIza…",
+            "optional": true
+          },
+          {
+            "key": "appId",
+            "label": "Project number",
+            "hint": "The Google Cloud project's number (its dashboard shows it), for the file picker.",
+            "placeholder": "123456789012",
+            "optional": true
+          },
+          {
+            "key": "folder",
+            "label": "Folder for new documents",
+            "hint": "Where new Docs and Sheets go: a Drive folder's address or ID. Empty: My Drive.",
+            "placeholder": "https://drive.google.com/drive/folders/…",
+            "optional": true
+          }
+        ],
+        "discordBot": false
+      }
+    ],
+    "nodeKinds": [],
+    "templates": [],
+    "workflows": [],
+    "tools": [],
+    "pmTools": [],
+    "projectSettings": null,
+    "projects": []
+  },
+  {
     "id": "arr",
     "label": "Sonarr and Radarr",
     "description": "Search Radarr and Sonarr, add films and series, and read their download queues from workflows.",

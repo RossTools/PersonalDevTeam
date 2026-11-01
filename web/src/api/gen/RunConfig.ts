@@ -3,6 +3,7 @@ import type { AreaDef } from "./AreaDef";
 import type { CiDef } from "./CiDef";
 import type { ForgeKind } from "./ForgeKind";
 import type { PushDef } from "./PushDef";
+import type { RegenerateDef } from "./RegenerateDef";
 import type { RunDef } from "./RunDef";
 
 export type RunConfig = { runs: Array<RunDef>, tests: Array<RunDef>, areas: Array<AreaDef>, 
@@ -28,6 +29,10 @@ push: PushDef | null,
  * the files at the checkout's root (`pdt_core::storage::detect_build_output`).
  */
 buildOutput: Array<string> | null, 
+/**
+ * `[[merge.regenerate]]`: the rules for generated files at merge time (the overrides' list wins when they give one).
+ */
+regenerate: Array<RegenerateDef>, 
 /**
  * Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
  */

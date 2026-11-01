@@ -16,6 +16,7 @@ export const documentKeys = {
   content: (id: string) => ['documents', 'content', id] as const,
   comments: (id: string) => ['documents', 'comments', id] as const,
   charts: (id: string) => ['documents', 'charts', id] as const,
+  version: (id: string) => ['documents', 'version', id] as const,
   providers: (project: string | null) => ['documents', 'providers', project] as const,
 };
 
@@ -42,6 +43,12 @@ export function useDocument(id: string | null) {
 /** A document's content, read from its provider (not polled: providers may be slow or rate-limited). */
 export function useDocumentContent(id: string) {
   return useQuery({ queryKey: documentKeys.content(id), queryFn: () => api.documentContent(id), retry: false });
+}
+
+/** A document's version now, every 15 s while `enabled` (cheaper than its content: an open page reads that again when
+ * this changes). */
+export function useDocumentVersion(id: string, enabled: boolean) {
+  return useQuery({ queryKey: documentKeys.version(id), queryFn: () => api.documentVersion(id), refetchInterval: 15_000, retry: false, enabled });
 }
 
 /** The providers this host has, and where new documents (in `project`) go. They change only with plugins. */

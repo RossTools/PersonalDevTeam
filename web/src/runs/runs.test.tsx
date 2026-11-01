@@ -360,6 +360,23 @@ describe('ProjectSettingsPanel', () => {
     expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, triageApproval: 'off' });
   });
 
+  it('resolves conflicts at merge time by default, or immediately (PDT-328)', async () => {
+    const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'off', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120, requireGreenCi: true, triageApproval: 'inbox', resolveConflicts: 'merge_time' };
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, policy },
+      'GET /api/projects/p/run-config': config,
+      'PUT /api/projects/p/settings': (c) => ({
+        effectiveCredentials: 'subscription', agentInstructions: null, policy: { ...policy, ...(c.body as object) },
+      }),
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    const select = await screen.findByRole('button', { name: /When to resolve conflicts/ });
+    expect(select).toHaveTextContent('At merge time');
+    await choose(select, 'Immediately');
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, resolveConflicts: 'immediately' });
+  });
+
   it('saves the quiet period before auto-start, shown while auto-start is on', async () => {
     const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'todo', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120 };
     const calls = stubApi({

@@ -423,6 +423,7 @@ mod tests {
             workspace_id: None,
             pr: None,
             ci: None,
+            merge_update: None,
         }
     }
 

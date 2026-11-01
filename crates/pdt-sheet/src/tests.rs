@@ -1,7 +1,7 @@
 use super::*;
 use ironcalc::base::cf_types::CfRuleInput;
 use ironcalc::base::types::{Dxf, DxfFont};
-use pdt_core::document::{CellCondition, CellFormat, HAlign, SortKey};
+use pdt_core::document::{BorderStyle, CellCondition, CellFormat, HAlign, SortKey};
 
 fn sales() -> Workbook {
     let mut wb = Workbook::new("Sales").unwrap();
@@ -223,4 +223,23 @@ fn the_web_ui_runs_the_same_ironcalc() {
         "pdt-sheet pins ironcalc {IRONCALC_VERSION}"
     );
     assert_eq!(cell_name(2, 27), "AB3");
+}
+
+#[test]
+fn borders_widths_and_frozen_panes() {
+    let mut wb = sales();
+    wb.borders("Sheet1", "A1:D5", BorderStyle::Solid, None, true).unwrap();
+    let b = wb.style("Sheet1", "B2").unwrap().border;
+    assert!(b.top.is_some() && b.left.is_some(), "{b:?}");
+    wb.borders("Sheet1", "A1:D5", BorderStyle::None, None, false).unwrap();
+    assert!(wb.style("Sheet1", "B2").unwrap().border.top.is_none());
+    assert!(wb.borders("Sheet1", "A1", BorderStyle::Solid, Some("blue"), false).is_err());
+
+    wb.column_width("Sheet1", "B:C", 140).unwrap();
+    assert!((wb.model().get_column_width(0, 3).unwrap() - 140.0).abs() < 1.0);
+    assert!(wb.column_width("Sheet1", "1", 140).is_err());
+    wb.freeze("Sheet1", 1, 1).unwrap();
+    assert_eq!(wb.model().get_frozen_rows_count(0).unwrap(), 1);
+    let back = Workbook::from_xlsx(&wb.to_xlsx().unwrap(), "x").unwrap();
+    assert_eq!(back.model().get_frozen_columns_count(0).unwrap(), 1, "kept in the file");
 }

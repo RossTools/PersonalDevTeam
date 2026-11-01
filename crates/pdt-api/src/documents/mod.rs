@@ -31,6 +31,9 @@ pub enum ProviderError {
     /// The edit or input doesn't fit the document (a cell that isn't one, a sheet it lacks).
     #[error("{0}")]
     Invalid(String),
+    /// The service is limiting how often PDT may call it: try again later.
+    #[error("{0}")]
+    Busy(String),
     /// Anything else (the service is down, a sign-in expired).
     #[error("{0}")]
     Failed(String),
@@ -132,7 +135,7 @@ pub trait DocumentProvider: Send + Sync {
         Box::pin(async move { Ok(self.file(reference).await?.version) })
     }
     /// A page that shows it inside PDT, when the provider has one.
-    fn embed_url(&self, _reference: &str) -> Option<String> {
+    fn embed_url(&self, _reference: &str, _kind: DocumentKind) -> Option<String> {
         None
     }
 
@@ -160,7 +163,7 @@ impl DocumentProviders {
 pub fn providers(st: &AppState) -> Vec<Arc<dyn DocumentProvider>> {
     let mut out: Vec<Arc<dyn DocumentProvider>> = st.documents.list().to_vec();
     for i in st.registry().integrations() {
-        for p in i.document_providers() {
+        for p in i.document_providers(st) {
             if !out.iter().any(|o| o.id() == p.id()) {
                 out.push(p);
             }

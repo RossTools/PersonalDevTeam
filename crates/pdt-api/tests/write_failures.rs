@@ -5,7 +5,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{call, git};
+use common::{call, disk_full, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -35,24 +35,6 @@ async fn setup() -> Env {
         call(&app, "POST", "/api/projects", Some(json!({"name": "Proj", "repoPath": repo.to_string_lossy()}))).await;
     assert_eq!(s, StatusCode::CREATED, "{p}");
     Env { app, state, project: p["id"].as_str().unwrap().to_string(), db, _tmp: tmp }
-}
-
-/// Makes inserts into `table` (those `when` picks) fail as SQLite does when the disk is full: the statement fails and
-/// SQLite rolls the whole transaction back itself. None: they work again.
-async fn disk_full(db: &std::path::Path, table: &str, when: Option<&str>) {
-    use sqlx::Connection;
-    let opts = sqlx::sqlite::SqliteConnectOptions::new().filename(db);
-    let mut c = sqlx::SqliteConnection::connect_with(&opts).await.unwrap();
-    let name = format!("test_full_{table}");
-    sqlx::query(sqlx::AssertSqlSafe(format!("DROP TRIGGER IF EXISTS {name}"))).execute(&mut c).await.unwrap();
-    if let Some(when) = when {
-        let sql = format!(
-            "CREATE TRIGGER {name} BEFORE INSERT ON {table} WHEN {when} \
-             BEGIN SELECT RAISE(ROLLBACK, 'database or disk is full'); END"
-        );
-        sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&mut c).await.unwrap();
-    }
-    c.close().await.unwrap();
 }
 
 async fn create(env: &Env, doc: Value) -> String {

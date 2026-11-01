@@ -3,4 +3,4 @@
 /**
  * Where a plugin (an integration, as the UI calls it) sits in Settings → Plugins (PDT-228).
  */
-export type PluginCategory = "dev" | "chat" | "media" | "general";
+export type PluginCategory = "dev" | "documents" | "chat" | "media" | "general";

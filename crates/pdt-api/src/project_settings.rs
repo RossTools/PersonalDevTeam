@@ -94,6 +94,11 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub triage_approval: Option<TriageApproval>,
+    /// When conflicts with the base are resolved: `merge_time` (once, when the ticket is next to merge) or
+    /// `immediately` (its agent is told at once) (PDT-328).
+    #[serde(default)]
+    #[ts(optional)]
+    pub resolve_conflicts: Option<pdt_core::policy::ResolveConflicts>,
     /// Integration settings by integration id: each one named is set (keys left out keep their values), null or a
     /// `connection` of "" unlinks it, and integrations not named are kept.
     #[serde(default)]
@@ -204,6 +209,7 @@ pub(crate) async fn put_settings(
         start_delay_seconds: input.start_delay_seconds.unwrap_or(current.policy.start_delay_seconds),
         require_green_ci: input.require_green_ci.unwrap_or(current.policy.require_green_ci),
         triage_approval: input.triage_approval.unwrap_or(current.policy.triage_approval),
+        resolve_conflicts: input.resolve_conflicts.unwrap_or(current.policy.resolve_conflicts),
     };
     let mut integrations = current.integrations;
     let reg = st.registry();

@@ -42,6 +42,15 @@ function withoutStream(streams: Streams, itemId: string, keepOutput: boolean): S
   return next;
 }
 
+function withoutMessageStreams(streams: Streams): Streams {
+  if (!Object.values(streams).some((s) => s.markdown !== undefined)) return streams;
+  const next: Streams = {};
+  for (const [id, s] of Object.entries(streams)) {
+    if (s.output !== undefined) next[id] = { output: s.output };
+  }
+  return next;
+}
+
 export function reduce(m: ConversationModel, a: ConversationAction): ConversationModel {
   if (a.type === 'open') return { ...m, replayed: {}, ready: false };
   if (a.type === 'batch') return reduceBatch(m, a.msgs);
@@ -71,8 +80,12 @@ export function reduce(m: ConversationModel, a: ConversationAction): Conversatio
       }
       return { ...m, replayed, streams: { ...m.streams, [itemId]: { ...cur, [field]: value } } };
     }
-    case 'state':
-      return { ...m, state: msg.state };
+    case 'state': {
+      // A turn that ended without a streamed message's event: it is not coming in this turn (it may come later, as a
+      // row, once PDT stores it), so its text stops showing at the end of the conversation.
+      const ended = m.state?.turnRunning === true && !msg.state.turnRunning;
+      return { ...m, state: msg.state, streams: ended ? withoutMessageStreams(m.streams) : m.streams };
+    }
     case 'ready': {
       // Streams the replay didn't mention finished while we were away (their events came in the replay).
       let streams = m.streams;

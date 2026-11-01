@@ -12,9 +12,9 @@ export type Plugin = IntegrationInfo;
 export const pluginsKey = ['integrations'] as const;
 
 /** The catalog's groups, in order. */
-export const CATEGORIES: readonly PluginCategory[] = ['dev', 'chat', 'media', 'general'];
+export const CATEGORIES: readonly PluginCategory[] = ['dev', 'documents', 'chat', 'media', 'general'];
 
-export const CATEGORY_LABEL: Record<PluginCategory, string> = { dev: 'Dev', chat: 'Chat', media: 'Media', general: 'General' };
+export const CATEGORY_LABEL: Record<PluginCategory, string> = { dev: 'Dev', documents: 'Documents', chat: 'Chat', media: 'Media', general: 'General' };
 
 export const STATUS_LABEL: Record<PluginStatus, string> = {
   on: 'On', off: 'Off', needs_setup: 'Needs setup', error: 'Error', not_built: 'Not in this build',

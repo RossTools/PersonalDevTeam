@@ -298,6 +298,22 @@ async fn a_local_sheet_computes_formats_sorts_filters_charts_and_exports() {
     assert_eq!(s, StatusCode::BAD_REQUEST, "{e}");
     let (_, c) = call(&env.app, "GET", &format!("/api/documents/{id}/content"), None).await;
     assert_eq!(c["content"]["sheets"][0]["rows"].as_array().unwrap().len(), 5, "{c}");
+    // Borders, column widths and frozen panes; data validation isn't there yet.
+    let (s, r) = edit(
+        &env,
+        &id,
+        json!([{"op": "set_borders", "sheet": "Sheet1", "range": "A1:B5", "inner": true},
+               {"op": "column_width", "sheet": "Sheet1", "columns": "A", "width": 160},
+               {"op": "freeze", "sheet": "Sheet1", "rows": 1}]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    let wb = Workbook::open(std::path::Path::new(&reference)).unwrap();
+    assert_eq!(wb.model().get_frozen_rows_count(0).unwrap(), 1);
+    let (s, e) =
+        edit(&env, &id, json!([{"op": "validate", "sheet": "Sheet1", "range": "B2:B4", "rule": {"type": "checkbox"}}]))
+            .await;
+    assert_eq!((s, &e["code"]), (StatusCode::BAD_REQUEST, &json!("unsupported")), "{e}");
     let (s, e) = edit(&env, &id, json!([{"op": "replace_text", "markdown": "x"}])).await;
     assert_eq!((s, &e["code"]), (StatusCode::BAD_REQUEST, &json!("unsupported")), "{e}");
 

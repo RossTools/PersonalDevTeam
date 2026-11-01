@@ -67,7 +67,7 @@ and `backups/` (a copy taken before migrations).
 | `pdt-sheet` | Local sheets on IronCalc: `.xlsx` and `.csv` in and out, cells with computed values, formats, sheets, sort and filter, and IronCalc's sync diffs. |
 | `pdt-host` | The supervisor: running pdtd, installing updates, rolling back, login registration. |
 | `pdtd` | The daemon binary: config, logging, the loops' wiring (`main.rs`), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
-| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
+| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
 
 Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients match on `code`. API types derive ts-rs
 and are generated into `web/src/api/gen`.
@@ -116,6 +116,17 @@ Actions, GitLab CI, the local forge's command, Buildkite), into memory. What cha
 from the merge queue, a merge) is logged as events, which the built-in PR notices workflow turns into messages to the
 agent.
 
+**Conflicts at merge time.** A conflict is fixed once, when the ticket is next to merge. PR notices' first step on a
+conflict or a moved base, `attempt.defer_conflict` (`workflow/nodes/conflicts.rs`, the rule is pdt-core
+`merge_update::defers`), leaves it for merge time while the ticket's Pipeline stage is before the merge and the
+project's `resolve_conflicts` policy says so: it records a `merge_update` ticket event and sets the attempt's in-memory
+`mergeUpdate` (kept in `github.rs`'s `PrWatch`, like `pr`). The Pipeline's merge, and PR notices' fix of a pull request
+set to merge after a conflict or a queue drop, start with `attempt.update_base`: in the attempt's worktree it fetches
+the base, merges it (pdt-git `update.rs`, with `rerere`), takes the base's side of files a `[[merge.regenerate]]` rule
+covers and runs the rule, commits, and pushes once; real conflicts leave the merge in progress and go to an agent step
+with the files, hunks and merged-since subjects (`merge_update::conflict_message`). Each result is a `merge_update`
+event (`how`: deferred, clean, regenerated, conflict, agent).
+
 **Review.** The Changes view diffs the worktree against its merge base with the base branch (pdt-git `review.rs`;
 each file says whether it is uncommitted, and generated: `linguist-generated` in `.gitattributes` or a lockfile). The
 web view shows every file on one scrolling page (`ChangesView` → a `FileSection` per file): a file's diff is drawn
@@ -137,7 +148,8 @@ area is a conflict.
 
 **Sessions.** An agent session runs as a terminal (the agent's own TUI in a PTY) or a conversation (PDT's structured
 view: Claude's stream-json, a PDT-owned Codex app-server, Devin and other agents over ACP). Conversation events are
-stored in `session_events`; terminals keep their scrollback in memory. Every agent gets PDT's instructions (pdt-core
+stored in `session_events` (in the order received; while writes fail they wait in memory, and a Claude conversation's
+gaps are filled in from its transcript when it loads); terminals keep their scrollback in memory. Every agent gets PDT's instructions (pdt-core
 `agent_context`, plus the project's agent instructions and the ticket), written to the session's folder and passed in
 the way each agent takes them. A session belongs to an attempt (the Coder's) or to a ticket (a workflow step's
 reviewer or QA). Claude, Codex and Devin terminals are resumed by their conversation ids after a restart;
@@ -200,7 +212,10 @@ works, events that could not be logged (kept in memory by `emit_event`) are logg
 runs, each once by its run key. Agent steps start a session with a
 persona and wait for its `submit_outcome`; messages to agents go through the outbox (`workflow/outbox.rs`), which
 waits for the agent to be idle. Built-in workflows (`workflow/builtins.rs`) and templates (the Pipeline:
-`workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. Triggers on things
+`workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. A template fills
+`{{params.x}}` into its one document, except "Review outside pull requests" (`workflow/outside_prs.rs`), whose
+`tickets` param picks one of two node sets (`templates::filled`); a workflow recorded before a param existed gets its
+old behaviour as the value (`outside_prs::upgrade`). Triggers on things
 outside PDT poll: new GitHub issues (`github_issues.rs`), outside pull requests (`github_pulls.rs`) and failed runs of a
 CI workflow (`github_workflow_runs.rs`: `github.workflow.failed`, read through `CiProvider::workflow_runs` since a
 `RunCursor` kept in the workflow's state, so a restart neither misses nor repeats a run). The template "Report failed
@@ -289,6 +304,27 @@ with Chart.js from `GET …/charts`, which reads their numbers from pdtd's model
 anchor cell. The web UI's `@ironcalc/workbook` must be the same version as pdt-sheet's `ironcalc` (they exchange
 IronCalc's bytes and diffs; a pdt-sheet test checks), and is loaded only when a sheet opens.
 
+`GET /api/documents/{id}/version` is the provider's version (Google's Drive counter): `DocumentBody` polls it in PDT's
+own view, so edits made at the provider (in Google's editor) show too.
+
+**Google.** An optional plugin (`crates/pdt-int-google`, pdtd's `google` feature), the `google` document provider.
+Each Google account is a `google` connection (the user's OAuth client ID in its config, the client secret as its
+secret, the picker's API key and project number, the folder for new files); signing in (`oauth.rs`: the authorization
+code flow with PKCE, the `drive.file` scope only) keeps the refresh token and email as a secret of their own
+(`connection:<id>:google`, `accounts.rs`), so editing the connection keeps them; deleting the connection runs `Integration::connection_deleted` (for every
+built integration with that kind, on or off), where Google revokes the token and forgets the sign-in. A document's reference is
+`<connection id>/<file id>`. `api.rs` is the client (an access token per account in memory, renewed once on a 401;
+Google's errors as `ProviderError`, a rate limit as `Busy`, which the API answers 429), over pdt-forge's blocking
+`Transport` (tests use recorded answers). `drive.rs` has the files, a Doc's Markdown (Drive's export), a Sheet's
+cells, comments and versions; `docs.rs` turns Markdown into Docs `batchUpdate` requests (inserted from the last block
+at one index, UTF-16 indexes, sections found in `documents.get`'s structure); `sheets.rs` maps sheet edits to
+`batchUpdate` requests and `values.batchUpdate` writes (`USER_ENTERED`), in order. A chart's PDT id becomes Google's numeric chart id by
+a hash and is kept in the spreadsheet's developer metadata (`pdt.chart`), so a read gives charts back under PDT's ids. `routes.rs` signs in and out
+(`/api/google/…`; the callback page is where Google sends the browser back) and gives the browser Google's file
+picker's token; signing in and the picker are for the web app only (its UI token). The web app loads the picker
+(`web/src/documents/google.tsx`); a picked file is imported like any other. The document page embeds the provider's
+`embed_url` (Google's editor, with `authuser`) and falls back to PDT's own reading.
+
 **GitLab.** An optional plugin (`crates/pdt-int-gitlab`, pdtd's `gitlab` feature) over GitLab's REST API (v4), for
 gitlab.com and self-hosted servers; nothing runs `glab`. It claims `origin` remotes on gitlab.com and on each host it
 has a login for (one account per host, a token with the `api` scope, or the device flow with `PDT_GITLAB_CLIENT_ID`),
@@ -314,7 +350,7 @@ login.
 | pdt-mcp and personas | pdt-api `mcp/`, `personas.rs`; pdt-core `persona.rs`, `mcp.rs` | `web/src/personas` |
 | Workflows, Inbox, notifications | pdt-api `workflow/`, `inbox.rs`, `notifications.rs`; pdt-core `workflow/`; pdt-store `workflows.rs`, `event_log.rs` | `web/src/workflows`, `web/src/inbox`, `web/src/notifications` |
 | Integrations | pdt-api `sdk.rs`, `integrations/`; `crates/pdt-int-*`; pdtd `src/integrations/` | `web/src/plugins`, `web/src/connections` |
-| Documents | pdt-api `documents/`; pdt-core `document.rs`; pdt-store `documents.rs` | `web/src/documents` |
+| Documents | pdt-api `documents/`; pdt-core `document.rs`, `document_ops.rs`; pdt-store `documents.rs`; `crates/pdt-int-google` | `web/src/documents` |
 | The PM | pdt-api `pm.rs`; pdt-core `pm.rs`; pdt-store `pm.rs` | `web/src/pm` |
 | Watches | pdt-api `watches.rs`; pdt-core `watch.rs`; pdt-store `watches.rs` | `web/src/common/Watch.tsx` |
 | Secrets | pdt-api `vault.rs`, `secrets.rs`; pdt-core `secret.rs` | `web/src/secrets` |
