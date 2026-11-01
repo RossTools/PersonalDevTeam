@@ -10,13 +10,16 @@
 use anyhow::Context;
 use pdt_core::conversation::*;
 use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
+use pdt_core::integration::ToolTable;
+use pdt_core::persona::{BUILTIN_PERSONAS, Persona, PersonaAuthor};
 use pdt_core::pr::CiState;
 use pdt_core::project::Project;
 use pdt_core::run::{Run, RunKind, RunState};
-use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
+use pdt_core::session::{AgentKind, Session, SessionKind, SessionPersona, SessionStatus};
 use pdt_core::ticket::{LinkKind, NewTicket, PipelineStage, Priority, TicketStage};
 use pdt_core::workflow::api::{Author, Scope, Source, Workflow};
 use pdt_core::workflow::doc::WorkflowDoc;
+use pdt_core::workspace::{TabItem, Workspace};
 use pdt_core::worktree::{WORKTREES_DIR, Worktree, worktree_path};
 use pdt_store::Store;
 use serde_json::json;
@@ -333,8 +336,32 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
         })
         .await?;
 
-    // Sessions, each a tab of the project's workspace (titled by persona: the ticket's key shows beside them): the
-    // Coder's conversation on the search ticket, a Reviewer and a QA agent (the screenshot script brings these two back on a stand-in), and a shell.
+    // The built-in personas the Pipeline's steps run, installed as PDT installs them (their template is PDT's, so
+    // the daemon keeps them as they are when it installs the rest).
+    let mut personas = Vec::new();
+    for b in BUILTIN_PERSONAS.iter().filter(|b| ["coder", "reviewer", "qa"].contains(&b.id)) {
+        let setup = b.setup(&ToolTable::default());
+        let p = Persona {
+            id: id(),
+            name: b.name.into(),
+            role: b.role.into(),
+            description: b.description.into(),
+            builtin: Some(b.id.into()),
+            archived: false,
+            version: 1,
+            setup: setup.clone(),
+            created_at: now - 30 * DAY,
+            updated_at: now - 30 * DAY,
+        };
+        store.insert_persona(&p, PersonaAuthor::Builtin, "installed").await?;
+        store.set_persona_template(&p.id, &setup).await?;
+        personas.push(p);
+    }
+    let persona = |name: &str| personas.iter().find(|p| p.name == name).expect("a sample persona");
+
+    // Sessions. The Pipeline's step sessions sit in their ticket's workspace, which pickup made when it started the
+    // ticket: the ticket's tab, then a tab per step so far (titled `<persona> · <key>`, as a step titles them). The
+    // user's own sessions are tabs of the project's workspace: a shell on main and two conversations of theirs.
     let session = |wt: Option<&Worktree>, agent: Option<AgentKind>, title: String, ago: i64| Session {
         id: id(),
         project_id: project.id.clone(),
@@ -362,34 +389,85 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
         persona: None,
         background: vec![],
     };
-    let (_, _, _, search_attempt, search_wt) = attempt_of("Search products by name");
-    let coder = Session {
+    // A ticket workspace per started ticket, in the order pickup started them (each new one goes last).
+    let mut by_start: Vec<&(&str, String, String, String, Worktree)> = attempts.iter().collect();
+    by_start.sort_by_key(|a| a.4.created_at);
+    let mut workspaces: Vec<(&str, String)> = Vec::new();
+    let mut steps: Vec<(&str, &str, Session)> = Vec::new();
+    for (title, ticket_id, key, attempt, wt) in by_start {
+        let w = Workspace {
+            id: id(),
+            name: key.clone(),
+            project_id: None,
+            position: 0,
+            created_at: wt.created_at,
+            tabs: vec![],
+            ticket: None,
+        };
+        store.insert_workspace(&w).await?;
+        store.set_attempt_workspace(attempt, &w.id).await?;
+        store.open_tab(&id(), &w.id, &TabItem::Ticket(ticket_id.clone()), None, wt.created_at).await?;
+        // The Pipeline's steps so far, oldest first; the newest is the ticket's stage's.
+        let it = items.iter().find(|i| i.title == *title).expect("a sample ticket");
+        let names: &[&str] = match it.work.expect("started").0 {
+            PipelineStage::Code => &["Coder"],
+            PipelineStage::Review => &["Coder", "Reviewer"],
+            _ => &["Coder", "Reviewer", "QA"],
+        };
+        for (n, name) in names.iter().enumerate() {
+            let p = persona(name);
+            let ago = it.ago + (names.len() - n) as i64 * 25 * MINUTE;
+            let mut s = Session {
+                attempt_id: Some(attempt.clone()),
+                persona: Some(SessionPersona {
+                    id: p.id.clone(),
+                    name: p.name.clone(),
+                    version: p.version,
+                    step_id: Some(id()),
+                }),
+                ..session(Some(wt), Some(AgentKind::Claude), format!("{name} · {key}"), ago)
+            };
+            // The Coder's conversation on the search ticket (the workspace screenshot).
+            if *title == "Search products by name" {
+                s.mode = SessionMode::Conversation;
+                s.permission_mode = Some(PermissionMode::Ask);
+                s.exit_code = None;
+            }
+            store.insert_session(&s).await?;
+            store.open_tab(&id(), &w.id, &TabItem::Session(s.id.clone()), None, s.created_at).await?;
+            steps.push((title, name, s));
+        }
+        workspaces.push((title, w.id));
+    }
+    let workspace_of =
+        |title: &str| workspaces.iter().find(|w| w.0 == title).map(|w| w.1.clone()).expect("a workspace");
+
+    let step = |title: &str, name: &str| &steps.iter().find(|s| s.0 == title && s.1 == name).expect("a step").2;
+    // The Coder's conversation on the search ticket, its branch's changes beside it.
+    let (_, _, _, _, search_wt) = attempt_of("Search products by name");
+    let coder = step("Search products by name", "Coder");
+    seed_conversation(store, &coder.id, &search_wt.branch, coder.created_at).await?;
+    let search_ws = workspace_of("Search products by name");
+    store.open_tab(&id(), &search_ws, &TabItem::Changes(search_wt.id.clone()), None, now - 5 * MINUTE).await?;
+    let (_, _, _, _, cart_wt) = attempt_of("Save the cart across visits");
+    let reviewer = step("Save the cart across visits", "Reviewer");
+    let (_, _, _, _, guest_wt) = attempt_of("Guest checkout without an account");
+
+    // The user's own sessions, in the project's workspace: a shell on main, a short chat and a Codex terminal.
+    let shell = session(None, None, "main".into(), 2 * HOUR);
+    let chat = Session {
         mode: SessionMode::Conversation,
         permission_mode: Some(PermissionMode::Ask),
         exit_code: None,
-        attempt_id: Some(search_attempt.clone()),
-        ..session(Some(search_wt), Some(AgentKind::Claude), "Coder".into(), 30 * MINUTE)
+        ..session(None, Some(AgentKind::Claude), "Where do cart totals get rounded?".into(), 45 * MINUTE)
     };
-    let (_, _, _, cart_attempt, cart_wt) = attempt_of("Save the cart across visits");
-    let reviewer = Session {
-        attempt_id: Some(cart_attempt.clone()),
-        ..session(Some(cart_wt), Some(AgentKind::Claude), "Reviewer".into(), 20 * MINUTE)
-    };
-    let (_, _, _, guest_attempt, guest_wt) = attempt_of("Guest checkout without an account");
-    let qa = Session {
-        attempt_id: Some(guest_attempt.clone()),
-        ..session(Some(guest_wt), Some(AgentKind::Claude), "QA".into(), 15 * MINUTE)
-    };
-    let shell = session(None, None, "main".into(), 2 * HOUR);
-    for s in [&shell, &coder, &reviewer, &qa] {
+    let codex = session(None, Some(AgentKind::Codex), "Try a denser product grid".into(), 90 * MINUTE);
+    let home = store.project_workspace_id(&project.id).await?.context("the project's workspace")?;
+    for s in [&shell, &codex, &chat] {
         store.insert_session(s).await?;
-        if let Some(home) = store.project_workspace_id(&s.project_id).await? {
-            store
-                .open_tab(&id(), &home, &pdt_core::workspace::TabItem::Session(s.id.clone()), None, s.created_at)
-                .await?;
-        }
+        store.open_tab(&id(), &home, &TabItem::Session(s.id.clone()), None, s.created_at).await?;
     }
-    seed_conversation(store, &coder.id, &search_wt.branch, now - 30 * MINUTE).await?;
+    seed_chat(store, &chat.id, chat.created_at).await?;
 
     let run = |wt: Option<&Worktree>, name: &str, kind: RunKind, state: RunState, ago: i64| Run {
         id: id(),
@@ -410,15 +488,15 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
         created_at: now - ago,
         updated_at: now - ago + MINUTE,
     };
-    for r in [
-        run(None, "unit", RunKind::Test, RunState::Passed, 3 * HOUR),
-        run(Some(guest_wt), "unit", RunKind::Test, RunState::Passed, 10 * MINUTE),
-    ] {
-        store.insert_run(&r).await?;
-    }
+    // The unit tests on main, and QA's run of them on the guest checkout branch, a tab of its ticket's workspace.
+    store.insert_run(&run(None, "unit", RunKind::Test, RunState::Passed, 3 * HOUR)).await?;
+    let qa_tests = run(Some(guest_wt), "unit", RunKind::Test, RunState::Passed, 10 * MINUTE);
+    store.insert_run(&qa_tests).await?;
+    let guest_ws = workspace_of("Guest checkout without an account");
+    store.open_tab(&id(), &guest_ws, &TabItem::Run(qa_tests.id.clone()), None, qa_tests.created_at).await?;
 
-    // The user's line comment on the cart branch, sent to the agent on it, and the branch's changes open beside the
-    // sessions (the review screenshot).
+    // The user's line comment on the cart branch, sent to its Reviewer, and the branch's changes open in its ticket's
+    // workspace (the review screenshot).
     let line = CART_JS.lines().position(|l| l == REVIEWED_LINE).expect("the reviewed line") + 1;
     let line = u32::try_from(line)?;
     store
@@ -442,10 +520,8 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
             updated_at: now - 18 * MINUTE,
         })
         .await?;
-    if let Some(home) = store.project_workspace_id(&project.id).await? {
-        let changes = pdt_core::workspace::TabItem::Changes(cart_wt.id.clone());
-        store.open_tab(&id(), &home, &changes, None, now - 18 * MINUTE).await?;
-    }
+    let cart_ws = workspace_of("Save the cart across visits");
+    store.open_tab(&id(), &cart_ws, &TabItem::Changes(cart_wt.id.clone()), None, now - 18 * MINUTE).await?;
 
     // A question from the Coder on the receipt ticket, beside the Accept gate in the Inbox.
     let (_, email_id, _, email_attempt, _) = attempt_of("Order confirmation email");
@@ -743,6 +819,42 @@ async fn seed_conversation(store: &Store, session_id: &str, branch: &str, at: i6
         ),
     ];
     insert_events(store, session_id, turn, at, &events).await
+}
+
+/// The user's own short chat in the main checkout: a question about the cart, and Claude's answer.
+async fn seed_chat(store: &Store, session_id: &str, at: i64) -> anyhow::Result<()> {
+    let events: Vec<(&str, AgentEvent)> = vec![
+        ("turn:chat-1", AgentEvent::Turn { phase: TurnPhase::Started, status: None, duration_ms: None, reason: None }),
+        (
+            "u:chat-1",
+            AgentEvent::UserMessage {
+                text: "Where do cart totals get rounded?".into(),
+                images: vec![],
+                source: MessageSource::Pdt,
+                pdt: None,
+            },
+        ),
+        (
+            "m:chat-1",
+            AgentEvent::AgentMessage {
+                id: "chat-1".into(),
+                markdown: "In `src/cart.js`: each line's price is rounded to cents before the lines are added up, so \
+                           a few items can come out a cent off the receipt. Rounding once, on the total, fixes it."
+                    .into(),
+                phase: MessagePhase::Final,
+            },
+        ),
+        (
+            "turn-end:chat-1",
+            AgentEvent::Turn {
+                phase: TurnPhase::Ended,
+                status: Some(TurnStatus::Completed),
+                duration_ms: Some(12_000),
+                reason: None,
+            },
+        ),
+    ];
+    insert_events(store, session_id, "chat-turn-1", at, &events).await
 }
 
 /// A turn's events, 15 s apart from `at`.
@@ -1078,9 +1190,27 @@ mod tests {
         assert_eq!(store.open_inbox_items(None).await.unwrap().len(), 2, "the Accept gate and a question");
 
         let sessions = store.list_sessions(&p.id).await.unwrap();
-        assert_eq!(sessions.len(), 4);
         assert!(sessions.iter().all(|s| s.status == SessionStatus::Finished));
-        let conv = sessions.iter().find(|s| s.mode == SessionMode::Conversation).unwrap();
+        // The user's own agents: a chat and a Codex terminal, in the project's workspace.
+        let own: Vec<_> = sessions.iter().filter(|s| s.agent.is_some() && s.persona.is_none()).collect();
+        assert_eq!(own.len(), 2);
+        // Every other agent is a Pipeline step's, on its ticket, in that ticket's workspace.
+        let workspaces = store.list_workspaces().await.unwrap();
+        let tickets: Vec<_> = workspaces.iter().filter_map(|w| w.ticket.as_ref().map(|t| (w, t))).collect();
+        assert_eq!(tickets.len(), active.len(), "a ticket workspace per started ticket");
+        let steps: Vec<_> = sessions.iter().filter(|s| s.persona.is_some()).collect();
+        assert_eq!(steps.len() + own.len() + 1, sessions.len(), "and a shell");
+        for s in &steps {
+            let persona = s.persona.as_ref().unwrap();
+            assert!(persona.step_id.is_some() && !persona.name.is_empty());
+            let attempt = s.attempt_id.as_deref().unwrap();
+            let (w, _) = tickets.iter().find(|(_, t)| t.attempt_id == attempt).expect("its ticket's workspace");
+            assert!(w.tabs.iter().any(|t| t.session_id.as_deref() == Some(s.id.as_str())));
+            assert_eq!(s.title, format!("{} · {}", persona.name, s.ticket.as_ref().unwrap().key));
+        }
+        let home = workspaces.iter().find(|w| w.project_id.as_deref() == Some(p.id.as_str())).unwrap();
+        assert!(own.iter().all(|s| home.tabs.iter().any(|t| t.session_id.as_deref() == Some(s.id.as_str()))));
+        let conv = steps.iter().find(|s| s.mode == SessionMode::Conversation).unwrap();
         assert!(store.list_session_events(&conv.id, 0, 100).await.unwrap().len() > 10);
         assert!(store.list_active_runs().await.unwrap().is_empty());
         // The cart branch's changes carry the user's comment on the line it names.
