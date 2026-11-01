@@ -144,16 +144,22 @@ names another (below, "Runners").
 For each OS, `rust.yml` runs:
 
 - **build**: compiles every test binary once into a nextest archive (`cargo nextest archive`), uploaded as an artifact
-  for a day.
+  for a day, with cargo's `--timings` report (`cargo-timings-<os>-<tests>`, a week) showing what compiled when. On
+  Linux and Windows (`split`) two build jobs run side by side, **build (unit)** (`--lib --bins`) and **build
+  (integration)** (`--test '*'`), an archive each: the build is CPU-bound on a 4-CPU runner, so halving each job's
+  work shortens it by minutes. Both select the same packages, so the dependencies build with the same features and
+  come from the same cache; only the workspace's shared crates (pdt-core up to pdt-api) compile in both. macOS
+  builds once (`build (all)`): its minutes cost the most.
 - **minimal** (Linux): pdtd's tests without its integration features, a build of its own beside the others.
-- **test (1…N)**: each downloads the archive, extracts it into its checkout (so `target/` is where the build had it
-  and `env!("CARGO_BIN_EXE_…")` paths hold) and runs one slice of the tests (`--partition slice:i/N`). They need no
-  Rust toolchain. On Linux each checks the generated files its tests wrote.
+- **test (1…N)**: each downloads the archives, extracts them into its checkout (so `target/` is where the build had
+  it and `env!("CARGO_BIN_EXE_…")` paths hold) and runs one slice of each archive's tests (`--partition slice:i/N`),
+  the second archive even when the first fails. They need no Rust toolchain. On Linux each checks the generated files
+  its tests wrote.
 - **clippy** (macOS and Windows; Linux lints in `lint (linux)`): beside the build, so it adds no wall time; on macOS
   also the desktop crate's clippy and tests. Windows keeps full clippy: its `cfg(windows)` code is in most crates,
   and a separate job costs no waiting.
 
-N is 3 on Linux, 4 on Windows and 2 on macOS; the repo variables `PDT_LINUX_PARTITIONS`, `PDT_MACOS_PARTITIONS` and
+N is 3 on Linux, 6 on Windows and 2 on macOS; the repo variables `PDT_LINUX_PARTITIONS`, `PDT_MACOS_PARTITIONS` and
 `PDT_WINDOWS_PARTITIONS` change it, as a JSON list (`gh variable set PDT_WINDOWS_PARTITIONS --body '[1,2,3,4,5]'`).
 
 The builds are lean: no debug info (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_DEV_STRIP=debuginfo`), no
