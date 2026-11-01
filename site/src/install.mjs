@@ -3,7 +3,7 @@
 
 /** In tab order; macOS first, the one shown without JS. */
 export const OSES = [
-  { id: 'mac', label: 'macOS', note: 'Apple silicon. Installs into ~/Applications and starts at login.' },
+  { id: 'mac', label: 'macOS', note: 'Apple silicon or Intel. Installs into ~/Applications and starts at login.' },
   { id: 'linux', label: 'Linux', note: 'x86_64 or aarch64, glibc 2.35 or newer. Installs into ~/.local/opt/pdt as a systemd user service.' },
   { id: 'windows', label: 'Windows', note: 'In PowerShell. Installs for you only, without admin rights, and starts at login.' },
 ];

@@ -1,5 +1,5 @@
 name: PDT bundle
-description: Builds the installer (nsis), app bundle (app) or Linux packages (linux, the headless tarball and the AppImage for the runner's CPU) at the checked-in version and keeps them as a workflow artifact (bundle-<bundles>, bundle-linux-<arch>). It publishes nothing.
+description: Builds the installer (nsis), universal app bundle (app) or Linux packages (linux, the headless tarball and the AppImage for the runner's CPU) at the checked-in version and keeps them as a workflow artifact (bundle-<bundles>, bundle-linux-<arch>). It publishes nothing.
 inputs:
   bundles:
     description: nsis, app or linux
@@ -56,17 +56,31 @@ runs:
         echo "Building $version (release: ${{ inputs.release }})"
     - run: pnpm --dir web build
       shell: bash
-    - run: cargo build --release -p pdtd -p pdt-host
+    # The macOS app is universal (Apple silicon and Intel): pdtd and pdt-host are built for both CPUs and joined with
+    # lipo (scripts/stage-sidecars.mjs), and Tauri does the same for the app itself. Its bundle is then under
+    # target/universal-apple-darwin; the others stay under target/release.
+    - name: Build pdtd and pdt-host
       shell: bash
-    - run: node scripts/stage-sidecars.mjs
-      shell: bash
+      run: |
+        if [ "${{ inputs.bundles }}" = app ]; then
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release -p pdtd -p pdt-host --target aarch64-apple-darwin --target x86_64-apple-darwin
+          node scripts/stage-sidecars.mjs --target universal-apple-darwin
+          echo "PDT_BUNDLE_DIR=target/universal-apple-darwin/release/bundle" >> "$GITHUB_ENV"
+        else
+          cargo build --release -p pdtd -p pdt-host
+          node scripts/stage-sidecars.mjs
+          echo "PDT_BUNDLE_DIR=target/release/bundle" >> "$GITHUB_ENV"
+        fi
     - name: Build the bundle
       shell: bash
       run: |
         bundles="${{ inputs.bundles }}"
+        target=()
         if [ "$bundles" = linux ]; then bundles=appimage; fi
+        if [ "$bundles" = app ]; then target=(--target universal-apple-darwin); fi
         pnpm --dir desktop exec tauri build --config "$GITHUB_WORKSPACE/desktop/src-tauri/tauri.bundle.conf.json" \
-          --bundles "$bundles"
+          --bundles "$bundles" "${target[@]}"
     # One certificate signs every macOS release (scripts/sign-macos.sh). With a Developer ID certificate the keychain
     # trusts every release; a self-signed one still makes it ask after each update (docs/SDLC.md
     # "Signing"). Releases must be signed; other builds are signed when the secret is available to them.
@@ -81,7 +95,8 @@ runs:
           echo "::notice::No signing certificate; this build is not a release, so it stays ad-hoc signed."
           exit 0
         fi
-        scripts/sign-macos.sh "$(ls -d target/release/bundle/macos/*.app | head -n 1)"
+        scripts/sign-macos.sh "$(ls -d "$PDT_BUNDLE_DIR"/macos/*.app | head -n 1)"
+        echo "PDT_SIGNED=true" >> "$GITHUB_ENV"
     # Notarized only when the API key secrets are set (they need a Developer ID signature), and only for releases:
     # Apple's service takes minutes.
     - name: Notarize the app bundle
@@ -91,7 +106,26 @@ runs:
         MACOS_NOTARY_KEY: ${{ inputs.notary-key }}
         MACOS_NOTARY_KEY_ID: ${{ inputs.notary-key-id }}
         MACOS_NOTARY_ISSUER: ${{ inputs.notary-issuer }}
-      run: scripts/notarize-macos.sh "$(ls -d target/release/bundle/macos/*.app | head -n 1)"
+      run: |
+        scripts/notarize-macos.sh "$(ls -d "$PDT_BUNDLE_DIR"/macos/*.app | head -n 1)"
+        echo "PDT_NOTARIZED=true" >> "$GITHUB_ENV"
+    # Every executable in the app runs on both CPUs; a signed app passes codesign's strict check, and a notarized one
+    # Gatekeeper's.
+    - name: Check the app bundle
+      if: inputs.bundles == 'app'
+      shell: bash
+      run: |
+        app="$(ls -d "$PDT_BUNDLE_DIR"/macos/*.app | head -n 1)"
+        status=0
+        while IFS= read -r exe; do
+          archs="$(lipo -archs "$exe")"
+          echo "$exe: $archs"
+          case " $archs " in *" x86_64 "*) ;; *) echo "::error::$exe is not built for x86_64"; status=1 ;; esac
+          case " $archs " in *" arm64 "*) ;; *) echo "::error::$exe is not built for arm64"; status=1 ;; esac
+        done < <(find "$app/Contents/MacOS" -type f -perm -u+x)
+        if [ "${PDT_SIGNED:-}" = true ]; then codesign --verify --deep --strict --verbose=2 "$app" || status=1; fi
+        if [ "${PDT_NOTARIZED:-}" = true ]; then spctl -a -vv "$app" || status=1; fi
+        exit "$status"
     # Asset names must match what hosts install (pdt_core::release::select_asset): *-setup.exe, *.app.tar.gz, and on
     # Linux pdt-linux-<arch>.tar.gz and pdt-linux-<arch>.AppImage (<arch>: x86_64 or aarch64, as `uname -m` says).
     - name: Collect the bundle
@@ -100,7 +134,7 @@ runs:
         mkdir -p "$RUNNER_TEMP/release"
         if [ "${{ inputs.bundles }}" = nsis ]; then
           # Only this version's installer (a cached target dir can hold older ones).
-          cp target/release/bundle/nsis/*_"$PDT_VERSION"_*-setup.exe "$RUNNER_TEMP/release/"
+          cp "$PDT_BUNDLE_DIR"/nsis/*_"$PDT_VERSION"_*-setup.exe "$RUNNER_TEMP/release/"
         elif [ "${{ inputs.bundles }}" = linux ]; then
           # The headless tarball: a pdt/ folder with pdtd, pdt-host and the web UI (crates/pdt-host/src/linux.rs).
           stage="$RUNNER_TEMP/tarball"
@@ -109,9 +143,9 @@ runs:
           cp -R web/dist "$stage/pdt/web"
           tar -czf "$RUNNER_TEMP/release/pdt-linux-$PDT_ARCH.tar.gz" -C "$stage" pdt
           # Only this version's AppImage (a cached target dir can hold older ones).
-          cp target/release/bundle/appimage/*_"$PDT_VERSION"_*.AppImage "$RUNNER_TEMP/release/pdt-linux-$PDT_ARCH.AppImage"
+          cp "$PDT_BUNDLE_DIR"/appimage/*_"$PDT_VERSION"_*.AppImage "$RUNNER_TEMP/release/pdt-linux-$PDT_ARCH.AppImage"
         else
-          cd target/release/bundle/macos
+          cd "$PDT_BUNDLE_DIR/macos"
           app="$(ls -d *.app | head -n 1)"
           # tar keeps the bundle's symlinks and permissions.
           tar -czf "$RUNNER_TEMP/release/$app.tar.gz" "$app"

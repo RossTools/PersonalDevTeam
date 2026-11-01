@@ -538,6 +538,8 @@ mod tests {
         assert!(matches!(r, Err(GitError::NotARepo(_))), "{r:?}");
     }
 
+    // Unix only: on Windows, std's program lookup falls back to the parent's PATH when the child's has no `git`.
+    #[cfg(unix)]
     #[test]
     fn git_not_on_path_is_git_missing() {
         let tmp = tempfile::tempdir().unwrap();
