@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 /// The PM's project (`common::pm::setup`) with only this integration enabled.
-async fn setup(update_every_ms: Option<i64>) -> Env {
-    common::pm::setup_with(update_every_ms, |st| {
+async fn setup() -> Env {
+    common::pm::setup_with(|st| {
         st.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(pdt_int_discord::Discord)]));
         st.integrations.enable(&["discord".into()]);
     })
@@ -100,7 +100,7 @@ async fn connection_named(env: &Env, name: &str) -> Option<Value> {
 
 #[tokio::test]
 async fn the_pm_sets_up_a_discord_channel_and_webhook_that_a_workflow_posts_to() {
-    let env = setup(None).await;
+    let env = setup().await;
     let (base, discord) = FakeDiscord::serve().await;
 
     // A bot connection needs its server's id.

@@ -50,7 +50,7 @@ describe('gallery model', () => {
     expect(g.counts.all).toBe(4);
     expect(g.counts.categories.map((c) => [c.id, c.count])).toEqual([['ciPr', 1], ['issues', 1], ['other', 1]]);
     expect(g.counts.builtin).toBe(3);
-    expect(CATEGORIES.map((c) => c.id)).toEqual(['ciPr', 'tickets', 'issues', 'notifications', 'releases', 'other']);
+    expect(CATEGORIES.map((c) => c.id)).toEqual(['ciPr', 'tickets', 'issues', 'notifications', 'releases', 'pm', 'other']);
   });
 
   it('filters by a category, by built-in, and by the search', () => {

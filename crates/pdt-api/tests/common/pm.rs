@@ -18,12 +18,12 @@ pub struct Env {
 }
 
 /// A project `P` (key `PX`) with one ticket, served on a free local port (the agent's pdt-mcp calls come over TCP).
-pub async fn setup(update_every_ms: Option<i64>) -> Env {
-    setup_with(update_every_ms, |_| {}).await
+pub async fn setup() -> Env {
+    setup_with(|_| {}).await
 }
 
 /// `setup`, with `tweak` applied to the state before it is served.
-pub async fn setup_with(update_every_ms: Option<i64>, tweak: impl FnOnce(&mut AppState)) -> Env {
+pub async fn setup_with(tweak: impl FnOnce(&mut AppState)) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -47,9 +47,6 @@ pub async fn setup_with(update_every_ms: Option<i64>, tweak: impl FnOnce(&mut Ap
     state.conversations.notice_quiet = Duration::ZERO;
     let gh = std::sync::Arc::new(pdt_forge::testing::FakeForge::default());
     state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::testing::fake_github(&gh))]);
-    if let Some(ms) = update_every_ms {
-        state.pm_update_every_ms = ms;
-    }
     tweak(&mut state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();
