@@ -2,16 +2,24 @@
 // (an agent's edit through PDT touches it), with what changed lit up for a moment. The Documents view and the panel
 // beside a conversation both show it. A provider with a page of its own (Google's editor, PDT-316) shows that page, or
 // PDT's own reading of it (Read in PDT), which also reads again when the provider's version changes (edits made there).
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { BarChart3 } from 'lucide-react';
 import { Alert, SegmentedControl, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
+import type { CommentAnchor } from '../api/gen/CommentAnchor';
 import type { DocumentContent } from '../api/gen/DocumentContent';
 import type { Sheet } from '../api/gen/Sheet';
 import { Markdown } from '../common/Markdown';
 import { actionError } from '../common/useAction';
-import { documentKeys, useDocument, useDocumentContent, useDocumentVersion } from './queries';
+import { DocEditor } from './DocEditor';
+import { documentKeys, useDocument, useDocumentContent, useDocumentProviders, useDocumentVersion } from './queries';
+
+// IronCalc's editor (and its WASM) loads only when a local sheet opens (PDT-315).
+const SheetEditor = lazy(() => import('./SheetEditor'));
+
+/** What a live sheet tells the page: its selection (comments go on it), how to show a range, and the sheet on show. */
+export type SheetHandle = { selection: () => CommentAnchor | null; show: (a: CommentAnchor) => void; sheet: () => string };
 
 /** How long a change stays lit. */
 export const HIGHLIGHT_MS = 2500;
@@ -159,11 +167,23 @@ function useChangedCells(content: DocumentContent | undefined): Set<string> {
 type View = 'live' | 'pdt';
 const VIEW_KEY = 'pdt.documents.view';
 
-/** A document's content, live: read again each time PDT sees it change. */
-export function DocumentBody({ id, providerLabel, className }: { id: string; providerLabel: string; className?: string }) {
+/**
+ * A document's content, live: read again each time PDT sees it change. A provider that edits live in PDT (its local
+ * one) shows its editors instead: a doc's Rendered/Write editor, and a sheet's spreadsheet editor (`onSheet` gets its
+ * handle).
+ */
+export function DocumentBody({ id, providerLabel, className, onSheet }: {
+  id: string;
+  providerLabel: string;
+  className?: string;
+  onSheet?: (h: SheetHandle | null) => void;
+}) {
   const qc = useQueryClient();
   const doc = useDocument(id);
   const content = useDocumentContent(id);
+  const providers = useDocumentProviders();
+  const provider = providers.data?.providers.find((p) => p.id === doc.data?.provider);
+  const editsHere = !!provider?.capabilities.live;
   const updatedAt = doc.data?.updatedAt;
   const read = useRef<number | undefined>(undefined);
   useEffect(() => {
@@ -192,7 +212,20 @@ export function DocumentBody({ id, providerLabel, className }: { id: string; pro
 
   if (content.isPending) return <Skeleton lines={6} label="Reading the document" className={className} />;
   if (content.isError) return <Alert tone="error" className={className}>{providerLabel} could not read it: {actionError(content.error)}</Alert>;
-  const body = <Content content={content.data.content} changed={changed} />;
+  const c = content.data.content;
+  if (editsHere && c.kind === 'doc') {
+    return <div className={className}><DocEditor id={id} markdown={c.markdown} version={c.version ?? null} editable={!!provider?.capabilities.edit} /></div>;
+  }
+  if (editsHere && c.kind === 'sheet') {
+    return (
+      <div className={className}>
+        <Suspense fallback={<Skeleton lines={8} label="Opening the sheet" />}>
+          <SheetEditor id={id} onReady={onSheet} />
+        </Suspense>
+      </div>
+    );
+  }
+  const body = <Content content={c} changed={changed} />;
   if (embed === null) return <div className={className}>{body}</div>;
   return (
     <div className={cn('flex flex-col gap-2', className)}>

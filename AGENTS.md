@@ -65,6 +65,7 @@ plus at most one line in a central list (docs/dev/architecture.md "Adding to the
 - crates/pdt-int-* — the optional integrations, one crate each; pdtd cargo features, enabled in Settings → Plugins.
   Outside their crates only pdt-core `integration::KNOWN` and pdtd's features name them
 - crates/pdt-tailscale, crates/pdt-update — tailscale CLI wrapper; GitHub release client
+- crates/pdt-sheet — local sheets on IronCalc (`.xlsx`/`.csv`, cells, sort/filter, live diffs); same IronCalc version as web's `@ironcalc/workbook`
 - crates/pdt-host — the supervisor (runs pdtd, installs updates, rolls back); crates/pdtd — the daemon (also `pdtd hook …`; demo seed in src/seed.rs)
 - test-support — shared test helpers (`port_blocks.rs`)
 - .pdt/project.toml — this repo's run configuration (the `pdt` dev instance, tests, areas)

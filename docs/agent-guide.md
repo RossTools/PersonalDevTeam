@@ -127,13 +127,20 @@ saying so, and the rest after it don't run:
   "not_equal_to", value}`, `{type: "between", min, max}`, `{type: "text_contains", text}`, `{type: "empty"}`,
   `{type: "not_empty"}` or `{type: "formula", formula}`.
 
+A `local` document is a file PDT keeps (a `.md`, or a `.xlsx` computed by a real spreadsheet engine: formats,
+conditional formats, borders, column widths, frozen panes, sort and filter all work; `validate` doesn't yet, and
+`sort`/`filter` with `range` `""` take the sheet's used cells). Change it through PDT, so a person with it open sees
+your change at once; a sheet's list of edits is all or none.
+
 | Call | Does |
 |---|---|
 | `GET /api/documents?ticket=<key>&project=<key>&kind=doc\|sheet&q=<words>` | documents, the most recently changed first, with their `projects` and `tickets` |
 | `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows, charts}]}` |
 | `POST /api/documents/<id>/edits` | `{edits: [...]}` (the operations above): `{version, charts}` |
 | `GET /api/documents/<id>/version` | `{version}`: it changes whenever the document does, edits made at the provider too |
-| `GET /api/documents/<id>/comments` | its comments with their replies; `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves |
+| `GET /api/documents/<id>/charts` | a local sheet's charts, each `{sheet, chart, labels, series: [{name, values}]}` with the numbers it draws |
+| `GET /api/documents/<id>/comments` | its comments with their replies and `anchor` (`{on: "heading", heading}`, `{on: "text", quote}` or `{on: "cell", sheet, range}`); `POST …/comments` `{body, anchor}` adds one, `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves, `…/reopen` opens it again |
+| `GET /api/documents/<id>/export?format=md\|xlsx\|csv[&sheet=]` | the document as a file |
 | `POST /api/tickets/<id>/design-doc` | makes the ticket's design doc from the template, linked to it |
 | `GET /api/sessions/<id>/documents` | the documents open beside a conversation: `{tabs: [{document, by}], active}`; `POST` `{documentId}` opens one (or shows its tab), `PUT` `{documentIds}` orders them, `DELETE …/documents/<doc>` closes one |
 

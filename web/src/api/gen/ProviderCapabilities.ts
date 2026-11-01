@@ -39,4 +39,13 @@ comments: boolean,
 /**
  * Has a page that can be shown inside PDT.
  */
-embed: boolean, };
+embed: boolean, 
+/**
+ * Keeps charts on its sheets and reads their numbers ([`ChartView`]).
+ */
+charts: boolean, 
+/**
+ * Edits a document live in PDT: a doc's text saved as it is typed, a sheet in PDT's own spreadsheet editor, and
+ * everyone's changes (an agent's) streamed to the open views.
+ */
+live: boolean, };

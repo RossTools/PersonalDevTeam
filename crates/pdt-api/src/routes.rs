@@ -65,8 +65,12 @@ pub struct AppState {
     /// GitHub; a test sets a fake (`pdt_forge::HostedForge`). The forge logins sign the plugins in (PDT-244).
     pub forges: pdt_forge::ForgeRegistry,
     /// PDT's own document providers (PDT-314); the enabled integrations add theirs (`crate::documents::providers`).
-    /// `new` has none; a test sets a fake (`crate::documents::testing::FakeProvider`).
+    /// `new` has the local one ([`AppState::local`]); a test may set a fake
+    /// (`crate::documents::testing::FakeProvider`).
     pub documents: crate::documents::DocumentProviders,
+    /// PDT's local document provider (PDT-315): files in the documents folder, live sheets. It counts while
+    /// `documents` lists it.
+    pub local: std::sync::Arc<crate::documents::local::LocalProvider>,
     /// The keychain account of this instance's forge logins (see `secrets::forge_logins_account`), kept apart from
     /// the stable instance's as `update_token_account` is.
     pub forge_logins_account: String,
@@ -220,6 +224,11 @@ impl AppState {
         let update_token_account = crate::secrets::update_token_account(&data_dir, None);
         let github_account = crate::secrets::github_login_account(&data_dir, None);
         let forge_logins_account = crate::secrets::forge_logins_account(&data_dir, None);
+        let local = std::sync::Arc::new(crate::documents::local::LocalProvider::new(
+            store.clone(),
+            data_dir.clone(),
+            std::env::home_dir(),
+        ));
         Self {
             store,
             ptys: pdt_agents::PtyManager::new(),
@@ -250,7 +259,8 @@ impl AppState {
             forges: pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_github::plugin::GithubPlugin::new(
                 std::sync::Arc::new(pdt_github::GithubApi::offline()),
             ))]),
-            documents: Default::default(),
+            documents: crate::documents::DocumentProviders::new(vec![local.clone()]),
+            local,
             forge_logins_account,
             github_account,
             github_client_id: pdt_core::brand::GITHUB_OAUTH_CLIENT_ID.into(),

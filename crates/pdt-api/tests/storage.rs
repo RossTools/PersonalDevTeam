@@ -129,6 +129,17 @@ async fn measured(env: &Env) -> Value {
     }
 }
 
+/// One pass of the automatic cleanup as of `now`, then waits out the measuring its cleaning starts in the
+/// background, so the test's next step never races it.
+async fn cleanup_at(env: &Env, now: i64) {
+    pdt_api::storage::auto_cleanup_at(&env.state, now).await;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while storage(env).await["measuring"] == true {
+        assert!(Instant::now() < deadline, "still measuring");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// Tests never read the machine's own disk: a state that sets no probe has no disks, so nothing is ever low.
 #[tokio::test]
 async fn a_state_without_a_probe_sees_no_disks_and_never_warns() {
@@ -213,9 +224,9 @@ async fn the_cleanup_cleans_finished_tickets_worktrees_after_the_delay_and_remov
 
     let now =
         i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()).unwrap();
-    pdt_api::storage::auto_cleanup_at(&env.state, now + DAY).await;
+    cleanup_at(&env, now + DAY).await;
     assert!(path.join("target").exists(), "a day in: the default waits two");
-    pdt_api::storage::auto_cleanup_at(&env.state, now + 2 * DAY + 1000).await;
+    cleanup_at(&env, now + 2 * DAY + 1000).await;
     assert!(!path.join("target").exists(), "two days after Done");
     assert!(path.join("dist").exists() && other.join("target").exists());
 
@@ -229,11 +240,11 @@ async fn the_cleanup_cleans_finished_tickets_worktrees_after_the_delay_and_remov
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     std::fs::write(path.join("a.txt"), "changed\n").unwrap();
-    pdt_api::storage::auto_cleanup_at(&env.state, now + 6 * DAY).await;
+    cleanup_at(&env, now + 6 * DAY).await;
     assert!(path.is_dir(), "uncommitted work: kept");
     git(&path, &["checkout", "--", "a.txt"]);
     std::fs::remove_dir_all(path.join("dist")).unwrap();
-    pdt_api::storage::auto_cleanup_at(&env.state, now + 6 * DAY).await;
+    cleanup_at(&env, now + 6 * DAY).await;
     assert!(!path.exists(), "removed after five days");
     assert!(other.is_dir());
     let branches = std::process::Command::new("git").current_dir(&env.repo).args(["branch"]).output().unwrap();

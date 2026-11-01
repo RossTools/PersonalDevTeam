@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pencil, Plus, X } from 'lucide-react';
 import { Alert, Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
@@ -6,14 +6,26 @@ import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
 import { ProjectKey } from '../common/BranchChip';
 import { InlineRename } from '../common/InlineRename';
+import { cn } from '@ui/lib/utils';
 import { runAction } from '../common/useAction';
 import { useOpenTicket } from '../tickets/actions';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { KindIcon } from './LinkedDocuments';
 import { openBesideEntry, useBesideTargets } from './BesidePanel';
-import { DocumentBody } from './DocumentBody';
-import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentProviders } from './queries';
+import { DocumentBody, type SheetHandle } from './DocumentBody';
+import { DocumentComments, headingsOf } from './DocumentComments';
+import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders } from './queries';
+
+/** Downloads a file pdtd serves. */
+function download(url: string) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
 
 /** The ids of the tickets a document is linked to (their conversations are where it can open beside). */
 const linkedTickets = (d: Document | null | undefined) => d?.tickets.map((t) => t.id) ?? [];
@@ -41,6 +53,9 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const [renaming, setRenaming] = useState(false);
   const [linkingTicket, setLinkingTicket] = useState(false);
   const besideTargets = useBesideTargets(linkedTickets(doc.data));
+  const [sheetHandle, setSheetHandle] = useState<SheetHandle | null>(null);
+  const onSheet = useCallback((h: SheetHandle | null) => setSheetHandle(h), []);
+  const content = useDocumentContent(id);
   const d = doc.data;
   const provider = d ? providers.data?.providers.find((p) => p.id === d.provider) : undefined;
   const settle = () => invalidateDocuments(qc);
@@ -66,10 +81,18 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
     settle();
     onGone();
   });
+  const local = d?.provider === 'local';
+  const exports = (): MenuEntry[] => !d ? [] : d.kind === 'doc'
+    ? [{ label: 'Export as Markdown (.md)', onSelect: () => download(api.documentExportUrl(id, 'md')) }]
+    : [
+        ...(local ? [{ label: 'Export as Excel (.xlsx)', onSelect: () => download(api.documentExportUrl(id, 'xlsx')) }] : []),
+        { label: sheetHandle ? `Export “${sheetHandle.sheet()}” as CSV (.csv)` : 'Export as CSV (.csv)', onSelect: () => download(api.documentExportUrl(id, 'csv', sheetHandle?.sheet())) },
+      ];
   const entries = (): MenuEntry[] => [
     { label: 'Rename', onSelect: () => setRenaming(true) },
     { label: 'Read again', onSelect: () => void qc.invalidateQueries({ queryKey: documentKeys.content(id) }) },
     ...(d ? [openBesideEntry(besideTargets, d.id)] : []),
+    ...exports(),
     { separator: true },
     { label: 'Remove from PDT…', onSelect: () => remove(false), danger: true },
     ...(provider?.capabilities.delete ? [{ label: 'Delete document…', onSelect: () => remove(true), danger: true }] : []),
@@ -91,7 +114,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const unlinked = (projects.data ?? []).filter((p) => !d.projects.some((l) => l.id === p.id));
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <article aria-label={d.title} className="mx-auto flex max-w-4xl flex-col gap-4 p-4">
+      <article aria-label={d.title} className={cn('mx-auto flex flex-col gap-4 p-4', d.kind === 'sheet' && provider?.capabilities.live ? 'max-w-none' : 'max-w-4xl')}>
         <header className="flex flex-col gap-1">
           <div className="flex min-w-0 items-center gap-2">
             <KindIcon kind={d.kind} />
@@ -165,8 +188,17 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
         </section>
 
         <section aria-label="Content" className="flex flex-col gap-2">
-          <DocumentBody id={id} providerLabel={provider?.label ?? d.provider} />
+          <DocumentBody id={id} providerLabel={provider?.label ?? d.provider} onSheet={onSheet} />
         </section>
+
+        {provider?.capabilities.comments && content.data && (
+          <DocumentComments
+            id={id}
+            headings={content.data.content.kind === 'doc' ? headingsOf(content.data.content.markdown) : undefined}
+            selection={content.data.content.kind === 'sheet' && sheetHandle ? sheetHandle.selection : undefined}
+            onShow={sheetHandle ? sheetHandle.show : undefined}
+          />
+        )}
       </article>
       {linkingTicket && (
         <Dialog open onOpenChange={(o) => !o && setLinkingTicket(false)} title={`Link “${d.title}” to a ticket`} size="md">

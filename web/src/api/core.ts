@@ -20,7 +20,7 @@ export async function requestText(path: string): Promise<string> {
   return (await send(path)).text();
 }
 
-async function send(path: string, init?: RequestInit): Promise<Response> {
+export async function send(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, { ...init, headers: { 'content-type': 'application/json', ...init?.headers } });
   if (!res.ok) throw await errorOf(res);
   return res;

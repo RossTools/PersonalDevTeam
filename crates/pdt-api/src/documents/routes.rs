@@ -1,7 +1,8 @@
 //! The documents API (PDT-314): `/api/documents…` (list, filter, create, import, rename, link, delete, content,
 //! comments), `/api/tickets/{id}/design-doc` and `/api/projects/{id}/document-settings`.
 
-use super::{DocumentProvider, NewFile, ProviderError, provider, providers};
+use super::local::{self, DiffsApplied, DocEvent, LocalProvider};
+use super::{CommentInput, DocumentProvider, NewFile, ProviderError, provider, providers};
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
@@ -9,8 +10,9 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::document::{
-    CommentReply, Document, DocumentComment, DocumentContent, DocumentEdit, DocumentFilter, DocumentKind,
-    ProjectDocumentSettings, ProviderFile, ProviderInfo, clean_title, design_doc, documents_folder, effective_provider,
+    ChartView, CommentReply, Document, DocumentComment, DocumentCommentInput, DocumentContent, DocumentEdit,
+    DocumentFilter, DocumentKind, ProjectDocumentSettings, ProviderFile, ProviderInfo, clean_title, design_doc,
+    documents_folder, effective_provider,
 };
 use pdt_core::ticket::{Actor, By};
 use pdt_store::{AddDocument, DocumentLink};
@@ -483,6 +485,11 @@ pub(crate) async fn version(State(st): State<AppState>, Path(id): Path<String>) 
 #[ts(export)]
 pub struct DocumentEdits {
     pub edits: Vec<DocumentEdit>,
+    /// The version the edits were made on (a doc's editor sends it): when the document has changed since, nothing
+    /// is changed and the answer is a `conflict`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub base_version: Option<String>,
 }
 
 /// Its version: after edits, or now.
@@ -534,6 +541,17 @@ pub(crate) async fn edit(
 ) -> Result<Json<EditResult>, ApiError> {
     let Json(e) = payload?;
     let d = document(&st, &id).await?;
+    if let Some(base) = e.base_version.as_deref().filter(|b| !b.is_empty()) {
+        let p = provider_of(&st, &d)?;
+        let now = p.version(&d.provider_ref).await?;
+        if now.as_deref().is_some_and(|v| v != base) {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                "the document changed since you opened it (someone else, or an agent, saved it)",
+            ));
+        }
+    }
     Ok(Json(apply_edits(&st, &d, e.edits).await?))
 }
 
@@ -560,6 +578,40 @@ pub(crate) async fn comments(
 #[ts(export)]
 pub struct CommentReplyInput {
     pub body: String,
+    /// `user` from PDT's UI.
+    #[serde(default)]
+    #[ts(optional)]
+    pub by: Option<Actor>,
+}
+
+/// Who wrote a comment, and the name it shows.
+fn author(by: Option<Actor>) -> (Actor, String) {
+    if by == Some(Actor::User) { (Actor::User, "You".into()) } else { (Actor::Agent, "Agent".into()) }
+}
+
+/// The longest comment kept (characters).
+const MAX_COMMENT: usize = 20_000;
+
+fn comment_body(body: &str) -> Result<String, ApiError> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Err(invalid("a comment needs some text"));
+    }
+    Ok(body.chars().take(MAX_COMMENT).collect())
+}
+
+/// `POST /api/documents/{id}/comments`: a comment, on a heading, some text, or a sheet's cell or range.
+pub(crate) async fn add_comment(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<DocumentCommentInput>, JsonRejection>,
+) -> Result<(StatusCode, Json<DocumentComment>), ApiError> {
+    let Json(c) = payload?;
+    let body = comment_body(&c.body)?;
+    let (d, p) = with_comments(&st, &id).await?;
+    let (actor, author) = author(c.by);
+    let c = p.comment(&d.provider_ref, CommentInput { body, anchor: c.anchor, author, actor }).await?;
+    Ok((StatusCode::CREATED, Json(c)))
 }
 
 /// `POST /api/documents/{id}/comments/{comment}/replies`.
@@ -569,12 +621,9 @@ pub(crate) async fn reply(
     payload: Result<Json<CommentReplyInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<CommentReply>), ApiError> {
     let Json(r) = payload?;
-    let body = r.body.trim();
-    if body.is_empty() {
-        return Err(invalid("a reply needs some text"));
-    }
+    let body = comment_body(&r.body).map_err(|_| invalid("a reply needs some text"))?;
     let (d, p) = with_comments(&st, &id).await?;
-    Ok((StatusCode::CREATED, Json(p.reply(&d.provider_ref, &comment, body).await?)))
+    Ok((StatusCode::CREATED, Json(p.reply(&d.provider_ref, &comment, &body, author(r.by)).await?)))
 }
 
 /// `POST /api/documents/{id}/comments/{comment}/resolve`.
@@ -584,6 +633,16 @@ pub(crate) async fn resolve(
 ) -> Result<StatusCode, ApiError> {
     let (d, p) = with_comments(&st, &id).await?;
     p.resolve(&d.provider_ref, &comment).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/documents/{id}/comments/{comment}/reopen`.
+pub(crate) async fn reopen(
+    State(st): State<AppState>,
+    Path((id, comment)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let (d, p) = with_comments(&st, &id).await?;
+    p.reopen(&d.provider_ref, &comment).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -673,6 +732,316 @@ pub(crate) async fn for_agent(st: &AppState, ticket: &str) -> Result<Vec<serde_j
                                "read": format!("/api/documents/{}/content", d.id)})
         })
         .collect())
+}
+
+// ---- Local documents (PDT-315): live sheets, the event stream, charts, export, import, images ----
+
+/// A local document and PDT's local provider.
+async fn local_doc(st: &AppState, id: &str) -> Result<(Document, Arc<LocalProvider>), ApiError> {
+    let d = document(st, id).await?;
+    if d.provider != local::ID {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "unsupported", "only PDT's local documents can do this"));
+    }
+    Ok((d, st.local.clone()))
+}
+
+fn bytes_response(bytes: Vec<u8>, mime: &str, extra: &[(&str, String)]) -> axum::response::Response {
+    let mut b = axum::response::Response::builder().header(axum::http::header::CONTENT_TYPE, mime);
+    for (k, v) in extra {
+        b = b.header(*k, v.as_str());
+    }
+    b.body(axum::body::Body::from(bytes)).unwrap_or_default()
+}
+
+/// `GET /api/documents/{id}/sheet`: a local sheet's live model as IronCalc's bytes (`Model.fromBytes`); the number of
+/// its last change is in `x-sheet-seq`.
+pub(crate) async fn sheet(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let (d, local) = local_doc(&st, &id).await?;
+    let (bytes, seq) = local.sheet_bytes(&d.provider_ref)?;
+    Ok(bytes_response(
+        bytes,
+        "application/octet-stream",
+        &[("x-sheet-seq", seq.to_string()), ("cache-control", "no-store".into())],
+    ))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct DiffsQuery {
+    /// The view that sent them (its stream doesn't get them back).
+    view: String,
+    /// The last change the view had.
+    seq: u64,
+}
+
+/// `POST /api/documents/{id}/sheet/diffs?view=&seq=`: a view's edits (IronCalc's `flushSendQueue()` bytes).
+pub(crate) async fn sheet_diffs(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<DiffsQuery>,
+    body: axum::body::Bytes,
+) -> Result<Json<DiffsApplied>, ApiError> {
+    let (d, local) = local_doc(&st, &id).await?;
+    let view = q.view.trim();
+    if view.is_empty() || view == "pdt" || view.len() > 64 {
+        return Err(invalid("give the view's own id"));
+    }
+    let r = local.view_diffs(&d.provider_ref, view, q.seq, &body).map_err(|e| match e {
+        ProviderError::Invalid(m) => ApiError::new(StatusCode::CONFLICT, "sheet_conflict", m),
+        e => e.into(),
+    })?;
+    st.store.touch_document(&id, now_ms()).await?;
+    Ok(Json(r))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct EventsQuery {
+    #[serde(default)]
+    view: String,
+}
+
+/// How often an open document's stream checks its file for changes made outside PDT.
+const WATCH_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// `GET /api/documents/{id}/events?view=`: Server-Sent Events of a local document's changes (`diffs`, `reload`,
+/// `changed`, `comments`, `charts`), each a JSON [`DocEvent`]. A view's own diffs are not sent back to it.
+pub(crate) async fn events(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<EventsQuery>,
+) -> Result<
+    axum::response::sse::Sse<
+        impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
+    >,
+    ApiError,
+> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    let (d, local) = local_doc(&st, &id).await?;
+    let reference = d.provider_ref.clone();
+    let rx = local.subscribe(&reference);
+    local.check_external(&reference);
+    let wake = st.resume_changed.subscribe();
+    let mut tick = tokio::time::interval(WATCH_EVERY);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let init = (st, local, reference, rx, wake, tick, q.view);
+    let s = futures_util::stream::unfold(init, |(st, local, reference, mut rx, mut wake, mut tick, view)| async move {
+        loop {
+            if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+                return None;
+            }
+            let got = tokio::select! {
+                r = rx.recv() => r,
+                _ = tick.tick() => {
+                    local.check_external(&reference);
+                    continue;
+                }
+                w = wake.changed() => {
+                    if w.is_err() {
+                        return None;
+                    }
+                    continue;
+                }
+            };
+            match got {
+                Ok(DocEvent::Diffs { from, .. }) if from == view => continue,
+                Ok(e) => {
+                    let ev = Event::default()
+                        .event(e.name())
+                        .json_data(&e)
+                        .unwrap_or_else(|_| Event::default().comment("?"));
+                    return Some((Ok(ev), (st, local, reference, rx, wake, tick, view)));
+                }
+                // Missed some: the view loads the sheet again.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    let e = DocEvent::Reload { seq: u64::MAX };
+                    let ev = Event::default()
+                        .event(e.name())
+                        .json_data(&e)
+                        .unwrap_or_else(|_| Event::default().comment("?"));
+                    return Some((Ok(ev), (st, local, reference, rx, wake, tick, view)));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+    Ok(Sse::new(s).keep_alive(KeepAlive::default()))
+}
+
+/// `GET /api/documents/{id}/charts`: a sheet's charts with the numbers they draw (none for a provider without
+/// charts).
+pub(crate) async fn charts(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<ChartView>>, ApiError> {
+    let d = document(&st, &id).await?;
+    if d.provider != local::ID || d.kind != DocumentKind::Sheet {
+        return Ok(Json(vec![]));
+    }
+    Ok(Json(st.local.charts(&d.id, &d.provider_ref).await?))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ExportQuery {
+    /// `md` (a doc), `xlsx` or `csv` (a sheet; `csv` is one sheet, the first unless `sheet` names one).
+    format: String,
+    #[serde(default)]
+    sheet: Option<String>,
+}
+
+/// `GET /api/documents/{id}/export?format=md|xlsx|csv[&sheet=]`: the document as a file to download. Any provider's
+/// doc exports as `.md` and sheet as `.csv`; `.xlsx` is for local sheets.
+pub(crate) async fn export(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<ExportQuery>,
+) -> Result<axum::response::Response, ApiError> {
+    let d = document(&st, &id).await?;
+    let format = q.format.trim().to_ascii_lowercase();
+    let sheet = q.sheet.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let out = if d.provider == local::ID {
+        st.local.export(&d.provider_ref, &d.title, &format, sheet)?
+    } else {
+        let p = provider_of(&st, &d)?;
+        let stem = local::file_stem(&d.title);
+        match (p.read(&d.provider_ref).await?, format.as_str()) {
+            (DocumentContent::Doc { markdown, .. }, "md") => local::Export {
+                bytes: markdown.into_bytes(),
+                file_name: format!("{stem}.md"),
+                mime: "text/markdown; charset=utf-8",
+            },
+            (DocumentContent::Sheet { sheets, .. }, "csv") => {
+                let s = match sheet {
+                    Some(n) => sheets.iter().find(|s| s.name == n),
+                    None => sheets.first(),
+                }
+                .ok_or_else(|| invalid("there is no such sheet"))?;
+                let mut csv = String::new();
+                for row in &s.rows {
+                    let line: Vec<String> = row
+                        .iter()
+                        .map(|c| {
+                            if c.value.contains([',', '"', '\n']) {
+                                format!("\"{}\"", c.value.replace('"', "\"\""))
+                            } else {
+                                c.value.clone()
+                            }
+                        })
+                        .collect();
+                    csv.push_str(&line.join(","));
+                    csv.push('\n');
+                }
+                local::Export {
+                    bytes: csv.into_bytes(),
+                    file_name: format!("{stem}.csv"),
+                    mime: "text/csv; charset=utf-8",
+                }
+            }
+            _ => return Err(invalid(format!("{} can't export this as {format}", p.label()))),
+        }
+    };
+    let disposition = format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        out.file_name.replace(|c: char| !c.is_ascii() || c == '"', "_"),
+        out.file_name
+            .bytes()
+            .map(|b| if b.is_ascii_alphanumeric() || b"-_.".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            })
+            .collect::<String>()
+    );
+    Ok(bytes_response(out.bytes, out.mime, &[("content-disposition", disposition)]))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UploadQuery {
+    /// The file's name (`Budget.xlsx`): its type and the document's title.
+    name: String,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    ticket_id: Option<String>,
+    #[serde(default)]
+    by: Option<Actor>,
+}
+
+/// An imported file: its document, and what of the file PDT couldn't keep.
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UploadedDocument {
+    pub document: Document,
+    /// What the file had that PDT's sheets don't keep (`charts`, `images and drawings`, `pivot tables`).
+    pub dropped: Vec<String>,
+}
+
+/// `POST /api/documents/upload?name=&projectId=&ticketId=`: a file from the user's computer (the body) made into a
+/// local document: `.md` a doc, `.xlsx` or `.csv` a sheet.
+pub(crate) async fn upload(
+    State(st): State<AppState>,
+    Query(q): Query<UploadQuery>,
+    body: axum::body::Bytes,
+) -> Result<(StatusCode, Json<UploadedDocument>), ApiError> {
+    if body.is_empty() {
+        return Err(invalid("the file is empty"));
+    }
+    if provider(&st, local::ID).is_none() {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "no_provider", "this host has no local documents"));
+    }
+    let (project, ticket) = targets(&st, q.project_id.as_deref(), q.ticket_id.as_deref()).await?;
+    let folder = folder(&st, project.as_deref()).await?;
+    let (file, dropped) = st.local.import_file(&folder, q.name.trim(), &body)?;
+    let (_, document) = record(&st, local::ID, file, project.as_deref(), ticket.as_deref(), &by_of(q.by)).await?;
+    Ok((StatusCode::CREATED, Json(UploadedDocument { document, dropped })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ImageQuery {
+    name: String,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SavedImage {
+    /// The path to write in the doc's Markdown (`![](path)`), relative to it.
+    pub path: String,
+}
+
+/// `POST /api/documents/{id}/images?name=`: an image (the body) saved beside a local doc.
+pub(crate) async fn image(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<ImageQuery>,
+    body: axum::body::Bytes,
+) -> Result<(StatusCode, Json<SavedImage>), ApiError> {
+    let (d, local) = local_doc(&st, &id).await?;
+    if body.is_empty() {
+        return Err(invalid("the image is empty"));
+    }
+    let path = local.save_image(&d.provider_ref, q.name.trim(), &body)?;
+    Ok((StatusCode::CREATED, Json(SavedImage { path })))
+}
+
+/// `GET /api/documents/{id}/assets/{*path}`: one of a local doc's images, by the path its Markdown gives.
+pub(crate) async fn asset(
+    State(st): State<AppState>,
+    Path((id, path)): Path<(String, String)>,
+) -> Result<axum::response::Response, ApiError> {
+    let (d, local) = local_doc(&st, &id).await?;
+    let (bytes, mime) = local.asset(&d.provider_ref, &path)?;
+    Ok(bytes_response(
+        bytes,
+        mime,
+        &[
+            ("x-content-type-options", "nosniff".into()),
+            ("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'".into()),
+        ],
+    ))
 }
 
 /// A conversation's session, which must be an agent's.
@@ -774,9 +1143,27 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/documents/{id}/content", get(content))
         .route("/documents/{id}/version", get(self::version))
         .route("/documents/{id}/edits", post(edit))
-        .route("/documents/{id}/comments", get(comments))
+        .route("/documents/{id}/comments", get(comments).post(add_comment))
+        .route("/documents/{id}/sheet", get(sheet))
+        .route(
+            "/documents/{id}/sheet/diffs",
+            post(sheet_diffs).layer(axum::extract::DefaultBodyLimit::max(crate::documents::local::MAX_FILE)),
+        )
+        .route("/documents/{id}/events", get(events))
+        .route("/documents/{id}/charts", get(charts))
+        .route("/documents/{id}/export", get(export))
+        .route(
+            "/documents/upload",
+            post(upload).layer(axum::extract::DefaultBodyLimit::max(crate::documents::local::MAX_FILE)),
+        )
+        .route(
+            "/documents/{id}/images",
+            post(image).layer(axum::extract::DefaultBodyLimit::max(crate::documents::local::MAX_FILE)),
+        )
+        .route("/documents/{id}/assets/{*path}", get(asset))
         .route("/documents/{id}/comments/{comment}/replies", post(reply))
         .route("/documents/{id}/comments/{comment}/resolve", post(resolve))
+        .route("/documents/{id}/comments/{comment}/reopen", post(reopen))
         .route("/sessions/{id}/documents", get(beside).post(open_beside).put(order_beside))
         .route("/sessions/{id}/documents/{doc}", delete(close_beside))
 }

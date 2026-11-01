@@ -6,15 +6,17 @@
 //! Providers come from [`AppState::documents`] (PDT's own) and the enabled integrations
 //! ([`crate::Integration::document_providers`]); [`providers`] lists them.
 
+pub mod local;
 pub(crate) mod routes;
 pub(crate) mod tools;
 
 use crate::routes::AppState;
 use crate::workflow::catalog::BoxFut;
 pub use pdt_core::document::{
-    CommentReply, DocumentComment, DocumentContent, DocumentEdit, DocumentKind, ProviderCapabilities, ProviderFile,
-    ProviderInfo,
+    CommentAnchor, CommentReply, DocumentComment, DocumentContent, DocumentEdit, DocumentKind, ProviderCapabilities,
+    ProviderFile, ProviderInfo,
 };
+use pdt_core::ticket::Actor;
 use std::sync::Arc;
 
 /// Why a provider could not do something.
@@ -49,6 +51,16 @@ pub struct NewFile {
     /// The local documents folder for it (its project's, else the host's): where a provider that keeps files on
     /// this machine puts it. Others ignore it.
     pub folder: std::path::PathBuf,
+}
+
+/// A comment to add ([`DocumentProvider::comment`]): checked text, where it is, and who wrote it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentInput {
+    pub body: String,
+    pub anchor: Option<CommentAnchor>,
+    /// The name it shows (`You`, the persona).
+    pub author: String,
+    pub actor: Actor,
 }
 
 fn unsupported<'a, T: Send + 'a>(what: &str) -> BoxFut<'a, ProviderResult<T>> {
@@ -97,16 +109,26 @@ pub trait DocumentProvider: Send + Sync {
     fn comments<'a>(&'a self, _reference: &'a str) -> BoxFut<'a, ProviderResult<Vec<DocumentComment>>> {
         unsupported(&format!("{} has no comments", self.label()))
     }
+    /// Adds a comment.
+    fn comment<'a>(&'a self, _reference: &'a str, _new: CommentInput) -> BoxFut<'a, ProviderResult<DocumentComment>> {
+        unsupported(&format!("{} can't add comments", self.label()))
+    }
+    /// Replies to a comment, as `by` (who, and the name shown).
     fn reply<'a>(
         &'a self,
         _reference: &'a str,
         _comment: &'a str,
         _body: &'a str,
+        _by: (Actor, String),
     ) -> BoxFut<'a, ProviderResult<CommentReply>> {
         unsupported(&format!("{} has no comments", self.label()))
     }
     fn resolve<'a>(&'a self, _reference: &'a str, _comment: &'a str) -> BoxFut<'a, ProviderResult<()>> {
         unsupported(&format!("{} has no comments", self.label()))
+    }
+    /// Opens a resolved comment again.
+    fn reopen<'a>(&'a self, _reference: &'a str, _comment: &'a str) -> BoxFut<'a, ProviderResult<()>> {
+        unsupported(&format!("{} can't reopen comments", self.label()))
     }
     /// Its version or etag now, which changes whenever it does (change detection); by default the file's.
     fn version<'a>(&'a self, reference: &'a str) -> BoxFut<'a, ProviderResult<Option<String>>> {
@@ -197,6 +219,8 @@ pub mod testing {
                     delete: true,
                     comments: true,
                     embed: false,
+                    charts: false,
+                    live: false,
                 }),
                 files: Default::default(),
                 next: Mutex::new(0),
@@ -216,6 +240,7 @@ pub mod testing {
                 author: "Sam".into(),
                 body: "Is this still right?".into(),
                 quote: None,
+                anchor: None,
                 resolved: false,
                 created_at: None,
                 replies: vec![],
@@ -372,12 +397,13 @@ pub mod testing {
             reference: &'a str,
             comment: &'a str,
             body: &'a str,
+            by: (Actor, String),
         ) -> BoxFut<'a, ProviderResult<CommentReply>> {
             ready(self.with(reference, |s| {
                 let c = s.comments.iter_mut().find(|c| c.id == comment).ok_or(ProviderError::NotFound)?;
                 let r = CommentReply {
                     id: format!("{comment}.{}", c.replies.len() + 1),
-                    author: "PDT".into(),
+                    author: by.1,
                     body: body.into(),
                     created_at: None,
                 };

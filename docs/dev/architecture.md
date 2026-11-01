@@ -64,6 +64,7 @@ and `backups/` (a copy taken before migrations).
 | `pdt-github` | The GitHub forge over GitHub's REST and GraphQL APIs (nothing runs `gh`): pull requests, Actions, merges, issues, the OAuth device-flow login, rate limits. The `Forge` methods are in `forge.rs`. |
 | `pdt-tailscale` | The `tailscale` CLI (`serve`, `status`), and `fake-tailscale` for tests. |
 | `pdt-update` | The GitHub release client: finding a release, verified downloads. |
+| `pdt-sheet` | Local sheets on IronCalc: `.xlsx` and `.csv` in and out, cells with computed values, formats, sheets, sort and filter, and IronCalc's sync diffs. |
 | `pdt-host` | The supervisor: running pdtd, installing updates, rolling back, login registration. |
 | `pdtd` | The daemon binary: config, logging, startup (`main.rs`: the state, the startup resume and the poll), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
 | `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
@@ -286,6 +287,22 @@ it, when it was focused: the newest focused is the tab shown), served at `/api/s
 `DocumentsBesideLayout` (`web/src/documents/BesidePanel.tsx`) wraps the agent and PM conversation views, and
 `DocumentBody` reads a document again whenever its `updatedAt` moves (an edit through PDT touches it) and lights what
 changed.
+
+PDT's own provider is `documents::local::LocalProvider` (`AppState::local`, listed first in `AppState::documents`).
+Its reference is the file's full path: a doc is a `.md` (its images in `<name>.assets/` beside it), a sheet a `.xlsx`
+read and written by pdt-sheet (IronCalc; files are written to a temp file and renamed). Comments
+(`document_comments`, anchored by a `CommentAnchor`: a heading, quoted text, or a sheet's cell or range) and chart
+specs (`document_charts`, `ChartSpec`) are in the store. A sheet is live: the provider holds one IronCalc model per
+open sheet (loaded on first use, dropped when idle with no view), and every change is numbered. A view loads the
+model (`GET …/sheet`, IronCalc's bytes and `x-sheet-seq`), posts its own edits as IronCalc diffs with the number it
+has (`POST …/sheet/diffs`), and follows `GET …/events` (SSE): `diffs` (from other views and agents' edits through
+`apply`), `reload`, `changed` (a doc saved), `comments`, `charts`. A view that missed a number reloads; diffs sent on
+an old number are applied anyway (last write wins) and the answer says `conflict`, so the view reloads and says so.
+Each stream also checks the file every 2 s, so a change made outside PDT reaches the open views. A doc's editor saves
+with `baseVersion` (a hash of the file) and gets `409 conflict` when it changed since. Charts are drawn in the browser
+with Chart.js from `GET …/charts`, which reads their numbers from pdtd's model; they float over the grid at their
+anchor cell. The web UI's `@ironcalc/workbook` must be the same version as pdt-sheet's `ironcalc` (they exchange
+IronCalc's bytes and diffs; a pdt-sheet test checks), and is loaded only when a sheet opens.
 
 `GET /api/documents/{id}/version` is the provider's version (Google's Drive counter): `DocumentBody` polls it in PDT's
 own view, so edits made at the provider (in Google's editor) show too.

@@ -242,6 +242,7 @@ pub fn comments(s: &Session, id: &str) -> ProviderResult<Vec<DocumentComment>> {
                 author: c["author"]["displayName"].as_str().unwrap_or("someone").to_string(),
                 body: c["content"].as_str().unwrap_or_default().to_string(),
                 quote: c["quotedFileContent"]["value"].as_str().map(str::to_string),
+                anchor: None,
                 resolved: c["resolved"].as_bool().unwrap_or(false),
                 created_at: time(&c["createdTime"]),
                 replies: c["replies"].as_array().into_iter().flatten().filter_map(reply_of).collect(),

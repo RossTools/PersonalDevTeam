@@ -21,6 +21,8 @@ The main things in it:
 - `pdt.db`: the database, with your projects, tickets, sessions, workflows and settings (and `pdt.db-wal` and
   `pdt.db-shm` beside it while PDT runs);
 - `backups/`: copies of the database (below);
+- `documents/`: your local [documents](../using-pdt/documents.md) (`.md` docs and `.xlsx` sheets), unless you picked
+  another folder for them;
 - `logs/`: PDT's logs (below);
 - `sessions/`, `pm/` and `runs/`: what PDT keeps for agent sessions, the PM and runs (a run's own data folder, its
   log);
@@ -75,7 +77,9 @@ cd ~/Library/Application\ Support/pdt
 sqlite3 pdt.db ".backup pdt-backup.db"
 ```
 
-Or let your usual backup tool (Time Machine and the like) include the data folder.
+Or let your usual backup tool (Time Machine and the like) include the data folder. That includes your local documents
+in `documents/`; if you keep them in another folder (**Settings › This host › Documents**, or a project's), back that
+folder up too. Their comments and charts are in the database.
 
 Old history is pruned as PDT goes: finished workflow runs, ended Inbox items, notifications and the event log after
 30 days. Tickets, comments and conversations' messages stay.
