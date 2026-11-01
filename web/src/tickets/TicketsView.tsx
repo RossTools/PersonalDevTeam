@@ -37,6 +37,7 @@ import {
 import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketId, useTicketPages } from './queries';
 import { LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle } from './TicketParts';
 import type { BacklogState } from './useBacklog';
+import { TicketAttachments } from './attachments';
 import { TicketDocuments } from './TicketDocuments';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -311,6 +312,7 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirt
         <PartsSection ticket={t} />
         <TicketLinks ticket={t} />
         <TicketDocuments ticket={t} />
+        <TicketAttachments ticketId={t.id} />
         <TicketTimeline ticketId={t.id} recent={5} />
       </div>
     )
