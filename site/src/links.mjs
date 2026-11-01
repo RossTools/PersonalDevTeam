@@ -13,6 +13,7 @@ export function siteLinks(baseUrl) {
     privacy: `${home}privacy/`,
     doc: (path) => `${home}docs/${path}/`,
     changelog: `${REPO}/blob/main/CHANGELOG.md`,
+    license: `${REPO}/blob/main/LICENSE`,
     github: REPO,
     download: `${REPO}/releases/latest`,
     requestPlugin: `${REPO}/issues/new?template=plugin.yml`,

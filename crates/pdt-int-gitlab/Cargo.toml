@@ -4,6 +4,7 @@ description = "GitLab (PDT-246): the GitLab forge (gitlab.com and self-hosted) a
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]
