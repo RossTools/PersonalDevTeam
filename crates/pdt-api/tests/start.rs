@@ -416,6 +416,16 @@ async fn abandon_ends_the_attempt_and_removes_a_worktree_with_nothing_to_lose() 
     assert!(t["attempts"][0]["endedAt"].is_number());
     assert!(event_kinds(&env, &id).await.iter().any(|k| k == "abandoned"));
     assert!(!env.repo.join(".worktrees").join("pdt-PDT-1-give-up").exists(), "nothing to lose: removed (PDT-339)");
+    // The timeline says what was stopped and removed (PDT-339).
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{id}/events"), None).await;
+    let notes: Vec<&str> = events["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "comment" && e["actor"] == "system")
+        .filter_map(|e| e["body"].as_str())
+        .collect();
+    assert!(notes.iter().any(|n| n.contains("Stopped 1 session") && n.contains("Removed the worktree")), "{notes:?}");
     // Again: nothing changes.
     let (st, _) = call(&env.app, "POST", &format!("/api/attempts/{aid}/abandon"), None).await;
     assert_eq!(st, StatusCode::OK);

@@ -193,9 +193,18 @@ pub(crate) enum WindDown {
     /// Found merged outside PDT: stop the sessions and runs, but leave the workflow runs to take the merge (the
     /// Pipeline's Accept ends on it).
     Merged,
-    /// Won't do or Abandon: also close its pull request and remove the worktree, branch and workspace as the project
-    /// says, unless something would be lost.
+    /// Won't do: also close its pull request and remove the worktree, branch and workspace as the project says,
+    /// unless something would be lost.
     Close,
+    /// Abandon: as [`WindDown::Close`], after [`stop_work`] stopped `sessions_stopped` sessions and cancelled
+    /// `runs_cancelled` workflow runs (counted on the timeline note).
+    Abandon { sessions_stopped: u32, runs_cancelled: u32 },
+}
+
+impl WindDown {
+    fn closes(self) -> bool {
+        matches!(self, WindDown::Close | WindDown::Abandon { .. })
+    }
 }
 
 /// What became of a ticket's work after it closed or its attempt was abandoned, for the timeline.
@@ -209,11 +218,14 @@ struct WoundDown {
 
 /// After a ticket closed or its attempt was abandoned (`attempt`, which was active until then): cancels the ticket's
 /// open workflow runs (the attempt's, and those started before `since`, but `keep_run` and the runs that called it),
-/// stops the attempt's sessions and runs, and with [`WindDown::Close`] closes its open pull request and cleans up
+/// stops the attempt's sessions and runs, and with [`WindDown::Close`] or [`WindDown::Abandon`] closes its open pull request and cleans up
 /// ([`clean_up_closed`]). Records what it did on the ticket's timeline. Problems are logged and noted, not failed.
 pub(crate) async fn wind_down(st: &AppState, attempt: &str, since: i64, how: WindDown, keep_run: Option<&str>) {
     let Ok(Some(info)) = st.store.get_attempt(attempt).await else { return };
     let mut done = WoundDown::default();
+    if let WindDown::Abandon { sessions_stopped, runs_cancelled } = how {
+        (done.sessions_stopped, done.runs_cancelled) = (sessions_stopped, runs_cancelled);
+    }
     let keep = keep_chain(st, keep_run).await;
     if how == WindDown::Merged {
         // No stage of the Pipeline is left to wait in (the board showed it at Accept).
@@ -221,7 +233,7 @@ pub(crate) async fn wind_down(st: &AppState, attempt: &str, since: i64, how: Win
             tracing::warn!(ticket = %info.ticket_key, error = %e, "could not clear the merged ticket's pipeline stage");
         }
     } else {
-        done.runs_cancelled = cancel_runs_but(st, &info, since, &keep).await;
+        done.runs_cancelled += cancel_runs_but(st, &info, since, &keep).await;
     }
     match crate::finish::plan(st, &info).await {
         Ok(p) => {
@@ -244,8 +256,12 @@ pub(crate) async fn wind_down(st: &AppState, attempt: &str, since: i64, how: Win
     // A merged attempt's pull request and branch are the merge's; nothing more to close.
     let merged =
         st.store.get_attempt(attempt).await.ok().flatten().is_some_and(|a| a.attempt.state == AttemptState::Merged);
-    if how == WindDown::Close && !merged && !info.attempt.branch.is_empty() {
-        if let Some(note) = close_pr(st, &info).await {
+    if how.closes() && !merged && !info.attempt.branch.is_empty() {
+        let why = match how {
+            WindDown::Abandon { .. } => "the attempt was abandoned",
+            _ => "the ticket was set to Won't do",
+        };
+        if let Some(note) = close_pr(st, &info, why).await {
             done.notes.push(note);
         }
         done.notes.extend(clean_up_closed(st, &info, false).await);
@@ -292,12 +308,12 @@ async fn cancel_runs_but(
     cancelled
 }
 
-/// Closes the attempt's open pull request with a comment saying why. A note for the timeline: closed, or why not
-/// (None: there was none, or it merged).
-async fn close_pr(st: &AppState, info: &AttemptInfo) -> Option<String> {
+/// Closes the attempt's open pull request with a comment saying `why` ("the attempt was abandoned"). A note for the
+/// timeline: closed, or why not (None: there was none, or it merged).
+async fn close_pr(st: &AppState, info: &AttemptInfo, why: &str) -> Option<String> {
     let forge = crate::forge::project_forge(st, &info.project_id, &info.repo_path).await?;
     let (api, repo, branch) = (forge.api.clone(), forge.repo.clone(), info.attempt.branch.clone());
-    let body = format!("Closed: the ticket was set to Won't do in {}.", pdt_core::brand::SHORT_NAME);
+    let body = format!("Closed: {why} in {}.", pdt_core::brand::SHORT_NAME);
     let closed = tokio::task::spawn_blocking(move || -> Result<Option<u32>, pdt_forge::ForgeError> {
         let Some(pr) = api.change_request(&repo, &branch)?.filter(|p| p.state == pdt_core::pr::PrState::Open) else {
             return Ok(None);

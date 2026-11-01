@@ -493,7 +493,11 @@ pub(crate) async fn abandon(State(st): State<AppState>, Path(id): Path<String>) 
             let since = now_ms();
             let r = crate::stop::stop_work(&st, &ticket, since, Actor::User).await?;
             if r.abandoned.is_some() {
-                crate::stop::wind_down(&st, &attempt, since, crate::stop::WindDown::Close, None).await;
+                let how = crate::stop::WindDown::Abandon {
+                    sessions_stopped: r.sessions_stopped,
+                    runs_cancelled: r.runs_cancelled,
+                };
+                crate::stop::wind_down(&st, &attempt, since, how, None).await;
             }
             Ok::<_, ApiError>(())
         });

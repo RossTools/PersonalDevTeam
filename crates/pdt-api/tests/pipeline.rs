@@ -2370,3 +2370,26 @@ async fn a_merge_while_waiting_at_accept_ends_the_pipeline_and_stops_the_session
     }
     assert_eq!(v["stage"], "in_progress", "the merged banner finishes it");
 }
+
+/// PDT-339: Abandon closes the attempt's open pull request too, saying the attempt was abandoned (the ticket keeps its
+/// stage), and the timeline counts the sessions and workflow runs it stopped.
+#[tokio::test]
+async fn abandon_closes_the_pr_saying_the_attempt_was_abandoned() {
+    let gh = std::sync::Arc::new(FakeForge::default());
+    let env = setup_with(Some(gh.clone())).await;
+    pipeline(&env, json!({}), &[]).await;
+    let t = ticket(&env, "Give up").await;
+    let attempt = start_with_a_commit(&env, &t, "g.txt").await;
+    step_session(&env, "code").await;
+    gh.set_pr(attempt["branch"].as_str().unwrap(), Some(pull_request(Mergeable::Mergeable)));
+    let id = attempt["id"].as_str().unwrap();
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/abandon"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["stage"], "in_progress");
+    assert_eq!(*gh.closed_changes.lock().unwrap(), [("o/r".to_string(), 12)]);
+    let said = gh.change_comments_added.lock().unwrap().clone();
+    assert!(said.iter().any(|(n, _, b)| *n == 12 && b == "Closed: the attempt was abandoned in PDT."), "{said:?}");
+    let notes = system_notes(&env, &t).await.join("\n");
+    assert!(notes.contains("Stopped 1 session") && notes.contains("1 workflow run"), "{notes}");
+    assert!(notes.contains("Closed pull request #12."), "{notes}");
+}
