@@ -1,6 +1,6 @@
 # Install PDT
 
-PDT runs on macOS (Apple silicon), Windows and Linux (`x86_64` or `aarch64`, glibc 2.35 or newer, such as Ubuntu
+PDT runs on macOS (Apple silicon or Intel), Windows and Linux (`x86_64` or `aarch64`, glibc 2.35 or newer, such as Ubuntu
 22.04 or later). You also need [git](https://git-scm.com/downloads) and at least one coding agent, before or after
 installing PDT: [the first run](first-run.md) checks for them.
 

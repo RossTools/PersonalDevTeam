@@ -111,7 +111,7 @@ names another (below, "Runners").
 | build (windows-latest) | clippy, nextest | `windows` label, or a Rust change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | same |
 | site | the install scripts' lint, the website's tests (the docs check included) and build | a change to `site/`, `docs/`, the pnpm lockfile or workspace, `ci.yml` or `pages.yml` | same |
 | changelog | a fragment or the `no-changelog` label; the scripts' tests | unless docs only | skipped |
-| bundle (…) | the macOS app, the Windows installer, the Linux tarball and AppImage, as workflow artifacts (GitHub's runners always: signing) | the release PR only | never |
+| bundle (…) | the macOS app (universal: Apple silicon and Intel, checked with `lipo -archs`), the Windows installer, the Linux tarball and AppImage, as workflow artifacts (GitHub's runners always: signing) | the release PR only | never |
 
 - **Docs-only PRs** (every changed file under `docs/` or `site/`, or a `*.md`) run only `changes` and `site`. The
   guides pdtd builds in with `include_str!` (`docs/agent-guide.md`, `docs/run-config.md`, `docs/prompts/`,

@@ -71,11 +71,8 @@ pdt_install() {
 	arch="$(uname -m)"
 	case "$os" in
 	Darwin)
+		# One universal app for Apple silicon and Intel Macs.
 		os=mac
-		# The app is built for Apple silicon; a shell under Rosetta still reports x86_64.
-		if [ "$arch" != arm64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" != 1 ]; then
-			die "$product for macOS needs a Mac with Apple silicon (this one reports $arch)."
-		fi
 		;;
 	Linux)
 		os=linux
