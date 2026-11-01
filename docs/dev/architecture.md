@@ -22,8 +22,8 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
 
 - **pdtd** (`crates/pdtd`) is the daemon and does all the work: one axum server (routes in pdt-api) on
   `127.0.0.1:<port>`, a SQLite database, the agents' terminals and conversations, and the background loops (the
-  PR/merge poll every 60 s, the workflow engine every 2 s, overlaps every 30 s, auto-start, notifications, update
-  checks, remote access). A loop that panics ends only that pass. It also serves the built web UI, from
+  PR/merge poll every 60 s, the workflow engine every 2 s, overlaps every 30 s, the pickup watch every 10 s,
+  notifications, update checks, remote access). A loop that panics ends only that pass. It also serves the built web UI, from
   `PDT_WEB_DIR`, a `web/` folder beside the executable, or the macOS bundle's resources.
 - **pdt-host** (`crates/pdt-host`) supervises pdtd: starts it (passing the port from Settings), restarts it, adopts a
   pdtd that is already running, and installs updates: pdtd downloads and verifies a release, pdt-host copies the
@@ -91,7 +91,7 @@ which cleans or removes finished tickets' worktrees per the project's `project_s
 output is `[storage] build_output` from its main checkout's run configuration, else detected from the files at its
 root (`detect_build_output`). Free space comes from `AppState::disk_space` (fs4, installed by pdtd; `AppState::new` reads none, tests set a fake) for the data
 folder and each project's folder, grouped by device (`storage::disk_id`) with the least free space any read; below the host's `low_disk_gb` the Inbox lists a `low_disk` item, below
-`critical_disk_gb` the scheduler starts nothing and `autoStartAt` is left out.
+`critical_disk_gb` `ticket.start` starts nothing, the pickup watch tells nothing and `autoStartAt` is left out.
 
 **Runs.** A run is a `[[run]]` or `[[test]]` from `.pdt/project.toml` (plus host overrides; the user docs' Run configuration page)
 started in a checkout, on a port from the host's range. Runs live in PTYs, or detached (`detach = true`) so they
@@ -189,6 +189,23 @@ workflow runs" follows each such run with `github.workflow.watch` (one gate item
 (pdt-core `policy.rs`) sets who merges, approvals, the running cap and auto-start; the host caps how many agents run a
 turn at once.
 
+**Auto-start** is the host built-in "Pick up tickets" (`builtins.rs`): `ticket.startable`, `slot.freed` and a
+one-minute `schedule` lead to `tickets.candidates` → `tickets.choose` → `ticket.start` (`workflow/nodes/pickup.rs`;
+the rules, pure, in pdt-core `pickup.rs`). A config field left out is the project's auto-start setting, so Settings
+edits the built-in's parameters without editing the workflow. The pickup watch (pdt-api `scheduler.rs`, every 10 s)
+emits the triggers, for projects with auto-start on: `ticket.startable` once per ticket each time it becomes startable
+(`policy::startable` and the start delay over; what it told is kept in `AppState::pickup_watch`, so a restart tells
+again), and `slot.freed` when a project has fewer tickets in flight, its cap rose, or the host's free agent slots went
+from none to some. `ticket.start` holds `AppState::pickup_lock` while it checks and starts, so concurrent pickup runs
+neither start a ticket twice (the store's one-active-attempt rule is the backstop) nor go over the caps a pick was
+chosen under (project, area and label, carried on each pick); it takes the first of each project's chosen tickets
+still free. Having checked the cap itself, it sets `ValidStart::cap_checked`, so Start doesn't refuse for the
+project's running cap (a step's cap may be higher) while still refusing for blockers and overlaps. A failed start is skipped until the ticket
+changes (`AppState::auto_start_failed`), unless it failed to write (a full disk), which the next run tries again. The
+watch also announces starts left half-done: an active attempt whose `started` timeline event never reached the event
+log (pdtd stopped, or the write failed, between `start_attempt` and `announce_start`), once it is two minutes old
+(`Store::unannounced_starts`).
+
 **The Inbox and notifications.** The Inbox (pdt-api and pdt-store `inbox.rs`) holds what waits on the user:
 questions, gates, stalled steps, secrets to enter, confirmations. An item's `title` is one line; a gate's question
 (Markdown) is in `body.question`, and `inbox::decorate` adds what is computed per request: ticket key and title,
@@ -252,7 +269,7 @@ login.
 | Projects, worktrees, runs | pdt-api `projects.rs`, `worktrees.rs`, `runs.rs`, `run_manager.rs`, `runconfig.rs`; pdt-core `runconfig.rs` | `web/src/projects`, `web/src/runs` |
 | Storage and disk space | pdt-api `storage.rs`; pdt-core `storage.rs`; pdt-git `is_disposable` | `web/src/host/StorageSettings.tsx`, `web/src/projects/worktreeStorage.tsx` |
 | Workspaces and tabs | pdt-api `workspaces.rs`; pdt-store `workspaces.rs` | `web/src/workspaces`, `web/src/shell` |
-| Tickets, Start, parts, merge detection | pdt-api `tickets.rs`, `start.rs`, `stop.rs`, `finish.rs`, `parts.rs`, `scheduler.rs`; pdt-core `ticket.rs`, `start.rs`, `parts.rs`, `policy.rs`; pdt-git `merge.rs` | `web/src/tickets` |
+| Tickets, Start, parts, merge detection | pdt-api `tickets.rs`, `start.rs`, `stop.rs`, `finish.rs`, `parts.rs`, `scheduler.rs`; pdt-core `ticket.rs`, `start.rs`, `parts.rs`, `policy.rs`, `pickup.rs`; pdt-git `merge.rs` | `web/src/tickets` |
 | PRs, CI, forges | pdt-api `github.rs`, `ci.rs`, `forge.rs`, `local_forge.rs`; `crates/pdt-forge`, `crates/pdt-github`, `crates/pdt-int-gitlab` | `web/src/tickets`, `web/src/plugins` |
 | Review and merge | pdt-api `review.rs`; pdt-core `review.rs`; pdt-git `review.rs` | `web/src/review` |
 | Sessions and terminals | pdt-api `sessions.rs`, `pty_ws.rs`, `activity.rs`; `crates/pdt-agents` | `web/src/sessions`, `web/src/terminal` |

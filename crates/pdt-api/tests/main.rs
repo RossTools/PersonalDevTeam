@@ -38,6 +38,7 @@ mod notifications;
 mod outside_prs;
 mod parts;
 mod personas;
+mod pickup;
 mod pipeline;
 mod pm;
 mod pr;

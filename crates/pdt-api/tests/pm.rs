@@ -879,7 +879,7 @@ async fn the_pm_stops_a_tickets_work_after_asking_and_its_links_hold_auto_start_
     assert!(said.starts_with("mcp link_tickets:"), "{said}");
     tokio::time::sleep(Duration::from_millis(1100)).await;
     for _ in 0..3 {
-        pdt_api::schedule_tickets(&env.state).await;
+        common::pick_up(&env.state).await;
     }
     let stage = |key: &'static str| {
         let app = env.app.clone();

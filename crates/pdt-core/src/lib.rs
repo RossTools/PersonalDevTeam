@@ -30,6 +30,7 @@ pub mod outside_pr;
 pub mod overlap;
 pub mod parts;
 pub mod persona;
+pub mod pickup;
 pub mod pm;
 pub mod policy;
 pub mod pr;
