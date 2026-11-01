@@ -50,4 +50,5 @@ Run `scripts/check.sh` before you push: it runs what CI runs.
 
 ## License
 
-No license has been chosen yet: until one is, all rights are reserved.
+PDT is licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for attribution, including
+the bundled fonts.

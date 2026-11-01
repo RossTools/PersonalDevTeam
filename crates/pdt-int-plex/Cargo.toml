@@ -4,6 +4,7 @@ description = "Plex: search, recently added and refresh actions."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]
