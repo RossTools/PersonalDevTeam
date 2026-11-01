@@ -52,7 +52,7 @@ import { TabOverview } from '../workspaces/TabOverview';
 import { InlineRename } from '../common/InlineRename';
 import { Sidebar } from '../workspaces/Sidebar';
 import { useWorkspaces } from '../workspaces/useWorkspaces';
-import { WorkspaceBar } from '../workspaces/WorkspaceBar';
+import { WorkspaceBar, workspaceTabId } from '../workspaces/WorkspaceBar';
 import { BottomPanel } from './BottomPanel';
 import { RightPanel, RightPanelContent, useRightPanelKey, useRightPanelOpen } from './RightPanel';
 import type { TodoFocus } from '../todos/TodoList';
@@ -745,6 +745,7 @@ export function AppShell() {
   const todoProjectId = (view === 'sessions' ? ws.workspace?.projectId : null) ?? stored.projectId ?? null;
   const projectKeyList = ws.projects.map((p) => p.key).join(' ');
   const projectKeys = useMemo(() => (projectKeyList ? projectKeyList.split(' ') : []), [projectKeyList]);
+  const tabPanelOf = view === 'sessions' && !phoneList && !setupShown && !(phone && overviewOpen) ? ws.tab?.id ?? null : null;
 
   return (
     <TicketKeysContext.Provider value={projectKeys}>
@@ -898,7 +899,11 @@ export function AppShell() {
           />
         )}
         {!(bottomOpen && bottomMax) && (
-          <div className="flex-1 flex flex-col min-h-0">
+          <div
+            className="flex-1 flex flex-col min-h-0"
+            // Under the workspace's tab strip, this is the current tab's panel.
+            {...(tabPanelOf ? { role: 'tabpanel', 'aria-labelledby': workspaceTabId(tabPanelOf) } : {})}
+          >
             <ErrorBoundary resetKey={loc} onBack={() => go(viewRoute('inbox'))}>
             {setupShown ? (
               <SetupPage

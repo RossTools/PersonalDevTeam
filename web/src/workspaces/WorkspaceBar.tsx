@@ -2,7 +2,7 @@ import { useEffect, useRef, type DragEvent, type ReactNode, type Ref } from 'rea
 import { useQueryClient } from '@tanstack/react-query';
 import { FileDiff, LayoutGrid, Plus, Ticket, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { ContextMenu, IconButton, Kbd } from '@ui';
+import { ContextMenu, IconButton, Kbd, tabIndexOf, tabListKeyDown } from '@ui';
 import { api } from '../api/client';
 import type { Tab } from '../api/gen/Tab';
 import { AgentDot, itemState } from '../common/AgentState';
@@ -28,11 +28,15 @@ export async function applyDrop(ws: WorkspacesApi, d: Dropped, workspaceId: stri
   }
 }
 
-function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop }: {
+/** The id of a workspace tab's button, which labels the tab's panel. */
+export const workspaceTabId = (tabId: string) => `workspace-tab-${tabId}`;
+
+function TabButton({ ws, tab, info, selected, tabIndex, renaming, setRenaming, onDrop }: {
   ws: WorkspacesApi;
   tab: Tab;
   info: ItemInfo | null;
   selected: boolean;
+  tabIndex: 0 | -1;
   renaming: boolean;
   setRenaming: (id: string | null) => void;
   onDrop: (e: DragEvent, index: number) => void;
@@ -70,7 +74,9 @@ function TabButton({ ws, tab, info, selected, renaming, setRenaming, onDrop }: {
           <button
             type="button"
             role="tab"
+            id={workspaceTabId(tab.id)}
             aria-selected={selected}
+            tabIndex={tabIndex}
             // Touch screens move tabs from the long-press menu (workspaces spec §4.6): a natively draggable element turns
             // Android's long press into a drag, so the menu would never open.
             draggable={!coarsePointer()}
@@ -153,17 +159,19 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, on
         ref={strip}
         role="tablist"
         aria-label="Tabs"
+        onKeyDown={tabListKeyDown}
         className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
         onDragOver={(e) => { if (accepts(e)) e.preventDefault(); }}
         onDrop={(e) => drop(e)}
       >
-        {w?.tabs.map((t) => (
+        {w?.tabs.map((t, i) => (
           <TabButton
             key={t.id}
             ws={ws}
             tab={t}
             info={ws.info(itemOf(t))}
             selected={t.id === ws.tab?.id}
+            tabIndex={tabIndexOf(t.id === ws.tab?.id, i, !!ws.tab)}
             renaming={renamingTabId === t.id}
             setRenaming={setRenamingTabId}
             onDrop={drop}

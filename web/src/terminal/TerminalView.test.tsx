@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   term: null as null | {
-    written: unknown[]; dataCb: ((d: string) => void) | null; disposed: boolean; resetCount: number; flush(): void;
+    written: unknown[]; dataCb: ((d: string) => void) | null; binaryCb: ((d: string) => void) | null; disposed: boolean; resetCount: number; flush(): void;
     cols: number; rows: number; fontFamilySets: unknown[];
     keyHandler: ((e: KeyboardEvent) => boolean) | null; modes: { bracketedPasteMode: boolean };
     selectionCb: (() => void) | null; selection: string; opts: Record<string, unknown>;
@@ -11,7 +11,7 @@ const h = vi.hoisted(() => ({
     selected: unknown[]; scrolled: number[]; lines: string[]; focus(): void;
   },
   clipboard: null as null | { readText(s: string): string; writeText(s: string, t: string): Promise<void> },
-  sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; open: boolean; resizes: string[]; disposed: boolean; connected: boolean; retries: number },
+  sock: null as null | { handlers: Record<string, (...a: unknown[]) => void>; sent: string[]; binary: string[]; open: boolean; resizes: string[]; disposed: boolean; connected: boolean; retries: number },
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -60,6 +60,8 @@ vi.mock('@xterm/xterm', () => ({
     flush() { this.callbacks.splice(0).forEach((cb) => cb()); }
     reset() { this.resetCount++; }
     onData(cb: (d: string) => void) { this.dataCb = cb; return { dispose() {} }; }
+    binaryCb: ((d: string) => void) | null = null;
+    onBinary(cb: (d: string) => void) { this.binaryCb = cb; return { dispose: () => { this.binaryCb = null; } }; }
     dispose() { this.disposed = true; }
   },
 }));
@@ -88,6 +90,12 @@ vi.mock('./ptySocket', () => ({
     send(d: string) {
       if (!this.open) return false;
       this.sent.push(d);
+      return true;
+    }
+    binary: string[] = [];
+    sendBinary(d: string) {
+      if (!this.open) return false;
+      this.binary.push(d);
       return true;
     }
     resizes: string[] = [];
@@ -150,6 +158,19 @@ describe('TerminalView', () => {
     unmount();
     expect(h.sock!.disposed).toBe(true);
     expect(h.term!.disposed).toBe(true);
+  });
+
+  it('sends binary input (old-style mouse reports) as bytes, after the replay', () => {
+    const { unmount } = render(<TerminalView sessionId="s1" />);
+    h.sock!.handlers.onReset();
+    h.term!.binaryCb!('\x1b[M \xa0!');
+    expect(h.sock!.binary).toEqual([]);
+    h.sock!.handlers.onReady();
+    h.term!.binaryCb!('\x1b[M \xa0!');
+    expect(h.sock!.binary).toEqual(['\x1b[M \xa0!']);
+    expect(h.sock!.sent).toEqual([]);
+    unmount();
+    expect(h.term!.binaryCb).toBeNull();
   });
 
   it('recolours an open terminal when the theme changes', async () => {
