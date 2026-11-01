@@ -75,6 +75,7 @@ impl Integration for Buildkite {
                 optional: true,
                 ..ConfigField::new("pipelines", "Pipelines")
             }],
+            import: None,
         })
     }
 

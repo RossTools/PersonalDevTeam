@@ -13,16 +13,23 @@ export const projectSettingsSchemas: ProjectSettingsSchema[] = [
         "label": "Jira issues",
         "hint": "JQL for this project's issues. Empty: every issue the account can see.",
         "placeholder": "project = ABC",
-        "optional": true
+        "optional": true,
+        "numeric": false
       },
       {
         "key": "done",
         "label": "Done in Jira",
         "hint": "The transition (or status) a ticket moved to Done moves its issue to.",
         "optional": false,
-        "default": "Done"
+        "default": "Done",
+        "numeric": false
       }
-    ]
+    ],
+    "import": {
+      "title": "Import from Jira",
+      "description": "Makes a Draft ticket from a Jira issue, linked to it. An issue that already has a ticket opens that ticket.",
+      "placeholder": "ABC-123"
+    }
   },
   {
     "integration": "buildkite",
@@ -36,7 +43,8 @@ export const projectSettingsSchemas: ProjectSettingsSchema[] = [
         "hint": "The pipelines (slugs) that build this project's branches, one per line.",
         "placeholder": "my-app\nmy-app-e2e",
         "type": "lines",
-        "optional": true
+        "optional": true,
+        "numeric": false
       }
     ]
   }

@@ -3,4 +3,4 @@
 /**
  * How a setting is edited.
  */
-export type FieldType = "text" | "lines" | "env" | "choice";
+export type FieldType = "text" | "lines" | "env" | "choice" | "switch";

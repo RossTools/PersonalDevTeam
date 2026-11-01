@@ -6,7 +6,6 @@ import type { EventPage } from './gen/EventPage';
 import type { EventQuery } from './gen/EventQuery';
 import type { FinishRequest } from './gen/FinishRequest';
 import type { FinishResult } from './gen/FinishResult';
-import type { JiraImportResult } from './gen/JiraImportResult';
 import type { NewComment } from './gen/NewComment';
 import type { NewParts } from './gen/NewParts';
 import type { NewTicket } from './gen/NewTicket';
@@ -17,6 +16,7 @@ import type { StartTicket } from './gen/StartTicket';
 import type { Ticket } from './gen/Ticket';
 import type { TicketAttachment } from './gen/TicketAttachment';
 import type { TicketEvent } from './gen/TicketEvent';
+import type { TicketImportResult } from './gen/TicketImportResult';
 import type { TicketLink } from './gen/TicketLink';
 import type { TicketPage } from './gen/TicketPage';
 import type { TicketPatch } from './gen/TicketPatch';
@@ -27,9 +27,9 @@ export const ticketsApi = {
   listTickets: (q: TicketQuery = {}) => request<TicketPage>(`/api/tickets${queryString(q)}`),
   createTicket: (projectId: string, t: NewTicket) =>
     request<Ticket>(`/api/projects/${enc(projectId)}/tickets`, { method: 'POST', body: JSON.stringify(t) }, { asUser: true }),
-  /** One Jira issue as a ticket linked to it (or the ticket that already links it). */
-  importJiraIssue: (projectId: string, key: string) =>
-    request<JiraImportResult>(`/api/projects/${enc(projectId)}/jira/import`, { method: 'POST', body: JSON.stringify({ key }) }),
+  /** One of a plugin's issues, by its key, as a ticket linked to it (or the ticket that already links it). */
+  importIssue: (projectId: string, integration: string, key: string) =>
+    request<TicketImportResult>(`/api/projects/${enc(projectId)}/import/${enc(integration)}`, { method: 'POST', body: JSON.stringify({ key }) }),
   getTicket: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}`),
   updateTicket: (id: string, p: TicketPatch) =>
     request<Ticket>(`/api/tickets/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }, { asUser: true }),

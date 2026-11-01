@@ -117,7 +117,8 @@ On a phone or tablet, a key bar above the keyboard adds **Esc**, **Tab**, **Ctrl
 When PDT restarts (after an update, say):
 
 - **Workspaces and tabs** stay as they were, on every device.
-- **Terminal sessions** start again on the same agent conversation; the old screen contents are gone.
+- **Terminal sessions** start again on the same agent conversation. A shell starts again below what it showed before,
+  under a **restarted · earlier output above** line.
 - **Conversations** keep their history. A turn that was running is marked interrupted: click **Continue**. Nothing is
   sent to an agent without you (or a workflow you turned on).
 - **Background tasks** an agent started (a long test run, a background sub-agent) stop and never report back. PDT

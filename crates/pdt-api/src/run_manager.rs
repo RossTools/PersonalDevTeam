@@ -281,6 +281,7 @@ fn spawn_step(
         env: env.to_vec(),
         cols: 120,
         rows: 30,
+        output_file: None,
     };
     st.ptys.spawn(spec).map_err(|e| e.to_string())
 }

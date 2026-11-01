@@ -3,4 +3,8 @@
 /**
  * A condition on another setting's value.
  */
-export type FieldWhen = { key: string, value: string, };
+export type FieldWhen = { key: string, value: string, 
+/**
+ * When the other setting does not have the value (`""`: once it is filled in).
+ */
+not: boolean, };

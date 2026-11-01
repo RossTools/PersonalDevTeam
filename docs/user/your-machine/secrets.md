@@ -53,8 +53,9 @@ PDT replaces every secret's value with `[secret:NAME]` everywhere it stores or s
 comments, workflow runs, the Inbox, notifications, its own logs, and bug reports' log excerpts.
 
 PDT can't clean what it doesn't hold: the agent's own transcript files, a terminal session's scrollback, and what a
-command does with the value once it has it. Agents are told never to print a secret; still, give an agent only the
-secrets its work needs.
+command does with the value once it has it. A shell's last output is also kept in PDT's data folder, readable only by
+you, so it can be shown again after PDT restarts; it is deleted with the session. Agents are told never to print a
+secret; still, give an agent only the secrets its work needs.
 
 ## Who used a secret
 

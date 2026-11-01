@@ -116,6 +116,9 @@ async fn the_pm_sets_up_a_discord_channel_and_webhook_that_a_workflow_posts_to()
     .await;
     assert_eq!(s, StatusCode::CREATED, "{bot}");
     let bot_id = bot["id"].as_str().unwrap().to_string();
+    // Without the user's id it has no DMs, so no status line.
+    let (s, status) = call(&env.app, "GET", &format!("/api/connections/{bot_id}/status"), None).await;
+    assert_eq!((s, status), (StatusCode::OK, Value::Null));
     let url = format!("/api/connections/{bot_id}/secret");
     call(&env.app, "PUT", &url, Some(json!({"secret": "bot-token"}))).await;
 

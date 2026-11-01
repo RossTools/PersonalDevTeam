@@ -150,7 +150,7 @@ export function PrDetails({ pr, attemptMerged = false, queueName = 'merge queue'
   );
 }
 
-/** CI of a branch without a pull request (Buildkite builds branches), for a board card. */
+/** CI of a branch without a pull request (a CI plugin that builds branches), for a board card. */
 export function CiBadge({ ci }: { ci: CiStatus }) {
   const jobs = failedJobs(ci);
   return (

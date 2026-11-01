@@ -14,16 +14,17 @@ use pdt_api::sdk::conversations::{answer_as_user, is_working, subscribe_all};
 use pdt_core::conversation::{
     AgentEvent, Answer, ConversationEvent, MessageSource, RequestKind, RequestState, TurnPhase,
 };
+use pdt_core::integration::{ConnectionStatus, StatusTone};
 use pdt_core::notification::{Change, Notification, NotificationKind};
+use pdt_core::workflow::api::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
-use ts_rs::TS;
 
-/// The `via` of a PM conversation held in the DMs.
+/// The `via` of a PM conversation held in the DMs: the plugin's id, which the web names it by.
 pub(crate) const VIA: &str = "discord";
 /// The host value that keeps the DMs' current conversation across restarts.
 const STATE_KEY: &str = "discord.dm";
@@ -35,18 +36,15 @@ const PROMPT_DELAY: Duration = Duration::from_millis(1500);
 /// How often "typing…" is shown again while the PM works (Discord's lasts 10 s).
 const TYPING_EVERY: Duration = Duration::from_secs(8);
 
-/// The DM link's state, shown on its connection (`GET /api/discord/dm`).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct DmStatus {
+/// The DM link's state, shown on its connection ([`connection_status`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct DmStatus {
     /// The bot connection holding it; None when no connection has a user id.
     pub connection: Option<String>,
     /// `off`, `connecting`, `connected`, `retrying` or `failed`.
     pub state: String,
     /// Why it is retrying or failed.
     pub error: Option<String>,
-    #[ts(type = "number")]
     pub since: i64,
 }
 
@@ -67,7 +65,7 @@ fn set_status(connection: Option<&str>, state: &str, error: Option<String>) {
 }
 
 /// The DM link's state now.
-pub fn status() -> DmStatus {
+pub(crate) fn status() -> DmStatus {
     STATUS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -75,9 +73,34 @@ pub fn status() -> DmStatus {
         .unwrap_or_else(|| DmStatus { state: "off".into(), ..Default::default() })
 }
 
-/// `GET /api/discord/dm`.
-pub(crate) async fn status_route() -> axum::Json<DmStatus> {
-    axum::Json(status())
+/// A bot connection's DMs with the PM, on its row (`GET /api/connections/{id}/status`): whether its Gateway
+/// connection is up, or why not. None for a bot without the user's id (it has no DMs).
+pub(crate) fn connection_status(c: &Connection) -> Option<ConnectionStatus> {
+    let has_user = c.config.get("dmUserId").and_then(Value::as_str).is_some_and(|u| !u.trim().is_empty());
+    if c.kind != DISCORD_BOT || !has_user {
+        return None;
+    }
+    let s = status();
+    let mine = s.connection.as_deref() == Some(c.name.as_str());
+    let (state, error) = if mine { (s.state.as_str(), s.error.clone()) } else { ("off", None) };
+    let mut text = match state {
+        "connected" => "Connected",
+        "connecting" => "Connecting…",
+        "retrying" => "Reconnecting",
+        "failed" => "Not connected",
+        "off" => "Off",
+        other => other,
+    }
+    .to_string();
+    if let Some(other) = s.connection.as_deref().filter(|_| !mine) {
+        text = format!("{text} (another bot, {other}, holds them)");
+    }
+    let tone = match state {
+        "connected" => StatusTone::Ok,
+        "failed" => StatusTone::Failed,
+        _ => StatusTone::Neutral,
+    };
+    Some(ConnectionStatus { label: "DMs with the PM".into(), state: text, tone, error })
 }
 
 /// What a link is made from: when any of it changes, the link starts over.
@@ -167,8 +190,9 @@ async fn link(st: AppState, want: Want) {
         match opened {
             Ok(x) => break x,
             Err(e) if e.contains("401") => {
-                set_status(Some(&name), "failed", Some(e.clone()));
+                // The connection's error first: whoever sees the status sees it too.
                 pdt_api::sdk::connections::report(&st, &name, Some(&e)).await;
+                set_status(Some(&name), "failed", Some(e));
                 return;
             }
             Err(e) => {
@@ -190,13 +214,13 @@ async fn link(st: AppState, want: Want) {
             r = rx.recv() => match r {
                 None => return,
                 Some(Report::Connected) => {
-                    set_status(Some(&name), "connected", None);
                     pdt_api::sdk::connections::report(&st, &name, None).await;
+                    set_status(Some(&name), "connected", None);
                 }
                 Some(Report::Retrying(why)) => set_status(Some(&name), "retrying", Some(why)),
                 Some(Report::Failed(why)) => {
-                    set_status(Some(&name), "failed", Some(why.clone()));
                     pdt_api::sdk::connections::report(&st, &name, Some(&why)).await;
+                    set_status(Some(&name), "failed", Some(why));
                     return;
                 }
                 Some(Report::Event(d)) => bridge.dispatch(d).await,

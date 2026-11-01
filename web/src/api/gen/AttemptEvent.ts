@@ -29,7 +29,11 @@ notice: Notice | null,
 /**
  * The ticket's labels when it happened, so a condition can branch on them (`contains` `automerge`).
  */
-labels: Array<string>, projectId: string, ticketId: string, 
+labels: Array<string>, 
+/**
+ * The ticket's title when it happened.
+ */
+ticketTitle: string, projectId: string, ticketId: string, 
 /**
  * `PDT-42`.
  */

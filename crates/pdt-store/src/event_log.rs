@@ -189,14 +189,14 @@ pub(crate) async fn mirror_timeline(
     ) {
         return Ok(());
     }
-    let head: Option<(String, String, i64)> = sqlx::query_as(
-        "SELECT t.project_id, COALESCE(p.key, ''), t.number FROM tickets t JOIN projects p ON p.id = t.project_id \
+    let head: Option<(String, String, i64, String)> = sqlx::query_as(
+        "SELECT t.project_id, COALESCE(p.key, ''), t.number, t.title FROM tickets t JOIN projects p ON p.id = t.project_id \
          WHERE t.id = ?",
     )
     .bind(ticket_id)
     .fetch_optional(&mut *conn)
     .await?;
-    let Some((project_id, pkey, number)) = head else { return Ok(()) };
+    let Some((project_id, pkey, number, ticket_title)) = head else { return Ok(()) };
     let ticket_key = pdt_core::ticket::format_key(&pkey, u32::try_from(number).unwrap_or(0));
     let null = serde_json::Value::Null;
     let data = data.unwrap_or(&null);
@@ -420,6 +420,7 @@ pub(crate) async fn mirror_timeline(
                 session_id,
                 notice,
                 labels: labels.into_iter().map(|(l,)| l).collect(),
+                ticket_title,
             };
             NewLogEvent::new(kind, key, "tickets", payload)
         }

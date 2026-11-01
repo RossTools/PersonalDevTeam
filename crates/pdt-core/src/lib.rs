@@ -9,6 +9,7 @@ pub mod bug_report;
 pub mod conversation;
 pub mod document;
 pub mod document_ops;
+pub mod document_watch;
 pub mod fence;
 pub mod forge;
 pub mod git_url;

@@ -212,14 +212,15 @@ fn body_text(b: &Value) -> String {
     b.get("content").and_then(Value::as_str).map(String::from).unwrap_or_else(|| b.as_str().unwrap_or("").to_string())
 }
 
-async fn dm_status(env: &Env) -> Value {
-    call(&env.app, "GET", "/api/discord/dm", None).await.1
+/// The bot connection's status line (its DMs with the PM).
+async fn dm_status(env: &Env, bot: &str) -> Value {
+    call(&env.app, "GET", &format!("/api/connections/{bot}/status"), None).await.1
 }
 
-async fn wait_status(env: &Env, state: &str) -> Value {
+async fn wait_status(env: &Env, bot: &str, state: &str) -> Value {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        let s = dm_status(env).await;
+        let s = dm_status(env, bot).await;
         if s["state"] == state {
             return s;
         }
@@ -250,8 +251,8 @@ async fn the_user_talks_to_the_pm_in_the_bots_dms() {
     pdt_api::start_services(&env.state);
 
     // It connects with the DM intents, and registers its commands.
-    let st = wait_status(&env, "connected").await;
-    assert_eq!(st["connection"], "home");
+    let st = wait_status(&env, &bot_id, "Connected").await;
+    assert_eq!((st["label"].as_str(), st["tone"].as_str()), (Some("DMs with the PM"), Some("ok")));
     let id = discord.identify.lock().unwrap().clone().unwrap();
     assert_eq!((id["d"]["token"].as_str(), id["d"]["intents"].as_u64()), (Some("bot-token"), Some(4096 + 32768)));
     let cmds = discord.wait_for("commands", |(m, p, _)| m == "PUT" && p.ends_with("/commands")).await;
@@ -376,7 +377,7 @@ async fn the_user_talks_to_the_pm_in_the_bots_dms() {
         assert!(Instant::now() < deadline, "the link never started over");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    wait_status(&env, "connected").await;
+    wait_status(&env, &bot_id, "Connected").await;
     let web = start_pm(&env, "hi from the web").await;
     wait_said(&env, &web, 1).await;
     assert!(discord.posted().iter().all(|(_, b)| !body_text(b).contains("hi from the web")), "not held in the DMs");
@@ -402,7 +403,7 @@ async fn the_user_talks_to_the_pm_in_the_bots_dms() {
         assert!(Instant::now() < deadline, "it never resumed");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    wait_status(&env, "connected").await;
+    wait_status(&env, &bot_id, "Connected").await;
     discord.dm(USER, "still there?");
     discord.wait_dm("echo: still there?").await;
 
@@ -414,12 +415,13 @@ async fn the_user_talks_to_the_pm_in_the_bots_dms() {
     discord.wait_dm("echo: fresh start").await;
     let via: Vec<Value> = pm_list(&env).await.into_iter().filter(|c| c["via"] == "discord").collect();
     assert_eq!(via.len(), 3, "{via:?}");
-    assert!(dm_status(&env).await["state"] == "connected");
+    assert!(dm_status(&env, &bot_id).await["state"] == "Connected");
 
     // A wrong token stops it, and the connection says why.
     *discord.drop_with.lock().unwrap() = Some(4004);
     discord.push.send(json!("drop")).unwrap();
-    let st = wait_status(&env, "failed").await;
+    let st = wait_status(&env, &bot_id, "Not connected").await;
+    assert_eq!(st["tone"], "failed");
     assert!(st["error"].as_str().unwrap().contains("token"), "{st}");
     let (_, conns) = call(&env.app, "GET", "/api/connections", None).await;
     assert!(conns[0]["lastError"].as_str().unwrap().contains("token"), "{conns}");

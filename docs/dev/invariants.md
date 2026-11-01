@@ -192,6 +192,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `@ironcalc/workbook` exchange IronCalc's bytes and diffs, so they are updated together (pdt-sheet's
   `the_web_ui_runs_the_same_ironcalc` checks).
 - **Guides served by pdtd link to each other by API path**, never by repository path (a test checks).
+- **The web doesn't test for an integration's id or name**: what a plugin adds to the UI comes from what it declares
+  (its connection kinds, project settings schema and label), so turning it off removes it. Add a declaration rather
+  than a check on `kind === '…'`. (The Google plugin's sign-in and file picker are still its own components.)
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.
 - **The UI re-renders every 2 s**: effects must be idempotent, and never focus from an inline ref callback.

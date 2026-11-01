@@ -42,8 +42,8 @@ PDT then runs it whenever its trigger happens. Turning it off stops new runs; ru
 ## Add a workflow from a template
 
 1. In **Workflows**, click **New workflow**.
-2. Pick a template: search, or browse **CI & pull requests**, **Tickets**, **Issues**, **Notifications** and
-   **Releases**. **Start from scratch** gives you an empty one; your own templates are under **Yours**, and copies of
+2. Pick a template: search, or browse **CI & pull requests**, **Tickets**, **Issues**, **Notifications**,
+   **Releases** and **Documents**. **Start from scratch** gives you an empty one; your own templates are under **Yours**, and copies of
    the built-ins under **Built-in**.
 3. Fill in its settings, if it has any. **When** and **What it does** preview its triggers and steps.
 4. Give it a **Name** and a **Project**: one project, **This host (every project)** or **None (personal)**.
@@ -216,6 +216,17 @@ run. These ones react to changes to tickets:
 - **Ticket priority changed**: the old priority and the new one.
 - **Ticket parent changed**: it was made a part of another ticket, moved to another parent, or detached.
 
+These ones react to [documents](../using-pdt/documents.md):
+
+- **Document changed**: its content changed, in PDT or at its provider (Google, say).
+- **New comment on a document**: someone commented on it or replied in a comment's thread. It carries who wrote it,
+  the text, and the text it's on. Your own comments count; agents' and workflows' don't, so an agent answering
+  comments never answers itself. What other people wrote reaches agents marked as outside input.
+
+Each watches the document you name, or every document linked to the workflow's project (for **This host**, every
+document linked to a project). PDT looks every minute; the first look only notes where a document is, so turning a
+workflow on, or on again, never replays old changes or comments. A document linked to several projects starts each workflow once.
+
 Some triggers have settings of their own:
 
 - **On a schedule**: every so often, or at set times (a cron line, in your time zone).
@@ -238,6 +249,11 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
 - **Tell people**: **Notify me**, **Put it in my Inbox**, a Discord post, a comment on a GitHub issue.
 - **The PM**: **PM daily update** brings the PM's open conversations up to date; **PM journal checkpoint** asks them
   to write their journal entry.
+- **Work on documents**: **Create a document** (a doc or a sheet, linked to a ticket or the project), **Add to a
+  document** (Markdown at its end or under a heading), **Add rows to a sheet** (under its last row), **Set cells in a
+  sheet**, **Add a chart to a sheet**, and **Comment on a document** (a reply in a comment's thread, or a new comment).
+  Each names its document by title or id, and a dry run says what it would write. In a sheet, a value you type
+  starting with `=` is a formula; text filled in from the event (a ticket's title, say) is always written as text.
 - **Reach out**: **Run a command**, **HTTP request** (through a connection), **MCP tool**, **Run a workflow**.
 - Plugins (Jira, Buildkite, GitHub…) add their own steps while they're on.
 
@@ -290,6 +306,25 @@ Each new issue goes to the **Triage** agent, which drafts a ticket, marks the is
 Drafts wait in the Inbox under **Triaged tickets**: **Approve** sends one to **To do**, **Reject** to **Won't do**.
 Issues opened before you turned it on aren't triaged. Triage runs locked down: see
 [Outside contributions](outside-contributions.md).
+
+### Log merged tickets to a sheet
+
+1. Make a spreadsheet in **Documents** (`Merged tickets`), with a header row if you like: Ticket, Title, Branch, Pull
+   request, How.
+2. **New workflow** › **Log each merged ticket to a sheet** (under **Documents**).
+3. **Spreadsheet**: its title or id. Pick the project, **Create workflow** and turn it on.
+
+Each ticket whose work merges adds a row under the last one: its key, title, branch, pull request and how it merged.
+
+### Answer comments on a project's documents
+
+1. **New workflow** › **Reply to new comments on a project's documents with an agent** (under **Documents**), in
+   the project.
+2. **Persona**: who answers (**Reviewer** by default). **Create workflow** and turn it on.
+
+When someone comments on a document linked to the project (a ticket's design doc, a plan), the agent reads the
+document and the comment and writes a reply, which the workflow posts in the comment's thread; the agent can also
+decide it needs none. Comments made before you turned it on are left alone.
 
 ### Report failed workflow runs
 

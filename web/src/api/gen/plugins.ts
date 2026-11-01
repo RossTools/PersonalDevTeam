@@ -36,7 +36,7 @@ export const plugins: IntegrationInfo[] = [
         "secretOptional": false,
         "urlOptional": false,
         "fields": [],
-        "discordBot": false
+        "status": false
       }
     ],
     "nodeKinds": [
@@ -225,7 +225,7 @@ export const plugins: IntegrationInfo[] = [
         "secretOptional": false,
         "urlOptional": false,
         "fields": [],
-        "discordBot": false
+        "status": false
       }
     ],
     "nodeKinds": [
@@ -277,7 +277,8 @@ export const plugins: IntegrationInfo[] = [
         "urlOptional": false,
         "urlWhen": {
           "key": "transport",
-          "value": "http"
+          "value": "http",
+          "not": false
         },
         "fields": [
           {
@@ -294,7 +295,8 @@ export const plugins: IntegrationInfo[] = [
                 "label": "An address (HTTP)"
               }
             ],
-            "optional": false
+            "optional": false,
+            "numeric": false
           },
           {
             "key": "command",
@@ -303,9 +305,11 @@ export const plugins: IntegrationInfo[] = [
             "placeholder": "npx",
             "when": {
               "key": "transport",
-              "value": "stdio"
+              "value": "stdio",
+              "not": false
             },
-            "optional": false
+            "optional": false,
+            "numeric": false
           },
           {
             "key": "args",
@@ -315,9 +319,11 @@ export const plugins: IntegrationInfo[] = [
             "type": "lines",
             "when": {
               "key": "transport",
-              "value": "stdio"
+              "value": "stdio",
+              "not": false
             },
-            "optional": true
+            "optional": true,
+            "numeric": false
           },
           {
             "key": "env",
@@ -327,9 +333,11 @@ export const plugins: IntegrationInfo[] = [
             "type": "env",
             "when": {
               "key": "transport",
-              "value": "stdio"
+              "value": "stdio",
+              "not": false
             },
-            "optional": true
+            "optional": true,
+            "numeric": false
           },
           {
             "key": "secretEnv",
@@ -338,12 +346,14 @@ export const plugins: IntegrationInfo[] = [
             "placeholder": "API_TOKEN",
             "when": {
               "key": "transport",
-              "value": "stdio"
+              "value": "stdio",
+              "not": false
             },
-            "optional": true
+            "optional": true,
+            "numeric": false
           }
         ],
-        "discordBot": false
+        "status": false
       }
     ],
     "nodeKinds": [
@@ -393,7 +403,8 @@ export const plugins: IntegrationInfo[] = [
         "secretOptional": false,
         "urlOptional": false,
         "fields": [],
-        "discordBot": false
+        "summary": "#{channel}",
+        "status": false
       },
       {
         "id": "discord_bot",
@@ -408,8 +419,51 @@ export const plugins: IntegrationInfo[] = [
         "auth": false,
         "secretOptional": false,
         "urlOptional": false,
-        "fields": [],
-        "discordBot": true,
+        "fields": [
+          {
+            "key": "guildId",
+            "label": "Server ID",
+            "hint": "In Discord, turn on Developer Mode (Settings → Advanced), then right-click the server → Copy Server ID.",
+            "optional": false,
+            "pattern": "^\\d+$",
+            "numeric": true
+          },
+          {
+            "key": "applicationId",
+            "label": "Application ID",
+            "hint": "Developer Portal → your application → General Information. Used only to make the invite link.",
+            "optional": true,
+            "pattern": "^\\d+$",
+            "numeric": true
+          },
+          {
+            "key": "dmUserId",
+            "label": "Your Discord user ID (optional)",
+            "hint": "To talk to the PM in the bot's DMs: with Developer Mode on, right-click your name → Copy User ID. Only this account's DMs and button presses reach the PM. It needs Message Content Intent on (Developer Portal → Bot → Privileged Gateway Intents).",
+            "optional": true,
+            "pattern": "^\\d+$",
+            "numeric": true
+          },
+          {
+            "key": "dmInbox",
+            "label": "Also send Inbox items (stalled, needs input) as DMs",
+            "type": "switch",
+            "when": {
+              "key": "dmUserId",
+              "value": "",
+              "not": true
+            },
+            "optional": false,
+            "numeric": false
+          }
+        ],
+        "summary": "Server {guildId}",
+        "link": {
+          "title": "Invite the bot",
+          "url": "https://discord.com/oauth2/authorize?client_id={applicationId}&scope=bot&permissions=536874000",
+          "hint": "Open it, pick the server, and keep the permissions it asks for."
+        },
+        "status": true,
         "pmActs": "The PM changes this server without asking"
       }
     ],
@@ -493,7 +547,8 @@ export const plugins: IntegrationInfo[] = [
                 "label": "Jira Server / Data Center"
               }
             ],
-            "optional": false
+            "optional": false,
+            "numeric": false
           },
           {
             "key": "email",
@@ -502,9 +557,11 @@ export const plugins: IntegrationInfo[] = [
             "placeholder": "you@work.com",
             "when": {
               "key": "deployment",
-              "value": "cloud"
+              "value": "cloud",
+              "not": false
             },
-            "optional": false
+            "optional": false,
+            "numeric": false
           },
           {
             "key": "fields",
@@ -512,28 +569,32 @@ export const plugins: IntegrationInfo[] = [
             "hint": "Names for this site’s custom fields, one name=field id per line; the PM and workflows can use them in place of the ids.",
             "placeholder": "storyPoints=customfield_10016\nseverity=customfield_10200",
             "type": "env",
-            "optional": true
+            "optional": true,
+            "numeric": false
           },
           {
             "key": "epicNameField",
             "label": "Epic Name field",
             "hint": "The Epic Name field’s id; found by its type when left empty.",
             "placeholder": "customfield_10011",
-            "optional": true
+            "optional": true,
+            "numeric": false
           },
           {
             "key": "epicLinkField",
             "label": "Epic Link field",
             "hint": "The Epic Link field’s id; found by its type when left empty (Cloud without one uses the issue’s parent).",
             "placeholder": "customfield_10014",
-            "optional": true
+            "optional": true,
+            "numeric": false
           },
           {
             "key": "sprintField",
             "label": "Sprint field",
             "hint": "The Sprint field’s id; found by its type when left empty.",
             "placeholder": "customfield_10020",
-            "optional": true
+            "optional": true,
+            "numeric": false
           },
           {
             "key": "backlogSections",
@@ -541,10 +602,11 @@ export const plugins: IntegrationInfo[] = [
             "hint": "Sprints that are sections of the backlog rather than sprints, one name per line (* at the end for any name starting so). They are never the active sprint.",
             "placeholder": "Backlog: *",
             "type": "lines",
-            "optional": true
+            "optional": true,
+            "numeric": false
           }
         ],
-        "discordBot": false,
+        "status": false,
         "pmActs": "The PM creates, edits, moves and comments on issues, imports them and changes sprints and epics without asking"
       }
     ],
@@ -709,10 +771,11 @@ export const plugins: IntegrationInfo[] = [
             "label": "Organization",
             "hint": "Its slug, as in buildkite.com/<organization>.",
             "placeholder": "acme",
-            "optional": false
+            "optional": false,
+            "numeric": false
           }
         ],
-        "discordBot": false
+        "status": false
       }
     ],
     "nodeKinds": [
@@ -799,31 +862,35 @@ export const plugins: IntegrationInfo[] = [
             "label": "OAuth client ID",
             "hint": "The OAuth client's ID (Google Cloud → APIs & Services → Credentials).",
             "placeholder": "1234-abc.apps.googleusercontent.com",
-            "optional": false
+            "optional": false,
+            "numeric": false
           },
           {
             "key": "apiKey",
             "label": "Picker API key",
             "hint": "An API key of the same Google Cloud project, for Google's file picker. Without it you can't pick files from your Drive.",
             "placeholder": "AIza…",
-            "optional": true
+            "optional": true,
+            "numeric": false
           },
           {
             "key": "appId",
             "label": "Project number",
             "hint": "The Google Cloud project's number (its dashboard shows it), for the file picker.",
             "placeholder": "123456789012",
-            "optional": true
+            "optional": true,
+            "numeric": false
           },
           {
             "key": "folder",
             "label": "Folder for new documents",
             "hint": "Where new Docs and Sheets go: a Drive folder's address or ID. Empty: My Drive.",
             "placeholder": "https://drive.google.com/drive/folders/…",
-            "optional": true
+            "optional": true,
+            "numeric": false
           }
         ],
-        "discordBot": false
+        "status": false
       }
     ],
     "nodeKinds": [],
@@ -874,17 +941,19 @@ export const plugins: IntegrationInfo[] = [
             "label": "Quality profile",
             "hint": "Used when a step adds without naming one: a profile’s name or id. Empty: the first profile.",
             "placeholder": "HD-1080p",
-            "optional": true
+            "optional": true,
+            "numeric": false
           },
           {
             "key": "rootFolder",
             "label": "Root folder",
             "hint": "Where adds go unless a step says. Empty: the first root folder.",
             "placeholder": "/movies",
-            "optional": true
+            "optional": true,
+            "numeric": false
           }
         ],
-        "discordBot": false
+        "status": false
       },
       {
         "id": "sonarr",
@@ -906,17 +975,19 @@ export const plugins: IntegrationInfo[] = [
             "label": "Quality profile",
             "hint": "Used when a step adds without naming one: a profile’s name or id. Empty: the first profile.",
             "placeholder": "HD-1080p",
-            "optional": true
+            "optional": true,
+            "numeric": false
           },
           {
             "key": "rootFolder",
             "label": "Root folder",
             "hint": "Where adds go unless a step says. Empty: the first root folder.",
             "placeholder": "/tv",
-            "optional": true
+            "optional": true,
+            "numeric": false
           }
         ],
-        "discordBot": false
+        "status": false
       }
     ],
     "nodeKinds": [
@@ -988,7 +1059,7 @@ export const plugins: IntegrationInfo[] = [
         "urlHint": "Scryer’s address, with its base path if it has one (http://nas/scryer).",
         "urlOptional": false,
         "fields": [],
-        "discordBot": false,
+        "status": false,
         "pmActs": "The PM adds titles and changes settings without asking (deleting, resetting and passing on a credential still ask)"
       }
     ],
@@ -1076,7 +1147,7 @@ export const plugins: IntegrationInfo[] = [
         "urlPlaceholder": "http://192.168.1.10:32400",
         "urlOptional": false,
         "fields": [],
-        "discordBot": false
+        "status": false
       }
     ],
     "nodeKinds": [

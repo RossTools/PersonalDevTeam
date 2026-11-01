@@ -3576,6 +3576,7 @@ mod tests {
             (Some("detected"), Some(4), Some("at1"))
         );
         assert!(merged["notice"]["text"].as_str().unwrap().contains("PR #4"));
+        assert_eq!(merged["ticketTitle"], "A", "a sheet's log row can name it");
         assert_eq!(log[3].key, "at1:merged");
         store.add_comment("a", "please also fix x", 10).await.unwrap();
         let log = store

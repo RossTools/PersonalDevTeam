@@ -27,7 +27,8 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   `PDT_WEB_DIR`, a `web/` folder beside the executable, or the macOS bundle's resources.
 - **pdt-host** (`crates/pdt-host`) supervises pdtd: starts it (passing the port from Settings), restarts it, adopts a
   pdtd that is already running, and installs updates: pdtd downloads and verifies a release, pdt-host copies the
-  database aside, swaps the install, health-checks the new pdtd and rolls back (database included) when it fails. It
+  database aside, swaps the install, health-checks the new pdtd and rolls back (database included; on Windows also the
+  installer's registry keys, `nsis_registry.rs`) when it fails. It
   is registered to start at login: a LaunchAgent on macOS, an HKCU Run value on Windows, a systemd user unit on Linux.
 - **The tray app** (`desktop/src-tauri`, Tauri v2) is optional and has no window of its own: it starts pdt-host when
   pdtd doesn't answer, opens the UI in the browser and can restart the daemon. Quitting it leaves PDT running.
@@ -67,7 +68,7 @@ and `backups/` (a copy taken before migrations).
 | `pdt-sheet` | Local sheets on IronCalc: `.xlsx` and `.csv` in and out, cells with computed values, formats, sheets, sort and filter, and IronCalc's sync diffs. |
 | `pdt-host` | The supervisor: running pdtd, installing updates, rolling back, login registration. |
 | `pdtd` | The daemon binary: config, logging, startup (`main.rs`: the state, the startup resume and the poll), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
-| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
+| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them; the web shows what they declare: a connection kind's fields (switches, patterns, conditions), invite link (`link`), row summary (`summary`) and status line (`status`, `Integration::connection_status`, `GET /api/connections/{id}/status`), a project settings schema's import by key (`import`, `Integration::import_by_key`, `POST /api/projects/{id}/import/{integration}`), and each plugin's label. |
 
 Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients match on `code`. API types derive ts-rs
 and are generated into `web/src/api/gen`.
@@ -160,7 +161,9 @@ area is a conflict.
 **Sessions.** An agent session runs as a terminal (the agent's own TUI in a PTY) or a conversation (PDT's structured
 view: Claude's stream-json, a PDT-owned Codex app-server, Devin and other agents over ACP). Conversation events are
 stored in `session_events` (in the order received; while writes fail they wait in memory, and a Claude conversation's
-gaps are filled in from its transcript when it loads); terminals keep their scrollback in memory. Every agent gets PDT's instructions (pdt-core
+gaps are filled in from its transcript when it loads); terminals keep their scrollback in memory, and a shell also tees its output to `sessions/<id>/output.log` in the
+data dir (pdt-agents `output_file`, capped and rotated at the scrollback size), which the next process of that session
+shows above a divider. Every agent gets PDT's instructions (pdt-core
 `agent_context`, plus the project's agent instructions and the ticket), written to the session's folder and passed in
 the way each agent takes them. A session belongs to an attempt (the Coder's) or to a ticket (a workflow step's
 reviewer or QA). Claude, Codex and Devin terminals are resumed by their conversation ids after a restart;
@@ -203,7 +206,7 @@ that journal. The daily update and checkpoint are not hard-coded: the built-in *
 the `pm.update` and `pm.checkpoint` nodes (pdt-api `workflow/nodes/pm.rs`) on an hourly schedule; `pm.update` brings
 each running open conversation due (`pm_sessions.caught_up_at`, `pdt_core::pm::update_due`) up to date through the
 outbox. Journaling at Close, Reset and compaction stays in `pm.rs`. A conversation can be
-held elsewhere too (`pm_sessions.via`): the Discord integration passes the user's DMs to one (pdt-int-discord `dm.rs`),
+held elsewhere too (`pm_sessions.via`, the integration's id, which the web names by its plugin label): the Discord integration passes the user's DMs to one (pdt-int-discord `dm.rs`),
 through the SDK's `pm` and `conversations` modules (start, send, close; every conversation's events as they are stored,
 `conversations::subscribe_all`; answering a request as the user). Its bot holds a Gateway websocket (`gateway.rs`) in
 an integration service (`Integration::services`, started once by pdtd, idle while the plugin is off).
@@ -344,6 +347,23 @@ IronCalc's bytes and diffs; a pdt-sheet test checks), and is loaded only when a 
 
 `GET /api/documents/{id}/version` is the provider's version (Google's Drive counter): `DocumentBody` polls it in PDT's
 own view, so edits made at the provider (in Google's editor) show too.
+
+Workflows work on documents through the `documents` integration's node kinds (pdt-api `documents/nodes.rs`):
+`document.create`, `document.append`, `sheet.append_rows`, `sheet.set_range`, `sheet.add_chart` and
+`document.comment`, each a thin layer over the same provider calls as the tools (`apply_edits`, `create_document`),
+and its two templates (`documents/templates.rs`). The triggers `document.changed` and `document.comment_added` are
+fed by a poller (`documents/watch.rs`, the 60 s pass): it looks only at the documents an enabled trigger watches
+(the one it names, else those linked to the workflow's projects), compares the provider's `version` and its comment
+ids with what it saw last (host values `sensor.document_version.<id>`, `sensor.document_comments.<id>`; the first look
+only records; the state of a document no trigger watches now is deleted, so watching it again starts with a first
+look), and logs one event per linked project. Each trigger takes one copy of an event (pdt-core
+`document_watch::accepts_copy`), so a document linked to two projects starts a host workflow once. Comments an agent or
+a workflow wrote never count: the provider's `actor` on a comment says so where it knows, and the ids of replies PDT
+posted are kept (`sensor.document_ours.<id>`) for providers that write them as the user (Google). A comment's text is
+an outside field of its event, fenced for agents unless `byUser` (the user wrote it). The sheet steps write text that came from a
+reference with a leading `'` when it would read as a formula (pdt-core `document_watch::text_from_refs`); every
+provider takes that as text (IronCalc's quote prefix, Google's `USER_ENTERED`, `document_ops`), so only formulas
+written into the step's config run.
 
 **Google.** An optional plugin (`crates/pdt-int-google`, pdtd's `google` feature), the `google` document provider.
 Each Google account is a `google` connection (the folder for new files, and, for the user's own OAuth client, its ID

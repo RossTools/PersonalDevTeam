@@ -204,7 +204,7 @@ pub(crate) async fn refuse_secrets(st: &AppState, s: &Session) -> Result<(), Str
 /// None for a trigger whose event carries none.
 pub(crate) fn trigger_source(reg: &crate::integrations::Registry, trigger: &Value) -> Option<(String, Option<String>)> {
     let kind = trigger.get("type").and_then(Value::as_str)?;
-    if reg.event_type(kind).is_none_or(|t| t.outside.is_empty()) {
+    if reg.event_type(kind).is_none_or(|t| t.outside.is_empty()) || pdt_core::workflow::events::by_user(trigger) {
         return None;
     }
     let s = |k: &str| trigger.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(String::from);
