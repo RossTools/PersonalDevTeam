@@ -1,29 +1,21 @@
-import { lazy, Suspense, useCallback, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pencil, Plus, X } from 'lucide-react';
-import { Alert, Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, SegmentedControl, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
-import { cn } from '@ui/lib/utils';
+import { Alert, Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
 import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
-import type { CommentAnchor } from '../api/gen/CommentAnchor';
-import type { DocumentContent } from '../api/gen/DocumentContent';
-import type { ProviderInfo } from '../api/gen/ProviderInfo';
-import type { Sheet } from '../api/gen/Sheet';
 import { ProjectKey } from '../common/BranchChip';
 import { InlineRename } from '../common/InlineRename';
-import { actionError, runAction } from '../common/useAction';
+import { cn } from '@ui/lib/utils';
+import { runAction } from '../common/useAction';
 import { useOpenTicket } from '../tickets/actions';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { TicketPicker } from '../tickets/TicketPicker';
-import { DocEditor } from './DocEditor';
-import { DocumentComments, headingsOf } from './DocumentComments';
 import { KindIcon } from './LinkedDocuments';
+import { openBesideEntry, useBesideTargets } from './BesidePanel';
+import { DocumentBody, type SheetHandle } from './DocumentBody';
+import { DocumentComments, headingsOf } from './DocumentComments';
 import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders } from './queries';
-
-// IronCalc's editor (and its WASM) loads only when a sheet opens.
-const SheetEditor = lazy(() => import('./SheetEditor'));
-
-type SheetHandle = { selection: () => CommentAnchor | null; show: (a: CommentAnchor) => void; sheet: () => string };
 
 /** Downloads a file pdtd serves. */
 function download(url: string) {
@@ -35,71 +27,13 @@ function download(url: string) {
   a.remove();
 }
 
+/** The ids of the tickets a document is linked to (their conversations are where it can open beside). */
+const linkedTickets = (d: Document | null | undefined) => d?.tickets.map((t) => t.id) ?? [];
+
 /** Who added it, for people. */
 function addedBy(d: Document): string {
   if (d.actor === 'user') return 'you';
   return d.agent?.persona ?? 'an agent';
-}
-
-/** A sheet as a table: its rows from A1, with column letters and row numbers; a cell's formula shows on hover. */
-function SheetTable({ sheet }: { sheet: Sheet }) {
-  const width = Math.max(0, ...sheet.rows.map((r) => r.length));
-  const letter = (i: number): string => (i < 26 ? String.fromCharCode(65 + i) : letter(Math.floor(i / 26) - 1) + letter(i % 26));
-  if (sheet.rows.length === 0) return <p className="text-xs text-muted-foreground">This sheet is empty.</p>;
-  return (
-    <div className="overflow-auto rounded-md border border-border">
-      <table className="border-collapse text-xs">
-        <thead>
-          <tr>
-            <th className="sticky left-0 bg-muted px-2 py-1" />
-            {Array.from({ length: width }, (_, i) => <th key={i} scope="col" className="border-l border-border bg-muted px-2 py-1 font-medium text-muted-foreground">{letter(i)}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {sheet.rows.map((row, r) => (
-            <tr key={r} className="border-t border-border">
-              <th scope="row" className="sticky left-0 bg-muted px-2 py-1 text-right font-medium text-muted-foreground">{r + 1}</th>
-              {Array.from({ length: width }, (_, c) => {
-                const cell = row[c];
-                return <td key={c} className="border-l border-border px-2 py-1 whitespace-nowrap" title={cell?.formula ?? undefined}>{cell?.value ?? ''}</td>;
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function Content({ id, content, provider, onSheet }: { id: string; content: DocumentContent; provider?: ProviderInfo; onSheet: (h: SheetHandle | null) => void }) {
-  const [sheet, setSheet] = useState(0);
-  const live = !!provider?.capabilities.live;
-  if (content.kind === 'doc') {
-    return <DocEditor id={id} markdown={content.markdown} version={content.version ?? null} editable={live && provider.capabilities.edit} />;
-  }
-  if (live) {
-    return (
-      <Suspense fallback={<Skeleton lines={8} label="Opening the sheet" />}>
-        <SheetEditor id={id} onReady={onSheet} />
-      </Suspense>
-    );
-  }
-  const shown = content.sheets[Math.min(sheet, content.sheets.length - 1)];
-  return (
-    <div className="flex flex-col gap-2">
-      {content.sheets.length > 1 && (
-        <SegmentedControl
-          aria-label="Sheet"
-          size="sm"
-          className="self-start"
-          options={content.sheets.map((s, i) => ({ value: String(i), label: s.name }))}
-          value={String(Math.min(sheet, content.sheets.length - 1))}
-          onChange={(v) => setSheet(Number(v))}
-        />
-      )}
-      {shown ? <SheetTable sheet={shown} /> : <p className="text-xs text-muted-foreground">No sheets.</p>}
-    </div>
-  );
 }
 
 const linkHeading = 'text-2xs font-semibold tracking-wider text-muted-foreground uppercase';
@@ -118,6 +52,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
   const [renaming, setRenaming] = useState(false);
   const [linkingTicket, setLinkingTicket] = useState(false);
+  const besideTargets = useBesideTargets(linkedTickets(doc.data));
   const [sheetHandle, setSheetHandle] = useState<SheetHandle | null>(null);
   const onSheet = useCallback((h: SheetHandle | null) => setSheetHandle(h), []);
   const content = useDocumentContent(id);
@@ -156,6 +91,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const entries = (): MenuEntry[] => [
     { label: 'Rename', onSelect: () => setRenaming(true) },
     { label: 'Read again', onSelect: () => void qc.invalidateQueries({ queryKey: documentKeys.content(id) }) },
+    ...(d ? [openBesideEntry(besideTargets, d.id)] : []),
     ...exports(),
     { separator: true },
     { label: 'Remove from PDT…', onSelect: () => remove(false), danger: true },
@@ -252,9 +188,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
         </section>
 
         <section aria-label="Content" className="flex flex-col gap-2">
-          {content.isPending && <Skeleton lines={6} label="Reading the document" />}
-          {content.isError && <Alert tone="error">{provider?.label ?? d.provider} could not read it: {actionError(content.error)}</Alert>}
-          {content.data && <Content id={id} content={content.data.content} provider={provider} onSheet={onSheet} />}
+          <DocumentBody id={id} providerLabel={provider?.label ?? d.provider} onSheet={onSheet} />
         </section>
 
         {provider?.capabilities.comments && content.data && (

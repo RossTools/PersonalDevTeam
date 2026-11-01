@@ -16,6 +16,7 @@ CREATE INDEX document_comments_by_document ON document_comments (document_id, cr
 CREATE TABLE document_charts (
     document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     chart_id    TEXT NOT NULL,
+    sheet       TEXT NOT NULL,               -- the sheet it is on (its name)
     spec        TEXT NOT NULL,               -- ChartSpec JSON
     position    INTEGER NOT NULL,
     PRIMARY KEY (document_id, chart_id)

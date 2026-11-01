@@ -98,6 +98,16 @@ async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
     let (s, _) = edit(&env, &id, json!([{"op": "append_text", "markdown": "## Notes\n"}])).await;
     assert_eq!(s, StatusCode::OK);
     assert!(matches!(next_event(&mut rx), DocEvent::Changed { .. }));
+    // And replaces a section by its heading.
+    let (s, r) =
+        edit(&env, &id, json!([{"op": "replace_section", "heading": "Notes", "markdown": "None yet.\n"}])).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    assert!(
+        std::fs::read_to_string(&path).unwrap().ends_with("## Notes\n\nNone yet.\n"),
+        "{}",
+        std::fs::read_to_string(&path).unwrap()
+    );
+    assert!(matches!(next_event(&mut rx), DocEvent::Changed { .. }));
 
     // The file changed outside PDT: an open view hears of it.
     std::fs::write(&path, "# Edited by hand\n").unwrap();
@@ -209,32 +219,36 @@ async fn a_local_sheet_computes_formats_sorts_filters_charts_and_exports() {
         json!([
             {"op": "set_cells", "sheet": "Sheet1", "cell": "A1", "values": [
                 ["Item", "Cost"], ["Pens", "3"], ["Ink", "12"], ["Paper", "7"], ["Total", "=SUM(B2:B4)"]]},
-            {"op": "set_style", "sheet": "Sheet1", "range": "A1:B1", "style": "font.b", "value": "true"},
-            {"op": "set_style", "sheet": "Sheet1", "range": "B2:B5", "style": "num_fmt", "value": "#,##0.00"},
+            {"op": "format_range", "sheet": "Sheet1", "range": "A1:B1", "format": {"bold": true}},
+            {"op": "format_range", "sheet": "Sheet1", "range": "B2:B5", "format": {"numberFormat": "#,##0.00"}},
+            {"op": "conditional_format", "sheet": "Sheet1", "range": "B2:B4", "when": {"type": "greater_than", "value": "10"},
+                "format": {"background": "#ffeeee"}},
             {"op": "add_sheet", "name": "Notes"},
-            {"op": "set_chart", "chart": {"kind": "bar", "title": "Costs", "sheet": "Sheet1", "categories": "A2:A4",
-                "series": [{"name": "Cost", "values": "B2:B4"}], "anchor": "D2"}}
+            {"op": "add_chart", "sheet": "Sheet1", "chart": {"kind": "column", "title": "Costs", "data": "A1:B4", "anchor": "D2"}}
         ]),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{r}");
+    let chart_id = r["charts"][0].as_str().unwrap().to_string();
     let (_, c) = call(&env.app, "GET", &format!("/api/documents/{id}/content"), None).await;
+    assert_eq!(c["content"]["sheets"][0]["charts"][0]["id"], json!(chart_id), "the sheet lists its chart: {c}");
     let rows = &c["content"]["sheets"][0]["rows"];
     assert_eq!((&rows[4][1]["value"], &rows[4][1]["formula"]), (&json!("22.00"), &json!("=SUM(B2:B4)")), "{c}");
     assert_eq!(c["content"]["sheets"][1]["name"], "Notes");
     let back = Workbook::open(std::path::Path::new(&reference)).unwrap();
     assert!(back.style("Sheet1", "A1").unwrap().font.b, "formats are saved in the file");
+    assert_eq!(back.model().get_conditional_formatting_list(0).unwrap().len(), 1);
 
     let (_, charts) = call(&env.app, "GET", &format!("/api/documents/{id}/charts"), None).await;
     assert_eq!(charts[0]["labels"], json!(["Pens", "Ink", "Paper"]), "{charts}");
-    assert_eq!(charts[0]["values"], json!([[3.0, 12.0, 7.0]]));
-    let chart_id = charts[0]["spec"]["id"].as_str().unwrap().to_string();
+    assert_eq!(charts[0]["series"], json!([{"name": "Cost", "values": [3.0, 12.0, 7.0]}]));
+    assert_eq!(charts[0]["sheet"], "Sheet1");
 
     // Sort by cost, highest first; the total still adds them up.
     let (s, _) = edit(
         &env,
         &id,
-        json!([{"op": "sort", "sheet": "Sheet1", "range": "A2:B4", "column": "B", "descending": true}]),
+        json!([{"op": "sort", "sheet": "Sheet1", "range": "A1:B4", "by": [{"column": "B", "descending": true}], "header": true}]),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -244,13 +258,22 @@ async fn a_local_sheet_computes_formats_sorts_filters_charts_and_exports() {
     let (s, _) = edit(
         &env,
         &id,
-        json!([{"op": "filter", "sheet": "Sheet1", "range": "A2:B4", "column": "A", "values": ["ink"]}]),
+        json!([{"op": "filter", "sheet": "Sheet1", "range": "A1:B4", "column": "A", "when": {"type": "equal_to", "value": "ink"}}]),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
     let wb = Workbook::open(std::path::Path::new(&reference)).unwrap();
     assert_eq!((2..=4).map(|r| wb.row_hidden("Sheet1", r).unwrap()).collect::<Vec<_>>(), [false, true, true]);
-    edit(&env, &id, json!([{"op": "filter", "sheet": "Sheet1", "range": "A2:B4", "column": "A"}])).await;
+    let (s, _) = edit(&env, &id, json!([{"op": "clear_filter", "sheet": "Sheet1"}])).await;
+    assert_eq!(s, StatusCode::OK);
+    // Charts follow a renamed sheet; an unknown chart is refused.
+    let (s, _) = edit(&env, &id, json!([{"op": "rename_sheet", "sheet": "Sheet1", "name": "Costs"}])).await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, charts) = call(&env.app, "GET", &format!("/api/documents/{id}/charts"), None).await;
+    assert_eq!((&charts[0]["sheet"], &charts[0]["labels"][0]), (&json!("Costs"), &json!("Ink")), "{charts}");
+    let (s, _) = edit(&env, &id, json!([{"op": "delete_chart", "id": "nope"}])).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    edit(&env, &id, json!([{"op": "rename_sheet", "sheet": "Costs", "name": "Sheet1"}])).await;
 
     // A bad edit changes nothing (the list is all or none).
     let (s, e) = edit(
@@ -264,8 +287,8 @@ async fn a_local_sheet_computes_formats_sorts_filters_charts_and_exports() {
     assert_eq!(s, StatusCode::BAD_REQUEST, "{e}");
     let (_, c) = call(&env.app, "GET", &format!("/api/documents/{id}/content"), None).await;
     assert_eq!(c["content"]["sheets"][0]["rows"].as_array().unwrap().len(), 5, "{c}");
-    let (s, _) = edit(&env, &id, json!([{"op": "replace_text", "markdown": "x"}])).await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, e) = edit(&env, &id, json!([{"op": "replace_text", "markdown": "x"}])).await;
+    assert_eq!((s, &e["code"]), (StatusCode::BAD_REQUEST, &json!("unsupported")), "{e}");
 
     // Export: the workbook, and a sheet as CSV.
     let (s, h, bytes) = raw(&env, "GET", &format!("/api/documents/{id}/export?format=xlsx"), vec![]).await;

@@ -3,4 +3,8 @@
 /**
  * The new version after edits.
  */
-export type EditResult = { version: string | null, };
+export type EditResult = { version: string | null, 
+/**
+ * The ids of the charts the edits added, in order.
+ */
+charts: Array<string>, };

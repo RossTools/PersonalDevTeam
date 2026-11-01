@@ -11,9 +11,10 @@
 use super::{CommentInput, DocumentProvider, NewFile, ProviderError, ProviderResult};
 use crate::workflow::catalog::BoxFut;
 use pdt_core::document::{
-    ChartSpec, ChartView, CommentReply, DocumentComment, DocumentContent, DocumentEdit, DocumentKind,
-    ProviderCapabilities, ProviderFile, documents_folder,
+    Chart, ChartSeriesView, ChartView, CommentReply, DocumentComment, DocumentContent, DocumentEdit, DocumentKind,
+    ProviderCapabilities, ProviderFile, cell_name, documents_folder, parse_range,
 };
+use pdt_core::document_ops::{EditError, apply_doc_edit};
 use pdt_core::ticket::Actor;
 use pdt_sheet::{Value, Workbook};
 use pdt_store::{NewDocumentComment, Store};
@@ -171,6 +172,43 @@ fn number(v: &Value) -> Option<f64> {
         Value::Text(t) => t.trim().replace(',', "").parse().ok(),
         Value::Empty => None,
     }
+}
+
+/// Marks an error from a cell edit that the local provider can't do at all.
+const UNSUPPORTED: &str = "unsupported: ";
+
+fn edit_error(e: EditError) -> ProviderError {
+    match e {
+        EditError::Unsupported(m) => ProviderError::Unsupported(m),
+        EditError::Invalid(m) => ProviderError::Invalid(m),
+    }
+}
+
+/// A chart with its numbers: its data range's first column (under the header row) labels it, and each other column
+/// is a series named by its header.
+fn chart_view(wb: &Workbook, sheet: String, chart: Chart) -> ChartView {
+    let mut labels = Vec::new();
+    let mut series = Vec::new();
+    if let Some(((r1, c1), (r2, c2))) = parse_range(&chart.spec.data) {
+        let range = |a: (usize, usize), b: (usize, usize)| format!("{}:{}", cell_name(a.0, a.1), cell_name(b.0, b.1));
+        let header =
+            wb.shown(&sheet, &range((r1, c1), (r1, c2))).ok().and_then(|r| r.into_iter().next()).unwrap_or_default();
+        if r2 > r1 {
+            labels = wb
+                .shown(&sheet, &range((r1 + 1, c1), (r2, c1)))
+                .map(|rows| rows.into_iter().flatten().collect())
+                .unwrap_or_default();
+            for c in c1 + 1..=c2 {
+                let values = wb
+                    .values(&sheet, &range((r1 + 1, c), (r2, c)))
+                    .map(|rows| rows.iter().flatten().map(number).collect())
+                    .unwrap_or_default();
+                let name = header.get(c - c1).filter(|n| !n.is_empty()).cloned().unwrap_or_else(|| cell_name(r1, c));
+                series.push(ChartSeriesView { name, values });
+            }
+        }
+    }
+    ChartView { sheet, chart, labels, series }
 }
 
 impl LocalProvider {
@@ -348,31 +386,13 @@ impl LocalProvider {
 
     /// A sheet's charts with the numbers they draw, read from the live model.
     pub async fn charts(&self, document_id: &str, reference: &str) -> ProviderResult<Vec<ChartView>> {
-        let specs = self.store.document_charts(document_id).await.map_err(failed)?;
-        if specs.is_empty() {
+        let charts = self.store.document_charts(document_id).await.map_err(failed)?;
+        if charts.is_empty() {
             return Ok(vec![]);
         }
         let l = self.live(reference)?;
         let l = lock(&l);
-        Ok(specs
-            .into_iter()
-            .map(|spec| {
-                let labels =
-                    l.wb.shown(&spec.sheet, &spec.categories)
-                        .map(|rows| rows.into_iter().flatten().collect())
-                        .unwrap_or_default();
-                let values = spec
-                    .series
-                    .iter()
-                    .map(|s| {
-                        l.wb.values(&spec.sheet, &s.values)
-                            .map(|rows| rows.iter().flatten().map(number).collect())
-                            .unwrap_or_default()
-                    })
-                    .collect();
-                ChartView { spec, labels, values }
-            })
-            .collect())
+        Ok(charts.into_iter().map(|(sheet, chart)| chart_view(&l.wb, sheet, chart)).collect())
     }
 
     /// A document as a file: a doc as `.md`; a sheet as `.xlsx`, or one of its sheets as `.csv`.
@@ -572,17 +592,8 @@ impl LocalProvider {
         let doc = self.doc_lock(reference);
         let _held = lock(&doc);
         let mut text = String::from_utf8_lossy(&std::fs::read(&path).map_err(failed)?).into_owned();
-        for e in edits {
-            match e {
-                DocumentEdit::ReplaceText { markdown } => text = markdown,
-                DocumentEdit::AppendText { markdown } => {
-                    if !text.is_empty() && !text.ends_with('\n') {
-                        text.push('\n');
-                    }
-                    text.push_str(&markdown);
-                }
-                _ => return Err(ProviderError::Unsupported("a text document has no sheets or cells".into())),
-            }
+        for e in &edits {
+            text = apply_doc_edit(&text, e).map_err(edit_error)?;
         }
         write_atomic(&path, text.as_bytes()).map_err(failed)?;
         let v = version_of(text.as_bytes());
@@ -600,22 +611,28 @@ impl LocalProvider {
             DocumentEdit::AddSheet { name } => l.wb.add_sheet(name),
             DocumentEdit::RenameSheet { sheet, name } => l.wb.rename_sheet(sheet, name),
             DocumentEdit::DeleteSheet { sheet } => l.wb.delete_sheet(sheet),
-            DocumentEdit::SetStyle { sheet, range, style, value } => l.wb.set_style(sheet, range, style, value),
-            DocumentEdit::Sort { sheet, range, column, descending } => l.wb.sort(sheet, range, column, *descending),
-            DocumentEdit::Filter { sheet, range, column, values } => l.wb.filter(sheet, range, column, values),
-            DocumentEdit::SetChart { chart } => l.wb.sheet_index(&chart.sheet).map(|_| ()),
-            DocumentEdit::DeleteChart { .. } => Ok(()),
-            DocumentEdit::ReplaceText { .. } | DocumentEdit::AppendText { .. } => {
-                Err("a spreadsheet has no text to change".into())
+            DocumentEdit::FormatRange { sheet, range, format } => l.wb.format(sheet, range, format),
+            DocumentEdit::ConditionalFormat { sheet, range, when, format } => {
+                l.wb.conditional_format(sheet, range, when, format)
             }
+            DocumentEdit::Sort { sheet, range, by, header } => l.wb.sort(sheet, range, by, *header),
+            DocumentEdit::Filter { sheet, range, column, when } => l.wb.filter(sheet, range, column, when),
+            DocumentEdit::ClearFilter { sheet } => l.wb.clear_filter(sheet),
+            DocumentEdit::AddChart { sheet, chart, .. } => l.wb.sheet_index(sheet).and_then(|_| {
+                parse_range(&chart.data).map(|_| ()).ok_or_else(|| format!("{} is not a range", chart.data))
+            }),
+            DocumentEdit::UpdateChart { chart, .. } => {
+                parse_range(&chart.data).map(|_| ()).ok_or_else(|| format!("{} is not a range", chart.data))
+            }
+            DocumentEdit::DeleteChart { .. } => Ok(()),
+            e => Err(format!("{UNSUPPORTED}{} is for text documents, and this is a spreadsheet", e.op())),
         });
         if let Err(e) = r {
             // Undo what part of the list did by reading the file again; open views reload.
             self.reread(reference, &mut l);
-            return Err(if e.starts_with("a spreadsheet has no text") {
-                ProviderError::Unsupported(e)
-            } else {
-                ProviderError::Invalid(e)
+            return Err(match e.strip_prefix(UNSUPPORTED) {
+                Some(m) => ProviderError::Unsupported(m.to_string()),
+                None => ProviderError::Invalid(e),
             });
         }
         let diffs = l.wb.flush();
@@ -681,7 +698,19 @@ impl DocumentProvider for LocalProvider {
     }
 
     fn read<'a>(&'a self, reference: &'a str) -> BoxFut<'a, ProviderResult<DocumentContent>> {
-        Box::pin(async move { self.read_now(reference) })
+        Box::pin(async move {
+            let mut content = self.read_now(reference)?;
+            if let DocumentContent::Sheet { sheets, .. } = &mut content
+                && let Some(d) = self.store.document_by_ref(ID, reference).await.map_err(failed)?
+            {
+                for (sheet, chart) in self.store.document_charts(&d.id).await.map_err(failed)? {
+                    if let Some(s) = sheets.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&sheet)) {
+                        s.charts.push(chart);
+                    }
+                }
+            }
+            Ok(content)
+        })
     }
 
     fn search<'a>(&'a self, q: &'a str, kind: Option<DocumentKind>) -> BoxFut<'a, ProviderResult<Vec<ProviderFile>>> {
@@ -737,32 +766,81 @@ impl DocumentProvider for LocalProvider {
             if kind == DocumentKind::Doc {
                 return self.apply_text(reference, edits).map(Some);
             }
-            let charts: Vec<ChartSpec> = edits
-                .iter()
-                .filter_map(|e| match e {
-                    DocumentEdit::SetChart { chart } => Some(chart.clone().cleaned().map_err(ProviderError::Invalid)),
-                    _ => None,
-                })
-                .collect::<ProviderResult<_>>()?;
-            let doc =
-                if edits.iter().any(DocumentEdit::is_chart) { Some(self.document_id(reference).await?) } else { None };
-            let v = self.apply_cells(reference, &edits)?;
-            if let Some(doc) = doc {
-                let mut charts = charts.into_iter();
+            let charting = edits.iter().any(|e| {
+                matches!(
+                    e,
+                    DocumentEdit::AddChart { .. }
+                        | DocumentEdit::UpdateChart { .. }
+                        | DocumentEdit::DeleteChart { .. }
+                        | DocumentEdit::RenameSheet { .. }
+                )
+            });
+            let doc = if charting { Some(self.document_id(reference).await?) } else { None };
+            // Charts are PDT's: check the list against them before anything changes.
+            if let Some(doc) = &doc {
+                let mut ids: Vec<String> =
+                    self.store.document_charts(doc).await.map_err(failed)?.into_iter().map(|(_, c)| c.id).collect();
                 for e in &edits {
                     match e {
-                        DocumentEdit::SetChart { .. } => {
-                            if let Some(c) = charts.next() {
-                                self.store.put_document_chart(&doc, &c).await.map_err(failed)?;
+                        DocumentEdit::AddChart { id, .. } => {
+                            let id = id.clone().filter(|i| !i.trim().is_empty());
+                            let id = id.ok_or_else(|| ProviderError::Invalid("a new chart needs an id".into()))?;
+                            if ids.contains(&id) {
+                                return Err(ProviderError::Invalid(format!("there is a chart {id} already")));
                             }
+                            ids.push(id);
+                        }
+                        DocumentEdit::UpdateChart { id, .. } | DocumentEdit::DeleteChart { id }
+                            if !ids.contains(id) =>
+                        {
+                            return Err(ProviderError::Invalid(format!("there is no chart {id}")));
+                        }
+                        DocumentEdit::DeleteChart { id } => ids.retain(|i| i != id),
+                        _ => {}
+                    }
+                }
+            }
+            let v = self.apply_cells(reference, &edits)?;
+            if let Some(doc) = doc {
+                let mut charts = self.store.document_charts(&doc).await.map_err(failed)?;
+                let mut changed = false;
+                for e in edits {
+                    match e {
+                        DocumentEdit::AddChart { sheet, id: Some(id), chart } => {
+                            self.store
+                                .put_document_chart(&doc, &sheet, &Chart { id, spec: chart })
+                                .await
+                                .map_err(failed)?;
+                            changed = true;
+                        }
+                        DocumentEdit::UpdateChart { id, chart } => {
+                            let sheet =
+                                charts.iter().find(|(_, c)| c.id == id).map(|(s, _)| s.clone()).unwrap_or_default();
+                            self.store
+                                .put_document_chart(&doc, &sheet, &Chart { id, spec: chart })
+                                .await
+                                .map_err(failed)?;
+                            changed = true;
                         }
                         DocumentEdit::DeleteChart { id } => {
-                            self.store.delete_document_chart(&doc, id).await.map_err(failed)?;
+                            self.store.delete_document_chart(&doc, &id).await.map_err(failed)?;
+                            changed = true;
+                        }
+                        DocumentEdit::RenameSheet { sheet, name } => {
+                            let from =
+                                charts.iter().find(|(s, _)| s.eq_ignore_ascii_case(&sheet)).map(|(s, _)| s.clone());
+                            if let Some(from) = from {
+                                self.store.rename_chart_sheet(&doc, &from, name.trim()).await.map_err(failed)?;
+                                charts = self.store.document_charts(&doc).await.map_err(failed)?;
+                                changed = true;
+                            }
                         }
                         _ => {}
                     }
                 }
-                self.send(reference, DocEvent::Charts);
+                if changed {
+                    self.send(reference, DocEvent::Charts);
+                }
             }
             Ok(Some(v))
         })

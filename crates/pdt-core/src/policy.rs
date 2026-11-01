@@ -90,14 +90,6 @@ impl AutoStartOrder {
             AutoStartOrder::Rank => TicketSort::Rank,
         }
     }
-    /// Where `t` comes in this order: lower goes first.
-    fn key(self, t: &TicketSummary) -> (std::cmp::Reverse<u8>, &str, &str) {
-        let urgency = match self {
-            AutoStartOrder::Priority => t.priority.weight(),
-            AutoStartOrder::Rank => 0,
-        };
-        (std::cmp::Reverse(urgency), t.rank.as_str(), t.id.as_str())
-    }
 }
 
 /// What happens to a ticket triage drafts (PDT-225).
@@ -291,31 +283,10 @@ pub fn auto_start_at(policy: &ProjectPolicy, t: &TicketSummary, now: i64) -> Opt
     (takes_stage(policy, t) && startable(t) && at > now).then_some(at)
 }
 
-/// The next ticket auto-start takes from `candidates` (To do in the policy's order, then Ready ones when the policy
-/// says so), or None. `skip`: tickets it already failed to start. A ticket changed within the start delay before `now` waits.
-pub fn pick_next<'a>(
-    policy: &ProjectPolicy,
-    active: u32,
-    candidates: &'a [TicketSummary],
-    skip: &[String],
-    now: i64,
-) -> Option<&'a TicketSummary> {
-    use crate::ticket::TicketStage;
-    if policy.auto_start == AutoStart::Off || active >= policy.auto_start_cap() {
-        return None;
-    }
-    let ok = |t: &&TicketSummary| startable(t) && !skip.contains(&t.id) && settles_at(policy, t) <= now;
-    let first = |stage: TicketStage| {
-        candidates.iter().filter(|t| t.stage == stage).filter(ok).min_by_key(|t| policy.auto_start_order.key(t))
-    };
-    first(TicketStage::Todo)
-        .or_else(|| (policy.auto_start == AutoStart::Ready).then(|| first(TicketStage::Ready)).flatten())
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::ticket::{AttemptState, AttemptSummary, Priority, TicketStage};
+    use crate::ticket::{Priority, TicketStage};
 
     fn policy(merge_by: MergeBy, require_approval: bool) -> ProjectPolicy {
         ProjectPolicy { merge_by, require_approval, ..ProjectPolicy::default() }
@@ -374,9 +345,6 @@ pub(crate) mod tests {
         assert_eq!(MergeBy::parse("robots"), None);
     }
 
-    /// Long after the test tickets were made.
-    const LATER: i64 = 1_000_000_000;
-
     pub(crate) fn ticket(id: &str, stage: TicketStage) -> TicketSummary {
         TicketSummary {
             id: id.into(),
@@ -410,118 +378,19 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn auto_start_takes_to_do_in_order_then_ready_and_skips_what_it_must() {
+    fn the_countdown_shows_while_a_candidate_waits_out_the_delay() {
         let todo = ProjectPolicy { auto_start: AutoStart::Todo, ..ProjectPolicy::default() };
-        let ready = ProjectPolicy { auto_start: AutoStart::Ready, max_running_attempts: Some(3), ..todo.clone() };
-        let blocked = TicketSummary { blocked_by: 1, ..ticket("blocked", TicketStage::Todo) };
-        let conflict = TicketSummary { overlap: OverlapLevel::Conflict, ..ticket("conflict", TicketStage::Todo) };
-        let overlap = TicketSummary { overlap: OverlapLevel::Overlap, ..ticket("overlap", TicketStage::Todo) };
-        let started = TicketSummary {
-            attempt: Some(AttemptSummary {
-                id: "a".into(),
-                branch: "b".into(),
-                base_branch: "main".into(),
-                worktree_id: None,
-                state: AttemptState::Active,
-                created_at: 0,
-                ended_at: None,
-                last_head: None,
-                workspace_id: None,
-                pr: None,
-                ci: None,
-            }),
-            ..ticket("started", TicketStage::Todo)
-        };
-        let waiting = TicketSummary { waiting: true, ..ticket("waiting", TicketStage::Todo) };
-        let r1 = ticket("r1", TicketStage::Ready);
-        let list = vec![blocked, conflict, started.clone(), waiting.clone(), overlap.clone(), r1.clone()];
-        assert_eq!(pick_next(&todo, 0, &list, &[], LATER).map(|t| t.id.as_str()), Some("overlap"));
-        // Only an active attempt holds a ticket back (PDT-159): one stopped and moved back to To do starts again.
-        let mut stopped = started.clone();
-        stopped.id = "stopped".into();
-        for (state, ended) in [(AttemptState::Abandoned, Some(1)), (AttemptState::Merged, Some(1))] {
-            let a = stopped.attempt.as_mut().unwrap();
-            (a.state, a.ended_at) = (state, ended);
-            assert_eq!(
-                pick_next(&todo, 0, std::slice::from_ref(&stopped), &[], LATER).map(|t| t.id.as_str()),
-                Some("stopped")
-            );
-        }
-        // Skipped after a failed start, so Ready is next only when the policy takes Ready.
-        let skip = vec!["overlap".to_string()];
-        assert_eq!(pick_next(&todo, 0, &list, &skip, LATER), None);
-        assert_eq!(pick_next(&ready, 2, &list, &skip, LATER).map(|t| t.id.as_str()), Some("r1"));
-        // At the cap: nothing.
-        assert_eq!(pick_next(&todo, 1, &list, &[], LATER), None);
-        assert_eq!(pick_next(&ready, 3, &list, &[], LATER), None);
-        assert_eq!(pick_next(&ProjectPolicy::default(), 0, &list, &[], LATER), None);
-        // A waiting ticket goes once it is clear.
-        let clear = TicketSummary { clear_to_start: true, ..waiting };
-        assert_eq!(pick_next(&todo, 0, &[clear], &[], LATER).map(|t| t.id.as_str()), Some("waiting"));
-    }
-
-    #[test]
-    fn auto_start_takes_the_most_urgent_first_unless_the_project_keeps_to_rank() {
-        let by_priority = ProjectPolicy { auto_start: AutoStart::Ready, ..ProjectPolicy::default() };
-        assert_eq!(by_priority.auto_start_order, AutoStartOrder::Priority, "most urgent first unless the project says");
-        let by_rank = ProjectPolicy { auto_start_order: AutoStartOrder::Rank, ..by_priority.clone() };
-        let t =
-            |id: &str, stage, priority, rank: &str| TicketSummary { priority, rank: rank.into(), ..ticket(id, stage) };
-        let list = vec![
-            t("medium", TicketStage::Todo, Priority::Medium, "a"),
-            t("high-later", TicketStage::Todo, Priority::High, "c"),
-            t("high", TicketStage::Todo, Priority::High, "b"),
-            t("urgent-ready", TicketStage::Ready, Priority::Urgent, "0"),
-            t("low-ready", TicketStage::Ready, Priority::Low, "1"),
-            t("none-ready", TicketStage::Ready, Priority::None, "2"),
-        ];
-        let pick = |p: &ProjectPolicy, skip: &[&str]| {
-            let skip: Vec<String> = skip.iter().map(|s| s.to_string()).collect();
-            pick_next(p, 0, &list, &skip, LATER).map(|t| t.id.clone())
-        };
-        // A high-priority ticket ranked below a medium one goes first; within a priority, rank decides.
-        assert_eq!(pick(&by_priority, &[]).as_deref(), Some("high"));
-        assert_eq!(pick(&by_priority, &["high"]).as_deref(), Some("high-later"));
-        assert_eq!(pick(&by_priority, &["high", "high-later"]).as_deref(), Some("medium"));
-        // By rank: today's order, whatever the priority.
-        assert_eq!(pick(&by_rank, &[]).as_deref(), Some("medium"));
-        assert_eq!(pick(&by_rank, &["medium"]).as_deref(), Some("high"));
-        // To do comes before Ready in both, however urgent the Ready ticket.
-        let todo = ["medium", "high", "high-later"];
-        assert_eq!(pick(&by_priority, &todo).as_deref(), Some("urgent-ready"));
-        assert_eq!(pick(&by_priority, &["medium", "high", "high-later", "urgent-ready"]).as_deref(), Some("low-ready"));
-        assert_eq!(pick(&by_rank, &todo).as_deref(), Some("urgent-ready"));
-        // Blocked tickets still wait.
-        let mut blocked = list.clone();
-        blocked[2].blocked_by = 1;
-        assert_eq!(pick_next(&by_priority, 0, &blocked, &[], LATER).map(|t| t.id.as_str()), Some("high-later"));
-    }
-
-    #[test]
-    fn auto_start_waits_until_a_ticket_has_been_quiet_for_the_delay() {
-        let todo = ProjectPolicy { auto_start: AutoStart::Todo, ..ProjectPolicy::default() };
-        assert_eq!(todo.start_delay_seconds, 120, "two minutes unless the project says otherwise");
         let made = 10_000;
         let fresh = TicketSummary { created_at: made, updated_at: made, ..ticket("fresh", TicketStage::Todo) };
-        let list = vec![fresh.clone()];
-        // Just created: not picked, and it says when it will be.
-        assert_eq!(pick_next(&todo, 0, &list, &[], made + 1_000), None);
         assert_eq!(auto_start_at(&todo, &fresh, made + 1_000), Some(made + 120_000));
-        // After the delay: picked, and no longer waiting.
-        assert_eq!(pick_next(&todo, 0, &list, &[], made + 120_000).map(|t| t.id.as_str()), Some("fresh"));
         assert_eq!(auto_start_at(&todo, &fresh, made + 120_000), None);
-        // A change inside the window (a link bumps `updated_at`) restarts it.
         let linked = TicketSummary { updated_at: made + 90_000, ..fresh.clone() };
-        assert_eq!(pick_next(&todo, 0, std::slice::from_ref(&linked), &[], made + 120_000), None);
         assert_eq!(auto_start_at(&todo, &linked, made + 120_000), Some(made + 210_000));
-        assert!(pick_next(&todo, 0, std::slice::from_ref(&linked), &[], made + 210_000).is_some());
-        // A blocker linked inside the window keeps it from starting at all, and it shows no countdown.
+        // Blocked: no countdown.
         let blocked = TicketSummary { blocked_by: 1, ..linked };
-        assert_eq!(pick_next(&todo, 0, std::slice::from_ref(&blocked), &[], LATER), None);
         assert_eq!(auto_start_at(&todo, &blocked, made), None);
         // 0: at once.
         let now = ProjectPolicy { start_delay_seconds: 0, ..todo.clone() };
-        assert_eq!(pick_next(&now, 0, &list, &[], made).map(|t| t.id.as_str()), Some("fresh"));
         assert_eq!(auto_start_at(&now, &fresh, made), None);
         // Only tickets auto-start would take count down.
         assert_eq!(auto_start_at(&ProjectPolicy::default(), &fresh, made), None);

@@ -1,19 +1,21 @@
-//! Scheduling (Phase 7c spec §6): auto-start of To do / Ready tickets up to a project's cap, the host's cap on agents
-//! running a turn (slots for PDT's own work), and who owns a ticket's workflow step now (the Board's cards, §7).
+//! Scheduling (Phase 7c spec §6): the pickup watch that feeds auto-start's workflow ("Pick up tickets", PDT-327), the
+//! host's cap on agents running a turn (slots for PDT's own work), and who owns a ticket's workflow step now (the
+//! Board's cards, §7).
 
 use crate::routes::AppState;
 use pdt_core::inbox::InboxKind;
-use pdt_core::policy::{AutoStart, auto_start_at, pick_next};
-use pdt_core::start::{StartMode, StartTicket};
+use pdt_core::policy::{AutoStart, auto_start_at, settles_at};
 use pdt_core::ticket::{TicketAgent, TicketAgentState, TicketQuery, TicketSummary};
 use pdt_core::workflow::agent::AgentStepState;
+use pdt_core::workflow::api::NewLogEvent;
 use pdt_core::workflow::api::{Scope, StepStatus};
+use pdt_core::workflow::events::{SLOT_FREED, SlotFreed, StartableTicket, TICKET_STARTABLE, TicketStartable};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-/// How often the scheduler looks for tickets to start.
-const SCHEDULE_EVERY: Duration = Duration::from_secs(10);
+/// How often the pickup watch looks for tickets that can start and room to start them.
+const WATCH_EVERY: Duration = Duration::from_secs(10);
 
 /// The agent sessions running a turn now: conversations with a turn or a message on its way, and agent terminals
 /// whose activity is `working`. Idle ones don't count.
@@ -84,29 +86,65 @@ pub(crate) async fn workflow_listens(st: &AppState, project_id: &str, event_type
     false
 }
 
-/// One pass of auto-start: in each project that asks for it, the next candidate while it is under its cap, once it
-/// has gone the project's start delay unchanged. A ticket that fails to start is skipped until it changes.
-pub async fn schedule_tickets(st: &AppState) {
-    // A disk almost full: nothing new starts until space is freed; what runs carries on (PDT-324).
+/// What the pickup watch saw on its last pass.
+#[derive(Default)]
+pub(crate) struct PickupWatch {
+    /// Startable tickets told as `ticket.startable`, with their `updated_at` then.
+    startable: HashMap<String, i64>,
+    /// Tickets in flight per project, and its auto-start cap.
+    active: HashMap<String, (u32, u32)>,
+    /// Free agent slots on the host (None before the first pass).
+    free: Option<usize>,
+}
+
+/// How long a start may take between its attempt and its announcement before the watch calls it half-done.
+const HALF_DONE_AFTER_MS: i64 = 2 * 60 * 1000;
+
+/// One pass of the pickup watch (PDT-327), which feeds the built-in "Pick up tickets": starts left half-done are
+/// announced; in each project with auto-start on, `ticket.startable` for each ticket that became one auto-start could
+/// take (its start delay over, its blocker or conflict gone) and `slot.freed` when fewer tickets are in flight or its cap
+/// rose; and
+/// `slot.freed` when an agent slot freed on the host. Nothing is told while auto-start waits for disk space.
+pub async fn watch_pickup(st: &AppState) {
+    repair_half_done_starts(st).await;
+    // A disk almost full: nothing new starts (PDT-324), so nothing is told; once there is space, every ticket that can
+    // start is.
     if crate::storage::auto_start_paused(st).await {
         return;
     }
+    let now = crate::routes::now_ms();
     let Ok(projects) = st.store.list_projects().await else { return };
+    let mut startable: HashMap<String, i64> = HashMap::new();
+    let mut active: HashMap<String, (u32, u32)> = HashMap::new();
+    let mut events: Vec<NewLogEvent> = vec![];
+    let (seen, was_active) = {
+        let w = st.pickup_watch.lock().unwrap_or_else(|e| e.into_inner());
+        (w.startable.clone(), w.active.clone())
+    };
     for p in projects {
         let Ok(settings) = st.store.get_project_settings(&p.id).await else { continue };
         let policy = settings.policy;
         if policy.auto_start == AutoStart::Off {
             continue;
         }
-        let Ok(active) = st.store.count_active_attempts(&p.id).await else { continue };
-        if active >= policy.auto_start_cap() {
-            continue;
+        let Ok(n) = st.store.count_active_attempts(&p.id).await else { continue };
+        let cap = policy.auto_start_cap();
+        active.insert(p.id.clone(), (n, cap));
+        let freed = match was_active.get(&p.id) {
+            Some((before, _)) if n < *before => Some("attempt"),
+            Some((_, was_cap)) if cap > *was_cap => Some("cap"),
+            _ => None,
+        };
+        if let Some(reason) = freed {
+            let payload = SlotFreed { project_id: Some(p.id.clone()), reason: reason.into() };
+            let mut e = NewLogEvent::new(SLOT_FREED, format!("{reason}:{}:{now}", p.id), "pickup", payload);
+            e.project_id = Some(p.id.clone());
+            events.push(e);
         }
         let q = TicketQuery {
             project: Some(p.id.clone()),
             stage: Some("todo,ready".into()),
             has_parts: Some(false),
-            sort: Some(policy.auto_start_order.ticket_sort()),
             limit: Some(200),
             ..Default::default()
         };
@@ -115,59 +153,64 @@ pub async fn schedule_tickets(st: &AppState) {
         let Ok(mut page) = st.store.query_tickets(&filter).await else { continue };
         for t in page.items.iter_mut() {
             idx.apply_summary(t);
-        }
-        let skip: Vec<String> = {
-            let failed = st.auto_start_failed.lock().unwrap_or_else(|e| e.into_inner());
-            page.items
-                .iter()
-                .filter(|t| failed.get(&t.id).is_some_and(|at| *at == t.updated_at))
-                .map(|t| t.id.clone())
-                .collect()
-        };
-        let Some(next) = pick_next(&policy, active, &page.items, &skip, crate::routes::now_ms()) else { continue };
-        let (id, updated_at, key) = (next.id.clone(), next.updated_at, next.key.clone());
-        let no_session = workflow_listens(st, &p.id, pdt_core::workflow::events::ATTEMPT_STARTED).await;
-        // A start with its own session runs a turn at once: it waits for a slot like an agent step.
-        if !no_session && !slot_free(st).await {
-            continue;
-        }
-        let Ok(host) = st.store.get_host_settings().await else { continue };
-        let input = StartTicket {
-            agent: host.default_agent,
-            branch: None,
-            base: None,
-            bypass_permissions: None,
-            permission_mode: Some(host.ticket_permission_mode),
-            tab: None,
-            new_workspace: Some(true),
-            mode: Some(StartMode::Check),
-            session_mode: Some(host.default_session_mode),
-            from_session: None,
-            no_session: Some(no_session),
-            next: None,
-            cols: None,
-            rows: None,
-        };
-        let started = match input.validate() {
-            Ok(v) => crate::start::start_ticket(st, id.clone(), v, crate::start::Starter::Auto)
-                .await
-                .map_err(|e| e.message().to_string()),
-            Err(e) => Err(e.to_string()),
-        };
-        match started {
-            Ok(_) => tracing::info!(ticket = %key, project = %p.name, "auto-start started a ticket"),
-            Err(e) => {
-                tracing::warn!(ticket = %key, error = %e, "auto-start could not start a ticket; skipping it until it changes");
-                st.auto_start_failed.lock().unwrap_or_else(|e| e.into_inner()).insert(id, updated_at);
+            if !(pdt_core::policy::startable(t) && settles_at(&policy, t) <= now) {
+                continue;
             }
+            startable.insert(t.id.clone(), t.updated_at);
+            if seen.get(&t.id) == Some(&t.updated_at) {
+                continue;
+            }
+            let ticket = StartableTicket {
+                id: t.id.clone(),
+                key: t.key.clone(),
+                title: t.title.clone(),
+                stage: t.stage.as_str().into(),
+                priority: t.priority.as_str().into(),
+                labels: t.labels.clone(),
+            };
+            let payload = TicketStartable { project_id: p.id.clone(), ticket };
+            let mut e =
+                NewLogEvent::new(TICKET_STARTABLE, format!("{}:{}:{now}", t.id, t.updated_at), "pickup", payload);
+            e.project_id = Some(p.id.clone());
+            events.push(e);
+        }
+    }
+    let free = free_slots(st).await;
+    let was_free = st.pickup_watch.lock().unwrap_or_else(|e| e.into_inner()).free;
+    if was_free == Some(0) && free > 0 {
+        let payload = SlotFreed { project_id: None, reason: "agent".into() };
+        events.push(NewLogEvent::new(SLOT_FREED, format!("agent:{now}"), "pickup", payload));
+    }
+    for e in &events {
+        if let Err(x) = st.store.emit_event(e, now).await {
+            // Logged once writes work again (PDT-323); the watch moves on.
+            tracing::warn!(event = %e.kind, error = %x, "could not log a pickup event");
+        }
+    }
+    let mut w = st.pickup_watch.lock().unwrap_or_else(|e| e.into_inner());
+    (w.startable, w.active, w.free) = (startable, active, Some(free));
+}
+
+/// Announces starts left half-done (PDT-327): an attempt and worktree made, but its `attempt.started` never logged
+/// (pdtd stopped, or the write failed, before Start announced it), so no workflow took it over. Only attempts at least
+/// [`HALF_DONE_AFTER_MS`] old (a Start still making its session announces it itself) and younger than the event log
+/// keeps events.
+pub(crate) async fn repair_half_done_starts(st: &AppState) {
+    let now = crate::routes::now_ms();
+    let since = now - pdt_store::EVENT_RETENTION_MS / 2;
+    let Ok(half_done) = st.store.unannounced_starts(since, now - HALF_DONE_AFTER_MS).await else { return };
+    for (ticket, events) in half_done {
+        match st.store.announce_events(&events, now).await {
+            Ok(()) => tracing::warn!(ticket = %ticket, "announced a start that was left half-done"),
+            Err(e) => tracing::warn!(ticket = %ticket, error = %e, "could not announce a start left half-done"),
         }
     }
 }
 
-/// pdtd's scheduler loop.
-pub async fn run_scheduler(st: AppState) {
-    crate::loops::run_every(st, "scheduler", SCHEDULE_EVERY, crate::loops::Start::AfterOnePeriod, |st| async move {
-        schedule_tickets(&st).await
+/// pdtd's pickup watch loop.
+pub async fn run_pickup_watch(st: AppState) {
+    crate::loops::run_every(st, "pickup", WATCH_EVERY, crate::loops::Start::AfterOnePeriod, |st| async move {
+        watch_pickup(&st).await
     })
     .await
 }

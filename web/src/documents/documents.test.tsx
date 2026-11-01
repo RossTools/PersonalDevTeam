@@ -142,7 +142,7 @@ describe('documents', () => {
     stubApi({
       'GET /api/documents/d2': doc('d2', 'Budget', { kind: 'sheet' }),
       'GET /api/documents/d2/content': {
-        content: { kind: 'sheet', version: '1', sheets: [{ name: 'Sheet1', rows: [[{ value: 'Rent' }, { value: '12', formula: '=6*2' }]] }] },
+        content: { kind: 'sheet', version: '1', sheets: [{ name: 'Sheet1', rows: [[{ value: 'Rent' }, { value: '12', formula: '=6*2' }]], charts: [] }] },
         embedUrl: null,
       },
       'GET /api/documents/providers': providers,

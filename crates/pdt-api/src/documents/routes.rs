@@ -76,12 +76,12 @@ async fn ticket_id(st: &AppState, given: &str) -> Result<String, ApiError> {
     st.store.ticket_id_by_key(given).await?.ok_or_else(|| ApiError::not_found("ticket"))
 }
 
-async fn document(st: &AppState, id: &str) -> Result<Document, ApiError> {
+pub(crate) async fn document(st: &AppState, id: &str) -> Result<Document, ApiError> {
     st.store.get_document(id).await?.ok_or_else(|| ApiError::not_found("document"))
 }
 
 /// The provider of a document PDT has.
-fn provider_of(st: &AppState, d: &Document) -> Result<Arc<dyn DocumentProvider>, ApiError> {
+pub(crate) fn provider_of(st: &AppState, d: &Document) -> Result<Arc<dyn DocumentProvider>, ApiError> {
     need(&provider(st, &d.provider), &d.provider)
 }
 
@@ -416,7 +416,7 @@ pub struct DocumentLinkInput {
     pub ticket_id: Option<String>,
 }
 
-async fn link_of(st: &AppState, l: &DocumentLinkInput) -> Result<DocumentLink, ApiError> {
+pub(crate) async fn link_of(st: &AppState, l: &DocumentLinkInput) -> Result<DocumentLink, ApiError> {
     match (l.project_id.as_deref(), l.ticket_id.as_deref()) {
         (Some(p), None) => Ok(DocumentLink::Project(project_id(st, p).await?)),
         (None, Some(t)) => Ok(DocumentLink::Ticket(ticket_id(st, t).await?)),
@@ -490,6 +490,39 @@ pub struct DocumentEdits {
 #[ts(export)]
 pub struct EditResult {
     pub version: Option<String>,
+    /// The ids of the charts the edits added, in order.
+    pub charts: Vec<String>,
+}
+
+/// Applies edits to a document at its provider, in order: new charts get an id when they have none.
+pub(crate) async fn apply_edits(
+    st: &AppState,
+    d: &Document,
+    mut edits: Vec<DocumentEdit>,
+) -> Result<EditResult, ApiError> {
+    let p = provider_of(st, d)?;
+    if !p.capabilities().edit {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "unsupported",
+            format!("{} can't change documents", p.label()),
+        ));
+    }
+    if edits.is_empty() {
+        return Err(invalid("give at least one edit"));
+    }
+    let mut charts = Vec::new();
+    for e in &mut edits {
+        if let DocumentEdit::AddChart { id, .. } = e {
+            let given = id.take().map(|i| i.trim().to_string()).filter(|i| !i.is_empty());
+            let new = given.unwrap_or_else(|| format!("chart-{}", &uuid::Uuid::now_v7().simple().to_string()[20..]));
+            charts.push(new.clone());
+            *id = Some(new);
+        }
+    }
+    let version = p.apply(&d.provider_ref, edits).await?;
+    st.store.touch_document(&d.id, now_ms()).await?;
+    Ok(EditResult { version, charts })
 }
 
 /// `POST /api/documents/{id}/edits`: changes its content, in order.
@@ -500,15 +533,8 @@ pub(crate) async fn edit(
 ) -> Result<Json<EditResult>, ApiError> {
     let Json(e) = payload?;
     let d = document(&st, &id).await?;
-    let p = provider_of(&st, &d)?;
-    if !p.capabilities().edit {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "unsupported",
-            format!("{} can't change documents", p.label()),
-        ));
-    }
     if let Some(base) = e.base_version.as_deref().filter(|b| !b.is_empty()) {
+        let p = provider_of(&st, &d)?;
         let now = p.version(&d.provider_ref).await?;
         if now.as_deref().is_some_and(|v| v != base) {
             return Err(ApiError::new(
@@ -518,12 +544,10 @@ pub(crate) async fn edit(
             ));
         }
     }
-    let version = p.apply(&d.provider_ref, e.edits).await?;
-    st.store.touch_document(&id, now_ms()).await?;
-    Ok(Json(EditResult { version }))
+    Ok(Json(apply_edits(&st, &d, e.edits).await?))
 }
 
-async fn with_comments(st: &AppState, id: &str) -> Result<(Document, Arc<dyn DocumentProvider>), ApiError> {
+pub(crate) async fn with_comments(st: &AppState, id: &str) -> Result<(Document, Arc<dyn DocumentProvider>), ApiError> {
     let d = document(st, id).await?;
     let p = provider_of(st, &d)?;
     if !p.capabilities().comments {
@@ -1010,4 +1034,88 @@ pub(crate) async fn asset(
             ("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'".into()),
         ],
     ))
+}
+
+/// A conversation's session, which must be an agent's.
+async fn beside_session(st: &AppState, id: &str) -> Result<(), ApiError> {
+    match st.store.get_session(id).await? {
+        Some(s) if s.kind == pdt_core::session::SessionKind::AgentTui => Ok(()),
+        Some(_) => Err(invalid("only an agent or PM conversation has documents beside it")),
+        None => Err(ApiError::not_found("session")),
+    }
+}
+
+/// `GET /api/sessions/{id}/documents`: the documents open beside a conversation, in tab order, and the one shown.
+pub(crate) async fn beside(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<pdt_core::document::DocumentsBeside>, ApiError> {
+    beside_session(&st, &id).await?;
+    Ok(Json(st.store.documents_beside(&id).await?))
+}
+
+/// A document to open beside a conversation (`POST /api/sessions/{id}/documents`).
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OpenBeside {
+    pub document_id: String,
+    /// `user` from PDT's UI.
+    #[serde(default)]
+    #[ts(optional)]
+    pub by: Option<Actor>,
+}
+
+/// Opens a document beside a conversation (or shows its tab there).
+pub(crate) async fn open_beside_doc(
+    st: &AppState,
+    session: &str,
+    document_id: &str,
+    by: Actor,
+) -> Result<pdt_core::document::DocumentsBeside, ApiError> {
+    beside_session(st, session).await?;
+    document(st, document_id).await?;
+    st.store.open_beside(session, document_id, by, now_ms()).await?;
+    Ok(st.store.documents_beside(session).await?)
+}
+
+/// `POST /api/sessions/{id}/documents`.
+pub(crate) async fn open_beside(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<OpenBeside>, JsonRejection>,
+) -> Result<Json<pdt_core::document::DocumentsBeside>, ApiError> {
+    let Json(o) = payload?;
+    let by = if o.by == Some(Actor::User) { Actor::User } else { Actor::Agent };
+    Ok(Json(open_beside_doc(&st, &id, o.document_id.trim(), by).await?))
+}
+
+/// The tabs' new order (`PUT /api/sessions/{id}/documents`).
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BesideOrder {
+    pub document_ids: Vec<String>,
+}
+
+/// `PUT /api/sessions/{id}/documents`: puts the tabs in this order.
+pub(crate) async fn order_beside(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<BesideOrder>, JsonRejection>,
+) -> Result<Json<pdt_core::document::DocumentsBeside>, ApiError> {
+    let Json(o) = payload?;
+    beside_session(&st, &id).await?;
+    st.store.order_beside(&id, &o.document_ids).await?;
+    Ok(Json(st.store.documents_beside(&id).await?))
+}
+
+/// `DELETE /api/sessions/{id}/documents/{doc}`: closes its tab.
+pub(crate) async fn close_beside(
+    State(st): State<AppState>,
+    Path((id, doc)): Path<(String, String)>,
+) -> Result<Json<pdt_core::document::DocumentsBeside>, ApiError> {
+    beside_session(&st, &id).await?;
+    st.store.close_beside(&id, &doc).await?;
+    Ok(Json(st.store.documents_beside(&id).await?))
 }

@@ -108,6 +108,13 @@ function cellPosition(model: Model, sheet: number, row: number, col: number): { 
   return { x, y };
 }
 
+/** Where a chart goes when its spec doesn't say: two columns right of its data, level with its top. */
+function anchorFor(data: string): string {
+  const [from, to = from] = data.split(':');
+  const p = parseCell(from ?? ''), q = parseCell(to ?? '');
+  return p && q ? cellName(Math.min(p.row, q.row), Math.max(p.col, q.col) + 2) : 'A1';
+}
+
 function parseCell(a: string): { row: number; col: number } | null {
   const m = /^([A-Z]{1,3})(\d+)$/i.exec(a.trim());
   if (!m) return null;
@@ -115,7 +122,11 @@ function parseCell(a: string): { row: number; col: number } | null {
   return { row: Number(m[2]), col };
 }
 
+/** A chart's size on the grid (pixels). */
+const CHART_SIZE = { width: 480, height: 300 };
+
 const KINDS: { value: ChartKind; label: string }[] = [
+  { value: 'column', label: 'Column' },
   { value: 'bar', label: 'Bar' },
   { value: 'line', label: 'Line' },
   { value: 'area', label: 'Area' },
@@ -126,14 +137,14 @@ const KINDS: { value: ChartKind; label: string }[] = [
 function SheetChart({ view, onEdit }: { view: ChartView; onEdit: (e: DocumentEdit) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const chart = useRef<{ destroy(): void } | null>(null);
-  const { spec } = view;
+  const { spec, id } = view.chart;
   useEffect(() => {
     const colors = [1, 2, 3, 4, 5, 6].map((i) => cssVar(`--pdt-chart-${i}`));
     const text = cssVar('--pdt-fg');
     const grid = cssVar('--pdt-border');
     const pie = spec.kind === 'pie';
-    const datasets = spec.series.map((s, i) => {
-      const data = view.values[i] ?? [];
+    const datasets = view.series.map((s, i) => {
+      const data = s.values;
       const color = colors[i % colors.length]!;
       if (spec.kind === 'scatter') {
         return { label: s.name, data: data.map((y, j) => ({ x: Number(view.labels[j]) || j + 1, y: y ?? Number.NaN })), backgroundColor: color, borderColor: color };
@@ -146,16 +157,18 @@ function SheetChart({ view, onEdit }: { view: ChartView; onEdit: (e: DocumentEdi
         fill: spec.kind === 'area',
       };
     });
-    const type = spec.kind === 'area' ? 'line' : spec.kind;
+    const type = spec.kind === 'area' ? 'line' : spec.kind === 'column' ? 'bar' : spec.kind;
     const config = {
       type,
       data: { labels: view.labels, datasets },
       options: {
+        // A bar chart's bars lie across; a column chart's stand up.
+        indexAxis: spec.kind === 'bar' ? 'y' : 'x',
         responsive: true,
         maintainAspectRatio: false,
         animation: { duration: 150 },
         color: text,
-        plugins: { title: { display: !!spec.title, text: spec.title, color: text }, legend: { labels: { color: text } } },
+        plugins: { title: { display: !!spec.title, text: spec.title ?? '', color: text }, legend: { labels: { color: text } } },
         scales: pie ? {} : { x: { ticks: { color: text }, grid: { color: grid } }, y: { ticks: { color: text }, grid: { color: grid } } },
       },
     };
@@ -168,9 +181,9 @@ function SheetChart({ view, onEdit }: { view: ChartView; onEdit: (e: DocumentEdi
     };
   }, [view, spec]);
   const entries = (): MenuEntry[] => [
-    ...KINDS.filter((k) => k.value !== spec.kind).map((k) => ({ label: `Show as ${k.label.toLowerCase()}`, onSelect: () => onEdit({ op: 'set_chart', chart: { ...spec, kind: k.value } }) })),
+    ...KINDS.filter((k) => k.value !== spec.kind).map((k) => ({ label: `Show as ${k.label.toLowerCase()}`, onSelect: () => onEdit({ op: 'update_chart', id, chart: { ...spec, kind: k.value } }) })),
     { separator: true },
-    { label: 'Remove chart', danger: true, onSelect: () => onEdit({ op: 'delete_chart', id: spec.id }) },
+    { label: 'Remove chart', danger: true, onSelect: () => onEdit({ op: 'delete_chart', id }) },
   ];
   return (
     <figure aria-label={spec.title || 'Chart'} className="relative h-full w-full rounded-md border border-border bg-card p-2 shadow-card">
@@ -360,21 +373,21 @@ export default function SheetEditor({ id, onReady }: SheetEditorProps) {
   const canvasEl = host.current?.querySelector<HTMLCanvasElement>('.ic-worksheet-sheet-canvas');
   const hostBox = host.current?.getBoundingClientRect();
   const gridBox = canvasEl?.getBoundingClientRect();
-  const shown = (charts.data ?? []).filter((c) => c.spec.sheet === sel.sheet);
+  const shown = (charts.data ?? []).filter((c) => c.sheet === sel.sheet);
 
   return (
     <div className="flex min-h-0 flex-col gap-2">
       <div role="toolbar" aria-label="Sheet tools" className="flex flex-wrap items-center gap-1">
-        <Button variant="ghost" size="sm" compact onClick={() => edit([{ op: 'sort', sheet: sel.sheet, range: sortRange, column: col, descending: false }])}>
+        <Button variant="ghost" size="sm" compact onClick={() => edit([{ op: 'sort', sheet: sel.sheet, range: sortRange, by: [{ column: col, descending: false }], header: sortRange === '' }])}>
           <ArrowDownAZ aria-hidden /> Sort A→Z by {col}
         </Button>
-        <Button variant="ghost" size="sm" compact onClick={() => edit([{ op: 'sort', sheet: sel.sheet, range: sortRange, column: col, descending: true }])}>
+        <Button variant="ghost" size="sm" compact onClick={() => edit([{ op: 'sort', sheet: sel.sheet, range: sortRange, by: [{ column: col, descending: true }], header: sortRange === '' }])}>
           <ArrowUpZA aria-hidden /> Z→A
         </Button>
-        <Button variant="ghost" size="sm" compact disabled={!value} onClick={() => edit([{ op: 'filter', sheet: sel.sheet, range: sortRange, column: col, values: [value] }])}>
+        <Button variant="ghost" size="sm" compact disabled={!value} onClick={() => edit([{ op: 'filter', sheet: sel.sheet, range: sortRange, column: col, when: { type: 'equal_to', value } }])}>
           <Filter aria-hidden /> Only rows with “{value.length > 16 ? `${value.slice(0, 16)}…` : value}” in {col}
         </Button>
-        <Button variant="ghost" size="sm" compact onClick={() => edit([{ op: 'filter', sheet: sel.sheet, range: sortRange, column: col, values: [] }])}>
+        <Button variant="ghost" size="sm" compact onClick={() => edit([{ op: 'clear_filter', sheet: sel.sheet }])}>
           <FilterX aria-hidden /> Show all rows
         </Button>
         <Button variant="ghost" size="sm" compact onClick={() => setCharting(true)}><ChartColumn aria-hidden /> Chart the selection</Button>
@@ -387,20 +400,20 @@ export default function SheetEditor({ id, onReady }: SheetEditorProps) {
       <div ref={host} className="relative h-[70dvh] min-h-96 overflow-hidden rounded-md border border-border">
         <Grid model={model} mount={mount} />
         {hostBox && gridBox && shown.map((c) => {
-          const at = parseCell(c.spec.anchor);
+          const at = parseCell(c.chart.spec.anchor ?? anchorFor(c.chart.spec.data));
           const p = at && cellPosition(model, sel.index, at.row, at.col);
           if (!p) return null;
           const left = gridBox.left - hostBox.left + p.x;
           const top = gridBox.top - hostBox.top + p.y;
           if (left > hostBox.width || top > gridBox.bottom - hostBox.top) return null;
           return (
-            <div key={c.spec.id} className="absolute" style={{ left, top, width: c.spec.width, height: c.spec.height }}>
+            <div key={c.chart.id} className="absolute" style={{ left, top, ...CHART_SIZE }}>
               <SheetChart view={c} onEdit={(e) => edit([e])} />
             </div>
           );
         })}
       </div>
-      {charting && <ChartDialog model={model} onClose={() => setCharting(false)} onAdd={(chart) => edit([{ op: 'set_chart', chart }])} />}
+      {charting && <ChartDialog model={model} onClose={() => setCharting(false)} onAdd={(chart) => edit([{ op: 'add_chart', sheet: sel.sheet, chart }])} />}
     </div>
   );
 }
@@ -408,28 +421,13 @@ export default function SheetEditor({ id, onReady }: SheetEditorProps) {
 /** A chart of the selection: its first column the labels, each other column a series, named by its first row. */
 function ChartDialog({ model, onClose, onAdd }: { model: Model; onClose: () => void; onAdd: (c: ChartSpec) => void }) {
   const s = selectionOf(model);
-  const [kind, setKind] = useState<ChartKind>('bar');
+  const [kind, setKind] = useState<ChartKind>('column');
   const [title, setTitle] = useState('');
   const header = s.r2 > s.r1;
-  const first = header ? s.r1 + 1 : s.r1;
   const ok = s.c2 > s.c1;
   const make = () => {
-    const series = [];
-    for (let c = s.c1 + 1; c <= s.c2; c++) {
-      const name = header ? model.getFormattedCellValue(s.index, s.r1, c) : letters(c);
-      series.push({ name: name || letters(c), values: `${cellName(first, c)}:${cellName(s.r2, c)}` });
-    }
-    onAdd({
-      id: '',
-      kind,
-      title: title.trim(),
-      sheet: s.sheet,
-      categories: `${cellName(first, s.c1)}:${cellName(s.r2, s.c1)}`,
-      series,
-      anchor: cellName(s.r1, s.c2 + 2),
-      width: 480,
-      height: 300,
-    });
+    const data = `${cellName(s.r1, s.c1)}:${cellName(s.r2, s.c2)}`;
+    onAdd({ kind, data, ...(title.trim() ? { title: title.trim() } : {}), anchor: anchorFor(data) });
     onClose();
   };
   return (

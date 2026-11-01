@@ -126,7 +126,9 @@ fn ticket_section(api: &str, t: &TicketWork, forge: Option<&ForgeNotes>) -> Stri
          images and files that matter. To add one (a screenshot of what you tried), give `add_ticket_comment` its \
          path in `files`.\n\
          - When documents are linked to the ticket (`get_ticket` lists them), read its design doc first: \
-         `GET {api}/documents/<id>/content` gives a doc as Markdown.\n",
+         `doc_read` (or `GET {api}/documents/<id>/content`) gives a doc as Markdown.\n\
+         - When you're asked for a spec, a plan or a design, write it as a document linked to the ticket \
+         (`document_create`), never as a file in the repository.\n",
         id = t.ticket_id,
     );
     let has = |kind: &str| t.news.contains(kind);
@@ -280,6 +282,7 @@ mod tests {
         assert!(t.contains("Follow-up work") && t.contains("Don't move the ticket to Done"), "{t}");
         assert!(t.contains("open the images and files that matter"), "{t}");
         assert!(t.contains("read its design doc first"), "{t}");
+        assert!(t.contains("never as a file in the repository"), "{t}");
         assert!(!t.contains("Messages from") && !t.contains("forge watch"), "no workflow, no messages: {t}");
         let plain = session_instructions(&ctx(Some("pdt-WA-7-x")), None);
         assert!(!plain.contains("This session's ticket"), "{plain}");

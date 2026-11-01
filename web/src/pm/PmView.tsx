@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { BriefcaseBusiness } from 'lucide-react';
+import { BriefcaseBusiness, FileStack } from 'lucide-react';
 import { Button, EmptyState, List, ListRow, PromptBox, Skeleton, ViewHeader, relativeTime } from '@ui';
 import { api } from '../api/client';
 import type { Session } from '../api/gen/Session';
 import { useAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { ConversationView } from '../conversation/ConversationView';
+import { DocumentsBesideLayout, useOpenBesidePicker } from '../documents/BesidePanel';
 import { enterAddsLine } from '../conversation/ConversationComposer';
 import { loadDraft, saveDraft } from '../conversation/drafts';
 import { useViewTracking } from '../sessions/useViewTracking';
@@ -61,8 +62,11 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
   const [renaming, setRenaming] = useState(false);
   const { rename, close, reset } = usePmActions(() => onSelect('current'), onReset);
   const canClose = info.rotation === 'none';
+  // Documents beside the conversation (PDT-317).
+  const besidePicker = useOpenBesidePicker(s.id);
   useTopBarActions(phone && !ended ? () => [
     { label: 'Rename', onSelect: () => setRenaming(true) },
+    besidePicker.entry,
     { label: 'Reset…', onSelect: () => reset(info), disabled: !canClose },
     { label: 'Close…', onSelect: () => close(info), disabled: !canClose },
   ] : null);
@@ -95,6 +99,7 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
           meta={<span className="text-meta">{meta}</span>}
           actions={(
             <>
+              <Button variant="ghost" size="sm" onClick={besidePicker.pick}><FileStack aria-hidden /> Open beside…</Button>
               {!ended && <Button variant="ghost" size="sm" onClick={() => setRenaming(true)}>Rename</Button>}
               {!ended && <Button variant="ghost" size="sm" disabled={!canClose} onClick={() => reset(info)}>Reset…</Button>}
               {!ended && <Button variant="ghost" size="sm" disabled={!canClose} onClick={() => close(info)}>Close…</Button>}
@@ -111,20 +116,23 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
         </div>
       )}
       <ViewTracked session={s} />
-      <ConversationView
-        session={s}
-        className="min-h-0 flex-1"
-        banner={resetting(info) ? (
-          <p role="status" className="px-4 pb-1 text-center text-meta text-muted-foreground">
-            Resetting: this conversation is writing its journal, then a fresh one starts from it here.
-          </p>
-        ) : info.rotation === 'journal' ? (
-          <p role="status" className="px-4 pb-1 text-center text-meta text-muted-foreground">
-            You closed this conversation: it is writing its journal, then it ends. Start a new one to carry on.
-          </p>
-        ) : undefined}
-        readOnly={ended ? <Ended reason={info.reason} journal={info.journal} onNew={onNew} /> : undefined}
-      />
+      {besidePicker.dialog}
+      <DocumentsBesideLayout sessionId={s.id} phone={phone}>
+        <ConversationView
+          session={s}
+          className="min-h-0 flex-1"
+          banner={resetting(info) ? (
+            <p role="status" className="px-4 pb-1 text-center text-meta text-muted-foreground">
+              Resetting: this conversation is writing its journal, then a fresh one starts from it here.
+            </p>
+          ) : info.rotation === 'journal' ? (
+            <p role="status" className="px-4 pb-1 text-center text-meta text-muted-foreground">
+              You closed this conversation: it is writing its journal, then it ends. Start a new one to carry on.
+            </p>
+          ) : undefined}
+          readOnly={ended ? <Ended reason={info.reason} journal={info.journal} onNew={onNew} /> : undefined}
+        />
+      </DocumentsBesideLayout>
     </div>
   );
 }

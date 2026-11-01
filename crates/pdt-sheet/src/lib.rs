@@ -8,10 +8,14 @@
 
 use ironcalc::base::UserModel;
 use ironcalc::base::cell::CellValue;
+use ironcalc::base::cf_types::CfRuleInput;
 use ironcalc::base::expressions::types::Area;
+use ironcalc::base::types::{Color, Dxf, DxfFont};
 use ironcalc::export::save_xlsx_to_writer;
 use ironcalc::import::load_from_xlsx_bytes;
-use pdt_core::document::{Cell, Sheet, column_letters, parse_column, parse_range};
+use pdt_core::document::{
+    Cell, CellCondition, CellFormat, HAlign, Sheet, SortKey, VAlign, cell_name, parse_column, parse_range,
+};
 use std::io::Cursor;
 use std::path::Path;
 
@@ -26,9 +30,6 @@ const LANGUAGE: &str = "en";
 pub const READ_LIMIT: (usize, usize) = (2000, 200);
 
 pub type Result<T> = std::result::Result<T, String>;
-
-/// A zero-based (row, column).
-type Place = (usize, usize);
 
 /// A workbook: IronCalc's model of one `.xlsx`.
 pub struct Workbook {
@@ -189,7 +190,7 @@ impl Workbook {
                 }
                 grid.push(line);
             }
-            out.push(Sheet { name, rows: grid });
+            out.push(Sheet { name, rows: grid, charts: vec![] });
         }
         Ok(out)
     }
@@ -293,49 +294,153 @@ impl Workbook {
         })
     }
 
-    /// A range to sort or filter: as given, or for none the sheet's used rows below its first (the header).
+    /// A range to sort or filter: as given, or for none the sheet's used cells from A1.
     fn table(&self, sheet: u32, range: &str) -> Result<String> {
         if !range.trim().is_empty() {
             return Ok(range.to_string());
         }
         let (rows, cols) = self.used(sheet)?;
-        if rows < 2 {
-            return Err("there are no rows below the first to sort or filter".into());
+        if rows < 1 {
+            return Err("the sheet is empty".into());
         }
-        Ok(format!("A2:{}", cell_name(rows as usize - 1, cols as usize - 1)))
+        Ok(format!("A1:{}", cell_name(rows as usize - 1, cols as usize - 1)))
     }
 
-    /// The zero-based column `column` names, checked to be inside the range.
-    fn key_column(range: &str, column: &str) -> Result<(usize, Place, Place)> {
-        let ((r1, c1), (r2, c2)) = parse_range(range).ok_or_else(|| format!("{range} is not a range"))?;
-        let key = parse_column(column).ok_or_else(|| format!("{column} is not a column"))?;
+    /// The zero-based column `column` names, checked to be inside the range's columns.
+    fn column_in(column: &str, c1: usize, c2: usize) -> Result<usize> {
+        let key = parse_column(column).ok_or_else(|| format!("{column} is not a column (A, B, …)"))?;
         if key < c1 || key > c2 {
-            return Err(format!("column {column} is not in {range}"));
+            return Err(format!("column {} is outside the range", column.trim()));
         }
-        Ok((key, (r1, c1), (r2, c2)))
+        Ok(key)
     }
 
-    /// Sorts the range's rows (none: the used rows below the first) by one of its columns: numbers before text before empty cells, text without regard to
-    /// case. As spreadsheets do, the range's cells are rewritten in their new order, a formula's references shifting
-    /// with it as if copied (`=B2-C2` moved to row 4 is `=B4-C4`), and formats move with their cells; formulas
-    /// elsewhere keep pointing at the same cells. Rows hidden by a filter are shown first.
-    pub fn sort(&mut self, sheet: &str, range: &str, column: &str, descending: bool) -> Result<()> {
+    fn typed(&self, sheet: u32, row: i32, col: i32) -> Result<Value> {
+        Ok(match self.model.get_model().get_cell_value_by_index(sheet, row, col)? {
+            CellValue::None => Value::Empty,
+            CellValue::Number(x) => Value::Number(x),
+            CellValue::String(s) if s.is_empty() => Value::Empty,
+            CellValue::String(s) => Value::Text(s),
+            CellValue::Boolean(b) => Value::Bool(b),
+        })
+    }
+
+    /// Puts a format on a range: only the fields given change.
+    pub fn format(&mut self, sheet: &str, range: &str, f: &CellFormat) -> Result<()> {
+        let flag = |b: bool| if b { "true" } else { "false" }.to_string();
+        let mut paths: Vec<(&str, String)> = Vec::new();
+        if let Some(b) = f.bold {
+            paths.push(("font.b", flag(b)));
+        }
+        if let Some(b) = f.italic {
+            paths.push(("font.i", flag(b)));
+        }
+        if let Some(b) = f.underline {
+            paths.push(("font.u", flag(b)));
+        }
+        if let Some(c) = &f.color {
+            paths.push(("font.color", hex(c)?));
+        }
+        if let Some(c) = &f.background {
+            paths.push(("fill.color", hex(c)?));
+        }
+        if let Some(n) = f.size {
+            paths.push(("font.size", n.clamp(1, 409).to_string()));
+        }
+        if let Some(n) = &f.number_format {
+            paths.push(("num_fmt", n.clone()));
+        }
+        if let Some(h) = f.horizontal {
+            paths.push((
+                "alignment.horizontal",
+                match h {
+                    HAlign::Left => "left",
+                    HAlign::Center => "center",
+                    HAlign::Right => "right",
+                }
+                .into(),
+            ));
+        }
+        if let Some(v) = f.vertical {
+            paths.push((
+                "alignment.vertical",
+                match v {
+                    VAlign::Top => "top",
+                    VAlign::Middle => "center",
+                    VAlign::Bottom => "bottom",
+                }
+                .into(),
+            ));
+        }
+        if let Some(b) = f.wrap {
+            paths.push(("alignment.wrap_text", flag(b)));
+        }
+        if paths.is_empty() {
+            return Err("give the format something to change".into());
+        }
+        for (path, value) in paths {
+            self.set_style(sheet, range, path, &value)?;
+        }
+        Ok(())
+    }
+
+    /// Shows a format on the range's cells that meet the condition (a conditional format, kept in the file).
+    pub fn conditional_format(&mut self, sheet: &str, range: &str, when: &CellCondition, f: &CellFormat) -> Result<()> {
+        let i = self.sheet_index(sheet)?;
+        let ((r1, c1), (r2, c2)) = parse_range(range).ok_or_else(|| format!("{range} is not a range"))?;
+        let formula = condition_formula(when, &cell_name(r1, c1));
+        let font =
+            (f.bold.is_some() || f.italic.is_some() || f.underline.is_some() || f.color.is_some()).then(|| DxfFont {
+                b: f.bold,
+                i: f.italic,
+                u: f.underline,
+                color: f
+                    .color
+                    .as_deref()
+                    .map(|c| hex(c).map(Color::Rgb))
+                    .transpose()
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                ..Default::default()
+            });
+        let fill = match &f.background {
+            Some(c) => Some(ironcalc::base::types::Fill { color: Color::Rgb(hex(c)?) }),
+            None => None,
+        };
+        if font.is_none() && fill.is_none() {
+            return Err("a conditional format shows as bold, italic, underline, a colour or a fill".into());
+        }
+        let format = Dxf { font, fill, ..Default::default() };
+        let area = format!("{}:{}", cell_name(r1, c1), cell_name(r2, c2));
+        self.model.add_conditional_formatting(i, &area, CfRuleInput::Formula { formula, format, stop_if_true: false })
+    }
+
+    /// Sorts the range's rows (none: the used cells from A1) by its columns in order: numbers before text before
+    /// empty cells, text without regard to case; with `header`, the first row stays on top. As spreadsheets do, the
+    /// range's cells are rewritten in their new order, a formula's references shifting with it as if copied (`=B2-C2`
+    /// moved to row 4 is `=B4-C4`), and formats move with their cells; formulas elsewhere keep pointing at the same
+    /// cells. Rows hidden by a filter are shown first.
+    pub fn sort(&mut self, sheet: &str, range: &str, by: &[SortKey], header: bool) -> Result<()> {
         let i = self.sheet_index(sheet)?;
         let range = self.table(i, range)?;
-        let (key, (r1, c1), (r2, c2)) = Self::key_column(&range, column)?;
-        let (first, last) = (r1 as i32 + 1, r2 as i32 + 1);
+        let ((r1, c1), (r2, c2)) = parse_range(&range).ok_or_else(|| format!("{range} is not a range"))?;
+        if by.is_empty() {
+            return Err("sort needs at least one column to sort by".into());
+        }
+        let keys: Vec<(usize, bool)> =
+            by.iter().map(|k| Ok((Self::column_in(&k.column, c1, c2)?, k.descending))).collect::<Result<_>>()?;
+        let first = r1 as i32 + 1 + i32::from(header);
+        let last = r2 as i32 + 1;
         let (left, right) = (c1 as i32 + 1, c2 as i32 + 1);
+        if first > last {
+            return Ok(());
+        }
         self.model.set_rows_hidden(i, first, last, false)?;
-        let m = self.model.get_model();
-        let mut keys: Vec<(usize, Value)> = Vec::new();
+        let mut rows: Vec<(usize, Vec<Value>)> = Vec::new();
         for (n, r) in (first..=last).enumerate() {
-            let v = match m.get_cell_value_by_index(i, r, key as i32 + 1)? {
-                CellValue::None => Value::Empty,
-                CellValue::Number(x) => Value::Number(x),
-                CellValue::String(s) => Value::Text(s.to_lowercase()),
-                CellValue::Boolean(b) => Value::Bool(b),
-            };
-            keys.push((n, v));
+            let vals = keys.iter().map(|(k, _)| self.typed(i, r, *k as i32 + 1)).collect::<Result<Vec<_>>>()?;
+            rows.push((n, vals));
         }
         let rank = |v: &Value| match v {
             Value::Number(_) => 0,
@@ -343,23 +448,31 @@ impl Workbook {
             Value::Bool(_) => 2,
             Value::Empty => 3,
         };
-        keys.sort_by(|(_, a), (_, b)| {
-            let o = rank(a).cmp(&rank(b)).then_with(|| match (a, b) {
-                (Value::Number(x), Value::Number(y)) => x.total_cmp(y),
-                (Value::Text(x), Value::Text(y)) => x.cmp(y),
-                (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
-                _ => std::cmp::Ordering::Equal,
-            });
-            // Empty cells stay at the end either way.
-            if descending && rank(a) != 3 && rank(b) != 3 { o.reverse() } else { o }
+        rows.sort_by(|(_, a), (_, b)| {
+            keys.iter()
+                .enumerate()
+                .map(|(j, (_, descending))| {
+                    let (a, b) = (&a[j], &b[j]);
+                    let o = rank(a).cmp(&rank(b)).then_with(|| match (a, b) {
+                        (Value::Number(x), Value::Number(y)) => x.total_cmp(y),
+                        (Value::Text(x), Value::Text(y)) => x.to_lowercase().cmp(&y.to_lowercase()),
+                        (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
+                        _ => std::cmp::Ordering::Equal,
+                    });
+                    // Empty cells stay at the end either way.
+                    if *descending && rank(a) != 3 && rank(b) != 3 { o.reverse() } else { o }
+                })
+                .find(|o| o.is_ne())
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
-        if keys.iter().enumerate().all(|(target, (orig, _))| target == *orig) {
+        if rows.iter().enumerate().all(|(target, (orig, _))| target == *orig) {
             return Ok(());
         }
         // Every cell's input as it reads at its new row, and its format.
-        let mut inputs = Vec::with_capacity(keys.len());
-        let mut styles = Vec::with_capacity(keys.len());
-        for (target, (orig, _)) in keys.iter().enumerate() {
+        let m = self.model.get_model();
+        let mut inputs = Vec::with_capacity(rows.len());
+        let mut styles = Vec::with_capacity(rows.len());
+        for (target, (orig, _)) in rows.iter().enumerate() {
             let (from, to) = (first + *orig as i32, first + target as i32);
             let mut line = Vec::new();
             let mut fmt = Vec::new();
@@ -396,23 +509,34 @@ impl Workbook {
         r
     }
 
-    /// Hides the range's rows whose `column` cell shows none of `values` (case-insensitive); no values shows every row
-    /// of the range again.
-    pub fn filter(&mut self, sheet: &str, range: &str, column: &str, values: &[String]) -> Result<()> {
+    /// A filter on a range (none: the used cells from A1), whose first row is the header: rows below it whose
+    /// `column` cell doesn't meet the condition are hidden.
+    pub fn filter(&mut self, sheet: &str, range: &str, column: &str, when: &CellCondition) -> Result<()> {
         let i = self.sheet_index(sheet)?;
         let range = self.table(i, range)?;
-        let (key, (r1, _), (r2, _)) = Self::key_column(&range, column)?;
-        let (first, last) = (r1 as i32 + 1, r2 as i32 + 1);
-        self.model.set_rows_hidden(i, first, last, false)?;
-        if values.is_empty() {
+        let ((r1, c1), (r2, c2)) = parse_range(&range).ok_or_else(|| format!("{range} is not a range"))?;
+        let key = Self::column_in(column, c1, c2)? as i32 + 1;
+        let (first, last) = (r1 as i32 + 2, r2 as i32 + 1);
+        if first > last {
             return Ok(());
         }
-        let wanted: Vec<String> = values.iter().map(|v| v.trim().to_lowercase()).collect();
+        self.model.set_rows_hidden(i, first, last, false)?;
         for r in first..=last {
-            let shown = self.model.get_formatted_cell_value(i, r, key as i32 + 1)?.trim().to_lowercase();
-            if !wanted.contains(&shown) {
+            let v = self.typed(i, r, key)?;
+            let shown = self.model.get_formatted_cell_value(i, r, key)?;
+            if !meets(when, &v, &shown)? {
                 self.model.set_rows_hidden(i, r, r, true)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Shows every row of a sheet again.
+    pub fn clear_filter(&mut self, sheet: &str) -> Result<()> {
+        let i = self.sheet_index(sheet)?;
+        let (rows, _) = self.used(i)?;
+        if rows > 0 {
+            self.model.set_rows_hidden(i, 1, rows, false)?;
         }
         Ok(())
     }
@@ -494,9 +618,62 @@ pub fn dropped_parts(xlsx: &[u8]) -> Vec<String> {
     out
 }
 
-/// The cell name of a zero-based (row, column): `B3`.
-pub fn cell_name(row: usize, col: usize) -> String {
-    format!("{}{}", column_letters(col), row + 1)
+/// A colour as `#RRGGBB`.
+fn hex(c: &str) -> Result<String> {
+    let c = c.trim();
+    let ok = c.len() == 7 && c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit());
+    if ok { Ok(c.to_ascii_uppercase()) } else { Err(format!("{c} is not a colour (#rrggbb)")) }
+}
+
+/// A condition's value in a formula: a number as it is, text quoted.
+fn literal(v: &str) -> String {
+    let v = v.trim();
+    if v.parse::<f64>().is_ok() { v.to_string() } else { format!("\"{}\"", v.replace('"', "\"\"")) }
+}
+
+/// A condition as a formula for the cell `at` (the range's top-left), true where it is met.
+fn condition_formula(when: &CellCondition, at: &str) -> String {
+    match when {
+        CellCondition::GreaterThan { value } => format!("={at}>{}", literal(value)),
+        CellCondition::LessThan { value } => format!("={at}<{}", literal(value)),
+        CellCondition::Between { min, max } => format!("=AND({at}>={},{at}<={})", literal(min), literal(max)),
+        CellCondition::EqualTo { value } => format!("={at}={}", literal(value)),
+        CellCondition::NotEqualTo { value } => format!("={at}<>{}", literal(value)),
+        CellCondition::TextContains { text } => format!("=ISNUMBER(SEARCH({},{at}))", literal(text)),
+        CellCondition::Empty => format!("=LEN({at})=0"),
+        CellCondition::NotEmpty => format!("=LEN({at})>0"),
+        CellCondition::Formula { formula } => {
+            if formula.trim_start().starts_with('=') {
+                formula.trim().to_string()
+            } else {
+                format!("={}", formula.trim())
+            }
+        }
+    }
+}
+
+/// Whether a cell (its typed value and what it shows) meets a filter's condition. Numbers compare as numbers; text
+/// without regard to case.
+fn meets(when: &CellCondition, v: &Value, shown: &str) -> Result<bool> {
+    let num = |s: &str| s.trim().parse::<f64>().ok();
+    let cmp = |other: &str| -> Option<std::cmp::Ordering> {
+        match (v, num(other)) {
+            (Value::Number(x), Some(y)) => x.partial_cmp(&y),
+            _ => Some(shown.trim().to_lowercase().cmp(&other.trim().to_lowercase())),
+        }
+    };
+    use std::cmp::Ordering::*;
+    Ok(match when {
+        CellCondition::GreaterThan { value } => cmp(value) == Some(Greater),
+        CellCondition::LessThan { value } => cmp(value) == Some(Less),
+        CellCondition::Between { min, max } => cmp(min) != Some(Less) && cmp(max) != Some(Greater),
+        CellCondition::EqualTo { value } => cmp(value) == Some(Equal),
+        CellCondition::NotEqualTo { value } => cmp(value) != Some(Equal),
+        CellCondition::TextContains { text } => shown.to_lowercase().contains(&text.trim().to_lowercase()),
+        CellCondition::Empty => matches!(v, Value::Empty),
+        CellCondition::NotEmpty => !matches!(v, Value::Empty),
+        CellCondition::Formula { .. } => return Err("a filter takes a value condition, not a formula".into()),
+    })
 }
 
 #[cfg(test)]

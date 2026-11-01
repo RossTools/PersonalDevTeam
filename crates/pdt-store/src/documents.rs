@@ -3,8 +3,8 @@
 
 use crate::{Store, StoreError};
 use pdt_core::document::{
-    ChartSpec, CommentAnchor, CommentReply, Document, DocumentComment, DocumentFilter, DocumentKind, DocumentProject,
-    DocumentTicket, ProjectDocumentSettings,
+    BesideTab, Chart, CommentAnchor, CommentReply, Document, DocumentComment, DocumentFilter, DocumentKind,
+    DocumentProject, DocumentTicket, DocumentsBeside, ProjectDocumentSettings,
 };
 use pdt_core::ticket::Actor;
 use sqlx::Row;
@@ -364,27 +364,45 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
-    /// A sheet's charts, in order.
-    pub async fn document_charts(&self, document_id: &str) -> Result<Vec<ChartSpec>, StoreError> {
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT spec FROM document_charts WHERE document_id = ? ORDER BY position, chart_id")
-                .bind(document_id)
-                .fetch_all(&self.pool)
-                .await?;
-        Ok(rows.into_iter().filter_map(|(j,)| serde_json::from_str(&j).ok()).collect())
+    /// A spreadsheet's charts, in order, each with the sheet it is on.
+    pub async fn document_charts(&self, document_id: &str) -> Result<Vec<(String, Chart)>, StoreError> {
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT sheet, chart_id, spec FROM document_charts WHERE document_id = ? ORDER BY position, chart_id",
+        )
+        .bind(document_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(sheet, id, j)| serde_json::from_str(&j).ok().map(|spec| (sheet, Chart { id, spec })))
+            .collect())
     }
 
-    /// Adds a chart (last), or replaces the one with its id in place.
-    pub async fn put_document_chart(&self, document_id: &str, chart: &ChartSpec) -> Result<(), StoreError> {
+    /// Adds a chart on `sheet` (last), or replaces the one with its id in place (on whatever sheet it is).
+    pub async fn put_document_chart(&self, document_id: &str, sheet: &str, chart: &Chart) -> Result<(), StoreError> {
         sqlx::query(
-            "INSERT INTO document_charts (document_id, chart_id, spec, position)              VALUES (?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM document_charts WHERE document_id = ?))              ON CONFLICT(document_id, chart_id) DO UPDATE SET spec = excluded.spec",
+            "INSERT INTO document_charts (document_id, chart_id, sheet, spec, position) \
+             VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM document_charts WHERE document_id = ?)) \
+             ON CONFLICT(document_id, chart_id) DO UPDATE SET spec = excluded.spec",
         )
         .bind(document_id)
         .bind(&chart.id)
-        .bind(serde_json::to_string(chart).expect("a chart serializes"))
+        .bind(sheet)
+        .bind(serde_json::to_string(&chart.spec).expect("a chart serializes"))
         .bind(document_id)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    /// Moves a document's charts from one sheet name to another (a sheet renamed).
+    pub async fn rename_chart_sheet(&self, document_id: &str, from: &str, to: &str) -> Result<(), StoreError> {
+        sqlx::query("UPDATE document_charts SET sheet = ? WHERE document_id = ? AND sheet = ?")
+            .bind(to)
+            .bind(document_id)
+            .bind(from)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -399,10 +417,118 @@ impl Store {
     }
 }
 
+impl Store {
+    /// The documents open beside a conversation, in tab order (PDT-317).
+    pub async fn documents_beside(&self, session_id: &str) -> Result<DocumentsBeside, StoreError> {
+        let rows = sqlx::query(
+            "SELECT document_id, actor, opened_at, focused_at FROM documents_beside WHERE session_id = ? \
+             ORDER BY position, opened_at",
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut tabs = Vec::with_capacity(rows.len());
+        for r in rows {
+            let id: String = r.try_get("document_id")?;
+            let Some(document) = self.get_document(&id).await? else { continue };
+            let actor: String = r.try_get("actor")?;
+            tabs.push(BesideTab {
+                document,
+                by: Actor::parse(&actor).unwrap_or(Actor::Agent),
+                opened_at: r.try_get("opened_at")?,
+                focused_at: r.try_get("focused_at")?,
+            });
+        }
+        Ok(DocumentsBeside::new(tabs))
+    }
+
+    /// Opens a document beside a conversation (a new last tab) or, when it is open there already, shows its tab.
+    /// False when the session or the document is gone.
+    pub async fn open_beside(
+        &self,
+        session_id: &str,
+        document_id: &str,
+        by: Actor,
+        now: i64,
+    ) -> Result<bool, StoreError> {
+        let mut tx = self.write_tx().await?;
+        let there: Option<(i64,)> =
+            sqlx::query_as("SELECT 1 FROM documents_beside WHERE session_id = ? AND document_id = ?")
+                .bind(session_id)
+                .bind(document_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let done = if there.is_some() {
+            sqlx::query("UPDATE documents_beside SET focused_at = ? WHERE session_id = ? AND document_id = ?")
+                .bind(now)
+                .bind(session_id)
+                .bind(document_id)
+                .execute(&mut *tx)
+                .await?;
+            true
+        } else {
+            let r = sqlx::query(
+                "INSERT INTO documents_beside (session_id, document_id, position, actor, opened_at, focused_at) \
+                 SELECT s.id, d.id, COALESCE((SELECT MAX(position) + 1 FROM documents_beside WHERE session_id = s.id), 0), \
+                        ?, ?, ? \
+                 FROM sessions s, documents d WHERE s.id = ? AND d.id = ?",
+            )
+            .bind(by.as_str())
+            .bind(now)
+            .bind(now)
+            .bind(session_id)
+            .bind(document_id)
+            .execute(&mut *tx)
+            .await?;
+            r.rows_affected() == 1
+        };
+        tx.commit().await?;
+        Ok(done)
+    }
+
+    /// Closes a document's tab beside a conversation.
+    pub async fn close_beside(&self, session_id: &str, document_id: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("DELETE FROM documents_beside WHERE session_id = ? AND document_id = ?")
+            .bind(session_id)
+            .bind(document_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Puts a conversation's tabs in this order; tabs it leaves out keep their places after these.
+    pub async fn order_beside(&self, session_id: &str, document_ids: &[String]) -> Result<(), StoreError> {
+        let mut tx = self.write_tx().await?;
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT document_id FROM documents_beside WHERE session_id = ? ORDER BY position, opened_at",
+        )
+        .bind(session_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut order: Vec<String> = document_ids.iter().filter(|d| rows.iter().any(|(r,)| r == *d)).cloned().collect();
+        order.dedup();
+        for (r,) in rows {
+            if !order.contains(&r) {
+                order.push(r);
+            }
+        }
+        for (i, d) in order.iter().enumerate() {
+            sqlx::query("UPDATE documents_beside SET position = ? WHERE session_id = ? AND document_id = ?")
+                .bind(i as i64)
+                .bind(session_id)
+                .bind(d)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pdt_core::document::{ChartKind, ChartSeries};
+    use pdt_core::document::{ChartKind, ChartSpec};
     use pdt_core::ticket::NewTicket;
 
     async fn store_with_ticket(dir: &std::path::Path) -> Store {
@@ -533,27 +659,59 @@ mod tests {
         assert_eq!(all[0].quote.as_deref(), Some("Sheet1!B3"));
         assert_eq!(all[0].replies.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["r1"]);
 
-        let chart = |id: &str, title: &str| ChartSpec {
+        let chart = |id: &str, title: &str| Chart {
             id: id.into(),
-            kind: ChartKind::Bar,
-            title: title.into(),
-            sheet: "Sheet1".into(),
-            categories: "A2:A4".into(),
-            series: vec![ChartSeries { name: "S".into(), values: "B2:B4".into() }],
-            anchor: "F2".into(),
-            width: 480,
-            height: 300,
+            spec: ChartSpec { kind: ChartKind::Bar, data: "A1:B4".into(), title: Some(title.into()), anchor: None },
         };
-        store.put_document_chart("d1", &chart("a", "One")).await.unwrap();
-        store.put_document_chart("d1", &chart("b", "Two")).await.unwrap();
-        store.put_document_chart("d1", &chart("a", "One again")).await.unwrap();
+        store.put_document_chart("d1", "Sheet1", &chart("a", "One")).await.unwrap();
+        store.put_document_chart("d1", "Sheet1", &chart("b", "Two")).await.unwrap();
+        store.put_document_chart("d1", "Sheet1", &chart("a", "One again")).await.unwrap();
+        store.rename_chart_sheet("d1", "Sheet1", "Data").await.unwrap();
         let charts = store.document_charts("d1").await.unwrap();
-        assert_eq!(charts.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), ["One again", "Two"]);
+        assert_eq!(
+            charts.iter().map(|(s, c)| (s.as_str(), c.spec.title.as_deref().unwrap())).collect::<Vec<_>>(),
+            [("Data", "One again"), ("Data", "Two")]
+        );
         assert!(store.delete_document_chart("d1", "b").await.unwrap());
         assert!(!store.delete_document_chart("d1", "b").await.unwrap());
 
         store.delete_document("d1").await.unwrap();
         assert!(store.document_comments("d1").await.unwrap().is_empty());
         assert!(store.document_charts("d1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn documents_open_beside_a_conversation_in_tabs() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_ticket(dir.path()).await;
+        store.insert_session(&crate::sessions::tests::session("s1", 1)).await.unwrap();
+        for (id, at) in [("d1", 1), ("d2", 2), ("d3", 3)] {
+            store.add_document(&doc(id, id, DocumentKind::Doc, "local", at)).await.unwrap();
+        }
+        assert!(store.documents_beside("s1").await.unwrap().tabs.is_empty());
+        assert!(store.open_beside("s1", "d1", Actor::User, 10).await.unwrap());
+        assert!(store.open_beside("s1", "d2", Actor::Agent, 11).await.unwrap());
+        assert!(store.open_beside("s1", "d3", Actor::User, 12).await.unwrap());
+        assert!(!store.open_beside("s1", "nope", Actor::User, 12).await.unwrap());
+        assert!(!store.open_beside("gone", "d1", Actor::User, 12).await.unwrap());
+        let ids = |b: &DocumentsBeside| b.tabs.iter().map(|t| t.document.id.clone()).collect::<Vec<_>>();
+        let b = store.documents_beside("s1").await.unwrap();
+        assert_eq!(ids(&b), ["d1", "d2", "d3"]);
+        assert_eq!(b.active.as_deref(), Some("d3"));
+        assert_eq!(b.tabs[1].by, Actor::Agent);
+
+        // Opening one again shows it, in its place.
+        store.open_beside("s1", "d1", Actor::Agent, 13).await.unwrap();
+        let b = store.documents_beside("s1").await.unwrap();
+        assert_eq!((ids(&b), b.active.as_deref()), (vec!["d1".into(), "d2".into(), "d3".into()], Some("d1")));
+        assert_eq!(b.tabs[0].by, Actor::User, "who opened it first stays");
+
+        store.order_beside("s1", &["d3".into(), "d1".into(), "x".into()]).await.unwrap();
+        assert_eq!(ids(&store.documents_beside("s1").await.unwrap()), ["d3", "d1", "d2"]);
+        assert!(store.close_beside("s1", "d1").await.unwrap());
+        assert!(!store.close_beside("s1", "d1").await.unwrap());
+        store.delete_document("d3").await.unwrap();
+        let b = store.documents_beside("s1").await.unwrap();
+        assert_eq!((ids(&b), b.active.as_deref()), (vec!["d2".into()], Some("d2")));
     }
 }

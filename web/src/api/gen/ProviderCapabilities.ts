@@ -41,7 +41,7 @@ comments: boolean,
  */
 embed: boolean, 
 /**
- * Keeps charts on its sheets ([`ChartSpec`]).
+ * Keeps charts on its sheets and reads their numbers ([`ChartView`]).
  */
 charts: boolean, 
 /**

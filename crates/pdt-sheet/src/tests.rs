@@ -1,6 +1,7 @@
 use super::*;
 use ironcalc::base::cf_types::CfRuleInput;
 use ironcalc::base::types::{Dxf, DxfFont};
+use pdt_core::document::{CellCondition, CellFormat, HAlign, SortKey};
 
 fn sales() -> Workbook {
     let mut wb = Workbook::new("Sales").unwrap();
@@ -88,11 +89,15 @@ fn csv_comes_in_typed_and_goes_out_as_shown() {
     assert_eq!(quoted.to_csv("Sheet1").unwrap(), "a,b\n\"x, y\",\"say \"\"hi\"\"\"\n");
 }
 
+fn key(column: &str, descending: bool) -> SortKey {
+    SortKey { column: column.into(), descending }
+}
+
 #[test]
 fn sorting_rewrites_the_rows_and_keeps_formulas_right() {
     let mut wb = sales();
     wb.set_style("Sheet1", "A2", "font.b", "true").unwrap();
-    wb.sort("Sheet1", "A2:D4", "D", true).unwrap();
+    wb.sort("Sheet1", "A2:D4", &[key("D", true)], false).unwrap();
     assert_eq!(
         shown(&wb, "Sheet1", "A2:D4"),
         vec![vec!["Q3", "1700", "1000", "700"], vec!["Q2", "1500", "900", "600"], vec!["Q1", "1200", "800", "400"],]
@@ -103,23 +108,60 @@ fn sorting_rewrites_the_rows_and_keeps_formulas_right() {
     assert_eq!(wb.input("Sheet1", "B5").unwrap(), "=SUM(B2:B4)", "a range over the sorted rows stays as it was");
     assert!(wb.style("Sheet1", "A4").unwrap().font.b, "a format moves with its cell");
     assert!(!wb.style("Sheet1", "A2").unwrap().font.b);
-    wb.sort("Sheet1", "A2:D4", "a", false).unwrap();
-    assert_eq!(shown(&wb, "Sheet1", "A2:A4"), vec![vec!["Q1".to_string()], vec!["Q2".into()], vec!["Q3".into()]]);
-    assert!(wb.sort("Sheet1", "A2:B4", "D", false).is_err());
-    // No range: the rows below the header, total included.
-    wb.sort("Sheet1", "", "B", true).unwrap();
-    assert_eq!(shown(&wb, "Sheet1", "A2:A2"), vec![vec!["Total".to_string()]]);
-    assert!(Workbook::new("e").unwrap().sort("Sheet1", "", "A", false).is_err());
+    // With a header row, which stays on top.
+    wb.sort("Sheet1", "A1:D4", &[key("a", false)], true).unwrap();
+    assert_eq!(
+        shown(&wb, "Sheet1", "A1:A4"),
+        vec![vec!["Quarter".to_string()], vec!["Q1".into()], vec!["Q2".into()], vec!["Q3".into()]]
+    );
+    assert!(wb.sort("Sheet1", "A2:B4", &[key("D", false)], false).is_err());
+    assert!(wb.sort("Sheet1", "A2:B4", &[], false).is_err());
+    // A second key breaks ties.
+    wb.set_cells("Sheet1", "B2", &[vec!["1500".into()]]).unwrap();
+    wb.sort("Sheet1", "A1:D4", &[key("B", true), key("A", true)], true).unwrap();
+    assert_eq!(shown(&wb, "Sheet1", "A2:A4"), vec![vec!["Q3".to_string()], vec!["Q2".into()], vec!["Q1".into()]]);
 }
 
 #[test]
 fn a_filter_hides_rows_and_clears() {
     let mut wb = sales();
-    wb.filter("Sheet1", "A2:D4", "A", &["q2".into()]).unwrap();
-    let hidden: Vec<bool> = (2..=4).map(|r| wb.row_hidden("Sheet1", r).unwrap()).collect();
-    assert_eq!(hidden, vec![true, false, true]);
-    wb.filter("Sheet1", "A2:D4", "A", &[]).unwrap();
-    assert!((2..=4).all(|r| !wb.row_hidden("Sheet1", r).unwrap()));
+    let hidden = |wb: &Workbook| (2..=5).map(|r| wb.row_hidden("Sheet1", r).unwrap()).collect::<Vec<_>>();
+    wb.filter("Sheet1", "A1:D5", "B", &CellCondition::GreaterThan { value: "1400".into() }).unwrap();
+    assert_eq!(hidden(&wb), vec![true, false, false, false], "the total (4400) shows too");
+    wb.filter("Sheet1", "A1:D5", "A", &CellCondition::TextContains { text: "q".into() }).unwrap();
+    assert_eq!(hidden(&wb), vec![false, false, false, true]);
+    wb.filter("Sheet1", "A1:D5", "A", &CellCondition::EqualTo { value: "q2".into() }).unwrap();
+    assert_eq!(hidden(&wb), vec![true, false, true, true]);
+    assert!(wb.filter("Sheet1", "A1:D5", "A", &CellCondition::Formula { formula: "=1".into() }).is_err());
+    wb.clear_filter("Sheet1").unwrap();
+    assert_eq!(hidden(&wb), vec![false; 4]);
+}
+
+#[test]
+fn formats_and_conditional_formats_go_on_ranges() {
+    let mut wb = sales();
+    let f = CellFormat {
+        bold: Some(true),
+        background: Some("#dce6f2".into()),
+        number_format: Some("#,##0.00".into()),
+        horizontal: Some(HAlign::Center),
+        ..Default::default()
+    };
+    wb.format("Sheet1", "B2:B4", &f).unwrap();
+    let s = wb.style("Sheet1", "B3").unwrap();
+    assert!(s.font.b);
+    assert_eq!(s.num_fmt, "#,##0.00");
+    assert_eq!(shown(&wb, "Sheet1", "B3:B3"), vec![vec!["1,500.00".to_string()]]);
+    assert!(wb.format("Sheet1", "B2", &CellFormat::default()).is_err());
+    assert!(wb.format("Sheet1", "B2", &CellFormat { color: Some("red".into()), ..Default::default() }).is_err());
+
+    let red = CellFormat { color: Some("#cc0000".into()), ..Default::default() };
+    wb.conditional_format("Sheet1", "D2:D4", &CellCondition::GreaterThan { value: "500".into() }, &red).unwrap();
+    let rules = wb.model().get_conditional_formatting_list(0).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert!(wb.conditional_format("Sheet1", "D2:D4", &CellCondition::Empty, &CellFormat::default()).is_err());
+    let back = Workbook::from_xlsx(&wb.to_xlsx().unwrap(), "x").unwrap();
+    assert_eq!(back.model().get_conditional_formatting_list(0).unwrap().len(), 1, "kept in the file");
 }
 
 #[test]

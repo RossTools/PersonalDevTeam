@@ -1,11 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, FilePlus2, FileSpreadsheet, FileText, Link2, Unlink } from 'lucide-react';
+import { ChevronDown, FilePlus2, FileSpreadsheet, FileText, Link2, PanelRight, Unlink } from 'lucide-react';
 import { Button, IconButton, MenuButton } from '@ui';
 import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
 import type { DocumentLinkInput } from '../api/gen/DocumentLinkInput';
 import { actionError, runAction, useAction } from '../common/useAction';
+import { besideEntries, useBesideTargets } from './BesidePanel';
 import { ImportDocumentDialog, LinkDocumentDialog, NewDocumentDialog } from './DocumentDialogs';
 import { invalidateDocuments, openDocument, providerLabel, useDocumentProviders, useDocuments } from './queries';
 
@@ -15,8 +16,16 @@ export function KindIcon({ kind }: { kind: Document['kind'] }) {
     : <FileText aria-label="Doc" className="size-3.5 shrink-0 text-muted-foreground" />;
 }
 
-/** One linked document: its title opens it in the Documents view; Unlink takes the link away (the document stays). */
-function DocumentRow({ doc, provider, onUnlink }: { doc: Document; provider: string; onUnlink: () => void }) {
+/**
+ * One linked document: its title opens it in the Documents view; Open beside opens it beside a conversation (the
+ * ticket's, or the PM's); Unlink takes the link away (the document stays).
+ */
+function DocumentRow({ doc, provider, beside, onUnlink }: {
+  doc: Document;
+  provider: string;
+  beside: ReturnType<typeof useBesideTargets>;
+  onUnlink: () => void;
+}) {
   return (
     <li className="flex min-w-0 items-center gap-2 text-xs">
       <KindIcon kind={doc.kind} />
@@ -24,6 +33,9 @@ function DocumentRow({ doc, provider, onUnlink }: { doc: Document; provider: str
         {doc.title}
       </button>
       <span className="shrink-0 text-meta text-muted-foreground">{provider}</span>
+      <MenuButton label={`Open ${doc.title} beside a conversation`} placement="bottom end" entries={() => besideEntries(beside, doc.id)}>
+        <IconButton label={`Open ${doc.title} beside a conversation`} size="sm" variant="ghost"><PanelRight aria-hidden /></IconButton>
+      </MenuButton>
       <IconButton label={`Unlink ${doc.title}`} size="sm" variant="ghost" onClick={onUnlink}>
         <Unlink aria-hidden />
       </IconButton>
@@ -62,6 +74,7 @@ function LinkedDocuments({ link, projectId, ticket, empty, wrap }: {
     invalidateDocuments(qc);
   });
   const done = () => setDialog(null);
+  const beside = useBesideTargets(ticket ? [ticket.id] : []);
   const canMake = (providers.data?.providers ?? []).some((p) => p.capabilities.create);
   const canImport = (providers.data?.providers ?? []).some((p) => p.capabilities.search);
   const actions = (
@@ -89,7 +102,7 @@ function LinkedDocuments({ link, projectId, ticket, empty, wrap }: {
       {docs.isSuccess && list.length === 0 && <p className="text-xs text-muted-foreground">{empty}</p>}
       {list.length > 0 && (
         <ul aria-label="Linked documents" className="flex flex-col gap-1.5">
-          {list.map((d) => <DocumentRow key={d.id} doc={d} provider={providerLabel(providers.data?.providers, d.provider)} onUnlink={() => unlink(d)} />)}
+          {list.map((d) => <DocumentRow key={d.id} doc={d} provider={providerLabel(providers.data?.providers, d.provider)} beside={beside} onUnlink={() => unlink(d)} />)}
         </ul>
       )}
       {docs.isError && <p role="alert" className="text-xs text-destructive">{actionError(docs.error)}</p>}
