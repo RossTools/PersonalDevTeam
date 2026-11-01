@@ -56,7 +56,9 @@ any), or says what went wrong. Set each tool to:
 - **Ask**: the agent asks you first, in its usual prompt (or your Inbox). A session that runs without asking runs it;
 - **Block**: the agent can't use it.
 
-Claude Code and Codex block tools. Other agents can't block a single tool: they say so when the session starts, and
+Claude Code and Codex block tools. With **Block** as a server's default, Claude Code gets the server once its tools
+have been listed (by **Test**, or by PDT on its own within a minute or so), so that every tool it doesn't allow stays
+blocked; a tool the server adds later asks until PDT lists the tools again. Other agents can't block a single tool: they say so when the session starts, and
 the tool stays available to them. A server whose every tool is blocked isn't given to any agent.
 
 ## Example: search Slack, never post
@@ -85,5 +87,6 @@ theirs still load.
 
 ## Workflows
 
-Workflows can call the same servers' tools: each tool is an action in the workflow catalog. Untick **Agents** under
-**Who gets it** for a server only workflows should use. See [Workflows](../automation/workflows.md).
+Workflows can call the same servers' tools: each tool is an action in the workflow catalog. A server with **Agents**
+unticked under **Who gets it** is for workflows only, and its row says **Workflows only**: tick **Agents** to give it to
+your agents too. A server added under **Settings › Plugins** or **All connections** starts that way. See [Workflows](../automation/workflows.md).

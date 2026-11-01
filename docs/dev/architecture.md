@@ -156,7 +156,9 @@ user's say are asked in the agent's own prompt where it supports that, or throug
 **The user's MCP servers.** `mcp` connections (Settings → MCP servers) reach agents beside pdt-mcp. Their
 `config.agents` (pdt-core `mcp_servers::AgentAccess`) says who gets one (the PM, ticket and workflow sessions with an
 optional persona list, sessions the user starts, project limits) and each tool's mode (allow, ask, block); a
-locked-down session gets none. pdt-api `agent_mcp.rs` picks a session's servers and resolves each (header and env
+locked-down session gets none. A connection without `agents` reaches everyone; those from before agents got them were
+set to `{enabled: false}` by a migration, and the generic connection dialog writes that too (workflow-only). Claude
+leaves out a Block-by-default server until its tools are listed (`ExtraServer::listed`), since it blocks tool by tool. pdt-api `agent_mcp.rs` picks a session's servers and resolves each (header and env
 values that name PDT secrets, the connection's own secret, an OAuth bearer token) into a pdt-agents
 `mcp::ExtraServer`, which `mcp::server_for` adds to the session's `McpServer`. pdt-agents `mcp.rs` writes each agent's
 form: Claude's `--mcp-config` file plus `--allowedTools`/`--disallowedTools` (a server whose tools share one mode is

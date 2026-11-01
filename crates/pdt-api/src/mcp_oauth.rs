@@ -53,8 +53,9 @@ struct Pending {
 pub struct OAuthCache {
     tokens: Mutex<HashMap<String, Option<OAuthTokens>>>,
     pending: Mutex<HashMap<String, Pending>>,
-    /// One refresh at a time per connection.
-    refreshing: tokio::sync::Mutex<()>,
+    /// By connection id: held while that server's tokens are refreshed, one refresh at a time per server (a slow
+    /// service holds up no other).
+    refreshing: Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
 }
 
 /// A server's sign-in, as Settings shows it.
@@ -115,6 +116,7 @@ async fn save(st: &AppState, conn: &Connection, t: &OAuthTokens) -> Result<(), S
 
 /// Forgets a connection's sign-in (Sign out, or the connection deleted).
 pub(crate) async fn forget(st: &AppState, id: &str) {
+    st.mcp.oauth.refreshing.lock().unwrap().remove(id);
     let (secrets, acct) = (st.secrets.clone(), account(id));
     let _ = tokio::task::spawn_blocking(move || secrets.delete(&acct)).await;
     st.mcp.oauth.tokens.lock().unwrap().insert(id.to_string(), None);
@@ -162,7 +164,8 @@ pub(crate) async fn access_token(st: &AppState, conn: &Connection) -> Result<Str
 /// Refreshes a connection's tokens now. A refusal (revoked, expired) marks the sign-in failed; a failure to reach the
 /// service doesn't.
 pub(crate) async fn refresh(st: &AppState, conn: &Connection) -> Result<OAuthTokens, String> {
-    let _one = st.mcp.oauth.refreshing.lock().await;
+    let gate = st.mcp.oauth.refreshing.lock().unwrap().entry(conn.id.clone()).or_default().clone();
+    let _one = gate.lock().await;
     let t = tokens(st, conn).await?.ok_or("not signed in")?;
     if !t.due(now_ms()) && t.failed.is_none() {
         // Another caller refreshed it meanwhile.

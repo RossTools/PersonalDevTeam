@@ -52,6 +52,8 @@ pub struct ExtraServer {
     /// The header and environment names whose values are secrets: a Codex terminal takes them from its environment,
     /// never its command line.
     pub secret_keys: Vec<String>,
+    /// Its tools have been listed (Test, or PDT's own use), so `plan` knows every tool there was then.
+    pub listed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,7 +88,7 @@ impl McpServer {
 /// Claude's `--mcp-config` document.
 pub fn claude_config(m: &McpServer) -> Value {
     let mut servers = serde_json::Map::new();
-    for x in &m.extra {
+    for x in m.extra.iter().filter(|x| claude_takes(x)) {
         servers.insert(x.name.clone(), claude_entry(x));
     }
     servers.insert(SERVER_NAME.into(), json!({"type": "http", "url": m.url, "headers": {"Authorization": m.bearer()}}));
@@ -107,6 +109,12 @@ fn claude_entry(x: &ExtraServer) -> Value {
             json!({"type": if *sse { "sse" } else { "http" }, "url": url, "headers": pairs(headers)})
         }
     }
+}
+
+/// Claude blocks a server's tools one by one: one that blocks by default is left out until its tools are listed, or
+/// the tools PDT doesn't know of would ask instead (Codex gets `enabled_tools`, which keeps them out).
+fn claude_takes(x: &ExtraServer) -> bool {
+    x.listed || x.plan.default != ToolMode::Block
 }
 
 /// Claude's tool rules for one server: allowed (`--allowedTools`) and blocked (`--disallowedTools`). A server whose
@@ -146,7 +154,7 @@ pub fn claude_args(m: &McpServer) -> Vec<String> {
     let mut a = vec!["--mcp-config".to_string(), file.to_string_lossy().into_owned()];
     let mut allowed: Vec<String> = m.tools.iter().map(|t| format!("mcp__{SERVER_NAME}__{t}")).collect();
     let mut blocked: Vec<String> = vec![];
-    for x in &m.extra {
+    for x in m.extra.iter().filter(|x| claude_takes(x)) {
         let (al, bl) = claude_rules(x);
         allowed.extend(al);
         blocked.extend(bl);
@@ -432,6 +440,7 @@ mod tests {
                 },
                 plan: slack.plan(&["search".into(), "post_message".into(), "read".into()]),
                 secret_keys: vec!["Authorization".into()],
+                listed: true,
             },
             ExtraServer {
                 name: "notes".into(),
@@ -443,6 +452,7 @@ mod tests {
                 },
                 plan: ToolPolicy { default: ToolMode::Allow, overrides: Default::default() }.plan(&["find".into()]),
                 secret_keys: vec!["NOTES_KEY".into()],
+                listed: false,
             },
         ]
     }
@@ -510,12 +520,22 @@ mod tests {
             transport: Transport::Http { url: "https://s/mcp".into(), headers: vec![], sse: false },
             plan: p.plan(&["search".into(), "post".into()]),
             secret_keys: vec![],
+            listed: true,
         };
         let v = codex_server(&x, false);
         assert_eq!(v["enabled_tools"], json!(["search"]));
         assert!(v.get("disabled_tools").is_none());
         let (_, blocked) = claude_rules(&x);
         assert_eq!(blocked, ["mcp__s__post"]);
+        assert!(claude_takes(&x));
+        // Before its tools are listed, Claude couldn't block the ones PDT doesn't know of: it goes without the server.
+        let unlisted = ExtraServer { listed: false, ..x };
+        assert!(!claude_takes(&unlisted));
+        let dir = tempfile::tempdir().unwrap();
+        let m = McpServer { extra: vec![unlisted.clone()], ..server(Some(dir.path())) };
+        assert!(claude_config(&m)["mcpServers"].get("s").is_none());
+        assert!(!claude_args(&m).iter().any(|a| a.contains("mcp__s")));
+        assert!(codex_thread_config(&m).get("mcp_servers.s").is_some(), "Codex enables only the open tools");
     }
 
     #[test]

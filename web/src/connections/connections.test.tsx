@@ -209,7 +209,11 @@ describe('connections', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
       name: 'notes', kind: 'mcp', url: '',
-      config: { transport: 'stdio', command: 'npx', args: ['-y', 'notes-server', '/tmp/notes'], env: { LOG: 'warn', A: 'b=c' }, secretEnv: 'NOTES_TOKEN' },
+      config: {
+        transport: 'stdio', command: 'npx', args: ['-y', 'notes-server', '/tmp/notes'], env: { LOG: 'warn', A: 'b=c' }, secretEnv: 'NOTES_TOKEN',
+        // A workflow's server: agents get it once the user ticks Agents in Settings › MCP servers.
+        agents: { enabled: false },
+      },
     });
     expect(calls.some((c) => c.method === 'PUT')).toBe(false);
   });

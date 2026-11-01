@@ -195,6 +195,7 @@ pub(crate) async fn servers_for(st: &AppState, s: &Session) -> Vec<ExtraServer> 
                     transport: r.transport,
                     plan: ms::access_of(&c.config).tools.plan(&known_tools(st, &c)),
                     secret_keys: r.secret_keys,
+                    listed: st.mcp.cached(&c.name).is_some_and(|t| t.listed_at.is_some()),
                 });
             }
             Err(e) => tracing::warn!(session = %s.id, server = %c.name, error = %e, "an MCP server was left out"),
