@@ -43,11 +43,22 @@ pub fn blocked_message() -> String {
     )
 }
 
-/// The message for a failed connection to `host` with OS error `os_error`, when it is the Local Network permission's
-/// doing: on macOS, EHOSTUNREACH to a local host. None for any other failure (a public address, another error,
-/// another OS).
+/// The message for a failed connection to `host` with OS error `os_error`, when it may be the Local Network
+/// permission's doing: on macOS, EHOSTUNREACH to a local host (it is), or to a name that may resolve to a local
+/// address (it may be; the message says so). None for any other failure (a public address, another error, another
+/// OS).
 pub fn explain_failure(macos: bool, host: Option<&str>, os_error: Option<i32>) -> Option<String> {
-    (macos && os_error == Some(EHOSTUNREACH_MACOS) && host.is_some_and(is_local_host)).then(blocked_message)
+    let host = host.filter(|_| macos && os_error == Some(EHOSTUNREACH_MACOS))?;
+    if is_local_host(host) {
+        return Some(blocked_message());
+    }
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    bare.parse::<IpAddr>().is_err().then(|| {
+        format!(
+            "No route to host. If it is on your local network, macOS Local Network permission may be blocking \
+             {PRODUCT_NAME}: System Settings › Privacy & Security › Local Network › turn on {PRODUCT_NAME}"
+        )
+    })
 }
 
 #[cfg(test)]
@@ -98,9 +109,23 @@ mod tests {
     }
 
     #[test]
+    fn host_unreachable_to_a_name_on_macos_mentions_the_setting_as_a_maybe() {
+        // A name (not `.local`) may resolve to a private address, which the permission blocks just the same.
+        let m = explain_failure(true, Some("nas.home.arpa"), Some(65)).unwrap();
+        assert!(m.starts_with("No route to host"), "{m}");
+        assert!(
+            m.contains("on your local network") && m.contains("System Settings") && m.contains(PRODUCT_NAME),
+            "{m}"
+        );
+        assert!(!m.contains("nas.home.arpa"), "the message never repeats the host: {m}");
+    }
+
+    #[test]
     fn other_failures_keep_their_own_error() {
         assert_eq!(explain_failure(true, Some("8.8.8.8"), Some(65)), None, "a public address");
-        assert_eq!(explain_failure(true, Some("example.com"), Some(65)), None, "a name that may not be local");
+        assert_eq!(explain_failure(true, Some("[2606:4700::1111]"), Some(65)), None, "a public IPv6 address");
+        assert_eq!(explain_failure(true, Some("example.com"), Some(61)), None, "a name, connection refused");
+        assert_eq!(explain_failure(false, Some("example.com"), Some(65)), None, "a name, not macOS");
         assert_eq!(explain_failure(true, Some("192.168.0.69"), Some(61)), None, "connection refused");
         assert_eq!(explain_failure(true, Some("192.168.0.69"), None), None, "no OS error");
         assert_eq!(explain_failure(true, None, Some(65)), None, "no host");

@@ -69,7 +69,10 @@ $tray = Get-Process -ErrorAction SilentlyContinue | Where-Object {
 if ($tray) {
     Write-Host 'Stopping the stable tray app and pdt-host...'
     $tray | Stop-Process -Force
+    # Wait-Process reports a timeout as an error that SilentlyContinue hides: check what is still running instead.
     $tray | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+    $left = @($tray | Where-Object { -not $_.HasExited })
+    if ($left) { throw "still running 10 seconds after being stopped: $(($left | ForEach-Object { "$($_.ProcessName) ($($_.Id))" }) -join ', ')" }
 }
 
 if (Test-Port $port) {
@@ -79,8 +82,9 @@ if (Test-Port $port) {
     while ((Test-Port $port) -and ((Get-Date) -lt $deadline)) { Start-Sleep -Milliseconds 250 }
     if (Test-Port $port) { throw "pdtd on port $port did not stop within 20 seconds" }
 }
-Get-Process pdtd -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$installDir\*" } |
-    Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+$daemon = @(Get-Process pdtd -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$installDir\*" })
+$daemon | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+if (@($daemon | Where-Object { -not $_.HasExited })) { throw "pdtd ($($daemon.Id -join ', ')) did not exit within 10 seconds" }
 
 Write-Host 'Installing...'
 # The installer's hook starts pdt-host with the installer's environment: no dev setup (e.g. PDT_PROFILE=dev) may leak in.
