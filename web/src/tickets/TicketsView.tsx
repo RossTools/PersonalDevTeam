@@ -30,7 +30,7 @@ import { NewTicketFab, PhoneToolbar } from './PhoneTickets';
 import { PhoneTicket } from './PhoneTicket';
 import { useClearToStartToasts } from './clearToStart';
 import { TicketBadges } from './TicketBadges';
-import { ImportJiraDialog } from './ImportJiraDialog';
+import { ImportByKeyDialog, useIssueImports, type IssueImport } from './ImportByKeyDialog';
 import {
   BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
 } from './model';
@@ -373,13 +373,14 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   const start = useStartTicket();
   const { projectId, filters, mode } = backlog;
   const project = projects.find((p) => p.id === projectId) ?? null;
-  // A project linked to Jira can import an issue by its key.
+  // A project linked to a plugin that imports issues can import one by its key.
   const settings = useQuery({
     queryKey: ['project-settings', project?.id],
     queryFn: () => api.projectSettings(project!.id),
     enabled: !!project && project.kind !== 'personal',
   });
-  const [importing, setImporting] = useState(false);
+  const imports = useIssueImports(project ? settings.data : undefined);
+  const [importing, setImporting] = useState<IssueImport | null>(null);
   const query = useMemo(() => toQuery(project?.id ?? null, filters), [project?.id, filters]);
   const pages = useTicketPages(query, mode === 'backlog');
   const items = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
@@ -561,9 +562,9 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     </BulkActionBar>
   );
 
-  // Phones: Import from Jira under the top bar's ⋯ (the list screen only).
-  const jira = phone && peekRef === null && !!project && !!settings.data?.integrations?.jira;
-  useTopBarActions(jira ? () => [{ label: 'Import from Jira…', onSelect: () => setImporting(true) }] : null);
+  // Phones: each import under the top bar's ⋯ (the list screen only).
+  const phoneImports = phone && peekRef === null && !!project ? imports : [];
+  useTopBarActions(phoneImports.length > 0 ? () => phoneImports.map((i) => ({ label: `${i.title}…`, onSelect: () => setImporting(i) })) : null);
 
   let body: ReactNode;
   if (projects.length === 0) {
@@ -633,7 +634,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
         ) : (
           projects.length > 0 && <NewTicketFab onClick={() => onNewTicket(project?.id ?? null)} />
         )}
-        {importing && project && <ImportJiraDialog projectId={project.id} onClose={() => setImporting(false)} />}
+        {importing && project && <ImportByKeyDialog projectId={project.id} source={importing} onClose={() => setImporting(null)} />}
         {menu}
         {ticketPeek}
       </div>
@@ -660,13 +661,13 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
         }
         actions={
           <>
-            {project && settings.data?.integrations?.jira && (
-              <Button size="sm" onClick={() => setImporting(true)}>Import from Jira…</Button>
-            )}
+            {project && imports.map((i) => (
+              <Button key={i.integration} size="sm" onClick={() => setImporting(i)}>{i.title}…</Button>
+            ))}
             <Button variant="primary" size="sm" disabled={projects.length === 0} onClick={() => onNewTicket(project?.id ?? null)}>
               <Plus aria-hidden /> <span className="max-sm:sr-only">New ticket</span>
             </Button>
-            {importing && project && <ImportJiraDialog projectId={project.id} onClose={() => setImporting(false)} />}
+            {importing && project && <ImportByKeyDialog projectId={project.id} source={importing} onClose={() => setImporting(null)} />}
           </>
         }
       />

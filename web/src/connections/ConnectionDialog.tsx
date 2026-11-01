@@ -7,7 +7,7 @@ import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import { pluginsKey } from '../plugins/model';
 import {
-  AUTH_MODES, discordInviteUrl, fieldShown, fieldText, fieldsConfig, hookUrl, kindOf, randomSecret, useConnectionKinds, type ConnectionKind,
+  AUTH_MODES, fieldShown, fieldText, fieldValid, fieldsConfig, hookUrl, kindOf, linkUrl, randomSecret, useConnectionKinds, whenHolds, type ConnectionKind,
 } from './kinds';
 
 export const connectionsKey = ['connections'] as const;
@@ -49,16 +49,12 @@ export function ConnectionDialog(props: DialogProps) {
 function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, description, cancelLabel = 'Cancel', kinds }: DialogProps & { kinds: ConnectionKind[] }) {
   const qc = useQueryClient();
   const [name, setName] = useState(connection?.name ?? '');
-  const [kind, setKind] = useState(connection?.kind ?? fixedKind ?? 'discord_webhook');
+  const [kind, setKind] = useState(connection?.kind ?? fixedKind ?? kinds[0]?.id ?? '');
   const [url, setUrl] = useState(connection?.url ?? '');
   const [auth, setAuth] = useState(str(connection?.config.auth) || 'bearer');
   const [extra, setExtra] = useState(str(connection?.config.username) || str(connection?.config.header) || str(connection?.config.param));
   const [secret, setSecret] = useState('');
   const [settings, setSettings] = useState(() => settingsText(kindOf(kinds, kind), connection?.config));
-  const [guildId, setGuildId] = useState(str(connection?.config.guildId));
-  const [appId, setAppId] = useState(str(connection?.config.applicationId));
-  const [dmUserId, setDmUserId] = useState(str(connection?.config.dmUserId));
-  const [dmInbox, setDmInbox] = useState(connection?.config.dmInbox === true);
   const [pmActs, setPmActs] = useState(connection?.config.pmActs === true);
   // A new connection made by an earlier Save whose secret step failed: Save again updates it instead of making a
   // second one with the same name.
@@ -66,14 +62,13 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, descrip
   const existing = connection ?? made;
   const k = kindOf(kinds, kind);
   const pickKind = (id: string) => { setKind(id); setSettings(settingsText(kindOf(kinds, id))); };
-  const askUrl = !!k?.url || (!!k?.urlWhen && settings[k.urlWhen.key] === k.urlWhen.value);
+  const askUrl = !!k?.url || (!!k?.urlWhen && whenHolds(k.urlWhen, settings));
   const extraField = auth === 'basic' ? 'username' : auth === 'header' ? 'header' : auth === 'query' ? 'param' : null;
   const save = useMutation({
     mutationFn: async () => {
       const own: Record<string, unknown> = k?.auth
         ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) }
-        : k?.discordBot ? { guildId: guildId.trim(), applicationId: appId.trim(), dmUserId: dmUserId.trim(), dmInbox: dmUserId.trim() !== '' && dmInbox }
-          : fieldsConfig(k?.fields ?? [], settings);
+        : fieldsConfig(k?.fields ?? [], settings);
       if (k?.pmActs) own.pmActs = pmActs;
       // Keeps what PDT put there (a webhook the PM made records its channel), but not a setting the form left empty.
       const kept = Object.fromEntries(Object.entries(connection?.config ?? {}).filter(([key]) => !k?.fields?.some((f) => f.key === key)));
@@ -102,9 +97,11 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, descrip
     },
   });
   const needsSecret = !existing?.hasSecret && kind !== 'http' && !k?.secretOptional;
-  const fieldsFilled = (k?.fields ?? []).every((f) => f.optional || !fieldShown(f, settings) || (settings[f.key] ?? '').trim() !== '');
-  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!askUrl || k?.urlOptional || url.trim() !== '')
-    && (!k?.discordBot || (/^\d+$/.test(guildId.trim()) && /^\d*$/.test(dmUserId.trim()))) && fieldsFilled;
+  const fieldsFilled = (k?.fields ?? []).every((f) => !fieldShown(f, settings)
+    || ((f.optional || (settings[f.key] ?? '').trim() !== '') && fieldValid(f, settings[f.key] ?? '')));
+  const ready = name.trim() !== '' && (!needsSecret || secret.trim() !== '') && (!askUrl || k?.urlOptional || url.trim() !== '') && fieldsFilled;
+  const link = k?.link ? linkUrl(k.link, k.fields, settings) : null;
+  const setField = (key: string, v: string) => setSettings((s) => ({ ...s, [key]: v }));
   return (
     <Dialog
       open
@@ -131,7 +128,7 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, descrip
         {k?.fields?.filter((f) => f.type === 'choice').map((f) => (
           <Field key={f.key} label={f.label} hint={f.hint}>
             <Select className="w-full" aria-label={f.label} options={f.options ?? []} value={settings[f.key] ?? ''}
-              onChange={(v) => setSettings((s) => ({ ...s, [f.key]: v }))} />
+              onChange={(v) => setField(f.key, v)} />
           </Field>
         ))}
         {askUrl && (
@@ -139,39 +136,22 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, descrip
             <Input aria-label="Address" placeholder={k?.urlPlaceholder ?? 'http://192.168.1.10:7878/api'} value={url} onChange={(e) => setUrl(e.target.value)} />
           </Field>
         )}
-        {k?.fields?.filter((f) => f.type !== 'choice' && fieldShown(f, settings)).map((f) => (
-          <Field key={f.key} label={f.label} hint={f.hint}>
-            {f.type === 'lines' || f.type === 'env'
-              ? <Textarea mono aria-label={f.label} rows={3} placeholder={f.placeholder} value={settings[f.key] ?? ''}
-                  onChange={(e) => setSettings((s) => ({ ...s, [f.key]: e.target.value }))} />
-              : <Input aria-label={f.label} placeholder={f.placeholder} value={settings[f.key] ?? ''}
-                  onChange={(e) => setSettings((s) => ({ ...s, [f.key]: e.target.value }))} />}
-          </Field>
-        ))}
-        {k?.discordBot && (
-          <>
-            <Field label="Server ID" hint="In Discord, turn on Developer Mode (Settings → Advanced), then right-click the server → Copy Server ID.">
-              <Input aria-label="Server ID" inputMode="numeric" value={guildId} onChange={(e) => setGuildId(e.target.value)} />
+        {k?.fields?.filter((f) => f.type !== 'choice' && fieldShown(f, settings)).map((f) => (f.type === 'switch'
+          ? <Switch key={f.key} checked={settings[f.key] === 'true'} onChange={(on) => setField(f.key, String(on))}>{f.label}</Switch>
+          : (
+            <Field key={f.key} label={f.label} hint={f.hint} error={fieldValid(f, settings[f.key] ?? '') ? undefined : 'Not in the form it needs.'}>
+              {f.type === 'lines' || f.type === 'env'
+                ? <Textarea mono aria-label={f.label} rows={3} placeholder={f.placeholder} value={settings[f.key] ?? ''}
+                    onChange={(e) => setField(f.key, e.target.value)} />
+                : <Input aria-label={f.label} placeholder={f.placeholder} inputMode={f.numeric ? 'numeric' : undefined}
+                    value={settings[f.key] ?? ''} onChange={(e) => setField(f.key, e.target.value)} />}
             </Field>
-            <Field label="Application ID" hint="Developer Portal → your application → General Information. Used only to make the invite link.">
-              <Input aria-label="Application ID" inputMode="numeric" value={appId} onChange={(e) => setAppId(e.target.value)} />
-            </Field>
-            {/^\d+$/.test(appId.trim()) && (
-              <Alert tone="info" title="Invite the bot">
-                <Link href={discordInviteUrl(appId.trim())} external className="break-all text-xs">{discordInviteUrl(appId.trim())}</Link>
-                <div className="text-xs text-muted-foreground">Open it, pick the server, and keep the permissions it asks for.</div>
-              </Alert>
-            )}
-            <Field
-              label="Your Discord user ID (optional)"
-              hint="To talk to the PM in the bot's DMs: with Developer Mode on, right-click your name → Copy User ID. Only this account's DMs and button presses reach the PM. It needs Message Content Intent on (Developer Portal → Bot → Privileged Gateway Intents)."
-            >
-              <Input aria-label="Your Discord user ID" inputMode="numeric" value={dmUserId} onChange={(e) => setDmUserId(e.target.value)} />
-            </Field>
-            {dmUserId.trim() !== '' && (
-              <Switch checked={dmInbox} onChange={setDmInbox}>Also send Inbox items (stalled, needs input) as DMs</Switch>
-            )}
-          </>
+          )))}
+        {k?.link && link && (
+          <Alert tone="info" title={k.link.title}>
+            <Link href={link} external className="break-all text-xs">{link}</Link>
+            {k.link.hint && <div className="text-xs text-muted-foreground">{k.link.hint}</div>}
+          </Alert>
         )}
         {k?.pmActs && <Switch checked={pmActs} onChange={setPmActs}>{k.pmActs}</Switch>}
         {k?.auth && (

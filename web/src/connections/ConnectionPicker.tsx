@@ -8,7 +8,7 @@ import { ConnectionDialog, connectionsKey } from './ConnectionDialog';
 import { useConnectionKinds } from './kinds';
 
 export function ConnectionPicker({ kind, value, onChange, label, disabled }: {
-  /** `discord_webhook`, …; `any` or none: every connection. */
+  /** A kind of connection's id; `any` or none: every connection. */
   kind?: string | null;
   value: string;
   onChange: (name: string) => void;

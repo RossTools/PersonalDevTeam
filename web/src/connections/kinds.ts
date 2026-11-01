@@ -5,6 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { ConfigField } from '../api/gen/ConfigField';
 import type { ConnectionKind } from '../api/gen/ConnectionKind';
+import type { ConnectionLink } from '../api/gen/ConnectionLink';
+import type { FieldWhen } from '../api/gen/FieldWhen';
 
 export type { ConnectionKind, ConfigField };
 
@@ -21,11 +23,18 @@ export function useConnectionKinds() {
 export function fieldText(f: ConfigField, v: unknown): string {
   if (f.type === 'lines') return Array.isArray(v) ? v.join('\n') : '';
   if (f.type === 'env') return v && typeof v === 'object' ? Object.entries(v).map(([k, x]) => `${k}=${String(x)}`).join('\n') : '';
+  if (f.type === 'switch') return typeof v === 'boolean' ? String(v) : f.default ?? 'false';
   return typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '';
 }
 
+/** Whether a condition holds, given the settings' text (`not` with `""`: once that setting is filled in). */
+export const whenHolds = (w: FieldWhen, text: Record<string, string>) => ((text[w.key] ?? '').trim() === w.value) !== w.not;
+
 /** Whether a setting is shown, given the others' text. */
-export const fieldShown = (f: { when?: { key: string; value: string } }, text: Record<string, string>) => !f.when || text[f.when.key] === f.when.value;
+export const fieldShown = (f: { when?: FieldWhen }, text: Record<string, string>) => !f.when || whenHolds(f.when, text);
+
+/** Whether a setting's text matches its pattern (empty text always does: whether it is required is checked apart). */
+export const fieldValid = (f: ConfigField, text: string) => !f.pattern || text.trim() === '' || new RegExp(f.pattern).test(text.trim());
 
 /** The config the settings' text makes (empty and hidden settings left out). */
 export function fieldsConfig(fields: ConfigField[], text: Record<string, string>): Record<string, unknown> {
@@ -33,6 +42,7 @@ export function fieldsConfig(fields: ConfigField[], text: Record<string, string>
   for (const f of fields) {
     if (!fieldShown(f, text)) continue;
     const t = (text[f.key] ?? '').trim();
+    if (f.type === 'switch') { out[f.key] = t === 'true'; continue; }
     if (!t) continue;
     if (f.type === 'lines') out[f.key] = t.split('\n').map((l) => l.trim()).filter(Boolean);
     else if (f.type === 'env') {
@@ -54,12 +64,28 @@ export const AUTH_MODES = [
   { value: 'none', label: 'Not sent' },
 ];
 
-/** What a Discord bot needs: View Channels, Manage Channels, Send Messages, Manage Webhooks. */
-export const DISCORD_BOT_PERMISSIONS = String(1024 + 16 + 2048 + 536870912);
+/** A kind's link with each `{key}` filled from the settings' text; null until each one it names is filled in and valid. */
+export function linkUrl(link: ConnectionLink, fields: ConfigField[], text: Record<string, string>): string | null {
+  let ok = true;
+  const url = link.url.replace(/\{(\w+)\}/g, (_, key: string) => {
+    const t = (text[key] ?? '').trim();
+    const f = fields.find((x) => x.key === key);
+    if (!t || (f && !fieldValid(f, t))) ok = false;
+    return encodeURIComponent(t);
+  });
+  return ok ? url : null;
+}
 
-/** The link that adds an application's bot to a server with the permissions PDT needs. */
-export const discordInviteUrl = (applicationId: string) =>
-  `https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(applicationId)}&scope=bot&permissions=${DISCORD_BOT_PERMISSIONS}`;
+/** A kind's summary with each `{key}` filled from a connection's config; null when one has no text. */
+export function summaryText(template: string, config: Record<string, unknown>): string | null {
+  let ok = true;
+  const text = template.replace(/\{(\w+)\}/g, (_, key: string) => {
+    const v = config[key];
+    if (typeof v !== 'string' || v.trim() === '') ok = false;
+    return typeof v === 'string' ? v : '';
+  });
+  return ok ? text : null;
+}
 
 /** A random secret for an incoming webhook. */
 export function randomSecret(): string {

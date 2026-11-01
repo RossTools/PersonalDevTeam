@@ -12,15 +12,20 @@ mod templates;
 
 use crate::core::DISCORD_BOT;
 use crate::post::DISCORD_WEBHOOK;
-use pdt_api::sdk::{AnyAction, AppState, Integration, NodeKind, Service};
-use pdt_core::integration::ConnectionKind;
+use pdt_api::sdk::{AnyAction, AppState, BoxFut, Integration, NodeKind, Service};
+use pdt_core::integration::{ConfigField, ConnectionKind, ConnectionLink, ConnectionStatus, FieldType, FieldWhen};
 use pdt_core::workflow::template::Template;
 use serde_json::Value;
 use std::sync::Arc;
 
 pub use bot::{EnsureChannelConfig, EnsureChannelOutput};
-pub use dm::{DmStatus, status as dm_status};
 pub use post::{DiscordConfig, DiscordOutput, split_content};
+
+/// What a bot needs: View Channels, Manage Channels, Send Messages, Manage Webhooks.
+const BOT_PERMISSIONS: u64 = 1024 + 16 + 2048 + 536870912;
+
+/// A Discord id: digits.
+const DIGITS: &str = r"^\d+$";
 
 pub struct Discord;
 
@@ -50,6 +55,7 @@ impl Integration for Discord {
                         Integrations → Webhooks → New Webhook, copy its URL, and add it here."
                     .into(),
                 description: "Posts to one Discord channel (Post to Discord).".into(),
+                summary: Some("#{channel}".into()),
                 url: false,
                 secret_label: "Webhook URL".into(),
                 secret_hint: "In Discord: the channel’s settings (Edit Channel) → Integrations → Webhooks → New \
@@ -74,7 +80,55 @@ impl Integration for Discord {
                 url: false,
                 secret_label: "Bot token".into(),
                 secret_hint: "Discord Developer Portal → your application → Bot → Reset Token → Copy.".into(),
-                discord_bot: true,
+                fields: vec![
+                    ConfigField {
+                        hint: Some(
+                            "In Discord, turn on Developer Mode (Settings → Advanced), then right-click the server → \
+                             Copy Server ID."
+                                .into(),
+                        ),
+                        pattern: Some(DIGITS.into()),
+                        numeric: true,
+                        ..ConfigField::new("guildId", "Server ID")
+                    },
+                    ConfigField {
+                        hint: Some(
+                            "Developer Portal → your application → General Information. Used only to make the invite \
+                             link."
+                                .into(),
+                        ),
+                        pattern: Some(DIGITS.into()),
+                        numeric: true,
+                        optional: true,
+                        ..ConfigField::new("applicationId", "Application ID")
+                    },
+                    ConfigField {
+                        hint: Some(
+                            "To talk to the PM in the bot's DMs: with Developer Mode on, right-click your name → Copy \
+                             User ID. Only this account's DMs and button presses reach the PM. It needs Message \
+                             Content Intent on (Developer Portal → Bot → Privileged Gateway Intents)."
+                                .into(),
+                        ),
+                        pattern: Some(DIGITS.into()),
+                        numeric: true,
+                        optional: true,
+                        ..ConfigField::new("dmUserId", "Your Discord user ID (optional)")
+                    },
+                    ConfigField {
+                        r#type: Some(FieldType::Switch),
+                        when: Some(FieldWhen::filled("dmUserId")),
+                        ..ConfigField::new("dmInbox", "Also send Inbox items (stalled, needs input) as DMs")
+                    },
+                ],
+                link: Some(ConnectionLink {
+                    title: "Invite the bot".into(),
+                    url: format!(
+                        "https://discord.com/oauth2/authorize?client_id={{applicationId}}&scope=bot&permissions={BOT_PERMISSIONS}"
+                    ),
+                    hint: Some("Open it, pick the server, and keep the permissions it asks for.".into()),
+                }),
+                summary: Some("Server {guildId}".into()),
+                status: true,
                 pm_acts: Some("The PM changes this server without asking".into()),
                 ..Default::default()
             },
@@ -89,8 +143,12 @@ impl Integration for Discord {
         vec![Service { name: "the Discord DM link", run: dm_service }]
     }
 
-    fn routes(&self) -> Option<axum::Router<AppState>> {
-        Some(axum::Router::new().route("/discord/dm", axum::routing::get(dm::status_route)))
+    fn connection_status<'a>(
+        &'a self,
+        _st: &'a AppState,
+        connection: &'a pdt_core::workflow::api::Connection,
+    ) -> BoxFut<'a, Option<ConnectionStatus>> {
+        Box::pin(async move { dm::connection_status(connection) })
     }
 
     fn actions(&self) -> Vec<Arc<dyn AnyAction>> {

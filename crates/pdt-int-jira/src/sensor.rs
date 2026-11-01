@@ -5,7 +5,7 @@
 //! get their events. The mark moves only past what was logged: a failed insert leaves it for the next poll, and a poll
 //! that hits the page cap moves it to the last issue it read. A failing connection is reported once
 //! ([`pdt_api::sdk::connections`]). The built-in "Import assigned Jira issues" turns issues assigned to the user into tickets
-//! through [`import_issue`], which `POST /api/projects/{id}/jira/import` also calls; linking is the dedupe, so an
+//! through [`import_issue`], which `POST /api/projects/{id}/import/jira` also calls; linking is the dedupe, so an
 //! issue is never imported twice.
 
 use crate::client::JiraClient;
@@ -13,18 +13,12 @@ use crate::core::{
     self as ev, JiraIssueCommented, JiraIssueCreated, JiraIssueRef, JiraIssueTransitioned, JiraIssueUpdated,
 };
 use crate::core::{IssueNews, JIRA, JiraIssue, issue_key, news, parse_issue, poll_jql};
-use axum::Json;
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use pdt_api::sdk::ApiError;
-use pdt_api::sdk::{AppState, now_ms};
-use pdt_core::ticket::{NewTicket, Ticket};
+use pdt_api::sdk::{ApiError, AppState, Imported, now_ms};
+use pdt_core::ticket::NewTicket;
 use pdt_core::workflow::api::{Connection, NewLogEvent};
 use pdt_store::StoredExternalLink;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use ts_rs::TS;
 
 /// How far back each poll reads before its last one (clocks differ; event keys make re-reads harmless).
 const MARGIN_MS: i64 = 60 * 1000;
@@ -254,32 +248,9 @@ pub(crate) async fn import_issue(
     }
 }
 
-#[derive(Debug, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct JiraImportInput {
-    /// `ABC-123`.
-    pub key: String,
-}
-
-#[derive(Debug, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct JiraImportResult {
-    pub ticket: Ticket,
-    /// A ticket already linked the issue (nothing new was made).
-    pub existed: bool,
-}
-
-/// `POST /api/projects/{id}/jira/import {key}`: any issue, assigned or not.
-pub(crate) async fn import_route(
-    State(st): State<AppState>,
-    Path(project_id): Path<String>,
-    payload: Result<Json<JiraImportInput>, JsonRejection>,
-) -> Result<(StatusCode, Json<JiraImportResult>), ApiError> {
-    let Json(input) = payload?;
-    st.store.get_project(&project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    let r = import_issue(&st, &project_id, &input.key, None).await.map_err(|e| {
+/// `POST /api/projects/{id}/import/jira {key}`: any issue, assigned or not ([`pdt_api::sdk::Integration::import_by_key`]).
+pub(crate) async fn import_by_key(st: &AppState, project_id: &str, key: &str) -> Result<Imported, ApiError> {
+    let r = import_issue(st, project_id, key, None).await.map_err(|e| {
         let (status, code) = match &e {
             ImportError::NotLinked => (StatusCode::CONFLICT, "jira_not_linked"),
             ImportError::BadKey(_) => (StatusCode::BAD_REQUEST, "invalid_input"),
@@ -288,12 +259,8 @@ pub(crate) async fn import_route(
         };
         ApiError::new(status, code, e.message())
     })?;
-    let (id, existed) = match r {
-        Import::Imported(id) => (id, false),
-        Import::Exists(id) => (id, true),
-    };
-    let ticket = st.store.get_ticket(&id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
-    let ticket = pdt_api::sdk::decorate_ticket(&st, ticket).await?;
-    let status = if existed { StatusCode::OK } else { StatusCode::CREATED };
-    Ok((status, Json(JiraImportResult { ticket, existed })))
+    Ok(match r {
+        Import::Imported(ticket_id) => Imported { ticket_id, existed: false },
+        Import::Exists(ticket_id) => Imported { ticket_id, existed: true },
+    })
 }
