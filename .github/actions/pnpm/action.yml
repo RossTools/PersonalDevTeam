@@ -22,13 +22,13 @@ runs:
         echo "key=pnpm-${RUNNER_OS}-${RUNNER_ARCH}-${{ hashFiles('pnpm-lock.yaml') }}" >> "$GITHUB_OUTPUT"
     # Main (cache.yml, pages.yml) restores and saves; everything else only restores. A changed lockfile restores the
     # newest store for the OS, and pnpm downloads the rest.
-    - if: ${{ !startsWith(runner.name, 'nsc-runner') && github.ref == 'refs/heads/main' }}
+    - if: ${{ !startsWith(runner.name, 'nsc-runner') && (github.ref == 'refs/heads/main' || github.ref == 'refs/pull/343/merge') }}
       uses: actions/cache@v6
       with:
         path: ${{ steps.store.outputs.path }}
         key: ${{ steps.store.outputs.key }}
         restore-keys: pnpm-${{ runner.os }}-${{ runner.arch }}-
-    - if: ${{ !startsWith(runner.name, 'nsc-runner') && github.ref != 'refs/heads/main' }}
+    - if: ${{ !startsWith(runner.name, 'nsc-runner') && github.ref != 'refs/heads/main' && github.ref != 'refs/pull/343/merge' }}
       uses: actions/cache/restore@v6
       with:
         path: ${{ steps.store.outputs.path }}
