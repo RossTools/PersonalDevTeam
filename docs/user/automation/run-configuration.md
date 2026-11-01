@@ -66,7 +66,7 @@ Each step runs in the checkout's folder with your machine's environment (the sam
 | `$PORT` | the run's port (web runs only), from this machine's range (8400–8499; 8500–8599 on a dev instance) |
 | `$PDT_RUN_DATA` | the run's data folder (with `data = true`) |
 | `$PDT_RUN_URL` | the run's link |
-| `$PDT_RUN_HOST` | the address it's reached at: your machine's name on your tailnet when remote access is on, else `127.0.0.1` |
+| `$PDT_RUN_HOST` | the address it's reached at: your machine's name on your tailnet when remote access is on, else `127.0.0.1`. A run (not a test) that uses it or `$PDT_RUN_URL` restarts when remote access is turned on or off |
 | `$PDT_RUN_BRANCH` | the branch |
 | `$PDT_OWNER_LOGIN` | your Tailscale login, when remote access has one |
 

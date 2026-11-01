@@ -95,6 +95,10 @@ A run's tab shows its output (**Setup** and **Output** when it has a setup step)
 open the app), **Stop** and **Restart**; the menu adds **Copy URL**, **Reset data…** (start with an empty data
 folder) and **Remove…**. Starting a run that already has a finished tab restarts it there.
 
+A run keeps going when its branch gets new commits: **Restart** it to pick them up (a dev server that reloads itself
+picks them up anyway). A pull request from a fork has no branch in your repository, so fetch it into a branch of your
+own before running it.
+
 ## The terminal's keys
 
 - **Shift+Enter** adds a new line instead of sending (in Claude Code, Codex and most shells).

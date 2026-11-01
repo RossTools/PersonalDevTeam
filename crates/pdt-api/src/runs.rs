@@ -281,6 +281,8 @@ pub(crate) async fn create(
     let data_dir =
         def.data.then(|| run_data_dir(&st.data_dir, &project.id, &branch, &def.name).to_string_lossy().into_owned());
     let now = now_ms();
+    // The link and the driver are settled under the lock applying remote access holds (see `run_manager::relaunch`).
+    let _link = st.settings_lock.lock().await;
     let run = Run {
         id: uuid::Uuid::now_v7().to_string(),
         project_id: project.id,
