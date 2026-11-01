@@ -96,20 +96,22 @@ The board no longer jumps back to the top when a ticket moves.
 
 ## CI
 
-`.github/workflows/ci.yml`; shared setup (toolchain, cache, nextest, pnpm) in `.github/actions/setup`, bundle steps in
-`.github/actions/bundle`. Linux does every check that doesn't depend on the OS, in parallel jobs; macOS and Windows
-run only what they can break on their own (clippy for `cfg` code, the Rust tests).
+`.github/workflows/ci.yml`; the Rust checks per OS in `.github/workflows/rust.yml`; shared setup (toolchain, cache,
+nextest, pnpm, Windows Defender exclusions) in `.github/actions/setup`, bundle steps in `.github/actions/bundle`.
+Linux does every check that doesn't depend on the OS, in parallel jobs; macOS and Windows run only what they can break
+on their own (clippy for `cfg` code, the Rust tests). Every job runs on GitHub's hosted runners unless a repo variable
+names another (below, "Runners").
 
-| Check | Runs on | Does | Pull requests | Merge queue |
-|---|---|---|---|---|
-| lint (linux) | Namespace `linux-8` | version sync, fmt, clippy (pdtd also without integration features) | unless docs only | unless docs only |
-| test (linux) | Namespace `linux-8` | nextest at the stand-in version 9.9.9 (pdtd also without integration features); generated files are committed | unless docs only | unless docs only |
-| web (linux) | Namespace `linux-8` | web typecheck, vitest, build | unless docs only | unless docs only |
-| build (macos-latest) | Namespace `macos-6` | clippy, nextest, desktop crate clippy and test | `macos` label, or a `.github/` change | unless docs only |
-| build (windows-latest) | GitHub Windows | clippy, nextest | `windows` label, or a change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | same |
-| site | GitHub `ubuntu-latest` | the install scripts' lint, the website's tests (the docs check included) and build | a change to `site/`, `docs/`, the pnpm lockfile or workspace, `ci.yml` or `pages.yml` | same |
-| changelog | GitHub `ubuntu-latest` | a fragment or the `no-changelog` label; the scripts' tests | unless docs only | skipped |
-| bundle (…) | GitHub macOS, Windows, `ubuntu-22.04` and `-arm` | the macOS app, the Windows installer, the Linux tarball and AppImage, as workflow artifacts | the release PR only | never |
+| Check | Does | Pull requests | Merge queue |
+|---|---|---|---|
+| lint (linux) | version sync, fmt, clippy (pdtd also without integration features) | unless docs only | unless docs only |
+| test (linux) | nextest at the stand-in version 9.9.9 (pdtd also without integration features); generated files are committed | unless docs only | unless docs only |
+| web (linux) | web typecheck, vitest, build | unless docs only | unless docs only |
+| build (macos-latest) | clippy, nextest, desktop crate clippy and test | `macos` label, or a `.github/` change | unless docs only |
+| build (windows-latest) | clippy, nextest | `windows` label, or a change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | same |
+| site | the install scripts' lint, the website's tests (the docs check included) and build | a change to `site/`, `docs/`, the pnpm lockfile or workspace, `ci.yml` or `pages.yml` | same |
+| changelog | a fragment or the `no-changelog` label; the scripts' tests | unless docs only | skipped |
+| bundle (…) | the macOS app, the Windows installer, the Linux tarball and AppImage, as workflow artifacts (GitHub's runners always: signing) | the release PR only | never |
 
 - **Docs-only PRs** (every changed file under `docs/` or `site/`, or a `*.md`) run only `changes` and `site`. The
   guides pdtd builds in with `include_str!` (`docs/agent-guide.md`, `docs/run-config.md`, `docs/prompts/`,
@@ -117,18 +119,52 @@ run only what they can break on their own (clippy for `cfg` code, the Rust tests
   them. If other code starts reading a Markdown file, add it to that rule in the `changes` job.
 - **Tests never depend on the checked-in version**: `test (linux)` sets it to 9.9.9 in its own checkout, so a test
   that hard-codes `0.x.y` fails on its own PR. Compare with `pdt_core::BUILD_VERSION` or `env!("CARGO_PKG_VERSION")`.
-- **Main runs nothing**: `ci.yml` has no `push` trigger (the queue has just checked that tree). Only `pages.yml`
-  runs on main, redeploying the website when `site/**` or `docs/**` changed.
-- **macOS waits for the queue** because Namespace bills macOS at 10× Linux; a macOS-only break shows when the PR
-  enters the queue. Label a PR `macos` to see it earlier.
+- **Main runs no checks**: `ci.yml` has no `push` trigger (the queue has just checked that tree). On main,
+  `pages.yml` redeploys the website when `site/**` or `docs/**` changed, and `cache.yml` rebuilds the build caches
+  when the dependencies change (below, "Caching").
+- **macOS waits for the queue** because macOS minutes cost the most (on Namespace, 10× Linux); a macOS-only break
+  shows when the PR enters the queue. Label a PR `macos` to see it earlier.
 - **Windows runs only when asked**: a Windows-only break in a PR without the `windows` label or Windows files is not
-  caught before it merges. Label any path, process or file-system change `windows`. Windows runs start from a cold
-  cache (GitHub's runners save rust-cache only from main, which runs no CI).
+  caught before it merges. Label any path, process or file-system change `windows`.
 - **Bundles by hand**: `gh workflow run ci --ref <branch>` (or Actions → ci → Run workflow, "Build bundles") runs
   every check and builds every bundle at `<version>-local`, kept as artifacts for 5 days and published nowhere: use
   it to try a packaging change.
 - **Job names are the "Main" ruleset's required checks.** A job skipped by its `if` still reports, and a skipped check
-  passes. Renaming a job means editing the ruleset first.
+  passes. Renaming a job means editing the ruleset first. `test (linux)`, `build (macos-latest)` and
+  `build (windows-latest)` only report the result of their OS's `rust (…)` jobs (rust.yml); they fail if those or
+  `changes` failed.
+
+### Build once, test in partitions
+
+For each OS, `rust.yml` runs:
+
+- **build**: compiles every test binary once into a nextest archive (`cargo nextest archive`), uploaded as an artifact
+  for a day; it also runs what the partitions don't (pdtd without its integration features on Linux, the desktop
+  crate's tests on macOS).
+- **test (1…N)**: each downloads the archive, extracts it into its checkout (so `target/` is where the build had it
+  and `env!("CARGO_BIN_EXE_…")` paths hold) and runs one slice of the tests (`--partition slice:i/N`). They need no
+  Rust toolchain. On Linux each checks the generated files its tests wrote.
+- **clippy** (macOS and Windows; Linux lints in `lint (linux)`): beside the build, so it adds no wall time. Windows
+  keeps full clippy: its `cfg(windows)` code is in most crates, and a separate job costs no waiting.
+
+N is 3 on Linux and Windows and 2 on macOS; the repo variables `PDT_LINUX_PARTITIONS`, `PDT_MACOS_PARTITIONS` and
+`PDT_WINDOWS_PARTITIONS` change it, as a JSON list (`gh variable set PDT_WINDOWS_PARTITIONS --body '[1,2,3,4]'`).
+
+### Caching
+
+- On GitHub's runners `setup` restores `Swatinem/rust-cache`, one cache per OS and build (`linux-lint`,
+  `linux-build`, `macos-clippy`, `macos-build`, `windows-clippy`, `windows-build`). Each holds the cargo registry and
+  the dependencies' build output (no debug info, not the workspace's crates), keyed on `Cargo.lock`, the manifests,
+  the toolchain and the OS. When the key misses it restores the newest cache for the same OS and build, and rebuilds
+  only what changed.
+- PRs and the queue can read only their own branch's caches and main's, so only main saves: `cache.yml` runs the same
+  builds on main when `Cargo.lock`, a `Cargo.toml`, the toolchain or the CI files change, weekly (GitHub drops caches
+  unused for 7 days), and by hand (Actions → cache → Run workflow; run it once after changing the caching). It then
+  deletes the caches the new ones replace, keeping the repo inside GitHub's 10 GB.
+- Namespace runners keep their cache volume instead (`target/`, the cargo registry, the pnpm store, saved when a job
+  exits cleanly); `cache.yml` skips an OS whose runner variable names a Namespace profile.
+- Windows: `setup` excludes the checkout, the temp folders and the cargo and rustup homes from Defender's scanning,
+  which otherwise slows the build and the tests several times over.
 
 ### The merge queue
 
@@ -141,13 +177,15 @@ conflict), push, and merge again.
 
 ### Runners
 
-- **Namespace** (its GitHub App is installed on the repo) runs the Linux and macOS checks: profiles
-  `namespace-profile-linux-8` and `namespace-profile-macos-6`, each with a cache volume (`target/`, the cargo
-  registry, the pnpm store), saved when a job exits cleanly. Its Linux image has no `SHELL` and no zsh, so `setup`
-  with `zsh: true` installs zsh for pdtd's terminal tests.
-- **GitHub** runs Windows, the bundles (signing) and the small `changes`, `changelog` and `site` jobs.
-- Repo variables `PDT_LINUX_RUNNER` / `PDT_MACOS_RUNNER` override the Namespace runners (`gh variable set
-  PDT_LINUX_RUNNER --body ubuntu-latest`; `gh variable delete` to go back); `setup` then uses GitHub's caches.
+- **GitHub's hosted runners** (`ubuntu-latest`, `macos-latest`, `windows-latest`) run every job by default: free and
+  many at once for a public repo.
+- Repo variables `PDT_LINUX_RUNNER`, `PDT_MACOS_RUNNER` and `PDT_WINDOWS_RUNNER` switch an OS's checks (lint, web,
+  the Rust jobs) to another runner with no code change: a Namespace profile (`gh variable set PDT_LINUX_RUNNER --body
+  namespace-profile-linux-8`, `PDT_MACOS_RUNNER` `namespace-profile-macos-6`) or a larger GitHub runner. `gh variable
+  delete` goes back to GitHub's. `setup` picks the cache to match (a runner named `nsc-runner-*` is Namespace's).
+- **Namespace** (its GitHub App is installed on the repo): each profile has a cache volume. Its Linux image has no
+  `SHELL` and no zsh, so `setup` with `zsh: true` installs zsh for pdtd's terminal tests.
+- The bundles and the small `changes`, `changelog`, `site` and reporting jobs always run on GitHub's runners.
 - `.github/workflows/bench.yml` (by hand only) times the same work on a list of runners, to compare hosts.
 - The Mac mini's old self-hosted runner is retired; if it is still listed under Settings → Actions → Runners, remove
   it, and never make the repo public while it is registered.

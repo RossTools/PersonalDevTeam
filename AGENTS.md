@@ -72,7 +72,8 @@ Add or update tickets through the API when work finishes or new work turns up.
 
 ## Commands
 - Rust: `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt`. CI runs `cargo nextest run` (each test
-  in its own process); nextest isn't installed locally. `cargo test` writes the TS types into web/src/api/gen.
+  in its own process, from one archive split across parallel jobs; runners and caches in docs/SDLC.md "CI"); nextest
+  isn't installed locally. `cargo test` writes the TS types into web/src/api/gen.
 - Integration tests: one binary per crate, `tests/main.rs` with a `mod` per `tests/*.rs` file (add new files there;
   `--test integration <file>::` runs one). Build output per worktree, sccache, and `scripts/clean-targets.sh` (removes
   build output cargo hasn't written for 7 days across worktrees): docs/dev/testing.md "Build output".

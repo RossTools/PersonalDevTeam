@@ -1,0 +1,95 @@
+name: cache
+# Saves the Rust build caches ci.yml restores on GitHub's runners (docs/SDLC.md "Caching"). Caches are scoped to a
+# branch, and PRs and the merge queue can read only their own and main's; ci.yml never runs on main, so this does:
+# the same builds as ci.yml's jobs, with the same cache keys, saved from main. Each cache holds the dependencies'
+# build output and the cargo registry; its key changes with Cargo.lock, the manifests and the toolchain, so it only
+# rebuilds when they change, plus weekly (GitHub drops caches unused for 7 days).
+# Runners on Namespace (the PDT_<OS>_RUNNER variables) keep their own cache volume, so their OS is skipped here.
+on:
+  push:
+    branches: [main]
+    paths:
+      - Cargo.lock
+      - "**/Cargo.toml"
+      - rust-toolchain.toml
+      - .cargo/config.toml
+      - .github/actions/setup/**
+      - .github/workflows/cache.yml
+      - .github/workflows/rust.yml
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: cache
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # As ci.yml's and rust.yml's: the cache keys include it.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+jobs:
+  # ci.yml's `lint (linux)`.
+  lint-linux:
+    if: ${{ !startsWith(vars.PDT_LINUX_RUNNER, 'namespace-') }}
+    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: linux-lint
+      - run: scripts/check.sh --only lint
+
+  rust-linux:
+    if: ${{ !startsWith(vars.PDT_LINUX_RUNNER, 'namespace-') }}
+    uses: ./.github/workflows/rust.yml
+    with:
+      os: linux
+      runner: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
+      warm: true
+
+  rust-macos:
+    if: ${{ !startsWith(vars.PDT_MACOS_RUNNER, 'namespace-') }}
+    uses: ./.github/workflows/rust.yml
+    with:
+      os: macos
+      runner: ${{ vars.PDT_MACOS_RUNNER || 'macos-latest' }}
+      warm: true
+
+  rust-windows:
+    if: ${{ !startsWith(vars.PDT_WINDOWS_RUNNER, 'namespace-') }}
+    uses: ./.github/workflows/rust.yml
+    with:
+      os: windows
+      runner: ${{ vars.PDT_WINDOWS_RUNNER || 'windows-latest' }}
+      warm: true
+
+  # Each save leaves the cache it replaces (an older Cargo.lock's) behind, and the repo has 10 GB: keep only the
+  # newest cache per key, once the new ones are saved.
+  prune:
+    needs: [lint-linux, rust-linux, rust-macos, rust-windows]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # rust-cache's keys: v0-rust-<shared key>-<OS and hashes>; our shared keys are <os>-<build|clippy|lint>.
+          gh cache list --repo "$GITHUB_REPOSITORY" --ref refs/heads/main --limit 100 --sort created_at --order desc \
+            --json id,key,sizeInBytes \
+            --jq '.[] | select(.key | test("^v0-rust-(linux|macos|windows)-(build|clippy|lint)-")) | "\(.id) \(.key)"' |
+          while read -r id key; do
+            name="$(printf '%s' "$key" | sed -E 's/^v0-rust-([a-z]+-[a-z]+)-.*/\1/')"
+            case " $seen " in
+              *" $name "*) echo "delete $key"; gh cache delete "$id" --repo "$GITHUB_REPOSITORY" ;;
+              *) echo "keep $key"; seen="$seen $name" ;;
+            esac
+          done
+          gh cache list --repo "$GITHUB_REPOSITORY" --limit 100 --json key,sizeInBytes,ref \
+            --jq '"\(map(.sizeInBytes) | add // 0 | . / 1e9 | . * 100 | floor / 100) GB in \(length) caches"'

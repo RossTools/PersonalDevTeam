@@ -35,15 +35,18 @@ env:
 # - site: builds the website (site/, Astro + Starlight) when `site/**` or `docs/**` changes (the site reads docs/ in
 #   place), or the pnpm lockfile or workspace. pages.yml deploys it from main.
 # - Linux does the full check set, split into parallel jobs: lint (fmt, clippy), test (nextest, generated TS types;
-#   pdtd also without its integration features) and web (typecheck, vitest, build), on Namespace (8 vCPU, with a cache volume). None of it depends on the OS.
-# - build (macos-latest): on Namespace's macOS runner (M4 Pro, 6 vCPU), only what macOS can break: clippy, nextest
-#   and the desktop crate. It is most of the Namespace bill (60 units a minute against linux-8's 8), so it runs in
-#   the merge queue, and on a PR only with the `macos` label or a change under `.github/`.
-# - A push to main runs nothing: the queue just ran the checks on the same tree (group size 1, squash merge), and
-#   merges are not released (docs/SDLC.md "Releases").
-# - Repo variables PDT_LINUX_RUNNER / PDT_MACOS_RUNNER override those runners (e.g. ubuntu-latest / macos-latest if
-#   Namespace is down); .github/actions/setup picks the cache to match.
+#   pdtd also without its integration features) and web (typecheck, vitest, build). None of it depends on the OS.
+# - build (macos-latest): only what macOS can break: clippy, nextest and the desktop crate. It runs in the merge
+#   queue, and on a PR only with the `macos` label or a change under `.github/`.
 # - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files.
+# - The Rust tests (rust.yml) build once per OS into a nextest archive and run it in parallel partition jobs; the
+#   `test (linux)` and `build (…)` jobs here only report rust.yml's result under the required check names.
+# - Runners are GitHub's hosted ones unless the repo variables PDT_LINUX_RUNNER / PDT_MACOS_RUNNER /
+#   PDT_WINDOWS_RUNNER name others (Namespace profiles, larger runners); PDT_<OS>_PARTITIONS (a JSON list, "[1,2,3]")
+#   change the partitions. .github/actions/setup picks the cache to match; cache.yml saves GitHub's from main.
+# - A push to main runs nothing here: the queue just ran the checks on the same tree (group size 1, squash merge),
+#   and merges are not released (docs/SDLC.md "Releases"). cache.yml rebuilds the build caches when the dependencies
+#   change.
 # - bundles: only on the release PR (the `release` branch release.yml opens), as release builds (signed and
 #   notarized), so packaging problems show before anything is tagged; never on another PR or in the queue; and when
 #   run by hand (workflow_dispatch with `bundles`). They publish nothing here: release.yml publishes the tag's. Linux builds the tarball and AppImage on native x86_64 and arm64
@@ -204,47 +207,46 @@ jobs:
     name: lint (linux)
     needs: changes
     if: needs.changes.outputs.linux == 'true'
-    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'namespace-profile-linux-8' }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-      # The same lint group developers run before pushing: the version (Cargo.toml and tauri.conf.json agree), fmt,
-      # clippy, and pdtd with no integration at all as well as with all of them (its default).
-      - run: scripts/check.sh --only lint
-
-  test-linux:
-    name: test (linux)
-    needs: changes
-    if: needs.changes.outputs.linux == 'true'
-    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'namespace-profile-linux-8' }}
+    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
-          nextest: "true"
-          zsh: "true"
-      # Linux tests at a version no release has (PDT-216): a test that hard-codes the checked-in version fails on its
-      # own PR, not first on the release PR that bumps it. The release PR tests its real version; macOS and Windows
-      # always test the checked-in one. Only this job's checkout changes (Cargo.lock follows on the next cargo command).
-      - name: Set a stand-in version
-        if: needs.changes.outputs.release != 'true'
-        run: scripts/version.sh set 9.9.9
-      # nextest runs all test binaries at once (cargo test runs them one after another); it also writes the TS types.
-      - run: cargo nextest run --profile ci
-      # pdtd with no integration built in (the run above has them all; PDT-173).
-      - run: cargo nextest run --profile ci -p pdtd --no-default-features
-      # The TS types, the web tests' fixtures and the website's plugin list (site/src/data/plugins.json, PDT-281).
-      - name: Generated TS types are committed
-        run: |
-          out="$(git status --porcelain -- web/src/api/gen site/src/data)"; if [ -n "$out" ]; then echo "Generated files are out of date:"; echo "$out"; exit 1; fi
+          cache-key: linux-lint
+      # The same lint group developers run before pushing: the version (Cargo.toml and tauri.conf.json agree), fmt,
+      # clippy, and pdtd with no integration at all as well as with all of them (its default).
+      - run: scripts/check.sh --only lint
+
+  # The Rust tests (.github/workflows/rust.yml): one job builds every test binary into a nextest archive, the
+  # partition jobs run a slice each. `test (linux)` below is the required check.
+  rust-linux:
+    name: rust (linux)
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
+    uses: ./.github/workflows/rust.yml
+    with:
+      os: linux
+      runner: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
+      partitions: ${{ vars.PDT_LINUX_PARTITIONS || '[1,2,3]' }}
+      release: ${{ needs.changes.outputs.release }}
+
+  test-linux:
+    name: test (linux)
+    needs: [changes, rust-linux]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.linux == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          RESULT: ${{ needs.rust-linux.result }}
+        run: echo "changes $CHANGES, rust (linux) $RESULT"; [ "$CHANGES" = success ] && [ "$RESULT" = success ]
 
   web-linux:
     name: web (linux)
     needs: changes
     if: needs.changes.outputs.linux == 'true'
-    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'namespace-profile-linux-8' }}
+    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -262,43 +264,52 @@ jobs:
       # typecheck, vitest, build: the web group developers run before pushing.
       - run: scripts/check.sh --only web
 
-  build-macos:
-    name: build (macos-latest)
+  # macOS: clippy (and the desktop crate's), the Rust tests in partitions, the desktop crate's tests (rust.yml).
+  rust-macos:
+    name: rust (macos)
     needs: changes
     # Skipped for docs-only PRs, unlabelled PRs and pushes to main (the skipped check counts as passing).
     if: needs.changes.outputs.macos == 'true'
-    # The job name is a required check, so it keeps "macos-latest" whichever Mac runs it.
-    runs-on: ${{ vars.PDT_MACOS_RUNNER || 'namespace-profile-macos-6' }}
-    timeout-minutes: 30
+    uses: ./.github/workflows/rust.yml
+    with:
+      os: macos
+      runner: ${{ vars.PDT_MACOS_RUNNER || 'macos-latest' }}
+      partitions: ${{ vars.PDT_MACOS_PARTITIONS || '[1,2]' }}
+
+  # The job name is a required check, so it keeps "macos-latest" whichever Mac runs it.
+  build-macos:
+    name: build (macos-latest)
+    needs: [changes, rust-macos]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.macos == 'true') }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-        with:
-          nextest: "true"
-          pnpm: "true"
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo nextest run --profile ci
-      # The desktop crate embeds web/dist, so it needs the web build first.
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --dir web build
-      - run: cargo clippy -p pdt-desktop --all-targets -- -D warnings
-      - run: cargo test -p pdt-desktop
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          RESULT: ${{ needs.rust-macos.result }}
+        run: echo "changes $CHANGES, rust (macos) $RESULT"; [ "$CHANGES" = success ] && [ "$RESULT" = success ]
+
+  # Windows: only what Windows can break, clippy and the Rust tests (the web checks, fmt and the generated types run
+  # on Linux, and the Windows bundle, run by hand or in a release, compiles the desktop crate).
+  rust-windows:
+    name: rust (windows)
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    uses: ./.github/workflows/rust.yml
+    with:
+      os: windows
+      runner: ${{ vars.PDT_WINDOWS_RUNNER || 'windows-latest' }}
+      partitions: ${{ vars.PDT_WINDOWS_PARTITIONS || '[1,2,3]' }}
 
   build-windows:
     name: build (windows-latest)
-    needs: changes
-    if: needs.changes.outputs.windows == 'true'
-    runs-on: windows-latest
+    needs: [changes, rust-windows]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.windows == 'true') }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-        with:
-          nextest: "true"
-      # Only what Windows can break: the web checks, fmt and the generated types run on Linux, and the Windows
-      # bundle (run by hand, or in a release) compiles the desktop crate.
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo nextest run --profile ci
-      - run: pwsh -NoProfile -File scripts/scratch-daemon.test.ps1
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          RESULT: ${{ needs.rust-windows.result }}
+        run: echo "changes $CHANGES, rust (windows) $RESULT"; [ "$CHANGES" = success ] && [ "$RESULT" = success ]
 
   # The bundles keep their names (required checks, skipped on PRs but the release PR, and in the queue). On the release
   # PR they are release builds (the version as is, signed and notarized); run by hand they build the app and installer,

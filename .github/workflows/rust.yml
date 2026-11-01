@@ -1,0 +1,136 @@
+name: rust
+# The Rust checks for one OS, for ci.yml (and cache.yml, which only builds, to save the cache): build once, test in
+# parallel partitions. ci.yml's aggregate jobs (`test (linux)`, `build (macos-latest)`, `build (windows-latest)`) carry
+# the required check names; these jobs' names are not required checks (docs/SDLC.md "CI").
+#
+# - clippy (macOS, Windows): clippy for their `cfg` code, beside the build so it adds no wall time. Linux lints in
+#   ci.yml's `lint (linux)`.
+# - build: compiles every test binary once into a nextest archive (an artifact for the partitions), and runs what
+#   the partitions don't: pdtd without its integrations (Linux), the desktop crate (macOS).
+# - test: the archive's tests, split into `partitions` jobs (`--partition slice:i/N`). They need no Rust toolchain.
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: linux, macos or windows
+        type: string
+        required: true
+      runner:
+        description: runs-on label (ci.yml picks it from the PDT_<OS>_RUNNER repo variables)
+        type: string
+        required: true
+      partitions:
+        description: 'The test partitions, as a JSON list: "[1,2,3]" runs three'
+        type: string
+        default: "[1,2]"
+      warm:
+        description: Only build (no tests, no archive), so cache.yml saves the build cache from main
+        type: boolean
+        default: false
+      release:
+        description: '"true" on the release PR: Linux tests the real version rather than the stand-in 9.9.9'
+        type: string
+        default: "false"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # CI never debugs its builds: no debug info makes compiling, linking and the cache much smaller and faster. The
+  # caches' keys include it, so ci.yml and cache.yml must agree.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  ARCHIVE: nextest-${{ inputs.os }}.tar.zst
+
+jobs:
+  clippy:
+    if: inputs.os != 'linux'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ inputs.os }}-clippy
+          pnpm: ${{ inputs.os == 'macos' }}
+      - run: cargo clippy --all-targets -- -D warnings
+      # The desktop crate embeds web/dist, so it needs the web build first.
+      - if: inputs.os == 'macos'
+        run: pnpm install --frozen-lockfile && pnpm --dir web build
+      - if: inputs.os == 'macos'
+        run: cargo clippy -p pdt-desktop --all-targets -- -D warnings
+      - if: inputs.os == 'windows' && !inputs.warm
+        run: pwsh -NoProfile -File scripts/scratch-daemon.test.ps1
+
+  build:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ inputs.os }}-build
+          nextest: "true"
+          zsh: ${{ inputs.os == 'linux' }}
+          pnpm: ${{ inputs.os == 'macos' }}
+      # Linux tests at a version no release has (PDT-216): a test that hard-codes the checked-in version fails on its
+      # own PR, not first on the release PR that bumps it. The release PR tests its real version; macOS and Windows
+      # always test the checked-in one. The partitions set it too, so the files match the binaries.
+      - name: Set a stand-in version
+        if: inputs.os == 'linux' && inputs.release != 'true'
+        run: scripts/version.sh set 9.9.9
+      - run: cargo nextest archive --profile ci --archive-file "$ARCHIVE"
+      - if: ${{ !inputs.warm }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: ${{ env.ARCHIVE }}
+          retention-days: 1
+          # zstd already.
+          compression-level: 0
+      # pdtd with no integration built in (the archive has them all; PDT-173). Small: only pdtd rebuilds.
+      - if: inputs.os == 'linux'
+        run: cargo nextest run --profile ci -p pdtd --no-default-features
+      - if: inputs.os == 'macos'
+        run: pnpm install --frozen-lockfile && pnpm --dir web build
+      - if: inputs.os == 'macos'
+        run: cargo test -p pdt-desktop
+
+  test:
+    name: test (${{ matrix.partition }})
+    needs: build
+    if: ${{ !inputs.warm }}
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: ${{ fromJSON(inputs.partitions) }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          rust: "false"
+          nextest: "true"
+          zsh: ${{ inputs.os == 'linux' }}
+      - name: Set a stand-in version
+        if: inputs.os == 'linux' && inputs.release != 'true'
+        run: scripts/version.sh set 9.9.9
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.ARCHIVE }}
+      # Extracted into the checkout, so target/ sits where the build had it: tests find the fake binaries at their
+      # compile-time paths (env!("CARGO_BIN_EXE_…")). `cargo-nextest` directly, as `cargo` would install the toolchain.
+      - name: nextest (partition ${{ matrix.partition }} of ${{ strategy.job-total }})
+        run: >-
+          cargo-nextest nextest run --profile ci --archive-file "$ARCHIVE" --workspace-remap . --extract-to .
+          --extract-overwrite --partition "slice:${{ matrix.partition }}/${{ strategy.job-total }}"
+      # The tests write the TS types, the web tests' fixtures and the website's plugin list (site/src/data/plugins.json,
+      # PDT-281); each partition checks the ones its tests wrote.
+      - name: Generated files are committed
+        if: inputs.os == 'linux'
+        run: |
+          out="$(git status --porcelain -- web/src/api/gen site/src/data)"; if [ -n "$out" ]; then echo "Generated files are out of date:"; echo "$out"; exit 1; fi
