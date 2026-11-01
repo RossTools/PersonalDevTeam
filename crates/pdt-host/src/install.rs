@@ -170,6 +170,9 @@ pub fn nsis_args(install_dir: &Path) -> Vec<String> {
 pub struct NsisInstaller {
     pub install_dir: PathBuf,
     pub backup: PathBuf,
+    /// Where the registry keys the installer rewrites (the Settings › Apps entry) are exported, next to `backup`;
+    /// `None` leaves the registry alone (tests).
+    pub registry_backup: Option<PathBuf>,
     pub timeout: Duration,
 }
 
@@ -199,8 +202,14 @@ impl Installer for NsisInstaller {
     fn stop_strays(&self) -> Vec<String> {
         stop_strays(&self.install_dir)
     }
+    /// Copies the install folder and exports the registry keys the installer rewrites (the Settings › Apps entry).
     fn backup(&self) -> Result<(), String> {
-        replace_dir(&self.install_dir, &self.backup).map_err(|e| format!("backing up the install folder: {e}"))
+        replace_dir(&self.install_dir, &self.backup).map_err(|e| format!("backing up the install folder: {e}"))?;
+        match &self.registry_backup {
+            Some(dir) => crate::nsis_registry::backup(dir, &mut crate::register::System)
+                .map_err(|e| format!("backing up the registry: {e}")),
+            None => Ok(()),
+        }
     }
     fn install(&self, asset: &Path) -> Result<(), String> {
         let _tray = TrayPause::stop(&self.install_dir);
@@ -213,7 +222,12 @@ impl Installer for NsisInstaller {
     }
     fn rollback(&self) -> Result<(), String> {
         let _tray = TrayPause::stop(&self.install_dir);
-        replace_dir(&self.backup, &self.install_dir).map_err(|e| format!("restoring the previous version: {e}"))
+        replace_dir(&self.backup, &self.install_dir).map_err(|e| format!("restoring the previous version: {e}"))?;
+        match &self.registry_backup {
+            Some(dir) => crate::nsis_registry::restore(dir, &mut crate::register::System)
+                .map_err(|e| format!("restoring the previous version's registry keys: {e}")),
+            None => Ok(()),
+        }
     }
     fn backup_path(&self) -> Option<PathBuf> {
         Some(self.backup.clone())
@@ -407,9 +421,11 @@ pub fn installer_for(cfg: &HostConfig) -> Result<Box<dyn Installer + Send>, Stri
     if cfg.dev {
         Err("the dev profile never installs updates".into())
     } else if cfg!(windows) {
+        let update_dir = pdt_core::handoff::update_dir(&cfg.data_dir);
         Ok(Box::new(NsisInstaller {
             install_dir: cfg.install_dir.clone(),
-            backup: pdt_core::handoff::update_dir(&cfg.data_dir).join("previous"),
+            backup: update_dir.join("previous"),
+            registry_backup: Some(update_dir.join("previous-registry")),
             timeout: INSTALL_TIMEOUT,
         }))
     } else if cfg!(target_os = "macos") {

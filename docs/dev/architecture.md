@@ -27,7 +27,8 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   `PDT_WEB_DIR`, a `web/` folder beside the executable, or the macOS bundle's resources.
 - **pdt-host** (`crates/pdt-host`) supervises pdtd: starts it (passing the port from Settings), restarts it, adopts a
   pdtd that is already running, and installs updates: pdtd downloads and verifies a release, pdt-host copies the
-  database aside, swaps the install, health-checks the new pdtd and rolls back (database included) when it fails. It
+  database aside, swaps the install, health-checks the new pdtd and rolls back (database included; on Windows also the
+  installer's registry keys, `nsis_registry.rs`) when it fails. It
   is registered to start at login: a LaunchAgent on macOS, an HKCU Run value on Windows, a systemd user unit on Linux.
 - **The tray app** (`desktop/src-tauri`, Tauri v2) is optional and has no window of its own: it starts pdt-host when
   pdtd doesn't answer, opens the UI in the browser and can restart the daemon. Quitting it leaves PDT running.
@@ -160,7 +161,9 @@ area is a conflict.
 **Sessions.** An agent session runs as a terminal (the agent's own TUI in a PTY) or a conversation (PDT's structured
 view: Claude's stream-json, a PDT-owned Codex app-server, Devin and other agents over ACP). Conversation events are
 stored in `session_events` (in the order received; while writes fail they wait in memory, and a Claude conversation's
-gaps are filled in from its transcript when it loads); terminals keep their scrollback in memory. Every agent gets PDT's instructions (pdt-core
+gaps are filled in from its transcript when it loads); terminals keep their scrollback in memory, and a shell also tees its output to `sessions/<id>/output.log` in the
+data dir (pdt-agents `output_file`, capped and rotated at the scrollback size), which the next process of that session
+shows above a divider. Every agent gets PDT's instructions (pdt-core
 `agent_context`, plus the project's agent instructions and the ticket), written to the session's folder and passed in
 the way each agent takes them. A session belongs to an attempt (the Coder's) or to a ticket (a workflow step's
 reviewer or QA). Claude, Codex and Devin terminals are resumed by their conversation ids after a restart;
