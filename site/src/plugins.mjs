@@ -7,9 +7,9 @@ import data from './data/plugins.json' with { type: 'json' };
 export const PLUGINS = data.plugins;
 
 /** The categories, in the app's order (web/src/plugins/model.ts). */
-export const CATEGORIES = ['dev', 'chat', 'media', 'general'];
+export const CATEGORIES = ['dev', 'documents', 'chat', 'media', 'general'];
 
-export const CATEGORY_LABEL = { dev: 'Dev', chat: 'Chat', media: 'Media', general: 'General' };
+export const CATEGORY_LABEL = { dev: 'Dev', documents: 'Documents', chat: 'Chat', media: 'Media', general: 'General' };
 
 /** The categories on their own page, not on /plugins/. */
 export const OWN_PAGE = ['media'];

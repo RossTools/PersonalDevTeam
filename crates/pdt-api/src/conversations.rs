@@ -539,7 +539,7 @@ async fn pump(
             AdapterOutput::History(turns) => import_history(&st, &c, &turns).await,
             AdapterOutput::BackgroundTasks(tasks) => {
                 // Kept with the session, so a restart knows what it stopped (PDT-311).
-                if let Err(e) = st.store.set_session_background(&c.id, &tasks).await {
+                if let Err(e) = st.store.set_session_background(&c.id, &tasks, now_ms()).await {
                     tracing::warn!(session = %c.id, error = %e, "could not record the background tasks");
                 }
                 {
@@ -566,7 +566,7 @@ async fn pump(
                 let had_background = !c.state().background_tasks.is_empty();
                 if had_background
                     && !st.shutting_down.load(std::sync::atomic::Ordering::SeqCst)
-                    && let Err(e) = st.store.set_session_background(&c.id, &[]).await
+                    && let Err(e) = st.store.set_session_background(&c.id, &[], now_ms()).await
                 {
                     tracing::warn!(session = %c.id, error = %e, "could not clear the background tasks");
                 }

@@ -103,6 +103,8 @@
   --spacing-control-touch: var(--pdt-control-touch);
   --ease-pdt: var(--pdt-ease);
   --default-transition-duration: var(--pdt-duration);
+  /* A calm pulse: the Background state dot (a session waiting on its background tasks). Tailwind's pulse keyframes. */
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 
   /* The rest of shadcn's names. */
   --color-background: var(--background);

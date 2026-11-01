@@ -123,6 +123,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         model: None,
         permission_mode: None,
         persona: None,
+        background: vec![],
     };
     let sessions = [
         session(&app, None, None, "main", 3 * DAY - HOUR),

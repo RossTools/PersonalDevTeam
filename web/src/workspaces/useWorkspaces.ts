@@ -13,6 +13,7 @@ import type { Workspace } from '../api/gen/Workspace';
 import type { Worktree } from '../api/gen/Worktree';
 import { isActive, runDot } from '../runs/runState';
 import { hiddenStepSession, toDot } from '../sessions/status';
+import { sessionUnseen } from '../common/AgentState';
 import { useSameList } from '../common/useSameList';
 import { findTab, itemOf, openTabBody, resolveCurrent, type CurrentChoice, type Item } from './model';
 
@@ -52,7 +53,7 @@ export interface ItemInfo {
 
 export function sessionInfo(s: Session): ItemInfo {
   return {
-    item: { kind: 'session', id: s.id }, title: s.title, status: toDot(s.status), activity: s.activity, unseen: s.unseen,
+    item: { kind: 'session', id: s.id }, title: s.title, status: toDot(s.status), activity: s.activity, unseen: sessionUnseen(s),
     projectId: s.projectId, worktreeId: s.worktreeId, session: s,
   };
 }

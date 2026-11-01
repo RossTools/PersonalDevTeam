@@ -18,6 +18,8 @@ pub fn built() -> Vec<Arc<dyn Integration>> {
     out.push(Arc::new(pdt_int_buildkite::Buildkite));
     #[cfg(feature = "gitlab")]
     out.push(Arc::new(pdt_int_gitlab::Gitlab));
+    #[cfg(feature = "google")]
+    out.push(Arc::new(pdt_int_google::Google::new(google_transport())));
     #[cfg(feature = "arr")]
     out.push(Arc::new(pdt_int_arr::Arr));
     #[cfg(feature = "scryer")]
@@ -25,6 +27,15 @@ pub fn built() -> Vec<Arc<dyn Integration>> {
     #[cfg(feature = "plex")]
     out.push(Arc::new(pdt_int_plex::Plex));
     out
+}
+
+/// How the Google plugin reaches Google: the network on pdtd's runtime (none outside one, as in a unit test).
+#[cfg(feature = "google")]
+fn google_transport() -> Arc<dyn Transport> {
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) => Arc::new(pdt_forge::transport::ReqwestTransport::on(h)),
+        Err(_) => Arc::new(pdt_forge::transport::Offline),
+    }
 }
 
 /// The forge plugins of the integrations built in (PDT-246: GitLab), each reaching its forge through `transport`. One
@@ -43,6 +54,7 @@ pub fn forges(transport: Arc<dyn Transport>) -> Vec<Arc<dyn ForgePlugin>> {
     feature = "jira",
     feature = "buildkite",
     feature = "gitlab",
+    feature = "google",
     feature = "arr",
     feature = "scryer",
     feature = "plex"

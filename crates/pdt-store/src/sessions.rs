@@ -10,7 +10,7 @@ use sqlx::sqlite::SqliteRow;
 const SELECT: &str = "SELECT s.id, s.project_id, s.worktree_id, s.kind, s.agent, s.bypass_permissions, s.title, s.cwd, \
                       s.status, s.exit_code, s.created_at, s.ended_at, s.external_session_id, s.fresh_started_at, \
                       s.activity, s.attention_at, s.last_viewed_at, s.attempt_id, s.mode, s.model, s.permission_mode, \
-                      s.persona_id, s.persona_version, s.step_id, pe.name AS persona_name, \
+                      s.persona_id, s.persona_version, s.step_id, s.background_tasks, pe.name AS persona_name, \
                       t.id AS ticket_id, \
                       COALESCE(p.key, '') AS ticket_pkey, t.number AS ticket_number \
                       FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt_id \
@@ -79,6 +79,12 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
         permission_mode: match permission_mode {
             Some(m) => Some(PermissionMode::parse(&m).ok_or_else(|| corrupt("permission mode", &m))?),
             None => None,
+        },
+        // Only a running session's: an interrupted one keeps them for the notice its agent gets (PDT-311).
+        background: if status == "running" {
+            parse_tasks(r.try_get::<Option<String>, _>("background_tasks")?.as_deref())
+        } else {
+            vec![]
         },
     })
 }
@@ -351,14 +357,24 @@ impl Store {
     }
 
     /// A conversation's background tasks as the agent last reported them (PDT-311): kept so a restart knows what it
-    /// stopped. None run: cleared.
-    pub async fn set_session_background(&self, id: &str, tasks: &[BackgroundTask]) -> Result<bool, StoreError> {
+    /// stopped, and shown on the session (PDT-332). None run: cleared. When the last ones end while the agent is idle,
+    /// its work has finished now: `at` becomes its attention time, so it reads as unseen (Done), as a turn ending does.
+    pub async fn set_session_background(
+        &self,
+        id: &str,
+        tasks: &[BackgroundTask],
+        at: i64,
+    ) -> Result<bool, StoreError> {
         let json = (!tasks.is_empty()).then(|| serde_json::to_string(tasks).expect("tasks serialize"));
-        let r = sqlx::query("UPDATE sessions SET background_tasks = ? WHERE id = ?")
-            .bind(json)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let r = sqlx::query(
+            "UPDATE sessions SET attention_at = CASE WHEN ?1 IS NULL AND background_tasks IS NOT NULL \
+             AND activity = 'idle' THEN ?2 ELSE attention_at END, background_tasks = ?1 WHERE id = ?3",
+        )
+        .bind(json)
+        .bind(at)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -447,6 +463,7 @@ pub(crate) mod tests {
             model: None,
             permission_mode: None,
             persona: None,
+            background: vec![],
         }
     }
 
@@ -545,20 +562,51 @@ pub(crate) mod tests {
         store.insert_session(&session("b", 2)).await.unwrap();
         let task =
             |id: &str| BackgroundTask { id: id.into(), description: format!("task {id}"), kind: "local_bash".into() };
-        store.set_session_background("a", &[task("t1")]).await.unwrap();
-        store.set_session_background("b", &[task("t2")]).await.unwrap();
-        store.set_session_background("b", &[]).await.unwrap();
+        store.set_session_background("a", &[task("t1")], 1).await.unwrap();
+        store.set_session_background("b", &[task("t2")], 1).await.unwrap();
+        store.set_session_background("b", &[], 1).await.unwrap();
         assert_eq!(store.retire_session_background().await.unwrap(), ["a"], "b's ended before the restart");
         assert_eq!(store.stopped_background("a").await.unwrap(), [task("t1")]);
         assert!(store.stopped_background("b").await.unwrap().is_empty());
         // Another restart before the agent was told adds to what it is told.
-        store.set_session_background("a", &[task("t1"), task("t3")]).await.unwrap();
+        store.set_session_background("a", &[task("t1"), task("t3")], 1).await.unwrap();
         store.retire_session_background().await.unwrap();
         assert_eq!(store.stopped_background("a").await.unwrap(), [task("t1"), task("t3")]);
         assert!(store.retire_session_background().await.unwrap().is_empty(), "nothing runs any more");
         store.set_stopped_background("a", &[]).await.unwrap();
         assert!(store.stopped_background("a").await.unwrap().is_empty());
         assert!(store.stopped_background("zz").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_running_session_shows_its_background_tasks_and_their_end_is_news() {
+        use pdt_core::activity::Activity;
+        use pdt_core::conversation::BackgroundTask;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store.insert_session(&session("a", 1)).await.unwrap();
+        let task = BackgroundTask { id: "t1".into(), description: "cargo test".into(), kind: "local_bash".into() };
+        // The turn ends (idle, seen) while a task runs.
+        store.update_activity("a", Some(Activity::Idle), Some(50)).await.unwrap();
+        store.mark_viewed("a", 60).await.unwrap();
+        store.set_session_background("a", std::slice::from_ref(&task), 70).await.unwrap();
+        let s = store.get_session("a").await.unwrap().unwrap();
+        assert_eq!((s.background, s.attention_at, s.unseen), (vec![task.clone()], Some(50), false));
+        // The task ends with the agent still idle: news now.
+        store.set_session_background("a", &[], 80).await.unwrap();
+        let s = store.get_session("a").await.unwrap().unwrap();
+        assert_eq!((s.background, s.attention_at, s.unseen), (vec![], Some(80), true));
+        // Clearing again changes nothing; nor does a task ending while the agent works.
+        store.set_session_background("a", &[], 90).await.unwrap();
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().attention_at, Some(80));
+        store.update_activity("a", Some(Activity::Working), None).await.unwrap();
+        store.set_session_background("a", std::slice::from_ref(&task), 100).await.unwrap();
+        store.set_session_background("a", &[], 110).await.unwrap();
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().attention_at, Some(80));
+        // An ended session shows none.
+        store.set_session_background("a", std::slice::from_ref(&task), 120).await.unwrap();
+        store.mark_running_interrupted(130).await.unwrap();
+        assert!(store.get_session("a").await.unwrap().unwrap().background.is_empty());
     }
 
     #[tokio::test]

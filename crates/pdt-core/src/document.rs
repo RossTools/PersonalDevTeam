@@ -451,6 +451,36 @@ pub enum CellCondition {
     },
 }
 
+/// A border's line.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum BorderStyle {
+    #[default]
+    Solid,
+    Thick,
+    Dashed,
+    Dotted,
+    Double,
+    /// Takes the borders away.
+    None,
+}
+
+/// What a cell may hold (data validation).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(export)]
+pub enum CellValidation {
+    /// One of these values (a drop-down).
+    OneOf { values: Vec<String> },
+    /// A tick box.
+    Checkbox,
+    /// A real date.
+    Date,
+    /// A value that meets the condition.
+    Matches { when: CellCondition },
+}
+
 /// One column to sort by: its letter (`B`), and the order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -606,6 +636,41 @@ pub enum DocumentEdit {
     ClearFilter {
         sheet: String,
     },
+    /// Borders around a range, and between its cells with `inner`.
+    SetBorders {
+        sheet: String,
+        range: String,
+        #[serde(default)]
+        style: BorderStyle,
+        /// `#rrggbb`; black when left out.
+        #[serde(default)]
+        #[ts(optional)]
+        color: Option<String>,
+        #[serde(default)]
+        inner: bool,
+    },
+    /// The width of columns (`B`, or `B:D`), in pixels.
+    ColumnWidth {
+        sheet: String,
+        columns: String,
+        width: u32,
+    },
+    /// The first `rows` and `columns` stay in view while scrolling (0 unfreezes).
+    Freeze {
+        sheet: String,
+        #[serde(default)]
+        rows: u32,
+        #[serde(default)]
+        columns: u32,
+    },
+    /// What may go in a range's cells; `strict` refuses anything else (else it is only flagged).
+    Validate {
+        sheet: String,
+        range: String,
+        rule: CellValidation,
+        #[serde(default)]
+        strict: bool,
+    },
 }
 
 impl DocumentEdit {
@@ -631,6 +696,10 @@ impl DocumentEdit {
             DocumentEdit::Sort { .. } => "sort",
             DocumentEdit::Filter { .. } => "filter",
             DocumentEdit::ClearFilter { .. } => "clear_filter",
+            DocumentEdit::SetBorders { .. } => "set_borders",
+            DocumentEdit::ColumnWidth { .. } => "column_width",
+            DocumentEdit::Freeze { .. } => "freeze",
+            DocumentEdit::Validate { .. } => "validate",
         }
     }
 

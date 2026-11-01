@@ -346,6 +346,7 @@ mod tests {
             model: Some("opus".into()),
             permission_mode: Some(pdt_core::conversation::PermissionMode::Plan),
             persona: None,
+            background: vec![],
         };
         store.insert_session(&s).await.unwrap();
         let back = store.get_session("s1").await.unwrap().unwrap();

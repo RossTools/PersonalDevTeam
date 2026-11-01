@@ -121,7 +121,7 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
   const ended = session.status === 'finished' || session.status === 'interrupted';
   // One action at a time: the daemon serializes them anyway, and a second click would only fail.
   const busy = killing || restarting || removing;
-  const state = agentState({ kind: session.kind, status: session.status, activity: session.activity, unseen: session.unseen });
+  const state = agentState({ kind: session.kind, status: session.status, activity: session.activity, background: session.background, unseen: session.unseen });
   const isAgent = session.kind === 'agent_tui';
   // Conversations have no terminal: sending a message reopens them, so no Compose, Restart or ended bar.
   const conversation = session.mode === 'conversation';

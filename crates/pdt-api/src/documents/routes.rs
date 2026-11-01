@@ -32,6 +32,7 @@ impl From<ProviderError> for ApiError {
                 "document_missing",
                 "the provider no longer has this document (deleted, or access was taken away)",
             ),
+            ProviderError::Busy(m) => ApiError::new(StatusCode::TOO_MANY_REQUESTS, "provider_busy", m),
             ProviderError::Failed(m) => ApiError::new(StatusCode::BAD_GATEWAY, "provider_failed", m),
         }
     }
@@ -466,8 +467,15 @@ pub(crate) async fn content(
     let d = document(&st, &id).await?;
     let p = provider_of(&st, &d)?;
     let content = p.read(&d.provider_ref).await?;
-    let embed_url = if p.capabilities().embed { p.embed_url(&d.provider_ref) } else { None };
+    let embed_url = if p.capabilities().embed { p.embed_url(&d.provider_ref, d.kind) } else { None };
     Ok(Json(DocumentRead { content, embed_url }))
+}
+
+/// `GET /api/documents/{id}/version`: its version now, which changes whenever it does (an open page refreshes on it).
+pub(crate) async fn version(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<EditResult>, ApiError> {
+    let d = document(&st, &id).await?;
+    let p = provider_of(&st, &d)?;
+    Ok(Json(EditResult { version: p.version(&d.provider_ref).await?, charts: vec![] }))
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -477,7 +485,7 @@ pub struct DocumentEdits {
     pub edits: Vec<DocumentEdit>,
 }
 
-/// The new version after edits.
+/// Its version: after edits, or now.
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -764,6 +772,7 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/documents/{id}", get(self::get).patch(rename).delete(remove))
         .route("/documents/{id}/links", post(link).delete(unlink))
         .route("/documents/{id}/content", get(content))
+        .route("/documents/{id}/version", get(self::version))
         .route("/documents/{id}/edits", post(edit))
         .route("/documents/{id}/comments", get(comments))
         .route("/documents/{id}/comments/{comment}/replies", post(reply))

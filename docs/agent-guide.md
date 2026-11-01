@@ -120,7 +120,10 @@ saying so, and the rest after it don't run:
   "bar" | "line" | "area" | "pie" | "scatter", data: "A1:C10", title?, anchor?}}` (the data's first column is the
   categories, its first row the series' names), `{op: "update_chart", id, chart}`, `{op: "delete_chart", id}`,
   `{op: "sort", sheet, range, by: [{column: "B", descending?}], header?}`, `{op: "filter", sheet, range, column,
-  when}`, `{op: "clear_filter", sheet}`. A `when` is `{type: "greater_than" | "less_than" | "equal_to" |
+  when}`, `{op: "clear_filter", sheet}`, `{op: "set_borders", sheet, range, style?: "solid" | "thick" | "dashed" |
+  "dotted" | "double" | "none", color?, inner?}`, `{op: "column_width", sheet, columns: "B:D", width}` (pixels),
+  `{op: "freeze", sheet, rows?, columns?}`, `{op: "validate", sheet, range, rule, strict?}` (a `rule` is
+  `{type: "one_of", values}`, `{type: "checkbox"}`, `{type: "date"}` or `{type: "matches", when}`). A `when` is `{type: "greater_than" | "less_than" | "equal_to" |
   "not_equal_to", value}`, `{type: "between", min, max}`, `{type: "text_contains", text}`, `{type: "empty"}`,
   `{type: "not_empty"}` or `{type: "formula", formula}`.
 
@@ -129,6 +132,7 @@ saying so, and the rest after it don't run:
 | `GET /api/documents?ticket=<key>&project=<key>&kind=doc\|sheet&q=<words>` | documents, the most recently changed first, with their `projects` and `tickets` |
 | `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows, charts}]}` |
 | `POST /api/documents/<id>/edits` | `{edits: [...]}` (the operations above): `{version, charts}` |
+| `GET /api/documents/<id>/version` | `{version}`: it changes whenever the document does, edits made at the provider too |
 | `GET /api/documents/<id>/comments` | its comments with their replies; `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves |
 | `POST /api/tickets/<id>/design-doc` | makes the ticket's design doc from the template, linked to it |
 | `GET /api/sessions/<id>/documents` | the documents open beside a conversation: `{tabs: [{document, by}], active}`; `POST` `{documentId}` opens one (or shows its tab), `PUT` `{documentIds}` orders them, `DELETE …/documents/<doc>` closes one |

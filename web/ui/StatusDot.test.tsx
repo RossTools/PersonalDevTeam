@@ -18,6 +18,15 @@ describe('StatusDot', () => {
     expect(dot.className).toContain('bg-transparent');
   });
 
+  it('background is a hollow green ring that pulses slowly, never under reduced motion', () => {
+    render(<StatusDot status="background" />);
+    const dot = screen.getByRole('img', { name: 'background' });
+    expect(dot.className).toContain('border-running');
+    expect(dot.className).toContain('bg-transparent');
+    expect(dot.className).toContain('animate-pulse-slow');
+    expect(dot.className).toContain('motion-reduce:animate-none');
+  });
+
   it('pulses only when running, never under reduced motion', () => {
     render(<StatusDot status="running" pulse label="Working" />);
     const dot = screen.getByRole('img', { name: 'Working' });

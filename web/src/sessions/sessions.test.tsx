@@ -24,7 +24,7 @@ const session = (over: Partial<Session>): Session => ({
   id: 's1', projectId: 'p', worktreeId: null, kind: 'shell', agent: null, bypassPermissions: false, title: 'Shell', cwd: '/r',
   status: 'running', exitCode: null, createdAt: 1, endedAt: null,
   externalSessionId: null, freshStartedAt: 1,
-  activity: null, attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'terminal', model: null, permissionMode: null, persona: null, ...over,
+  activity: null, attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'terminal', model: null, permissionMode: null, persona: null, background: [], ...over,
 });
 const worktree = { id: 'w', projectId: 'p', branch: 'feature/x', path: '/r/.worktrees/feature-x', baseCommit: 'c', createdAt: 1, missing: false };
 

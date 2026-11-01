@@ -97,7 +97,7 @@ pub(crate) async fn ui_token(
 
 /// Whether a request came from PDT's web client: it carries this pdtd's UI token. A token from an earlier pdtd (it
 /// restarted under the open page) is `403 stale_ui_token`, so the client fetches the new one and tries again.
-pub(crate) fn from_ui(st: &AppState, headers: &HeaderMap) -> Result<bool, ApiError> {
+pub fn from_ui(st: &AppState, headers: &HeaderMap) -> Result<bool, ApiError> {
     match headers.get(UI_TOKEN_HEADER) {
         None => Ok(false),
         Some(v) if v.as_bytes() == st.ui_token.0.as_bytes() => Ok(true),

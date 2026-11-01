@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { AgentDot, AgentLabel, agentState, itemState, rollup, type AgentStateInput, type AgentStateValue } from './AgentState';
+import { AgentDot, AgentLabel, agentState, inBackground, itemState, rollup, sessionUnseen, type AgentStateInput, type AgentStateValue } from './AgentState';
 import type { Session } from '../api/gen/Session';
 import type { Run } from '../api/gen/Run';
 
@@ -35,6 +35,49 @@ describe('agentState (spec §6.5)', () => {
   });
 });
 
+const bg = [{ id: 't1', description: 'cargo test', kind: 'local_bash' }, { id: 't2', description: ' ', kind: 'local_agent' }];
+
+describe('Background (PDT-332)', () => {
+  it('is a running agent whose turn ended while background tasks run, never unseen', () => {
+    expect(agentState({ kind: 'agent_tui', status: 'running', activity: 'idle', background: bg, unseen: true })).toEqual({
+      dot: 'background', pulse: false, label: 'Background', tone: 'muted', unseen: false, tasks: ['cargo test', 'a background task'],
+    });
+  });
+
+  it('gives way to working, needs you and an ended session', () => {
+    expect(agentState({ kind: 'agent_tui', status: 'running', activity: 'working', background: bg }).label).toBe('Working');
+    expect(agentState({ kind: 'agent_tui', status: 'running', activity: 'needs_you', background: bg }).label).toBe('Needs you');
+    expect(agentState({ kind: 'agent_tui', status: 'interrupted', activity: 'idle', background: bg }).label).toBe('Interrupted');
+  });
+
+  it('turns Done when the tasks end (the session is unseen again)', () => {
+    expect(agentState({ kind: 'agent_tui', status: 'running', activity: 'idle', background: [], unseen: true }).label).toBe('Done');
+  });
+
+  it('holds back a session\'s unseen flag only while it is in the background', () => {
+    const session = { status: 'running', activity: 'idle', background: bg, unseen: true } as Session;
+    expect([inBackground(session), sessionUnseen(session)]).toEqual([true, false]);
+    expect(sessionUnseen({ ...session, background: [] })).toBe(true);
+    expect(itemState({ session, unseen: true })).toMatchObject({ label: 'Background', unseen: false });
+  });
+
+  it('lists its tasks on hover, on the dot and the label', () => {
+    const st = agentState({ kind: 'agent_tui', status: 'running', activity: 'idle', background: bg });
+    render(<><AgentDot state={st} /><AgentLabel state={st} /></>);
+    const dot = screen.getByRole('img', { name: 'Background' });
+    expect(dot).toHaveAttribute('data-status', 'background');
+    expect(dot.parentElement).toHaveAttribute('title', 'Background: cargo test, a background task');
+    expect(screen.getByText('Background')).toHaveAttribute('title', 'Background: cargo test, a background task');
+    expect(screen.queryByRole('img', { name: 'unseen' })).not.toBeInTheDocument();
+  });
+
+  it('ranks below Working and above Done and Idle in a group', () => {
+    const back = agentState({ kind: 'agent_tui', status: 'running', activity: 'idle', background: bg });
+    expect(rollup([back, agent('working')])?.label).toBe('Working');
+    expect(rollup([agent('idle', true), back, agent('idle')])?.label).toBe('Background');
+  });
+});
+
 describe('itemState', () => {
   it('reads a session or a run', () => {
     const session = { kind: 'agent_tui', status: 'running', activity: 'working' } as Session;
@@ -48,7 +91,7 @@ const s = (input: AgentStateInput) => agentState(input);
 const agent = (activity: 'working' | 'needs_you' | 'idle', unseen = false) => s({ kind: 'agent_tui', status: 'running', activity, unseen });
 
 describe('rollup', () => {
-  it('takes the most urgent: needs you > failed > working > done > idle', () => {
+  it('takes the most urgent: needs you > failed > working > (background) > done > idle', () => {
     expect(rollup([agent('idle'), agent('working'), agent('needs_you')])?.label).toBe('Needs you');
     expect(rollup([agent('working'), s({ kind: 'run', status: 'failed' })])?.label).toBe('Failed');
     expect(rollup([agent('idle'), agent('working')])?.label).toBe('Working');
