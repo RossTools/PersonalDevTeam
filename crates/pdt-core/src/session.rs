@@ -244,6 +244,10 @@ pub struct Session {
     pub permission_mode: Option<crate::conversation::PermissionMode>,
     /// The persona and version the session runs, when a workflow's agent step started it (Phase 7b).
     pub persona: Option<SessionPersona>,
+    /// Conversations: the background tasks still running, as the agent last reported them (PDT-332). With the agent
+    /// idle, its turn has ended while they run: the sidebar shows it as Background, not Done. Empty when none run.
+    #[serde(default)]
+    pub background: Vec<crate::conversation::BackgroundTask>,
 }
 
 /// A session's persona.

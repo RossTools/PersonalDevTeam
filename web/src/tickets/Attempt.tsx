@@ -8,7 +8,7 @@ import type { AttemptSession } from '../api/gen/AttemptSession';
 import type { AttemptState } from '../api/gen/AttemptState';
 import type { Session } from '../api/gen/Session';
 import type { Ticket } from '../api/gen/Ticket';
-import { AgentDot, agentState, itemState } from '../common/AgentState';
+import { AgentDot, agentState, itemState, sessionUnseen } from '../common/AgentState';
 import { SessionKindIcon } from '../common/SessionKindIcon';
 import { useAction } from '../common/useAction';
 import { abandonAttempt, finishMerged, useOpenSession } from './actions';
@@ -89,7 +89,7 @@ function SessionList({ ticket: t, sessions }: { ticket: Ticket; sessions: Attemp
             >
               <AgentDot state={state} />
               <SessionKindIcon session={live ?? { kind: 'agent_tui', agent: s.agent }} />
-              <span className={cn('min-w-0 flex-1 truncate', live?.unseen && 'font-semibold')}>{live?.title ?? s.title}</span>
+              <span className={cn('min-w-0 flex-1 truncate', live && sessionUnseen(live) && 'font-semibold')}>{live?.title ?? s.title}</span>
               {state.label && <span className="shrink-0 text-meta text-muted-foreground">{state.label}</span>}
             </button>
           </li>

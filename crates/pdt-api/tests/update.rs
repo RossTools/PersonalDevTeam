@@ -201,6 +201,7 @@ async fn add_busy_session(app: &axum::Router, state: &pdt_api::AppState, tmp: &s
             model: None,
             permission_mode: None,
             persona: None,
+            background: vec![],
         })
         .await
         .unwrap();

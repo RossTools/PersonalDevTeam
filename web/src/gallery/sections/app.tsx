@@ -28,6 +28,7 @@ const states: [string, AgentStateInput][] = [
   ['Codex', { kind: 'agent_tui', status: 'running', activity: 'needs_you', unseen: true }],
   ['Reviewer', { kind: 'agent_tui', status: 'running', activity: 'idle', unseen: true }],
   ['Builder', { kind: 'agent_tui', status: 'running', activity: 'idle' }],
+  ['Tester', { kind: 'agent_tui', status: 'running', activity: 'idle', background: [{ id: 't1', description: 'cargo test', kind: 'local_bash' }] }],
   ['Old agent', { kind: 'agent_tui', status: 'finished' }],
   ['After restart', { kind: 'agent_tui', status: 'interrupted' }],
   ['zsh', { kind: 'shell', status: 'running' }],

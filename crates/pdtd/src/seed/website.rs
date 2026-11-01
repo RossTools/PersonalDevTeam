@@ -360,6 +360,7 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
         model: None,
         permission_mode: None,
         persona: None,
+        background: vec![],
     };
     let (_, _, _, search_attempt, search_wt) = attempt_of("Search products by name");
     let coder = Session {
@@ -803,6 +804,7 @@ async fn seed_pm(
         model: None,
         permission_mode: Some(PermissionMode::Ask),
         persona: None,
+        background: vec![],
     };
     store.insert_session(&session).await?;
     store.insert_pm_session(&session.id, at).await?;
