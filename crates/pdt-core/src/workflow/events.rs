@@ -179,7 +179,8 @@ pub const EVENT_TYPES: &[EventType] = &[
     EventType {
         id: TICKET_COMMENTED,
         title: "Ticket commented",
-        description: "Someone commented on a ticket: the user, an agent or a workflow (its actor says which).",
+        description: "Someone commented on a ticket: the user, an agent or a workflow (its actor says which, its author \
+                      which persona: `PM`, `Coder` …).",
         schema: schema_of::<TicketCommented>,
         outside: &[],
     },
@@ -525,6 +526,31 @@ pub struct TicketCommented {
     /// The agent session that wrote it (an agent's comment through pdt-mcp), so a watching PM conversation skips its own.
     #[serde(default)]
     pub by_session: Option<String>,
+    /// Who wrote it: `user`, the persona of the agent session that did (`PM`, `Coder` …), else the actor.
+    #[serde(default)]
+    pub author: String,
+    /// The ticket's attachments it links to (screenshots, files), in the order it shows them.
+    #[serde(default)]
+    pub attachments: Vec<CommentAttachment>,
+    /// The attachments as lines for a message (a blank line, then each name and its local path), or empty: filled in
+    /// as runs see the event.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub attachment_list: String,
+}
+
+/// An attachment a comment links to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CommentAttachment {
+    pub id: String,
+    pub name: String,
+    pub media_type: String,
+    /// The file's name in the ticket's attachments folder.
+    pub file_name: String,
+    /// Its local path, filled in as runs see the event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// `ticket.overlap_found`.
@@ -902,6 +928,9 @@ mod tests {
             attempt_id: None,
             workflow_id: None,
             by_session: None,
+            author: "user".into(),
+            attachments: vec![],
+            attachment_list: String::new(),
         };
         assert_eq!(serde_json::to_value(&e).unwrap()["ticketKey"], "PDT-1");
         let a = AttemptEvent {

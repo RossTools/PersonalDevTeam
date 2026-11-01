@@ -17,7 +17,7 @@ These come with PDT. You can turn them off, edit them or copy them, but not dele
 | **PR notices** | Tells a ticket's agent when its pull request's CI fails, it conflicts with the base branch, it falls out of the merge queue, or it merges. A conflict before the merge waits for merge time. When the pull request was set to merge, PDT brings it up to date with its base, the agent fixes what's left, and PDT merges it again. | On |
 | **Finish merged tickets** | Moves a ticket to **Done** and cleans up once its branch merges, when you asked for that at **Merge…**. | On |
 | **Commits pushed after a merge** | Asks you whether to open a follow-up ticket when an agent pushes to a branch that already merged. | On |
-| **Ticket comments to the agent** | Sends your comments on a ticket to the agent working on it. | On |
+| **Ticket comments to the agent** | Sends your comments and the PM's on a ticket to the agent working on it, with where to find the files they attach. Other agents' comments stay on the ticket. | On |
 | **PR comments to the agent** | Sends other people's comments and reviews on the pull request to the agent. | Off |
 | **Base moved while a PR waits** | Tells the agent when the base branch moves while its pull request waits (**PR notices** covers this too). | Off |
 

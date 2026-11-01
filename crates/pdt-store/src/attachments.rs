@@ -24,6 +24,26 @@ fn to_attachment(r: &SqliteRow) -> Result<TicketAttachment, StoreError> {
     })
 }
 
+/// The ticket's attachments `text` links to, in the order it first shows them (a comment's, PDT-341).
+pub(crate) async fn referenced(
+    conn: &mut sqlx::SqliteConnection,
+    ticket_id: &str,
+    text: &str,
+) -> Result<Vec<TicketAttachment>, StoreError> {
+    let mut out = Vec::new();
+    for id in pdt_core::ticket_attachment::referenced_ids(text, ticket_id) {
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!("{SELECT} WHERE ticket_id = ? AND id = ?")))
+            .bind(ticket_id)
+            .bind(&id)
+            .fetch_optional(&mut *conn)
+            .await?;
+        if let Some(r) = row {
+            out.push(to_attachment(&r)?);
+        }
+    }
+    Ok(out)
+}
+
 /// What adding an attachment did.
 #[derive(Debug, PartialEq)]
 pub enum AddAttachment {
@@ -168,6 +188,44 @@ mod tests {
         store.delete_ticket(&t).await.unwrap();
         assert!(store.ticket_attachments(&t).await.unwrap().is_empty());
         assert!(store.existing_ticket_ids(&[t]).await.unwrap().is_empty());
+    }
+
+    /// PDT-341: a comment's event says who wrote it (the PM's persona) and which attachments it links to.
+    #[tokio::test]
+    async fn a_comments_event_names_its_author_and_attachments() {
+        use pdt_core::ticket::{AgentBy, By};
+        let dir = tempfile::tempdir().unwrap();
+        let (store, t) = store_with_ticket(dir.path()).await;
+        store.add_ticket_attachment(&attachment("a1", &t)).await.unwrap();
+        let pm = By::agent(AgentBy {
+            session_id: "s1".into(),
+            project_id: None,
+            persona: Some("PM".into()),
+            from_ticket: None,
+            from_ticket_id: None,
+        });
+        let body =
+            "Look at this.\n\n![shot.png](/api/tickets/t1/attachments/a1) [gone](/api/tickets/t1/attachments/a9)";
+        store.add_comment_by(&t, body, pm, None, 6).await.unwrap();
+        store.add_comment_by(&t, "And this.", Actor::User, None, 7).await.unwrap();
+        store.add_comment_by(&t, "Done.", Actor::Agent, None, 8).await.unwrap();
+        let log = store
+            .list_log_events(&crate::EventFilter {
+                kind: Some("ticket.commented".into()),
+                limit: 5,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let by: Vec<(&str, &str)> =
+            log.iter().map(|e| (e.payload["author"].as_str().unwrap(), e.payload["actor"].as_str().unwrap())).collect();
+        assert_eq!(by, [("PM", "agent"), ("user", "user"), ("agent", "agent")]);
+        assert_eq!(
+            log[0].payload["attachments"],
+            serde_json::json!([{"id": "a1", "name": "shot.png", "mediaType": "image/png", "fileName": "a1.png"}]),
+            "only the ticket's own attachments that exist"
+        );
+        assert_eq!(log[1].payload["attachments"], serde_json::json!([]));
     }
 
     #[tokio::test]

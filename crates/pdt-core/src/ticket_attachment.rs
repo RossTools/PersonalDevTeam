@@ -66,6 +66,21 @@ impl TicketAttachment {
     }
 }
 
+/// The ids of the ticket's attachments `text` links to (`/api/tickets/<ticket id>/attachments/<id>`, as
+/// [`TicketAttachment::markdown`] writes them), in the order they first appear: a comment's attachments (PDT-341).
+pub fn referenced_ids(text: &str, ticket_id: &str) -> Vec<String> {
+    let prefix = format!("/api/tickets/{ticket_id}/attachments/");
+    let mut ids: Vec<String> = Vec::new();
+    for (at, _) in text.match_indices(&prefix) {
+        let rest = &text[at + prefix.len()..];
+        let id: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+        if !id.is_empty() && !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
 /// Why a file can't be attached: a code for the API's error and a message for the person or agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refused {
@@ -266,6 +281,15 @@ mod tests {
         let t = TicketAttachment { media_type: "text/plain".into(), name: "log.txt".into(), ..a };
         assert_eq!(t.markdown(), "[log.txt](/api/tickets/t1/attachments/a1)");
         assert_eq!(t.file_name(), "a1.txt");
+    }
+
+    #[test]
+    fn a_comment_refers_to_the_tickets_attachments_it_links() {
+        let body = "See ![shot](/api/tickets/t1/attachments/a-1) and [log](/api/tickets/t1/attachments/b2).\n\
+                    Again ![shot](/api/tickets/t1/attachments/a-1), not [other](/api/tickets/t2/attachments/c3) \
+                    nor /api/tickets/t1/attachments/.";
+        assert_eq!(referenced_ids(body, "t1"), ["a-1", "b2"]);
+        assert!(referenced_ids("no links", "t1").is_empty());
     }
 
     fn root() -> PathBuf {
