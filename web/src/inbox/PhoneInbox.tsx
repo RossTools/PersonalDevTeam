@@ -1,31 +1,26 @@
 // The Inbox on a phone (PDT-117, design §6): the list with Needs you | Updates and Review all, and one item per screen
 // with its decision fixed at the bottom, in the thumb's reach.
-import { useEffect, useRef, useState, type ReactNode, type TouchEvent } from 'react';
+import { useEffect, useRef, useState, type TouchEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown } from 'lucide-react';
-import { ApprovalCard, Button, Dialog, DiffViewer, EmptyState, Sheet, Skeleton, Textarea, relativeTime } from '@ui';
+import { Button, Dialog, EmptyState, Sheet, Skeleton, Textarea } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
+import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
 import { ErrorBoundary } from '../common/ErrorBoundary';
-import { Markdown } from '../common/Markdown';
-import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
-import { SecretRequest } from './SecretRequest';
-import { TriagedTicket } from './TriagedTicket';
-import { WorkflowProposal } from './WorkflowProposal';
-import { ConfirmCall } from './ConfirmCall';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { useOpenSession, useOpenTicket } from '../tickets/actions';
 import { PrDetails } from '../tickets/PullRequest';
 import { useProjectForge, useTicket } from '../tickets/queries';
 import { useOpenChanges } from '../review/open';
-import { answerApproval, UpdateView } from './InboxView';
-import { navigate } from '../shell/router';
-import { after, changeRequestLabel, CONNECT_PATH, MCP_SERVERS_PATH, dismissable, gateQuestion, KIND_LABEL, merges, noticeText, passesOf, proposalPath, questionsOf, resends, selectedUpdate, step } from './model';
+import { UpdateView } from './InboxView';
+import { after, changeRequestLabel, dismissable, merges, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
-import { STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
+import { useItemView } from './itemView';
+import { ItemHeader, Why } from './ItemLayout';
 
 /** Opens the pull request a gate is about on its forge, in a new tab. */
 const openChangeRequest = (item: InboxItem) => item.changeRequest && window.open(item.changeRequest.url, '_blank', 'noopener');
@@ -190,8 +185,6 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
           className={cn('animate-in duration-200 motion-reduce:animate-none', dir === 1 ? 'slide-in-from-right' : 'slide-in-from-left')}
           onAnswer={answer}
           onApproved={() => finish(item)}
-          onOpenSession={() => item.sessionId && item.projectId && openSession({ id: item.sessionId, projectId: item.projectId })}
-          onOpenTicket={() => item.ticketId && item.projectId && openTicket({ id: item.ticketId, projectId: item.projectId })}
           onDismiss={() => void dismiss()}
         />
       </ErrorBoundary>
@@ -199,261 +192,54 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
   );
 }
 
-/** One item: its context and content (scrolling), and its decisions at the bottom. Keyed by item, so its state is its own. */
-function TriageItem({ item, busy, className, onAnswer, onApproved, onOpenSession, onOpenTicket, onDismiss }: {
+/**
+ * One item in the one item layout (PDT-361): its header and links, the line on why, its content and note box
+ * (scrolling), and its actions in the bottom bar. Keyed by item, so its state is its own.
+ */
+function TriageItem({ item, busy, className, onAnswer, onApproved, onDismiss }: {
   item: InboxItem;
   busy: boolean;
   className?: string;
-  onAnswer: (a: { choice: string; text?: string } | { answers: string[] } | { secret: string }) => Promise<void>;
+  onAnswer: (a: InboxAnswer) => Promise<void>;
   onApproved: () => void;
-  onOpenSession: () => void;
-  onOpenTicket: () => void;
   onDismiss: () => void;
 }) {
-  const [note, setNote] = useState('');
-  const [answers, setAnswers] = useState<string[]>([]);
-  const [takingOver, setTakingOver] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
-  const [approving, setApproving] = useState(false);
-  const [cleanFinished, cleaning] = useCleanFinished();
-  const withNote = (choice: string) => void onAnswer({ choice, ...(note.trim() ? { text: note } : {}) });
-  const pick = (choice: string) => (merges(item, choice) ? setConfirming(choice) : withNote(choice));
-  const itemChoices: Decision[] = item.choices.map((c) => ({ id: c.id, title: capital(c.title), primary: c.primary }));
-
-  let content: ReactNode = null;
-  let bar: ReactNode = null;
-  const noteBox = (label: string, placeholder: string) => (
-    <Textarea aria-label={label} placeholder={placeholder} value={note} onChange={(e) => setNote(e.target.value)} rows={3} />
-  );
-  switch (item.kind) {
-    case 'question': {
-      const qs = questionsOf(item);
-      const set = (n: number, v: string) => setAnswers(qs.map((_, i) => (i === n ? v : answers[i] ?? '')));
-      content = qs.map((q, n) => (
-        <div key={n} className="flex flex-col gap-2">
-          <div className="text-sm font-medium"><Markdown>{q.question}</Markdown></div>
-          {q.choices.length > 0 && (
-            <Rows label={`Choices for question ${n + 1}`} rows={q.choices.map((c) => ({ id: c, title: c }))} selected={answers[n] ?? ''}
-              onPick={(c) => set(n, c)} />
-          )}
-          <Textarea aria-label={`Answer ${n + 1}`} placeholder={q.choices.length > 0 ? 'Or your own answer' : 'Your answer'}
-            value={answers[n] ?? ''} onChange={(e) => set(n, e.target.value)} rows={2} />
-        </div>
-      ));
-      bar = <DecisionBar busy={busy} decisions={[{ id: 'send', title: 'Send', primary: true, disabled: !answers.some((a) => a?.trim()) }]}
-        onPick={() => void onAnswer({ answers })} />;
-      break;
-    }
-    case 'secret':
-      content = <SecretRequest item={item} busy={busy} onSend={(secret) => onAnswer({ secret })} />;
-      break;
-    case 'approval': {
-      const tool = typeof item.body.tool === 'string' ? item.body.tool : 'tool';
-      const diff = typeof item.body.diff === 'string' ? item.body.diff : null;
-      const description = typeof item.body.description === 'string' ? item.body.description : null;
-      const questions = requestQuestions(item.body.input);
-      if (questions.length > 0) {
-        // The agent's own questions (AskUserQuestion): the card asks them and sends the answers.
-        content = <ApprovalCard kind="question" title={approvalTitle(tool)} questions={questions}
-          onAnswer={(a) => answerApproval(item, a, onApproved)} />;
-        break;
-      }
-      content = (
-        <>
-          <p className="text-sm font-medium">{approvalTitle(tool)}</p>
-          {diff ? <DiffViewer diff={diff} /> : <pre className="overflow-auto rounded-md bg-muted p-2 font-mono text-xs whitespace-pre-wrap">{item.title}</pre>}
-          {description && <p className="text-sm text-muted-foreground">{description}</p>}
-        </>
-      );
-      const send = (id: string) => {
-        setApproving(true);
-        const a = id === 'deny' ? { type: 'deny' as const } : { type: 'approve' as const, always: id === 'always' };
-        void answerApproval(item, a, onApproved).finally(() => setApproving(false));
-      };
-      bar = <DecisionBar busy={approving} onPick={send} decisions={[
-        { id: 'deny', title: 'Deny' },
-        ...(item.choices.some((c) => c.id === 'allow_always') ? [{ id: 'always', title: 'Always' }] : []),
-        { id: 'allow', title: 'Allow', primary: true },
-      ]} />;
-      break;
-    }
-    case 'session':
-      content = (
-        <p className="text-sm">
-          {typeof item.body.sessionTitle === 'string' ? item.body.sessionTitle : 'This session'} waits on a permission prompt
-          or a question. Answer it in the session; looking at it takes it out of the Inbox.
-        </p>
-      );
-      bar = <DecisionBar busy={false} decisions={[{ id: 'open', title: 'Open session', primary: true, disabled: !item.sessionId }]} onPick={onOpenSession} />;
-      break;
-    case 'stalled': {
-      const outcomes = item.choices.filter((c) => c.id.startsWith('outcome:'));
-      content = (
-        <>
-          <p className="text-sm">
-            {typeof item.body.why === 'string' ? item.body.why : 'The step stopped without an outcome.'} Nudge it to carry
-            on, or take it over and pick the outcome yourself.
-          </p>
-          {noteBox('Nudge message (optional)', 'Your own words for the nudge (optional)')}
-          <Sheet side="bottom" title="Take over: the step ends with" open={takingOver} onOpenChange={setTakingOver}>
-            <Rows rows={outcomes.map((c) => ({ id: c.id, title: c.id.slice('outcome:'.length) }))} disabled={busy}
-              onPick={(id) => { setTakingOver(false); void onAnswer({ choice: id }); }} />
-          </Sheet>
-        </>
-      );
-      // Its first message never reached the session: sending it again comes first (PDT-144).
-      const decisions = resends(item)
-        ? [
-          { id: 'takeover', title: 'Take over', disabled: outcomes.length === 0 },
-          { id: 'nudge', title: 'Nudge' },
-          { id: 'resend', title: 'Resume with this message', primary: true },
-        ]
-        : [{ id: 'takeover', title: 'Take over', disabled: outcomes.length === 0 }, { id: 'nudge', title: 'Nudge', primary: true }];
-      bar = <DecisionBar busy={busy} decisions={decisions} onPick={(id) => {
-        if (id === 'takeover') setTakingOver(true);
-        else if (id === 'resend') void onAnswer({ choice: 'resend' });
-        else withNote('nudge');
-      }} />;
-      break;
-    }
-    case 'loop_limit':
-      content = (
-        <>
-          <p className="text-sm">This step has run as many times as its loop limit allows. Its passes so far:</p>
-          <ol className="flex flex-col gap-2">
-            {passesOf(item).map((p, n) => (
-              <li key={n} className="rounded-md border border-border p-2 text-sm">
-                <span className="font-medium">{p.persona}</span>: {p.outcome ?? 'no outcome'}
-                {p.summary && <p className="mt-1 text-muted-foreground">{p.summary}</p>}
-              </li>
-            ))}
-          </ol>
-        </>
-      );
-      bar = <DecisionBar busy={busy} decisions={itemChoices} onPick={(choice) => void onAnswer({ choice })} />;
-      break;
-    case 'timed_out':
-      content = (
-        <>
-          <p className="text-sm">
-            {typeof item.body.node === 'string' ? `Step ${item.body.node}` : 'The step'} ended without an outcome:{' '}
-            {typeof item.body.why === 'string' ? item.body.why : 'it ran out of time'}. Resume runs it again on the same
-            ticket and attempt; Stop leaves it stopped.
-          </p>
-          {noteBox('Note (optional)', 'A note for the agent with Resume (optional)')}
-        </>
-      );
-      bar = <DecisionBar busy={busy} decisions={itemChoices}
-        onPick={(choice) => void onAnswer({ choice, ...(choice === 'resume' && note.trim() ? { text: note } : {}) })} />;
-      break;
-    case 'manual':
-      content = (
-        <>
-          <p className="text-sm">This stage is yours: do it, then pick how it ended.</p>
-          {typeof item.body.prompt === 'string' && (
-            <div className="rounded-md border border-border p-3 text-sm"><Markdown>{item.body.prompt}</Markdown></div>
-          )}
-          {noteBox('What you did (optional)', 'What you did or found (optional): the next step reads it')}
-        </>
-      );
-      bar = <DecisionBar busy={busy} decisions={itemChoices} onPick={withNote} />;
-      break;
-    case 'connect':
-      content = <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>;
-      bar = <DecisionBar busy={busy} decisions={[{ id: 'settings', title: 'Open GitHub settings', primary: true }]} onPick={() => navigate(CONNECT_PATH)} />;
-      break;
-    case 'mcp_sign_in':
-      content = <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>;
-      bar = <DecisionBar busy={busy} decisions={[{ id: 'settings', title: 'Open MCP servers', primary: true }]} onPick={() => navigate(MCP_SERVERS_PATH)} />;
-    case 'low_disk':
-      content = (
-        <>
-          <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
-          <p className="text-sm text-muted-foreground">It goes away on its own once there is more space.</p>
-        </>
-      );
-      bar = <DecisionBar busy={cleaning} decisions={[{ id: 'open', title: 'Open Storage', primary: true }, { id: 'clean', title: 'Clean all finished' }]}
-        onPick={(id) => (id === 'clean' ? void cleanFinished() : navigate(STORAGE_PATH))} />;
-      break;
-    case 'storage':
-      content = (
-        <>
-          <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
-          <p className="text-sm text-muted-foreground">It goes away on its own once PDT can save again.</p>
-        </>
-      );
-      break;
-    case 'notice':
-      content = (
-        <>
-          <p className="text-sm">
-            {item.attemptId
-              ? 'No agent session was open to tell, so it waits for you. It goes away once the pull request is fixed, merged or closed.'
-              : `${typeof item.body.workflow === 'string' ? item.body.workflow : 'A workflow'} wants you to know. Act on it if you disagree, then dismiss it.`}
-          </p>
-          <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
-        </>
-      );
-      bar = <DecisionBar busy={busy} decisions={[
-        { id: 'dismiss', title: 'Dismiss' },
-        { id: 'ticket', title: 'Open ticket', primary: true, disabled: !item.ticketId },
-      ]} onPick={(id) => (id === 'dismiss' ? onDismiss() : onOpenTicket())} />;
-      break;
-    case 'confirm':
-      content = <ConfirmCall item={item} />;
-      bar = <DecisionBar busy={busy} decisions={itemChoices} onPick={(choice) => void onAnswer({ choice })} />;
-      break;
-    case 'proposal':
-      content = (
-        <>
-          <WorkflowProposal item={item} />
-          <div>
-            <Button variant="secondary" className="h-12 pointer-coarse:h-12" onClick={() => navigate(proposalPath(item))}>Open</Button>
-          </div>
-        </>
-      );
-      bar = <DecisionBar busy={busy} decisions={itemChoices} onPick={(choice) => void onAnswer({ choice })} />;
-      break;
-    case 'admit':
-      content = <TriagedTicket item={item} />;
-      bar = <DecisionBar busy={busy} decisions={itemChoices} onPick={(choice) => void onAnswer({ choice })} />;
-      break;
-    case 'gate':
-      content = (
-        <>
-          {item.changeRequest && (
-            <div>
-              <Button variant="secondary" className="h-12 pointer-coarse:h-12" onClick={() => openChangeRequest(item)}>{changeRequestLabel(item)}</Button>
-            </div>
-          )}
-          {gateQuestion(item) && (
-            <div aria-label="Question" className="rounded-md border border-border p-3 text-sm"><Markdown>{gateQuestion(item)!}</Markdown></div>
-          )}
-          {typeof item.body.text === 'string' && (
-            <div className="rounded-md border border-border p-3 text-sm"><Markdown>{item.body.text}</Markdown></div>
-          )}
-          {noteBox('Note (optional)', item.ticketId ? 'A note with your choice (optional), e.g. what to change when you reject it' : 'A note with your choice (optional)')}
-          {item.ticketId && <p className="text-meta text-muted-foreground">A note goes on the ticket as your comment, so the agent working on it gets it.</p>}
-        </>
-      );
-      bar = <DecisionBar busy={busy} decisions={itemChoices} onPick={pick} />;
-      break;
-  }
-
-  const step = [typeof item.body.workflow === 'string' ? item.body.workflow : null, typeof item.body.node === 'string' && item.kind !== 'timed_out' ? item.body.node : null]
-    .filter(Boolean).join(' · ');
-  const meta = [KIND_LABEL[item.kind], item.personaName, relativeTime(item.createdAt)].filter(Boolean).join(' · ');
+  const { spec, note, setNote } = useItemView({ item, busy, answer: onAnswer, dismiss: onDismiss, onApproved, phone: true });
+  // The bar's order: the rest first, the primary one on the right; Dismiss and the like before them. Dismiss is in ⋯,
+  // except for a notice, whose bar has it as its one other way out.
+  const actions = [...spec.actions.filter((a) => a.end), ...spec.actions.filter((a) => !a.end)]
+    .filter((a) => a.id !== 'dismiss' || item.kind === 'notice');
+  const decisions: Decision[] = actions.map((a) => ({ id: a.id, title: a.short ?? a.title, primary: a.primary, disabled: a.disabled }));
+  const pick = (id: string) => {
+    // Merge (and Accept) asks first.
+    if (merges(item, id)) return setConfirming(id);
+    if (id === 'takeover') return spec.takeOver?.setOpen(true);
+    actions.find((a) => a.id === id)?.run();
+  };
+  const pending = spec.actions.some((a) => a.pending);
   return (
     <>
       <div className={cn('flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4', className)}>
-        <header className="flex flex-col gap-1">
-          {item.ticketKey && <p className="truncate text-xs text-muted-foreground">{item.ticketKey}{item.ticketTitle ? ` · ${item.ticketTitle}` : ''}</p>}
-          <h2 className="text-base font-medium">{item.title}</h2>
-          <p className="text-meta text-muted-foreground">{meta}{step ? ` · ${step}` : ''}</p>
-        </header>
-        {content}
+        <ItemHeader item={item} spec={spec} className="pb-3" />
+        <section aria-label={spec.region} className="flex flex-col gap-4">
+          {spec.why && <Why>{spec.why}</Why>}
+          {spec.content}
+        </section>
+        {spec.note && (
+          <div className="flex flex-col gap-1">
+            <Textarea aria-label={spec.note.label} placeholder={spec.note.placeholder} value={note} onChange={(e) => setNote(e.target.value)} rows={3} />
+            {spec.note.hint && <p className="text-meta text-muted-foreground">{spec.note.hint}</p>}
+          </div>
+        )}
+        {spec.hint && <p className="text-meta text-muted-foreground">{spec.hint}</p>}
+        {spec.takeOver && (
+          <Sheet side="bottom" title="Take over: the step ends with" open={spec.takeOver.open} onOpenChange={spec.takeOver.setOpen}>
+            <Rows rows={spec.takeOver.outcomes} disabled={busy} onPick={(id) => spec.takeOver!.pick(id)} />
+          </Sheet>
+        )}
       </div>
-      {bar}
+      {decisions.length > 0 && <DecisionBar busy={pending} decisions={decisions} onPick={pick} />}
       {confirming && (
         <MergeConfirm item={item} choice={confirming} busy={busy} onCancel={() => setConfirming(null)}
           onConfirm={() => void onAnswer({ choice: confirming, ...(note.trim() ? { text: note } : {}) }).finally(() => setConfirming(null))} />
