@@ -5,10 +5,29 @@ import type { Notification } from '../api/gen/Notification';
 import { TicketKey } from '../common/TicketKey';
 import { cn } from '@ui/lib/utils';
 import { grouped, KIND_LABEL, selectedUpdate, updateSelection } from './model';
+import { KindIcon } from './kinds';
 
 const heading = 'px-3 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
 
-/** Needs you: the items grouped by kind, most urgent first (the ticket's key, the item's title, its kind, persona and age). */
+/** An age in a list row's corner: "now", "10m", "3h", "2d". */
+export function shortAge(at: number, now: number = Date.now()): string {
+  const m = Math.floor(Math.max(0, now - at) / 60_000);
+  if (m < 1) return 'now';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
+}
+
+/** What a row says under its title: who asks (or which workflow) and the ticket's title. */
+function context(i: InboxItem): string {
+  const who = i.personaName ?? (typeof i.body.workflow === 'string' ? i.body.workflow : null);
+  return [who, i.ticketTitle ?? (i.ticketKey ? null : KIND_LABEL[i.kind])].filter(Boolean).join(' · ');
+}
+
+/**
+ * Needs you: the items under their sections, most urgent first. Each row: the kind's icon in its colour, the title,
+ * then the ticket's key and who asks; the age on the right.
+ */
 export function NeedsYouGroups({ items, selectedId, onSelect, loading }: {
   items: InboxItem[];
   selectedId: string | null;
@@ -21,7 +40,9 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading }: {
       {groups.length === 0 && !loading && <p className="px-3 py-2 text-xs text-muted-foreground">Nothing waits on you.</p>}
       {groups.map((g) => (
         <section key={g.id} aria-label={g.title}>
-          <h3 className={heading}>{g.title} <span className="tabular-nums">{g.items.length}</span></h3>
+          <h3 className={cn(heading, 'flex items-center gap-1.5')}>
+            {g.title} <span className="rounded-full bg-surface-2 px-1.5 tabular-nums">{g.items.length}</span>
+          </h3>
           <List aria-label={g.title} onAction={onSelect}>
             {g.items.map((i) => (
               <ListRow
@@ -30,8 +51,15 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading }: {
                 title={i.title}
                 textValue={i.title}
                 current={i.id === selectedId}
-                leading={i.ticketKey ? <TicketKey ticketKey={i.ticketKey} /> : undefined}
-                secondary={[KIND_LABEL[i.kind], i.personaName, relativeTime(i.createdAt)].filter(Boolean).join(' · ')}
+                className="items-start py-1.5 data-current:shadow-[inset_2px_0_0_var(--pdt-accent)]"
+                leading={<KindIcon item={i} className="mt-0.5" />}
+                trailing={<span className="text-meta text-muted-foreground tabular-nums" title={relativeTime(i.createdAt)}>{shortAge(i.createdAt)}</span>}
+                secondary={
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
+                    <span className="truncate">{context(i)}</span>
+                  </span>
+                }
               />
             ))}
           </List>
