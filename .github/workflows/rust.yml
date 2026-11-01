@@ -5,9 +5,13 @@ name: rust
 #
 # - clippy (macOS, Windows): clippy for their `cfg` code, and on macOS the desktop crate's clippy and tests, beside
 #   the build so it adds no wall time. Linux lints in ci.yml's `lint (linux)`.
-# - build: compiles every test binary once into a nextest archive, an artifact for the partitions.
+# - build: compiles every test binary once into a nextest archive, an artifact for the partitions. With `split`, two
+#   build jobs side by side: the unit tests (`--lib --bins`) and the integration tests (`--test '*'`), an archive each.
+#   The build is CPU-bound, so two runners halve the work each does; both select the same packages, so they build
+#   the dependencies with the same features and share the build cache.
 # - minimal (Linux): pdtd's tests without its integrations, a build of its own beside the others.
-# - test: the archive's tests, split into `partitions` jobs (`--partition slice:i/N`). They need no Rust toolchain.
+# - test: the archives' tests, split into `partitions` jobs (`--partition slice:i/N` of each archive). They need no Rust
+#   toolchain.
 on:
   workflow_call:
     inputs:
@@ -23,6 +27,10 @@ on:
         description: 'The test partitions, as a JSON list: "[1,2,3]" runs three'
         type: string
         default: "[1,2]"
+      split:
+        description: Build the unit tests and the integration tests in two jobs side by side (never when warm)
+        type: boolean
+        default: false
       warm:
         description: Only build (no tests, no archive), so cache.yml saves the build cache from main
         type: boolean
@@ -47,7 +55,10 @@ env:
   CARGO_INCREMENTAL: "0"
   # Windows links with LLVM's lld (shipped with Rust) rather than MSVC's link.exe, which is much slower.
   CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld
-  ARCHIVE: nextest-${{ inputs.os }}.tar.zst
+  # The tests' dependencies (SQLite, serde_json, tokio's runtime …) built with some optimisation: the tests are
+  # CPU-bound and take about a quarter less CPU, for a slower cold build of the dependencies (cached). Only the test
+  # builds (`--config "$DEPS_CONFIG"`); clippy doesn't codegen them.
+  DEPS_CONFIG: profile.dev.package."*".opt-level=1
 
 jobs:
   clippy:
@@ -73,8 +84,16 @@ jobs:
         run: pwsh -NoProfile -File scripts/scratch-daemon.test.ps1
 
   build:
+    name: build (${{ matrix.tests }})
+    strategy:
+      matrix:
+        # cache.yml's warm build is one job: the cache it saves holds the dependencies both halves use.
+        tests: ${{ fromJSON(inputs.split && !inputs.warm && '["unit","integration"]' || '["all"]') }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
+    env:
+      ARCHIVE: nextest-${{ inputs.os }}-${{ matrix.tests }}.tar.zst
+      TESTS: ${{ matrix.tests }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -88,7 +107,15 @@ jobs:
       - name: Set a stand-in version
         if: inputs.os == 'linux' && inputs.release != 'true'
         run: scripts/version.sh set 9.9.9
-      - run: cargo nextest archive --profile ci --archive-file "$ARCHIVE"
+      # `--timings`: cargo's report of what compiled when (the critical path), kept as an artifact to see what to speed
+      # up next.
+      - run: |
+          case "$TESTS" in
+            unit) set -- --lib --bins ;;
+            integration) set -- --test '*' ;;
+            *) set -- ;;
+          esac
+          cargo nextest archive --profile ci --config "$DEPS_CONFIG" --archive-file "$ARCHIVE" --timings "$@"
       - if: ${{ !inputs.warm }}
         uses: actions/upload-artifact@v7
         with:
@@ -97,6 +124,13 @@ jobs:
           retention-days: 1
           # zstd already.
           compression-level: 0
+      - if: ${{ !inputs.warm && !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: cargo-timings-${{ inputs.os }}-${{ matrix.tests }}
+          path: target/cargo-timings/cargo-timing.html
+          retention-days: 7
+          if-no-files-found: ignore
 
   # pdtd with no integration built in (the archive has them all; PDT-173). Its own job: the build without the
   # features recompiles pdt-api and pdtd, which took 2.5 min after the archive.
@@ -115,9 +149,9 @@ jobs:
         if: inputs.release != 'true'
         run: scripts/version.sh set 9.9.9
       - if: ${{ !inputs.warm }}
-        run: cargo nextest run --profile ci -p pdtd --no-default-features
+        run: cargo nextest run --profile ci --config "$DEPS_CONFIG" -p pdtd --no-default-features
       - if: inputs.warm
-        run: cargo nextest archive --profile ci -p pdtd --no-default-features --archive-file "$RUNNER_TEMP/minimal.tar.zst"
+        run: cargo nextest archive --profile ci --config "$DEPS_CONFIG" -p pdtd --no-default-features --archive-file "$RUNNER_TEMP/minimal.tar.zst"
 
   test:
     name: test (${{ matrix.partition }})
@@ -141,13 +175,23 @@ jobs:
         run: scripts/version.sh set 9.9.9
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ env.ARCHIVE }}
+          pattern: nextest-${{ inputs.os }}-*.tar.zst
+          merge-multiple: true
       # Extracted into the checkout, so target/ sits where the build had it: tests find the fake binaries at their
       # compile-time paths (env!("CARGO_BIN_EXE_…")). `cargo-nextest` directly, as `cargo` would install the toolchain.
+      # Each archive in turn (one, or the unit and integration tests' two); a failure in one still runs the other.
       - name: nextest (partition ${{ matrix.partition }} of ${{ strategy.job-total }})
-        run: >-
-          cargo-nextest nextest run --profile ci --archive-file "$ARCHIVE" --workspace-remap . --extract-to .
-          --extract-overwrite --partition "slice:${{ matrix.partition }}/${{ strategy.job-total }}"
+        env:
+          PARTITION: slice:${{ matrix.partition }}/${{ strategy.job-total }}
+        run: |
+          failed=0
+          for archive in nextest-${{ inputs.os }}-*.tar.zst; do
+            echo "::group::$archive"
+            cargo-nextest nextest run --profile ci --archive-file "$archive" --workspace-remap . --extract-to . \
+              --extract-overwrite --partition "$PARTITION" || failed=1
+            echo "::endgroup::"
+          done
+          exit "$failed"
       # The tests write the TS types, the web tests' fixtures and the website's plugin list (site/src/data/plugins.json,
       # PDT-281); each partition checks the ones its tests wrote.
       - name: Generated files are committed

@@ -69,6 +69,9 @@ runs:
         # build output only (not the workspace's crates) and the cargo registry, under a key from Cargo.lock, the
         # manifests and the toolchain; when those change it restores the newest older one and rebuilds the rest.
         shared-key: ${{ inputs.cache-key }}
+        # rust.yml's `--config` for the dependencies' optimisation changes what they build into: part of the key, as
+        # the CARGO_* variables are.
+        env-vars: DEPS_CONFIG
         # Only main saves (cache.yml): PRs and the queue restore it. Caches are per branch, and PRs and queue runs can
         # read only their own and main's, so a save anywhere else would be read by nobody and fill the 10 GB.
         save-if: ${{ github.ref == 'refs/heads/main' }}
