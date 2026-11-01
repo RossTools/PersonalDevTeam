@@ -837,6 +837,87 @@ async fn a_comment_reaches_the_coder_a_restart_interrupted() {
     assert_eq!(session_status(&env, &coder).await, "running");
 }
 
+/// PDT-341: "Ticket comments to the agent" sends the PM's comments as well as the user's, each once, labelled, with
+/// the local paths of the files they attach; the ticket's own agents' comments and a workflow's notes stay on the
+/// ticket.
+#[tokio::test]
+async fn the_pms_and_the_users_comments_reach_the_coder_with_their_attachments() {
+    use pdt_core::ticket::{Actor, AgentBy, By};
+    let env = setup().await;
+    let t = ticket(&env, "Colour the button").await;
+    pipeline(&env, json!({"reviewBy": "user", "qaBy": "user"}), &[("code", "submitted")]).await;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    inbox_item(&env, "manual", &t).await;
+    let coder = get_ticket(&env, &t).await["sessions"][0]["id"].as_str().unwrap().to_string();
+    let (s, _, shot) = common::call_raw(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{t}/attachments?name=shot.png"),
+        b"\x89PNG\r\n\x1a\nrest".to_vec(),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let shot: Value = serde_json::from_slice(&shot).unwrap();
+    let agent = |persona: &str| {
+        By::agent(AgentBy {
+            session_id: format!("{persona}-session"),
+            project_id: Some(env.project.clone()),
+            persona: Some(persona.into()),
+            from_ticket: None,
+            from_ticket_id: None,
+        })
+    };
+    let store = &env.state.store;
+    let body =
+        format!("The cache is wrong.\n\n![shot.png](/api/tickets/{t}/attachments/{})", shot["id"].as_str().unwrap());
+    store.add_comment_by(&t, &body, agent("PM"), None, 1).await.unwrap();
+    store.add_comment_by(&t, "Coder: done the cache.", agent("Coder"), None, 2).await.unwrap();
+    store.add_comment_by(&t, "PM via a workflow.", agent("PM"), Some(json!({"workflowId": "w1"})), 3).await.unwrap();
+    store
+        .add_comment_by(&t, "A note from a workflow.", Actor::System, Some(json!({"workflowId": "w1"})), 4)
+        .await
+        .unwrap();
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{t}/comments"),
+        Some(json!({"body": "Make it blue.", "by": "user"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    // Messages waiting for the same turn may arrive together.
+    let told = || async { agent_says(&env, &coder).await.join("\n") };
+    tick_until(&env, "both comments reaching the coder", || async {
+        (told().await.matches("New comment on").count() >= 2).then_some(json!(null))
+    })
+    .await;
+    for _ in 0..5 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={t}"), None).await;
+    let runs = runs.as_array().unwrap().iter().filter(|r| r["workflowName"] == "Ticket comments to the agent").count();
+    let told = told().await;
+    assert_eq!((runs, told.matches("New comment on").count()), (2, 2), "each once, none of the others: {told}");
+    for not in ["Coder: done", "PM via a workflow", "A note from a workflow"] {
+        assert!(!told.contains(not), "{told}");
+    }
+    let (pm, user) = told.split_once("from the user:").unwrap_or_else(|| panic!("{told}"));
+    assert!(pm.contains("from the PM:\n\nThe cache is wrong."), "{told}");
+    let path = env
+        .state
+        .data_dir
+        .join("tickets")
+        .join(&t)
+        .join("attachments")
+        .join(format!("{}.png", shot["id"].as_str().unwrap()));
+    assert!(pm.contains(&format!("- shot.png: {}", path.display())), "{told}");
+    assert!(path.is_file());
+    assert!(user.contains("Make it blue.") && !user.contains("Attached"), "{told}");
+}
+
 /// PDT-144: a terminal a restart interrupted can't take the step's message, so the step starts a session of its own
 /// with the whole task.
 #[tokio::test]

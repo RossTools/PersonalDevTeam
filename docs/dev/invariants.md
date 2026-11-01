@@ -75,7 +75,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **Finish never discards uncommitted changes** unless asked (`discardChanges`), and runs in its own task so it
   completes when the agent that called it is stopped.
 - **Workflows hear of a Start only once its session exists** (`announce_start`).
-- **Only the user's ticket comments go to the agent**; the API refuses `by: "system"`.
+- **Only the user's and the PM's ticket comments go to the agent** (`ticket.commented`'s `author`: `user`, else the
+  writing session's persona), never a workflow's (`workflowId`) or the ticket's own agents', so an agent never hears
+  back what it wrote; the API refuses `by: "system"`. A comment's attachments' local paths are filled in by pdt-api
+  as runs see the event (`trigger_value`), since the store doesn't know the data folder.
 - **Hiding a session from the lists never hides it from attention.** The Agents list (the sidebar, the phone drawer
   and `/sessions`, all `AgentsSection` in web `workspaces/Sidebar.tsx`) leaves out every session a workflow step
   started (`startedByStep`, web `sessions/status.ts`), tab or not. Bring here and the palette read

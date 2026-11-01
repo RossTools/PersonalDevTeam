@@ -448,7 +448,7 @@ pub(crate) async fn dry_run(
         (Some(e), _) => e,
         (None, Some(id)) => {
             let e = st.store.get_log_event(&id).await?.ok_or_else(|| ApiError::not_found("event"))?;
-            let payload = engine::trigger_value(&e);
+            let payload = engine::trigger_value(&st, &e);
             DryEvent { kind: e.kind, payload }
         }
         (None, None) => return Err(invalid("give event or eventId")),

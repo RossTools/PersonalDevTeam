@@ -224,7 +224,7 @@ async fn a_started_session_is_told_which_pdt_messages_to_expect() {
     let text = instructions(&env, &started(&env, &a, json!({"agent": "claude"})).await);
     assert!(text.contains("This session works on ticket PDT-1"), "{text}");
     assert!(text.contains("when CI fails on its pull request, the pull request conflicts with `main`"), "{text}");
-    assert!(text.contains("the user comments on the ticket") && text.contains("- Merged:"), "{text}");
+    assert!(text.contains("the user or the PM comments on the ticket") && text.contains("- Merged:"), "{text}");
     assert!(text.contains("don't poll or watch CI in a shell"), "{text}");
     assert!(text.contains("moves while it waits"), "PR notices handles a PR behind its base (PDT-104): {text}");
 

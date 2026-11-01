@@ -14,7 +14,9 @@ looked yet.
 - **Tidy the backlog**: "Which tickets are duplicates or out of date?", "Rank the bugs by how much they hurt."
 - **Say what's going on**: "What's in flight?", "Why is ABC-12 stuck?", "What needs me?" It reads the board, pull
   requests, CI, running agents and the Inbox.
-- **Talk to an agent**: "Tell the agent on ABC-12 to rebase before it pushes again."
+- **Talk to an agent**: "Tell the agent on ABC-12 to rebase before it pushes again." A comment the PM adds to a
+  ticket that is being worked on reaches its agent too, with any screenshots or files attached, as yours do
+  (**Ticket comments to the agent**, in [Workflows](workflows.md)).
 - **Keep an eye on something**: "Tell me when ABC-12's agent reports", "Let me know when the release run finishes."
   See [Watch a ticket or run](#watch-a-ticket-or-run).
 - **Run or write a workflow**: "Cut a minor release", "Write a workflow that posts merged tickets to Discord." A

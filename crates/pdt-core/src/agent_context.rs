@@ -143,7 +143,7 @@ fn ticket_section(api: &str, t: &TicketWork, forge: Option<&ForgeNotes>) -> Stri
         (merged, "it is merged".into()),
         (has(ev::ATTEMPT_ABANDONED), "the attempt is abandoned".into()),
         (has(ev::TICKET_STAGE_CHANGED), "the ticket moves to another stage".into()),
-        (has(ev::TICKET_COMMENTED), "the user comments on the ticket".into()),
+        (has(ev::TICKET_COMMENTED), "the user or the PM comments on the ticket".into()),
         (has(ev::TICKET_OVERLAP_FOUND), "another ticket in flight changes the same files".into()),
         (has(ev::PR_COMMENTED) || has(ev::PR_REVIEWED), "someone comments on or reviews the pull request".into()),
     ]
@@ -188,8 +188,8 @@ fn ticket_section(api: &str, t: &TicketWork, forge: Option<&ForgeNotes>) -> Stri
         (has(ev::PR_COMMENTED) || has(ev::PR_REVIEWED), reply.as_str()),
         (
             has(ev::TICKET_COMMENTED),
-            "A ticket comment: the user wrote it; answer or act on it as you would their own \
-                                  message.",
+            "A ticket comment: the user wrote it, or the PM for them (the message says which, and gives the \
+             local path of each file it attaches); answer or act on it as you would the user's own message.",
         ),
     ];
     for (_, rule) in rules.iter().filter(|(on, _)| *on) {
@@ -333,7 +333,10 @@ mod tests {
     #[test]
     fn comments_alone_say_nothing_about_ci() {
         let t = on_ticket(&[ev::TICKET_COMMENTED]);
-        assert!(t.contains("when the user comments on the ticket. ") && t.contains("- A ticket comment:"), "{t}");
+        assert!(
+            t.contains("when the user or the PM comments on the ticket. ") && t.contains("- A ticket comment:"),
+            "{t}"
+        );
         assert!(!t.contains("forge watch") && !t.contains("- Merged") && !t.contains("- CI failed"), "{t}");
     }
 
