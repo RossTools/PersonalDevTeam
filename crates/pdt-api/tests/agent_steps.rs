@@ -1067,8 +1067,9 @@ async fn a_hung_step_holds_up_neither_other_runs_nor_submit_outcome() {
 async fn a_working_steps_removed_session_stalls_it() {
     let env = setup().await;
     let t = ticket(&env, "Long one").await;
-    // Its turn stays open on a question for the user.
-    let wf = create_workflow(&env, review_doc("ask: Which one?", json!({}))).await;
+    // Its turn stays open while it works (a step's session bypasses permissions, so an `ask:` would be answered at once
+    // and its turn end before the session is removed).
+    let wf = create_workflow(&env, review_doc("slow", json!({}))).await;
     let id = run_now(&env, &wf, json!({"ticketId": t})).await;
     let step = tick_until(&env, "the step's session", || async {
         let r = run(&env, &id).await;
