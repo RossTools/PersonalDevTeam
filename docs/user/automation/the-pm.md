@@ -60,7 +60,22 @@ and the pinned notes. So you can ask "what's new?" without explaining anything.
 
 About once a day, a conversation you've written to since is brought up to date: what happened to each ticket (moved,
 merged, CI failed…), what waits in the Inbox, and what other conversations noted as still open. It shows as one line,
-"PDT brought this conversation up to date", which opens to the full text.
+"PDT brought this conversation up to date", which opens to the full text. The PM then writes a journal checkpoint; on
+a day with nothing new, it's asked only for the checkpoint.
+
+### Change when it's brought up to date
+
+The built-in workflow **PM daily checkpoint** sends these (see [Workflows](workflows.md#the-built-in-workflows)). Out
+of the box it looks every hour and brings up to date each open conversation you've written to since its last update,
+a day or more ago. Open it in **Workflows** to change that:
+
+- **At a set time, or only on weekdays**: set **Every hour**'s schedule to a cron expression, `0 9 * * 1-5` for 9:00 on
+  weekdays, and lower **Send the daily updates**' **After** (to `12h`, say) so each day's run finds the conversations
+  due.
+- **Even when you haven't written**: turn off **Only in use**.
+- **Elsewhere too**: add a Discord post after **Updates sent**, with `{{steps.update.text}}` as its message.
+- **Not at all**: turn the workflow off. Conversations still write their journal when you close or reset them, and
+  when their history is condensed.
 
 ## When it asks first
 

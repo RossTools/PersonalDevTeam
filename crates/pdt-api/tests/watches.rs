@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 /// A PDT whose watches tell at once (no waiting for a burst).
 async fn env() -> Env {
-    setup_with(None, |s| s.watch_wait_ms = (0, 0)).await
+    setup_with(|s| s.watch_wait_ms = (0, 0)).await
 }
 
 async fn ticket_id(env: &Env) -> String {
@@ -125,7 +125,7 @@ async fn the_pm_hears_when_a_watched_tickets_agent_reports_and_the_ticket_finish
 #[tokio::test]
 async fn a_burst_is_told_in_one_message_and_delivery_waits_for_the_pm_to_be_idle() {
     // Real waits: a burst coalesces.
-    let env = setup(None).await;
+    let env = setup().await;
     let t = ticket_id(&env).await;
     let pm = start_pm(&env, "who").await;
     wait_said(&env, &pm, 1).await;

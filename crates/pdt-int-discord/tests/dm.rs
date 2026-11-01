@@ -16,7 +16,7 @@ const USER: &str = "77";
 const DM: &str = "dm1";
 
 async fn setup() -> Env {
-    common::pm::setup_with(None, |st| {
+    common::pm::setup_with(|st| {
         st.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(pdt_int_discord::Discord)]));
         st.integrations.enable(&["discord".into()]);
     })

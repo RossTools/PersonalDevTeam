@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 #[tokio::test]
 async fn the_pm_answers_from_pdt_and_creates_tickets_after_a_yes() {
-    let env = setup(None).await;
+    let env = setup().await;
     let (_, pm) = call(&env.app, "GET", "/api/pm", None).await;
     assert_eq!(pm, json!({"current": null, "sessions": []}));
 
@@ -88,7 +88,7 @@ async fn the_pm_answers_from_pdt_and_creates_tickets_after_a_yes() {
 /// tools; Codex's also with live web search and the network in its sandbox.
 #[tokio::test]
 async fn the_pm_works_from_the_work_folder_with_its_agents_own_tools() {
-    let env = setup(None).await;
+    let env = setup().await;
     let work = env._tmp.path().canonicalize().unwrap();
     let said_cwd = |said: &str| {
         let dir = said.strip_prefix("cwd=").unwrap().split(' ').next().unwrap().to_string();
@@ -127,7 +127,7 @@ async fn the_pm_works_from_the_work_folder_with_its_agents_own_tools() {
 /// `edit_ticket`; the links show on both tickets and hold the blocked one back; mistakes come back as errors.
 #[tokio::test]
 async fn the_pm_links_and_unlinks_tickets_and_sets_a_parent() {
-    let env = setup(None).await;
+    let env = setup().await;
     for title in ["Ship the login", "The epic"] {
         let url = format!("/api/projects/{}/tickets", env.project);
         let (s, v) = call(&env.app, "POST", &url, Some(json!({"title": title, "stage": "todo"}))).await;
@@ -210,7 +210,7 @@ async fn the_pm_links_and_unlinks_tickets_and_sets_a_parent() {
 
 #[tokio::test]
 async fn notes_and_the_journal_carry_into_the_next_session() {
-    let env = setup(None).await;
+    let env = setup().await;
     let (s, n) = call(
         &env.app,
         "POST",
@@ -304,7 +304,7 @@ async fn pdt_says(env: &Env, session: &str) -> Vec<(String, String)> {
 
 #[tokio::test]
 async fn several_pm_conversations_run_at_once_each_with_its_own_transcript() {
-    let env = setup(None).await;
+    let env = setup().await;
     let cb = start_pm(&env, "Plan the CB cutover").await;
     wait_said(&env, &cb, 1).await;
     let pdt = start_pm(&env, "A PDT bug\nThe board flickers.").await;
@@ -409,7 +409,7 @@ async fn said_in_order(env: &Env, session: &str) -> Vec<(String, String)> {
 
 #[tokio::test]
 async fn a_compacted_conversation_writes_a_checkpoint_after_its_turn_and_carries_on() {
-    let env = setup(None).await;
+    let env = setup().await;
     let id = start_pm(&env, "hello").await;
     wait_said(&env, &id, 1).await;
     // The agent compacts mid-turn and works on: the checkpoint request waits for the turn to end (the engine ticks
@@ -448,32 +448,85 @@ async fn a_compacted_conversation_writes_a_checkpoint_after_its_turn_and_carries
     }
 }
 
-#[tokio::test]
-async fn a_conversation_in_use_gets_a_daily_update_and_carries_on() {
-    // Every turn the user started is "a day" later.
-    let env = setup(Some(0)).await;
-    let id = start_pm(&env, "hello").await;
-    let said = wait_said(&env, &id, 2).await;
-    // Nothing happened yet: only a checkpoint request.
-    for want in ["[PDT] Nothing that needs you happened", "`write_journal`", "carries on"] {
-        assert!(said[1].contains(want), "missing {want:?} in\n{}", said[1]);
+/// The PM daily checkpoint built-in (PDT-372), installed and on.
+async fn daily_checkpoint(env: &Env) -> Value {
+    pdt_api::run_workflows(&env.state).await;
+    let (_, list) = call(&env.app, "GET", "/api/workflows", None).await;
+    let w = list.as_array().unwrap().iter().find(|w| w["builtin"] == "pm-daily-checkpoint").cloned();
+    let w = w.unwrap_or_else(|| panic!("no PM daily checkpoint in {list}"));
+    assert_eq!(w["enabled"], true, "{w}");
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{}", w["id"].as_str().unwrap()), None).await;
+    w
+}
+
+/// Fires the PM daily checkpoint's schedule (its `slot`) and runs the engine until the run is over.
+async fn fire_daily(env: &Env, wf: &Value, slot: i64) {
+    let payload = json!({"workflowId": wf["id"], "nodeId": "hourly", "slot": slot,
+                         "slotIso": "2026-11-01T09:00:00Z", "date": "2026-11-01"});
+    let e = pdt_core::workflow::api::NewLogEvent::new(
+        pdt_core::workflow::events::SCHEDULE_FIRED,
+        format!("schedule:test:{slot}"),
+        "scheduler",
+        payload,
+    );
+    env.state.store.emit_event(&e, slot).await.unwrap().expect("logged");
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
     }
-    assert_eq!(pdt_says(&env, &id).await.iter().map(|m| m.0.as_str()).collect::<Vec<_>>(), ["checkpoint"]);
-    // Answering the update asks for no other, and the conversation stays open.
+}
+
+/// Makes a PM conversation's last update `ago` ms old.
+async fn updated_ago(env: &Env, id: &str, ago: i64) {
+    let row = env.state.store.get_pm_session(id).await.unwrap().unwrap();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+    assert!(env.state.store.set_pm_caught_up(id, row.caught_up_at, now - ago).await.unwrap());
+}
+
+/// Ticks the engine for a while (the outbox delivers what is waiting).
+async fn settle(env: &Env) {
     let deadline = Instant::now() + Duration::from_millis(1500);
     while Instant::now() < deadline {
         pdt_api::run_workflows(&env.state).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+const HOUR: i64 = 3_600_000;
+
+#[tokio::test]
+async fn a_conversation_in_use_gets_a_daily_update_and_carries_on() {
+    let env = setup().await;
+    let wf = daily_checkpoint(&env).await;
+    let id = start_pm(&env, "hello").await;
+    wait_said(&env, &id, 1).await;
+
+    // Less than a day since its briefing: the schedule's run sends nothing, and ending a turn sends nothing either.
+    fire_daily(&env, &wf, 1).await;
+    settle(&env).await;
+    assert_eq!(agent_says(&env, &id).await.len(), 1);
+
+    // A day on, nothing happened yet: only a checkpoint request.
+    updated_ago(&env, &id, 24 * HOUR).await;
+    fire_daily(&env, &wf, 2).await;
+    let said = wait_said(&env, &id, 2).await;
+    for want in ["[PDT] Nothing that needs you happened", "`write_journal`", "carries on"] {
+        assert!(said[1].contains(want), "missing {want:?} in\n{}", said[1]);
+    }
+    assert_eq!(pdt_says(&env, &id).await.iter().map(|m| m.0.as_str()).collect::<Vec<_>>(), ["checkpoint"]);
+    // Answering it asks for no other, and the conversation stays open.
+    fire_daily(&env, &wf, 3).await;
+    settle(&env).await;
     assert_eq!(agent_says(&env, &id).await.len(), 2);
     let info = pm_info(&env, &id).await;
     assert_eq!((info["open"].as_bool(), info["rotation"].as_str()), (Some(true), Some("none")));
 
-    // Another conversation writes its journal; the next turn the user starts here brings the next update with it.
+    // Another conversation writes its journal; the user writes here, and a day later the update brings it.
     let other = start_pm(&env, "CB cutover").await;
-    wait_said(&env, &other, 2).await;
+    wait_said(&env, &other, 1).await;
     ask(&env, &other, r#"mcp: write_journal {"body": "Cut over Friday.\n\n## Still open\n- DNS"}"#).await;
-    send(&env, &id, "again").await;
+    ask(&env, &id, "again").await;
+    updated_ago(&env, &id, 24 * HOUR).await;
+    fire_daily(&env, &wf, 4).await;
     let said = wait_said(&env, &id, 4).await;
     for want in ["[PDT] Since the last update (", "## Tickets", "## Inbox", "### CB cutover (", "Still open:\n- DNS"] {
         assert!(said[3].contains(want), "missing {want:?} in\n{}", said[3]);
@@ -482,14 +535,57 @@ async fn a_conversation_in_use_gets_a_daily_update_and_carries_on() {
     let marked = pdt_says(&env, &id).await;
     assert_eq!(marked.iter().map(|m| m.0.as_str()).collect::<Vec<_>>(), ["checkpoint", "update"], "{marked:?}");
     assert_eq!(pm_info(&env, &id).await["open"], true);
+    // The other conversation was only just briefed: nothing for it.
+    assert!(pdt_says(&env, &other).await.is_empty());
     for s in [&id, &other] {
         call(&env.app, "POST", &format!("/api/sessions/{s}/kill"), None).await;
     }
 }
 
+/// PDT-372: the user changes the PM daily checkpoint (a weekday time, half a day, every open conversation) and it
+/// runs as changed, kept as theirs; turned off, no update goes out.
+#[tokio::test]
+async fn the_daily_checkpoint_runs_as_the_user_changed_it() {
+    let env = setup().await;
+    let wf = daily_checkpoint(&env).await;
+    let wf_id = wf["id"].as_str().unwrap().to_string();
+    let id = start_pm(&env, "hello").await;
+    wait_said(&env, &id, 1).await;
+
+    let mut doc = wf["doc"].clone();
+    for n in doc["nodes"].as_array_mut().unwrap() {
+        match n["id"].as_str().unwrap() {
+            "hourly" => n["config"] = json!({"cron": "0 9 * * 1-5", "timezone": "UTC", "catchUp": true}),
+            "update" => n["config"] = json!({"after": "12h", "onlyInUse": false}),
+            _ => {}
+        }
+    }
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/workflows/{wf_id}"), Some(json!({"doc": doc, "note": "mine"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, saved) = call(&env.app, "GET", &format!("/api/workflows/{wf_id}"), None).await;
+    assert_eq!(saved["doc"]["nodes"][0]["config"]["cron"], "0 9 * * 1-5", "{saved}");
+
+    // Half a day on (the default waits a day): it goes out.
+    updated_ago(&env, &id, 13 * HOUR).await;
+    fire_daily(&env, &saved, 10).await;
+    wait_said(&env, &id, 2).await;
+    let kinds = pdt_says(&env, &id).await.into_iter().map(|m| m.0).collect::<Vec<_>>();
+    assert_eq!(kinds.len(), 1, "{kinds:?}");
+
+    // Turned off: nothing more.
+    let (s, v) = call(&env.app, "PATCH", &format!("/api/workflows/{wf_id}"), Some(json!({"enabled": false}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    updated_ago(&env, &id, 13 * HOUR).await;
+    fire_daily(&env, &saved, 11).await;
+    settle(&env).await;
+    assert_eq!(pdt_says(&env, &id).await.len(), 1);
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
 #[tokio::test]
 async fn notes_are_checked_and_edited() {
-    let env = setup(None).await;
+    let env = setup().await;
     let (s, v) = call(&env.app, "POST", "/api/pm/notes", Some(json!({"title": " "}))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
     let (s, v) = call(&env.app, "POST", "/api/pm/notes", Some(json!({"title": "x", "project": "NOPE"}))).await;
@@ -509,7 +605,7 @@ async fn notes_are_checked_and_edited() {
 
 #[tokio::test]
 async fn the_users_own_notes_are_found_by_the_pm_but_never_briefed_or_written_by_it() {
-    let env = setup(None).await;
+    let env = setup().await;
     let (s, v) = call(&env.app, "POST", "/api/pm/notes", Some(json!({"title": "x", "kind": "journal"}))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "only PM conversations write journal entries: {v}");
     let (s, mine) = call(
@@ -571,7 +667,7 @@ fn issue(n: u64, title: &str, body: &str) -> pdt_forge::Issue {
 
 #[tokio::test]
 async fn the_triage_template_has_triage_draft_an_external_ticket_for_a_new_issue() {
-    let env = setup(None).await;
+    let env = setup().await;
     let (s, w) = call(
         &env.app,
         "POST",
@@ -705,7 +801,7 @@ async fn tool_answer(env: &Env, session: &str, n: usize, what: &str) -> String {
 /// it act without asking.
 #[tokio::test]
 async fn the_pm_moves_an_external_ticket_to_to_do_only_after_the_users_yes() {
-    let env = setup(None).await;
+    let env = setup().await;
     let (s, _) =
         call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
     assert_eq!(s, StatusCode::OK);
@@ -755,7 +851,7 @@ async fn the_pm_moves_an_external_ticket_to_to_do_only_after_the_users_yes() {
 
 #[tokio::test]
 async fn the_pm_reads_the_users_todos_but_cannot_change_them() {
-    let env = setup(None).await;
+    let env = setup().await;
     for body in [
         json!({"title": "Buy milk", "body": "Oat, **not** soy.", "dueOn": "2026-10-26", "recurrence": {"rule": {"every": "week", "interval": 1, "days": [1]}, "from": "due"}}),
         json!({"title": "Review the login fix", "ticket": "PX-1"}),
@@ -781,7 +877,7 @@ async fn the_pm_reads_the_users_todos_but_cannot_change_them() {
 async fn the_pm_reports_a_bug_after_a_yes() {
     use common::issues::{FakeIssues, TOKEN};
     let (base, gh) = FakeIssues::serve().await;
-    let env = setup_with(None, |st| {
+    let env = setup_with(|st| {
         st.update = std::sync::Arc::new(pdt_api::UpdateService::new(&base, "o/r", false, "0.1.0-local"));
         st.secrets.set(&st.update_token_account, TOKEN).unwrap();
     })
@@ -809,7 +905,7 @@ async fn the_pm_reports_a_bug_after_a_yes() {
 async fn a_codex_pm_reports_a_bug_after_the_users_allow_in_the_inbox() {
     use common::issues::{FakeIssues, TOKEN};
     let (base, gh) = FakeIssues::serve().await;
-    let env = setup_with(None, |st| {
+    let env = setup_with(|st| {
         st.update = std::sync::Arc::new(pdt_api::UpdateService::new(&base, "o/r", false, "0.1.0-local"));
         st.secrets.set(&st.update_token_account, TOKEN).unwrap();
     })
@@ -882,7 +978,7 @@ async fn a_codex_pm_reports_a_bug_after_the_users_allow_in_the_inbox() {
 /// and moves it back to To do.
 #[tokio::test]
 async fn the_pm_stops_a_tickets_work_after_asking_and_its_links_hold_auto_start_back() {
-    let env = setup(None).await;
+    let env = setup().await;
     let settings = |body: Value| {
         let url = format!("/api/projects/{}/settings", env.project);
         let app = env.app.clone();
@@ -938,7 +1034,7 @@ async fn the_pm_stops_a_tickets_work_after_asking_and_its_links_hold_auto_start_
 /// on an existing one by path. Each asks as the tool always does, nothing more.
 #[tokio::test]
 async fn the_pm_attaches_a_pasted_image_and_a_file_to_tickets() {
-    let env = setup(None).await;
+    let env = setup().await;
     let (s, v) =
         call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -975,7 +1071,7 @@ async fn the_pm_attaches_a_pasted_image_and_a_file_to_tickets() {
 /// briefing names for it once it is on.
 #[tokio::test]
 async fn the_briefing_names_the_project_s_release_workflow() {
-    let env = setup(None).await;
+    let env = setup().await;
     let (s, w) = call(
         &env.app,
         "POST",
@@ -1016,7 +1112,7 @@ async fn reset_pm(env: &Env, id: &str) -> Value {
 /// the list, whose briefing leads with that journal; the old one stays readable.
 #[tokio::test]
 async fn a_reset_conversation_carries_on_fresh_with_its_name_settings_and_journal() {
-    let env = setup(None).await;
+    let env = setup().await;
     let first = start_pm(&env, "Plan the CB cutover").await;
     wait_said(&env, &first, 1).await;
     let said =
@@ -1097,7 +1193,7 @@ async fn a_reset_conversation_carries_on_fresh_with_its_name_settings_and_journa
 /// that never said anything is reset at once.
 #[tokio::test]
 async fn a_reset_records_no_journal_after_its_wait() {
-    let env = setup_with(None, |st| st.pm_reset_wait_ms = 300).await;
+    let env = setup_with(|st| st.pm_reset_wait_ms = 300).await;
     let first = start_pm(&env, "hello").await;
     wait_said(&env, &first, 1).await;
     // Nothing ticks the engine: the journal request is never delivered.
@@ -1130,7 +1226,7 @@ async fn a_reset_records_no_journal_after_its_wait() {
 /// never finished (pdtd stopped mid-way) is listed as ended, not as resetting forever.
 #[tokio::test]
 async fn an_abandoned_reset_still_finishes_and_an_unfinished_one_counts_as_ended() {
-    let env = setup(None).await;
+    let env = setup().await;
     let first = start_pm(&env, "hello").await;
     wait_said(&env, &first, 1).await;
     let (app, url) = (env.app.clone(), format!("/api/pm/sessions/{first}/reset"));
@@ -1172,7 +1268,7 @@ async fn an_abandoned_reset_still_finishes_and_an_unfinished_one_counts_as_ended
 /// them); a name the project doesn't have is refused with the ones it has.
 #[tokio::test]
 async fn the_pm_tags_tickets_with_the_projects_areas() {
-    let env = setup(None).await;
+    let env = setup().await;
     let (_, projects) = call(&env.app, "GET", "/api/projects", None).await;
     let repo = std::path::PathBuf::from(projects[0]["repoPath"].as_str().unwrap());
     std::fs::create_dir_all(repo.join(".pdt")).unwrap();

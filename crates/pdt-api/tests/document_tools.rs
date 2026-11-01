@@ -17,7 +17,7 @@ use std::sync::Arc;
 async fn setup_docs() -> (Env, Arc<FakeProvider>) {
     let fake = Arc::new(FakeProvider::new("fake", "Fake"));
     let given = fake.clone();
-    let env = setup_with(None, move |st| st.documents = DocumentProviders::new(vec![given])).await;
+    let env = setup_with(move |st| st.documents = DocumentProviders::new(vec![given])).await;
     (env, fake)
 }
 

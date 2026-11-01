@@ -28,11 +28,14 @@ command = "pnpm --dir web test"
 
 # Areas (docs/user/automation/run-configuration.md "Areas"): parts of PDT that two tickets in flight at once would both touch. Starting a
 # ticket warns when its areas or changed files overlap another active ticket's; only `migrations` is exclusive (two
-# branches changing the schema at once can clash, even with timestamped migration names).
+# branches changing the schema at once can clash, even with timestamped migration names). A file may sit in more than
+# one area (`crates/pdt-api/src/workflow/pipeline.rs` is in `persona prompts` and `workflows`): overlap compares area
+# names and changed files, never which area a file came from.
 #
 # Hot areas (the project's Settings, "Hot areas"; PDT keeps them per host, not here): `api routes`, `mcp tools`,
-# `persona prompts` and `agent docs`, the files most often in merge conflicts. Auto-start doesn't start a ticket in one
-# while another ticket in it is in flight.
+# `persona prompts` and `agent docs`, the files most often in merge conflicts. Marking `workflows` or `inbox and
+# notifications` hot is the same per-host setting. Auto-start doesn't start a ticket in a hot area while another
+# ticket in it is in flight.
 [[area]]
 name      = "migrations"
 paths     = ["crates/pdt-store/migrations/**"]
@@ -88,6 +91,16 @@ paths = ["crates/pdt-core/src/persona.rs", "crates/pdt-api/src/workflow/pipeline
 [[area]]
 name  = "agent docs"
 paths = ["AGENTS.md", "CLAUDE.md", "docs/agent-guide.md", "docs/run-config.md", "docs/dev/**"]
+
+[[area]]
+name  = "workflows"
+paths = ["crates/pdt-core/src/workflow/**", "crates/pdt-core/src/workflow_runs.rs", "crates/pdt-api/src/workflow/**",
+         "web/src/workflows/**"]
+
+[[area]]
+name  = "inbox and notifications"
+paths = ["crates/pdt-core/src/inbox.rs", "crates/pdt-core/src/notification.rs", "crates/pdt-api/src/inbox.rs",
+         "crates/pdt-api/src/notifications.rs", "web/src/inbox/**", "web/src/notifications/**"]
 
 # Generated files at merge time (docs/user/automation/run-configuration.md "Generated files at merge time"): when only
 # these conflict as PDT brings a branch up to date with main, it takes main's side and runs the command, in this order

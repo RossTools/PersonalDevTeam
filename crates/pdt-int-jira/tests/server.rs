@@ -587,7 +587,7 @@ async fn sprints_backlog_sections_and_the_board() {
 #[tokio::test]
 async fn the_pm_searches_freely_and_moves_issues_after_a_yes() {
     use common::pm::*;
-    let pm = setup_with(None, |st| {
+    let pm = setup_with(|st| {
         st.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(pdt_int_jira::Jira)]));
         st.integrations.enable(&["jira".into()]);
     })
