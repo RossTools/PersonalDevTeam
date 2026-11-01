@@ -274,6 +274,17 @@ async fn a_local_sheet_computes_formats_sorts_filters_charts_and_exports() {
     let (s, _) = edit(&env, &id, json!([{"op": "delete_chart", "id": "nope"}])).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
     edit(&env, &id, json!([{"op": "rename_sheet", "sheet": "Costs", "name": "Sheet1"}])).await;
+    // A deleted sheet's charts go with it, and don't come back with a new sheet of its name.
+    let (s, r) = edit(
+        &env,
+        &id,
+        json!([{"op": "add_chart", "sheet": "Notes", "chart": {"kind": "line", "data": "A1:B2"}},
+               {"op": "delete_sheet", "sheet": "Notes"}, {"op": "add_sheet", "name": "Notes"}]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    let (_, charts) = call(&env.app, "GET", &format!("/api/documents/{id}/charts"), None).await;
+    assert_eq!(charts.as_array().unwrap().len(), 1, "only Sheet1's chart: {charts}");
 
     // A bad edit changes nothing (the list is all or none).
     let (s, e) = edit(

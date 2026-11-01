@@ -160,6 +160,8 @@ fn formats_and_conditional_formats_go_on_ranges() {
     let rules = wb.model().get_conditional_formatting_list(0).unwrap();
     assert_eq!(rules.len(), 1);
     assert!(wb.conditional_format("Sheet1", "D2:D4", &CellCondition::Empty, &CellFormat::default()).is_err());
+    let named = CellFormat { color: Some("red".into()), ..Default::default() };
+    assert!(wb.conditional_format("Sheet1", "D2:D4", &CellCondition::Empty, &named).is_err(), "a colour is #rrggbb");
     let back = Workbook::from_xlsx(&wb.to_xlsx().unwrap(), "x").unwrap();
     assert_eq!(back.model().get_conditional_formatting_list(0).unwrap().len(), 1, "kept in the file");
 }

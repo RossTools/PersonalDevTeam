@@ -389,21 +389,9 @@ impl Workbook {
         let i = self.sheet_index(sheet)?;
         let ((r1, c1), (r2, c2)) = parse_range(range).ok_or_else(|| format!("{range} is not a range"))?;
         let formula = condition_formula(when, &cell_name(r1, c1));
-        let font =
-            (f.bold.is_some() || f.italic.is_some() || f.underline.is_some() || f.color.is_some()).then(|| DxfFont {
-                b: f.bold,
-                i: f.italic,
-                u: f.underline,
-                color: f
-                    .color
-                    .as_deref()
-                    .map(|c| hex(c).map(Color::Rgb))
-                    .transpose()
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default(),
-                ..Default::default()
-            });
+        let color = f.color.as_deref().map(hex).transpose()?.map(Color::Rgb).unwrap_or_default();
+        let font = (f.bold.is_some() || f.italic.is_some() || f.underline.is_some() || f.color.is_some())
+            .then(|| DxfFont { b: f.bold, i: f.italic, u: f.underline, color, ..Default::default() });
         let fill = match &f.background {
             Some(c) => Some(ironcalc::base::types::Fill { color: Color::Rgb(hex(c)?) }),
             None => None,

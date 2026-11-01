@@ -773,6 +773,7 @@ impl DocumentProvider for LocalProvider {
                         | DocumentEdit::UpdateChart { .. }
                         | DocumentEdit::DeleteChart { .. }
                         | DocumentEdit::RenameSheet { .. }
+                        | DocumentEdit::DeleteSheet { .. }
                 )
             });
             let doc = if charting { Some(self.document_id(reference).await?) } else { None };
@@ -807,10 +808,10 @@ impl DocumentProvider for LocalProvider {
                 for e in edits {
                     match e {
                         DocumentEdit::AddChart { sheet, id: Some(id), chart } => {
-                            self.store
-                                .put_document_chart(&doc, &sheet, &Chart { id, spec: chart })
-                                .await
-                                .map_err(failed)?;
+                            let c = Chart { id, spec: chart };
+                            self.store.put_document_chart(&doc, &sheet, &c).await.map_err(failed)?;
+                            // Later edits in the list (a delete of its sheet) see it.
+                            charts.push((sheet, c));
                             changed = true;
                         }
                         DocumentEdit::UpdateChart { id, chart } => {
@@ -834,6 +835,14 @@ impl DocumentProvider for LocalProvider {
                                 charts = self.store.document_charts(&doc).await.map_err(failed)?;
                                 changed = true;
                             }
+                        }
+                        // A deleted sheet's charts go with it.
+                        DocumentEdit::DeleteSheet { sheet } => {
+                            for (_, c) in charts.iter().filter(|(s, _)| s.eq_ignore_ascii_case(&sheet)) {
+                                self.store.delete_document_chart(&doc, &c.id).await.map_err(failed)?;
+                                changed = true;
+                            }
+                            charts.retain(|(s, _)| !s.eq_ignore_ascii_case(&sheet));
                         }
                         _ => {}
                     }
