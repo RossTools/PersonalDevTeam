@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { plugins } from '../api/gen/plugins';
 import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import type { PmState } from '../api/gen/PmState';
 import type { Session } from '../api/gen/Session';
@@ -63,10 +64,10 @@ describe('the PM', () => {
   });
 
   it('marks a conversation held in the Discord bot\'s DMs', async () => {
-    stubApi({ 'GET /api/pm': { ...two, sessions: [info(live('c2', 'A PDT bug'), { via: 'discord' }), ...two.sessions.slice(1)] } });
+    stubApi({ 'GET /api/pm': { ...two, sessions: [info(live('c2', 'A PDT bug'), { via: 'discord' }), ...two.sessions.slice(1)] }, 'GET /api/integrations': plugins });
     renderWithQuery(<PmList selection="current" onSelect={() => {}} onNew={() => {}} />);
     const open = await screen.findByRole('grid', { name: 'PM conversations' });
-    expect(await within(open).findByRole('row', { name: /A PDT bug/ })).toHaveTextContent('via Discord');
+    await waitFor(() => expect(within(open).getByRole('row', { name: /A PDT bug/ })).toHaveTextContent('via Discord'));
     expect(within(open).getByRole('row', { name: /CB cutover/ })).not.toHaveTextContent('via Discord');
   });
 

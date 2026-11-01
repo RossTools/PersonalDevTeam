@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import type { RotateReason } from '../api/gen/RotateReason';
 import { runAction } from '../common/useAction';
+import { pluginsKey } from '../plugins/model';
 
 /** The PM's conversations, polled with the rest of the UI (PDT-81). */
 export function usePm() {
@@ -53,8 +54,12 @@ export const earlier = (sessions: PmSessionInfo[]) => {
 export const resetting = (info: PmSessionInfo) => info.open && info.rotation !== 'none' && info.reason === 'reset';
 
 /** A journal's first line, for list rows. */
-/** Where a conversation is held besides PDT, for its list row and header (PDT-304: the Discord bot's DMs). */
-export const viaLabel = (info: PmSessionInfo) => (info.via === 'discord' ? 'via Discord' : null);
+/** Where a conversation is held besides PDT, for its list row and header (PDT-304: a chat plugin's DMs): `via` is the
+ * plugin's id, named as Settings → Plugins names it. */
+export function useViaLabel() {
+  const plugins = useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations, staleTime: 60_000 });
+  return (info: PmSessionInfo) => (info.via ? `via ${plugins.data?.find((p) => p.id === info.via)?.label ?? info.via}` : null);
+}
 export const firstLine = (text: string | null) => (text ?? '').split('\n').find((l) => l.trim())?.replace(/^#+\s*/, '') ?? '';
 
 /**

@@ -8,7 +8,9 @@ import { ProjectSettingsPanel } from '../runs/ProjectSettingsPanel';
 import { renderWithQuery, Reply, stubApi } from '../test-utils';
 import { OpenTicketContext } from './actions';
 import { ExternalKeys } from './ExternalKeys';
-import { ImportJiraDialog } from './ImportJiraDialog';
+import { plugins } from '../api/gen/plugins';
+import { projectSettingsSchemas } from '../api/gen/projectSettingsSchemas';
+import { ImportByKeyDialog } from './ImportByKeyDialog';
 import { CiBadge } from './PullRequest';
 
 vi.mock('../files/CodeViewer', () => ({ CodeViewer: ({ text }: { text: string }) => <pre>{text}</pre> }));
@@ -109,14 +111,16 @@ describe('Jira and Buildkite', () => {
     const ticket = { id: 't9', projectId: 'p' };
     let first = true;
     const calls = stubApi({
-      'POST /api/projects/p/jira/import': () => {
+      'POST /api/projects/p/import/jira': () => {
         if (first) { first = false; return new Reply(404, { code: 'jira_issue_not_found', message: 'Jira has no issue ABC-404' }); }
         return { ticket, existed: false };
       },
     });
     const open = vi.fn();
     const onClose = vi.fn();
-    renderWithQuery(<OpenTicketContext.Provider value={open}><ImportJiraDialog projectId="p" onClose={onClose} /></OpenTicketContext.Provider>);
+    const jira = projectSettingsSchemas.find((x) => x.integration === 'jira')!;
+    renderWithQuery(<OpenTicketContext.Provider value={open}><ImportByKeyDialog projectId="p" source={{ ...jira.import!, integration: 'jira' }} onClose={onClose} /></OpenTicketContext.Provider>);
+    expect(await screen.findByRole('dialog', { name: 'Import from Jira' })).toBeInTheDocument();
     const box = await screen.findByRole('textbox', { name: 'Issue key' });
     await userEvent.type(box, 'ABC-404{Enter}');
     expect(await screen.findByText('Jira has no issue ABC-404')).toBeTruthy();
@@ -139,11 +143,12 @@ describe('Jira and Buildkite', () => {
     expect(screen.getByText('CI failed').closest('[title]')?.getAttribute('title')).toBe('Failed: test');
   });
 
-  it("shows a ticket's GitHub issue by its number, naming the repository", () => {
+  it("shows a ticket's GitHub issue by its number, naming the repository and its plugin", async () => {
+    stubApi({ 'GET /api/integrations': plugins });
     const links = [{ system: 'github', key: 'o/r#12', url: 'https://github.com/o/r/issues/12' }];
     renderWithQuery(<ExternalKeys links={links} linked />);
     const link = screen.getByRole('link', { name: /#12/ });
     expect(link.getAttribute('href')).toBe(links[0].url);
-    expect(link.closest('[title]')?.getAttribute('title')).toBe('GitHub issue o/r#12');
+    await waitFor(() => expect(link.closest('[title]')?.getAttribute('title')).toBe('GitHub issue o/r#12'));
   });
 });

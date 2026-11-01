@@ -310,13 +310,64 @@ pub struct ConnectionKind {
     /// Settings of its own, kept in the connection's config.
     #[serde(default)]
     pub fields: Vec<ConfigField>,
-    /// Asks for a Discord server and its bot's application (a Discord bot).
+    /// A connection's details in a line on its row: `{key}` is its config's value (`#{channel}`). Not shown when
+    /// a key it names has no text value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub summary: Option<String>,
+    /// A link the dialog shows once the settings it names are filled in (a bot's invite link).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub link: Option<ConnectionLink>,
+    /// Its integration says how a connection of this kind is doing beyond OK or Failing
+    /// (`GET /api/connections/{id}/status`, [`ConnectionStatus`]).
     #[serde(default)]
-    pub discord_bot: bool,
+    pub status: bool,
     /// The PM acts through it: the switch that lets it act without asking (`config.pmActs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub pm_acts: Option<String>,
+}
+
+/// A link made from a connection's settings, shown in its dialog.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConnectionLink {
+    pub title: String,
+    /// The address: `{key}` is that setting's text, URL-encoded. Shown once each one it names is filled in and
+    /// matches its pattern.
+    pub url: String,
+    /// What to do with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub hint: Option<String>,
+}
+
+/// How a connection is doing, in a line on its row (`GET /api/connections/{id}/status`): `{label}: {state}`, and
+/// why, when there is a reason.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConnectionStatus {
+    pub label: String,
+    pub state: String,
+    #[serde(default)]
+    pub tone: StatusTone,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error: Option<String>,
+}
+
+/// How a [`ConnectionStatus`]'s state is shown.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum StatusTone {
+    #[default]
+    Neutral,
+    Ok,
+    Failed,
 }
 
 /// One setting of a connection kind.
@@ -346,10 +397,18 @@ pub struct ConfigField {
     /// May be left empty (otherwise a shown setting is required).
     #[serde(default)]
     pub optional: bool,
-    /// What an empty value becomes (a project's integration setting).
+    /// What an empty value becomes (a project's integration setting); a switch's is `true` or `false`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub default: Option<String>,
+    /// A regular expression a value given must match in the form (`^\d+$`: digits only); the integration checks it
+    /// again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pattern: Option<String>,
+    /// Typed as a number (a phone's keypad).
+    #[serde(default)]
+    pub numeric: bool,
 }
 
 impl ConfigField {
@@ -372,6 +431,8 @@ pub enum FieldType {
     Env,
     /// One of the field's options.
     Choice,
+    /// On or off, kept as `true` or `false`.
+    Switch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -389,11 +450,19 @@ pub struct FieldOption {
 pub struct FieldWhen {
     pub key: String,
     pub value: String,
+    /// When the other setting does not have the value (`""`: once it is filled in).
+    #[serde(default)]
+    pub not: bool,
 }
 
 impl FieldWhen {
     pub fn new(key: &str, value: &str) -> Self {
-        Self { key: key.into(), value: value.into() }
+        Self { key: key.into(), value: value.into(), not: false }
+    }
+
+    /// When setting `key` is filled in.
+    pub fn filled(key: &str) -> Self {
+        Self { key: key.into(), value: String::new(), not: true }
     }
 }
 
@@ -415,6 +484,25 @@ pub struct ProjectSettingsSchema {
     /// Its settings, shown once a connection is picked. Text, choice and lines only.
     #[serde(default)]
     pub fields: Vec<ConfigField>,
+    /// A linked project's tickets list can import one of the integration's issues by its key
+    /// (`POST /api/projects/{id}/import/{integration}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub import: Option<ImportByKey>,
+}
+
+/// How a linked project imports one issue by its key, as a Draft ticket linked to it: the words of its button and
+/// dialog.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ImportByKey {
+    /// The button and the dialog's title (`Import from Jira`).
+    pub title: String,
+    /// What it does, under the dialog's title.
+    pub description: String,
+    /// An example key.
+    pub placeholder: String,
 }
 
 /// A project's settings for one integration: `connection` and the schema's fields.
@@ -468,6 +556,11 @@ impl ProjectSettingsSchema {
                     }
                     Value::Array(list.into_iter().map(Value::String).collect())
                 }
+                FieldType::Switch => match given(&f.key) {
+                    None => Value::Bool(f.default.as_deref() == Some("true")),
+                    Some(Value::Bool(b)) => Value::Bool(*b),
+                    Some(_) => return Err(format!("{} is on or off", f.label)),
+                },
                 FieldType::Text | FieldType::Choice | FieldType::Env => {
                     let text = match given(&f.key) {
                         None => "",
@@ -549,6 +642,21 @@ mod tests {
         };
         assert!(choice.apply(&map(json!({"connection": "t", "pick": "b"})), None).is_err());
         assert!(choice.apply(&map(json!({"connection": "t", "pick": "a"})), None).unwrap().is_some());
+    }
+
+    #[test]
+    fn project_settings_keep_a_switch_as_a_bool() {
+        let s = ProjectSettingsSchema {
+            fields: vec![ConfigField {
+                r#type: Some(FieldType::Switch),
+                default: Some("true".into()),
+                ..ConfigField::new("on", "On")
+            }],
+            ..schema()
+        };
+        assert_eq!(s.apply(&map(json!({"connection": "t"})), None).unwrap().unwrap()["on"], true);
+        assert_eq!(s.apply(&map(json!({"connection": "t", "on": false})), None).unwrap().unwrap()["on"], false);
+        assert!(s.apply(&map(json!({"connection": "t", "on": "yes"})), None).is_err());
     }
 
     #[test]

@@ -3,7 +3,7 @@ import { Plus } from 'lucide-react';
 import { Alert, IconButton, List, ListRow, Skeleton, Spinner, relativeTime, useMenuAt } from '@ui';
 import { InlineRename } from '../common/InlineRename';
 import { RowField } from '../common/RowField';
-import { earlier, firstLine, isUnread, openConversations, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useShownRef, viaLabel, type PmSelection } from './usePm';
+import { earlier, firstLine, isUnread, openConversations, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useShownRef, useViaLabel, type PmSelection } from './usePm';
 
 const heading = 'flex items-center px-3 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
 /** Ended conversations the list shows; the rest are under "All ended conversations". */
@@ -20,6 +20,7 @@ export function PmList({ selection, onSelect, onNew }: {
   onNew: () => void;
 }) {
   const pm = usePm();
+  const viaLabel = useViaLabel();
   const sessions = pm.data?.sessions ?? [];
   const open = openConversations(sessions);
   const ended = earlier(sessions);

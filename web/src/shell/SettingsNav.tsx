@@ -7,6 +7,7 @@ import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import { ProjectKey } from '../common/BranchChip';
 import { HOST_PAGES, HOST_SECTIONS, projectSections, sectionMatches, shownSection, type SectionInfo } from '../common/settingsSections';
+import { pluginsKey } from '../plugins/model';
 import { sectionSlug, type SettingsPage } from './route';
 
 const HOST = 'host';
@@ -33,6 +34,9 @@ export function SettingsNav({ projects, page, phone, onGo, onAddProject, heading
   // Settings → Network saved but not applied yet: a "restart" badge until PDT restarts.
   const host = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
   const restart = host.data?.network?.restartNeeded ?? false;
+  // The plugins' names find the Plugins pages.
+  const plugins = useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations, enabled: searching }).data ?? [];
+  const more = (s: { label: string }) => (s.label === 'Plugins' ? plugins.map((p) => p.label) : []);
   const currentGroup = page.kind === 'project' ? page.key : page.kind === 'host' || page.kind === 'index' ? HOST : null;
   const [open, setOpen] = useState<Set<string>>(() => new Set(currentGroup ? [currentGroup] : []));
   // The group of the screen on show opens (a link, the palette, Back).
@@ -53,13 +57,13 @@ export function SettingsNav({ projects, page, phone, onGo, onAddProject, heading
   };
   const hostSlug = page.kind === 'host' || (page.kind === 'index' && !phone) ? currentSlug(HOST_SECTIONS, page.kind === 'host' ? page.section : null) : null;
   const hostShown = HOST_SECTIONS.filter((s) => sectionMatches(s, query));
-  const pagesShown = HOST_PAGES.filter((p) => sectionMatches(p, query));
+  const pagesShown = HOST_PAGES.filter((p) => sectionMatches(p, query, more(p)));
   const projectsShown = projects
     .map((p) => {
       const all = projectSections(p.kind);
       // The project's own name finds all its sections.
       const named = sectionMatches({ label: p.name, terms: [p.key] }, query);
-      return { p, all, shown: named ? all : all.filter((s) => sectionMatches(s, query)) };
+      return { p, all, shown: named ? all : all.filter((s) => sectionMatches(s, query, more(s))) };
     })
     .filter((x) => !searching || x.shown.length > 0);
   const nothing = searching && hostShown.length === 0 && pagesShown.length === 0 && projectsShown.length === 0;

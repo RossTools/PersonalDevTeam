@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, relativeTime } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
-import { hookUrl, useConnectionKinds } from './kinds';
+import { hookUrl, summaryText, useConnectionKinds, type ConnectionKind } from './kinds';
 
 /** An MCP server's tools: how many (their names on hover), or why listing them failed; List again asks it now. */
 export function McpToolsLine({ c }: { c: Connection }) {
@@ -26,51 +26,39 @@ export function McpToolsLine({ c }: { c: Connection }) {
   );
 }
 
-const DM_STATE: Record<string, string> = {
-  connected: 'Connected',
-  connecting: 'Connecting…',
-  retrying: 'Reconnecting',
-  failed: 'Not connected',
-  off: 'Off',
-};
-
-/** A Discord bot's DMs with the PM (PDT-304): whether its Gateway connection is up, or why not. */
-export function DiscordDmLine({ c }: { c: Connection }) {
-  const dm = useQuery({ queryKey: ['discord-dm'], queryFn: () => api.discordDm(), refetchInterval: 5_000 });
-  const d = dm.data;
-  const mine = d?.connection === c.name;
-  const state = mine ? d.state : 'off';
-  const why = mine ? d.error : null;
+/** How a connection is doing beyond OK or Failing, as its plugin tells it (a bot's DMs with the PM). */
+export function StatusLine({ c }: { c: Connection }) {
+  const status = useQuery({ queryKey: ['connection-status', c.id], queryFn: () => api.connectionStatus(c.id), refetchInterval: 5_000 });
+  const s = status.data;
+  if (status.isError) return <p role="status" className="w-full pl-2 text-xs text-muted-foreground">Status unknown: {status.error.message}</p>;
+  if (!s) return null;
+  const tone = s.tone === 'failed' ? 'text-destructive' : s.tone === 'ok' ? 'text-foreground' : undefined;
   return (
     <p role="status" className="w-full pl-2 text-xs text-muted-foreground">
-      DMs with the PM: <span className={state === 'failed' ? 'text-destructive' : state === 'connected' ? 'text-foreground' : undefined}>
-        {dm.isError ? 'unknown' : DM_STATE[state] ?? state}
-      </span>
-      {why && <span className={state === 'failed' ? 'text-destructive' : undefined}>: {why}</span>}
-      {!mine && d?.connection && <span> (another bot, {d.connection}, holds them)</span>}
+      {s.label}: <span className={tone}>{s.state}</span>
+      {s.error && <span className={s.tone === 'failed' ? 'text-destructive' : undefined}>: {s.error}</span>}
     </p>
   );
 }
 
-/** What a connection is, in a line: a webhook's address, a channel, a server, or its URL. */
-export function connectionDetails(c: Connection): string {
+/** What a connection is, in a line: a webhook's address, its kind's summary (a channel, a server), or its URL. */
+export function connectionDetails(c: Connection, kind: ConnectionKind | undefined): string {
   if (c.kind === 'webhook') return hookUrl(c.name);
-  if (c.kind === 'discord_webhook' && typeof c.config.channel === 'string') return `#${c.config.channel}`;
-  if (c.kind === 'discord_bot' && typeof c.config.guildId === 'string') return `Server ${c.config.guildId}`;
-  return c.url;
+  return (kind?.summary ? summaryText(kind.summary, c.config) : null) ?? c.url;
 }
 
 export function ConnectionRow({ c, onEdit, onDelete }: { c: Connection; onEdit: () => void; onDelete: () => void }) {
   const { kindOf } = useConnectionKinds();
-  const details = connectionDetails(c);
+  const k = kindOf(c.kind);
+  const details = connectionDetails(c, k);
   return (
     <div className="flex flex-wrap items-center gap-2 py-1">
       <span className="min-w-0 truncate text-sm font-medium">{c.name}</span>
-      {!c.hasSecret && c.kind !== 'http' && !kindOf(c.kind)?.secretOptional && <Badge tone="waiting">No secret</Badge>}
+      {!c.hasSecret && c.kind !== 'http' && !k?.secretOptional && <Badge tone="waiting">No secret</Badge>}
       {details && (c.kind === 'webhook'
         ? <code className="min-w-0 truncate text-xs text-muted-foreground">{details}</code>
         : <span className="min-w-0 truncate text-xs text-muted-foreground">{details}</span>)}
-      {(c.kind === 'discord_bot' || c.kind === 'scryer') && c.config.pmActs === true && <Badge>PM acts without asking</Badge>}
+      {k?.pmActs && c.config.pmActs === true && <Badge>PM acts without asking</Badge>}
       <span className="flex-1" />
       {c.lastError ? <Badge tone="failed">Failing</Badge> : <Badge tone="running">OK</Badge>}
       <Button size="sm" variant="secondary" onClick={onEdit}>Edit</Button>
@@ -81,7 +69,7 @@ export function ConnectionRow({ c, onEdit, onDelete }: { c: Connection; onEdit: 
         </p>
       )}
       {c.kind === 'mcp' && <McpToolsLine c={c} />}
-      {c.kind === 'discord_bot' && typeof c.config.dmUserId === 'string' && c.config.dmUserId !== '' && <DiscordDmLine c={c} />}
+      {k?.status && <StatusLine c={c} />}
     </div>
   );
 }

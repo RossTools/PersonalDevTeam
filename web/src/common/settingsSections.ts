@@ -39,7 +39,7 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
 /** The host's other pages, each a single screen. */
 export const HOST_PAGES = [
   { id: 'notifications', label: 'Notifications', terms: ['Desktop notifications', 'Toasts', 'Updates'] },
-  { id: 'plugins', label: 'Plugins', terms: ['Integrations', 'GitHub', 'Jira', 'Buildkite', 'Discord'] },
+  { id: 'plugins', label: 'Plugins', terms: ['Integrations'] },
   { id: 'connections', label: 'All connections', terms: ['Connections'] },
   { id: 'secrets', label: 'Secrets', terms: ['Keychain', 'Tokens'] },
   { id: 'mcp-servers', label: 'MCP servers', terms: ['MCP', 'Model Context Protocol', 'OAuth', 'Sign in', 'Slack', 'Tools', 'Use only PDT’s MCP servers'] },
@@ -57,7 +57,7 @@ const PROJECT_SECTIONS: readonly (SectionInfo & { repoOnly?: true })[] = [
     label: 'Pipeline and policies',
     terms: ['Who may merge', 'Approval', 'Labels that merge without approval', 'Green CI', 'Running tickets at once', 'Auto-start', 'Quiet period', 'The PM acts without asking'],
   },
-  { label: 'Plugins', terms: ['Jira', 'Buildkite', 'Connection'], repoOnly: true },
+  { label: 'Plugins', terms: ['Connection'], repoOnly: true },
   { label: 'Documents', terms: ['Default provider', 'Local documents folder', 'Design doc', 'Docs', 'Sheets'] },
   { label: 'Danger zone', terms: ['Remove this project'] },
 ];
@@ -72,9 +72,9 @@ export const PROJECT_SECTION_LABELS = PROJECT_SECTIONS.map((s) => s.label);
 export const HOST_SECTION_LABELS = HOST_SECTIONS.map((s) => s.label);
 
 /** Whether search text finds a section: by its label or any of its settings, ignoring case. */
-export function sectionMatches(s: { label: string; terms: readonly string[] }, query: string): boolean {
+export function sectionMatches(s: { label: string; terms: readonly string[] }, query: string, more: readonly string[] = []): boolean {
   const q = query.trim().toLowerCase();
-  return !q || s.label.toLowerCase().includes(q) || s.terms.some((t) => t.toLowerCase().includes(q));
+  return !q || s.label.toLowerCase().includes(q) || [...s.terms, ...more].some((t) => t.toLowerCase().includes(q));
 }
 
 /** A section's slug among `sections`, or the first one's when `slug` is null (a page's own path shows its first). */

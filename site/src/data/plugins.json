@@ -275,7 +275,12 @@
         },
         {
           "description": "Lets the PM manage a Discord server’s channels and webhooks, and you talk to the PM in the bot’s DMs.",
-          "fields": [],
+          "fields": [
+            "Server ID",
+            "Application ID",
+            "Your Discord user ID (optional)",
+            "Also send Inbox items (stalled, needs input) as DMs"
+          ],
           "label": "Discord bot",
           "secretHint": "Discord Developer Portal → your application → Bot → Reset Token → Copy.",
           "secretLabel": "Bot token",
