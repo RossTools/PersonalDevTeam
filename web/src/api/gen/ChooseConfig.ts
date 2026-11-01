@@ -27,6 +27,21 @@ startDelaySeconds?: number,
  */
 skipFailed: boolean, 
 /**
- * How candidates overlapping work in flight are treated: `off` (candidates leaves out conflicts).
+ * How candidates overlapping work in flight are treated: `off` (only candidates' conflicts), `avoid` (pass over
+ * a candidate in a hot area while a ticket in it is in flight) or `serialize` (at most `perArea` in flight in
+ * each area). Left out: `avoid` when the project has hot areas, else `off`.
  */
-overlap: OverlapRule, };
+overlap?: OverlapRule, 
+/**
+ * The hot areas. Left out: the project's.
+ */
+hotAreas?: Array<string>, 
+/**
+ * `serialize`: the most tickets in flight in one area (default 1).
+ */
+perArea?: number, 
+/**
+ * A ticket without areas may start alongside a hot area's ticket in flight, and the other way round. Left out:
+ * the project's setting.
+ */
+untaggedAlongsideHot?: boolean, };

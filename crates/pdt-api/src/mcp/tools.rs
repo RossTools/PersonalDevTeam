@@ -103,6 +103,10 @@ struct UpdateTicket {
     /// The new description (Markdown), replacing the old one: keep what still holds.
     #[serde(default)]
     description: Option<String>,
+    /// The parts of the project it touches, from its areas (`projectAreas` in `get_ticket`); replaces every area.
+    /// "Pick up tickets" keeps tickets in the same busy areas from running at once.
+    #[serde(default)]
+    areas: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -308,6 +312,10 @@ struct CreateTicket {
     priority: Option<pdt_core::ticket::Priority>,
     #[serde(default)]
     labels: Option<Vec<String>>,
+    /// The parts of the project it touches, from its areas (`projectAreas` in `get_ticket`).
+    /// "Pick up tickets" keeps tickets in the same busy areas from running at once.
+    #[serde(default)]
+    areas: Option<Vec<String>>,
     /// Make it a part of this ticket (key or id).
     #[serde(default)]
     parent: Option<String>,
@@ -337,6 +345,10 @@ struct EditTicket {
     /// Replaces every label.
     #[serde(default)]
     labels: Option<Vec<String>>,
+    /// The parts of the project it touches, from its areas (`projectAreas` in `get_ticket`); replaces every area.
+    /// "Pick up tickets" keeps tickets in the same busy areas from running at once.
+    #[serde(default)]
+    areas: Option<Vec<String>>,
     /// Make it a part of this ticket (key or id), or `""` to detach it from its parent.
     #[serde(default)]
     parent: Option<String>,
@@ -475,10 +487,10 @@ pub(crate) fn defs() -> Vec<Tool> {
             schema: schema::<crate::vault::WriteSecretFile>,
         },
         Tool {
-            decl: ToolDecl::new("update_ticket", "Rewrite its own ticket's title and description"),
+            decl: ToolDecl::new("update_ticket", "Rewrite its own ticket's title, description and areas"),
             title: "Update the ticket",
-            description: "Rewrites this session's ticket: its title and/or description (as `PATCH /api/tickets/{id}`, \
-                          recorded as the agent's edit). Only this session's own ticket.",
+            description: "Rewrites this session's ticket: its title, description and/or areas (as `PATCH \
+                          /api/tickets/{id}`, recorded as the agent's edit). Only this session's own ticket.",
             schema: schema::<UpdateTicket>,
         },
         Tool {
@@ -663,7 +675,7 @@ pub(crate) fn defs() -> Vec<Tool> {
         Tool {
             decl: ToolDecl::new("edit_ticket", "Edit tickets (outside the PM, others only by exact key)").asks().pm(),
             title: "Edit a ticket",
-            description: "Changes a ticket's title, description, stage, priority, labels or parent, recorded as the \
+            description: "Changes a ticket's title, description, stage, priority, labels, areas or parent, recorded as the \
                           agent's. Outside the PM, a ticket other than the session's own needs its exact key \
                           (`ABC-12`), and one in progress or done keeps its title and description unless this \
                           session created it: comment on it instead. `files` attaches files to it (alone, or with \
@@ -722,6 +734,19 @@ fn store(e: pdt_store::StoreError) -> String {
 }
 
 /// Refuses a PM tool's change to one of the user's own notes (PDT-126); a missing note is left to the tool.
+/// Areas an agent gives a ticket of `project_id`, checked against the project's configured areas.
+async fn checked_areas(
+    st: &AppState,
+    project_id: &str,
+    areas: Option<Vec<String>>,
+) -> Result<Option<Vec<String>>, String> {
+    let Some(areas) = areas else { return Ok(None) };
+    let project = st.store.get_project(project_id).await.map_err(store)?.ok_or("no such project")?;
+    let configured: Vec<String> =
+        crate::overlap::project_areas(st, &project).await.areas.into_iter().map(|a| a.name).collect();
+    pdt_core::ticket::agent_areas(&areas, &configured).map(Some)
+}
+
 async fn pm_may_write(st: &AppState, id: &str) -> Result<(), String> {
     match st.store.get_note(id).await.map_err(store)? {
         Some(n) if !n.kind.pm_may_write() => Err(format!("note {id} is the user's own: only they can change it")),
@@ -783,12 +808,17 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         "write_secret_file" => crate::vault::write_file_tool(st, cx.session, args(a)?).await,
         "update_ticket" => {
             let a: UpdateTicket = args(a)?;
-            if a.title.is_none() && a.description.is_none() {
-                return Err("give a title, a description or both".into());
+            if a.title.is_none() && a.description.is_none() && a.areas.is_none() {
+                return Err("give a title, a description, areas or any of them".into());
             }
             let id = ticket_for(cx, None).await?;
-            let patch =
-                pdt_core::ticket::TicketPatch { title: a.title, description: a.description, ..Default::default() };
+            let areas = checked_areas(st, &cx.session.project_id, a.areas).await?;
+            let patch = pdt_core::ticket::TicketPatch {
+                title: a.title,
+                description: a.description,
+                areas,
+                ..Default::default()
+            };
             let valid = patch.validate().map_err(|e| api(e.into()))?;
             let t = st
                 .store
@@ -796,7 +826,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 .await
                 .map_err(|e| api(e.into()))?
                 .ok_or("that ticket no longer exists")?;
-            Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title}))
+            Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "areas": t.summary.areas}))
         }
         "add_review_comment" => {
             let a: OutcomeComment = args(a)?;
@@ -1134,7 +1164,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 stage: Some(a.stage.unwrap_or(pdt_core::ticket::TicketStage::Draft)),
                 priority: a.priority,
                 labels: a.labels,
-                areas: None,
+                areas: checked_areas(st, &project, a.areas).await?,
                 before: None,
                 after: None,
                 parent,
@@ -1194,6 +1224,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 stage: a.stage,
                 priority: a.priority,
                 labels: a.labels,
+                areas: checked_areas(st, &current.summary.project_id, a.areas).await?,
                 parent,
                 ..Default::default()
             };
@@ -1684,6 +1715,7 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
     let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
     let outside = external.then(|| (fence.wrap(&ticket.description), fence.note()));
     let attachments = attachments_of(st, id, external.then_some(&fence)).await?;
+    let ticket_project = ticket.summary.project_id.clone();
     let mut v = serde_json::to_value(ticket).map_err(|e| e.to_string())?;
     if let Some((description, note)) = outside {
         v["description"] = json!(description);
@@ -1706,6 +1738,18 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
             "Documents are linked to this ticket. Read its design doc (and any other that matters) before you start: \
              doc_read gives a doc as Markdown, sheet_read a sheet's cells."
         );
+    }
+    if let Some(project) = st.store.get_project(&ticket_project).await.map_err(store)? {
+        let areas = crate::overlap::project_areas(st, &project).await.areas;
+        if !areas.is_empty() {
+            let list: Vec<Value> = areas.iter().map(|a| json!({"name": a.name, "paths": a.paths})).collect();
+            v["projectAreas"] = json!(list);
+            v["areasNote"] = json!(
+                "`areas` are the parts of the project the ticket touches, from `projectAreas` (each with the files it \
+                 covers). \"Pick up tickets\" keeps tickets in the same busy areas from running at once, so a ticket \
+                 without them is a guess."
+            );
+        }
     }
     v["comments"] = json!(comments);
     v["history"] = json!(history);

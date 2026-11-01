@@ -5,7 +5,7 @@
 use crate::routes::AppState;
 use pdt_core::inbox::InboxKind;
 use pdt_core::policy::{AutoStart, auto_start_at, settles_at};
-use pdt_core::ticket::{TicketAgent, TicketAgentState, TicketQuery, TicketSummary};
+use pdt_core::ticket::{TicketAgent, TicketAgentState, TicketQuery, TicketStage, TicketSummary};
 use pdt_core::workflow::agent::AgentStepState;
 use pdt_core::workflow::api::NewLogEvent;
 use pdt_core::workflow::api::{Scope, StepStatus};
@@ -91,8 +91,8 @@ pub(crate) async fn workflow_listens(st: &AppState, project_id: &str, event_type
 pub(crate) struct PickupWatch {
     /// Startable tickets told as `ticket.startable`, with their `updated_at` then.
     startable: HashMap<String, i64>,
-    /// Tickets in flight per project, and its auto-start cap.
-    active: HashMap<String, (u32, u32)>,
+    /// The attempts in flight per project, and its auto-start cap.
+    active: HashMap<String, (HashSet<String>, u32)>,
     /// Free agent slots on the host (None before the first pass).
     free: Option<usize>,
 }
@@ -102,8 +102,8 @@ const HALF_DONE_AFTER_MS: i64 = 2 * 60 * 1000;
 
 /// One pass of the pickup watch (PDT-327), which feeds the built-in "Pick up tickets": starts left half-done are
 /// announced; in each project with auto-start on, `ticket.startable` for each ticket that became one auto-start could
-/// take (its start delay over, its blocker or conflict gone) and `slot.freed` when fewer tickets are in flight or its cap
-/// rose; and
+/// take (its start delay over, its blocker or conflict gone) and `slot.freed` when a ticket in flight ended (room under
+/// the cap, or a hot area free: PDT-329) or its cap rose; and
 /// `slot.freed` when an agent slot freed on the host. Nothing is told while auto-start waits for disk space.
 pub async fn watch_pickup(st: &AppState) {
     repair_half_done_starts(st).await;
@@ -115,7 +115,8 @@ pub async fn watch_pickup(st: &AppState) {
     let now = crate::routes::now_ms();
     let Ok(projects) = st.store.list_projects().await else { return };
     let mut startable: HashMap<String, i64> = HashMap::new();
-    let mut active: HashMap<String, (u32, u32)> = HashMap::new();
+    let mut active: HashMap<String, (HashSet<String>, u32)> = HashMap::new();
+    let Ok(in_flight) = st.store.list_active_attempts().await else { return };
     let mut events: Vec<NewLogEvent> = vec![];
     let (seen, was_active) = {
         let w = st.pickup_watch.lock().unwrap_or_else(|e| e.into_inner());
@@ -127,14 +128,15 @@ pub async fn watch_pickup(st: &AppState) {
         if policy.auto_start == AutoStart::Off {
             continue;
         }
-        let Ok(n) = st.store.count_active_attempts(&p.id).await else { continue };
+        let now_active: HashSet<String> =
+            in_flight.iter().filter(|a| a.project_id == p.id).map(|a| a.attempt.id.clone()).collect();
         let cap = policy.auto_start_cap();
-        active.insert(p.id.clone(), (n, cap));
         let freed = match was_active.get(&p.id) {
-            Some((before, _)) if n < *before => Some("attempt"),
+            Some((before, _)) if before.iter().any(|a| !now_active.contains(a)) => Some("attempt"),
             Some((_, was_cap)) if cap > *was_cap => Some("cap"),
             _ => None,
         };
+        active.insert(p.id.clone(), (now_active, cap));
         if let Some(reason) = freed {
             let payload = SlotFreed { project_id: Some(p.id.clone()), reason: reason.into() };
             let mut e = NewLogEvent::new(SLOT_FREED, format!("{reason}:{}:{now}", p.id), "pickup", payload);
@@ -308,12 +310,23 @@ pub(crate) async fn apply_auto_start(st: &AppState, items: &mut [TicketSummary])
     // No countdown while auto-start waits for disk space.
     let paused = !items.is_empty() && crate::storage::auto_start_paused(st).await;
     let mut policies: HashMap<String, Option<pdt_core::policy::ProjectPolicy>> = HashMap::new();
-    for t in items {
+    for t in items.iter_mut() {
         if !policies.contains_key(&t.project_id) {
             let p = st.store.get_project_settings(&t.project_id).await.ok().map(|s| s.policy);
             policies.insert(t.project_id.clone(), p);
         }
         t.auto_start_at = policies[&t.project_id].as_ref().filter(|_| !paused).and_then(|p| auto_start_at(p, t, now));
+    }
+    apply_pickup_holds(st, items);
+}
+
+/// Fills in `pickup_hold` on tickets of a list that could still start: why pickup last passed them over for overlap.
+fn apply_pickup_holds(st: &AppState, items: &mut [TicketSummary]) {
+    let holds = st.pickup_holds.lock().unwrap_or_else(|e| e.into_inner());
+    for t in items {
+        let could_start = matches!(t.stage, TicketStage::Todo | TicketStage::Ready)
+            && t.attempt.as_ref().is_none_or(|a| a.state != pdt_core::ticket::AttemptState::Active);
+        t.pickup_hold = holds.get(&t.id).filter(|_| could_start).map(|(_, why)| why.clone());
     }
 }
 

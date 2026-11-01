@@ -29,6 +29,10 @@ command = "pnpm --dir web test"
 # Areas (docs/user/automation/run-configuration.md "Areas"): parts of PDT that two tickets in flight at once would both touch. Starting a
 # ticket warns when its areas or changed files overlap another active ticket's; only `migrations` is exclusive (two
 # branches changing the schema at once can clash, even with timestamped migration names).
+#
+# Hot areas (the project's Settings, "Hot areas"; PDT keeps them per host, not here): `api routes`, `mcp tools`,
+# `persona prompts` and `agent docs`, the files most often in merge conflicts. Auto-start doesn't start a ticket in one
+# while another ticket in it is in flight.
 [[area]]
 name      = "migrations"
 paths     = ["crates/pdt-store/migrations/**"]
@@ -68,6 +72,22 @@ paths = ["crates/pdt-host/**", "crates/pdt-update/**", "crates/pdt-api/src/updat
 [[area]]
 name  = "ci"
 paths = [".github/**"]
+
+[[area]]
+name  = "api routes"
+paths = ["crates/pdt-api/src/routes.rs", "crates/pdt-api/src/lib.rs", "web/src/api/**"]
+
+[[area]]
+name  = "mcp tools"
+paths = ["crates/pdt-api/src/mcp/**"]
+
+[[area]]
+name  = "persona prompts"
+paths = ["crates/pdt-core/src/persona.rs", "crates/pdt-api/src/workflow/pipeline.rs", "docs/prompts/**"]
+
+[[area]]
+name  = "agent docs"
+paths = ["AGENTS.md", "CLAUDE.md", "docs/agent-guide.md", "docs/run-config.md", "docs/dev/**"]
 
 # Generated files at merge time (docs/user/automation/run-configuration.md "Generated files at merge time"): when only
 # these conflict as PDT brings a branch up to date with main, it takes main's side and runs the command, in this order

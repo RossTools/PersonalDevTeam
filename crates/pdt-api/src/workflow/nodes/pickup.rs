@@ -1,13 +1,14 @@
 //! Ticket pickup (PDT-327): `tickets.candidates` (a project's tickets that could start, in order), `tickets.choose`
-//! (caps, the start delay, failed starts; the rules are pdt-core `pickup`) and `ticket.start` (Start, as auto-start).
+//! (caps, the start delay, failed starts, overlap with work in flight; the rules are pdt-core `pickup`) and
+//! `ticket.start` (Start, as auto-start).
 //! The built-in "Pick up tickets" chains them; a field left out takes the project's auto-start setting.
 
 use crate::routes::AppState;
 use crate::start::Starter;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use pdt_core::pickup::{
-    ActiveTicket, CandidateFilter, ChooseRules, DEFAULT_LIMIT, OverlapRule, PickupOrder, PickupProject, PickupTicket,
-    choose,
+    ActiveTicket, CandidateFilter, ChooseRules, DEFAULT_LIMIT, OverlapOverride, OverlapPolicy, OverlapRule,
+    PickupOrder, PickupProject, PickupTicket, choose,
 };
 use pdt_core::policy::AutoStartOrder;
 use pdt_core::start::{StartMode, StartTicket};
@@ -118,7 +119,8 @@ impl NodeKind for Candidates {
             "Find tickets to start",
             "Lists the tickets of a project (or of every project the workflow covers) that could start, in order: no \
              active attempt, not waiting, in the given stages, filtered by labels, priority and areas. Each project \
-             comes with its auto-start cap, start delay and tickets in flight (their labels and areas). Fields left \
+             comes with its auto-start cap, start delay, overlap rule (its hot areas) and tickets in flight (their \
+             labels and areas). Fields left \
              out take the project's auto-start settings; a project with no stages is left out.",
             &[("out", "Then")],
             false,
@@ -166,6 +168,7 @@ impl NodeKind for Candidates {
                     name: p.name.clone(),
                     cap: policy.auto_start_cap(),
                     start_delay_seconds: policy.start_delay_seconds,
+                    overlap: OverlapPolicy::from_policy(&policy),
                     active: in_flight(cx.st, &p.id).await?,
                     tickets,
                 });
@@ -228,8 +231,21 @@ pub struct ChooseConfig {
     /// Pass over a ticket that failed to start until it changes.
     #[serde(default = "yes")]
     pub skip_failed: bool,
-    /// How candidates overlapping work in flight are treated: `off` (candidates leaves out conflicts).
-    pub overlap: OverlapRule,
+    /// How candidates overlapping work in flight are treated: `off` (only candidates' conflicts), `avoid` (pass over
+    /// a candidate in a hot area while a ticket in it is in flight) or `serialize` (at most `perArea` in flight in
+    /// each area). Left out: `avoid` when the project has hot areas, else `off`.
+    #[ts(optional)]
+    pub overlap: Option<OverlapRule>,
+    /// The hot areas. Left out: the project's.
+    #[ts(optional)]
+    pub hot_areas: Option<Vec<String>>,
+    /// `serialize`: the most tickets in flight in one area (default 1).
+    #[ts(optional)]
+    pub per_area: Option<u32>,
+    /// A ticket without areas may start alongside a hot area's ticket in flight, and the other way round. Left out:
+    /// the project's setting.
+    #[ts(optional)]
+    pub untagged_alongside_hot: Option<bool>,
 }
 
 impl Default for ChooseConfig {
@@ -241,7 +257,10 @@ impl Default for ChooseConfig {
             label_caps: BTreeMap::new(),
             start_delay_seconds: None,
             skip_failed: true,
-            overlap: OverlapRule::Off,
+            overlap: None,
+            hot_areas: None,
+            per_area: None,
+            untagged_alongside_hot: None,
         }
     }
 }
@@ -256,7 +275,9 @@ impl NodeKind for Choose {
             Category::Condition,
             "Choose tickets to start",
             "From the candidates, the tickets that may start now: under the project's cap (and any area or label \
-             caps), unchanged for the start delay, and not a ticket that failed to start and hasn't changed since. \
+             caps), unchanged for the start delay, not a ticket that failed to start and hasn't changed since, and \
+             clear of work in flight under the overlap rule (by default, nothing in a hot area while another ticket \
+             in it is in flight; the Board shows why a ticket waits). \
              `chosen`: `ticket` (the first) and `tickets` (every one, each project's in order: Start takes the first \
              still free). `none`: nothing may start. Both list the tickets passed over with why (`passed`).",
             &[("chosen", "Chosen"), ("none", "None")],
@@ -281,10 +302,18 @@ impl NodeKind for Choose {
                 label_caps: c.label_caps,
                 start_delay_seconds: c.start_delay_seconds,
                 skip_failed: c.skip_failed,
-                overlap: c.overlap,
+                overlap: OverlapOverride {
+                    rule: c.overlap,
+                    hot_areas: c.hot_areas,
+                    per_area: c.per_area,
+                    untagged_alongside_hot: c.untagged_alongside_hot,
+                },
             };
             let failed = cx.st.auto_start_failed.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let choice = choose(&projects, &rules, &failed, crate::routes::now_ms());
+            if !cx.dry_run {
+                record_holds(cx.st, &projects, &choice.passed);
+            }
             match choice.chosen.first() {
                 Some(first) => Ok(Outcome::next(
                     "chosen",
@@ -293,6 +322,20 @@ impl NodeKind for Choose {
                 None => Ok(Outcome::next("none", json!({"passed": choice.passed}))),
             }
         })
+    }
+}
+
+/// Keeps why choose passed over each of `projects`' candidates for overlap, for the Board, in place of what the
+/// last choose said of those projects.
+fn record_holds(st: &AppState, projects: &[PickupProject], passed: &[pdt_core::pickup::Passed]) {
+    let mut holds = st.pickup_holds.lock().unwrap_or_else(|e| e.into_inner());
+    holds.retain(|_, (project, _)| !projects.iter().any(|p| p.project_id == *project));
+    for p in projects {
+        for t in &p.tickets {
+            if let Some(why) = passed.iter().find(|x| x.id == t.id && x.reason.is_overlap()) {
+                holds.insert(t.id.clone(), (p.project_id.clone(), why.why.clone()));
+            }
+        }
     }
 }
 
@@ -396,6 +439,8 @@ struct Caps {
     area_caps: BTreeMap<String, u32>,
     #[serde(default)]
     label_caps: BTreeMap<String, u32>,
+    #[serde(default)]
+    overlap_rule: OverlapPolicy,
 }
 
 struct StartFields {
@@ -484,9 +529,14 @@ impl NodeKind for Start {
                         cap: caps.cap,
                         area_caps: caps.area_caps.clone(),
                         label_caps: caps.label_caps.clone(),
+                        overlap_rule: caps.overlap_rule.clone(),
                     };
                     if let Some((what, name, cap)) = pick.full_at(&in_flight) {
                         skipped.push(note(&format!("{what} {name} is at its cap of {cap}")));
+                        continue;
+                    }
+                    if let Some(reason) = caps.overlap_rule.check(&t.areas, &in_flight) {
+                        skipped.push(note(&reason.describe()));
                         continue;
                     }
                 }

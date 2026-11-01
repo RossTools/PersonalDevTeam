@@ -31,3 +31,12 @@ describe('the source badge', () => {
     expect(screen.getByText('External')).toHaveAttribute('title', expect.stringContaining('you let it in'));
   });
 });
+
+describe('the pickup hold', () => {
+  it('says why auto-start passed a ticket over for overlapping work', () => {
+    const { rerender } = render(<TicketBadges ticket={summary(1, { stage: 'todo', pickupHold: 'overlaps PDT-4 in api' })} />);
+    expect(screen.getByText('Waiting: overlaps PDT-4 in api')).toBeInTheDocument();
+    rerender(<TicketBadges ticket={summary(1, { stage: 'todo' })} />);
+    expect(screen.queryByText(/Waiting:/)).not.toBeInTheDocument();
+  });
+});

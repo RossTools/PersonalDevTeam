@@ -228,6 +228,7 @@ fn to_summary(r: &SqliteRow) -> Result<TicketSummary, StoreError> {
         pipeline_stage: r.try_get::<Option<String>, _>("pipeline_stage")?.as_deref().and_then(PipelineStage::parse),
         agent: None,
         auto_start_at: None,
+        pickup_hold: None,
         external: vec![],
         source: {
             let s: String = r.try_get("source")?;

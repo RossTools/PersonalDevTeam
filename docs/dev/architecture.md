@@ -226,16 +226,25 @@ the rules, pure, in pdt-core `pickup.rs`). A config field left out is the projec
 edits the built-in's parameters without editing the workflow. The pickup watch (pdt-api `scheduler.rs`, every 10 s)
 emits the triggers, for projects with auto-start on: `ticket.startable` once per ticket each time it becomes startable
 (`policy::startable` and the start delay over; what it told is kept in `AppState::pickup_watch`, so a restart tells
-again), and `slot.freed` when a project has fewer tickets in flight, its cap rose, or the host's free agent slots went
-from none to some. `ticket.start` holds `AppState::pickup_lock` while it checks and starts, so concurrent pickup runs
+again), and `slot.freed` when a ticket in flight ended (room under the cap, or a hot area free), its cap rose, or the
+host's free agent slots went from none to some. `ticket.start` holds `AppState::pickup_lock` while it checks and starts, so concurrent pickup runs
 neither start a ticket twice (the store's one-active-attempt rule is the backstop) nor go over the caps a pick was
-chosen under (project, area and label, carried on each pick); it takes the first of each project's chosen tickets
+chosen under (project, area and label, and the overlap rule, carried on each pick); it takes the first of each project's chosen tickets
 still free. Having checked the cap itself, it sets `ValidStart::cap_checked`, so Start doesn't refuse for the
 project's running cap (a step's cap may be higher) while still refusing for blockers and overlaps. A failed start is skipped until the ticket
 changes (`AppState::auto_start_failed`), unless it failed to write (a full disk), which the next run tries again. The
 watch also announces starts left half-done: an active attempt whose `started` timeline event never reached the event
 log (pdtd stopped, or the write failed, between `start_attempt` and `announce_start`), once it is two minutes old
 (`Store::unannounced_starts`).
+
+**Overlap-aware pickup**: a project's `hot_areas` and `untagged_alongside_hot` (`ProjectPolicy`) become each
+candidates project's `OverlapPolicy` (`avoid` when it has hot areas, else `off`); `tickets.choose`'s `overlap`,
+`hotAreas`, `perArea` and `untaggedAlongsideHot` override it (`OverlapOverride`). `OverlapPolicy::check` compares a
+candidate's areas with the tickets in flight. Choose keeps the overlap reasons it passed over in
+`AppState::pickup_holds` (replacing its projects' entries each run, not on a dry run), and the ticket list and detail
+fill `TicketSummary::pickup_hold` from it for tickets that could still start. Agents tag areas through `update_ticket`
+(Refiner), `create_ticket` and `edit_ticket` (PM), checked against the project's configured areas
+(`ticket::agent_areas`); `get_ticket` lists them as `projectAreas`.
 
 **The Inbox and notifications.** The Inbox (pdt-api and pdt-store `inbox.rs`) holds what waits on the user:
 questions, gates, stalled steps, secrets to enter, confirmations. An item's `title` is one line; a gate's question

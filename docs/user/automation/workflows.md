@@ -77,7 +77,7 @@ On the board, **In progress** splits into these stages, and each card says who h
 "Your turn").
 
 The Pipeline also handles **Refine** (in a **Draft** or **Ready** ticket's menu): the **Refiner** rewrites the ticket
-so it's ready to build and moves it to **To do**, or asks you when something needs clearing up.
+so it's ready to build, sets its areas, and moves it to **To do**, or asks you when something needs clearing up.
 
 How each agent works inside a stage is in [Personas and approvals](personas-and-approvals.md#how-a-workflow-runs-an-agent).
 
@@ -110,7 +110,15 @@ rose, an agent slot freed up), and every minute. It has three steps:
    areas to take, whether to leave out blocked, conflicting and parent tickets, and the order (`priority`, `rank` or
    `age`).
 2. **Choose tickets to start** keeps to the caps (per project, and optionally per area or label), the quiet period,
-   and passes over a ticket that failed to start until it changes. The run shows why it passed over each one.
+   and passes over a ticket that failed to start until it changes. It also keeps tickets apart from work in progress,
+   by area (**Overlap**):
+   - `avoid` (the default when the project has hot areas): no ticket in a hot area while another ticket in that area
+     is in progress.
+   - `serialize`: at most **Per area** tickets in progress in each area, hot or not.
+   - `off`: no rule of its own (conflicting tickets are still left out in the first step).
+
+   **Hot areas** and **Untagged alongside hot** default to the project's settings. The run shows why it passed over
+   each ticket, and a ticket waiting on overlapping work says why on its card.
 3. **Start the ticket** starts the first one still free, with the agent, permission mode and view you give it (your
    defaults otherwise), handed to the project's workflow (the Pipeline) or to an agent session of its own.
 

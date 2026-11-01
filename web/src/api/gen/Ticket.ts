@@ -109,6 +109,11 @@ agent: TicketAgent | null,
  */
 autoStartAt: number | null, 
 /**
+ * Why "Pick up tickets" passed it over last time for overlapping work in flight ("overlaps PDT-4 in api";
+ * PDT-329; filled in by the API, in memory).
+ */
+pickupHold: string | null, 
+/**
  * The issues in other trackers it is linked to (an issue it was imported from).
  */
 external: Array<ExternalLink>, 
