@@ -175,6 +175,10 @@ const BLOCKED_BY: &str = "(SELECT COUNT(*) FROM ticket_links l JOIN tickets b ON
                           WHERE l.to_id = t.id AND l.kind = 'blocks' AND b.stage NOT IN ('done', 'wont_do'))";
 /// Whether `t` is a ticket proposal waiting for the user (PDT-366): held from its making until it leaves Draft.
 const PROPOSED: &str = "(t.proposed_at IS NOT NULL)";
+/// Whether `t` waits in the Inbox as a proposal (PDT-366): lists leave it out. A held ticket the workflow never put in
+/// the Inbox (it was off, its conditions didn't match, its run failed) stays listed, in Draft, for the user to decide.
+const IN_INBOX: &str = "EXISTS (SELECT 1 FROM inbox_items i WHERE i.ticket_id = t.id AND i.kind = 'ticket_proposal' \
+                        AND i.status = 'open')";
 const FROM: &str =
     " FROM tickets t JOIN projects p ON p.id = t.project_id LEFT JOIN tickets par ON par.id = t.parent_id";
 
@@ -393,7 +397,7 @@ fn push_filters(qb: &mut QueryBuilder<Sqlite>, f: &TicketFilter) {
         None => {}
     }
     // Proposals wait in the Inbox, off the board and lists, until the user decides (PDT-366).
-    qb.push(format!(" AND {}{PROPOSED}", if f.proposed { "" } else { "NOT " }));
+    qb.push(format!(" AND {}{IN_INBOX}", if f.proposed { "" } else { "NOT " }));
     if let Some(after) = f.closed_after {
         qb.push(" AND (t.closed_at IS NULL OR t.closed_at >= ").push_bind(after).push(")");
     }
@@ -4022,12 +4026,9 @@ mod tests {
         assert!(store.get_ticket_summary("a").await.unwrap().unwrap().proposed);
         assert!(!store.get_ticket_summary("c").await.unwrap().unwrap().proposed, "not held: proposals were off");
         assert!(!store.get_ticket_summary("u").await.unwrap().unwrap().proposed);
-        let mut listed = ids(&store, in_project()).await;
-        listed.sort();
-        assert_eq!(listed, ["c", "u"], "off the board and lists");
-        let mut only = ids(&store, TicketQuery { proposed: Some(true), ..in_project() }).await;
-        only.sort();
-        assert_eq!(only, ["a", "b"]);
+        // Listed until the workflow puts it in the Inbox: one it never does stays reachable.
+        assert_eq!(ids(&store, in_project()).await.len(), 4, "no item yet: still listed");
+        assert!(ids(&store, TicketQuery { proposed: Some(true), ..in_project() }).await.is_empty());
 
         // At once, before any item: the agent can't move it on or label it agentic; it can edit it or withdraw it.
         let agent = coder_on("PX-9");
@@ -4041,6 +4042,12 @@ mod tests {
         store.patch_ticket_by("a", &edit, &agent, 2).await.unwrap();
         store.add_inbox_item_once(&proposal("ia", "a"), "ticket-proposal:a").await.unwrap();
         store.add_inbox_item_once(&proposal("ib", "b"), "ticket-proposal:b").await.unwrap();
+        let mut listed = ids(&store, in_project()).await;
+        listed.sort();
+        assert_eq!(listed, ["c", "u"], "in the Inbox: off the board and lists");
+        let mut only = ids(&store, TicketQuery { proposed: Some(true), ..in_project() }).await;
+        only.sort();
+        assert_eq!(only, ["a", "b"]);
         store.move_ticket_by("b", TicketStage::WontDo, &agent, None, 2).await.unwrap();
         let b = store.get_inbox_item("ib").await.unwrap().unwrap();
         assert_eq!((b.status, b.resolution), (InboxStatus::Closed, json!({"moved": "wont_do"})));

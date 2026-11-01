@@ -58,6 +58,7 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   of it out of Draft (closing it is allowed) or its `agentic` label; without the UI token, PATCH, bulk actions and
   Start refuse the same (`untrusted::decides_proposal`), and auto-start never starts it; the Inbox answer needs the UI
   token. Any move out of Draft releases it and closes the open `ticket_proposal` item; deleting the ticket removes it.
+  Lists hide a ticket only while that item is open, so a held ticket with no item is never out of the user's reach.
 - **Fresh Codex launches in one folder stay at least 5 s apart**, or PDT can't tell their conversations apart.
 
 ## Tabs, tickets and attempts

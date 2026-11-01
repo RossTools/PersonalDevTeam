@@ -1823,6 +1823,7 @@ async fn ticket_proposals_wait_for_the_user() {
     let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{rejected}"), None).await;
     assert_eq!(t["proposed"], true, "held from its making: {t}");
     assert!(!inbox(&env).await.iter().any(|i| i["ticketId"] == rejected.as_str()), "no item yet");
+    assert!(listed().await.contains(&rejected), "listed until it is in the Inbox, so it is never out of reach");
     let path = format!("/api/tickets/{rejected}");
     for body in [json!({"stage": "todo"}), json!({"stage": "ready"}), json!({"labels": ["agentic"]})] {
         let (s, v) = call(&env.app, "PATCH", &path, Some(body)).await;
@@ -1837,6 +1838,7 @@ async fn ticket_proposals_wait_for_the_user() {
     let (_, t) = call(&env.app, "GET", &path, None).await;
     assert_eq!((t["stage"].as_str(), t["labels"].clone()), (Some("draft"), json!([])), "{t}");
     let item = proposal_of(rejected.clone()).await;
+    assert!(!listed().await.contains(&rejected), "in the Inbox: off the lists");
     assert_eq!(item["body"]["reason"], "Found it.");
     let answer = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
     let (s, v) =

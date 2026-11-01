@@ -69,7 +69,7 @@ export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; cl
   return (
     <span className={cn('flex min-w-0 shrink items-center gap-1', className)}>
       <SourceBadge source={source} admitted={t.admitted ?? false} createdBy={t.createdBy ?? null} />
-      {t.proposed && <Badge tone="waiting" title="A ticket proposal: it waits in your Inbox, off the board, until you accept or reject it">Proposal</Badge>}
+      {t.proposed && <Badge tone="waiting" title="A ticket proposal an agent made: it waits for your decision in the Inbox, and only you can move it on">Proposal</Badge>}
       {refining && <Badge title="The pipeline is refining it">Refining</Badge>}
       {mergeBlocked && <Badge tone="failed" title="Its merge was refused; the Inbox asks you">Merge blocked</Badge>}
       {t.blockedBy > 0 && <Badge tone="waiting" title={`${t.blockedBy} open blocker${t.blockedBy === 1 ? '' : 's'}`}>Blocked</Badge>}
