@@ -78,6 +78,8 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, descrip
       // Keeps what PDT put there (a webhook the PM made records its channel), but not a setting the form left empty.
       const kept = Object.fromEntries(Object.entries(connection?.config ?? {}).filter(([key]) => !k?.fields?.some((f) => f.key === key)));
       const config = { ...kept, ...own };
+      // An MCP server added here is a workflow's: agents get it once the user ticks Agents in Settings › MCP servers.
+      if (kind === 'mcp' && !('agents' in config)) config.agents = { enabled: false };
       const body = { name: name.trim(), kind, url: askUrl ? url.trim() : '', config };
       let c = existing ? await api.updateConnection(existing.id, body) : await api.createConnection(body);
       if (!connection) setMade(c);

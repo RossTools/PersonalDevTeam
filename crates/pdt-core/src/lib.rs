@@ -24,6 +24,7 @@ pub mod links;
 pub mod liveness;
 pub mod local_network;
 pub mod mcp;
+pub mod mcp_servers;
 pub mod merge_update;
 pub mod network;
 pub mod notification;

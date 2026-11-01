@@ -20,7 +20,7 @@ import { prHref } from '../tickets/PullRequest';
 import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
 import { navigate } from '../shell/router';
-import { after, changeRequestLabel, CONNECT_PATH, dismissable, gateQuestion, KIND_LABEL, noticeText, passesOf, primary, proposalPath, questionsOf, resends, selectedUpdate, step } from './model';
+import { after, changeRequestLabel, CONNECT_PATH, MCP_SERVERS_PATH, dismissable, gateQuestion, KIND_LABEL, noticeText, passesOf, primary, proposalPath, questionsOf, resends, selectedUpdate, step } from './model';
 import { useClearUpdate, useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
 import { STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
@@ -117,6 +117,7 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
       return;
     }
     if (item.kind === 'connect') return void navigate(CONNECT_PATH);
+    if (item.kind === 'mcp_sign_in') return void navigate(MCP_SERVERS_PATH);
     if (item.kind === 'low_disk') return void navigate(STORAGE_PATH);
     if (p && item.kind !== 'approval') void answer({ choice: p });
   };
@@ -214,6 +215,15 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
             </p>
             <div>
               <Button variant="primary" onClick={doPrimary}>Open GitHub's page <Kbd>↵</Kbd></Button>
+            </div>
+          </section>
+        )}
+        {item.kind === 'mcp_sign_in' && (
+          <section aria-label="Sign in again" className="flex flex-col gap-3">
+            <div className="rounded-md border border-border p-3 text-sm"><Markdown>{noticeText(item)}</Markdown></div>
+            <p className="text-sm text-muted-foreground">It goes away once you sign in again, or sign out.</p>
+            <div>
+              <Button variant="primary" onClick={doPrimary}>Open MCP servers <Kbd>↵</Kbd></Button>
             </div>
           </section>
         )}

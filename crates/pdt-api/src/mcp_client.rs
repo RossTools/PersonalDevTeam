@@ -6,7 +6,9 @@
 //! the server again.
 //!
 //! A connection's `config.transport` is `stdio` (`command`, `args`, `env`, `cwd`; the secret, if any, in the env var
-//! `config.secretEnv`) or `http` (the connection's `url`, streamable HTTP; the secret as a bearer token).
+//! `config.secretEnv`), `http` (the connection's `url`, streamable HTTP; the secret as a bearer token) or `sse` (the
+//! older HTTP+SSE, which only agents connect to). Header and environment values may be PDT secrets, and a remote
+//! server may sign in with OAuth: `agent_mcp::resolve` fills them in, for PDT and for agents (PDT-322).
 
 use crate::routes::{AppState, now_ms};
 use pdt_core::workflow::api::Connection;
@@ -62,6 +64,27 @@ pub struct McpTools {
     /// When a listing was last tried (ms).
     #[ts(type = "number")]
     pub tried_at: i64,
+}
+
+/// A resource or prompt a server offers (Test).
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct McpItem {
+    pub name: String,
+    /// A resource's URI, a prompt's title.
+    pub detail: Option<String>,
+    pub description: String,
+}
+
+/// What Test found on a server.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct McpProbe {
+    pub tools: McpTools,
+    pub resources: Vec<McpItem>,
+    pub prompts: Vec<McpItem>,
 }
 
 struct Live {
@@ -125,13 +148,16 @@ pub struct McpPool {
     refreshing: std::sync::atomic::AtomicBool,
     /// By connection id: held while that server's client is checked and, if need be, started.
     starting: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// OAuth sign-ins (PDT-322).
+    pub(crate) oauth: crate::mcp_oauth::OAuthCache,
 }
 
-fn fingerprint(conn: &Connection, secret: Option<&str>) -> String {
+/// What a client was started with: its settings and everything filled in (a new token starts it again).
+fn fingerprint(conn: &Connection, resolved: &crate::agent_mcp::Resolved) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(serde_json::to_vec(&(&conn.kind, &conn.url, &conn.config)).unwrap_or_default());
-    h.update(secret.unwrap_or_default());
+    h.update(format!("{:?}", resolved.transport));
     hex::encode(h.finalize())
 }
 
@@ -159,30 +185,31 @@ pub fn check_connection(conn: &Connection) -> Result<(), String> {
                 return Err(format!("{}: config.args must be a list of text", conn.name));
             }
             if let Some(e) = conn.config.get("env").filter(|e| !e.is_null())
-                && !e.as_object().is_some_and(|m| m.values().all(Value::is_string))
+                && !e.as_object().is_some_and(|m| m.values().all(|v| pdt_core::mcp_servers::value_ref(v).is_some()))
             {
-                return Err(format!("{}: config.env must map names to text", conn.name));
+                return Err(format!("{}: config.env must map names to text or secrets", conn.name));
             }
             Ok(())
         }
-        "http" if conn.url.starts_with("http://") || conn.url.starts_with("https://") => Ok(()),
-        "http" => Err(format!("{} has no http(s) address", conn.name)),
-        other => Err(format!("{}: transport {other:?} is not stdio or http", conn.name)),
-    }
+        "http" | "sse" if conn.url.starts_with("http://") || conn.url.starts_with("https://") => Ok(()),
+        "http" | "sse" => Err(format!("{} has no http(s) address", conn.name)),
+        other => Err(format!("{}: transport {other:?} is not stdio, http or sse", conn.name)),
+    }?;
+    pdt_core::mcp_servers::check(&conn.config).map_err(|e| format!("{}: {e}", conn.name))
 }
 
-fn stdio_command(conn: &Connection, secret: Option<&str>) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new(cfg_str(conn, "command").unwrap_or_default());
-    for a in conn.config.get("args").and_then(|a| a.as_array()).into_iter().flatten() {
-        cmd.arg(a.as_str().unwrap_or_default());
+fn stdio_command(
+    command: &str,
+    args: &[String],
+    env: &[(String, String)],
+    cwd: Option<&str>,
+) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(command);
+    cmd.args(args);
+    for (k, v) in env {
+        cmd.env(k, v);
     }
-    for (k, v) in conn.config.get("env").and_then(|e| e.as_object()).into_iter().flatten() {
-        cmd.env(k, v.as_str().unwrap_or_default());
-    }
-    if let (Some(var), Some(secret)) = (cfg_str(conn, "secretEnv"), secret) {
-        cmd.env(var, secret);
-    }
-    if let Some(dir) = cfg_str(conn, "cwd") {
+    if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
     cmd.kill_on_drop(true);
@@ -194,16 +221,20 @@ fn stdio_command(conn: &Connection, secret: Option<&str>) -> tokio::process::Com
     cmd
 }
 
-/// Starts a client for `conn` (the MCP handshake done).
-async fn connect(conn: &Connection, secret: Option<&str>) -> Result<RunningService<RoleClient, ()>, String> {
-    check_connection(conn)?;
-    match transport(conn) {
-        "stdio" => {
-            let program = cfg_str(conn, "command").unwrap_or_default().to_string();
-            let (proc, stderr) = rmcp::transport::TokioChildProcess::builder(stdio_command(conn, secret))
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|e| format!("{}: could not start {program}: {e}", conn.name))?;
+/// Starts a client for `conn` (the MCP handshake done), as `resolved` says.
+async fn connect(
+    conn: &Connection,
+    resolved: &crate::agent_mcp::Resolved,
+) -> Result<RunningService<RoleClient, ()>, String> {
+    use pdt_agents::mcp::Transport;
+    match &resolved.transport {
+        Transport::Stdio { command, args, env, cwd } => {
+            let program = command.clone();
+            let (proc, stderr) =
+                rmcp::transport::TokioChildProcess::builder(stdio_command(command, args, env, cwd.as_deref()))
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .map_err(|e| format!("{}: could not start {program}: {e}", conn.name))?;
             let tail = Arc::new(Mutex::new(VecDeque::new()));
             if let Some(stderr) = stderr {
                 tokio::spawn(drain_stderr(conn.name.clone(), stderr, tail.clone()));
@@ -223,13 +254,30 @@ async fn connect(conn: &Connection, secret: Option<&str>) -> Result<RunningServi
                 }
             }
         }
-        _ => {
+        Transport::Http { sse: true, .. } => Err(format!(
+            "{}: PDT can't connect to HTTP+SSE servers itself (agents can): it can't list their tools",
+            conn.name
+        )),
+        Transport::Http { url, headers, .. } => {
+            use reqwest::header::{HeaderName, HeaderValue};
             use rmcp::transport::StreamableHttpClientTransport;
             use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
-            let mut cfg = StreamableHttpClientTransportConfig::with_uri(conn.url.trim());
-            if let Some(s) = secret {
-                cfg = cfg.auth_header(s);
+            let mut cfg = StreamableHttpClientTransportConfig::with_uri(url.as_str());
+            let mut custom = HashMap::new();
+            for (k, v) in headers {
+                if k.eq_ignore_ascii_case("authorization")
+                    && let Some(token) = v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer "))
+                {
+                    cfg = cfg.auth_header(token.trim());
+                    continue;
+                }
+                let (Ok(name), Ok(value)) = (HeaderName::try_from(k.as_str()), HeaderValue::try_from(v.as_str()))
+                else {
+                    return Err(format!("{}: the header {k} is not a valid HTTP header", conn.name));
+                };
+                custom.insert(name, value);
             }
+            cfg = cfg.custom_headers(custom);
             let t = StreamableHttpClientTransport::with_client(crate::workflow::nodes::http::client().clone(), cfg);
             match tokio::time::timeout(CONNECT_TIMEOUT, ().serve(t)).await {
                 Ok(Ok(s)) => Ok(s),
@@ -288,8 +336,8 @@ impl McpPool {
         if conn.kind != MCP {
             return Err(format!("{} is a {} connection, not {MCP}", conn.name, conn.kind));
         }
-        let secret = secret.filter(|s| !s.is_empty());
-        let fp = fingerprint(&conn, secret.as_deref());
+        let resolved = crate::agent_mcp::resolve(st, &conn, secret.as_deref(), crate::agent_mcp::For::User).await?;
+        let fp = fingerprint(&conn, &resolved);
         {
             let mut live = self.live.lock().await;
             if let Some(l) = live.get_mut(&conn.id) {
@@ -303,7 +351,7 @@ impl McpPool {
                 }
             }
         }
-        let service = connect(&conn, secret.as_deref()).await?;
+        let service = connect(&conn, &resolved).await?;
         let peer = service.peer().clone();
         let health = Arc::new(Health::default());
         let mut live = self.live.lock().await;
@@ -402,6 +450,36 @@ impl McpPool {
                 ))
             }
         }
+    }
+
+    /// Settings → MCP servers → Test: the server's tools listed now (and cached, as any listing), and its resources and
+    /// prompts when it has them.
+    pub async fn probe(&self, st: &AppState, name: &str) -> McpProbe {
+        let tools = self.refresh(st, name).await;
+        let mut out = McpProbe { tools, resources: vec![], prompts: vec![] };
+        if out.tools.error.is_some() {
+            return out;
+        }
+        let Ok((_, peer, health)) = self.peer(st, name).await else { return out };
+        let caps = peer.peer_info().map(|i| i.capabilities.clone());
+        let call = InFlight::start(health);
+        let item = |v: Value, key: &str| McpItem {
+            name: v["name"].as_str().unwrap_or_default().to_string(),
+            detail: v[key].as_str().map(String::from),
+            description: v["description"].as_str().unwrap_or_default().to_string(),
+        };
+        if caps.as_ref().is_some_and(|c| c.resources.is_some())
+            && let Ok(Ok(list)) = tokio::time::timeout(CONNECT_TIMEOUT, peer.list_all_resources()).await
+        {
+            out.resources = list.iter().map(|r| item(serde_json::to_value(r).unwrap_or_default(), "uri")).collect();
+        }
+        if caps.as_ref().is_some_and(|c| c.prompts.is_some())
+            && let Ok(Ok(list)) = tokio::time::timeout(CONNECT_TIMEOUT, peer.list_all_prompts()).await
+        {
+            out.prompts = list.iter().map(|p| item(serde_json::to_value(p).unwrap_or_default(), "title")).collect();
+        }
+        call.done();
+        out
     }
 
     /// The cached tools of the server called `name`.
@@ -539,16 +617,33 @@ mod tests {
         assert!(check_connection(&conn("", json!({"command": "x", "args": "-y srv"}))).unwrap_err().contains("list"));
         assert!(check_connection(&conn("", json!({"command": "x", "env": {"A": 1}}))).unwrap_err().contains("env"));
         assert!(check_connection(&conn("ftp://x", json!({"transport": "http"}))).is_err());
-        assert!(check_connection(&conn("", json!({"transport": "ws"}))).unwrap_err().contains("not stdio or http"));
+        assert!(
+            check_connection(&conn("", json!({"transport": "ws"}))).unwrap_err().contains("not stdio, http or sse")
+        );
+        assert!(check_connection(&conn("https://x/sse", json!({"transport": "sse"}))).is_ok());
+        assert!(
+            check_connection(&conn("", json!({"command": "x", "env": {"A": {"$secret": "KEY"}}}))).is_ok(),
+            "a secret's value"
+        );
     }
 
     #[test]
     fn a_changed_setting_or_secret_changes_the_fingerprint() {
+        use crate::agent_mcp::Resolved;
+        use pdt_agents::mcp::Transport;
+        let with = |token: &str| Resolved {
+            transport: Transport::Http {
+                url: "https://x".into(),
+                headers: vec![("Authorization".into(), token.into())],
+                sse: false,
+            },
+            secret_keys: vec![],
+        };
         let a = conn("", json!({"command": "x"}));
         let b = conn("", json!({"command": "y"}));
-        assert_eq!(fingerprint(&a, Some("s")), fingerprint(&a, Some("s")));
-        assert_ne!(fingerprint(&a, Some("s")), fingerprint(&a, Some("t")));
-        assert_ne!(fingerprint(&a, None), fingerprint(&b, None));
+        assert_eq!(fingerprint(&a, &with("s")), fingerprint(&a, &with("s")));
+        assert_ne!(fingerprint(&a, &with("s")), fingerprint(&a, &with("t")), "a refreshed token");
+        assert_ne!(fingerprint(&a, &with("s")), fingerprint(&b, &with("s")));
     }
 
     #[test]

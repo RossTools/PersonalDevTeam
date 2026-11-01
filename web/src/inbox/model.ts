@@ -27,6 +27,7 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   admit: 'Triaged ticket',
   confirm: 'Agent call',
   proposal: 'Workflow proposal',
+  mcp_sign_in: 'Sign in again',
   storage: "Can't save",
   low_disk: 'Low disk space',
 };
@@ -101,6 +102,9 @@ export function dismissable(item: InboxItem): boolean {
 
 /** Where "Connect GitHub" (PDT-177) sends the user: GitHub's plugin page, Settings › Plugins › GitHub (PDT-228). */
 export const CONNECT_PATH = '/settings/plugins/github';
+
+/** Where "Sign in to <server> again" (an MCP server's OAuth sign-in, PDT-322) sends the user. */
+export const MCP_SERVERS_PATH = '/settings/mcp-servers';
 
 /** What an unheard notice said, and its settling, in a line (PDT-139). */
 export function noticeText(item: InboxItem): string {

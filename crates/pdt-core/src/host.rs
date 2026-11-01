@@ -142,6 +142,9 @@ pub struct HostSettings {
     /// Where local documents go (a full path, or `~/…`) unless their project names a folder; none: `documents` in
     /// PDT's data folder.
     pub documents_dir: Option<String>,
+    /// Settings → MCP servers → "Use only PDT's MCP servers" (PDT-322): sessions ignore the agents' own MCP configs
+    /// where the agent can.
+    pub mcp_only_pdt: bool,
     /// Free space (GB) below which the Inbox warns that a disk with PDT's data or a project is running out; 0: off.
     pub low_disk_gb: u32,
     /// Free space (GB) below which auto-start waits until space is freed; 0: off.
@@ -186,6 +189,7 @@ impl Default for HostSettings {
             agent_models: Default::default(),
             documents_provider: None,
             documents_dir: None,
+            mcp_only_pdt: false,
             low_disk_gb: crate::storage::DEFAULT_LOW_DISK_GB,
             critical_disk_gb: crate::storage::DEFAULT_CRITICAL_DISK_GB,
         }
@@ -291,6 +295,9 @@ pub struct HostSettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub documents_dir: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub mcp_only_pdt: Option<bool>,
     /// 0 turns the warning off.
     #[serde(default)]
     #[ts(optional)]
@@ -433,6 +440,9 @@ impl HostSettings {
         }
         if let Some(b) = p.bug_reports {
             s.bug_reports = b;
+        }
+        if let Some(b) = p.mcp_only_pdt {
+            s.mcp_only_pdt = b;
         }
         if let Some(raw) = &p.documents_provider {
             let id = raw.trim();

@@ -43,6 +43,9 @@ pub enum InboxKind {
     /// A workflow version an agent proposed (PDT-320): Accept or Discard. Not stored: listed while the proposal waits,
     /// so it goes once it is accepted, discarded or replaced by a newer one.
     Proposal,
+    /// An MCP server's OAuth sign-in was revoked or expired (PDT-322): Sign in again in Settings → MCP servers. Not
+    /// stored: listed while it lasts.
+    McpSignIn,
     /// PDT can't save changes (a full disk, PDT-323). Not stored (it couldn't be): listed while writes fail.
     Storage,
     /// A disk with PDT's data or a project's checkouts is running low on space (PDT-324), with Clean actions. Not
@@ -67,6 +70,7 @@ impl InboxKind {
             InboxKind::Admit => "admit",
             InboxKind::Confirm => "confirm",
             InboxKind::Proposal => "proposal",
+            InboxKind::McpSignIn => "mcp_sign_in",
             InboxKind::Storage => "storage",
             InboxKind::LowDisk => "low_disk",
         }
@@ -87,6 +91,7 @@ impl InboxKind {
             Self::Admit,
             Self::Confirm,
             Self::Proposal,
+            Self::McpSignIn,
             Self::Storage,
             Self::LowDisk,
         ]

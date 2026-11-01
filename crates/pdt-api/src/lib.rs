@@ -1,4 +1,5 @@
 mod activity;
+mod agent_mcp;
 mod attachments;
 mod bug_reports;
 mod checks;
@@ -29,6 +30,8 @@ mod local_network;
 pub mod loops;
 mod mcp;
 mod mcp_client;
+mod mcp_oauth;
+mod mcp_servers;
 mod notifications;
 mod overlap;
 mod parts;

@@ -472,7 +472,40 @@ impl<P: AcpProfile> AcpLive<P> {
         let init = sh.request("initialize", initialize_params(), START_TIMEOUT).await?.map_err(refused)?;
         let can_load = init.pointer("/agentCapabilities/loadSession").and_then(Value::as_bool).unwrap_or(false);
         let cwd = spec.cwd.to_string_lossy().into_owned();
-        let mcp = crate::mcp::acp_servers(spec.mcp.as_ref());
+        let (mcp, skipped) = crate::mcp::acp_servers(spec.mcp.as_ref(), crate::mcp::AcpMcpCaps::from_init(&init));
+        let mut notes = vec![];
+        if !skipped.is_empty() {
+            notes.push(format!(
+                "{} can't connect to remote MCP servers of this kind, so it doesn't get {}.",
+                sh.profile.name(),
+                skipped.join(", ")
+            ));
+        }
+        if let Some(m) = spec
+            .mcp
+            .as_ref()
+            .filter(|m| m.extra.iter().any(|x| !x.plan.with(pdt_core::mcp_servers::ToolMode::Block).is_empty()))
+        {
+            let names: Vec<&str> = m
+                .extra
+                .iter()
+                .filter(|x| !x.plan.with(pdt_core::mcp_servers::ToolMode::Block).is_empty())
+                .map(|x| x.name.as_str())
+                .collect();
+            notes.push(format!(
+                "{} can't block single MCP tools: the tools blocked on {} are still available to it.",
+                sh.profile.name(),
+                names.join(", ")
+            ));
+        }
+        for text in notes {
+            let _ = sh.sink.send(AdapterOutput::Event {
+                item_id: None,
+                turn_id: None,
+                event: AgentEvent::Notice { level: NoticeLevel::Info, text, until: None },
+                raw: None,
+            });
+        }
         let mut loaded = false;
         let resume = spec.external_id.clone().filter(|_| spec.resume);
         if resume.is_some() && !can_load {
