@@ -1230,9 +1230,10 @@ async fn a_blocked_merge_closes_its_inbox_item_when_someone_merges_it() {
 #[tokio::test]
 async fn a_merge_left_to_a_person_asks_again_after_its_time_limit() {
     let env = setup().await;
+    // The Pipeline's merge wait, a day here instead of three (PDT-371).
     pipeline(
         &env,
-        json!({"accept": "auto", "merge": "person"}),
+        json!({"accept": "auto", "merge": "person", "mergeWait": "1d"}),
         &[("code", "submitted"), ("review", "approved"), ("qa", "pass")],
     )
     .await;
@@ -1251,9 +1252,9 @@ async fn a_merge_left_to_a_person_asks_again_after_its_time_limit() {
     })
     .await;
     assert_eq!(get_ticket(&env, &t).await["pipelineStage"], "merge");
-    let three_days = 3 * 24 * 60 * 60 * 1000;
+    let one_day = 24 * 60 * 60 * 1000;
     let wake = wait["wakeAt"].as_i64().expect("the wait has a time limit");
-    assert!((wake - wait["startedAt"].as_i64().unwrap() - three_days).abs() < 60_000, "{wait}");
+    assert!((wake - wait["startedAt"].as_i64().unwrap() - one_day).abs() < 60_000, "{wait}");
     // Its time is up: the Inbox asks (keep waiting, merge or stop), and Merge merges it.
     let mut step = env.state.store.get_step(wait["id"].as_str().unwrap()).await.unwrap().unwrap();
     step.wake_at = Some(1);
@@ -1721,9 +1722,10 @@ async fn runs_of(env: &Env, t: &str, workflow: &str) -> Vec<Value> {
 async fn a_pipeline_merge_waits_for_pending_ci_and_sends_red_ci_back_to_the_coder() {
     let gh = std::sync::Arc::new(FakeForge::default());
     let env = setup_with(Some(gh.clone())).await;
+    // The Pipeline's CI wait, two hours here instead of six (PDT-371).
     pipeline(
         &env,
-        json!({"autoAcceptLabels": ["agentic"]}),
+        json!({"autoAcceptLabels": ["agentic"], "ciWait": "2h"}),
         &[("code", "submitted"), ("review", "approved"), ("qa", "pass")],
     )
     .await;
@@ -1743,6 +1745,8 @@ async fn a_pipeline_merge_waits_for_pending_ci_and_sends_red_ci_back_to_the_code
     })
     .await;
     assert_eq!(waiting["wait"]["event"]["also"], json!(["ci.run_failed"]), "{waiting}");
+    let wake = waiting["wakeAt"].as_i64().expect("the wait has a time limit") - waiting["startedAt"].as_i64().unwrap();
+    assert!((wake - 2 * 60 * 60 * 1000).abs() < 60_000, "{waiting}");
     let merge = runs_of(&env, &t, "Pipeline").await[0]["steps"]
         .as_array()
         .unwrap()

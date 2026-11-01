@@ -708,10 +708,36 @@ mod tests {
             .find(|t| t.id == "builtin:pipeline")
             .unwrap();
         let given = serde_json::json!({"coder": "Builder", "accept": "auto", "autoAcceptLabels": ["agentic"],
-                                       "loopLimit": 5, "afterRefine": "ready"});
+                                       "loopLimit": 5, "afterRefine": "ready", "mergeWait": "1d",
+                                       "ciWait": 7_200_000});
         let values = param_values(&t.params, given.as_object().unwrap()).unwrap();
         let doc = fill(&t.doc, &values).unwrap();
         assert_eq!(unfill(&t.doc, &doc), values, "every param is found");
         assert_eq!(fill(&t.doc, &unfill(&t.doc, &doc)).unwrap(), doc);
+    }
+
+    /// PDT-371: the Pipeline's waits and the Code step's time limit are params; left out (an existing Pipeline's
+    /// recorded params), they are the times PDT always used, and a changed one lands in its steps.
+    #[test]
+    fn the_pipelines_waits_default_to_the_old_times_and_take_a_changed_one() {
+        let t = builtin_templates(crate::integrations::test_registry())
+            .into_iter()
+            .find(|t| t.id == "builtin:pipeline")
+            .unwrap();
+        let config = |given: serde_json::Value, node: &str, key: &str| {
+            let doc = fill(&t.doc, &param_values(&t.params, given.as_object().unwrap()).unwrap()).unwrap();
+            doc.node(node).unwrap().config[key].clone()
+        };
+        let (day, hour) = (24 * 60 * 60 * 1000_i64, 60 * 60 * 1000_i64);
+        let old = serde_json::json!({"loopLimit": 3});
+        assert_eq!(config(old.clone(), "wait_merge", "timeoutMs"), 3 * day);
+        assert_eq!(config(old.clone(), "blocked", "timeoutMs"), 3 * day);
+        assert_eq!(config(old.clone(), "wait_ci", "timeoutMs"), 6 * hour);
+        assert_eq!(config(old, "code", "maxRuntimeMs"), 8 * hour);
+        let mine = serde_json::json!({"mergeWait": "12h", "ciWait": "30m", "codeTimeLimit": "2h"});
+        assert_eq!(config(mine.clone(), "wait_merge", "timeoutMs"), 12 * hour);
+        assert_eq!(config(mine.clone(), "blocked", "timeoutMs"), 12 * hour);
+        assert_eq!(config(mine.clone(), "wait_ci", "timeoutMs"), hour / 2);
+        assert_eq!(config(mine, "code", "maxRuntimeMs"), 2 * hour);
     }
 }

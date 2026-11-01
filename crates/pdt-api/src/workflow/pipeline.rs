@@ -38,11 +38,16 @@ against its base, against the ticket. Put each finding on its line (`comments` i
 const RESOLVE_PROMPT: &str = "{{steps.update.message}}\n\nQA passed and this ticket is merging: resolve only the \
 conflicts. Once you push, PDT brings the branch up to date again and merges it.";
 
-/// How long a merge may wait (for a person, or for someone to clear what blocks it) before the Inbox asks again.
+/// How long a merge may wait (for a person, or for someone to clear what blocks it) before the Inbox asks again: the
+/// `mergeWait` param's default (PDT-371).
 const MERGE_WAIT_MS: i64 = 3 * 24 * 60 * 60 * 1000;
 
-/// How long a merge waits for CI on the pull request's head to finish before the Inbox asks (PDT-151).
+/// How long a merge waits for CI on the pull request's head to finish before the Inbox asks (PDT-151): the `ciWait`
+/// param's default.
 const CI_WAIT_MS: i64 = 6 * 60 * 60 * 1000;
+
+/// How long the Code step may run: the `codeTimeLimit` param's default.
+const CODE_TIME_LIMIT_MS: i64 = 8 * 60 * 60 * 1000;
 
 const QA_PROMPT: &str = "Check that this attempt's change works: run the project's tests and try each point of the \
 ticket's \"Done when\". When the Coder's outcome says \"No changes\", there is no change to try: check that the \
@@ -82,6 +87,14 @@ pub fn params() -> Vec<TemplateParam> {
                          person: it waits until someone merges, in PDT or on GitHub."},
         {"id": "loopLimit", "title": "Passes before asking", "type": "number", "default": 3,
          "description": "How many times Code may run again before the Inbox asks."},
+        {"id": "mergeWait", "title": "Merge wait", "type": "duration", "default": MERGE_WAIT_MS,
+         "description": "How long a merge waits for someone (to merge it, or to clear what blocks it) before the Inbox \
+                         asks again. Default: 3 days."},
+        {"id": "ciWait", "title": "CI wait", "type": "duration", "default": CI_WAIT_MS,
+         "description": "How long a merge waits for CI on the pull request to finish before the Inbox asks. Default: \
+                         6 hours."},
+        {"id": "codeTimeLimit", "title": "Code time limit", "type": "duration", "default": CODE_TIME_LIMIT_MS,
+         "description": "How long the Code step may run before the pipeline stops there. Default: 8 hours."},
     ]))
     .expect("the pipeline's params")
 }
@@ -167,7 +180,7 @@ pub fn doc() -> WorkflowDoc {
             json!({
             "persona": "{{params.coder}}", "prompt": CODE_PROMPT, "session": "reuse",
             "owner": "{{params.codeBy}}", "pipelineStage": "code", "loopLimit": "{{params.loopLimit}}",
-            "maxRuntimeMs": 8 * 60 * 60 * 1000,
+            "maxRuntimeMs": "{{params.codeTimeLimit}}",
             "outcomes": [{"id": "submitted", "description": "the change is built, checked and committed"}]}),
         ),
         node(
@@ -335,7 +348,7 @@ pub fn doc() -> WorkflowDoc {
             2400,
             -60,
             "Wait for CI",
-            json!({"event": ci_event(), "timeoutMs": CI_WAIT_MS, "pipelineStage": "merge"}),
+            json!({"event": ci_event(), "timeoutMs": "{{params.ciWait}}", "pipelineStage": "merge"}),
         ),
         node(
             "fixable",
@@ -380,7 +393,7 @@ pub fn doc() -> WorkflowDoc {
             "question": "Merge blocked on {{trigger.ticketKey}}: {{steps.merge.reason}}. Clear it (or merge it \
                          yourself), then merge again.",
             "choices": ["merge_again", "stop"], "approve": "merge_again", "pipelineStage": "merge_blocked",
-            "timeoutMs": MERGE_WAIT_MS, "event": merged_event()}),
+            "timeoutMs": "{{params.mergeWait}}", "event": merged_event()}),
         ),
         node(
             "finish",
@@ -396,7 +409,7 @@ pub fn doc() -> WorkflowDoc {
             2100,
             560,
             "Wait for the merge",
-            json!({"event": merged_event(), "timeoutMs": MERGE_WAIT_MS, "pipelineStage": "merge"}),
+            json!({"event": merged_event(), "timeoutMs": "{{params.mergeWait}}", "pipelineStage": "merge"}),
         ),
         node(
             "not_merged",
