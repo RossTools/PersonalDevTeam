@@ -109,9 +109,9 @@ pub(crate) async fn relink_runs(st: &AppState, tailnet_host: Option<&str>) {
     }
 }
 
-/// Restarts, in the background, the runs this process drives whose definition uses the run's host or link: their
-/// processes keep the old value otherwise (a dev PDT's allowlist would refuse the new link). Called after remote
-/// access changed the host; each run keeps its port when it can.
+/// Restarts, in the background, the runs (not tests: they run to their end) this process drives whose definition
+/// uses the run's host or link: their processes keep the old value otherwise (a dev PDT's allowlist would refuse the
+/// new link). Called after remote access changed the host; each run keeps its port when it can.
 pub(crate) fn restart_host_dependent_runs(st: &AppState) {
     let ids: Vec<String> = {
         let controls = st.run_controls.lock().unwrap_or_else(|e| e.into_inner());
@@ -123,33 +123,57 @@ pub(crate) fn restart_host_dependent_runs(st: &AppState) {
             tracing::info!(run = %id, "remote access changed the run's host; restarting it");
             if let Err(e) = restart_in_place(&st, &id).await {
                 tracing::warn!(run = %id, error = %e, "could not restart a run for its new host");
+                let msg = format!("could not start again for remote access's new address: {e}");
+                let _ = st.store.finish_run(&id, RunState::Failed, None, Some(&msg), now_ms()).await;
             }
         });
     }
 }
 
-/// Stops an active run and starts it again (no run-limit check: it replaces itself).
+/// How many times the run was asked to stop so far, and whether it is still being driven and not stopping. Read
+/// under `run_stops`, which `stop` holds while it counts and flags a stop, so a stop is either counted after this or
+/// already flagged.
+fn stops_and_running(st: &AppState, id: &str) -> (u64, bool) {
+    let stops = st.run_stops.lock().unwrap_or_else(|e| e.into_inner());
+    let running = st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).get(id).is_some_and(|c| !c.stopping());
+    (stops.get(id).copied().unwrap_or(0), running)
+}
+
+/// Stops an active run and starts it again (no run-limit check: it replaces itself). Any other stop of the run
+/// before it starts again (the user's Stop, a gone branch) cancels the restart. Ok when there was nothing to do; Err
+/// says why it could not start again (the run has stopped).
 async fn restart_in_place(st: &AppState, id: &str) -> Result<(), String> {
-    if !stop(st, id, None).await {
-        return Err("the run did not stop in time".into());
+    let (stops, running) = stops_and_running(st, id);
+    if !running {
+        return Ok(());
     }
+    if !stop_inner(st, id, None, false).await {
+        tracing::warn!(run = %id, "the run did not stop in time; it is not restarted");
+        return Ok(());
+    }
+    let stopped_since = || stops_and_running(st, id).0 != stops;
     let Some(run) = st.store.get_run(id).await.map_err(|e| e.to_string())? else { return Ok(()) };
-    let def = crate::runs::definition_for(st, &run).await?;
-    if def.web {
+    let def = crate::runs::definition_for(st, &run).await;
+    if let Ok(def) = &def
+        && def.web
+    {
         await_port_release(run.port).await;
     }
     let _start = st.run_start_lock.lock().await;
     let Some(run) = st.store.get_run(id).await.map_err(|e| e.to_string())? else { return Ok(()) };
-    if run.state.is_active() || st.shutting_down.load(Ordering::SeqCst) {
+    if run.state.is_active() || st.shutting_down.load(Ordering::SeqCst) || stopped_since() {
         return Ok(());
     }
-    relaunch(st, run, def).await.map(|_| ()).map_err(|e| e.message().to_string())
+    relaunch(st, run, def?).await.map(|_| ()).map_err(|e| e.message().to_string())
 }
 
 /// Starts a stopped run again: a port (its old one when free) and link for a web run, the first state, then the
 /// driver. The caller holds `run_start_lock` and has checked the run is not active.
 pub(crate) async fn relaunch(st: &AppState, mut run: Run, def: RunDef) -> Result<Run, ApiError> {
     let id = run.id.clone();
+    // The link and the driver are settled under the lock applying remote access holds (it relinks and restarts the
+    // driven runs), so a remote toggle meanwhile cannot leave this run with the other setting's link.
+    let _link = st.settings_lock.lock().await;
     if def.web {
         let p = allocate_port(st, run.port, Some(&id)).await.ok_or_else(no_free_port)?;
         let url = run_url(st, p);
@@ -445,7 +469,7 @@ fn stop_reason(ctl: &RunControl) -> Option<String> {
 pub(crate) fn start(st: &AppState, run: Run, def: RunDef) {
     let ctl = Arc::new(RunControl {
         web_port: run.port.filter(|_| def.web),
-        uses_host: uses_run_host(&def),
+        uses_host: run.kind == RunKind::Run && uses_run_host(&def),
         ..Default::default()
     });
     let (st2, ctl2, run2) = (st.clone(), ctl.clone(), run.clone());
@@ -510,11 +534,25 @@ fn supervise(st: &AppState, run: Run, ctl: Arc<RunControl>, driver: impl Future<
 /// active by a previous daemon and not resumed yet) is marked stopped directly. False when the driver did not finish
 /// in time: the run may still be running, so nothing must be started in its place.
 pub(crate) async fn stop(st: &AppState, id: &str, reason: Option<String>) -> bool {
-    let ctl = st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned();
+    stop_inner(st, id, reason, true).await
+}
+
+/// [`stop`]; `counted` is false only for a restart's own stop, which must not cancel itself.
+async fn stop_inner(st: &AppState, id: &str, reason: Option<String>, counted: bool) -> bool {
+    let ctl = {
+        let mut stops = st.run_stops.lock().unwrap_or_else(|e| e.into_inner());
+        if counted {
+            *stops.entry(id.to_string()).or_default() += 1;
+        }
+        let ctl = st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned();
+        if let Some(ctl) = &ctl {
+            *ctl.reason.lock().unwrap_or_else(|e| e.into_inner()) = reason.clone();
+            ctl.stop.store(true, Ordering::SeqCst);
+        }
+        ctl
+    };
     match ctl {
         Some(ctl) => {
-            *ctl.reason.lock().unwrap_or_else(|e| e.into_inner()) = reason;
-            ctl.stop.store(true, Ordering::SeqCst);
             for step in [RunStep::Setup, RunStep::Command] {
                 let _ = st.kill_pty(&pty_id(id, step)).await;
             }

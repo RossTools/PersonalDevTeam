@@ -60,17 +60,17 @@ pub fn check(caller: &Caller, owner: Option<&str>) -> Result<(), Denied> {
     }
 }
 
-/// Decodes an RFC 2047 "Q"-encoded UTF-8 value (`=?utf-8?q?…?=`), which Tailscale may use for non-ASCII values
-/// (fact 5). Anything else, or anything malformed, is returned unchanged.
+/// Decodes an RFC 2047 "Q"-encoded UTF-8 value (`=?utf-8?q?…?=`), which Tailscale uses for non-ASCII values (Go's
+/// `mime.QEncoding`, so never "B"). A long value comes as several encoded words separated by spaces, which are joined
+/// (RFC 2047 §6.2). Anything else, or anything malformed, is returned unchanged.
 pub fn decode_header_value(raw: &str) -> String {
-    let decoded = (|| {
-        let inner = raw.strip_prefix("=?")?.strip_suffix("?=")?;
+    let word = |w: &str, bytes: &mut Vec<u8>| -> Option<()> {
+        let inner = w.strip_prefix("=?")?.strip_suffix("?=")?;
         let mut parts = inner.splitn(3, '?');
         let (charset, enc, text) = (parts.next()?, parts.next()?, parts.next()?);
         if !charset.eq_ignore_ascii_case("utf-8") || !enc.eq_ignore_ascii_case("q") {
             return None;
         }
-        let mut bytes = Vec::with_capacity(text.len());
         let mut it = text.bytes();
         while let Some(b) = it.next() {
             match b {
@@ -81,6 +81,16 @@ pub fn decode_header_value(raw: &str) -> String {
                 }
                 b => bytes.push(b),
             }
+        }
+        Some(())
+    };
+    let decoded = (|| {
+        let mut bytes = Vec::with_capacity(raw.len());
+        for w in raw.split_ascii_whitespace() {
+            word(w, &mut bytes)?;
+        }
+        if bytes.is_empty() {
+            return None;
         }
         String::from_utf8(bytes).ok()
     })();
@@ -122,6 +132,17 @@ mod tests {
         assert_eq!(decode_header_value("=?UTF-8?Q?a=3Db?="), "a=b");
         assert_eq!(decode_header_value("=?utf-8?b?bm90IHE=?="), "=?utf-8?b?bm90IHE=?=", "only Q is decoded");
         assert_eq!(decode_header_value("=?utf-8?q?bad=ZZ?="), "=?utf-8?q?bad=ZZ?=", "malformed stays raw");
+        assert_eq!(decode_header_value("Ren=C3=A9 D"), "Ren=C3=A9 D", "plain text with spaces stays as it is");
+    }
+
+    #[test]
+    fn a_long_value_split_into_several_encoded_words_is_joined() {
+        // Go's mime.QEncoding (what Tailscale uses) splits a value whose encoding passes 75 characters into words
+        // separated by a space, never inside a character.
+        let split = "=?utf-8?q?j=C3=BCrgen.m=C3=BCller-l=C3=BCdenscheidt.with.a.long?= =?utf-8?q?.name@example.com?=";
+        assert_eq!(decode_header_value(split), "jürgen.müller-lüdenscheidt.with.a.long.name@example.com");
+        let mixed = "=?utf-8?q?ren=C3=A9?= =?utf-8?b?QGV4YW1wbGUuY29t?=";
+        assert_eq!(decode_header_value(mixed), mixed, "a word that is not Q leaves the whole value raw");
     }
 
     #[test]
