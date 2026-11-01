@@ -187,6 +187,16 @@ test('a release without SHA256SUMS aborts', { skip }, async (ctx) => {
   assert.ok(!existsSync(join(t.home, '.local/opt/pdt')));
 });
 
+test('installs the universal app on an Intel Mac', { skip }, async (ctx) => {
+  const t = setup({ os: 'Darwin', arch: 'x86_64' });
+  ctx.after(t.cleanup);
+  const app = tarball(t, { [`${APP}/Contents/MacOS/pdt-host`]: hostStub, [`${APP}/Contents/Info.plist`]: '<plist/>' });
+  publish(t, 'v0.3.0', { 'Personal.Dev.Team.app.tar.gz': app, 'pdt-linux-x86_64.tar.gz': 'other' });
+  const r = await run(t);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(join(t.home, 'Applications', APP, 'Contents/Info.plist')));
+});
+
 test('unsupported systems are refused with a clear reason', { skip }, async (ctx) => {
   const cases = [
     [{ os: 'FreeBSD' }, /runs on macOS, Linux and Windows, not FreeBSD/],

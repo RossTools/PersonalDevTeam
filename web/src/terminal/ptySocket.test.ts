@@ -272,6 +272,50 @@ describe('PtySocket', () => {
     expect(sockets).toHaveLength(1);
   });
 
+  it('sends binary input as one byte per character, not UTF-8', () => {
+    const { sock, sockets } = setup();
+    sock.connect();
+    expect(sock.sendBinary('\x1b[M \xa0!')).toBe(false);
+    sockets[0].open();
+    expect(sock.sendBinary('\x1b[M \xa0!')).toBe(true);
+    expect([...(sockets[0].sent[0] as Uint8Array)]).toEqual([0x1b, 0x5b, 0x4d, 0x20, 0xa0, 0x21]);
+  });
+
+  it('ignores control text it cannot read and carries on', () => {
+    const { sock, sockets, events } = setup();
+    sock.connect();
+    sockets[0].open();
+    expect(() => {
+      sockets[0].text('not json');
+      sockets[0].text('42');
+      sockets[0].text('null');
+      sockets[0].text('{"type":"from_the_future"}');
+    }).not.toThrow();
+    sockets[0].text('{"type":"ready"}');
+    sockets[0].data('live');
+    expect(events.filter((e) => !e.startsWith('status'))).toEqual(['reset', 'ready', 'data:live']);
+  });
+
+  it('detaches from the socket on dispose and retry, so late events reach no handler', () => {
+    const { sock, sockets, events } = setup();
+    sock.connect();
+    sock.retry();
+    expect(sockets[0].closed).toBe(true);
+    expect(sockets[0].onopen).toBeNull();
+    expect(sockets[0].onmessage).toBeNull();
+    expect(sockets[0].onclose).toBeNull();
+    sock.dispose();
+    expect(sockets[1].closed).toBe(true);
+    expect(sockets[1].onopen).toBeNull();
+    expect(sockets[1].onmessage).toBeNull();
+    expect(sockets[1].onclose).toBeNull();
+    const before = events.length;
+    sockets[1].open();
+    sockets[1].text('{"type":"exit","code":0}');
+    sockets[1].drop();
+    expect(events).toHaveLength(before);
+  });
+
   it('drops input while disconnected and says so', () => {
     const { sock, sockets } = setup();
     sock.connect();

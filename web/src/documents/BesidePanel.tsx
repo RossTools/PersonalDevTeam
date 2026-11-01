@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ExternalLink, FileStack, PanelRightClose, Plus, X } from 'lucide-react';
-import { ContextMenu, IconButton, SegmentedControl, dragData, parseDragData, type MenuEntry } from '@ui';
+import { ContextMenu, IconButton, SegmentedControl, dragData, parseDragData, tabIndexOf, tabListKeyDown, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { DocumentsBeside } from '../api/gen/DocumentsBeside';
@@ -104,6 +104,7 @@ function TabStrip({ data, tabs: act, trailing }: {
   trailing: ReactNode;
 }) {
   const ids = data.tabs.map((t) => t.document.id);
+  const anyActive = data.active !== null && ids.includes(data.active);
   const onDrop = (e: DragEvent, index: number) => {
     const d = parseDragData(e.dataTransfer.getData('text/plain'));
     if (d?.kind !== DRAG_KIND) return;
@@ -112,7 +113,7 @@ function TabStrip({ data, tabs: act, trailing }: {
   };
   return (
     <div className="flex min-w-0 items-center gap-1 border-b border-border px-1">
-      <div role="tablist" aria-label="Documents" className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto pt-1">
+      <div role="tablist" aria-label="Documents" onKeyDown={tabListKeyDown} className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto pt-1">
         {data.tabs.map((t, i) => {
           const id = t.document.id;
           const active = id === data.active;
@@ -134,7 +135,9 @@ function TabStrip({ data, tabs: act, trailing }: {
                 <button
                   type="button"
                   role="tab"
+                  id={`beside-tab-${id}`}
                   aria-selected={active}
+                  tabIndex={tabIndexOf(active, i, anyActive)}
                   title={t.document.title}
                   draggable={!coarsePointer()}
                   onDragStart={(e) => e.dataTransfer.setData('text/plain', dragData(DRAG_KIND, id))}
@@ -184,7 +187,7 @@ function Shown({ id }: { id: string | null }) {
   if (!id) return null;
   const provider = doc.data ? providerLabel(providers.data?.providers, doc.data.provider) : 'Its provider';
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-auto p-3">
+    <div role="tabpanel" aria-labelledby={`beside-tab-${id}`} className="flex min-h-0 flex-1 flex-col overflow-auto p-3">
       <DocumentBody key={id} id={id} providerLabel={provider} className="flex min-h-0 flex-1 flex-col" />
     </div>
   );

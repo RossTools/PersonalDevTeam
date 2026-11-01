@@ -126,7 +126,9 @@ export class PtySocket {
     };
     s.onmessage = (ev) => inOrder(() => {
       if (typeof ev.data === 'string') {
-        const msg = JSON.parse(ev.data) as PtyServerMessage;
+        // A control message this client can't read (not JSON, or from a newer server) is ignored.
+        const msg = parseControl(ev.data);
+        if (!msg) return;
         if (msg.type === 'ready') {
           ready = true;
           // A server that held this connection while it waited for the session to start has not seen our size.
@@ -178,6 +180,13 @@ export class PtySocket {
     this.timer = setTimeout(() => this.connect(), delay);
   }
 
+  /** Stops listening to a socket that is being let go, so nothing it still delivers reaches the handlers. */
+  private static detach(s: SocketLike): void {
+    s.onopen = null;
+    s.onmessage = null;
+    s.onclose = null;
+  }
+
   /** Reconnects now, also after the process exited or the session ended (e.g. it was restarted). */
   retry(): void {
     if (this.disposed) return;
@@ -185,7 +194,10 @@ export class PtySocket {
     this.timer = null;
     const old = this.sock;
     this.sock = null;
-    old?.close();
+    if (old) {
+      PtySocket.detach(old);
+      old.close();
+    }
     this.exited = false;
     this.ended = false;
     this.attempt = 0;
@@ -203,6 +215,18 @@ export class PtySocket {
     return true;
   }
 
+  /**
+   * Sends xterm's binary input (`onBinary`: a string of byte values 0-255, such as the X10 mouse reports for columns
+   * past 95) as those bytes, not UTF-8 encoded. Returns false when it was not sent, like `send`.
+   */
+  sendBinary(data: string): boolean {
+    if (this.sock?.readyState !== OPEN) return false;
+    const bytes = new Uint8Array(data.length);
+    for (let i = 0; i < data.length; i++) bytes[i] = data.charCodeAt(i) & 0xff;
+    this.sock.send(bytes);
+    return true;
+  }
+
   resize(cols: number, rows: number): void {
     this.size = { cols, rows };
     this.control({ type: 'resize', cols, rows });
@@ -215,7 +239,24 @@ export class PtySocket {
   dispose(): void {
     this.disposed = true;
     if (this.timer) clearTimeout(this.timer);
-    this.sock?.close();
+    this.timer = null;
+    const s = this.sock;
     this.sock = null;
+    if (s) {
+      PtySocket.detach(s);
+      s.close();
+    }
   }
+}
+
+/** A server control message, or null when the text isn't one (not JSON, or not an object with a string `type`). */
+function parseControl(text: string): PtyServerMessage | null {
+  let msg: unknown;
+  try {
+    msg = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof msg !== 'object' || msg === null || typeof (msg as { type?: unknown }).type !== 'string') return null;
+  return msg as PtyServerMessage;
 }

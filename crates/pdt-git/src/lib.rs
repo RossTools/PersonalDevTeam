@@ -538,8 +538,7 @@ mod tests {
         assert!(matches!(r, Err(GitError::NotARepo(_))), "{r:?}");
     }
 
-    // Unix only: on Windows, Rust looks for the program in the child's PATH, then the application folder, the system
-    // folders and the parent's PATH, so an empty PATH never hides git there.
+    // Unix only: on Windows, std's program lookup falls back to the parent's PATH when the child's has no `git`.
     #[cfg(unix)]
     #[test]
     fn git_not_on_path_is_git_missing() {

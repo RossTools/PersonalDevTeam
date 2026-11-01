@@ -89,6 +89,21 @@ describe('ticket tab', () => {
     expect(within(screen.getByRole('list', { name: 'Related' })).getByText('Docs')).toBeInTheDocument();
   });
 
+  it('moves between sections with the arrow keys, each shown in its tab panel', async () => {
+    stub();
+    view();
+    const overview = await screen.findByRole('tab', { name: 'Overview' });
+    expect(screen.getByRole('tabpanel', { name: 'Overview' })).toBeInTheDocument();
+    await userEvent.click(overview);
+    await userEvent.keyboard('{ArrowRight}');
+    const conversation = screen.getByRole('tab', { name: 'Conversation' });
+    expect(conversation).toHaveFocus();
+    expect(conversation).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel', { name: 'Conversation' })).toBeInTheDocument();
+    await userEvent.keyboard('{Home}');
+    expect(overview).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('edits the title in place', async () => {
     const calls = stub();
     view();
