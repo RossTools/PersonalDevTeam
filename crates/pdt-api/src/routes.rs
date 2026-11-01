@@ -544,6 +544,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
             axum::routing::post(crate::documents::routes::link).delete(crate::documents::routes::unlink),
         )
         .route("/documents/{id}/content", get(crate::documents::routes::content))
+        .route("/documents/{id}/version", get(crate::documents::routes::version))
         .route("/documents/{id}/edits", axum::routing::post(crate::documents::routes::edit))
         .route("/documents/{id}/comments", get(crate::documents::routes::comments))
         .route("/documents/{id}/comments/{comment}/replies", axum::routing::post(crate::documents::routes::reply))

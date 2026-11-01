@@ -119,6 +119,8 @@ impl ToolTable {
 pub enum PluginCategory {
     /// Forges, trackers and CI.
     Dev,
+    /// Document providers (Google's Docs and Sheets).
+    Documents,
     Chat,
     Media,
     /// PDT's own general pieces: incoming webhooks, HTTP services, MCP servers.
@@ -187,6 +189,16 @@ pub const KNOWN: &[KnownIntegration] = &[
         category: PluginCategory::Dev,
         icon: Icon { letters: "GL", color: "#fc6d26" },
         connection_kinds: &[],
+        kind_prefixes: &[],
+    },
+    KnownIntegration {
+        id: "google",
+        label: "Google",
+        description: "Google Docs and Sheets as documents: pick files from your Drive, make new ones, and let agents \
+                      edit them (formulas, formatting and charts too) and answer their comments.",
+        category: PluginCategory::Documents,
+        icon: Icon { letters: "G", color: "#4285f4" },
+        connection_kinds: &["google"],
         kind_prefixes: &[],
     },
     KnownIntegration {
