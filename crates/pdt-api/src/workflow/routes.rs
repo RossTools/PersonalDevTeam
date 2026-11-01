@@ -717,6 +717,9 @@ pub(crate) async fn delete_connection(
         .map_err(ApiError::internal)?
         .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "keychain_failed", e.to_string()))?;
     st.store.delete_connection(&id).await?;
+    if c.kind == crate::mcp_client::MCP {
+        crate::mcp_oauth::forget(&st, &id).await;
+    }
     crate::connection_health::forget(&st, &[&c.name]).await;
     crate::mcp_client::connection_changed(&st, None).await;
     Ok(StatusCode::NO_CONTENT)

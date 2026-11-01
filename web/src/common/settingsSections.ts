@@ -42,6 +42,7 @@ export const HOST_PAGES = [
   { id: 'plugins', label: 'Plugins', terms: ['Integrations', 'GitHub', 'Jira', 'Buildkite', 'Discord'] },
   { id: 'connections', label: 'All connections', terms: ['Connections'] },
   { id: 'secrets', label: 'Secrets', terms: ['Keychain', 'Tokens'] },
+  { id: 'mcp-servers', label: 'MCP servers', terms: ['MCP', 'Model Context Protocol', 'OAuth', 'Sign in', 'Slack', 'Tools', 'Use only PDT’s MCP servers'] },
 ] as const;
 
 /** A project's sections, in sidebar order; the ones a Personal project (no repository) lacks are marked. */

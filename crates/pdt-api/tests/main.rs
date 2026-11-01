@@ -35,6 +35,7 @@ mod integrations;
 mod liveness;
 mod local_documents;
 mod local_forge;
+mod mcp_servers;
 mod notifications;
 mod outside_prs;
 mod parts;
