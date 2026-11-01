@@ -35,6 +35,7 @@ fn spec(id: &str, program: PathBuf, args: Vec<String>) -> SpawnSpec {
         env: vec![("PDT_TEST_VAR".into(), "from-spec".into())],
         cols: 80,
         rows: 24,
+        output_file: None,
     }
 }
 
@@ -217,4 +218,35 @@ async fn input_is_refused_once_the_process_is_gone() {
     assert!(matches!(m.write("a", b"x"), Err(PtyError::NotRunning(_))));
     tokio::time::timeout(WAIT, exit).await.unwrap().unwrap();
     assert!(!m.accepts_input("a") && !m.accepts_input("nobody"));
+}
+
+/// A terminal with an output file starts again (pdtd restarted: a new manager) showing what the earlier process printed,
+/// above a divider and the new process's output (PDT-352).
+#[tokio::test]
+async fn a_restarted_terminal_shows_its_earlier_output_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("sessions").join("s").join("output.log");
+    let with_file = |s: SpawnSpec| SpawnSpec { output_file: Some(file.clone()), ..s };
+
+    let before = PtyManager::new();
+    let exit = before.spawn(with_file(oneshot_cmd("s", "echo before-restart", "echo before-restart"))).unwrap();
+    tokio::time::timeout(WAIT, exit).await.unwrap().unwrap();
+    before.shutdown().await;
+
+    let after = PtyManager::new();
+    assert!(after.attach("s").is_err(), "nothing runs until it starts again");
+    after.spawn(with_file(oneshot_cmd("s", "echo after-restart", "echo after-restart"))).unwrap();
+    let (out, code) = drain(after.attach("s").unwrap()).await;
+    assert_eq!(code, Some(0));
+    let at = |what: &str| out.find(what).unwrap_or_else(|| panic!("{what:?} missing from {out:?}"));
+    assert!(at("before-restart") < at("earlier output above"), "{out:?}");
+    assert!(at("earlier output above") < at("after-restart"), "{out:?}");
+    after.shutdown().await;
+
+    // Without a file, a terminal starts blank.
+    let other = PtyManager::new();
+    other.spawn(oneshot_cmd("s", "echo fresh", "echo fresh")).unwrap();
+    let (out, _) = drain(other.attach("s").unwrap()).await;
+    assert!(!out.contains("before-restart"), "{out:?}");
+    other.shutdown().await;
 }
