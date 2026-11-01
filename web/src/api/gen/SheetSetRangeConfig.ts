@@ -14,7 +14,7 @@ sheet?: string,
  */
 cell: string, 
 /**
- * The values, a list of rows (each a list of cells) or one row, written across and down; a cell starting with
- * `=` is a formula.
+ * The values, a list of rows (each a list of cells) or one row, written across and down. A cell written here
+ * starting with `=` is a formula; text from a reference is always text.
  */
 values: unknown, };

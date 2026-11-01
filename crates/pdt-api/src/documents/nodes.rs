@@ -15,7 +15,7 @@ use pdt_core::document::{
     parse_range,
 };
 use pdt_core::document_ops::used_size;
-use pdt_core::document_watch::{accepts_copy, rows_of};
+use pdt_core::document_watch::{accepts_copy, rows_of, text_from_refs};
 use pdt_core::ticket::{Actor, By};
 use pdt_core::workflow::api::{LogEvent, Workflow};
 use pdt_core::workflow::cond::Condition;
@@ -98,6 +98,14 @@ async fn sheet_of(st: &AppState, d: &Document, name: Option<&str>) -> Result<She
             .ok_or_else(|| format!("{} has no sheet called {n}", d.title)),
         None => sheets.into_iter().next().ok_or_else(|| format!("{} has no sheets", d.title)),
     }
+}
+
+/// A sheet step's cells from its `field` (filled in), with the text references brought in kept as text
+/// ([`text_from_refs`]): only formulas written into the step itself run.
+fn cells_of(cx: &StepCx<'_>, field: &str, filled: &Value) -> Result<Vec<Vec<String>>, String> {
+    let mut rows = rows_of(filled)?;
+    text_from_refs(cx.node.config.get(field).unwrap_or(&Value::Null), &mut rows);
+    Ok(rows)
 }
 
 /// The range `rows` fill from `cell` (`A5:C6`).
@@ -276,8 +284,8 @@ pub struct AppendRowsConfig {
     #[serde(default)]
     #[ts(optional)]
     pub sheet: Option<String>,
-    /// The rows, each a list of cells (`[["{{trigger.ticketKey}}", "{{trigger.ticketTitle}}"]]`), or one row; a
-    /// cell starting with `=` is a formula.
+    /// The rows, each a list of cells (`[["{{trigger.ticketKey}}", "{{trigger.ticketTitle}}"]]`), or one row. A
+    /// cell written here starting with `=` is a formula; text from a reference is always text.
     #[ts(type = "unknown")]
     pub rows: Value,
 }
@@ -291,8 +299,8 @@ impl NodeKind for AppendRows {
             1,
             Category::Action,
             "Add rows to a sheet",
-            "Writes rows under the last used row of a sheet, from column A. Output: the `range` written and the new \
-             `version`.",
+            "Writes rows under the last used row of a sheet, from column A. Text from a reference is always text, \
+             never a formula. Output: the `range` written and the new `version`.",
             &[("out", "Then")],
             false,
         )
@@ -310,7 +318,7 @@ impl NodeKind for AppendRows {
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: AppendRowsConfig = parse(&input)?;
-            let rows = rows_of(&c.rows)?;
+            let rows = cells_of(cx, "rows", &c.rows)?;
             if cx.dry_run {
                 let n = rows.len();
                 let what = format!("add {n} row{}: {}", if n == 1 { "" } else { "s" }, json!(rows));
@@ -346,8 +354,8 @@ pub struct SetRangeConfig {
     pub sheet: Option<String>,
     /// The top-left cell (`B3`).
     pub cell: String,
-    /// The values, a list of rows (each a list of cells) or one row, written across and down; a cell starting with
-    /// `=` is a formula.
+    /// The values, a list of rows (each a list of cells) or one row, written across and down. A cell written here
+    /// starting with `=` is a formula; text from a reference is always text.
     #[ts(type = "unknown")]
     pub values: Value,
 }
@@ -361,8 +369,8 @@ impl NodeKind for SetRange {
             1,
             Category::Action,
             "Set cells in a sheet",
-            "Writes values into a sheet from a cell, across and down (a formula where a value starts with `=`). Output: \
-             the `range` written and the new `version`.",
+            "Writes values into a sheet from a cell, across and down (a formula where a value written here starts with \
+             `=`; text from a reference is always text). Output: the `range` written and the new `version`.",
             &[("out", "Then")],
             false,
         )
@@ -382,7 +390,7 @@ impl NodeKind for SetRange {
         Box::pin(async move {
             let c: SetRangeConfig = parse(&input)?;
             check_cell("cell", &c.cell, false)?;
-            let rows = rows_of(&c.values)?;
+            let rows = cells_of(cx, "values", &c.values)?;
             let cell = c.cell.trim().to_ascii_uppercase();
             let range = filled(&cell, &rows);
             if cx.dry_run {

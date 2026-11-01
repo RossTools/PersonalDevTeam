@@ -35,6 +35,17 @@ fn formulas_compute_and_read_back() {
     assert_eq!(wb.values("sheet1", "A1:A1").unwrap(), vec![vec![Value::Text("Quarter".into())]]);
 }
 
+/// A leading `'` makes the rest text, as in any sheet: a workflow writes text from outside so it never runs.
+#[test]
+fn a_quoted_value_is_text_not_a_formula() {
+    let mut wb = Workbook::new("Log").unwrap();
+    wb.set_cells("Sheet1", "A1", &[vec!["'=1+1".into(), "=1+1".into()]]).unwrap();
+    let rows = &wb.sheets().unwrap()[0].rows;
+    assert_eq!((rows[0][0].value.as_str(), rows[0][0].formula.as_deref()), ("=1+1", None));
+    assert_eq!((rows[0][1].value.as_str(), rows[0][1].formula.as_deref()), ("2", Some("=1+1")));
+    assert_eq!(wb.values("Sheet1", "A1:A1").unwrap(), vec![vec![Value::Text("=1+1".into())]]);
+}
+
 #[test]
 fn an_xlsx_round_trips_with_formats_merges_panes_widths_and_names() {
     let mut wb = sales();

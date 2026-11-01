@@ -223,7 +223,7 @@ These ones react to [documents](../using-pdt/documents.md):
 
 Each watches the document you name, or every document linked to the workflow's project (for **This host**, every
 document linked to a project). PDT looks every minute; the first look only notes where a document is, so turning a
-workflow on never replays old changes or comments. A document linked to several projects starts each workflow once.
+workflow on, or on again, never replays old changes or comments. A document linked to several projects starts each workflow once.
 
 Some triggers have settings of their own:
 
@@ -250,7 +250,8 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
 - **Work on documents**: **Create a document** (a doc or a sheet, linked to a ticket or the project), **Add to a
   document** (Markdown at its end or under a heading), **Add rows to a sheet** (under its last row), **Set cells in a
   sheet**, **Add a chart to a sheet**, and **Comment on a document** (a reply in a comment's thread, or a new comment).
-  Each names its document by title or id, and a dry run says what it would write.
+  Each names its document by title or id, and a dry run says what it would write. In a sheet, a value you type
+  starting with `=` is a formula; text filled in from the event (a ticket's title, say) is always written as text.
 - **Reach out**: **Run a command**, **HTTP request** (through a connection), **MCP tool**, **Run a workflow**.
 - Plugins (Jira, Buildkite, GitHub…) add their own steps while they're on.
 

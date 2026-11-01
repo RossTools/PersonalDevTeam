@@ -10,7 +10,7 @@ document: string,
  */
 sheet?: string, 
 /**
- * The rows, each a list of cells (`[["{{trigger.ticketKey}}", "{{trigger.ticketTitle}}"]]`), or one row; a
- * cell starting with `=` is a formula.
+ * The rows, each a list of cells (`[["{{trigger.ticketKey}}", "{{trigger.ticketTitle}}"]]`), or one row. A
+ * cell written here starting with `=` is a formula; text from a reference is always text.
  */
 rows: unknown, };

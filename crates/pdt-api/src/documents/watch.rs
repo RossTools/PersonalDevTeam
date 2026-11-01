@@ -2,7 +2,9 @@
 //! `document.changed` and `document.comment_added` triggers watch, asks each one's provider for its version and its
 //! comments, and logs an event for each change and each new comment or reply. Providers are polled the same way,
 //! local or not. The first look at a document only records where it is (`sensor.document_version.<id>`,
-//! `sensor.document_comments.<id>`), so turning a watcher on never replays its history.
+//! `sensor.document_comments.<id>`), so turning a watcher on never replays its history. A document nothing watches
+//! (its workflows turned off, it unlinked, its provider gone) has that state forgotten, so watching it again starts
+//! with a first look too.
 //!
 //! An event is logged once for each project the document is linked to, or once without a project when it has none
 //! (each trigger takes one copy: [`pdt_core::document_watch::accepts_copy`]). What PDT itself wrote (a workflow's
@@ -33,12 +35,15 @@ struct Watch {
     comments: bool,
 }
 
+const VERSION_PREFIX: &str = "sensor.document_version.";
+const COMMENTS_PREFIX: &str = "sensor.document_comments.";
+
 fn version_key(id: &str) -> String {
-    format!("sensor.document_version.{id}")
+    format!("{VERSION_PREFIX}{id}")
 }
 
 fn comments_key(id: &str) -> String {
-    format!("sensor.document_comments.{id}")
+    format!("{COMMENTS_PREFIX}{id}")
 }
 
 fn ours_key(id: &str) -> String {
@@ -61,13 +66,13 @@ pub(crate) async fn mark_ours(st: &AppState, document: &str, id: &str) {
     }
 }
 
-/// The documents enabled workflows watch, by id.
-async fn watched(st: &AppState) -> BTreeMap<String, Watch> {
+/// The documents enabled workflows watch, by id; Err when the store can't say (then nothing is forgotten).
+async fn watched(st: &AppState) -> Result<BTreeMap<String, Watch>, pdt_store::StoreError> {
     let mut out: BTreeMap<String, Watch> = BTreeMap::new();
     let mut all: Option<Vec<Document>> = None;
     let reg = st.registry();
-    for wf in st.store.enabled_workflows().await.unwrap_or_default() {
-        let Ok(Some(doc)) = st.store.workflow_doc(&wf.id, wf.version).await else { continue };
+    for wf in st.store.enabled_workflows().await? {
+        let Some(doc) = st.store.workflow_doc(&wf.id, wf.version).await? else { continue };
         for node in doc.nodes.iter().filter(|n| n.kind == DOCUMENT_CHANGED || n.kind == DOCUMENT_COMMENT_ADDED) {
             let Ok(c) = reg.catalog().current_config(node).and_then(|c| parse::<DocumentTriggerConfig>(&c)) else {
                 continue;
@@ -79,7 +84,7 @@ async fn watched(st: &AppState) -> BTreeMap<String, Watch> {
                 },
                 None => {
                     if all.is_none() {
-                        all = Some(st.store.list_documents(&DocumentFilter::default()).await.unwrap_or_default());
+                        all = Some(st.store.list_documents(&DocumentFilter::default()).await?);
                     }
                     let linked = |d: &&Document, p: &str| d.projects.iter().any(|x| x.id == p);
                     all.iter()
@@ -106,7 +111,21 @@ async fn watched(st: &AppState) -> BTreeMap<String, Watch> {
             }
         }
     }
-    out
+    Ok(out)
+}
+
+/// Forgets the last look of documents not looked at now (`changes`: their versions; `comments`: their comments), so
+/// the next look at one only records again. The ids of PDT's own comments are kept.
+async fn forget_unwatched(st: &AppState, prefix: &str, looked: &HashSet<String>) {
+    let keys = match st.store.host_keys_with_prefix(prefix).await {
+        Ok(k) => k,
+        Err(e) => return tracing::warn!(error = %e, "could not list what documents were seen"),
+    };
+    for key in keys.iter().filter(|k| !looked.contains(&k[prefix.len()..])) {
+        if let Err(e) = st.store.delete_host_value(key).await {
+            tracing::warn!(key, error = %e, "could not forget what a document was seen at");
+        }
+    }
 }
 
 /// A document's reference for its events: one per project it is linked to (or one without a project).
@@ -214,17 +233,31 @@ async fn look_at_comments(st: &AppState, d: &Document, p: &Arc<dyn DocumentProvi
 /// One look at every watched document. pdtd runs it every 60 s (the documents integration's poller). Never fails;
 /// problems are logged.
 pub async fn refresh(st: &AppState) {
-    for (id, w) in watched(st).await {
+    let watched = match watched(st).await {
+        Ok(w) => w,
+        Err(e) => return tracing::warn!(error = %e, "could not read which documents workflows watch"),
+    };
+    let (mut versions, mut comments) = (HashSet::new(), HashSet::new());
+    for (id, w) in watched {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
-        let Ok(Some(d)) = st.store.get_document(&id).await else { continue };
+        let d = match st.store.get_document(&id).await {
+            Ok(Some(d)) => d,
+            Ok(None) => continue,
+            // Not read: keep what was seen of the rest too.
+            Err(e) => return tracing::warn!(document = %id, error = %e, "could not read a watched document"),
+        };
         let Some(p) = provider(st, &d.provider) else { continue };
         if w.changes {
             look_at_version(st, &d, &p).await;
+            versions.insert(id.clone());
         }
         if w.comments {
             look_at_comments(st, &d, &p).await;
+            comments.insert(id);
         }
     }
+    forget_unwatched(st, VERSION_PREFIX, &versions).await;
+    forget_unwatched(st, COMMENTS_PREFIX, &comments).await;
 }

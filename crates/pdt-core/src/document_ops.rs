@@ -365,7 +365,11 @@ fn grow(s: &mut Sheet, rows: usize, cols: usize) {
     }
 }
 
+/// A typed value as a cell, as a sheet reads it: `=` starts a formula, a leading `'` makes the rest text.
 fn cell_from(v: String) -> Cell {
+    if let Some(text) = v.strip_prefix('\'') {
+        return Cell { value: text.to_string(), formula: None };
+    }
     match v.starts_with('=') {
         // Nothing computes it here: a formula shows itself.
         true => Cell { value: v.clone(), formula: Some(v) },
@@ -676,6 +680,11 @@ mod tests {
         assert_eq!(cells[1].0, "C3");
         assert_eq!(cells[1].1.formula.as_deref(), Some("=1+1"));
         assert_eq!(cells_in(&b[0], None).unwrap().len(), 4);
+        // A leading `'` makes the rest text.
+        let quoted = DocumentEdit::SetCells { sheet: "Sheet1".into(), cell: "A1".into(), values: values(&[&["'=2"]]) };
+        apply_sheet_edit(&mut b, quoted).unwrap();
+        let a1 = &cells_in(&b[0], Some("A1")).unwrap()[0].1;
+        assert_eq!((a1.value.as_str(), a1.formula.as_deref()), ("=2", None));
         assert!(cells_in(&b[0], Some("nope")).is_err());
     }
 
