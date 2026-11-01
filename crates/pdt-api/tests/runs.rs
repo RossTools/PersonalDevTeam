@@ -62,6 +62,11 @@ name = "bad"
 command = "node -e \"process.exit(1)\""
 
 [[test]]
+name = "hosttest"
+command = "node -e \"require('fs').appendFileSync('hosttest-starts.txt', process.env.SEEN_HOST + '\\n'); setTimeout(() => {}, 120000)\""
+env = { SEEN_HOST = "$PDT_RUN_HOST" }
+
+[[test]]
 name = "shim"
 command = '.\failing-shim'
 "#;
@@ -472,6 +477,110 @@ async fn runs_that_use_the_run_host_restart_when_remote_access_changes_it() {
         call(&env.app, "POST", &format!("/api/runs/{id}/stop"), None).await;
         wait_state(&env.app, id, &["stopped"]).await;
     }
+    env.state.ptys.shutdown().await;
+}
+
+/// A test run that uses `$PDT_RUN_HOST` is not restarted when remote access changes the host: it runs to its end.
+#[tokio::test]
+async fn test_runs_are_not_restarted_when_remote_access_changes_the_host() {
+    let mut env = setup().await;
+    env.state.tailscale = recording();
+    env.app = router(env.state.clone(), None);
+    let starts = env.repo.join("hosttest-starts.txt");
+    let (_, r) = start(&env, json!({"name": "hosttest", "kind": "test"})).await;
+    let test_run = r["id"].as_str().unwrap().to_string();
+    let (_, r) = start(&env, json!({"name": "webhost", "kind": "run"})).await;
+    let host_run = r["id"].as_str().unwrap().to_string();
+    let port = wait_state(&env.app, &host_run, &["ready"]).await["port"].as_u64().unwrap() as u16;
+    for _ in 0..300 {
+        if std::fs::read_to_string(&starts).is_ok_and(|t| t.ends_with('\n')) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    // The web run restarting with the new host shows the restarts have happened.
+    wait_body(&env.app, &host_run, port, "box.t.ts.net").await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(std::fs::read_to_string(&starts).unwrap(), "127.0.0.1\n", "the test run started once");
+    let (_, t) = call(&env.app, "GET", &format!("/api/runs/{test_run}"), None).await;
+    assert_eq!(t["state"], "running", "{t}");
+    for id in [&host_run, &test_run] {
+        call(&env.app, "POST", &format!("/api/runs/{id}/stop"), None).await;
+        wait_state(&env.app, id, &["stopped"]).await;
+    }
+    env.state.ptys.shutdown().await;
+}
+
+/// A run stopped right after remote access changed its host stays stopped: the restart does not start it again.
+#[tokio::test]
+async fn a_stop_during_a_host_restart_is_kept() {
+    let mut env = setup().await;
+    env.state.tailscale = recording();
+    env.app = router(env.state.clone(), None);
+    let (_, r) = start(&env, json!({"name": "webhost", "kind": "run"})).await;
+    let id = r["id"].as_str().unwrap().to_string();
+    wait_state(&env.app, &id, &["ready"]).await;
+    let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = call(&env.app, "POST", &format!("/api/runs/{id}/stop"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    wait_state(&env.app, &id, &["stopped"]).await;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let (_, r) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
+        assert_eq!(r["state"], "stopped", "the Stop was overridden: {r}");
+    }
+    env.state.ptys.shutdown().await;
+}
+
+/// A run that cannot start again with the new host (its configuration broke meanwhile) ends failed, saying why.
+#[tokio::test]
+async fn a_host_restart_that_cannot_start_says_why_on_the_run() {
+    let mut env = setup().await;
+    env.state.tailscale = recording();
+    env.app = router(env.state.clone(), None);
+    let (_, r) = start(&env, json!({"name": "webhost", "kind": "run"})).await;
+    let id = r["id"].as_str().unwrap().to_string();
+    wait_state(&env.app, &id, &["ready"]).await;
+    std::fs::write(env.repo.join(".pdt").join("project.toml"), "[[run]]\nname = \"webhost\"\n").unwrap();
+    let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let r = wait_state(&env.app, &id, &["failed"]).await;
+    let error = r["error"].as_str().unwrap_or("");
+    assert!(error.contains("could not start again") && error.contains("configuration"), "{r}");
+    env.state.ptys.shutdown().await;
+}
+
+/// Remote access turned on and straight off again leaves a host-dependent run on its loopback link and host.
+#[tokio::test]
+async fn a_quick_on_off_toggle_leaves_the_loopback_link() {
+    let mut env = setup().await;
+    env.state.tailscale = recording();
+    env.app = router(env.state.clone(), None);
+    let (_, r) = start(&env, json!({"name": "webhost", "kind": "run"})).await;
+    let id = r["id"].as_str().unwrap().to_string();
+    let port = wait_state(&env.app, &id, &["ready"]).await["port"].as_u64().unwrap() as u16;
+    let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"remoteAccess": false}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    // Let the restarts settle, then the run is ready on loopback with the loopback host.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    wait_state(&env.app, &id, &["ready"]).await;
+    wait_body(&env.app, &id, port, "127.0.0.1").await;
+    let (_, r) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
+    assert_eq!(
+        (r["state"].as_str(), r["url"].as_str()),
+        (Some("ready"), Some(format!("http://127.0.0.1:{port}/").as_str()))
+    );
+    call(&env.app, "POST", &format!("/api/runs/{id}/stop"), None).await;
+    wait_state(&env.app, &id, &["stopped"]).await;
     env.state.ptys.shutdown().await;
 }
 
