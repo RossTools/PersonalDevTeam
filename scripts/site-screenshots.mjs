@@ -9,7 +9,7 @@
 //
 // The daemon comes from scripts/scratch-daemon.sh (a free port, a scratch data folder, GitHub offline, in-memory
 // secrets, no Tailscale), with a stand-in for every agent program: nothing real is started, and it never touches the
-// stable PDT. The two agent sessions it brings back run the stand-in, and their activity is reported as Claude's hooks
+// stable PDT. The two Pipeline sessions it brings back (in their tickets' workspaces) run the stand-in, and their activity is reported as Claude's hooks
 // would; the sample's dev server is the one real process (a static file server in the scratch folder).
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -80,30 +80,41 @@ async function until(what, check, ms = 15_000) {
   }
 }
 
-/** Brings the sample's sessions and runs to life: two agents at work, the dev server up. */
+/** Brings the sample's sessions and runs to life: two Pipeline steps at work, the dev server up. */
 async function stage() {
   const [project] = await api('/projects');
   const sessions = await api(`/projects/${project.id}/sessions`);
-  const byTitle = (title) => sessions.find((s) => s.title === title);
+  const tickets = (await api(`/tickets?project=${project.id}&limit=100`)).items;
+  const ticket = (title) => tickets.find((t) => t.title === title);
+  // A Pipeline step's session on a ticket, by its persona.
+  const step = (title, persona) => sessions.find((s) => s.persona?.name === persona && s.ticket?.id === ticket(title).id);
+  const search = ticket('Search products by name');
+  const cart = ticket('Save the cart across visits');
   // The Reviewer is working; QA waits on a permission prompt.
-  for (const [prefix, event] of [['Reviewer', 'UserPromptSubmit'], ['QA', 'PermissionRequest']]) {
-    const s = byTitle(prefix);
+  for (const [s, event] of [
+    [step(cart.title, 'Reviewer'), 'UserPromptSubmit'],
+    [step('Guest checkout without an account', 'QA'), 'PermissionRequest'],
+  ]) {
     await api(`/sessions/${s.id}/restart`, { method: 'POST', body: JSON.stringify({ cols: 120, rows: 30 }) });
     await until(`${s.title} to run`, async () => (await api(`/sessions/${s.id}`)).status === 'running');
     await api(`/sessions/${s.id}/activity`, { method: 'POST', body: JSON.stringify({ source: 'claude', event }) });
   }
-  const coder = byTitle('Coder');
+  // The search branch's dev server: its tab opens in the ticket's workspace.
+  const coder = step(search.title, 'Coder');
   const run = await api(`/projects/${project.id}/runs`, {
     method: 'POST',
     body: JSON.stringify({ worktreeId: coder.worktreeId, name: 'dev', kind: 'run' }),
   });
   await until('the dev server', async () => ['ready', 'running'].includes((await api(`/runs/${run.id}`)).state));
-  const workspace = (await api('/workspaces')).find((w) => w.projectId === project.id);
-  const coderTab = workspace.tabs.find((t) => t.item?.session === coder.id || t.sessionId === coder.id);
+  // Each started ticket's workspace, as pickup made it.
+  const workspaces = await api('/workspaces');
+  const workspaceOf = (t) => workspaces.find((w) => w.ticket?.id === t.id);
+  const searchWs = workspaceOf(search);
+  const coderTab = searchWs.tabs.find((t) => t.sessionId === coder.id);
   // The Reviewer's branch, open for review with the user's line comment.
-  const changesTab = workspace.tabs.find((t) => t.worktreeId === byTitle('Reviewer').worktreeId);
-  const tickets = (await api(`/tickets?project=${project.id}&limit=100`)).items;
-  const guest = tickets.find((t) => t.title === 'Guest checkout without an account');
+  const cartWs = workspaceOf(cart);
+  const changesTab = cartWs.tabs.find((t) => t.worktreeId === step(cart.title, 'Reviewer').worktreeId);
+  const guest = ticket('Guest checkout without an account');
   const pm = (await api('/pm/sessions'))[0].session;
   // Secrets for the Secrets page (the scratch daemon keeps them in memory): values nobody sees again.
   for (const [name, description] of [
@@ -117,7 +128,7 @@ async function stage() {
   const detail = await api(`/workflows/${workflow.id}`);
   // Issues show on the graph's nodes.
   if (detail.issues?.length) throw new Error(`the sample workflow has issues: ${JSON.stringify(detail.issues)}`);
-  return { project, workspace, coderTab, changesTab, guest, pm, workflow };
+  return { project, searchWs, coderTab, cartWs, changesTab, guest, pm, workflow };
 }
 
 async function shoot(page, name, clip) {
@@ -150,7 +161,7 @@ async function nodesClip(page) {
 
 let browser;
 try {
-  const { project, workspace, coderTab, changesTab, guest, pm, workflow } = await stage();
+  const { project, searchWs, coderTab, cartWs, changesTab, guest, pm, workflow } = await stage();
   mkdirSync(out, { recursive: true });
   browser = await chromium.launch();
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: SCALE, colorScheme: 'dark' });
@@ -186,7 +197,8 @@ try {
   await shoot(page, 'board');
   await page.setViewportSize(VIEWPORT);
 
-  await page.goto(`${base}/sessions/${workspace.id}/${coderTab.id}`);
+  // The search ticket's workspace on its Coder's conversation, the Tickets section beside it.
+  await page.goto(`${base}/sessions/${searchWs.id}/${coderTab.id}`);
   await page.getByText('Search is in.').waitFor();
   // The turn's tool calls, folded into one line once it ended.
   await page.getByText(/^Ran \d+ commands/).click();
@@ -203,7 +215,7 @@ try {
   await page.waitForTimeout(1000);
   await shoot(page, 'ticket', await page.getByRole('dialog').boundingBox());
 
-  await page.goto(`${base}/sessions/${workspace.id}/${changesTab.id}`);
+  await page.goto(`${base}/sessions/${cartWs.id}/${changesTab.id}`);
   await page.getByText('Cap the merged line').first().waitFor();
   await shoot(page, 'review');
 
