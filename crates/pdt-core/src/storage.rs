@@ -116,7 +116,28 @@ pub struct StorageSettings {
     pub clean_after_days: u32,
     /// Days after its ticket is done (or won't do) that the worktree itself is removed (its branch stays); 0: never.
     pub remove_after_days: u32,
+    /// What becomes of a worktree when its ticket goes to Won't do or its attempt is abandoned.
+    pub wont_do: WontDoCleanup,
+    /// With [`WontDoCleanup::Later`]: days after the ticket closed that its worktree is removed (at least 1).
+    pub wont_do_after_days: u32,
 }
+
+/// What becomes of a worktree, its branch and the ticket's workspace when its ticket goes to Won't do or its attempt
+/// is abandoned. Nothing that would be lost (uncommitted changes, commits not pushed) is ever removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum WontDoCleanup {
+    /// At once: the worktree, the branch (local and the remote one PDT pushed) and the workspace go.
+    #[default]
+    Now,
+    /// Kept for `wont_do_after_days`, then the automatic cleanup removes the worktree.
+    Later,
+    /// Kept until the user removes it.
+    Keep,
+}
+
+pub const DEFAULT_WONT_DO_AFTER_DAYS: u32 = 7;
 
 pub const DEFAULT_CLEAN_AFTER_DAYS: u32 = 2;
 /// The longest either delay can be: a year.
@@ -124,7 +145,12 @@ pub const MAX_CLEANUP_DAYS: u32 = 365;
 
 impl Default for StorageSettings {
     fn default() -> Self {
-        Self { clean_after_days: DEFAULT_CLEAN_AFTER_DAYS, remove_after_days: 0 }
+        Self {
+            clean_after_days: DEFAULT_CLEAN_AFTER_DAYS,
+            remove_after_days: 0,
+            wont_do: WontDoCleanup::Now,
+            wont_do_after_days: DEFAULT_WONT_DO_AFTER_DAYS,
+        }
     }
 }
 
@@ -147,8 +173,9 @@ pub struct WorktreeTicket {
 }
 
 /// What the cleanup does to a worktree with `ticket` (None: no ticket's, never touched) at `now`: nothing while an
-/// attempt works in it or its ticket is open; removal once `remove_after_days` passed since it closed, else cleaning
-/// once `clean_after_days` did.
+/// attempt works in it or its ticket is open; removal once `remove_after_days` passed since it closed (a Won't do
+/// ticket's: `wont_do_after_days` with [`WontDoCleanup::Later`], never with `Keep`), else cleaning once
+/// `clean_after_days` did.
 pub fn cleanup_due(ticket: Option<WorktreeTicket>, s: StorageSettings, now: i64) -> Cleanup {
     let Some(t) = ticket else { return Cleanup::Nothing };
     if t.attempt_active || !t.stage.is_closed() {
@@ -156,7 +183,12 @@ pub fn cleanup_due(ticket: Option<WorktreeTicket>, s: StorageSettings, now: i64)
     }
     let Some(closed) = t.closed_at else { return Cleanup::Nothing };
     let passed = |days: u32| days > 0 && now - closed >= i64::from(days) * DAY_MS;
-    if passed(s.remove_after_days) {
+    let remove = match (t.stage, s.wont_do) {
+        (TicketStage::WontDo, WontDoCleanup::Later) => passed(s.wont_do_after_days.max(1)),
+        (TicketStage::WontDo, WontDoCleanup::Keep) => false,
+        _ => passed(s.remove_after_days),
+    };
+    if remove {
         Cleanup::Remove
     } else if passed(s.clean_after_days) {
         Cleanup::Clean
@@ -262,16 +294,40 @@ mod tests {
         assert_eq!(cleanup_due(closed(TicketStage::Done, 0), s, 2 * day - 1), Cleanup::Nothing);
         assert_eq!(cleanup_due(closed(TicketStage::Done, 0), s, 2 * day), Cleanup::Clean);
         assert_eq!(cleanup_due(closed(TicketStage::WontDo, 0), s, 3 * day), Cleanup::Clean);
-        let both = StorageSettings { clean_after_days: 2, remove_after_days: 7 };
+        let both = StorageSettings { clean_after_days: 2, remove_after_days: 7, ..s };
         assert_eq!(cleanup_due(closed(TicketStage::Done, 0), both, 6 * day), Cleanup::Clean);
         assert_eq!(cleanup_due(closed(TicketStage::Done, 0), both, 7 * day), Cleanup::Remove);
-        let off = StorageSettings { clean_after_days: 0, remove_after_days: 0 };
+        let off = StorageSettings { clean_after_days: 0, remove_after_days: 0, ..s };
         assert_eq!(cleanup_due(closed(TicketStage::Done, 0), off, 100 * day), Cleanup::Nothing);
     }
 
     #[test]
+    fn a_wont_do_worktree_kept_for_later_goes_after_its_own_delay_and_a_kept_one_stays() {
+        let day = DAY_MS;
+        let later = StorageSettings { wont_do: WontDoCleanup::Later, wont_do_after_days: 3, ..Default::default() };
+        assert_eq!(cleanup_due(closed(TicketStage::WontDo, 0), later, 3 * day - 1), Cleanup::Clean);
+        assert_eq!(cleanup_due(closed(TicketStage::WontDo, 0), later, 3 * day), Cleanup::Remove);
+        assert_eq!(cleanup_due(closed(TicketStage::Done, 0), later, 30 * day), Cleanup::Clean, "Done: its own delays");
+        let zero = StorageSettings { wont_do_after_days: 0, ..later };
+        assert_eq!(cleanup_due(closed(TicketStage::WontDo, 0), zero, day), Cleanup::Remove, "at least a day");
+        let keep = StorageSettings { wont_do: WontDoCleanup::Keep, remove_after_days: 1, ..Default::default() };
+        assert_eq!(cleanup_due(closed(TicketStage::WontDo, 0), keep, 30 * day), Cleanup::Clean);
+        assert_eq!(cleanup_due(closed(TicketStage::Done, 0), keep, 30 * day), Cleanup::Remove);
+        let now = StorageSettings { remove_after_days: 5, ..Default::default() };
+        assert_eq!(cleanup_due(closed(TicketStage::WontDo, 0), now, 5 * day), Cleanup::Remove);
+    }
+
+    #[test]
+    fn old_settings_read_with_the_defaults() {
+        let s: StorageSettings = serde_json::from_str(r#"{"cleanAfterDays": 1, "removeAfterDays": 2}"#).unwrap();
+        assert_eq!((s.wont_do, s.wont_do_after_days), (WontDoCleanup::Now, DEFAULT_WONT_DO_AFTER_DAYS));
+        let s: StorageSettings = serde_json::from_str(r#"{"wontDo": "later", "wontDoAfterDays": 9}"#).unwrap();
+        assert_eq!((s.wont_do, s.wont_do_after_days), (WontDoCleanup::Later, 9));
+    }
+
+    #[test]
     fn never_touches_open_tickets_active_attempts_or_worktrees_without_a_ticket() {
-        let s = StorageSettings { clean_after_days: 1, remove_after_days: 1 };
+        let s = StorageSettings { clean_after_days: 1, remove_after_days: 1, ..Default::default() };
         let late = 10 * DAY_MS;
         assert_eq!(cleanup_due(None, s, late), Cleanup::Nothing);
         assert_eq!(cleanup_due(closed(TicketStage::InProgress, 0), s, late), Cleanup::Nothing);

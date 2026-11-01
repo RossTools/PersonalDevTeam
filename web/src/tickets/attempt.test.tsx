@@ -96,6 +96,26 @@ describe('ticket attempt', () => {
     await waitFor(() => expect(count(calls, 'POST', '/api/attempts/a1/abandon')).toBe(1));
   });
 
+  it('offers Clean up on an abandoned attempt whose worktree was kept, and only then (PDT-339)', async () => {
+    const kept = { ...active, stage: 'wont_do' as const, attempt: attempt({ state: 'abandoned' }), attempts: [attempt({ state: 'abandoned' })] };
+    const calls = stub(kept, { 'POST /api/attempts/a1/clean-up': { ...kept, attempt: attempt({ state: 'abandoned', worktreeId: null }) } });
+    view();
+    const section = await screen.findByRole('region', { name: 'Attempt' });
+    expect(within(section).queryByRole('button', { name: 'Abandon…' })).toBeNull();
+    await userEvent.click(within(section).getByRole('button', { name: 'Clean up…' }));
+    const dialog = await screen.findByRole('alertdialog', { name: /Clean up ALP-1/ });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Clean up' }));
+    await waitFor(() => expect(count(calls, 'POST', '/api/attempts/a1/clean-up')).toBe(1));
+  });
+
+  it('offers no Clean up once the worktree is gone', async () => {
+    const gone = attempt({ state: 'abandoned', worktreeId: null });
+    stub({ ...active, stage: 'wont_do', attempt: gone, attempts: [gone] });
+    view();
+    const section = await screen.findByRole('region', { name: 'Attempt' });
+    expect(within(section).queryByRole('button', { name: 'Clean up…' })).toBeNull();
+  });
+
   it('asks before moving a ticket at work back before work, which stops it (PDT-159)', async () => {
     const calls = stub(active);
     const qc = new QueryClient();
