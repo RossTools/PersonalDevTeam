@@ -149,13 +149,14 @@ pub(crate) async fn answer(st: &AppState, item: &InboxItem, choice: &str, from_u
         return Err("this item was already answered".into());
     }
     let extra = json!({"via": "inbox"});
+    let since = now_ms();
     st.store
         .move_ticket_by(id, to, Actor::User, Some(&extra), now_ms())
         .await
         .map_err(|e| e.to_string())?
         .ok_or("the ticket is gone")?;
     if to.is_closed() {
-        crate::start::end_for_close(st, id, to, Actor::User).await.map_err(|e| e.message().to_string())?;
+        crate::start::close_attempt(st, id, to, since, Actor::User, None).await.map_err(|e| e.message().to_string())?;
     }
     Ok(json!({"stage": to}))
 }

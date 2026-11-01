@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// The longest a `git fetch` of a base branch may take.
-const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 /// The longest Start waits for a fetch of the base branch.
 const START_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -483,15 +483,72 @@ async fn open_tabs(
 }
 
 /// `POST /api/attempts/{id}/abandon`: stops the ticket's work and ends the attempt (PDT-159: its runs are cancelled
-/// and its sessions stop; the worktree and sessions stay). Abandoning an ended attempt changes nothing.
+/// and its sessions stop), then winds it down as Won't do does (PDT-339): its pull request closes and the worktree,
+/// branch and workspace go as the project says, when nothing would be lost. Abandoning an ended attempt changes nothing.
 pub(crate) async fn abandon(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
     let info = st.store.get_attempt(&id).await?.ok_or_else(|| ApiError::not_found("attempt"))?;
     if info.attempt.state == AttemptState::Active {
-        let (st, ticket) = (st.clone(), info.ticket_id.clone());
-        let task = tokio::spawn(async move { crate::stop::stop_work(&st, &ticket, now_ms(), Actor::User).await });
+        let (st, ticket, attempt) = (st.clone(), info.ticket_id.clone(), info.attempt.id.clone());
+        let task = tokio::spawn(async move {
+            let since = now_ms();
+            let r = crate::stop::stop_work(&st, &ticket, since, Actor::User).await?;
+            if r.abandoned.is_some() {
+                let how = crate::stop::WindDown::Abandon {
+                    sessions_stopped: r.sessions_stopped,
+                    runs_cancelled: r.runs_cancelled,
+                };
+                crate::stop::wind_down(&st, &attempt, since, how, None).await;
+            }
+            Ok::<_, ApiError>(())
+        });
         task.await.map_err(ApiError::internal)??;
     }
     Ok(Json(load_ticket(&st, &info.ticket_id).await?))
+}
+
+/// `POST /api/attempts/{id}/clean-up`: the Clean up action on an ended attempt whose worktree was kept (PDT-339):
+/// removes the worktree (uncommitted changes and all), the branch (and PDT's copy on the remote) and the workspace.
+pub(crate) async fn clean_up(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
+    let info = st.store.get_attempt(&id).await?.ok_or_else(|| ApiError::not_found("attempt"))?;
+    if info.attempt.state == AttemptState::Active {
+        return Err(conflict("attempt_active", "the attempt is still active; abandon it first".into()));
+    }
+    let ticket = info.ticket_id.clone();
+    let task = tokio::spawn({
+        let st = st.clone();
+        async move {
+            let notes = crate::stop::clean_up_closed(&st, &info, true).await;
+            if !notes.is_empty()
+                && let Err(e) =
+                    st.store.add_comment_by(&info.ticket_id, &notes.join(" "), Actor::User, None, now_ms()).await
+            {
+                tracing::warn!(ticket = %info.ticket_key, error = %e, "could not note the cleanup on the timeline");
+            }
+        }
+    });
+    task.await.map_err(ApiError::internal)?;
+    Ok(Json(load_ticket(&st, &ticket).await?))
+}
+
+/// Ends the ticket's active attempt because the ticket closed ([`end_for_close`]), then winds its work down
+/// (PDT-339): Won't do stops its sessions and runs, cancels its workflow runs, closes its pull request and cleans up
+/// as the project says; Done only stops what still runs. `keep_run`: the workflow run closing it, which goes on.
+pub(crate) async fn close_attempt(
+    st: &AppState,
+    ticket_id: &str,
+    stage: TicketStage,
+    since: i64,
+    by: impl Into<pdt_core::ticket::By>,
+    keep_run: Option<&str>,
+) -> Result<(), ApiError> {
+    let active = st.store.active_attempt(ticket_id).await?;
+    end_for_close(st, ticket_id, stage, by).await?;
+    let Some(info) = active else { return Ok(()) };
+    let how = if stage == TicketStage::WontDo { crate::stop::WindDown::Close } else { crate::stop::WindDown::Stop };
+    let (st, attempt, keep) = (st.clone(), info.attempt.id, keep_run.map(String::from));
+    // In a task of its own, so it completes when the caller goes away (an agent closing its own ticket is stopped).
+    let task = tokio::spawn(async move { crate::stop::wind_down(&st, &attempt, since, how, keep.as_deref()).await });
+    task.await.map_err(ApiError::internal)
 }
 
 /// `POST /api/tickets/{id}/check-merge`: merge detection for the ticket's active attempt, now.
@@ -501,7 +558,8 @@ pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<Strin
         crate::github::refresh_attempt(&st, &info).await;
         if is_merged(&st, &info, true, true).await {
             let pr = crate::github::watched_pr(&st, &info.attempt.id).map(|p| p.number);
-            st.store
+            let ended = st
+                .store
                 .end_attempt(
                     &info.attempt.id,
                     AttemptState::Merged,
@@ -511,6 +569,14 @@ pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<Strin
                     now_ms(),
                 )
                 .await?;
+            if ended.is_some() {
+                // Nothing works on a merged attempt (PDT-339).
+                let (st, attempt) = (st.clone(), info.attempt.id.clone());
+                let task = tokio::spawn(async move {
+                    crate::stop::wind_down(&st, &attempt, now_ms(), crate::stop::WindDown::Merged, None).await
+                });
+                task.await.map_err(ApiError::internal)?;
+            }
         }
     }
     Ok(Json(load_ticket(&st, &id).await?))
@@ -644,6 +710,8 @@ pub async fn check_merges(st: &AppState) {
                 Ok(Some(_)) => {
                     tracing::info!(ticket = %info.ticket_key, branch = %info.attempt.branch,
                         "the attempt's branch was merged");
+                    // Nothing works on a merged attempt (PDT-339).
+                    crate::stop::wind_down(st, &info.attempt.id, now_ms(), crate::stop::WindDown::Merged, None).await;
                 }
                 Ok(None) => {}
                 Err(e) => tracing::warn!(attempt = %info.attempt.id, error = %e, "could not end the merged attempt"),
@@ -676,4 +744,5 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/tickets/{id}/start", post(start))
         .route("/tickets/{id}/check-merge", post(check_merge))
         .route("/attempts/{id}/abandon", post(abandon))
+        .route("/attempts/{id}/clean-up", post(clean_up))
 }

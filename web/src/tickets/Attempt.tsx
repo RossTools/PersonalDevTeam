@@ -11,7 +11,7 @@ import type { Ticket } from '../api/gen/Ticket';
 import { AgentDot, agentState, itemState, sessionUnseen } from '../common/AgentState';
 import { SessionKindIcon } from '../common/SessionKindIcon';
 import { useAction } from '../common/useAction';
-import { abandonAttempt, finishMerged, useOpenSession } from './actions';
+import { abandonAttempt, cleanUpAttempt, finishMerged, useOpenSession } from './actions';
 import { isClosed } from './model';
 import { useAllSessions, useProjectForge } from './queries';
 import { CiDetails, PrDetails } from './PullRequest';
@@ -31,13 +31,15 @@ function sessionState(s: AttemptSession, live: Session | undefined) {
 }
 
 /**
- * The latest attempt: branch, state, its sessions (click opens the tab), and Abandon… while it is active. With no
+ * The latest attempt: branch, state, its sessions (click opens the tab), and Abandon… while it is active (Clean up…
+ * once it is abandoned with its worktree kept). With no
  * attempt, the sessions workflow steps started on the ticket (a Refiner's), if any.
  */
 export function AttemptSection({ ticket: t, compact = false }: { ticket: Ticket; compact?: boolean }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [abandon, abandoning] = useAction(() => abandonAttempt(confirm, qc, t, t.attempt!));
+  const [cleanUp, cleaning] = useAction(() => cleanUpAttempt(confirm, qc, t, t.attempt!));
   const queueName = useProjectForge(t.attempt?.pr ? t.projectId : null).data?.queueName ?? undefined;
   const a = t.attempt;
   if (!a) {
@@ -48,8 +50,10 @@ export function AttemptSection({ ticket: t, compact = false }: { ticket: Ticket;
   return (
     <OverviewSection
       title="Attempt"
-      actions={a.state === 'active' && (
+      actions={a.state === 'active' ? (
         <Button variant="ghost" size="sm" compact pending={abandoning} onClick={() => void abandon()}>Abandon…</Button>
+      ) : a.state === 'abandoned' && a.worktreeId !== null && (
+        <Button variant="ghost" size="sm" compact pending={cleaning} onClick={() => void cleanUp()}>Clean up…</Button>
       )}
     >
       <div className="flex min-w-0 items-center gap-2 text-xs">

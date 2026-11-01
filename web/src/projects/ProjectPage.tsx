@@ -7,6 +7,7 @@ import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import type { Worktree } from '../api/gen/Worktree';
 import type { StorageSettings } from '../api/gen/StorageSettings';
+import type { WontDoCleanup } from '../api/gen/WontDoCleanup';
 import type { WorktreeStorage } from '../api/gen/WorktreeStorage';
 import { TicketKey } from '../common/TicketKey';
 import { CleanButton, formatBytes, sizeText, StageBadge, useRemoveWorktree, useStorage } from './worktreeStorage';
@@ -130,6 +131,12 @@ function days(text: string): number {
   return Number(text);
 }
 
+const WONT_DO_OPTIONS: { value: WontDoCleanup; label: string }[] = [
+  { value: 'now', label: 'Clean up at once' },
+  { value: 'later', label: 'Keep for some days' },
+  { value: 'keep', label: 'Keep' },
+];
+
 /** The project's automatic cleanup of finished tickets' worktrees. */
 function Cleanup({ project, settings }: { project: Project; settings: StorageSettings }) {
   const qc = useQueryClient();
@@ -147,6 +154,16 @@ function Cleanup({ project, settings }: { project: Project; settings: StorageSet
         <AutoSaveText aria-label="Remove worktree after (days)" inputMode="numeric" className="w-20" value={String(settings.removeAfterDays)}
           onSave={(t) => save({ removeAfterDays: days(t) })} />
       </SettingsRow>
+      <SettingsRow label="On Won't do" description="When a ticket goes to Won't do or its attempt is abandoned: remove its worktree, branch (also the copy PDT pushed) and workspace at once, after some days, or keep them. Work not committed or not pushed is always kept.">
+        <Select aria-label="On Won't do" className="w-48 max-w-full" options={WONT_DO_OPTIONS} value={settings.wontDo}
+          onChange={(wontDo) => void save({ wontDo })} />
+      </SettingsRow>
+      {settings.wontDo === 'later' && (
+        <SettingsRow label="Keep Won't do worktrees for" description="Days after a ticket goes to Won't do that its worktree is removed (at least 1).">
+          <AutoSaveText aria-label="Keep Won't do worktrees for (days)" inputMode="numeric" className="w-20" value={String(settings.wontDoAfterDays)}
+            onSave={(t) => save({ wontDoAfterDays: Math.max(1, days(t)) })} />
+        </SettingsRow>
+      )}
     </>
   );
 }

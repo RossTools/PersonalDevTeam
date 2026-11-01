@@ -322,7 +322,7 @@ mod tests {
         let store = store_with_project(tmp.path()).await;
         let defaults = pdt_core::storage::StorageSettings::default();
         assert_eq!(store.get_project_storage("p").await.unwrap(), defaults);
-        let s = pdt_core::storage::StorageSettings { clean_after_days: 0, remove_after_days: 9 };
+        let s = pdt_core::storage::StorageSettings { clean_after_days: 0, remove_after_days: 9, ..defaults };
         store.put_project_storage("p", &s).await.unwrap();
         assert_eq!(store.get_project_storage("p").await.unwrap(), s);
         assert_eq!(store.get_project_settings("p").await.unwrap(), ProjectSettings::default());
