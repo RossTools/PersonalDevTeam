@@ -7,6 +7,7 @@ pub mod health;
 pub mod install;
 pub mod linux;
 pub mod log;
+pub mod nsis_registry;
 pub mod placement;
 pub mod process;
 pub mod register;

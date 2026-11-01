@@ -27,7 +27,8 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   `PDT_WEB_DIR`, a `web/` folder beside the executable, or the macOS bundle's resources.
 - **pdt-host** (`crates/pdt-host`) supervises pdtd: starts it (passing the port from Settings), restarts it, adopts a
   pdtd that is already running, and installs updates: pdtd downloads and verifies a release, pdt-host copies the
-  database aside, swaps the install, health-checks the new pdtd and rolls back (database included) when it fails. It
+  database aside, swaps the install, health-checks the new pdtd and rolls back (database included; on Windows also the
+  installer's registry keys, `nsis_registry.rs`) when it fails. It
   is registered to start at login: a LaunchAgent on macOS, an HKCU Run value on Windows, a systemd user unit on Linux.
 - **The tray app** (`desktop/src-tauri`, Tauri v2) is optional and has no window of its own: it starts pdt-host when
   pdtd doesn't answer, opens the UI in the browser and can restart the daemon. Quitting it leaves PDT running.
