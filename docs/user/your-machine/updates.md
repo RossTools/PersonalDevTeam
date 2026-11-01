@@ -47,8 +47,8 @@ a day). Choose what it does in **Settings › This host › Updates › Install 
 If you install an update while agents are busy, PDT says what's busy and asks first. Sessions resume afterwards.
 
 Each update is checked against the release's checksums, and PDT copies its database before installing. If the new
-version doesn't start properly, PDT puts back the version you had and the database copy, and a banner says **Update
-to v… failed (…) and was rolled back** with the reason. Nothing is lost, and PDT doesn't retry that version on its
+version doesn't start properly, PDT puts back the version you had (on Windows, with its entry in **Settings › Apps**)
+and the database copy, and a banner says **Update to v… failed (…) and was rolled back** with the reason. Nothing is lost, and PDT doesn't retry that version on its
 own. See [An update rolled back](../troubleshooting/troubleshooting.md#an-update-rolled-back).
 
 ### The GitHub token for updates

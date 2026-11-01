@@ -238,6 +238,7 @@ mod tests {
             env: vec![],
             cols: 80,
             rows: 24,
+            output_file: None,
         }
     }
 

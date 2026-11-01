@@ -6,6 +6,7 @@ pub mod hooks;
 pub mod instructions;
 pub mod launch;
 pub mod mcp;
+mod output_file;
 pub mod pty;
 
 pub use pty::{Attachment, PtyError, PtyEvent, PtyManager, SCROLLBACK_BYTES, SpawnSpec};

@@ -515,6 +515,8 @@ fn start_pty(
         env,
         cols: size.cols,
         rows: size.rows,
+        // A shell's output, shown when it starts again (PDT-352). An agent redraws its own conversation instead.
+        output_file: (s.kind == SessionKind::Shell).then(|| session_data_dir(st, &s.id).join("output.log")),
     };
     let exit = st.ptys.spawn(spec)?;
     let (store, id, st2) = (st.store.clone(), s.id.clone(), st.clone());
@@ -595,7 +597,7 @@ pub(crate) fn devin_config(st: &AppState, id: &str, instructions: Option<&FsPath
     Ok(written)
 }
 
-/// PDT's own files for one session (the Claude hook settings).
+/// PDT's own files for one session (the Claude hook settings, a shell's kept output).
 fn session_data_dir(st: &AppState, id: &str) -> PathBuf {
     st.data_dir.join("sessions").join(id)
 }

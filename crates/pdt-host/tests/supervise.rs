@@ -421,6 +421,7 @@ fn a_failed_installer_is_rolled_back() {
     let installer = NsisInstaller {
         install_dir: install.clone(),
         backup: tmp.path().join("backup"),
+        registry_backup: None,
         timeout: Duration::from_secs(30),
     };
     let _h = supervise_with(config(&install, &data, port), Box::new(installer));
@@ -446,6 +447,7 @@ fn an_installer_that_did_not_replace_pdtd_is_rolled_back() {
     let installer = NsisInstaller {
         install_dir: install.clone(),
         backup: tmp.path().join("backup"),
+        registry_backup: None,
         timeout: Duration::from_secs(30),
     };
     let cfg = config(&install, &data, port);
@@ -473,6 +475,7 @@ fn a_hanging_installer_times_out_and_is_rolled_back() {
     let installer = NsisInstaller {
         install_dir: install.clone(),
         backup: tmp.path().join("backup"),
+        registry_backup: None,
         timeout: Duration::from_secs(1),
     };
     let _h = supervise_with(config(&install, &data, port), Box::new(installer));
@@ -733,6 +736,7 @@ fn a_timed_out_installer_is_stopped_with_its_children() {
     let installer = NsisInstaller {
         install_dir: install.clone(),
         backup: tmp.path().join("backup"),
+        registry_backup: None,
         timeout: Duration::from_secs(30), // the installer and its child must start before it, even under load
     };
     let _h = supervise_with(config(&install, &data, port), Box::new(installer));
