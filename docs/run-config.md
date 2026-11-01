@@ -27,3 +27,4 @@ Notes for writing it:
   unless it is set.
 - The local forge's CI log for a run is at `GET /api/local-ci/runs/<id>/log` (the CI-failed message gives the URL).
 - `[ci] providers` needs PDT 0.3.0 or newer; an older PDT refuses the whole file over the unknown key.
+- `[[merge.regenerate]]` needs a PDT newer than 0.5.1; an older one skips `[merge]` (listed in `effective.ignored`).

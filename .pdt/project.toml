@@ -68,3 +68,19 @@ paths = ["crates/pdt-host/**", "crates/pdt-update/**", "crates/pdt-api/src/updat
 [[area]]
 name  = "ci"
 paths = [".github/**"]
+
+# Generated files at merge time (docs/user/automation/run-configuration.md "Generated files at merge time"): when only
+# these conflict as PDT brings a branch up to date with main, it takes main's side and runs the command, in this order
+# (the lockfiles first, so the TypeScript types build against them). The types come from ts-rs's `export_bindings`
+# tests in each crate's lib tests.
+[[merge.regenerate]]
+paths = ["Cargo.lock"]
+run   = "cargo update -w"
+
+[[merge.regenerate]]
+paths = ["pnpm-lock.yaml"]
+run   = "pnpm install"
+
+[[merge.regenerate]]
+paths = ["web/src/api/gen/**"]
+run   = "cargo test --workspace --lib export_bindings"

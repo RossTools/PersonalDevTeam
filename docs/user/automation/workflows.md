@@ -14,7 +14,7 @@ These come with PDT. You can turn them off, edit them or copy them, but not dele
 | Workflow | What it does | Starts |
 | --- | --- | --- |
 | **Pick up tickets** | Auto-start: starts each project's next ticket, with the project's auto-start settings. See [Pick up tickets](#pick-up-tickets). | On |
-| **PR notices** | Tells a ticket's agent when its pull request's CI fails, it conflicts with the base branch, it falls out of the merge queue, or it merges. When the pull request was set to merge, the agent fixes it and PDT merges it again. | On |
+| **PR notices** | Tells a ticket's agent when its pull request's CI fails, it conflicts with the base branch, it falls out of the merge queue, or it merges. A conflict before the merge waits for merge time. When the pull request was set to merge, PDT brings it up to date with its base, the agent fixes what's left, and PDT merges it again. | On |
 | **Finish merged tickets** | Moves a ticket to **Done** and cleans up once its branch merges, when you asked for that at **Merge…**. | On |
 | **Commits pushed after a merge** | Asks you whether to open a follow-up ticket when an agent pushes to a branch that already merged. | On |
 | **Ticket comments to the agent** | Sends your comments on a ticket to the agent working on it. | On |
@@ -68,9 +68,10 @@ every ticket you start there goes through these stages:
 4. **Accept**: the ticket waits for you under **Ready to accept** in the [Inbox](../using-pdt/the-inbox.md). Accept it
    and it merges; reject it with a note and the note goes to the Coder. Tickets labelled `agentic` skip this stage
    (see [The `agentic` label](personas-and-approvals.md#the-agentic-label)).
-5. **Merge**: PDT merges it (on GitHub, by turning on the pull request's auto-merge once CI passes) and moves the
-   ticket to **Done**. A conflict or failing CI goes back to the Coder, then the Reviewer. A merge PDT can't fix (a
-   draft pull request, the project's policy) asks you.
+5. **Merge**: PDT brings the branch up to date with its base (only real conflicts go to the Coder; see
+   [Conflicts](../using-pdt/review-and-merge.md#conflicts)), merges it (on GitHub, by turning on the pull request's
+   auto-merge once CI passes) and moves the ticket to **Done**. Failing CI goes back to the Coder, then the Reviewer.
+   A merge PDT can't fix (a draft pull request, the project's policy) asks you.
 
 On the board, **In progress** splits into these stages, and each card says who has the ticket ("Reviewer · working",
 "Your turn").
@@ -198,7 +199,7 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
 **Add node** lists every step, grouped:
 
 - **Act on tickets**: **Comment on the ticket**, **Move the ticket**, **Create a ticket**, **Finish the ticket** (stop
-  its runs, remove its worktree), **Merge the attempt**, and **Find tickets to start**, **Choose tickets to start** and
+  its runs, remove its worktree), **Update with the base**, **Merge the attempt**, and **Find tickets to start**, **Choose tickets to start** and
   **Start the ticket** (see [Pick up tickets](#pick-up-tickets)).
 - **Talk to agents**: **Tell the agent** messages the ticket's agent once it's between turns; an **Agent step** has a
   persona do a piece of work.

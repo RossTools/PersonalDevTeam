@@ -95,6 +95,8 @@ them, whatever a workflow asks.
 - **Labels that merge without approval**: tickets with one of these don't need it.
 - **An automated merge waits for green CI**: a workflow's or agent's merge waits for CI to pass on the latest commit,
   and goes back to the Coder when it fails (on by default).
+- **When to resolve conflicts**: **At merge time** (the default) or **Immediately**. See
+  [Conflicts](../using-pdt/review-and-merge.md#conflicts).
 
 **Merge through pull requests** (under **Review** on the same page) makes every merge go through the pull request, so
 nothing merges on your machine.

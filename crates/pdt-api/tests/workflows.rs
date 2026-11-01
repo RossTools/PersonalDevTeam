@@ -400,10 +400,12 @@ async fn a_dry_run_says_what_the_pr_notices_would_do() {
     assert_eq!(s, StatusCode::OK, "{r}");
     let run = &r["run"];
     assert_eq!(run["triggers"][0], json!({"node": "conflict", "matched": true, "reason": null}));
-    assert_eq!(run["steps"][1]["nodeId"], "asked", "never set to merge: just the notice");
-    assert_eq!(run["steps"][2]["nodeId"], "tell");
-    assert_eq!(run["steps"][2]["input"]["text"], "[PDT] fix it");
-    assert!(run["steps"][2]["output"]["would"].as_str().unwrap().contains("[PDT] fix it"), "{run}");
+    // No such attempt: nothing to leave for merge time.
+    assert_eq!((run["steps"][1]["nodeId"].as_str(), run["steps"][1]["port"].as_str()), (Some("defer"), Some("now")));
+    assert_eq!(run["steps"][2]["nodeId"], "asked", "never set to merge: just the notice");
+    assert_eq!(run["steps"][3]["nodeId"], "tell");
+    assert_eq!(run["steps"][3]["input"]["text"], "[PDT] fix it");
+    assert!(run["steps"][3]["output"]["would"].as_str().unwrap().contains("[PDT] fix it"), "{run}");
     assert!(env.state.store.waiting_session_messages().await.unwrap().is_empty(), "nothing was queued");
 
     // A closed ticket's merge doesn't tell the agent.
@@ -493,12 +495,16 @@ async fn a_dry_run_covers_each_case_of_a_pr_set_to_merge() {
     assert_eq!(path(&run), ["ci:out", "asked:false", "tell:sent"], "{run}");
 
     // Set to merge: CI failed, a conflict, the queue dropped it, the base moved: the Coder fixes it, then it merges.
-    let fix = ["count:out", "over:false", "fix:submitted", "remerge:queued", "merging:-"];
+    // (A notice with no kind isn't about the base, so PDT doesn't update the branch first.)
+    let fix = ["count:out", "over:false", "stale:false", "fix:submitted", "remerge:queued", "merging:-"];
     for (kind, node) in
         [("ci.run_failed", "ci"), ("pr.conflict", "conflict"), ("pr.queue_left", "queue"), ("pr.behind", "behind")]
     {
         let run = dry(kind, json!({"mergeRequested": true})).await;
-        let p = path(&run);
+        let mut p = path(&run);
+        if matches!(node, "conflict" | "behind") {
+            assert_eq!(p.remove(1), "defer:now", "{kind}: {run}");
+        }
         assert_eq!(p[..3], [format!("{node}:out"), "asked:true".into(), "busy:no".into()], "{kind}: {run}");
         assert_eq!(p[3..], fix, "{kind}: {run}");
         let step = run["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "fix").unwrap();
@@ -506,9 +512,18 @@ async fn a_dry_run_covers_each_case_of_a_pr_set_to_merge() {
         assert!(prompt.starts_with("[PDT] it failed") && prompt.contains("set to merge"), "{prompt}");
         assert!(step["output"]["would"].as_str().unwrap().contains("Coder (reused session)"), "{step}");
     }
+    // A queue drop (or a conflict): PDT updates the branch with its base first; up to date (as a dry run says), the
+    // Coder fixes the cause.
+    let notice = json!({"key": "k", "kind": "queue_left", "text": "[PDT] dropped"});
+    let run = dry("pr.queue_left", json!({"mergeRequested": true, "notice": notice})).await;
+    assert_eq!(
+        path(&run)[3..],
+        ["count:out", "over:false", "stale:true", "update:current", "fix:submitted", "remerge:queued", "merging:-"],
+        "{run}"
+    );
     // An agent is on it already: it hears the news instead of a second step.
     let run = dry("pr.conflict", json!({"mergeRequested": true, "agentWorking": true})).await;
-    assert_eq!(path(&run), ["conflict:out", "asked:true", "busy:yes", "tell:sent"], "{run}");
+    assert_eq!(path(&run), ["conflict:out", "defer:now", "asked:true", "busy:yes", "tell:sent"], "{run}");
 
     // CI passes with auto-merge off: merge again. With it on, in the queue, or an agent still on it: nothing.
     let run = dry("ci.run_passed", json!({"mergeRequested": true, "notice": null})).await;

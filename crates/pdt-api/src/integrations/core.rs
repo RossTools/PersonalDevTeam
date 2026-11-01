@@ -48,6 +48,8 @@ impl Integration for Core {
             Box::new(brief::Read),
             Box::new(merge::Merge),
             Box::new(attempt::AgentWorking),
+            Box::new(conflicts::DeferConflict),
+            Box::new(conflicts::UpdateBase),
         ]
     }
 

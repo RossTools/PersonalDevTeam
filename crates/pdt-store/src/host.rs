@@ -1,7 +1,7 @@
 use crate::{Store, StoreError};
 use pdt_core::host::{CredentialPolicy, HostSettings};
 use pdt_core::integration::IntegrationSettings;
-use pdt_core::policy::{AutoStart, AutoStartOrder, MergeBy, ProjectPolicy, TriageApproval};
+use pdt_core::policy::{AutoStart, AutoStartOrder, MergeBy, ProjectPolicy, ResolveConflicts, TriageApproval};
 use std::collections::BTreeMap;
 
 const HOST_KEY: &str = "host";
@@ -190,6 +190,12 @@ impl Store {
         else {
             return Ok(ProjectSettings::default());
         };
+        // Past the 16 columns a row tuple can hold.
+        let (resolve,): (String,) =
+            sqlx::query_as("SELECT resolve_conflicts FROM project_settings WHERE project_id = ?")
+                .bind(project_id)
+                .fetch_one(&self.pool)
+                .await?;
         let agent_credentials = match creds {
             Some(c) => Some(
                 CredentialPolicy::parse(&c).ok_or_else(|| StoreError::Corrupt(format!("credential policy {c:?}")))?,
@@ -221,6 +227,8 @@ impl Store {
                 require_green_ci,
                 triage_approval: TriageApproval::parse(&triage)
                     .ok_or_else(|| StoreError::Corrupt(format!("triage approval {triage:?}")))?,
+                resolve_conflicts: ResolveConflicts::parse(&resolve)
+                    .ok_or_else(|| StoreError::Corrupt(format!("resolve conflicts {resolve:?}")))?,
             },
             integrations,
         })
@@ -231,8 +239,8 @@ impl Store {
             "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
              merge_via_pr, agent_permission_mode, merge_by, require_approval, max_running_attempts, auto_start, \
              approval_exempt_labels, pm_acts, integration_settings, start_delay_seconds, require_green_ci, \
-             auto_start_order, triage_approval) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             auto_start_order, triage_approval, resolve_conflicts) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(project_id) DO UPDATE SET \
              run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
              agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr, \
@@ -241,7 +249,8 @@ impl Store {
              auto_start = excluded.auto_start, approval_exempt_labels = excluded.approval_exempt_labels, \
              pm_acts = excluded.pm_acts, integration_settings = excluded.integration_settings, \
              start_delay_seconds = excluded.start_delay_seconds, require_green_ci = excluded.require_green_ci, \
-             auto_start_order = excluded.auto_start_order, triage_approval = excluded.triage_approval",
+             auto_start_order = excluded.auto_start_order, triage_approval = excluded.triage_approval, \
+             resolve_conflicts = excluded.resolve_conflicts",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
@@ -260,6 +269,7 @@ impl Store {
         .bind(s.policy.require_green_ci)
         .bind(s.policy.auto_start_order.as_str())
         .bind(s.policy.triage_approval.as_str())
+        .bind(s.policy.resolve_conflicts.as_str())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -474,6 +484,7 @@ mod tests {
                 start_delay_seconds: 30,
                 require_green_ci: false,
                 triage_approval: pdt_core::policy::TriageApproval::Off,
+                resolve_conflicts: pdt_core::policy::ResolveConflicts::Immediately,
             },
             integrations: [
                 ("tracker", json!({"connection": "work", "scope": "project = ABC", "done": "Close"})),

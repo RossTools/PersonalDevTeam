@@ -115,6 +115,17 @@ Actions, GitLab CI, the local forge's command, Buildkite), into memory. What cha
 from the merge queue, a merge) is logged as events, which the built-in PR notices workflow turns into messages to the
 agent.
 
+**Conflicts at merge time.** A conflict is fixed once, when the ticket is next to merge. PR notices' first step on a
+conflict or a moved base, `attempt.defer_conflict` (`workflow/nodes/conflicts.rs`, the rule is pdt-core
+`merge_update::defers`), leaves it for merge time while the ticket's Pipeline stage is before the merge and the
+project's `resolve_conflicts` policy says so: it records a `merge_update` ticket event and sets the attempt's in-memory
+`mergeUpdate` (kept in `github.rs`'s `PrWatch`, like `pr`). The Pipeline's merge, and PR notices' fix of a pull request
+set to merge after a conflict or a queue drop, start with `attempt.update_base`: in the attempt's worktree it fetches
+the base, merges it (pdt-git `update.rs`, with `rerere`), takes the base's side of files a `[[merge.regenerate]]` rule
+covers and runs the rule, commits, and pushes once; real conflicts leave the merge in progress and go to an agent step
+with the files, hunks and merged-since subjects (`merge_update::conflict_message`). Each result is a `merge_update`
+event (`how`: deferred, clean, regenerated, conflict, agent).
+
 **Review.** The Changes view diffs the worktree against its merge base with the base branch (pdt-git `review.rs`;
 each file says whether it is uncommitted, and generated: `linguist-generated` in `.gitattributes` or a lockfile). The
 web view shows every file on one scrolling page (`ChangesView` → a `FileSection` per file): a file's diff is drawn

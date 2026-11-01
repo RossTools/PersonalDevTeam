@@ -55,6 +55,8 @@ pub(crate) struct PrWatch {
     /// Attempts whose merge the forge refused to hold although the repository allows auto-merge (checks it doesn't
     /// require, PDT-297): PDT holds them.
     held: HashSet<String>,
+    /// Where each attempt is with its base's conflicts (PDT-328): `attempt.mergeUpdate`.
+    merge_update: HashMap<String, pdt_core::merge_update::MergeUpdateStatus>,
 }
 
 /// PDT holds the attempt's merge (PDT-297): the forge refused to ([`pdt_forge::ForgeError::NotReady`]).
@@ -344,9 +346,27 @@ impl PrWatch {
 
 fn decorate_attempt(w: &PrWatch, a: &mut AttemptSummary) {
     a.pr = w.by_attempt.get(&a.id).cloned();
+    use pdt_core::merge_update::MergeUpdateStatus;
+    // A deferred conflict shows while the pull request still conflicts.
+    let conflicting =
+        a.pr.as_ref().is_some_and(|p| p.state == PrState::Open && p.mergeable == pdt_core::pr::Mergeable::Conflicting);
+    a.merge_update = w.merge_update.get(&a.id).copied().filter(|s| *s != MergeUpdateStatus::Deferred || conflicting);
     if a.pr.as_ref().is_none_or(|p| p.state != PrState::Open) {
         a.ci = w.branch_ci.get(&a.id).cloned();
     }
+}
+
+/// Sets (or, None, clears) where the attempt is with its base's conflicts (PDT-328).
+pub(crate) fn set_merge_update(
+    st: &AppState,
+    attempt_id: &str,
+    status: Option<pdt_core::merge_update::MergeUpdateStatus>,
+) {
+    let mut w = watch(st);
+    match status {
+        Some(s) => w.merge_update.insert(attempt_id.to_string(), s),
+        None => w.merge_update.remove(attempt_id),
+    };
 }
 
 /// The attempt's pull request as pdtd last saw it.
@@ -1313,6 +1333,7 @@ mod tests {
                 workspace_id: None,
                 pr: None,
                 ci: None,
+                merge_update: None,
             },
             ticket_id: "t".into(),
             ticket_key: "P-1".into(),

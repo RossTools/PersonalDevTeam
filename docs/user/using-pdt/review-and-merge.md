@@ -79,7 +79,8 @@ A worktree with uncommitted changes is never thrown away without asking.
 
 On GitHub projects, each ticket in progress shows its pull request: a badge on its card and in the Sessions sidebar,
 and details in the ticket's **Attempt** section. The badge reads **Draft**, open with its CI result, **Auto-merge on**,
-**Merging when CI passes**, **In queue**, **CI failed**, **Conflict**, **Queue failed**, **Merged** or **Closed**; the
+**Merging when CI passes**, **In queue**, **CI failed**, **Conflict**, **Conflict (deferred)**, **Updating**,
+**Resolving conflicts**, **Queue failed**, **Merged** or **Closed**; the
 details list each CI run and its failed jobs, with links.
 
 PDT checks GitHub about once a minute (and when you open the ticket). If it can't reach GitHub, the badge shows a
@@ -88,8 +89,9 @@ warning and the details say when it last checked.
 When a pull request runs into trouble, PDT tells the agent working on it, which fixes it and pushes:
 
 - **CI failed**: the agent gets the failed jobs and reads their logs;
-- **a conflict** with the base branch: it merges the base in and resolves it;
-- **dropped from the merge queue**, or **behind** its base while waiting to merge: it brings the branch up to date.
+- **a conflict** with the base branch: resolved once, at merge time (see [Conflicts](#conflicts));
+- **dropped from the merge queue**, or **behind** its base while waiting to merge: PDT brings the branch up to date
+  itself first, and the agent gets only what's left.
 
 A pull request that was set to merge is set to merge again after the fix. If no agent is running on the ticket, you
 get the news instead, as a ticket comment and an [Inbox](the-inbox.md) item. This is the **PR notices** workflow; turn
@@ -97,13 +99,29 @@ it off in **Workflows** to handle these yourself.
 
 ## Conflicts
 
-A conflict means the base branch changed the same lines as the ticket's branch.
+A conflict means the base branch changed the same lines as the ticket's branch. The base keeps moving while a ticket
+is worked on, so conflicts are fixed once, when the ticket is next to merge, not each time the base moves.
 
-- With a pull request, the badge shows **Conflict** and the agent is told, as above.
-- Merging locally, the **Merge…** dialog lists the files under **The merge conflicts**; **Send to agent** asks the
-  agent to merge the base in and resolve them.
+- **Before the merge** (while the ticket is in Code, Review, QA or Accept), a conflict is shown on the ticket as
+  **Conflicts with main (deferred)** and recorded on its **Activity**, but its agent isn't interrupted. The Reviewer
+  and QA work on the branch as it is.
+- **At the merge**, the Pipeline first brings the branch up to date (**Updating with main…**): PDT merges the base in
+  itself and pushes once.
+  - No conflicts: it merges, with one CI run.
+  - Only generated files conflict (lockfiles, generated code): PDT takes the base's version, runs the command you set
+    for them, and commits. See [Generated files at merge time](../automation/run-configuration.md#generated-files-at-merge-time).
+  - Real conflicts: only then does an agent get them (**Resolving conflicts (agent)**), with the files, the conflicting
+    lines and the tickets merged into the base since. It resolves them, runs the checks and pushes.
+- The same happens when the merge queue drops a pull request, or it falls behind while waiting to merge.
 
-Or just tell the agent in its session.
+The ticket's **Activity** says how each update went: merged cleanly, regenerated, or resolved by the agent. Git
+remembers each resolution (`git rerere`), so a conflict resolved once resolves itself the next time.
+
+To have the agent told as soon as a conflict appears instead, set **When to resolve conflicts** to **Immediately** in
+the project's settings, under **Pipeline and policies**.
+
+Merging locally, the **Merge…** dialog lists the files under **The merge conflicts**; **Send to agent** asks the agent
+to merge the base in and resolve them. Or just tell the agent in its session.
 
 ## On a phone
 

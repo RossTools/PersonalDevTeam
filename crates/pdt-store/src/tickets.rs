@@ -251,6 +251,7 @@ fn to_attempt(r: &SqliteRow) -> Result<AttemptSummary, StoreError> {
         workspace_id: r.try_get("workspace_id")?,
         pr: None,
         ci: None,
+        merge_update: None,
     })
 }
 

@@ -3,6 +3,7 @@ import type { AutoStart } from "./AutoStart";
 import type { AutoStartOrder } from "./AutoStartOrder";
 import type { CredentialPolicy } from "./CredentialPolicy";
 import type { MergeBy } from "./MergeBy";
+import type { ResolveConflicts } from "./ResolveConflicts";
 import type { TriageApproval } from "./TriageApproval";
 
 /**
@@ -44,6 +45,11 @@ requireGreenCi?: boolean,
  * Tickets triage drafts wait for Approve or Reject in the Inbox (`inbox`), or not (`off`) (PDT-225).
  */
 triageApproval?: TriageApproval, 
+/**
+ * When conflicts with the base are resolved: `merge_time` (once, when the ticket is next to merge) or
+ * `immediately` (its agent is told at once) (PDT-328).
+ */
+resolveConflicts?: ResolveConflicts, 
 /**
  * Integration settings by integration id: each one named is set (keys left out keep their values), null or a
  * `connection` of "" unlinks it, and integrations not named are kept.

@@ -75,6 +75,9 @@ queue), and the Coder's fix is large enough to want a review before it merges. R
 yet (`git log @{u}..`) and the branch's diff against its base, against the ticket. Put each finding on its line \
 (`comments` in `submit_outcome`).";
 
+const RESOLVE_PROMPT: &str = "{{steps.update.message}}\n\nThis pull request was set to merge. Once you push, PDT sets \
+it to merge again: don't turn on auto-merge or merge it yourself.";
+
 const PUSH_PROMPT: &str = "The Reviewer approved your fix. Push it (run the checks first if anything changed since); \
 PDT then gets the pull request merging again.";
 
@@ -137,6 +140,16 @@ fn pr_notices() -> WorkflowDoc {
             cond("{{trigger.mergeRequested}}", "truthy", None),
             cond("{{trigger.mergeRefused}}", "truthy", None)]}),
         ),
+        // Conflicts are fixed once, at merge time (PDT-328): before the merge step they are recorded, not sent.
+        node(
+            "defer",
+            "attempt.defer_conflict",
+            140,
+            0,
+            "Resolve at merge time?",
+            json!({"attempt": "{{trigger.attemptId}}", "notice": "{{trigger.notice.kind}}"}),
+        ),
+        node("later", "end", 280, 0, "Resolved at merge time", json!({"quiet": true})),
         node(
             "busy",
             "attempt.agent_working",
@@ -174,6 +187,34 @@ fn pr_notices() -> WorkflowDoc {
                 "PR notices stopped getting PR #{{{{trigger.pr}}}} merging again after {FIX_TRIES} tries: it failed again \
              ({{{{trigger.notice.text}}}}). Fix it and merge it yourself; its later notices still go to the agent."
             )),
+        ),
+        // The base first, with no agent (PDT-328): a conflict or a queue drop may need only the base merged in.
+        node(
+            "stale",
+            "condition",
+            1400,
+            -280,
+            "About the base?",
+            json!({"conditions": [
+            cond("{{trigger.notice.kind}}", "in", Some(json!(["conflict", "queue_left", "behind"])))]}),
+        ),
+        node(
+            "update",
+            "attempt.update_base",
+            1680,
+            -420,
+            "Update with the base",
+            json!({"attempt": "{{trigger.attemptId}}"}),
+        ),
+        node(
+            "resolve",
+            "agent",
+            1960,
+            -420,
+            "Resolve the conflicts",
+            json!({
+            "persona": "Coder", "prompt": RESOLVE_PROMPT, "session": "reuse",
+            "outcomes": [{"id": "submitted", "description": "the conflicts are resolved, checked and pushed"}]}),
         ),
         node(
             "fix",
@@ -296,8 +337,12 @@ fn pr_notices() -> WorkflowDoc {
     let e = |from: &str, port: &str, to: &str| {
         if port.is_empty() { json!({"from": from, "to": to}) } else { json!({"from": from, "port": port, "to": to}) }
     };
-    let mut edges: Vec<_> = ["ci", "conflict", "queue", "behind"].iter().map(|f| e(f, "", "asked")).collect();
+    let mut edges: Vec<_> = ["ci", "queue"].iter().map(|f| e(f, "", "asked")).collect();
     edges.extend([
+        e("conflict", "", "defer"),
+        e("behind", "", "defer"),
+        e("defer", "deferred", "later"),
+        e("defer", "now", "asked"),
         e("pr_merged", "", "tell"),
         e("merged", "", "tell"),
         e("passed", "", "remerge"),
@@ -307,7 +352,16 @@ fn pr_notices() -> WorkflowDoc {
         e("busy", "no", "count"),
         e("count", "", "over"),
         e("over", "true", "first_over"),
-        e("over", "false", "fix"),
+        e("over", "false", "stale"),
+        e("stale", "true", "update"),
+        e("stale", "false", "fix"),
+        e("update", "updated", "remerge"),
+        e("update", "conflict", "resolve"),
+        e("update", "current", "fix"),
+        e("update", "skipped", "fix"),
+        e("resolve", "submitted", "remerge"),
+        e("resolve", "timeout", "stuck"),
+        e("resolve", "stopped", "stuck"),
         e("first_over", "true", "limit_note"),
         e("first_over", "false", "tell"),
         e("limit_note", "", "tell"),
@@ -335,10 +389,13 @@ fn pr_notices() -> WorkflowDoc {
     doc(json!({
         "name": "PR notices",
         "description": "Tells the attempt's agent when CI fails, its pull request conflicts with the base, the merge \
-                        queue drops it, or it merges. Each notice once; it waits until the agent is idle and nobody \
+                        queue drops it, or it merges. A conflict while the ticket is in code, review, QA or accept \
+                        waits for merge time (unless the project resolves conflicts immediately): it is recorded on \
+                        the ticket, not sent. Each notice once; it waits until the agent is idle and nobody \
                         is typing, and lands on the ticket's timeline; one that comes while a Coder's pass sent \
                         back by review or QA waits goes in with it, after the findings. A pull request that was set to merge gets an \
-                        agent step instead (the attempt's Coder session, or a new one): it fixes the cause and pushes, \
+                        agent step instead (the attempt's Coder session, or a new one), after PDT merges the base in itself \
+                        for a conflict or a queue drop (an agent gets only the conflicts PDT can't resolve): it fixes the cause and pushes, \
                         with a Reviewer first when it calls the fix large, and auto-merge goes back on, also when CI \
                         passes again with it off; a workflow's merge refused for a conflict counts too. After 3 tries \
                         on one attempt it stops and comments on the ticket. A notice with no agent session to tell \

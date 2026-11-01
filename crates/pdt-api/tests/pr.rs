@@ -283,7 +283,8 @@ async fn a_removal_from_the_merge_queue_puts_an_agent_on_it_even_when_never_seen
     let runs = notice_runs(&env).await;
     assert_eq!(runs.len(), 1, "{runs:?}");
     assert_eq!(&path(&runs[0])[..5], ["queue:out", "asked:true", "busy:no", "count:out", "over:false"]);
-    assert_eq!(path(&runs[0])[5], "fix:-", "the agent is on it");
+    // PDT merges the base in first (here GitHub can't be reached, so it can't).
+    assert_eq!(path(&runs[0])[5..8], ["stale:true", "update:skipped", "fix:-"], "the agent is on it");
     let step = env.state.store.active_agent_steps().await.unwrap().pop().unwrap();
     assert_eq!((step.session_id.as_deref(), step.node_id.as_str()), (Some(env.session.as_str()), "fix"));
     assert!(pr_events(&env).await.is_empty(), "not a bare notice");
@@ -864,7 +865,7 @@ async fn a_pr_set_to_merge_is_fixed_and_merges_again() {
     submit(&env, &env.session, "submitted").await;
     let r = finished_run(&env, 1).await;
     assert_eq!(r["status"], "succeeded", "{r}");
-    assert_eq!(path(&r)[5..], ["fix:submitted", "remerge:queued", "merging:-"], "{r}");
+    assert_eq!(path(&r)[5..], ["stale:false", "fix:submitted", "remerge:queued", "merging:-"], "{r}");
     assert_eq!(merges(&env), 1, "already merging");
     assert!(pr_events(&env).await.is_empty(), "the step, not a second notice");
 
@@ -889,7 +890,16 @@ async fn a_pr_set_to_merge_is_fixed_and_merges_again() {
     let p = path(&r);
     assert_eq!(
         p[5..],
-        ["fix:review", "review:approved", "push:submitted", "remerge:refused", "ci_wait:true", "after_ci:-"],
+        [
+            "stale:true",
+            "update:skipped",
+            "fix:review",
+            "review:approved",
+            "push:submitted",
+            "remerge:refused",
+            "ci_wait:true",
+            "after_ci:-"
+        ],
         "{p:?}"
     );
     assert_eq!(merges(&env), 1, "not while CI runs");
@@ -929,7 +939,7 @@ async fn a_pr_set_to_merge_is_fixed_and_merges_again() {
     pdt_api::refresh_prs(&env.state).await;
     let r = finished_run(&env, 6).await;
     let p = path(&r);
-    assert_eq!(p[4..8], ["over:true", "first_over:true", "limit_note:out", "tell:sent"], "{p:?}");
+    assert_eq!(p[5..9], ["over:true", "first_over:true", "limit_note:out", "tell:sent"], "{p:?}");
     assert!(comments(&env).await.iter().any(|c| c.contains("after 3 tries")), "{:?}", comments(&env).await);
     let told = pr_events(&env).await;
     assert_eq!((told.len(), told[0]["data"]["notice"].as_str()), (1, Some("conflict")), "{told:?}");
@@ -1021,7 +1031,7 @@ async fn an_unheard_conflict_waits_in_the_inbox_until_it_is_fixed() {
     let run = finished_run(&env, 1).await;
     assert_eq!(
         path(&run),
-        ["conflict:out", "asked:false", "tell:untold", "unheard:true", "inbox:added", "unheard_note:out"],
+        ["conflict:out", "defer:now", "asked:false", "tell:untold", "unheard:true", "inbox:added", "unheard_note:out"],
         "{run}"
     );
     let notes: Vec<String> = comments(&env).await.into_iter().filter(|c| c.contains("no agent session")).collect();
@@ -1046,7 +1056,7 @@ async fn an_unheard_conflict_waits_in_the_inbox_until_it_is_fixed() {
     assert_eq!(second["workflowId"], json!(wf));
     // Nobody was told, so its key is not spent (PDT-129): it tries again, still untold, and the Inbox item is made
     // once per key.
-    assert_eq!(path(&second)[2..], ["tell:untold", "unheard:true", "inbox:skipped"], "{second}");
+    assert_eq!(path(&second)[3..], ["tell:untold", "unheard:true", "inbox:skipped"], "{second}");
     assert_eq!(comments(&env).await.iter().filter(|c| c.contains("no agent session")).count(), 1);
     assert_eq!(notice_items(&env).await.len(), 1);
 
@@ -1121,7 +1131,7 @@ async fn auto_merge_turned_off_by_hand_forgets_a_refused_merge() {
     env.gh.set_pr(BRANCH, Some(conflicting));
     pdt_api::refresh_prs(&env.state).await;
     let run = finished_run(&env, 1).await;
-    assert_eq!(path(&run)[..3], ["conflict:out", "asked:false", "tell:sent"], "{run}");
+    assert_eq!(path(&run)[..4], ["conflict:out", "defer:now", "asked:false", "tell:sent"], "{run}");
     assert_eq!(merges(&env), 0);
     env.state.ptys.shutdown().await;
 }
