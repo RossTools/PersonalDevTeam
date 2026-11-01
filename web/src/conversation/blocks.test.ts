@@ -65,6 +65,56 @@ describe('buildBlocks', () => {
     expect(blocks[0].type === 'group' && blocks[0].nodes).toHaveLength(3);
   });
 
+  // Tools, the answer, then more tools and a closing line: the answer was commentary (a tool call followed it).
+  const answerTurn = (): ConversationEvent[] => [
+    turn(1, 'started'),
+    ev(2, call('a', 'Bash', 'gh cache list')),
+    ev(3, { kind: 'agent_message', id: 'n', markdown: 'Checking pricing…', phase: 'commentary' }),
+    ev(4, call('b', 'WebSearch', 'pricing')),
+    ev(5, call('c', 'WebSearch', 'r2 pricing')),
+    ev(6, { kind: 'agent_message', id: 'm', markdown: 'We are at the limit.\n\n| Option | Price |\n| --- | --- |\n| A | $1 |', phase: 'commentary' }),
+    ev(7, call('d', 'mcp__pdt__add_ticket_comment', '')),
+    ev(8, call('e', 'mcp__pdt__get_ticket', '')),
+    ev(9, { kind: 'agent_message', id: 'f', markdown: 'Added to the ticket.', phase: 'final' }),
+    turn(10, 'ended'),
+  ];
+  const shape = (blocks: ReturnType<typeof buildBlocks>) =>
+    blocks.map((b) => (b.type === 'group' ? `group(${b.nodes.map((n) => n.row.seq).join(',')})` : `row(${b.node.row.seq})`));
+
+  it('never folds the answer into a tool group, only a one-line narration before a call', () => {
+    const blocks = buildBlocks(answerTurn(), false);
+    expect(shape(blocks)).toEqual(['group(2,3,4,5)', 'row(6)', 'group(7,8)', 'row(9)', 'row(10)']);
+    const summaries = blocks.flatMap((b) => (b.type === 'group' ? [summarizeTools(b.calls)] : []));
+    expect(summaries).toEqual(['Ran 1 command, looked up 2 pages', 'Used 2 tools']);
+  });
+
+  it('keeps commentary at top level when no tool call follows it directly', () => {
+    const rows = [
+      turn(1, 'started'),
+      ev(2, call('a', 'Bash', 'ls')),
+      ev(3, call('b', 'Bash', 'pwd')),
+      ev(4, { kind: 'agent_message', id: 'c', markdown: 'short', phase: 'commentary' }),
+      ev(5, { kind: 'reasoning', summary: 'thinking' }),
+      ev(6, call('c', 'Bash', 'git status')),
+      turn(7, 'ended'),
+    ];
+    expect(shape(buildBlocks(rows, false))).toEqual(['group(2,3)', 'row(4)', 'row(5)', 'row(6)', 'row(7)']);
+  });
+
+  it('shows text at top level while the turn streams, and the same structure once it ends and on reload', () => {
+    const all = answerTurn();
+    for (let n = 2; n < all.length; n++) {
+      const live = buildBlocks(all.slice(0, n), true);
+      for (const b of live) {
+        if (b.type === 'group') expect(b.nodes.every((x) => x.row.event.kind !== 'agent_message' || x.row.seq === 3)).toBe(true);
+      }
+      // Every row seen so far is shown, in order.
+      expect(live.flatMap((b) => (b.type === 'group' ? b.nodes.map((x) => x.row.seq) : [b.node.row.seq])))
+        .toEqual(all.slice(1, n).map((r) => r.seq));
+    }
+    expect(shape(buildBlocks(all, true))).toEqual(shape(buildBlocks(all, false)));
+  });
+
   it('keeps calls separate while their turn runs', () => {
     const rows = [turn(1, 'started'), ev(2, call('a', 'Bash', 'ls')), ev(3, call('b', 'Bash', 'pwd', 'running'))];
     expect(buildBlocks(rows, true).map((b) => b.type)).toEqual(['row', 'row']);
