@@ -269,6 +269,12 @@ jobs:
           bundles: app
           release: "true"
           version: ${{ needs.nightly.outputs.version }}
+          google-client-id: ${{ secrets.PDT_GOOGLE_CLIENT_ID }}
+          google-client-secret: ${{ secrets.PDT_GOOGLE_CLIENT_SECRET }}
+          google-agent-client-id: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_ID }}
+          google-agent-client-secret: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET }}
+          google-picker-key: ${{ secrets.PDT_GOOGLE_PICKER_KEY }}
+          google-project-number: ${{ secrets.PDT_GOOGLE_PROJECT_NUMBER }}
           signing-p12: ${{ secrets.MACOS_SIGNING_P12 }}
           signing-password: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
           notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
@@ -294,6 +300,12 @@ jobs:
           bundles: nsis
           release: "true"
           version: ${{ needs.nightly.outputs.version }}
+          google-client-id: ${{ secrets.PDT_GOOGLE_CLIENT_ID }}
+          google-client-secret: ${{ secrets.PDT_GOOGLE_CLIENT_SECRET }}
+          google-agent-client-id: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_ID }}
+          google-agent-client-secret: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET }}
+          google-picker-key: ${{ secrets.PDT_GOOGLE_PICKER_KEY }}
+          google-project-number: ${{ secrets.PDT_GOOGLE_PROJECT_NUMBER }}
 
   bundle-linux:
     name: bundle (linux, ${{ matrix.arch }})
@@ -322,6 +334,12 @@ jobs:
           bundles: linux
           release: "true"
           version: ${{ needs.nightly.outputs.version }}
+          google-client-id: ${{ secrets.PDT_GOOGLE_CLIENT_ID }}
+          google-client-secret: ${{ secrets.PDT_GOOGLE_CLIENT_SECRET }}
+          google-agent-client-id: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_ID }}
+          google-agent-client-secret: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET }}
+          google-picker-key: ${{ secrets.PDT_GOOGLE_PICKER_KEY }}
+          google-project-number: ${{ secrets.PDT_GOOGLE_PROJECT_NUMBER }}
 
   publish:
     needs: [tag, nightly, bundle-macos, bundle-windows, bundle-linux]

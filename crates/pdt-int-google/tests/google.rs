@@ -7,10 +7,12 @@
 mod common;
 
 use common::{call, call_as_ui};
+use pdt_api::sdk::documents::as_agent;
 use pdt_api::{AppState, router};
 use pdt_forge::transport::Response;
 use pdt_forge::transport::testing::Recorded;
 use pdt_int_google::api::{DOCS, DRIVE, SHEETS};
+use pdt_int_google::builtin::BuiltIn;
 use pdt_int_google::oauth::{REVOKE_URL, TOKEN_URL, USERINFO_URL};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -28,11 +30,29 @@ struct Env {
 }
 
 async fn env() -> Env {
+    env_with(None).await
+}
+
+/// PDT's own clients, as a release build has them.
+fn built_in() -> BuiltIn {
+    BuiltIn::from_values([
+        Some("std-id"),
+        Some("std-secret"),
+        Some("agent-id"),
+        Some("agent-secret"),
+        Some("pk"),
+        Some("42"),
+    ])
+    .unwrap()
+}
+
+async fn env_with(built_in: Option<BuiltIn>) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut st = AppState::new(store, tmp.path().join("data"));
     let google = Arc::new(Recorded::new());
-    st.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(pdt_int_google::Google::new(google.clone()))]));
+    let plugin = pdt_int_google::Google::with_built_in(google.clone(), built_in);
+    st.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(plugin)]));
     st.integrations.enable(&["google".into()]);
     Env { app: router(st.clone(), None), google, st, _tmp: tmp }
 }
@@ -316,4 +336,222 @@ async fn an_account_is_deleted_even_when_google_cant_take_its_sign_in_back() {
     let (s, _) = call(&env.app, "DELETE", &format!("/api/connections/{id}"), None).await;
     assert_eq!(s, 204);
     assert_eq!(env.st.secrets.get(&pdt_int_google::accounts::sign_in_key(&id)).unwrap(), None);
+}
+
+/// The consent page's `state`, from its URL.
+fn state_of(url: &str) -> String {
+    url.split("state=").nth(1).unwrap().split('&').next().unwrap().to_string()
+}
+
+/// The last token exchange's body.
+fn exchange_body(env: &Env) -> String {
+    env.google.sent().into_iter().rfind(|r| r.url == TOKEN_URL).unwrap().body.unwrap()
+}
+
+/// With PDT's own clients: Sign in with Google adds the account (back through the website's page, from a Tailscale
+/// address), the picker gets PDT's key, agents need a permission of their own with the agentic client, never the
+/// user's token, and taking it away forgets only the agents' sign-in.
+#[tokio::test]
+async fn sign_in_with_pdts_own_clients_and_a_separate_permission_for_agents() {
+    let env = env_with(Some(built_in())).await;
+    let (_, v) = call(&env.app, "GET", "/api/google/client", None).await;
+    assert_eq!(v, json!({"builtIn": true}));
+
+    // Only the web app, and only from an address that looks like a PDT.
+    let from = json!({"origin": "http://100.101.102.103:7420"});
+    let (s, _) = call(&env.app, "POST", "/api/google/sign-in", Some(from.clone())).await;
+    assert_eq!(s, 403);
+    let (s, v) =
+        call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "https://evil.example"}))).await;
+    assert_eq!(s, 400, "{v}");
+    let (s, v) = call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(from)).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["redirectUri"], "https://pdt.dev/oauth/google");
+    let url = v["url"].as_str().unwrap();
+    assert!(url.contains("client_id=std-id") && url.contains("code_challenge="), "{url}");
+    let state = state_of(url);
+    // The website's page reads where to go back to from the state.
+    let (nonce, origin) = state.split_once('.').unwrap();
+    assert_eq!(origin, "aHR0cDovLzEwMC4xMDEuMTAyLjEwMzo3NDIw");
+
+    // A state PDT didn't issue (the same address, another nonce) is refused, and the real one still works after.
+    let forged = format!("{}x.{origin}", &nonce[1..]);
+    let (s, _) = call(&env.app, "GET", &format!("/api/google/callback?code=abc&state={forged}"), None).await;
+    assert_eq!(s, 400);
+    env.google.ok("POST", TOKEN_URL, r#"{"access_token":"u0","expires_in":3600,"refresh_token":"user-rt"}"#).ok(
+        "GET",
+        USERINFO_URL,
+        r#"{"email":"me@example.com"}"#,
+    );
+    let (s, _) = call(&env.app, "GET", &format!("/api/google/callback?code=abc&state={state}"), None).await;
+    assert_eq!(s, 200);
+    let body = exchange_body(&env);
+    for part in [
+        "client_id=std-id",
+        "client_secret=std-secret",
+        "code_verifier=",
+        "redirect_uri=https%3A%2F%2Fpdt.dev%2Foauth%2Fgoogle",
+    ] {
+        assert!(body.contains(part), "{part} in {body}");
+    }
+    let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
+    let id = v[0]["connectionId"].as_str().unwrap().to_string();
+    assert_eq!(v[0]["name"], "me@example.com", "named after the account: {v}");
+    assert_eq!(
+        (&v[0]["signedIn"], &v[0]["builtIn"], &v[0]["hasClient"], &v[0]["agents"], &v[0]["picker"]),
+        (&json!(true), &json!(true), &json!(true), &json!(false), &json!(true))
+    );
+    let (_, conns) = call(&env.app, "GET", "/api/connections", None).await;
+    assert_eq!(conns.as_array().unwrap().len(), 1);
+
+    // The picker has PDT's key and project.
+    env.google.ok("POST", TOKEN_URL, TOKEN);
+    let (s, v) = call_as_ui(&env.app, "GET", &format!("/api/google/accounts/{id}/picker"), None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!((&v["apiKey"], &v["appId"], &v["clientId"]), (&json!("pk"), &json!("42"), &json!("std-id")));
+
+    // The user's own reads use the user's token.
+    env.google.ok("GET", &format!("{DRIVE}/files/d1?"), DOC);
+    let (s, doc) = call(
+        &env.app,
+        "POST",
+        "/api/documents/import",
+        Some(json!({"provider": "google", "reference": format!("{id}/d1")})),
+    )
+    .await;
+    assert_eq!(s, 201, "{doc}");
+    let doc = doc["id"].as_str().unwrap().to_string();
+
+    // An agent may not, until the user allows agents: and never with the user's token.
+    let before = env.google.sent().len();
+    let (s, v) = as_agent(call(&env.app, "GET", &format!("/api/documents/{doc}/version"), None)).await;
+    assert_eq!(s, 502);
+    assert!(v["message"].as_str().unwrap().contains("Allow agents"), "{v}");
+    assert_eq!(env.google.sent().len(), before, "nothing went to Google");
+    let (s, v) = as_agent(call(&env.app, "GET", "/api/documents/providers/google/files", None)).await;
+    assert_eq!(s, 502);
+    assert!(v["message"].as_str().unwrap().contains("lets agents"), "{v}");
+
+    // Allowing agents: a consent of its own, with the agentic client, as the same account.
+    let (s, v) = call_as_ui(
+        &env.app,
+        "POST",
+        &format!("/api/google/accounts/{id}/sign-in"),
+        Some(json!({"origin": "https://mac.tail1.ts.net", "agent": true})),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let url = v["url"].as_str().unwrap();
+    assert!(url.contains("client_id=agent-id") && url.contains("login_hint=me%40example.com"), "{url}");
+    env.google.ok("POST", TOKEN_URL, r#"{"access_token":"x","expires_in":3600,"refresh_token":"other-rt"}"#).ok(
+        "GET",
+        USERINFO_URL,
+        r#"{"email":"someone-else@example.com"}"#,
+    );
+    let (s, _) = call(&env.app, "GET", &format!("/api/google/callback?code=c2&state={}", state_of(url)), None).await;
+    assert_eq!(s, 400, "another Google account can't be the agents'");
+    let (_, v) = call_as_ui(
+        &env.app,
+        "POST",
+        &format!("/api/google/accounts/{id}/sign-in"),
+        Some(json!({"origin": "https://mac.tail1.ts.net", "agent": true})),
+    )
+    .await;
+    env.google.ok("POST", TOKEN_URL, r#"{"access_token":"a0","expires_in":3600,"refresh_token":"agent-rt"}"#).ok(
+        "GET",
+        USERINFO_URL,
+        r#"{"email":"Me@example.com"}"#,
+    );
+    let state = state_of(v["url"].as_str().unwrap());
+    let (s, _) = call(&env.app, "GET", &format!("/api/google/callback?code=c3&state={state}"), None).await;
+    assert_eq!(s, 200);
+    assert!(exchange_body(&env).contains("client_secret=agent-secret"));
+    let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
+    assert_eq!(v[0]["agents"], true);
+
+    // An agent's call uses the agents' token, from their refresh token and the agentic client.
+    env.google.ok("POST", TOKEN_URL, r#"{"access_token":"agent-at","expires_in":3600}"#).ok(
+        "GET",
+        &format!("{DRIVE}/files/d1?"),
+        &DOC.replace("\"7\"", "\"8\""),
+    );
+    let (s, v) = as_agent(call(&env.app, "GET", &format!("/api/documents/{doc}/version"), None)).await;
+    assert_eq!((s.as_u16(), v["version"].as_str()), (200, Some("8")), "{v}");
+    let sent = env.google.sent();
+    let refresh = sent.iter().rfind(|r| r.url == TOKEN_URL).unwrap().body.clone().unwrap();
+    assert!(refresh.contains("refresh_token=agent-rt") && refresh.contains("client_id=agent-id"), "{refresh}");
+    let get = sent.last().unwrap();
+    assert!(get.headers.iter().any(|(k, v)| *k == "authorization" && v == "Bearer agent-at"));
+
+    // The user's calls still use the user's token.
+    env.google.ok("GET", &format!("{DRIVE}/files/d1?"), DOC);
+    call(&env.app, "GET", &format!("/api/documents/{doc}/version"), None).await;
+    let get = env.google.sent().pop().unwrap();
+    assert!(get.headers.iter().any(|(k, v)| *k == "authorization" && v == "Bearer at1"), "{:?}", get.headers);
+
+    // Taking the agents' permission away forgets their sign-in, without asking Google (which would sign the user out).
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/google/accounts/{id}/agents"), None).await;
+    assert_eq!(s, 403);
+    let (s, _) = call_as_ui(&env.app, "DELETE", &format!("/api/google/accounts/{id}/agents"), None).await;
+    assert_eq!(s, 204);
+    assert_eq!(env.st.secrets.get(&pdt_int_google::accounts::agent_key(&id)).unwrap(), None);
+    assert!(env.st.secrets.get(&pdt_int_google::accounts::sign_in_key(&id)).unwrap().is_some());
+    assert!(!env.google.urls().iter().any(|u| u.contains(REVOKE_URL)));
+    let (s, v) = as_agent(call(&env.app, "GET", &format!("/api/documents/{doc}/version"), None)).await;
+    assert_eq!(s, 502, "{v}");
+    let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
+    assert_eq!((&v[0]["signedIn"], &v[0]["agents"]), (&json!(true), &json!(false)));
+
+    // Signing in again as the same account keeps it one account.
+    let (_, v) =
+        call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "http://localhost:7421"}))).await;
+    env.google.ok("POST", TOKEN_URL, r#"{"access_token":"u1","expires_in":3600,"refresh_token":"user-rt2"}"#).ok(
+        "GET",
+        USERINFO_URL,
+        r#"{"email":"me@example.com"}"#,
+    );
+    let (s, _) = call(
+        &env.app,
+        "GET",
+        &format!("/api/google/callback?code=c4&state={}", state_of(v["url"].as_str().unwrap())),
+        None,
+    )
+    .await;
+    assert_eq!(s, 200);
+    let (_, conns) = call(&env.app, "GET", "/api/connections", None).await;
+    assert_eq!(conns.as_array().unwrap().len(), 1);
+}
+
+/// With its own OAuth client an account keeps signing in as before, through PDT's own callback, and agents use its
+/// sign-in; it can't ask for the agents' permission.
+#[tokio::test]
+async fn an_account_with_its_own_client_works_beside_pdts() {
+    let env = env_with(Some(built_in())).await;
+    let id = account(&env).await;
+    sign_in(&env, &id).await;
+    let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
+    assert_eq!((&v[0]["builtIn"], &v[0]["agents"]), (&json!(false), &json!(true)));
+    let (s, _) = call_as_ui(
+        &env.app,
+        "POST",
+        &format!("/api/google/accounts/{id}/sign-in"),
+        Some(json!({"origin": "http://127.0.0.1:7421", "agent": true})),
+    )
+    .await;
+    assert_eq!(s, 400);
+    // A connection with no client of its own is PDT's.
+    let (s, v) =
+        call(&env.app, "POST", "/api/connections", Some(json!({"name": "X", "kind": "google", "config": {}}))).await;
+    assert_eq!(s, 201, "{v}");
+}
+
+/// A build without PDT's clients offers only the user's own: no Sign in with Google for a new account.
+#[tokio::test]
+async fn without_pdts_clients_only_your_own() {
+    let env = env().await;
+    let (_, v) = call(&env.app, "GET", "/api/google/client", None).await;
+    assert_eq!(v, json!({"builtIn": false}));
+    let (s, v) =
+        call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "http://127.0.0.1:7420"}))).await;
+    assert_eq!(s, 400, "{v}");
 }

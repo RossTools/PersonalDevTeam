@@ -135,6 +135,11 @@ async fn agents_read_and_edit_docs_and_answer_their_comments() {
     let part = tool(&env, &id, "doc_read", json!({"document": doc, "heading": "Scope"})).await;
     assert_eq!(part["markdown"], "## Scope\n\nOld.", "{part}");
     assert_eq!(part["headings"], json!(["# Spec", "## Scope", "## Notes"]));
+    // The provider knows an agent's tool read it (Google then uses the account's agent permission), and the API not.
+    let agent_read = fake.reads_by_agent.lock().unwrap().pop();
+    assert_eq!(agent_read, Some(true));
+    call(&env.app, "GET", &format!("/api/documents/{doc}/content"), None).await;
+    assert_eq!(fake.reads_by_agent.lock().unwrap().pop(), Some(false));
 
     // Edits ask (the project doesn't let the PM act) and come back with a diff.
     let edits = json!({"document": doc, "edits": [

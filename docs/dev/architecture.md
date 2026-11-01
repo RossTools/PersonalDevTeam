@@ -330,10 +330,24 @@ IronCalc's bytes and diffs; a pdt-sheet test checks), and is loaded only when a 
 own view, so edits made at the provider (in Google's editor) show too.
 
 **Google.** An optional plugin (`crates/pdt-int-google`, pdtd's `google` feature), the `google` document provider.
-Each Google account is a `google` connection (the user's OAuth client ID in its config, the client secret as its
-secret, the picker's API key and project number, the folder for new files); signing in (`oauth.rs`: the authorization
-code flow with PKCE, the `drive.file` scope only) keeps the refresh token and email as a secret of their own
-(`connection:<id>:google`, `accounts.rs`), so editing the connection keeps them; deleting the connection runs `Integration::connection_deleted` (for every
+Each Google account is a `google` connection (the folder for new files, and, for the user's own OAuth client, its ID
+in the config, the client secret as its secret, the picker's API key and project number); signing in (`oauth.rs`: the
+authorization code flow with PKCE, the `drive.file` scope only) keeps the refresh token and email as a secret of their
+own (`connection:<id>:google`, `accounts.rs`), so editing the connection keeps them. A connection with no client ID
+uses PDT's own clients (`builtin.rs`), built in from `PDT_GOOGLE_*` (`option_env!`; the release and nightly bundle
+jobs pass the repository's secrets through `.github/actions/bundle`; a build without them offers only the user's own
+client, `GET /api/google/client`). Their only redirect URI is the website's `/oauth/google` page
+(`site/public/oauth/google.js`): `state` is `<nonce>.<base64url(origin)>`, the page forwards only to an origin that
+looks like a PDT (loopback, private and Tailscale addresses, `localhost`, `*.ts.net`: the same rule as
+`builtin::pdt_origin`, which pdtd applies before issuing one) and asks first, and the callback takes only a state it
+issued, traded with its PKCE verifier. Signing in with no account (`POST /api/google/sign-in`) adds the connection,
+named after the email, once Google says who it is. There are two clients, after Google's rule for apps that are
+partly an agent: the standard one for the user's own calls and the agentic one for agents' document tools.
+`pdt_api::sdk::documents::by_agent` (a task-local set around every agent tool call, `AnyAction::call`) tells the
+provider an agent is calling, and it then uses the account's agent sign-in (`connection:<id>:google-agent`, its own
+consent, `"agent": true` on the sign-in route) and never the user's; taking it away (`DELETE …/agents`) forgets it
+without calling Google's revoke, which would revoke every client of the project. An account with its own client has
+one sign-in, which agents use too. Deleting the connection runs `Integration::connection_deleted` (for every
 built integration with that kind, on or off), where Google revokes the token and forgets the sign-in. A document's reference is
 `<connection id>/<file id>`. `api.rs` is the client (an access token per account in memory, renewed once on a 401;
 Google's errors as `ProviderError`, a rate limit as `Busy`, which the API answers 429), over pdt-forge's blocking

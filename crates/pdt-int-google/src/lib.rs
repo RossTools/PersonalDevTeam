@@ -1,5 +1,6 @@
 //! Google (PDT-316): Google Docs and Sheets as PDT documents. Each Google account is a `google` connection, signed in
-//! with the user's own OAuth client and only the `drive.file` scope: PDT reaches the files it makes and those the user
+//! with PDT's own OAuth clients when the build has them (PDT-360, [`builtin`]) or the user's own, and only the
+//! `drive.file` scope: PDT reaches the files it makes and those the user
 //! picks in Google's file picker, nothing else in their Drive. Docs read as Markdown and change through the Docs API;
 //! Sheets read as cells with their formulas and change through the Sheets API (values, formulas, formats, conditional
 //! formats, validation, charts, sorting and filters); comments through Drive. The document page embeds Google's own
@@ -7,6 +8,7 @@
 
 pub mod accounts;
 pub mod api;
+pub mod builtin;
 pub mod docs;
 pub mod drive;
 pub mod oauth;
@@ -27,9 +29,14 @@ pub struct Google {
 }
 
 impl Google {
-    /// The plugin, reaching Google through `transport` (recorded answers in tests).
+    /// The plugin, reaching Google through `transport` (recorded answers in tests), with the clients this build has.
     pub fn new(transport: Arc<dyn Transport>) -> Self {
-        Self { shared: Arc::new(Shared::new(transport)) }
+        Self::with_built_in(transport, builtin::BuiltIn::from_build())
+    }
+
+    /// The plugin with PDT's own clients, or with none (only the user's own).
+    pub fn with_built_in(transport: Arc<dyn Transport>, built_in: Option<builtin::BuiltIn>) -> Self {
+        Self { shared: Arc::new(Shared::new(transport, built_in)) }
     }
 }
 
@@ -39,18 +46,35 @@ impl Integration for Google {
     }
 
     fn connection_kinds(&self) -> Vec<ConnectionKind> {
+        // With PDT's own clients, Sign in with Google adds an account; a connection made here is for an
+        // organization's own OAuth client.
+        let built_in = self.shared.built_in.is_some();
+        let setup = if built_in {
+            "One per Google account: Sign in with Google below adds it. Your organization blocks apps from outside? \
+             Add one with your own OAuth client from Google Cloud instead (Advanced). PDT sees only the files it makes \
+             and those you pick."
+        } else {
+            "One per Google account, with your own OAuth client from Google Cloud. Save it, then Sign in with Google \
+             below. PDT sees only the files it makes and those you pick."
+        };
         vec![ConnectionKind {
             id: KIND.into(),
             label: "Google account".into(),
             plural: "Google accounts".into(),
-            setup: "One per Google account, with your own OAuth client from Google Cloud. Save it, then Sign in with \
-                    Google below. PDT sees only the files it makes and those you pick."
-                .into(),
+            setup: setup.into(),
             description: "A Google account for Docs and Sheets (drive.file: only files PDT makes or you pick).".into(),
+            secret_optional: built_in,
             fields: vec![
                 ConfigField {
                     placeholder: Some("1234-abc.apps.googleusercontent.com".into()),
-                    hint: Some("The OAuth client's ID (Google Cloud → APIs & Services → Credentials).".into()),
+                    hint: Some(if built_in {
+                        "Your own OAuth client's ID (Google Cloud → APIs & Services → Credentials). Empty: PDT's own \
+                         sign-in."
+                            .into()
+                    } else {
+                        "The OAuth client's ID (Google Cloud → APIs & Services → Credentials).".into()
+                    }),
+                    optional: built_in,
                     ..ConfigField::new("clientId", "OAuth client ID")
                 },
                 ConfigField {
@@ -79,14 +103,18 @@ impl Integration for Google {
                 },
             ],
             secret_label: "OAuth client secret".into(),
-            secret_hint: "The OAuth client's secret, shown with its ID in Google Cloud.".into(),
+            secret_hint: if built_in {
+                "Your own OAuth client's secret, shown with its ID in Google Cloud. Only with your own client.".into()
+            } else {
+                "The OAuth client's secret, shown with its ID in Google Cloud.".into()
+            },
             ..Default::default()
         }]
     }
 
     fn check_connection_config(&self, _kind: &str, config: &Value) -> Result<(), String> {
         let s = |k: &str| config.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
-        if s("clientId").is_none() {
+        if s("clientId").is_none() && self.shared.built_in.is_none() {
             return Err("a Google account needs its OAuth client ID".into());
         }
         if let Some(f) = s("folder")
@@ -122,7 +150,10 @@ impl Integration for Google {
         Some(
             axum::Router::new()
                 .route("/google/accounts", get(routes::list))
+                .route("/google/client", get(routes::client))
+                .route("/google/sign-in", post(routes::start_new))
                 .route("/google/accounts/{id}/sign-in", post(routes::start).delete(routes::sign_out))
+                .route("/google/accounts/{id}/agents", axum::routing::delete(routes::forget_agents))
                 .route("/google/accounts/{id}/picker", get(routes::picker))
                 .route("/google/callback", get(routes::callback))
                 .layer(axum::Extension(self.shared.clone())),

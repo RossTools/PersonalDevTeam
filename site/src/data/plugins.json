@@ -630,10 +630,10 @@
             "Folder for new documents"
           ],
           "label": "Google account",
-          "secretHint": "The OAuth client's secret, shown with its ID in Google Cloud.",
+          "secretHint": "Your own OAuth client's secret, shown with its ID in Google Cloud. Only with your own client.",
           "secretLabel": "OAuth client secret",
-          "secretOptional": false,
-          "setup": "One per Google account, with your own OAuth client from Google Cloud. Save it, then Sign in with Google below. PDT sees only the files it makes and those you pick.",
+          "secretOptional": true,
+          "setup": "One per Google account: Sign in with Google below adds it. Your organization blocks apps from outside? Add one with your own OAuth client from Google Cloud instead (Advanced). PDT sees only the files it makes and those you pick.",
           "url": false,
           "urlHint": null,
           "urlOptional": false

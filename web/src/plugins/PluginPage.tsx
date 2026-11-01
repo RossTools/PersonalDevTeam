@@ -7,7 +7,7 @@ import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import { ConnectionDialog, connectionsKey } from '../connections/ConnectionDialog';
 import { ConnectionRow } from '../connections/ConnectionRow';
-import { GoogleSignIn } from '../documents/google';
+import { GoogleSignIn, useGoogleClient } from '../documents/google';
 import { ForgeLogin } from './ForgeLogin';
 import { CATEGORY_LABEL, connectionsOf, pluginsKey, stuckOn, type Plugin } from './model';
 import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch, usePlugins } from './parts';
@@ -58,6 +58,8 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
   const plugins = usePlugins();
   const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
   const sw = usePluginSwitch(plugins.data ?? []);
+  // With PDT's own Google sign-in, Sign in with Google adds an account (GoogleSignIn), not Add.
+  const googleBuiltIn = useGoogleClient(id === 'google').data?.builtIn === true;
   const [editing, setEditing] = useState<{ connection?: Connection; kind?: string } | null>(null);
   const check = useMutation({ mutationFn: () => api.checkIntegration(id), onSuccess: (next) => {
     qc.setQueryData(pluginsKey, next);
@@ -131,7 +133,7 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
         <Section
           label="Connections"
           description={p.enabled ? 'Secrets stay in this machine’s keychain.' : `Turn ${p.label} on to add connections. Those it has are kept while it is off.`}
-          actions={p.enabled && p.connectionKinds.map((k) => (
+          actions={p.enabled && !(p.id === 'google' && googleBuiltIn) && p.connectionKinds.map((k) => (
             <Button key={k.id} size="sm" variant="primary" onClick={() => setEditing({ kind: k.id })}>
               {p.connectionKinds.length > 1 ? `Add ${k.label}` : 'Add'}
             </Button>

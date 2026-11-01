@@ -32,6 +32,12 @@ org can open it).
   `src/data/plugins.json`, which pdtd's integrations tests write from the same code the app lists its plugins from
   (`cargo test -p pdtd`): never edit it by hand. CI's check that generated files are committed fails when it is
   stale. "Request a plugin" opens the `plugin.yml` issue template.
+- `src/pages/privacy.astro` is the privacy page (`/privacy/`, linked from the footer and Google's consent screen).
+  `public/oauth/google.html` (`/oauth/google`) is where Google's sign-in comes back to with PDT's own OAuth clients:
+  `public/oauth/google.js` reads the PDT to return to from OAuth's `state`, forwards only to an address that looks
+  like a PDT (the same rule as pdtd's, `crates/pdt-int-google/src/builtin.rs`) after asking, and loads and sends
+  nothing else (a strict Content-Security-Policy, no referrer). `src/oauth-google.test.mjs` tests its rules. Keep it a
+  static file: its address is the OAuth clients' registered redirect URI.
 - `public/install.sh` (macOS and Linux) and `public/install.ps1` (Windows) are the one-line install scripts, served
   from the site's root (`curl -fsSL https://pdt.dev/install.sh | sh`, `irm https://pdt.dev/install.ps1 | iex`). They
   pick the release from GitHub's API, check it against its `SHA256SUMS` and install it as the user docs' install page

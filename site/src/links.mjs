@@ -10,6 +10,7 @@ export function siteLinks(baseUrl) {
     features: `${home}features/`,
     plugins: `${home}plugins/`,
     docs: `${home}docs/`,
+    privacy: `${home}privacy/`,
     doc: (path) => `${home}docs/${path}/`,
     changelog: `${REPO}/blob/main/CHANGELOG.md`,
     github: REPO,

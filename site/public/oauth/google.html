@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Nothing from anywhere else, and the code in the address never leaves in a Referer. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex" />
+    <title>Return to PDT · PDT (Personal Dev Team)</title>
+    <link rel="icon" href="/pdt-favicon-16.svg" type="image/svg+xml" />
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0e0f12; color: #e7e8ec;
+        font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      main { max-width: 30rem; padding: 2rem; background: #17181d; border-radius: 12px; }
+      h1 { font-size: 1.25rem; margin: 0 0 0.75rem; }
+      p { margin: 0 0 1rem; color: #b4b6bf; }
+      code { color: #e7e8ec; font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+      button { font: inherit; padding: 0.5rem 1rem; border: 0; border-radius: 8px; background: #3561b8; color: #fff; cursor: pointer; }
+      a { color: #8fb0f0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <noscript><p>This page needs JavaScript to send you back to PDT.</p></noscript>
+      <section id="ask" hidden>
+        <h1>Return to PDT at <code id="where"></code>?</h1>
+        <p>Google signed you in. Continue only if this is the PDT you started from: on this computer, your network or
+          Tailscale.</p>
+        <button id="go" type="button">Return to PDT</button>
+      </section>
+      <section id="refused" hidden>
+        <h1>This sign-in can’t go back to PDT</h1>
+        <p>The link doesn’t come from a PDT sign-in, or names an address that isn’t a PDT. Start signing in again from
+          PDT: Settings → Plugins → Google.</p>
+      </section>
+      <p><a href="/privacy/">Privacy</a></p>
+    </main>
+    <script type="module" src="/oauth/google.js"></script>
+  </body>
+</html>

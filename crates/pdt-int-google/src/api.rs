@@ -23,6 +23,20 @@ pub struct Account {
     pub client_id: String,
     pub client_secret: String,
     pub refresh_token: String,
+    /// Signed in with PDT's agentic client, for an agent's document tools (PDT-360).
+    pub agent: bool,
+}
+
+impl Account {
+    /// What its access token is kept under: the agentic client's apart from the standard one's.
+    pub fn token_key(&self) -> String {
+        token_key(&self.connection_id, self.agent)
+    }
+}
+
+/// What a connection's access token is kept under, for its standard or agentic client.
+pub fn token_key(connection_id: &str, agent: bool) -> String {
+    if agent { format!("{connection_id}:agent") } else { connection_id.to_string() }
 }
 
 /// Access tokens by connection, with when they expire (ms).
@@ -69,7 +83,7 @@ impl<'a> Session<'a> {
     /// An access token: the one kept, else a new one from the refresh token.
     pub fn access_token(&self, renew: bool) -> Result<String, ProviderError> {
         let now = (self.now)();
-        if !renew && let Some(t) = self.tokens.get(&self.account.connection_id, now) {
+        if !renew && let Some(t) = self.tokens.get(&self.account.token_key(), now) {
             return Ok(t);
         }
         let t = oauth::refresh(self.transport, self.account).map_err(|e| match e {
@@ -81,7 +95,7 @@ impl<'a> Session<'a> {
             oauth::OauthError::Offline(m) => offline(&m),
             oauth::OauthError::Failed(m) => ProviderError::Failed(format!("Google's sign-in failed: {m}")),
         })?;
-        self.tokens.put(&self.account.connection_id, &t.access_token, now + t.expires_in * 1000);
+        self.tokens.put(&self.account.token_key(), &t.access_token, now + t.expires_in * 1000);
         Ok(t.access_token)
     }
 
@@ -102,7 +116,7 @@ impl<'a> Session<'a> {
     pub fn call_raw(&self, method: &'static str, url: &str, body: Body) -> Result<String, ProviderError> {
         let mut res = self.send(method, url, &body, &self.access_token(false)?)?;
         if res.status == 401 {
-            self.tokens.forget(&self.account.connection_id);
+            self.tokens.forget(&self.account.token_key());
             res = self.send(method, url, &body, &self.access_token(true)?)?;
         }
         if (200..300).contains(&res.status) {
@@ -185,6 +199,7 @@ pub(crate) mod tests {
             client_id: "cid".into(),
             client_secret: "csecret".into(),
             refresh_token: "rtoken".into(),
+            agent: false,
         }
     }
 

@@ -126,6 +126,23 @@ pub trait Action: Send + Sync + 'static {
     }
 }
 
+tokio::task_local! {
+    /// Set while an agent session's tool call runs (PDT-360).
+    static AGENT_TOOL: ();
+}
+
+/// Whether this runs inside an agent session's tool call (not the web app, the API or a workflow step): a document
+/// provider then acts as the agent, with the account's agent permission (Google's agentic client), never the user's.
+/// Read it before leaving the task (`spawn_blocking`, `spawn`).
+pub fn by_agent() -> bool {
+    AGENT_TOOL.try_with(|_| ()).is_ok()
+}
+
+/// Runs `f` as an agent's tool call ([`by_agent`]).
+pub async fn as_agent<F: std::future::Future>(f: F) -> F::Output {
+    AGENT_TOOL.scope((), f).await
+}
+
 /// An [`Action`] with its types erased, as the registry keeps it.
 pub trait AnyAction: Send + Sync {
     fn decl(&self) -> ToolDecl;
@@ -172,7 +189,8 @@ impl<A: Action> AnyAction for A {
                 a.insert("connection".into(), json!(conn.name));
             }
             let input: A::Input = crate::mcp::tools::args(args)?;
-            let out = self.run(&ActionCx { st: cx.st, via: Via::Tool, session: Some(cx.session) }, input).await?;
+            let cx = ActionCx { st: cx.st, via: Via::Tool, session: Some(cx.session) };
+            let out = as_agent(self.run(&cx, input)).await?;
             self.tool_output(out)
         })
     }
