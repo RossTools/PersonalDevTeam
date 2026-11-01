@@ -173,6 +173,66 @@ pub async fn recorded_launches(dir: &std::path::Path, name: &str, want: usize) -
     found
 }
 
+/// A launch [`recorded_launches`] gave, as its arguments on every OS: on Windows the raw `%*` line is split back
+/// into them ([`split_command_line`]).
+pub fn launch_args(launch: Vec<String>) -> Vec<String> {
+    if cfg!(windows) { launch.first().map(|l| split_command_line(l)).unwrap_or_default() } else { launch }
+}
+
+/// A Windows command line split into its arguments, as a program's C runtime splits it: whitespace separates them
+/// outside quotes; inside quotes `""` is a literal quote; `n` backslashes before a quote are `n / 2` backslashes,
+/// and an odd one escapes the quote.
+pub fn split_command_line(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let (mut quoted, mut started) = (false, false);
+    let chars: Vec<char> = line.trim_end_matches(['\r', '\n']).chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\\' => {
+                let n = chars[i..].iter().take_while(|c| **c == '\\').count();
+                i += n;
+                if chars.get(i) == Some(&'"') {
+                    cur.extend(std::iter::repeat_n('\\', n / 2));
+                    if n % 2 == 1 {
+                        cur.push('"');
+                        i += 1;
+                    }
+                } else {
+                    cur.extend(std::iter::repeat_n('\\', n));
+                }
+                started = true;
+                continue;
+            }
+            '"' if quoted && chars.get(i + 1) == Some(&'"') => {
+                cur.push('"');
+                i += 1;
+            }
+            '"' => {
+                quoted = !quoted;
+                started = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if started {
+                    out.push(std::mem::take(&mut cur));
+                    started = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                started = true;
+            }
+        }
+        i += 1;
+    }
+    if started {
+        out.push(cur);
+    }
+    out
+}
+
 /// Parks the test's idle conversation, retrying for up to 10 s: a turn's end is stored before the conversation's
 /// runtime state says the turn is over, so a test that saw the stored end can call park a moment too early.
 pub async fn park_once_idle(st: &pdt_api::AppState) {
