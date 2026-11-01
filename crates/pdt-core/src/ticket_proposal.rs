@@ -118,7 +118,7 @@ pub fn decision_text(key: &str, title: &str, decision: &Decision, note: Option<&
 /// What `create_ticket` tells an agent whose ticket became a proposal.
 pub fn created_note(key: &str) -> String {
     format!(
-        "{key} is a proposal: it waits in Draft, off the board, for the user to accept, merge or reject it in PDT's \
+        "{key} is a proposal: it waits in Draft, off the board, for the user to accept, mark as a duplicate or reject in PDT's \
          Inbox. You hear their decision (in this session if it is still open, else as a comment on the ticket you \
          work on). Don't move it or label it {AGENTIC_LABEL} yourself."
     )

@@ -129,6 +129,15 @@ pub(crate) fn lets_in(t: &TicketSummary, p: &pdt_core::ticket::ValidPatch) -> bo
     held_back(t) && pdt_core::ticket::boards(Some(t.stage), p.stage, &t.labels, p.labels.as_deref())
 }
 
+/// A change PDT's web client didn't send that would decide a ticket proposal (PDT-366): moving it out of Draft to an
+/// open stage, or labelling it agentic. An agent's curl counts as the user otherwise; this refuses it as an agent's.
+pub(crate) fn decides_proposal(t: &TicketSummary, p: &pdt_core::ticket::ValidPatch) -> Result<(), ApiError> {
+    let boards = pdt_core::ticket::boards(Some(t.stage), p.stage, &t.labels, p.labels.as_deref());
+    let moves = p.stage.is_some_and(|s| s != t.stage && !s.is_closed());
+    pdt_core::ticket_proposal::agent_gate(t.proposed, pdt_core::ticket::Actor::Agent, boards || moves, &t.key)
+        .map_err(|m| ApiError::new(StatusCode::FORBIDDEN, "ticket_proposal", m))
+}
+
 /// Whether a pdt-mcp call (`tool`, `input`) from a session is one PDT never answers for the user (PDT-201): the PM's
 /// `edit_ticket` letting an external ticket in.
 pub(crate) async fn needs_the_user(st: &AppState, s: &Session, tool: &str, input: &Value) -> bool {

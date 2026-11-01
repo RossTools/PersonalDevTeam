@@ -105,6 +105,15 @@ pub(crate) async fn start_ticket(
     if by == Starter::Api && crate::untrusted::held_back(&ticket.summary) {
         return Err(crate::untrusted::refused(&key));
     }
+    // A ticket proposal waits for the user's decision in the Inbox (PDT-366): neither auto-start nor an agent's curl
+    // starts it.
+    if by != Starter::User && ticket.summary.proposed {
+        return Err(ApiError::new(
+            axum::http::StatusCode::FORBIDDEN,
+            "ticket_proposal",
+            format!("{key} is a ticket proposal waiting for the user in PDT's Inbox: only they can start it"),
+        ));
+    }
     if ticket.summary.stage.is_closed() {
         return Err(conflict("ticket_closed", format!("{key} is closed; move it back to Ready to start it")));
     }

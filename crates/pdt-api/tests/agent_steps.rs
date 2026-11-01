@@ -1818,6 +1818,24 @@ async fn ticket_proposals_wait_for_the_user() {
         }
     };
     let rejected = curl("Rename everything").await;
+    // Straight away, before the engine has put it in the Inbox: held, and an agent's curl can't move it on, label it
+    // agentic or start it.
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{rejected}"), None).await;
+    assert_eq!(t["proposed"], true, "held from its making: {t}");
+    assert!(!inbox(&env).await.iter().any(|i| i["ticketId"] == rejected.as_str()), "no item yet");
+    let path = format!("/api/tickets/{rejected}");
+    for body in [json!({"stage": "todo"}), json!({"stage": "ready"}), json!({"labels": ["agentic"]})] {
+        let (s, v) = call(&env.app, "PATCH", &path, Some(body)).await;
+        assert_eq!((s, v["code"].as_str()), (StatusCode::FORBIDDEN, Some("ticket_proposal")), "{v}");
+    }
+    let bulk = json!({"ids": [rejected], "action": "stage", "value": "todo"});
+    let (s, v) = call(&env.app, "POST", "/api/tickets/bulk", Some(bulk)).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::FORBIDDEN, Some("ticket_proposal")), "{v}");
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/tickets/{rejected}/start"), Some(json!({"agent": "claude"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::FORBIDDEN, Some("ticket_proposal")), "{v}");
+    let (_, t) = call(&env.app, "GET", &path, None).await;
+    assert_eq!((t["stage"].as_str(), t["labels"].clone()), (Some("draft"), json!([])), "{t}");
     let item = proposal_of(rejected.clone()).await;
     assert_eq!(item["body"]["reason"], "Found it.");
     let answer = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());

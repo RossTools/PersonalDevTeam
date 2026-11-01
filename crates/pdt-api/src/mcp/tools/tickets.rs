@@ -214,7 +214,14 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let by_agent = agent_by(st, cx.session).await;
             let t = st
                 .store
-                .create_ticket_why(&id, &project, &valid, by_agent.clone(), reason, now_ms())
+                .create_ticket_made(
+                    &id,
+                    &project,
+                    &valid,
+                    by_agent.clone(),
+                    pdt_store::Made { reason, proposal: proposed, ..Default::default() },
+                    now_ms(),
+                )
                 .await
                 .map_err(|e| api(e.into()))?;
             let attached = crate::ticket_attachments::attach_read(st, &id, read, &by_agent).await?;

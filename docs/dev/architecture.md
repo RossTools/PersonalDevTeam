@@ -282,10 +282,10 @@ transient kind.
 
 **Ticket proposals.** A ticket an agent session makes (source `agent`, not via Make into parts) is held for the user
 while the "Ticket proposals" built-in is on (`workflow::nodes::ticket_proposal::proposals_on`): `create_ticket` and
-`POST /api/projects/{id}/tickets` make it in Draft without `agentic` (pdt-core `ticket_proposal::hold`) and put the
-agent's `reason` on its `created` event. The built-in's `ticket.created` trigger runs `inbox.ticket_proposal`, which
-stores a `ticket_proposal` item; a ticket with an open one is `proposed`, and ticket lists leave it out unless asked
-(`proposed=true`). `ticket_proposal::answer` applies the user's Accept (the edits, the `agentic` box), Duplicate of…
+`POST /api/projects/{id}/tickets` make it in Draft without `agentic` (pdt-core `ticket_proposal::hold`), held
+(`tickets.proposed_at`, so `proposed` from the start; cleared once it leaves Draft), with the agent's `reason` on its
+`created` event. Ticket lists leave held tickets out unless asked (`proposed=true`). The built-in's `ticket.created`
+trigger runs `inbox.ticket_proposal`, which stores a `ticket_proposal` item. `ticket_proposal::answer` applies the user's Accept (the edits, the `agentic` box), Duplicate of…
 (a `relates` link, Won't do) or Reject (Won't do), then tells the proposing session while it runs, else comments on
 the ticket it came from.
 
