@@ -377,6 +377,32 @@ async fn background_tasks_keep_the_process_and_report_back_in_a_turn_of_their_ow
 }
 
 #[tokio::test]
+async fn a_session_shows_its_background_tasks_and_their_end_is_news() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id =
+        new_conversation(&env, json!({"initialPrompt": "bg-quiet: 1500"})).await["id"].as_str().unwrap().to_string();
+    wait_turns(&env, &id, 1).await;
+    // The turn ended with a task running: the session lists it (the sidebar's Background state, PDT-332).
+    let s = wait_activity(&env, &id, "idle").await;
+    assert_eq!(s["background"][0]["description"], "Sleep in the background", "{s}");
+    let (st, _) = call(&env.app, "POST", &format!("/api/sessions/{id}/view"), None).await;
+    assert_eq!(st.as_u16(), 204);
+    assert_eq!(session(&env, &id).await["unseen"], false);
+    // It drops off the list with no turn taking it up: the session's work has finished now, and that is news.
+    for _ in 0..100 {
+        let s = session(&env, &id).await;
+        if s["background"].as_array().is_some_and(Vec::is_empty) {
+            assert_eq!((s["activity"].as_str(), s["unseen"].as_bool()), (Some("idle"), Some(true)), "{s}");
+            call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the task never ended: {}", session(&env, &id).await);
+}
+
+#[tokio::test]
 async fn idle_conversations_park_and_settings_apply_on_resume() {
     let tmp = tempfile::tempdir().unwrap();
     let mut env = setup(tmp.path()).await;

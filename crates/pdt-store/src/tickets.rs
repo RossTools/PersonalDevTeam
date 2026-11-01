@@ -3259,6 +3259,7 @@ mod tests {
             model: None,
             permission_mode: None,
             persona: None,
+            background: vec![],
         }
     }
 

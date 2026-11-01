@@ -79,6 +79,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `useWorkspaces.allInfos`, which leaves out workflow step sessions for a ticket and ended ones with no ticket unless
   a tab holds them (`hiddenStepSession`), so a step's tab can still be found without old steps piling up. The favicon
   and title read `everyInfo`, every session, so a hidden step that needs the user still shows.
+- **A session in the background is never news.** A running agent that is idle with background tasks (`Session.background`,
+  the store's `background_tasks` column, kept in step with the conversation's) shows Background (web
+  `common/AgentState.tsx` `inBackground`), and its unseen flag is held back (`sessionUnseen`, read by `sessionInfo`),
+  so no Done, unseen dot or favicon. Clearing the last task while the agent is idle sets `attention_at`
+  (`set_session_background`), so it turns Done (unseen) then, even if the user looked meanwhile.
 
 ## Workflows
 

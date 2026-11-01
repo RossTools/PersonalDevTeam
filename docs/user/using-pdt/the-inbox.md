@@ -86,4 +86,5 @@ PDT's browser tab shows when something is waiting:
 
 - the title starts with the Inbox count: `(3) PDT`;
 - the icon gets a dot: **red** when an agent session needs you, **amber** when anything else waits in the Inbox,
-  **blue** when an agent or run finished and you haven't looked, or the PM replied.
+  **blue** when an agent or run finished and you haven't looked, or the PM replied. An agent still waiting on
+  background tasks hasn't finished yet.

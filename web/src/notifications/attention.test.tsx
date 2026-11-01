@@ -12,7 +12,7 @@ const session = (id: string, more: Partial<Session> = {}): Session => ({
   id, projectId: 'p1', worktreeId: null, kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: id,
   cwd: '/x', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null,
   activity: 'working', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'conversation',
-  model: null, permissionMode: 'ask', persona: null, ...more,
+  model: null, permissionMode: 'ask', persona: null, background: [], ...more,
 });
 
 const item = (id: string, kind: InboxItem['kind'], more: Partial<InboxItem> = {}): InboxItem => ({
@@ -70,6 +70,15 @@ describe('attentionOf', () => {
     expect(attentionOf({ ...none, items: [runInfo('r', true)] }).level).toBe('idle');
     const reply = pm(session('pm1', { activity: 'idle', unseen: true, projectId: 'host' }));
     expect(attentionOf({ ...none, pm: [reply] })).toEqual({ level: 'idle', count: 0 });
+  });
+
+  it('is quiet while a finished turn waits on background tasks, and idle once they end (PDT-332)', () => {
+    const background = [{ id: 't1', description: 'cargo test', kind: 'local_bash' }];
+    const waiting = sessionInfo(session('b', { activity: 'idle', unseen: true, background }));
+    expect(waiting.unseen).toBe(false);
+    expect(attentionOf({ ...none, items: [waiting] })).toEqual({ level: 'none', count: 0 });
+    const done = sessionInfo(session('b', { activity: 'idle', unseen: true, background: [] }));
+    expect(attentionOf({ ...none, items: [done] }).level).toBe('idle');
   });
 
   it('leaves workflow step sessions out of idle, but not out of needs_you (PDT-262)', () => {

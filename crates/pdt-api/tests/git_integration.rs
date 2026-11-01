@@ -501,6 +501,7 @@ async fn an_agent_can_be_told_which_files_the_user_changed() {
         model: None,
         permission_mode: None,
         persona: None,
+        background: vec![],
     };
     env.state.store.insert_session(&session).await.unwrap();
     let (s, v) = call(
