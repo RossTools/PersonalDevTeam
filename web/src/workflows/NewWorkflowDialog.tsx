@@ -8,6 +8,7 @@ import { Alert, Badge, Button, Dialog, Field, Input, Link, Select, Skeleton, Swi
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { ConnectionPicker } from '../connections/ConnectionPicker';
+import { DurationInput } from './DurationInput';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { navigate } from '../shell/router';
 import { routePath } from '../shell/route';
@@ -33,6 +34,7 @@ export function ParamsForm({ params, values, onChange }: { params: TemplateParam
         return (
           <Field key={p.id} label={label} hint={p.description || undefined}>
             {p.type === 'connection' ? <ConnectionPicker label={p.title} kind={p.connectionKind} value={String(v ?? '')} onChange={(n) => set(p.id, n)} />
+              : p.type === 'duration' ? <DurationInput label={p.title} value={v} onChange={(ms) => set(p.id, ms)} />
               : p.type === 'boolean' ? <Switch checked={v === true} onChange={(on) => set(p.id, on)} />
               : p.type === 'choice' ? <Select options={(p.choices ?? []).map((c) => ({ value: c, label: c }))} value={String(v ?? '')} onChange={(c) => set(p.id, c)} />
                 : p.type === 'text' ? <Textarea rows={3} value={String(v ?? '')} onChange={(e) => set(p.id, e.target.value)} />

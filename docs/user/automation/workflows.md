@@ -97,9 +97,15 @@ You set these when you create it; afterwards each lives in its step (click the s
 - **Who accepts**: `user` (you, in the Inbox) or `auto` (it merges once QA passes).
 - **Labels accepted automatically**: tickets with one of these skip Accept (default `agentic`).
 - **Who merges**: `workflow` (the Pipeline merges after Accept) or `person` (it waits for someone to merge, in PDT or
-  on GitHub, and asks you after three days).
+  on GitHub, and asks you after the **Merge wait**).
 - **Passes before asking**: how many times work may go back to Code before PDT asks whether to go on (default 3; see
   [Loop limits](personas-and-approvals.md#loop-limits)).
+- **Merge wait**: how long a merge waits for someone, to merge it or to clear what blocks it, before the Inbox asks
+  again (default 3 days).
+- **CI wait**: how long a merge waits for CI on the pull request to finish before the Inbox asks (default 6 hours).
+- **Code time limit**: how long the Code step may run before the Pipeline stops there (default 8 hours).
+
+Pipelines you added earlier keep these defaults.
 
 What any workflow may merge is the project's policy, set apart from workflows: see
 [Approvals and merging](personas-and-approvals.md#approvals-and-merging).
