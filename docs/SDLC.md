@@ -139,6 +139,13 @@ everything), labels from PR `<n>` in the branch name, which is why the group siz
 required checks pass; one that conflicts with main or fails leaves the queue: fix the branch (merge main in for a
 conflict), push, and merge again.
 
+### Reviews
+
+The "Main" ruleset requires one approving review from a code owner. `.github/CODEOWNERS` makes the maintainer
+(`@rossxwest`) the owner of every file, so an outside PR (a contributor's, Dependabot's) needs the maintainer's
+approval before it can join the queue. The maintainer's own PRs, which PDT opens as `rossxwest`, can't be approved by
+their author and merge through the ruleset's admin bypass.
+
 ### Runners
 
 - **Namespace** (its GitHub App is installed on the repo) runs the Linux and macOS checks: profiles
