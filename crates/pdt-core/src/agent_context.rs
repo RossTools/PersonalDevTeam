@@ -67,7 +67,8 @@ pub fn session_instructions(ctx: &SessionContext, project: Option<&str>) -> Stri
     let mut out = format!(
         "# Running in {PRODUCT_NAME} ({SHORT_NAME})\n\n\
          {SHORT_NAME} started this session. Its API is {api} (local only, no authentication).\n\
-         - This session: `{session}` (`GET {api}/sessions/{session}`).\n\
+         - This session: `{session}` (`GET {api}/sessions/{session}`). Send it in an `X-Agent-Session` header when \
+         you make tickets over the API, so they are recorded as this session's.\n\
          - Project: {name} (key `{key}`, id `{project}`), {home} `{repo}`. This session works in {place}.\n\
          - {SHORT_NAME}'s guides for agents, as Markdown: `GET {api}/guides` lists them; `GET {api}/guides/agents` \
          covers tickets, worktrees, runs and tests; `GET {api}/guides/run-config` is how runs and tests are \

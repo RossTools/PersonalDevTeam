@@ -69,7 +69,7 @@ backlog), `todo` (picked for the board), `in_progress`, `done`, `wont_do`. Prior
 |---|---|
 | `GET /api/tickets?project=<id>` | the project's tickets, ranked. Also `q` (words, or a key), `stage`, `priority`, `label` (comma-separated lists), `parent`, `blocked`, `sort` (`rank`, `priority`, `updated`, `created`), `limit`, `cursor`; returns `{items, nextCursor, total}` |
 | `GET /api/tickets/<id or key>` | one ticket with its `description`, links and attempt |
-| `POST /api/projects/<id>/tickets` | `{title, description?, stage?, priority?, labels?, areas?, parent?}`: a Draft (unless `stage`) at the top of its stage; with `parent`, a part after the parent's last part |
+| `POST /api/projects/<id>/tickets` | `{title, description?, stage?, priority?, labels?, areas?, parent?}`: a Draft (unless `stage`) at the top of its stage; with `parent`, a part after the parent's last part. Send your session id in an `X-Agent-Session` header, so the ticket shows who made it (your persona and the ticket you work on) |
 | `PATCH /api/tickets/<id>` | any of `title`, `description`, `stage`, `priority`, `labels`, `areas` (lists replace the whole set), `parent` (a ticket id, `""` to detach), `waiting` |
 | `GET /api/tickets/<id>/events` | the timeline, oldest first (`newestFirst=true`, `limit`, `cursor`; returns `{items, nextCursor}`). Comments have `kind: "comment"` and their text in `body` |
 | `POST /api/tickets/<id>/comments` | `{body}`: a comment by the agent (not sent back to you) |

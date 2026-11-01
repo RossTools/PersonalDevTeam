@@ -635,8 +635,10 @@ async fn queue_checkpoint(st: &AppState, s: &Session, key: &str, text: String) {
 /// was last brought up to date.
 async fn update_data(st: &AppState, id: &str, row: &PmSessionRow, now: i64) -> Result<pm::UpdateData, ApiError> {
     let since = row.caught_up_at;
+    // Nothing from before the conversation began: its briefing covered that.
+    let from = since.max(row.created_at);
     let filter =
-        pdt_store::EventFilter { since: Some(since), newest_first: true, limit: BRIEF_EVENTS, ..Default::default() };
+        pdt_store::EventFilter { since: Some(from), newest_first: true, limit: BRIEF_EVENTS, ..Default::default() };
     let events = brief_events(st, &filter).await?;
     let inbox = brief_inbox(st).await?;
     let mut journal = vec![];

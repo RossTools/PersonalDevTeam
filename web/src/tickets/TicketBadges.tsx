@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { CircleCheck, Clock, Timer } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { Badge, OverlapBadge } from '@ui';
+import type { AgentBy } from '../api/gen/AgentBy';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 
 type BadgeTicket = Pick<TicketSummary, 'blockedBy' | 'overlap' | 'overlapWith' | 'waiting' | 'clearToStart'> &
-  Partial<Pick<TicketSummary, 'pipelineStage' | 'autoStartAt' | 'source' | 'admitted' | 'pickupHold'>>;
+  Partial<Pick<TicketSummary, 'pipelineStage' | 'autoStartAt' | 'source' | 'admitted' | 'pickupHold' | 'createdBy'>>;
 
 /** `m:ss` until `at`, never below 0:00. */
 export function countdown(at: number, now: number): string {
@@ -27,10 +28,20 @@ function AutoStartBadge({ at }: { at: number }) {
   );
 }
 
-/** Who made a ticket, when not the user (PDT-201). An external one the user hasn't let in yet is held back. */
-function SourceBadge({ source, admitted }: Pick<TicketSummary, 'source' | 'admitted'>) {
-  if (source === 'pm') return <Badge title="The PM made it">PM</Badge>;
-  if (source === 'workflow') return <Badge title="A workflow or an agent made it">Workflow</Badge>;
+/** "Created by Coder · from PDT-345": the agent session that made a ticket and the ticket it was working on. */
+export function createdByText(by: AgentBy | null | undefined, fallback: string): string {
+  const who = by?.persona ?? fallback;
+  return `Created by ${who}${by?.fromTicket ? ` · from ${by.fromTicket}` : ''}`;
+}
+
+/**
+ * Who made a ticket, when not the user (PDT-201): an agent by its persona (PDT-363). An external one the user hasn't
+ * let in yet is held back.
+ */
+function SourceBadge({ source, admitted, createdBy }: Pick<TicketSummary, 'source' | 'admitted'> & { createdBy?: AgentBy | null }) {
+  if (source === 'pm') return <Badge title={createdByText(createdBy, 'the PM')}>PM</Badge>;
+  if (source === 'agent') return <Badge title={createdByText(createdBy, 'an agent')}>{createdBy?.persona ?? 'Agent'}</Badge>;
+  if (source === 'workflow') return <Badge title="A workflow made it">Workflow</Badge>;
   if (source !== 'external') return null;
   return admitted ? (
     <Badge title="Made from outside PDT (an issue or a report); you let it in">External</Badge>
@@ -57,7 +68,7 @@ export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; cl
   if (!any) return null;
   return (
     <span className={cn('flex min-w-0 shrink items-center gap-1', className)}>
-      <SourceBadge source={source} admitted={t.admitted ?? false} />
+      <SourceBadge source={source} admitted={t.admitted ?? false} createdBy={t.createdBy ?? null} />
       {refining && <Badge title="The pipeline is refining it">Refining</Badge>}
       {mergeBlocked && <Badge tone="failed" title="Its merge was refused; the Inbox asks you">Merge blocked</Badge>}
       {t.blockedBy > 0 && <Badge tone="waiting" title={`${t.blockedBy} open blocker${t.blockedBy === 1 ? '' : 's'}`}>Blocked</Badge>}

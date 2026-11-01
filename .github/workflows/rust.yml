@@ -183,6 +183,9 @@ jobs:
       - name: nextest (partition ${{ matrix.partition }} of ${{ strategy.job-total }})
         env:
           PARTITION: slice:${{ matrix.partition }}/${{ strategy.job-total }}
+          # Every request still running after 2 s, one line each (crates/pdt-api/src/slow.rs): nextest hides a passing
+          # test's output, so this is how CI sees whether requests stall (PDT-358).
+          PDT_SLOW_REQUESTS_LOG: ${{ runner.temp }}/slow-requests.log
         run: |
           failed=0
           for archive in nextest-${{ inputs.os }}-*.tar.zst; do
@@ -192,6 +195,24 @@ jobs:
             echo "::endgroup::"
           done
           exit "$failed"
+      # The slow requests, in the log and the job's summary, and as an artifact to compare across runs.
+      - name: Slow requests
+        if: ${{ !cancelled() }}
+        env:
+          LOG: ${{ runner.temp }}/slow-requests.log
+        run: |
+          if [ ! -s "$LOG" ]; then echo "No request took 2 s or more."; exit 0; fi
+          n="$(grep -c ' took \| dropped ' "$LOG" || true)"
+          echo "::notice::$n requests took 2 s or more (partition ${{ matrix.partition }})"
+          cat "$LOG"
+          { echo "### Slow requests (partition ${{ matrix.partition }})"; echo '```'; cat "$LOG"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: slow-requests-${{ inputs.os }}-${{ matrix.partition }}
+          path: ${{ runner.temp }}/slow-requests.log
+          retention-days: 14
+          if-no-files-found: ignore
       # The tests write the TS types, the web tests' fixtures and the website's plugin list (site/src/data/plugins.json,
       # PDT-281); each partition checks the ones its tests wrote.
       - name: Generated files are committed

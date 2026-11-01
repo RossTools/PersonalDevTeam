@@ -8,9 +8,9 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use pdt_core::ticket::{
-    Actor, AttemptState, BulkRequest, BulkResult, EventPage, EventQuery, MAX_LIMIT, NewComment, NewTicket,
-    PipelineStage, RankMove, Ticket, TicketEvent, TicketLink, TicketPage, TicketPatch, TicketQuery, TicketStage,
-    ValidBulk, ValidPatch, valid_comment,
+    Actor, AttemptState, BulkRequest, BulkResult, By, EventPage, EventQuery, MAX_LIMIT, NewComment, NewTicket,
+    PipelineStage, RankMove, Ticket, TicketEvent, TicketLink, TicketPage, TicketPatch, TicketQuery, TicketSource,
+    TicketStage, ValidBulk, ValidPatch, valid_comment,
 };
 use pdt_core::workflow::api::{NewLogEvent, RunStatus};
 use pdt_store::{DeleteTicket, TicketError};
@@ -47,15 +47,44 @@ async fn reply(st: &AppState, t: Ticket) -> Result<Json<Ticket>, ApiError> {
     Ok(Json(crate::overlap::decorate(st, t).await?))
 }
 
+/// The header an agent names its session in when it calls the HTTP API (its session id), so what it makes is
+/// recorded as that session's (PDT-363).
+pub(crate) const SESSION_HEADER: &str = "x-agent-session";
+
+/// Who makes a ticket over the HTTP API (PDT-363), and the source it gets: the user from PDT's web client (it sends the
+/// UI token); the agent session `x-agent-session` names, with its persona and the ticket it works on (the PM's are `pm`,
+/// a triage session's `external`); any other caller is an agent's curl.
+pub(crate) async fn creator(st: &AppState, headers: &HeaderMap) -> Result<(By, TicketSource), ApiError> {
+    if crate::untrusted::from_ui(st, headers)? {
+        return Ok((Actor::User.into(), TicketSource::User));
+    }
+    let named = headers.get(SESSION_HEADER).and_then(|v| v.to_str().ok()).map(str::trim).filter(|s| !s.is_empty());
+    let session = match named {
+        Some(id) => st.store.get_session(id).await?,
+        None => None,
+    };
+    let Some(s) = session else { return Ok((Actor::Agent.into(), TicketSource::Agent)) };
+    let source = if crate::untrusted::triaging(st, &s).await {
+        TicketSource::External
+    } else if crate::pm::is_pm_session(st, &s).await {
+        TicketSource::Pm
+    } else {
+        TicketSource::Agent
+    };
+    Ok((crate::mcp::tools::agent_by(st, &s).await, source))
+}
+
 pub(crate) async fn create(
     State(st): State<AppState>,
     Path(project_id): Path<String>,
+    headers: HeaderMap,
     payload: Result<Json<NewTicket>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Ticket>), ApiError> {
     let Json(input) = payload?;
-    let t = input.validate()?;
+    let (by, source) = creator(&st, &headers).await?;
+    let t = pdt_core::ticket::ValidNewTicket { source, ..input.validate()? };
     let id = uuid::Uuid::now_v7().to_string();
-    let ticket = st.store.create_ticket(&id, &project_id, &t, now_ms()).await?;
+    let ticket = st.store.create_ticket_by(&id, &project_id, &t, by, now_ms()).await?;
     Ok((StatusCode::CREATED, reply(&st, ticket).await?))
 }
 

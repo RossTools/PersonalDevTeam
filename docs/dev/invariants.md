@@ -49,6 +49,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `prompts_and_guides_carry_no_pdt_development_assumptions` checks it (with an allow list).
 - **Routes that act as the user need the UI token** (`x-ui-token`, new at each start; pdt-api `untrusted.rs`): admitting
   an external ticket, filing issues, the PM's approvals. An agent's `curl` can't do them.
+- **Making tickets over the HTTP API records the user only with the UI token** (pdt-api `tickets::creator`, also
+  parts): without it the caller is an agent, the session its `x-agent-session` header names (persona, the ticket it
+  works on), and the ticket's source is `agent` (`pm`, `external` for a PM or triage session). The web client sends
+  the token when it creates tickets and parts; a new route that makes tickets uses `creator` too.
 - **Fresh Codex launches in one folder stay at least 5 s apart**, or PDT can't tell their conversations apart.
 
 ## Tabs, tickets and attempts

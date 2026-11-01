@@ -415,6 +415,7 @@ pub(crate) mod tests {
             external: vec![],
             source: Default::default(),
             admitted: false,
+            created_by: None,
         }
     }
 

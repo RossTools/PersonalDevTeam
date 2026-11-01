@@ -54,8 +54,17 @@ impl RunControl {
     }
 }
 
+/// Whether nothing listens on `p` on either loopback: dev servers bound to `localhost` often listen only on `::1`
+/// (PDT-356). Only "in use" (or "permission denied", Windows' answer for an exclusively held port) on `::1` counts as
+/// taken: any other error means the machine has no IPv6 (no `::1`, or no IPv6 stack at all), so `127.0.0.1` decides.
 pub(crate) fn port_is_free(p: u16) -> bool {
-    std::net::TcpListener::bind(("127.0.0.1", p)).is_ok()
+    if std::net::TcpListener::bind(("127.0.0.1", p)).is_err() {
+        return false;
+    }
+    match std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, p)) {
+        Ok(_) => true,
+        Err(e) => !matches!(e.kind(), std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied),
+    }
 }
 
 /// After stopping a web run to start it again: waits (up to [`PORT_RELEASE_WAIT`]) until its port is free, so the
@@ -718,5 +727,14 @@ mod tests {
         assert!(port_is_free(port));
         release.await.unwrap();
         await_port_release(None).await;
+    }
+
+    /// A port something listens on only on `::1` is not free (skipped where the machine has no IPv6 loopback).
+    #[test]
+    fn a_port_held_only_on_ipv6_loopback_is_not_free() {
+        let Ok(held) = std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)) else { return };
+        let port = held.local_addr().unwrap().port();
+        assert!(!port_is_free(port));
+        drop(held);
     }
 }

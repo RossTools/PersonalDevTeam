@@ -13,12 +13,12 @@ export function summary(n: number, over: Partial<TicketSummary> = {}): TicketSum
   return {
     id: `t${n}`, projectId: project.id, key: `ALP-${n}`, number: n, title: `Ticket ${n}`, stage: 'draft', priority: 'none',
     labels: [], areas: [], rank: `a${String(n).padStart(4, '0')}`, waiting: false, clearToStart: false, blockedBy: 0, attempt: null, overlap: 'none', overlapWith: [],
-    createdAt: 1, updatedAt: 1, closedAt: null, parent: null, parts: null, pipelineStage: null, agent: null, autoStartAt: null, pickupHold: null, external: [], source: 'user', admitted: false, ...over,
+    createdAt: 1, updatedAt: 1, closedAt: null, parent: null, parts: null, pipelineStage: null, agent: null, autoStartAt: null, pickupHold: null, external: [], source: 'user', admitted: false, createdBy: null, ...over,
   };
 }
 
 export function ticket(n: number, over: Partial<Ticket> = {}): Ticket {
-  return { ...summary(n), description: '', links: [], attempts: [], defaultBranch: `pdt/ALP-${n}-ticket-${n}`, sessions: [], overlaps: [], partList: [], ...over };
+  return { ...summary(n), description: '', links: [], attempts: [], defaultBranch: `pdt/ALP-${n}-ticket-${n}`, sessions: [], overlaps: [], partList: [], createdBy: null, ...over };
 }
 
 export const page = (items: TicketSummary[], nextCursor: string | null = null, total = items.length): TicketPage => ({ items, nextCursor, total });

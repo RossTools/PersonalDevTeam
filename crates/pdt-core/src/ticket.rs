@@ -93,12 +93,15 @@ pub enum TicketSource {
     User,
     /// Made by the PM in a conversation.
     Pm,
-    /// Made by a workflow, or by an agent session other than the PM.
+    /// Made by a workflow.
     Workflow,
     /// Made from outside input.
     External,
+    /// Made by an agent session other than the PM (through pdt-mcp or the HTTP API; PDT-363): its `created` event
+    /// names the session, its persona and the ticket it works on.
+    Agent,
 }
-str_enum!(TicketSource { User => "user", Pm => "pm", Workflow => "workflow", External => "external" });
+str_enum!(TicketSource { User => "user", Pm => "pm", Workflow => "workflow", External => "external", Agent => "agent" });
 
 /// The label that marks a ticket for agents to work on unattended: adding it to an external ticket is gated like To
 /// do (PDT-201).
@@ -131,6 +134,25 @@ pub fn external_gate(source: TicketSource, admitted: bool, boards: bool, by: &By
     Err(format!(
         "{key} came from outside PDT (an issue or a report), so only the user can put it in To do, start it or label          it {AGENTIC_LABEL}: they do it on the board, or confirm the PM's edit_ticket. Leave it where it is and tell          the user why it should go ahead."
     ))
+}
+
+/// Who made a ticket, for `ticket.created` (PDT-363): `external` or `pm` by its source, else `agent` for an agent
+/// session, `workflow` for PDT itself (a workflow node, a bug report), else `user`.
+pub fn creator(source: TicketSource, by: &By) -> &'static str {
+    match (source, by.actor) {
+        (TicketSource::External, _) => "external",
+        (TicketSource::Pm, _) => "pm",
+        (TicketSource::Agent, _) | (_, Actor::Agent) => "agent",
+        (TicketSource::Workflow, _) | (_, Actor::System) => "workflow",
+        (TicketSource::User, Actor::User) => "user",
+    }
+}
+
+/// The labels added and removed going from `old` to `new` (each sorted as given).
+pub fn label_change(old: &[String], new: &[String]) -> (Vec<String>, Vec<String>) {
+    let added = new.iter().filter(|l| !old.contains(l)).cloned().collect();
+    let removed = old.iter().filter(|l| !new.contains(l)).cloned().collect();
+    (added, removed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
@@ -463,6 +485,9 @@ pub struct TicketSummary {
     /// An external ticket the user let in (moved to To do, started or labelled `agentic`): the Todo gate is open.
     #[serde(default)]
     pub admitted: bool,
+    /// The agent session that made it, from its `created` event (PDT-363): "Created by Coder · from PDT-345".
+    #[serde(default)]
+    pub created_by: Option<AgentBy>,
 }
 
 /// A ticket's stage in a pipeline workflow (Phase 7c spec §2): the Board splits In progress by it.
@@ -1462,6 +1487,7 @@ mod tests {
             external: vec![],
             source: TicketSource::External,
             admitted: false,
+            created_by: None,
         };
         let t = Ticket {
             summary: s,
@@ -1515,9 +1541,30 @@ mod tests {
         // Let in already, not boarding, or not external: nothing to say.
         assert_eq!(external_gate(ext, true, true, &system, "P-1"), Ok(false));
         assert_eq!(external_gate(ext, false, false, &system, "P-1"), Ok(false));
-        for s in [TicketSource::User, TicketSource::Pm, TicketSource::Workflow] {
+        for s in [TicketSource::User, TicketSource::Pm, TicketSource::Workflow, TicketSource::Agent] {
             assert_eq!(external_gate(s, false, true, &system, "P-1"), Ok(false));
         }
+    }
+
+    #[test]
+    fn who_made_a_ticket_reads_its_source_then_its_actor() {
+        let agent = By::agent(coder());
+        assert_eq!(creator(TicketSource::User, &Actor::User.into()), "user");
+        assert_eq!(creator(TicketSource::Agent, &agent), "agent");
+        assert_eq!(creator(TicketSource::Pm, &agent), "pm");
+        assert_eq!(creator(TicketSource::External, &agent), "external", "a triage session's ticket");
+        assert_eq!(creator(TicketSource::External, &Actor::System.into()), "external");
+        assert_eq!(creator(TicketSource::Workflow, &Actor::System.into()), "workflow");
+        assert_eq!(creator(TicketSource::User, &Actor::System.into()), "workflow", "PDT made it");
+        assert_eq!(creator(TicketSource::User, &Actor::Agent.into()), "agent", "an agent's curl, no session");
+    }
+
+    #[test]
+    fn a_label_change_is_what_was_added_and_removed() {
+        let v = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(label_change(&v(&["a", "b"]), &v(&["b", "c"])), (v(&["c"]), v(&["a"])));
+        assert_eq!(label_change(&v(&[]), &v(&["a"])), (v(&["a"]), v(&[])));
+        assert_eq!(label_change(&v(&["a"]), &v(&["a"])), (v(&[]), v(&[])));
     }
 
     fn coder() -> AgentBy {

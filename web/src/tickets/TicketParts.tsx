@@ -495,10 +495,13 @@ function actorOf(e: TicketEvent): string {
   return typeof persona === 'string' && persona ? persona : 'Agent';
 }
 
-/** An agent's persona and the ticket its session works on ("Coder · PDT-34"), opening that session (PDT-163). */
-function AgentLabel({ agent, name }: { agent: AgentBy; name: string }) {
+/**
+ * An agent's persona and the ticket its session works on ("Coder · PDT-34"; "Coder · from PDT-34" for a ticket it
+ * made), opening that session (PDT-163).
+ */
+function AgentLabel({ agent, name, made = false }: { agent: AgentBy; name: string; made?: boolean }) {
   const openSession = useOpenSession();
-  const text = agent.fromTicket ? `${name} · ${agent.fromTicket}` : name;
+  const text = agent.fromTicket ? `${name} · ${made ? 'from ' : ''}${agent.fromTicket}` : name;
   const projectId = agent.projectId;
   if (!projectId) return <>{text}</>;
   return (
@@ -531,7 +534,7 @@ function toItem(e: TicketEvent): TimelineItem {
   return {
     id: e.id,
     actor: actorOf(e),
-    ...(e.actor === 'agent' && e.agent ? { actorLabel: <AgentLabel agent={e.agent} name={actorOf(e)} /> } : {}),
+    ...(e.actor === 'agent' && e.agent ? { actorLabel: <AgentLabel agent={e.agent} name={actorOf(e)} made={e.kind === 'created'} /> } : {}),
     time: e.createdAt,
     title: eventTitle(e),
     ...(icon ? { icon } : {}),

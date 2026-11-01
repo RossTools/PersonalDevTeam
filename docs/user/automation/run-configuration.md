@@ -47,8 +47,8 @@ env     = { DATABASE_URL = "sqlite://$PDT_RUN_DATA/app.db" }
 - **`command`** (required): what starts it, in the checkout's folder.
 - **`setup`**: a step before every start, such as installing dependencies. It runs each time, so keep it quick when
   nothing changed.
-- **`web = true`**: it's a web server. PDT picks a free port, passes it as `$PORT`, and shows the run's link once
-  something answers on it.
+- **`web = true`**: it's a web server. PDT picks a free port (nothing listens on it on `127.0.0.1` or `::1`),
+  passes it as `$PORT`, and shows the run's link once something answers on it.
 - **`data = true`**: PDT gives the run a folder of its own as `$PDT_RUN_DATA`, kept per branch. **Reset data…** on the
   run empties it.
 - **`env`**: environment variables for the run.

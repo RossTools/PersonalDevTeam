@@ -7,7 +7,7 @@ use crate::common;
 use crate::retired;
 
 use axum::http::StatusCode;
-use common::{call, git};
+use common::{call, call_as_ui, git};
 use pdt_api::{AppState, router};
 use pdt_core::brand::RELEASE_REPO;
 use pdt_core::github_issue::CloseReason;
@@ -433,7 +433,7 @@ fn step<'a>(run: &'a Value, node: &str) -> &'a Value {
 #[tokio::test]
 async fn a_workflow_files_a_ticket_as_an_issue() {
     let env = setup().await;
-    let (s, t) = call(
+    let (s, t) = call_as_ui(
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
