@@ -821,6 +821,10 @@ pub struct CommentReply {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub created_at: Option<i64>,
+    /// Who wrote it, when the provider knows: the user, an agent or a workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub actor: Option<Actor>,
 }
 
 /// A comment on a document, with its replies.
@@ -843,6 +847,10 @@ pub struct DocumentComment {
     pub created_at: Option<i64>,
     #[serde(default)]
     pub replies: Vec<CommentReply>,
+    /// Who wrote it, when the provider knows: the user, an agent or a workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub actor: Option<Actor>,
 }
 
 /// A cell's place (`B3`) as its zero-based row and column; None for anything else.

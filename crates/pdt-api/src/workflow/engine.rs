@@ -175,7 +175,7 @@ fn context(wf: &Workflow, run: &Run, steps: &[Step], state: serde_json::Map<Stri
 /// The outside text an agent gets, fenced (PDT-202): each of `fields` (`NodeKind::agent_text`) is resolved again, each
 /// reference that reads one of the trigger's outside fields (its event type's `outside`, or something inside one:
 /// `{{trigger.body.message}}`) put in a block tagged with an id picked for this prompt, and the fixed instruction goes
-/// before it. Other fields, and other nodes, get the text as it is.
+/// before it. Other fields, and other nodes, get the text as it is, as does a trigger the user wrote (`byUser`).
 pub(crate) fn fence_input(
     reg: &crate::integrations::Registry,
     fields: &[&str],
@@ -187,7 +187,8 @@ pub(crate) fn fence_input(
         return;
     }
     let Some(t) = ctx.pointer("/trigger/type").and_then(Value::as_str).and_then(|k| reg.event_type(k)) else { return };
-    if t.outside.is_empty() {
+    // The user wrote it (a comment of theirs on a document, PDT-318): not outside input.
+    if t.outside.is_empty() || pdt_core::workflow::events::by_user(&ctx["trigger"]) {
         return;
     }
     let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());

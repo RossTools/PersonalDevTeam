@@ -86,6 +86,10 @@ Reading never asks. Changing a document, making one, linking one, and replying t
 first, as the PM's other changes do, unless the project lets the PM act without asking (**Settings › the project › Pipeline and policies**). What other
 people wrote in a document's comments reaches agents marked as outside input, never as instructions.
 
+Workflows work on documents too: they can make one, add text or rows, set cells, add a chart and comment, and start
+when a document changes or gets a new comment. See [Workflows](../automation/workflows.md#steps), with examples that
+log merged tickets to a sheet and have an agent answer comments.
+
 ## Documents beside a conversation
 
 A document can sit in a panel beside an agent's conversation or a PM conversation, so you watch the work land as it

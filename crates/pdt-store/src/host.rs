@@ -115,6 +115,19 @@ impl Store {
         Ok(())
     }
 
+    /// The keys of the host values that start with `prefix` (taken literally), sorted.
+    pub async fn host_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>, StoreError> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT key FROM host_settings WHERE substr(key, 1, length(?)) = ? AND key != ? ORDER BY key",
+        )
+        .bind(prefix)
+        .bind(prefix)
+        .bind(HOST_KEY)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(k,)| k).collect())
+    }
+
     /// The integrations this instance has enabled (PDT-173), by id.
     pub async fn enabled_integrations(&self) -> Result<Vec<String>, StoreError> {
         let v = self.get_host_value(ENABLED_INTEGRATIONS).await?;
@@ -390,6 +403,11 @@ mod tests {
         store.put_host_value("sensor.x.y", &serde_json::json!({"n": 4})).await.unwrap();
         assert_eq!(store.get_host_value("sensor.x.y").await.unwrap(), Some(serde_json::json!({"n": 4})));
         assert_eq!(store.get_host_settings().await.unwrap(), HostSettings::default(), "the settings are untouched");
+        // A prefix is literal: `_` matches only itself.
+        store.put_host_value("sensor.x_z", &serde_json::json!(1)).await.unwrap();
+        store.put_host_value("sensor.xaz", &serde_json::json!(1)).await.unwrap();
+        assert_eq!(store.host_keys_with_prefix("sensor.x_").await.unwrap(), ["sensor.x_z"]);
+        assert_eq!(store.host_keys_with_prefix("sensor.x").await.unwrap(), ["sensor.x.y", "sensor.x_z", "sensor.xaz"]);
         store.delete_host_value("sensor.x.y").await.unwrap();
         assert_eq!(store.get_host_value("sensor.x.y").await.unwrap(), None);
     }

@@ -7,8 +7,11 @@
 //! ([`crate::Integration::document_providers`]); [`providers`] lists them.
 
 pub mod local;
+pub(crate) mod nodes;
 pub(crate) mod routes;
+pub(crate) mod templates;
 pub(crate) mod tools;
+pub mod watch;
 
 use crate::routes::AppState;
 use crate::workflow::catalog::BoxFut;
@@ -247,9 +250,29 @@ pub mod testing {
                 resolved: false,
                 created_at: None,
                 replies: vec![],
+                actor: None,
             }];
             self.lock().insert(r.clone(), Stored { title: title.into(), content, version: 1, comments });
             r
+        }
+
+        /// Adds a comment by someone outside PDT (who the provider can't name as the user); its id.
+        pub fn add_comment(&self, reference: &str, author: &str, body: &str) -> String {
+            let mut files = self.lock();
+            let s = files.get_mut(reference).expect("a file put or created");
+            let id = format!("c{}", s.comments.len() + 1);
+            s.comments.push(DocumentComment {
+                id: id.clone(),
+                author: author.into(),
+                body: body.into(),
+                quote: None,
+                anchor: None,
+                resolved: false,
+                created_at: None,
+                replies: vec![],
+                actor: None,
+            });
+            id
         }
 
         fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Stored>> {
@@ -397,6 +420,23 @@ pub mod testing {
         fn comments<'a>(&'a self, reference: &'a str) -> BoxFut<'a, ProviderResult<Vec<DocumentComment>>> {
             ready(self.with(reference, |s| Ok(s.comments.clone())))
         }
+        fn comment<'a>(&'a self, reference: &'a str, new: CommentInput) -> BoxFut<'a, ProviderResult<DocumentComment>> {
+            ready(self.with(reference, |s| {
+                let c = DocumentComment {
+                    id: format!("c{}", s.comments.len() + 1),
+                    author: new.author,
+                    body: new.body,
+                    quote: None,
+                    anchor: new.anchor,
+                    resolved: false,
+                    created_at: None,
+                    replies: vec![],
+                    actor: Some(new.actor),
+                };
+                s.comments.push(c.clone());
+                Ok(c)
+            }))
+        }
         fn reply<'a>(
             &'a self,
             reference: &'a str,
@@ -411,6 +451,7 @@ pub mod testing {
                     author: by.1,
                     body: body.into(),
                     created_at: None,
+                    actor: Some(by.0),
                 };
                 c.replies.push(r.clone());
                 Ok(r)

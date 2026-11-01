@@ -67,6 +67,8 @@ pub enum Category {
     Releases,
     /// The PM's conversations.
     Pm,
+    /// Docs and sheets.
+    Documents,
     /// The user's own templates, and anything else.
     #[default]
     Other,
