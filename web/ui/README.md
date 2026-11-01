@@ -42,6 +42,8 @@
   `Button` API working (`variant` primary | secondary | ghost; adds danger; `size` sm | md; `pending`).
 - **Accessible by default.** Real roles; icon-only controls require a `label`; every overlay closes on Escape and
   returns focus to what opened it; Up/Down/Home/End in lists and menus; long press = right-click on touch.
+  A hand-built `role="tablist"` takes `onKeyDown={tabListKeyDown}` and gives its tabs `tabIndexOf(…)` (Left/Right/Home/End,
+  one Tab stop); what a tab shows is a `role="tabpanel"` labelled by the tab's id.
 - **Touch.** Long press opens the same menu as right-click (`MenuTrigger trigger="contextMenu"`). Drag data is
   `text/plain` with a `pdt:<kind>:<id>` value (Android Chrome drops custom types); draggable rows carry a
   `<Button slot="drag">` handle. Sheets open from a button, never an edge swipe. Never make a long-press target natively `draggable` on touch

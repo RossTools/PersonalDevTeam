@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Play } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Button, DiffStat, EmptyState, MenuButton, Skeleton, useConfirm, ViewHeader } from '@ui';
+import { Button, DiffStat, EmptyState, MenuButton, Skeleton, tabListKeyDown, useConfirm, ViewHeader } from '@ui';
 import type { Ticket } from '../api/gen/Ticket';
 import { BranchChip } from '../common/BranchChip';
 import { PriorityIcon } from '../common/PriorityIcon';
@@ -71,7 +71,7 @@ export function HubTabs({ value, onChange, diff }: {
   diff?: { added: number; removed: number; files: number } | null;
 }) {
   return (
-    <div role="tablist" aria-label="Ticket sections" className="flex shrink-0 items-center gap-1 border-b border-border px-3">
+    <div role="tablist" aria-label="Ticket sections" onKeyDown={tabListKeyDown} className="flex shrink-0 items-center gap-1 border-b border-border px-3">
       {HUB_TABS.map((t) => (
         <button
           key={t.id}
@@ -79,6 +79,7 @@ export function HubTabs({ value, onChange, diff }: {
           role="tab"
           id={`ticket-tab-${t.id}`}
           aria-selected={t.id === value}
+          tabIndex={t.id === value ? 0 : -1}
           onClick={() => !t.arrives && onChange(t.id)}
           aria-disabled={t.arrives ? true : undefined}
           disabled={!!t.arrives}
