@@ -133,7 +133,7 @@ const agent = (over: Partial<Session> = {}): Session => ({
   id: 's1', projectId: 'p', worktreeId: null, kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: 'Coder · PDT-7',
   cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null,
   activity: 'working', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'conversation',
-  model: null, permissionMode: null, persona: null, ...over,
+  model: null, permissionMode: null, persona: null, background: [], ...over,
 });
 
 const editRoutes = (extra: Record<string, unknown> = {}) => ({
