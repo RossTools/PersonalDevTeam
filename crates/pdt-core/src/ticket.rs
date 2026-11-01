@@ -209,13 +209,16 @@ pub enum EventKind {
     /// Outside input reached an agent session, or was held back from one (PDT-202): `{source, url, sessionId, via,
     /// runId, workflowName}`; a comment held back: `{held: true, source, url, author, pr}` with its text as the body.
     OutsideInput,
+    /// The branch was brought up to date with its base, or a conflict with it left for merge time (PDT-328):
+    /// `{attemptId, how, base, files, regenerated, pr}` (`how`: [`crate::merge_update::MergeUpdateHow`]).
+    MergeUpdate,
 }
 str_enum!(EventKind {
     Created => "created", Edited => "edited", Moved => "moved", Linked => "linked", Unlinked => "unlinked",
     Started => "started", Session => "session", Merged => "merged", Abandoned => "abandoned",
     Unblocked => "unblocked", Overlap => "overlap", Comment => "comment", Waiting => "waiting", Pr => "pr",
     Parted => "parted", Feedback => "feedback", Review => "review", Outcome => "outcome",
-    OutsideInput => "outside_input",
+    OutsideInput => "outside_input", MergeUpdate => "merge_update",
 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -348,6 +351,10 @@ pub struct AttemptSummary {
     /// CI of its branch without a pull request (a CI integration's builds of the branch; with a PR it is in `pr.ci`). In memory.
     #[serde(default)]
     pub ci: Option<crate::pr::CiStatus>,
+    /// Where it is with its base's conflicts (PDT-328): deferred to merge time, being updated, or with an agent. In memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub merge_update: Option<crate::merge_update::MergeUpdateStatus>,
 }
 
 /// An issue in another tracker that a ticket is linked to (Phase 7e: an issue tracker integration's, or GitHub's).

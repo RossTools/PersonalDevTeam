@@ -577,7 +577,7 @@ async fn a_strict_project_is_other_parameters_and_policies() {
         s["policy"],
         json!({"mergeBy": "user", "requireApproval": true, "approvalExemptLabels": [], "maxRunningAttempts": 1,
                "autoStart": "off", "autoStartOrder": "priority", "pmActs": false, "startDelaySeconds": 120,
-               "requireGreenCi": true, "triageApproval": "inbox"})
+               "requireGreenCi": true, "triageApproval": "inbox", "resolveConflicts": "merge_time"})
     );
 
     let (s, started) =
@@ -1089,13 +1089,31 @@ async fn a_merge_left_to_a_person_asks_again_after_its_time_limit() {
 
 /// A local merge that conflicts (main moved on): the Coder fixes it, a Reviewer checks the fix, and it merges, with
 /// no person in the loop (PDT-124).
+/// The `merge_update` events on the ticket's timeline: how each update went (PDT-328).
+async fn merge_updates(env: &Env, t: &str) -> Vec<Value> {
+    timeline(env, t).await["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "merge_update")
+        .map(|e| e["data"].clone())
+        .collect()
+}
+
+fn hows(updates: &[Value]) -> Vec<&str> {
+    updates.iter().map(|u| u["how"].as_str().unwrap()).collect()
+}
+
+/// PDT-328: at merge time PDT merges main in itself; a real conflict goes to the Coder once, with the files, the hunks
+/// and what merged into main since, and the merge left in progress. Once the Coder pushes, PDT finds the branch up to
+/// date and merges it, and the timeline says the agent resolved it.
 #[tokio::test]
-async fn a_merge_refused_for_a_conflict_is_fixed_reviewed_and_merged() {
+async fn a_real_conflict_at_merge_time_goes_to_the_coder_once_with_its_hunks() {
     let env = setup().await;
     pipeline(
         &env,
         json!({"autoAcceptLabels": ["agentic"]}),
-        &[("code", "submitted"), ("review", "approved"), ("qa", "pass"), ("fix_review", "approved")],
+        &[("code", "submitted"), ("review", "approved"), ("qa", "pass")],
     )
     .await;
     let t = labelled(&env, "Change a", &["agentic"]).await;
@@ -1108,14 +1126,9 @@ async fn a_merge_refused_for_a_conflict_is_fixed_reviewed_and_merged() {
     git(&worktree, &["commit", "-qam", "branch"]);
     // Main moves on and conflicts.
     std::fs::write(env.repo.join("a.txt"), "main\n").unwrap();
-    git(&env.repo, &["commit", "-qam", "main"]);
+    git(&env.repo, &["commit", "-qam", "PX-9: Main's change"]);
 
-    let fix = tick_until(&env, "the fix step", || async {
-        let steps = env.state.store.active_agent_steps().await.unwrap();
-        steps.into_iter().find(|a| a.node_id == "fix").and_then(|a| a.session_id).map(Value::from)
-    })
-    .await;
-    let fix = fix.as_str().unwrap().to_string();
+    let resolve = step_session(&env, "resolve").await;
     let coder = get_ticket(&env, &t).await["sessions"]
         .as_array()
         .unwrap()
@@ -1123,24 +1136,204 @@ async fn a_merge_refused_for_a_conflict_is_fixed_reviewed_and_merged() {
         .find(|s| s["title"].as_str().unwrap().starts_with("Coder"))
         .unwrap()["id"]
         .clone();
-    assert_eq!(coder, json!(fix), "the Coder's own session");
-    let said = tick_until(&env, "the fix reaching the coder", || async {
-        agent_says(&env, &fix).await.into_iter().find(|m| m.contains("merge was refused")).map(Value::from)
+    assert_eq!(coder, json!(resolve), "the Coder's own session");
+    let said = tick_until(&env, "the conflicts reaching the coder", || async {
+        agent_says(&env, &resolve).await.into_iter().find(|m| m.contains("conflicts")).map(Value::from)
     })
     .await;
-    assert!(said.as_str().unwrap().contains("the merge conflicts"), "{said}");
-    assert_eq!(get_ticket(&env, &t).await["pipelineStage"], "code");
-    // The Coder merges main in and resolves the conflict, then submits; a fresh Reviewer approves and it merges.
-    git(&worktree, &["merge", "-q", "main", "-X", "ours", "-m", "merge main"]);
-    let text = r#"mcp: submit_outcome {"outcome": "submitted", "summary": "merged main in"}"#;
-    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{fix}/messages"), Some(json!({"text": text}))).await;
-    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
-    until_done(&env, &t).await;
-    assert_eq!(outcomes(&timeline(&env, &t).await), ["submitted", "approved", "pass", "submitted", "approved"]);
+    let said = said.as_str().unwrap();
+    for want in ["- a.txt", "<<<<<<<", "- PX-9: Main's change", "merged `main`"] {
+        assert!(said.contains(want), "{want} in {said}");
+    }
+    let v = get_ticket(&env, &t).await;
+    assert_eq!(
+        (v["pipelineStage"].as_str(), v["attempts"][0]["mergeUpdate"].as_str()),
+        (Some("merge"), Some("resolving"))
+    );
+    assert!(
+        worktree.join(".git").exists() && std::fs::read_to_string(worktree.join("a.txt")).unwrap().contains("<<<<<<<")
+    );
+    assert_eq!(hows(&merge_updates(&env, &t).await), ["conflict"]);
+    assert_eq!(merge_updates(&env, &t).await[0]["files"], json!(["a.txt"]));
+
+    // The Coder resolves the conflict in the merge PDT left in progress, commits and submits.
+    std::fs::write(worktree.join("a.txt"), "branch\n").unwrap();
+    git(&worktree, &["add", "a.txt"]);
+    git(&worktree, &["commit", "-q", "--no-edit"]);
+    mark_pushed(&worktree);
+    submit_in(&env, &resolve, "submitted").await;
+    let done = until_done(&env, &t).await;
+    assert_eq!(outcomes(&timeline(&env, &t).await), ["submitted", "approved", "pass", "submitted"]);
+    assert_eq!(hows(&merge_updates(&env, &t).await), ["conflict", "agent"]);
+    assert_eq!(done["attempts"][0]["mergeUpdate"], Value::Null);
     assert!(inbox(&env).await.iter().all(|i| i["ticketId"] != t.as_str()), "nobody was asked");
     // Git on Windows may check the merged file out with CRLF.
     let merged = std::fs::read_to_string(env.repo.join("a.txt")).unwrap().replace("\r\n", "\n");
     assert_eq!(merged, "branch\n", "merged into main");
+}
+
+/// PDT-328: main moved without conflicting. PDT merges it in and pushes the branch once, with no agent, then merges.
+#[tokio::test]
+async fn a_clean_update_at_merge_time_needs_no_agent_and_pushes_once() {
+    let env = setup().await;
+    // A plain git remote: the branch was pushed, and main moved there.
+    let remote = env._tmp.path().join("origin.git");
+    git(env._tmp.path(), &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+    git(&env.repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(&env.repo, &["push", "-q", "origin", "main"]);
+    pipeline(
+        &env,
+        json!({"autoAcceptLabels": ["agentic"]}),
+        &[("code", "submitted"), ("review", "approved"), ("qa", "pass")],
+    )
+    .await;
+    let t = labelled(&env, "Add b", &["agentic"]).await;
+    let (s, started) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{started}");
+    let branch = started["attempt"]["branch"].as_str().unwrap().to_string();
+    let worktree = env.repo.join(".worktrees").join(&branch);
+    std::fs::write(worktree.join("b.txt"), "built\n").unwrap();
+    git(&worktree, &["add", "."]);
+    git(&worktree, &["commit", "-qm", "build"]);
+    git(&worktree, &["push", "-q", "origin", &branch]);
+    let other = env._tmp.path().join("other");
+    git(env._tmp.path(), &["clone", "-q", remote.to_str().unwrap(), other.to_str().unwrap()]);
+    git(&other, &["config", "user.name", "t"]);
+    git(&other, &["config", "user.email", "t@t"]);
+    std::fs::write(other.join("m.txt"), "main\n").unwrap();
+    git(&other, &["add", "."]);
+    git(&other, &["commit", "-qm", "PX-8: Main's change"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+
+    until_done(&env, &t).await;
+    assert_eq!(outcomes(&timeline(&env, &t).await), ["submitted", "approved", "pass"], "no agent after QA");
+    let updates = merge_updates(&env, &t).await;
+    assert_eq!(hows(&updates), ["clean"], "{updates:?}");
+    assert_eq!(updates[0]["base"], "origin/main");
+    // The update was pushed: the remote branch has main's change.
+    let rev = |r: &str| {
+        let out = std::process::Command::new("git").current_dir(&remote).args(["rev-parse", r]).output().unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let (pushed, main_head) = (rev(&format!("refs/heads/{branch}")), rev("main"));
+    let r = std::process::Command::new("git")
+        .current_dir(&remote)
+        .args(["merge-base", "--is-ancestor", &main_head, &pushed])
+        .status()
+        .unwrap();
+    assert!(r.success(), "the pushed branch has main");
+    assert!(env.repo.join("m.txt").exists() && env.repo.join("b.txt").exists(), "merged into main");
+}
+
+/// PDT-328: only a generated file conflicts. PDT takes main's side, runs the project's regeneration command and
+/// commits, with no agent.
+#[tokio::test]
+async fn a_conflict_only_in_generated_files_is_regenerated_without_an_agent() {
+    let env = setup().await;
+    std::fs::create_dir_all(env.repo.join(".pdt")).unwrap();
+    std::fs::write(
+        env.repo.join(".pdt/project.toml"),
+        "[[merge.regenerate]]\npaths = [\"gen/**\"]\nrun = \"cd gen && echo regenerated> out.txt\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(env.repo.join("gen")).unwrap();
+    std::fs::write(env.repo.join("gen/out.txt"), "one\n").unwrap();
+    git(&env.repo, &["add", "."]);
+    git(&env.repo, &["commit", "-qm", "regeneration rules"]);
+    pipeline(
+        &env,
+        json!({"autoAcceptLabels": ["agentic"]}),
+        &[("code", "submitted"), ("review", "approved"), ("qa", "pass")],
+    )
+    .await;
+    let t = labelled(&env, "Change gen", &["agentic"]).await;
+    let (s, started) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{started}");
+    let worktree = env.repo.join(".worktrees").join(started["attempt"]["branch"].as_str().unwrap());
+    std::fs::write(worktree.join("gen/out.txt"), "branch\n").unwrap();
+    std::fs::write(worktree.join("b.txt"), "built\n").unwrap();
+    git(&worktree, &["add", "."]);
+    git(&worktree, &["commit", "-qm", "build"]);
+    std::fs::write(env.repo.join("gen/out.txt"), "main\n").unwrap();
+    git(&env.repo, &["commit", "-qam", "main regenerates"]);
+
+    until_done(&env, &t).await;
+    assert_eq!(outcomes(&timeline(&env, &t).await), ["submitted", "approved", "pass"], "no agent after QA");
+    let updates = merge_updates(&env, &t).await;
+    assert_eq!(hows(&updates), ["regenerated"], "{updates:?}");
+    assert_eq!(updates[0]["regenerated"], json!(["gen/out.txt"]));
+    let generated = std::fs::read_to_string(env.repo.join("gen/out.txt")).unwrap();
+    assert_eq!(generated.trim(), "regenerated", "merged into main as regenerated");
+    assert!(env.repo.join("b.txt").exists());
+}
+
+/// PDT-328: while the ticket is in code (review, QA or accept), a conflict is recorded and shown, not sent to its
+/// agent; a project that resolves conflicts immediately tells the agent at once.
+#[tokio::test]
+async fn a_conflict_before_the_merge_step_waits_for_merge_time_unless_the_project_says_immediately() {
+    let gh = std::sync::Arc::new(FakeForge::default());
+    let env = setup_with(Some(gh.clone())).await;
+    // The Coder never submits: the ticket stays in code.
+    pipeline(&env, json!({}), &[]).await;
+    let t = ticket(&env, "Long work").await;
+    let attempt = start_with_a_commit(&env, &t, "c.txt").await;
+    let branch = attempt["branch"].as_str().unwrap().to_string();
+    let coder = step_session(&env, "code").await;
+    let notices = |run: &Value| -> Vec<String> {
+        run["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| format!("{}:{}", s["nodeId"].as_str().unwrap(), s["port"].as_str().unwrap_or("-")))
+            .collect()
+    };
+    let notice_run = |head: &'static str| {
+        let env = &env;
+        let t = t.clone();
+        async move {
+            tick_until(env, "PR notices on the conflict", || async {
+                runs_of(env, &t, "PR notices")
+                    .await
+                    .into_iter()
+                    .find(|r| r["trigger"]["headSha"] == head && r["status"] != "running" && r["status"] != "waiting")
+            })
+            .await
+        }
+    };
+    let mut conflicting = pull_request(Mergeable::Conflicting);
+    gh.set_pr(&branch, Some(conflicting.clone()));
+    pdt_api::refresh_prs(&env.state).await;
+    let run = notice_run("abcdef1234").await;
+    assert_eq!(notices(&run), ["conflict:out", "defer:deferred", "later:-"], "{run}");
+    let v = get_ticket(&env, &t).await;
+    assert_eq!(
+        (v["pipelineStage"].as_str(), v["attempts"][0]["mergeUpdate"].as_str()),
+        (Some("code"), Some("deferred"))
+    );
+    let updates = merge_updates(&env, &t).await;
+    assert_eq!((hows(&updates), updates[0]["pr"].as_u64()), (vec!["deferred"], Some(12)));
+    let pr_events = timeline(&env, &t).await["events"].as_array().unwrap().iter().filter(|e| e["kind"] == "pr").count();
+    assert_eq!(pr_events, 0, "the agent wasn't told");
+    assert!(agent_says(&env, &coder).await.iter().all(|m| !m.contains("conflicts with main")));
+
+    // No longer conflicting: the ticket shows nothing.
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+    pdt_api::refresh_prs(&env.state).await;
+    assert_eq!(get_ticket(&env, &t).await["attempts"][0]["mergeUpdate"], Value::Null);
+
+    // Immediately: the agent hears of the next conflict at once.
+    settings(&env, json!({"resolveConflicts": "immediately"})).await;
+    conflicting.head_sha = "fedcba9876".into();
+    gh.set_pr(&branch, Some(conflicting));
+    pdt_api::refresh_prs(&env.state).await;
+    let run = notice_run("fedcba9876").await;
+    assert_eq!(notices(&run)[..3], ["conflict:out", "defer:now", "asked:false"], "{run}");
+    let told = timeline(&env, &t).await["events"].as_array().unwrap().iter().filter(|e| e["kind"] == "pr").count();
+    assert_eq!(told, 1, "the agent was told");
 }
 
 fn pull_request(mergeable: Mergeable) -> ChangeRequest {
@@ -1283,7 +1476,7 @@ async fn conflicting_pr(abandon: bool) {
         })
         .await;
         let nodes: Vec<&str> = run["steps"].as_array().unwrap().iter().map(|s| s["nodeId"].as_str().unwrap()).collect();
-        assert_eq!(nodes[..3], ["conflict", "asked", "busy"], "{run}");
+        assert_eq!(nodes[..4], ["conflict", "defer", "asked", "busy"], "{run}");
         assert_eq!(run["trigger"]["mergeRefused"], true);
         assert_eq!(merges(), 0, "nothing merges before the fix");
         return;

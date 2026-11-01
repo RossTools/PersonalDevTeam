@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use ts_rs::TS;
 
 /// The top-level sections (and keys) this PDT understands. Any other is skipped (see [`parse`]).
-const SECTIONS: [&str; 7] = ["run", "test", "area", "forge", "ci", "push", "storage"];
+const SECTIONS: [&str; 8] = ["run", "test", "area", "forge", "ci", "push", "storage", "merge"];
 
 /// Unknown top-level keys are skipped by serde (no `deny_unknown_fields` here, unlike the entries).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -32,6 +32,9 @@ pub struct ConfigFile {
     /// `[storage]`: which paths of a checkout are build output, for cleaning worktrees.
     #[serde(default)]
     pub storage: Option<StorageFile>,
+    /// `[merge]`: how PDT brings a branch up to date with its base at merge time (PDT-328).
+    #[serde(default)]
+    pub merge: Option<MergeFile>,
     /// Top-level sections this PDT does not know (e.g. written for a newer PDT), skipped rather than refused.
     #[serde(skip)]
     pub ignored: Vec<String>,
@@ -58,6 +61,32 @@ pub struct PushFile {
 #[serde(deny_unknown_fields)]
 pub struct StorageFile {
     pub build_output: Option<Vec<String>>,
+}
+
+/// `[merge]` as written: `[[merge.regenerate]]` entries.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MergeFile {
+    pub regenerate: Option<Vec<RegenerateFile>>,
+}
+
+/// A `[[merge.regenerate]]` as written: `paths = ["Cargo.lock"]`, `run = "cargo update -w"`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegenerateFile {
+    pub paths: Option<Vec<String>>,
+    pub run: Option<String>,
+}
+
+/// Generated or derived files (PDT-328): when bringing a branch up to date with its base, a conflict only in files
+/// that `paths` match (globs as in areas) is resolved by taking the base's side and running `run` in the worktree, then
+/// committing what it changed there, with no agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RegenerateDef {
+    pub paths: Vec<String>,
+    pub run: String,
 }
 
 /// A plain git remote for the local forge (PDT-245): after CI passes and the branch merges into its base, PDT pushes
@@ -155,6 +184,8 @@ pub struct RunConfig {
     /// `[storage] build_output`: the checkout's build output paths (the overrides' list wins); None: detected from
     /// the files at the checkout's root (`pdt_core::storage::detect_build_output`).
     pub build_output: Option<Vec<String>>,
+    /// `[[merge.regenerate]]`: the rules for generated files at merge time (the overrides' list wins when they give one).
+    pub regenerate: Vec<RegenerateDef>,
     /// Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
     pub ignored: Vec<String>,
 }
@@ -209,6 +240,10 @@ pub enum RunConfigError {
     BadPushRemote(String),
     #[error("{0}")]
     BadBuildOutput(String),
+    #[error("a [[merge.regenerate]] needs at least one path and a `run` command")]
+    EmptyRegenerate,
+    #[error("[[merge.regenerate]] has a path that is not a valid pattern ({path:?}): {message}")]
+    BadRegenerateGlob { path: String, message: String },
 }
 
 /// Parses a configuration. Unknown top-level sections are skipped and listed in `ignored`, so a file written for a
@@ -370,9 +405,23 @@ pub fn merge(file: Option<ConfigFile>, overrides: Option<ConfigFile>) -> Result<
         Some(o) => Some(o),
         None => output(&file.storage)?,
     };
+    let rules = |m: Option<MergeFile>| m.and_then(|m| m.regenerate);
+    let regenerate = rules(over.merge).or(rules(file.merge)).unwrap_or_default();
+    let regenerate = regenerate.into_iter().map(finish_regenerate).collect::<Result<_, _>>()?;
     let mut ignored = file.ignored;
     ignored.extend(over.ignored.into_iter().filter(|s| !ignored.contains(s)).collect::<Vec<_>>());
-    Ok(RunConfig { runs, tests, areas, forge, ci, ci_providers, push, build_output, ignored })
+    Ok(RunConfig { runs, tests, areas, forge, ci, ci_providers, push, build_output, regenerate, ignored })
+}
+
+fn finish_regenerate(r: RegenerateFile) -> Result<RegenerateDef, RunConfigError> {
+    let paths: Vec<String> =
+        r.paths.unwrap_or_default().iter().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
+    let run = r.run.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+    let Some(run) = run.filter(|_| !paths.is_empty()) else { return Err(RunConfigError::EmptyRegenerate) };
+    for p in &paths {
+        crate::overlap::glob(p).map_err(|message| RunConfigError::BadRegenerateGlob { path: p.clone(), message })?;
+    }
+    Ok(RegenerateDef { paths, run })
 }
 
 /// `[push]` with the overrides' fields over the file's; None without a remote (a blank one is none).
@@ -670,6 +719,33 @@ command = "cargo run"
             assert!(matches!(merge(Some(b), None), Err(RunConfigError::BadPushRemote(_))), "{bad}");
         }
         assert!(matches!(parse("[push]\nurl = \"x\"\n", Source::File), Err(RunConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn merge_regenerate_rules_are_read_and_checked() {
+        let text = "[[merge.regenerate]]\npaths = [\"web/src/api/gen/**\"]\nrun = \"cargo test\"\n\
+                    [[merge.regenerate]]\npaths = [\" Cargo.lock \"]\nrun = \" cargo update -w \"\n";
+        let f = parse(text, Source::File).unwrap();
+        assert!(f.ignored.is_empty(), "{:?}", f.ignored);
+        let c = merge(Some(f.clone()), None).unwrap();
+        let rule = |p: &str, r: &str| RegenerateDef { paths: vec![p.into()], run: r.into() };
+        assert_eq!(c.regenerate, [rule("web/src/api/gen/**", "cargo test"), rule("Cargo.lock", "cargo update -w")]);
+        let over = parse("[[merge.regenerate]]\npaths = [\"x\"]\nrun = \"y\"\n", Source::Overrides).unwrap();
+        assert_eq!(
+            merge(Some(f.clone()), Some(over)).unwrap().regenerate,
+            [rule("x", "y")],
+            "the overrides' list wins"
+        );
+        let none = parse("[merge]\nregenerate = []\n", Source::Overrides).unwrap();
+        assert!(merge(Some(f), Some(none)).unwrap().regenerate.is_empty(), "an empty list turns them off");
+        assert!(merge(None, None).unwrap().regenerate.is_empty());
+        for bad in ["paths = []\nrun = \"x\"", "paths = [\"a\"]", "paths = [\"a\"]\nrun = \" \""] {
+            let b = parse(&format!("[[merge.regenerate]]\n{bad}\n"), Source::File).unwrap();
+            assert_eq!(merge(Some(b), None), Err(RunConfigError::EmptyRegenerate), "{bad}");
+        }
+        let b = parse("[[merge.regenerate]]\npaths = [\"src/[\"]\nrun = \"x\"\n", Source::File).unwrap();
+        assert!(matches!(merge(Some(b), None), Err(RunConfigError::BadRegenerateGlob { .. })));
+        assert!(matches!(parse("[merge]\nrebase = true\n", Source::File), Err(RunConfigError::Parse { .. })));
     }
 
     #[test]

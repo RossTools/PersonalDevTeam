@@ -47,6 +47,30 @@ describe('pull request status', () => {
     expect(prSummary(pr({ autoMerge: false, mergeHeld: true, ci: null })).label).toBe('Set to merge');
   });
 
+  it('shows a conflict left for merge time, and the update at merge time (PDT-328)', () => {
+    const conflicting = pr({ mergeable: 'conflicting' });
+    expect(prSummary(conflicting, false, 'deferred')).toEqual({ label: 'Conflict (deferred)', tone: 'neutral' });
+    expect(prSummary(conflicting, false, 'resolving')).toEqual({ label: 'Resolving conflicts', tone: 'waiting' });
+    expect(prSummary(pr(), false, 'updating')).toEqual({ label: 'Updating', tone: 'waiting' });
+    expect(prSummary(pr({ state: 'merged' }), false, 'updating').label).toBe('Merged');
+    const { rerender } = render(<PrDetails pr={conflicting} mergeUpdate="deferred" />);
+    expect(screen.getByText('Conflicts with main (deferred)')).toBeInTheDocument();
+    expect(screen.queryByText('Conflicts with main')).not.toBeInTheDocument();
+    rerender(<PrDetails pr={pr()} mergeUpdate="updating" />);
+    expect(screen.getByText('Updating with main…')).toBeInTheDocument();
+    rerender(<PrDetails pr={conflicting} mergeUpdate="resolving" />);
+    expect(screen.getByText('Resolving conflicts (agent)')).toBeInTheDocument();
+  });
+
+  it('names how each update with the base went on the timeline (PDT-328)', () => {
+    const title = (data: Record<string, unknown>) => eventTitle(event('e1', { kind: 'merge_update', data }));
+    expect(title({ how: 'deferred', pr: 12 })).toBe('Conflicts with the base branch (PR #12) · resolved at merge time');
+    expect(title({ how: 'clean', base: 'origin/main' })).toBe('Updated with origin/main · merged cleanly, no agent');
+    expect(title({ how: 'regenerated', base: 'main', regenerated: ['Cargo.lock'] })).toBe('Updated with main · regenerated Cargo.lock, no agent');
+    expect(title({ how: 'conflict', base: 'main', files: ['a.rs', 'b.rs'] })).toBe('Conflicts with main in 2 files · sent to the agent');
+    expect(title({ how: 'agent', base: 'main' })).toBe('Conflicts with main resolved by the agent');
+  });
+
   it('says PDT merges a held pull request once CI passes (PDT-297)', () => {
     render(<PrDetails pr={pr({ autoMerge: false, mergeHeld: true, ci: { ...passed, state: 'running' } })} />);
     expect(screen.getByText('Merging when CI passes')).toBeInTheDocument();

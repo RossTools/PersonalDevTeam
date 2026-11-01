@@ -201,6 +201,32 @@ section PDT detects the usual ones from the files at the checkout's root: `targe
 CMake. Cleaning only removes what git ignores and holds no tracked files, so it never touches your code or your
 uncommitted work. The host overrides' list replaces the file's.
 
+## Generated files at merge time
+
+When PDT brings a branch up to date with its base at merge time (see **Conflicts** in Review and merge), a conflict
+only in generated files needs no agent if you say how to regenerate them:
+
+```toml
+[[merge.regenerate]]
+paths = ["src/generated/**"]
+run   = "cargo test"
+
+[[merge.regenerate]]
+paths = ["Cargo.lock"]
+run   = "cargo update -w"
+
+[[merge.regenerate]]
+paths = ["pnpm-lock.yaml"]
+run   = "pnpm install"
+```
+
+- **`paths`**: the files the rule covers, as patterns like an area's.
+- **`run`**: the command that regenerates them, run in the ticket's worktree with your login shell's `PATH`.
+
+When every conflicting file matches a rule, PDT takes the base's version of each, runs each matching rule's command,
+and commits what changed under its `paths` with the merge. If a command fails, or other files conflict too, the agent
+gets the conflicts and the commands to run once they're resolved. The host overrides' list replaces the file's.
+
 ## Pitfalls
 
 - **Use `$PORT`.** A web server on a fixed port never shows as ready, and two branches would clash. Pass the port by

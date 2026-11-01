@@ -1229,6 +1229,7 @@ mod tests {
             workspace_id: None,
             pr: Some(pr),
             ci: None,
+            merge_update: None,
         });
         t.agent = Some(TicketAgent {
             persona: Some("Coder".into()),

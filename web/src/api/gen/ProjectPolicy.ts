@@ -2,6 +2,7 @@
 import type { AutoStart } from "./AutoStart";
 import type { AutoStartOrder } from "./AutoStartOrder";
 import type { MergeBy } from "./MergeBy";
+import type { ResolveConflicts } from "./ResolveConflicts";
 import type { TriageApproval } from "./TriageApproval";
 
 /**
@@ -41,4 +42,8 @@ requireGreenCi: boolean,
 /**
  * Whether tickets triage drafts wait for the user's approval in the Inbox (PDT-225).
  */
-triageApproval: TriageApproval, };
+triageApproval: TriageApproval, 
+/**
+ * When conflicts with the base are resolved: at merge time, or as soon as they appear (PDT-328).
+ */
+resolveConflicts: ResolveConflicts, };

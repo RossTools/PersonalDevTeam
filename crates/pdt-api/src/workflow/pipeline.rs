@@ -31,6 +31,9 @@ const FIX_REVIEW_PROMPT: &str = "QA passed on this attempt, then its merge was r
 changes or failing CI) and the Coder fixed that. Review the fix: the commits since your earlier review, and the branch's diff \
 against its base, against the ticket. Put each finding on its line (`comments` in `submit_outcome`).";
 
+const RESOLVE_PROMPT: &str = "{{steps.update.message}}\n\nQA passed and this ticket is merging: resolve only the \
+conflicts. Once you push, PDT brings the branch up to date again and merges it.";
+
 /// How long a merge may wait (for a person, or for someone to clear what blocks it) before the Inbox asks again.
 const MERGE_WAIT_MS: i64 = 3 * 24 * 60 * 60 * 1000;
 
@@ -215,6 +218,27 @@ pub fn doc() -> WorkflowDoc {
             "question": "Accept {{trigger.ticketKey}} and merge it?", "choices": ["merge", "reject"],
             "inbox": "accept", "pipelineStage": "accept", "approve": "merge"}),
         ),
+        // Conflicts are fixed once, here (PDT-328): PDT merges the base in itself and regenerates generated files;
+        // only real conflicts go to the Coder.
+        node(
+            "update",
+            "attempt.update_base",
+            1650,
+            550,
+            "Update with the base",
+            json!({"attempt": "{{trigger.attemptId}}", "pipelineStage": "merge"}),
+        ),
+        node(
+            "resolve",
+            "agent",
+            1650,
+            700,
+            "Resolve the conflicts",
+            json!({
+            "persona": "{{params.coder}}", "prompt": RESOLVE_PROMPT, "session": "reuse",
+            "owner": "{{params.codeBy}}", "pipelineStage": "merge", "loopLimit": "{{params.loopLimit}}",
+            "outcomes": [{"id": "submitted", "description": "the conflicts are resolved, checked and pushed"}]}),
+        ),
         node(
             "merge_mode",
             "switch",
@@ -366,11 +390,18 @@ pub fn doc() -> WorkflowDoc {
         edge("qa", "timeout", "stopped"),
         edge("qa", "stopped", "stopped"),
         edge("accept_mode", "user", "auto_accept"),
-        edge("auto_accept", "true", "merge_mode"),
+        edge("auto_accept", "true", "update"),
         edge("auto_accept", "false", "accept"),
-        edge("accept_mode", "auto", "merge_mode"),
+        edge("accept_mode", "auto", "update"),
         edge("accept_mode", "default", "accept"),
-        edge("accept", "merge", "merge_mode"),
+        edge("accept", "merge", "update"),
+        edge("update", "current", "merge_mode"),
+        edge("update", "updated", "merge_mode"),
+        edge("update", "skipped", "merge_mode"),
+        edge("update", "conflict", "resolve"),
+        edge("resolve", "submitted", "update"),
+        edge("resolve", "timeout", "stopped"),
+        edge("resolve", "stopped", "stopped"),
         edge("accept", "reject", "code"),
         edge("accept", "timeout", "stopped"),
         edge("accept", "unanswered", "stopped"),
@@ -415,8 +446,9 @@ pub fn doc() -> WorkflowDoc {
         "description": "Draft → Refine → Ready → Code → Review → QA → Accept → Done. Refine (on a ticket) runs the \
                         Refiner; starting a ticket runs the Coder, then a fresh Reviewer and QA, sending it back to the \
                         Coder on changes or a failure (findings first, PR notices after them; it submits once its \
-                        work is committed and pushed); then you accept and the run merges once CI on the pull \
-                        request passes. A merge refused for a conflict or failing CI goes back to the Coder and a \
+                        work is committed and pushed); then you accept, PDT brings the branch up to date with its base \
+                        (conflicts in generated files regenerated, real ones to the Coder), and the run merges once \
+                        CI on the pull request passes. A merge refused for a conflict or failing CI goes back to the Coder and a \
                         Reviewer; one refused for anything else asks you in the Inbox. Any stage can be yours instead of an agent's.",
         "nodes": nodes,
         "edges": edges,

@@ -117,6 +117,32 @@ impl TriageApproval {
     }
 }
 
+/// When an attempt's conflicts with its base get resolved (PDT-328).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ResolveConflicts {
+    /// Once, when the ticket is next to merge: a conflict while it is in code, review, QA or accept is recorded and
+    /// shown, not sent to its agent; the merge step brings the branch up to date first.
+    #[default]
+    MergeTime,
+    /// As soon as the pull request conflicts: its agent is told at once.
+    Immediately,
+}
+
+impl ResolveConflicts {
+    pub const ALL: [ResolveConflicts; 2] = [ResolveConflicts::MergeTime, ResolveConflicts::Immediately];
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResolveConflicts::MergeTime => "merge_time",
+            ResolveConflicts::Immediately => "immediately",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+}
+
 /// How long a ticket goes unchanged before auto-start takes it, unless the project says otherwise (PDT-146).
 pub const DEFAULT_START_DELAY_SECONDS: u32 = 120;
 
@@ -155,6 +181,9 @@ pub struct ProjectPolicy {
     /// Whether tickets triage drafts wait for the user's approval in the Inbox (PDT-225).
     #[serde(default)]
     pub triage_approval: TriageApproval,
+    /// When conflicts with the base are resolved: at merge time, or as soon as they appear (PDT-328).
+    #[serde(default)]
+    pub resolve_conflicts: ResolveConflicts,
 }
 
 fn yes() -> bool {
@@ -174,6 +203,7 @@ impl Default for ProjectPolicy {
             start_delay_seconds: DEFAULT_START_DELAY_SECONDS,
             require_green_ci: true,
             triage_approval: TriageApproval::default(),
+            resolve_conflicts: ResolveConflicts::default(),
         }
     }
 }

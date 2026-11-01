@@ -6,6 +6,7 @@ pub mod brief;
 pub mod call;
 pub mod command;
 pub mod condition;
+pub mod conflicts;
 pub mod end;
 pub mod gate;
 pub mod github;

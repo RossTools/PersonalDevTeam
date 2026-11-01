@@ -12,6 +12,7 @@ import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { AutoStart } from '../api/gen/AutoStart';
 import type { AutoStartOrder } from '../api/gen/AutoStartOrder';
+import type { ResolveConflicts } from '../api/gen/ResolveConflicts';
 import type { TriageApproval } from '../api/gen/TriageApproval';
 import type { MergeBy } from '../api/gen/MergeBy';
 import { PERMISSION_LABEL, PERMISSION_MODES } from '../conversation/ConversationComposer';
@@ -308,6 +309,10 @@ const TRIAGE_APPROVAL: { value: TriageApproval; label: string }[] = [
   { value: 'inbox', label: 'Wait in the Inbox' },
   { value: 'off', label: 'Off: stay in the backlog' },
 ];
+const RESOLVE_CONFLICTS: { value: ResolveConflicts; label: string }[] = [
+  { value: 'merge_time', label: 'At merge time' },
+  { value: 'immediately', label: 'Immediately' },
+];
 const START_DELAYS: { value: string; label: string }[] = [
   { value: '0', label: 'None: at once' },
   { value: '30', label: '30 seconds' },
@@ -388,6 +393,21 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
                 checked={p?.requireGreenCi ?? true}
                 disabled={!settings || save.isPending}
                 onChange={(on) => void track(set({ requireGreenCi: on }))}
+              />
+            )}
+          </AutoSaveRow>
+          <AutoSaveRow
+            label="When to resolve conflicts"
+            description="At merge time: a conflict with the base while a ticket is in code, review or QA is shown on the ticket but doesn't interrupt its agent. When the ticket is next to merge, the base is merged in automatically, generated files are regenerated (merge.regenerate in .pdt/project.toml), and only real conflicts go to an agent. Immediately: the agent is told as soon as its pull request conflicts."
+          >
+            {(track) => (
+              <Select<ResolveConflicts>
+                aria-label="When to resolve conflicts"
+                className="w-56 max-w-full"
+                options={RESOLVE_CONFLICTS}
+                value={p?.resolveConflicts ?? 'merge_time'}
+                disabled={!settings}
+                onChange={(v) => void track(set({ resolveConflicts: v }))}
               />
             )}
           </AutoSaveRow>
