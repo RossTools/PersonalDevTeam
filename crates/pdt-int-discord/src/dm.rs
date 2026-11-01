@@ -190,8 +190,9 @@ async fn link(st: AppState, want: Want) {
         match opened {
             Ok(x) => break x,
             Err(e) if e.contains("401") => {
-                set_status(Some(&name), "failed", Some(e.clone()));
+                // The connection's error first: whoever sees the status sees it too.
                 pdt_api::sdk::connections::report(&st, &name, Some(&e)).await;
+                set_status(Some(&name), "failed", Some(e));
                 return;
             }
             Err(e) => {
@@ -213,13 +214,13 @@ async fn link(st: AppState, want: Want) {
             r = rx.recv() => match r {
                 None => return,
                 Some(Report::Connected) => {
-                    set_status(Some(&name), "connected", None);
                     pdt_api::sdk::connections::report(&st, &name, None).await;
+                    set_status(Some(&name), "connected", None);
                 }
                 Some(Report::Retrying(why)) => set_status(Some(&name), "retrying", Some(why)),
                 Some(Report::Failed(why)) => {
-                    set_status(Some(&name), "failed", Some(why.clone()));
                     pdt_api::sdk::connections::report(&st, &name, Some(&why)).await;
+                    set_status(Some(&name), "failed", Some(why));
                     return;
                 }
                 Some(Report::Event(d)) => bridge.dispatch(d).await,
