@@ -2,7 +2,8 @@
 //! shipped. What a user message does:
 //! - `run: <cmd>` — asks to run `<cmd>` with Bash (a `can_use_tool` request), then reports it ran or was denied.
 //! - `ask: <question>` — asks an AskUserQuestion with options A and B, then says the answer.
-//! - `slow` — streams text for ~20 s unless interrupted (messages sent meanwhile wait for the next turn).
+//! - `slow` (its first line) — streams text for ~20 s unless interrupted (messages sent meanwhile wait for the next
+//!   turn).
 //! - `exit` — writes to stderr and exits 3.
 //! - `compact: <ms>` (its first line) — compacts its context (a `compact_boundary`), then works on for `<ms>` before
 //!   ending the turn.
@@ -326,7 +327,7 @@ impl Agent {
             let answers = resp["updatedInput"]["answers"].to_string();
             self.tool_result(&tool_id, &answers, false);
             self.say(&format!("You answered {answers}"));
-        } else if text == "slow" {
+        } else if text.lines().next() == Some("slow") {
             let id = self.next_id("msg");
             let end = Instant::now() + Duration::from_secs(20);
             while Instant::now() < end {
