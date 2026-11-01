@@ -238,12 +238,15 @@ async fn a_draft_goes_through_refine_code_review_and_qa_and_merges_once_accepted
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["pipelineStage"], "refine");
 
-    // Refined: To do (the template's default), out of the pipeline stage; then auto-start takes it.
-    tick_until(&env, "the ticket started", || async {
+    // Refined: To do (the template's default), out of the pipeline stage; then auto-start takes it. The change is
+    // committed on its branch at once (what a real Coder would do), so it has something to merge (PDT-354).
+    let v = tick_until(&env, "the ticket started", || async {
         let v = get_ticket(&env, &t).await;
         (v["stage"] == "in_progress").then_some(v)
     })
     .await;
+    let worktree = env.repo.join(".worktrees").join(v["attempts"][0]["branch"].as_str().unwrap());
+    commit_in(&worktree);
     let started = timeline(&env, &t).await;
     let start = started["events"].as_array().unwrap().iter().find(|e| e["kind"] == "started").unwrap().clone();
     assert_eq!(start["data"]["auto"], true, "{start}");
@@ -263,8 +266,6 @@ async fn a_draft_goes_through_refine_code_review_and_qa_and_merges_once_accepted
     assert!(personas.iter().any(|p| p.starts_with("Coder")), "the Coder's session is the attempt's: {personas:?}");
 
     // Accept: the user's approval is recorded and the run merges the branch locally, then finishes the ticket.
-    let worktree = env.repo.join(".worktrees").join(v["attempts"][0]["branch"].as_str().unwrap());
-    commit_in(&worktree);
     answer(&env, &accept, json!({"choice": "merge"})).await;
     let done = tick_until(&env, "the ticket done", || async {
         let v = get_ticket(&env, &t).await;
@@ -597,17 +598,17 @@ async fn a_strict_project_is_other_parameters_and_policies() {
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("start_blocked")), "{v}");
     assert!(v["message"].as_str().unwrap().contains("cap of 1 running tickets"), "{v}");
 
-    // Review is the user's: a Your turn item with the outcomes.
+    // Review is the user's: a Your turn item with the outcomes. The change is on the branch by then.
     let mine = inbox_item(&env, "manual", &t).await;
+    let attempt = started["attempt"]["id"].as_str().unwrap();
+    let worktree = env.repo.join(".worktrees").join(started["attempt"]["branch"].as_str().unwrap());
+    commit_in(&worktree);
     assert_eq!(get_ticket(&env, &t).await["pipelineStage"], "review");
     assert_eq!(get_ticket(&env, &t).await["agent"]["state"], "yours");
     answer(&env, &mine, json!({"choice": "outcome:approved", "text": "Looks right."})).await;
     let accept = inbox_item(&env, "gate", &t).await;
 
     // Before the user accepts, an automated merge is refused by the policy.
-    let attempt = started["attempt"]["id"].as_str().unwrap();
-    let worktree = env.repo.join(".worktrees").join(started["attempt"]["branch"].as_str().unwrap());
-    commit_in(&worktree);
     let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{attempt}/merge"), Some(json!({}))).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("merge_not_allowed")), "{v}");
     answer(&env, &accept, json!({"choice": "merge"})).await;
@@ -1077,6 +1078,81 @@ async fn an_explicit_empty_list_accepts_no_label_automatically() {
     start_with_a_commit(&env, &t, "agentic.txt").await;
     let accept = inbox_item(&env, "gate", &t).await;
     assert_eq!(accept["group"], "accept");
+}
+
+/// Starts `t` with no session and no commits on its branch (a ticket that needs no change); the attempt.
+async fn start_without_changes(env: &Env, t: &str) -> Value {
+    let (s, started) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{started}");
+    started["attempt"].clone()
+}
+
+/// The attempt finished without a merge (PDT-354): nothing merged into main, its sessions stopped, its worktree and
+/// branch gone.
+async fn finished_without_a_merge(env: &Env, t: &str, attempt: &Value) {
+    let done = until_done(env, t).await;
+    assert_eq!(done["pipelineStage"], Value::Null);
+    let branch = attempt["branch"].as_str().unwrap();
+    assert!(!branch_exists(env, branch), "the branch is deleted");
+    assert!(!env.repo.join(".worktrees").join(branch).exists(), "the worktree is removed");
+    let ours = done["attempts"].as_array().unwrap().iter().find(|a| a["id"] == attempt["id"]).unwrap().clone();
+    assert_ne!(ours["state"], "active", "{ours}");
+    assert_eq!(ours["pr"], Value::Null, "no pull request: {ours}");
+    let (_, sessions) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await;
+    let running: Vec<&Value> = sessions
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| s["attemptId"] == attempt["id"] && s["status"] == "running")
+        .collect();
+    assert!(running.is_empty(), "its sessions stopped: {running:?}");
+    let log = std::process::Command::new("git").current_dir(&env.repo).args(["rev-list", "--count", "main"]).output();
+    assert_eq!(String::from_utf8_lossy(&log.unwrap().stdout).trim(), "1", "nothing merged into main");
+}
+
+/// PDT-354: an approved attempt whose branch is the same as its base has nothing to merge. An `agentic` ticket goes
+/// straight to Done; it never sits at Merge blocked.
+#[tokio::test]
+async fn an_agentic_ticket_with_no_changes_finishes_without_a_merge() {
+    let env = setup().await;
+    pipeline(&env, json!({}), &[("code", "submitted"), ("review", "approved"), ("qa", "pass")]).await;
+    let t = labelled(&env, "Triage only", &["agentic"]).await;
+    let attempt = start_without_changes(&env, &t).await;
+    finished_without_a_merge(&env, &t, &attempt).await;
+    assert!(inbox(&env).await.iter().all(|i| i["ticketId"] != t.as_str()), "no Inbox item for it");
+    assert_eq!(outcomes(&timeline(&env, &t).await), ["submitted", "approved", "pass"]);
+}
+
+/// PDT-354: a ticket that isn't accepted automatically waits at Accept, saying it has no changes; accepted, it moves to
+/// Done without a merge. Commits that came meanwhile merge as any other change.
+#[tokio::test]
+async fn a_ticket_with_no_changes_waits_at_accept_then_finishes_without_a_merge() {
+    let env = setup().await;
+    pipeline(&env, json!({}), &[("code", "submitted"), ("review", "approved"), ("qa", "pass")]).await;
+    let t = ticket(&env, "Answer a question").await;
+    let attempt = start_without_changes(&env, &t).await;
+    let accept = inbox_item(&env, "gate", &t).await;
+    assert_eq!(accept["group"], "accept");
+    let title = accept["title"].as_str().unwrap();
+    assert!(title.contains("passed with no changes to merge") && title.contains("code says submitted"), "{title}");
+    assert_eq!(get_ticket(&env, &t).await["pipelineStage"], "accept");
+    answer(&env, &accept, json!({"choice": "done"})).await;
+    finished_without_a_merge(&env, &t, &attempt).await;
+
+    let late = ticket(&env, "Changed while it waited").await;
+    let attempt = start_without_changes(&env, &late).await;
+    let accept = inbox_item(&env, "gate", &late).await;
+    commit_file(&env.repo.join(".worktrees").join(attempt["branch"].as_str().unwrap()), "late.txt");
+    answer(&env, &accept, json!({"choice": "done"})).await;
+    until_done(&env, &late).await;
+    let log = std::process::Command::new("git")
+        .current_dir(&env.repo)
+        .args(["ls-tree", "--name-only", "main"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&log.stdout).contains("late.txt"), "the late commit merged");
 }
 
 #[tokio::test]

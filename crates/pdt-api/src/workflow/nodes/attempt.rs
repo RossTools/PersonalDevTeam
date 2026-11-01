@@ -1,12 +1,14 @@
 //! `attempt.agent_working`: whether an agent step is on the attempt now (PDT-104). Read when the step runs, not when
 //! the event was logged: two events of one look at a PR (a conflict and the queue drop it caused) both say no agent
 //! is on it, but the first run's fix step is by the time the second run gets here (runs advance one at a time).
+//! `attempt.has_changes`: whether the attempt has anything to merge (PDT-354).
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use pdt_core::workflow::tpl::Tpl;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::path::PathBuf;
 use ts_rs::TS;
 
 pub const KIND: &str = "attempt.agent_working";
@@ -50,6 +52,68 @@ impl NodeKind for AgentWorking {
             let busy = c.known.is_some_and(|k| k.or(false))
                 || cx.st.store.attempt_agent_busy(&c.attempt, &cx.run.id).await.map_err(|e| e.to_string())?;
             Ok(Outcome::next(if busy { "yes" } else { "no" }, json!({"working": busy})))
+        })
+    }
+}
+
+pub const HAS_CHANGES_KIND: &str = "attempt.has_changes";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export)]
+pub struct HasChangesConfig {
+    /// The attempt (`{{trigger.attemptId}}`).
+    pub attempt: String,
+}
+
+pub struct HasChanges;
+
+/// Whether the attempt has something to merge: a pull request, commits its base lacks (now, or ever seen), or
+/// uncommitted changes in its worktree. Anything it can't read counts as changes, so nothing is thrown away.
+async fn has_changes(cx: &StepCx<'_>, attempt: &str) -> Result<bool, String> {
+    let info = cx.st.store.get_attempt(attempt).await.map_err(|e| e.to_string())?.ok_or("no such attempt")?;
+    if info.own_commits || crate::github::watched_pr(cx.st, attempt).is_some() {
+        return Ok(true);
+    }
+    let repo = PathBuf::from(&info.repo_path);
+    let worktree = info.worktree_path.map(PathBuf::from);
+    let (branch, base) = (info.attempt.branch, info.attempt.base_branch);
+    tokio::task::spawn_blocking(move || {
+        let dirty = worktree.filter(|w| w.is_dir()).is_some_and(|w| pdt_git::is_dirty(&w).unwrap_or(true));
+        let range = (format!("refs/heads/{base}"), format!("refs/heads/{branch}"));
+        dirty || pdt_git::commits_between(&repo, &range.0, &range.1).is_none_or(|c| !c.is_empty())
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+impl NodeKind for HasChanges {
+    fn spec(&self) -> KindSpec {
+        spec::<HasChangesConfig, Value>(
+            HAS_CHANGES_KIND,
+            1,
+            Category::Condition,
+            "Anything to merge?",
+            "`yes` when the attempt has something to merge: a pull request, commits its base branch lacks, or \
+             uncommitted changes in its worktree. `no` when its branch is the same as its base (a ticket that needed \
+             no change), so there is nothing to merge. Read as the step runs.",
+            &[("yes", "Has changes"), ("no", "No changes")],
+            false,
+        )
+    }
+
+    fn check(&self, config: &Value) -> Result<(), String> {
+        parse::<HasChangesConfig>(config).map(|_| ())
+    }
+
+    fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
+        Box::pin(async move {
+            let c: HasChangesConfig = parse(&input)?;
+            if cx.dry_run {
+                return Ok(Outcome::next("yes", json!({"would": format!("look for changes on {}", c.attempt)})));
+            }
+            let changes = has_changes(cx, &c.attempt).await?;
+            Ok(Outcome::next(if changes { "yes" } else { "no" }, json!({"changes": changes})))
         })
     }
 }

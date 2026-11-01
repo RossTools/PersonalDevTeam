@@ -73,6 +73,10 @@ every ticket you start there goes through these stages:
    auto-merge once CI passes) and moves the ticket to **Done**. Failing CI goes back to the Coder, then the Reviewer.
    A merge PDT can't fix (a draft pull request, the project's policy) asks you.
 
+A ticket that needed no change (the Coder says "No changes", and its branch has no commits) has nothing to merge.
+Once QA passes it is accepted as above: tickets that skip Accept go straight to **Done**; the rest wait at Accept,
+where **Done** moves them there. Either way its sessions stop and its worktree and branch are removed.
+
 On the board, **In progress** splits into these stages, and each card says who has the ticket ("Reviewer · working",
 "Your turn").
 

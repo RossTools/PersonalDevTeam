@@ -131,7 +131,10 @@ set to merge after a conflict or a queue drop, start with `attempt.update_base`:
 the base, merges it (pdt-git `update.rs`, with `rerere`), takes the base's side of files a `[[merge.regenerate]]` rule
 covers and runs the rule, commits, and pushes once; real conflicts leave the merge in progress and go to an agent step
 with the files, hunks and merged-since subjects (`merge_update::conflict_message`). Each result is a `merge_update`
-event (`how`: deferred, clean, regenerated, conflict, agent).
+event (`how`: deferred, clean, regenerated, conflict, agent). Before Accept, the Pipeline's `attempt.has_changes`
+(`workflow/nodes/attempt.rs`) asks whether the attempt has anything to merge (a pull request, commits its base lacks,
+uncommitted changes); one without goes through its own Accept and `ticket.finish` (deleting the branch) instead of the
+merge, after looking again once Accept is answered.
 
 **Review.** The Changes view diffs the worktree against its merge base with the base branch (pdt-git `review.rs`;
 each file says whether it is uncommitted, and generated: `linguist-generated` in `.gitattributes` or a lockfile). The
