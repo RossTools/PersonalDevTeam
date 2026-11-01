@@ -166,9 +166,10 @@ pub struct AppState {
     pub(crate) personas_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Tickets auto-start failed to start, with their `updated_at` then: skipped until they change.
     pub(crate) auto_start_failed: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
-    /// Tickets "Pick up tickets" last passed over for overlapping work in flight (PDT-329), with their project and why:
-    /// the Board shows it. Each choose replaces its projects' entries.
-    pub(crate) pickup_holds: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, (String, String)>>>,
+    /// Tickets "Pick up tickets" last passed over for overlapping work in flight (PDT-329): the Board shows why while
+    /// it is recent. Each choose replaces its projects' entries.
+    pub(crate) pickup_holds:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, crate::scheduler::PickupHold>>>,
     /// Held by `ticket.start` while it checks and starts (PDT-327): two pickup runs never start the same ticket or go
     /// over a cap together.
     pub(crate) pickup_lock: std::sync::Arc<tokio::sync::Mutex<()>>,

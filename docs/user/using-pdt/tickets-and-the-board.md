@@ -155,8 +155,8 @@ In **Settings**, on the project's page:
   finish editing it. Its card shows "Auto-starts in 1:30".
 - **Hot areas**: areas where two tickets in progress at once often collide (shared API routes, prompts, docs). While a
   ticket in a hot area is in progress, auto-start doesn't start another ticket in that area. It takes the next ticket
-  that doesn't collide, and the waiting ticket's card says why ("Waiting: overlaps another ticket in api", naming it). The waiting ticket
-  starts once that work is done.
+  that doesn't collide. The waiting ticket's card says which ticket and area it waits on ("Waiting: overlaps …"),
+  and it starts once that work is done.
 - **Tickets without areas run alongside hot ones**: a ticket without areas might touch anything. On (the default), it
   starts like any other. Off, it waits while a ticket in a hot area is in progress, and a ticket in a hot area waits
   while one without areas is in progress.

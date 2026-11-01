@@ -126,6 +126,7 @@ pub async fn watch_pickup(st: &AppState) {
         let Ok(settings) = st.store.get_project_settings(&p.id).await else { continue };
         let policy = settings.policy;
         if policy.auto_start == AutoStart::Off {
+            drop_pickup_holds(st, &p.id);
             continue;
         }
         let now_active: HashSet<String> =
@@ -317,17 +318,38 @@ pub(crate) async fn apply_auto_start(st: &AppState, items: &mut [TicketSummary])
         }
         t.auto_start_at = policies[&t.project_id].as_ref().filter(|_| !paused).and_then(|p| auto_start_at(p, t, now));
     }
-    apply_pickup_holds(st, items);
+    apply_pickup_holds(st, items, now);
 }
 
-/// Fills in `pickup_hold` on tickets of a list that could still start: why pickup last passed them over for overlap.
-fn apply_pickup_holds(st: &AppState, items: &mut [TicketSummary]) {
+/// Why a choose passed a ticket over for overlapping work in flight (PDT-329).
+#[derive(Debug, Clone)]
+pub(crate) struct PickupHold {
+    pub project_id: String,
+    pub why: String,
+    /// When that choose ran.
+    pub at: i64,
+}
+
+/// How long a hold shows after the choose that made it: the built-in runs every minute, so a hold no choose has
+/// renewed for this long belongs to a pickup that stopped (auto-start turned off, the workflow disabled, the ticket
+/// out of its filter).
+pub(crate) const PICKUP_HOLD_SHOWN_MS: i64 = 3 * 60 * 1000;
+
+/// Fills in `pickup_hold` on tickets of a list that could still start: why pickup recently passed them over for
+/// overlap.
+fn apply_pickup_holds(st: &AppState, items: &mut [TicketSummary], now: i64) {
     let holds = st.pickup_holds.lock().unwrap_or_else(|e| e.into_inner());
     for t in items {
         let could_start = matches!(t.stage, TicketStage::Todo | TicketStage::Ready)
             && t.attempt.as_ref().is_none_or(|a| a.state != pdt_core::ticket::AttemptState::Active);
-        t.pickup_hold = holds.get(&t.id).filter(|_| could_start).map(|(_, why)| why.clone());
+        t.pickup_hold =
+            holds.get(&t.id).filter(|h| could_start && now - h.at < PICKUP_HOLD_SHOWN_MS).map(|h| h.why.clone());
     }
+}
+
+/// Forgets the holds of `project_id` (its auto-start is off: nothing picks its tickets up).
+fn drop_pickup_holds(st: &AppState, project_id: &str) {
+    st.pickup_holds.lock().unwrap_or_else(|e| e.into_inner()).retain(|_, h| h.project_id != project_id);
 }
 
 /// Fills in `agent` on tickets of a list.

@@ -73,7 +73,7 @@ export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; cl
       ))}
       {autoStartAt !== null && <AutoStartBadge at={autoStartAt} />}
       {hold !== null && (
-        <Badge tone="waiting" className="min-w-0" title={`Auto-start passed it over: it ${hold}. It starts once that work is done.`}>
+        <Badge tone="waiting" className="min-w-0" title={`Auto-start passed it over: ${hold}. It starts once that work is done.`}>
           <Clock aria-hidden /> <span className="truncate">Waiting: {hold}</span>
         </Badge>
       )}

@@ -383,7 +383,7 @@ impl PassedReason {
             }
             PassedReason::Untagged { with, area } => format!("has no areas yet, and {with} is in flight in {area}"),
             PassedReason::UntaggedInFlight { with, area } => {
-                format!("in {area}, and {with} is in flight with no areas yet")
+                format!("{with} is in flight with no areas yet (this is in {area})")
             }
         }
     }
@@ -839,7 +839,7 @@ mod tests {
         let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
         assert_eq!(
             chosen_and_passed(&c),
-            (vec!["free", "unknown"], vec![("hot", "in api, and P-u is in flight with no areas yet")])
+            (vec!["free", "unknown"], vec![("hot", "P-u is in flight with no areas yet (this is in api)")])
         );
         // The step may let them run alongside.
         let rules = ChooseRules {

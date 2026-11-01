@@ -312,7 +312,7 @@ impl NodeKind for Choose {
             let failed = cx.st.auto_start_failed.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let choice = choose(&projects, &rules, &failed, crate::routes::now_ms());
             if !cx.dry_run {
-                record_holds(cx.st, &projects, &choice.passed);
+                record_holds(cx.st, &projects, &choice.passed, crate::routes::now_ms());
             }
             match choice.chosen.first() {
                 Some(first) => Ok(Outcome::next(
@@ -327,13 +327,15 @@ impl NodeKind for Choose {
 
 /// Keeps why choose passed over each of `projects`' candidates for overlap, for the Board, in place of what the
 /// last choose said of those projects.
-fn record_holds(st: &AppState, projects: &[PickupProject], passed: &[pdt_core::pickup::Passed]) {
+fn record_holds(st: &AppState, projects: &[PickupProject], passed: &[pdt_core::pickup::Passed], now: i64) {
     let mut holds = st.pickup_holds.lock().unwrap_or_else(|e| e.into_inner());
-    holds.retain(|_, (project, _)| !projects.iter().any(|p| p.project_id == *project));
+    holds.retain(|_, h| !projects.iter().any(|p| p.project_id == h.project_id));
     for p in projects {
         for t in &p.tickets {
-            if let Some(why) = passed.iter().find(|x| x.id == t.id && x.reason.is_overlap()) {
-                holds.insert(t.id.clone(), (p.project_id.clone(), why.why.clone()));
+            if let Some(x) = passed.iter().find(|x| x.id == t.id && x.reason.is_overlap()) {
+                let hold =
+                    crate::scheduler::PickupHold { project_id: p.project_id.clone(), why: x.why.clone(), at: now };
+                holds.insert(t.id.clone(), hold);
             }
         }
     }

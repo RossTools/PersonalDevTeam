@@ -733,7 +733,6 @@ fn store(e: pdt_store::StoreError) -> String {
     ApiError::from(e).message().to_string()
 }
 
-/// Refuses a PM tool's change to one of the user's own notes (PDT-126); a missing note is left to the tool.
 /// Areas an agent gives a ticket of `project_id`, checked against the project's configured areas.
 async fn checked_areas(
     st: &AppState,
@@ -747,6 +746,7 @@ async fn checked_areas(
     pdt_core::ticket::agent_areas(&areas, &configured).map(Some)
 }
 
+/// Refuses a PM tool's change to one of the user's own notes (PDT-126); a missing note is left to the tool.
 async fn pm_may_write(st: &AppState, id: &str) -> Result<(), String> {
     match st.store.get_note(id).await.map_err(store)? {
         Some(n) if !n.kind.pm_may_write() => Err(format!("note {id} is the user's own: only they can change it")),

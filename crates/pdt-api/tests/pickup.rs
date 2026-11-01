@@ -458,6 +458,14 @@ async fn pick_up_tickets_avoids_hot_areas_in_flight_and_says_why() {
     assert_eq!(stage(&env, &free).await, "in_progress");
     assert_eq!(stage(&env, &hot).await, "todo");
 
+    // Auto-start off: nothing will pick Hot up, so it no longer says it waits; back on, it does again.
+    settings(&env, json!({"autoStart": "off"})).await;
+    common::pick_up(&env.state).await;
+    assert_eq!(get_ticket(&env, &hot).await["pickupHold"], Value::Null);
+    settings(&env, json!({"autoStart": "todo"})).await;
+    common::pick_up(&env.state).await;
+    assert_eq!(get_ticket(&env, &hot).await["pickupHold"], json!(why));
+
     // The hot work finishes: Hot starts, and its reason is gone.
     move_to(&env, &busy, "done").await;
     common::pick_up(&env.state).await;

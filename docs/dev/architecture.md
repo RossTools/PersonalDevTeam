@@ -242,7 +242,9 @@ candidates project's `OverlapPolicy` (`avoid` when it has hot areas, else `off`)
 `hotAreas`, `perArea` and `untaggedAlongsideHot` override it (`OverlapOverride`). `OverlapPolicy::check` compares a
 candidate's areas with the tickets in flight. Choose keeps the overlap reasons it passed over in
 `AppState::pickup_holds` (replacing its projects' entries each run, not on a dry run), and the ticket list and detail
-fill `TicketSummary::pickup_hold` from it for tickets that could still start. Agents tag areas through `update_ticket`
+fill `TicketSummary::pickup_hold` from it for tickets that could still start, while the hold is under three minutes
+old (a pickup that stopped running stops renewing it); the pickup watch drops a project's holds when its auto-start
+is off. Agents tag areas through `update_ticket`
 (Refiner), `create_ticket` and `edit_ticket` (PM), checked against the project's configured areas
 (`ticket::agent_areas`); `get_ticket` lists them as `projectAreas`.
 
