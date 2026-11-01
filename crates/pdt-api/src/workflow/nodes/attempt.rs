@@ -68,7 +68,7 @@ pub struct HasChangesConfig {
 
 pub struct HasChanges;
 
-/// Whether the attempt has something to merge: a pull request, commits its base lacks (now, or ever seen), or
+/// Whether the attempt has something to merge: a pull request, commits of its own (now, or ever seen), or
 /// uncommitted changes in its worktree. Anything it can't read counts as changes, so nothing is thrown away.
 async fn has_changes(cx: &StepCx<'_>, attempt: &str) -> Result<bool, String> {
     let info = cx.st.store.get_attempt(attempt).await.map_err(|e| e.to_string())?.ok_or("no such attempt")?;
@@ -77,11 +77,14 @@ async fn has_changes(cx: &StepCx<'_>, attempt: &str) -> Result<bool, String> {
     }
     let repo = PathBuf::from(&info.repo_path);
     let worktree = info.worktree_path.map(PathBuf::from);
-    let (branch, base) = (info.attempt.branch, info.attempt.base_branch);
+    let (branch, base, base_commit) = (info.attempt.branch, info.attempt.base_branch, info.base_commit);
     tokio::task::spawn_blocking(move || {
         let dirty = worktree.filter(|w| w.is_dir()).is_some_and(|w| pdt_git::is_dirty(&w).unwrap_or(true));
-        let range = (format!("refs/heads/{base}"), format!("refs/heads/{branch}"));
-        dirty || pdt_git::commits_between(&repo, &range.0, &range.1).is_none_or(|c| !c.is_empty())
+        // Against where the branch started and both bases: Start branches from `origin/<base>` when it is ahead of
+        // the local base (PDT-45), whose newer commits are not the branch's own.
+        let origin = format!("origin/{base}");
+        let own = |head: String| pdt_git::has_own_commits(&repo, &head, &base_commit, &[&base, &origin]);
+        dirty || pdt_git::rev_parse(&repo, &format!("refs/heads/{branch}")).is_none_or(own)
     })
     .await
     .map_err(|e| e.to_string())

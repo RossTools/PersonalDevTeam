@@ -1090,8 +1090,8 @@ async fn start_without_changes(env: &Env, t: &str) -> Value {
 }
 
 /// The attempt finished without a merge (PDT-354): nothing merged into main, its sessions stopped, its worktree and
-/// branch gone.
-async fn finished_without_a_merge(env: &Env, t: &str, attempt: &Value) {
+/// branch gone. `main`: how many commits main has then (finishing pulls it).
+async fn finished_without_a_merge(env: &Env, t: &str, attempt: &Value, main: usize) {
     let done = until_done(env, t).await;
     assert_eq!(done["pipelineStage"], Value::Null);
     let branch = attempt["branch"].as_str().unwrap();
@@ -1109,7 +1109,7 @@ async fn finished_without_a_merge(env: &Env, t: &str, attempt: &Value) {
         .collect();
     assert!(running.is_empty(), "its sessions stopped: {running:?}");
     let log = std::process::Command::new("git").current_dir(&env.repo).args(["rev-list", "--count", "main"]).output();
-    assert_eq!(String::from_utf8_lossy(&log.unwrap().stdout).trim(), "1", "nothing merged into main");
+    assert_eq!(String::from_utf8_lossy(&log.unwrap().stdout).trim(), main.to_string(), "nothing merged into main");
 }
 
 /// PDT-354: an approved attempt whose branch is the same as its base has nothing to merge. An `agentic` ticket goes
@@ -1120,9 +1120,32 @@ async fn an_agentic_ticket_with_no_changes_finishes_without_a_merge() {
     pipeline(&env, json!({}), &[("code", "submitted"), ("review", "approved"), ("qa", "pass")]).await;
     let t = labelled(&env, "Triage only", &["agentic"]).await;
     let attempt = start_without_changes(&env, &t).await;
-    finished_without_a_merge(&env, &t, &attempt).await;
+    finished_without_a_merge(&env, &t, &attempt, 1).await;
     assert!(inbox(&env).await.iter().all(|i| i["ticketId"] != t.as_str()), "no Inbox item for it");
     assert_eq!(outcomes(&timeline(&env, &t).await), ["submitted", "approved", "pass"]);
+}
+
+/// PDT-354: on a project whose local `main` isn't pulled, Start branches from `origin/main` (ahead of it); origin's
+/// newer commits are not the branch's own, so it still has nothing to merge.
+#[tokio::test]
+async fn a_ticket_with_no_changes_started_from_a_newer_origin_finishes_without_a_merge() {
+    let env = setup().await;
+    // origin/main is one commit ahead of the local main.
+    let remote = env._tmp.path().join("remote.git");
+    git(env._tmp.path(), &["init", "-q", "--bare", &remote.to_string_lossy()]);
+    git(&env.repo, &["remote", "add", "origin", &remote.to_string_lossy()]);
+    std::fs::write(env.repo.join("merged.txt"), "merged on the forge\n").unwrap();
+    git(&env.repo, &["add", "."]);
+    git(&env.repo, &["commit", "-m", "merged elsewhere", "-q"]);
+    git(&env.repo, &["push", "-q", "origin", "main"]);
+    git(&env.repo, &["reset", "-q", "--hard", "HEAD~1"]);
+    pipeline(&env, json!({}), &[("code", "submitted"), ("review", "approved"), ("qa", "pass")]).await;
+    let t = labelled(&env, "Triage only", &["agentic"]).await;
+    let attempt = start_without_changes(&env, &t).await;
+    let wt = env.repo.join(".worktrees").join(attempt["branch"].as_str().unwrap());
+    assert!(wt.join("merged.txt").exists(), "the branch starts at origin/main");
+    git(&wt, &["push", "-q", "-u", "origin", attempt["branch"].as_str().unwrap()]);
+    finished_without_a_merge(&env, &t, &attempt, 2).await;
 }
 
 /// PDT-354: a ticket that isn't accepted automatically waits at Accept, saying it has no changes; accepted, it moves to
@@ -1139,7 +1162,7 @@ async fn a_ticket_with_no_changes_waits_at_accept_then_finishes_without_a_merge(
     assert!(title.contains("passed with no changes to merge") && title.contains("code says submitted"), "{title}");
     assert_eq!(get_ticket(&env, &t).await["pipelineStage"], "accept");
     answer(&env, &accept, json!({"choice": "done"})).await;
-    finished_without_a_merge(&env, &t, &attempt).await;
+    finished_without_a_merge(&env, &t, &attempt, 1).await;
 
     let late = ticket(&env, "Changed while it waited").await;
     let attempt = start_without_changes(&env, &late).await;
