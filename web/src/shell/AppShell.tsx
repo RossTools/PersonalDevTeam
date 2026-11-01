@@ -1,11 +1,10 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, FileText, NotebookPen, PanelBottom, Plus } from 'lucide-react';
+import { ChevronDown, FileText, NotebookPen, PanelBottom } from 'lucide-react';
 import { api } from '../api/client';
 import { branchUrl } from '../projects/forgeLinks';
-import { Button, EmptyState, IconButton, Link, List, ListRow, Sheet, Skeleton, useConfirm, useThemePref, type MenuEntry } from '@ui';
+import { Button, EmptyState, IconButton, Link, Sheet, Skeleton, useConfirm, useThemePref, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
-import { ProjectKey } from '../common/BranchChip';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
@@ -28,11 +27,7 @@ import { HostSettingsPage } from '../host/HostSettingsPage';
 import { sectionLabel } from '../common/SettingsScreens';
 import { HOST_SECTION_LABELS, PROJECT_SECTION_LABELS } from '../common/settingsSections';
 import { SettingsNav } from './SettingsNav';
-import { SecretsPage } from '../secrets/SecretsPage';
-import { McpServersPage } from '../mcp/McpServersPage';
-import { AllConnectionsPage } from '../plugins/AllConnectionsPage';
-import { PluginPage } from '../plugins/PluginPage';
-import { PluginsPage } from '../plugins/PluginsPage';
+import { settingsPageScreen, settingsPageTitle, type SettingsPageContext } from './settingsPages';
 import { pluginsKey } from '../plugins/model';
 import { WorkflowsList, type WorkflowTarget } from '../workflows/WorkflowsList';
 import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
@@ -77,7 +72,6 @@ import { useInbox } from '../inbox/useInbox';
 import { triageTitle } from '../inbox/model';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useDevTitle } from './useInstance';
-import { NotificationSettingsPage } from '../notifications/NotificationSettingsPage';
 import { useReadAllUpdates, useClearUpdate, useClearAllUpdates, useUpdates } from '../notifications/queries';
 import { useNotificationStream } from '../notifications/useNotificationStream';
 import { useAttention, useFaviconBadge, type Attention } from '../notifications/attention';
@@ -86,10 +80,14 @@ import { VIEWS, type ViewId } from './views';
 import { TicketKeysContext } from '../common/ticketKeys';
 import type { TicketPeekState } from '../tickets/TicketsView';
 import type { TicketsMode } from '../tickets/useBacklog';
-import { isDetail, isOldPath, parseLocation, routePath, sectionSlug, upRoute, viewRoute, type Route, type SettingsPage } from './route';
+import { isDetail, isOldPath, parseLocation, routePath, upRoute, viewRoute, type Route, type SettingsPage } from './route';
 import { currentLocation, goBack, navigate, useAppLinks, useLocation } from './router';
 import { PhoneDrawer } from './PhoneDrawer';
 import { PhoneTopBar, TopBarActionsContext, TopBarEditContext, type TopBarActions, type TopBarEdit } from './PhoneTopBar';
+import {
+  ChangesView, CreateIssueDialog, DocumentPage, InboxView, NewTicketDialog, NewWorkflowDialog, NoteScreen, PersonaPage, PhoneInboxItem, PmView,
+  ScreenSuspense, StartDialog, TicketView, TicketsView, WorkflowsView, WorkspaceMergedBanner,
+} from './screens';
 
 const CHOICE: Record<Exclude<NewKind, AcpKind>, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
 
@@ -117,23 +115,6 @@ function useAttentionTitle(attention: Attention) {
   useFaviconBadge(attention.level);
   useReloadOnNewBuild();
 }
-
-// The ticket screens (and the Markdown libraries they use) load the first time they're shown.
-const TicketsView = lazy(() => import('../tickets/TicketsView').then((m) => ({ default: m.TicketsView })));
-const NewWorkflowDialog = lazy(() => import('../workflows/NewWorkflowDialog').then((m) => ({ default: m.NewWorkflowDialog })));
-const CreateIssueDialog = lazy(() => import('../tickets/CreateIssueDialog').then((m) => ({ default: m.CreateIssueDialog })));
-const NewTicketDialog = lazy(() => import('../tickets/NewTicketDialog').then((m) => ({ default: m.NewTicketDialog })));
-const TicketView = lazy(() => import('../tickets/TicketView').then((m) => ({ default: m.TicketView })));
-const ChangesView = lazy(() => import('../review/ChangesView').then((m) => ({ default: m.ChangesView })));
-const StartDialog = lazy(() => import('../tickets/StartDialog').then((m) => ({ default: m.StartDialog })));
-const WorkflowsView = lazy(() => import('../workflows/WorkflowsView').then((m) => ({ default: m.WorkflowsView })));
-const WorkspaceMergedBanner = lazy(() => import('../tickets/WorkspaceMergedBanner').then((m) => ({ default: m.WorkspaceMergedBanner })));
-const InboxView = lazy(() => import('../inbox/InboxView').then((m) => ({ default: m.InboxView })));
-const PhoneInboxItem = lazy(() => import('../inbox/PhoneInbox').then((m) => ({ default: m.PhoneInboxItem })));
-const PersonaPage = lazy(() => import('../personas/PersonaPage').then((m) => ({ default: m.PersonaPage })));
-const PmView = lazy(() => import('../pm/PmView').then((m) => ({ default: m.PmView })));
-const DocumentPage = lazy(() => import('../documents/DocumentPage').then((m) => ({ default: m.DocumentPage })));
-const NoteScreen = lazy(() => import('../notes/NotePage').then((m) => ({ default: m.NoteScreen })));
 
 export function AppShell() {
   // What is on screen comes from the path (PDT-111): selecting things navigates, and Back/Forward and reload restore
@@ -167,6 +148,7 @@ export function AppShell() {
   // A plugin page's name, for a phone's top bar.
   const shownPlugins = useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations, enabled: settingsPage.kind === 'plugins' && settingsPage.id !== null });
   const pluginTitle = (id: string) => shownPlugins.data?.find((p) => p.id === id)?.label ?? 'Plugin';
+  const settingsContext: SettingsPageContext = { phone, openPlugin, pluginTitle };
   const [bottomOpen, setBottomOpen] = useState(false);
   const [bottomMax, setBottomMax] = useState(false);
   // The New workflow dialog.
@@ -742,12 +724,8 @@ export function AppShell() {
     switch (settingsPage.kind) {
       case 'host': return (section && sectionLabel(HOST_SECTION_LABELS, section)) || 'This host';
       case 'project': return (section && sectionLabel(PROJECT_SECTION_LABELS, section)) || (settingsProject?.name ?? settingsPage.key);
-      case 'plugins': return settingsPage.id ? pluginTitle(settingsPage.id) : 'Plugins';
-      case 'connections': return 'All connections';
-      case 'secrets': return 'Secrets';
-      case 'mcp-servers': return 'MCP servers';
-      case 'notifications': return 'Notifications';
       case 'index': return label;
+      default: return settingsPageTitle(settingsPage, settingsContext);
     }
   }
   const shellActions = (): MenuEntry[] =>
@@ -947,15 +925,15 @@ export function AppShell() {
                 )}
               </div>
             ) : view === 'inbox' && phone && inboxId ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PhoneInboxItem items={inboxItems} updates={updates.data?.items ?? []}
-                itemId={inboxId} loading={inbox.isLoading} onMove={moveInbox} onList={() => goBack(routePath(viewRoute('inbox')))} onOpenTarget={openTarget} /></Suspense>
+              <ScreenSuspense><PhoneInboxItem items={inboxItems} updates={updates.data?.items ?? []}
+                itemId={inboxId} loading={inbox.isLoading} onMove={moveInbox} onList={() => goBack(routePath(viewRoute('inbox')))} onOpenTarget={openTarget} /></ScreenSuspense>
             ) : view === 'inbox' ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><InboxView items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} /></Suspense>
+              <ScreenSuspense><InboxView items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} /></ScreenSuspense>
             ) : view === 'pm' ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></Suspense>
+              <ScreenSuspense><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></ScreenSuspense>
             ) : view === 'notes' ? (
               noteId ? (
-                <Suspense fallback={<Skeleton lines={8} className="p-4" />}><NoteScreen
+                <ScreenSuspense><NoteScreen
                   id={noteId}
                   whose={notes.whose}
                   scope={notes.scope}
@@ -963,7 +941,7 @@ export function AppShell() {
                   onCreated={(id) => go({ view: 'notes', memory: false, note: id }, { replace: true })}
                   onGone={() => (phone ? goBack(routePath(notesList(notes.whose))) : go(notesList(notes.whose), { replace: true }))}
                   onKind={setNotesWhose}
-                /></Suspense>
+                /></ScreenSuspense>
               ) : (
                 <EmptyState icon={<NotebookPen />} className="mt-16 border-0" action={<Button size="sm" onClick={newNote}>New note</Button>}>
                   {notes.whose === 'note' ? 'Pick a note from the PM’s memory, or add one.' : 'Pick a note, or start a new one.'}
@@ -971,23 +949,23 @@ export function AppShell() {
               )
             ) : view === 'documents' ? (
               docId ? (
-                <Suspense fallback={<Skeleton lines={8} className="p-4" />}><DocumentPage
+                <ScreenSuspense><DocumentPage
                   key={docId}
                   id={docId}
                   phone={phone}
                   onGone={() => (phone ? goBack(routePath(viewRoute('documents'))) : go(viewRoute('documents'), { replace: true }))}
-                /></Suspense>
+                /></ScreenSuspense>
               ) : (
                 <EmptyState icon={<FileText />} className="mt-16 border-0" action={<Button size="sm" onClick={() => setDocDialog('new')}>New document</Button>}>
                   Pick a document, or make one.
                 </EmptyState>
               )
             ) : view === 'personas' ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></Suspense>
+              <ScreenSuspense><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></ScreenSuspense>
             ) : view === 'tickets' ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketsView backlog={backlog} projects={ws.projects} peek={peek} onNewTicket={(projectId, title) => setNewTicket({ projectId, title: title ?? '' })} /></Suspense>
+              <ScreenSuspense><TicketsView backlog={backlog} projects={ws.projects} peek={peek} onNewTicket={(projectId, title) => setNewTicket({ projectId, title: title ?? '' })} /></ScreenSuspense>
             ) : view === 'workflows' ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><WorkflowsView target={workflowTarget} onOpen={setWorkflowTarget} projects={ws.projects} projectInView={currentProject?.id ?? null} creating={creatingWorkflow} onCreate={setCreatingWorkflow} /></Suspense>
+              <ScreenSuspense><WorkflowsView target={workflowTarget} onOpen={setWorkflowTarget} projects={ws.projects} projectInView={currentProject?.id ?? null} creating={creatingWorkflow} onCreate={setCreatingWorkflow} /></ScreenSuspense>
             ) : view === 'files' ? (
               phone && filesDir !== null ? <div className="flex-1 overflow-auto px-1"><FolderList state={folder} dir={filesDir} /></div> : <FileViewer state={folder} readOnly={phone} />
             ) : view === 'settings' ? (
@@ -996,18 +974,12 @@ export function AppShell() {
                   drill={phone} section={section} onSection={showSection}
                   onKeyChange={(key) => go({ view: 'settings', page: { kind: 'project', key, section } }, { replace: true })} />
                   : ws.projectsLoaded ? <EmptyState>No project has the key {settingsPage.key}.</EmptyState> : <Skeleton lines={8} className="p-4" />
-              ) : settingsPage.kind === 'plugins' ? (
-                settingsPage.id
-                  ? <PluginPage key={settingsPage.id} id={settingsPage.id} phone={phone} onBack={() => go({ view: 'settings', page: { kind: 'plugins', id: null } })} />
-                  : <PluginsPage phone={phone} onOpen={openPlugin} />
-              ) : settingsPage.kind === 'connections' ? <AllConnectionsPage onOpen={openPlugin} />
-                : settingsPage.kind === 'secrets' ? <SecretsPage />
-                : settingsPage.kind === 'mcp-servers' ? <McpServersPage />
-                : settingsPage.kind === 'notifications' ? <NotificationSettingsPage /> : <HostSettingsPage drill={phone} section={section} onSection={showSection} />
+              ) : settingsPage.kind === 'host' || settingsPage.kind === 'index' ? <HostSettingsPage drill={phone} section={section} onSection={showSection} />
+                : settingsPageScreen(settingsPage, settingsContext)
             ) : ws.tab?.ticketId ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></Suspense>
+              <ScreenSuspense><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></ScreenSuspense>
             ) : ws.tab?.worktreeId ? (
-              <Suspense fallback={<Skeleton lines={8} className="p-4" />}><ChangesView key={ws.tab.worktreeId} worktreeId={ws.tab.worktreeId} /></Suspense>
+              <ScreenSuspense><ChangesView key={ws.tab.worktreeId} worktreeId={ws.tab.worktreeId} /></ScreenSuspense>
             ) : current?.run ? (
               <RunView
                 key={current.run.id}

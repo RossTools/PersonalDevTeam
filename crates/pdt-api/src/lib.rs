@@ -1,6 +1,7 @@
 mod activity;
 mod agent_mcp;
 mod attachments;
+mod background;
 mod bug_reports;
 mod checks;
 mod ci;
@@ -68,6 +69,7 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::run_activity_ticker;
+pub use background::start_background;
 pub use checks::{HostChecks, run_host_checks};
 pub use conversations::{
     IDLE_PARK, conversation_live, expire_pending_messages, park_idle_conversations, recover_conversations,
@@ -99,7 +101,7 @@ pub use run_manager::{log_path as run_log_path, resume_runs, sweep_gone_runs};
 pub use scheduler::{run_pickup_watch, watch_pickup};
 pub use sessions::{ResumePlan, plan_resume_interrupted, resume_interrupted};
 pub use start::check_merges;
-pub use storage::{auto_cleanup, run_storage};
+pub use storage::{auto_cleanup, auto_cleanup_at, run_storage};
 pub use update::{UpdateService, run_update_loop};
 pub use watches::{follow as follow_watches, tick as tick_watches, tick_at as tick_watches_at};
 pub use workflow::{

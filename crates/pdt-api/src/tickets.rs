@@ -92,7 +92,7 @@ pub(crate) async fn update(
     // stops its work (PDT-159).
     match patch.stage {
         Some(stage) if stage.is_closed() => {
-            crate::start::end_for_close(&st, &id, stage, Actor::User).await?;
+            crate::start::close_attempt(&st, &id, stage, since, Actor::User, None).await?;
             reply(&st, st.store.get_ticket(&id).await?.ok_or_else(unknown_ticket)?).await
         }
         Some(stage) if stage.is_before_work() && t.attempts.iter().any(|a| a.state == AttemptState::Active) => {
@@ -171,7 +171,7 @@ pub(crate) async fn bulk(
     {
         // The tickets are closed: end every attempt there is, whatever one of them does.
         for id in &req.ids {
-            if let Err(e) = crate::start::end_for_close(&st, id, stage, Actor::User).await {
+            if let Err(e) = crate::start::close_attempt(&st, id, stage, since, Actor::User, None).await {
                 tracing::warn!(ticket = %id, error = %e.message(), "could not end the closed ticket's attempt");
             }
         }
@@ -305,4 +305,20 @@ pub(crate) async fn labels(
 ) -> Result<Json<Vec<String>>, ApiError> {
     st.store.get_project(&project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     Ok(Json(st.store.project_labels(&project_id).await?))
+}
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/projects/{id}/tickets", post(create))
+        .route("/projects/{id}/labels", get(labels))
+        .route("/tickets", get(list))
+        .route("/tickets/bulk", post(bulk))
+        .route("/tickets/{id}", get(get_one).patch(update).delete(remove))
+        .route("/tickets/{id}/rank", post(rank))
+        .route("/tickets/{id}/links", post(add_link).delete(remove_link))
+        .route("/tickets/{id}/events", get(events))
+        .route("/tickets/{id}/comments", post(comment))
+        .route("/tickets/{id}/refine", post(refine))
 }

@@ -224,6 +224,24 @@ pub(crate) async fn mirror_timeline(
                     .bind(ticket_id)
                     .fetch_optional(&mut *conn)
                     .await?;
+            let body = body.unwrap_or_default();
+            let attachments = crate::attachments::referenced(&mut *conn, ticket_id, body)
+                .await?
+                .into_iter()
+                .map(|a| ev::CommentAttachment {
+                    file_name: a.file_name(),
+                    id: a.id,
+                    name: a.name,
+                    media_type: a.media_type,
+                    path: None,
+                })
+                .collect();
+            // The user, or the persona of the agent session that wrote it (the PM's comments reach the working agent:
+            // PDT-341).
+            let author = match data.pointer("/agent/persona").and_then(|p| p.as_str()) {
+                Some(persona) if actor != pdt_core::ticket::Actor::User => persona.to_string(),
+                _ => actor.as_str().to_string(),
+            };
             NewLogEvent::new(
                 ev::TICKET_COMMENTED,
                 timeline_id,
@@ -232,7 +250,7 @@ pub(crate) async fn mirror_timeline(
                     project_id,
                     ticket_id: ticket_id.into(),
                     ticket_key,
-                    body: body.unwrap_or_default().into(),
+                    body: body.into(),
                     actor: actor.as_str().into(),
                     attempt_id: attempt.map(|(a,)| a),
                     workflow_id: data.get("workflowId").and_then(|w| w.as_str()).map(String::from),
@@ -241,6 +259,9 @@ pub(crate) async fn mirror_timeline(
                         .or_else(|| data.get("sessionId"))
                         .and_then(|v| v.as_str())
                         .map(String::from),
+                    author,
+                    attachments,
+                    attachment_list: String::new(),
                 },
             )
         }

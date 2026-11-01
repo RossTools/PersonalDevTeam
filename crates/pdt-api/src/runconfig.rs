@@ -126,3 +126,9 @@ pub(crate) async fn get_config(
         error,
     }))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new().route("/projects/{id}/run-config", get(get_config))
+}

@@ -75,7 +75,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **Finish never discards uncommitted changes** unless asked (`discardChanges`), and runs in its own task so it
   completes when the agent that called it is stopped.
 - **Workflows hear of a Start only once its session exists** (`announce_start`).
-- **Only the user's ticket comments go to the agent**; the API refuses `by: "system"`.
+- **Only the user's and the PM's ticket comments go to the agent** (`ticket.commented`'s `author`: `user`, else the
+  writing session's persona), never a workflow's (`workflowId`) or the ticket's own agents', so an agent never hears
+  back what it wrote; the API refuses `by: "system"`. A comment's attachments' local paths are filled in by pdt-api
+  as runs see the event (`trigger_value`), since the store doesn't know the data folder.
 - **Hiding a session from the lists never hides it from attention.** The Agents list (the sidebar, the phone drawer
   and `/sessions`, all `AgentsSection` in web `workspaces/Sidebar.tsx`) leaves out every session a workflow step
   started (`startedByStep`, web `sessions/status.ts`), tab or not. Bring here and the palette read
@@ -170,8 +173,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   maintainer's workflows.** Outside tests, only updates, bug reports and the release repository setting name the
   release repository (`brand::RELEASE_REPO`; a test in pdt-core `brand.rs` lists where). Nothing is installed or
   offered by what a project's repository is. The built-ins that once automated PDT's development are kept on the
-  hosts that had them as their own workflows (pdt-api `workflow/builtins.rs`, `RETIRED`); never ship such a built-in
+  hosts that had them as their own workflows (pdt-api `workflow/builtins/mod.rs`, `RETIRED`); never ship such a built-in
   again. Cut a release is a template (filled in per project), not a built-in.
+- **IronCalc is one version on both sides**: pdt-sheet's `ironcalc` (pinned with `=`) and web's
+  `@ironcalc/workbook` exchange IronCalc's bytes and diffs, so they are updated together (pdt-sheet's
+  `the_web_ui_runs_the_same_ironcalc` checks).
 - **Guides served by pdtd link to each other by API path**, never by repository path (a test checks).
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.

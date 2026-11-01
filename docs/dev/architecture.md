@@ -59,13 +59,14 @@ and `backups/` (a copy taken before migrations).
 | `pdt-store` | SQLite through sqlx: one module per table group, migrations in `migrations/`, data backfills in `Store::open`, failed writes and recovering from them in `health.rs`. |
 | `pdt-git` | The git CLI: worktrees, branches, diffs, merge detection, local merges, pulls. |
 | `pdt-agents` | Running agents: PTYs (`pty.rs`), detached runs (`detached.rs`), launching (`launch.rs`), hooks, instruction files, MCP wiring, and the adapters in `adapter/` (Claude, Codex, Devin, ACP). |
-| `pdt-api` | The axum routes and everything that ties the crates together: `routes.rs` (the router and `AppState`), one module per area, the workflow engine and nodes (`workflow/`), pdt-mcp (`mcp/`), the integration SDK (`sdk.rs`, `integrations/`). Test fakes in `src/bin` (`fake-agent`, `fake-mcp`, `fake-command`). |
-| `pdt-forge` | The `Forge` trait (change requests, CI, merges, reviews, issues, with declared capabilities), `CiProvider`, the login store, the forges' shared HTTP `transport` (reqwest, `Offline`, recorded answers), and `FakeForge`. |
-| `pdt-github` | The GitHub forge over GitHub's REST and GraphQL APIs (nothing runs `gh`): pull requests, Actions, merges, issues, the OAuth device-flow login, rate limits. |
+| `pdt-api` | The axum routes and everything that ties the crates together: `routes.rs` (`AppState`, and the router merging each module's routes), one module per area, the background loops (`background.rs`), the workflow engine and nodes (`workflow/`), pdt-mcp (`mcp/`), the integration SDK (`sdk.rs`, `integrations/`). Test fakes in `src/bin` (`fake-agent`, `fake-mcp`, `fake-command`). |
+| `pdt-forge` | The `Forge` trait (change requests, CI, merges, reviews, issues, with declared capabilities), `CiProvider`, the login store, the forges' shared HTTP `transport` (reqwest, `Offline`, recorded answers), and `FakeForge` (`testing.rs`). |
+| `pdt-github` | The GitHub forge over GitHub's REST and GraphQL APIs (nothing runs `gh`): pull requests, Actions, merges, issues, the OAuth device-flow login, rate limits. The `Forge` methods are in `forge.rs`. |
 | `pdt-tailscale` | The `tailscale` CLI (`serve`, `status`), and `fake-tailscale` for tests. |
 | `pdt-update` | The GitHub release client: finding a release, verified downloads. |
+| `pdt-sheet` | Local sheets on IronCalc: `.xlsx` and `.csv` in and out, cells with computed values, formats, sheets, sort and filter, and IronCalc's sync diffs. |
 | `pdt-host` | The supervisor: running pdtd, installing updates, rolling back, login registration. |
-| `pdtd` | The daemon binary: config, logging, the loops' wiring (`main.rs`), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
+| `pdtd` | The daemon binary: config, logging, startup (`main.rs`: the state, the startup resume and the poll), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
 | `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
 
 Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients match on `code`. API types derive ts-rs
@@ -108,7 +109,13 @@ state. Start (pdt-api `start.rs`) makes the branch and worktree, the attempt and
 prompt is pdt-core `start::start_prompt`. An attempt ends as merged or abandoned. Merge detection (pdt-git
 `merge.rs`, run by the poll) counts a branch as merged when its head is in the base, its patch is (a squash), or the
 forge says its PR merged; it counts only once the branch had commits of its own. Finish (pdt-api `finish.rs`) moves
-the ticket to Done and cleans up the worktree, sessions, runs and workspace.
+the ticket to Done and cleans up the worktree, sessions, runs and workspace. Closing a ticket any other way, or
+abandoning its attempt, goes through `start::close_attempt` / `stop::wind_down`: the attempt's workflow runs are
+cancelled (but the run closing it) and its sessions and runs stopped; Won't do and Abandon also close its open PR and,
+when `stop::clean_up_closed` finds nothing to lose (no uncommitted changes, nothing unpushed), remove the worktree, the
+branch, the remote branch when it is PDT's (`pdt-<KEY>-…`, origin at the same head) and the workspace, as the
+project's `StorageSettings::wont_do` says. A merge found outside PDT stops the attempt's sessions (`WindDown::Merged`)
+and leaves the workflow runs to take the merge (the Pipeline's Accept has an `event` port for it).
 
 **Pull requests and CI.** pdt-api `github.rs` reads each attempt's PR, and `ci.rs` each CI provider's runs (GitHub
 Actions, GitLab CI, the local forge's command, Buildkite), into memory. What changed (CI failed or passed, a conflict, a drop
@@ -210,7 +217,7 @@ engine's tick waits, writing a probe row (`Store::probe_writes`) after a backoff
 works, events that could not be logged (kept in memory by `emit_event`) are logged, and unprocessed events start their
 runs, each once by its run key. Agent steps start a session with a
 persona and wait for its `submit_outcome`; messages to agents go through the outbox (`workflow/outbox.rs`), which
-waits for the agent to be idle. Built-in workflows (`workflow/builtins.rs`) and templates (the Pipeline:
+waits for the agent to be idle. Built-in workflows (`workflow/builtins/`) and templates (the Pipeline:
 `workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. A template fills
 `{{params.x}}` into its one document, except "Review outside pull requests" (`workflow/outside_prs.rs`), whose
 `tickets` param picks one of two node sets (`templates::filled`); a workflow recorded before a param existed gets its
@@ -223,22 +230,33 @@ workflow runs" follows each such run with `github.workflow.watch` (one gate item
 (pdt-core `policy.rs`) sets who merges, approvals, the running cap and auto-start; the host caps how many agents run a
 turn at once.
 
-**Auto-start** is the host built-in "Pick up tickets" (`builtins.rs`): `ticket.startable`, `slot.freed` and a
+**Auto-start** is the host built-in "Pick up tickets" (`workflow/builtins/pick_up_tickets.rs`): `ticket.startable`, `slot.freed` and a
 one-minute `schedule` lead to `tickets.candidates` → `tickets.choose` → `ticket.start` (`workflow/nodes/pickup.rs`;
 the rules, pure, in pdt-core `pickup.rs`). A config field left out is the project's auto-start setting, so Settings
 edits the built-in's parameters without editing the workflow. The pickup watch (pdt-api `scheduler.rs`, every 10 s)
 emits the triggers, for projects with auto-start on: `ticket.startable` once per ticket each time it becomes startable
 (`policy::startable` and the start delay over; what it told is kept in `AppState::pickup_watch`, so a restart tells
-again), and `slot.freed` when a project has fewer tickets in flight, its cap rose, or the host's free agent slots went
-from none to some. `ticket.start` holds `AppState::pickup_lock` while it checks and starts, so concurrent pickup runs
+again), and `slot.freed` when a ticket in flight ended (room under the cap, or a hot area free), its cap rose, or the
+host's free agent slots went from none to some. `ticket.start` holds `AppState::pickup_lock` while it checks and starts, so concurrent pickup runs
 neither start a ticket twice (the store's one-active-attempt rule is the backstop) nor go over the caps a pick was
-chosen under (project, area and label, carried on each pick); it takes the first of each project's chosen tickets
+chosen under (project, area and label, and the overlap rule, carried on each pick); it takes the first of each project's chosen tickets
 still free. Having checked the cap itself, it sets `ValidStart::cap_checked`, so Start doesn't refuse for the
 project's running cap (a step's cap may be higher) while still refusing for blockers and overlaps. A failed start is skipped until the ticket
 changes (`AppState::auto_start_failed`), unless it failed to write (a full disk), which the next run tries again. The
 watch also announces starts left half-done: an active attempt whose `started` timeline event never reached the event
 log (pdtd stopped, or the write failed, between `start_attempt` and `announce_start`), once it is two minutes old
 (`Store::unannounced_starts`).
+
+**Overlap-aware pickup**: a project's `hot_areas` and `untagged_alongside_hot` (`ProjectPolicy`) become each
+candidates project's `OverlapPolicy` (`avoid` when it has hot areas, else `off`); `tickets.choose`'s `overlap`,
+`hotAreas`, `perArea` and `untaggedAlongsideHot` override it (`OverlapOverride`). `OverlapPolicy::check` compares a
+candidate's areas with the tickets in flight. Choose keeps the overlap reasons it passed over in
+`AppState::pickup_holds` (replacing its projects' entries each run, not on a dry run), and the ticket list and detail
+fill `TicketSummary::pickup_hold` from it for tickets that could still start, while the hold is under three minutes
+old (a pickup that stopped running stops renewing it); the pickup watch drops a project's holds when its auto-start
+is off. Agents tag areas through `update_ticket`
+(Refiner), `create_ticket` and `edit_ticket` (PM), checked against the project's configured areas
+(`ticket::agent_areas`); `get_ticket` lists them as `projectAreas`.
 
 **The Inbox and notifications.** The Inbox (pdt-api and pdt-store `inbox.rs`) holds what waits on the user:
 questions, gates, stalled steps, secrets to enter, confirmations. An item's `title` is one line; a gate's question
@@ -287,6 +305,22 @@ it, when it was focused: the newest focused is the tab shown), served at `/api/s
 `DocumentBody` reads a document again whenever its `updatedAt` moves (an edit through PDT touches it) and lights what
 changed.
 
+PDT's own provider is `documents::local::LocalProvider` (`AppState::local`, listed first in `AppState::documents`).
+Its reference is the file's full path: a doc is a `.md` (its images in `<name>.assets/` beside it), a sheet a `.xlsx`
+read and written by pdt-sheet (IronCalc; files are written to a temp file and renamed). Comments
+(`document_comments`, anchored by a `CommentAnchor`: a heading, quoted text, or a sheet's cell or range) and chart
+specs (`document_charts`, `ChartSpec`) are in the store. A sheet is live: the provider holds one IronCalc model per
+open sheet (loaded on first use, dropped when idle with no view), and every change is numbered. A view loads the
+model (`GET …/sheet`, IronCalc's bytes and `x-sheet-seq`), posts its own edits as IronCalc diffs with the number it
+has (`POST …/sheet/diffs`), and follows `GET …/events` (SSE): `diffs` (from other views and agents' edits through
+`apply`), `reload`, `changed` (a doc saved), `comments`, `charts`. A view that missed a number reloads; diffs sent on
+an old number are applied anyway (last write wins) and the answer says `conflict`, so the view reloads and says so.
+Each stream also checks the file every 2 s, so a change made outside PDT reaches the open views. A doc's editor saves
+with `baseVersion` (a hash of the file) and gets `409 conflict` when it changed since. Charts are drawn in the browser
+with Chart.js from `GET …/charts`, which reads their numbers from pdtd's model; they float over the grid at their
+anchor cell. The web UI's `@ironcalc/workbook` must be the same version as pdt-sheet's `ironcalc` (they exchange
+IronCalc's bytes and diffs; a pdt-sheet test checks), and is loaded only when a sheet opens.
+
 `GET /api/documents/{id}/version` is the provider's version (Google's Drive counter): `DocumentBody` polls it in PDT's
 own view, so edits made at the provider (in Google's editor) show too.
 
@@ -316,6 +350,26 @@ project has one) is the base branch's merge queue, and `GitlabCi` (provider id `
 `api.rs` is the client, `forge.rs` the `Forge`, `ci.rs` the CI provider, `plugin.rs` the claim and `login.rs` the
 login.
 
+## Adding to the hot lists
+
+Most changes add a route, a client call, a tool, a prompt, a built-in workflow or a screen. Each of those lives in its
+own file, and the central list takes at most one line, so tickets built side by side rarely touch the same lines.
+
+| To add | Write it in | The central line |
+| --- | --- | --- |
+| An API route | The area's module (pdt-api `<area>.rs`), in its `router()` | A new module adds `.merge(crate::<area>::router())` to `routes::router` (sorted) |
+| A web API call | `web/src/api/<area>.ts`, in its `<area>Api` object | A new area adds its import and `...<area>Api` to `api` in `web/src/api/client.ts` (sorted). `client.test.ts` fails when two areas define the same call. |
+| A pdt-mcp tool | Its group's module in pdt-api `mcp/tools/` (`defs()` and `call()`); shared helpers are in `mcp/tools/mod.rs` | A new group adds itself to `defs()` and `call()` in `mod.rs`. The order of `defs()` is the `tools/list` order. |
+| A built-in persona's prompt | pdt-core `persona/<id>.md` (read with `include_str!`) | A new persona adds an entry to `BUILTIN_PERSONAS` in `persona.rs` |
+| A built-in workflow | Its own module in pdt-api `workflow/builtins/` | Its `mod` line, its id constant and its line in `BUILTINS` (or the integration's list) in `builtins/mod.rs` |
+| A background loop | pdt-api `background.rs` (`start_background`) | |
+| A lazy screen or dialog | Its feature folder | One line in `web/src/shell/screens.tsx`, and the place in `AppShell.tsx` that shows it |
+| A Settings page of its own | Its feature folder | Its kind in `web/src/shell/route.ts` and `SettingsNav`, and one entry in `web/src/shell/settingsPages.tsx` |
+
+A new top-level view (Inbox, Notes and the like) still means editing `AppShell.tsx`, because its state lives in the
+shell. `AppShell`'s tests are split by area (`AppShell.<area>.test.tsx`), with shared fixtures in
+`web/src/shell/fixtures.ts`.
+
 ## Where to look
 
 | Area | Rust | Web |
@@ -330,7 +384,7 @@ login.
 | Sessions and terminals | pdt-api `sessions.rs`, `pty_ws.rs`, `activity.rs`; `crates/pdt-agents` | `web/src/sessions`, `web/src/terminal` |
 | Conversations | pdt-api `conversations.rs`; pdt-core `conversation/`; pdt-agents `adapter/` | `web/src/conversation` |
 | Agent instructions and guides | pdt-core `agent_context.rs`; pdt-api `guides.rs` (serves `docs/agent-guide.md`, the run-config guide (`docs/user/automation/run-configuration.md` then `docs/run-config.md`), `docs/prompts/`) | |
-| pdt-mcp and personas | pdt-api `mcp/`, `personas.rs`; pdt-core `persona.rs`, `mcp.rs` | `web/src/personas` |
+| pdt-mcp and personas | pdt-api `mcp/` (tools in `mcp/tools/`), `personas.rs`; pdt-core `persona.rs` (prompts in `persona/`), `mcp.rs` | `web/src/personas` |
 | Workflows, Inbox, notifications | pdt-api `workflow/`, `inbox.rs`, `notifications.rs`; pdt-core `workflow/`; pdt-store `workflows.rs`, `event_log.rs` | `web/src/workflows`, `web/src/inbox`, `web/src/notifications` |
 | Integrations | pdt-api `sdk.rs`, `integrations/`; `crates/pdt-int-*`; pdtd `src/integrations/` | `web/src/plugins`, `web/src/connections` |
 | Documents | pdt-api `documents/`; pdt-core `document.rs`, `document_ops.rs`; pdt-store `documents.rs`; `crates/pdt-int-google` | `web/src/documents` |

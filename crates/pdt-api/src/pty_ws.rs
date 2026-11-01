@@ -207,6 +207,12 @@ async fn pump(socket: WebSocket, st: AppState, id: String, att: Attachment, gzip
     }
 }
 
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new().route("/sessions/{id}/pty", get(connect))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

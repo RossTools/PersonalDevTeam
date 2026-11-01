@@ -1,7 +1,7 @@
 //! Ticket pickup (PDT-327): the pure rules of the `tickets.candidates` and `tickets.choose` workflow steps, which the
 //! built-in "Pick up tickets" runs with each project's auto-start settings. Candidates filters and orders a project's
 //! tickets; choose applies the caps, the start delay and skip-failed-until-changed, and says why it passed over each
-//! ticket it didn't choose.
+//! ticket it didn't choose. Overlap-aware pickup (PDT-329) keeps candidates apart from work in flight by area.
 
 use crate::policy::{AutoStart, AutoStartOrder, ProjectPolicy};
 use crate::ticket::{AttemptState, OverlapLevel, Priority, TicketStage, TicketSummary};
@@ -197,11 +197,14 @@ pub struct PickupProject {
     pub cap: u32,
     /// The project's start delay.
     pub start_delay_seconds: u32,
+    /// How the project keeps candidates apart from work in flight (its hot areas).
+    #[serde(default)]
+    pub overlap: OverlapPolicy,
     pub active: Vec<ActiveTicket>,
     pub tickets: Vec<PickupTicket>,
 }
 
-/// How choose overlaps candidates with work in flight (more rules come with overlap-aware pickup).
+/// How choose keeps candidates apart from work in flight, by area.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -209,6 +212,102 @@ pub enum OverlapRule {
     /// No rule of its own (candidates leaves out conflicts).
     #[default]
     Off,
+    /// Pass over a candidate in a hot area while another ticket in it is in flight, and take the next.
+    Avoid,
+    /// At most `per_area` tickets in flight in each area.
+    Serialize,
+}
+
+/// The overlap rule with what it applies to: a project's (from its settings), or a step's over it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct OverlapPolicy {
+    pub rule: OverlapRule,
+    /// The areas `avoid` keeps to one ticket in flight at a time, and that untagged tickets are kept apart from.
+    pub hot_areas: Vec<String>,
+    /// `serialize`: the most tickets in flight in one area (at least 1).
+    pub per_area: u32,
+    /// A ticket without areas may start alongside a hot area's ticket in flight, and a hot area's ticket alongside
+    /// one without areas.
+    pub untagged_alongside_hot: bool,
+}
+
+impl Default for OverlapPolicy {
+    fn default() -> Self {
+        OverlapPolicy { rule: OverlapRule::Off, hot_areas: vec![], per_area: 1, untagged_alongside_hot: true }
+    }
+}
+
+impl OverlapPolicy {
+    /// A project's: `avoid` on its hot areas when it has any, else off.
+    pub fn from_policy(policy: &ProjectPolicy) -> Self {
+        OverlapPolicy {
+            rule: if policy.hot_areas.is_empty() { OverlapRule::Off } else { OverlapRule::Avoid },
+            hot_areas: policy.hot_areas.clone(),
+            per_area: 1,
+            untagged_alongside_hot: policy.untagged_alongside_hot,
+        }
+    }
+
+    /// Why a ticket in `areas` may not start alongside `active` (the project's tickets in flight), if it may not.
+    pub fn check(&self, areas: &[String], active: &[ActiveTicket]) -> Option<PassedReason> {
+        let holders = |area: &str| -> Vec<String> {
+            active.iter().filter(|a| a.areas.iter().any(|x| x == area)).map(|a| a.key.clone()).collect()
+        };
+        let hot = |area: &str| self.hot_areas.iter().any(|h| h == area);
+        let limited: (Vec<&String>, usize) = match self.rule {
+            OverlapRule::Off => return None,
+            OverlapRule::Avoid => (areas.iter().filter(|a| hot(a)).collect(), 1),
+            OverlapRule::Serialize => (areas.iter().collect(), usize::try_from(self.per_area.max(1)).unwrap_or(1)),
+        };
+        let (limited, cap) = limited;
+        for area in limited {
+            let with = holders(area);
+            if with.len() >= cap {
+                let cap = u32::try_from(cap).unwrap_or(u32::MAX);
+                return Some(PassedReason::Overlaps { area: area.clone(), with, cap });
+            }
+        }
+        if self.untagged_alongside_hot {
+            return None;
+        }
+        if areas.is_empty() {
+            // Unknown: it may touch whatever hot area is busy.
+            return active.iter().find_map(|a| {
+                a.areas
+                    .iter()
+                    .find(|x| hot(x))
+                    .map(|area| PassedReason::Untagged { with: a.key.clone(), area: area.clone() })
+            });
+        }
+        let mine = areas.iter().find(|a| hot(a))?;
+        active
+            .iter()
+            .find(|a| a.areas.is_empty())
+            .map(|a| PassedReason::UntaggedInFlight { with: a.key.clone(), area: mine.clone() })
+    }
+}
+
+/// A step's overlap fields, each over the project's when given.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OverlapOverride {
+    pub rule: Option<OverlapRule>,
+    pub hot_areas: Option<Vec<String>>,
+    pub per_area: Option<u32>,
+    pub untagged_alongside_hot: Option<bool>,
+}
+
+impl OverlapOverride {
+    /// The policy for a project whose own is `project`.
+    pub fn over(&self, project: &OverlapPolicy) -> OverlapPolicy {
+        OverlapPolicy {
+            rule: self.rule.unwrap_or(project.rule),
+            hot_areas: self.hot_areas.clone().unwrap_or_else(|| project.hot_areas.clone()),
+            per_area: self.per_area.unwrap_or(project.per_area).max(1),
+            untagged_alongside_hot: self.untagged_alongside_hot.unwrap_or(project.untagged_alongside_hot),
+        }
+    }
 }
 
 /// What choose applies.
@@ -224,7 +323,8 @@ pub struct ChooseRules {
     pub start_delay_seconds: Option<u32>,
     /// Pass over a ticket that failed to start until it changes.
     pub skip_failed: bool,
-    pub overlap: OverlapRule,
+    /// The step's overlap fields over each project's own.
+    pub overlap: OverlapOverride,
 }
 
 impl ChooseRules {
@@ -257,6 +357,15 @@ pub enum PassedReason {
     /// It failed to start and hasn't changed since.
     #[serde(rename = "failed_before")]
     FailedBefore,
+    /// `with` (ticket keys) are in flight in `area`, which takes `cap` at a time.
+    #[serde(rename = "overlaps")]
+    Overlaps { area: String, with: Vec<String>, cap: u32 },
+    /// It has no areas, and `with` is in flight in hot area `area`.
+    #[serde(rename = "untagged")]
+    Untagged { with: String, area: String },
+    /// It is in hot area `area`, and `with` is in flight without areas.
+    #[serde(rename = "untagged_in_flight")]
+    UntaggedInFlight { with: String, area: String },
 }
 
 impl PassedReason {
@@ -268,7 +377,23 @@ impl PassedReason {
             PassedReason::LabelCap { label, cap } => format!("label {label} is at its cap of {cap}"),
             PassedReason::Settling { .. } => "changed within the start delay".into(),
             PassedReason::FailedBefore => "it failed to start and hasn't changed since".into(),
+            PassedReason::Overlaps { area, with, cap: 1 } => format!("overlaps {} in {area}", with.join(", ")),
+            PassedReason::Overlaps { area, with, cap } => {
+                format!("overlaps {} in {area} ({cap} at a time)", with.join(", "))
+            }
+            PassedReason::Untagged { with, area } => format!("has no areas yet, and {with} is in flight in {area}"),
+            PassedReason::UntaggedInFlight { with, area } => {
+                format!("{with} is in flight with no areas yet (this is in {area})")
+            }
         }
+    }
+
+    /// Whether it waits on overlapping work in flight (the Board shows it as the ticket's reason to wait).
+    pub fn is_overlap(&self) -> bool {
+        matches!(
+            self,
+            PassedReason::Overlaps { .. } | PassedReason::Untagged { .. } | PassedReason::UntaggedInFlight { .. }
+        )
     }
 }
 
@@ -297,6 +422,9 @@ pub struct Pick {
     pub area_caps: BTreeMap<String, u32>,
     /// The label caps that bind it: those of its own labels.
     pub label_caps: BTreeMap<String, u32>,
+    /// The overlap rule it was chosen under.
+    #[serde(default)]
+    pub overlap_rule: OverlapPolicy,
 }
 
 impl Pick {
@@ -330,6 +458,7 @@ pub fn choose(projects: &[PickupProject], rules: &ChooseRules, failed: &HashMap<
         let cap = rules.cap.unwrap_or(p.cap);
         let active = u32::try_from(p.active.len()).unwrap_or(u32::MAX);
         let delay_ms = i64::from(rules.start_delay_seconds.unwrap_or(p.start_delay_seconds)) * 1000;
+        let overlap = rules.overlap.over(&p.overlap);
         let in_flight = |pick: &dyn Fn(&ActiveTicket) -> &Vec<String>, name: &str| {
             p.active.iter().filter(|a| pick(a).iter().any(|x| x == name)).count()
         };
@@ -353,7 +482,7 @@ pub fn choose(projects: &[PickupProject], rules: &ChooseRules, failed: &HashMap<
             } else if let Some((label, cap)) = full(&rules.label_caps, &t.labels, &|a| &a.labels) {
                 Some(PassedReason::LabelCap { label, cap })
             } else {
-                None
+                overlap.check(&t.areas, &p.active)
             };
             match reason {
                 Some(reason) => {
@@ -368,6 +497,7 @@ pub fn choose(projects: &[PickupProject], rules: &ChooseRules, failed: &HashMap<
                         label_caps: binding(&rules.label_caps, &t.labels),
                         ticket: t.clone(),
                         cap,
+                        overlap_rule: overlap.clone(),
                     })
                 }
             }
@@ -392,6 +522,7 @@ mod tests {
             name: "P".into(),
             cap: policy.auto_start_cap(),
             start_delay_seconds: policy.start_delay_seconds,
+            overlap: OverlapPolicy::from_policy(policy),
             active: (0..active)
                 .map(|n| ActiveTicket { id: format!("a{n}"), key: format!("P-a{n}"), labels: vec![], areas: vec![] })
                 .collect(),
@@ -623,5 +754,135 @@ mod tests {
         assert!(c.chosen.is_empty());
         assert_eq!(c.passed[0].reason, PassedReason::AtCap { cap: 1, active: 1 });
         assert_eq!(c.passed[0].why, "the project is at its cap (1 of 1 in flight)");
+    }
+
+    fn in_flight(key: &str, areas: &[&str]) -> ActiveTicket {
+        ActiveTicket {
+            id: key.to_lowercase(),
+            key: key.into(),
+            labels: vec![],
+            areas: areas.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn tagged(id: &str, areas: &[&str]) -> TicketSummary {
+        TicketSummary {
+            areas: areas.iter().map(|s| s.to_string()).collect(),
+            rank: id.into(),
+            ..ticket(id, TicketStage::Todo)
+        }
+    }
+
+    fn chosen_and_passed(c: &Choice) -> (Vec<&str>, Vec<(&str, &str)>) {
+        (
+            c.chosen.iter().map(|p| p.ticket.id.as_str()).collect(),
+            c.passed.iter().map(|p| (p.id.as_str(), p.why.as_str())).collect(),
+        )
+    }
+
+    #[test]
+    fn a_project_with_hot_areas_avoids_them_by_default() {
+        let plain = ProjectPolicy { auto_start: AutoStart::Todo, start_delay_seconds: 0, ..ProjectPolicy::default() };
+        assert_eq!(OverlapPolicy::from_policy(&plain).rule, OverlapRule::Off, "no hot areas: no rule");
+        let hot = ProjectPolicy { hot_areas: vec!["api".into()], ..plain.clone() };
+        let o = OverlapPolicy::from_policy(&hot);
+        assert_eq!(
+            (o.rule, o.hot_areas.as_slice(), o.untagged_alongside_hot),
+            (OverlapRule::Avoid, &["api".to_string()][..], true)
+        );
+
+        let list = vec![tagged("a", &["api", "web"]), tagged("b", &["web"]), tagged("c", &[])];
+        let mut p = project(&hot, 0, &list);
+        p.cap = 5;
+        p.active = vec![in_flight("P-x", &["api"]), in_flight("P-y", &["web"])];
+        let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
+        // `a` shares the hot area with P-x; `b` only shares `web`, which isn't hot; `c` has no areas, allowed.
+        assert_eq!(chosen_and_passed(&c), (vec!["b", "c"], vec![("a", "overlaps P-x in api")]));
+        assert_eq!(c.passed[0].reason, PassedReason::Overlaps { area: "api".into(), with: vec!["P-x".into()], cap: 1 });
+        assert!(c.passed[0].reason.is_overlap());
+        // Each pick carries the rule, so Start checks it again.
+        assert_eq!(c.chosen[0].overlap_rule, o);
+        assert_eq!(o.check(&c.chosen[0].ticket.areas, &[in_flight("P-z", &["web"])]), None);
+        assert!(o.check(&["api".into()], &[in_flight("P-z", &["api"])]).is_some());
+
+        // Without the project's hot areas, nothing is passed over for them.
+        let mut cold = p.clone();
+        cold.overlap = OverlapPolicy::from_policy(&plain);
+        let c = choose(std::slice::from_ref(&cold), &ChooseRules::auto_start(), &HashMap::new(), LATER);
+        assert_eq!(c.chosen.len(), 3);
+    }
+
+    #[test]
+    fn untagged_tickets_wait_beside_hot_work_when_the_project_says() {
+        let policy = ProjectPolicy {
+            auto_start: AutoStart::Todo,
+            start_delay_seconds: 0,
+            hot_areas: vec!["api".into()],
+            untagged_alongside_hot: false,
+            ..ProjectPolicy::default()
+        };
+        let list = vec![tagged("hot", &["api"]), tagged("unknown", &[]), tagged("free", &["web"])];
+        let mut p = project(&policy, 0, &list);
+        p.cap = 5;
+        // A hot ticket in flight holds back the untagged one.
+        p.active = vec![in_flight("P-x", &["api", "docs"])];
+        let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
+        assert_eq!(
+            chosen_and_passed(&c),
+            (
+                vec!["free"],
+                vec![("hot", "overlaps P-x in api"), ("unknown", "has no areas yet, and P-x is in flight in api")]
+            )
+        );
+        // An untagged ticket in flight holds back the hot one.
+        p.active = vec![in_flight("P-u", &[])];
+        let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
+        assert_eq!(
+            chosen_and_passed(&c),
+            (vec!["free", "unknown"], vec![("hot", "P-u is in flight with no areas yet (this is in api)")])
+        );
+        // The step may let them run alongside.
+        let rules = ChooseRules {
+            overlap: OverlapOverride { untagged_alongside_hot: Some(true), ..Default::default() },
+            ..ChooseRules::auto_start()
+        };
+        let c = choose(std::slice::from_ref(&p), &rules, &HashMap::new(), LATER);
+        assert_eq!(c.chosen.len(), 3);
+    }
+
+    #[test]
+    fn serialize_keeps_every_area_to_n_in_flight_and_off_turns_the_rule_off() {
+        let policy = ProjectPolicy {
+            auto_start: AutoStart::Todo,
+            start_delay_seconds: 0,
+            hot_areas: vec!["api".into()],
+            ..ProjectPolicy::default()
+        };
+        let list = vec![tagged("web", &["web"]), tagged("docs", &["docs"]), tagged("api", &["api"])];
+        let mut p = project(&policy, 0, &list);
+        p.cap = 9;
+        p.active = vec![in_flight("P-1", &["web"]), in_flight("P-2", &["web"]), in_flight("P-3", &["docs"])];
+        let serialize = |n: u32| ChooseRules {
+            overlap: OverlapOverride { rule: Some(OverlapRule::Serialize), per_area: Some(n), ..Default::default() },
+            ..ChooseRules::auto_start()
+        };
+        let c = choose(std::slice::from_ref(&p), &serialize(2), &HashMap::new(), LATER);
+        assert_eq!(
+            chosen_and_passed(&c),
+            (vec!["api", "docs"], vec![("web", "overlaps P-1, P-2 in web (2 at a time)")])
+        );
+        let c = choose(std::slice::from_ref(&p), &serialize(1), &HashMap::new(), LATER);
+        assert_eq!(chosen_and_passed(&c).0, ["api"]);
+        // 0 counts as 1.
+        assert_eq!(choose(std::slice::from_ref(&p), &serialize(0), &HashMap::new(), LATER).chosen.len(), 1);
+        // The step's `off` wins over the project's avoid.
+        p.active.push(in_flight("P-4", &["api"]));
+        let off = ChooseRules {
+            overlap: OverlapOverride { rule: Some(OverlapRule::Off), ..Default::default() },
+            ..ChooseRules::auto_start()
+        };
+        assert_eq!(choose(std::slice::from_ref(&p), &off, &HashMap::new(), LATER).chosen.len(), 3);
+        let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
+        assert_eq!(chosen_and_passed(&c).0, ["docs", "web"]);
     }
 }

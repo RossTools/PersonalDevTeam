@@ -1070,3 +1070,15 @@ pub(crate) async fn delete_note(State(st): State<AppState>, Path(id): Path<Strin
 pub(crate) fn takes_messages(s: &Session) -> bool {
     s.kind == SessionKind::AgentTui && !matches!(s.status, SessionStatus::Finished)
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, patch, post};
+    axum::Router::new()
+        .route("/pm", get(state))
+        .route("/pm/sessions", get(list).post(start))
+        .route("/pm/sessions/{id}", patch(self::patch).delete(close))
+        .route("/pm/sessions/{id}/reset", post(reset))
+        .route("/pm/notes", get(list_notes).post(create_note))
+        .route("/pm/notes/{id}", get(get_note).patch(patch_note).delete(delete_note))
+}

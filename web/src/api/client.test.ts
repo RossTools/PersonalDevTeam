@@ -70,3 +70,15 @@ describe('the UI token (PDT-204)', () => {
     expect(seen.slice(2)).toEqual(['first', 'second']);
   });
 });
+
+describe('the area modules', () => {
+  it('are all in `api`, with no call name used by two areas', () => {
+    // Spreading two areas with the same key would silently keep only the last one.
+    const modules = import.meta.glob<Record<string, unknown>>(['./*.ts', '!./client.ts', '!./core.ts', '!./*.test.ts'], { eager: true });
+    const names = Object.values(modules).flatMap((m) =>
+      Object.entries(m).filter(([k]) => k.endsWith('Api')).flatMap(([, area]) => Object.keys(area as object)));
+    expect(names.length).toBeGreaterThan(200);
+    expect(names.filter((n, i) => names.indexOf(n) !== i)).toEqual([]);
+    expect(Object.keys(api).sort()).toEqual([...names].sort());
+  });
+});

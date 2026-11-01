@@ -8,6 +8,7 @@ import { useAgentAvailability } from '../common/useAgentAvailability';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { agentOf, byDefault, choiceFor, newSession } from '../sessions/newSession';
 import { useOpenSession } from '../tickets/actions';
+import { AreasEditor } from '../tickets/Areas';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { AutoStart } from '../api/gen/AutoStart';
@@ -475,6 +476,36 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
               value={String(p.startDelaySeconds)}
               disabled={!settings}
               onChange={(v) => void track(set({ startDelaySeconds: Number(v) }))}
+            />
+          )}
+        </AutoSaveRow>
+      )}
+      <AutoSaveRow
+        label="Hot areas"
+        description="Areas where two tickets in flight at once often collide. Auto-start doesn't start a ticket in one while another ticket in it is in flight, and takes the next instead; the ticket shows why it waits."
+      >
+        {(track) => (
+          <div className="w-72 max-w-full">
+            <AreasEditor
+              projectId={project.id}
+              areas={p?.hotAreas ?? []}
+              disabled={!settings}
+              onChange={(a) => void track(set({ hotAreas: a }))}
+            />
+          </div>
+        )}
+      </AutoSaveRow>
+      {p && (p.hotAreas ?? []).length > 0 && (
+        <AutoSaveRow
+          label="Tickets without areas run alongside hot ones"
+          description="A ticket without areas may touch anything. On: it starts while a hot area's ticket is in flight, and the other way round. Off: it waits."
+        >
+          {(track) => (
+            <Switch
+              aria-label="Tickets without areas run alongside hot ones"
+              checked={p.untaggedAlongsideHot ?? true}
+              disabled={save.isPending}
+              onChange={(on) => void track(set({ untaggedAlongsideHot: on }))}
             />
           )}
         </AutoSaveRow>

@@ -218,6 +218,12 @@ pub(crate) async fn refresh_checks(State(st): State<AppState>) -> Json<HostCheck
     Json(run_host_checks(&st).await)
 }
 
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new().route("/host/checks", get(get_checks)).route("/host/checks/refresh", post(refresh_checks))
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

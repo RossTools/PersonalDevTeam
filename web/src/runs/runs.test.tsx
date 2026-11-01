@@ -343,6 +343,35 @@ describe('ProjectSettingsPanel', () => {
     await waitFor(() => expect(toggle).not.toBeChecked());
   });
 
+  it('lets tickets without areas wait beside hot areas, shown once the project has hot areas (PDT-329)', async () => {
+    const base = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'todo', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120, requireGreenCi: true, untaggedAlongsideHot: true };
+    for (const hotAreas of [[], ['api']]) {
+      const policy = { ...base, hotAreas };
+      const calls = stubApi({
+        'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, policy },
+        'GET /api/projects/p/run-config': config,
+        'GET /api/projects/p/areas': { areas: [{ name: 'api', paths: ['api/**'], exclusive: false }], error: null },
+        'PUT /api/projects/p/settings': (c) => ({
+          effectiveCredentials: 'subscription', agentInstructions: null, policy: { ...policy, ...(c.body as object) },
+        }),
+      });
+      const { unmount } = renderWithQuery(<ProjectSettingsPanel project={project} />);
+      await screen.findByText('Hot areas');
+      const name = 'Tickets without areas run alongside hot ones';
+      if (hotAreas.length === 0) {
+        expect(screen.queryByRole('switch', { name })).not.toBeInTheDocument();
+      } else {
+        const toggle = await screen.findByRole('switch', { name });
+        await waitFor(() => expect(toggle).toBeEnabled());
+        expect(toggle).toBeChecked();
+        await userEvent.click(toggle);
+        await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+        expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, untaggedAlongsideHot: false });
+      }
+      unmount();
+    }
+  });
+
   it('turns off waiting in the Inbox for triaged tickets (on by default, PDT-225)', async () => {
     const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'off', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120, requireGreenCi: true, triageApproval: 'inbox' };
     const calls = stubApi({
@@ -361,7 +390,7 @@ describe('ProjectSettingsPanel', () => {
   });
 
   it('resolves conflicts at merge time by default, or immediately (PDT-328)', async () => {
-    const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'off', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120, requireGreenCi: true, triageApproval: 'inbox', resolveConflicts: 'merge_time' };
+    const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'off', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120, requireGreenCi: true, triageApproval: 'inbox', resolveConflicts: 'merge_time', hotAreas: [], untaggedAlongsideHot: true };
     const calls = stubApi({
       'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, policy },
       'GET /api/projects/p/run-config': config,

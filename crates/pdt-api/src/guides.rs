@@ -93,6 +93,12 @@ pub(crate) async fn get_one(Path(name): Path<String>) -> Result<impl IntoRespons
     Ok(([(header::CONTENT_TYPE, "text/markdown; charset=utf-8")], text))
 }
 
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new().route("/guides", get(list)).route("/guides/{name}", get(get_one))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

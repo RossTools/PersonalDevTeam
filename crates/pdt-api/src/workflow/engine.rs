@@ -140,14 +140,18 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-/// The trigger as runs see it (`{{trigger.…}}`): the payload with the event's type and id.
-pub(crate) fn trigger_value(e: &LogEvent) -> Value {
+/// The trigger as runs see it (`{{trigger.…}}`): the payload with the event's type and id (and a comment's
+/// attachments' local paths, which only pdt-api knows).
+pub(crate) fn trigger_value(st: &AppState, e: &LogEvent) -> Value {
     let mut v = match &e.payload {
         Value::Object(_) => e.payload.clone(),
         other => json!({"payload": other}),
     };
     v["type"] = json!(e.kind);
     v["eventId"] = json!(e.id);
+    if e.kind == pdt_core::workflow::events::TICKET_COMMENTED {
+        crate::ticket_attachments::fill_paths(st, &mut v);
+    }
     v
 }
 
@@ -299,7 +303,7 @@ async fn match_events(st: &AppState) {
     let waiting = st.store.steps_waiting_for_events().await.unwrap_or_default();
     let mut resumed: HashSet<String> = HashSet::new();
     for e in events {
-        let trigger = trigger_value(&e);
+        let trigger = trigger_value(st, &e);
         let ctx = json!({"trigger": trigger});
         let reg = st.registry();
         // The triage cap (PDT-202), looked up once per event for the workflows with an agent step it starts.
@@ -765,7 +769,7 @@ async fn apply(
             st.store.put_step(&step).await.map_err(err)?;
             // The event may have come already, while the run was on an earlier step (PDT-131).
             if let Some(e) = look_back(st, run, &step).await? {
-                complete_step(st, &step, "event", trigger_value(&e)).await?;
+                complete_step(st, &step, "event", trigger_value(st, &e)).await?;
             }
             Ok(false)
         }
@@ -810,7 +814,7 @@ async fn look_back(st: &AppState, run: &Run, step: &Step) -> R<Option<LogEvent>>
         };
         let events = st.store.list_log_events(&filter).await.map_err(err)?;
         let first = events.into_iter().find(|e| {
-            !taken.contains(e.id.as_str()) && crate::workflow::nodes::wait::wait_matches(w, &trigger_value(e))
+            !taken.contains(e.id.as_str()) && crate::workflow::nodes::wait::wait_matches(w, &trigger_value(st, e))
         });
         // Of several types, the one logged first.
         if let Some(e) = first.filter(|e| found.as_ref().is_none_or(|f| e.seq < f.seq)) {

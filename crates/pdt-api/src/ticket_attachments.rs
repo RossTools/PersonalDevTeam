@@ -29,6 +29,24 @@ pub(crate) fn path_of(st: &AppState, a: &TicketAttachment) -> PathBuf {
     dir(st, &a.ticket_id).join(a.file_name())
 }
 
+/// A `ticket.commented` trigger with its attachments' local paths filled in (`attachments[].path`), and
+/// `attachmentList`, the lines a message gives them in (PDT-341).
+pub(crate) fn fill_paths(st: &AppState, trigger: &mut serde_json::Value) {
+    let Some(ticket) = trigger["ticketId"].as_str().map(String::from) else { return };
+    let Some(list) = trigger.get_mut("attachments").and_then(|a| a.as_array_mut()) else { return };
+    let mut lines = Vec::new();
+    for a in list {
+        let Some(file) = a["fileName"].as_str().filter(|f| !f.is_empty()) else { continue };
+        let path = dir(st, &ticket).join(file);
+        lines.push(format!("- {}: {}", a["name"].as_str().unwrap_or(file), path.display()));
+        a["path"] = serde_json::json!(path);
+    }
+    if !lines.is_empty() {
+        trigger["attachmentList"] =
+            serde_json::json!(format!("\n\nAttached (open them at these paths):\n{}", lines.join("\n")));
+    }
+}
+
 fn refused(r: Refused) -> ApiError {
     let status = if r.too_large { StatusCode::PAYLOAD_TOO_LARGE } else { StatusCode::BAD_REQUEST };
     ApiError::new(status, r.code, r.message)
@@ -271,4 +289,18 @@ pub(crate) async fn remove(
     st.store.delete_ticket_attachment(&id, &aid).await?;
     let _ = tokio::fs::remove_file(path_of(&st, &a)).await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new()
+        .route(
+            "/tickets/{id}/attachments",
+            get(list)
+                .post(upload)
+                // Room for the largest image; anything bigger is refused with a clear error.
+                .layer(axum::extract::DefaultBodyLimit::max(pdt_core::conversation::composer::MAX_IMAGE_BYTES + 1)),
+        )
+        .route("/tickets/{id}/attachments/{attachment_id}", get(self::get).delete(remove))
 }

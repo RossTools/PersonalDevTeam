@@ -660,7 +660,7 @@ pub(crate) async fn put_settings(
 ) -> Result<Json<StorageSettings>, ApiError> {
     let Json(s) = payload?;
     st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    if s.clean_after_days > MAX_CLEANUP_DAYS || s.remove_after_days > MAX_CLEANUP_DAYS {
+    if [s.clean_after_days, s.remove_after_days, s.wont_do_after_days].iter().any(|d| *d > MAX_CLEANUP_DAYS) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "invalid_input",
@@ -724,6 +724,17 @@ pub async fn run_storage(st: AppState) {
         spawn_measure(&st, false);
     })
     .await
+}
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post, put};
+    axum::Router::new()
+        .route("/worktrees/{id}/clean", post(clean))
+        .route("/storage", get(view))
+        .route("/storage/refresh", post(refresh))
+        .route("/storage/clean-finished", post(clean_finished))
+        .route("/projects/{id}/storage", put(put_settings))
 }
 
 #[cfg(test)]

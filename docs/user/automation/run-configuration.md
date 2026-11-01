@@ -122,6 +122,9 @@ While a ticket is in progress, another in the same area shows an overlap, and **
 files that two active branches both change. Areas are read from the main checkout (and the host overrides), not from
 the branch being worked on.
 
+Tickets get their areas from you, the Refiner or the PM. To keep auto-start from starting tickets that would collide,
+pick the project's **Hot areas** in its **Settings**, next to auto-start.
+
 ## Forge
 
 The forge is where a project's pull requests, CI, reviews and issues live. Without a `forge` line, PDT goes by where

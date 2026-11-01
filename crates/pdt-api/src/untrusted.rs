@@ -443,6 +443,12 @@ pub(crate) fn outsider_refusal(ctx: &Value) -> Option<String> {
     })
 }
 
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new().route("/ui/token", get(ui_token))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -46,4 +46,14 @@ triageApproval: TriageApproval,
 /**
  * When conflicts with the base are resolved: at merge time, or as soon as they appear (PDT-328).
  */
-resolveConflicts: ResolveConflicts, };
+resolveConflicts: ResolveConflicts, 
+/**
+ * Areas two tickets in flight at once often collide in (PDT-329): "Pick up tickets" starts no ticket in one while
+ * another ticket in it is in flight.
+ */
+hotAreas: Array<string>, 
+/**
+ * A ticket without areas may start while a ticket in a hot area is in flight, and a ticket in a hot area while one
+ * without areas is.
+ */
+untaggedAlongsideHot: boolean, };

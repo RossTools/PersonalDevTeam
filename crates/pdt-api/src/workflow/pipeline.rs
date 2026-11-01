@@ -9,8 +9,9 @@ use serde_json::{Value, json};
 pub const ID: &str = "pipeline";
 
 const REFINE_PROMPT: &str = "Refine this ticket so a coding agent can build it without guessing: a clear scope, \
-what is out of scope, and a \"Done when\" list someone can check. Rewrite the ticket with `update_ticket`. Ask the \
-user (`ask_user`) about anything only they can decide.";
+what is out of scope, and a \"Done when\" list someone can check. Rewrite the ticket with `update_ticket`, and set \
+its `areas` there from the project's (`projectAreas` in `get_ticket`). Ask the user (`ask_user`) about anything only \
+they can decide.";
 
 const CODE_PROMPT: &str = "Build this ticket on its branch. On a later pass, address every point in the earlier \
 review and QA outcomes and in the user's newest comments, e.g. why they rejected it at Accept (`get_ticket` lists \
@@ -216,7 +217,7 @@ pub fn doc() -> WorkflowDoc {
             "Accept",
             json!({
             "question": "Accept {{trigger.ticketKey}} and merge it?", "choices": ["merge", "reject"],
-            "inbox": "accept", "pipelineStage": "accept", "approve": "merge"}),
+            "inbox": "accept", "pipelineStage": "accept", "approve": "merge", "event": merged_event()}),
         ),
         // Conflicts are fixed once, here (PDT-328): PDT merges the base in itself and regenerates generated files;
         // only real conflicts go to the Coder.
@@ -405,6 +406,8 @@ pub fn doc() -> WorkflowDoc {
         edge("accept", "reject", "code"),
         edge("accept", "timeout", "stopped"),
         edge("accept", "unanswered", "stopped"),
+        // Merged meanwhile (PDT-339): nothing is left to accept; Finish merged tickets takes the ticket on.
+        edge("accept", "event", "done"),
         edge("merge_mode", "workflow", "merge"),
         edge("merge_mode", "person", "wait_merge"),
         edge("merge_mode", "default", "wait_merge"),

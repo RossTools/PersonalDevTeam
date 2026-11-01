@@ -338,7 +338,7 @@ async fn a_steps_cap_above_the_projects_running_cap_holds() {
 }
 
 /// What another pickup run started since a pick was chosen counts: `ticket.start` checks the pick's project, area and
-/// label caps again under its lock, and skips it (not a failure) when one is full.
+/// label caps and its overlap rule again under its lock, and skips it (not a failure) when one is full.
 #[tokio::test]
 async fn a_stale_pick_is_checked_again_and_skipped_when_a_cap_filled_since() {
     let env = setup().await;
@@ -386,7 +386,89 @@ async fn a_stale_pick_is_checked_again_and_skipped_when_a_cap_filled_since() {
     assert_eq!(s, StatusCode::OK, "{v}");
     let step = run(start_with(json!({"id": next, "cap": 5, "labelCaps": {"agentic": 1}}))).await;
     assert_eq!(step["output"]["skipped"][0]["reason"], "label agentic is at its cap of 1", "{step}");
+    // The overlap rule it was chosen under: a ticket in its hot area started since.
+    for (id, areas) in [(&busy, json!(["x"])), (&next, json!(["x"]))] {
+        let (s, v) = call(&env.app, "PATCH", &format!("/api/tickets/{id}"), Some(json!({"areas": areas}))).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+    }
+    let rule = json!({"rule": "avoid", "hotAreas": ["x"]});
+    let step = run(start_with(json!({"id": next, "cap": 5, "overlapRule": rule}))).await;
+    let why = format!("overlaps {} in x", t["key"].as_str().unwrap());
+    assert_eq!(step["output"]["skipped"][0]["reason"], json!(why), "{step}");
     let step = run(start_with(json!({"id": next, "cap": 5, "areaCaps": {}, "labelCaps": {"agentic": 2}}))).await;
     assert_eq!(step["port"], "started", "{step}");
     assert_eq!(stage(&env, &next).await, "in_progress");
+}
+
+/// Overlap-aware pickup (PDT-329): with hot areas set, "Pick up tickets" passes over a ticket in a hot area while
+/// another ticket in it is in flight, starts an independent one instead, and the Board shows why the first waits.
+#[tokio::test]
+async fn pick_up_tickets_avoids_hot_areas_in_flight_and_says_why() {
+    let env = setup().await;
+    let repo = env._tmp.path().join("repo");
+    std::fs::create_dir_all(repo.join(".pdt")).unwrap();
+    std::fs::write(
+        repo.join(".pdt/project.toml"),
+        "[[area]]\nname = \"api\"\npaths = [\"api/**\"]\n\n[[area]]\nname = \"web\"\npaths = [\"web/**\"]\n",
+    )
+    .unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-m", "areas", "-q"]);
+    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 5, "startDelaySeconds": 0, "hotAreas": ["api"]}))
+        .await;
+    let (_, view) = call(&env.app, "GET", &format!("/api/projects/{}/settings", env.project), None).await;
+    assert_eq!(view["policy"]["hotAreas"], json!(["api"]));
+    assert_eq!(view["policy"]["untaggedAlongsideHot"], true);
+    let tagged = |title: &'static str, areas: Value| {
+        let env = &env;
+        async move {
+            let (s, t) = call(
+                &env.app,
+                "POST",
+                &format!("/api/projects/{}/tickets", env.project),
+                Some(json!({"title": title, "stage": "todo", "areas": areas})),
+            )
+            .await;
+            assert_eq!(s, StatusCode::CREATED, "{t}");
+            (t["id"].as_str().unwrap().to_string(), t["key"].as_str().unwrap().to_string())
+        }
+    };
+    let (busy, busy_key) = tagged("In flight", json!(["api"])).await;
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{busy}/start"),
+        Some(json!({"agent": "claude", "noSession": true})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let (hot, _) = tagged("Hot", json!(["api"])).await;
+    common::pick_up(&env.state).await;
+    // Hot waits, with the reason on the ticket; nothing else is free yet.
+    assert_eq!(stage(&env, &hot).await, "todo");
+    let why = format!("overlaps {busy_key} in api");
+    assert_eq!(get_ticket(&env, &hot).await["pickupHold"], json!(why));
+    let (_, list) = call(&env.app, "GET", &format!("/api/tickets?project={}", env.project), None).await;
+    let row = list["items"].as_array().unwrap().iter().find(|t| t["id"] == hot).unwrap().clone();
+    assert_eq!(row["pickupHold"], json!(why));
+
+    // An independent ticket starts while Hot waits.
+    let (free, _) = tagged("Free", json!(["web"])).await;
+    common::pick_up(&env.state).await;
+    assert_eq!(stage(&env, &free).await, "in_progress");
+    assert_eq!(stage(&env, &hot).await, "todo");
+
+    // Auto-start off: nothing will pick Hot up, so it no longer says it waits; back on, it does again.
+    settings(&env, json!({"autoStart": "off"})).await;
+    common::pick_up(&env.state).await;
+    assert_eq!(get_ticket(&env, &hot).await["pickupHold"], Value::Null);
+    settings(&env, json!({"autoStart": "todo"})).await;
+    common::pick_up(&env.state).await;
+    assert_eq!(get_ticket(&env, &hot).await["pickupHold"], json!(why));
+
+    // The hot work finishes: Hot starts, and its reason is gone.
+    move_to(&env, &busy, "done").await;
+    common::pick_up(&env.state).await;
+    assert_eq!(stage(&env, &hot).await, "in_progress");
+    assert_eq!(get_ticket(&env, &hot).await["pickupHold"], Value::Null);
 }

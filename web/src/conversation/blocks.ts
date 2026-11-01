@@ -18,15 +18,25 @@ function hidden(e: ConversationEvent): boolean {
   return ev.kind === 'usage' || ev.kind === 'turn_diff' || (ev.kind === 'turn' && ev.phase === 'started');
 }
 
-/** Rows that are part of a turn's activity (they collapse with its tool calls). */
-function isActivity(e: ConversationEvent): boolean {
+/** The longest narration ("Checking the workflow…") that collapses with the tool call after it. */
+const NARRATION_MAX = 160;
+
+/**
+ * Rows that are part of a turn's activity (they collapse with its tool calls): tool calls, reasoning, and a one-line
+ * narration directly before a tool call of the same turn. Any other assistant text stays at top level, even when
+ * the agent calls a tool after it (PDT-340).
+ */
+function isActivity(e: ConversationEvent, next: ConversationEvent | undefined): boolean {
   const ev = e.event;
-  return ev.kind === 'tool_call' || ev.kind === 'reasoning' || (ev.kind === 'agent_message' && ev.phase === 'commentary');
+  if (ev.kind === 'tool_call' || ev.kind === 'reasoning') return true;
+  if (ev.kind !== 'agent_message' || ev.phase !== 'commentary') return false;
+  const text = ev.markdown.trim();
+  return next?.event.kind === 'tool_call' && next.turnId === e.turnId && !text.includes('\n') && text.length <= NARRATION_MAX;
 }
 
 /**
  * Groups rows (already in `pos` order) into blocks. Tool calls nest under their parent call when it is present.
- * Two or more tool calls in a row (with the reasoning and commentary between them) collapse into one group once
+ * Two or more tool calls in a row (with the reasoning and one-line narration between them) collapse into one group once
  * their turn has ended, or, for rows without a turn id, once anything follows them or no turn is running.
  */
 export function buildBlocks(rows: ConversationEvent[], turnRunning: boolean): Block[] {
@@ -65,16 +75,16 @@ export function buildBlocks(rows: ConversationEvent[], turnRunning: boolean): Bl
     }
     run = [];
   };
-  for (const n of top) {
-    if (isActivity(n.row)) {
+  top.forEach((n, i) => {
+    if (isActivity(n.row, top[i + 1]?.row)) {
       // A new turn starts a new run.
       if (run.length && run[0].row.turnId !== n.row.turnId) flush(false);
       run.push(n);
-      continue;
+      return;
     }
     flush(false);
     blocks.push({ type: 'row', key: rowKey(n.row), node: n });
-  }
+  });
   flush(true);
   return blocks;
 }

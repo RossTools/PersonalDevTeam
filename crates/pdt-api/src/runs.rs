@@ -422,3 +422,17 @@ pub(crate) async fn pty(
     let step = RunStep::parse(&step).ok_or_else(|| ApiError::not_found("run step"))?;
     crate::pty_ws::upgrade(st, pty_id(&id, step), params.gzip_replay(), ws)
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/projects/{id}/runs", get(list).post(create))
+        .route("/projects/{id}/branches", get(branches))
+        .route("/runs", get(list_active))
+        .route("/runs/{id}", get(get_one).delete(remove))
+        .route("/runs/{id}/stop", post(stop))
+        .route("/runs/{id}/restart", post(restart))
+        .route("/runs/{id}/reset-data", post(reset_data))
+        .route("/runs/{id}/pty/{step}", get(pty))
+}

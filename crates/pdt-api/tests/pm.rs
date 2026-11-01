@@ -7,8 +7,8 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::call;
 use common::pm::*;
+use common::{call, git};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
@@ -1166,4 +1166,47 @@ async fn an_abandoned_reset_still_finishes_and_an_unfinished_one_counts_as_ended
     for id in [fresh["session"]["id"].as_str().unwrap(), &other] {
         call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     }
+}
+
+/// PDT-329: the PM tags a ticket's areas when it drafts or edits one, from the project's areas (`get_ticket` lists
+/// them); a name the project doesn't have is refused with the ones it has.
+#[tokio::test]
+async fn the_pm_tags_tickets_with_the_projects_areas() {
+    let env = setup(None).await;
+    let (_, projects) = call(&env.app, "GET", "/api/projects", None).await;
+    let repo = std::path::PathBuf::from(projects[0]["repoPath"].as_str().unwrap());
+    std::fs::create_dir_all(repo.join(".pdt")).unwrap();
+    std::fs::write(
+        repo.join(".pdt/project.toml"),
+        "[[area]]\nname = \"api\"\npaths = [\"api/**\"]\n\n[[area]]\nname = \"web\"\npaths = [\"web/**\"]\n",
+    )
+    .unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-m", "areas", "-q"]);
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let id = start_pm(&env, "hi").await;
+    wait_said(&env, &id, 1).await;
+
+    let said = ask(&env, &id, "mcp: get_ticket {\"ticket\": \"PX-1\"}").await;
+    assert!(said.contains("\"projectAreas\"") && said.contains("api/**") && said.contains("\"areasNote\""), "{said}");
+    let said =
+        ask(&env, &id, r#"mcp: create_ticket {"project": "PX", "title": "An endpoint", "areas": ["api"]}"#).await;
+    assert!(said.contains("\"key\": \"PX-2\""), "{said}");
+    let areas = |key: &'static str| {
+        let env = &env;
+        async move {
+            let (_, t) = call(&env.app, "GET", &format!("/api/tickets?project=&q={key}"), None).await;
+            t["items"][0]["areas"].clone()
+        }
+    };
+    assert_eq!(areas("PX-2").await, json!(["api"]));
+    let said = ask(&env, &id, r#"mcp: edit_ticket {"ticket": "PX-2", "areas": ["api", "web"]}"#).await;
+    assert!(said.contains("\"updated\": true"), "{said}");
+    assert_eq!(areas("PX-2").await, json!(["api", "web"]));
+    let said = ask(&env, &id, r#"mcp: edit_ticket {"ticket": "PX-2", "areas": ["apo"]}"#).await;
+    assert!(said.contains("not areas of the project: apo") && said.contains("api, web"), "{said}");
+    assert_eq!(areas("PX-2").await, json!(["api", "web"]), "unchanged");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
