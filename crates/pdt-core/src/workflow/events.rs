@@ -16,7 +16,12 @@ pub const ATTEMPT_STARTED: &str = "attempt.started";
 pub const ATTEMPT_MERGED: &str = "attempt.merged";
 pub const ATTEMPT_ABANDONED: &str = "attempt.abandoned";
 pub const ATTEMPT_LATE_COMMITS: &str = "attempt.late_commits";
+pub const TICKET_CREATED: &str = "ticket.created";
 pub const TICKET_STAGE_CHANGED: &str = "ticket.stage_changed";
+pub const TICKET_UNBLOCKED: &str = "ticket.unblocked";
+pub const TICKET_LABELS_CHANGED: &str = "ticket.labels_changed";
+pub const TICKET_PRIORITY_CHANGED: &str = "ticket.priority_changed";
+pub const TICKET_PARENT_CHANGED: &str = "ticket.parent_changed";
 pub const TICKET_COMMENTED: &str = "ticket.commented";
 pub const TICKET_OVERLAP_FOUND: &str = "ticket.overlap_found";
 pub const TICKET_OVERLAP_CLEARED: &str = "ticket.overlap_cleared";
@@ -152,10 +157,49 @@ pub const EVENT_TYPES: &[EventType] = &[
         outside: &[],
     },
     EventType {
+        id: TICKET_CREATED,
+        title: "Ticket created",
+        description: "A ticket was made: by the user, the PM, an agent, a workflow or from outside input (`actor`). An \
+                      agent's has its `persona`, `sessionId` and the ticket it was working on (`fromTicket`); parts \
+                      made with Make into parts have `viaParts`.",
+        schema: schema_of::<TicketCreated>,
+        outside: &[],
+    },
+    EventType {
         id: TICKET_STAGE_CHANGED,
         title: "Ticket moved",
         description: "A ticket moved to another stage.",
         schema: schema_of::<TicketStageChanged>,
+        outside: &[],
+    },
+    EventType {
+        id: TICKET_UNBLOCKED,
+        title: "Ticket unblocked",
+        description: "The last open ticket blocking a ticket reached Done or Won't do (`reason`: `closed`), or its \
+                      link was removed (`unlinked`).",
+        schema: schema_of::<TicketUnblocked>,
+        outside: &[],
+    },
+    EventType {
+        id: TICKET_LABELS_CHANGED,
+        title: "Ticket labels changed",
+        description: "Labels were added to or removed from a ticket (`added`, `removed`; `labels` is the new set).",
+        schema: schema_of::<TicketLabelsChanged>,
+        outside: &[],
+    },
+    EventType {
+        id: TICKET_PRIORITY_CHANGED,
+        title: "Ticket priority changed",
+        description: "A ticket's priority changed (`from`, `to`).",
+        schema: schema_of::<TicketPriorityChanged>,
+        outside: &[],
+    },
+    EventType {
+        id: TICKET_PARENT_CHANGED,
+        title: "Ticket parent changed",
+        description: "A ticket was made a part of another, moved to another parent, or detached (`from` and `to` are \
+                      the parents' keys, empty for none).",
+        schema: schema_of::<TicketParentChanged>,
         outside: &[],
     },
     EventType {
@@ -505,6 +549,110 @@ pub struct TicketStageChanged {
     /// `{{trigger.external.<tracker>}}`.
     #[serde(default)]
     pub external: std::collections::BTreeMap<String, String>,
+}
+
+/// `ticket.created` (PDT-363).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketCreated {
+    pub project_id: String,
+    pub ticket_id: String,
+    pub ticket_key: String,
+    pub title: String,
+    pub stage: String,
+    pub labels: Vec<String>,
+    pub priority: String,
+    /// Its parent, when it is a part: id and key.
+    pub parent_id: Option<String>,
+    pub parent_key: Option<String>,
+    /// Who made it: `user`, `pm`, `agent`, `workflow` or `external` (from outside input).
+    pub actor: String,
+    /// The persona of the agent session that made it (`PM`, `Coder` …).
+    pub persona: Option<String>,
+    pub session_id: Option<String>,
+    /// The ticket that agent session was working on: its key and id.
+    pub from_ticket: Option<String>,
+    pub from_ticket_id: Option<String>,
+    /// Made with Make into parts.
+    pub via_parts: bool,
+}
+
+/// Who changed a ticket, on the `ticket.*_changed` events (PDT-363).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketChangeRef {
+    pub project_id: String,
+    pub ticket_id: String,
+    pub ticket_key: String,
+    pub title: String,
+    pub stage: String,
+    /// `user`, `agent` or `system` (a workflow or PDT).
+    pub actor: String,
+    /// The persona of the agent session that did it, and the session.
+    pub persona: Option<String>,
+    pub session_id: Option<String>,
+}
+
+/// `ticket.unblocked` (PDT-363).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketUnblocked {
+    pub project_id: String,
+    pub ticket_id: String,
+    pub ticket_key: String,
+    pub title: String,
+    pub stage: String,
+    pub priority: String,
+    pub labels: Vec<String>,
+    /// The last blocker: its id and key.
+    pub blocker_id: String,
+    pub blocker_key: String,
+    /// `closed` (it reached Done or Won't do) or `unlinked` (its link was removed).
+    pub reason: String,
+}
+
+/// `ticket.labels_changed` (PDT-363).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketLabelsChanged {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub ticket: TicketChangeRef,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    /// Its labels now.
+    pub labels: Vec<String>,
+}
+
+/// `ticket.priority_changed` (PDT-363).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketPriorityChanged {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub ticket: TicketChangeRef,
+    pub from: String,
+    pub to: String,
+}
+
+/// `ticket.parent_changed` (PDT-363).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketParentChanged {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub ticket: TicketChangeRef,
+    /// The parent before and after: keys (empty for none) and ids.
+    pub from: String,
+    pub to: String,
+    pub from_id: Option<String>,
+    pub to_id: Option<String>,
 }
 
 /// `ticket.commented`.

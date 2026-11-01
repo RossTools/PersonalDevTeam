@@ -40,6 +40,10 @@ the top); **Shift+Enter** opens the full form instead.
 Click a ticket to open it beside the list, or **Open** to give it its own tab. Its **Activity** holds your comments and
 everything that happened to it: moves, starts, merges, agents' outcomes.
 
+A ticket you didn't make carries a badge saying who did: **PM**, **Workflow**, **External**, or the persona of the
+agent that filed it (**Coder**, say). Hover over an agent's badge to see the ticket it was working on: "Created by
+Coder · from APP-12".
+
 ## Screenshots and logs
 
 Paste or drop a screenshot or text file (a log, a JSON response, a config) into a description or comment, or use the

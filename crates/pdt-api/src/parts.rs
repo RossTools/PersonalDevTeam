@@ -113,11 +113,13 @@ pub(crate) async fn next(st: &AppState, parent: &str) -> Result<Result<String, N
 pub(crate) async fn create(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
     payload: Result<Json<NewParts>, JsonRejection>,
 ) -> Result<(StatusCode, Json<PartsCreated>), ApiError> {
     let Json(input) = payload?;
     let v = input.validate()?;
-    let mut items = st.store.create_parts(&id, &v, now_ms()).await?;
+    let (by, source) = crate::tickets::creator(&st, &headers).await?;
+    let mut items = st.store.create_parts_by(&id, &v, source, by, now_ms()).await?;
     for t in items.iter_mut() {
         crate::github::apply_summary(&st, t);
     }

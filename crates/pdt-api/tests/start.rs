@@ -399,7 +399,11 @@ async fn a_failed_session_rolls_the_start_back_and_keeps_the_worktree() {
     assert_eq!(r["attempt"]["state"], "active");
     let (_, wts) = call(&env.app, "GET", &format!("/api/projects/{}/worktrees", env.pid), None).await;
     assert_eq!(wts.as_array().unwrap().len(), 1, "the kept worktree is reused: {wts}");
-    assert_eq!(logged(&env, &id).await, ["ticket.stage_changed", "attempt.started"], "logged once it started");
+    assert_eq!(
+        logged(&env, &id).await,
+        ["ticket.created", "ticket.stage_changed", "attempt.started"],
+        "logged once it started"
+    );
     env.state.ptys.shutdown().await;
 }
 

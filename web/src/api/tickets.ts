@@ -26,7 +26,7 @@ import type { TicketQuery } from './gen/TicketQuery';
 export const ticketsApi = {
   listTickets: (q: TicketQuery = {}) => request<TicketPage>(`/api/tickets${queryString(q)}`),
   createTicket: (projectId: string, t: NewTicket) =>
-    request<Ticket>(`/api/projects/${enc(projectId)}/tickets`, { method: 'POST', body: JSON.stringify(t) }),
+    request<Ticket>(`/api/projects/${enc(projectId)}/tickets`, { method: 'POST', body: JSON.stringify(t) }, { asUser: true }),
   /** One Jira issue as a ticket linked to it (or the ticket that already links it). */
   importJiraIssue: (projectId: string, key: string) =>
     request<JiraImportResult>(`/api/projects/${enc(projectId)}/jira/import`, { method: 'POST', body: JSON.stringify({ key }) }),
@@ -76,7 +76,7 @@ export const ticketsApi = {
   ticketAttachmentUrl: (id: string, attachmentId: string) => `/api/tickets/${enc(id)}/attachments/${enc(attachmentId)}`,
   /** Several parts of a parent, in order after its existing parts (PDT-38). */
   createParts: (id: string, b: NewParts) =>
-    request<PartsCreated>(`/api/tickets/${enc(id)}/parts`, { method: 'POST', body: JSON.stringify(b) }),
+    request<PartsCreated>(`/api/tickets/${enc(id)}/parts`, { method: 'POST', body: JSON.stringify(b) }, { asUser: true }),
   startTicket: (id: string, b: StartTicket) =>
     request<StartResult>(`/api/tickets/${enc(id)}/start`, { method: 'POST', body: JSON.stringify(b) }, { asUser: true }),
   checkMerge: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/check-merge`, { method: 'POST' }),

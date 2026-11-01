@@ -198,7 +198,16 @@ Failed runs also show in the Inbox's **Updates**. To hear when one run finishes,
 
 Every kind of event in PDT is a trigger: a ticket moved, started, commented on or merged; CI failed or passed; a pull
 request conflicts, left the merge queue or merged; a new GitHub issue or outside pull request; a failed GitHub Actions
-run. Some have settings of their own:
+run. These ones react to changes to tickets:
+
+- **Ticket created**: says who made it (you, the PM, an agent, a workflow, or outside input). An agent's ticket names
+  its persona and the ticket it was working on. Parts made with **Make into parts** are marked as parts.
+- **Ticket unblocked**: the last open ticket blocking it reached Done or Won't do, or its link was removed.
+- **Ticket labels changed**: the labels added and removed.
+- **Ticket priority changed**: the old priority and the new one.
+- **Ticket parent changed**: it was made a part of another ticket, moved to another parent, or detached.
+
+Some triggers have settings of their own:
 
 - **On a schedule**: every so often, or at set times (a cron line, in your time zone).
 - **Webhook**: when another service calls PDT's address for a webhook connection.

@@ -182,7 +182,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let source = match (triaging, pm) {
                 (true, _) => TicketSource::External,
                 (false, true) => TicketSource::Pm,
-                (false, false) => TicketSource::Workflow,
+                (false, false) => TicketSource::Agent,
             };
             let input = pdt_core::ticket::NewTicket {
                 title: a.title,

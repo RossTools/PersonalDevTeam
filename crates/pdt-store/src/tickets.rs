@@ -322,7 +322,7 @@ async fn decorate(conn: &mut SqliteConnection, items: &mut [TicketSummary]) -> R
     Ok(())
 }
 
-async fn summary(conn: &mut SqliteConnection, id: &str) -> Result<Option<TicketSummary>, StoreError> {
+pub(crate) async fn summary(conn: &mut SqliteConnection, id: &str) -> Result<Option<TicketSummary>, StoreError> {
     let sql = format!("{} WHERE t.id = ?", summary_select());
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&mut *conn).await? else {
         return Ok(None);
@@ -470,6 +470,55 @@ fn order_by(sort: TicketSort) -> String {
         TicketSort::Updated => " ORDER BY t.updated_at DESC, t.id DESC".into(),
         TicketSort::Created => " ORDER BY t.created_at DESC, t.id DESC".into(),
     }
+}
+
+/// A change to a ticket that workflows react to (PDT-363): `ticket.labels_changed`, `ticket.priority_changed` and
+/// `ticket.parent_changed`. The parents are `(id, key)`.
+enum Change {
+    Labels { added: Vec<String>, removed: Vec<String> },
+    Priority { from: Priority, to: Priority },
+    Parent { from: Option<(String, String)>, to: Option<(String, String)> },
+}
+
+/// Logs `change` to ticket `id` by `by`, in the change's transaction (once per change: its key is new each time).
+async fn log_change(
+    conn: &mut SqliteConnection,
+    id: &str,
+    by: &By,
+    change: Change,
+    now: i64,
+) -> Result<(), StoreError> {
+    use pdt_core::workflow::{api::NewLogEvent, events as ev};
+    let Some(t) = summary(conn, id).await? else { return Ok(()) };
+    let ticket = ev::TicketChangeRef {
+        project_id: t.project_id,
+        ticket_id: id.into(),
+        ticket_key: t.key,
+        title: t.title,
+        stage: t.stage.as_str().into(),
+        actor: by.actor.as_str().into(),
+        persona: by.agent.as_ref().and_then(|a| a.persona.clone()),
+        session_id: by.agent.as_ref().map(|a| a.session_id.clone()),
+    };
+    let key = format!("{id}:{}", uuid::Uuid::now_v7());
+    let e = match change {
+        Change::Labels { added, removed } => {
+            let p = ev::TicketLabelsChanged { ticket, added, removed, labels: t.labels };
+            NewLogEvent::new(ev::TICKET_LABELS_CHANGED, key, "tickets", p)
+        }
+        Change::Priority { from, to } => {
+            let p = ev::TicketPriorityChanged { ticket, from: from.as_str().into(), to: to.as_str().into() };
+            NewLogEvent::new(ev::TICKET_PRIORITY_CHANGED, key, "tickets", p)
+        }
+        Change::Parent { from, to } => {
+            let (from_id, from) = from.map_or((None, String::new()), |(i, k)| (Some(i), k));
+            let (to_id, to) = to.map_or((None, String::new()), |(i, k)| (Some(i), k));
+            let p = ev::TicketParentChanged { ticket, from, to, from_id, to_id };
+            NewLogEvent::new(ev::TICKET_PARENT_CHANGED, key, "tickets", p)
+        }
+    };
+    crate::event_log::emit_in(conn, &e, now).await?;
+    Ok(())
 }
 
 async fn insert_event(
@@ -686,7 +735,8 @@ async fn change_stage_by(
         );
         let freed: Vec<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(id).fetch_all(&mut *conn).await?;
         for (t,) in freed {
-            insert_event(conn, &t, EventKind::Unblocked, Actor::System, None, Some(json!({"by": id})), now).await?;
+            let data = json!({"by": id, "reason": "closed"});
+            insert_event(conn, &t, EventKind::Unblocked, Actor::System, None, Some(data), now).await?;
         }
     }
     Ok(())
@@ -851,6 +901,7 @@ async fn insert_ticket(
     project_id: &str,
     t: &ValidNewTicket,
     by: &By,
+    via_parts: bool,
     now: i64,
 ) -> TResult<()> {
     let number: Option<(i64,)> = sqlx::query_as(
@@ -917,7 +968,11 @@ async fn insert_ticket(
     if rank::needs_rebalance(&key) {
         rebalance(conn, project_id).await?;
     }
-    insert_event(conn, id, EventKind::Created, by, None, Some(json!({"stage": t.stage})), now).await?;
+    let mut data = json!({"stage": t.stage});
+    if via_parts {
+        data["viaParts"] = json!(true);
+    }
+    insert_event(conn, id, EventKind::Created, by, None, Some(data), now).await?;
     if let Some(parent) = &t.parent {
         let (pkey,): (String,) = sqlx::query_as("SELECT COALESCE(key, '') FROM projects WHERE id = ?")
             .bind(project_id)
@@ -1005,7 +1060,7 @@ impl Store {
         if let Some((other,)) = existing {
             return Ok(Err(other));
         }
-        insert_ticket(&mut tx, id, project_id, t, &by.into(), now).await?;
+        insert_ticket(&mut tx, id, project_id, t, &by.into(), false, now).await?;
         sqlx::query(
             "INSERT INTO ticket_links_external (ticket_id, system, connection_id, key, url, created_at) \
              VALUES (?, ?, ?, ?, ?, ?)",
@@ -1125,7 +1180,7 @@ impl Store {
         now: i64,
     ) -> TResult<Ticket> {
         let mut tx = self.write_tx().await?;
-        insert_ticket(&mut tx, id, project_id, t, &by.into(), now).await?;
+        insert_ticket(&mut tx, id, project_id, t, &by.into(), false, now).await?;
         tx.commit().await?;
         self.get_ticket(id).await?.ok_or(TicketError::NotFound("ticket"))
     }
@@ -1133,6 +1188,19 @@ impl Store {
     /// Makes several parts of `parent`, in order after its existing parts, in one transaction (PDT-38). With
     /// `blocked_by_previous`, each is blocked by the part before it.
     pub async fn create_parts(&self, parent: &str, v: &ValidParts, now: i64) -> TResult<Vec<TicketSummary>> {
+        self.create_parts_by(parent, v, TicketSource::User, Actor::User, now).await
+    }
+
+    /// [`Store::create_parts`] from `source` on behalf of `by`, who their `created` events name (with `viaParts`).
+    pub async fn create_parts_by(
+        &self,
+        parent: &str,
+        v: &ValidParts,
+        source: TicketSource,
+        by: impl Into<By>,
+        now: i64,
+    ) -> TResult<Vec<TicketSummary>> {
+        let by = by.into();
         let mut tx = self.write_tx().await?;
         let Some((project_id, _, _)) = ticket_head(&mut tx, parent).await? else {
             return Err(TicketError::NotFound("ticket"));
@@ -1151,9 +1219,9 @@ impl Store {
                 after: None,
                 parent: Some(parent.to_string()),
                 blocked_by_previous: v.blocked_by_previous,
-                source: TicketSource::User,
+                source,
             };
-            insert_ticket(&mut tx, &id, &project_id, &t, &Actor::User.into(), now).await?;
+            insert_ticket(&mut tx, &id, &project_id, &t, &by, true, now).await?;
             ids.push(id);
         }
         tx.commit().await?;
@@ -1312,6 +1380,16 @@ impl Store {
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_all(&mut *conn).await?;
         let mut part_list = rows.iter().map(to_summary).collect::<Result<Vec<_>, _>>()?;
         decorate(&mut conn, &mut part_list).await?;
+        let created: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT actor, data FROM ticket_events WHERE ticket_id = ? AND kind = 'created' ORDER BY created_at LIMIT 1",
+        )
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await?;
+        let created_by = created.and_then(|(actor, data)| {
+            let data: serde_json::Value = serde_json::from_str(data.as_deref()?).ok()?;
+            AgentBy::of_event(EventKind::Created, Actor::parse(&actor)?, Some(&data))
+        });
         Ok(Some(Ticket {
             summary: s,
             description,
@@ -1321,6 +1399,7 @@ impl Store {
             sessions,
             overlaps: vec![],
             part_list,
+            created_by,
         }))
     }
 
@@ -1393,6 +1472,7 @@ impl Store {
         let (description,): (String,) =
             sqlx::query_as("SELECT description FROM tickets WHERE id = ?").bind(id).fetch_one(&mut *tx).await?;
         let mut fields: Vec<&str> = vec![];
+        let mut changes = vec![];
         if let Some(title) = p.title.as_ref().filter(|t| **t != cur.title) {
             sqlx::query("UPDATE tickets SET title = ? WHERE id = ?").bind(title).bind(id).execute(&mut *tx).await?;
             fields.push("title");
@@ -1408,10 +1488,13 @@ impl Store {
                 .execute(&mut *tx)
                 .await?;
             fields.push("priority");
+            changes.push(Change::Priority { from: cur.priority, to: pr });
         }
         if let Some(l) = p.labels.as_ref().filter(|l| **l != cur.labels) {
             replace_set(&mut tx, "ticket_labels", "label", id, l).await?;
             fields.push("labels");
+            let (added, removed) = pdt_core::ticket::label_change(&cur.labels, l);
+            changes.push(Change::Labels { added, removed });
         }
         if let Some(a) = p.areas.as_ref().filter(|a| **a != cur.areas) {
             replace_set(&mut tx, "ticket_areas", "area", id, a).await?;
@@ -1427,11 +1510,15 @@ impl Store {
                 if let Some(old) = &cur.parent {
                     parted_events(&mut tx, (&old.id, &old.key), (id, &cur.key), true, &by, now).await?;
                 }
+                let mut to = None;
                 if let Some(new) = parent {
                     let (facts, key, _) = parent_facts(&mut tx, Some((id, &cur.project_id)), new).await?;
                     valid_parent(&facts)?;
                     parted_events(&mut tx, (new, &key), (id, &cur.key), false, &by, now).await?;
+                    to = Some((new.clone(), key));
                 }
+                let from = cur.parent.as_ref().map(|p| (p.id.clone(), p.key.clone()));
+                changes.push(Change::Parent { from, to });
                 sqlx::query("UPDATE tickets SET parent_id = ?, updated_at = ? WHERE id = ?")
                     .bind(parent)
                     .bind(now)
@@ -1449,6 +1536,9 @@ impl Store {
                 }
             }
             change_stage_by(&mut tx, id, cur.stage, stage, &by, None, now).await?;
+        }
+        for change in changes {
+            log_change(&mut tx, id, &by, change, now).await?;
         }
         if let Some(waiting) = p.waiting {
             if waiting && stage.is_closed() {
@@ -1566,6 +1656,10 @@ impl Store {
             }
             ValidBulk::Priority(pr) => {
                 for (id, _) in &heads {
+                    let (from,): (String,) = sqlx::query_as("SELECT priority FROM tickets WHERE id = ?")
+                        .bind(id)
+                        .fetch_one(&mut *tx)
+                        .await?;
                     let r =
                         sqlx::query("UPDATE tickets SET priority = ?, updated_at = ? WHERE id = ? AND priority <> ?")
                             .bind(pr.as_str())
@@ -1577,6 +1671,8 @@ impl Store {
                     if r.rows_affected() > 0 {
                         let data = json!({"fields": ["priority"]});
                         insert_event(&mut tx, id, EventKind::Edited, Actor::User, None, Some(data), now).await?;
+                        let from = Priority::parse(&from).unwrap_or(Priority::None);
+                        log_change(&mut tx, id, &Actor::User.into(), Change::Priority { from, to: *pr }, now).await?;
                         count += 1;
                     }
                 }
@@ -1613,6 +1709,13 @@ impl Store {
                     touch(&mut tx, id, now).await?;
                     let data = json!({"fields": ["labels"]});
                     insert_event(&mut tx, id, EventKind::Edited, Actor::User, None, Some(data), now).await?;
+                    let one = vec![label.clone()];
+                    let change = if add {
+                        Change::Labels { added: one, removed: vec![] }
+                    } else {
+                        Change::Labels { added: vec![], removed: one }
+                    };
+                    log_change(&mut tx, id, &Actor::User.into(), change, now).await?;
                     count += 1;
                 }
             }
@@ -2397,8 +2500,8 @@ impl Store {
             let sql = format!("SELECT {BLOCKED_BY} FROM tickets t WHERE t.id = ?");
             let (n,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(to).fetch_one(&mut *tx).await?;
             if n == 0 {
-                insert_event(&mut tx, to, EventKind::Unblocked, Actor::System, None, Some(json!({"by": from})), now)
-                    .await?;
+                let data = json!({"by": from, "reason": "unlinked"});
+                insert_event(&mut tx, to, EventKind::Unblocked, Actor::System, None, Some(data), now).await?;
             }
         }
         tx.commit().await?;
@@ -3289,7 +3392,7 @@ mod tests {
             let f = crate::EventFilter { ticket_id: Some("a".into()), limit: 50, ..Default::default() };
             store.list_log_events(&f).await.unwrap().into_iter().map(|e| e.kind).collect::<Vec<_>>()
         };
-        assert_eq!(log(store.clone()).await, Vec::<String>::new());
+        assert_eq!(log(store.clone()).await, ["ticket.created"], "only its making");
 
         // One active attempt per ticket.
         let again = store.start_attempt("at2", "a", None, "b", "main", "abc", json!({}), 6).await;
@@ -3305,7 +3408,7 @@ mod tests {
         assert_eq!((t.summary.stage, t.summary.updated_at), (TicketStage::Ready, before.summary.updated_at));
         assert!(t.attempts.is_empty());
         assert_eq!(events(&store, "a").await, [EventKind::Created]);
-        assert_eq!(log(store.clone()).await, Vec::<String>::new(), "no workflow ever saw the undone start");
+        assert_eq!(log(store.clone()).await, ["ticket.created"], "no workflow ever saw the undone start");
         store.set_pipeline_stage("a", Some(PipelineStage::Code)).await.unwrap();
         let started = store.start_attempt("at3", "a", None, "b", "main", "abc", json!({}), 7).await.unwrap();
         assert_eq!(store.get_ticket_summary("a").await.unwrap().unwrap().pipeline_stage, None);
@@ -3315,7 +3418,7 @@ mod tests {
         // Announced, the start is in the log.
         let started = store.start_attempt("at4", "a", None, "b", "main", "abc", json!({}), 8).await.unwrap();
         store.announce_start(&started, 9).await.unwrap();
-        assert_eq!(log(store.clone()).await, ["ticket.stage_changed", "attempt.started"]);
+        assert_eq!(log(store.clone()).await, ["ticket.created", "ticket.stage_changed", "attempt.started"]);
 
         // A ticket already in progress gets no `moved` event.
         add(&store, "b", ValidNewTicket { stage: TicketStage::InProgress, ..new("B") }).await;
@@ -3416,15 +3519,15 @@ mod tests {
             .await
             .unwrap();
         let kinds: Vec<&str> = log.iter().map(|e| e.kind.as_str()).collect();
-        assert_eq!(kinds, ["ticket.stage_changed", "attempt.started", "attempt.merged"]);
-        assert_eq!(log[1].payload["labels"], json!(["automerge", "docs"]), "a condition can branch on them");
-        let merged = &log[2].payload;
+        assert_eq!(kinds, ["ticket.created", "ticket.stage_changed", "attempt.started", "attempt.merged"]);
+        assert_eq!(log[2].payload["labels"], json!(["automerge", "docs"]), "a condition can branch on them");
+        let merged = &log[3].payload;
         assert_eq!(
             (merged["via"].as_str(), merged["pr"].as_u64(), merged["attemptId"].as_str()),
             (Some("detected"), Some(4), Some("at1"))
         );
         assert!(merged["notice"]["text"].as_str().unwrap().contains("PR #4"));
-        assert_eq!(log[2].key, "at1:merged");
+        assert_eq!(log[3].key, "at1:merged");
         store.add_comment("a", "please also fix x", 10).await.unwrap();
         let log = store
             .list_log_events(&crate::EventFilter {
@@ -3767,5 +3870,159 @@ mod tests {
         let ids: Vec<&str> = rows.iter().map(|r| r.ticket_id.as_str()).collect();
         assert!(!ids.contains(&"par"), "a parent is not compared: {ids:?}");
         assert!(ids.contains(&"a") && ids.contains(&"b"));
+    }
+
+    /// The payloads of the events of `kind` logged about ticket `id`, oldest first (PDT-363).
+    async fn logged(store: &Store, kind: &str, id: &str) -> Vec<serde_json::Value> {
+        let f = crate::EventFilter {
+            kind: Some(kind.into()),
+            ticket_id: Some(id.into()),
+            limit: 100,
+            ..Default::default()
+        };
+        store.list_log_events(&f).await.unwrap().into_iter().map(|e| e.payload).collect()
+    }
+
+    fn coder_on(key: &str) -> By {
+        By::agent(AgentBy {
+            session_id: "s1".into(),
+            project_id: Some("p".into()),
+            persona: Some("Coder".into()),
+            from_ticket: Some(key.into()),
+            from_ticket_id: Some("from".into()),
+        })
+    }
+
+    #[tokio::test]
+    async fn ticket_created_says_who_made_it() {
+        use pdt_core::workflow::events::TICKET_CREATED;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        let mine = ValidNewTicket { labels: vec!["ui".into()], priority: Priority::High, ..new("Mine") };
+        add(&store, "u", mine).await;
+        let [e] = logged(&store, TICKET_CREATED, "u").await.try_into().unwrap();
+        assert_eq!(
+            (e["actor"].as_str(), e["title"].as_str(), e["stage"].as_str()),
+            (Some("user"), Some("Mine"), Some("draft"))
+        );
+        assert_eq!((e["labels"].clone(), e["priority"].as_str()), (json!(["ui"]), Some("high")));
+        assert_eq!((e["persona"].clone(), e["viaParts"].as_bool()), (json!(null), Some(false)));
+
+        // An agent's: its persona, session and the ticket it was working on, also on the ticket.
+        let t = ValidNewTicket { source: TicketSource::Agent, parent: Some("u".into()), ..new("Follow-up") };
+        let made = store.create_ticket_by("a", "p", &t, coder_on("PX-9"), 2).await.unwrap();
+        assert_eq!(made.summary.source, TicketSource::Agent);
+        let by = made.created_by.expect("created by the agent");
+        assert_eq!((by.persona.as_deref(), by.from_ticket.as_deref()), (Some("Coder"), Some("PX-9")));
+        let [e] = logged(&store, TICKET_CREATED, "a").await.try_into().unwrap();
+        assert_eq!((e["actor"].as_str(), e["persona"].as_str()), (Some("agent"), Some("Coder")));
+        assert_eq!((e["sessionId"].as_str(), e["fromTicket"].as_str()), (Some("s1"), Some("PX-9")));
+        assert_eq!((e["fromTicketId"].as_str(), e["parentId"].as_str()), (Some("from"), Some("u")));
+        assert!(e["parentKey"].as_str().is_some_and(|k| k.ends_with("-1")), "{e}");
+        assert!(store.get_ticket("u").await.unwrap().unwrap().created_by.is_none(), "the user's");
+
+        // A workflow's, and parts made with Make into parts.
+        store.create_ticket_by("w", "p", &new("Nightly"), Actor::System, 3).await.unwrap();
+        assert_eq!(logged(&store, TICKET_CREATED, "w").await[0]["actor"], "workflow");
+        let v = ValidParts { parts: vec![("One".into(), String::new())], blocked_by_previous: false };
+        let part = store.create_parts("u", &v, 4).await.unwrap().remove(0);
+        let [e] = logged(&store, TICKET_CREATED, &part.id).await.try_into().unwrap();
+        assert_eq!((e["actor"].as_str(), e["viaParts"].as_bool()), (Some("user"), Some(true)));
+    }
+
+    #[tokio::test]
+    async fn ticket_unblocked_fires_when_the_last_blocker_closes_or_goes() {
+        use pdt_core::workflow::events::TICKET_UNBLOCKED;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        for id in ["a", "b1", "b2", "c"] {
+            add(&store, id, new(id)).await;
+        }
+        store.add_link("b1", "a", LinkKind::Blocks, 2).await.unwrap();
+        store.add_link("b2", "a", LinkKind::Blocks, 2).await.unwrap();
+        let done = ValidPatch { stage: Some(TicketStage::Done), ..Default::default() };
+        store.patch_ticket("b1", &done, 3).await.unwrap();
+        assert!(logged(&store, TICKET_UNBLOCKED, "a").await.is_empty(), "b2 still blocks it");
+        let wont = ValidPatch { stage: Some(TicketStage::WontDo), ..Default::default() };
+        store.patch_ticket("b2", &wont, 4).await.unwrap();
+        let [e] = logged(&store, TICKET_UNBLOCKED, "a").await.try_into().unwrap();
+        assert_eq!((e["blockerId"].as_str(), e["reason"].as_str()), (Some("b2"), Some("closed")));
+        assert!(e["blockerKey"].as_str().is_some_and(|k| k.ends_with("-3")), "{e}");
+        // Reopening and closing a blocker of nothing else fires nothing more.
+        store
+            .patch_ticket("b2", &ValidPatch { stage: Some(TicketStage::Todo), ..Default::default() }, 5)
+            .await
+            .unwrap();
+        store.remove_link("b2", "a", LinkKind::Blocks, 6).await.unwrap();
+        let unlinked = logged(&store, TICKET_UNBLOCKED, "a").await;
+        assert_eq!(unlinked.len(), 2, "removing the last open blocker's link unblocks it");
+        assert_eq!(unlinked[1]["reason"], "unlinked");
+        // A link to a closed blocker going unblocks nothing.
+        store.add_link("b1", "c", LinkKind::Blocks, 7).await.unwrap();
+        store.remove_link("b1", "c", LinkKind::Blocks, 8).await.unwrap();
+        assert!(logged(&store, TICKET_UNBLOCKED, "c").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn labels_priority_and_parent_changes_fire_once_each() {
+        use pdt_core::workflow::events::{TICKET_LABELS_CHANGED, TICKET_PARENT_CHANGED, TICKET_PRIORITY_CHANGED};
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "t", ValidNewTicket { labels: vec!["a".into(), "b".into()], ..new("t") }).await;
+        add(&store, "p1", new("p1")).await;
+        add(&store, "p2", new("p2")).await;
+        let p = ValidPatch {
+            labels: Some(vec!["b".into(), "c".into()]),
+            priority: Some(Priority::Urgent),
+            parent: Some(Some("p1".into())),
+            ..Default::default()
+        };
+        store.patch_ticket_by("t", &p, &coder_on("PX-9"), 2).await.unwrap();
+        let [l] = logged(&store, TICKET_LABELS_CHANGED, "t").await.try_into().unwrap();
+        assert_eq!(
+            (l["added"].clone(), l["removed"].clone(), l["labels"].clone()),
+            (json!(["c"]), json!(["a"]), json!(["b", "c"]))
+        );
+        assert_eq!(
+            (l["actor"].as_str(), l["persona"].as_str(), l["sessionId"].as_str()),
+            (Some("agent"), Some("Coder"), Some("s1"))
+        );
+        let [pr] = logged(&store, TICKET_PRIORITY_CHANGED, "t").await.try_into().unwrap();
+        assert_eq!((pr["from"].as_str(), pr["to"].as_str()), (Some("none"), Some("urgent")));
+        let [pa] = logged(&store, TICKET_PARENT_CHANGED, "t").await.try_into().unwrap();
+        assert_eq!(
+            (pa["fromId"].clone(), pa["from"].as_str(), pa["toId"].as_str()),
+            (json!(null), Some(""), Some("p1"))
+        );
+        assert!(pa["to"].as_str().is_some_and(|k| k.ends_with("-2")), "{pa}");
+
+        // The same values again change nothing; a move between parents is one change.
+        store.patch_ticket("t", &p, 3).await.unwrap();
+        store
+            .patch_ticket("t", &ValidPatch { parent: Some(Some("p2".into())), ..Default::default() }, 4)
+            .await
+            .unwrap();
+        assert_eq!(logged(&store, TICKET_LABELS_CHANGED, "t").await.len(), 1);
+        assert_eq!(logged(&store, TICKET_PRIORITY_CHANGED, "t").await.len(), 1);
+        let moved = logged(&store, TICKET_PARENT_CHANGED, "t").await;
+        assert_eq!(moved.len(), 2);
+        assert_eq!(
+            (moved[1]["fromId"].as_str(), moved[1]["toId"].as_str(), moved[1]["actor"].as_str()),
+            (Some("p1"), Some("p2"), Some("user"))
+        );
+        store.patch_ticket("t", &ValidPatch { parent: Some(None), ..Default::default() }, 5).await.unwrap();
+        assert_eq!(logged(&store, TICKET_PARENT_CHANGED, "t").await[2]["to"], "", "detached");
+
+        // Bulk actions too, only for the tickets they change.
+        store.bulk_tickets(&["t".into(), "p1".into()], &ValidBulk::AddLabel("c".into()), 6).await.unwrap();
+        assert_eq!(logged(&store, TICKET_LABELS_CHANGED, "t").await.len(), 1, "t has c already");
+        let [l] = logged(&store, TICKET_LABELS_CHANGED, "p1").await.try_into().unwrap();
+        assert_eq!((l["added"].clone(), l["removed"].clone()), (json!(["c"]), json!([])));
+        store.bulk_tickets(&["t".into()], &ValidBulk::RemoveLabel("b".into()), 7).await.unwrap();
+        assert_eq!(logged(&store, TICKET_LABELS_CHANGED, "t").await[1]["removed"], json!(["b"]));
+        store.bulk_tickets(&["t".into(), "p1".into()], &ValidBulk::Priority(Priority::Urgent), 8).await.unwrap();
+        assert_eq!(logged(&store, TICKET_PRIORITY_CHANGED, "t").await.len(), 1, "t is urgent already");
+        let [pr] = logged(&store, TICKET_PRIORITY_CHANGED, "p1").await.try_into().unwrap();
+        assert_eq!((pr["from"].as_str(), pr["to"].as_str()), (Some("none"), Some("urgent")));
     }
 }
