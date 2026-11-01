@@ -660,7 +660,7 @@ pub(crate) async fn put_settings(
 ) -> Result<Json<StorageSettings>, ApiError> {
     let Json(s) = payload?;
     st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    if s.clean_after_days > MAX_CLEANUP_DAYS || s.remove_after_days > MAX_CLEANUP_DAYS {
+    if [s.clean_after_days, s.remove_after_days, s.wont_do_after_days].iter().any(|d| *d > MAX_CLEANUP_DAYS) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "invalid_input",
