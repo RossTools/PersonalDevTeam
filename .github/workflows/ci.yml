@@ -42,8 +42,10 @@ env:
 # - build (macos-latest): only what macOS can break: clippy, nextest and the desktop crate. It runs in the merge
 #   queue, and on a PR only with the `macos` label or a change under `.github/`.
 # - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files.
-# - The Rust tests (rust.yml) build once per OS into a nextest archive and run it in parallel partition jobs; the
-#   `test (linux)` and `build (…)` jobs here only report rust.yml's result under the required check names.
+# - The Rust tests (rust.yml) build once per OS into nextest archives and run them in parallel partition jobs; Linux
+#   and Windows build the unit and integration tests in two jobs side by side (`split`), macOS in one (its minutes
+#   cost the most). The `test (linux)` and `build (…)` jobs here only report rust.yml's result under the required
+#   check names.
 # - Runners are GitHub's hosted ones unless the repo variables PDT_LINUX_RUNNER / PDT_MACOS_RUNNER /
 #   PDT_WINDOWS_RUNNER name others (Namespace profiles, larger runners); PDT_<OS>_PARTITIONS (a JSON list, "[1,2,3]")
 #   change the partitions. .github/actions/setup picks the cache to match; cache.yml saves GitHub's from main.
@@ -242,6 +244,7 @@ jobs:
       os: linux
       runner: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
       partitions: ${{ vars.PDT_LINUX_PARTITIONS || '[1,2,3]' }}
+      split: true
       release: ${{ needs.changes.outputs.release }}
 
   test-linux:
@@ -332,7 +335,8 @@ jobs:
     with:
       os: windows
       runner: ${{ vars.PDT_WINDOWS_RUNNER || 'windows-latest' }}
-      partitions: ${{ vars.PDT_WINDOWS_PARTITIONS || '[1,2,3,4]' }}
+      partitions: ${{ vars.PDT_WINDOWS_PARTITIONS || '[1,2,3,4,5,6]' }}
+      split: true
 
   build-windows:
     name: build (windows-latest)
