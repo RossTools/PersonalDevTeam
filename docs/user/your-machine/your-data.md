@@ -21,6 +21,8 @@ The main things in it:
 - `pdt.db`: the database, with your projects, tickets, sessions, workflows and settings (and `pdt.db-wal` and
   `pdt.db-shm` beside it while PDT runs);
 - `backups/`: copies of the database (below);
+- `documents/`: your local [documents](../using-pdt/documents.md) (`.md` docs and `.xlsx` sheets), unless you picked
+  another folder for them;
 - `logs/`: PDT's logs (below);
 - `sessions/`, `pm/` and `runs/`: what PDT keeps for agent sessions, the PM and runs (a run's own data folder, its
   log);
@@ -45,6 +47,9 @@ can take gigabytes per worktree. Worktrees stay after a ticket is done, so PDT c
   **Worktrees** settings with **Clean build output after**, and set **Remove worktree after** to remove the worktree
   itself too (its branch stays; a worktree with uncommitted changes is kept). Worktrees a ticket still works in, and
   ones that belong to no ticket, are never touched.
+- **On Won't do** says what becomes of a worktree when its ticket goes to Won't do or its attempt is abandoned:
+  **Clean up at once** (the default: the worktree, its branch and the ticket's workspace go), **Keep for some days**
+  (then it is removed) or **Keep**. Work not committed or not pushed is always kept.
 - When a disk has less than 20 GB free, the Inbox says so. Below 5 GB, auto-start starts no new tickets until there is
   more space; agents already running carry on. Change both in **Settings › This host › Storage** (0 turns one off).
 
@@ -75,7 +80,9 @@ cd ~/Library/Application\ Support/pdt
 sqlite3 pdt.db ".backup pdt-backup.db"
 ```
 
-Or let your usual backup tool (Time Machine and the like) include the data folder.
+Or let your usual backup tool (Time Machine and the like) include the data folder. That includes your local documents
+in `documents/`; if you keep them in another folder (**Settings › This host › Documents**, or a project's), back that
+folder up too. Their comments and charts are in the database.
 
 Old history is pruned as PDT goes: finished workflow runs, ended Inbox items, notifications and the event log after
 30 days. Tickets, comments and conversations' messages stay.

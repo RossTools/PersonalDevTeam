@@ -336,8 +336,9 @@ struct EditTicket {
     /// The new description, replacing the old one: keep what still holds.
     #[serde(default)]
     description: Option<String>,
-    /// draft, ready, todo, in_progress, done or wont_do. Done and wont_do end its attempt; draft, ready and todo stop
-    /// its work like `stop_ticket` (keeping the worktree).
+    /// draft, ready, todo, in_progress, done or wont_do. Done and wont_do end its attempt and stop its sessions and
+    /// runs; wont_do also closes its pull request and removes its worktree and branch when nothing would be lost;
+    /// draft, ready and todo stop its work like `stop_ticket` (keeping the worktree).
     #[serde(default)]
     stage: Option<pdt_core::ticket::TicketStage>,
     #[serde(default)]
@@ -1255,7 +1256,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 .ok_or("that ticket no longer exists")?;
             match valid.stage {
                 Some(stage) if stage.is_closed() => {
-                    crate::start::end_for_close(st, &id, stage, &by).await.map_err(api)?;
+                    crate::start::close_attempt(st, &id, stage, since, &by, None).await.map_err(api)?;
                 }
                 // Back before work: the ticket's work stops (PDT-159).
                 Some(stage) => crate::stop::after_move(st, &id, stage, since, &by).await,

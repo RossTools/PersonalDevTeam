@@ -161,6 +161,8 @@ mod tests {
         git(&repo, &["config", "user.name", "t"]);
         git(&repo, &["config", "user.email", "t@t"]);
         git(&repo, &["config", "commit.gpgsign", "false"]);
+        // Windows runners set autocrlf globally: a checkout would write the files back with CRLF.
+        git(&repo, &["config", "core.autocrlf", "false"]);
         std::fs::write(repo.join("gen.txt"), "gen 1\n").unwrap();
         write(&repo, "a.txt", "one\n");
         let wt = tmp.join("wt");

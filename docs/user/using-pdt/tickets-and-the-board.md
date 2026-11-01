@@ -143,6 +143,24 @@ If an open blocker, an overlap or the project's limit on running tickets stands 
 Comments you add while an agent works are sent to it. To stop, move the ticket back to **To do** (or **Draft** or
 **Ready**), or use **Abandon attempt…** in its menu.
 
+### Won't do and Abandon
+
+Moving a ticket at work to **Won't do**, or **Abandon attempt…**, ends its work:
+
+- its sessions, terminals and runs stop, and its workflow runs are cancelled;
+- its open pull request is closed, with a comment saying why (a merged one is left alone);
+- its worktree, its branch (and the copy PDT pushed for it) and its workspace are removed, unless they hold work
+  that isn't committed or pushed. Then everything is kept, the ticket's timeline says why, and **Clean up…** on the
+  ticket's attempt removes it anyway.
+
+The ticket's timeline lists what was stopped, closed and removed. To keep worktrees for a while, or always, change
+**On Won't do** in the project's **Worktrees** settings (see [Disk space](../your-machine/your-data.md#disk-space)).
+Starting the ticket again later begins afresh.
+
+Moving a ticket to **Done** stops its sessions and runs too; its worktree is left to the automatic cleanup. When a
+ticket's branch merges while it waits at **Accept**, the question goes away, its sessions stop, and the merged banner
+offers to finish it.
+
 ## Auto-start
 
 In **Settings**, on the project's page:

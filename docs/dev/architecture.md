@@ -64,9 +64,10 @@ and `backups/` (a copy taken before migrations).
 | `pdt-github` | The GitHub forge over GitHub's REST and GraphQL APIs (nothing runs `gh`): pull requests, Actions, merges, issues, the OAuth device-flow login, rate limits. |
 | `pdt-tailscale` | The `tailscale` CLI (`serve`, `status`), and `fake-tailscale` for tests. |
 | `pdt-update` | The GitHub release client: finding a release, verified downloads. |
+| `pdt-sheet` | Local sheets on IronCalc: `.xlsx` and `.csv` in and out, cells with computed values, formats, sheets, sort and filter, and IronCalc's sync diffs. |
 | `pdt-host` | The supervisor: running pdtd, installing updates, rolling back, login registration. |
 | `pdtd` | The daemon binary: config, logging, the loops' wiring (`main.rs`), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
-| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
+| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
 
 Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients match on `code`. API types derive ts-rs
 and are generated into `web/src/api/gen`.
@@ -108,7 +109,13 @@ state. Start (pdt-api `start.rs`) makes the branch and worktree, the attempt and
 prompt is pdt-core `start::start_prompt`. An attempt ends as merged or abandoned. Merge detection (pdt-git
 `merge.rs`, run by the poll) counts a branch as merged when its head is in the base, its patch is (a squash), or the
 forge says its PR merged; it counts only once the branch had commits of its own. Finish (pdt-api `finish.rs`) moves
-the ticket to Done and cleans up the worktree, sessions, runs and workspace.
+the ticket to Done and cleans up the worktree, sessions, runs and workspace. Closing a ticket any other way, or
+abandoning its attempt, goes through `start::close_attempt` / `stop::wind_down`: the attempt's workflow runs are
+cancelled (but the run closing it) and its sessions and runs stopped; Won't do and Abandon also close its open PR and,
+when `stop::clean_up_closed` finds nothing to lose (no uncommitted changes, nothing unpushed), remove the worktree, the
+branch, the remote branch when it is PDT's (`pdt-<KEY>-…`, origin at the same head) and the workspace, as the
+project's `StorageSettings::wont_do` says. A merge found outside PDT stops the attempt's sessions (`WindDown::Merged`)
+and leaves the workflow runs to take the merge (the Pipeline's Accept has an `event` port for it).
 
 **Pull requests and CI.** pdt-api `github.rs` reads each attempt's PR, and `ci.rs` each CI provider's runs (GitHub
 Actions, GitLab CI, the local forge's command, Buildkite), into memory. What changed (CI failed or passed, a conflict, a drop
@@ -211,7 +218,10 @@ works, events that could not be logged (kept in memory by `emit_event`) are logg
 runs, each once by its run key. Agent steps start a session with a
 persona and wait for its `submit_outcome`; messages to agents go through the outbox (`workflow/outbox.rs`), which
 waits for the agent to be idle. Built-in workflows (`workflow/builtins.rs`) and templates (the Pipeline:
-`workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. Triggers on things
+`workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. A template fills
+`{{params.x}}` into its one document, except "Review outside pull requests" (`workflow/outside_prs.rs`), whose
+`tickets` param picks one of two node sets (`templates::filled`); a workflow recorded before a param existed gets its
+old behaviour as the value (`outside_prs::upgrade`). Triggers on things
 outside PDT poll: new GitHub issues (`github_issues.rs`), outside pull requests (`github_pulls.rs`) and failed runs of a
 CI workflow (`github_workflow_runs.rs`: `github.workflow.failed`, read through `CiProvider::workflow_runs` since a
 `RunCursor` kept in the workflow's state, so a restart neither misses nor repeats a run). The template "Report failed
@@ -295,6 +305,43 @@ it, when it was focused: the newest focused is the tab shown), served at `/api/s
 `DocumentBody` reads a document again whenever its `updatedAt` moves (an edit through PDT touches it) and lights what
 changed.
 
+PDT's own provider is `documents::local::LocalProvider` (`AppState::local`, listed first in `AppState::documents`).
+Its reference is the file's full path: a doc is a `.md` (its images in `<name>.assets/` beside it), a sheet a `.xlsx`
+read and written by pdt-sheet (IronCalc; files are written to a temp file and renamed). Comments
+(`document_comments`, anchored by a `CommentAnchor`: a heading, quoted text, or a sheet's cell or range) and chart
+specs (`document_charts`, `ChartSpec`) are in the store. A sheet is live: the provider holds one IronCalc model per
+open sheet (loaded on first use, dropped when idle with no view), and every change is numbered. A view loads the
+model (`GET …/sheet`, IronCalc's bytes and `x-sheet-seq`), posts its own edits as IronCalc diffs with the number it
+has (`POST …/sheet/diffs`), and follows `GET …/events` (SSE): `diffs` (from other views and agents' edits through
+`apply`), `reload`, `changed` (a doc saved), `comments`, `charts`. A view that missed a number reloads; diffs sent on
+an old number are applied anyway (last write wins) and the answer says `conflict`, so the view reloads and says so.
+Each stream also checks the file every 2 s, so a change made outside PDT reaches the open views. A doc's editor saves
+with `baseVersion` (a hash of the file) and gets `409 conflict` when it changed since. Charts are drawn in the browser
+with Chart.js from `GET …/charts`, which reads their numbers from pdtd's model; they float over the grid at their
+anchor cell. The web UI's `@ironcalc/workbook` must be the same version as pdt-sheet's `ironcalc` (they exchange
+IronCalc's bytes and diffs; a pdt-sheet test checks), and is loaded only when a sheet opens.
+
+`GET /api/documents/{id}/version` is the provider's version (Google's Drive counter): `DocumentBody` polls it in PDT's
+own view, so edits made at the provider (in Google's editor) show too.
+
+**Google.** An optional plugin (`crates/pdt-int-google`, pdtd's `google` feature), the `google` document provider.
+Each Google account is a `google` connection (the user's OAuth client ID in its config, the client secret as its
+secret, the picker's API key and project number, the folder for new files); signing in (`oauth.rs`: the authorization
+code flow with PKCE, the `drive.file` scope only) keeps the refresh token and email as a secret of their own
+(`connection:<id>:google`, `accounts.rs`), so editing the connection keeps them; deleting the connection runs `Integration::connection_deleted` (for every
+built integration with that kind, on or off), where Google revokes the token and forgets the sign-in. A document's reference is
+`<connection id>/<file id>`. `api.rs` is the client (an access token per account in memory, renewed once on a 401;
+Google's errors as `ProviderError`, a rate limit as `Busy`, which the API answers 429), over pdt-forge's blocking
+`Transport` (tests use recorded answers). `drive.rs` has the files, a Doc's Markdown (Drive's export), a Sheet's
+cells, comments and versions; `docs.rs` turns Markdown into Docs `batchUpdate` requests (inserted from the last block
+at one index, UTF-16 indexes, sections found in `documents.get`'s structure); `sheets.rs` maps sheet edits to
+`batchUpdate` requests and `values.batchUpdate` writes (`USER_ENTERED`), in order. A chart's PDT id becomes Google's numeric chart id by
+a hash and is kept in the spreadsheet's developer metadata (`pdt.chart`), so a read gives charts back under PDT's ids. `routes.rs` signs in and out
+(`/api/google/…`; the callback page is where Google sends the browser back) and gives the browser Google's file
+picker's token; signing in and the picker are for the web app only (its UI token). The web app loads the picker
+(`web/src/documents/google.tsx`); a picked file is imported like any other. The document page embeds the provider's
+`embed_url` (Google's editor, with `authuser`) and falls back to PDT's own reading.
+
 **GitLab.** An optional plugin (`crates/pdt-int-gitlab`, pdtd's `gitlab` feature) over GitLab's REST API (v4), for
 gitlab.com and self-hosted servers; nothing runs `glab`. It claims `origin` remotes on gitlab.com and on each host it
 has a login for (one account per host, a token with the `api` scope, or the device flow with `PDT_GITLAB_CLIENT_ID`),
@@ -320,7 +367,7 @@ login.
 | pdt-mcp and personas | pdt-api `mcp/`, `personas.rs`; pdt-core `persona.rs`, `mcp.rs` | `web/src/personas` |
 | Workflows, Inbox, notifications | pdt-api `workflow/`, `inbox.rs`, `notifications.rs`; pdt-core `workflow/`; pdt-store `workflows.rs`, `event_log.rs` | `web/src/workflows`, `web/src/inbox`, `web/src/notifications` |
 | Integrations | pdt-api `sdk.rs`, `integrations/`; `crates/pdt-int-*`; pdtd `src/integrations/` | `web/src/plugins`, `web/src/connections` |
-| Documents | pdt-api `documents/`; pdt-core `document.rs`; pdt-store `documents.rs` | `web/src/documents` |
+| Documents | pdt-api `documents/`; pdt-core `document.rs`, `document_ops.rs`; pdt-store `documents.rs`; `crates/pdt-int-google` | `web/src/documents` |
 | The PM | pdt-api `pm.rs`; pdt-core `pm.rs`; pdt-store `pm.rs` | `web/src/pm` |
 | Watches | pdt-api `watches.rs`; pdt-core `watch.rs`; pdt-store `watches.rs` | `web/src/common/Watch.tsx` |
 | Secrets | pdt-api `vault.rs`, `secrets.rs`; pdt-core `secret.rs` | `web/src/secrets` |

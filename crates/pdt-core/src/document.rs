@@ -264,6 +264,13 @@ pub struct ProviderCapabilities {
     pub comments: bool,
     /// Has a page that can be shown inside PDT.
     pub embed: bool,
+    /// Keeps charts on its sheets and reads their numbers ([`ChartView`]).
+    #[serde(default)]
+    pub charts: bool,
+    /// Edits a document live in PDT: a doc's text saved as it is typed, a sheet in PDT's own spreadsheet editor, and
+    /// everyone's changes (an agent's) streamed to the open views.
+    #[serde(default)]
+    pub live: bool,
 }
 
 /// A provider as the UI and agents see it.
@@ -451,6 +458,36 @@ pub enum CellCondition {
     },
 }
 
+/// A border's line.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum BorderStyle {
+    #[default]
+    Solid,
+    Thick,
+    Dashed,
+    Dotted,
+    Double,
+    /// Takes the borders away.
+    None,
+}
+
+/// What a cell may hold (data validation).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(export)]
+pub enum CellValidation {
+    /// One of these values (a drop-down).
+    OneOf { values: Vec<String> },
+    /// A tick box.
+    Checkbox,
+    /// A real date.
+    Date,
+    /// A value that meets the condition.
+    Matches { when: CellCondition },
+}
+
 /// One column to sort by: its letter (`B`), and the order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -606,6 +643,41 @@ pub enum DocumentEdit {
     ClearFilter {
         sheet: String,
     },
+    /// Borders around a range, and between its cells with `inner`.
+    SetBorders {
+        sheet: String,
+        range: String,
+        #[serde(default)]
+        style: BorderStyle,
+        /// `#rrggbb`; black when left out.
+        #[serde(default)]
+        #[ts(optional)]
+        color: Option<String>,
+        #[serde(default)]
+        inner: bool,
+    },
+    /// The width of columns (`B`, or `B:D`), in pixels.
+    ColumnWidth {
+        sheet: String,
+        columns: String,
+        width: u32,
+    },
+    /// The first `rows` and `columns` stay in view while scrolling (0 unfreezes).
+    Freeze {
+        sheet: String,
+        #[serde(default)]
+        rows: u32,
+        #[serde(default)]
+        columns: u32,
+    },
+    /// What may go in a range's cells; `strict` refuses anything else (else it is only flagged).
+    Validate {
+        sheet: String,
+        range: String,
+        rule: CellValidation,
+        #[serde(default)]
+        strict: bool,
+    },
 }
 
 impl DocumentEdit {
@@ -631,6 +703,10 @@ impl DocumentEdit {
             DocumentEdit::Sort { .. } => "sort",
             DocumentEdit::Filter { .. } => "filter",
             DocumentEdit::ClearFilter { .. } => "clear_filter",
+            DocumentEdit::SetBorders { .. } => "set_borders",
+            DocumentEdit::ColumnWidth { .. } => "column_width",
+            DocumentEdit::Freeze { .. } => "freeze",
+            DocumentEdit::Validate { .. } => "validate",
         }
     }
 
@@ -647,6 +723,91 @@ impl DocumentEdit {
                 | DocumentEdit::TableSetCell { .. }
         )
     }
+}
+
+/// Where a comment is: a doc's heading or quoted text, or a sheet's cell or range.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "on", rename_all = "snake_case")]
+#[ts(export)]
+pub enum CommentAnchor {
+    /// Under a heading of a doc (its text, without the `#`s).
+    Heading { heading: String },
+    /// On some text of a doc (the text itself).
+    Text { quote: String },
+    /// On a sheet's cell (`B3`) or range (`B3:D9`).
+    Cell { sheet: String, range: String },
+}
+
+impl CommentAnchor {
+    /// The anchor as given, checked: text trimmed and not blank, a sheet's range parses.
+    pub fn cleaned(self) -> Result<Self, String> {
+        let blank = |s: &str, what: &str| {
+            let t = s.trim();
+            if t.is_empty() {
+                Err(format!("a comment's {what} can't be blank"))
+            } else {
+                Ok(t.chars().take(500).collect())
+            }
+        };
+        Ok(match self {
+            CommentAnchor::Heading { heading } => {
+                CommentAnchor::Heading { heading: blank(heading.trim_start_matches('#'), "heading")? }
+            }
+            CommentAnchor::Text { quote } => CommentAnchor::Text { quote: blank(&quote, "text")? },
+            CommentAnchor::Cell { sheet, range } => {
+                let range = range.trim().to_ascii_uppercase();
+                parse_range(&range).ok_or_else(|| format!("{range} is not a cell or range"))?;
+                CommentAnchor::Cell { sheet: blank(&sheet, "sheet")?, range }
+            }
+        })
+    }
+
+    /// What it points at, for people: `Goal`, `“some text”`, `Sheet1!B3`.
+    pub fn label(&self) -> String {
+        match self {
+            CommentAnchor::Heading { heading } => heading.clone(),
+            CommentAnchor::Text { quote } => format!("“{quote}”"),
+            CommentAnchor::Cell { sheet, range } => format!("{sheet}!{range}"),
+        }
+    }
+}
+
+/// A new comment (`POST /api/documents/{id}/comments`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentCommentInput {
+    pub body: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub anchor: Option<CommentAnchor>,
+    /// `user` from PDT's UI.
+    #[serde(default)]
+    #[ts(optional)]
+    pub by: Option<Actor>,
+}
+
+/// A chart with the numbers it draws, read from its sheet: the categories (the data range's first column, under its
+/// header row) and each series (the other columns, named by the header row).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ChartView {
+    /// The sheet it is on.
+    pub sheet: String,
+    pub chart: Chart,
+    /// The category labels, as the cells show them.
+    pub labels: Vec<String>,
+    pub series: Vec<ChartSeriesView>,
+}
+
+/// One series of a chart: its name and its values (none where a cell holds no number).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ChartSeriesView {
+    pub name: String,
+    pub values: Vec<Option<f64>>,
 }
 
 /// A reply in a comment's thread.
@@ -673,6 +834,9 @@ pub struct DocumentComment {
     /// The text it is on, if the provider says.
     #[serde(default)]
     pub quote: Option<String>,
+    /// Where it is (a heading, some text, a cell), when the provider keeps that.
+    #[serde(default)]
+    pub anchor: Option<CommentAnchor>,
     pub resolved: bool,
     #[serde(default)]
     #[ts(type = "number | null")]
@@ -731,6 +895,21 @@ pub fn column_name(mut col: usize) -> String {
 /// A zero-based cell's name (`(2, 1)` is `B3`).
 pub fn cell_name(row: usize, col: usize) -> String {
     format!("{}{}", column_name(col), row + 1)
+}
+
+#[cfg(test)]
+mod anchor_tests {
+    use super::*;
+
+    #[test]
+    fn anchors_are_checked() {
+        let a = CommentAnchor::Cell { sheet: "Sheet1".into(), range: " b3:c4 ".into() }.cleaned().unwrap();
+        assert_eq!(a.label(), "Sheet1!B3:C4");
+        assert!(CommentAnchor::Cell { sheet: "S".into(), range: "x".into() }.cleaned().is_err());
+        let h = CommentAnchor::Heading { heading: "## Goal ".into() }.cleaned().unwrap();
+        assert_eq!(h, CommentAnchor::Heading { heading: "Goal".into() });
+        assert!(CommentAnchor::Text { quote: "  ".into() }.cleaned().is_err());
+    }
 }
 
 #[cfg(test)]

@@ -21,7 +21,7 @@ const view = (over: Partial<StorageView> = {}): StorageView => ({
   projects: [{
     projectId: 'p', name: 'App', key: 'APP',
     buildOutput: { paths: ['target', '**/node_modules'], detected: true, error: null },
-    settings: { cleanAfterDays: 2, removeAfterDays: 0 },
+    settings: { cleanAfterDays: 2, removeAfterDays: 0, wontDo: 'now', wontDoAfterDays: 7 },
     total: 4 * GB, build: 3 * GB,
     worktrees: [
       { id: 'w1', branch: 'pdt-APP-1-x', path: '/work/app/.worktrees/a', missing: false, size: size(),

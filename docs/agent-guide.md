@@ -39,7 +39,7 @@ for what they cover, and the API for the rest. Which tools a session has depends
 | `documents_list`, `document_get`, `doc_read`, `sheet_read`, `comments_list` | documents (see "Documents"): list them; one's details and open comments; a doc as Markdown (`heading` reads one section); a sheet's sheets, charts and cells (`sheet`, `range`); comments, fenced as outside input |
 | `doc_edit`, `sheet_edit`, `document_create`, `document_link`, `comment_reply`, `comment_resolve`, `document_open_beside` | changes to documents: `{document, edits}` (`doc_edit` answers with a diff, `sheet_edit` with new charts' ids); a new doc or sheet, linked to the session's own ticket unless you name a ticket or project; a link (or `unlink`); a comment's reply or resolve; opening one in a tab beside this conversation, for the person to watch your edits land |
 | `watch`, `unwatch`, `list_watches` | the PM's watches: `watch {ticket? \| run?, events?, once?}` sends this conversation a `[PDT] Watched …` message (once it is idle) when the target is `finished`, `failed`, gets an agent's `outcome` or a `comment`, or `needs_you` (default: finished, failed, needs_you). `once` (the default) ends the watch when the target finishes and refuses one already finished. Use it instead of polling |
-| `create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session` | changes to tickets (a new one is a draft by default; moving one at work back to Draft, Ready or To do stops its work; `stop_ticket` cancels its runs and sessions and abandons its attempt) and a message to a session (delivered when it is idle) |
+| `create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session` | changes to tickets (a new one is a draft by default; moving one at work back to Draft, Ready or To do stops its work; Won't do also closes its pull request and removes its worktree and branch when nothing would be lost; `stop_ticket` cancels its runs and sessions and abandons its attempt) and a message to a session (delivered when it is idle) |
 
 Tools that act beyond this session (`create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`,
 `send_to_session`, `workflow_run`, `workflow_import`, `issue_create`, and the document writes `doc_edit`, `sheet_edit`,
@@ -120,16 +120,27 @@ saying so, and the rest after it don't run:
   "bar" | "line" | "area" | "pie" | "scatter", data: "A1:C10", title?, anchor?}}` (the data's first column is the
   categories, its first row the series' names), `{op: "update_chart", id, chart}`, `{op: "delete_chart", id}`,
   `{op: "sort", sheet, range, by: [{column: "B", descending?}], header?}`, `{op: "filter", sheet, range, column,
-  when}`, `{op: "clear_filter", sheet}`. A `when` is `{type: "greater_than" | "less_than" | "equal_to" |
+  when}`, `{op: "clear_filter", sheet}`, `{op: "set_borders", sheet, range, style?: "solid" | "thick" | "dashed" |
+  "dotted" | "double" | "none", color?, inner?}`, `{op: "column_width", sheet, columns: "B:D", width}` (pixels),
+  `{op: "freeze", sheet, rows?, columns?}`, `{op: "validate", sheet, range, rule, strict?}` (a `rule` is
+  `{type: "one_of", values}`, `{type: "checkbox"}`, `{type: "date"}` or `{type: "matches", when}`). A `when` is `{type: "greater_than" | "less_than" | "equal_to" |
   "not_equal_to", value}`, `{type: "between", min, max}`, `{type: "text_contains", text}`, `{type: "empty"}`,
   `{type: "not_empty"}` or `{type: "formula", formula}`.
+
+A `local` document is a file PDT keeps (a `.md`, or a `.xlsx` computed by a real spreadsheet engine: formats,
+conditional formats, borders, column widths, frozen panes, sort and filter all work; `validate` doesn't yet, and
+`sort`/`filter` with `range` `""` take the sheet's used cells). Change it through PDT, so a person with it open sees
+your change at once; a sheet's list of edits is all or none.
 
 | Call | Does |
 |---|---|
 | `GET /api/documents?ticket=<key>&project=<key>&kind=doc\|sheet&q=<words>` | documents, the most recently changed first, with their `projects` and `tickets` |
 | `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows, charts}]}` |
 | `POST /api/documents/<id>/edits` | `{edits: [...]}` (the operations above): `{version, charts}` |
-| `GET /api/documents/<id>/comments` | its comments with their replies; `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves |
+| `GET /api/documents/<id>/version` | `{version}`: it changes whenever the document does, edits made at the provider too |
+| `GET /api/documents/<id>/charts` | a local sheet's charts, each `{sheet, chart, labels, series: [{name, values}]}` with the numbers it draws |
+| `GET /api/documents/<id>/comments` | its comments with their replies and `anchor` (`{on: "heading", heading}`, `{on: "text", quote}` or `{on: "cell", sheet, range}`); `POST …/comments` `{body, anchor}` adds one, `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves, `…/reopen` opens it again |
+| `GET /api/documents/<id>/export?format=md\|xlsx\|csv[&sheet=]` | the document as a file |
 | `POST /api/tickets/<id>/design-doc` | makes the ticket's design doc from the template, linked to it |
 | `GET /api/sessions/<id>/documents` | the documents open beside a conversation: `{tabs: [{document, by}], active}`; `POST` `{documentId}` opens one (or shows its tab), `PUT` `{documentIds}` orders them, `DELETE …/documents/<doc>` closes one |
 

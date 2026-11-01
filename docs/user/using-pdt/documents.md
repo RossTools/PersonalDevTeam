@@ -4,22 +4,59 @@
 tickets they're about, so you and your agents can find them from either side.
 
 A document is a **doc** (text, read as Markdown) or a **sheet** (a spreadsheet). A **provider** keeps its content:
-PDT's local documents, in a folder on this machine, or a plugin's, such as Google Docs and Sheets. PDT keeps the
-document's record and links. Until a provider is turned on, there is nothing to make or import.
+**Local**, PDT's own, which saves each document as a file on this machine and needs no account, or a plugin's, such
+as Google Docs and Sheets. PDT keeps the document's record and links.
 
 ## Browse and find
 
 Open **Documents** in the rail. The list shows every document, most recently changed first. Narrow it by project,
 **Docs** or **Sheets**, provider or ticket (**Ticket…**), and search by title.
 
-Pick a document to see its links and content. A sheet shows as a table; hover a cell for its formula. **Open in …**
-opens it in the provider's own app, when it has one.
+Pick a document to see its links, content and comments. A sheet from a plugin's provider shows as a table; hover a
+cell for its formula. **Open in …** opens it in the provider's own app, when it has one.
 
-## Make or import a document
+## Write a doc
+
+A local doc opens **Rendered**. Switch to **Write** to edit its Markdown; it's saved as you type ("Saved" shows when
+it is). **Add image** puts a picture in the doc, saved beside the doc's file.
+
+If an agent (or you, in another window) saves the doc while you have unsaved changes, nothing is overwritten: a
+notice asks you to **Keep mine** (theirs is replaced) or **Take theirs** (your changes go). While you have nothing
+unsaved, changes made elsewhere show at once.
+
+## Work in a sheet
+
+A local sheet opens in a spreadsheet editor: formulas, number formats, fonts, fills, borders, merged cells, frozen
+rows and several sheets (the tabs at the bottom). Every change is saved as you make it. Above the grid:
+
+- **Sort A→Z by …** and **Z→A** sort by the selected cell's column: the selected range, or with none every row below
+  the first (the header row).
+- **Only rows with “…” in …** hides rows whose cell in that column shows something else; **Show all rows** brings
+  them back.
+- **Chart the selection** charts the selected cells, headers included: the first column labels it, each other column
+  is a series named by its header. Pick **Column**, **Bar**, **Line**, **Area**, **Pie** or **Scatter** and a title.
+  The chart floats beside the cells and redraws when they change; its **⋯** menu changes its kind or removes it.
+
+An agent's change to an open sheet shows at once, its formulas recalculated. If you and an agent change it at the
+same moment, the last change wins and a notice says the sheet now shows both.
+
+## Comment
+
+Local documents have **Comments** under them. **Comment** starts one: on a doc, about the whole document, a heading,
+or the text you selected before clicking; on a sheet, about the selected cells (click the cell name above a comment
+to select them again). Reply, **Resolve** when it's done (it folds to one line), or **Reopen**. Agents read, add,
+answer and resolve comments too.
+
+## Make, import or export a document
 
 - **New document** (the pencil at the top of the list): give it a title, pick **Doc** or **Sheet**, the provider and
   the project.
 - **Import a document** (beside it): search a provider's files and pick one. PDT links the file; it doesn't copy it.
+  **Local** lists the `.md` and `.xlsx` files in the local documents folders.
+- **From your computer…** (in **Import a document**): a `.md` file becomes a doc, a `.xlsx` or `.csv` file a sheet,
+  copied into the local documents folder. A spreadsheet's charts, pictures and pivot tables aren't kept; PDT says so.
+- The **⋯** menu exports a doc as **Export as Markdown (.md)**, and a sheet as **Export as Excel (.xlsx)** (every
+  sheet, with formulas and formats) or as CSV (the sheet you're on). Charts aren't in the exported file.
 
 ## Link documents to projects and tickets
 
@@ -69,11 +106,71 @@ On a phone, a **Conversation | Documents** switch at the top of the conversation
 
 ## Rename or remove
 
-**Rename** (the pencil beside the title, or the **⋯** menu) renames it, at the provider too when it can. In the **⋯**
-menu, **Remove from PDT…** forgets the document and its links but leaves the file; **Delete document…** deletes the
-file too, where the provider allows it.
+**Rename** (the pencil beside the title, or the **⋯** menu) renames it, at the provider too when it can (a local
+document keeps its file name). In the **⋯** menu, **Remove from PDT…** forgets the document and its links but leaves
+the file; **Delete document…** deletes the file too, where the provider allows it (a local doc's pictures go with it).
 
 ## Where new documents go
 
 **Settings › This host › Documents** sets the **Default provider** and the **Local documents folder** (blank: PDT's
 data folder). **Settings › the project › Documents** sets the same for one project; blank follows this host.
+
+A local doc is a `.md` file (its pictures in a `.assets` folder beside it), a local sheet a `.xlsx` you can open in
+Excel, LibreOffice or Google Sheets; comments and charts are in PDT's database. Changes made to a file outside PDT
+show within a few seconds while it's open. The default folder is inside PDT's data folder, so backing that up
+includes your documents ([Your data](../your-machine/your-data.md#backups)); back up a folder elsewhere too.
+
+## Google Docs and Sheets
+
+With the **Google** plugin on, your Google Docs and Sheets can be documents. PDT asks Google only for the files it
+makes and the ones you pick: it never sees the rest of your Drive.
+
+### Set up a Google Cloud OAuth client
+
+PDT signs in with an OAuth client of your own, made once in the Google Cloud console:
+
+1. Make a project (or pick one) and turn on the **Google Drive API**, **Google Docs API**, **Google Sheets API** and
+   **Google Picker API** for it.
+2. Set up its **OAuth consent screen** (Google Auth Platform). While it is in testing, add your Google accounts as
+   test users.
+3. Under **Clients**, make an OAuth client of type **Web application**, and add the address PDT shows under **Sign
+   in** on the Google plugin's page to its **Authorized redirect URIs**. That address follows where you opened PDT:
+   Google takes plain `http` only for this machine's own address, so sign in from here, or from PDT's HTTPS address
+   ([remote access](../your-machine/remote-access.md)) with that address added too.
+4. For Google's file picker, make an **API key** (**Credentials › Create credentials › API key**), limited to the
+   **Google Picker API**, and note the project's **number** from its dashboard.
+
+### Add a Google account
+
+1. Open **Settings › Plugins › Google**, turn it on, and **Add** a connection: a name, the OAuth client's ID and
+   secret, the picker's API key and project number, and, if you like, the **Folder for new documents** (a Drive
+   folder's address; blank: My Drive).
+2. Under **Sign in**, click **Sign in with Google**. Google's page opens in a window of its own; allow access and it
+   closes. The account shows **Signed in as** its email.
+
+Add one connection for each Google account. **Sign out** takes PDT's access back.
+
+### Pick files from your Drive
+
+In **Import a document**, choose **Google** and click **Pick from Google Drive**: Google's own picker searches your
+whole Drive. The Docs and Sheets you pick become documents, and PDT can open them from then on. The list under the
+button shows the files PDT already has access to.
+
+New Google documents are made in the first signed-in account (by connection name), in its folder.
+
+### Work on them live
+
+A Google document's page shows Google's own editor, so you see agents' edits as they land and can edit alongside
+them. **Read in PDT** shows PDT's own reading of it instead, which updates when the document changes. PDT remembers
+which you chose.
+
+Some browsers (Safari, and PDT's desktop app on a Mac) keep Google's sign-in out of pages shown inside PDT, so the
+editor asks you to sign in or stays blank. Use **Read in PDT**, or **Open in Google**.
+
+Agents can change a Doc's text (whole sections, after a heading, find and replace, with headings, lists, tables and
+links) and a Sheet fully: values and formulas, sheets, formatting, borders, column widths, frozen rows, conditional
+formatting, validation, charts, sorting and filters. They read and answer comments too, and resolve them.
+
+When Google limits how often PDT may call it, PDT says so: try again a minute later. If an account's sign-in expired
+or was taken back, PDT says to sign in again.
+

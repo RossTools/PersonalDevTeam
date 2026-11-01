@@ -472,7 +472,8 @@ impl Action for SheetEdit {
             "Changes a spreadsheet with a batch of operations, in order: `set_cells` (values from a cell across and \
              down; `=` starts a formula), `add_sheet`, `rename_sheet`, `delete_sheet`, `format_range`, \
              `conditional_format`, `add_chart` / `update_chart` / `delete_chart` (a kind and a data range whose first \
-             column is the categories and first row the series' names), `sort`, `filter` and `clear_filter`. An \
+             column is the categories and first row the series' names), `sort`, `filter`, `clear_filter`, `set_borders`, \
+             `column_width`, `freeze` and `validate` (a drop-down list, a tick box, a date or a condition). An \
              operation the provider can't do fails with a message saying so, and the batch stops there. Returns the \
              new version and the ids of new charts. The user confirms each call unless a project the spreadsheet is \
              linked to lets you act.",
@@ -741,7 +742,8 @@ impl Action for CommentReply {
             }
             let d = find(cx.st, &i.document).await?;
             let (d, p) = with_comments(cx.st, &d.id).await.map_err(api)?;
-            let r = p.reply(&d.provider_ref, i.comment.trim(), body).await.map_err(|e| api(e.into()))?;
+            let by = (pdt_core::ticket::Actor::Agent, "Agent".to_string());
+            let r = p.reply(&d.provider_ref, i.comment.trim(), body, by).await.map_err(|e| api(e.into()))?;
             Ok(json!({"id": r.id, "replied": true}))
         })
     }

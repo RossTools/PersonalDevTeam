@@ -1,16 +1,25 @@
 // A document's content as its provider reads it, kept live (PDT-317): read again whenever PDT sees the document change
 // (an agent's edit through PDT touches it), with what changed lit up for a moment. The Documents view and the panel
-// beside a conversation both show it. A provider with a page of its own (Google's editor) shows that page instead.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+// beside a conversation both show it. A provider with a page of its own (Google's editor, PDT-316) shows that page, or
+// PDT's own reading of it (Read in PDT), which also reads again when the provider's version changes (edits made there).
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { BarChart3 } from 'lucide-react';
 import { Alert, SegmentedControl, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
+import type { CommentAnchor } from '../api/gen/CommentAnchor';
 import type { DocumentContent } from '../api/gen/DocumentContent';
 import type { Sheet } from '../api/gen/Sheet';
 import { Markdown } from '../common/Markdown';
 import { actionError } from '../common/useAction';
-import { documentKeys, useDocument, useDocumentContent } from './queries';
+import { DocEditor } from './DocEditor';
+import { documentKeys, useDocument, useDocumentContent, useDocumentProviders, useDocumentVersion } from './queries';
+
+// IronCalc's editor (and its WASM) loads only when a local sheet opens (PDT-315).
+const SheetEditor = lazy(() => import('./SheetEditor'));
+
+/** What a live sheet tells the page: its selection (comments go on it), how to show a range, and the sheet on show. */
+export type SheetHandle = { selection: () => CommentAnchor | null; show: (a: CommentAnchor) => void; sheet: () => string };
 
 /** How long a change stays lit. */
 export const HIGHLIGHT_MS = 2500;
@@ -155,11 +164,26 @@ function useChangedCells(content: DocumentContent | undefined): Set<string> {
   return changed;
 }
 
-/** A document's content, live: read again each time PDT sees it change. */
-export function DocumentBody({ id, providerLabel, className }: { id: string; providerLabel: string; className?: string }) {
+type View = 'live' | 'pdt';
+const VIEW_KEY = 'pdt.documents.view';
+
+/**
+ * A document's content, live: read again each time PDT sees it change. A provider that edits live in PDT (its local
+ * one) shows its editors instead: a doc's Rendered/Write editor, and a sheet's spreadsheet editor (`onSheet` gets its
+ * handle).
+ */
+export function DocumentBody({ id, providerLabel, className, onSheet }: {
+  id: string;
+  providerLabel: string;
+  className?: string;
+  onSheet?: (h: SheetHandle | null) => void;
+}) {
   const qc = useQueryClient();
   const doc = useDocument(id);
   const content = useDocumentContent(id);
+  const providers = useDocumentProviders();
+  const provider = providers.data?.providers.find((p) => p.id === doc.data?.provider);
+  const editsHere = !!provider?.capabilities.live;
   const updatedAt = doc.data?.updatedAt;
   const read = useRef<number | undefined>(undefined);
   useEffect(() => {
@@ -168,12 +192,59 @@ export function DocumentBody({ id, providerLabel, className }: { id: string; pro
     read.current = updatedAt;
   }, [qc, id, updatedAt]);
   const changed = useChangedCells(content.data?.content);
+  const embed = content.data?.embedUrl ?? null;
+  const [view, setView] = useState<View>(() => (localStorage.getItem(VIEW_KEY) === 'pdt' ? 'pdt' : 'live'));
+  const live = embed !== null && view === 'live';
+  // Edits made at the provider (in Google's editor) don't pass through PDT: its version says when to read again. The
+  // embedded editor follows them itself, and a provider without one is only changed through PDT (`updatedAt`).
+  const version = useDocumentVersion(id, content.isSuccess && embed !== null && view === 'pdt');
+  const shownVersion = content.data?.content.version ?? null;
+  const nowVersion = version.data?.version ?? null;
+  useEffect(() => {
+    if (nowVersion !== null && shownVersion !== null && nowVersion !== shownVersion) {
+      void qc.invalidateQueries({ queryKey: documentKeys.content(id) });
+    }
+  }, [qc, id, nowVersion, shownVersion]);
+  const pickView = (v: View) => {
+    localStorage.setItem(VIEW_KEY, v);
+    setView(v);
+  };
 
   if (content.isPending) return <Skeleton lines={6} label="Reading the document" className={className} />;
   if (content.isError) return <Alert tone="error" className={className}>{providerLabel} could not read it: {actionError(content.error)}</Alert>;
-  const embed = content.data.embedUrl;
-  if (embed) {
-    return <iframe title={doc.data?.title ?? 'Document'} src={embed} className={cn('min-h-96 w-full flex-1 rounded-md border border-border', className)} />;
+  const c = content.data.content;
+  if (editsHere && c.kind === 'doc') {
+    return <div className={className}><DocEditor id={id} markdown={c.markdown} version={c.version ?? null} editable={!!provider?.capabilities.edit} /></div>;
   }
-  return <div className={className}><Content content={content.data.content} changed={changed} /></div>;
+  if (editsHere && c.kind === 'sheet') {
+    return (
+      <div className={className}>
+        <Suspense fallback={<Skeleton lines={8} label="Opening the sheet" />}>
+          <SheetEditor id={id} onReady={onSheet} />
+        </Suspense>
+      </div>
+    );
+  }
+  const body = <Content content={c} changed={changed} />;
+  if (embed === null) return <div className={className}>{body}</div>;
+  return (
+    <div className={cn('flex flex-col gap-2', className)}>
+      <SegmentedControl
+        aria-label="How to show it"
+        size="sm"
+        className="self-start"
+        options={[{ value: 'live', label: `${providerLabel} editor` }, { value: 'pdt', label: 'Read in PDT' }]}
+        value={view}
+        onChange={(v) => pickView(v as View)}
+      />
+      {live ? (
+        <>
+          <iframe title={`${doc.data?.title ?? 'Document'} in ${providerLabel}`} src={embed} allow="clipboard-read; clipboard-write" className="min-h-96 w-full flex-1 rounded-md border border-border" />
+          <p className="text-xs text-muted-foreground">
+            Asks you to sign in, or stays blank? This browser keeps {providerLabel}’s sign-in out of pages inside PDT: switch to Read in PDT, or open it in {providerLabel}.
+          </p>
+        </>
+      ) : body}
+    </div>
+  );
 }

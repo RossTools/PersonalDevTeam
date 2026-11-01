@@ -1,4 +1,4 @@
-import { memo, useContext, useMemo, type ComponentType } from 'react';
+import { createContext, memo, useContext, useMemo, type ComponentType, type ImgHTMLAttributes } from 'react';
 import ReactMarkdown, { type Components, type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -105,8 +105,19 @@ const components: Components = {
   // A ticket's attached image opens full size (PDT-300).
   img: ({ node: _n, alt, ...p }) => typeof p.src === 'string' && attachmentRef(p.src)
     ? <AttachmentImage src={p.src} alt={alt ?? ''} />
-    : <img {...p} alt={alt ?? ''} className="my-2 max-w-full rounded-md" />,
+    : <ResolvedImage {...p} alt={alt ?? ''} />,
 };
+
+/** Where a relative image of the Markdown on show is served from (a local doc's images sit beside it, PDT-315). */
+export const MarkdownImageContext = createContext<((src: string) => string) | null>(null);
+
+const isRelative = (src: string) => !/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(src);
+
+function ResolvedImage({ src, ...p }: ImgHTMLAttributes<HTMLImageElement>) {
+  const resolve = useContext(MarkdownImageContext);
+  const shown = typeof src === 'string' && resolve && isRelative(src) ? resolve(src) : src;
+  return <img {...p} src={shown} className="my-2 max-w-full rounded-md" />;
+}
 
 // A document to read (a note, PDT-143): roomier, with headings a step above the body and quieter list markers.
 const documentComponents: Components = {

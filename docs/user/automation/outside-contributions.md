@@ -28,17 +28,23 @@ backlog** (in **Settings**, the project's page, **Pipeline and policies**).
 Add the **Review outside pull requests** workflow (**New workflow**, under **Issues**). For each pull request PDT
 didn't open (from outside contributors and bots):
 
-1. PDT makes a ticket for it, marked as from outside.
-2. The **PR Reviewer** reads its changes through GitHub (it never checks them out or runs them) and writes a review:
+1. The **PR Reviewer** reads its changes through GitHub (it never checks them out or runs them) and writes a review:
    what it changes, risks such as changes to CI, build scripts or dependencies, and whether it has tests. It suggests
    merging, asking for changes, or closing.
-3. The review goes on the ticket, and the pull request waits in the Inbox, with its CI, for your choice:
+2. The pull request waits in the Inbox, with the review and its CI, for your choice:
    - **Approve & merge** merges it once CI passes;
    - **Request changes** posts your note (or the reviewer's suggested feedback) on the pull request as a review;
-   - **Close** closes it, with your note as a comment, and moves the ticket to **Won't do**.
+   - **Close** closes it, with your note as a comment.
 
-Nothing is posted on the pull request until you choose. When its author pushes again, it's reviewed again; when it's
-merged or closed on GitHub, its ticket follows.
+Nothing is posted on the pull request until you choose. When its author pushes again, the question is replaced and
+it's reviewed again; when it's merged or closed on GitHub, the question goes away.
+
+### A ticket for each pull request
+
+To keep track of outside pull requests on the board, turn on **Create a ticket for each pull request** when you add
+the workflow. Each pull request then gets a ticket, marked as from outside: the review goes on it, **Close** moves it
+to **Won't do**, and when the pull request is merged or closed on GitHub, its ticket follows (**Done** or **Won't
+do**). Off (the default), PDT makes no tickets for them.
 
 Pull requests from your own collaborators are left alone unless you change the trigger to include them.
 
@@ -57,6 +63,6 @@ title doesn't give the versions, is reviewed like any other, and a failure comes
   they are data, never instructions.
 - **Capped.** Triage runs are limited per author and per repository each hour (**Triage per author** and **Triage per
   repository** in **Settings › This host › Agents**), so a flood of issues can't keep agents busy.
-- **Recorded.** Each session that read outside text is noted in the ticket's activity.
+- **Recorded.** Each session that read outside text is noted in its ticket's activity, when it has one.
 
 To use your own persona for either workflow, give it the **triage** role: PDT locks it down the same way.

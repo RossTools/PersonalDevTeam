@@ -126,6 +126,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         model: valid.model.clone(),
         permission_mode: valid.permission_mode,
         persona: req.persona,
+        background: vec![],
     };
     // Before the row exists, so a lookup failure leaves no half-created session.
     let creds = credentials_for(st, &session.project_id).await?;

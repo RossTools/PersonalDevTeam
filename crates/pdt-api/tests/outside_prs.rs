@@ -34,6 +34,12 @@ struct Env {
 /// A project whose repository is PDT's own, served on a free local port (the agent's pdt-mcp calls come over TCP),
 /// with the workflow enabled and its first look at the pull requests taken.
 async fn setup() -> Env {
+    setup_with(None).await
+}
+
+/// As [`setup`], with `template`: the Review outside pull requests template instantiated for the project (with
+/// `tickets` as given, or its default) in place of "PDT pull request review".
+async fn setup_with(template: Option<Option<bool>>) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -43,7 +49,9 @@ async fn setup() -> Env {
     git(&repo, &["commit", "-m", "init", "-q"]);
     git(&repo, &["remote", "add", "origin", &format!("https://github.com/{RELEASE_REPO}.git")]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    retired::install(&store, retired::PR_REVIEW, true).await;
+    if template.is_none() {
+        retired::install(&store, retired::PR_REVIEW, true).await;
+    }
     let mut state = AppState::new(store, tmp.path().join("data"));
     state.platform.claude_program = FAKE.to_string();
     state.platform.codex_program = FAKE.to_string();
@@ -71,10 +79,28 @@ async fn setup() -> Env {
     // Several pull requests by one author: no triage cap here.
     call(&app, "PUT", "/api/host/settings", Some(json!({"triagePerAuthorHour": 0}))).await;
     pdt_api::run_workflows(&state).await;
-    let (_, w) = call(&app, "GET", &format!("/api/workflows/{}", retired::id(retired::PR_REVIEW)), None).await;
-    assert!(w["builtin"].is_null(), "the user's own: {w}");
-    assert_eq!(w["enabled"], true, "{w}");
-    let wf = w["id"].as_str().unwrap().to_string();
+    let wf = match template {
+        None => {
+            let (_, w) = call(&app, "GET", &format!("/api/workflows/{}", retired::id(retired::PR_REVIEW)), None).await;
+            assert!(w["builtin"].is_null(), "the user's own: {w}");
+            assert_eq!(w["enabled"], true, "{w}");
+            w["id"].as_str().unwrap().to_string()
+        }
+        Some(tickets) => {
+            let params = match tickets {
+                Some(t) => json!({"tickets": t}),
+                None => json!({}),
+            };
+            let body = json!({"params": params, "scope": "project", "projectId": project});
+            let (s, w) =
+                call(&app, "POST", "/api/workflow-templates/builtin:review-outside-prs/instantiate", Some(body)).await;
+            assert_eq!(s, StatusCode::CREATED, "{w}");
+            let id = w["id"].as_str().unwrap().to_string();
+            let (s, w) = call(&app, "PATCH", &format!("/api/workflows/{id}"), Some(json!({"enabled": true}))).await;
+            assert_eq!(s, StatusCode::OK, "{w}");
+            id
+        }
+    };
     let env = Env { app, state, project, gh, wf, _tmp: tmp };
     look(&env, vec![]).await;
     env
@@ -613,4 +639,171 @@ async fn ci_is_read_on_the_prs_own_head_when_another_pr_has_its_branch_name() {
     assert_eq!(run(&env, &run_id).await["status"], "succeeded");
     let calls = env.gh.calls.lock().unwrap().clone();
     assert!(calls.iter().any(|c| c == &format!("merge {RELEASE_REPO} 16 squash")), "{calls:?}");
+}
+
+async fn ticket_count(env: &Env) -> usize {
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets?project={}", env.project), None).await;
+    v["items"].as_array().unwrap().len()
+}
+
+async fn gates(env: &Env) -> Vec<Value> {
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    inbox["items"].as_array().unwrap().iter().filter(|i| i["kind"] == "gate").cloned().collect()
+}
+
+/// PDT-333: the template as installed, tickets off by default: the review goes straight to the Inbox, Close just
+/// closes the pull request, and no ticket is ever made.
+#[tokio::test]
+async fn the_template_reviews_straight_to_the_inbox_with_no_ticket() {
+    let env = setup_with(Some(None)).await;
+    let mut seen = HashSet::new();
+    let pr = outside(30, "al", "Fix the board", "patch-30", 1);
+    look(&env, vec![pr.clone()]).await;
+    let session = reviewer(&env, &mut seen).await;
+    let prompt = first_prompt(&env, &session).await;
+    assert!(!prompt.contains("Its ticket is"), "{prompt}");
+    let (run_id, step) = review(&env, &session, "close", "").await;
+    let gate = gates(&env).await.into_iter().next().expect("asked");
+    assert!(gate["ticketId"].is_null(), "{gate}");
+    assert!(gate["body"]["question"].as_str().unwrap().contains("Suggests close."), "the review is in it: {gate}");
+    assert_eq!(gate["changeRequest"]["url"], pr.url, "{gate}");
+    assert_eq!(ticket_count(&env).await, 0);
+    untouched(&env.gh);
+
+    answer(&env, &run_id, &step, "close", Some("Out of scope, sorry.")).await;
+    let r = run(&env, &run_id).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(*env.gh.closed_changes.lock().unwrap(), [(RELEASE_REPO.to_string(), 30)]);
+    // GitHub reports it closed: no run follows it.
+    let before = runs(&env).await.len();
+    look(&env, vec![RepoChangeRequest { state: PrState::Closed, updated_at: at(5), ..pr }]).await;
+    assert_eq!(runs(&env).await.len(), before, "a closed pull request needs no syncing");
+    assert_eq!(ticket_count(&env).await, 0);
+}
+
+/// Without tickets a push still supersedes the open question and is reviewed again, and one closed on GitHub ends it.
+#[tokio::test]
+async fn without_tickets_a_push_supersedes_the_question_and_a_close_ends_it() {
+    let env = setup_with(Some(Some(false))).await;
+    let mut seen = HashSet::new();
+    let pr = outside(31, "al", "Add a thing", "patch-31", 1);
+    look(&env, vec![pr.clone()]).await;
+    let session = reviewer(&env, &mut seen).await;
+    let (run_id, _) = review(&env, &session, "changes", "Please add a test.").await;
+
+    let pushed = RepoChangeRequest { head_sha: "sha-31b".into(), updated_at: at(2), ..pr };
+    look(&env, vec![pushed.clone()]).await;
+    let r = run(&env, &run_id).await;
+    assert_eq!(r["status"], "quiet", "the question is moot: {r}");
+    let again = reviewer(&env, &mut seen).await;
+    assert!(first_prompt(&env, &again).await.contains("sha-31b"));
+    let (run_id, _) = review(&env, &again, "changes", "Still no test.").await;
+    assert_eq!(gates(&env).await.len(), 1, "only the new head's question");
+
+    look(&env, vec![RepoChangeRequest { state: PrState::Closed, updated_at: at(3), ..pushed }]).await;
+    let r = run(&env, &run_id).await;
+    assert_eq!(r["status"], "quiet", "closed on GitHub: {r}");
+    assert!(gates(&env).await.is_empty());
+    assert_eq!(ticket_count(&env).await, 0);
+    untouched(&env.gh);
+}
+
+/// Turning the option on gives each pull request its ticket again, holding the review, and the question names it.
+#[tokio::test]
+async fn the_template_with_tickets_on_makes_a_ticket_per_pr() {
+    let env = setup_with(Some(Some(true))).await;
+    let mut seen = HashSet::new();
+    let pr = outside(32, "al", "Fix", "patch-32", 1);
+    look(&env, vec![pr.clone()]).await;
+    let session = reviewer(&env, &mut seen).await;
+    let (run_id, step) = review(&env, &session, "close", "").await;
+    let t = the_ticket(&env).await;
+    assert_eq!((t["source"].as_str(), t["stage"].as_str()), (Some("external"), Some("draft")), "{t}");
+    let ticket = t["id"].as_str().unwrap().to_string();
+    assert!(first_prompt(&env, &session).await.contains(&format!("Its ticket is {}", t["key"].as_str().unwrap())));
+    assert!(comments(&env, &ticket).await.iter().any(|c| c.starts_with("Review of ")));
+    assert_eq!(gates(&env).await[0]["ticketId"], ticket.as_str());
+    answer(&env, &run_id, &step, "close", None).await;
+    assert_eq!(the_ticket(&env).await["stage"], "wont_do");
+}
+
+/// Dependabot's patch updates still merge on green CI with the template's defaults, with no ticket.
+#[tokio::test]
+async fn the_template_still_merges_dependabot_patches_on_green_ci() {
+    let env = setup_with(Some(None)).await;
+    let bump = outside(33, "dependabot[bot]", "Bump serde from 1.0.1 to 1.0.2", "dependabot/cargo/serde", 1);
+    look(&env, vec![bump]).await;
+    let id = newest_run(&env).await;
+    assert_eq!(waiting(&env, &id).await.0, "wait_ci");
+    assert_eq!(reviewer_sessions(&env).await, 0, "no review");
+    env.gh.set_runs("dependabot/cargo/serde", vec![ci("dependabot/cargo/serde", "sha-33", CiState::Passed)]);
+    time_passes(&env, &id).await;
+    assert_eq!(run(&env, &id).await["status"], "succeeded");
+    let calls = env.gh.calls.lock().unwrap().clone();
+    assert!(calls.iter().any(|c| c == &format!("merge {RELEASE_REPO} 33 squash")), "{calls:?}");
+    assert!(gates(&env).await.is_empty());
+    assert_eq!(ticket_count(&env).await, 0);
+}
+
+/// Dry runs of both settings: an outsider's pull request goes through the review to the Inbox, with the ticket steps
+/// only when tickets are on; a Dependabot patch merges either way.
+#[tokio::test]
+async fn dry_runs_of_the_template_with_and_without_tickets() {
+    for tickets in [false, true] {
+        let env = setup_with(Some(Some(tickets))).await;
+        let payload = |author: &str, kind: &str, update: Value| {
+            json!({"projectId": env.project, "repo": RELEASE_REPO, "number": 20, "title": "T", "body": "B",
+                   "url": format!("https://github.com/{RELEASE_REPO}/pull/20"), "author": author, "kind": kind,
+                   "headRepo": RELEASE_REPO, "headBranch": "b", "headSha": "s", "fork": false, "base": "main",
+                   "labels": [], "draft": false, "changedFiles": 1, "additions": 1, "deletions": 0,
+                   "updateType": update, "createdAt": at(1), "previousHead": null, "merged": false})
+        };
+        let dry = |payload: Value| {
+            let body =
+                json!({"workflowId": env.wf, "event": {"type": "github.pull_request.opened", "payload": payload}});
+            let app = env.app.clone();
+            async move {
+                let (s, v) = call(&app, "POST", "/api/workflows/dry-run", Some(body)).await;
+                assert_eq!(s, StatusCode::OK, "{v}");
+                let steps: Vec<String> = v["run"]["steps"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|s| s["nodeId"].as_str().unwrap().into())
+                    .collect();
+                (steps, v)
+            }
+        };
+        let (person, v) = dry(payload("al", "outside", Value::Null)).await;
+        assert!(person.contains(&"review".into()) && person.contains(&"decide".into()), "{tickets}: {v}");
+        assert_eq!(person.contains(&"ticket".into()), tickets, "{v}");
+        assert_eq!(person.contains(&"note".into()), tickets, "{v}");
+        assert!(!person.contains(&"merge".into()), "{v}");
+        let (patch, v) = dry(payload("dependabot[bot]", "bot", json!("patch"))).await;
+        assert!(patch.contains(&"merge".into()) && !patch.contains(&"review".into()), "{tickets}: {v}");
+    }
+}
+
+/// A workflow made from the template before the option (recorded without it, a ticket per pull request) keeps its
+/// tickets when PDT updates it to the newer template; the value is recorded.
+#[tokio::test]
+async fn a_workflow_from_before_the_option_keeps_its_tickets() {
+    let env = setup_with(Some(Some(true))).await;
+    let store = &env.state.store;
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{}", env.wf), None).await;
+    let with_tickets = w["doc"].clone();
+    // Made before the option: version 1 with a ticket per pull request, recorded without `tickets`.
+    let old = json!({"id": "builtin:review-outside-prs",
+                     "params": {"autoMerge": true, "autoMergeTypes": ["patch", "minor"], "persona": "PR Reviewer"}});
+    store.set_workflow_state(&env.wf, "_pdt.template", &old, false, 1).await.unwrap();
+
+    // pdtd starts again.
+    let state =
+        AppState::new(Store::open(&env._tmp.path().join("pdt.db")).await.unwrap(), env._tmp.path().join("data"));
+    pdt_api::run_workflows(&state).await;
+    let app = router(state.clone(), None);
+    let (_, w) = call(&app, "GET", &format!("/api/workflows/{}", env.wf), None).await;
+    assert_eq!((w["version"].as_u64(), &w["doc"]), (Some(1), &with_tickets), "unchanged: {w}");
+    let recorded = state.store.workflow_state(&env.wf).await.unwrap();
+    assert_eq!(recorded["_pdt.template"]["params"]["tickets"], true, "{recorded:?}");
 }

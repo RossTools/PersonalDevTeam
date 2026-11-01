@@ -22,7 +22,7 @@ test('every plugin has a unique id, a known category and what its card shows', (
 });
 
 test('groups follow the category order and leave out empty ones', () => {
-  assert.deepEqual(groupPlugins(pluginsOn(PLUGINS, false)).map(([c]) => c), ['dev', 'chat', 'general']);
+  assert.deepEqual(groupPlugins(pluginsOn(PLUGINS, false)).map(([c]) => c), ['dev', 'documents', 'chat', 'general']);
 });
 
 test('inline code in descriptions, the rest escaped', () => {

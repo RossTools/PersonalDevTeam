@@ -217,7 +217,7 @@ pub fn doc() -> WorkflowDoc {
             "Accept",
             json!({
             "question": "Accept {{trigger.ticketKey}} and merge it?", "choices": ["merge", "reject"],
-            "inbox": "accept", "pipelineStage": "accept", "approve": "merge"}),
+            "inbox": "accept", "pipelineStage": "accept", "approve": "merge", "event": merged_event()}),
         ),
         // Conflicts are fixed once, here (PDT-328): PDT merges the base in itself and regenerates generated files;
         // only real conflicts go to the Coder.
@@ -406,6 +406,8 @@ pub fn doc() -> WorkflowDoc {
         edge("accept", "reject", "code"),
         edge("accept", "timeout", "stopped"),
         edge("accept", "unanswered", "stopped"),
+        // Merged meanwhile (PDT-339): nothing is left to accept; Finish merged tickets takes the ticket on.
+        edge("accept", "event", "done"),
         edge("merge_mode", "workflow", "merge"),
         edge("merge_mode", "person", "wait_merge"),
         edge("merge_mode", "default", "wait_merge"),

@@ -66,6 +66,13 @@
   --pdt-term-red: #c9302c;
   --pdt-term-green: #15803d;
   --pdt-term-yellow: #92400e;
+  /* Chart series, in order (a sheet's charts). */
+  --pdt-chart-1: #2563eb;
+  --pdt-chart-2: #d97706;
+  --pdt-chart-3: #16a34a;
+  --pdt-chart-4: #9333ea;
+  --pdt-chart-5: #dc2626;
+  --pdt-chart-6: #0891b2;
   --pdt-term-blue: #2563eb;
   --pdt-term-magenta: #a21caf;
   --pdt-term-cyan: #0e7490;
@@ -132,6 +139,13 @@
     --pdt-term-red: #f87171;
     --pdt-term-green: #34d399;
     --pdt-term-yellow: #f59e0b;
+    /* Chart series, in order (a sheet's charts). */
+    --pdt-chart-1: #60a5fa;
+    --pdt-chart-2: #fbbf24;
+    --pdt-chart-3: #4ade80;
+    --pdt-chart-4: #c084fc;
+    --pdt-chart-5: #f87171;
+    --pdt-chart-6: #22d3ee;
     --pdt-term-blue: #60a5fa;
     --pdt-term-magenta: #e879f9;
     --pdt-term-cyan: #22d3ee;
@@ -196,6 +210,13 @@
   --pdt-term-red: #f87171;
   --pdt-term-green: #34d399;
   --pdt-term-yellow: #f59e0b;
+  /* Chart series, in order (a sheet's charts). */
+  --pdt-chart-1: #60a5fa;
+  --pdt-chart-2: #fbbf24;
+  --pdt-chart-3: #4ade80;
+  --pdt-chart-4: #c084fc;
+  --pdt-chart-5: #f87171;
+  --pdt-chart-6: #22d3ee;
   --pdt-term-blue: #60a5fa;
   --pdt-term-magenta: #e879f9;
   --pdt-term-cyan: #22d3ee;

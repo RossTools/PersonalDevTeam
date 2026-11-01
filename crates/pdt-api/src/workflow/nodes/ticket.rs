@@ -134,13 +134,20 @@ impl NodeKind for Move {
                 }
             }
             let data = cx.by().data();
+            let since = now_ms();
             let t = cx
                 .st
                 .store
-                .move_ticket_by(&c.ticket, stage, Actor::System, Some(&data), now_ms())
+                .move_ticket_by(&c.ticket, stage, Actor::System, Some(&data), since)
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or("no such ticket")?;
+            // Closing it ends its attempt and winds its work down (PDT-339), but this run's.
+            if stage.is_closed() {
+                crate::start::close_attempt(cx.st, &t.summary.id, stage, since, Actor::System, Some(&cx.run.id))
+                    .await
+                    .map_err(|e| e.message().to_string())?;
+            }
             Ok(Outcome::next("out", json!({"ticketId": t.summary.id, "stage": t.summary.stage})))
         })
     }

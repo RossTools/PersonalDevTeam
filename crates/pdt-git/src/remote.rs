@@ -22,6 +22,7 @@ pub(crate) fn run_remote(repo: &Path, args: &[&str], timeout: Duration) -> Resul
     cmd.env("LC_ALL", "C")
         .env("LANGUAGE", "C")
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_SSH_COMMAND", ssh)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

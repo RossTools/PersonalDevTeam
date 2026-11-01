@@ -30,6 +30,13 @@ pub fn attempt_branch(project_key: &str, number: u32, title: &str) -> String {
     if s.is_empty() { format!("{SLUG}-{key}") } else { format!("{SLUG}-{key}-{s}") }
 }
 
+/// Whether `branch` is one [`attempt_branch`] names for the ticket `ticket_key` (`PDT-42`), whatever its title was:
+/// a branch PDT made for the ticket, which it may delete from the remote when the ticket goes to Won't do.
+pub fn is_attempt_branch(branch: &str, ticket_key: &str) -> bool {
+    let prefix = format!("{SLUG}-{ticket_key}");
+    branch.strip_prefix(&prefix).is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+}
+
 /// The parent and the other parts, for a part's first prompt (PDT-38).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PartContext {
@@ -396,6 +403,15 @@ pub fn started_session_title(ticket_title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attempt_branches_are_known_by_their_ticket_key_whatever_the_title() {
+        assert!(is_attempt_branch(&attempt_branch("PDT", 42, "Old title"), "PDT-42"));
+        assert!(is_attempt_branch("pdt-PDT-42", "PDT-42"));
+        assert!(!is_attempt_branch("pdt-PDT-420-other", "PDT-42"));
+        assert!(!is_attempt_branch("feature/login", "PDT-42"));
+        assert!(!is_attempt_branch("my-pdt-PDT-42", "PDT-42"));
+    }
 
     #[test]
     fn default_branches_carry_the_key_and_a_short_slug() {

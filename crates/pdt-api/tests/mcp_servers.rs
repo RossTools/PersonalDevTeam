@@ -8,7 +8,7 @@ use crate::common;
 use axum::extract::{Form, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
-use common::{argv_agent, call, git, recorded_launches};
+use common::{argv_agent, call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -79,6 +79,13 @@ async fn terminal(env: &Env, agent: &str) -> String {
 fn claude_config(env: &Env, session: &str) -> Value {
     let path = env.state.data_dir.join("sessions").join(session).join("mcp.json");
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// The launches [`common::recorded_launches`] recorded, each as its arguments on Windows too (there, one raw command
+/// line).
+async fn recorded_launches(bin: &std::path::Path, name: &str, want: usize) -> Vec<Vec<String>> {
+    let all = common::recorded_launches(bin, name, want).await;
+    if cfg!(windows) { all.iter().map(|l| common::windows_args(&l[0])).collect() } else { all }
 }
 
 /// The recorded launch of a Claude session (its `--session-id`).

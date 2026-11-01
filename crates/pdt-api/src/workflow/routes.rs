@@ -710,6 +710,12 @@ pub(crate) async fn delete_connection(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let c = load_connection(&st, &id).await?;
+    // Its integration forgets what it keeps for it (Google's sign-in), turned on or not.
+    for int in st.integrations.built() {
+        if int.connection_kinds().iter().any(|k| k.id == c.kind) {
+            int.connection_deleted(&st, &c).await;
+        }
+    }
     let secrets = st.secrets.clone();
     let account = secret_account(&id);
     tokio::task::spawn_blocking(move || secrets.delete(&account))

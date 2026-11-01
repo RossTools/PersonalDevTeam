@@ -284,6 +284,15 @@ pub(crate) fn failed_workflow_runs() -> Template {
     )
 }
 
+/// The template's document filled in with `values`. Most templates fill `{{params.x}}` into their one document;
+/// Review outside pull requests picks its node set by a param too (PDT-333).
+pub(crate) fn filled(t: &Template, values: &Map<String, Value>) -> Result<WorkflowDoc, String> {
+    if t.builtin && t.id.strip_prefix(BUILTIN_PREFIX) == Some(super::outside_prs::ID) {
+        return super::outside_prs::fill(values);
+    }
+    fill(&t.doc, values)
+}
+
 /// The templates PDT ships, for the integrations that are on.
 fn offered_templates(st: &AppState) -> Vec<Template> {
     builtin_templates(&st.registry())
@@ -511,7 +520,7 @@ pub(crate) async fn instantiate(
     let i = body(payload)?;
     let t = find(&st, &id).await?;
     let values = param_values(&t.params, &i.params).map_err(invalid)?;
-    let mut doc = fill(&t.doc, &values).map_err(invalid)?;
+    let mut doc = filled(&t, &values).map_err(invalid)?;
     if let Some(n) = i.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
         doc.name = n.to_string();
     }
@@ -595,7 +604,7 @@ pub(crate) async fn follow_templates(st: &AppState) -> Result<(), pdt_store::Sto
             continue;
         }
         let state = st.store.workflow_state(&w.id).await?;
-        let (id, given) = match state.get(TEMPLATE_STATE) {
+        let (id, mut given) = match state.get(TEMPLATE_STATE) {
             Some(r) => {
                 (r["id"].as_str().unwrap_or_default().to_string(), r["params"].as_object().cloned().unwrap_or_default())
             }
@@ -606,11 +615,14 @@ pub(crate) async fn follow_templates(st: &AppState) -> Result<(), pdt_store::Sto
             None => continue,
         };
         let Some(t) = templates.iter().find(|t| t.id == id) else { continue };
+        if t.id.strip_prefix(BUILTIN_PREFIX) == Some(super::outside_prs::ID) {
+            super::outside_prs::upgrade(&mut given);
+        }
         let Ok(values) = param_values(&t.params, &given) else { continue };
-        let Ok(mut doc) = fill(&t.doc, &values) else { continue };
+        let Ok(mut doc) = filled(t, &values) else { continue };
         doc.name = current.name.clone();
         let now = now_ms();
-        if !state.contains_key(TEMPLATE_STATE) {
+        if state.get(TEMPLATE_STATE).and_then(|r| r["params"].as_object()) != Some(&values) {
             st.store
                 .set_workflow_state(&w.id, TEMPLATE_STATE, &json!({"id": t.id, "params": values}), false, now)
                 .await?;

@@ -619,6 +619,43 @@
     },
     {
       "builtIn": false,
+      "category": "documents",
+      "connections": [
+        {
+          "description": "A Google account for Docs and Sheets (drive.file: only files PDT makes or you pick).",
+          "fields": [
+            "OAuth client ID",
+            "Picker API key",
+            "Project number",
+            "Folder for new documents"
+          ],
+          "label": "Google account",
+          "secretHint": "The OAuth client's secret, shown with its ID in Google Cloud.",
+          "secretLabel": "OAuth client secret",
+          "secretOptional": false,
+          "setup": "One per Google account, with your own OAuth client from Google Cloud. Save it, then Sign in with Google below. PDT sees only the files it makes and those you pick.",
+          "url": false,
+          "urlHint": null,
+          "urlOptional": false
+        }
+      ],
+      "description": "Google Docs and Sheets as documents: pick files from your Drive, make new ones, and let agents edit them (formulas, formatting and charts too) and answer their comments.",
+      "icon": {
+        "color": "#4285f4",
+        "letters": "G"
+      },
+      "id": "google",
+      "label": "Google",
+      "login": false,
+      "projectSettings": null,
+      "steps": [],
+      "templates": [],
+      "tools": [],
+      "triggers": [],
+      "workflows": []
+    },
+    {
+      "builtIn": false,
       "category": "media",
       "connections": [
         {

@@ -69,6 +69,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   tracks nothing in it (pdt-git `is_disposable`, checked per path by pdt-api `storage::clean_checkout`), and never
   while a session or run works in the worktree. The automatic cleanup touches only worktrees of closed tickets with no
   active attempt, and removes a worktree only through `remove_worktree` without force or deleting the branch.
+- **PDT's git never takes optional locks** (`GIT_OPTIONAL_LOCKS=0` on every git pdt-git runs). A read such as
+  `git status` would otherwise refresh the index under `index.lock`, failing a git command the agent runs in the same
+  worktree at that moment (the background size measuring reads worktrees agents work in).
 - **Finish never discards uncommitted changes** unless asked (`discardChanges`), and runs in its own task so it
   completes when the agent that called it is stopped.
 - **Workflows hear of a Start only once its session exists** (`announce_start`).
@@ -79,6 +82,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `useWorkspaces.allInfos`, which leaves out workflow step sessions for a ticket and ended ones with no ticket unless
   a tab holds them (`hiddenStepSession`), so a step's tab can still be found without old steps piling up. The favicon
   and title read `everyInfo`, every session, so a hidden step that needs the user still shows.
+- **A session in the background is never news.** A running agent that is idle with background tasks (`Session.background`,
+  the store's `background_tasks` column, kept in step with the conversation's) shows Background (web
+  `common/AgentState.tsx` `inBackground`), and its unseen flag is held back (`sessionUnseen`, read by `sessionInfo`),
+  so no Done, unseen dot or favicon. Clearing the last task while the agent is idle sets `attention_at`
+  (`set_session_background`), so it turns Done (unseen) then, even if the user looked meanwhile.
 
 ## Workflows
 
@@ -164,6 +172,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   offered by what a project's repository is. The built-ins that once automated PDT's development are kept on the
   hosts that had them as their own workflows (pdt-api `workflow/builtins.rs`, `RETIRED`); never ship such a built-in
   again. Cut a release is a template (filled in per project), not a built-in.
+- **IronCalc is one version on both sides**: pdt-sheet's `ironcalc` (pinned with `=`) and web's
+  `@ironcalc/workbook` exchange IronCalc's bytes and diffs, so they are updated together (pdt-sheet's
+  `the_web_ui_runs_the_same_ironcalc` checks).
 - **Guides served by pdtd link to each other by API path**, never by repository path (a test checks).
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.
