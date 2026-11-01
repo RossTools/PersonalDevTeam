@@ -516,6 +516,14 @@ pub(crate) async fn post_view(State(st): State<AppState>, Path(id): Path<String>
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::post;
+    axum::Router::new()
+        .route("/sessions/{id}/activity", post(post_report))
+        .route("/sessions/{id}/view", post(post_view))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

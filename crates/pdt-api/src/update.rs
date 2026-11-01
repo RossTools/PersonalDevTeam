@@ -973,3 +973,14 @@ pub(crate) async fn delete_token(State(st): State<AppState>) -> Result<StatusCod
     }
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post, put};
+    axum::Router::new()
+        .route("/host/update", get(get_status))
+        .route("/host/update/check", post(post_check))
+        .route("/host/update/install", post(post_install))
+        .route("/host/update/dismiss", post(post_dismiss))
+        .route("/host/token", put(put_token).delete(delete_token))
+}

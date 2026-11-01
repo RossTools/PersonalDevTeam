@@ -615,3 +615,14 @@ pub(crate) async fn disconnect(
     }
     Ok(Json(view(&st, p.as_ref())))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{delete, get, post};
+    axum::Router::new()
+        .route("/forges/{kind}/login", get(self::get))
+        .route("/forges/{kind}/login/test", post(test_token))
+        .route("/forges/{kind}/login/token", post(put_token))
+        .route("/forges/{kind}/login/device", post(start_device).delete(cancel_device))
+        .route("/forges/{kind}/login/accounts/{host}", delete(disconnect))
+}

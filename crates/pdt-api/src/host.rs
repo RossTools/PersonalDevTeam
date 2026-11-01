@@ -378,3 +378,12 @@ pub(crate) async fn post_restart(State(st): State<AppState>) -> Result<StatusCod
     st.shutdown.notify_one();
     Ok(StatusCode::ACCEPTED)
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post, put};
+    axum::Router::new()
+        .route("/host/settings", get(get_settings).put(put_settings))
+        .route("/host/network", put(put_network))
+        .route("/host/restart", post(post_restart))
+}

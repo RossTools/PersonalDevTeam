@@ -330,3 +330,9 @@ pub(crate) async fn file(
     }
     Ok(filed)
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new().route("/bug-reports", post(create)).route("/bug-reports/preview", get(preview))
+}

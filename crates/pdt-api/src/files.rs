@@ -438,6 +438,16 @@ pub(crate) async fn tell(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/projects/{id}/files", get(list))
+        .route("/projects/{id}/files/content", get(content).put(save).delete(self::delete))
+        .route("/projects/{id}/files/rename", post(rename))
+        .route("/projects/{id}/files/tell", post(tell))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -128,3 +128,17 @@ pub(crate) async fn files(
         .unwrap_or_default();
     Ok(Json(rank_paths(q.q.trim(), &all, MAX_SUGGESTIONS).into_iter().map(String::from).collect()))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route(
+            "/sessions/{id}/attachments",
+            post(upload)
+                // Room for the largest image; anything bigger is refused with a clear error.
+                .layer(axum::extract::DefaultBodyLimit::max(pdt_core::conversation::composer::MAX_IMAGE_BYTES + 1)),
+        )
+        .route("/sessions/{id}/attachments/{attachment_id}", get(self::get))
+        .route("/sessions/{id}/files", get(files))
+}

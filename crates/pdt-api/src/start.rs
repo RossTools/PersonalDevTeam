@@ -736,3 +736,13 @@ async fn outside_ticket(st: &AppState, t: &pdt_core::ticket::TicketSummary, sess
         crate::untrusted::record_input(st, e).await;
     }
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::post;
+    axum::Router::new()
+        .route("/tickets/{id}/start", post(start))
+        .route("/tickets/{id}/check-merge", post(check_merge))
+        .route("/attempts/{id}/abandon", post(abandon))
+        .route("/attempts/{id}/clean-up", post(clean_up))
+}

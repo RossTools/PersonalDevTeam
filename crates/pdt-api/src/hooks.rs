@@ -121,6 +121,12 @@ pub(crate) async fn receive(
     }
 }
 
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::post;
+    axum::Router::new().route("/hooks/{name}", post(receive).layer(axum::extract::DefaultBodyLimit::max(MAX_BODY)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
