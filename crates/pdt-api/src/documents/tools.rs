@@ -1,6 +1,6 @@
 //! The document tools (PDT-317): agents and the PM list, read and change documents through PDT, whichever provider
 //! keeps them, and open one beside their conversation for the user to watch. Each is an action with only a tool face
-//! (PDT-318 gives some a node face). Reads don't ask; writes (edits, new documents, links, comment replies and
+//! (the workflow steps and triggers on documents are in [`super::nodes`], PDT-318). Reads don't ask; writes (edits, new documents, links, comment replies and
 //! resolves) ask the user unless a project the document is linked to lets the agent act. What other people wrote in a
 //! document's comments comes fenced as outside input (PDT-202).
 
@@ -51,6 +51,25 @@ impl Integration for DocumentTools {
         ]
     }
 
+    fn event_types(&self) -> &'static [pdt_core::workflow::events::EventType] {
+        pdt_core::workflow::events::DOCUMENT_EVENT_TYPES
+    }
+
+    fn node_kinds(&self) -> Vec<Box<dyn crate::workflow::catalog::NodeKind>> {
+        super::nodes::kinds()
+    }
+
+    fn pollers(&self) -> Vec<crate::integrations::Poller> {
+        vec![crate::integrations::Poller {
+            name: "the documents check",
+            run: |st| Box::pin(async move { super::watch::refresh(&st).await }),
+        }]
+    }
+
+    fn templates(&self) -> Vec<pdt_core::workflow::template::Template> {
+        super::templates::all()
+    }
+
     fn approval_title(&self, tool: &str, input: &Value) -> Option<String> {
         let n = input.get("edits").and_then(Value::as_array).map_or(0, Vec::len);
         let title = input.get("title").and_then(Value::as_str).unwrap_or("a document");
@@ -83,7 +102,7 @@ fn tool(decl: ToolDecl, title: &'static str, description: &'static str) -> ToolF
 }
 
 /// A document by id, or by its exact title when one has it.
-async fn find(st: &AppState, given: &str) -> Result<Document, String> {
+pub(super) async fn find(st: &AppState, given: &str) -> Result<Document, String> {
     let g = given.trim();
     if let Some(d) = st.store.get_document(g).await.map_err(|e| e.to_string())? {
         return Ok(d);
@@ -113,7 +132,7 @@ async fn by(cx: &ActionCx<'_>) -> By {
 }
 
 /// A document as the tools give it: no provider reference, links by key.
-fn brief(d: &Document) -> Value {
+pub(super) fn brief(d: &Document) -> Value {
     json!({
         "id": d.id, "title": d.title, "kind": d.kind, "provider": d.provider, "url": d.url,
         "projects": d.projects.iter().map(|p| &p.key).collect::<Vec<_>>(),
@@ -170,7 +189,7 @@ fn need_kind(d: &Document, kind: DocumentKind, tool: &str) -> Result<(), String>
     }
 }
 
-async fn read(st: &AppState, d: &Document) -> Result<DocumentContent, String> {
+pub(super) async fn read(st: &AppState, d: &Document) -> Result<DocumentContent, String> {
     let p = provider_of(st, d).map_err(api)?;
     p.read(&d.provider_ref).await.map_err(|e| api(e.into()))
 }
@@ -744,6 +763,7 @@ impl Action for CommentReply {
             let (d, p) = with_comments(cx.st, &d.id).await.map_err(api)?;
             let by = (pdt_core::ticket::Actor::Agent, "Agent".to_string());
             let r = p.reply(&d.provider_ref, i.comment.trim(), body, by).await.map_err(|e| api(e.into()))?;
+            super::watch::mark_ours(cx.st, &d.id, &r.id).await;
             Ok(json!({"id": r.id, "replied": true}))
         })
     }

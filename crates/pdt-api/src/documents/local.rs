@@ -932,7 +932,7 @@ impl DocumentProvider for LocalProvider {
                 return Err(ProviderError::NotFound);
             }
             self.comments_changed(reference);
-            Ok(CommentReply { id: c.id, author: by.1, body: c.body, created_at: Some(now) })
+            Ok(CommentReply { id: c.id, author: by.1, body: c.body, created_at: Some(now), actor: Some(by.0) })
         })
     }
 

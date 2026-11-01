@@ -308,7 +308,7 @@ impl Store {
     /// A document's comments, oldest first, each with its replies.
     pub async fn document_comments(&self, document_id: &str) -> Result<Vec<DocumentComment>, StoreError> {
         let rows = sqlx::query(
-            "SELECT id, parent_id, anchor, author, body, resolved, created_at FROM document_comments              WHERE document_id = ? ORDER BY created_at, id",
+            "SELECT id, parent_id, anchor, author, actor, body, resolved, created_at FROM document_comments              WHERE document_id = ? ORDER BY created_at, id",
         )
         .bind(document_id)
         .fetch_all(&self.pool)
@@ -320,8 +320,11 @@ impl Store {
             let author: String = r.try_get("author")?;
             let body: String = r.try_get("body")?;
             let created_at: i64 = r.try_get("created_at")?;
+            let actor = Actor::parse(&r.try_get::<String, _>("actor")?);
             match r.try_get::<Option<String>, _>("parent_id")? {
-                Some(parent) => replies.push((parent, CommentReply { id, author, body, created_at: Some(created_at) })),
+                Some(parent) => {
+                    replies.push((parent, CommentReply { id, author, body, created_at: Some(created_at), actor }))
+                }
                 None => {
                     let anchor: Option<CommentAnchor> =
                         r.try_get::<Option<String>, _>("anchor")?.and_then(|j| serde_json::from_str(&j).ok());
@@ -334,6 +337,7 @@ impl Store {
                         resolved: r.try_get::<i64, _>("resolved")? != 0,
                         created_at: Some(created_at),
                         replies: vec![],
+                        actor,
                     });
                 }
             }

@@ -209,6 +209,11 @@ fn time(v: &Value) -> Option<i64> {
     v.as_str()?.parse::<jiff::Timestamp>().ok().map(|t| t.as_millisecond())
 }
 
+/// The user, for what the signed-in account wrote (Google's `me`); None for anyone else's.
+fn mine(author: &Value) -> Option<pdt_core::ticket::Actor> {
+    (author["me"].as_bool() == Some(true)).then_some(pdt_core::ticket::Actor::User)
+}
+
 fn reply_of(r: &Value) -> Option<CommentReply> {
     if r["deleted"].as_bool() == Some(true) {
         return None;
@@ -223,11 +228,12 @@ fn reply_of(r: &Value) -> Option<CommentReply> {
         author: r["author"]["displayName"].as_str().unwrap_or("someone").to_string(),
         body: body.to_string(),
         created_at: time(&r["createdTime"]),
+        actor: mine(&r["author"]),
     })
 }
 
-const COMMENT_FIELDS: &str = "comments(id,author(displayName),content,quotedFileContent(value),resolved,createdTime,\
-                              deleted,replies(id,author(displayName),content,createdTime,deleted,action))";
+const COMMENT_FIELDS: &str = "comments(id,author(displayName,me),content,quotedFileContent(value),resolved,createdTime,\
+                              deleted,replies(id,author(displayName,me),content,createdTime,deleted,action))";
 
 pub fn comments(s: &Session, id: &str) -> ProviderResult<Vec<DocumentComment>> {
     let v = s.get(&format!("{DRIVE}/files/{}/comments?fields={}&pageSize=100", q(id), q(COMMENT_FIELDS)))?;
@@ -246,6 +252,7 @@ pub fn comments(s: &Session, id: &str) -> ProviderResult<Vec<DocumentComment>> {
                 resolved: c["resolved"].as_bool().unwrap_or(false),
                 created_at: time(&c["createdTime"]),
                 replies: c["replies"].as_array().into_iter().flatten().filter_map(reply_of).collect(),
+                actor: mine(&c["author"]),
             })
         })
         .collect())
@@ -426,7 +433,7 @@ mod tests {
             .ok(
                 "GET",
                 &format!("{DRIVE}/files/d1/comments"),
-                r#"{"comments":[{"id":"k1","author":{"displayName":"Sam"},"content":"Is this right?","quotedFileContent":{"value":"Ship it"},"resolved":false,"createdTime":"2026-10-22T09:00:00.000Z","replies":[{"id":"r1","author":{"displayName":"Ann"},"content":"Yes","createdTime":"2026-10-22T10:00:00Z"},{"id":"r2","action":"resolve","content":""}]},{"id":"k2","deleted":true}]}"#,
+                r#"{"comments":[{"id":"k1","author":{"displayName":"Sam"},"content":"Is this right?","quotedFileContent":{"value":"Ship it"},"resolved":false,"createdTime":"2026-10-22T09:00:00.000Z","replies":[{"id":"r1","author":{"displayName":"Ann","me":true},"content":"Yes","createdTime":"2026-10-22T10:00:00Z"},{"id":"r2","action":"resolve","content":""}]},{"id":"k2","deleted":true}]}"#,
             )
             .ok("POST", TOKEN_URL, TOKEN)
             .ok("POST", TOKEN_URL, TOKEN)
@@ -436,6 +443,8 @@ mod tests {
         assert_eq!(c.len(), 1);
         assert_eq!((c[0].author.as_str(), c[0].quote.as_deref(), c[0].replies.len()), ("Sam", Some("Ship it"), 1));
         assert_eq!(c[0].created_at, Some(1_792_659_600_000));
+        // What the signed-in account wrote is the user's.
+        assert_eq!((c[0].actor, c[0].replies[0].actor), (None, Some(pdt_core::ticket::Actor::User)));
         let rep = with(&r, |s| reply(s, "d1", "k1", "Done")).unwrap();
         assert_eq!(rep.id, "r3");
         with(&r, |s| resolve(s, "d1", "k1")).unwrap();

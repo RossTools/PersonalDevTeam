@@ -335,6 +335,19 @@ IronCalc's bytes and diffs; a pdt-sheet test checks), and is loaded only when a 
 `GET /api/documents/{id}/version` is the provider's version (Google's Drive counter): `DocumentBody` polls it in PDT's
 own view, so edits made at the provider (in Google's editor) show too.
 
+Workflows work on documents through the `documents` integration's node kinds (pdt-api `documents/nodes.rs`):
+`document.create`, `document.append`, `sheet.append_rows`, `sheet.set_range`, `sheet.add_chart` and
+`document.comment`, each a thin layer over the same provider calls as the tools (`apply_edits`, `create_document`),
+and its two templates (`documents/templates.rs`). The triggers `document.changed` and `document.comment_added` are
+fed by a poller (`documents/watch.rs`, the 60 s pass): it looks only at the documents an enabled trigger watches
+(the one it names, else those linked to the workflow's projects), compares the provider's `version` and its comment
+ids with what it saw last (host values `sensor.document_version.<id>`, `sensor.document_comments.<id>`; the first look
+only records), and logs one event per linked project. Each trigger takes one copy of an event (pdt-core
+`document_watch::accepts_copy`), so a document linked to two projects starts a host workflow once. Comments an agent or
+a workflow wrote never count: the provider's `actor` on a comment says so where it knows, and the ids of replies PDT
+posted are kept (`sensor.document_ours.<id>`) for providers that write them as the user (Google). A comment's text is
+an outside field of its event, fenced for agents unless `byUser` (the user wrote it).
+
 **Google.** An optional plugin (`crates/pdt-int-google`, pdtd's `google` feature), the `google` document provider.
 Each Google account is a `google` connection (the folder for new files, and, for the user's own OAuth client, its ID
 in the config, the client secret as its secret, the picker's API key and project number); signing in (`oauth.rs`: the

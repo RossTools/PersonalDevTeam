@@ -34,6 +34,8 @@ pub const GITHUB_PR_CLOSED: &str = "github.pull_request.closed";
 pub const GITHUB_WORKFLOW_FAILED: &str = "github.workflow.failed";
 pub const SCHEDULE_FIRED: &str = "schedule.fired";
 pub const WEBHOOK_RECEIVED: &str = "webhook.received";
+pub const DOCUMENT_CHANGED: &str = "document.changed";
+pub const DOCUMENT_COMMENT_ADDED: &str = "document.comment_added";
 
 pub const AGENT_OUTCOME: &str = "agent.outcome";
 pub const OUTSIDE_INPUT: &str = "session.outside_input";
@@ -58,6 +60,12 @@ pub fn untrusted(kind: &str) -> bool {
 /// `pr.commented` and `pr.reviewed`): it is never sent into an agent session.
 pub fn by_outsider(payload: &serde_json::Value) -> bool {
     payload.get("outside").and_then(serde_json::Value::as_bool) == Some(true)
+}
+
+/// Whether an event's payload (a trigger) says the user wrote its outside fields (`byUser` on
+/// `document.comment_added`, PDT-318): they are not fenced, and no outside input is recorded.
+pub fn by_user(payload: &serde_json::Value) -> bool {
+    payload.get("byUser").and_then(serde_json::Value::as_bool) == Some(true)
 }
 
 /// The CI provider of GitHub Actions runs.
@@ -351,9 +359,33 @@ pub const GITHUB_EVENT_TYPES: &[EventType] = &[
     },
 ];
 
+/// The documents' event types (PDT-318), the documents integration's triggers: PDT looks at the documents enabled
+/// workflows watch every minute.
+pub const DOCUMENT_EVENT_TYPES: &[EventType] = &[
+    EventType {
+        id: DOCUMENT_CHANGED,
+        title: "Document changed",
+        description: "A document's content changed, through PDT or at its provider (its version moved). Checked every \
+                      minute for the documents a workflow watches: the one it names, else those linked to its \
+                      projects; the first look only records the version.",
+        schema: schema_of::<DocumentChanged>,
+        outside: &[],
+    },
+    EventType {
+        id: DOCUMENT_COMMENT_ADDED,
+        title: "New comment on a document",
+        description: "Someone commented on a document or replied in a comment's thread (`reply`; `thread` is the \
+                      comment to reply to). Agents' and workflows' own comments don't count. Checked every minute for \
+                      the documents a workflow watches; the first look only records the comments already there.",
+        schema: schema_of::<DocumentCommentAdded>,
+        // What the people a document is shared with wrote: fenced for an agent unless the user wrote it (`byUser`).
+        outside: &["body", "quote"],
+    },
+];
+
 /// One of PDT's own event types (every integration's: pdt-api's registry).
 pub fn event_type(id: &str) -> Option<&'static EventType> {
-    EVENT_TYPES.iter().chain(GITHUB_EVENT_TYPES).find(|t| t.id == id)
+    EVENT_TYPES.iter().chain(GITHUB_EVENT_TYPES).chain(DOCUMENT_EVENT_TYPES).find(|t| t.id == id)
 }
 
 /// The attempt an event is about.
@@ -529,6 +561,72 @@ pub struct AttemptEvent {
     /// The ticket's labels when it happened, so a condition can branch on them (`contains` `automerge`).
     #[serde(default)]
     pub labels: Vec<String>,
+    /// The ticket's title when it happened.
+    #[serde(default)]
+    pub ticket_title: String,
+}
+
+/// The document an event is about (`document.*`), and the project it is for: an event is logged once for each project
+/// the document is linked to (`projectIds`, in order), or once without a project when it is linked to none.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentRef {
+    /// One of `projectIds`; empty for a document linked to no project.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub project_id: String,
+    pub document_id: String,
+    pub title: String,
+    /// `doc` or `sheet`.
+    pub kind: String,
+    /// The provider that keeps it (`local`, `google`).
+    pub provider: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Every project it is linked to.
+    #[serde(default)]
+    pub project_ids: Vec<String>,
+    /// The keys of the tickets it is linked to.
+    #[serde(default)]
+    pub tickets: Vec<String>,
+}
+
+/// `document.changed` (PDT-318).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentChanged {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub document: DocumentRef,
+    /// The provider's version now.
+    pub version: String,
+    /// The version PDT saw before.
+    pub previous_version: String,
+}
+
+/// `document.comment_added` (PDT-318).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentCommentAdded {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub document: DocumentRef,
+    /// The new comment's (or reply's) id.
+    pub comment_id: String,
+    /// The comment whose thread it is in: the one to reply to (the comment itself, or the one it replies to).
+    pub thread: String,
+    /// It is a reply in a thread, not a new comment.
+    pub reply: bool,
+    /// The name it shows.
+    pub author: String,
+    /// The user wrote it (in PDT, or as the signed-in account): its text is not outside input.
+    pub by_user: bool,
+    pub body: String,
+    /// The text the thread is on, when the provider says.
+    #[serde(default)]
+    pub quote: Option<String>,
 }
 
 /// `ticket.stage_changed`.
@@ -1045,7 +1143,7 @@ mod tests {
     #[test]
     fn every_type_is_unique_and_has_a_schema() {
         let mut ids = std::collections::HashSet::new();
-        for t in EVENT_TYPES.iter().chain(GITHUB_EVENT_TYPES) {
+        for t in EVENT_TYPES.iter().chain(GITHUB_EVENT_TYPES).chain(DOCUMENT_EVENT_TYPES) {
             assert!(ids.insert(t.id), "{} twice", t.id);
             assert!(t.id.contains('.'));
             assert!((t.schema)().as_object().is_some_and(|o| o.contains_key("properties")), "{}", t.id);
@@ -1091,6 +1189,7 @@ mod tests {
             session_id: None,
             notice: None,
             labels: vec!["automerge".into()],
+            ticket_title: "Faster boards".into(),
         };
         let v = serde_json::to_value(&a).unwrap();
         assert_eq!(v["labels"], serde_json::json!(["automerge"]));

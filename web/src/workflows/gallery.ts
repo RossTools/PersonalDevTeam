@@ -13,6 +13,7 @@ export const CATEGORIES: { id: TemplateCategory; label: string }[] = [
   { id: 'notifications', label: 'Notifications' },
   { id: 'releases', label: 'Releases' },
   { id: 'pm', label: 'PM' },
+  { id: 'documents', label: 'Documents' },
   { id: 'other', label: 'Other' },
 ];
 
