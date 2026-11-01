@@ -10,7 +10,7 @@ import { TicketTabsContext } from '../workspaces/ticketTabs';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { InboxList } from './InboxList';
 import { InboxView } from './InboxView';
-import { after, dismissable, grouped, step } from './model';
+import { after, dismissable, grouped, SECTION_OF, step } from './model';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -38,7 +38,7 @@ const stalled = item('st', {
 describe('inbox model', () => {
   it('groups most urgent first and steps through the items in that order', () => {
     const items = [gate, stalled, question];
-    expect(grouped(items).map((g) => g.title)).toEqual(['Questions', 'Stalled', 'Gates']);
+    expect(grouped(items).map((g) => g.title)).toEqual(['Questions', 'Stuck', 'Ready to accept']);
     expect(step(items, null, 1)).toBe('q');
     expect(step(items, 'q', 1)).toBe('st');
     expect(step(items, 'g', 1)).toBe('g');
@@ -49,13 +49,81 @@ describe('inbox model', () => {
   });
 });
 
+describe('inbox sections (PDT-361)', () => {
+  it('merges the groups into Questions, Approvals, Stuck, To act on and Ready to accept', () => {
+    expect(SECTION_OF).toEqual({
+      question: 'question', approval: 'approval', stalled: 'stuck', loop_limit: 'stuck',
+      session: 'act', notice: 'act', admit: 'act', proposal: 'act', gate: 'accept', accept: 'accept',
+    });
+    const timedOut = item('to', { kind: 'timed_out', group: 'stalled' });
+    const loop = item('l', { kind: 'loop_limit', group: 'loop_limit' });
+    const disk = item('d', { kind: 'low_disk', group: 'notice' });
+    const session = item('s', { kind: 'session', group: 'session' });
+    const accept = item('a', { group: 'accept' });
+    const sections = grouped([accept, gate, session, disk, loop, timedOut, question]);
+    expect(sections.map((g) => [g.title, g.items.map((i) => i.id)])).toEqual([
+      ['Questions', ['q']], ['Stuck', ['l', 'to']], ['To act on', ['s', 'd']], ['Ready to accept', ['a', 'g']],
+    ]);
+  });
+});
+
+describe('question cards (PDT-361)', () => {
+  const two = item('q2', {
+    kind: 'question', group: 'question', sessionId: 'sess', personaName: 'Coder', title: 'Two questions',
+    body: { questions: [{ question: 'Attach a PDF?', choices: ['Attach a PDF', 'Text is enough'] }, { question: 'From which address?', choices: ['orders@acme.shop', 'no-reply@acme.shop'] }] },
+  });
+  const answered = (calls: Call[]) => calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body;
+
+  it('shows each question as a card, its choices as radio options with their number keys and Something else', () => {
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[two]} selectedId="q2" onSelect={() => {}} />);
+    const first = screen.getByRole('region', { name: 'Question 1 of 2' });
+    expect(first).toHaveTextContent('1 / 2');
+    const group = within(first).getByRole('radiogroup', { name: 'Attach a PDF?' });
+    expect(within(group).getAllByRole('radio').map((r) => r.textContent)).toEqual(['Attach a PDF1', 'Text is enough2', '']);
+    expect(within(group).getByRole('radio', { name: 'Something else' })).toBeInTheDocument();
+    expect(within(first).getByRole('textbox', { name: 'Something else for question 1' })).toBeInTheDocument();
+    expect(screen.getByText('0 of 2 answered')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send answers' })).toBeDisabled();
+  });
+
+  it('picks with number keys, question by question, and Enter sends', async () => {
+    const calls = stubApi({ 'POST /api/inbox/q2/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[two]} selectedId="q2" onSelect={() => {}} />);
+    fireEvent.keyDown(window, { key: '2' });
+    expect(screen.getByRole('radio', { name: /Text is enough/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('1 of 2 answered')).toBeInTheDocument();
+    // The next key answers the next question.
+    fireEvent.keyDown(window, { key: '1' });
+    expect(screen.getByRole('radio', { name: /orders@acme\.shop/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('2 of 2 answered')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(answered(calls)).toEqual({ answers: ['Text is enough', 'orders@acme.shop'] }));
+  });
+
+  it('takes the user\'s own words with Something else, its number key focusing the field', async () => {
+    const calls = stubApi({ 'POST /api/inbox/q2/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[two]} selectedId="q2" onSelect={() => {}} />);
+    fireEvent.keyDown(window, { key: '3' });
+    const own = screen.getByRole('textbox', { name: 'Something else for question 1' });
+    expect(own).toHaveFocus();
+    expect(screen.getAllByRole('radio', { name: 'Something else' })[0]).toHaveAttribute('aria-checked', 'true');
+    await userEvent.type(own, 'Both, as a link');
+    // A choice after typing takes the choice instead.
+    await userEvent.click(screen.getByRole('radio', { name: /no-reply/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    await waitFor(() => expect(answered(calls)).toEqual({ answers: ['Both, as a link', 'no-reply@acme.shop'] }));
+  });
+});
+
 describe('inbox', () => {
   it('lists items under their kind with the ticket key', () => {
     renderWithQuery(<InboxList items={[gate, question]} selectedId="g" onSelect={() => {}} />);
     expect(screen.getByRole('region', { name: 'Questions' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Gates' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Ready to accept' })).toBeInTheDocument();
     expect(screen.getAllByText('PDT-7')).toHaveLength(2);
-    expect(screen.getByText(/Question · Refiner/)).toBeInTheDocument();
+    // The title first, then who asks and the ticket's title.
+    expect(screen.getByText('Refiner · Pipeline')).toBeInTheDocument();
   });
 
   it('answers a gate with Enter and moves on', async () => {
@@ -117,7 +185,9 @@ describe('inbox', () => {
     renderWithQuery(<InboxView items={[question]} selectedId="q" onSelect={() => {}} />);
     const send = screen.getByRole('button', { name: 'Send answers' });
     expect(send).toBeDisabled();
-    await userEvent.click(screen.getByRole('button', { name: 'a.txt' }));
+    await userEvent.click(screen.getByRole('radio', { name: /a\.txt/ }));
+    expect(screen.getByRole('radio', { name: /a\.txt/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('1 of 2 answered')).toBeInTheDocument();
     await userEvent.type(screen.getByRole('textbox', { name: 'Answer 2' }), 'Yes');
     await userEvent.click(send);
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body).toEqual({ answers: ['a.txt', 'Yes'] }));
@@ -196,7 +266,7 @@ describe('inbox', () => {
       kind: 'notice', group: 'notice', stepId: null, title: 'PR #12 conflicts with its base and no agent session is open',
       body: { notice: 'conflict', key: 'conflict:abc', text: '[PDT] PR #12 (b) conflicts with main.', workflow: 'PR notices' },
     });
-    expect(grouped([gate, notice]).map((g) => g.title)).toEqual(['Unheard notices', 'Gates']);
+    expect(grouped([gate, notice]).map((g) => g.title)).toEqual(['To act on', 'Ready to accept']);
     const calls = stubApi({ 'POST /api/inbox/n/dismiss': undefined, 'GET /api/inbox': { items: [], total: 0 } });
     const openTicket = vi.fn();
     renderWithQuery(
@@ -205,7 +275,7 @@ describe('inbox', () => {
       </OpenTicketContext.Provider>,
     );
     expect(screen.getByRole('region', { name: 'Unheard notice' })).toHaveTextContent('conflicts with main');
-    expect(screen.getByText(/Unheard notice ·/)).toBeInTheDocument();
+    expect(screen.getByText('Unheard notice')).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'Enter' });
     expect(openTicket).toHaveBeenCalledWith({ id: 't', projectId: 'p' });
     fireEvent.keyDown(window, { key: 'e' });
@@ -218,7 +288,7 @@ describe('inbox', () => {
       body: { summary: 'Panics when the config is empty.', issue: 'https://github.com/o/r/issues/2', external: true, workflow: 'Bug triage' },
       choices: [{ id: 'approve', title: 'Approve', primary: true }, { id: 'reject', title: 'Reject', primary: false }],
     });
-    expect(grouped([gate, triaged]).map((g) => g.title)).toEqual(['Triaged tickets', 'Gates']);
+    expect(grouped([gate, triaged]).map((g) => g.title)).toEqual(['To act on', 'Ready to accept']);
     expect(dismissable(triaged)).toBe(false);
     const calls = stubApi({ 'POST /api/inbox/a/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     renderWithQuery(<InboxView items={[triaged]} selectedId="a" onSelect={() => {}} />);
@@ -239,7 +309,7 @@ describe('inbox', () => {
       body: { workflowId: 'w1', workflow: 'Scryer import sweeper', version: 2, current: 1, by: 'PM', note: 'Sweep every hour', summary: 'changed sweep', enabled: true },
       choices: [{ id: 'discard', title: 'Discard', primary: false }, { id: 'accept', title: 'Accept', primary: true }],
     });
-    expect(grouped([gate, proposal]).map((g) => g.title)).toEqual(['Workflow proposals', 'Gates']);
+    expect(grouped([gate, proposal]).map((g) => g.title)).toEqual(['To act on', 'Ready to accept']);
     expect(dismissable(proposal)).toBe(false);
     const calls = stubApi({ 'POST /api/inbox/proposal%3Aw1%3A2/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     renderWithQuery(<InboxView items={[proposal]} selectedId={proposal.id} onSelect={() => {}} />);
@@ -250,9 +320,9 @@ describe('inbox', () => {
     const answers = () => calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer')).map((c) => c.body);
     fireEvent.keyDown(window, { key: 'Enter' });
     await waitFor(() => expect(answers()).toEqual([{ choice: 'accept' }]));
-    await userEvent.click(within(region).getByRole('button', { name: 'Discard' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
     await waitFor(() => expect(answers()).toContainEqual({ choice: 'discard' }));
-    await userEvent.click(within(region).getByRole('button', { name: 'Open' }));
+    await userEvent.click(screen.getByRole('button', { name: "Open the workflow's versions" }));
     expect(window.location.pathname).toBe('/workflows/w1/versions');
   });
 
@@ -456,7 +526,7 @@ describe('inbox sections (PDT-108)', () => {
         selectedId={null} onSelect={onSelect} onReadAll={onReadAll} onSettings={() => {}} />,
     );
     expect(screen.getByRole('heading', { name: 'Needs you' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Sessions waiting' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'To act on' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Updates' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Mark all read' }));
     expect(onReadAll).toHaveBeenCalled();

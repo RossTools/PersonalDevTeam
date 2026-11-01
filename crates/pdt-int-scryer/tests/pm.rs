@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 /// The PM's project (`common::pm::setup`) with only this integration enabled.
-async fn setup(update_every_ms: Option<i64>) -> Env {
-    common::pm::setup_with(update_every_ms, |st| {
+async fn setup() -> Env {
+    common::pm::setup_with(|st| {
         st.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(pdt_int_scryer::Scryer)]));
         st.integrations.enable(&["scryer".into()]);
     })
@@ -23,7 +23,7 @@ async fn setup(update_every_ms: Option<i64>) -> Env {
 #[tokio::test]
 async fn the_pm_browses_scryer_and_adds_a_title_after_a_yes() {
     use fake_scryer::{FakeScryer, KEY};
-    let env = setup(None).await;
+    let env = setup().await;
     let (base, scryer) = FakeScryer::serve().await;
     let (s, c) = call(
         &env.app,
@@ -84,7 +84,7 @@ async fn the_pm_browses_scryer_and_adds_a_title_after_a_yes() {
 #[tokio::test]
 async fn the_pm_sets_up_an_indexer_and_a_download_client_through_scryers_api() {
     use fake_scryer::{FakeScryer, KEY};
-    let env = setup(None).await;
+    let env = setup().await;
     let (base, scryer) = FakeScryer::serve().await;
     let conn = |name: &'static str, kind: &'static str, url: String, secret: &'static str| {
         let app = env.app.clone();

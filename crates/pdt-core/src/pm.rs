@@ -9,9 +9,12 @@ use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 use ts_rs::TS;
 
-/// How often a PM conversation that is in use is brought up to date ([`update_message`]) and asked for a journal
-/// checkpoint (ms).
-pub const UPDATE_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
+/// How far back the first PM conversation's briefing reads events (ms).
+pub const BRIEF_SINCE_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// How early a conversation may be brought up to date ([`update_due`], ms): a schedule fires a moment less than a day
+/// after the run that last brought it up to date, and still finds it due.
+pub const UPDATE_SLACK_MS: i64 = 15 * 60 * 1000;
 
 /// How long a reset waits for the conversation's journal turn before it records none (PDT-308, ms).
 pub const RESET_WAIT_MS: i64 = 3 * 60 * 1000;
@@ -607,10 +610,6 @@ pub struct UpdateData {
     pub inbox: Vec<BriefInbox>,
     /// Other PM conversations' journal entries written since then, newest first.
     pub journal: Vec<BriefConversationJournal>,
-    /// When this conversation's own journal entry was last written (its last checkpoint), if ever.
-    pub checkpointed_at: Option<i64>,
-    /// When the user last wrote to this conversation.
-    pub user_wrote_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -621,11 +620,11 @@ pub struct BriefConversationJournal {
     pub body: String,
 }
 
-/// Whether a PM conversation that just ended a turn is due its daily update (spec §5.3): `every` (normally
-/// [`UPDATE_EVERY_MS`]) has passed since it was last brought up to date. pdt-api also wants the user to have written
-/// to it since.
-pub fn update_due(caught_up_at: i64, now: i64, every: i64) -> bool {
-    now - caught_up_at >= every
+/// Whether a PM conversation is due its daily update (spec §5.3, PDT-372): `after` (the PM daily checkpoint
+/// workflow's, a day by default) has passed since it was last brought up to date, give or take [`UPDATE_SLACK_MS`].
+/// pdt-api also wants the user to have written to it since, unless the workflow says otherwise.
+pub fn update_due(caught_up_at: i64, now: i64, after: i64) -> bool {
+    now - caught_up_at + UPDATE_SLACK_MS >= after
 }
 
 /// Events an update leaves out (PDT-211): the clock and overlaps, which say nothing the PM acts on.
@@ -784,7 +783,7 @@ pub fn still_open(body: &str) -> Option<String> {
 /// The daily update a PM conversation in use gets in place of ending (spec §5.3, PDT-211): what happened to tickets
 /// since its briefing or last update, the Inbox, what the other conversations' new journal entries leave open, and a
 /// request for a journal checkpoint. None when nothing relevant happened (no ticket events, an empty Inbox, no new
-/// journal entries): [`daily_message`] sends a short checkpoint request then, or nothing.
+/// journal entries): the PM daily checkpoint workflow asks only for a checkpoint then ([`checkpoint_due`]).
 pub fn update_message(d: &UpdateData) -> Option<String> {
     let since = if d.first { "your briefing" } else { "the last update" };
     let mut events = String::new();
@@ -824,17 +823,10 @@ pub fn quiet_checkpoint_request() -> String {
     )
 }
 
-/// What a PM conversation due its daily update is sent (PDT-211): the update ([`update_message`]); on a quiet day a
-/// short checkpoint request; nothing when its last checkpoint is newer than the user's last message.
-pub fn daily_message(d: &UpdateData) -> Option<(crate::conversation::PdtMessage, String)> {
-    use crate::conversation::PdtMessage;
-    if let Some(text) = update_message(d) {
-        return Some((PdtMessage::Update, text));
-    }
-    if d.checkpointed_at.is_some_and(|at| at > d.user_wrote_at) {
-        return None;
-    }
-    Some((PdtMessage::Checkpoint, quiet_checkpoint_request()))
+/// Whether a PM conversation is asked for a journal checkpoint ([`quiet_checkpoint_request`], PDT-211): the user wrote
+/// to it since its last checkpoint (`checkpointed_at`, its journal entry's time), or it has none yet.
+pub fn checkpoint_due(checkpointed_at: Option<i64>, user_wrote_at: Option<i64>) -> bool {
+    user_wrote_at.is_some_and(|wrote| checkpointed_at.is_none_or(|at| wrote > at))
 }
 
 /// What PDT's own messages to a PM conversation are queued under in the outbox (`dedupe`), one waiting at a time: it
@@ -1029,10 +1021,13 @@ mod tests {
 
     #[test]
     fn a_daily_update_is_due_after_a_day_of_use() {
-        let day = UPDATE_EVERY_MS;
-        assert!(!update_due(0, 24 * H - 1, day));
+        let day = 24 * H;
+        assert!(!update_due(0, 23 * H, day));
         assert!(update_due(0, 24 * H, day));
         assert!(update_due(H, 25 * H, day) && !update_due(H, 24 * H, day), "a day from the last update");
+        // An hourly schedule's run a day later fires a moment before a full day has passed since the last update.
+        assert!(update_due(5_000, 24 * H, day), "a schedule's next day");
+        assert!(update_due(0, 0, 0), "no wait");
     }
 
     fn event(at: i64, kind: &str, ticket: Option<(&str, &str)>, payload: Value) -> BriefEvent {
@@ -1070,8 +1065,6 @@ mod tests {
                 at: 3 * H,
                 body: "## Decided\n\nCut over Friday.\n\n## Still open\n\n- DNS for cb.example\n".into(),
             }],
-            checkpointed_at: None,
-            user_wrote_at: 24 * H,
         }
     }
 
@@ -1170,7 +1163,6 @@ mod tests {
 
     #[test]
     fn a_quiet_day_asks_only_for_a_checkpoint_or_nothing() {
-        use crate::conversation::PdtMessage;
         let quiet = UpdateData {
             events: vec![
                 event(2 * H, "schedule.fired", None, json!({})),
@@ -1181,12 +1173,11 @@ mod tests {
             ..update()
         };
         assert_eq!(update_message(&quiet), None, "nothing relevant: no update");
-        assert_eq!(daily_message(&quiet), Some((PdtMessage::Checkpoint, quiet_checkpoint_request())));
-        let stale = UpdateData { checkpointed_at: Some(23 * H), ..quiet.clone() };
-        assert_eq!(daily_message(&stale).map(|m| m.0), Some(PdtMessage::Checkpoint), "the user wrote since");
-        let fresh = UpdateData { checkpointed_at: Some(24 * H + 1), ..quiet };
-        assert_eq!(daily_message(&fresh), None, "the checkpoint is newer than every change");
-        assert_eq!(daily_message(&update()).map(|m| m.0), Some(PdtMessage::Update));
+        let wrote = Some(24 * H);
+        assert!(checkpoint_due(None, wrote), "no checkpoint yet");
+        assert!(checkpoint_due(Some(23 * H), wrote), "the user wrote since");
+        assert!(!checkpoint_due(Some(24 * H + 1), wrote), "the checkpoint is newer than every change");
+        assert!(!checkpoint_due(None, None), "the user never wrote to it");
     }
 
     #[test]

@@ -100,7 +100,7 @@ impl InboxKind {
     }
 }
 
-/// Where an item is listed, most urgent first (UX spec §8.4).
+/// What kind of wait an item is (stored with it). The Inbox lists items by their [`InboxSection`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -164,6 +164,46 @@ impl InboxGroup {
             InboxGroup::Proposal => "Workflow proposals",
             InboxGroup::Gate => "Gates",
             InboxGroup::Accept => "Ready to accept",
+        }
+    }
+}
+
+/// Where the Inbox lists an item, most urgent first (PDT-361): a few sections, each holding one or more groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum InboxSection {
+    Question,
+    Approval,
+    /// Agent steps that stopped: stalled, at their loop limit, timed out.
+    Stuck,
+    /// Things only the user can do: unheard notices, sessions waiting, sign-ins, storage, triaged tickets, proposals.
+    Act,
+    /// Gates: the work waits for the user's Accept or choice.
+    Accept,
+}
+
+impl InboxSection {
+    pub fn title(self) -> &'static str {
+        match self {
+            InboxSection::Question => "Questions",
+            InboxSection::Approval => "Approvals",
+            InboxSection::Stuck => "Stuck",
+            InboxSection::Act => "To act on",
+            InboxSection::Accept => "Ready to accept",
+        }
+    }
+}
+
+impl InboxGroup {
+    /// The section the Inbox lists this group's items under.
+    pub fn section(self) -> InboxSection {
+        match self {
+            InboxGroup::Question => InboxSection::Question,
+            InboxGroup::Approval => InboxSection::Approval,
+            InboxGroup::Stalled | InboxGroup::LoopLimit => InboxSection::Stuck,
+            InboxGroup::Session | InboxGroup::Notice | InboxGroup::Admit | InboxGroup::Proposal => InboxSection::Act,
+            InboxGroup::Gate | InboxGroup::Accept => InboxSection::Accept,
         }
     }
 }
@@ -508,9 +548,11 @@ impl std::fmt::Debug for InboxAnswer {
     }
 }
 
-/// Sorts items as the Inbox lists them: by group, then oldest first.
+/// Sorts items as the Inbox lists them: by section, then oldest first.
 pub fn sort(items: &mut [InboxItem]) {
-    items.sort_by(|a, b| a.group.cmp(&b.group).then(a.created_at.cmp(&b.created_at)).then(a.id.cmp(&b.id)));
+    items.sort_by(|a, b| {
+        a.group.section().cmp(&b.group.section()).then(a.created_at.cmp(&b.created_at)).then(a.id.cmp(&b.id))
+    });
 }
 
 /// The message an agent gets with the user's answers.
@@ -593,6 +635,26 @@ mod tests {
         ];
         sort(&mut v);
         assert_eq!(v.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["q1", "q2", "stall", "accept"]);
+    }
+
+    #[test]
+    fn merged_sections_list_their_groups_oldest_first() {
+        let mut v = vec![
+            item("gate", InboxGroup::Gate, 3),
+            item("loop", InboxGroup::LoopLimit, 1),
+            item("accept", InboxGroup::Accept, 2),
+            item("stall", InboxGroup::Stalled, 4),
+            item("notice", InboxGroup::Notice, 9),
+            item("session", InboxGroup::Session, 8),
+            item("proposal", InboxGroup::Proposal, 7),
+        ];
+        sort(&mut v);
+        assert_eq!(
+            v.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            ["loop", "stall", "proposal", "session", "notice", "accept", "gate"]
+        );
+        assert_eq!(InboxGroup::Admit.section(), InboxSection::Act);
+        assert_eq!(InboxSection::Act.title(), "To act on");
     }
 
     #[test]

@@ -110,7 +110,7 @@ describe('phone inbox: opening a question (PDT-209)', () => {
     renderWithQuery(<PhoneInbox items={[asked, asking]} />);
     await userEvent.click(screen.getByText(asked.title));
     expect(screen.getByRole('heading', { name: asked.title })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Hold: I will do the dry run first' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Hold: I will do the dry run first' }));
     await userEvent.click(bar().getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(answered(calls)).toEqual({ answers: ['Hold: I will do the dry run first'] }));
   });
@@ -163,9 +163,9 @@ describe('phone inbox list', () => {
     renderWithQuery(<PhoneInboxList items={[stalled, waiting, question]} updates={[update('u1')]} onOpen={onOpen} onReadAll={() => {}} onClear={() => {}} onClearAll={() => {}} onSettings={() => {}} />);
     expect(screen.getByRole('radio', { name: 'Needs you (3)' })).toBeChecked();
     expect(screen.getByRole('radio', { name: 'Updates (unread)' })).toBeInTheDocument();
-    // Sessions waiting come after Approvals, before Stalled.
+    // Stuck steps come before sessions waiting, which are under To act on.
     const nav = screen.getByRole('navigation', { name: 'Inbox items' });
-    expect(within(nav).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Questions', 'Sessions waiting', 'Stalled']);
+    expect(within(nav).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Questions', 'Stuck', 'To act on']);
     await userEvent.click(screen.getByRole('button', { name: 'Review all (3)' }));
     expect(onOpen).toHaveBeenCalledWith('q');
     await userEvent.click(screen.getByText('Reviewer stalled'));
@@ -199,12 +199,13 @@ describe('phone inbox list', () => {
 });
 
 describe('phone triage', () => {
-  it('answers a question with a big choice row and Send, then shows the next item', async () => {
+  it('answers a question with a choice and Send, then shows the next item', async () => {
     const { calls, onMove } = triage([question, stalled], 'q');
     expect(barLabels()).toEqual(['Send']);
     expect(bar().getByRole('button', { name: 'Send' })).toBeDisabled();
-    await userEvent.click(screen.getByRole('button', { name: 'a.txt' }));
-    expect(screen.getByRole('button', { name: 'a.txt' })).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(screen.getByRole('radio', { name: 'a.txt' }));
+    expect(screen.getByRole('radio', { name: 'a.txt' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('1 of 1 answered')).toBeInTheDocument();
     await userEvent.click(bar().getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(answered(calls)).toEqual({ answers: ['a.txt'] }));
     await waitFor(() => expect(onMove).toHaveBeenCalledWith('st'));
@@ -234,7 +235,7 @@ describe('phone triage', () => {
       choices: [{ id: 'resend', title: 'Resume with this message', primary: true }, ...stalled.choices.map((c) => ({ ...c, primary: false }))],
     });
     const { calls } = triage([undelivered], 'un');
-    expect(barLabels()).toEqual(['Take over', 'Nudge', 'Resume with this message']);
+    expect(barLabels()).toEqual(['Nudge', 'Take over', 'Resume with this message']);
     await userEvent.click(bar().getByRole('button', { name: 'Resume with this message' }));
     await waitFor(() => expect(answered(calls)).toEqual({ choice: 'resend' }));
   });

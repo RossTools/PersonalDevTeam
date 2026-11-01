@@ -199,7 +199,10 @@ the sign-in failed, which lists an `mcp_sign_in` Inbox item. Agents get the toke
 **The PM.** A host-level project manager: conversations in the host project, with the PM persona's tools (those
 flagged `pm`) and a briefing built when the session starts (pdt-api `pm.rs`, pdt-core `pm.rs`). Close and Reset end
 one after its journal; a reset starts its successor (`pm_sessions.reset_from`) with the same settings, briefed from
-that journal. A conversation can be
+that journal. The daily update and checkpoint are not hard-coded: the built-in **PM daily checkpoint** workflow runs
+the `pm.update` and `pm.checkpoint` nodes (pdt-api `workflow/nodes/pm.rs`) on an hourly schedule; `pm.update` brings
+each running open conversation due (`pm_sessions.caught_up_at`, `pdt_core::pm::update_due`) up to date through the
+outbox. Journaling at Close, Reset and compaction stays in `pm.rs`. A conversation can be
 held elsewhere too (`pm_sessions.via`): the Discord integration passes the user's DMs to one (pdt-int-discord `dm.rs`),
 through the SDK's `pm` and `conversations` modules (start, send, close; every conversation's events as they are stored,
 `conversations::subscribe_all`; answering a request as the user). Its bot holds a Gateway websocket (`gateway.rs`) in
@@ -271,8 +274,11 @@ link that a forge plugin's `is_change_request_url` accepts, named by its `change
 stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, "PDT can't save changes"
 (`inbox::storage`, while `Store::write_failure` says writes fail), and workflow proposals
 (`inbox::proposals`: one per workflow with a proposed version, id `proposal:<workflow>:<version>`, answered
-by `inbox::answer` with the Versions tab's accept and discard). Notifications (`notifications.rs`) are the transient
-kind.
+by `inbox::answer` with the Versions tab's accept and discard). An item's `group` is what kind of wait it is;
+the list shows a few sections (`InboxGroup::section`: Questions, Approvals, Stuck, To act on, Ready to accept) and
+`inbox::sort` orders by section, then age. The web lays every kind out the same way (`web/src/inbox/itemView.tsx`
+makes one spec per item that the desktop and the phone both render). Notifications (`notifications.rs`) are the
+transient kind.
 
 **Secrets.** Values live in the OS keychain (or, on Linux without a Secret Service, a file only the user can read) and
 in memory; agents and workflows refer to them by name (`run_with_secrets`, `write_secret_file`, `{{secret.x}}` in a

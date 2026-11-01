@@ -399,7 +399,7 @@ describe('phone', () => {
     await userEvent.click(within(top).getByRole('button', { name: 'Screen actions' }));
     expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Open session', 'Dismiss']);
     await userEvent.keyboard('{Escape}');
-    await userEvent.click(await screen.findByRole('button', { name: 'a.txt' }));
+    await userEvent.click(await screen.findByRole('radio', { name: 'a.txt' }));
     await userEvent.click(within(screen.getByRole('group', { name: 'Decision' })).getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('All clear')).toBeInTheDocument();
     await userEvent.click(within(top).getByRole('button', { name: 'Back' }));

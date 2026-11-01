@@ -20,6 +20,7 @@ These come with PDT. You can turn them off, edit them or copy them, but not dele
 | **Ticket comments to the agent** | Sends your comments and the PM's on a ticket to the agent working on it, with where to find the files they attach. Other agents' comments stay on the ticket. | On |
 | **PR comments to the agent** | Sends other people's comments and reviews on the pull request to the agent. | Off |
 | **Base moved while a PR waits** | Tells the agent when the base branch moves while its pull request waits (**PR notices** covers this too). | Off |
+| **PM daily checkpoint** | Brings the PM's open conversations up to date once a day and has each write a journal checkpoint. See [Change when it's brought up to date](the-pm.md#change-when-its-brought-up-to-date). | On |
 
 Plugins add their own while they're on: Jira, say, adds **Import assigned Jira issues** and **Done moves the Jira
 issue**. See [Plugins and connections](plugins.md).
@@ -97,9 +98,15 @@ You set these when you create it; afterwards each lives in its step (click the s
 - **Who accepts**: `user` (you, in the Inbox) or `auto` (it merges once QA passes).
 - **Labels accepted automatically**: tickets with one of these skip Accept (default `agentic`).
 - **Who merges**: `workflow` (the Pipeline merges after Accept) or `person` (it waits for someone to merge, in PDT or
-  on GitHub, and asks you after three days).
+  on GitHub, and asks you after the **Merge wait**).
 - **Passes before asking**: how many times work may go back to Code before PDT asks whether to go on (default 3; see
   [Loop limits](personas-and-approvals.md#loop-limits)).
+- **Merge wait**: how long a merge waits for someone, to merge it or to clear what blocks it, before the Inbox asks
+  again (default 3 days).
+- **CI wait**: how long a merge waits for CI on the pull request to finish before the Inbox asks (default 6 hours).
+- **Code time limit**: how long the Code step may run before the Pipeline stops there (default 8 hours).
+
+Pipelines you added earlier keep these defaults.
 
 What any workflow may merge is the project's policy, set apart from workflows: see
 [Approvals and merging](personas-and-approvals.md#approvals-and-merging).
@@ -227,6 +234,8 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
 - **Decide**: **If** (yes or no), **Switch** (one exit per value), **Wait** (for a time, or an event with a time
   limit), **Ask the user** (a gate).
 - **Tell people**: **Notify me**, **Put it in my Inbox**, a Discord post, a comment on a GitHub issue.
+- **The PM**: **PM daily update** brings the PM's open conversations up to date; **PM journal checkpoint** asks them
+  to write their journal entry.
 - **Reach out**: **Run a command**, **HTTP request** (through a connection), **MCP tool**, **Run a workflow**.
 - Plugins (Jira, Buildkite, GitHub…) add their own steps while they're on.
 
@@ -239,8 +248,8 @@ with that message.
 
 ### Gates
 
-**Ask the user** asks you something and waits. The question shows in the Inbox under **Gates** (or **Ready to
-accept**) with a box for a note, which goes on the ticket as your comment. Each choice is an exit. A gate can give up
+**Ask the user** asks you something and waits. The question shows in the Inbox under **Ready to accept** with a
+box for a note, which goes on the ticket as your comment. Each choice is an exit. A gate can give up
 after a time, or close by itself when something else happens first (the ticket merged, say).
 
 ### Agent steps and outcomes

@@ -24,6 +24,8 @@ pub enum ParamType {
     Connection,
     /// A list of text (labels): a JSON list, or one string with the items comma-separated.
     List,
+    /// A length of time, in milliseconds in the document: a number of ms, or text such as `90m`, `6h`, `3d`.
+    Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -63,6 +65,8 @@ pub enum Category {
     Issues,
     Notifications,
     Releases,
+    /// The PM's conversations.
+    Pm,
     /// The user's own templates, and anything else.
     #[default]
     Other,
@@ -119,6 +123,7 @@ fn typed(p: &TemplateParam, v: &Value) -> Result<Value, String> {
             Some(s) if p.choices.iter().any(|c| c == s) => Ok(json!(s)),
             _ => Err(bad()),
         },
+        ParamType::Duration => duration_ms(v).map(|ms| json!(ms)).ok_or_else(bad),
         ParamType::List => {
             let items: Vec<&str> = match v {
                 Value::String(s) => s.split(',').collect(),
@@ -131,6 +136,28 @@ fn typed(p: &TemplateParam, v: &Value) -> Result<Value, String> {
     }
 }
 
+/// Milliseconds from a whole number of them, or from text: digits with an optional unit (`ms`, `s`, `m`, `h`, `d`).
+fn duration_ms(v: &Value) -> Option<u64> {
+    match v {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => {
+            let s = s.trim().to_ascii_lowercase();
+            let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+            let (n, unit) = s.split_at(digits);
+            let scale: u64 = match unit.trim() {
+                "" | "ms" => 1,
+                "s" => 1000,
+                "m" => 60_000,
+                "h" => 3_600_000,
+                "d" => 86_400_000,
+                _ => return None,
+            };
+            n.parse::<u64>().ok()?.checked_mul(scale)
+        }
+        _ => None,
+    }
+}
+
 fn describe(p: &TemplateParam) -> String {
     match p.kind {
         ParamType::String | ParamType::Text => "text".into(),
@@ -139,6 +166,7 @@ fn describe(p: &TemplateParam) -> String {
         ParamType::Boolean => "true or false".into(),
         ParamType::Choice => format!("one of {}", p.choices.join(", ")),
         ParamType::List => "a list of text".into(),
+        ParamType::Duration => "a duration (milliseconds, or such as 90m, 6h, 3d)".into(),
     }
 }
 
@@ -191,7 +219,7 @@ fn placeholder(p: &TemplateParam) -> Value {
     }
     match p.kind {
         ParamType::String | ParamType::Text | ParamType::Connection => json!(""),
-        ParamType::Number => json!(0),
+        ParamType::Number | ParamType::Duration => json!(0),
         ParamType::Boolean => json!(false),
         ParamType::Choice => json!(p.choices.first().cloned().unwrap_or_default()),
         ParamType::List => json!([]),
@@ -293,6 +321,16 @@ mod tests {
         assert_eq!(list(json!({"labels": ["a", " b "]})).unwrap()["labels"], json!(["a", "b"]));
         assert_eq!(list(json!({})).unwrap()["labels"], json!([]));
         assert!(list(json!({"labels": [1]})).unwrap_err().contains("a list of text"));
+        let wait = [param("wait", ParamType::Duration)];
+        let ms = |g: Value| param_values(&wait, g.as_object().unwrap()).map(|v| v["wait"].clone());
+        assert_eq!(ms(json!({"wait": 5000})).unwrap(), json!(5000));
+        assert_eq!(ms(json!({"wait": "6h"})).unwrap(), json!(6 * 3_600_000));
+        assert_eq!(ms(json!({"wait": " 3D "})).unwrap(), json!(3 * 86_400_000));
+        assert_eq!(ms(json!({"wait": "90m"})).unwrap(), json!(90 * 60_000));
+        assert_eq!(ms(json!({"wait": "250"})).unwrap(), json!(250));
+        for bad in [json!(-1), json!(1.5), json!("3 weeks"), json!("h"), json!(true)] {
+            assert!(ms(json!({"wait": bad})).unwrap_err().contains("a duration"), "{bad}");
+        }
         let mut repo = param("repo", ParamType::String);
         repo.required = true;
         assert_eq!(Value::Object(placeholder_values(&[repo])), json!({"repo": "{{params.repo}}"}), "left for later");
