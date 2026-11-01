@@ -69,6 +69,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   tracks nothing in it (pdt-git `is_disposable`, checked per path by pdt-api `storage::clean_checkout`), and never
   while a session or run works in the worktree. The automatic cleanup touches only worktrees of closed tickets with no
   active attempt, and removes a worktree only through `remove_worktree` without force or deleting the branch.
+- **PDT's git never takes optional locks** (`GIT_OPTIONAL_LOCKS=0` on every git pdt-git runs). A read such as
+  `git status` would otherwise refresh the index under `index.lock`, failing a git command the agent runs in the same
+  worktree at that moment (the background size measuring reads worktrees agents work in).
 - **Finish never discards uncommitted changes** unless asked (`discardChanges`), and runs in its own task so it
   completes when the agent that called it is stopped.
 - **Workflows hear of a Start only once its session exists** (`announce_start`).

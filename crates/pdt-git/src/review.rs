@@ -278,7 +278,7 @@ pub struct MergePreview {
 fn merge_tree(repo: &Path, base: &str, branch: &str) -> Result<(String, Vec<String>), GitError> {
     use std::process::Command;
     let mut cmd = Command::new("git");
-    cmd.env("LC_ALL", "C").env("LANGUAGE", "C");
+    cmd.env("LC_ALL", "C").env("LANGUAGE", "C").env("GIT_OPTIONAL_LOCKS", "0");
     for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"] {
         cmd.env_remove(var);
     }

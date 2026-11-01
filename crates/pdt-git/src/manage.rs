@@ -237,6 +237,24 @@ mod tests {
         git(dir, &["commit", "-q", "-m", "init"]);
     }
 
+    /// Reading a checkout never rewrites its index: `git status` refreshes a stale index and writes it back under
+    /// `index.lock`, which fails a git command the agent (or a test) runs in the worktree at that moment (PDT-335).
+    #[test]
+    fn reading_a_checkout_leaves_its_index_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("work");
+        repo(&dir);
+        // Same content, new timestamp: the index's stat data is stale, so a plain `git status` would refresh it.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        std::fs::File::options().write(true).open(dir.join("README.md")).unwrap().set_modified(later).unwrap();
+        let index = dir.join(".git/index");
+        let before = std::fs::read(&index).unwrap();
+        assert!(!is_dirty(&dir).unwrap());
+        assert!(unpushed(&dir).unwrap().changed.is_empty());
+        assert!(status(&dir, "").unwrap().is_empty());
+        assert_eq!(std::fs::read(&index).unwrap(), before, "the index was rewritten");
+    }
+
     #[test]
     fn only_ignored_untracked_paths_are_disposable() {
         let tmp = tempfile::tempdir().unwrap();

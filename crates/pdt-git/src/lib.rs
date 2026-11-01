@@ -61,6 +61,9 @@ fn git_with_env(dir: &Path, args: &[&str], inherited_env: &[(&str, &str)]) -> Re
     for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"] {
         cmd.env_remove(var);
     }
+    // PDT reads checkouts agents work in: a read (`git status`) must not take `index.lock` to refresh the index, or
+    // the agent's own git command fails at that moment (PDT-335). Writes still take the locks they need.
+    cmd.env("GIT_OPTIONAL_LOCKS", "0");
     let output = cmd.arg("-C").arg(dir).args(args).output().map_err(|e| {
         if e.kind() == ErrorKind::NotFound { GitError::GitMissing } else { GitError::Command(e.to_string()) }
     })?;
@@ -86,7 +89,7 @@ fn git_bytes(dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Result<V
     use std::io::Write;
     use std::process::Stdio;
     let mut cmd = Command::new("git");
-    cmd.env("LC_ALL", "C").env("LANGUAGE", "C");
+    cmd.env("LC_ALL", "C").env("LANGUAGE", "C").env("GIT_OPTIONAL_LOCKS", "0");
     for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"] {
         cmd.env_remove(var);
     }
