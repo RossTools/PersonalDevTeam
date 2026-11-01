@@ -541,6 +541,13 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/documents/{id}/comments", get(crate::documents::routes::comments))
         .route("/documents/{id}/comments/{comment}/replies", axum::routing::post(crate::documents::routes::reply))
         .route("/documents/{id}/comments/{comment}/resolve", axum::routing::post(crate::documents::routes::resolve))
+        .route(
+            "/sessions/{id}/documents",
+            get(crate::documents::routes::beside)
+                .post(crate::documents::routes::open_beside)
+                .put(crate::documents::routes::order_beside),
+        )
+        .route("/sessions/{id}/documents/{doc}", axum::routing::delete(crate::documents::routes::close_beside))
         .route("/tickets/{id}/parts", axum::routing::post(crate::parts::create))
         .route("/tickets/{id}/start", axum::routing::post(crate::start::start))
         .route("/tickets/{id}/refine", axum::routing::post(crate::tickets::refine))

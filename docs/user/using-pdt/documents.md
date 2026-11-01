@@ -37,6 +37,36 @@ project › Documents**.
 ticket and project, and opens it. Agents working on the ticket see its documents and are told to read the design doc
 before they start.
 
+## Work on documents with agents and the PM
+
+Agents and the PM read and change documents themselves, whichever provider keeps them. Ask the PM for a budget sheet
+or an agent for a design and it writes a document linked to the ticket or project, never a file in your repository. In
+a doc they replace or add sections, change text and fill in tables; in a sheet they write values and formulas, add,
+rename and delete sheets, format cells, add conditional formats and charts, and sort and filter, as far as the provider
+can. They read a document's comments, reply to them and resolve them.
+
+Reading never asks. Changing a document, making one, linking one, and replying to or resolving a comment ask you
+first, as the PM's other changes do, unless the project lets the PM act without asking (**Settings › the project › Pipeline and policies**). What other
+people wrote in a document's comments reaches agents marked as outside input, never as instructions.
+
+## Documents beside a conversation
+
+A document can sit in a panel beside an agent's conversation or a PM conversation, so you watch the work land as it
+happens: what an edit changed lights up for a moment.
+
+- **Open a document beside…** in a conversation's **⋯** menu (in a PM conversation, **Open beside…** at the top)
+  picks one of your documents.
+- **Open beside** on a document's **⋯** menu, or the panel button on a row of a ticket's **Documents**, opens it beside
+  one of the ticket's conversations or a PM conversation, and takes you there.
+- An agent or the PM can open one there itself ("I've drafted the plan; it's open on the right").
+
+Several documents open as tabs. Click a tab to show it, drag it to move it (or use its right-click menu, a long press
+on touch screens), and **×** closes it. The panel's buttons open another document, open the one shown in
+**Documents**, and collapse the panel to a strip at the edge; drag the panel's left edge to make it wider. The tabs stay
+with the conversation, and the panel's width and whether it is collapsed are remembered per conversation.
+
+On a phone, a **Conversation | Documents** switch at the top of the conversation flips between the two.
+
 ## Rename or remove
 
 **Rename** (the pencil beside the title, or the **⋯** menu) renames it, at the provider too when it can. In the **⋯**

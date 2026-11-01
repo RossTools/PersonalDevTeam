@@ -1704,7 +1704,7 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
         v["documents"] = json!(documents);
         v["documentsNote"] = json!(
             "Documents are linked to this ticket. Read its design doc (and any other that matters) before you start: \
-             `GET <PDT's API>/documents/<id>/content` gives a doc as Markdown, a sheet as its cells."
+             doc_read gives a doc as Markdown, sheet_read a sheet's cells."
         );
     }
     v["comments"] = json!(comments);
