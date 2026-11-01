@@ -20,6 +20,7 @@ These come with PDT. You can turn them off, edit them or copy them, but not dele
 | **Ticket comments to the agent** | Sends your comments and the PM's on a ticket to the agent working on it, with where to find the files they attach. Other agents' comments stay on the ticket. | On |
 | **PR comments to the agent** | Sends other people's comments and reviews on the pull request to the agent. | Off |
 | **Base moved while a PR waits** | Tells the agent when the base branch moves while its pull request waits (**PR notices** covers this too). | Off |
+| **PM daily checkpoint** | Brings the PM's open conversations up to date once a day and has each write a journal checkpoint. See [Change when it's brought up to date](the-pm.md#change-when-its-brought-up-to-date). | On |
 
 Plugins add their own while they're on: Jira, say, adds **Import assigned Jira issues** and **Done moves the Jira
 issue**. See [Plugins and connections](plugins.md).
@@ -218,6 +219,8 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
 - **Decide**: **If** (yes or no), **Switch** (one exit per value), **Wait** (for a time, or an event with a time
   limit), **Ask the user** (a gate).
 - **Tell people**: **Notify me**, **Put it in my Inbox**, a Discord post, a comment on a GitHub issue.
+- **The PM**: **PM daily update** brings the PM's open conversations up to date; **PM journal checkpoint** asks them
+  to write their journal entry.
 - **Reach out**: **Run a command**, **HTTP request** (through a connection), **MCP tool**, **Run a workflow**.
 - Plugins (Jira, Buildkite, GitHub…) add their own steps while they're on.
 

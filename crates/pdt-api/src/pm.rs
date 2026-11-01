@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use pdt_core::conversation::{Answer, PdtMessage, PermissionMode, SessionMode};
+use pdt_core::conversation::{Answer, PermissionMode, SessionMode};
 use pdt_core::pm::{
     self, AskTarget, BriefConversation, BriefEvent, BriefInbox, BriefJournal, BriefNote, BriefProject, BriefTicket,
     BriefingData, NewNote, NoteKind, NotePatch, PmNote, PmSessionInfo, PmSessionPatch, PmState, RotateReason, Rotation,
@@ -447,45 +447,109 @@ pub(crate) async fn write_journal(st: &AppState, s: &Session, body: &str) -> Res
     Ok(n)
 }
 
-/// A PM session ended a turn (spec §5.3): one in use gets its daily update when it is due, and one the user closed
-/// ends once the turn that was asked for its journal is over. Neither a full context nor age ends one: the agent
-/// compacts its own context ([`compacted`]).
+/// A PM session ended a turn (spec §5.3): one the user closed ends once the turn that was asked for its journal is
+/// over. One in use carries on: its daily update comes from the PM daily checkpoint workflow ([`send_updates`],
+/// PDT-372), and neither a full context nor age ends one: the agent compacts its own context ([`compacted`]).
 pub(crate) async fn turn_ended(st: &AppState, id: &str) {
     let Ok(Some(row)) = st.store.get_pm_session(id).await else { return };
+    if row.rotation != Rotation::Journal {
+        return;
+    }
     let Ok(Some(s)) = st.store.get_session(id).await else { return };
-    match row.rotation {
-        Rotation::Done => {}
-        Rotation::Journal => {
-            // A turn of the user's that ended before the journal request went in: wait for the request's turn.
-            let waiting = st.store.waiting_session_messages().await.unwrap_or_default();
-            if waiting.iter().any(|m| m.session_id.as_deref() == Some(id)) {
-                return;
-            }
-            end_session(st, &s, Rotation::Journal, None).await
+    // A turn of the user's that ended before the journal request went in: wait for the request's turn.
+    let waiting = st.store.waiting_session_messages().await.unwrap_or_default();
+    if waiting.iter().any(|m| m.session_id.as_deref() == Some(id)) {
+        return;
+    }
+    end_session(st, &s, Rotation::Journal, None).await
+}
+
+/// The PM conversations a scheduled update or checkpoint goes to (PDT-372): open (not closing), running, with none of
+/// PDT's checkpoint requests or updates still waiting for them.
+async fn open_conversations(st: &AppState) -> Result<Vec<(PmSessionRow, Session)>, ApiError> {
+    let mut out = vec![];
+    for row in st.store.list_pm_sessions().await? {
+        if row.rotation != Rotation::None || checkpoint_waiting(st, &row.session_id).await {
+            continue;
         }
-        Rotation::None => {
-            let now = now_ms();
-            // News is for a conversation in use: the turn answering an update never asks for another.
-            if !pm::update_due(row.caught_up_at, now, st.pm_update_every_ms)
-                || !user_wrote_since(st, id, row.caught_up_at).await
-                || checkpoint_waiting(st, id).await
-            {
-                return;
-            }
-            let message = match update_data(st, id, &row, now).await {
-                Ok(d) => pm::daily_message(&d),
-                Err(e) => return tracing::warn!(session = %id, error = %e.message(), "could not gather a PM update"),
-            };
-            if !matches!(st.store.set_pm_caught_up(id, row.caught_up_at, now).await, Ok(true)) {
-                return;
-            }
-            // A quiet day since a checkpoint newer than the user's last message: nothing to say (PDT-211).
-            let Some((kind, text)) = message else { return };
-            let key = if kind == PdtMessage::Update { pm::UPDATE_KEY } else { pm::CHECKPOINT_KEY };
-            tracing::info!(session = %id, kind = ?kind, "sending a PM conversation its daily update");
-            queue_checkpoint(st, &s, key, text).await;
+        let Some(s) = st.store.get_session(&row.session_id).await? else { continue };
+        if s.status == SessionStatus::Running {
+            out.push((row, s));
         }
     }
+    Ok(out)
+}
+
+/// A daily update `pm.update` sent (or would send).
+#[derive(Debug, Clone)]
+pub(crate) struct SentUpdate {
+    pub session_id: String,
+    pub title: String,
+    pub text: String,
+}
+
+/// What `pm.update` did: the updates, and the conversations that had nothing new (they are brought up to date, and
+/// `pm.checkpoint` asks them only for a checkpoint).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Updates {
+    pub updated: Vec<SentUpdate>,
+    pub nothing_new: Vec<String>,
+}
+
+/// Brings every open PM conversation due its daily update up to date (spec §5.3, PDT-211; the PM daily checkpoint
+/// workflow's `pm.update` since PDT-372): `after` ms since its last update, and, with `in_use`, the user wrote to it
+/// since. Each gets what happened since then, through the outbox so it never goes into a running turn; one with
+/// nothing new is only listed. `dry_run` changes nothing.
+pub(crate) async fn send_updates(st: &AppState, after: i64, in_use: bool, dry_run: bool) -> Result<Updates, ApiError> {
+    let now = now_ms();
+    let mut out = Updates::default();
+    for (row, s) in open_conversations(st).await? {
+        if !pm::update_due(row.caught_up_at, now, after)
+            || (in_use && !user_wrote_since(st, &s.id, row.caught_up_at).await)
+        {
+            continue;
+        }
+        let message = pm::update_message(&update_data(st, &s.id, &row, now).await?);
+        if !dry_run && !matches!(st.store.set_pm_caught_up(&s.id, row.caught_up_at, now).await, Ok(true)) {
+            continue;
+        }
+        let Some(text) = message else {
+            out.nothing_new.push(s.id.clone());
+            continue;
+        };
+        if !dry_run {
+            tracing::info!(session = %s.id, "sending a PM conversation its daily update");
+            queue_checkpoint(st, &s, pm::UPDATE_KEY, text.clone()).await;
+        }
+        out.updated.push(SentUpdate { session_id: s.id.clone(), title: s.title.clone(), text });
+    }
+    Ok(out)
+}
+
+/// Asks open PM conversations for a journal checkpoint (`pm.checkpoint`, PDT-372): those in `only` (every open one
+/// when None) whose user wrote to them since their last checkpoint ([`pm::checkpoint_due`]). Returns the ones asked
+/// (or that would be, with `dry_run`).
+pub(crate) async fn ask_checkpoints(
+    st: &AppState,
+    only: Option<&[String]>,
+    dry_run: bool,
+) -> Result<Vec<String>, ApiError> {
+    let mut asked = vec![];
+    for (_, s) in open_conversations(st).await? {
+        if only.is_some_and(|ids| !ids.contains(&s.id)) {
+            continue;
+        }
+        let checkpointed_at = st.store.session_journal(&s.id).await?.map(|n| n.updated_at);
+        if !pm::checkpoint_due(checkpointed_at, user_wrote_at(st, &s.id).await) {
+            continue;
+        }
+        if !dry_run {
+            tracing::info!(session = %s.id, "asking a PM conversation for its daily journal checkpoint");
+            queue_checkpoint(st, &s, pm::CHECKPOINT_KEY, pm::quiet_checkpoint_request()).await;
+        }
+        asked.push(s.id);
+    }
+    Ok(asked)
 }
 
 /// A PM conversation's agent compacted its context: it is asked for a journal checkpoint, through the outbox so the
@@ -585,18 +649,7 @@ async fn update_data(st: &AppState, id: &str, row: &PmSessionRow, now: i64) -> R
         };
         journal.push(pm::BriefConversationJournal { title, at: n.updated_at, body: n.body });
     }
-    let checkpointed_at = st.store.session_journal(id).await?.map(|n| n.updated_at);
-    let user_wrote_at = user_wrote_at(st, id).await.unwrap_or(0);
-    Ok(pm::UpdateData {
-        now,
-        since,
-        first: since == row.created_at,
-        events,
-        inbox,
-        journal,
-        checkpointed_at,
-        user_wrote_at,
-    })
+    Ok(pm::UpdateData { now, since, first: since == row.created_at, events, inbox, journal })
 }
 
 /// Asks a PM conversation the user closed or is resetting (rotation `journal`) for its journal entry with `text`, through the outbox (7a's
@@ -843,7 +896,7 @@ async fn briefing_data(st: &AppState, session_id: &str, reset_from: Option<&str>
     let since =
         st.store.list_pm_sessions().await?.into_iter().find(|r| r.session_id != session_id).map(|r| r.created_at);
     let filter = pdt_store::EventFilter {
-        since: Some(since.unwrap_or(now - pm::UPDATE_EVERY_MS)),
+        since: Some(since.unwrap_or(now - pm::BRIEF_SINCE_MS)),
         newest_first: true,
         limit: BRIEF_EVENTS,
         ..Default::default()
