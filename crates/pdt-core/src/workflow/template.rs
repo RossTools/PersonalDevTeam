@@ -65,6 +65,8 @@ pub enum Category {
     Issues,
     Notifications,
     Releases,
+    /// The PM's conversations.
+    Pm,
     /// The user's own templates, and anything else.
     #[default]
     Other,

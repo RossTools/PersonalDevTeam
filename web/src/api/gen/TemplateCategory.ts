@@ -3,4 +3,4 @@
 /**
  * Where a template sits in the New workflow gallery (PDT-229).
  */
-export type TemplateCategory = "ciPr" | "tickets" | "issues" | "notifications" | "releases" | "other";
+export type TemplateCategory = "ciPr" | "tickets" | "issues" | "notifications" | "releases" | "pm" | "other";

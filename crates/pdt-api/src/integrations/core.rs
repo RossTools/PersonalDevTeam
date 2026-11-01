@@ -46,6 +46,8 @@ impl Integration for Core {
             Box::new(inbox_admit::InboxAdmit),
             Box::new(brief::Archive),
             Box::new(brief::Read),
+            Box::new(pm::PmUpdate),
+            Box::new(pm::PmCheckpoint),
             Box::new(merge::Merge),
             Box::new(attempt::AgentWorking),
             Box::new(attempt::HasChanges),

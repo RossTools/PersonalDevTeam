@@ -10,6 +10,7 @@ mod github_issue_done;
 mod late_commits;
 mod missing_release;
 mod pick_up_tickets;
+mod pm_daily_checkpoint;
 mod pr_feedback;
 mod pr_notices;
 
@@ -40,6 +41,7 @@ pub const PR_FEEDBACK: &str = "pr-feedback";
 pub const LATE_COMMITS: &str = "late-commits";
 pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
 pub const PICK_UP_TICKETS: &str = "pick-up-tickets";
+pub const PM_DAILY_CHECKPOINT: &str = "pm-daily-checkpoint";
 /// The Cut a release template (without `builtin:`); a built-in workflow until PDT-301 ([`RETIRED`]).
 pub const CUT_RELEASE: &str = "cut-release";
 
@@ -57,6 +59,12 @@ pub const BUILTINS: &[Builtin] = &[
     },
     Builtin { id: BASE_MOVED, enabled: false, category: Category::CiPr, doc: base_moved::base_moved },
     Builtin { id: PR_FEEDBACK, enabled: false, category: Category::CiPr, doc: pr_feedback::pr_feedback },
+    Builtin {
+        id: PM_DAILY_CHECKPOINT,
+        enabled: true,
+        category: Category::Pm,
+        doc: pm_daily_checkpoint::pm_daily_checkpoint,
+    },
 ];
 
 /// The GitHub plugin's built-ins ([`crate::integrations::Integration::builtin_workflows`]): left out while it is off
