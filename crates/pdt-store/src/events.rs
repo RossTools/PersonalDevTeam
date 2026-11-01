@@ -51,14 +51,7 @@ impl Store {
         session_id: &str,
         e: NewEvent<'_>,
     ) -> Result<ConversationEvent, StoreError> {
-        let body = serde_json::to_string(e.event).map_err(|err| StoreError::Corrupt(err.to_string()))?;
-        let redacted = self.redactor.text(&body);
-        let event = match &redacted {
-            std::borrow::Cow::Borrowed(_) => e.event.clone(),
-            std::borrow::Cow::Owned(b) => serde_json::from_str(b).unwrap_or_else(|_| e.event.clone()),
-        };
-        let body = redacted.into_owned();
-        let raw = e.raw.map(|r| self.redactor.string(&cap_text(r, MAX_RAW)));
+        let (event, body, raw) = self.redacted(&e)?;
         // IMMEDIATE: this reads then writes, and a deferred transaction that another writer gets ahead of cannot be
         // upgraded (SQLITE_BUSY_SNAPSHOT, which the busy timeout does not retry).
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -125,6 +118,85 @@ impl Store {
         Ok(ConversationEvent { seq, pos, ts: e.ts, item_id: e.item_id.map(String::from), turn_id, event })
     }
 
+    /// An event as stored: redacted (the event, its body), and its raw frames capped and redacted.
+    fn redacted(&self, e: &NewEvent<'_>) -> Result<(AgentEvent, String, Option<String>), StoreError> {
+        let body = serde_json::to_string(e.event).map_err(|err| StoreError::Corrupt(err.to_string()))?;
+        let redacted = self.redactor.text(&body);
+        let event = match &redacted {
+            std::borrow::Cow::Borrowed(_) => e.event.clone(),
+            std::borrow::Cow::Owned(b) => serde_json::from_str(b).unwrap_or_else(|_| e.event.clone()),
+        };
+        let raw = e.raw.map(|r| self.redactor.string(&cap_text(r, MAX_RAW)));
+        Ok((event, redacted.into_owned(), raw))
+    }
+
+    /// Puts events that are missing from the log right after the item `after` (PDT-331: a gap left by writes that
+    /// failed); each takes the time of the row it follows (the agent's record they come from has none PDT keeps). The
+    /// rows after it move down to make room and get new `seq`s, so a viewer that asks for what changed since its last
+    /// `seq` places them again. Nothing happens when `after` is not logged (0).
+    pub async fn insert_session_events_after(
+        &self,
+        session_id: &str,
+        after: &str,
+        events: &[NewEvent<'_>],
+    ) -> Result<usize, StoreError> {
+        self.noted(self.insert_session_events_after_unnoted(session_id, after, events).await)
+    }
+
+    async fn insert_session_events_after_unnoted(
+        &self,
+        session_id: &str,
+        after: &str,
+        events: &[NewEvent<'_>],
+    ) -> Result<usize, StoreError> {
+        let rows = events.iter().map(|e| self.redacted(e)).collect::<Result<Vec<_>, _>>()?;
+        let mut tx = self.write_tx().await?;
+        let at: Option<(i64, i64)> =
+            sqlx::query_as("SELECT pos, ts FROM session_events WHERE session_id = ? AND item_id = ?")
+                .bind(session_id)
+                .bind(after)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some((at, ts)) = at else { return Ok(0) };
+        let n = i64::try_from(rows.len()).unwrap_or(i64::MAX);
+        let top: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE session_id = ?")
+            .bind(session_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        // Above every seq there is, so no two rows ever share one, in the moved rows' own order.
+        sqlx::query("UPDATE session_events SET pos = pos + ?, seq = seq + ? WHERE session_id = ? AND pos > ?")
+            .bind(n)
+            .bind(top)
+            .bind(session_id)
+            .bind(at)
+            .execute(&mut *tx)
+            .await?;
+        let mut seq: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE session_id = ?")
+            .bind(session_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        for (i, (e, (event, body, raw))) in events.iter().zip(&rows).enumerate() {
+            seq += 1;
+            sqlx::query(
+                "INSERT INTO session_events (session_id, seq, pos, ts, kind, item_id, turn_id, body, raw) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(session_id)
+            .bind(seq)
+            .bind(at + 1 + i64::try_from(i).unwrap_or(0))
+            .bind(ts)
+            .bind(event.kind())
+            .bind(e.item_id)
+            .bind(e.turn_id)
+            .bind(body)
+            .bind(raw)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(rows.len())
+    }
+
     /// Events with `seq > after`, oldest first, at most `limit`.
     pub async fn list_session_events(
         &self,
@@ -185,6 +257,16 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(r.rows_affected())
+    }
+
+    /// The item ids the log has.
+    pub async fn session_item_ids(&self, session_id: &str) -> Result<std::collections::HashSet<String>, StoreError> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT item_id FROM session_events WHERE session_id = ? AND item_id IS NOT NULL")
+                .bind(session_id)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().map(|(t,)| t).collect())
     }
 
     /// The agent turn ids the log has (for importing only the turns it lacks).
@@ -306,6 +388,20 @@ mod tests {
         let back = store.get_session("s1").await.unwrap().unwrap();
         assert_eq!(back.model, None);
         assert!(back.bypass_permissions);
+        // A gap filled in after the first item: the rows after it move down and get new seqs.
+        let lost: &'static AgentEvent = Box::leak(Box::new(AgentEvent::Reasoning { summary: "lost".into() }));
+        let n =
+            store.insert_session_events_after("s1", "t:t1", &[ev(Some("th:x"), Some("turn1"), lost)]).await.unwrap();
+        assert_eq!(n, 1);
+        assert!(store.session_item_ids("s1").await.unwrap().contains("th:x"));
+        let all = store.list_session_events("s1", 0, 100).await.unwrap();
+        let mut by_pos: Vec<(i64, Option<&str>)> = all.iter().map(|e| (e.pos, e.item_id.as_deref())).collect();
+        by_pos.sort();
+        assert_eq!(by_pos, [(1, Some("t:t1")), (2, Some("th:x")), (3, None)]);
+        let moved = all.iter().find(|e| e.pos == 3).unwrap();
+        assert!(moved.seq > 3, "the moved row is sent again: {}", moved.seq);
+        assert_eq!(store.list_session_events("s1", 3, 100).await.unwrap().len(), 2, "both the new and the moved row");
+        assert_eq!(store.insert_session_events_after("s1", "nope", &[ev(None, None, lost)]).await.unwrap(), 0);
         store.delete_session("s1").await.unwrap();
         assert!(store.list_session_events("s1", 0, 100).await.unwrap().is_empty(), "events go with the session");
     }

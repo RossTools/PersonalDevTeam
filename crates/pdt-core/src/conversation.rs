@@ -12,6 +12,7 @@ pub mod draft;
 pub mod flavor;
 pub mod grok;
 pub mod omp;
+pub mod repair;
 
 use crate::activity::Activity;
 use serde::{Deserialize, Serialize};
