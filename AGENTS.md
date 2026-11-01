@@ -54,6 +54,8 @@ Add or update tickets through the API when work finishes or new work turns up.
   before relying on a new API route or a fix.
 
 ## Layout
+Adding a route, API client call, MCP tool, persona prompt, built-in workflow or screen: each goes in its own file,
+plus at most one line in a central list (docs/dev/architecture.md "Adding to the hot lists").
 - crates/pdt-core — pure domain types and rules (TDD), brand constants (no I/O)
 - crates/pdt-git — git CLI wrapper
 - crates/pdt-store — SQLite (sqlx), migrations in crates/pdt-store/migrations

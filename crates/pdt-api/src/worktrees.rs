@@ -169,3 +169,11 @@ pub(crate) async fn remove_worktree(st: &AppState, id: &str, force: bool, delete
         )),
     }
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{delete, get};
+    axum::Router::new()
+        .route("/worktrees/{id}", delete(remove))
+        .route("/projects/{id}/worktrees", get(list).post(create))
+}

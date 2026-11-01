@@ -726,6 +726,17 @@ pub async fn run_storage(st: AppState) {
     .await
 }
 
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post, put};
+    axum::Router::new()
+        .route("/worktrees/{id}/clean", post(clean))
+        .route("/storage", get(view))
+        .route("/storage/refresh", post(refresh))
+        .route("/storage/clean-finished", post(clean_finished))
+        .route("/projects/{id}/storage", put(put_settings))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

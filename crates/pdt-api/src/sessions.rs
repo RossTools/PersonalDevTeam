@@ -903,3 +903,14 @@ pub(crate) async fn stop_and_remove(st: &AppState, id: &str) -> Result<(), ApiEr
     }
     remove_locked(st, id).await
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/projects/{id}/sessions", get(list))
+        .route("/sessions", post(create))
+        .route("/sessions/{id}", get(get_one).patch(update).delete(remove))
+        .route("/sessions/{id}/kill", post(kill))
+        .route("/sessions/{id}/restart", post(restart))
+}

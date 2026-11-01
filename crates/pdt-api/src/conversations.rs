@@ -2066,3 +2066,17 @@ pub(crate) async fn capabilities(
         ..Default::default()
     })))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/sessions/{id}/events", get(events))
+        .route("/sessions/{id}/messages", post(post_message))
+        .route("/sessions/{id}/requests/{request_id}", post(post_answer))
+        .route("/sessions/{id}/interrupt", post(post_interrupt))
+        .route("/sessions/{id}/ticket-draft", post(ticket_draft))
+        .route("/sessions/{id}/mode", post(switch_mode))
+        .route("/sessions/{id}/terminal", post(open_terminal).delete(close_terminal))
+        .route("/agents/{agent}/capabilities", get(capabilities))
+}

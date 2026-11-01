@@ -272,3 +272,17 @@ pub(crate) async fn remove(
     let _ = tokio::fs::remove_file(path_of(&st, &a)).await;
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new()
+        .route(
+            "/tickets/{id}/attachments",
+            get(list)
+                .post(upload)
+                // Room for the largest image; anything bigger is refused with a clear error.
+                .layer(axum::extract::DefaultBodyLimit::max(pdt_core::conversation::composer::MAX_IMAGE_BYTES + 1)),
+        )
+        .route("/tickets/{id}/attachments/{attachment_id}", get(self::get).delete(remove))
+}

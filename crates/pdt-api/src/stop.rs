@@ -183,3 +183,9 @@ pub(crate) async fn after_move(st: &AppState, ticket_id: &str, stage: TicketStag
         tracing::warn!(ticket = %ticket_id, error = %e.message(), "could not stop the moved ticket's work");
     }
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::post;
+    axum::Router::new().route("/tickets/{id}/stop", post(stop_route))
+}

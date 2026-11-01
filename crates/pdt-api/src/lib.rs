@@ -1,6 +1,7 @@
 mod activity;
 mod agent_mcp;
 mod attachments;
+mod background;
 mod bug_reports;
 mod checks;
 mod ci;
@@ -68,6 +69,7 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::run_activity_ticker;
+pub use background::start_background;
 pub use checks::{HostChecks, run_host_checks};
 pub use conversations::{
     IDLE_PARK, conversation_live, expire_pending_messages, park_idle_conversations, recover_conversations,

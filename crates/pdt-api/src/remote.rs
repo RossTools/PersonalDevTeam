@@ -312,6 +312,12 @@ pub(crate) async fn refresh(State(st): State<AppState>) -> Result<Json<RemoteSta
     Ok(Json(apply_remote_access(&st).await))
 }
 
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new().route("/host/remote", get(get_remote)).route("/host/remote/refresh", post(refresh))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

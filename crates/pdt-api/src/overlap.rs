@@ -232,3 +232,9 @@ pub(crate) fn describe(list: &[TicketOverlap]) -> String {
 pub(crate) fn worst(list: &[TicketOverlap]) -> OverlapLevel {
     list.iter().map(|o| o.level).max().unwrap_or_default()
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new().route("/projects/{id}/areas", get(areas))
+}

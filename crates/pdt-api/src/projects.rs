@@ -349,3 +349,13 @@ pub(crate) async fn pull_branch(project: &pdt_core::project::Project, branch: St
     }
     Ok(PullResult { branch, outcome, message })
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/projects", get(list).post(create))
+        .route("/projects/clone", post(clone))
+        .route("/projects/{id}", get(get_one).patch(update).delete(remove))
+        .route("/projects/{id}/pull", post(pull))
+}

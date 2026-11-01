@@ -750,3 +750,24 @@ pub(crate) async fn close_beside(
     st.store.close_beside(&id, &doc).await?;
     Ok(Json(st.store.documents_beside(&id).await?))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{delete, get, post};
+    axum::Router::new()
+        .route("/projects/{id}/document-settings", get(get_settings).put(put_settings))
+        .route("/tickets/{id}/design-doc", post(design))
+        .route("/documents", get(list).post(create))
+        .route("/documents/import", post(import))
+        .route("/documents/providers", get(list_providers))
+        .route("/documents/providers/{provider}/files", get(search))
+        .route("/documents/{id}", get(self::get).patch(rename).delete(remove))
+        .route("/documents/{id}/links", post(link).delete(unlink))
+        .route("/documents/{id}/content", get(content))
+        .route("/documents/{id}/edits", post(edit))
+        .route("/documents/{id}/comments", get(comments))
+        .route("/documents/{id}/comments/{comment}/replies", post(reply))
+        .route("/documents/{id}/comments/{comment}/resolve", post(resolve))
+        .route("/sessions/{id}/documents", get(beside).post(open_beside).put(order_beside))
+        .route("/sessions/{id}/documents/{doc}", delete(close_beside))
+}

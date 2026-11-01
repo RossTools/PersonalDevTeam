@@ -306,3 +306,19 @@ pub(crate) async fn labels(
     st.store.get_project(&project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     Ok(Json(st.store.project_labels(&project_id).await?))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/projects/{id}/tickets", post(create))
+        .route("/projects/{id}/labels", get(labels))
+        .route("/tickets", get(list))
+        .route("/tickets/bulk", post(bulk))
+        .route("/tickets/{id}", get(get_one).patch(update).delete(remove))
+        .route("/tickets/{id}/rank", post(rank))
+        .route("/tickets/{id}/links", post(add_link).delete(remove_link))
+        .route("/tickets/{id}/events", get(events))
+        .route("/tickets/{id}/comments", post(comment))
+        .route("/tickets/{id}/refine", post(refine))
+}

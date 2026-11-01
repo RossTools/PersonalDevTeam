@@ -1,6 +1,7 @@
 //! pdt-mcp (Phase 7b spec §2): PDT's MCP server at `POST /api/mcp`, Streamable HTTP answered with JSON. Each agent
 //! session gets its own bearer token (`<session id>.<HMAC of it under the host key>`), so a tool call knows its
-//! session, and through it the project, ticket and agent step. The tools (`tools.rs`) run the API's own handlers.
+//! session, and through it the project, ticket and agent step. The tools (`tools/`, one module per group) run the
+//! API's own handlers.
 
 pub(crate) mod tools;
 
@@ -263,6 +264,12 @@ async fn handle(st: &AppState, session: &Session, v: Value) -> Option<RpcRespons
         Ok(v) => RpcResponse::ok(id, v),
         Err(e) => e,
     })
+}
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::post;
+    axum::Router::new().route("/mcp", post(self::post).get(not_allowed).delete(not_allowed))
 }
 
 #[cfg(test)]
