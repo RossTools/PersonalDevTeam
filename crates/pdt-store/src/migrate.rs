@@ -435,3 +435,62 @@ mod integration_settings_tests {
         s.close().await;
     }
 }
+
+#[cfg(test)]
+mod mcp_servers_tests {
+    use crate::Store;
+    use serde_json::{Value, json};
+    use sqlx::migrate::Migrator;
+
+    /// PDT-322: MCP servers added before agents got them stay workflow-only; other connections are left alone.
+    #[tokio::test]
+    async fn mcp_servers_from_before_stay_for_workflows_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let before = tmp.path().join("before");
+        std::fs::create_dir_all(&before).unwrap();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        for e in std::fs::read_dir(&src).unwrap() {
+            let name = e.unwrap().file_name().into_string().unwrap();
+            if !name.ends_with("_mcp_servers_workflow_only.sql") {
+                std::fs::copy(src.join(&name), before.join(&name)).unwrap();
+            }
+        }
+        let db = tmp.path().join("t.db");
+        let backups = tmp.path().join("backups");
+        let s = Store::open_with(&db, &Migrator::new(before.as_path()).await.unwrap(), &backups).await.unwrap();
+        let rows = [
+            ("a", "mcp", r#"{"transport":"stdio","command":"x"}"#),
+            ("b", "mcp", r#"{"transport":"http","agents":{"pm":false}}"#),
+            ("c", "http", r#"{"auth":"bearer"}"#),
+        ];
+        for (id, kind, config) in rows {
+            sqlx::query(
+                "INSERT INTO connections (id, name, kind, url, config, created_at, updated_at) VALUES (?, ?, ?, '', ?, 0, 0)",
+            )
+            .bind(id)
+            .bind(id)
+            .bind(kind)
+            .bind(config)
+            .execute(&s.pool)
+            .await
+            .unwrap();
+        }
+        s.close().await;
+
+        let s = Store::open_with(&db, &super::MIGRATOR, &backups).await.unwrap();
+        let config = |id: &'static str| {
+            let pool = s.pool.clone();
+            async move {
+                let (c,): (String,) = sqlx::query_as("SELECT config FROM connections WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+                serde_json::from_str::<Value>(&c).unwrap()
+            }
+        };
+        assert_eq!(config("a").await, json!({"transport": "stdio", "command": "x", "agents": {"enabled": false}}));
+        assert_eq!(config("b").await["agents"], json!({"pm": false}), "already set: kept");
+        assert_eq!(config("c").await, json!({"auth": "bearer"}), "not an MCP server");
+    }
+}

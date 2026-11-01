@@ -1514,6 +1514,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         InboxKind::Session => Err("answer the session in its tab".into()),
         InboxKind::Notice => Err("a notice waits on no answer: dismiss it".into()),
         InboxKind::Connect => Err("connect GitHub in Settings › Plugins › GitHub".into()),
+        InboxKind::McpSignIn => Err("sign in to the MCP server again in Settings › MCP servers".into()),
         // Answered by `inbox::answer`, which knows whether the user's own click sent it.
         InboxKind::Admit => Err("approve or reject a triaged ticket from PDT's Inbox".into()),
         InboxKind::Confirm => Err("allow or deny an agent's call from PDT's Inbox".into()),

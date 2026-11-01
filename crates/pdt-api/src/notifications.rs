@@ -217,6 +217,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
     let mut items = st.store.open_inbox_items(None).await?;
     items.extend(approvals);
     items.extend(crate::inbox::connect_forge(st));
+    items.extend(crate::mcp_oauth::inbox_items(st).await);
     items.extend(crate::inbox::proposals(st, None).await?);
     items.extend(crate::storage::low_disk(st).await);
     let fresh: Vec<&InboxItem> = items.iter().filter(|i| !live.contains_key(&inbox_key(&i.id))).collect();
@@ -241,6 +242,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
                 | InboxKind::LoopLimit
                 | InboxKind::Notice
                 | InboxKind::Connect
+                | InboxKind::McpSignIn
                 | InboxKind::LowDisk
         ) {
             Severity::Warning
