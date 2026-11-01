@@ -21,13 +21,13 @@ import { TextView } from './TextView';
 const TYPES: { value: ParamType; label: string }[] = [
   { value: 'string', label: 'Text' }, { value: 'text', label: 'Long text' }, { value: 'number', label: 'Number' },
   { value: 'boolean', label: 'Yes or no' }, { value: 'choice', label: 'Choice' }, { value: 'connection', label: 'Connection' },
-  { value: 'list', label: 'List' },
+  { value: 'list', label: 'List' }, { value: 'duration', label: 'Duration (ms)' },
 ];
 
 /** A default typed into the params table, as the param's type wants it. */
 function typedDefault(type: ParamType, text: string): unknown {
   if (text === '') return undefined;
-  if (type === 'number') return Number.isNaN(Number(text)) ? text : Number(text);
+  if (type === 'number' || type === 'duration') return Number.isNaN(Number(text)) ? text : Number(text);
   if (type === 'boolean') return text === 'true' ? true : text === 'false' ? false : text;
   if (type === 'list') return text.split(',').map((t) => t.trim()).filter(Boolean);
   return text;
