@@ -161,7 +161,7 @@ mod tests {
         git(&repo, &["config", "user.name", "t"]);
         git(&repo, &["config", "user.email", "t@t"]);
         git(&repo, &["config", "commit.gpgsign", "false"]);
-        // Files check out as written on every OS (Windows' git turns \n into \r\n otherwise).
+        // Windows runners set autocrlf globally: a checkout would write the files back with CRLF.
         git(&repo, &["config", "core.autocrlf", "false"]);
         std::fs::write(repo.join("gen.txt"), "gen 1\n").unwrap();
         write(&repo, "a.txt", "one\n");

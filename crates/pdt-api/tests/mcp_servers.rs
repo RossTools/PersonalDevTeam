@@ -8,7 +8,7 @@ use crate::common;
 use axum::extract::{Form, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
-use common::{argv_agent, call, git, launch_args, recorded_launches, split_command_line};
+use common::{argv_agent, call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -81,11 +81,18 @@ fn claude_config(env: &Env, session: &str) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
 
+/// The launches [`common::recorded_launches`] recorded, each as its arguments on Windows too (there, one raw command
+/// line).
+async fn recorded_launches(bin: &std::path::Path, name: &str, want: usize) -> Vec<Vec<String>> {
+    let all = common::recorded_launches(bin, name, want).await;
+    if cfg!(windows) { all.iter().map(|l| common::windows_args(&l[0])).collect() } else { all }
+}
+
 /// The recorded launch of a Claude session (its `--session-id`).
 async fn launch_of(env: &Env, session: &str) -> Vec<String> {
     for _ in 0..100 {
         let all = recorded_launches(&env.bin, "fakeclaude", 1).await;
-        if let Some(l) = all.into_iter().map(launch_args).find(|l| l.iter().any(|a| a == session)) {
+        if let Some(l) = all.into_iter().find(|l| l.iter().any(|a| a == session)) {
             return l;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -124,7 +131,7 @@ async fn claude_gets_the_servers_it_is_meant_to_with_secrets_filled_in_and_tools
     let env = setup().await;
     two_servers(&env).await;
     let id = terminal(&env, "claude").await;
-    let launch = launch_args(recorded_launches(&env.bin, "fakeclaude", 1).await.remove(0));
+    let launch = recorded_launches(&env.bin, "fakeclaude", 1).await.remove(0);
     let cfg = claude_config(&env, &id);
     let servers = cfg["mcpServers"].as_object().unwrap();
     assert_eq!(servers.keys().collect::<Vec<_>>(), ["notes", "pdt"], "Docs isn't for sessions the user starts");
@@ -147,7 +154,7 @@ async fn claude_gets_the_servers_it_is_meant_to_with_secrets_filled_in_and_tools
     let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"mcpOnlyPdt": true}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     terminal(&env, "claude").await;
-    let launch = launch_args(recorded_launches(&env.bin, "fakeclaude", 2).await.remove(1));
+    let launch = recorded_launches(&env.bin, "fakeclaude", 2).await.remove(1);
     assert!(launch.contains(&"--strict-mcp-config".to_string()), "{launch:?}");
     let (_, list) = call(&env.app, "GET", "/api/mcp-servers", None).await;
     assert_eq!(list["onlyPdt"], true);
@@ -161,7 +168,7 @@ async fn a_codex_terminal_gets_the_servers_with_their_secrets_off_its_command_li
     two_servers(&env).await;
     call(&env.app, "PUT", "/api/host/settings", Some(json!({"mcpOnlyPdt": true}))).await;
     terminal(&env, "codex").await;
-    let launch = launch_args(recorded_launches(&env.bin, "fakecodex", 1).await.remove(0));
+    let launch = recorded_launches(&env.bin, "fakecodex", 1).await.remove(0);
     let joined = launch.join(" ");
     assert!(!joined.contains("notes-key-123"), "no secret on the command line: {joined}");
     let notes = launch.iter().find(|a| a.starts_with("mcp_servers.notes=")).expect("the notes server");
@@ -451,14 +458,4 @@ async fn a_server_for_one_project_or_turned_off_there_stays_out_of_other_session
     let id = terminal(&env, "claude").await;
     let cfg = claude_config(&env, &id);
     assert_eq!(cfg["mcpServers"].as_object().unwrap().keys().collect::<Vec<_>>(), ["here", "pdt"]);
-}
-
-#[test]
-fn a_windows_command_line_splits_back_into_its_arguments() {
-    assert_eq!(
-        split_command_line(r#"--session-id abc "C:\a b\c.json" -c "x={k = ""v"", l = [""A""]}" \"q\" end\\"#),
-        ["--session-id", "abc", r"C:\a b\c.json", "-c", r#"x={k = "v", l = ["A"]}"#, r#""q""#, r"end\\"]
-    );
-    assert_eq!(split_command_line("  one \r\n"), ["one"]);
-    assert_eq!(split_command_line(r#"a "" b"#), ["a", "", "b"]);
 }

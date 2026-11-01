@@ -173,64 +173,51 @@ pub async fn recorded_launches(dir: &std::path::Path, name: &str, want: usize) -
     found
 }
 
-/// A launch [`recorded_launches`] gave, as its arguments on every OS: on Windows the raw `%*` line is split back
-/// into them ([`split_command_line`]).
-pub fn launch_args(launch: Vec<String>) -> Vec<String> {
-    if cfg!(windows) { launch.first().map(|l| split_command_line(l)).unwrap_or_default() } else { launch }
-}
-
-/// A Windows command line split into its arguments, as a program's C runtime splits it: whitespace separates them
-/// outside quotes; inside quotes `""` is a literal quote; `n` backslashes before a quote are `n / 2` backslashes,
-/// and an odd one escapes the quote.
-pub fn split_command_line(line: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let (mut quoted, mut started) = (false, false);
-    let chars: Vec<char> = line.trim_end_matches(['\r', '\n']).chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
+/// A raw Windows command line (a [`recorded_launches`] line on Windows) split into its arguments, by the rules
+/// programs built with MSVC parse it with (and portable-pty quotes it by): `\\"` is a quote, `"` starts or ends a
+/// quoted part, backslashes elsewhere are plain.
+pub fn windows_args(line: &str) -> Vec<String> {
+    let mut out = vec![];
+    let (mut arg, mut started, mut quoted, mut slashes) = (String::new(), false, false, 0usize);
+    for c in line.chars() {
         match c {
-            '\\' => {
-                let n = chars[i..].iter().take_while(|c| **c == '\\').count();
-                i += n;
-                if chars.get(i) == Some(&'"') {
-                    cur.extend(std::iter::repeat_n('\\', n / 2));
-                    if n % 2 == 1 {
-                        cur.push('"');
-                        i += 1;
-                    }
-                } else {
-                    cur.extend(std::iter::repeat_n('\\', n));
-                }
-                started = true;
-                continue;
-            }
-            '"' if quoted && chars.get(i + 1) == Some(&'"') => {
-                cur.push('"');
-                i += 1;
-            }
+            '\\' => slashes += 1,
             '"' => {
-                quoted = !quoted;
-                started = true;
-            }
-            c if c.is_whitespace() && !quoted => {
-                if started {
-                    out.push(std::mem::take(&mut cur));
-                    started = false;
+                arg.extend(std::iter::repeat_n('\\', slashes / 2));
+                if slashes % 2 == 1 {
+                    arg.push('"');
+                } else {
+                    quoted = !quoted;
                 }
+                (slashes, started) = (0, true);
             }
-            c => {
-                cur.push(c);
-                started = true;
+            _ => {
+                arg.extend(std::iter::repeat_n('\\', slashes));
+                started |= slashes > 0;
+                slashes = 0;
+                if (c == ' ' || c == '\t') && !quoted {
+                    if started {
+                        out.push(std::mem::take(&mut arg));
+                    }
+                    started = false;
+                } else {
+                    arg.push(c);
+                    started = true;
+                }
             }
         }
-        i += 1;
     }
-    if started {
-        out.push(cur);
+    arg.extend(std::iter::repeat_n('\\', slashes));
+    if started || slashes > 0 {
+        out.push(arg);
     }
     out
+}
+
+#[test]
+fn windows_command_lines_split_into_their_arguments() {
+    let line = r#"--a "b c" "" \ x\y "k={v = [\"N\"]}" "d\\" e\\\"f"#;
+    assert_eq!(windows_args(line), ["--a", "b c", "", r"\", r"x\y", r#"k={v = ["N"]}"#, r"d\", r#"e\"f"#]);
 }
 
 /// Parks the test's idle conversation, retrying for up to 10 s: a turn's end is stored before the conversation's

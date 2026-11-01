@@ -17,7 +17,7 @@ const session = (id: string, over: Partial<Session> = {}): Session => ({
   id, projectId: project.id, worktreeId: 'w', kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: `Session ${id}`,
   cwd: '/r', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null,
   activity: 'idle', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: 'a1', ticket: { id: 't1', key: 'ALP-1' },
-  mode: 'conversation', model: null, permissionMode: 'ask', persona: null, ...over,
+  mode: 'conversation', model: null, permissionMode: 'ask', persona: null, background: [], ...over,
 });
 
 const row = (s: Session) => ({ id: s.id, title: s.title, status: s.status, agent: s.agent, attemptId: 'a1', persona: null, mode: s.mode });
