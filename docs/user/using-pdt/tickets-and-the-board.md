@@ -155,6 +155,10 @@ Auto-start skips parents, blocked or conflicting tickets, and outside tickets yo
 agent, view and permission mode (**Settings › This host › Agents**), or the project's workflow if it has one. Starting
 a ticket yourself is never delayed.
 
+Auto-start is the built-in **Pick up tickets** workflow, and these settings are its settings. To pick up tickets your
+own way (only some labels, Ready tickets only at night), edit or copy it: see
+[Pick up tickets](../automation/workflows.md#pick-up-tickets).
+
 While a disk PDT uses is almost full, auto-start starts nothing new (see
 [Disk space](../your-machine/your-data.md#disk-space)).
 

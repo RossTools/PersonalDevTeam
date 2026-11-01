@@ -166,6 +166,11 @@ pub struct AppState {
     pub(crate) personas_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Tickets auto-start failed to start, with their `updated_at` then: skipped until they change.
     pub(crate) auto_start_failed: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
+    /// Held by `ticket.start` while it checks and starts (PDT-327): two pickup runs never start the same ticket or go
+    /// over a cap together.
+    pub(crate) pickup_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// What the pickup watch saw last (startable tickets, tickets in flight, free agent slots), to log what changed.
+    pub(crate) pickup_watch: std::sync::Arc<std::sync::Mutex<crate::scheduler::PickupWatch>>,
     /// Worktrees' sizes as last measured, and the storage loop's state (PDT-324).
     pub(crate) storage: std::sync::Arc<crate::storage::StorageState>,
     /// Reads a disk's free space. `new` reads none (no disk is ever low), so tests never depend on the machine's own
@@ -293,6 +298,8 @@ impl AppState {
             engine_tick_wait: std::time::Duration::from_secs(10 * 60),
             workflow_docs: Default::default(),
             auto_start_failed: Default::default(),
+            pickup_lock: Default::default(),
+            pickup_watch: Default::default(),
             storage: Default::default(),
             disk_space: std::sync::Arc::new(|_| None),
             mcp: Default::default(),
@@ -542,6 +549,13 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/documents/{id}/comments", get(crate::documents::routes::comments))
         .route("/documents/{id}/comments/{comment}/replies", axum::routing::post(crate::documents::routes::reply))
         .route("/documents/{id}/comments/{comment}/resolve", axum::routing::post(crate::documents::routes::resolve))
+        .route(
+            "/sessions/{id}/documents",
+            get(crate::documents::routes::beside)
+                .post(crate::documents::routes::open_beside)
+                .put(crate::documents::routes::order_beside),
+        )
+        .route("/sessions/{id}/documents/{doc}", axum::routing::delete(crate::documents::routes::close_beside))
         .route("/tickets/{id}/parts", axum::routing::post(crate::parts::create))
         .route("/tickets/{id}/start", axum::routing::post(crate::start::start))
         .route("/tickets/{id}/refine", axum::routing::post(crate::tickets::refine))

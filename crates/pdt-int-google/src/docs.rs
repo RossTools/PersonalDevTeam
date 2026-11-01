@@ -1,7 +1,8 @@
 //! Google Docs (PDT-316): PDT's text edits as Docs API `batchUpdate` requests. Markdown becomes paragraphs with their
 //! named styles (headings), bulleted and numbered lists (nested), tables, links, bold, italic, strikethrough and code.
 //! Sections are found in the document's structure (`documents.get`): a heading's section runs to the next heading of
-//! its level or higher. Indexes are UTF-16 code units, as the Docs API counts them. Pure.
+//! its level or higher, and a table is the `n`th in the body or the first in a heading's section. Indexes are UTF-16
+//! code units, as the Docs API counts them. Pure.
 
 use pdt_api::sdk::documents::{DocumentEdit, ProviderError};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
@@ -332,8 +333,126 @@ fn norm(s: &str) -> String {
     s.trim().trim_start_matches('#').split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
-/// The requests for one text edit, given the document as `documents.get` gave it. `None` for an edit that is not a
-/// text one.
+/// A table of the body: where it starts, and each row's cells (where their text goes and what it says).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Table {
+    pub start: i64,
+    pub rows: Vec<Vec<TableCell>>,
+}
+
+/// A table cell's text: from `start` up to `end` (its last newline, which stays), and what it says.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableCell {
+    pub start: i64,
+    pub end: i64,
+    pub text: String,
+}
+
+/// The body's tables, in order.
+pub fn tables(doc: &Value) -> Vec<Table> {
+    let mut out = vec![];
+    for el in doc["body"]["content"].as_array().into_iter().flatten() {
+        let Some(t) = el.get("table") else { continue };
+        let rows = t["tableRows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|r| {
+                r["tableCells"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|c| {
+                        let content = c["content"].as_array().cloned().unwrap_or_default();
+                        let start = content.first().and_then(|x| x["startIndex"].as_i64()).unwrap_or(0);
+                        let end = content.last().and_then(|x| x["endIndex"].as_i64()).unwrap_or(start + 1) - 1;
+                        let text: String = content
+                            .iter()
+                            .flat_map(|x| x["paragraph"]["elements"].as_array().cloned().unwrap_or_default())
+                            .filter_map(|x| x["textRun"]["content"].as_str().map(str::to_string))
+                            .collect();
+                        TableCell { start, end, text: text.trim_end_matches('\n').to_string() }
+                    })
+                    .collect()
+            })
+            .collect();
+        out.push(Table { start: el["startIndex"].as_i64().unwrap_or(0), rows });
+    }
+    out
+}
+
+/// All the body's text, tables too.
+fn body_text(doc: &Value) -> String {
+    fn walk(v: &Value, out: &mut String) {
+        match v {
+            Value::Object(m) => {
+                if let Some(t) = m.get("textRun").and_then(|t| t["content"].as_str()) {
+                    out.push_str(t);
+                }
+                m.values().for_each(|x| walk(x, out));
+            }
+            Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+            _ => {}
+        }
+    }
+    let mut out = String::new();
+    walk(&doc["body"], &mut out);
+    out
+}
+
+/// The heading `h`'s section: from its end to the next heading of its level or higher (or the body's end).
+fn section(paras: &[Para], end: i64, h: &str) -> Result<(usize, i64, i64), ProviderError> {
+    let want = norm(h);
+    let i = paras
+        .iter()
+        .position(|p| p.level > 0 && norm(&p.text) == want)
+        .ok_or_else(|| ProviderError::Invalid(format!("the document has no heading called {}", h.trim())))?;
+    let level = paras[i].level;
+    let next = paras[i + 1..].iter().find(|p| p.level > 0 && p.level <= level);
+    Ok((i, paras[i].end, next.map_or(end - 1, |p| p.start)))
+}
+
+/// Which table an edit means: the `n`th (from 1), or the first in a heading's section, else the first.
+pub fn find_table(doc: &Value, heading: Option<&str>, n: Option<u32>) -> Result<usize, ProviderError> {
+    let all = tables(doc);
+    let found = match (heading.map(str::trim).filter(|h| !h.is_empty()), n) {
+        (_, Some(n)) => (n >= 1).then(|| n as usize - 1).filter(|i| *i < all.len()),
+        (Some(h), None) => {
+            let (paras, end) = structure(doc);
+            let (_, from, to) = section(&paras, end, h)?;
+            all.iter().position(|t| t.start >= from && t.start < to)
+        }
+        (None, None) => (!all.is_empty()).then_some(0),
+    };
+    found.ok_or_else(|| ProviderError::Invalid("the document has no such table".into()))
+}
+
+/// A table column by its header's text or its number from 1.
+fn column_of(t: &Table, column: &str) -> Result<usize, ProviderError> {
+    let width = t.rows.first().map_or(0, Vec::len);
+    let c = match column.trim().parse::<usize>() {
+        Ok(n) => n.checked_sub(1),
+        Err(_) => t.rows.first().and_then(|h| h.iter().position(|c| norm(&c.text) == norm(column))),
+    };
+    c.filter(|c| *c < width).ok_or_else(|| ProviderError::Invalid(format!("the table has no column {}", column.trim())))
+}
+
+/// The requests that put `cells` in a table's last row (empty, as Google adds it), from the last cell.
+pub fn fill_last_row(doc: &Value, table: usize, cells: &[String]) -> Result<Vec<Value>, ProviderError> {
+    let t =
+        tables(doc).into_iter().nth(table).ok_or_else(|| ProviderError::Failed("the new row went missing".into()))?;
+    let row = t.rows.last().cloned().unwrap_or_default();
+    Ok(row
+        .iter()
+        .zip(cells)
+        .rev()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(c, v)| json!({"insertText": {"location": {"index": c.start}, "text": v}}))
+        .collect())
+}
+
+/// The requests for one text edit, given the document as `documents.get` gave it. A table row is added in two steps:
+/// these requests add it empty, and [`fill_last_row`] (on the document read again) writes its cells.
 pub fn requests(doc: &Value, edit: &DocumentEdit) -> Result<Vec<Value>, ProviderError> {
     let (paras, end) = structure(doc);
     // The body always ends with a paragraph's newline, which stays.
@@ -348,13 +467,6 @@ pub fn requests(doc: &Value, edit: &DocumentEdit) -> Result<Vec<Value>, Provider
         out.extend(insert(&blocks, last + 1));
         out
     };
-    let heading = |h: &str| -> Result<usize, ProviderError> {
-        let want = norm(h);
-        paras
-            .iter()
-            .position(|p| p.level > 0 && norm(&p.text) == want)
-            .ok_or_else(|| ProviderError::Invalid(format!("the document has no heading called {}", h.trim())))
-    };
     Ok(match edit {
         DocumentEdit::ReplaceText { markdown } => {
             let mut out = vec![];
@@ -365,25 +477,30 @@ pub fn requests(doc: &Value, edit: &DocumentEdit) -> Result<Vec<Value>, Provider
             out
         }
         DocumentEdit::AppendText { markdown } => append(parse(markdown)),
-        DocumentEdit::ReplaceAll { find, replace, match_case } => {
+        DocumentEdit::ReplaceString { find, replace, all } => {
             if find.is_empty() {
                 return Err(ProviderError::Invalid("there is nothing to find".into()));
             }
-            vec![json!({"replaceAllText": {"containsText": {"text": find, "matchCase": match_case},
-                                           "replaceText": replace}})]
+            let n = body_text(doc).matches(find.as_str()).count();
+            if n == 0 {
+                return Err(ProviderError::Invalid(format!("the document has no {find}")));
+            }
+            if n > 1 && !all {
+                return Err(ProviderError::Invalid(format!(
+                    "{find} is in the document {n} times: give more of the text around it, or all"
+                )));
+            }
+            vec![json!({"replaceAllText": {"containsText": {"text": find, "matchCase": true}, "replaceText": replace}})]
         }
         DocumentEdit::InsertAfterHeading { heading: h, markdown } => {
-            let i = heading(h)?;
+            let (i, _, _) = section(&paras, end, h)?;
             match paras.get(i + 1) {
                 Some(next) => insert(&parse(markdown), next.start),
                 None => append(parse(markdown)),
             }
         }
         DocumentEdit::ReplaceSection { heading: h, markdown } => {
-            let i = heading(h)?;
-            let level = paras[i].level;
-            let next = paras[i + 1..].iter().find(|p| p.level > 0 && p.level <= level);
-            let (from, to) = (paras[i].end, next.map_or(last, |p| p.start));
+            let (_, from, to) = section(&paras, end, h)?;
             let blocks = parse(markdown);
             let mut out = vec![];
             if to > from {
@@ -398,10 +515,41 @@ pub fn requests(doc: &Value, edit: &DocumentEdit) -> Result<Vec<Value>, Provider
             }
             out
         }
-        _ => {
-            return Err(ProviderError::Unsupported(
-                "a Google Doc has no sheets or cells: that is a Sheets edit".into(),
-            ));
+        DocumentEdit::TableAppendRow { heading, table, cells } => {
+            let i = find_table(doc, heading.as_deref(), *table)?;
+            let t = &tables(doc)[i];
+            let width = t.rows.first().map_or(0, Vec::len);
+            if cells.len() > width {
+                return Err(ProviderError::Invalid(format!("the table has {width} columns, not {}", cells.len())));
+            }
+            vec![json!({"insertTableRow": {"insertBelow": true, "tableCellLocation": {
+                "tableStartLocation": {"index": t.start}, "rowIndex": t.rows.len().saturating_sub(1), "columnIndex": 0}}})]
+        }
+        DocumentEdit::TableSetCell { heading, table, row, column, value } => {
+            let i = find_table(doc, heading.as_deref(), *table)?;
+            let t = &tables(doc)[i];
+            let c = column_of(t, column)?;
+            // Rows count the body from 1: row 0 is the header.
+            let cell = t
+                .rows
+                .get(*row as usize)
+                .filter(|_| *row >= 1)
+                .and_then(|r| r.get(c))
+                .ok_or_else(|| ProviderError::Invalid(format!("the table has no body row {row}")))?;
+            let mut out = vec![];
+            if cell.end > cell.start {
+                out.push(json!({"deleteContentRange": {"range": {"startIndex": cell.start, "endIndex": cell.end}}}));
+            }
+            if !value.is_empty() {
+                out.push(json!({"insertText": {"location": {"index": cell.start}, "text": value}}));
+            }
+            out
+        }
+        e => {
+            return Err(ProviderError::Unsupported(format!(
+                "a Google Doc has no sheets or cells ({} is a Sheets edit)",
+                e.op()
+            )));
         }
     })
 }
@@ -535,5 +683,85 @@ mod tests {
     fn sheet_edits_are_not_doc_edits() {
         let e = DocumentEdit::AddSheet { name: "x".into() };
         assert!(matches!(requests(&doc(), &e), Err(ProviderError::Unsupported(_))));
+    }
+
+    fn with_table() -> Value {
+        let para = |s: i64, e: i64, text: &str, named: &str| {
+            json!({"startIndex": s, "endIndex": e, "paragraph": {
+                "elements": [{"textRun": {"content": text}}], "paragraphStyle": {"namedStyleType": named}}})
+        };
+        let cell = |s: i64, text: &str| {
+            let n = text.encode_utf16().count() as i64;
+            json!({"startIndex": s, "endIndex": s + n + 2, "content": [{"startIndex": s + 1, "endIndex": s + n + 2,
+                "paragraph": {"elements": [{"textRun": {"content": format!("{text}\n")}}]}}]})
+        };
+        // A heading, then a table: header Name | Cost, one row Pens | 3.
+        json!({"body": {"content": [
+            {"endIndex": 1, "sectionBreak": {}},
+            para(1, 7, "Costs\n", "HEADING_2"),
+            {"startIndex": 7, "endIndex": 30, "table": {"tableRows": [
+                {"tableCells": [cell(8, "Name"), cell(14, "Cost")]},
+                {"tableCells": [cell(21, "Pens"), cell(27, "3")]}
+            ]}},
+            para(30, 37, "Total.\n", "NORMAL_TEXT"),
+        ]}})
+    }
+
+    #[test]
+    fn a_table_is_found_by_number_or_heading() {
+        let d = with_table();
+        let t = &tables(&d)[0];
+        assert_eq!(t.rows[1][1], TableCell { start: 28, end: 29, text: "3".into() });
+        assert_eq!(find_table(&d, Some("costs"), None).unwrap(), 0);
+        assert_eq!(find_table(&d, None, Some(1)).unwrap(), 0);
+        assert!(find_table(&d, None, Some(2)).is_err());
+    }
+
+    #[test]
+    fn a_table_cell_is_set_by_header_and_body_row() {
+        let e =
+            DocumentEdit::TableSetCell { heading: None, table: None, row: 1, column: "cost".into(), value: "4".into() };
+        let r = requests(&with_table(), &e).unwrap();
+        assert_eq!(r[0]["deleteContentRange"]["range"], json!({"startIndex": 28, "endIndex": 29}));
+        assert_eq!(r[1]["insertText"], json!({"location": {"index": 28}, "text": "4"}));
+        let e =
+            DocumentEdit::TableSetCell { heading: None, table: None, row: 2, column: "1".into(), value: "x".into() };
+        assert!(requests(&with_table(), &e).is_err());
+    }
+
+    #[test]
+    fn a_table_row_is_added_then_filled() {
+        let e = DocumentEdit::TableAppendRow {
+            heading: Some("Costs".into()),
+            table: None,
+            cells: vec!["Ink".into(), "5".into()],
+        };
+        let r = requests(&with_table(), &e).unwrap();
+        assert_eq!(
+            r[0]["insertTableRow"]["tableCellLocation"],
+            json!({"tableStartLocation": {"index": 7}, "rowIndex": 1, "columnIndex": 0})
+        );
+        let fill = fill_last_row(&with_table(), 0, &["Ink".into(), "5".into()]).unwrap();
+        // The last cell first.
+        assert_eq!(fill[0]["insertText"], json!({"location": {"index": 28}, "text": "5"}));
+        let wide = DocumentEdit::TableAppendRow {
+            heading: None,
+            table: None,
+            cells: vec!["a".into(), "b".into(), "c".into()],
+        };
+        assert!(requests(&with_table(), &wide).is_err());
+    }
+
+    #[test]
+    fn a_string_is_replaced_once_unless_all() {
+        let once = DocumentEdit::ReplaceString { find: "Total".into(), replace: "Sum".into(), all: false };
+        let r = requests(&with_table(), &once).unwrap();
+        assert_eq!(r[0]["replaceAllText"]["containsText"], json!({"text": "Total", "matchCase": true}));
+        let twice = DocumentEdit::ReplaceString { find: "s".into(), replace: "z".into(), all: false };
+        assert!(matches!(requests(&with_table(), &twice), Err(ProviderError::Invalid(m)) if m.contains("times")));
+        let all = DocumentEdit::ReplaceString { find: "s".into(), replace: "z".into(), all: true };
+        assert!(requests(&with_table(), &all).is_ok());
+        let none = DocumentEdit::ReplaceString { find: "nope".into(), replace: "z".into(), all: true };
+        assert!(requests(&with_table(), &none).is_err());
     }
 }

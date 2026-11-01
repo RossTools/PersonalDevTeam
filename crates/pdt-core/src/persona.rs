@@ -13,7 +13,7 @@ use ts_rs::TS;
 /// (PDT-177) read the session's pull request, CI and issues and comment on them, open its pull request and ask for its
 /// merge again after a merge queue drop (PDT-185), instead of a forge's CLI; `issue_create` (PDT-221) files an issue,
 /// asking the user first.
-pub const DEFAULT_TOOLS: [&str; 18] = [
+pub const DEFAULT_TOOLS: [&str; 30] = [
     "get_ticket",
     "submit_outcome",
     "ask_user",
@@ -31,6 +31,18 @@ pub const DEFAULT_TOOLS: [&str; 18] = [
     "ci_failed_logs",
     "issue_view",
     "issue_comment",
+    "documents_list",
+    "document_get",
+    "doc_read",
+    "doc_edit",
+    "sheet_read",
+    "sheet_edit",
+    "document_create",
+    "document_link",
+    "comments_list",
+    "comment_reply",
+    "comment_resolve",
+    "document_open_beside",
     "issue_create",
 ];
 

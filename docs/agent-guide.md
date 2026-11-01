@@ -36,12 +36,15 @@ for what they cover, and the API for the rest. Which tools a session has depends
 | `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`, `workflow_save`, `workflow_run`, `workflow_export`, `workflow_import` | workflows: the node catalog (each MCP server's tools are in it as `mcp:<server>/<tool>`), documents, runs and transfer. `workflow_save` proposes a new version for the person to accept, or saves a new workflow, which starts disabled |
 | `get_overview`, `search_tickets`, `get_session`, `list_workflow_runs`, `list_todos` | the PM's view: every project's open tickets, work in flight with PR and CI, the Inbox and running sessions; ticket search; a session's state and last messages; workflow runs; the person's todo list (read-only) |
 | `search_notes`, `save_note`, `delete_note`, `write_journal` | the PM's memory: notes (pinned ones go in every briefing) and each PM conversation's journal entry |
+| `documents_list`, `document_get`, `doc_read`, `sheet_read`, `comments_list` | documents (see "Documents"): list them; one's details and open comments; a doc as Markdown (`heading` reads one section); a sheet's sheets, charts and cells (`sheet`, `range`); comments, fenced as outside input |
+| `doc_edit`, `sheet_edit`, `document_create`, `document_link`, `comment_reply`, `comment_resolve`, `document_open_beside` | changes to documents: `{document, edits}` (`doc_edit` answers with a diff, `sheet_edit` with new charts' ids); a new doc or sheet, linked to the session's own ticket unless you name a ticket or project; a link (or `unlink`); a comment's reply or resolve; opening one in a tab beside this conversation, for the person to watch your edits land |
 | `watch`, `unwatch`, `list_watches` | the PM's watches: `watch {ticket? \| run?, events?, once?}` sends this conversation a `[PDT] Watched …` message (once it is idle) when the target is `finished`, `failed`, gets an agent's `outcome` or a `comment`, or `needs_you` (default: finished, failed, needs_you). `once` (the default) ends the watch when the target finishes and refuses one already finished. Use it instead of polling |
 | `create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`, `send_to_session` | changes to tickets (a new one is a draft by default; moving one at work back to Draft, Ready or To do stops its work; `stop_ticket` cancels its runs and sessions and abandons its attempt) and a message to a session (delivered when it is idle) |
 
 Tools that act beyond this session (`create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `stop_ticket`,
-`send_to_session`, `workflow_run`, `workflow_import`, `issue_create`) wait for the person's yes (except, where the
-project lets the PM act, those on its tickets and sessions). In Claude that is its permission prompt; other agents
+`send_to_session`, `workflow_run`, `workflow_import`, `issue_create`, and the document writes `doc_edit`, `sheet_edit`,
+`document_create`, `document_link`, `comment_reply`, `comment_resolve`) wait for the person's yes (except, where the
+project lets the PM act, those on its tickets, sessions and documents). In Claude that is its permission prompt; other agents
 get an answer saying the call waits in the Inbox: end your turn, and PDT sends the result once the person allows it.
 
 **Secrets.** Never ask the person to paste a secret into the chat, and never print, log or commit one. `list_secrets`
@@ -96,17 +99,43 @@ none.
 ### Documents
 
 Design docs, plans and spreadsheets live outside the repo as documents, linked to projects and tickets. `get_ticket`
-lists the ticket's documents: read its design doc before you start. A doc reads as Markdown, a sheet as its sheets
-of cells (each with its `value` and, if it has one, its `formula`).
+lists the ticket's documents: read its design doc before you start. When you're asked for a spec, a plan or a design,
+write it as a document linked to the ticket (`document_create`), never as a file in the repository. A doc reads as
+Markdown, a sheet as its sheets of cells (each with its `value` and, if it has one, its `formula`) and charts. A
+`document` is given by id or exact title.
+
+Edits are a list of operations, applied in order; an operation the document's provider can't do fails with a message
+saying so, and the rest after it don't run:
+
+- Docs: `{op: "replace_section", heading, markdown}` (the body under a heading, up to the next one of its level),
+  `{op: "insert_after_heading", heading, markdown}`, `{op: "append_text", markdown}`, `{op: "replace_string", find,
+  replace, all?}` (the text must appear once unless `all`), `{op: "table_append_row", heading?, table?, cells}` and
+  `{op: "table_set_cell", heading?, table?, row, column, value}` (the `table`th table from 1, or the first under
+  `heading`; `row` counts body rows from 1, `column` is a header's text or a number), `{op: "replace_text", markdown}`
+  (the whole document).
+- Sheets: `{op: "set_cells", sheet, cell: "B3", values: [["1", "=A1*2"]]}`, `{op: "add_sheet", name}`,
+  `{op: "rename_sheet", sheet, name}`, `{op: "delete_sheet", sheet}`, `{op: "format_range", sheet, range: "A1:C1",
+  format: {bold?, italic?, underline?, color?, background?, size?, numberFormat?, horizontal?, vertical?, wrap?}}`,
+  `{op: "conditional_format", sheet, range, when, format}`, `{op: "add_chart", sheet, id?, chart: {kind: "column" |
+  "bar" | "line" | "area" | "pie" | "scatter", data: "A1:C10", title?, anchor?}}` (the data's first column is the
+  categories, its first row the series' names), `{op: "update_chart", id, chart}`, `{op: "delete_chart", id}`,
+  `{op: "sort", sheet, range, by: [{column: "B", descending?}], header?}`, `{op: "filter", sheet, range, column,
+  when}`, `{op: "clear_filter", sheet}`, `{op: "set_borders", sheet, range, style?: "solid" | "thick" | "dashed" |
+  "dotted" | "double" | "none", color?, inner?}`, `{op: "column_width", sheet, columns: "B:D", width}` (pixels),
+  `{op: "freeze", sheet, rows?, columns?}`, `{op: "validate", sheet, range, rule, strict?}` (a `rule` is
+  `{type: "one_of", values}`, `{type: "checkbox"}`, `{type: "date"}` or `{type: "matches", when}`). A `when` is `{type: "greater_than" | "less_than" | "equal_to" |
+  "not_equal_to", value}`, `{type: "between", min, max}`, `{type: "text_contains", text}`, `{type: "empty"}`,
+  `{type: "not_empty"}` or `{type: "formula", formula}`.
 
 | Call | Does |
 |---|---|
 | `GET /api/documents?ticket=<key>&project=<key>&kind=doc\|sheet&q=<words>` | documents, the most recently changed first, with their `projects` and `tickets` |
-| `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows}]}` |
-| `POST /api/documents/<id>/edits` | `{edits: [...]}`, run in order; the answer is the new `version`. A provider that can't do one says so. Docs: `{op: "replace_text", markdown}` (all of it), `{op: "append_text", markdown}`, `{op: "replace_all", find, replace, matchCase?}`, `{op: "insert_after_heading", heading, markdown}`, `{op: "replace_section", heading, markdown}` (up to the next heading of its level). Sheets: `{op: "set_cells", sheet, cell: "B3", values: [["1", "=A1*2"]]}` (as typed: `=` is a formula), `add_sheet {name}`, `rename_sheet {sheet, name}`, `delete_sheet {sheet}`, `format_cells {sheet, range: "A1:C1", format: {bold, italic, strikethrough, fontSize, color: "#rrggbb", background, align: left\|center\|right, wrap, numberFormat: {kind: number\|currency\|percent\|date\|time\|date_time\|scientific\|text, pattern?}}}`, `set_borders {sheet, range, style?: solid\|thick\|dashed\|dotted\|double\|none, color?, inner?}`, `column_width {sheet, columns: "B:D", width}` (pixels), `freeze {sheet, rows, columns}`, `conditional_format {sheet, range, when, format}`, `validate {sheet, range, rule, strict?}` (`when` and `rule` are `{kind, values}`, kind one of greater_than, greater_or_equal, less_than, less_or_equal, equal, not_equal, between, not_between, text_contains, text_not_contains, text_starts_with, text_ends_with, blank, not_blank, formula; validation also one_of, checkbox, is_date), `add_chart {sheet, chart: {kind: line\|bar\|column\|area\|pie\|scatter, title?, domain: "A1:A10", series: ["B1:B10"], headers?, anchor?: "E2", placeSheet?}}`, `sort {sheet, range, by: [{column: "B", descending?}]}`, `filter {sheet, range?}` (none clears it) |
-| `GET /api/documents/<id>/version` | `{version}`: it changes whenever the document does |
+| `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows, charts}]}` |
+| `POST /api/documents/<id>/edits` | `{edits: [...]}` (the operations above): `{version, charts}` |
+| `GET /api/documents/<id>/version` | `{version}`: it changes whenever the document does, edits made at the provider too |
 | `GET /api/documents/<id>/comments` | its comments with their replies; `POST …/comments/<cid>/replies` `{body}` replies, `POST …/comments/<cid>/resolve` resolves |
 | `POST /api/tickets/<id>/design-doc` | makes the ticket's design doc from the template, linked to it |
+| `GET /api/sessions/<id>/documents` | the documents open beside a conversation: `{tabs: [{document, by}], active}`; `POST` `{documentId}` opens one (or shows its tab), `PUT` `{documentIds}` orders them, `DELETE …/documents/<doc>` closes one |
 
 ### Review feedback
 

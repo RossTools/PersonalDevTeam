@@ -50,6 +50,7 @@ import type { DocumentFilter } from './gen/DocumentFilter';
 import type { DocumentLinkInput } from './gen/DocumentLinkInput';
 import type { DocumentProvidersView } from './gen/DocumentProvidersView';
 import type { DocumentRead } from './gen/DocumentRead';
+import type { DocumentsBeside } from './gen/DocumentsBeside';
 import type { DocumentKind } from './gen/DocumentKind';
 import type { EditResult } from './gen/EditResult';
 import type { GoogleAccount } from './gen/GoogleAccount';
@@ -452,6 +453,15 @@ export const api = {
   /** A ticket's design doc, from the template, in its project's default provider. */
   createDesignDoc: (ticketId: string) =>
     request<Document>(`/api/tickets/${enc(ticketId)}/design-doc`, { method: 'POST', body: JSON.stringify({ by: 'user' }) }),
+  /** The documents open beside a conversation (PDT-317), in tab order. */
+  documentsBeside: (sessionId: string) => request<DocumentsBeside>(`/api/sessions/${enc(sessionId)}/documents`),
+  /** Opens a document beside a conversation, or shows its tab there. */
+  openBeside: (sessionId: string, documentId: string) =>
+    request<DocumentsBeside>(`/api/sessions/${enc(sessionId)}/documents`, { method: 'POST', body: JSON.stringify({ documentId, by: 'user' }) }),
+  orderBeside: (sessionId: string, documentIds: string[]) =>
+    request<DocumentsBeside>(`/api/sessions/${enc(sessionId)}/documents`, { method: 'PUT', body: JSON.stringify({ documentIds }) }),
+  closeBeside: (sessionId: string, documentId: string) =>
+    request<DocumentsBeside>(`/api/sessions/${enc(sessionId)}/documents/${enc(documentId)}`, { method: 'DELETE' }),
   projectDocumentSettings: (projectId: string) =>
     request<ProjectDocumentSettings>(`/api/projects/${enc(projectId)}/document-settings`),
   putProjectDocumentSettings: (projectId: string, s: ProjectDocumentSettings) =>

@@ -102,7 +102,7 @@ async fn the_catalog_and_the_builtins_are_served() {
         .iter()
         .map(|w| (w["builtin"].as_str().unwrap(), w["enabled"].as_bool().unwrap()))
         .collect();
-    assert_eq!(builtins.len(), 7, "no integration's built-ins until it is enabled: {list}");
+    assert_eq!(builtins.len(), 8, "no integration's built-ins until it is enabled: {list}");
     // PDT's own development's are not built-ins (PDT-295): neither installed nor offered.
     assert!(builtins.contains(&("github-issue-done", true)) && !builtins.iter().any(|b| b.0 == "pdt-bug-triage"));
     let (_, templates) = call(&env.app, "GET", "/api/workflow-templates", None).await;
@@ -113,6 +113,8 @@ async fn the_catalog_and_the_builtins_are_served() {
     // Cut a release is a template since PDT-301, made per project.
     assert!(templates.to_string().contains("builtin:cut-release"), "{templates}");
     assert!(builtins.contains(&("pr-notices", true)) && builtins.contains(&("base-moved", false)));
+    // Auto-start is a built-in (PDT-327), on from the start; each project's settings decide what it does.
+    assert!(builtins.contains(&("pick-up-tickets", true)));
     let id = list[0]["id"].as_str().unwrap();
     let (s, e) = call(&env.app, "DELETE", &format!("/api/workflows/{id}"), None).await;
     assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("builtin_workflow")));

@@ -3,7 +3,6 @@
 //! (title, kind, which provider holds it and the provider's reference) and its links; the content stays with the
 //! provider. Pure: the types, titles, provider ids, settings and the design doc template.
 
-pub use crate::document_edit::*;
 use crate::ticket::{Actor, AgentBy};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -12,7 +11,7 @@ use ts_rs::TS;
 pub const MAX_TITLE: usize = 200;
 
 /// A text document or a spreadsheet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum DocumentKind {
@@ -95,6 +94,36 @@ impl Document {
             (_, Some(AgentBy { persona: Some(p), .. })) => p.clone(),
             _ => "an agent".into(),
         }
+    }
+}
+
+/// A document open beside a conversation (PDT-317): one tab of its side panel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BesideTab {
+    pub document: Document,
+    /// Who opened it here: the user, or the agent with `document_open_beside`.
+    pub by: Actor,
+    #[ts(type = "number")]
+    pub opened_at: i64,
+    #[ts(type = "number")]
+    pub focused_at: i64,
+}
+
+/// A conversation's side panel: its tabs in order, and the one shown (the newest focused).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentsBeside {
+    pub tabs: Vec<BesideTab>,
+    pub active: Option<String>,
+}
+
+impl DocumentsBeside {
+    pub fn new(tabs: Vec<BesideTab>) -> Self {
+        let active = tabs.iter().max_by_key(|t| t.focused_at).map(|t| t.document.id.clone());
+        Self { tabs, active }
     }
 }
 
@@ -275,13 +304,191 @@ pub struct Cell {
     pub formula: Option<String>,
 }
 
-/// One sheet of a spreadsheet: its rows of cells from A1.
+/// One sheet of a spreadsheet: its rows of cells from A1, and its charts.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Sheet {
     pub name: String,
     pub rows: Vec<Vec<Cell>>,
+    /// Its charts, where the provider reads them.
+    #[serde(default)]
+    pub charts: Vec<Chart>,
+}
+
+/// A chart on a sheet: its id (to update or delete it) and what it shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Chart {
+    pub id: String,
+    pub spec: ChartSpec,
+}
+
+/// What kind of chart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ChartKind {
+    /// Vertical bars.
+    Column,
+    /// Horizontal bars.
+    Bar,
+    Line,
+    Area,
+    Pie,
+    Scatter,
+}
+
+/// A chart, the same for every provider: a kind and a data range whose first column is the categories (the x axis)
+/// and whose other columns are the series, named by the range's first row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export)]
+pub struct ChartSpec {
+    pub kind: ChartKind,
+    /// The data, as a range on the chart's sheet (`A1:C10`).
+    pub data: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    /// The cell its top-left corner sits on; the provider places it when left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub anchor: Option<String>,
+}
+
+/// Horizontal alignment in a cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum HAlign {
+    Left,
+    Center,
+    Right,
+}
+
+/// Vertical alignment in a cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum VAlign {
+    Top,
+    Middle,
+    Bottom,
+}
+
+/// A cell format: only the fields given change.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export)]
+pub struct CellFormat {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub bold: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub italic: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub underline: Option<bool>,
+    /// The text colour, `#rrggbb`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub color: Option<String>,
+    /// The fill colour, `#rrggbb`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub background: Option<String>,
+    /// The font size in points.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub size: Option<u32>,
+    /// A number format (`0.00`, `#,##0`, `0%`, `yyyy-mm-dd`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub number_format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub horizontal: Option<HAlign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub vertical: Option<VAlign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub wrap: Option<bool>,
+}
+
+/// A test on a cell's value, for conditional formats and filters. Values are as typed (numbers compare as numbers).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(export)]
+pub enum CellCondition {
+    GreaterThan {
+        value: String,
+    },
+    LessThan {
+        value: String,
+    },
+    Between {
+        min: String,
+        max: String,
+    },
+    EqualTo {
+        value: String,
+    },
+    NotEqualTo {
+        value: String,
+    },
+    TextContains {
+        text: String,
+    },
+    Empty,
+    NotEmpty,
+    /// A formula that is true for the cells to match, written for the range's top-left cell (`=B2>C2`).
+    Formula {
+        formula: String,
+    },
+}
+
+/// A border's line.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum BorderStyle {
+    #[default]
+    Solid,
+    Thick,
+    Dashed,
+    Dotted,
+    Double,
+    /// Takes the borders away.
+    None,
+}
+
+/// What a cell may hold (data validation).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(export)]
+pub enum CellValidation {
+    /// One of these values (a drop-down).
+    OneOf { values: Vec<String> },
+    /// A tick box.
+    Checkbox,
+    /// A real date.
+    Date,
+    /// A value that meets the condition.
+    Matches { when: CellCondition },
+}
+
+/// One column to sort by: its letter (`B`), and the order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export)]
+pub struct SortKey {
+    pub column: String,
+    #[serde(default)]
+    pub descending: bool,
 }
 
 /// A document's content as a provider reads it.
@@ -306,6 +513,208 @@ impl DocumentContent {
         match self {
             DocumentContent::Doc { version, .. } | DocumentContent::Sheet { version, .. } => version.as_deref(),
         }
+    }
+}
+
+/// A change to a document's content, the same for every provider: each maps them to its own API and answers
+/// "unsupported" for one it can't do. Headings are matched by their text (case-insensitive, `#`s optional).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+#[ts(export)]
+pub enum DocumentEdit {
+    // ---- text documents
+    /// A text document's whole content, as Markdown.
+    ReplaceText {
+        markdown: String,
+    },
+    /// Markdown added at a text document's end.
+    AppendText {
+        markdown: String,
+    },
+    /// A section's body (everything under its heading, up to the next heading of its level or higher) replaced; the
+    /// heading stays.
+    ReplaceSection {
+        heading: String,
+        markdown: String,
+    },
+    /// Markdown put right under a heading, before the rest of its section.
+    InsertAfterHeading {
+        heading: String,
+        markdown: String,
+    },
+    /// Text found and replaced: it must appear exactly once, unless `all`.
+    ReplaceString {
+        find: String,
+        replace: String,
+        #[serde(default)]
+        all: bool,
+    },
+    /// A row added at the end of a table: the `table`th (from 1) in the document, or under `heading`.
+    TableAppendRow {
+        #[serde(default)]
+        #[ts(optional)]
+        heading: Option<String>,
+        #[serde(default)]
+        #[ts(optional)]
+        table: Option<u32>,
+        cells: Vec<String>,
+    },
+    /// One cell of a table changed: `row` counts its body rows from 1, `column` is a header's text or a number from 1.
+    TableSetCell {
+        #[serde(default)]
+        #[ts(optional)]
+        heading: Option<String>,
+        #[serde(default)]
+        #[ts(optional)]
+        table: Option<u32>,
+        row: u32,
+        column: String,
+        value: String,
+    },
+
+    // ---- spreadsheets
+    /// Values written into a sheet from `cell` (`B3`) across and down; a value starting with `=` is a formula.
+    SetCells {
+        sheet: String,
+        cell: String,
+        values: Vec<Vec<String>>,
+    },
+    /// A new, empty sheet.
+    AddSheet {
+        name: String,
+    },
+    RenameSheet {
+        sheet: String,
+        name: String,
+    },
+    DeleteSheet {
+        sheet: String,
+    },
+    /// A format put on a range (`A1:C1`, or one cell): only the fields given change.
+    FormatRange {
+        sheet: String,
+        range: String,
+        format: CellFormat,
+    },
+    /// A format shown on the range's cells that meet the condition.
+    ConditionalFormat {
+        sheet: String,
+        range: String,
+        when: CellCondition,
+        format: CellFormat,
+    },
+    /// A chart added; PDT gives it an id when none is given (the result lists it).
+    AddChart {
+        sheet: String,
+        #[serde(default)]
+        #[ts(optional)]
+        id: Option<String>,
+        chart: ChartSpec,
+    },
+    UpdateChart {
+        id: String,
+        chart: ChartSpec,
+    },
+    DeleteChart {
+        id: String,
+    },
+    /// A range's rows sorted by its columns, in order; with `header` its first row stays on top.
+    Sort {
+        sheet: String,
+        range: String,
+        by: Vec<SortKey>,
+        #[serde(default)]
+        header: bool,
+    },
+    /// A filter on a range: only the rows whose `column` meets the condition show (its first row is the header).
+    Filter {
+        sheet: String,
+        range: String,
+        column: String,
+        when: CellCondition,
+    },
+    ClearFilter {
+        sheet: String,
+    },
+    /// Borders around a range, and between its cells with `inner`.
+    SetBorders {
+        sheet: String,
+        range: String,
+        #[serde(default)]
+        style: BorderStyle,
+        /// `#rrggbb`; black when left out.
+        #[serde(default)]
+        #[ts(optional)]
+        color: Option<String>,
+        #[serde(default)]
+        inner: bool,
+    },
+    /// The width of columns (`B`, or `B:D`), in pixels.
+    ColumnWidth {
+        sheet: String,
+        columns: String,
+        width: u32,
+    },
+    /// The first `rows` and `columns` stay in view while scrolling (0 unfreezes).
+    Freeze {
+        sheet: String,
+        #[serde(default)]
+        rows: u32,
+        #[serde(default)]
+        columns: u32,
+    },
+    /// What may go in a range's cells; `strict` refuses anything else (else it is only flagged).
+    Validate {
+        sheet: String,
+        range: String,
+        rule: CellValidation,
+        #[serde(default)]
+        strict: bool,
+    },
+}
+
+impl DocumentEdit {
+    /// Its name, as agents give it (`replace_section`).
+    pub fn op(&self) -> &'static str {
+        match self {
+            DocumentEdit::ReplaceText { .. } => "replace_text",
+            DocumentEdit::AppendText { .. } => "append_text",
+            DocumentEdit::ReplaceSection { .. } => "replace_section",
+            DocumentEdit::InsertAfterHeading { .. } => "insert_after_heading",
+            DocumentEdit::ReplaceString { .. } => "replace_string",
+            DocumentEdit::TableAppendRow { .. } => "table_append_row",
+            DocumentEdit::TableSetCell { .. } => "table_set_cell",
+            DocumentEdit::SetCells { .. } => "set_cells",
+            DocumentEdit::AddSheet { .. } => "add_sheet",
+            DocumentEdit::RenameSheet { .. } => "rename_sheet",
+            DocumentEdit::DeleteSheet { .. } => "delete_sheet",
+            DocumentEdit::FormatRange { .. } => "format_range",
+            DocumentEdit::ConditionalFormat { .. } => "conditional_format",
+            DocumentEdit::AddChart { .. } => "add_chart",
+            DocumentEdit::UpdateChart { .. } => "update_chart",
+            DocumentEdit::DeleteChart { .. } => "delete_chart",
+            DocumentEdit::Sort { .. } => "sort",
+            DocumentEdit::Filter { .. } => "filter",
+            DocumentEdit::ClearFilter { .. } => "clear_filter",
+            DocumentEdit::SetBorders { .. } => "set_borders",
+            DocumentEdit::ColumnWidth { .. } => "column_width",
+            DocumentEdit::Freeze { .. } => "freeze",
+            DocumentEdit::Validate { .. } => "validate",
+        }
+    }
+
+    /// Whether it changes a text document (else a spreadsheet).
+    pub fn for_docs(&self) -> bool {
+        matches!(
+            self,
+            DocumentEdit::ReplaceText { .. }
+                | DocumentEdit::AppendText { .. }
+                | DocumentEdit::ReplaceSection { .. }
+                | DocumentEdit::InsertAfterHeading { .. }
+                | DocumentEdit::ReplaceString { .. }
+                | DocumentEdit::TableAppendRow { .. }
+                | DocumentEdit::TableSetCell { .. }
+        )
     }
 }
 
@@ -352,6 +761,45 @@ pub fn parse_cell(cell: &str) -> Option<(usize, usize)> {
     let col = letters.bytes().fold(0usize, |n, b| n * 26 + usize::from(b - b'A') + 1) - 1;
     let row: usize = digits.parse().ok().filter(|r| *r >= 1)?;
     Some((row - 1, col))
+}
+
+/// A cell's zero-based (row, column).
+pub type CellAt = (usize, usize);
+
+/// A range (`A1:C10`, or one cell `B3`) as its zero-based first and last (row, column), in order.
+pub fn parse_range(range: &str) -> Option<(CellAt, CellAt)> {
+    let (a, b) = match range.split_once(':') {
+        Some((a, b)) => (parse_cell(a)?, parse_cell(b)?),
+        None => {
+            let c = parse_cell(range)?;
+            (c, c)
+        }
+    };
+    Some(((a.0.min(b.0), a.1.min(b.1)), (a.0.max(b.0), a.1.max(b.1))))
+}
+
+/// A column's zero-based index from its letters (`B` is 1).
+pub fn parse_column(column: &str) -> Option<usize> {
+    parse_cell(&format!("{}1", column.trim())).map(|(_, c)| c)
+}
+
+/// A zero-based column's letters (1 is `B`).
+pub fn column_name(mut col: usize) -> String {
+    let mut out = Vec::new();
+    loop {
+        out.push(b'A' + (col % 26) as u8);
+        if col < 26 {
+            break;
+        }
+        col = col / 26 - 1;
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// A zero-based cell's name (`(2, 1)` is `B3`).
+pub fn cell_name(row: usize, col: usize) -> String {
+    format!("{}{}", column_name(col), row + 1)
 }
 
 #[cfg(test)]
@@ -423,6 +871,15 @@ mod tests {
         assert_eq!(parse_cell("A0"), None);
         assert_eq!(parse_cell("1A"), None);
         assert_eq!(parse_cell("A"), None);
+        assert_eq!(parse_range("C10:a1"), Some(((0, 0), (9, 2))));
+        assert_eq!(parse_range("B3"), Some(((2, 1), (2, 1))));
+        assert_eq!(parse_range("A1:"), None);
+        assert_eq!(parse_column("AA"), Some(26));
+        assert_eq!(
+            (column_name(0), column_name(25), column_name(26), column_name(701)),
+            ("A".into(), "Z".into(), "AA".into(), "ZZ".into())
+        );
+        assert_eq!(cell_name(2, 1), "B3");
     }
 
     #[test]

@@ -189,8 +189,8 @@ async fn sign_in_pick_read_and_edit_google_docs_and_sheets() {
         .ok("GET", &format!("{DRIVE}/files/s1?"), &SHEET.replace("\"3\"", "\"4\""));
     let edits = json!({"edits": [
         {"op": "set_cells", "sheet": "Sheet1", "cell": "A1", "values": [["Month", "Cost"], ["Jan", "10"], ["Feb", "12"], ["Total", "=SUM(B2:B3)"]]},
-        {"op": "format_cells", "sheet": "Sheet1", "range": "B2:B4", "format": {"numberFormat": {"kind": "currency"}}},
-        {"op": "add_chart", "sheet": "Sheet1", "chart": {"kind": "column", "title": "Costs", "domain": "A1:A3", "series": ["B1:B3"], "anchor": "D2"}}
+        {"op": "format_range", "sheet": "Sheet1", "range": "B2:B4", "format": {"numberFormat": "$#,##0.00"}},
+        {"op": "add_chart", "sheet": "Sheet1", "id": "costs", "chart": {"kind": "column", "title": "Costs", "data": "A1:B3", "anchor": "D2"}}
     ]});
     let (s, v) = call(&env.app, "POST", &format!("/api/documents/{sheet}/edits"), Some(edits)).await;
     assert_eq!((s.as_u16(), v["version"].as_str()), (200, Some("4")), "{v}");
@@ -205,6 +205,14 @@ async fn sign_in_pick_read_and_edit_google_docs_and_sheets() {
     )
     .unwrap();
     assert!(batch["requests"][0]["repeatCell"].is_object() && batch["requests"][1]["addChart"].is_object(), "{batch}");
+    // The chart keeps the id PDT gave it.
+    assert_eq!(v["charts"], json!(["costs"]));
+    assert!(
+        batch["requests"][2]["createDeveloperMetadata"]["developerMetadata"]["metadataValue"]
+            .as_str()
+            .unwrap()
+            .ends_with(" costs")
+    );
 
     // A Sheet reads as cells with formulas.
     env.google.ok("GET", &format!("{DRIVE}/files/s1?"), SHEET).ok(

@@ -143,7 +143,7 @@ pub fn read(s: &Session, id: &str) -> ProviderResult<DocumentContent> {
             let v = s.get(&format!(
                 "{SHEETS}/spreadsheets/{}?includeGridData=true&fields={}",
                 q(id),
-                q(sheets::READ_FIELDS)
+                q(&sheets::read_fields())
             ))?;
             DocumentContent::Sheet { sheets: sheets::read(&v), version: f.version }
         }
@@ -162,21 +162,27 @@ pub fn apply(s: &Session, id: &str, edits: &[DocumentEdit]) -> ProviderResult<Op
     let f = file(s, id)?;
     match f.kind {
         DocumentKind::Doc => {
+            let get = || s.get(&format!("{DOCS}/documents/{}", q(id)));
+            let update = |requests: Vec<Value>| -> ProviderResult<()> {
+                if !requests.is_empty() {
+                    s.post(&format!("{DOCS}/documents/{}:batchUpdate", q(id)), json!({"requests": requests}))?;
+                }
+                Ok(())
+            };
             for e in edits {
-                if !e.is_text() {
+                if !e.for_docs() {
                     return Err(ProviderError::Unsupported(format!(
                         "a Google Doc has no sheets or cells ({} is a Sheets edit)",
                         e.op()
                     )));
                 }
                 // Each edit reads the document again: the one before moved its indexes.
-                let doc = match e {
-                    DocumentEdit::ReplaceAll { .. } => Value::Null,
-                    _ => s.get(&format!("{DOCS}/documents/{}", q(id)))?,
-                };
-                let requests = docs::requests(&doc, e)?;
-                if !requests.is_empty() {
-                    s.post(&format!("{DOCS}/documents/{}:batchUpdate", q(id)), json!({"requests": requests}))?;
+                let doc = get()?;
+                update(docs::requests(&doc, e)?)?;
+                // A new table row is filled once it is there.
+                if let DocumentEdit::TableAppendRow { heading, table, cells } = e {
+                    let t = docs::find_table(&doc, heading.as_deref(), *table)?;
+                    update(docs::fill_last_row(&get()?, t, cells)?)?;
                 }
             }
         }
@@ -352,18 +358,19 @@ mod tests {
             .ok("GET", &format!("{DRIVE}/files/d1?"), DOC)
             .ok("GET", &format!("{DOCS}/documents/d1"), body)
             .ok("POST", &format!("{DOCS}/documents/d1:batchUpdate"), "{}")
+            .ok("GET", &format!("{DOCS}/documents/d1"), body)
             .ok("POST", &format!("{DOCS}/documents/d1:batchUpdate"), "{}")
             .ok("GET", &format!("{DRIVE}/files/d1?"), &DOC.replace("\"12\"", "\"13\""));
         let edits = [
             DocumentEdit::InsertAfterHeading { heading: "Goal".into(), markdown: "- a\n- b".into() },
-            DocumentEdit::ReplaceAll { find: "a".into(), replace: "b".into(), match_case: true },
+            DocumentEdit::ReplaceString { find: "Goal".into(), replace: "Aim".into(), all: false },
         ];
         let v = with(&r, |s| apply(s, "d1", &edits)).unwrap();
         assert_eq!(v.as_deref(), Some("13"));
         let urls = r.urls();
         assert_eq!(urls.iter().filter(|u| u.contains("/documents/d1:batchUpdate")).count(), 2);
-        // ReplaceAll needs no read.
-        assert_eq!(urls.iter().filter(|u| u.starts_with("GET https://docs.googleapis.com")).count(), 1);
+        // Each edit reads the document first.
+        assert_eq!(urls.iter().filter(|u| u.starts_with("GET https://docs.googleapis.com")).count(), 2);
         let sent: Value = serde_json::from_str(r.sent()[3].body.as_deref().unwrap()).unwrap();
         assert_eq!(sent["requests"][0]["insertText"]["location"]["index"], 5);
         let sheet_edit = [DocumentEdit::AddSheet { name: "x".into() }];
@@ -395,7 +402,7 @@ mod tests {
                     vec!["Total".into(), "=SUM(B2:B2)".into()],
                 ],
             },
-            DocumentEdit::FormatCells {
+            DocumentEdit::FormatRange {
                 sheet: "Sheet1".into(),
                 range: "A1:B1".into(),
                 format: pdt_api::sdk::documents::CellFormat { bold: Some(true), ..Default::default() },

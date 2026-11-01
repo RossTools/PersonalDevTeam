@@ -1775,8 +1775,44 @@ impl Store {
     /// Logs a `start_attempt`'s events (`ticket.stage_changed`, `attempt.started`) for workflows, once Start has
     /// what it makes (its session): until then a failed Start can still be undone without a workflow having seen it.
     pub async fn announce_start(&self, started: &StartedAttempt, now: i64) -> Result<(), StoreError> {
+        self.announce_events(&started.event_ids, now).await
+    }
+
+    /// Starts left half-done (PDT-327): active attempts made between `since` and `before` whose `started` event never
+    /// reached the event log (pdtd stopped, or the write failed, between the attempt and its announcement), each with
+    /// the timeline events its start made (the stage change and `started`), to announce now.
+    pub async fn unannounced_starts(&self, since: i64, before: i64) -> Result<Vec<(String, Vec<String>)>, StoreError> {
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT a.ticket_id, a.created_at FROM attempts a \
+             JOIN ticket_events e ON e.ticket_id = a.ticket_id AND e.kind = 'started' \
+               AND json_extract(e.data, '$.attemptId') = a.id \
+             WHERE a.state = 'active' AND a.created_at >= ? AND a.created_at < ? \
+               AND NOT EXISTS (SELECT 1 FROM events v WHERE v.key = e.id AND v.source = 'tickets') \
+             ORDER BY a.created_at",
+        )
+        .bind(since)
+        .bind(before)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = vec![];
+        for (ticket, at) in rows {
+            let ids: Vec<(String,)> = sqlx::query_as(
+                "SELECT id FROM ticket_events WHERE ticket_id = ? AND created_at = ? AND kind IN ('moved', 'started') \
+                 ORDER BY id",
+            )
+            .bind(&ticket)
+            .bind(at)
+            .fetch_all(&self.pool)
+            .await?;
+            out.push((ticket, ids.into_iter().map(|(e,)| e).collect()));
+        }
+        Ok(out)
+    }
+
+    /// Logs timeline events for workflows (each once: the event log keeps one per timeline event).
+    pub async fn announce_events(&self, event_ids: &[String], now: i64) -> Result<(), StoreError> {
         let mut tx = self.write_tx().await?;
-        for e in &started.event_ids {
+        for e in event_ids {
             let row = sqlx::query(
                 "SELECT id, ticket_id, kind, actor, body, data, created_at FROM ticket_events WHERE id = ?",
             )

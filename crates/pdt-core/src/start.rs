@@ -311,6 +311,9 @@ pub struct ValidStart {
     /// On a parent: start its next part.
     pub next: bool,
     pub size: TerminalSize,
+    /// The caller checked the running cap itself, under its own lock (`ticket.start`, with the cap a workflow chose
+    /// under, PDT-327): Start doesn't refuse for the project's cap. Never set from a request.
+    pub cap_checked: bool,
 }
 
 impl StartTicket {
@@ -361,6 +364,7 @@ impl StartTicket {
             no_session,
             next: self.next.unwrap_or(false),
             size: TerminalSize { cols, rows },
+            cap_checked: false,
         })
     }
 }
@@ -573,6 +577,7 @@ mod tests {
                 no_session: false,
                 next: false,
                 size: DEFAULT_SIZE,
+                cap_checked: false,
             }
         );
         assert!(start(serde_json::json!({"agent": "claude", "next": true})).unwrap().next);

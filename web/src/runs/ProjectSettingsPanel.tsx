@@ -410,7 +410,7 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
       </AutoSaveRow>
       <AutoSaveRow
         label="Auto-start"
-        description="Starts tickets on its own, skipping blocked and conflicting ones, while the project is under its cap."
+        description="Starts tickets on its own, skipping blocked and conflicting ones, while the project is under its cap. The built-in Pick up tickets workflow does it with these settings; edit or copy it in Workflows to pick up tickets your own way."
       >
         {(track) => (
           <Select<AutoStart>

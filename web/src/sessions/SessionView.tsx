@@ -25,6 +25,7 @@ import { useViewTracking } from './useViewTracking';
 import { usePolledAt } from '../common/usePolledAt';
 import { useOpenChanges } from '../review/open';
 import { ChangesButton } from '../review/ChangesButton';
+import { DocumentsBesideLayout, useOpenBesidePicker } from '../documents/BesidePanel';
 
 export interface SessionViewProps {
   session: Session;
@@ -237,11 +238,14 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
     if (ok) await remove();
   };
 
+  // Documents beside the conversation (PDT-317).
+  const besidePicker = useOpenBesidePicker(session.id);
   // On a phone, Compose sits with the terminal's other actions (terminalEntries).
   const entries = (compose = true): MenuEntry[] => [
     // Devin and ACP agents cannot draft on the side without touching the conversation (the server says
     // draft_unsupported).
     ...(scratch && session.agent !== 'devin' && !isAcp(session.agent) ? [{ label: 'Make ticket…', onSelect: () => setMakingTicket(true) }, { separator: true } as const] : []),
+    ...(conversation ? [besidePicker.entry, { separator: true } as const] : []),
     ...(conversation
       ? [
           ...(terminalOpen ? [{ label: 'Close terminal', onSelect: () => void closeTerminal(), disabled: closingTerminal }] : []),
@@ -304,6 +308,7 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
 
   return (
     <div className="flex flex-1 flex-col min-h-0">
+      {besidePicker.dialog}
       {makingTicket && (
         <MakeTicketDialog
           session={session}
@@ -398,16 +403,18 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
           <TerminalView key={`${session.id}:tui`} handle={terminal} sessionId={session.id} sessionStatus={session.status} polledAt={polledAt} />
         </div>
       ) : conv ? (
-        <ConversationPane
-          session={session}
-          conv={conv}
-          banner={switchable && terminalOpen ? (
-            <p className="flex items-center justify-center gap-2 px-4 pb-1 text-meta text-muted-foreground" role="status">
-              Also open in the terminal
-              <Button variant="ghost" size="sm" onClick={() => pickView('terminal')}>Show</Button>
-            </p>
-          ) : undefined}
-        />
+        <DocumentsBesideLayout sessionId={session.id} phone={phone}>
+          <ConversationPane
+            session={session}
+            conv={conv}
+            banner={switchable && terminalOpen ? (
+              <p className="flex items-center justify-center gap-2 px-4 pb-1 text-meta text-muted-foreground" role="status">
+                Also open in the terminal
+                <Button variant="ghost" size="sm" onClick={() => pickView('terminal')}>Show</Button>
+              </p>
+            ) : undefined}
+          />
+        </DocumentsBesideLayout>
       ) : (
         <div className="relative flex min-h-0 flex-1 flex-col">
           <TerminalView

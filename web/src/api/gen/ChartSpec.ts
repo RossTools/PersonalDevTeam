@@ -2,23 +2,15 @@
 import type { ChartKind } from "./ChartKind";
 
 /**
- * A chart: its kind, the range along its axis (or a pie's labels) and one range per series, all on the edit's sheet.
+ * A chart, the same for every provider: a kind and a data range whose first column is the categories (the x axis)
+ * and whose other columns are the series, named by the range's first row.
  */
-export type ChartSpec = { kind: ChartKind, title?: string, 
+export type ChartSpec = { kind: ChartKind, 
 /**
- * `A1:A10`.
+ * The data, as a range on the chart's sheet (`A1:C10`).
  */
-domain: string, 
+data: string, title?: string, 
 /**
- * `B1:B10`, one per series (a pie takes one).
+ * The cell its top-left corner sits on; the provider places it when left out.
  */
-series: Array<string>, 
-/**
- * The ranges' first row is their headers (the series' names). Yes when left out.
- */
-headers?: boolean, 
-/**
- * The cell its top left corner sits on (`E2`), on `placeSheet` or the edit's sheet; a sheet of its own when
- * neither is given.
- */
-anchor?: string, placeSheet?: string, };
+anchor?: string, };
