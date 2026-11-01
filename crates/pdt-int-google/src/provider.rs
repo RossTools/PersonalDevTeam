@@ -71,6 +71,8 @@ impl DocumentProvider for GoogleDocs {
             delete: true,
             comments: true,
             embed: true,
+            charts: false,
+            live: false,
         }
     }
 
@@ -149,6 +151,8 @@ impl DocumentProvider for GoogleDocs {
         reference: &'a str,
         comment: &'a str,
         body: &'a str,
+        // Google writes a reply as the signed-in account.
+        _by: (pdt_core::ticket::Actor, String),
     ) -> BoxFut<'a, ProviderResult<CommentReply>> {
         let (comment, body) = (comment.to_string(), body.to_string());
         Box::pin(self.on(reference, move |s, f| drive::reply(s, f, &comment, &body)))

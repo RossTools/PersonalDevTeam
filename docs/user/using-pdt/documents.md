@@ -4,22 +4,59 @@
 tickets they're about, so you and your agents can find them from either side.
 
 A document is a **doc** (text, read as Markdown) or a **sheet** (a spreadsheet). A **provider** keeps its content:
-PDT's local documents, in a folder on this machine, or a plugin's, such as Google Docs and Sheets. PDT keeps the
-document's record and links. Until a provider is turned on, there is nothing to make or import.
+**Local**, PDT's own, which saves each document as a file on this machine and needs no account, or a plugin's, such
+as Google Docs and Sheets. PDT keeps the document's record and links.
 
 ## Browse and find
 
 Open **Documents** in the rail. The list shows every document, most recently changed first. Narrow it by project,
 **Docs** or **Sheets**, provider or ticket (**Ticket…**), and search by title.
 
-Pick a document to see its links and content. A sheet shows as a table; hover a cell for its formula. **Open in …**
-opens it in the provider's own app, when it has one.
+Pick a document to see its links, content and comments. A sheet from a plugin's provider shows as a table; hover a
+cell for its formula. **Open in …** opens it in the provider's own app, when it has one.
 
-## Make or import a document
+## Write a doc
+
+A local doc opens **Rendered**. Switch to **Write** to edit its Markdown; it's saved as you type ("Saved" shows when
+it is). **Add image** puts a picture in the doc, saved beside the doc's file.
+
+If an agent (or you, in another window) saves the doc while you have unsaved changes, nothing is overwritten: a
+notice asks you to **Keep mine** (theirs is replaced) or **Take theirs** (your changes go). While you have nothing
+unsaved, changes made elsewhere show at once.
+
+## Work in a sheet
+
+A local sheet opens in a spreadsheet editor: formulas, number formats, fonts, fills, borders, merged cells, frozen
+rows and several sheets (the tabs at the bottom). Every change is saved as you make it. Above the grid:
+
+- **Sort A→Z by …** and **Z→A** sort by the selected cell's column: the selected range, or with none every row below
+  the first (the header row).
+- **Only rows with “…” in …** hides rows whose cell in that column shows something else; **Show all rows** brings
+  them back.
+- **Chart the selection** charts the selected cells, headers included: the first column labels it, each other column
+  is a series named by its header. Pick **Column**, **Bar**, **Line**, **Area**, **Pie** or **Scatter** and a title.
+  The chart floats beside the cells and redraws when they change; its **⋯** menu changes its kind or removes it.
+
+An agent's change to an open sheet shows at once, its formulas recalculated. If you and an agent change it at the
+same moment, the last change wins and a notice says the sheet now shows both.
+
+## Comment
+
+Local documents have **Comments** under them. **Comment** starts one: on a doc, about the whole document, a heading,
+or the text you selected before clicking; on a sheet, about the selected cells (click the cell name above a comment
+to select them again). Reply, **Resolve** when it's done (it folds to one line), or **Reopen**. Agents read, add,
+answer and resolve comments too.
+
+## Make, import or export a document
 
 - **New document** (the pencil at the top of the list): give it a title, pick **Doc** or **Sheet**, the provider and
   the project.
 - **Import a document** (beside it): search a provider's files and pick one. PDT links the file; it doesn't copy it.
+  **Local** lists the `.md` and `.xlsx` files in the local documents folders.
+- **From your computer…** (in **Import a document**): a `.md` file becomes a doc, a `.xlsx` or `.csv` file a sheet,
+  copied into the local documents folder. A spreadsheet's charts, pictures and pivot tables aren't kept; PDT says so.
+- The **⋯** menu exports a doc as **Export as Markdown (.md)**, and a sheet as **Export as Excel (.xlsx)** (every
+  sheet, with formulas and formats) or as CSV (the sheet you're on). Charts aren't in the exported file.
 
 ## Link documents to projects and tickets
 
@@ -69,14 +106,19 @@ On a phone, a **Conversation | Documents** switch at the top of the conversation
 
 ## Rename or remove
 
-**Rename** (the pencil beside the title, or the **⋯** menu) renames it, at the provider too when it can. In the **⋯**
-menu, **Remove from PDT…** forgets the document and its links but leaves the file; **Delete document…** deletes the
-file too, where the provider allows it.
+**Rename** (the pencil beside the title, or the **⋯** menu) renames it, at the provider too when it can (a local
+document keeps its file name). In the **⋯** menu, **Remove from PDT…** forgets the document and its links but leaves
+the file; **Delete document…** deletes the file too, where the provider allows it (a local doc's pictures go with it).
 
 ## Where new documents go
 
 **Settings › This host › Documents** sets the **Default provider** and the **Local documents folder** (blank: PDT's
 data folder). **Settings › the project › Documents** sets the same for one project; blank follows this host.
+
+A local doc is a `.md` file (its pictures in a `.assets` folder beside it), a local sheet a `.xlsx` you can open in
+Excel, LibreOffice or Google Sheets; comments and charts are in PDT's database. Changes made to a file outside PDT
+show within a few seconds while it's open. The default folder is inside PDT's data folder, so backing that up
+includes your documents ([Your data](../your-machine/your-data.md#backups)); back up a folder elsewhere too.
 
 ## Google Docs and Sheets
 

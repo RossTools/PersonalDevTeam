@@ -742,7 +742,8 @@ impl Action for CommentReply {
             }
             let d = find(cx.st, &i.document).await?;
             let (d, p) = with_comments(cx.st, &d.id).await.map_err(api)?;
-            let r = p.reply(&d.provider_ref, i.comment.trim(), body).await.map_err(|e| api(e.into()))?;
+            let by = (pdt_core::ticket::Actor::Agent, "Agent".to_string());
+            let r = p.reply(&d.provider_ref, i.comment.trim(), body, by).await.map_err(|e| api(e.into()))?;
             Ok(json!({"id": r.id, "replied": true}))
         })
     }

@@ -66,8 +66,12 @@ pub struct AppState {
     /// GitHub; a test sets a fake (`pdt_forge::HostedForge`). The forge logins sign the plugins in (PDT-244).
     pub forges: pdt_forge::ForgeRegistry,
     /// PDT's own document providers (PDT-314); the enabled integrations add theirs (`crate::documents::providers`).
-    /// `new` has none; a test sets a fake (`crate::documents::testing::FakeProvider`).
+    /// `new` has the local one ([`AppState::local`]); a test may set a fake
+    /// (`crate::documents::testing::FakeProvider`).
     pub documents: crate::documents::DocumentProviders,
+    /// PDT's local document provider (PDT-315): files in the documents folder, live sheets. It counts while
+    /// `documents` lists it.
+    pub local: std::sync::Arc<crate::documents::local::LocalProvider>,
     /// The keychain account of this instance's forge logins (see `secrets::forge_logins_account`), kept apart from
     /// the stable instance's as `update_token_account` is.
     pub forge_logins_account: String,
@@ -221,6 +225,11 @@ impl AppState {
         let update_token_account = crate::secrets::update_token_account(&data_dir, None);
         let github_account = crate::secrets::github_login_account(&data_dir, None);
         let forge_logins_account = crate::secrets::forge_logins_account(&data_dir, None);
+        let local = std::sync::Arc::new(crate::documents::local::LocalProvider::new(
+            store.clone(),
+            data_dir.clone(),
+            std::env::home_dir(),
+        ));
         Self {
             store,
             ptys: pdt_agents::PtyManager::new(),
@@ -251,7 +260,8 @@ impl AppState {
             forges: pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_github::plugin::GithubPlugin::new(
                 std::sync::Arc::new(pdt_github::GithubApi::offline()),
             ))]),
-            documents: Default::default(),
+            documents: crate::documents::DocumentProviders::new(vec![local.clone()]),
+            local,
             forge_logins_account,
             github_account,
             github_client_id: pdt_core::brand::GITHUB_OAUTH_CLIENT_ID.into(),
@@ -546,9 +556,33 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/documents/{id}/content", get(crate::documents::routes::content))
         .route("/documents/{id}/version", get(crate::documents::routes::version))
         .route("/documents/{id}/edits", axum::routing::post(crate::documents::routes::edit))
-        .route("/documents/{id}/comments", get(crate::documents::routes::comments))
+        .route(
+            "/documents/{id}/comments",
+            get(crate::documents::routes::comments).post(crate::documents::routes::add_comment),
+        )
+        .route("/documents/{id}/sheet", get(crate::documents::routes::sheet))
+        .route(
+            "/documents/{id}/sheet/diffs",
+            axum::routing::post(crate::documents::routes::sheet_diffs)
+                .layer(axum::extract::DefaultBodyLimit::max(crate::documents::local::MAX_FILE)),
+        )
+        .route("/documents/{id}/events", get(crate::documents::routes::events))
+        .route("/documents/{id}/charts", get(crate::documents::routes::charts))
+        .route("/documents/{id}/export", get(crate::documents::routes::export))
+        .route(
+            "/documents/upload",
+            axum::routing::post(crate::documents::routes::upload)
+                .layer(axum::extract::DefaultBodyLimit::max(crate::documents::local::MAX_FILE)),
+        )
+        .route(
+            "/documents/{id}/images",
+            axum::routing::post(crate::documents::routes::image)
+                .layer(axum::extract::DefaultBodyLimit::max(crate::documents::local::MAX_FILE)),
+        )
+        .route("/documents/{id}/assets/{*path}", get(crate::documents::routes::asset))
         .route("/documents/{id}/comments/{comment}/replies", axum::routing::post(crate::documents::routes::reply))
         .route("/documents/{id}/comments/{comment}/resolve", axum::routing::post(crate::documents::routes::resolve))
+        .route("/documents/{id}/comments/{comment}/reopen", axum::routing::post(crate::documents::routes::reopen))
         .route(
             "/sessions/{id}/documents",
             get(crate::documents::routes::beside)
