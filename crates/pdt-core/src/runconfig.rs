@@ -933,8 +933,25 @@ paths = ["web/ui/**", " "]
         let area = |n: &str| c.areas.iter().find(|a| a.name == n).unwrap_or_else(|| panic!("no area {n}"));
         assert!(area("migrations").exclusive);
         assert_eq!(area("migrations").paths, ["crates/pdt-store/migrations/**"]);
-        for n in ["design system", "tickets", "terminals", "runs", "workspaces", "host and updates", "ci"] {
+        for n in [
+            "design system",
+            "tickets",
+            "terminals",
+            "runs",
+            "workspaces",
+            "host and updates",
+            "ci",
+            "workflows",
+            "inbox and notifications",
+        ] {
             assert!(!area(n).exclusive, "{n}");
         }
+        // A file may be in two areas: the workflow pipeline holds the persona prompts too.
+        let covers = |n: &str, f: &str| {
+            area(n).paths.iter().any(|p| crate::overlap::glob(p).unwrap().compile_matcher().is_match(f))
+        };
+        assert!(covers("workflows", "crates/pdt-api/src/workflow/pipeline.rs"));
+        assert!(covers("persona prompts", "crates/pdt-api/src/workflow/pipeline.rs"));
+        assert!(covers("inbox and notifications", "web/src/inbox/Inbox.tsx"));
     }
 }
