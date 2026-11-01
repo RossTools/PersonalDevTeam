@@ -46,7 +46,8 @@ pub(crate) async fn create(
 
 /// Makes `.worktrees/<branch>` on a new branch from `base` and records it. A worktree git already has there for
 /// `branch` (made outside PDT) is adopted; any other folder there is `worktree_path_taken`. With `existing_branch`,
-/// a branch that already exists is checked out instead of refused (`branch_exists`).
+/// a branch that already exists is checked out instead of refused (`branch_exists`). A worktree made here that can't
+/// be recorded (a full disk, a clashing row) is removed again, with the branch when it made it, so none is orphaned.
 pub(crate) async fn make_worktree(
     st: &AppState,
     project: &Project,
@@ -57,21 +58,22 @@ pub(crate) async fn make_worktree(
     let repo = PathBuf::from(&project.repo_path);
     let path = worktree_path(&repo, branch);
     let (b, target, base) = (branch.to_string(), path.clone(), base.to_string());
-    let base_commit = tokio::task::spawn_blocking(move || -> Result<String, ApiError> {
+    let (base_commit, made) = tokio::task::spawn_blocking(move || -> Result<(String, Made), ApiError> {
         pdt_git::ensure_excluded(&repo, &format!("/{WORKTREES_DIR}/"))?;
         if target.exists() {
-            return adoptable(&repo, &target, &b).ok_or_else(|| {
+            let head = adoptable(&repo, &target, &b).ok_or_else(|| {
                 ApiError::new(
                     StatusCode::CONFLICT,
                     "worktree_path_taken",
                     format!("the worktree folder {} is already in use (by another branch?)", target.display()),
                 )
-            });
+            })?;
+            return Ok((head, Made::Adopted));
         }
         if existing_branch && pdt_git::branch_exists(&repo, &b) {
-            return Ok(pdt_git::add_worktree_for_branch(&repo, &target, &b)?);
+            return Ok((pdt_git::add_worktree_for_branch(&repo, &target, &b)?, Made::Worktree));
         }
-        Ok(pdt_git::add_worktree(&repo, &target, &b, &base)?)
+        Ok((pdt_git::add_worktree(&repo, &target, &b, &base)?, Made::WorktreeAndBranch))
     })
     .await
     .map_err(ApiError::internal)??;
@@ -84,8 +86,35 @@ pub(crate) async fn make_worktree(
         created_at: now_ms(),
         missing: false,
     };
-    st.store.insert_worktree(&wt).await?;
+    if let Err(e) = st.store.insert_worktree(&wt).await {
+        if made != Made::Adopted {
+            let (repo, branch) = (PathBuf::from(&project.repo_path), branch.to_string());
+            let undone = tokio::task::spawn_blocking(move || {
+                pdt_git::remove_worktree(&repo, &path, true)?;
+                if made == Made::WorktreeAndBranch {
+                    pdt_git::delete_branch(&repo, &branch)?;
+                }
+                Ok::<_, pdt_git::GitError>(())
+            })
+            .await;
+            if let Ok(Err(err)) = undone {
+                tracing::warn!(path = %wt.path, "could not remove a worktree PDT failed to record: {err}");
+            }
+        }
+        return Err(e.into());
+    }
     Ok(wt)
+}
+
+/// What `make_worktree` did on disk, so a failure to record it undoes only that.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Made {
+    /// A worktree git already had, left as it was.
+    Adopted,
+    /// A new worktree on a branch that already existed.
+    Worktree,
+    /// A new worktree on a new branch.
+    WorktreeAndBranch,
 }
 
 #[derive(Debug, Default, Deserialize)]

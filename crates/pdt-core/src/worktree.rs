@@ -60,7 +60,9 @@ impl NewWorktree {
             || branch.ends_with(".lock")
             || branch.contains("..")
             || branch.contains("//")
-            || branch.contains("@{");
+            || branch.contains("@{")
+            || branch == "HEAD"
+            || branch == "@";
         if bad {
             return Err(WorktreeValidationError::InvalidBranch(branch.into()));
         }
@@ -114,6 +116,8 @@ mod tests {
             "/a",
             "a//b",
             "a.",
+            "HEAD",
+            "@",
         ] {
             assert!(matches!(nw(bad, None).validate(), Err(WorktreeValidationError::InvalidBranch(_))), "{bad}");
         }
