@@ -271,8 +271,11 @@ link that a forge plugin's `is_change_request_url` accepts, named by its `change
 stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, "PDT can't save changes"
 (`inbox::storage`, while `Store::write_failure` says writes fail), and workflow proposals
 (`inbox::proposals`: one per workflow with a proposed version, id `proposal:<workflow>:<version>`, answered
-by `inbox::answer` with the Versions tab's accept and discard). Notifications (`notifications.rs`) are the transient
-kind.
+by `inbox::answer` with the Versions tab's accept and discard). An item's `group` is what kind of wait it is;
+the list shows a few sections (`InboxGroup::section`: Questions, Approvals, Stuck, To act on, Ready to accept) and
+`inbox::sort` orders by section, then age. The web lays every kind out the same way (`web/src/inbox/itemView.tsx`
+makes one spec per item that the desktop and the phone both render). Notifications (`notifications.rs`) are the
+transient kind.
 
 **Secrets.** Values live in the OS keychain (or, on Linux without a Secret Service, a file only the user can read) and
 in memory; agents and workflows refer to them by name (`run_with_secrets`, `write_secret_file`, `{{secret.x}}` in a

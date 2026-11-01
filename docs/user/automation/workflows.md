@@ -236,8 +236,8 @@ with that message.
 
 ### Gates
 
-**Ask the user** asks you something and waits. The question shows in the Inbox under **Gates** (or **Ready to
-accept**) with a box for a note, which goes on the ticket as your comment. Each choice is an exit. A gate can give up
+**Ask the user** asks you something and waits. The question shows in the Inbox under **Ready to accept** with a
+box for a note, which goes on the ticket as your comment. Each choice is an exit. A gate can give up
 after a time, or close by itself when something else happens first (the ticket merged, say).
 
 ### Agent steps and outcomes
