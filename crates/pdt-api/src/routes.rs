@@ -599,6 +599,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .route("/sessions/{id}/view", axum::routing::post(crate::activity::post_view))
         .merge(crate::workflow::routes::router())
         .merge(crate::vault::router())
+        .merge(crate::mcp_servers::router())
         .route(
             "/hooks/{name}",
             axum::routing::post(crate::hooks::receive)

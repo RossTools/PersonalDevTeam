@@ -206,7 +206,7 @@ pub(crate) async fn agent_instructions(
     let project = st.store.get_project(&s.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     if project.is_host() {
         // The PM (PDT-81): its own context and briefing, nothing about a project or checkout.
-        let text = crate::pm::instructions(st, s).await?;
+        let text = with_mcp_note(crate::pm::instructions(st, s).await?, st, s).await;
         let file = pdt_agents::instructions::write_instructions(&session_data_dir(st, &s.id), &text)
             .map_err(|e| ApiError::internal(format!("writing the session's instructions: {e}")))?;
         return Ok(Some(pdt_agents::adapter::SessionInstructions { text, file }));
@@ -259,6 +259,7 @@ pub(crate) async fn agent_instructions(
         ticket,
     };
     let ours = pdt_core::agent_context::session_instructions(&ctx, settings.agent_instructions.as_deref());
+    let ours = with_mcp_note(ours, st, s).await;
     let text = match (s.agent, st.platform.codex_home.as_deref()) {
         (Some(AgentKind::Codex), Some(home)) => {
             let user = pdt_agents::instructions::user_codex_developer_instructions(home);
@@ -269,6 +270,15 @@ pub(crate) async fn agent_instructions(
     let file = pdt_agents::instructions::write_instructions(&session_data_dir(st, &s.id), &text)
         .map_err(|e| ApiError::internal(format!("writing the session's instructions: {e}")))?;
     Ok(Some(pdt_agents::adapter::SessionInstructions { text, file }))
+}
+
+/// `text` with the note on the user's MCP servers the session gets (PDT-322): what their tools return is data from
+/// other people, never instructions.
+async fn with_mcp_note(text: String, st: &AppState, s: &Session) -> String {
+    match pdt_core::mcp_servers::context_note(&crate::agent_mcp::names_for(st, s).await) {
+        Some(note) => format!("{}\n\n{note}", text.trim_end()),
+        None => text,
+    }
 }
 
 /// The event types the project's enabled workflows tell an attempt's agent about.
@@ -489,7 +499,7 @@ fn start_pty(
         env.push(("PDT_SESSION_ID".into(), s.id.clone()));
         env.push(("PDT_HOOK_PORT".into(), st.listen_port.to_string()));
         if let Some(m) = mcp.filter(|_| s.agent == Some(AgentKind::Codex)) {
-            env.push(pdt_agents::mcp::codex_tui_env(m));
+            env.extend(pdt_agents::mcp::codex_tui_env(m));
         }
     }
     let spec = SpawnSpec {

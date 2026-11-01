@@ -109,6 +109,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   in a `format!`), never replace it with your own words. A route answers it with 503 `write_failed` and its message
   (`ApiError::write_failed`, also from `ApiError::internal` given its text), and the router's `note_write_failures`
   records it, so the Inbox says so whoever wrote; a `BEGIN` that can't start (`Store::write_tx`) is recorded too.
+- **Conversation events are never skipped.** `conversations.rs` `append` applies an event to the runtime state as
+  it comes (a message the agent took leaves `pending`, a turn's leftover streamed text goes), then stores it through
+  the conversation's `unstored` queue: one that can't be written waits there with every event after it, is retried
+  with a backoff and stored in the order received, and only a stored event goes to viewers. What reads the log (a
+  turn's end, the PM's hooks) runs once the event is stored. A Claude conversation's log is checked for gaps against
+  Claude's transcript the first time it loads in a pdtd (`repair_gaps`, by item id; only messages, tool calls and
+  reasoning, since turn markers of turns the agent starts on its own have other ids live).
 - **A step's setup error is never retried.** An error that waiting won't fix (no project, a bad repository) is made
   with `setup_error` (pdt-api `workflow/catalog.rs`; `repo_for_step` in `nodes/release.rs`), and `fail_step` skips the
   node's retries for it. A kind that works on the run's project says so in `NodeKind::needs_project`, so a manual start

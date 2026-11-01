@@ -66,6 +66,8 @@ pub struct Conversations {
     codex: Arc<std::sync::OnceLock<Arc<CodexServer>>>,
     /// Every conversation's stored events as they happen, with their session's id ([`subscribe_all`]).
     all: broadcast::Sender<(String, ConversationEvent)>,
+    /// The conversations whose log was checked for gaps since pdtd started ([`repair_gaps`]).
+    repaired: Arc<tokio::sync::Mutex<HashSet<String>>>,
 }
 
 impl Default for Conversations {
@@ -81,6 +83,7 @@ impl Default for Conversations {
             close_pause: Duration::ZERO,
             codex: Default::default(),
             all: broadcast::channel(1024).0,
+            repaired: Default::default(),
         }
     }
 }
@@ -129,6 +132,11 @@ pub(crate) struct Conv {
     sending: tokio::sync::RwLock<()>,
     /// The newest process generation whose exit has been fully applied (its last events stored).
     exits: tokio::sync::watch::Sender<u64>,
+    /// Events received that are not stored yet (a write failed), oldest first; held while storing, so events are
+    /// stored in the order they came (PDT-331).
+    unstored: tokio::sync::Mutex<std::collections::VecDeque<Unstored>>,
+    /// `unstored` is being retried.
+    retrying: std::sync::atomic::AtomicBool,
 }
 
 struct ConvState {
@@ -266,6 +274,9 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
         return Ok(c.clone());
     }
     let has_history = st.store.last_session_event_seq(&session.id).await? > 0;
+    if has_history {
+        repair_gaps(st, session).await;
+    }
     let stopped_background = st.store.stopped_background(&session.id).await?;
     let c = Arc::new(Conv {
         id: session.id.clone(),
@@ -295,9 +306,71 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
         activity_write: tokio::sync::Mutex::new(()),
         sending: tokio::sync::RwLock::new(()),
         exits: tokio::sync::watch::channel(0).0,
+        unstored: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
+        retrying: std::sync::atomic::AtomicBool::new(false),
     });
     let mut map = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner());
     Ok(map.entry(session.id.clone()).or_insert(c).clone())
+}
+
+/// Fills in the gaps in a Claude conversation's log from Claude's transcript, once per pdtd, as it loads (PDT-331):
+/// events PDT received but could not store (a full disk) before pdtd stopped. Loads of other conversations wait
+/// meanwhile, and a second load of this one finds it done.
+async fn repair_gaps(st: &AppState, session: &Session) {
+    if !matches!(session.agent, None | Some(AgentKind::Claude)) {
+        return;
+    }
+    let mut checked = st.conversations.repaired.lock().await;
+    if !checked.insert(session.id.clone()) {
+        return;
+    }
+    // A terminal's turns waiting to be imported are not a gap.
+    if !matches!(st.store.history_from(&session.id).await, Ok(None)) {
+        return;
+    }
+    let Some(transcript) = read_transcript(st, session.claude_conversation_id()).await else { return };
+    let cwd = session.cwd.clone();
+    let history = tokio::task::spawn_blocking(move || {
+        pdt_core::conversation::claude::history_events(&transcript, None, Some(&cwd)).map(|events| {
+            events
+                .into_iter()
+                .filter_map(|out| match out {
+                    pdt_core::conversation::claude::MapOut::Event { item_id, turn_id, event } => {
+                        Some((item_id, turn_id, event))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+    })
+    .await;
+    let Ok(Ok(history)) = history else { return };
+    let stored = match st.store.session_item_ids(&session.id).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(session = %session.id, error = %e, "could not read the conversation's items");
+            return;
+        }
+    };
+    for gap in pdt_core::conversation::repair::gaps(&history, &stored) {
+        let events: Vec<NewEvent> = gap
+            .events
+            .iter()
+            .map(|(item, turn, event)| NewEvent {
+                ts: 0,
+                item_id: Some(item),
+                turn_id: turn.as_deref(),
+                event,
+                raw: None,
+            })
+            .collect();
+        match st.store.insert_session_events_after(&session.id, &gap.after, &events).await {
+            Ok(n) => {
+                tracing::info!(session = %session.id, after = %gap.after, events = n, "filled in a gap in the conversation")
+            }
+            Err(e) => tracing::warn!(session = %session.id, error = %e, "could not fill in a gap in the conversation"),
+        }
+    }
 }
 
 /// Starts the agent process for a conversation if it is not running, resuming its saved conversation. Marks the
@@ -569,6 +642,8 @@ async fn append(
     event: AgentEvent,
     raw: Option<&str>,
 ) {
+    // When it happened: a write that has to wait keeps it (PDT-331).
+    let ts = now_ms();
     // The agent echoes a message without PDT's attachment ids (the stored row names them, for the thumbnails) and
     // without saying that PDT sent it on its own.
     let mut event = event;
@@ -588,85 +663,208 @@ async fn append(
     }
     let scrubbed = integration_hooks(st, &mut event, raw);
     let raw = scrubbed.as_deref().or(raw);
-    let row = match st
-        .store
-        .upsert_session_event(&c.id, NewEvent { ts: now_ms(), item_id, turn_id, event: &event, raw })
-        .await
-    {
-        Ok(row) => row,
-        Err(e) => {
-            tracing::warn!(session = %c.id, error = %e, "could not store a conversation event");
-            return;
-        }
+    // The runtime state follows the event as it comes, whether or not it can be stored yet: a message the agent took
+    // leaves the queue even while the disk is full (PDT-331). What reads the log waits until it is stored.
+    let (state_changed, then) = apply_event(c, item_id, &event);
+    let unstored = Unstored {
+        ts,
+        item_id: item_id.map(String::from),
+        turn_id: turn_id.map(String::from),
+        event,
+        raw: raw.map(String::from),
+        then,
     };
-    let state_changed = {
-        let mut s = c.state();
-        s.has_history = true;
-        s.last_active = Instant::now();
-        if let Some(item) = item_id {
-            s.partial.remove(item);
-        }
-        match &event {
-            AgentEvent::Turn { phase: TurnPhase::Started, .. } => {
-                s.turn_running = true;
-                s.errored = false;
-                true
-            }
-            AgentEvent::Turn { phase: TurnPhase::Ended, .. } => {
-                s.turn_running = false;
-                // An agent step's session ended a turn: did it submit an outcome (Phase 7b spec §4.4)? A PM session's
-                // may be due its daily update (PDT-167), or end once the user closed it.
-                let (st2, id) = (st.clone(), c.id.clone());
-                tokio::spawn(async move {
-                    crate::workflow::agent::turn_ended(&st2, &id).await;
-                    crate::pm::turn_ended(&st2, &id).await;
-                });
-                true
-            }
-            AgentEvent::Request { id, state: RequestState::Open, tool, input, .. } => {
-                s.open_requests.insert(id.clone());
-                // One of PDT's asking tools in a project that lets the PM act is answered for the user (PDT-81).
-                if tool.starts_with(&format!("mcp__{}__", pdt_core::mcp::SERVER_NAME)) {
-                    let (st2, sid, rid, tool, input) =
-                        (st.clone(), c.id.clone(), id.clone(), tool.clone(), input.clone());
-                    tokio::spawn(async move { crate::pm::request_opened(&st2, &sid, &rid, &tool, &input).await });
-                }
-                true
-            }
-            AgentEvent::Request { id, .. } => s.open_requests.remove(id),
-            AgentEvent::Compaction { .. } => {
-                // A PM conversation writes a journal checkpoint and carries on (PDT-167).
-                let (st2, id) = (st.clone(), c.id.clone());
-                tokio::spawn(async move { crate::pm::compacted(&st2, &id).await });
-                false
-            }
-            AgentEvent::Error { .. } => {
-                s.errored = true;
-                true
-            }
-            AgentEvent::Usage { rate_limits, .. } if !rate_limits.is_empty() => {
-                s.limited_until = pdt_core::conversation::limited_until(rate_limits, now_ms());
-                false
-            }
-            AgentEvent::UserMessage { text, source, .. }
-                if *source != pdt_core::conversation::MessageSource::Terminal =>
-            {
-                // The agent took a message: it is no longer pending, and whatever it carried was told (PDT-129).
-                if let Some(i) = pending_index(&s.pending, text) {
-                    let p = s.pending.remove(i);
-                    let st2 = st.clone();
-                    tokio::spawn(async move { crate::workflow::outbox::echoed(&st2, &p.id).await });
-                }
-                true
-            }
-            _ => false,
-        }
-    };
-    let _ = st.conversations.all.send((c.id.clone(), row.clone()));
-    let _ = c.tx.send(ConversationServerMessage::Event { event: row });
+    store_in_order(st, c, unstored).await;
     if state_changed {
         c.push_state();
         refresh_activity(st, c).await;
+    }
+}
+
+/// What an event sets off once it is stored (never when it can't be: its session was removed).
+enum FollowUp {
+    /// An agent step's session ended a turn: did it submit an outcome (Phase 7b spec §4.4)? A PM session's may be due
+    /// its daily update (PDT-167), or end once the user closed it.
+    TurnEnded,
+    /// One of PDT's asking tools in a project that lets the PM act is answered for the user (PDT-81).
+    PdtRequest { id: String, tool: String, input: serde_json::Value },
+    /// A PM conversation writes a journal checkpoint and carries on (PDT-167).
+    Compacted,
+    /// Whatever a message the agent took carried was told (PDT-129).
+    Echoed(String),
+}
+
+impl FollowUp {
+    fn spawn(self, st: &AppState, session: &str) {
+        let (st, sid) = (st.clone(), session.to_string());
+        match self {
+            FollowUp::TurnEnded => tokio::spawn(async move {
+                crate::workflow::agent::turn_ended(&st, &sid).await;
+                crate::pm::turn_ended(&st, &sid).await;
+            }),
+            FollowUp::PdtRequest { id, tool, input } => {
+                tokio::spawn(async move { crate::pm::request_opened(&st, &sid, &id, &tool, &input).await })
+            }
+            FollowUp::Compacted => tokio::spawn(async move { crate::pm::compacted(&st, &sid).await }),
+            FollowUp::Echoed(pending) => {
+                tokio::spawn(async move { crate::workflow::outbox::echoed(&st, &pending).await })
+            }
+        };
+    }
+}
+
+/// Applies an event to the conversation's runtime state: whether the state viewers see changed, and what it sets off.
+fn apply_event(c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Vec<FollowUp>) {
+    let mut then = Vec::new();
+    let mut s = c.state();
+    s.has_history = true;
+    s.last_active = Instant::now();
+    if let Some(item) = item_id {
+        s.partial.remove(item);
+    }
+    let changed = match event {
+        AgentEvent::Turn { phase: TurnPhase::Started, .. } => {
+            s.turn_running = true;
+            s.errored = false;
+            true
+        }
+        AgentEvent::Turn { phase: TurnPhase::Ended, .. } => {
+            s.turn_running = false;
+            // A message streamed in a turn that ended without it is not coming (PDT-331); a tool's output can still
+            // grow (a background task).
+            s.partial.retain(|_, (field, _)| *field != DeltaField::Markdown);
+            then.push(FollowUp::TurnEnded);
+            true
+        }
+        AgentEvent::Request { id, state: RequestState::Open, tool, input, .. } => {
+            s.open_requests.insert(id.clone());
+            if tool.starts_with(&format!("mcp__{}__", pdt_core::mcp::SERVER_NAME)) {
+                then.push(FollowUp::PdtRequest { id: id.clone(), tool: tool.clone(), input: input.clone() });
+            }
+            true
+        }
+        AgentEvent::Request { id, .. } => s.open_requests.remove(id),
+        AgentEvent::Compaction { .. } => {
+            then.push(FollowUp::Compacted);
+            false
+        }
+        AgentEvent::Error { .. } => {
+            s.errored = true;
+            true
+        }
+        AgentEvent::Usage { rate_limits, .. } if !rate_limits.is_empty() => {
+            s.limited_until = pdt_core::conversation::limited_until(rate_limits, now_ms());
+            false
+        }
+        AgentEvent::UserMessage { text, source, .. } if *source != pdt_core::conversation::MessageSource::Terminal => {
+            // The agent took a message: it is no longer pending.
+            if let Some(i) = pending_index(&s.pending, text) {
+                let p = s.pending.remove(i);
+                then.push(FollowUp::Echoed(p.id));
+            }
+            true
+        }
+        _ => false,
+    };
+    (changed, then)
+}
+
+/// An event received and not stored yet.
+struct Unstored {
+    ts: i64,
+    item_id: Option<String>,
+    turn_id: Option<String>,
+    event: AgentEvent,
+    raw: Option<String>,
+    /// What it sets off once stored.
+    then: Vec<FollowUp>,
+}
+
+/// At most this many events wait for a write in one conversation; past it the oldest is given up (and logged).
+const MAX_UNSTORED: usize = 10_000;
+
+/// Stores an event after those still waiting for a write, in the order they came (PDT-331), and sends each one stored
+/// to the viewers. One that can't be stored yet (a full disk) waits in memory, with the ones after it, and is retried
+/// with a backoff until it is. A later version of a waiting item replaces it there, keeping its place.
+async fn store_in_order(st: &AppState, c: &Arc<Conv>, e: Unstored) {
+    let mut q = c.unstored.lock().await;
+    let waiting = e.item_id.as_ref().and_then(|item| q.iter_mut().find(|w| w.item_id.as_ref() == Some(item)));
+    if let Some(w) = waiting {
+        w.ts = e.ts;
+        w.event = e.event;
+        if e.turn_id.is_some() {
+            w.turn_id = e.turn_id;
+        }
+        if e.raw.is_some() {
+            w.raw = e.raw;
+        }
+        w.then.extend(e.then);
+    } else {
+        q.push_back(e);
+    }
+    if q.len() > MAX_UNSTORED
+        && let Some(lost) = q.pop_front()
+    {
+        tracing::error!(session = %c.id, kind = lost.event.kind(), "gave up on a conversation event PDT could not store");
+    }
+    // While a retry waits and writes still fail, this one waits with the rest instead of failing again.
+    if c.retrying.load(Ordering::SeqCst) && st.store.write_failure().is_some() {
+        return;
+    }
+    if !flush_unstored(st, c, &mut q).await && !c.retrying.swap(true, Ordering::SeqCst) {
+        tracing::warn!(session = %c.id, waiting = q.len(), "conversation events wait to be stored");
+        let (st, c) = (st.clone(), c.clone());
+        tokio::spawn(async move { retry_unstored(&st, &c).await });
+    }
+}
+
+/// Stores the waiting events in order, sending each to the viewers, until one fails to write: whether all were.
+async fn flush_unstored(st: &AppState, c: &Arc<Conv>, q: &mut std::collections::VecDeque<Unstored>) -> bool {
+    while let Some(e) = q.front() {
+        let new = NewEvent {
+            ts: e.ts,
+            item_id: e.item_id.as_deref(),
+            turn_id: e.turn_id.as_deref(),
+            event: &e.event,
+            raw: e.raw.as_deref(),
+        };
+        match st.store.upsert_session_event(&c.id, new).await {
+            Ok(row) => {
+                if let Some(done) = q.pop_front() {
+                    for f in done.then {
+                        f.spawn(st, &c.id);
+                    }
+                }
+                let _ = st.conversations.all.send((c.id.clone(), row.clone()));
+                let _ = c.tx.send(ConversationServerMessage::Event { event: row });
+            }
+            Err(pdt_store::StoreError::Write(e)) => {
+                tracing::debug!(session = %c.id, error = %e, "could not store a conversation event yet");
+                return false;
+            }
+            // Not a write that may work later: retrying would hold up every event after it.
+            Err(err) => {
+                tracing::warn!(session = %c.id, error = %err, "could not store a conversation event");
+                q.pop_front();
+            }
+        }
+    }
+    true
+}
+
+/// Retries a conversation's waiting events with a backoff until they are all stored.
+async fn retry_unstored(st: &AppState, c: &Arc<Conv>) {
+    let mut tries = 0;
+    loop {
+        let wait = u64::try_from(pdt_store::write_backoff_ms(tries)).unwrap_or(30_000);
+        tokio::time::sleep(Duration::from_millis(wait)).await;
+        tries += 1;
+        let mut q = c.unstored.lock().await;
+        if flush_unstored(st, c, &mut q).await {
+            c.retrying.store(false, Ordering::SeqCst);
+            tracing::info!(session = %c.id, "stored the conversation events that were waiting");
+            return;
+        }
     }
 }
 
@@ -1174,6 +1372,13 @@ pub async fn shutdown_conversations(st: &AppState) {
     let convs: Vec<Arc<Conv>> =
         st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
     futures_util::future::join_all(convs.iter().map(|c| park(st, c))).await;
+    // A last try at events still waiting for a write: what is not stored now is lost with this process (PDT-331).
+    for c in &convs {
+        let mut q = c.unstored.lock().await;
+        if !q.is_empty() && !flush_unstored(st, c, &mut q).await {
+            tracing::error!(session = %c.id, events = q.len(), "conversation events could not be stored before PDT stopped");
+        }
+    }
     if let Some(server) = st.conversations.codex.get() {
         server.shutdown().await;
     }

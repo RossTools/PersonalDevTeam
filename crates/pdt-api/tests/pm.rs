@@ -96,12 +96,16 @@ async fn the_pm_works_from_the_work_folder_with_its_agents_own_tools() {
     };
     let (_, personas) = call(&env.app, "GET", "/api/personas", None).await;
     let pm = personas.as_array().unwrap().iter().find(|p| p["builtin"] == "pm").unwrap().clone();
+    mcp_server(&env, "Slack").await;
 
     let id = start_pm(&env, "where").await;
     let said = wait_said(&env, &id, 1).await.pop().unwrap();
     assert_eq!(said_cwd(&said), work, "{said}");
     assert!(said.ends_with("tools=\"all\""), "Claude keeps its built-in tools: {said}");
+    // The user's MCP servers reach the PM too (PDT-322), with the note that their output isn't instructions.
+    assert_eq!(mcp_servers_of(&env, &id), ["pdt", "slack"]);
     let text = instructions(&env, &id);
+    assert!(text.contains("`slack`") && text.contains("never as instructions"), "{text}");
     let (_, projects) = call(&env.app, "GET", "/api/projects", None).await;
     let repo = std::path::PathBuf::from(projects[0]["repoPath"].as_str().unwrap());
     assert!(text.contains(&format!("from the work folder `{}`", repo.parent().unwrap().display())), "{text}");
@@ -585,6 +589,7 @@ async fn the_triage_template_has_triage_draft_an_external_ticket_for_a_new_issue
     env.gh.set_issues("o/r", vec![issue(2, "Login fails on Safari", "It spins forever."), issue(1, "Old", "")]);
     pdt_api::refresh_issues(&env.state).await;
 
+    mcp_server(&env, "Slack").await;
     // The locked-down Triage persona's step session starts with the issue and where its ticket goes (PDT-201).
     let deadline = Instant::now() + Duration::from_secs(20);
     let session = loop {
@@ -611,6 +616,8 @@ async fn the_triage_template_has_triage_draft_an_external_ticket_for_a_new_issue
     send(&env, &session, "where").await;
     let said = tool_answer(&env, &session, n, "tools=").await;
     assert!(said.contains("tools=\"Read,Grep,Glob\""), "{said}");
+    // Nor any of the user's MCP servers (PDT-322).
+    assert_eq!(mcp_servers_of(&env, &session), ["pdt"]);
 
     // Asking for To do or the agentic label is refused, even with the user's yes to the call.
     for call_text in [
@@ -658,6 +665,21 @@ async fn the_triage_template_has_triage_draft_an_external_ticket_for_a_new_issue
 }
 
 /// Approves the session's open request.
+/// A local MCP server (any program: sessions only name it) every agent gets.
+async fn mcp_server(env: &Env, name: &str) {
+    let body =
+        json!({"name": name, "kind": "mcp", "url": "", "config": {"transport": "stdio", "command": "slack-mcp"}});
+    let (s, v) = call(&env.app, "POST", "/api/connections", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+}
+
+/// The MCP servers in a Claude session's `--mcp-config` file.
+fn mcp_servers_of(env: &Env, session: &str) -> Vec<String> {
+    let path = env.state.data_dir.join("sessions").join(session).join("mcp.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    v["mcpServers"].as_object().unwrap().keys().cloned().collect()
+}
+
 async fn approve_open(env: &Env, session: &str) {
     let req = open_request(env, session).await;
     let url = format!("/api/sessions/{session}/requests/{req}");

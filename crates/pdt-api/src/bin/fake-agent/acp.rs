@@ -8,6 +8,7 @@
 //! - `who` — says the session id, whether it was loaded, its mode and model, and whether `--config` carries PDT's
 //!   instructions hook.
 //! - `where` — says the session's working folder.
+//! - `servers` — says the names of the session's `mcpServers` (`servers=pdt,slack`; it takes HTTP ones, not SSE).
 //! - `mcp: <tool> <json arguments>` (its first line) — asks permission for that pdt-mcp tool (from the session's `mcpServers`), then
 //!   calls it and says `mcp <tool>: <the result's text>` (or `mcp <tool> denied`, `mcp error: …`).
 //! - a prompt with images — says `saw N images (<media types>)`.
@@ -130,6 +131,10 @@ fn mcp_server(p: &Value) -> Option<(String, String)> {
     Some((s["url"].as_str()?.to_string(), auth["value"].as_str()?.to_string()))
 }
 
+fn server_names(p: &Value) -> Vec<String> {
+    p["mcpServers"].as_array().into_iter().flatten().filter_map(|s| s["name"].as_str().map(String::from)).collect()
+}
+
 struct Acp {
     rx: mpsc::Receiver<Option<Value>>,
     queue: Vec<Value>,
@@ -142,6 +147,8 @@ struct Acp {
     cwd: String,
     /// pdt-mcp's URL and Authorization header, from the session's `mcpServers`.
     mcp: Option<(String, String)>,
+    /// The names of the session's `mcpServers`.
+    servers: Vec<String>,
     next: u64,
     cancelled: bool,
     /// Prompts sent while a turn ran: answered with it.
@@ -350,6 +357,8 @@ impl Acp {
             self.say(&reply);
         } else if text == "where" {
             self.say(&format!("cwd={}", self.cwd));
+        } else if text == "servers" {
+            self.say(&format!("servers={}", self.servers.join(",")));
         } else if text == "who" {
             self.say(&format!(
                 "session={} loaded={} mode={} model={} instructions={}",
@@ -408,6 +417,7 @@ pub fn serve(args: &[String]) {
         hook,
         cwd: String::new(),
         mcp: None,
+        servers: Vec::new(),
         next: 0,
         cancelled: false,
         joined: Vec::new(),
@@ -426,7 +436,7 @@ pub fn serve(args: &[String]) {
         let ok = |r: Value| out(json!({"jsonrpc": "2.0", "id": id, "result": r}));
         match v["method"].as_str().unwrap_or("") {
             "initialize" => ok(json!({"protocolVersion": 1, "agentCapabilities": {"loadSession": true,
-                "promptCapabilities": {"image": true}}, "agentInfo": {"name": "fake", "version": "0.0.0-fake"}})),
+                "promptCapabilities": {"image": true}, "mcpCapabilities": {"http": true, "sse": false}}, "agentInfo": {"name": "fake", "version": "0.0.0-fake"}})),
             // Sign in (PDT-239): `FAKE_ACP_AUTH` names a file the method goes in.
             "authenticate" => {
                 if let Ok(path) = std::env::var("FAKE_ACP_AUTH") {
@@ -441,6 +451,7 @@ pub fn serve(args: &[String]) {
             "session/new" => {
                 a.cwd = p["cwd"].as_str().unwrap_or("?").to_string();
                 a.mcp = mcp_server(&p);
+                a.servers = server_names(&p);
                 a.session = format!("fake-{}-{}", std::process::id(), a.next);
                 a.announce();
                 ok(a.opened(json!({"sessionId": a.session, "configOptions": a.config()})));
@@ -456,6 +467,7 @@ pub fn serve(args: &[String]) {
                 a.loaded = true;
                 a.cwd = p["cwd"].as_str().unwrap_or("?").to_string();
                 a.mcp = mcp_server(&p);
+                a.servers = server_names(&p);
                 // The whole conversation again, as Devin replays it (the answers are stand-ins).
                 let saved = std::fs::read_to_string(saved_marker(&a.session)).unwrap_or_default();
                 for (n, line) in saved.lines().enumerate() {

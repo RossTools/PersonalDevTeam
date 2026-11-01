@@ -135,6 +135,9 @@ import type { SecretUse } from './gen/SecretUse';
 import type { ConnectionInput } from './gen/ConnectionInput';
 import type { DmStatus } from './gen/DmStatus';
 import type { McpTools } from './gen/McpTools';
+import type { McpServersView } from './gen/McpServersView';
+import type { McpProbe } from './gen/McpProbe';
+import type { SignInStart } from './gen/SignInStart';
 import type { NewWorkflow } from './gen/NewWorkflow';
 import type { SaveWorkflow } from './gen/SaveWorkflow';
 import type { Started } from './gen/Started';
@@ -546,6 +549,14 @@ export const api = {
   discordDm: () => request<DmStatus>('/api/discord/dm'),
   /** Lists an MCP server's tools now. */
   refreshConnectionTools: (id: string) => request<McpTools>(`/api/connections/${enc(id)}/tools`, { method: 'POST' }),
+  /** Settings → MCP servers (PDT-322): the `mcp` connections with what agents get of them. */
+  mcpServers: () => request<McpServersView>('/api/mcp-servers'),
+  /** Connects to an MCP server and lists its tools, resources and prompts. */
+  testMcpServer: (id: string) => request<McpProbe>(`/api/mcp-servers/${enc(id)}/test`, { method: 'POST' }),
+  /** Begins an MCP server's OAuth sign-in: the address the browser opens. */
+  signInMcpServer: (id: string, origin: string) =>
+    request<SignInStart>(`/api/mcp-servers/${enc(id)}/sign-in`, { method: 'POST', body: JSON.stringify({ origin }) }),
+  signOutMcpServer: (id: string) => request<void>(`/api/mcp-servers/${enc(id)}/sign-in`, { method: 'DELETE' }),
   listWorkflowTemplates: () => request<GalleryTemplate[]>('/api/workflow-templates'),
   getWorkflowTemplate: (id: string) => request<WorkflowTemplate>(`/api/workflow-templates/${enc(id)}`),
   createWorkflowTemplate: (t: TemplateInput) =>

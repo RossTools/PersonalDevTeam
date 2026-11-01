@@ -29,6 +29,7 @@ import { sectionLabel } from '../common/SettingsScreens';
 import { HOST_SECTION_LABELS, PROJECT_SECTION_LABELS } from '../common/settingsSections';
 import { SettingsNav } from './SettingsNav';
 import { SecretsPage } from '../secrets/SecretsPage';
+import { McpServersPage } from '../mcp/McpServersPage';
 import { AllConnectionsPage } from '../plugins/AllConnectionsPage';
 import { PluginPage } from '../plugins/PluginPage';
 import { PluginsPage } from '../plugins/PluginsPage';
@@ -744,6 +745,7 @@ export function AppShell() {
       case 'plugins': return settingsPage.id ? pluginTitle(settingsPage.id) : 'Plugins';
       case 'connections': return 'All connections';
       case 'secrets': return 'Secrets';
+      case 'mcp-servers': return 'MCP servers';
       case 'notifications': return 'Notifications';
       case 'index': return label;
     }
@@ -1000,6 +1002,7 @@ export function AppShell() {
                   : <PluginsPage phone={phone} onOpen={openPlugin} />
               ) : settingsPage.kind === 'connections' ? <AllConnectionsPage onOpen={openPlugin} />
                 : settingsPage.kind === 'secrets' ? <SecretsPage />
+                : settingsPage.kind === 'mcp-servers' ? <McpServersPage />
                 : settingsPage.kind === 'notifications' ? <NotificationSettingsPage /> : <HostSettingsPage drill={phone} section={section} onSection={showSection} />
             ) : ws.tab?.ticketId ? (
               <Suspense fallback={<Skeleton lines={8} className="p-4" />}><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></Suspense>

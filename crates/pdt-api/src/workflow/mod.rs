@@ -27,6 +27,11 @@ static LAST_CHECKPOINT: std::sync::atomic::AtomicI64 = std::sync::atomic::Atomic
 pub async fn maintain_workflows(st: &AppState) {
     repo::sync_all(st).await;
     crate::mcp_client::maintain(st).await;
+    {
+        // Refreshing sign-ins waits on the services: never on the rest of the housekeeping.
+        let st = st.clone();
+        tokio::spawn(async move { crate::mcp_oauth::upkeep(&st).await });
+    }
     let now = now_ms();
     if let Err(e) = st.store.prune_events(now - pdt_store::EVENT_RETENTION_MS).await {
         tracing::warn!(error = %e, "could not prune old events");
