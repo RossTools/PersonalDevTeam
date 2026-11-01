@@ -196,6 +196,21 @@ describe('backlog', () => {
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 't1', projectId: project.id }));
   });
 
+  it('shows the ticket’s own attachments in the peek', async () => {
+    stub({
+      'GET /api/tickets/t1/attachments': [{
+        id: 'a1', ticketId: 't1', name: 'workspaces.png', mediaType: 'image/png', size: 2048, actor: 'agent', agent: null,
+        eventId: null, createdAt: 1,
+      }],
+    });
+    renderWithQuery(<Harness />);
+    const grid = await screen.findByRole('grid', { name: 'Tickets' });
+    await userEvent.click(within(grid).getByRole('row', { name: /ALP-1 / }));
+    const sheet = await screen.findByRole('dialog', { name: 'ALP-1 · Ticket 1' });
+    expect(within(sheet).getByRole('heading', { name: 'Attachments' })).toBeInTheDocument();
+    expect(await within(sheet).findByRole('img', { name: 'workspaces.png' })).toHaveAttribute('src', '/api/tickets/t1/attachments/a1');
+  });
+
   it('keeps the peek open while its menus are used', async () => {
     const calls = stub({ 'PATCH /api/tickets/t1': ticket(1, { stage: 'todo' }) });
     renderWithQuery(<Harness />);
