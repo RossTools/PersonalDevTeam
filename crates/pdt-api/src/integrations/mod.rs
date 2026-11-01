@@ -30,7 +30,8 @@ use crate::workflow::nodes::trigger::EventTrigger;
 use action::AnyAction;
 use axum::extract::State;
 use pdt_core::integration::{
-    ConnectionKind, Icon, IntegrationSettings, PluginCategory, ProjectSettingsSchema, ToolDecl, ToolTable,
+    ConnectionKind, ConnectionStatus, Icon, IntegrationSettings, PluginCategory, ProjectSettingsSchema, ToolDecl,
+    ToolTable,
 };
 use pdt_core::mcp::ToolInfo;
 use pdt_core::pm::AskTarget;
@@ -179,6 +180,27 @@ pub trait Integration: Send + Sync {
     /// the user.
     fn check_project_settings(&self, _settings: &IntegrationSettings) -> Result<(), String> {
         Ok(())
+    }
+
+    /// Imports issue `key` into project `project_id` as a Draft ticket linked to it, or finds the ticket that already
+    /// links it, for its [`ProjectSettingsSchema::import`] (`POST /api/projects/{id}/import/{integration}`).
+    fn import_by_key<'a>(
+        &'a self,
+        _st: &'a AppState,
+        _project_id: &'a str,
+        _key: &'a str,
+    ) -> BoxFut<'a, Result<Imported, crate::error::ApiError>> {
+        Box::pin(async { Err(crate::error::ApiError::not_found("import")) })
+    }
+
+    /// How a connection of one of its kinds with [`ConnectionKind::status`] is doing, beyond OK or Failing
+    /// (`GET /api/connections/{id}/status`). None: nothing to say.
+    fn connection_status<'a>(
+        &'a self,
+        _st: &'a AppState,
+        _connection: &'a pdt_core::workflow::api::Connection,
+    ) -> BoxFut<'a, Option<ConnectionStatus>> {
+        Box::pin(async { None })
     }
 
     /// The CI provider it is for project `project_id` with these settings, if it is one and the project has it set
@@ -490,6 +512,16 @@ impl Registry {
             Some((_, i)) => self.integrations[*i].check_connection_config(kind, config),
             None => Ok(()),
         }
+    }
+
+    /// The enabled integration a kind of connection is from.
+    pub fn owner_of_connection(&self, kind: &str) -> Option<&Arc<dyn Integration>> {
+        self.kinds.iter().find(|(k, _)| k.id == kind).map(|(_, i)| &self.integrations[*i])
+    }
+
+    /// The enabled integration with project settings `id`, and its schema.
+    pub fn project_settings_of(&self, id: &str) -> Option<(&Arc<dyn Integration>, &ProjectSettingsSchema)> {
+        self.project_settings.iter().find(|(_, s)| s.integration == id).map(|(i, s)| (&self.integrations[*i], s))
     }
 
     /// Every integration's project settings, in the settings page's order.
@@ -1090,6 +1122,65 @@ pub(crate) fn routes(st: &AppState) -> axum::Router<AppState> {
 /// `GET /api/connections/kinds`: every kind of connection, for the Connections page.
 pub(crate) async fn connection_kinds(State(st): State<AppState>) -> axum::Json<Vec<ConnectionKind>> {
     axum::Json(st.registry().connection_kinds())
+}
+
+/// An issue an integration imported ([`Integration::import_by_key`]).
+pub struct Imported {
+    pub ticket_id: String,
+    /// A ticket already linked the issue (nothing new was made).
+    pub existed: bool,
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[ts(export)]
+pub struct TicketImportInput {
+    /// The issue's key (`ABC-123`).
+    pub key: String,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketImportResult {
+    pub ticket: pdt_core::ticket::Ticket,
+    /// A ticket already linked the issue (nothing new was made).
+    pub existed: bool,
+}
+
+/// `POST /api/projects/{id}/import/{integration} {key}`: one of an enabled integration's issues as a ticket
+/// ([`ProjectSettingsSchema::import`]); 201 when it made one, 200 when a ticket already links it.
+pub(crate) async fn import_by_key(
+    State(st): State<AppState>,
+    axum::extract::Path((project_id, integration)): axum::extract::Path<(String, String)>,
+    payload: Result<axum::Json<TicketImportInput>, axum::extract::rejection::JsonRejection>,
+) -> Result<(axum::http::StatusCode, axum::Json<TicketImportResult>), crate::error::ApiError> {
+    use crate::error::ApiError;
+    let axum::Json(input) = payload?;
+    st.store.get_project(&project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let registry = st.registry();
+    let Some((int, _)) = registry.project_settings_of(&integration).filter(|(_, s)| s.import.is_some()) else {
+        return Err(ApiError::not_found("import"));
+    };
+    let r = int.import_by_key(&st, &project_id, input.key.trim()).await?;
+    let ticket = st.store.get_ticket(&r.ticket_id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    let ticket = crate::overlap::decorate(&st, ticket).await?;
+    let status = if r.existed { axum::http::StatusCode::OK } else { axum::http::StatusCode::CREATED };
+    Ok((status, axum::Json(TicketImportResult { ticket, existed: r.existed })))
+}
+
+/// `GET /api/connections/{id}/status`: how a connection is doing, from its kind's integration; null when it has
+/// nothing to say (or its integration is off).
+pub(crate) async fn connection_status(
+    State(st): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<axum::Json<Option<ConnectionStatus>>, crate::error::ApiError> {
+    let c = st.store.get_connection(&id).await?.ok_or_else(|| crate::error::ApiError::not_found("connection"))?;
+    let registry = st.registry();
+    let status = match registry.owner_of_connection(&c.kind) {
+        Some(int) => int.connection_status(&st, &c).await,
+        None => None,
+    };
+    Ok(axum::Json(status))
 }
 
 /// `GET /api/integrations/project-settings`: what a project sets for each integration, for its settings form.

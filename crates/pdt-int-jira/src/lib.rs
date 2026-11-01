@@ -11,8 +11,10 @@ mod meta;
 mod sensor;
 
 use crate::core::{DEFAULT_DONE, JIRA};
-use pdt_api::sdk::{AnyAction, AppState, BoxFut, Builtin, Integration, Poller};
-use pdt_core::integration::{ConfigField, ConnectionKind, FieldOption, FieldType, FieldWhen, ProjectSettingsSchema};
+use pdt_api::sdk::{AnyAction, ApiError, AppState, BoxFut, Builtin, Imported, Integration, Poller};
+use pdt_core::integration::{
+    ConfigField, ConnectionKind, FieldOption, FieldType, FieldWhen, ImportByKey, ProjectSettingsSchema,
+};
 use pdt_core::workflow::doc::WorkflowDoc;
 use pdt_core::workflow::events::EventType;
 use pdt_core::workflow::template::Category;
@@ -25,7 +27,7 @@ pub use crate::core::{
     parse_time,
 };
 pub use crate::meta::{Allowed, FieldMeta, MissingField, Placement, Sprint, Transition};
-pub use crate::sensor::{JiraImportInput, JiraImportResult, refresh_jira};
+pub use crate::sensor::refresh_jira;
 
 pub const JIRA_IMPORT: &str = "jira-import";
 pub const JIRA_DONE: &str = "jira-done";
@@ -44,8 +46,13 @@ impl Integration for Jira {
         vec![Poller { name: "the Jira check", run }]
     }
 
-    fn routes(&self) -> Option<axum::Router<AppState>> {
-        Some(axum::Router::new().route("/projects/{id}/jira/import", axum::routing::post(sensor::import_route)))
+    fn import_by_key<'a>(
+        &'a self,
+        st: &'a AppState,
+        project_id: &'a str,
+        key: &'a str,
+    ) -> BoxFut<'a, Result<Imported, ApiError>> {
+        Box::pin(sensor::import_by_key(st, project_id, key))
     }
 
     fn builtin_workflows(&self) -> Vec<Builtin> {
@@ -180,6 +187,14 @@ impl Integration for Jira {
                     ..ConfigField::new("done", "Done in Jira")
                 },
             ],
+            import: Some(ImportByKey {
+                title: "Import from Jira".into(),
+                description:
+                    "Makes a Draft ticket from a Jira issue, linked to it. An issue that already has a ticket \
+                              opens that ticket."
+                        .into(),
+                placeholder: "ABC-123".into(),
+            }),
         })
     }
 

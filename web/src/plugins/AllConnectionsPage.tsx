@@ -6,6 +6,7 @@ import { Alert, Badge, Input, Page, Skeleton } from '@ui';
 import { api } from '../api/client';
 import { connectionsKey } from '../connections/ConnectionDialog';
 import { connectionDetails } from '../connections/ConnectionRow';
+import { useConnectionKinds } from '../connections/kinds';
 import { pluginOf } from './model';
 import { usePlugins } from './parts';
 
@@ -20,6 +21,7 @@ interface Line {
 
 export function AllConnectionsPage({ onOpen }: { onOpen: (pluginId: string) => void }) {
   const plugins = usePlugins();
+  const { kindOf } = useConnectionKinds();
   const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
   const github = useQuery({ queryKey: ['forge-login', 'github'], queryFn: () => api.forgeLogin('github') });
   const [q, setQ] = useState('');
@@ -30,7 +32,7 @@ export function AllConnectionsPage({ onOpen }: { onOpen: (pluginId: string) => v
     })),
     ...(connections.data ?? []).map((c) => {
       const p = pluginOf(ps, c);
-      return { id: c.id, name: c.name, plugin: p?.id ?? null, pluginLabel: p?.label ?? c.kind, details: connectionDetails(c), failing: c.lastError !== null };
+      return { id: c.id, name: c.name, plugin: p?.id ?? null, pluginLabel: p?.label ?? c.kind, details: connectionDetails(c, kindOf(c.kind)), failing: c.lastError !== null };
     }),
   ];
   const needle = q.trim().toLowerCase();

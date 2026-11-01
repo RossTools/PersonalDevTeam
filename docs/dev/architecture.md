@@ -68,7 +68,7 @@ and `backups/` (a copy taken before migrations).
 | `pdt-sheet` | Local sheets on IronCalc: `.xlsx` and `.csv` in and out, cells with computed values, formats, sheets, sort and filter, and IronCalc's sync diffs. |
 | `pdt-host` | The supervisor: running pdtd, installing updates, rolling back, login registration. |
 | `pdtd` | The daemon binary: config, logging, startup (`main.rs`: the state, the startup resume and the poll), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
-| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them. |
+| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them; the web shows what they declare: a connection kind's fields (switches, patterns, conditions), invite link (`link`), row summary (`summary`) and status line (`status`, `Integration::connection_status`, `GET /api/connections/{id}/status`), a project settings schema's import by key (`import`, `Integration::import_by_key`, `POST /api/projects/{id}/import/{integration}`), and each plugin's label. |
 
 Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients match on `code`. API types derive ts-rs
 and are generated into `web/src/api/gen`.
@@ -206,7 +206,7 @@ that journal. The daily update and checkpoint are not hard-coded: the built-in *
 the `pm.update` and `pm.checkpoint` nodes (pdt-api `workflow/nodes/pm.rs`) on an hourly schedule; `pm.update` brings
 each running open conversation due (`pm_sessions.caught_up_at`, `pdt_core::pm::update_due`) up to date through the
 outbox. Journaling at Close, Reset and compaction stays in `pm.rs`. A conversation can be
-held elsewhere too (`pm_sessions.via`): the Discord integration passes the user's DMs to one (pdt-int-discord `dm.rs`),
+held elsewhere too (`pm_sessions.via`, the integration's id, which the web names by its plugin label): the Discord integration passes the user's DMs to one (pdt-int-discord `dm.rs`),
 through the SDK's `pm` and `conversations` modules (start, send, close; every conversation's events as they are stored,
 `conversations::subscribe_all`; answering a request as the user). Its bot holds a Gateway websocket (`gateway.rs`) in
 an integration service (`Integration::services`, started once by pdtd, idle while the plugin is off).

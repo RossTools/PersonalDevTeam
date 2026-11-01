@@ -20,6 +20,15 @@ when?: FieldWhen,
  */
 optional: boolean, 
 /**
- * What an empty value becomes (a project's integration setting).
+ * What an empty value becomes (a project's integration setting); a switch's is `true` or `false`.
  */
-default?: string, };
+default?: string, 
+/**
+ * A regular expression a value given must match in the form (`^\d+$`: digits only); the integration checks it
+ * again.
+ */
+pattern?: string, 
+/**
+ * Typed as a number (a phone's keypad).
+ */
+numeric: boolean, };

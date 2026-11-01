@@ -561,7 +561,7 @@ function integrationInput(schema: ProjectSettingsSchema, text: Record<string, st
 
 /**
  * The project's integrations (PDT-174): each integration that a project links to declares its connection kind and
- * fields, and its part of the page is made from them (Jira's issues and Done, Buildkite's pipelines). Kept on this
+ * fields, and its part of the page is made from them (a tracker's issues and Done, a CI's pipelines). Kept on this
  * host, never in the repository. Each field saves as it changes (PDT-231): a connection or choice at once, text on
  * blur or Enter.
  */

@@ -2,7 +2,7 @@ import { enc, request } from './core';
 import type { Connection } from './gen/Connection';
 import type { ConnectionInput } from './gen/ConnectionInput';
 import type { ConnectionKind } from './gen/ConnectionKind';
-import type { DmStatus } from './gen/DmStatus';
+import type { ConnectionStatus } from './gen/ConnectionStatus';
 import type { IntegrationInfo } from './gen/IntegrationInfo';
 import type { McpProbe } from './gen/McpProbe';
 import type { McpServersView } from './gen/McpServersView';
@@ -29,8 +29,8 @@ export const connectionsApi = {
     request<Connection>(`/api/connections/${enc(id)}/secret`, { method: 'PUT', body: JSON.stringify({ secret }) }),
   /** An MCP server's tools as last listed (null before the first listing). */
   connectionTools: (id: string) => request<McpTools | null>(`/api/connections/${enc(id)}/tools`),
-  /** The Discord bot's DM link to the PM (PDT-304): which connection holds it and its state. */
-  discordDm: () => request<DmStatus>('/api/discord/dm'),
+  /** How a connection of a kind with `status` is doing, from its plugin (null: nothing to say). */
+  connectionStatus: (id: string) => request<ConnectionStatus | null>(`/api/connections/${enc(id)}/status`),
   /** Lists an MCP server's tools now. */
   refreshConnectionTools: (id: string) => request<McpTools>(`/api/connections/${enc(id)}/tools`, { method: 'POST' }),
   /** Settings → MCP servers (PDT-322): the `mcp` connections with what agents get of them. */

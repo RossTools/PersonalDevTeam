@@ -891,5 +891,7 @@ pub(crate) fn router() -> axum::Router<AppState> {
         .route("/integrations/{id}/check", post(crate::integrations::check))
         .route("/connections/{id}", get(get_connection).patch(patch_connection).delete(delete_connection))
         .route("/connections/{id}/secret", put(put_secret).delete(delete_secret))
+        .route("/connections/{id}/status", get(crate::integrations::connection_status))
+        .route("/projects/{id}/import/{integration}", post(crate::integrations::import_by_key))
         .route("/connections/{id}/tools", get(connection_tools).post(refresh_connection_tools))
 }

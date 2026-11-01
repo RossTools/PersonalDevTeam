@@ -122,6 +122,7 @@ impl Integration for Dummy {
             description: "Each project can poke its own Dummy.".into(),
             connection_kind: "dummy".into(),
             fields: vec![],
+            ..Default::default()
         })
     }
     fn connection_kinds(&self) -> Vec<ConnectionKind> {

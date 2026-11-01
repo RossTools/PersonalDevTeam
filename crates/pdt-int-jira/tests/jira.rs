@@ -185,7 +185,7 @@ async fn the_jira_integration_serves_its_connection_kind_and_triggers() {
     assert_eq!((jira["label"].as_str(), jira["url"].as_bool()), (Some("Jira"), Some(true)));
     assert_eq!(jira["fields"][0]["key"], "deployment");
     assert_eq!(jira["fields"][1]["key"], "email");
-    assert_eq!(jira["fields"][1]["when"], json!({"key": "deployment", "value": "cloud"}));
+    assert_eq!(jira["fields"][1]["when"], json!({"key": "deployment", "value": "cloud", "not": false}));
     let (s, catalog) = call(&env.app, "GET", "/api/workflows/catalog", None).await;
     assert_eq!(s, StatusCode::OK);
     let trigger = catalog.as_array().unwrap().iter().find(|k| k["id"] == "jira.issue.created").expect("its trigger");
@@ -214,7 +214,7 @@ async fn turned_off_jira_registers_nothing_and_its_workflows_name_it() {
             .await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
     assert!(v["message"].as_str().unwrap().contains("Jira integration, which is turned off"), "{v}");
-    let import = format!("/api/projects/{}/jira/import", env.project);
+    let import = format!("/api/projects/{}/import/jira", env.project);
     let (s, _) = call(&env.app, "POST", &import, Some(json!({"key": "ABC-1"}))).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     let doc = json!({"name": "Comment", "nodes": [{"id": "go", "kind": "manual", "version": 1},
@@ -417,7 +417,7 @@ async fn assigned_issues_become_linked_tickets_once() {
     assert_eq!(tickets(&env).await.len(), 1, "a linked issue is never imported again");
 
     // By key: the linked one exists; another (not assigned) is imported; bad and unknown keys are refused.
-    let path = format!("/api/projects/{}/jira/import", env.project);
+    let path = format!("/api/projects/{}/import/jira", env.project);
     let (s, r) = call(&env.app, "POST", &path, Some(json!({"key": "abc-1"}))).await;
     assert_eq!((s, r["existed"].clone(), r["ticket"]["id"].clone()), (StatusCode::OK, json!(true), json!(id)));
     let (s, r) = call(&env.app, "POST", &path, Some(json!({"key": "ABC-2"}))).await;
@@ -466,7 +466,7 @@ async fn done_moves_the_linked_issue_and_nothing_else() {
     link(&env).await;
     env.jira.lock().unwrap().issues.push(issue("ABC-5", "Ship", Some(ME), T1));
     let (s, r) =
-        call(&env.app, "POST", &format!("/api/projects/{}/jira/import", env.project), Some(json!({"key": "ABC-5"})))
+        call(&env.app, "POST", &format!("/api/projects/{}/import/jira", env.project), Some(json!({"key": "ABC-5"})))
             .await;
     assert_eq!(s, StatusCode::CREATED, "{r}");
     let linked = r["ticket"]["id"].as_str().unwrap().to_string();
@@ -635,7 +635,7 @@ async fn settings_check_the_connection() {
     let (_, v) = call(&env.app, "PUT", &path, Some(put(Value::Null))).await;
     assert!(v["integrations"]["jira"].is_null());
     let (s, r) =
-        call(&env.app, "POST", &format!("/api/projects/{}/jira/import", env.project), Some(json!({"key": "ABC-1"})))
+        call(&env.app, "POST", &format!("/api/projects/{}/import/jira", env.project), Some(json!({"key": "ABC-1"})))
             .await;
     assert_eq!((s, r["code"].clone()), (StatusCode::CONFLICT, json!("jira_not_linked")));
 }

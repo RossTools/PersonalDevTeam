@@ -14,7 +14,7 @@ import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import type { RotateReason } from '../api/gen/RotateReason';
 import { InlineRename } from '../common/InlineRename';
 import { useTopBarActions } from '../shell/PhoneTopBar';
-import { earlier, firstLine, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useRefreshPm, useShownRef, viaLabel, type PmSelection } from './usePm';
+import { earlier, firstLine, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useRefreshPm, useShownRef, useViaLabel, type PmSelection } from './usePm';
 
 /** The start box's unsent text, kept like a conversation's (it has no session yet). */
 export const PM_START_DRAFT = 'pm-start';
@@ -60,6 +60,7 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
   const s = info.session;
   const ended = !info.open;
   const [renaming, setRenaming] = useState(false);
+  const viaLabel = useViaLabel();
   const { rename, close, reset } = usePmActions(() => onSelect('current'), onReset);
   const canClose = info.rotation === 'none';
   // Documents beside the conversation (PDT-317).
