@@ -129,4 +129,8 @@ admitted: boolean,
 /**
  * The agent session that made it, from its `created` event (PDT-363): "Created by Coder · from PDT-345".
  */
-createdBy: AgentBy | null, };
+createdBy: AgentBy | null, 
+/**
+ * A ticket proposal waiting for the user in the Inbox (PDT-366): held in Draft, off the board and lists.
+ */
+proposed: boolean, };

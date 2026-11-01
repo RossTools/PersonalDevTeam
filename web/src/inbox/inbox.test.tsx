@@ -53,7 +53,7 @@ describe('inbox sections (PDT-361)', () => {
   it('merges the groups into Questions, Approvals, Stuck, To act on and Ready to accept', () => {
     expect(SECTION_OF).toEqual({
       question: 'question', approval: 'approval', stalled: 'stuck', loop_limit: 'stuck',
-      session: 'act', notice: 'act', admit: 'act', proposal: 'act', gate: 'accept', accept: 'accept',
+      session: 'act', notice: 'act', admit: 'act', proposal: 'act', ticket_proposal: 'act', gate: 'accept', accept: 'accept',
     });
     const timedOut = item('to', { kind: 'timed_out', group: 'stalled' });
     const loop = item('l', { kind: 'loop_limit', group: 'loop_limit' });
@@ -324,6 +324,60 @@ describe('inbox', () => {
     await waitFor(() => expect(answers()).toContainEqual({ choice: 'discard' }));
     await userEvent.click(screen.getByRole('button', { name: "Open the workflow's versions" }));
     expect(window.location.pathname).toBe('/workflows/w1/versions');
+  });
+
+  it("shows an agent's ticket proposal with who, from where and why: accepts, edits, merges as a duplicate or rejects it (PDT-366)", async () => {
+    const proposal = item('tp', {
+      kind: 'ticket_proposal', group: 'ticket_proposal', ticketId: 't9', ticketKey: 'PDT-9', ticketTitle: 'Flaky test', sessionId: 'sess', stepId: null,
+      title: 'Flaky test',
+      body: { description: 'It **fails** on CI.', priority: 'medium', labels: ['bug'], reason: 'It failed twice today.', persona: 'Coder', fromTicket: 'PDT-3', fromTicketId: 't3' },
+      choices: [
+        { id: 'accept_todo', title: 'Accept to Todo', primary: true }, { id: 'accept_backlog', title: 'Accept to backlog', primary: false },
+        { id: 'duplicate', title: 'Duplicate of…', primary: false }, { id: 'reject', title: 'Reject', primary: false },
+      ],
+    });
+    expect(grouped([gate, proposal]).map((g) => g.title)).toEqual(['To act on', 'Ready to accept']);
+    expect(dismissable(proposal)).toBe(false);
+    const calls = stubApi({
+      'POST /api/inbox/tp/answer': {}, 'GET /api/inbox': { items: [], total: 0 },
+      'GET /api/tickets': { items: [ticket(1, { id: 't1', key: 'PDT-1', title: 'The flaky test' })], nextCursor: null, total: 1 },
+    });
+    const openTicket = vi.fn();
+    renderWithQuery(
+      <OpenTicketContext.Provider value={openTicket}>
+        <InboxView items={[proposal]} selectedId="tp" onSelect={() => {}} />
+      </OpenTicketContext.Provider>,
+    );
+    const region = screen.getByRole('region', { name: 'Ticket proposal' });
+    expect(region).toHaveTextContent('Coder proposed this ticket while working on PDT-3');
+    expect(within(region).getByText('fails').tagName).toBe('STRONG');
+    expect(region).toHaveTextContent('Medium priority · bug');
+    expect(region).toHaveTextContent('It failed twice today.');
+    const answers = () => calls.filter((c) => c.method === 'POST' && c.path === '/api/inbox/tp/answer').map((c) => c.body);
+    // Enter accepts it to To do, agentic unticked.
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(answers()).toEqual([{ choice: 'accept_todo', proposal: { agentic: false } }]));
+    // Edited, with the box ticked, to the backlog.
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Label it agentic, so agents can pick it up' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const title = screen.getByRole('textbox', { name: 'Title' });
+    await userEvent.clear(title);
+    await userEvent.type(title, 'Fix the flaky test');
+    await userEvent.click(screen.getByRole('button', { name: 'Accept to backlog' }));
+    await waitFor(() => expect(answers()).toContainEqual({
+      choice: 'accept_backlog',
+      proposal: { title: 'Fix the flaky test', description: 'It **fails** on CI.', priority: 'medium', labels: ['bug'], agentic: true },
+    }));
+    // Duplicate of… picks the ticket it repeats.
+    await userEvent.click(screen.getByRole('button', { name: 'Duplicate of…' }));
+    await userEvent.click(await screen.findByText('PDT-1 · The flaky test'));
+    await waitFor(() => expect(answers().at(-1)).toMatchObject({ choice: 'duplicate', proposal: { duplicateOf: 't1' } }));
+    // Reject sends only the reason.
+    await userEvent.type(screen.getByRole('textbox', { name: 'Reason (optional)' }), 'Not worth it');
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    await waitFor(() => expect(answers().at(-1)).toEqual({ choice: 'reject', text: 'Not worth it' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Open PDT-3' }));
+    expect(openTicket).toHaveBeenCalledWith(expect.objectContaining({ id: 't3', projectId: 'p' }));
   });
 
   it('shows a Codex PM\'s call with its arguments: Enter allows it, Deny denies it (PDT-256)', async () => {

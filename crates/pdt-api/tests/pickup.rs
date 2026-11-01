@@ -3,7 +3,7 @@
 
 use crate::common;
 use axum::http::StatusCode;
-use common::{call, git};
+use common::{call, call_as_ui, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -69,7 +69,7 @@ async fn settings(env: &Env, body: Value) {
 }
 
 async fn ticket(env: &Env, title: &str, stage: &str) -> String {
-    let (s, t) = call(
+    let (s, t) = call_as_ui(
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -239,7 +239,7 @@ async fn pick_up_steps_can_narrow_to_a_label_and_their_own_cap() {
     doc["nodes"][2]["config"]["cap"] = json!(1);
     let wf = workflow(&env, doc).await;
     let plain = ticket(&env, "Plain", "todo").await;
-    let (s, t) = call(
+    let (s, t) = call_as_ui(
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -343,7 +343,7 @@ async fn a_steps_cap_above_the_projects_running_cap_holds() {
 async fn a_stale_pick_is_checked_again_and_skipped_when_a_cap_filled_since() {
     let env = setup().await;
     settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 5, "startDelaySeconds": 0})).await;
-    let (_, t) = call(
+    let (_, t) = call_as_ui(
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -422,7 +422,7 @@ async fn pick_up_tickets_avoids_hot_areas_in_flight_and_says_why() {
     let tagged = |title: &'static str, areas: Value| {
         let env = &env;
         async move {
-            let (s, t) = call(
+            let (s, t) = call_as_ui(
                 &env.app,
                 "POST",
                 &format!("/api/projects/{}/tickets", env.project),

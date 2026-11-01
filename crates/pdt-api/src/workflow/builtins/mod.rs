@@ -13,6 +13,7 @@ mod pick_up_tickets;
 mod pm_daily_checkpoint;
 mod pr_feedback;
 mod pr_notices;
+mod ticket_proposals;
 
 pub(crate) use cut_release::cut_release_template;
 pub(crate) use missing_release::missing_release_template;
@@ -42,6 +43,7 @@ pub const LATE_COMMITS: &str = "late-commits";
 pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
 pub const PICK_UP_TICKETS: &str = "pick-up-tickets";
 pub const PM_DAILY_CHECKPOINT: &str = "pm-daily-checkpoint";
+pub const TICKET_PROPOSALS: &str = "ticket-proposals";
 /// The Cut a release template (without `builtin:`); a built-in workflow until PDT-301 ([`RETIRED`]).
 pub const CUT_RELEASE: &str = "cut-release";
 
@@ -64,6 +66,12 @@ pub const BUILTINS: &[Builtin] = &[
         enabled: true,
         category: Category::Pm,
         doc: pm_daily_checkpoint::pm_daily_checkpoint,
+    },
+    Builtin {
+        id: TICKET_PROPOSALS,
+        enabled: true,
+        category: Category::Tickets,
+        doc: ticket_proposals::ticket_proposals,
     },
 ];
 

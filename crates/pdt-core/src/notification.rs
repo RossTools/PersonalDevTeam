@@ -299,7 +299,14 @@ impl NotificationKind {
                 _,
             ) => K::InboxNotice,
             (InboxKind::Manual, _) => K::InboxManual,
-            (InboxKind::Gate | InboxKind::Session | InboxKind::Admit | InboxKind::Proposal, _) => K::InboxGate,
+            (
+                InboxKind::Gate
+                | InboxKind::Session
+                | InboxKind::Admit
+                | InboxKind::Proposal
+                | InboxKind::TicketProposal,
+                _,
+            ) => K::InboxGate,
         }
     }
 }

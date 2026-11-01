@@ -3,7 +3,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{argv_agent, call, git, recorded_launches};
+use common::{argv_agent, call, call_as_ui, git, recorded_launches};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -42,7 +42,7 @@ async fn setup(tmp: &Path) -> Env {
 }
 
 async fn ticket(env: &Env, body: Value) -> String {
-    let (s, v) = call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.pid), Some(body)).await;
+    let (s, v) = call_as_ui(&env.app, "POST", &format!("/api/projects/{}/tickets", env.pid), Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
     v["id"].as_str().unwrap().to_string()
 }

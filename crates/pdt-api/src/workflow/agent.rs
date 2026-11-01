@@ -1519,6 +1519,7 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         InboxKind::Admit => Err("approve or reject a triaged ticket from PDT's Inbox".into()),
         InboxKind::Confirm => Err("allow or deny an agent's call from PDT's Inbox".into()),
         InboxKind::Proposal => Err("accept or discard a workflow proposal from PDT's Inbox".into()),
+        InboxKind::TicketProposal => Err("decide a ticket proposal from PDT's Inbox".into()),
         InboxKind::Storage => Err("PDT can't save changes: it waits on no answer, and goes once saving works".into()),
         InboxKind::LowDisk => Err("low disk space waits on no answer: it goes once there is space again".into()),
     }

@@ -488,6 +488,9 @@ pub struct TicketSummary {
     /// The agent session that made it, from its `created` event (PDT-363): "Created by Coder · from PDT-345".
     #[serde(default)]
     pub created_by: Option<AgentBy>,
+    /// A ticket proposal waiting for the user in the Inbox (PDT-366): held in Draft, off the board and lists.
+    #[serde(default)]
+    pub proposed: bool,
 }
 
 /// A ticket's stage in a pipeline workflow (Phase 7c spec §2): the Board splits In progress by it.
@@ -827,6 +830,10 @@ pub struct TicketQuery {
     #[serde(default)]
     #[ts(optional)]
     pub has_parts: Option<bool>,
+    /// true: only ticket proposals waiting in the Inbox (PDT-366). Left out (or false), lists leave them out.
+    #[serde(default)]
+    #[ts(optional)]
+    pub proposed: Option<bool>,
     #[serde(default)]
     #[ts(optional)]
     pub cursor: Option<String>,
@@ -854,6 +861,8 @@ pub struct TicketFilter {
     pub closed_after: Option<i64>,
     pub parent: Option<ParentFilter>,
     pub has_parts: Option<bool>,
+    /// Only ticket proposals; otherwise none (PDT-366).
+    pub proposed: bool,
     pub cursor: Option<String>,
     pub limit: u32,
 }
@@ -1199,6 +1208,7 @@ impl TicketQuery {
             closed_after: self.closed_after,
             parent: nonblank(&self.parent).map(|p| if p == "none" { ParentFilter::None } else { ParentFilter::Of(p) }),
             has_parts: self.has_parts,
+            proposed: self.proposed == Some(true),
             cursor: nonblank(&self.cursor),
             limit,
         })
@@ -1488,6 +1498,7 @@ mod tests {
             source: TicketSource::External,
             admitted: false,
             created_by: None,
+            proposed: false,
         };
         let t = Ticket {
             summary: s,

@@ -5,7 +5,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{call, git, mark_pushed};
+use common::{call, call_as_ui, git, mark_pushed};
 use pdt_api::{AppState, router};
 use pdt_core::pr::{CiRun, CiState, Mergeable, PrState};
 use pdt_forge::testing::FakeForge;
@@ -99,13 +99,14 @@ impl pdt_api::Integration for FakeCi {
 
 async fn ticket(env: &Env, title: &str) -> String {
     let (s, t) =
-        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": title}))).await;
+        call_as_ui(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": title})))
+            .await;
     assert_eq!(s, StatusCode::CREATED, "{t}");
     t["id"].as_str().unwrap().to_string()
 }
 
 async fn labelled(env: &Env, title: &str, labels: &[&str]) -> String {
-    let (s, t) = call(
+    let (s, t) = call_as_ui(
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -282,7 +283,7 @@ async fn a_draft_goes_through_refine_code_review_and_qa_and_merges_once_accepted
 }
 
 async fn todo(env: &Env, title: &str) -> String {
-    let (s, t) = call(
+    let (s, t) = call_as_ui(
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -439,7 +440,7 @@ async fn auto_start_waits_until_a_ticket_has_been_quiet_for_the_start_delay() {
 }
 
 async fn todo_at(env: &Env, title: &str, priority: &str) -> String {
-    let (s, t) = call(
+    let (s, t) = call_as_ui(
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),

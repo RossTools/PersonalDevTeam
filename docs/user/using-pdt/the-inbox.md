@@ -68,6 +68,18 @@ from an agent that can't ask in its own prompt shows here too, with its argument
   [Disk space](../your-machine/your-data.md#disk-space)).
 - **Triaged tickets**: a workflow drafted a ticket from a new issue. **Approve** moves it to **To do**, **Reject** to
   **Won't do** (moving it on the board does the same).
+- **Ticket proposals**: an agent filed a ticket while it worked (a follow-up a Coder or QA found). It waits in
+  **Draft**, off the board, until you decide. The item shows the ticket's title and description, which agent proposed
+  it, the ticket it was working on (with a link) and the agent's reason. Choose:
+  - **Accept to Todo** or **Accept to backlog** (Ready). Tick **Label it agentic** first if agents may pick it up
+    (it's unticked to start with). **Edit** changes the title, description, priority and labels before you accept.
+  - **Duplicate of…**: pick the ticket it repeats. It goes to **Won't do**, linked to that ticket.
+  - **Reject**: it goes to **Won't do**.
+
+  The optional reason goes to the agent with your decision: in its session if it's still running, otherwise as a
+  comment on the ticket it was working on. Tickets you or the PM make, and parts from **Make into parts**, aren't
+  proposals. To let agents' tickets go straight to the board, turn off the **Ticket proposals** workflow (see
+  [Workflows](../automation/workflows.md#turn-a-workflow-on-or-off)).
 - **Workflow proposals**: an agent (the PM, say) changed one of your workflows. The item shows their note and what
   changed. **Accept** makes it the current version, **Discard** sets it aside, **Versions** shows the whole change in
   the workflow's **Versions** tab. The item goes once you decide, or when a newer proposal replaces it.

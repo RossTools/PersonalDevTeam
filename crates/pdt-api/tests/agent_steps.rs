@@ -1498,6 +1498,15 @@ async fn gate_session(env: &Env, t: &str) -> String {
 #[tokio::test]
 async fn a_coder_edits_only_its_own_tickets_unless_it_names_another_by_key() {
     let env = setup().await;
+    // Its follow-ups go straight to the board (proposals: `ticket_proposals_wait_for_the_user`).
+    let proposals = builtin_workflow(&env, "ticket-proposals").await;
+    call(
+        &env.app,
+        "PATCH",
+        &format!("/api/workflows/{}", proposals["id"].as_str().unwrap()),
+        Some(json!({"enabled": false})),
+    )
+    .await;
     let (s, p) = call(
         &env.app,
         "POST",
@@ -1651,6 +1660,206 @@ async fn a_coder_edits_only_its_own_tickets_unless_it_names_another_by_key() {
     // Fields other than the text are fine by key.
     let said = ask(format!(r#"mcp: edit_ticket {{"ticket": "{busy_key}", "priority": "high"}}"#)).await;
     assert!(said.contains("\"updated\": true"), "{said}");
+}
+
+async fn builtin_workflow(env: &Env, id: &str) -> Value {
+    pdt_api::run_workflows(&env.state).await;
+    let (_, all) = call(&env.app, "GET", "/api/workflows", None).await;
+    all.as_array().unwrap().iter().find(|w| w["builtin"] == id).cloned().unwrap_or_else(|| panic!("no {id}: {all}"))
+}
+
+/// PDT-366: a ticket an agent makes is a proposal: held in Draft without `agentic`, off the lists, in the Inbox with
+/// who proposed it, from which ticket and why. Only the user's click decides it; the agent hears the decision in its
+/// session while it runs, else on the ticket it came from. The user's tickets and Make into parts' skip it.
+#[tokio::test]
+async fn ticket_proposals_wait_for_the_user() {
+    let env = setup().await;
+    assert_eq!(builtin_workflow(&env, "ticket-proposals").await["enabled"], true, "on from the start");
+    let (s, p) = call(
+        &env.app,
+        "POST",
+        "/api/personas",
+        Some(json!({"name": "Builder", "role": "coder", "agent": "claude", "instructions": "Build it.",
+                    "permissionMode": "bypass",
+                    "tools": ["get_ticket", "submit_outcome", "create_ticket", "edit_ticket"]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{p}");
+    let (_, project) = call(&env.app, "GET", &format!("/api/projects/{}", env.project), None).await;
+    let key = project["key"].as_str().unwrap().to_string();
+    let own = ticket(&env, "Mine").await;
+    let wf = create_workflow(
+        &env,
+        json!({
+            "name": "Build",
+            "nodes": [
+                {"id": "go", "kind": "manual", "version": 1},
+                {"id": "code", "kind": "agent", "version": 1, "config": {"persona": "Builder",
+                    "prompt": "Build it.", "outcomes": [{"id": "submitted"}]}},
+                {"id": "done", "kind": "end", "version": 1},
+            ],
+            "edges": [{"from": "go", "to": "code"}, {"from": "code", "port": "submitted", "to": "done"}],
+        }),
+    )
+    .await;
+    run_now(&env, &wf, json!({"ticketId": own})).await;
+    let coder = tick_until(&env, "the coder", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{own}"), None).await;
+        v["sessions"][0]["id"].as_str().map(|s| json!(s))
+    })
+    .await;
+    let coder = coder.as_str().unwrap().to_string();
+    let ask = |text: String| {
+        let (env, coder) = (&env, coder.clone());
+        async move {
+            let n = agent_says(env, &coder).await.len();
+            let (s, v) =
+                call(&env.app, "POST", &format!("/api/sessions/{coder}/messages"), Some(json!({"text": text}))).await;
+            assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+            tick_until(env, "the agent's answer", || async {
+                agent_says(env, &coder).await.into_iter().skip(n).find(|m| m.starts_with("mcp ")).map(|m| json!(m))
+            })
+            .await
+            .as_str()
+            .unwrap()
+            .to_string()
+        }
+    };
+    let proposal_of = |t: String| {
+        let env = &env;
+        async move {
+            tick_until(env, "the proposal", || async {
+                inbox(env).await.into_iter().find(|i| i["kind"] == "ticket_proposal" && i["ticketId"] == t.as_str())
+            })
+            .await
+        }
+    };
+    let listed = || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets?project={}", env.project), None).await;
+        v["items"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap().to_string()).collect::<Vec<_>>()
+    };
+    let own_key =
+        call(&env.app, "GET", &format!("/api/tickets/{own}"), None).await.1["key"].as_str().unwrap().to_string();
+
+    // Made in To do with agentic, it is held in Draft without it, and the agent is told.
+    let said = ask(format!(
+        r#"mcp: create_ticket {{"project": "{key}", "title": "Flaky test", "stage": "todo", "labels": ["agentic", "bug"], "reason": "It failed twice in CI."}}"#
+    ))
+    .await;
+    assert!(said.contains("\"proposal\": true") && said.contains("Inbox"), "{said}");
+    let made = said.split("\"id\": \"").nth(1).unwrap().split('"').next().unwrap().to_string();
+    let made_key = said.split("\"key\": \"").nth(1).unwrap().split('"').next().unwrap().to_string();
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{made}"), None).await;
+    assert_eq!((t["stage"].as_str(), t["labels"].clone()), (Some("draft"), json!(["bug"])));
+    let item = proposal_of(made.clone()).await;
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{made}"), None).await;
+    assert_eq!(t["proposed"], true, "{t}");
+    assert!(!listed().await.contains(&made), "off the board and lists");
+    assert_eq!(item["group"], "ticket_proposal");
+    assert_eq!(item["title"], "Flaky test");
+    let b = &item["body"];
+    assert_eq!(
+        (b["reason"].as_str(), b["persona"].as_str()),
+        (Some("It failed twice in CI."), Some("Builder")),
+        "{item}"
+    );
+    assert_eq!((b["fromTicket"].as_str(), b["fromTicketId"].as_str()), (Some(own_key.as_str()), Some(own.as_str())));
+    assert_eq!(item["sessionId"], coder.as_str());
+    let choices: Vec<&str> = item["choices"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(choices, ["accept_todo", "accept_backlog", "duplicate", "reject"]);
+
+    // The agent can't decide it: not by moving it, nor by answering the item.
+    let said = ask(format!(r#"mcp: edit_ticket {{"ticket": "{made_key}", "stage": "todo"}}"#)).await;
+    assert!(said.contains("ticket proposal"), "{said}");
+    let answer = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
+    let (s, v) = call(&env.app, "POST", &answer, Some(json!({"choice": "accept_todo"}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("only the user"), "{v}");
+
+    // Accept to Todo with the user's edits and the agentic box: the agent hears it in its session.
+    let body = json!({"choice": "accept_todo", "proposal": {"title": "Fix the flaky test", "priority": "high", "agentic": true}});
+    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{made}"), None).await;
+    assert_eq!(
+        (
+            t["stage"].as_str(),
+            t["title"].as_str(),
+            t["priority"].as_str(),
+            t["labels"].clone(),
+            t["proposed"].as_bool()
+        ),
+        (Some("todo"), Some("Fix the flaky test"), Some("high"), json!(["agentic", "bug"]), Some(false)),
+        "{t}"
+    );
+    assert!(listed().await.contains(&made));
+    let heard = tick_until(&env, "the agent hearing it", || async {
+        agent_took(&env, &coder)
+            .await
+            .into_iter()
+            .find(|m| m.contains("accepted your ticket proposal"))
+            .map(|m| json!(m))
+    })
+    .await;
+    assert!(heard.as_str().unwrap().contains("to To do, labelled agentic"), "{heard}");
+    let (s, _) = call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "reject"}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "answered once");
+
+    // Its session gone, the decision goes on the ticket it came from; curl with its header makes proposals too.
+    call(&env.app, "POST", &format!("/api/sessions/{coder}/kill"), None).await;
+    let new_ticket = format!("/api/projects/{}/tickets", env.project);
+    let curl = |title: &str| {
+        let (env, coder, new_ticket) = (&env, coder.clone(), new_ticket.clone());
+        let body = json!({"title": title, "stage": "ready", "reason": "Found it."});
+        async move {
+            let (s, v) = call_with(&env.app, "POST", &new_ticket, Some(body), &[("x-agent-session", &coder)]).await;
+            assert_eq!((s, v["stage"].as_str()), (StatusCode::CREATED, Some("draft")), "{v}");
+            v["id"].as_str().unwrap().to_string()
+        }
+    };
+    let rejected = curl("Rename everything").await;
+    let item = proposal_of(rejected.clone()).await;
+    assert_eq!(item["body"]["reason"], "Found it.");
+    let answer = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
+    let (s, v) =
+        call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "reject", "text": "Not worth it."}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{rejected}"), None).await;
+    assert_eq!(t["stage"], "wont_do");
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{own}/events"), None).await;
+    let text = events.to_string();
+    assert!(text.contains("rejected your ticket proposal") && text.contains("Their reason: Not worth it."), "{events}");
+
+    // Duplicate of…: Won't do, linked to the ticket it repeats.
+    let dup = curl("Fix the flaky test again").await;
+    let item = proposal_of(dup.clone()).await;
+    let answer = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
+    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "duplicate"}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    let body = json!({"choice": "duplicate", "proposal": {"duplicateOf": made}});
+    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{dup}"), None).await;
+    assert_eq!(t["stage"], "wont_do");
+    assert_eq!(
+        (t["links"][0]["kind"].as_str(), t["links"][0]["id"].as_str()),
+        (Some("relates"), Some(made.as_str())),
+        "{t}"
+    );
+
+    // The user's own tickets and Make into parts' parts are no proposals.
+    let (_, v) = call_as_ui(&env.app, "POST", &new_ticket, Some(json!({"title": "Clicked", "stage": "todo"}))).await;
+    assert_eq!((v["stage"].as_str(), v["proposed"].as_bool()), (Some("todo"), Some(false)), "{v}");
+    let parts = format!("/api/tickets/{own}/parts");
+    let body = json!({"parts": [{"title": "Part"}]});
+    let (s, v) = call_with(&env.app, "POST", &parts, Some(body), &[("x-agent-session", &coder)]).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let part = v["items"][0]["id"].as_str().unwrap().to_string();
+    for _ in 0..5 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    assert!(!inbox(&env).await.iter().any(|i| i["ticketId"] == part.as_str()), "parts skip it");
+    assert!(listed().await.contains(&part));
 }
 
 /// A switched-off agent (PDT-270): Settings lists the agents still on and won't switch off the default; no new

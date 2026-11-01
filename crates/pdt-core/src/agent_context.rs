@@ -120,7 +120,8 @@ fn ticket_section(api: &str, t: &TicketWork, forge: Option<&ForgeNotes>) -> Stri
         "\n## This session's ticket\n\n\
          This session works on ticket {key} (`GET {api}/tickets/{id}`) on branch `{branch}`.\n\
          - Follow-up work that turns up goes in a ticket of its own, not into this change (the project's instructions \
-         say whether to ask first). Comment on the ticket with anything the user should know.\n\
+         say whether to ask first): `create_ticket` with a `reason` (why it matters). It may wait in the user's Inbox \
+         as a proposal until they decide. Comment on the ticket with anything the user should know.\n\
          - Don't move the ticket to Done, remove its worktree or delete its branch unless the user asks: {SHORT_NAME} \
          or the user does that once the work is merged.\n\
          - When the ticket has attachments (screenshots, logs: `get_ticket` lists each with a local `path`), open the \

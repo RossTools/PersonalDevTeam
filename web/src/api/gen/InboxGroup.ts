@@ -3,4 +3,4 @@
 /**
  * What kind of wait an item is (stored with it). The Inbox lists items by their [`InboxSection`].
  */
-export type InboxGroup = "question" | "approval" | "session" | "stalled" | "loop_limit" | "notice" | "admit" | "proposal" | "gate" | "accept";
+export type InboxGroup = "question" | "approval" | "session" | "stalled" | "loop_limit" | "notice" | "admit" | "proposal" | "ticket_proposal" | "gate" | "accept";

@@ -239,6 +239,7 @@ pub(crate) async fn mirror_timeline(
                     from_ticket: agent.as_ref().and_then(|a| a.from_ticket.clone()),
                     from_ticket_id: agent.and_then(|a| a.from_ticket_id),
                     via_parts: data.get("viaParts").and_then(|v| v.as_bool()) == Some(true),
+                    reason: data.get("reason").and_then(|v| v.as_str()).map(String::from),
                 },
             )
         }

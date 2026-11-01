@@ -51,6 +51,9 @@ pub enum InboxKind {
     /// A disk with PDT's data or a project's checkouts is running low on space (PDT-324), with Clean actions. Not
     /// stored: listed while it lasts.
     LowDisk,
+    /// A ticket an agent made, held in Draft off the board until the user decides (PDT-366): Accept to To do, Accept
+    /// to backlog, Duplicate of… or Reject. It closes once the ticket leaves Draft some other way.
+    TicketProposal,
 }
 
 impl InboxKind {
@@ -73,6 +76,7 @@ impl InboxKind {
             InboxKind::McpSignIn => "mcp_sign_in",
             InboxKind::Storage => "storage",
             InboxKind::LowDisk => "low_disk",
+            InboxKind::TicketProposal => "ticket_proposal",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -94,6 +98,7 @@ impl InboxKind {
             Self::McpSignIn,
             Self::Storage,
             Self::LowDisk,
+            Self::TicketProposal,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -117,13 +122,15 @@ pub enum InboxGroup {
     Admit,
     /// Workflow versions agents proposed (PDT-320).
     Proposal,
+    /// Tickets agents proposed (PDT-366).
+    TicketProposal,
     Gate,
     /// A gate with `inbox: accept`: the work is done and waits for the user's Accept.
     Accept,
 }
 
 impl InboxGroup {
-    pub const ALL: [InboxGroup; 10] = [
+    pub const ALL: [InboxGroup; 11] = [
         InboxGroup::Question,
         InboxGroup::Approval,
         InboxGroup::Session,
@@ -132,6 +139,7 @@ impl InboxGroup {
         InboxGroup::Notice,
         InboxGroup::Admit,
         InboxGroup::Proposal,
+        InboxGroup::TicketProposal,
         InboxGroup::Gate,
         InboxGroup::Accept,
     ];
@@ -145,6 +153,7 @@ impl InboxGroup {
             InboxGroup::Notice => "notice",
             InboxGroup::Admit => "admit",
             InboxGroup::Proposal => "proposal",
+            InboxGroup::TicketProposal => "ticket_proposal",
             InboxGroup::Gate => "gate",
             InboxGroup::Accept => "accept",
         }
@@ -162,6 +171,7 @@ impl InboxGroup {
             InboxGroup::Notice => "Unheard notices",
             InboxGroup::Admit => "Triaged tickets",
             InboxGroup::Proposal => "Workflow proposals",
+            InboxGroup::TicketProposal => "Ticket proposals",
             InboxGroup::Gate => "Gates",
             InboxGroup::Accept => "Ready to accept",
         }
@@ -202,7 +212,11 @@ impl InboxGroup {
             InboxGroup::Question => InboxSection::Question,
             InboxGroup::Approval => InboxSection::Approval,
             InboxGroup::Stalled | InboxGroup::LoopLimit => InboxSection::Stuck,
-            InboxGroup::Session | InboxGroup::Notice | InboxGroup::Admit | InboxGroup::Proposal => InboxSection::Act,
+            InboxGroup::Session
+            | InboxGroup::Notice
+            | InboxGroup::Admit
+            | InboxGroup::Proposal
+            | InboxGroup::TicketProposal => InboxSection::Act,
             InboxGroup::Gate | InboxGroup::Accept => InboxSection::Accept,
         }
     }
@@ -289,6 +303,12 @@ pub const DENY: &str = "deny";
 pub const ACCEPT: &str = "accept";
 /// A workflow proposal's Discard: it is set aside.
 pub const DISCARD: &str = "discard";
+/// A ticket proposal's Accept to To do (PDT-366).
+pub const ACCEPT_TODO: &str = "accept_todo";
+/// A ticket proposal's Accept to backlog: to Ready.
+pub const ACCEPT_BACKLOG: &str = "accept_backlog";
+/// A ticket proposal's Duplicate of…: to Won't do, linked to the ticket it repeats. Reject is [`REJECT`].
+pub const DUPLICATE: &str = "duplicate";
 
 /// The id of the item that says PDT can't save changes ([`storage_item`]).
 pub const STORAGE_ID: &str = "storage";
@@ -436,7 +456,8 @@ pub struct InboxItem {
     pub title: String,
     /// Kind-specific: `questions` (question), `question`/`choices` (gate), `outcomes`, `summary`, `turns`
     /// (stalled), `passes` (loop limit), `request` (approval), `notice`/`key`/`text`/`pr`/`url` (notice),
-    /// `summary`/`issue`/`external` (admit), `tool`/`toolTitle`/`input`/`agent`/`sessionTitle` (confirm).
+    /// `summary`/`issue`/`external` (admit), `tool`/`toolTitle`/`input`/`agent`/`sessionTitle` (confirm),
+    /// `description`/`priority`/`labels`/`reason`/`persona`/`fromTicket`/`fromTicketId` (ticket proposal).
     #[ts(type = "Record<string, unknown>")]
     pub body: Value,
     pub choices: Vec<InboxChoice>,
@@ -534,6 +555,11 @@ pub struct InboxAnswer {
     #[serde(default)]
     #[ts(optional)]
     pub answers: Option<Vec<String>>,
+    /// A ticket proposal's Accept or Duplicate of… (PDT-366): the user's edits, the `agentic` box and the ticket it
+    /// repeats. Reject's reason is `text`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub proposal: Option<crate::ticket_proposal::ProposalAnswer>,
 }
 
 /// Never shows a secret's value.
@@ -544,6 +570,7 @@ impl std::fmt::Debug for InboxAnswer {
             .field("secret", &self.secret.as_ref().map(|_| "[secret]"))
             .field("text", &self.text)
             .field("answers", &self.answers)
+            .field("proposal", &self.proposal)
             .finish()
     }
 }

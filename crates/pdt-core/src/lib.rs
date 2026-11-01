@@ -49,6 +49,7 @@ pub mod start;
 pub mod storage;
 pub mod ticket;
 pub mod ticket_attachment;
+pub mod ticket_proposal;
 pub mod todo;
 pub mod watch;
 pub mod workflow;

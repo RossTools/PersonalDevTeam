@@ -416,6 +416,7 @@ pub(crate) mod tests {
             source: Default::default(),
             admitted: false,
             created_by: None,
+            proposed: false,
         }
     }
 

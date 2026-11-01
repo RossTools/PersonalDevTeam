@@ -74,17 +74,32 @@ pub(crate) async fn creator(st: &AppState, headers: &HeaderMap) -> Result<(By, T
     Ok((crate::mcp::tools::agent_by(st, &s).await, source))
 }
 
+/// `POST /api/projects/{id}/tickets`: a [`NewTicket`], and from an agent why it makes it (`reason`; PDT-366).
+#[derive(serde::Deserialize)]
+pub(crate) struct CreateTicket {
+    #[serde(flatten)]
+    ticket: NewTicket,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
 pub(crate) async fn create(
     State(st): State<AppState>,
     Path(project_id): Path<String>,
     headers: HeaderMap,
-    payload: Result<Json<NewTicket>, JsonRejection>,
+    payload: Result<Json<CreateTicket>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Ticket>), ApiError> {
-    let Json(input) = payload?;
+    let Json(CreateTicket { ticket: input, reason }) = payload?;
     let (by, source) = creator(&st, &headers).await?;
-    let t = pdt_core::ticket::ValidNewTicket { source, ..input.validate()? };
+    let mut t = pdt_core::ticket::ValidNewTicket { source, ..input.validate()? };
+    // An agent's ticket waits for the user as a proposal (PDT-366).
+    if pdt_core::ticket_proposal::proposes(source, false)
+        && crate::workflow::nodes::ticket_proposal::proposals_on(&st).await
+    {
+        pdt_core::ticket_proposal::hold(&mut t);
+    }
     let id = uuid::Uuid::now_v7().to_string();
-    let ticket = st.store.create_ticket_by(&id, &project_id, &t, by, now_ms()).await?;
+    let ticket = st.store.create_ticket_why(&id, &project_id, &t, by, reason.as_deref(), now_ms()).await?;
     Ok((StatusCode::CREATED, reply(&st, ticket).await?))
 }
 

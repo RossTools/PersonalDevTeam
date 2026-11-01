@@ -69,7 +69,7 @@ backlog), `todo` (picked for the board), `in_progress`, `done`, `wont_do`. Prior
 |---|---|
 | `GET /api/tickets?project=<id>` | the project's tickets, ranked. Also `q` (words, or a key), `stage`, `priority`, `label` (comma-separated lists), `parent`, `blocked`, `sort` (`rank`, `priority`, `updated`, `created`), `limit`, `cursor`; returns `{items, nextCursor, total}` |
 | `GET /api/tickets/<id or key>` | one ticket with its `description`, links and attempt |
-| `POST /api/projects/<id>/tickets` | `{title, description?, stage?, priority?, labels?, areas?, parent?}`: a Draft (unless `stage`) at the top of its stage; with `parent`, a part after the parent's last part. Send your session id in an `X-Agent-Session` header, so the ticket shows who made it (your persona and the ticket you work on) |
+| `POST /api/projects/<id>/tickets` | `{title, description?, stage?, priority?, labels?, areas?, parent?, reason?}`: a Draft (unless `stage`) at the top of its stage; with `parent`, a part after the parent's last part. Send your session id in an `X-Agent-Session` header, so the ticket shows who made it (your persona and the ticket you work on). From an agent it is usually a proposal (below): say why in `reason` |
 | `PATCH /api/tickets/<id>` | any of `title`, `description`, `stage`, `priority`, `labels`, `areas` (lists replace the whole set), `parent` (a ticket id, `""` to detach), `waiting` |
 | `GET /api/tickets/<id>/events` | the timeline, oldest first (`newestFirst=true`, `limit`, `cursor`; returns `{items, nextCursor}`). Comments have `kind: "comment"` and their text in `body` |
 | `POST /api/tickets/<id>/comments` | `{body}`: a comment by the agent (not sent back to you) |
@@ -77,6 +77,13 @@ backlog), `todo` (picked for the board), `in_progress`, `done`, `wont_do`. Prior
 
 A session started on a ticket gets the rules for that work in its instructions: follow-up work goes in a new ticket,
 and moving the ticket to `done` or removing its worktree is left to PDT (once the branch is merged) or the person.
+
+A ticket an agent makes (`create_ticket` outside the PM, or the call above) is a **proposal** while the project's
+"Ticket proposals" workflow is on: it is made in Draft without the `agentic` label, stays off the board, and waits in
+the person's Inbox with your `reason` until they accept it (to To do or the backlog), mark it a duplicate or reject it.
+You can't move it or label it `agentic` yourself. You hear the decision in your session if it is still running,
+otherwise as a comment on the ticket you were working on. `create_ticket`'s result says `"proposal": true` when it is
+one.
 
 ### Attachments
 

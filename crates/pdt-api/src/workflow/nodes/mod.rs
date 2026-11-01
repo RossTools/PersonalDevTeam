@@ -25,6 +25,7 @@ pub mod session_send;
 pub mod state;
 pub mod switch;
 pub mod ticket;
+pub mod ticket_proposal;
 pub mod trigger;
 pub mod wait;
 pub mod webhook;

@@ -32,4 +32,8 @@ parent?: string,
 /**
  * true: only tickets with parts; false: only tickets without.
  */
-hasParts?: boolean, cursor?: string, limit?: number, };
+hasParts?: boolean, 
+/**
+ * true: only ticket proposals waiting in the Inbox (PDT-366). Left out (or false), lists leave them out.
+ */
+proposed?: boolean, cursor?: string, limit?: number, };
