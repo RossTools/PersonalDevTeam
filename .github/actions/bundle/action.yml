@@ -25,6 +25,26 @@ inputs:
   notary-issuer:
     description: the API key's issuer id
     default: ''
+  # PDT's own Google sign-in (its two OAuth clients, the picker key and the project number), built into pdtd; without
+  # them a build offers only the user's own OAuth client.
+  google-client-id:
+    description: the standard Google OAuth client's ID
+    default: ''
+  google-client-secret:
+    description: its secret
+    default: ''
+  google-agent-client-id:
+    description: the agentic Google OAuth client's ID (for agents' document tools)
+    default: ''
+  google-agent-client-secret:
+    description: its secret
+    default: ''
+  google-picker-key:
+    description: the Google file picker's API key
+    default: ''
+  google-project-number:
+    description: the Google Cloud project's number
+    default: ''
 runs:
   using: composite
   steps:
@@ -59,8 +79,16 @@ runs:
     # The macOS app is universal (Apple silicon and Intel): pdtd and pdt-host are built for both CPUs and joined with
     # lipo (scripts/stage-sidecars.mjs), and Tauri does the same for the app itself. Its bundle is then under
     # target/universal-apple-darwin; the others stay under target/release.
+    # PDT's own Google sign-in is built into pdtd (option_env!, crates/pdt-int-google/src/builtin.rs).
     - name: Build pdtd and pdt-host
       shell: bash
+      env:
+        PDT_GOOGLE_CLIENT_ID: ${{ inputs.google-client-id }}
+        PDT_GOOGLE_CLIENT_SECRET: ${{ inputs.google-client-secret }}
+        PDT_GOOGLE_AGENT_CLIENT_ID: ${{ inputs.google-agent-client-id }}
+        PDT_GOOGLE_AGENT_CLIENT_SECRET: ${{ inputs.google-agent-client-secret }}
+        PDT_GOOGLE_PICKER_KEY: ${{ inputs.google-picker-key }}
+        PDT_GOOGLE_PROJECT_NUMBER: ${{ inputs.google-project-number }}
       run: |
         if [ "${{ inputs.bundles }}" = app ]; then
           rustup target add aarch64-apple-darwin x86_64-apple-darwin

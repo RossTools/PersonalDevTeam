@@ -302,6 +302,16 @@ and the update token is read without a prompt once allowed. A self-signed one (`
 stopgap) has no Team ID: the keychain then trusts each build's exact code hash, so every update asks again, and
 Gatekeeper warns. Check a host with `security dump-keychain -a`: the item's partition list should show `teamid:`.
 
+### Google sign-in
+
+Release and nightly bundles build in PDT's own Google OAuth clients (the GCP project `pdt`): the standard and agentic
+Web clients, the file picker's API key and the project's number, from the `PDT_GOOGLE_CLIENT_ID`,
+`PDT_GOOGLE_CLIENT_SECRET`, `PDT_GOOGLE_AGENT_CLIENT_ID`, `PDT_GOOGLE_AGENT_CLIENT_SECRET`, `PDT_GOOGLE_PICKER_KEY` and
+`PDT_GOOGLE_PROJECT_NUMBER` repository secrets, passed to `.github/actions/bundle` (CI's bundles only when they build a
+release). Never commit them. A build without them (a local one, a PR's bundle) offers only the user's own OAuth client;
+set the same variables in the environment to build them in locally. Both clients' only redirect URI is
+`https://pdt.dev/oauth/google`, and the consent screen links `https://pdt.dev/privacy`: both are on the website.
+
 ### Moving the release repository
 
 Hosts find the release repository by its numeric id (`RELEASE_REPO_ID` in `crates/pdt-core/src/brand.rs`), which

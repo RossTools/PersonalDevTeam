@@ -4,4 +4,8 @@ export type GoogleSignInInput = {
 /**
  * The address PDT is open at in the browser (`http://127.0.0.1:7420`): Google sends the browser back there.
  */
-origin: string, };
+origin: string, 
+/**
+ * Asks the account's consent for agents (PDT's agentic client) instead of signing it in.
+ */
+agent?: boolean, };

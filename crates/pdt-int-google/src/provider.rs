@@ -1,13 +1,15 @@
 //! The Google document provider (PDT-316): Docs and Sheets in the user's Drive, through each signed-in Google account.
 //! A document's reference is `<connection id>/<file id>`, so it is always reached as the account that has it. New
-//! documents go to the first signed-in account (by connection name), in its connection's Drive folder.
+//! documents go to the first signed-in account (by connection name), in its connection's Drive folder. Called from an
+//! agent's document tools, it acts as the agent (PDT-360): with each account's agent sign-in, and not at all with an
+//! account that doesn't let agents in.
 
 use crate::accounts::{self, Shared, config_str};
 use crate::api::{Account, Session};
 use crate::drive;
 use pdt_api::sdk::documents::{
     CommentReply, DocumentComment, DocumentContent, DocumentEdit, DocumentKind, DocumentProvider, NewFile,
-    ProviderCapabilities, ProviderError, ProviderFile, ProviderResult,
+    ProviderCapabilities, ProviderError, ProviderFile, ProviderResult, by_agent,
 };
 use pdt_api::sdk::{AppState, BoxFut};
 use std::sync::Arc;
@@ -17,6 +19,16 @@ pub const ID: &str = "google";
 pub struct GoogleDocs {
     pub st: AppState,
     pub shared: Arc<Shared>,
+}
+
+/// No account to act as: none is signed in, or, for an agent, none lets agents in.
+fn no_account(agent: bool) -> ProviderError {
+    ProviderError::Failed(if agent {
+        "no Google account lets agents use it: the user allows them in Settings → Plugins → Google (Allow agents)"
+            .into()
+    } else {
+        "no Google account is signed in: sign in in Settings → Plugins → Google".into()
+    })
 }
 
 /// A reference's connection and file ids.
@@ -47,7 +59,7 @@ impl GoogleDocs {
         f: impl FnOnce(&Session, &str) -> ProviderResult<T> + Send + 'static,
     ) -> ProviderResult<T> {
         let (conn, file) = split_ref(reference)?;
-        let (_, account) = accounts::account_by_id(&self.st, &self.shared, conn).await?;
+        let (_, account) = accounts::account_by_id(&self.st, &self.shared, conn, by_agent()).await?;
         let file = file.to_string();
         self.run(account, move |s| f(s, &file)).await
     }
@@ -87,11 +99,10 @@ impl DocumentProvider for GoogleDocs {
     /// Every signed-in account's Docs and Sheets PDT may open; an account that fails is left out, unless all do.
     fn search<'a>(&'a self, q: &'a str, kind: Option<DocumentKind>) -> BoxFut<'a, ProviderResult<Vec<ProviderFile>>> {
         Box::pin(async move {
-            let all = accounts::signed_in(&self.st, &self.shared).await?;
+            let agent = by_agent();
+            let all = accounts::signed_in(&self.st, &self.shared, agent).await?;
             if all.is_empty() {
-                return Err(ProviderError::Failed(
-                    "no Google account is signed in: sign in in Settings → Plugins → Google".into(),
-                ));
+                return Err(no_account(agent));
             }
             let (mut out, mut failed) = (vec![], None);
             for (_, a) in all {
@@ -110,9 +121,9 @@ impl DocumentProvider for GoogleDocs {
 
     fn create<'a>(&'a self, new: NewFile) -> BoxFut<'a, ProviderResult<ProviderFile>> {
         Box::pin(async move {
-            let (c, a) = accounts::signed_in(&self.st, &self.shared).await?.into_iter().next().ok_or_else(|| {
-                ProviderError::Failed("no Google account is signed in: sign in in Settings → Plugins → Google".into())
-            })?;
+            let agent = by_agent();
+            let all = accounts::signed_in(&self.st, &self.shared, agent).await?;
+            let (c, a) = all.into_iter().next().ok_or_else(|| no_account(agent))?;
             let folder = config_str(&c, "folder").and_then(|f| drive::folder_id(&f));
             self.run(a, move |s| {
                 let f = drive::create(s, &new.title, new.kind, folder.as_deref())?;

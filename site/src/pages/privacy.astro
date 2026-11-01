@@ -1,0 +1,59 @@
+---
+// The privacy page (pdt.dev/privacy): what PDT keeps and sends, for people and for Google's consent screen, which
+// links here. Like the landing page it stands outside Starlight.
+import Landing from '../layouts/Landing.astro';
+import { NAME, SHORT_NAME } from '../brand.mjs';
+
+const SUPPORT = 'support@pdt.dev';
+---
+
+<Landing title="Privacy" description={`What ${SHORT_NAME} keeps, what it sends, and how to take its access back.`}>
+	<main class="privacy">
+		<div class="wrap">
+			<h2>Privacy</h2>
+			<p class="lead">{NAME} ({SHORT_NAME}) runs on your own machine. There are no {SHORT_NAME} servers your work goes through.</p>
+
+			<h3>What stays on your machine</h3>
+			<ul>
+				<li>Your tickets, documents, conversations and settings are kept in {SHORT_NAME}'s data folder on the computer it runs on.</li>
+				<li>Sign-ins and secrets (tokens for GitHub, Google and other services) are kept in that computer's keychain.</li>
+				<li>Nothing is sent to {SHORT_NAME}'s developers: no analytics, no telemetry, no copies of your data.</li>
+			</ul>
+
+			<h3>What {SHORT_NAME} sends, and where</h3>
+			<p>{SHORT_NAME} talks to the services you connect it to, from your machine, as you: GitHub for your repositories, the
+				coding agents you run, and the plugins you turn on. It checks GitHub for new releases.</p>
+
+			<h3>Google</h3>
+			<ul>
+				<li>Signing in with Google asks only for the <code>drive.file</code> permission, with your email address to name
+					the account. {SHORT_NAME} can then open only the Docs and Sheets it makes and those you pick in Google's file
+					picker, never the rest of your Drive.</li>
+				<li>Your Google sign-in is kept in your keychain and used only from your machine, to read and change those files
+					when you or the agents you allowed ask it to.</li>
+				<li>Agents use Google only when you allow them, for each account, and you can take that away in Settings → Plugins →
+					Google at any time. What an agent reads from a file goes to that agent's own service (Claude, Codex or the
+					agent you run), as anything else it works on does.</li>
+				<li>Google's sign-in comes back through <code>pdt.dev/oauth/google</code>, a page that only sends your browser back to
+					the {SHORT_NAME} you started from. It keeps nothing and sends nothing anywhere else.</li>
+			</ul>
+
+			<h3>Taking access back</h3>
+			<p>Sign out of an account in Settings → Plugins → Google, or delete its connection: {SHORT_NAME} forgets the sign-in.
+				To take {SHORT_NAME}'s access back from Google's side, open your Google Account → Security → Third-party apps with
+				account access, pick {NAME} and remove its access.</p>
+
+			<h3>Contact</h3>
+			<p>Questions about privacy or support: <a href={`mailto:${SUPPORT}`}>{SUPPORT}</a>.</p>
+		</div>
+	</main>
+</Landing>
+
+<style>
+	.privacy { padding: 72px 0 96px; }
+	.privacy .wrap { max-width: 760px; }
+	.privacy h3 { font-size: 20px; margin: 40px 0 12px; }
+	.privacy p, .privacy li { color: var(--muted); font-size: 16px; line-height: 1.6; }
+	.privacy ul { padding-left: 20px; display: grid; gap: 8px; }
+	.privacy a { color: var(--accent-hi); }
+</style>

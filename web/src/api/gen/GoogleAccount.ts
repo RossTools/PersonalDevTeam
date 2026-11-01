@@ -9,9 +9,18 @@ export type GoogleAccount = { connectionId: string, name: string, signedIn: bool
  */
 email: string | null, 
 /**
- * Has an OAuth client ID and secret (signing in needs both).
+ * Has an OAuth client ID and secret (signing in needs both), its own or PDT's.
  */
 hasClient: boolean, 
+/**
+ * Signs in with PDT's own clients; else with its own.
+ */
+builtIn: boolean, 
+/**
+ * Agents may use it: with PDT's own clients, once the user allowed them (a sign-in of their own); with its own
+ * client, whenever it is signed in.
+ */
+agents: boolean, 
 /**
  * Has the API key and project number Google's file picker needs.
  */

@@ -1,15 +1,19 @@
 //! The Google plugin's routes (PDT-316), under `/api/google`: its accounts and their sign-in state, signing in (the
-//! browser goes to Google's consent page and comes back to [`callback`]) and out, and what Google's file picker needs
-//! in the browser (an access token, the API key and the project number). Signing in and out and the picker's token
-//! are for PDT's web app only (its UI token), never an agent's curl.
+//! browser goes to Google's consent page and comes back to [`callback`]) and out, the agents' permission (PDT-360),
+//! and what Google's file picker needs in the browser (an access token, the API key and the project number). With
+//! PDT's own clients Google comes back through the website's page ([`crate::builtin`]), and signing in with no account
+//! adds one. Signing in and out, the agents' permission and the picker's token are for PDT's web app only (its UI
+//! token), never an agent's curl.
 
 use crate::accounts::{self, Pending, Shared, SignIn, config_str};
+use crate::builtin::{self, Client};
 use crate::oauth;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Html;
 use pdt_api::sdk::{ApiError, AppState, from_ui, now_ms};
+use pdt_core::workflow::api::Connection;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ts_rs::TS;
@@ -24,10 +28,24 @@ pub struct GoogleAccount {
     pub signed_in: bool,
     /// The account's email, once signed in.
     pub email: Option<String>,
-    /// Has an OAuth client ID and secret (signing in needs both).
+    /// Has an OAuth client ID and secret (signing in needs both), its own or PDT's.
     pub has_client: bool,
+    /// Signs in with PDT's own clients; else with its own.
+    pub built_in: bool,
+    /// Agents may use it: with PDT's own clients, once the user allowed them (a sign-in of their own); with its own
+    /// client, whenever it is signed in.
+    pub agents: bool,
     /// Has the API key and project number Google's file picker needs.
     pub picker: bool,
+}
+
+/// Whether this PDT has its own Google sign-in.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GoogleClient {
+    /// Built with PDT's own OAuth clients: Sign in with Google adds an account, with nothing to set up.
+    pub built_in: bool,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -36,6 +54,10 @@ pub struct GoogleAccount {
 pub struct GoogleSignInInput {
     /// The address PDT is open at in the browser (`http://127.0.0.1:7420`): Google sends the browser back there.
     pub origin: String,
+    /// Asks the account's consent for agents (PDT's agentic client) instead of signing it in.
+    #[serde(default)]
+    #[ts(optional)]
+    pub agent: Option<bool>,
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -80,20 +102,36 @@ async fn connection(st: &AppState, id: &str) -> Result<pdt_core::workflow::api::
 }
 
 /// `GET /api/google/accounts`.
-pub async fn list(State(st): State<AppState>) -> Result<Json<Vec<GoogleAccount>>, ApiError> {
+pub async fn list(
+    State(st): State<AppState>,
+    shared: axum::Extension<Arc<Shared>>,
+) -> Result<Json<Vec<GoogleAccount>>, ApiError> {
     let mut out = vec![];
     for c in accounts::connections(&st).await? {
         let s = accounts::sign_in(&st, &c.id).await?;
+        let built_in = shared.uses_built_in(&c);
+        let agents = s.is_some() && (!built_in || accounts::agent_sign_in(&st, &c.id).await?.is_some());
+        let picker = match &shared.built_in {
+            Some(b) if built_in => b.picker.is_some(),
+            _ => config_str(&c, "apiKey").is_some() && config_str(&c, "appId").is_some(),
+        };
         out.push(GoogleAccount {
             signed_in: s.is_some(),
             email: s.and_then(|s| s.email),
-            has_client: config_str(&c, "clientId").is_some() && c.has_secret,
-            picker: config_str(&c, "apiKey").is_some() && config_str(&c, "appId").is_some(),
+            has_client: built_in || (config_str(&c, "clientId").is_some() && c.has_secret),
+            built_in,
+            agents,
+            picker,
             connection_id: c.id,
             name: c.name,
         });
     }
     Ok(Json(out))
+}
+
+/// `GET /api/google/client`.
+pub async fn client(shared: axum::Extension<Arc<Shared>>) -> Json<GoogleClient> {
+    Json(GoogleClient { built_in: shared.built_in.is_some() })
 }
 
 /// The address Google sends the browser back to, from where PDT is open.
@@ -108,7 +146,59 @@ pub fn redirect_uri(origin: &str) -> Result<String, String> {
     }
 }
 
-/// `POST /api/google/accounts/{id}/sign-in`: where the browser goes to sign in.
+/// Where the browser goes to sign `connection` in (a new account for None), or to ask its consent for agents.
+fn begin(
+    shared: &Shared,
+    connection: Option<&Connection>,
+    client: Client,
+    origin: &str,
+    agent: bool,
+    hint: Option<&str>,
+) -> Result<GoogleSignInStart, ApiError> {
+    let built_in = connection.is_none_or(|c| shared.uses_built_in(c));
+    let nonce = oauth::random(24);
+    let (state, redirect) = if built_in {
+        // Google comes back to the website's page, which sends the browser on to `origin`.
+        (builtin::state(&nonce, &builtin::pdt_origin(origin).map_err(bad)?), builtin::redirect_uri())
+    } else {
+        (nonce, redirect_uri(origin).map_err(bad)?)
+    };
+    let verifier = oauth::random(48);
+    let url = oauth::auth_url(&client.id, &redirect, &state, &verifier, hint);
+    let now = now_ms();
+    let mut p = shared.pending.lock().unwrap_or_else(|e| e.into_inner());
+    p.retain(|_, x| now - x.started_ms < accounts::PENDING_MS);
+    p.insert(
+        state,
+        Pending {
+            connection_id: connection.map(|c| c.id.clone()),
+            verifier,
+            redirect_uri: redirect.clone(),
+            client,
+            agent,
+            started_ms: now,
+        },
+    );
+    Ok(GoogleSignInStart { url, redirect_uri: redirect })
+}
+
+/// `POST /api/google/sign-in`: where the browser goes to add an account, with PDT's own clients.
+pub async fn start_new(
+    State(st): State<AppState>,
+    shared: axum::Extension<Arc<Shared>>,
+    headers: HeaderMap,
+    Json(input): Json<GoogleSignInInput>,
+) -> Result<Json<GoogleSignInStart>, ApiError> {
+    ui_only(&st, &headers)?;
+    let Some(b) = &shared.built_in else {
+        return Err(bad(
+            "this PDT was built without its own Google sign-in: add an account with your own OAuth client",
+        ));
+    };
+    Ok(Json(begin(&shared, None, b.standard.clone(), &input.origin, false, None)?))
+}
+
+/// `POST /api/google/accounts/{id}/sign-in`: where the browser goes to sign in, or to let agents use the account.
 pub async fn start(
     State(st): State<AppState>,
     shared: axum::Extension<Arc<Shared>>,
@@ -118,16 +208,19 @@ pub async fn start(
 ) -> Result<Json<GoogleSignInStart>, ApiError> {
     ui_only(&st, &headers)?;
     let c = connection(&st, &id).await?;
-    let (client_id, _) = accounts::client(&st, &c).await?;
-    let redirect = redirect_uri(&input.origin).map_err(bad)?;
-    let (state, verifier) = (oauth::random(24), oauth::random(48));
-    let hint = accounts::sign_in(&st, &id).await?.and_then(|s| s.email);
-    let url = oauth::auth_url(&client_id, &redirect, &state, &verifier, hint.as_deref());
-    let now = now_ms();
-    let mut p = shared.pending.lock().unwrap_or_else(|e| e.into_inner());
-    p.retain(|_, x| now - x.started_ms < accounts::PENDING_MS);
-    p.insert(state, Pending { connection_id: id, verifier, redirect_uri: redirect.clone(), started_ms: now });
-    Ok(Json(GoogleSignInStart { url, redirect_uri: redirect }))
+    let agent = input.agent == Some(true);
+    let signed = accounts::sign_in(&st, &id).await?;
+    if agent {
+        if !shared.uses_built_in(&c) {
+            return Err(bad(format!("{} has its own OAuth client: agents use its sign-in", c.name)));
+        }
+        if signed.is_none() {
+            return Err(bad(format!("sign {} in first, then allow agents", c.name)));
+        }
+    }
+    let client = accounts::client(&st, &shared, &c, agent).await?;
+    let hint = signed.and_then(|s| s.email);
+    Ok(Json(begin(&shared, Some(&c), client, &input.origin, agent, hint.as_deref())?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,32 +248,59 @@ fn page(ok: bool, message: &str) -> (StatusCode, Html<String>) {
     (status, Html(html))
 }
 
-/// `GET /api/google/callback`: Google sends the browser back here with a code, which PDT trades for the account's
-/// refresh token.
+/// The connection a new account's sign-in goes to: the one with PDT's own clients already signed in as `email`, else
+/// a new one named after it.
+async fn added(st: &AppState, shared: &Shared, email: Option<&str>) -> Result<Connection, String> {
+    let email = email.ok_or("Google didn't say which account signed in, so PDT can't add it. Try again.")?;
+    let all = accounts::connections(st).await.map_err(|e| e.to_string())?;
+    for c in &all {
+        let mine = accounts::sign_in(st, &c.id).await.map_err(|e| e.to_string())?.and_then(|s| s.email);
+        if shared.uses_built_in(c) && mine.is_some_and(|m| m.eq_ignore_ascii_case(email)) {
+            return Ok(c.clone());
+        }
+    }
+    let taken = st.store.list_connections().await.map_err(|e| e.to_string())?;
+    let name = (1..)
+        .map(|n| if n == 1 { email.to_string() } else { format!("{email} ({n})") })
+        .find(|n| !taken.iter().any(|c| c.name.eq_ignore_ascii_case(n)))
+        .unwrap_or_default();
+    let input = pdt_api::sdk::connections::ConnectionInput {
+        name: Some(name),
+        kind: Some(accounts::KIND.into()),
+        url: None,
+        config: Some(serde_json::json!({})),
+    };
+    let made = pdt_api::sdk::connections::create_connection(State(st.clone()), Ok(Json(input))).await;
+    made.map(|(_, Json(c))| c).map_err(|e| e.message().to_string())
+}
+
+/// `GET /api/google/callback`: Google sends the browser back here (through the website's page, with PDT's own
+/// clients) with a code, which PDT trades for the account's refresh token, or the agents' for their permission. Only
+/// a `state` PDT issued, still under way, is taken, and the code is traded with its PKCE verifier.
 pub async fn callback(
     State(st): State<AppState>,
     shared: axum::Extension<Arc<Shared>>,
     Query(q): Query<CallbackQuery>,
 ) -> (StatusCode, Html<String>) {
+    let pending = q.state.and_then(|s| shared.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&s));
     if let Some(e) = q.error {
         return page(false, &format!("Google said: {e}. Try again from Settings → Plugins → Google."));
     }
-    let pending = q.state.and_then(|s| shared.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&s));
     let Some(p) = pending.filter(|p| now_ms() - p.started_ms < accounts::PENDING_MS) else {
         return page(false, "This sign-in is unknown or too old. Start it again from Settings → Plugins → Google.");
     };
     let Some(code) = q.code else { return page(false, "Google sent no code back.") };
-    let c = match connection(&st, &p.connection_id).await {
-        Ok(c) => c,
-        Err(_) => return page(false, "The Google connection was deleted while signing in."),
+    let existing = match &p.connection_id {
+        Some(id) => match connection(&st, id).await {
+            Ok(c) => Some(c),
+            Err(_) => return page(false, "The Google connection was deleted while signing in."),
+        },
+        None => None,
     };
-    let (client_id, secret) = match accounts::client(&st, &c).await {
-        Ok(x) => x,
-        Err(e) => return page(false, &e.to_string()),
-    };
-    let transport = shared.transport.clone();
+    let (transport, client, verifier, redirect) =
+        (shared.transport.clone(), p.client.clone(), p.verifier.clone(), p.redirect_uri.clone());
     let traded = tokio::task::spawn_blocking(move || {
-        let t = oauth::exchange(transport.as_ref(), &client_id, &secret, &code, &p.verifier, &p.redirect_uri)?;
+        let t = oauth::exchange(transport.as_ref(), &client.id, &client.secret, &code, &verifier, &redirect)?;
         let email = oauth::email(transport.as_ref(), &t.access_token).ok();
         Ok::<_, oauth::OauthError>((t, email))
     })
@@ -190,29 +310,62 @@ pub async fn callback(
         Ok(Err(e)) => return page(false, &format!("PDT couldn't finish signing in: {e}")),
         Err(e) => return page(false, &e.to_string()),
     };
-    // Google gives a refresh token with consent; a sign-in again without one keeps the one PDT has.
-    let refresh = match token.refresh_token {
-        Some(r) => r,
-        None => match accounts::sign_in(&st, &c.id).await.ok().flatten() {
-            Some(s) => s.refresh_token,
-            None => {
-                return page(
-                    false,
-                    "Google gave PDT no refresh token. Remove PDT's access in your Google account and sign in again.",
-                );
-            }
+    let c = match existing {
+        Some(c) => c,
+        None => match added(&st, &shared, email.as_deref()).await {
+            Ok(c) => c,
+            Err(e) => return page(false, &format!("PDT couldn't add the Google account: {e}")),
         },
     };
-    if let Err(e) = accounts::store_sign_in(&st, &c.id, &SignIn { refresh_token: refresh, email: email.clone() }).await
-    {
+    let who = email.clone().unwrap_or_else(|| "your Google account".to_string());
+    let had = if p.agent {
+        // Agents act as the account the user signed in, never another one.
+        let mine = accounts::sign_in(&st, &c.id).await.ok().flatten().and_then(|s| s.email);
+        if let Some(m) = mine.filter(|m| !email.as_deref().is_some_and(|e| e.eq_ignore_ascii_case(m))) {
+            return page(
+                false,
+                &format!("You allowed agents as {who}, but {} is {m}. Try again and pick {m}.", c.name),
+            );
+        }
+        accounts::agent_sign_in(&st, &c.id).await
+    } else {
+        accounts::sign_in(&st, &c.id).await
+    };
+    // Google gives a refresh token with consent; a sign-in again without one keeps the one PDT has.
+    let refresh = match token.refresh_token.or_else(|| had.ok().flatten().map(|s| s.refresh_token)) {
+        Some(r) => r,
+        None => {
+            return page(
+                false,
+                "Google gave PDT no refresh token. Remove PDT's access in your Google account and sign in again.",
+            );
+        }
+    };
+    let key = if p.agent { accounts::agent_key(&c.id) } else { accounts::sign_in_key(&c.id) };
+    if let Err(e) = accounts::store_sign_in(&st, key, &SignIn { refresh_token: refresh, email: email.clone() }).await {
         return page(false, &format!("PDT couldn't keep the sign-in: {e}"));
     }
-    shared.tokens.forget(&c.id);
+    shared.tokens.forget(&crate::api::token_key(&c.id, p.agent));
+    if p.agent {
+        return page(true, &format!("Agents may now use {who}'s Google docs through PDT ({}).", c.name));
+    }
     if let Some(e) = &email {
         shared.emails.write().unwrap_or_else(|e| e.into_inner()).insert(c.id.clone(), e.clone());
     }
-    let who = email.unwrap_or_else(|| "your Google account".to_string());
     page(true, &format!("PDT is signed in to Google as {who} for {}.", c.name))
+}
+
+/// `DELETE /api/google/accounts/{id}/agents`: agents may no longer use the account; PDT forgets their sign-in.
+pub async fn forget_agents(
+    State(st): State<AppState>,
+    shared: axum::Extension<Arc<Shared>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    ui_only(&st, &headers)?;
+    connection(&st, &id).await?;
+    accounts::forget_agents(&st, &shared, &id).await.map_err(ApiError::internal)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `DELETE /api/google/accounts/{id}/sign-in`: signs out; Google forgets PDT's access too.
@@ -237,13 +390,18 @@ pub async fn picker(
 ) -> Result<Json<GooglePicker>, ApiError> {
     ui_only(&st, &headers)?;
     let c = connection(&st, &id).await?;
-    let (Some(api_key), Some(app_id)) = (config_str(&c, "apiKey"), config_str(&c, "appId")) else {
+    let own = (config_str(&c, "apiKey"), config_str(&c, "appId"));
+    let picker = match &shared.built_in {
+        Some(b) if shared.uses_built_in(&c) => b.picker.clone(),
+        _ => own.0.zip(own.1),
+    };
+    let Some((api_key, app_id)) = picker else {
         return Err(bad(format!(
             "{} has no API key and project number for Google's file picker: add them to the connection",
             c.name
         )));
     };
-    let a = accounts::account(&st, &shared, &c).await?;
+    let a = accounts::account(&st, &shared, &c, false).await?;
     let client_id = a.client_id.clone();
     let sh = shared.0.clone();
     let token = tokio::task::spawn_blocking(move || {

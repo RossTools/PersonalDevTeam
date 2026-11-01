@@ -44,6 +44,7 @@ pub mod ci {
 /// Document providers (PDT-314: Google's Docs and Sheets, [`crate::Integration::document_providers`]).
 pub mod documents {
     pub use crate::documents::{DocumentProvider, NewFile, ProviderError, ProviderResult};
+    pub use crate::integrations::action::{as_agent, by_agent};
     pub use pdt_core::document::*;
 }
 

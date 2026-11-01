@@ -366,6 +366,12 @@ jobs:
         with:
           bundles: app
           release: ${{ needs.changes.outputs.release }}
+          google-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_CLIENT_ID || '' }}
+          google-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_CLIENT_SECRET || '' }}
+          google-agent-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_ID || '' }}
+          google-agent-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET || '' }}
+          google-picker-key: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PICKER_KEY || '' }}
+          google-project-number: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PROJECT_NUMBER || '' }}
           signing-p12: ${{ secrets.MACOS_SIGNING_P12 }}
           signing-password: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
           notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
@@ -386,6 +392,12 @@ jobs:
         with:
           bundles: nsis
           release: ${{ needs.changes.outputs.release }}
+          google-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_CLIENT_ID || '' }}
+          google-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_CLIENT_SECRET || '' }}
+          google-agent-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_ID || '' }}
+          google-agent-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET || '' }}
+          google-picker-key: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PICKER_KEY || '' }}
+          google-project-number: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PROJECT_NUMBER || '' }}
 
   # Linux (PDT-197): the headless tarball and the AppImage, each CPU on its own native runner (no cross-compiling).
   # Ubuntu 22.04, so the AppImage and the binaries run on glibc 2.35 and newer.
@@ -411,3 +423,9 @@ jobs:
         with:
           bundles: linux
           release: ${{ needs.changes.outputs.release }}
+          google-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_CLIENT_ID || '' }}
+          google-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_CLIENT_SECRET || '' }}
+          google-agent-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_ID || '' }}
+          google-agent-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET || '' }}
+          google-picker-key: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PICKER_KEY || '' }}
+          google-project-number: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PROJECT_NUMBER || '' }}

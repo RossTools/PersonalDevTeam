@@ -247,10 +247,18 @@ fn exports_the_plugins_for_the_web_tests() {
 
 /// The website's Plugins pages (PDT-281) read the plugins from `site/src/data/plugins.json`: Settings → Plugins' list
 /// with every integration on, with what each needs, its workflow triggers and steps (with their descriptions) and its
-/// tools. CI's check that the generated files are committed covers it.
+/// tools. CI's check that the generated files are committed covers it. Google is described as releases have it, with
+/// PDT's own sign-in, whatever this build's environment.
 #[test]
 fn exports_the_plugins_for_the_website() {
-    let ints = pdt_api::Integrations::new(super::built());
+    #[allow(unused_mut)]
+    let mut built = super::built();
+    #[cfg(feature = "google")]
+    for i in built.iter_mut().filter(|i| i.id() == "google") {
+        let release = pdt_int_google::builtin::BuiltIn::from_values([Some("release"); 6]);
+        *i = Arc::new(pdt_int_google::Google::with_built_in(Arc::new(pdt_forge::transport::Offline), release));
+    }
+    let ints = pdt_api::Integrations::new(built);
     let ids: Vec<String> = ints.built().iter().map(|i| i.id().to_string()).collect();
     ints.enable(&ids);
     let r = ints.registry();

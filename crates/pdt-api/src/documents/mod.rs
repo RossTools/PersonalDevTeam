@@ -201,6 +201,8 @@ pub mod testing {
         next: Mutex<u64>,
         /// The folders `create` was given, in order.
         pub folders: Mutex<Vec<std::path::PathBuf>>,
+        /// Each read, whether an agent's tool made it ([`crate::integrations::action::by_agent`]).
+        pub reads_by_agent: Mutex<Vec<bool>>,
     }
 
     impl FakeProvider {
@@ -225,6 +227,7 @@ pub mod testing {
                 files: Default::default(),
                 next: Mutex::new(0),
                 folders: Default::default(),
+                reads_by_agent: Default::default(),
             }
         }
 
@@ -322,6 +325,8 @@ pub mod testing {
             ready(self.with(reference, |s| Ok(s.clone())).map(|s| self.to_file(reference, &s)))
         }
         fn read<'a>(&'a self, reference: &'a str) -> BoxFut<'a, ProviderResult<DocumentContent>> {
+            let by_agent = crate::integrations::action::by_agent();
+            self.reads_by_agent.lock().unwrap_or_else(|e| e.into_inner()).push(by_agent);
             ready(self.with(reference, |s| {
                 let mut c = s.content.clone();
                 let v = Some(s.version.to_string());
