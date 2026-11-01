@@ -335,7 +335,7 @@ jobs:
     with:
       os: windows
       runner: ${{ vars.PDT_WINDOWS_RUNNER || 'windows-latest' }}
-      partitions: ${{ vars.PDT_WINDOWS_PARTITIONS || '[1,2,3,4,5,6]' }}
+      partitions: ${{ vars.PDT_WINDOWS_PARTITIONS || '[1,2,3,4,5,6,7,8]' }}
       split: true
 
   build-windows:

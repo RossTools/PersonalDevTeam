@@ -159,7 +159,7 @@ For each OS, `rust.yml` runs:
   also the desktop crate's clippy and tests. Windows keeps full clippy: its `cfg(windows)` code is in most crates,
   and a separate job costs no waiting.
 
-N is 3 on Linux, 6 on Windows and 2 on macOS; the repo variables `PDT_LINUX_PARTITIONS`, `PDT_MACOS_PARTITIONS` and
+N is 3 on Linux, 8 on Windows and 2 on macOS; the repo variables `PDT_LINUX_PARTITIONS`, `PDT_MACOS_PARTITIONS` and
 `PDT_WINDOWS_PARTITIONS` change it, as a JSON list (`gh variable set PDT_WINDOWS_PARTITIONS --body '[1,2,3,4,5]'`).
 
 The builds are lean: no debug info (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_DEV_STRIP=debuginfo`), no
