@@ -52,8 +52,8 @@ The picker at the top sets where it starts (project, and main checkout or worktr
 
 An agent session is one of:
 
-- **A conversation**: PDT's chat view, with the agent's messages, tool calls folded to a line each ("Ran 3 commands"),
-  each edit's diff, and a **Changes** summary per turn. Questions and permission requests show as cards with
+- **A conversation**: PDT's chat view, with the agent's messages, tool calls folded to a line each ("Ran 3 commands")
+  while the agent's text stays outside them, each edit's diff, and a **Changes** summary per turn. Questions and permission requests show as cards with
   **Allow** and **Deny**. Type `@` to mention a file, `/` for the agent's commands; paste or attach images.
 - **A terminal**: the agent's own interface, as in your terminal app.
 

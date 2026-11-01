@@ -835,3 +835,9 @@ pub(crate) async fn run_log(State(st): State<AppState>, Path(id): Path<i64>) -> 
     };
     Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new().route("/local-ci/runs/{id}/log", get(run_log))
+}

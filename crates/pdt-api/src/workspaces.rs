@@ -166,3 +166,13 @@ pub(crate) async fn open_for_new(st: &AppState, project_id: &str, item: TabItem,
         tracing::warn!(error = %e, "could not open a tab for the new item");
     }
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, patch, post};
+    axum::Router::new()
+        .route("/workspaces", get(list).post(create))
+        .route("/workspaces/{id}", patch(update).delete(remove))
+        .route("/workspaces/{id}/tabs", post(open_tab))
+        .route("/tabs/{id}", patch(update_tab).delete(close_tab))
+}

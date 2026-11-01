@@ -392,6 +392,14 @@ async fn authenticate(mut child: tokio::process::Child, method: &str) -> Result<
     Ok(())
 }
 
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::post;
+    axum::Router::new()
+        .route("/host/acp-agents/{id}/install", post(post_install))
+        .route("/host/acp-agents/{id}/sign-in", post(post_sign_in))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

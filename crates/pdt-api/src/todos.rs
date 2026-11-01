@@ -228,3 +228,11 @@ pub(crate) async fn delete(
     crate::notifications::kick(&st);
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, patch};
+    axum::Router::new()
+        .route("/todos", get(list).post(create))
+        .route("/todos/{id}", patch(self::patch).delete(self::delete))
+}

@@ -123,3 +123,9 @@ pub(crate) async fn create(
     }
     Ok((StatusCode::CREATED, Json(PartsCreated { items })))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::post;
+    axum::Router::new().route("/tickets/{id}/parts", post(create))
+}

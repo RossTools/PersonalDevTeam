@@ -962,3 +962,17 @@ pub(crate) async fn ask_agent(
     deliver(&st, &session, &text).await?;
     Ok(Json(FeedbackResult { session_id: session.id, sent: 0 }))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, patch, post};
+    axum::Router::new()
+        .route("/worktrees/{id}/changes", get(changes))
+        .route("/worktrees/{id}/changes/file", get(file))
+        .route("/worktrees/{id}/comments", get(list_comments).post(create_comment))
+        .route("/worktrees/{id}/feedback", post(feedback))
+        .route("/review-comments/{id}", patch(update_comment).delete(delete_comment))
+        .route("/attempts/{id}/approve", post(approve))
+        .route("/attempts/{id}/merge", get(merge_preview).post(merge))
+        .route("/attempts/{id}/ask-agent", post(ask_agent))
+}

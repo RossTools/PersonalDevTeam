@@ -1,5 +1,4 @@
 use crate::error::ApiError;
-use crate::{pty_ws, sessions, worktrees};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
@@ -440,251 +439,54 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
     let api = Router::new()
         .route("/health", get(move |st: State<AppState>| health(st, index.clone())))
         .route("/shutdown", axum::routing::post(request_shutdown))
-        .route("/host/settings", get(crate::host::get_settings).put(crate::host::put_settings))
-        .route("/host/network", axum::routing::put(crate::host::put_network))
-        .route("/host/acp-agents/{id}/install", axum::routing::post(crate::toolchains::post_install))
-        .route("/host/acp-agents/{id}/sign-in", axum::routing::post(crate::toolchains::post_sign_in))
-        .route("/host/restart", axum::routing::post(crate::host::post_restart))
-        .route("/host/whoami", get(crate::identity_guard::whoami))
-        .route("/ui/token", get(crate::untrusted::ui_token))
-        .route("/host/setup", get(crate::setup::get_setup).put(crate::setup::put_setup))
-        .route("/host/checks", get(crate::checks::get_checks))
-        .route("/host/checks/refresh", axum::routing::post(crate::checks::refresh_checks))
-        .route("/host/remote", get(crate::remote::get_remote))
-        .route("/host/remote/refresh", axum::routing::post(crate::remote::refresh))
-        .route("/host/update", get(crate::update::get_status))
-        .route("/host/update/check", axum::routing::post(crate::update::post_check))
-        .route("/host/update/install", axum::routing::post(crate::update::post_install))
-        .route("/host/update/dismiss", axum::routing::post(crate::update::post_dismiss))
-        .route("/host/token", axum::routing::put(crate::update::put_token).delete(crate::update::delete_token))
-        .route("/forges/{kind}/login", get(crate::forge_login::get))
-        .route("/forges/{kind}/login/test", axum::routing::post(crate::forge_login::test_token))
-        .route("/forges/{kind}/login/token", axum::routing::post(crate::forge_login::put_token))
-        .route(
-            "/forges/{kind}/login/device",
-            axum::routing::post(crate::forge_login::start_device).delete(crate::forge_login::cancel_device),
-        )
-        .route("/forges/{kind}/login/accounts/{host}", axum::routing::delete(crate::forge_login::disconnect))
-        .route("/host/folders", get(crate::folders::list).post(crate::folders::create))
-        .route("/bug-reports", axum::routing::post(crate::bug_reports::create))
-        .route("/bug-reports/preview", get(crate::bug_reports::preview))
-        .route("/guides", get(crate::guides::list))
-        .route("/guides/{name}", get(crate::guides::get_one))
-        .route("/projects", get(crate::projects::list).post(crate::projects::create))
-        .route("/projects/clone", axum::routing::post(crate::projects::clone))
-        .route(
-            "/projects/{id}",
-            get(crate::projects::get_one).patch(crate::projects::update).delete(crate::projects::remove),
-        )
-        .route("/projects/{id}/pull", axum::routing::post(crate::projects::pull))
-        .route("/projects/{id}/files", get(crate::files::list))
-        .route(
-            "/projects/{id}/files/content",
-            get(crate::files::content).put(crate::files::save).delete(crate::files::delete),
-        )
-        .route("/projects/{id}/files/rename", axum::routing::post(crate::files::rename))
-        .route("/projects/{id}/files/tell", axum::routing::post(crate::files::tell))
-        .route("/worktrees/{id}", axum::routing::delete(worktrees::remove))
-        .route("/worktrees/{id}/clean", axum::routing::post(crate::storage::clean))
-        .route("/storage", get(crate::storage::view))
-        .route("/storage/refresh", axum::routing::post(crate::storage::refresh))
-        .route("/storage/clean-finished", axum::routing::post(crate::storage::clean_finished))
-        .route("/projects/{id}/storage", axum::routing::put(crate::storage::put_settings))
-        .route("/worktrees/{id}/changes", get(crate::review::changes))
-        .route("/worktrees/{id}/changes/file", get(crate::review::file))
-        .route("/worktrees/{id}/comments", get(crate::review::list_comments).post(crate::review::create_comment))
-        .route("/worktrees/{id}/feedback", axum::routing::post(crate::review::feedback))
-        .route(
-            "/review-comments/{id}",
-            axum::routing::patch(crate::review::update_comment).delete(crate::review::delete_comment),
-        )
-        .route(
-            "/projects/{id}/settings",
-            get(crate::project_settings::get_settings).put(crate::project_settings::put_settings),
-        )
-        .route(
-            "/projects/{id}/document-settings",
-            get(crate::documents::routes::get_settings).put(crate::documents::routes::put_settings),
-        )
-        .route("/projects/{id}/run-config", get(crate::runconfig::get_config))
-        .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))
-        .route("/projects/{id}/sessions", get(sessions::list))
-        .route("/projects/{id}/runs", get(crate::runs::list).post(crate::runs::create))
-        .route("/projects/{id}/branches", get(crate::runs::branches))
-        .route("/runs", get(crate::runs::list_active))
-        .route("/runs/{id}", get(crate::runs::get_one).delete(crate::runs::remove))
-        .route("/runs/{id}/stop", axum::routing::post(crate::runs::stop))
-        .route("/runs/{id}/restart", axum::routing::post(crate::runs::restart))
-        .route("/runs/{id}/reset-data", axum::routing::post(crate::runs::reset_data))
-        .route("/runs/{id}/pty/{step}", get(crate::runs::pty))
-        .route("/projects/{id}/tickets", axum::routing::post(crate::tickets::create))
-        .route("/projects/{id}/labels", get(crate::tickets::labels))
-        .route("/projects/{id}/areas", get(crate::overlap::areas))
-        .route("/projects/{id}/forge", get(crate::issues::forge))
-        .route("/projects/{id}/issues", axum::routing::post(crate::issues::create))
-        .route("/tickets", get(crate::tickets::list))
-        .route("/tickets/bulk", axum::routing::post(crate::tickets::bulk))
-        .route(
-            "/tickets/{id}",
-            get(crate::tickets::get_one).patch(crate::tickets::update).delete(crate::tickets::remove),
-        )
-        .route("/tickets/{id}/rank", axum::routing::post(crate::tickets::rank))
-        .route("/tickets/{id}/links", axum::routing::post(crate::tickets::add_link).delete(crate::tickets::remove_link))
-        .route("/tickets/{id}/events", get(crate::tickets::events))
-        .route("/tickets/{id}/comments", axum::routing::post(crate::tickets::comment))
-        .route(
-            "/tickets/{id}/attachments",
-            get(crate::ticket_attachments::list)
-                .post(crate::ticket_attachments::upload)
-                // Room for the largest image; anything bigger is refused with a clear error.
-                .layer(axum::extract::DefaultBodyLimit::max(pdt_core::conversation::composer::MAX_IMAGE_BYTES + 1)),
-        )
-        .route(
-            "/tickets/{id}/attachments/{attachment_id}",
-            get(crate::ticket_attachments::get).delete(crate::ticket_attachments::remove),
-        )
-        .route("/tickets/{id}/design-doc", axum::routing::post(crate::documents::routes::design))
-        .route("/documents", get(crate::documents::routes::list).post(crate::documents::routes::create))
-        .route("/documents/import", axum::routing::post(crate::documents::routes::import))
-        .route("/documents/providers", get(crate::documents::routes::list_providers))
-        .route("/documents/providers/{provider}/files", get(crate::documents::routes::search))
-        .route(
-            "/documents/{id}",
-            get(crate::documents::routes::get)
-                .patch(crate::documents::routes::rename)
-                .delete(crate::documents::routes::remove),
-        )
-        .route(
-            "/documents/{id}/links",
-            axum::routing::post(crate::documents::routes::link).delete(crate::documents::routes::unlink),
-        )
-        .route("/documents/{id}/content", get(crate::documents::routes::content))
-        .route("/documents/{id}/version", get(crate::documents::routes::version))
-        .route("/documents/{id}/edits", axum::routing::post(crate::documents::routes::edit))
-        .route(
-            "/documents/{id}/comments",
-            get(crate::documents::routes::comments).post(crate::documents::routes::add_comment),
-        )
-        .route("/documents/{id}/sheet", get(crate::documents::routes::sheet))
-        .route(
-            "/documents/{id}/sheet/diffs",
-            axum::routing::post(crate::documents::routes::sheet_diffs)
-                .layer(axum::extract::DefaultBodyLimit::max(crate::documents::local::MAX_FILE)),
-        )
-        .route("/documents/{id}/events", get(crate::documents::routes::events))
-        .route("/documents/{id}/charts", get(crate::documents::routes::charts))
-        .route("/documents/{id}/export", get(crate::documents::routes::export))
-        .route(
-            "/documents/upload",
-            axum::routing::post(crate::documents::routes::upload)
-                .layer(axum::extract::DefaultBodyLimit::max(crate::documents::local::MAX_FILE)),
-        )
-        .route(
-            "/documents/{id}/images",
-            axum::routing::post(crate::documents::routes::image)
-                .layer(axum::extract::DefaultBodyLimit::max(crate::documents::local::MAX_FILE)),
-        )
-        .route("/documents/{id}/assets/{*path}", get(crate::documents::routes::asset))
-        .route("/documents/{id}/comments/{comment}/replies", axum::routing::post(crate::documents::routes::reply))
-        .route("/documents/{id}/comments/{comment}/resolve", axum::routing::post(crate::documents::routes::resolve))
-        .route("/documents/{id}/comments/{comment}/reopen", axum::routing::post(crate::documents::routes::reopen))
-        .route(
-            "/sessions/{id}/documents",
-            get(crate::documents::routes::beside)
-                .post(crate::documents::routes::open_beside)
-                .put(crate::documents::routes::order_beside),
-        )
-        .route("/sessions/{id}/documents/{doc}", axum::routing::delete(crate::documents::routes::close_beside))
-        .route("/tickets/{id}/parts", axum::routing::post(crate::parts::create))
-        .route("/tickets/{id}/start", axum::routing::post(crate::start::start))
-        .route("/tickets/{id}/refine", axum::routing::post(crate::tickets::refine))
-        .route("/tickets/{id}/check-merge", axum::routing::post(crate::start::check_merge))
-        .route("/tickets/{id}/finish", axum::routing::post(crate::finish::finish_route))
-        .route("/tickets/{id}/stop", axum::routing::post(crate::stop::stop_route))
-        .route("/attempts/{id}/abandon", axum::routing::post(crate::start::abandon))
-        .route("/attempts/{id}/clean-up", axum::routing::post(crate::start::clean_up))
-        .route("/attempts/{id}/approve", axum::routing::post(crate::review::approve))
-        .route("/attempts/{id}/merge", get(crate::review::merge_preview).post(crate::review::merge))
-        .route("/local-ci/runs/{id}/log", get(crate::local_forge::run_log))
-        .route("/attempts/{id}/ask-agent", axum::routing::post(crate::review::ask_agent))
-        .route("/workspaces", get(crate::workspaces::list).post(crate::workspaces::create))
-        .route("/workspaces/{id}", axum::routing::patch(crate::workspaces::update).delete(crate::workspaces::remove))
-        .route("/workspaces/{id}/tabs", axum::routing::post(crate::workspaces::open_tab))
-        .route("/tabs/{id}", axum::routing::patch(crate::workspaces::update_tab).delete(crate::workspaces::close_tab))
-        .route("/sessions", axum::routing::post(sessions::create))
-        .route("/sessions/{id}", get(sessions::get_one).patch(sessions::update).delete(sessions::remove))
-        .route("/sessions/{id}/events", get(crate::conversations::events))
-        .route("/sessions/{id}/messages", axum::routing::post(crate::conversations::post_message))
-        .route("/sessions/{id}/requests/{request_id}", axum::routing::post(crate::conversations::post_answer))
-        .route("/sessions/{id}/interrupt", axum::routing::post(crate::conversations::post_interrupt))
-        .route("/sessions/{id}/ticket-draft", axum::routing::post(crate::conversations::ticket_draft))
-        .route("/sessions/{id}/mode", axum::routing::post(crate::conversations::switch_mode))
-        .route(
-            "/sessions/{id}/attachments",
-            axum::routing::post(crate::attachments::upload)
-                // Room for the largest image; anything bigger is refused with a clear error.
-                .layer(axum::extract::DefaultBodyLimit::max(pdt_core::conversation::composer::MAX_IMAGE_BYTES + 1)),
-        )
-        .route("/sessions/{id}/attachments/{attachment_id}", get(crate::attachments::get))
-        .route("/sessions/{id}/files", get(crate::attachments::files))
-        .route(
-            "/sessions/{id}/terminal",
-            axum::routing::post(crate::conversations::open_terminal).delete(crate::conversations::close_terminal),
-        )
-        .route("/agents/{agent}/capabilities", get(crate::conversations::capabilities))
-        .route("/sessions/{id}/kill", axum::routing::post(sessions::kill))
-        .route("/sessions/{id}/restart", axum::routing::post(sessions::restart))
-        .route("/sessions/{id}/pty", get(pty_ws::connect))
-        .route("/sessions/{id}/activity", axum::routing::post(crate::activity::post_report))
-        .route("/sessions/{id}/view", axum::routing::post(crate::activity::post_view))
-        .merge(crate::workflow::routes::router())
-        .merge(crate::vault::router())
+        // Each module lists its own routes in `router()`; one sorted line per module here.
+        .merge(crate::activity::router())
+        .merge(crate::attachments::router())
+        .merge(crate::bug_reports::router())
+        .merge(crate::checks::router())
+        .merge(crate::conversations::router())
+        .merge(crate::documents::routes::router())
+        .merge(crate::files::router())
+        .merge(crate::finish::router())
+        .merge(crate::folders::router())
+        .merge(crate::forge_login::router())
+        .merge(crate::guides::router())
+        .merge(crate::hooks::router())
+        .merge(crate::host::router())
+        .merge(crate::identity_guard::router())
+        .merge(crate::inbox::router())
+        .merge(crate::issues::router())
+        .merge(crate::local_forge::router())
+        .merge(crate::mcp::router())
         .merge(crate::mcp_servers::router())
-        .route(
-            "/hooks/{name}",
-            axum::routing::post(crate::hooks::receive)
-                .layer(axum::extract::DefaultBodyLimit::max(crate::hooks::MAX_BODY)),
-        )
-        .route(
-            "/mcp",
-            axum::routing::post(crate::mcp::post).get(crate::mcp::not_allowed).delete(crate::mcp::not_allowed),
-        )
-        .route("/personas", get(crate::personas::list).post(crate::personas::create))
-        .route("/personas/tools", get(crate::personas::tools))
-        .route(
-            "/personas/{id}",
-            get(crate::personas::get_one)
-                .put(crate::personas::save)
-                .patch(crate::personas::patch)
-                .delete(crate::personas::remove),
-        )
-        .route("/personas/{id}/versions", get(crate::personas::versions))
-        .route("/personas/{id}/versions/{v}", get(crate::personas::version))
-        .route("/personas/{id}/diff", get(crate::personas::diff))
-        .route("/personas/{id}/template", get(crate::personas::template))
-        .route("/pm", get(crate::pm::state))
-        .route("/pm/sessions", get(crate::pm::list).post(crate::pm::start))
-        .route("/pm/sessions/{id}", axum::routing::patch(crate::pm::patch).delete(crate::pm::close))
-        .route("/pm/sessions/{id}/reset", axum::routing::post(crate::pm::reset))
-        .route("/pm/notes", get(crate::pm::list_notes).post(crate::pm::create_note))
-        .route("/pm/notes/{id}", get(crate::pm::get_note).patch(crate::pm::patch_note).delete(crate::pm::delete_note))
-        .route("/todos", get(crate::todos::list).post(crate::todos::create))
-        .route("/watches", get(crate::watches::list).post(crate::watches::create))
-        .route("/watches/{id}", axum::routing::delete(crate::watches::delete))
-        .route("/todos/{id}", axum::routing::patch(crate::todos::patch).delete(crate::todos::delete))
-        .route("/inbox", get(crate::inbox::list))
-        .route("/inbox/{id}/answer", axum::routing::post(crate::inbox::answer))
-        .route("/inbox/{id}/dismiss", axum::routing::post(crate::inbox::dismiss))
-        .route("/notifications", get(crate::notifications::list))
-        .route("/notifications/stream", get(crate::notifications::stream))
-        .route("/notifications/read-all", axum::routing::post(crate::notifications::read_all))
-        .route("/notifications/clear-all", axum::routing::post(crate::notifications::clear_all))
-        .route(
-            "/notifications/settings",
-            get(crate::notifications::get_settings).patch(crate::notifications::patch_settings),
-        )
-        .route("/notifications/{id}/read", axum::routing::post(crate::notifications::read))
-        .route("/notifications/{id}/clear", axum::routing::post(crate::notifications::clear_one))
+        .merge(crate::notifications::router())
+        .merge(crate::overlap::router())
+        .merge(crate::parts::router())
+        .merge(crate::personas::router())
+        .merge(crate::pm::router())
+        .merge(crate::project_settings::router())
+        .merge(crate::projects::router())
+        .merge(crate::pty_ws::router())
+        .merge(crate::remote::router())
+        .merge(crate::review::router())
+        .merge(crate::runconfig::router())
+        .merge(crate::runs::router())
+        .merge(crate::sessions::router())
+        .merge(crate::setup::router())
+        .merge(crate::start::router())
+        .merge(crate::stop::router())
+        .merge(crate::storage::router())
+        .merge(crate::ticket_attachments::router())
+        .merge(crate::tickets::router())
+        .merge(crate::todos::router())
+        .merge(crate::toolchains::router())
+        .merge(crate::untrusted::router())
+        .merge(crate::update::router())
+        .merge(crate::vault::router())
+        .merge(crate::watches::router())
+        .merge(crate::workflow::routes::router())
+        .merge(crate::workspaces::router())
+        .merge(crate::worktrees::router())
         .merge(crate::integrations::routes(&state))
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {
