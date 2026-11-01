@@ -164,7 +164,9 @@ N is 3 on Linux, 6 on Windows and 2 on macOS; the repo variables `PDT_LINUX_PART
 
 The builds are lean: no debug info (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_DEV_STRIP=debuginfo`), no
 incremental state (`CARGO_INCREMENTAL=0`), and Windows links with `rust-lld` instead of MSVC's `link.exe`. Linux
-already links with Rust's bundled lld.
+already links with Rust's bundled lld. The test builds compile the dependencies (not the workspace's crates) at
+`opt-level=1` (`DEPS_CONFIG` in `rust.yml`, part of the cache key): the tests are CPU-bound and take about a quarter
+less CPU. Local builds keep `opt-level=0`.
 
 ### Caching
 
