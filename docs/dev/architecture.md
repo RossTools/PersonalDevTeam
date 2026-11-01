@@ -199,7 +199,10 @@ works, events that could not be logged (kept in memory by `emit_event`) are logg
 runs, each once by its run key. Agent steps start a session with a
 persona and wait for its `submit_outcome`; messages to agents go through the outbox (`workflow/outbox.rs`), which
 waits for the agent to be idle. Built-in workflows (`workflow/builtins.rs`) and templates (the Pipeline:
-`workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. Triggers on things
+`workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. A template fills
+`{{params.x}}` into its one document, except "Review outside pull requests" (`workflow/outside_prs.rs`), whose
+`tickets` param picks one of two node sets (`templates::filled`); a workflow recorded before a param existed gets its
+old behaviour as the value (`outside_prs::upgrade`). Triggers on things
 outside PDT poll: new GitHub issues (`github_issues.rs`), outside pull requests (`github_pulls.rs`) and failed runs of a
 CI workflow (`github_workflow_runs.rs`: `github.workflow.failed`, read through `CiProvider::workflow_runs` since a
 `RunCursor` kept in the workflow's state, so a restart neither misses nor repeats a run). The template "Report failed
