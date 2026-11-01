@@ -5,7 +5,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{call, git};
+use common::{call, call_as_ui, call_with, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -55,9 +55,11 @@ async fn setup_with(change: impl FnOnce(&mut AppState)) -> Env {
     Env { app, state, project: p["id"].as_str().unwrap().into(), _tmp: tmp }
 }
 
+/// A ticket the user makes (from PDT's web client).
 async fn ticket(env: &Env, title: &str) -> String {
     let (s, t) =
-        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": title}))).await;
+        call_as_ui(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": title})))
+            .await;
     assert_eq!(s, StatusCode::CREATED, "{t}");
     t["id"].as_str().unwrap().to_string()
 }
@@ -1571,6 +1573,58 @@ async fn a_coder_edits_only_its_own_tickets_unless_it_names_another_by_key() {
     let said = ask(format!(r#"mcp: create_ticket {{"project": "{key}", "title": "Follow-up"}}"#)).await;
     assert!(said.contains("\"created\": true"), "{said}");
     let follow = said.split("\"key\": \"").nth(1).unwrap().split('"').next().unwrap().to_string();
+    // PDT-363: recorded as the workflow's agent, with its persona and the ticket it works on, not as the user.
+    let own_key = key_of(&own).await;
+    let (_, made) = call(&env.app, "GET", &format!("/api/tickets/{follow}"), None).await;
+    assert_eq!(made["source"], "agent", "{made}");
+    assert_eq!(
+        (made["createdBy"]["persona"].as_str(), made["createdBy"]["fromTicket"].as_str()),
+        (Some("Builder"), Some(own_key.as_str()))
+    );
+    assert_eq!(made["createdBy"]["sessionId"], coder.as_str());
+    let made_id = made["id"].as_str().unwrap();
+    let (_, log) = call(&env.app, "GET", &format!("/api/events?type=ticket.created&ticket={made_id}"), None).await;
+    let e = &log[0]["payload"];
+    assert_eq!(log.as_array().unwrap().len(), 1, "{log}");
+    assert_eq!(
+        (e["actor"].as_str(), e["persona"].as_str(), e["sessionId"].as_str()),
+        (Some("agent"), Some("Builder"), Some(coder.as_str()))
+    );
+    assert_eq!((e["fromTicket"].as_str(), e["fromTicketId"].as_str()), (Some(own_key.as_str()), Some(own.as_str())));
+    // Over the HTTP API: the session its header names; another curl is an agent's; PDT's web client is the user.
+    let new_ticket = format!("/api/projects/{}/tickets", env.project);
+    let (s, v) =
+        call_with(&env.app, "POST", &new_ticket, Some(json!({"title": "Curled"})), &[("x-agent-session", &coder)])
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    assert_eq!((v["source"].as_str(), v["createdBy"]["persona"].as_str()), (Some("agent"), Some("Builder")), "{v}");
+    assert_eq!(v["createdBy"]["fromTicket"], own_key.as_str());
+    let (_, v) = call(&env.app, "POST", &new_ticket, Some(json!({"title": "Anonymous"}))).await;
+    assert_eq!((v["source"].as_str(), v["createdBy"].clone()), (Some("agent"), json!(null)), "{v}");
+    let (_, log) =
+        call(&env.app, "GET", &format!("/api/events?type=ticket.created&ticket={}", v["id"].as_str().unwrap()), None)
+            .await;
+    assert_eq!(log[0]["payload"]["actor"], "agent", "{log}");
+    let (_, v) = call_as_ui(&env.app, "POST", &new_ticket, Some(json!({"title": "Clicked"}))).await;
+    assert_eq!((v["source"].as_str(), v["createdBy"].clone()), (Some("user"), json!(null)), "{v}");
+    let parts = format!("/api/tickets/{own}/parts");
+    let (s, v) = call_with(
+        &env.app,
+        "POST",
+        &parts,
+        Some(json!({"parts": [{"title": "Part"}]})),
+        &[("x-agent-session", &coder)],
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let part = v["items"][0]["id"].as_str().unwrap();
+    let (_, log) = call(&env.app, "GET", &format!("/api/events?type=ticket.created&ticket={part}"), None).await;
+    let e = &log[0]["payload"];
+    assert_eq!(
+        (e["actor"].as_str(), e["persona"].as_str(), e["viaParts"].as_bool()),
+        (Some("agent"), Some("Builder"), Some(true)),
+        "{e}"
+    );
     let said =
         ask(format!(r#"mcp: edit_ticket {{"ticket": "{follow}", "description": "More.", "stage": "in_progress"}}"#))
             .await;

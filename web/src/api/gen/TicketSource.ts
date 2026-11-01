@@ -5,4 +5,4 @@
  * triage, an issue tracker integration), which may carry prompt injection: it reaches To do only when the user puts it
  * there (see [`external_gate`]).
  */
-export type TicketSource = "user" | "pm" | "workflow" | "external";
+export type TicketSource = "user" | "pm" | "workflow" | "external" | "agent";

@@ -75,4 +75,16 @@ describe('TicketTimeline', () => {
     expect(screen.getByText(/^Refiner ·/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Refiner/ })).toBeNull();
   });
+
+  it('says which ticket an agent was working on when it made this one', async () => {
+    const agent = { sessionId: 's9', projectId: 'p1', persona: 'Coder', fromTicket: 'PDT-345', fromTicketId: 't345' };
+    stubApi({
+      'GET /api/tickets/t1/events': {
+        items: [event('e1', { kind: 'created', actor: 'agent', data: { stage: 'draft', agent }, agent })],
+        nextCursor: null,
+      },
+    });
+    renderWithQuery(<TicketTimeline ticketId="t1" />);
+    expect(await screen.findByRole('button', { name: 'Coder · from PDT-345' })).toBeInTheDocument();
+  });
 });

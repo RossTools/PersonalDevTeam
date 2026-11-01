@@ -695,7 +695,7 @@ async fn the_user_files_a_ticket_as_a_github_issue_and_the_ticket_links_it() {
     let (_, f) = call(&env.app, "GET", &format!("/api/projects/{}/forge", env.project), None).await;
     assert_eq!(f["queueName"], json!(null));
     *gh.capabilities.lock().unwrap() = Capabilities::ALL;
-    let (_, t) = call(
+    let (_, t) = call_as_ui(
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),

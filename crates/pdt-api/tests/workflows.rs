@@ -4,7 +4,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{call, git};
+use common::{call, call_as_ui, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -1391,7 +1391,8 @@ async fn a_workflow_never_puts_an_external_ticket_in_to_do() {
 
     // Making one in To do from outside input is refused too; a workflow's own tickets are `workflow`'s.
     let (_, made) =
-        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "Mine"}))).await;
+        call_as_ui(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "Mine"})))
+            .await;
     assert_eq!(made["source"], "user");
     let wf = create(
         &env,

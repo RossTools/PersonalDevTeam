@@ -153,8 +153,9 @@ impl Store {
     }
 }
 
-/// Mirrors a ticket timeline event into the log, in the same transaction (Phase 7a spec §2.1): `moved`, `comment`,
-/// `started`, `merged`, `abandoned`, `overlap` (found or cleared) and `outcome` become `ticket.*`, `attempt.*` and `agent.*` events.
+/// Mirrors a ticket timeline event into the log, in the same transaction (Phase 7a spec §2.1): `created`, `moved`,
+/// `unblocked`, `comment`, `started`, `merged`, `abandoned`, `overlap` (found or cleared) and `outcome` become
+/// `ticket.*`, `attempt.*` and `agent.*` events.
 /// Other kinds aren't domain events workflows react to.
 /// A row just written to `ticket_events`.
 pub(crate) struct TimelineRow<'a> {
@@ -174,7 +175,18 @@ pub(crate) async fn mirror_timeline(
     let TimelineRow { id: timeline_id, ticket_id, kind, actor, body, data } = row;
     use pdt_core::ticket::EventKind as K;
     use pdt_core::workflow::events::{self as ev, AttemptEvent, AttemptRef, MergeVia};
-    if !matches!(kind, K::Moved | K::Comment | K::Started | K::Merged | K::Abandoned | K::Overlap | K::Outcome) {
+    if !matches!(
+        kind,
+        K::Created
+            | K::Moved
+            | K::Unblocked
+            | K::Comment
+            | K::Started
+            | K::Merged
+            | K::Abandoned
+            | K::Overlap
+            | K::Outcome
+    ) {
         return Ok(());
     }
     let head: Option<(String, String, i64)> = sqlx::query_as(
@@ -203,6 +215,59 @@ pub(crate) async fn mirror_timeline(
         Default::default()
     };
     let event = match kind {
+        K::Created => {
+            let Some(t) = crate::tickets::summary(&mut *conn, ticket_id).await? else { return Ok(()) };
+            let agent = pdt_core::ticket::AgentBy::of_event(kind, actor, Some(data));
+            let by = pdt_core::ticket::By { actor, agent: agent.clone(), confirmed: false };
+            NewLogEvent::new(
+                ev::TICKET_CREATED,
+                timeline_id,
+                "tickets",
+                ev::TicketCreated {
+                    project_id,
+                    ticket_id: ticket_id.into(),
+                    ticket_key,
+                    title: t.title,
+                    stage: t.stage.as_str().into(),
+                    labels: t.labels,
+                    priority: t.priority.as_str().into(),
+                    parent_id: t.parent.as_ref().map(|p| p.id.clone()),
+                    parent_key: t.parent.map(|p| p.key),
+                    actor: pdt_core::ticket::creator(t.source, &by).into(),
+                    persona: agent.as_ref().and_then(|a| a.persona.clone()),
+                    session_id: agent.as_ref().map(|a| a.session_id.clone()),
+                    from_ticket: agent.as_ref().and_then(|a| a.from_ticket.clone()),
+                    from_ticket_id: agent.and_then(|a| a.from_ticket_id),
+                    via_parts: data.get("viaParts").and_then(|v| v.as_bool()) == Some(true),
+                },
+            )
+        }
+        K::Unblocked => {
+            let Some(t) = crate::tickets::summary(&mut *conn, ticket_id).await? else { return Ok(()) };
+            let blocker_id = s("by");
+            let blocker_key = match crate::tickets::summary(&mut *conn, &blocker_id).await? {
+                Some(b) => b.key,
+                None => String::new(),
+            };
+            let reason = data.get("reason").and_then(|v| v.as_str()).unwrap_or("closed").to_string();
+            NewLogEvent::new(
+                ev::TICKET_UNBLOCKED,
+                timeline_id,
+                "tickets",
+                ev::TicketUnblocked {
+                    project_id,
+                    ticket_id: ticket_id.into(),
+                    ticket_key,
+                    title: t.title,
+                    stage: t.stage.as_str().into(),
+                    priority: t.priority.as_str().into(),
+                    labels: t.labels,
+                    blocker_id,
+                    blocker_key,
+                    reason,
+                },
+            )
+        }
         K::Moved => NewLogEvent::new(
             ev::TICKET_STAGE_CHANGED,
             timeline_id,

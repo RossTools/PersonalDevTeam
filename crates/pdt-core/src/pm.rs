@@ -666,6 +666,23 @@ fn event_words(e: &BriefEvent) -> String {
         ev::ATTEMPT_ABANDONED => "abandoned".into(),
         ev::ATTEMPT_LATE_COMMITS => "commits pushed after the merge".into(),
         ev::TICKET_COMMENTED => "commented".into(),
+        ev::TICKET_CREATED => {
+            let who = Some(text("persona")).filter(|w| !w.is_empty()).unwrap_or_else(|| text("actor"));
+            format!("created by {who}")
+        }
+        ev::TICKET_UNBLOCKED => "unblocked".into(),
+        ev::TICKET_LABELS_CHANGED => {
+            let list = |k: &str, sign: char| {
+                let l = p.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+                l.iter().filter_map(Value::as_str).map(|x| format!("{sign}{x}")).collect::<Vec<_>>()
+            };
+            format!("labels {}", [list("added", '+'), list("removed", '-')].concat().join(" "))
+        }
+        ev::TICKET_PRIORITY_CHANGED => format!("priority → {}", text("to")),
+        ev::TICKET_PARENT_CHANGED => match text("to") {
+            to if to.is_empty() => "no longer a part".into(),
+            to => format!("part of {to}"),
+        },
         ev::AGENT_OUTCOME => match (text("persona"), text("outcome")) {
             (who, what) if !who.is_empty() && !what.is_empty() => format!("{who} {what}"),
             _ => "an agent step ended".into(),
@@ -1021,6 +1038,19 @@ mod tests {
             title: ticket.map(|t| t.1.to_string()),
             payload,
         }
+    }
+
+    #[test]
+    fn ticket_changes_read_as_a_few_words() {
+        let words = |kind: &str, p: Value| event_words(&event(1, kind, None, p));
+        use crate::workflow::events as ev;
+        assert_eq!(words(ev::TICKET_CREATED, json!({"actor": "agent", "persona": "Coder"})), "created by Coder");
+        assert_eq!(words(ev::TICKET_CREATED, json!({"actor": "user", "persona": null})), "created by user");
+        assert_eq!(words(ev::TICKET_UNBLOCKED, json!({})), "unblocked");
+        assert_eq!(words(ev::TICKET_LABELS_CHANGED, json!({"added": ["ui"], "removed": ["docs"]})), "labels +ui -docs");
+        assert_eq!(words(ev::TICKET_PRIORITY_CHANGED, json!({"from": "low", "to": "high"})), "priority → high");
+        assert_eq!(words(ev::TICKET_PARENT_CHANGED, json!({"to": "PDT-2"})), "part of PDT-2");
+        assert_eq!(words(ev::TICKET_PARENT_CHANGED, json!({"to": ""})), "no longer a part");
     }
 
     fn update() -> UpdateData {
