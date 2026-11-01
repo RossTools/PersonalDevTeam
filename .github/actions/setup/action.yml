@@ -71,7 +71,7 @@ runs:
         shared-key: ${{ inputs.cache-key }}
         # Only main saves (cache.yml): PRs and the queue restore it. Caches are per branch, and PRs and queue runs can
         # read only their own and main's, so a save anywhere else would be read by nobody and fill the 10 GB.
-        save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/pull/343/merge' }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
     - uses: taiki-e/install-action@v2
       if: inputs.nextest == 'true'
       with:
