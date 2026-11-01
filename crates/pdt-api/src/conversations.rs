@@ -1468,6 +1468,7 @@ pub(crate) async fn open_terminal(
         env,
         cols: size.cols,
         rows: size.rows,
+        output_file: None,
     })?;
     c.state().terminal_open = true;
     c.push_state();

@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{broadcast, oneshot};
 
+use crate::output_file::{self, OutputFile};
+
 pub const SCROLLBACK_BYTES: usize = 512 * 1024;
 /// After the child exits, give the reader a moment to flush the last output before announcing the exit.
 const FLUSH_GRACE: Duration = Duration::from_millis(200);
@@ -25,6 +27,9 @@ pub struct SpawnSpec {
     pub env: Vec<(String, String)>,
     pub cols: u16,
     pub rows: u16,
+    /// Keeps the output in this file too (its last `SCROLLBACK_BYTES`, see `output_file`), so a later process of the
+    /// same terminal (after pdtd restarts, say) starts by showing it, above a divider.
+    pub output_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +83,32 @@ impl Scrollback {
     pub(crate) fn snapshot(&self) -> Vec<u8> {
         self.buf.iter().copied().collect()
     }
+}
+
+/// Puts what the file at `path` kept from the terminal's earlier processes in `scrollback`, above the divider (also
+/// added to the file, so it stays between them after the next restart), and opens the file to keep this process's
+/// output. None if it can't be opened: the terminal then runs without it.
+fn earlier_output(path: PathBuf, scrollback: &mut Scrollback) -> Option<OutputFile> {
+    let earlier = output_file::last_output(&path, SCROLLBACK_BYTES);
+    let opened = OutputFile::open(path, SCROLLBACK_BYTES);
+    let mut file = match opened {
+        Ok(f) => Some(f),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not open the terminal's output file");
+            None
+        }
+    };
+    if !earlier.is_empty() {
+        let divider = output_file::divider(&earlier);
+        scrollback.push(&earlier);
+        scrollback.push(&divider);
+        if let Some(f) = file.as_mut()
+            && f.write(&divider).is_err()
+        {
+            file = None;
+        }
+    }
+    file
 }
 
 /// Device Status Report: "where is the cursor?".
@@ -248,10 +279,13 @@ impl PtyManager {
             }
         };
 
+        let mut scrollback = Scrollback::new(SCROLLBACK_BYTES);
+        let mut output_file = spec.output_file.and_then(|path| earlier_output(path, &mut scrollback));
+
         let (events, _) = broadcast::channel(1024);
         let (input_tx, input_rx) = std_mpsc::channel::<Vec<u8>>();
         let handle = Arc::new(Handle {
-            state: Mutex::new(State { scrollback: Scrollback::new(SCROLLBACK_BYTES), exited: None }),
+            state: Mutex::new(State { scrollback, exited: None }),
             events,
             proc: Some(Proc {
                 input: input_tx,
@@ -289,10 +323,18 @@ impl PtyManager {
                         if chunk.is_empty() {
                             continue;
                         }
-                        // Append and broadcast under one lock so `attach` sees each byte exactly once.
-                        let mut st = h.state.lock().unwrap();
-                        st.scrollback.push(chunk);
-                        let _ = h.events.send(PtyEvent::Output(Arc::from(chunk)));
+                        {
+                            // Append and broadcast under one lock so `attach` sees each byte exactly once.
+                            let mut st = h.state.lock().unwrap();
+                            st.scrollback.push(chunk);
+                            let _ = h.events.send(PtyEvent::Output(Arc::from(chunk)));
+                        }
+                        if let Some(f) = output_file.as_mut()
+                            && let Err(e) = f.write(chunk)
+                        {
+                            tracing::warn!(error = %e, "could not keep the terminal's output; carrying on without");
+                            output_file = None;
+                        }
                     }
                 }
             }

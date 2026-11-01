@@ -161,7 +161,9 @@ area is a conflict.
 **Sessions.** An agent session runs as a terminal (the agent's own TUI in a PTY) or a conversation (PDT's structured
 view: Claude's stream-json, a PDT-owned Codex app-server, Devin and other agents over ACP). Conversation events are
 stored in `session_events` (in the order received; while writes fail they wait in memory, and a Claude conversation's
-gaps are filled in from its transcript when it loads); terminals keep their scrollback in memory. Every agent gets PDT's instructions (pdt-core
+gaps are filled in from its transcript when it loads); terminals keep their scrollback in memory, and a shell also tees its output to `sessions/<id>/output.log` in the
+data dir (pdt-agents `output_file`, capped and rotated at the scrollback size), which the next process of that session
+shows above a divider. Every agent gets PDT's instructions (pdt-core
 `agent_context`, plus the project's agent instructions and the ticket), written to the session's folder and passed in
 the way each agent takes them. A session belongs to an attempt (the Coder's) or to a ticket (a workflow step's
 reviewer or QA). Claude, Codex and Devin terminals are resumed by their conversation ids after a restart;
