@@ -33,7 +33,7 @@ describe('the source badge', () => {
 
   it("names an agent's ticket by its persona and the ticket it was working on", () => {
     const createdBy = { sessionId: 's9', projectId: 'p1', persona: 'Coder', fromTicket: 'PDT-345', fromTicketId: 't345' };
-    const { rerender } = render(<TicketBadges ticket={{ ...summary(1, { source: 'agent' }), createdBy }} />);
+    const { rerender } = render(<TicketBadges ticket={summary(1, { source: 'agent', createdBy })} />);
     expect(screen.getByText('Coder')).toHaveAttribute('title', 'Created by Coder · from PDT-345');
     rerender(<TicketBadges ticket={summary(1, { source: 'agent' })} />);
     expect(screen.getByText('Agent')).toHaveAttribute('title', 'Created by an agent');

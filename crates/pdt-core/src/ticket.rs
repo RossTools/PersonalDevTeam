@@ -485,6 +485,9 @@ pub struct TicketSummary {
     /// An external ticket the user let in (moved to To do, started or labelled `agentic`): the Todo gate is open.
     #[serde(default)]
     pub admitted: bool,
+    /// The agent session that made it, from its `created` event (PDT-363): "Created by Coder · from PDT-345".
+    #[serde(default)]
+    pub created_by: Option<AgentBy>,
 }
 
 /// A ticket's stage in a pipeline workflow (Phase 7c spec §2): the Board splits In progress by it.
@@ -600,9 +603,6 @@ pub struct Ticket {
     pub overlaps: Vec<TicketOverlap>,
     /// Its parts in rank order (empty when it has none).
     pub part_list: Vec<TicketSummary>,
-    /// The agent session that made it, from its `created` event (PDT-363): "Created by Coder · from PDT-345".
-    #[serde(default)]
-    pub created_by: Option<AgentBy>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, TS)]
@@ -1487,6 +1487,7 @@ mod tests {
             external: vec![],
             source: TicketSource::External,
             admitted: false,
+            created_by: None,
         };
         let t = Ticket {
             summary: s,
@@ -1497,7 +1498,6 @@ mod tests {
             sessions: vec![],
             overlaps: vec![],
             part_list: vec![],
-            created_by: None,
         };
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(v["key"], "PDT-1");

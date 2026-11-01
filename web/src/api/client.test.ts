@@ -69,6 +69,26 @@ describe('the UI token (PDT-204)', () => {
     await api.bulkTickets({ ids: ['t'], action: 'stage', value: 'todo' });
     expect(seen.slice(2)).toEqual(['first', 'second']);
   });
+
+  it('goes with new tickets and parts, so they are the user’s, and survives a pdtd restart (PDT-363)', async () => {
+    let token = 'first';
+    const seen: [string, string | null][] = [];
+    const fetchMock = vi.fn().mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === '/api/ui/token') return new Response(JSON.stringify({ token }), { status: 200 });
+      const sent = new Headers(init?.headers).get('x-ui-token');
+      seen.push([path, sent]);
+      if (sent !== token) return new Response(JSON.stringify({ code: 'stale_ui_token', message: 'stale' }), { status: 403 });
+      return new Response(JSON.stringify({ id: 't', items: [] }), { status: 201 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    // Whatever token an earlier test left cached, each goes through with the current one.
+    await api.createTicket('p', { title: 'Quick one' });
+    expect(seen.at(-1)).toEqual(['/api/projects/p/tickets', 'first']);
+    token = 'second';
+    seen.length = 0;
+    await api.createParts('t', { parts: [{ title: 'One' }] });
+    expect(seen).toEqual([['/api/tickets/t/parts', 'first'], ['/api/tickets/t/parts', 'second']]);
+  });
 });
 
 describe('the area modules', () => {

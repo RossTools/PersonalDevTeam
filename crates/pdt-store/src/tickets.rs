@@ -180,7 +180,7 @@ fn summary_select() -> String {
     format!(
         "SELECT t.id, t.project_id, COALESCE(p.key, '') AS pkey, t.number, t.title, t.stage, t.priority, t.rank, \
          t.waiting, t.created_at, t.updated_at, t.closed_at, {BLOCKED_BY} AS blocked_by, {PRIORITY_WEIGHT} AS pw, \
-         t.parent_id, par.number AS parent_number, par.title AS parent_title, t.pipeline_stage, t.source, t.admitted_at{FROM}"
+         t.parent_id, par.number AS parent_number, par.title AS parent_title, t.pipeline_stage, t.source, t.admitted_at, t.created_by{FROM}"
     )
 }
 
@@ -235,6 +235,7 @@ fn to_summary(r: &SqliteRow) -> Result<TicketSummary, StoreError> {
             TicketSource::parse(&s).ok_or_else(|| corrupt("ticket source", &s))?
         },
         admitted: r.try_get::<Option<i64>, _>("admitted_at")?.is_some(),
+        created_by: r.try_get::<Option<String>, _>("created_by")?.and_then(|j| serde_json::from_str(&j).ok()),
     })
 }
 
@@ -936,8 +937,8 @@ async fn insert_ticket(
         .then_some(now);
     sqlx::query(
         "INSERT INTO tickets (id, seq, project_id, number, title, description, stage, priority, rank, created_at, \
-         updated_at, closed_at, parent_id, source, admitted_at) \
-         VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM tickets), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         updated_at, closed_at, parent_id, source, admitted_at, created_by) \
+         VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM tickets), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(project_id)
@@ -953,6 +954,7 @@ async fn insert_ticket(
     .bind(&t.parent)
     .bind(t.source.as_str())
     .bind(admitted)
+    .bind(by.agent.as_ref().and_then(|a| serde_json::to_string(a).ok()))
     .execute(&mut *conn)
     .await?;
     replace_set(conn, "ticket_labels", "label", id, &t.labels).await?;
@@ -1380,16 +1382,6 @@ impl Store {
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_all(&mut *conn).await?;
         let mut part_list = rows.iter().map(to_summary).collect::<Result<Vec<_>, _>>()?;
         decorate(&mut conn, &mut part_list).await?;
-        let created: Option<(String, Option<String>)> = sqlx::query_as(
-            "SELECT actor, data FROM ticket_events WHERE ticket_id = ? AND kind = 'created' ORDER BY created_at LIMIT 1",
-        )
-        .bind(id)
-        .fetch_optional(&mut *conn)
-        .await?;
-        let created_by = created.and_then(|(actor, data)| {
-            let data: serde_json::Value = serde_json::from_str(data.as_deref()?).ok()?;
-            AgentBy::of_event(EventKind::Created, Actor::parse(&actor)?, Some(&data))
-        });
         Ok(Some(Ticket {
             summary: s,
             description,
@@ -1399,7 +1391,6 @@ impl Store {
             sessions,
             overlaps: vec![],
             part_list,
-            created_by,
         }))
     }
 
@@ -3912,14 +3903,16 @@ mod tests {
         let t = ValidNewTicket { source: TicketSource::Agent, parent: Some("u".into()), ..new("Follow-up") };
         let made = store.create_ticket_by("a", "p", &t, coder_on("PX-9"), 2).await.unwrap();
         assert_eq!(made.summary.source, TicketSource::Agent);
-        let by = made.created_by.expect("created by the agent");
+        let by = made.summary.created_by.clone().expect("created by the agent");
+        let listed = store.get_ticket_summary("a").await.unwrap().unwrap();
+        assert_eq!(listed.created_by.as_ref().and_then(|b| b.persona.as_deref()), Some("Coder"), "on the summary too");
         assert_eq!((by.persona.as_deref(), by.from_ticket.as_deref()), (Some("Coder"), Some("PX-9")));
         let [e] = logged(&store, TICKET_CREATED, "a").await.try_into().unwrap();
         assert_eq!((e["actor"].as_str(), e["persona"].as_str()), (Some("agent"), Some("Coder")));
         assert_eq!((e["sessionId"].as_str(), e["fromTicket"].as_str()), (Some("s1"), Some("PX-9")));
         assert_eq!((e["fromTicketId"].as_str(), e["parentId"].as_str()), (Some("from"), Some("u")));
         assert!(e["parentKey"].as_str().is_some_and(|k| k.ends_with("-1")), "{e}");
-        assert!(store.get_ticket("u").await.unwrap().unwrap().created_by.is_none(), "the user's");
+        assert!(store.get_ticket("u").await.unwrap().unwrap().summary.created_by.is_none(), "the user's");
 
         // A workflow's, and parts made with Make into parts.
         store.create_ticket_by("w", "p", &new("Nightly"), Actor::System, 3).await.unwrap();
@@ -4024,5 +4017,75 @@ mod tests {
         assert_eq!(logged(&store, TICKET_PRIORITY_CHANGED, "t").await.len(), 1, "t is urgent already");
         let [pr] = logged(&store, TICKET_PRIORITY_CHANGED, "p1").await.try_into().unwrap();
         assert_eq!((pr["from"].as_str(), pr["to"].as_str()), (Some("none"), Some("urgent")));
+    }
+
+    /// PDT-363: tickets agents made before keep who made them, and a non-PM agent's are `agent`.
+    #[tokio::test]
+    async fn the_agent_source_migration_fills_in_who_made_each_ticket() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old = tmp.path().join("m");
+        std::fs::create_dir_all(&old).unwrap();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        for e in std::fs::read_dir(&src).unwrap() {
+            let e = e.unwrap();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !name.ends_with("_ticket_source_agent.sql") {
+                std::fs::copy(e.path(), old.join(&name)).unwrap();
+            }
+        }
+        let (db, backups) = (tmp.path().join("pdt.db"), tmp.path().join("backups"));
+        let migrator = sqlx::migrate::Migrator::new(old.as_path()).await.unwrap();
+        let store = Store::open_with(&db, &migrator, &backups).await.unwrap();
+        let p = Project {
+            id: "p".into(),
+            name: "P".into(),
+            repo_path: "/r".into(),
+            base_branch: "main".into(),
+            created_at: 1,
+            key: String::new(),
+            forge: None,
+            kind: Default::default(),
+        };
+        store.insert_project(&p).await.unwrap();
+        let agent = json!({"agent": {"sessionId": "s1", "persona": "Coder", "fromTicket": "PX-9"}});
+        for (id, n, source, data) in
+            [("a", 1, "workflow", Some(agent.clone())), ("pm", 2, "pm", Some(agent)), ("u", 3, "user", None)]
+        {
+            sqlx::query(
+                "INSERT INTO tickets (id, seq, project_id, number, title, description, stage, priority, rank, \
+                 created_at, updated_at, source) VALUES (?, ?, 'p', ?, ?, '', 'draft', 'none', ?, 1, 1, ?)",
+            )
+            .bind(id)
+            .bind(n)
+            .bind(n)
+            .bind(id)
+            .bind(format!("a{n}"))
+            .bind(source)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+            sqlx::query("INSERT INTO ticket_events (id, ticket_id, kind, actor, data, created_at) VALUES (?, ?, 'created', ?, ?, 1)")
+                .bind(format!("e{n}"))
+                .bind(id)
+                .bind(if data.is_some() { "agent" } else { "user" })
+                .bind(data.map(|d| d.to_string()))
+                .execute(&store.pool)
+                .await
+                .unwrap();
+        }
+        store.close().await;
+
+        let store = Store::open_with(&db, &crate::migrate::MIGRATOR, &backups).await.unwrap();
+        let a = store.get_ticket_summary("a").await.unwrap().unwrap();
+        assert_eq!(a.source, TicketSource::Agent);
+        let by = a.created_by.unwrap();
+        assert_eq!(
+            (by.session_id.as_str(), by.persona.as_deref(), by.from_ticket.as_deref()),
+            ("s1", Some("Coder"), Some("PX-9"))
+        );
+        let pm = store.get_ticket_summary("pm").await.unwrap().unwrap();
+        assert_eq!((pm.source, pm.created_by.is_some()), (TicketSource::Pm, true), "the PM's stay the PM's");
+        let u = store.get_ticket_summary("u").await.unwrap().unwrap();
+        assert_eq!((u.source, u.created_by), (TicketSource::User, None));
     }
 }

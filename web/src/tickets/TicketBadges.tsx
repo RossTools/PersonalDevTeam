@@ -6,7 +6,7 @@ import type { AgentBy } from '../api/gen/AgentBy';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 
 type BadgeTicket = Pick<TicketSummary, 'blockedBy' | 'overlap' | 'overlapWith' | 'waiting' | 'clearToStart'> &
-  Partial<Pick<TicketSummary, 'pipelineStage' | 'autoStartAt' | 'source' | 'admitted' | 'pickupHold'>> & { createdBy?: AgentBy | null };
+  Partial<Pick<TicketSummary, 'pipelineStage' | 'autoStartAt' | 'source' | 'admitted' | 'pickupHold' | 'createdBy'>>;
 
 /** `m:ss` until `at`, never below 0:00. */
 export function countdown(at: number, now: number): string {

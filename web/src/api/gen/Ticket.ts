@@ -46,11 +46,7 @@ overlaps: Array<TicketOverlap>,
 /**
  * Its parts in rank order (empty when it has none).
  */
-partList: Array<TicketSummary>, 
-/**
- * The agent session that made it, from its `created` event (PDT-363): "Created by Coder · from PDT-345".
- */
-createdBy: AgentBy | null, id: string, projectId: string, 
+partList: Array<TicketSummary>, id: string, projectId: string, 
 /**
  * `<project key>-<number>`, e.g. `PDT-42`.
  */
@@ -129,4 +125,8 @@ source: TicketSource,
 /**
  * An external ticket the user let in (moved to To do, started or labelled `agentic`): the Todo gate is open.
  */
-admitted: boolean, };
+admitted: boolean, 
+/**
+ * The agent session that made it, from its `created` event (PDT-363): "Created by Coder · from PDT-345".
+ */
+createdBy: AgentBy | null, };
