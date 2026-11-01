@@ -88,3 +88,25 @@ async fn worktree_errors_have_codes() {
     let (s, v) = call(&app, "GET", "/api/projects/nope/worktrees", None).await;
     assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::NOT_FOUND, "not_found"));
 }
+
+#[tokio::test]
+async fn a_worktree_that_cannot_be_recorded_is_removed_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, pid, repo) = setup(tmp.path()).await;
+    let uri = format!("/api/projects/{pid}/worktrees");
+    let (s, wt) = call(&app, "POST", &uri, Some(json!({"branch": "again"}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{wt}");
+    let path = std::path::PathBuf::from(wt["path"].as_str().unwrap());
+    // The folder and branch go behind PDT's back, so git makes them again but PDT's record of the branch is in the way.
+    git(&repo, &["worktree", "remove", "--force", &path.to_string_lossy()]);
+    git(&repo, &["branch", "-D", "again"]);
+
+    let (s, v) = call(&app, "POST", &uri, Some(json!({"branch": "again"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("conflict")), "{v}");
+    assert!(!path.exists(), "the new worktree folder was cleaned up");
+    let out =
+        std::process::Command::new("git").current_dir(&repo).args(["branch", "--list", "again"]).output().unwrap();
+    assert!(out.stdout.is_empty(), "the new branch was deleted");
+    let list = std::process::Command::new("git").current_dir(&repo).args(["worktree", "list"]).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&list.stdout).lines().count(), 1, "git forgot the worktree");
+}
