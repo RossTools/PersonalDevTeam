@@ -231,16 +231,33 @@ export async function refineTicket(qc: QueryClient, t: Pick<TicketRef, 'id' | 'k
   toast.success(`${t.key} is being refined.`);
 }
 
-/** Asks, then abandons the ticket's active attempt: its workflow run is cancelled and its sessions stop (the worktree and sessions are kept). */
+/**
+ * Asks, then abandons the ticket's active attempt: its workflow run is cancelled, its sessions stop and its pull
+ * request closes; the worktree, branch and workspace go as the project says, unless they hold work not pushed.
+ */
 export async function abandonAttempt(confirm: Confirm, qc: QueryClient, t: Pick<Ticket, 'id' | 'key'>, attempt: Pick<AttemptSummary, 'id' | 'branch'>) {
   const { ok } = await confirm({
     title: `Abandon ${t.key}'s attempt?`,
-    body: `The attempt on ${attempt.branch} ends: its workflow run is cancelled and its sessions stop. Its worktree, branch and sessions are kept; the ticket can be started again.`,
+    body: `The attempt on ${attempt.branch} ends: its workflow run is cancelled, its sessions stop and its pull request closes. Its worktree and branch are removed, as the project's "On Won't do" setting says, unless they hold work not committed or not pushed. The ticket can be started again.`,
     action: 'Abandon attempt',
     danger: true,
   });
   if (!ok) return;
   const fresh = await api.abandonAttempt(attempt.id);
+  qc.setQueryData(['ticket', t.id], fresh);
+  invalidateTickets(qc, [t.id]);
+}
+
+/** Asks, then removes an ended attempt's kept worktree (uncommitted changes and all), its branch and workspace. */
+export async function cleanUpAttempt(confirm: Confirm, qc: QueryClient, t: Pick<Ticket, 'id' | 'key'>, attempt: Pick<AttemptSummary, 'id' | 'branch'>) {
+  const { ok } = await confirm({
+    title: `Clean up ${t.key}'s worktree?`,
+    body: `The worktree of ${attempt.branch} is removed with any changes not committed, and the branch is deleted (also on the remote, when PDT pushed it and nothing more is there).`,
+    action: 'Clean up',
+    danger: true,
+  });
+  if (!ok) return;
+  const fresh = await api.cleanUpAttempt(attempt.id);
   qc.setQueryData(['ticket', t.id], fresh);
   invalidateTickets(qc, [t.id]);
 }

@@ -108,7 +108,13 @@ state. Start (pdt-api `start.rs`) makes the branch and worktree, the attempt and
 prompt is pdt-core `start::start_prompt`. An attempt ends as merged or abandoned. Merge detection (pdt-git
 `merge.rs`, run by the poll) counts a branch as merged when its head is in the base, its patch is (a squash), or the
 forge says its PR merged; it counts only once the branch had commits of its own. Finish (pdt-api `finish.rs`) moves
-the ticket to Done and cleans up the worktree, sessions, runs and workspace.
+the ticket to Done and cleans up the worktree, sessions, runs and workspace. Closing a ticket any other way, or
+abandoning its attempt, goes through `start::close_attempt` / `stop::wind_down`: the attempt's workflow runs are
+cancelled (but the run closing it) and its sessions and runs stopped; Won't do and Abandon also close its open PR and,
+when `stop::clean_up_closed` finds nothing to lose (no uncommitted changes, nothing unpushed), remove the worktree, the
+branch, the remote branch when it is PDT's (`pdt-<KEY>-…`, origin at the same head) and the workspace, as the
+project's `StorageSettings::wont_do` says. A merge found outside PDT stops the attempt's sessions (`WindDown::Merged`)
+and leaves the workflow runs to take the merge (the Pipeline's Accept has an `event` port for it).
 
 **Pull requests and CI.** pdt-api `github.rs` reads each attempt's PR, and `ci.rs` each CI provider's runs (GitHub
 Actions, GitLab CI, the local forge's command, Buildkite), into memory. What changed (CI failed or passed, a conflict, a drop

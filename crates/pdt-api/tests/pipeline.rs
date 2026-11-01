@@ -1918,8 +1918,8 @@ async fn moving_a_started_ticket_back_to_todo_stops_its_work_and_auto_start_take
     assert!(states.contains(&&json!("active")) && states.contains(&&json!("abandoned")), "{v}");
 }
 
-/// PDT-159: Abandon stops the attempt's work too, and `POST /tickets/{id}/stop` with `removeWorktree` also removes
-/// the worktree, so the next start begins clean.
+/// PDT-159: Abandon stops the attempt's work too (and keeps a worktree with changes, PDT-339), and
+/// `POST /tickets/{id}/stop` with `removeWorktree` also removes the worktree, so the next start begins clean.
 #[tokio::test]
 async fn abandon_and_stop_end_the_run_and_sessions_and_stop_can_remove_the_worktree() {
     let env = setup().await;
@@ -1930,6 +1930,8 @@ async fn abandon_and_stop_end_the_run_and_sessions_and_stop_can_remove_the_workt
             .await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
     let coder = step_session(&env, "code").await;
+    let path = env.repo.join(".worktrees").join(get_ticket(&env, &t).await["attempts"][0]["branch"].as_str().unwrap());
+    std::fs::write(path.join("left-over.txt"), "x").unwrap();
     let attempt = get_ticket(&env, &t).await["attempts"][0]["id"].as_str().unwrap().to_string();
     let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{attempt}/abandon"), None).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -1938,12 +1940,9 @@ async fn abandon_and_stop_end_the_run_and_sessions_and_stop_can_remove_the_workt
     assert!(runs_of(&env, &t, "Pipeline").await.iter().all(|r| r["status"] == "cancelled"));
     assert_ne!(session_status(&env, &coder).await, "running");
 
+    assert!(path.exists(), "the worktree with changes is kept");
+
     // Stop: an in-progress ticket goes back to To do; the worktree the abandoned attempt left goes, changes and all.
-    let wt = v["attempts"][0]["worktreeId"].as_str().unwrap().to_string();
-    let (_, w) = call(&env.app, "GET", &format!("/api/projects/{}/worktrees", env.project), None).await;
-    let path =
-        w.as_array().unwrap().iter().find(|x| x["id"] == wt.as_str()).unwrap()["path"].as_str().unwrap().to_string();
-    std::fs::write(Path::new(&path).join("left-over.txt"), "x").unwrap();
     let (s, r) = call(&env.app, "POST", &format!("/api/tickets/{t}/stop"), Some(json!({"removeWorktree": true}))).await;
     assert_eq!(s, StatusCode::OK, "{r}");
     assert_eq!(
@@ -2188,4 +2187,186 @@ async fn without_auto_merge_a_workflow_merge_waits_for_ci_then_merges() {
     let (s, r) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "agent"}))).await;
     assert_eq!((s, r["outcome"].as_str()), (StatusCode::OK, Some("merged")), "{r}");
     assert_eq!(get_ticket(&env, &t).await["attempt"]["state"], "merged");
+}
+
+/// The ticket's timeline comments by PDT itself.
+async fn system_notes(env: &Env, t: &str) -> Vec<String> {
+    let events = timeline(env, t).await;
+    events["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "comment" && e["actor"] == "system")
+        .map(|e| e["body"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+fn has_branch(repo: &Path, branch: &str) -> bool {
+    let out = std::process::Command::new("git").current_dir(repo).args(["branch", "--list", branch]).output().unwrap();
+    !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+}
+
+async fn move_to(env: &Env, t: &str, stage: &str) -> Value {
+    let (s, v) = call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": stage}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    v
+}
+
+/// PDT-339: Won't do on a ticket at work stops its sessions, cancels its Pipeline run, closes its open pull request
+/// with a comment, and, with nothing to lose, removes the worktree, the branch here and on origin, and the workspace.
+#[tokio::test]
+async fn wont_do_stops_the_work_closes_the_pr_and_removes_the_worktree_and_branches() {
+    let gh = std::sync::Arc::new(FakeForge::default());
+    let env = setup_with(Some(gh.clone())).await;
+    // Pushes go to a local remote; the fetch URL stays GitHub's, so the forge is the fake.
+    let remote = env._tmp.path().join("remote.git");
+    git(env._tmp.path(), &["init", "-q", "--bare", "-b", "main", &remote.to_string_lossy()]);
+    git(&env.repo, &["config", "remote.origin.pushurl", &remote.to_string_lossy()]);
+    pipeline(&env, json!({}), &[]).await;
+    let t = ticket(&env, "Not wanted").await;
+    let (s, started) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{started}");
+    let branch = started["attempt"]["branch"].as_str().unwrap().to_string();
+    let worktree = env.repo.join(".worktrees").join(&branch);
+    let coder = step_session(&env, "code").await;
+    std::fs::write(worktree.join("w.txt"), "w\n").unwrap();
+    git(&worktree, &["add", "."]);
+    git(&worktree, &["commit", "-q", "-m", "work"]);
+    git(&worktree, &["push", "-q", "-u", "origin", &branch]);
+    gh.set_pr(&branch, Some(pull_request(Mergeable::Mergeable)));
+
+    let v = move_to(&env, &t, "wont_do").await;
+    assert_eq!(v["attempts"][0]["state"], "abandoned", "{v}");
+    assert!(runs_of(&env, &t, "Pipeline").await.iter().all(|r| r["status"] == "cancelled"));
+    assert_ne!(session_status(&env, &coder).await, "running");
+    assert_eq!(*gh.closed_changes.lock().unwrap(), [("o/r".to_string(), 12)]);
+    let said = gh.change_comments_added.lock().unwrap().clone();
+    assert!(said.iter().any(|(n, _, body)| *n == 12 && body.contains("Won't do")), "{said:?}");
+    assert!(!worktree.exists(), "the worktree is removed");
+    assert!(!has_branch(&env.repo, &branch), "the local branch is deleted");
+    assert!(!has_branch(&remote, &branch), "the branch on origin is deleted");
+    let (_, w) = call(&env.app, "GET", &format!("/api/projects/{}/worktrees", env.project), None).await;
+    assert_eq!(w.as_array().unwrap().len(), 0, "{w}");
+    let notes = system_notes(&env, &t).await.join("\n");
+    assert!(notes.contains("Stopped 1 session") && notes.contains("1 workflow run"), "{notes}");
+    assert!(notes.contains("Closed pull request #12.") && notes.contains("Removed the worktree"), "{notes}");
+    assert!(notes.contains("its copy on origin"), "{notes}");
+    let (_, ws) = call(&env.app, "GET", "/api/workspaces", None).await;
+    assert!(
+        ws.as_array().unwrap().iter().all(|w| w["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|x| x["ticketId"] != t.as_str())),
+        "no tab shows the ticket: {ws}"
+    );
+}
+
+/// PDT-339: Won't do keeps a worktree with uncommitted changes (and says so), and leaves a merged pull request alone;
+/// Clean up then removes it anyway.
+#[tokio::test]
+async fn wont_do_keeps_a_dirty_worktree_until_clean_up_and_leaves_a_merged_pr() {
+    let gh = std::sync::Arc::new(FakeForge::default());
+    let env = setup_with(Some(gh.clone())).await;
+    let t = ticket(&env, "Half done").await;
+    let attempt = start_with_a_commit(&env, &t, "half.txt").await;
+    let branch = attempt["branch"].as_str().unwrap().to_string();
+    let worktree = env.repo.join(".worktrees").join(&branch);
+    std::fs::write(worktree.join("half.txt"), "changed\n").unwrap();
+    let mut merged = pull_request(Mergeable::Mergeable);
+    merged.state = PrState::Merged;
+    gh.set_pr(&branch, Some(merged));
+
+    move_to(&env, &t, "wont_do").await;
+    assert!(gh.closed_changes.lock().unwrap().is_empty(), "a merged pull request is left alone");
+    assert!(worktree.exists() && has_branch(&env.repo, &branch));
+    let notes = system_notes(&env, &t).await.join("\n");
+    assert!(notes.contains("Kept the worktree and branch") && notes.contains("uncommitted changes"), "{notes}");
+
+    let id = attempt["id"].as_str().unwrap();
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/clean-up"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(!worktree.exists() && !has_branch(&env.repo, &branch));
+    assert_eq!(v["stage"], "wont_do");
+}
+
+/// PDT-339: the project's Won't do setting: keep, or keep for some days (then the automatic cleanup removes it).
+#[tokio::test]
+async fn the_projects_wont_do_setting_keeps_the_worktree_or_leaves_it_to_the_cleanup() {
+    let env = setup().await;
+    let put = |body: Value| {
+        let app = env.app.clone();
+        let p = env.project.clone();
+        async move {
+            let (s, v) = call(&app, "PUT", &format!("/api/projects/{p}/storage"), Some(body)).await;
+            assert_eq!(s, StatusCode::OK, "{v}");
+        }
+    };
+    put(json!({"cleanAfterDays": 0, "removeAfterDays": 0, "wontDo": "keep"})).await;
+    let kept = ticket(&env, "Keep it").await;
+    let a = start_with_a_commit(&env, &kept, "k.txt").await;
+    let kept_wt = env.repo.join(".worktrees").join(a["branch"].as_str().unwrap());
+    move_to(&env, &kept, "wont_do").await;
+    assert!(kept_wt.exists());
+    assert!(system_notes(&env, &kept).await.iter().any(|n| n.contains("as the project says")));
+    put(json!({"cleanAfterDays": 0, "removeAfterDays": 1, "wontDo": "keep"})).await;
+    let far = i64::try_from(std::time::UNIX_EPOCH.elapsed().unwrap().as_millis()).unwrap() + 30 * 24 * 60 * 60 * 1000;
+    pdt_api::auto_cleanup_at(&env.state, far).await;
+    assert!(kept_wt.exists(), "a kept one stays");
+
+    put(json!({"cleanAfterDays": 0, "removeAfterDays": 0, "wontDo": "later", "wontDoAfterDays": 2})).await;
+    let later = ticket(&env, "Later").await;
+    let a = start_with_a_commit(&env, &later, "l.txt").await;
+    let later_wt = env.repo.join(".worktrees").join(a["branch"].as_str().unwrap());
+    move_to(&env, &later, "wont_do").await;
+    assert!(later_wt.exists());
+    assert!(system_notes(&env, &later).await.iter().any(|n| n.contains("for 2 days")));
+    let (s, v) = call(
+        &env.app,
+        "PUT",
+        &format!("/api/projects/{}/storage", env.project),
+        Some(json!({"wontDo": "later", "wontDoAfterDays": 999})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+
+    let day = 24 * 60 * 60 * 1000;
+    let now = i64::try_from(std::time::UNIX_EPOCH.elapsed().unwrap().as_millis()).unwrap();
+    pdt_api::auto_cleanup_at(&env.state, now + day).await;
+    assert!(later_wt.exists(), "not yet");
+    pdt_api::auto_cleanup_at(&env.state, now + 2 * day).await;
+    assert!(!later_wt.exists(), "removed once its days passed");
+}
+
+/// PDT-339: a ticket that isn't accepted automatically, whose branch merges while it waits at Accept: the Accept step
+/// ends (its Inbox item closes), its sessions stop, and Finish merged tickets leaves the one merged banner.
+#[tokio::test]
+async fn a_merge_while_waiting_at_accept_ends_the_pipeline_and_stops_the_sessions() {
+    let env = setup().await;
+    pipeline(&env, json!({}), &[("code", "submitted"), ("review", "approved"), ("qa", "pass")]).await;
+    let t = ticket(&env, "Merged meanwhile").await;
+    let attempt = start_with_a_commit(&env, &t, "m.txt").await;
+    let accept = inbox_item(&env, "gate", &t).await;
+    assert_eq!(accept["group"], "accept");
+    let branch = attempt["branch"].as_str().unwrap();
+    // Merge detection sees the branch's own commits first, as its loop does.
+    call(&env.app, "POST", &format!("/api/tickets/{t}/check-merge"), None).await;
+    git(&env.repo, &["merge", "-q", "--no-ff", "-m", "merge", branch]);
+    let (s, v) = call(&env.app, "POST", &format!("/api/tickets/{t}/check-merge"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["attempts"][0]["state"], "merged", "{v}");
+    tick_until(&env, "the Pipeline done", || async {
+        let runs = runs_of(&env, &t, "Pipeline").await;
+        runs.iter().all(|r| r["status"] == "succeeded").then_some(Value::Null)
+    })
+    .await;
+    assert!(inbox(&env).await.iter().all(|i| i["ticketId"] != t.as_str()), "no Inbox item waits for it");
+    let v = get_ticket(&env, &t).await;
+    assert_eq!(v["pipelineStage"], Value::Null, "{v}");
+    for s in v["sessions"].as_array().unwrap() {
+        assert_ne!(session_status(&env, s["id"].as_str().unwrap()).await, "running", "{s}");
+    }
+    assert_eq!(v["stage"], "in_progress", "the merged banner finishes it");
 }

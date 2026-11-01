@@ -567,6 +567,8 @@ export const api = {
   instantiateWorkflowTemplate: (id: string, i: Instantiate) =>
     request<WorkflowDetail>(`/api/workflow-templates/${enc(id)}/instantiate`, { method: 'POST', body: JSON.stringify(i) }),
   abandonAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/abandon`, { method: 'POST' }),
+  /** Clean up on an ended attempt whose worktree was kept: removes it (changes and all), its branch and workspace. */
+  cleanUpAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/clean-up`, { method: 'POST' }),
   approveAttempt: (id: string) => request<Ticket>(`/api/attempts/${enc(id)}/approve`, { method: 'POST' }),
   mergePreview: (id: string) => request<MergePreview>(`/api/attempts/${enc(id)}/merge`),
   /** PDT's Merge…: a person's merge (`by: user`), which the project's policy treats as its own approval. */

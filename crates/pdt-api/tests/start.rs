@@ -73,6 +73,11 @@ async fn event_kinds(env: &Env, id: &str) -> Vec<String> {
     v["items"].as_array().unwrap().iter().map(|e| e["kind"].as_str().unwrap().to_string()).collect()
 }
 
+/// [`event_kinds`] but comments: what PDT notes after an attempt ends (what it stopped and cleaned up, PDT-339).
+async fn event_kinds_but_comments(env: &Env, id: &str) -> Vec<String> {
+    event_kinds(env, id).await.into_iter().filter(|k| k != "comment").collect()
+}
+
 /// The event log's types for a ticket (what workflows see), oldest first.
 async fn logged(env: &Env, id: &str) -> Vec<String> {
     let (_, v) = call(&env.app, "GET", &format!("/api/events?ticket={id}"), None).await;
@@ -399,7 +404,7 @@ async fn a_failed_session_rolls_the_start_back_and_keeps_the_worktree() {
 }
 
 #[tokio::test]
-async fn abandon_ends_the_attempt_and_keeps_the_worktree() {
+async fn abandon_ends_the_attempt_and_removes_a_worktree_with_nothing_to_lose() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;
     let id = ticket(&env, json!({"title": "Give up"})).await;
@@ -409,8 +414,8 @@ async fn abandon_ends_the_attempt_and_keeps_the_worktree() {
     assert_eq!(st, StatusCode::OK, "{t}");
     assert_eq!(t["attempts"][0]["state"], "abandoned");
     assert!(t["attempts"][0]["endedAt"].is_number());
-    assert_eq!(event_kinds(&env, &id).await.last().map(String::as_str), Some("abandoned"));
-    assert!(env.repo.join(".worktrees").join("pdt-PDT-1-give-up").is_dir());
+    assert!(event_kinds(&env, &id).await.iter().any(|k| k == "abandoned"));
+    assert!(!env.repo.join(".worktrees").join("pdt-PDT-1-give-up").exists(), "nothing to lose: removed (PDT-339)");
     // Again: nothing changes.
     let (st, _) = call(&env.app, "POST", &format!("/api/attempts/{aid}/abandon"), None).await;
     assert_eq!(st, StatusCode::OK);
@@ -424,7 +429,9 @@ async fn abandon_ends_the_attempt_and_keeps_the_worktree() {
     assert_eq!((st, s(&v["code"])), (StatusCode::CONFLICT, "worktree_attempt"), "{v}");
     assert!(env.repo.join(".worktrees").join("pdt-PDT-1-give-up").is_dir());
     let aid = s(&r["attempt"]["id"]).to_string();
+    std::fs::write(env.repo.join(".worktrees").join("pdt-PDT-1-give-up").join("wip.txt"), "wip").unwrap();
     call(&env.app, "POST", &format!("/api/attempts/{aid}/abandon"), None).await;
+    assert!(env.repo.join(".worktrees").join("pdt-PDT-1-give-up").is_dir(), "uncommitted work: kept");
     // A new attempt can start, on the same worktree.
     let r = started(&env, &id, json!({"agent": "claude"})).await;
     assert_eq!(r["ticket"]["attempts"].as_array().unwrap().len(), 3);
@@ -458,7 +465,7 @@ async fn merges_are_detected_on_demand_and_by_the_loop() {
     let (_, t) = call(&env.app, "POST", &format!("/api/tickets/{a}/check-merge"), None).await;
     assert_eq!(t["attempts"][0]["state"], "merged");
     assert_eq!(t["stage"], "in_progress", "the ticket never moves to Done by itself");
-    assert_eq!(event_kinds(&env, &a).await.last().map(String::as_str), Some("merged"));
+    assert_eq!(event_kinds_but_comments(&env, &a).await.last().map(String::as_str), Some("merged"));
 
     // The 60 s loop: a squash merge, then the branch deleted.
     let b = ticket(&env, json!({"title": "Squash me"})).await;
@@ -545,7 +552,7 @@ async fn closing_a_ticket_ends_its_attempt() {
     let (st, t) = call(&env.app, "PATCH", &format!("/api/tickets/{a}"), Some(json!({"stage": "wont_do"}))).await;
     assert_eq!(st, StatusCode::OK, "{t}");
     assert_eq!((s(&t["stage"]), s(&t["attempts"][0]["state"])), ("wont_do", "abandoned"));
-    let kinds = event_kinds(&env, &a).await;
+    let kinds = event_kinds_but_comments(&env, &a).await;
     assert_eq!(kinds[kinds.len() - 2..], ["moved".to_string(), "abandoned".to_string()]);
 
     // Merged work: merged.
