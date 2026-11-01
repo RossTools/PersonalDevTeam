@@ -100,6 +100,19 @@ impl Integration for Google {
         Ok(())
     }
 
+    /// A deleted account is signed out: Google takes the refresh token back and PDT forgets it.
+    fn connection_deleted<'a>(
+        &'a self,
+        st: &'a AppState,
+        connection: &'a pdt_core::workflow::api::Connection,
+    ) -> pdt_api::sdk::BoxFut<'a, ()> {
+        Box::pin(async move {
+            if let Err(e) = accounts::sign_out(st, &self.shared, &connection.id).await {
+                tracing::warn!(connection = connection.name, error = %e, "a deleted Google account's sign-in stayed");
+            }
+        })
+    }
+
     fn document_providers(&self, st: &AppState) -> Vec<Arc<dyn DocumentProvider>> {
         vec![Arc::new(provider::GoogleDocs { st: st.clone(), shared: self.shared.clone() })]
     }

@@ -173,20 +173,28 @@ describe('documents', () => {
     expect(localStorage.getItem('pdt.documents.view')).toBe('pdt');
   });
 
-  it('PDT’s view reads a document again when its version changes', async () => {
+  it('Read in PDT reads an embedded document again when its version changes; one without an embed never polls', async () => {
+    localStorage.setItem('pdt.documents.view', 'pdt');
     let version = '1';
-    stubApi({
-      'GET /api/documents/d1': doc('d1', 'Plan'),
-      'GET /api/documents/d1/content': () => ({ content: { kind: 'doc', markdown: `Version ${version}`, version }, embedUrl: null }),
+    const calls = stubApi({
+      'GET /api/documents/d1': doc('d1', 'Plan', { provider: 'google' }),
+      'GET /api/documents/d1/content': () => ({ content: { kind: 'doc', markdown: `Version ${version}`, version }, embedUrl: 'https://docs.google.com/document/d/x/edit' }),
       'GET /api/documents/d1/version': () => ({ version }),
+      'GET /api/documents/d2': doc('d2', 'Notes'),
+      'GET /api/documents/d2/content': { content: { kind: 'doc', markdown: 'Local', version: '1' }, embedUrl: null },
       'GET /api/documents/providers': providers,
       'GET /api/projects': [project],
     });
-    const { qc } = renderWithQuery(<DocumentPage id="d1" phone={false} onGone={() => {}} />);
+    const { qc, unmount } = renderWithQuery(<DocumentPage id="d1" phone={false} onGone={() => {}} />);
     expect(await screen.findByText('Version 1')).toBeInTheDocument();
     version = '2';
     await qc.refetchQueries({ queryKey: ['documents', 'version', 'd1'] });
     expect(await screen.findByText('Version 2')).toBeInTheDocument();
+    unmount();
+    localStorage.removeItem('pdt.documents.view');
+    renderWithQuery(<DocumentPage id="d2" phone={false} onGone={() => {}} />);
+    expect(await screen.findByText('Local')).toBeInTheDocument();
+    expect(calls.some((c) => c.path === '/api/documents/d2/version')).toBe(false);
   });
 
   it('Google’s import offers its Drive picker for each signed-in account', async () => {

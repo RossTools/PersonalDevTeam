@@ -280,7 +280,8 @@ own view, so edits made at the provider (in Google's editor) show too.
 Each Google account is a `google` connection (the user's OAuth client ID in its config, the client secret as its
 secret, the picker's API key and project number, the folder for new files); signing in (`oauth.rs`: the authorization
 code flow with PKCE, the `drive.file` scope only) keeps the refresh token and email as a secret of their own
-(`connection:<id>:google`, `accounts.rs`), so editing the connection keeps them. A document's reference is
+(`connection:<id>:google`, `accounts.rs`), so editing the connection keeps them; deleting the connection runs `Integration::connection_deleted` (for every
+built integration with that kind, on or off), where Google revokes the token and forgets the sign-in. A document's reference is
 `<connection id>/<file id>`. `api.rs` is the client (an access token per account in memory, renewed once on a 401;
 Google's errors as `ProviderError`, a rate limit as `Busy`, which the API answers 429), over pdt-forge's blocking
 `Transport` (tests use recorded answers). `drive.rs` has the files, a Doc's Markdown (Drive's export), a Sheet's

@@ -176,8 +176,8 @@ export function DocumentBody({ id, providerLabel, className }: { id: string; pro
   const [view, setView] = useState<View>(() => (localStorage.getItem(VIEW_KEY) === 'pdt' ? 'pdt' : 'live'));
   const live = embed !== null && view === 'live';
   // Edits made at the provider (in Google's editor) don't pass through PDT: its version says when to read again. The
-  // embedded editor follows them itself.
-  const version = useDocumentVersion(id, content.isSuccess && !live);
+  // embedded editor follows them itself, and a provider without one is only changed through PDT (`updatedAt`).
+  const version = useDocumentVersion(id, content.isSuccess && embed !== null && view === 'pdt');
   const shownVersion = content.data?.content.version ?? null;
   const nowVersion = version.data?.version ?? null;
   useEffect(() => {

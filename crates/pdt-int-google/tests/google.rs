@@ -23,6 +23,7 @@ const TOKEN: &str = r#"{"access_token":"at1","expires_in":3600}"#;
 struct Env {
     app: axum::Router,
     google: Arc<Recorded>,
+    st: AppState,
     _tmp: tempfile::TempDir,
 }
 
@@ -33,7 +34,7 @@ async fn env() -> Env {
     let google = Arc::new(Recorded::new());
     st.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(pdt_int_google::Google::new(google.clone()))]));
     st.integrations.enable(&["google".into()]);
-    Env { app: router(st, None), google, _tmp: tmp }
+    Env { app: router(st.clone(), None), google, st, _tmp: tmp }
 }
 
 async fn account(env: &Env) -> String {
@@ -280,4 +281,39 @@ async fn a_connection_needs_its_client_id_and_both_picker_settings() {
     let (s, v) = call(&env.app, "GET", "/api/documents/providers/google/files", None).await;
     assert_eq!(s, 502);
     assert!(v["message"].as_str().unwrap().contains("signed in"), "{v}");
+}
+
+/// Deleting a Google account takes its sign-in with it: Google gets the refresh token back and the keychain forgets
+/// it, with the plugin turned on or off.
+#[tokio::test]
+async fn deleting_an_account_revokes_and_forgets_its_sign_in() {
+    for on in [true, false] {
+        let env = env().await;
+        let id = account(&env).await;
+        sign_in(&env, &id).await;
+        let key = pdt_int_google::accounts::sign_in_key(&id);
+        assert!(env.st.secrets.get(&key).unwrap().is_some());
+        if !on {
+            let (s, _) = call(&env.app, "PUT", "/api/integrations", Some(json!({"enabled": []}))).await;
+            assert_eq!(s, 200);
+        }
+        env.google.ok("POST", REVOKE_URL, "{}");
+        let (s, _) = call(&env.app, "DELETE", &format!("/api/connections/{id}"), None).await;
+        assert_eq!(s, 204, "plugin on: {on}");
+        assert!(env.google.urls().iter().any(|u| u.starts_with(&format!("POST {REVOKE_URL}?token=rt1"))), "on: {on}");
+        assert_eq!(env.st.secrets.get(&key).unwrap(), None, "on: {on}");
+        assert_eq!(env.st.secrets.get(&format!("connection:{id}")).unwrap(), None);
+    }
+}
+
+/// Google can't be reached: the account is deleted all the same, and PDT forgets its sign-in.
+#[tokio::test]
+async fn an_account_is_deleted_even_when_google_cant_take_its_sign_in_back() {
+    let env = env().await;
+    let id = account(&env).await;
+    sign_in(&env, &id).await;
+    // No answer recorded for the revoke: Google says 404.
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/connections/{id}"), None).await;
+    assert_eq!(s, 204);
+    assert_eq!(env.st.secrets.get(&pdt_int_google::accounts::sign_in_key(&id)).unwrap(), None);
 }

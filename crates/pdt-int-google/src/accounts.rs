@@ -171,3 +171,21 @@ pub async fn signed_in(st: &AppState, shared: &Shared) -> Result<Vec<(Connection
     }
     Ok(out)
 }
+
+/// Signs an account out: Google takes PDT's access back (when it can be reached; a failure is only logged), and PDT
+/// forgets the sign-in and its tokens.
+pub async fn sign_out(st: &AppState, shared: &Shared, connection_id: &str) -> Result<(), String> {
+    if let Some(s) = sign_in(st, connection_id).await.map_err(|e| e.to_string())? {
+        let transport = shared.transport.clone();
+        let revoked =
+            tokio::task::spawn_blocking(move || crate::oauth::revoke(transport.as_ref(), &s.refresh_token)).await;
+        if let Ok(Err(e)) = revoked {
+            tracing::info!(error = %e, "Google didn't take back PDT's access; signing out anyway");
+        }
+    }
+    forget_sign_in(st, connection_id).await?;
+    shared.tokens.forget(connection_id);
+    shared.emails.write().unwrap_or_else(|e| e.into_inner()).remove(connection_id);
+    shared.pending.lock().unwrap_or_else(|e| e.into_inner()).retain(|_, p| p.connection_id != connection_id);
+    Ok(())
+}

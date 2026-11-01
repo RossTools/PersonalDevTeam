@@ -224,16 +224,7 @@ pub async fn sign_out(
 ) -> Result<StatusCode, ApiError> {
     ui_only(&st, &headers)?;
     connection(&st, &id).await?;
-    if let Some(s) = accounts::sign_in(&st, &id).await? {
-        let transport = shared.transport.clone();
-        let revoked = tokio::task::spawn_blocking(move || oauth::revoke(transport.as_ref(), &s.refresh_token)).await;
-        if let Ok(Err(e)) = revoked {
-            tracing::info!(error = %e, "Google didn't take back PDT's access; signing out anyway");
-        }
-    }
-    accounts::forget_sign_in(&st, &id).await.map_err(ApiError::internal)?;
-    shared.tokens.forget(&id);
-    shared.emails.write().unwrap_or_else(|e| e.into_inner()).remove(&id);
+    accounts::sign_out(&st, &shared, &id).await.map_err(ApiError::internal)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
