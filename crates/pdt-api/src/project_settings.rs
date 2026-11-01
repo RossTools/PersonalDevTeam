@@ -99,6 +99,14 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub resolve_conflicts: Option<pdt_core::policy::ResolveConflicts>,
+    /// The areas "Pick up tickets" keeps to one ticket in flight at a time (replaces the list; PDT-329).
+    #[serde(default)]
+    #[ts(optional)]
+    pub hot_areas: Option<Vec<String>>,
+    /// A ticket without areas may start alongside a hot area's ticket in flight (and the other way round).
+    #[serde(default)]
+    #[ts(optional)]
+    pub untagged_alongside_hot: Option<bool>,
     /// Integration settings by integration id: each one named is set (keys left out keep their values), null or a
     /// `connection` of "" unlinks it, and integrations not named are kept.
     #[serde(default)]
@@ -198,6 +206,10 @@ pub(crate) async fn put_settings(
         Some(l) => pdt_core::ticket::normalize_labels(l)
             .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()))?,
     };
+    let hot_areas = match &input.hot_areas {
+        None => current.policy.hot_areas,
+        Some(a) => pdt_core::ticket::normalize_areas(a).map_err(|e| invalid(e.to_string()))?,
+    };
     let policy = ProjectPolicy {
         merge_by: input.merge_by.unwrap_or(current.policy.merge_by),
         require_approval: input.require_approval.unwrap_or(current.policy.require_approval),
@@ -210,6 +222,8 @@ pub(crate) async fn put_settings(
         require_green_ci: input.require_green_ci.unwrap_or(current.policy.require_green_ci),
         triage_approval: input.triage_approval.unwrap_or(current.policy.triage_approval),
         resolve_conflicts: input.resolve_conflicts.unwrap_or(current.policy.resolve_conflicts),
+        hot_areas,
+        untagged_alongside_hot: input.untagged_alongside_hot.unwrap_or(current.policy.untagged_alongside_hot),
     };
     let mut integrations = current.integrations;
     let reg = st.registry();

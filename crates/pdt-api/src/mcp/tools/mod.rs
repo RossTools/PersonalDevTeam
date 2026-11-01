@@ -70,6 +70,19 @@ fn store(e: pdt_store::StoreError) -> String {
     ApiError::from(e).message().to_string()
 }
 
+/// Areas an agent gives a ticket of `project_id`, checked against the project's configured areas (PDT-329).
+async fn checked_areas(
+    st: &AppState,
+    project_id: &str,
+    areas: Option<Vec<String>>,
+) -> Result<Option<Vec<String>>, String> {
+    let Some(areas) = areas else { return Ok(None) };
+    let project = st.store.get_project(project_id).await.map_err(store)?.ok_or("no such project")?;
+    let configured: Vec<String> =
+        crate::overlap::project_areas(st, &project).await.areas.into_iter().map(|a| a.name).collect();
+    pdt_core::ticket::agent_areas(&areas, &configured).map(Some)
+}
+
 /// PDT's own tools, in `tools/list` order ([`crate::integrations::core`]): one line per group.
 pub(crate) fn defs() -> Vec<Tool> {
     [

@@ -229,6 +229,7 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
     let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
     let outside = external.then(|| (fence.wrap(&ticket.description), fence.note()));
     let attachments = attachments_of(st, id, external.then_some(&fence)).await?;
+    let ticket_project = ticket.summary.project_id.clone();
     let mut v = serde_json::to_value(ticket).map_err(|e| e.to_string())?;
     if let Some((description, note)) = outside {
         v["description"] = json!(description);
@@ -251,6 +252,18 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
             "Documents are linked to this ticket. Read its design doc (and any other that matters) before you start: \
              doc_read gives a doc as Markdown, sheet_read a sheet's cells."
         );
+    }
+    if let Some(project) = st.store.get_project(&ticket_project).await.map_err(store)? {
+        let areas = crate::overlap::project_areas(st, &project).await.areas;
+        if !areas.is_empty() {
+            let list: Vec<Value> = areas.iter().map(|a| json!({"name": a.name, "paths": a.paths})).collect();
+            v["projectAreas"] = json!(list);
+            v["areasNote"] = json!(
+                "`areas` are the parts of the project the ticket touches, from `projectAreas` (each with the files it \
+                 covers). \"Pick up tickets\" keeps tickets in the same busy areas from running at once, so a ticket \
+                 without them is a guess."
+            );
+        }
     }
     v["comments"] = json!(comments);
     v["history"] = json!(history);

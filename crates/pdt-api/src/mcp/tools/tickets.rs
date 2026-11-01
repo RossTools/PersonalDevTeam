@@ -20,6 +20,10 @@ struct CreateTicket {
     priority: Option<pdt_core::ticket::Priority>,
     #[serde(default)]
     labels: Option<Vec<String>>,
+    /// The parts of the project it touches, from its areas (`projectAreas` in `get_ticket`).
+    /// "Pick up tickets" keeps tickets in the same busy areas from running at once.
+    #[serde(default)]
+    areas: Option<Vec<String>>,
     /// Make it a part of this ticket (key or id).
     #[serde(default)]
     parent: Option<String>,
@@ -50,6 +54,10 @@ struct EditTicket {
     /// Replaces every label.
     #[serde(default)]
     labels: Option<Vec<String>>,
+    /// The parts of the project it touches, from its areas (`projectAreas` in `get_ticket`); replaces every area.
+    /// "Pick up tickets" keeps tickets in the same busy areas from running at once.
+    #[serde(default)]
+    areas: Option<Vec<String>>,
     /// Make it a part of this ticket (key or id), or `""` to detach it from its parent.
     #[serde(default)]
     parent: Option<String>,
@@ -112,7 +120,7 @@ pub(super) fn defs() -> Vec<Tool> {
         Tool {
             decl: ToolDecl::new("edit_ticket", "Edit tickets (outside the PM, others only by exact key)").asks().pm(),
             title: "Edit a ticket",
-            description: "Changes a ticket's title, description, stage, priority, labels or parent, recorded as the \
+            description: "Changes a ticket's title, description, stage, priority, labels, areas or parent, recorded as the \
                           agent's. Outside the PM, a ticket other than the session's own needs its exact key \
                           (`ABC-12`), and one in progress or done keeps its title and description unless this \
                           session created it: comment on it instead. `files` attaches files to it (alone, or with \
@@ -182,7 +190,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 stage: Some(a.stage.unwrap_or(pdt_core::ticket::TicketStage::Draft)),
                 priority: a.priority,
                 labels: a.labels,
-                areas: None,
+                areas: checked_areas(st, &project, a.areas).await?,
                 before: None,
                 after: None,
                 parent,
@@ -242,6 +250,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 stage: a.stage,
                 priority: a.priority,
                 labels: a.labels,
+                areas: checked_areas(st, &current.summary.project_id, a.areas).await?,
                 parent,
                 ..Default::default()
             };

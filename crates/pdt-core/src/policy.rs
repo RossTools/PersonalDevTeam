@@ -184,6 +184,14 @@ pub struct ProjectPolicy {
     /// When conflicts with the base are resolved: at merge time, or as soon as they appear (PDT-328).
     #[serde(default)]
     pub resolve_conflicts: ResolveConflicts,
+    /// Areas two tickets in flight at once often collide in (PDT-329): "Pick up tickets" starts no ticket in one while
+    /// another ticket in it is in flight.
+    #[serde(default)]
+    pub hot_areas: Vec<String>,
+    /// A ticket without areas may start while a ticket in a hot area is in flight, and a ticket in a hot area while one
+    /// without areas is.
+    #[serde(default = "yes")]
+    pub untagged_alongside_hot: bool,
 }
 
 fn yes() -> bool {
@@ -204,6 +212,8 @@ impl Default for ProjectPolicy {
             require_green_ci: true,
             triage_approval: TriageApproval::default(),
             resolve_conflicts: ResolveConflicts::default(),
+            hot_areas: vec![],
+            untagged_alongside_hot: true,
         }
     }
 }
@@ -401,6 +411,7 @@ pub(crate) mod tests {
             pipeline_stage: None,
             agent: None,
             auto_start_at: None,
+            pickup_hold: None,
             external: vec![],
             source: Default::default(),
             admitted: false,

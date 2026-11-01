@@ -3,4 +3,4 @@
 /**
  * Why choose passed over a candidate.
  */
-export type PassedReason = { "reason": "at_cap", cap: number, active: number, } | { "reason": "area_cap", area: string, cap: number, } | { "reason": "label_cap", label: string, cap: number, } | { "reason": "settling", at: number, } | { "reason": "failed_before" };
+export type PassedReason = { "reason": "at_cap", cap: number, active: number, } | { "reason": "area_cap", area: string, cap: number, } | { "reason": "label_cap", label: string, cap: number, } | { "reason": "settling", at: number, } | { "reason": "failed_before" } | { "reason": "overlaps", area: string, with: Array<string>, cap: number, } | { "reason": "untagged", with: string, area: string, } | { "reason": "untagged_in_flight", with: string, area: string, };

@@ -450,6 +450,10 @@ pub struct TicketSummary {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub auto_start_at: Option<i64>,
+    /// Why "Pick up tickets" passed it over last time for overlapping work in flight ("overlaps PDT-4 in api";
+    /// PDT-329; filled in by the API, in memory).
+    #[serde(default)]
+    pub pickup_hold: Option<String>,
     /// The issues in other trackers it is linked to (an issue it was imported from).
     #[serde(default)]
     pub external: Vec<ExternalLink>,
@@ -961,6 +965,20 @@ pub fn normalize_labels(labels: &[String]) -> VResult<Vec<String>> {
     Ok(out)
 }
 
+/// An agent's areas for a ticket, checked against the project's configured ones (PDT-329): every one must be among
+/// them, so a typo can't hide a ticket from overlap. A project without areas takes none.
+pub fn agent_areas(areas: &[String], configured: &[String]) -> Result<Vec<String>, String> {
+    let areas = normalize_areas(areas).map_err(|e| e.to_string())?;
+    let unknown: Vec<&str> = areas.iter().filter(|a| !configured.contains(a)).map(String::as_str).collect();
+    match (unknown.is_empty(), configured.is_empty()) {
+        (true, _) => Ok(areas),
+        (false, true) => Err("the project has no areas (`[[area]]` in its .pdt/project.toml): leave areas out".into()),
+        (false, false) => {
+            Err(format!("not areas of the project: {}. Its areas are: {}", unknown.join(", "), configured.join(", ")))
+        }
+    }
+}
+
 /// Area names (matched against `.pdt/project.toml` in Phase 4c): trimmed, 1–60 characters, no commas; kept as
 /// written, de-duplicated and sorted.
 pub fn normalize_areas(areas: &[String]) -> VResult<Vec<String>> {
@@ -1328,6 +1346,12 @@ mod tests {
         assert_eq!(normalize_labels(&many), Err(TicketValidationError::TooManyLabels));
         assert_eq!(normalize_areas(&v(&[" migrations", "web", "web"])), Ok(v(&["migrations", "web"])));
         assert!(normalize_areas(&v(&[""])).is_err());
+        let known = v(&["api", "web"]);
+        assert_eq!(agent_areas(&v(&["web ", "api", "web"]), &known), Ok(v(&["api", "web"])));
+        assert_eq!(agent_areas(&[], &known), Ok(vec![]));
+        let e = agent_areas(&v(&["ap", "web"]), &known).unwrap_err();
+        assert!(e.contains("not areas of the project: ap") && e.contains("api, web"), "{e}");
+        assert!(agent_areas(&v(&["web"]), &[]).unwrap_err().contains("has no areas"));
     }
 
     #[test]
@@ -1434,6 +1458,7 @@ mod tests {
             pipeline_stage: None,
             agent: None,
             auto_start_at: None,
+            pickup_hold: None,
             external: vec![],
             source: TicketSource::External,
             admitted: false,

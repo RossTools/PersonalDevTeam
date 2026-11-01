@@ -51,6 +51,14 @@ triageApproval?: TriageApproval,
  */
 resolveConflicts?: ResolveConflicts, 
 /**
+ * The areas "Pick up tickets" keeps to one ticket in flight at a time (replaces the list; PDT-329).
+ */
+hotAreas?: Array<string>, 
+/**
+ * A ticket without areas may start alongside a hot area's ticket in flight (and the other way round).
+ */
+untaggedAlongsideHot?: boolean, 
+/**
  * Integration settings by integration id: each one named is set (keys left out keep their values), null or a
  * `connection` of "" unlinks it, and integrations not named are kept.
  */

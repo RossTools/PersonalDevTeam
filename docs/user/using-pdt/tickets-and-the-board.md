@@ -98,6 +98,9 @@ in the same area as one in progress shows an overlap, and its **Overlaps** secti
 both branches change. An overlap in an exclusive area (database migrations, say) is a conflict. See
 [Run configuration](../automation/run-configuration.md).
 
+A ticket's areas are in its details, where you can change them. When the Refiner refines a ticket, or the PM drafts
+one, it picks the areas from the project's list by what the ticket describes and the code it will touch.
+
 ## Watch a ticket
 
 To hear about a ticket without opening it, click the eye (**Watch**) at the top of its page (on a phone, **Watch** in
@@ -168,6 +171,13 @@ In **Settings**, on the project's page:
 - **Auto-start picks by**: **Priority, then rank** or **Backlog rank**. **To do** always comes before **Ready**.
 - **Quiet period before auto-start**: a ticket must go this long unchanged first (two minutes by default), so you can
   finish editing it. Its card shows "Auto-starts in 1:30".
+- **Hot areas**: areas where two tickets in progress at once often collide (shared API routes, prompts, docs). While a
+  ticket in a hot area is in progress, auto-start doesn't start another ticket in that area. It takes the next ticket
+  that doesn't collide. The waiting ticket's card says which ticket and area it waits on ("Waiting: overlaps …"),
+  and it starts once that work is done.
+- **Tickets without areas run alongside hot ones**: a ticket without areas might touch anything. On (the default), it
+  starts like any other. Off, it waits while a ticket in a hot area is in progress, and a ticket in a hot area waits
+  while one without areas is in progress.
 
 Auto-start skips parents, blocked or conflicting tickets, and outside tickets you haven't let in. It uses your default
 agent, view and permission mode (**Settings › This host › Agents**), or the project's workflow if it has one. Starting
