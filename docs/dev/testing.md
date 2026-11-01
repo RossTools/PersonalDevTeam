@@ -7,6 +7,9 @@ How PDT's own tests are run and what they must never touch. Before pushing, run 
 
 - **Rust:** `cargo test` (and `cargo clippy --all-targets -- -D warnings`, `cargo fmt`). CI runs `cargo nextest run`:
   every test in its own process, all at once, so a test must not depend on another's state or on running alone.
+  The tests are built once into a nextest archive and split across parallel jobs, each in a fresh checkout with the
+  archive's `target/` (docs/SDLC.md "Build once, test in partitions"): a test may run in any job, and can rely only on
+  the checkout and the test binaries, not on anything else a build wrote.
 - **Generated types:** `cargo test` writes the TypeScript types (ts-rs) into `web/src/api/gen`. Commit them with the
   Rust change, or CI's diff check fails.
 - **Web:** `pnpm --dir web test`, `typecheck`, `build`. `web/src/lint.test.ts` enforces the design-system rules

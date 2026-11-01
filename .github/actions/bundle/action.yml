@@ -38,11 +38,7 @@ runs:
           libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
         echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
         echo "PDT_ARCH=$(uname -m)" >> "$GITHUB_ENV"
-    - uses: pnpm/action-setup@v6
-    - uses: actions/setup-node@v7
-      with:
-        node-version: 24
-        cache: pnpm
+    - uses: ./.github/actions/pnpm
     - run: pnpm install --frozen-lockfile
       shell: bash
     # The version is the checked-in one (Cargo.toml, matched by tauri.conf.json; scripts/version.sh), or an

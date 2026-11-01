@@ -676,6 +676,9 @@ pub(crate) async fn stop(st: &AppState, id: &str) -> Result<(), ApiError> {
         return crate::conversations::stop(st, &session).await;
     }
     st.kill_pty(id).await?;
+    // Stopped means no longer running for whoever looks next: wait for the exit to be recorded. On Windows it lands
+    // a moment after the kill, and a wind-down that looked again stopped (and counted) the session twice.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), settle_exit(st, id)).await;
     Ok(())
 }
 
