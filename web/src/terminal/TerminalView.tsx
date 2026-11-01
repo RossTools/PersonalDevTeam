@@ -220,6 +220,10 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
     const input = term.onData((d) => {
       if (!replaying()) sendInput(d);
     });
+    // Binary input (X10 mouse reports past column 95) is bytes, not text; it skips the key bar's armed key.
+    const binary = term.onBinary((d) => {
+      if (!replaying() && !sock.sendBinary(d)) setDropped(true);
+    });
     term.attachCustomKeyEventHandler((e) => {
       if (!isShiftEnter(e)) return true;
       // Handle keydown only; keypress and keyup of the same key are swallowed so xterm doesn't also send `\r`.
@@ -257,6 +261,7 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
       selection.dispose();
       underliner?.dispose();
       input.dispose();
+      binary.dispose();
       sock.dispose();
       term.dispose();
       sockRef.current = null;

@@ -96,7 +96,9 @@ folder and each project's folder, grouped by device (`storage::disk_id`) with th
 
 **Runs.** A run is a `[[run]]` or `[[test]]` from `.pdt/project.toml` (plus host overrides; the user docs' Run configuration page)
 started in a checkout, on a port from the host's range. Runs live in PTYs, or detached (`detach = true`) so they
-outlive pdtd and are reattached after a restart.
+outlive pdtd and are reattached after a restart. When remote access changes the host, the runs (never tests) that use
+`$PDT_RUN_HOST` or `$PDT_RUN_URL` restart (`run_manager::restart_host_dependent_runs`); any stop of the run meanwhile
+cancels that restart (`AppState::run_stops`), and one that cannot start again fails the run with the reason.
 
 **Tickets.** Numbered per project (`<KEY>-<n>`, never reused), in a stage (draft, ready, todo, in progress, done,
 won't do), ordered by a fractional `rank`, linked (`blocks`, `relates`), with a timeline of events (comments are
@@ -131,7 +133,10 @@ set to merge after a conflict or a queue drop, start with `attempt.update_base`:
 the base, merges it (pdt-git `update.rs`, with `rerere`), takes the base's side of files a `[[merge.regenerate]]` rule
 covers and runs the rule, commits, and pushes once; real conflicts leave the merge in progress and go to an agent step
 with the files, hunks and merged-since subjects (`merge_update::conflict_message`). Each result is a `merge_update`
-event (`how`: deferred, clean, regenerated, conflict, agent).
+event (`how`: deferred, clean, regenerated, conflict, agent). Before Accept, the Pipeline's `attempt.has_changes`
+(`workflow/nodes/attempt.rs`) asks whether the attempt has anything to merge (a pull request, commits its base lacks,
+uncommitted changes); one without goes through its own Accept and `ticket.finish` (deleting the branch) instead of the
+merge, after looking again once Accept is answered.
 
 **Review.** The Changes view diffs the worktree against its merge base with the base branch (pdt-git `review.rs`;
 each file says whether it is uncommitted, and generated: `linguist-generated` in `.gitattributes` or a lockfile). The

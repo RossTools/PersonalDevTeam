@@ -166,10 +166,17 @@ pub fn check_branch_name(repo: &Path, branch: &str) -> Result<(), GitError> {
 pub fn add_worktree(repo: &Path, path: &Path, branch: &str, base: &str) -> Result<String, GitError> {
     check_branch_name(repo, branch)?;
     let spec = format!("{base}^{{commit}}");
-    let sha = match git_with_env(repo, &["rev-parse", "--verify", "--quiet", &spec], &[])? {
+    // `--end-of-options`: a base starting with `-` is a ref to look up, never an option. Exit 1 is "no such commit";
+    // anything else (not a repository, a broken one) is reported as what it is.
+    let sha = match git_with_env(repo, &["rev-parse", "--verify", "--quiet", "--end-of-options", &spec], &[])? {
         Ok(s) if !s.is_empty() => s,
-        _ => return Err(GitError::UnknownRef(base.to_string())),
+        Ok(_) => return Err(GitError::UnknownRef(base.to_string())),
+        Err(f) if f.code == Some(1) => return Err(GitError::UnknownRef(base.to_string())),
+        Err(f) => return Err(classify_failure(repo, f)),
     };
+    if branch_exists(repo, branch) {
+        return Err(GitError::BranchExists(branch.to_string()));
+    }
     if path.exists() {
         return Err(GitError::Command(format!("worktree path already exists: {}", path.display())));
     }
@@ -184,6 +191,7 @@ pub fn add_worktree(repo: &Path, path: &Path, branch: &str, base: &str) -> Resul
             let _ = enable_rerere(repo);
             Ok(sha)
         }
+        // Made between the check above and here (git's message is stable under LC_ALL=C).
         Err(f) if f.stderr.contains("already exists") && f.stderr.contains("branch") => {
             Err(GitError::BranchExists(branch.to_string()))
         }
@@ -513,6 +521,33 @@ mod tests {
             matches!(add_worktree(&repo, &wt("b"), "b", "no-such-ref"), Err(GitError::UnknownRef(r)) if r == "no-such-ref")
         );
         assert!(matches!(add_worktree(&repo, &wt("c"), "bad..name", "main"), Err(GitError::InvalidBranch(_))));
+        for name in ["HEAD", "@{-1}"] {
+            assert!(matches!(add_worktree(&repo, &wt("d"), name, "main"), Err(GitError::InvalidBranch(_))), "{name}");
+        }
+        for base in ["-q", "--git-dir=elsewhere"] {
+            let r = add_worktree(&repo, &wt("e"), "e", base);
+            assert!(matches!(&r, Err(GitError::UnknownRef(b)) if b == base), "{base}: {r:?}");
+        }
+        assert!(!wt("d").exists() && !wt("e").exists());
+    }
+
+    #[test]
+    fn add_worktree_outside_a_repo_is_not_an_unknown_ref() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = add_worktree(tmp.path(), &tmp.path().join("wt"), "x", "main");
+        assert!(matches!(r, Err(GitError::NotARepo(_))), "{r:?}");
+    }
+
+    // Unix only: on Windows, std's program lookup falls back to the parent's PATH when the child's has no `git`.
+    #[cfg(unix)]
+    #[test]
+    fn git_not_on_path_is_git_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let empty = tmp.path().join("no-git-here");
+        std::fs::create_dir_all(&empty).unwrap();
+        let path = empty.to_string_lossy();
+        let r = resolve_repo_with_env(tmp.path(), &[("PATH", &path)]);
+        assert!(matches!(r, Err(GitError::GitMissing)), "{r:?}");
     }
 
     #[test]

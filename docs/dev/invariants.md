@@ -156,6 +156,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **The Host guard and owner-only checks cover every route** (pdt-api `host_guard.rs`, `identity_guard.rs`): only
   loopback hosts and the allowed hosts; remote requests carry the owner's Tailscale identity. Hooks
   (`/api/hooks/*`) authenticate with their own secret instead. Don't add a route outside the guards.
+- **A run's link is set under `settings_lock`, together with registering its driver** (`run_manager::relaunch`,
+  `runs::create`). Applying remote access holds the same lock while it relinks and restarts the running runs, so a
+  run started meanwhile never keeps the other setting's link.
 
 ## Code and data
 

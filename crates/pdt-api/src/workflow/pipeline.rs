@@ -17,11 +17,14 @@ const CODE_PROMPT: &str = "Build this ticket on its branch. On a later pass, add
 review and QA outcomes and in the user's newest comments, e.g. why they rejected it at Accept (`get_ticket` lists \
 them, with their line comments). When the project keeps a changelog (its instructions say how), add an entry for \
 the change, written for its users. Run the project's checks, commit, push and open a pull request against the base \
-branch (`change_request_open`) when the project works with them.";
+branch (`change_request_open`) when the project works with them. When the ticket needs no change to the \
+repository, commit nothing and start your outcome's summary with \"No changes:\" and why.";
 
 const REVIEW_PROMPT: &str = "Review this attempt's changes against the ticket: the branch's diff against its base. \
 When the project keeps a changelog, check the change's entry is written for its users and says accurately what \
-changed. Put each finding on its line (`comments` in `submit_outcome`).";
+changed. Put each finding on its line (`comments` in `submit_outcome`). When the Coder's outcome says \"No \
+changes\", there is no diff to read: check the branch has no commits of its own, that the ticket needs none, and \
+say so in your outcome.";
 
 const FIX_PROMPT: &str = "QA passed, but the merge was refused: {{steps.merge.reason}}. Clear it on the branch: \
 for a conflict, merge the base branch in and resolve it; for uncommitted changes, commit them; for failing CI, read \
@@ -42,7 +45,11 @@ const MERGE_WAIT_MS: i64 = 3 * 24 * 60 * 60 * 1000;
 const CI_WAIT_MS: i64 = 6 * 60 * 60 * 1000;
 
 const QA_PROMPT: &str = "Check that this attempt's change works: run the project's tests and try each point of the \
-ticket's \"Done when\".";
+ticket's \"Done when\". When the Coder's outcome says \"No changes\", there is no change to try: check that the \
+ticket's \"Done when\" holds as it is, and say so in your outcome.";
+
+const ACCEPT_EMPTY_QUESTION: &str = "{{trigger.ticketKey}} passed with no changes to merge: {{steps.code.summary}} \
+Accept it and move it to Done?";
 
 pub fn params() -> Vec<TemplateParam> {
     let who = |id: &str, title: &str| {
@@ -190,6 +197,60 @@ pub fn doc() -> WorkflowDoc {
                 {"id": "pass", "description": "it works as the ticket asks"},
                 {"id": "fail", "description": "something doesn't work: say what and how to reproduce it"},
             ]}),
+        ),
+        // An attempt with nothing to merge (PDT-354): accepted (or not, as below), it finishes without a merge.
+        node(
+            "changes",
+            "attempt.has_changes",
+            1050,
+            550,
+            "Anything to merge?",
+            json!({"attempt": "{{trigger.attemptId}}"}),
+        ),
+        node(
+            "empty_accept_mode",
+            "switch",
+            1200,
+            850,
+            "Who accepts",
+            json!({
+            "value": "{{params.accept}}", "cases": [{"port": "user", "equals": "user"}, {"port": "auto", "equals": "auto"}]}),
+        ),
+        node(
+            "empty_auto_accept",
+            "condition",
+            1350,
+            1000,
+            "Accepted by label?",
+            json!({"conditions": [
+                {"left": "{{trigger.labels}}", "op": "contains_any", "right": "{{params.autoAcceptLabels}}"}]}),
+        ),
+        node(
+            "accept_empty",
+            "gate",
+            1500,
+            850,
+            "Accept without changes",
+            json!({
+            "question": ACCEPT_EMPTY_QUESTION, "choices": ["done", "reject"], "inbox": "accept",
+            "pipelineStage": "accept", "approve": "done"}),
+        ),
+        // Commits may have come while it waited at Accept: then it merges as any other.
+        node(
+            "still_empty",
+            "attempt.has_changes",
+            1650,
+            850,
+            "Still nothing to merge?",
+            json!({"attempt": "{{trigger.attemptId}}"}),
+        ),
+        node(
+            "finish_empty",
+            "ticket.finish",
+            1800,
+            1000,
+            "Finish without a merge",
+            json!({"ticket": "{{trigger.ticketId}}", "stopRunning": true, "deleteBranch": true}),
         ),
         node(
             "accept_mode",
@@ -386,7 +447,22 @@ pub fn doc() -> WorkflowDoc {
         edge("review", "changes_requested", "code"),
         edge("review", "timeout", "stopped"),
         edge("review", "stopped", "stopped"),
-        edge("qa", "pass", "accept_mode"),
+        edge("qa", "pass", "changes"),
+        edge("changes", "yes", "accept_mode"),
+        edge("changes", "no", "empty_accept_mode"),
+        edge("empty_accept_mode", "user", "empty_auto_accept"),
+        edge("empty_accept_mode", "auto", "finish_empty"),
+        edge("empty_accept_mode", "default", "accept_empty"),
+        edge("empty_auto_accept", "true", "finish_empty"),
+        edge("empty_auto_accept", "false", "accept_empty"),
+        edge("accept_empty", "done", "still_empty"),
+        edge("accept_empty", "reject", "code"),
+        edge("accept_empty", "timeout", "stopped"),
+        edge("accept_empty", "unanswered", "stopped"),
+        edge("still_empty", "no", "finish_empty"),
+        edge("still_empty", "yes", "update"),
+        edge("finish_empty", "finished", "done"),
+        edge("finish_empty", "blocked", "done"),
         edge("qa", "fail", "code"),
         edge("qa", "timeout", "stopped"),
         edge("qa", "stopped", "stopped"),
@@ -451,7 +527,8 @@ pub fn doc() -> WorkflowDoc {
                         Coder on changes or a failure (findings first, PR notices after them; it submits once its \
                         work is committed and pushed); then you accept, PDT brings the branch up to date with its base \
                         (conflicts in generated files regenerated, real ones to the Coder), and the run merges once \
-                        CI on the pull request passes. A merge refused for a conflict or failing CI goes back to the Coder and a \
+                        CI on the pull request passes. An attempt with no changes is accepted the same way, then moves to Done \
+                        without a merge. A merge refused for a conflict or failing CI goes back to the Coder and a \
                         Reviewer; one refused for anything else asks you in the Inbox. Any stage can be yours instead of an agent's.",
         "nodes": nodes,
         "edges": edges,
