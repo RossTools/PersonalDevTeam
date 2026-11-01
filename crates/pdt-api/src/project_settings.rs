@@ -245,3 +245,9 @@ pub(crate) async fn put_settings(
     st.store.put_project_settings(&id, &settings).await?;
     Ok(Json(view(&st, &id).await?))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new().route("/projects/{id}/settings", get(get_settings).put(put_settings))
+}

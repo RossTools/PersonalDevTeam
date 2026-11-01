@@ -284,3 +284,9 @@ pub(crate) async fn create(
     .map_err(ApiError::internal)??;
     Ok((StatusCode::CREATED, Json(made)))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new().route("/host/folders", get(list).post(create))
+}

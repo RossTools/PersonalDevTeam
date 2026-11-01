@@ -49,3 +49,9 @@ pub(crate) async fn whoami(headers: HeaderMap) -> Json<WhoAmI> {
         _ => WhoAmI { caller: "local".into(), login: None },
     })
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new().route("/host/whoami", get(whoami))
+}

@@ -265,3 +265,16 @@ async fn install(st: &AppState, b: &pdt_core::persona::BuiltinPersona) -> Result
     }
     st.store.set_persona_template(&p.id, &template).await
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new()
+        .route("/personas", get(list).post(create))
+        .route("/personas/tools", get(tools))
+        .route("/personas/{id}", get(get_one).put(save).patch(self::patch).delete(remove))
+        .route("/personas/{id}/versions", get(versions))
+        .route("/personas/{id}/versions/{v}", get(version))
+        .route("/personas/{id}/diff", get(diff))
+        .route("/personas/{id}/template", get(template))
+}

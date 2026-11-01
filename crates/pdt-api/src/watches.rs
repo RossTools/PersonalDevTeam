@@ -482,3 +482,9 @@ fn capitalise(s: &str) -> String {
         None => String::new(),
     }
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{delete, get};
+    axum::Router::new().route("/watches", get(list).post(create)).route("/watches/{id}", delete(self::delete))
+}

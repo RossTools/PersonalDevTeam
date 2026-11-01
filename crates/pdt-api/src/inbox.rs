@@ -476,3 +476,12 @@ pub(crate) async fn settle_notices(st: &AppState, only: Option<(&str, &[NoticeKi
         crate::notifications::kick(st);
     }
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/inbox", get(list))
+        .route("/inbox/{id}/answer", post(answer))
+        .route("/inbox/{id}/dismiss", post(dismiss))
+}

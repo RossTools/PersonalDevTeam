@@ -364,3 +364,9 @@ pub(crate) async fn clean_up(
     }
     out
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::post;
+    axum::Router::new().route("/tickets/{id}/finish", post(finish_route))
+}

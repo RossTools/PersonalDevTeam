@@ -621,3 +621,16 @@ pub(crate) async fn stream(
     });
     Ok(Sse::new(s).keep_alive(KeepAlive::default()))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/notifications", get(list))
+        .route("/notifications/stream", get(stream))
+        .route("/notifications/read-all", post(read_all))
+        .route("/notifications/clear-all", post(clear_all))
+        .route("/notifications/settings", get(get_settings).patch(patch_settings))
+        .route("/notifications/{id}/read", post(read))
+        .route("/notifications/{id}/clear", post(clear_one))
+}

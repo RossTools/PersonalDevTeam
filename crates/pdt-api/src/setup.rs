@@ -105,3 +105,9 @@ pub(crate) async fn put_setup(
     let Json(patch) = payload?;
     Ok(Json(view(&st, Some(&patch)).await?))
 }
+
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::get;
+    axum::Router::new().route("/host/setup", get(get_setup).put(put_setup))
+}

@@ -185,6 +185,12 @@ pub(crate) async fn after_move(st: &AppState, ticket_id: &str, stage: TicketStag
     }
 }
 
+/// This module's API routes; `routes::router` merges them under `/api`.
+pub(crate) fn router() -> axum::Router<crate::AppState> {
+    use axum::routing::post;
+    axum::Router::new().route("/tickets/{id}/stop", post(stop_route))
+}
+
 /// What the wind-down after Won't do, Done or Abandon (PDT-339) is to do once the attempt's work is stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindDown {
