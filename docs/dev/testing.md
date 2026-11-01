@@ -11,6 +11,10 @@ How PDT's own tests are run and what they must never touch. Before pushing, run 
   in two builds) and split across parallel jobs, each in a fresh checkout with the archives' `target/` (docs/SDLC.md
   "Build once, test in partitions"): a test may run in any job, and can rely only on the checkout, its own test
   binary and its package's binaries (`env!("CARGO_BIN_EXE_…")`), not on anything else a build wrote.
+- **Slow requests:** a request still running after 2 s logs a warning (`crates/pdt-api/src/slow.rs`), but the tests
+  install no tracing subscriber and nextest hides a passing test's output. With `PDT_SLOW_REQUESTS_LOG` set to a
+  file, each warning is also appended there as a line naming the test. CI's test jobs set it, print the file in a
+  "Slow requests" step (and the job summary) and upload it as the `slow-requests-<os>-<partition>` artifact.
 - **Generated types:** `cargo test` writes the TypeScript types (ts-rs) into `web/src/api/gen`. Commit them with the
   Rust change, or CI's diff check fails.
 - **Web:** `pnpm --dir web test`, `typecheck`, `build`. `web/src/lint.test.ts` enforces the design-system rules
