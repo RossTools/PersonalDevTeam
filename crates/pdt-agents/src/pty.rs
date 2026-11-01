@@ -99,10 +99,11 @@ fn earlier_output(path: PathBuf, scrollback: &mut Scrollback) -> Option<OutputFi
         }
     };
     if !earlier.is_empty() {
+        let divider = output_file::divider(&earlier);
         scrollback.push(&earlier);
-        scrollback.push(output_file::DIVIDER);
+        scrollback.push(&divider);
         if let Some(f) = file.as_mut()
-            && f.write(output_file::DIVIDER).is_err()
+            && f.write(&divider).is_err()
         {
             file = None;
         }

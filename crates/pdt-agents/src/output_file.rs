@@ -6,10 +6,45 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-/// Shown between the earlier output and the new process's. It first cancels an escape sequence the earlier output
-/// may end inside, then leaves the alternate screen and undoes the modes a full-screen program may have left on
-/// (colours, a hidden cursor, mouse reporting, application cursor keys, bracketed paste).
-pub(crate) const DIVIDER: &[u8] = b"\x18\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1l\x1b[?2004l\r\n\x1b[2m\xe2\x94\x80\xe2\x94\x80 restarted \xc2\xb7 earlier output above \xe2\x94\x80\xe2\x94\x80\x1b[0m\r\n";
+/// Shown between the earlier output and the new process's: the line that says so, after [`reset`].
+const DIVIDER: &[u8] =
+    b"\r\n\x1b[2m\xe2\x94\x80\xe2\x94\x80 restarted \xc2\xb7 earlier output above \xe2\x94\x80\xe2\x94\x80\x1b[0m\r\n";
+
+/// What goes between `earlier` (a terminal's kept output) and the new process's output: [`reset`], then the divider.
+pub(crate) fn divider(earlier: &[u8]) -> Vec<u8> {
+    let mut out = reset(earlier);
+    out.extend_from_slice(DIVIDER);
+    out
+}
+
+/// Undoes what `earlier` may have left on: it cancels an escape sequence it ends inside, then resets colours, a hidden
+/// cursor, mouse reporting, application cursor keys and bracketed paste. It leaves the alternate screen only if
+/// `earlier` was still on it (a full-screen program was running), the way that program entered it: leaving one that
+/// isn't on would still restore the saved cursor (`?1049l`), often the top of the screen, and write over the earlier
+/// output from there.
+fn reset(earlier: &[u8]) -> Vec<u8> {
+    let mut out = b"\x18\x1b[0m\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1l\x1b[?2004l".to_vec();
+    if let Some(mode) = alternate_screen(earlier) {
+        out.extend_from_slice(format!("\x1b[?{mode}l").as_bytes());
+    }
+    out
+}
+
+/// The mode (`1049`, `1047` or `47`) `bytes` last switched to the alternate screen with, if it didn't switch back.
+fn alternate_screen(bytes: &[u8]) -> Option<&'static str> {
+    let mut last: Option<(usize, &'static str, bool)> = None;
+    for mode in ["1049", "1047", "47"] {
+        for on in [true, false] {
+            let seq = format!("\x1b[?{mode}{}", if on { 'h' } else { 'l' });
+            if let Some(at) = bytes.windows(seq.len()).rposition(|w| w == seq.as_bytes())
+                && last.is_none_or(|(l, ..)| at > l)
+            {
+                last = Some((at, mode, on));
+            }
+        }
+    }
+    last.filter(|&(_, _, on)| on).map(|(_, mode, _)| mode)
+}
 
 fn rotated(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
@@ -92,7 +127,23 @@ fn open_append(path: &Path) -> std::io::Result<File> {
 
 #[cfg(test)]
 mod tests {
-    use super::{OutputFile, last_output, rotated};
+    use super::{OutputFile, divider, last_output, rotated};
+
+    #[test]
+    fn the_divider_leaves_the_alternate_screen_only_when_it_is_on() {
+        let leaves = |earlier: &[u8]| {
+            let d = divider(earlier);
+            ["1049", "1047", "47"].into_iter().find(|m| {
+                let seq = format!("\x1b[?{m}l");
+                d.windows(seq.len()).any(|w| w == seq.as_bytes())
+            })
+        };
+        assert_eq!(leaves(b"$ clear\r\n\x1b[H\x1b[2Jline-1\r\n$ "), None, "a shell: the cursor stays put");
+        assert_eq!(leaves(b"$ vim\r\n\x1b[?1049h\x1b[Hediting"), Some("1049"), "vim was still open");
+        assert_eq!(leaves(b"\x1b[?1049hvim\x1b[?1049l$ "), None, "vim had closed");
+        assert_eq!(leaves(b"\x1b[?1049l\x1b[?47h"), Some("47"));
+        assert!(divider(b"").ends_with("earlier output above \u{2500}\u{2500}\x1b[0m\r\n".as_bytes()));
+    }
 
     #[test]
     fn nothing_kept_is_empty() {
