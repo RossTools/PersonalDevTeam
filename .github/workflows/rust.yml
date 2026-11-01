@@ -88,7 +88,9 @@ jobs:
       - name: Set a stand-in version
         if: inputs.os == 'linux' && inputs.release != 'true'
         run: scripts/version.sh set 9.9.9
-      - run: cargo nextest archive --profile ci --archive-file "$ARCHIVE"
+      # `--timings`: cargo's report of what compiled when (the critical path), kept as an artifact to see what to speed
+      # up next.
+      - run: cargo nextest archive --profile ci --archive-file "$ARCHIVE" --timings
       - if: ${{ !inputs.warm }}
         uses: actions/upload-artifact@v7
         with:
@@ -97,6 +99,13 @@ jobs:
           retention-days: 1
           # zstd already.
           compression-level: 0
+      - if: ${{ !inputs.warm && !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: cargo-timings-${{ inputs.os }}
+          path: target/cargo-timings/cargo-timing.html
+          retention-days: 7
+          if-no-files-found: ignore
 
   # pdtd with no integration built in (the archive has them all; PDT-173). Its own job: the build without the
   # features recompiles pdt-api and pdtd, which took 2.5 min after the archive.
