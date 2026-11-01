@@ -26,8 +26,11 @@ permissions:
   contents: read
 
 env:
-  # CI never debugs its builds: no debug info makes compiling, linking and the cache much smaller and faster.
+  # CI never debugs its builds: no debug info (none left from std either) and no incremental state make compiling,
+  # linking and the cache much smaller and faster. rust.yml and cache.yml set the same (the cache keys include them).
   CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_DEV_STRIP: debuginfo
+  CARGO_INCREMENTAL: "0"
 
 # What a pull request, and its run in the merge queue, waits for (docs/SDLC.md "CI"):
 # - nothing but `changes` and `site` when it only touches docs and the website (`docs/**`, `site/**` or any `*.md`,
@@ -69,6 +72,7 @@ jobs:
       bundle: ${{ steps.pick.outputs.bundle }}
       release: ${{ steps.pick.outputs.release }}
       site: ${{ steps.pick.outputs.site }}
+      web: ${{ steps.pick.outputs.web }}
     steps:
       - id: pick
         env:
@@ -87,8 +91,10 @@ jobs:
           if [ "$EVENT" = pull_request ] && [ "$RELEASE_PR" = true ]; then release=true; fi
           # The website builds when it or the docs it reads change; with every check (a dispatch, an unreadable diff).
           site=true
-          out() { echo "code=$1 linux=$2 macos=$3 windows=$4 bundle=$5 release=$release site=$site"
-            { echo "code=$1"; echo "linux=$2"; echo "macos=$3"; echo "windows=$4"; echo "bundle=$5"; echo "release=$release"; echo "site=$site"; } >> "$GITHUB_OUTPUT"; exit 0; }
+          # The web checks, unless a PR changes nothing they read (below).
+          web=true
+          out() { echo "code=$1 linux=$2 macos=$3 windows=$4 bundle=$5 release=$release site=$site web=$web"
+            { echo "code=$1"; echo "linux=$2"; echo "macos=$3"; echo "windows=$4"; echo "bundle=$5"; echo "release=$release"; echo "site=$site"; echo "web=$web"; } >> "$GITHUB_OUTPUT"; exit 0; }
           all() { out true true true true true; }
           case "$EVENT" in
             pull_request)
@@ -112,19 +118,30 @@ jobs:
           if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qE '^(site|docs)/|^pnpm-(lock|workspace)\.yaml$|^\.github/workflows/(ci|pages)\.yml$'; then
             site=false
           fi
-          # Docs only: every changed file is under docs/ or site/ or a Markdown file, and none is a guide pdtd builds
-          # in with include_str! (crates/pdt-api/src/guides.rs; its tests check them). An empty list (the diff could
-          # not be read) counts as code, so CI never skips by accident.
+          # Files under docs/ and site/ that Rust builds in with include_str! and its tests check: the guides pdtd
+          # serves (crates/pdt-api/src/guides.rs) and the install scripts.
+          builtin='^docs/(agent-guide\.md|run-config\.md|prompts/|user/automation/run-configuration\.md)|^site/public/install\.(sh|ps1)$'
+          # Docs only: every changed file is under docs/ or site/ or a Markdown file, and none is built in. An empty
+          # list (the diff could not be read) counts as code, so CI never skips by accident.
           code=true
           if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^(docs|site)/|\.md$' \
-            && ! printf '%s\n' "$files" | grep -qE '^docs/(agent-guide\.md|run-config\.md|prompts/|user/automation/run-configuration\.md)'; then code=false; fi
+            && ! printf '%s\n' "$files" | grep -qE "$builtin"; then code=false; fi
+          # Per job on a PR: a change only to web/ (and docs) skips the Rust jobs, and one that touches neither web/,
+          # the Node workspace nor CI skips the web jobs. The queue runs both: a few Rust tests read web/ (the brand
+          # check), and it is the last check before main.
+          rust=$code; web=$code
+          if [ "$EVENT" = pull_request ] && [ "$code" = true ] && [ -n "$files" ]; then
+            printf '%s\n' "$files" | grep -qE '^web/|^package\.json$|^pnpm-(lock|workspace)\.yaml$|^\.github/|^scripts/check\.sh$' || web=false
+            if ! printf '%s\n' "$files" | grep -vE '^web/|^(docs|site)/|\.md$' | grep -q . \
+              && ! printf '%s\n' "$files" | grep -qE "$builtin"; then rust=false; fi
+          fi
           windows=false
-          if has windows || { [ "$code" = true ] && printf '%s\n' "$files" | grep -qiE '(^|/)windows/|\.ps1$|\.cmd$|^\.github/'; }; then windows=true; fi
+          if has windows || { [ "$rust" = true ] && printf '%s\n' "$files" | grep -qiE '(^|/)windows/|\.ps1$|\.cmd$|^\.github/'; }; then windows=true; fi
           # macOS: always in the queue; on a PR only with the label or a change to CI itself.
           macos=false
-          if has macos || { [ "$code" = true ] && { [ "$EVENT" = merge_group ] || printf '%s\n' "$files" | grep -qE '^\.github/'; }; }; then macos=true; fi
+          if has macos || { [ "$rust" = true ] && { [ "$EVENT" = merge_group ] || printf '%s\n' "$files" | grep -qE '^\.github/'; }; }; then macos=true; fi
           # Bundles run for the release PR only, never in the queue (the tag builds its own; a dispatch builds them).
-          out "$code" "$code" "$macos" "$windows" "$release"
+          out "$code" "$rust" "$macos" "$windows" "$release"
 
   # A pull request adds a changelog fragment, or carries the `no-changelog` label (docs/SDLC.md "Changelog").
   # Docs-only PRs, the merge queue and main skip it (the queue runs main plus a PR that already passed it).
@@ -184,11 +201,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm
       - run: pnpm install --frozen-lockfile --filter site...
       # The one-line install scripts the site serves (site/public/; the runner image has shellcheck and pwsh).
       - run: shellcheck site/public/install.sh
@@ -242,29 +255,50 @@ jobs:
           RESULT: ${{ needs.rust-linux.result }}
         run: echo "changes $CHANGES, rust (linux) $RESULT"; [ "$CHANGES" = success ] && [ "$RESULT" = success ]
 
-  web-linux:
-    name: web (linux)
+  # The web checks: typecheck and build in one job, vitest split into shards beside it (on GitHub's 4-CPU runners the
+  # whole suite takes ~8 min). `web (linux)` reports them under the required check's name.
+  web-build:
+    name: web (typecheck, build)
     needs: changes
-    if: needs.changes.outputs.linux == 'true'
+    if: needs.changes.outputs.web == 'true'
     runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: ${{ !startsWith(runner.name, 'nsc-runner') && 'pnpm' || '' }}
-      - name: Cache volume (Namespace)
-        if: startsWith(runner.name, 'nsc-runner')
-        uses: namespacelabs/nscloud-cache-action@v1
-        with:
-          cache: pnpm
+      - uses: ./.github/actions/pnpm
       - run: pnpm install --frozen-lockfile
-      # typecheck, vitest, build: the web group developers run before pushing.
-      - run: scripts/check.sh --only web
+      - run: pnpm --dir web typecheck
+      - run: pnpm --dir web build
 
-  # macOS: clippy (and the desktop crate's), the Rust tests in partitions, the desktop crate's tests (rust.yml).
+  web-test:
+    name: web (vitest ${{ matrix.shard }})
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(vars.PDT_WEB_SHARDS || '[1,2,3,4]') }}
+    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir web exec vitest run --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+
+  web-linux:
+    name: web (linux)
+    needs: [changes, web-build, web-test]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          BUILD: ${{ needs.web-build.result }}
+          TEST: ${{ needs.web-test.result }}
+        run: echo "changes $CHANGES, build $BUILD, vitest $TEST"; [ "$CHANGES" = success ] && [ "$BUILD" = success ] && [ "$TEST" = success ]
+
+  # macOS: clippy and the desktop crate's clippy and tests beside the Rust tests in partitions (rust.yml).
   rust-macos:
     name: rust (macos)
     needs: changes
@@ -298,7 +332,7 @@ jobs:
     with:
       os: windows
       runner: ${{ vars.PDT_WINDOWS_RUNNER || 'windows-latest' }}
-      partitions: ${{ vars.PDT_WINDOWS_PARTITIONS || '[1,2,3]' }}
+      partitions: ${{ vars.PDT_WINDOWS_PARTITIONS || '[1,2,3,4]' }}
 
   build-windows:
     name: build (windows-latest)

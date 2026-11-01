@@ -52,7 +52,7 @@ it as above, or start a dev instance by hand.
 scripts/check.sh               # everything: changelog and version, the docs check and website, lint, web, cargo test
 scripts/check.sh --docs        # a docs-only change: the changelog, the docs check, the website's tests and build
 scripts/check.sh --no-rust     # skip fmt, clippy and cargo test; --no-web and --no-site skip those groups
-scripts/check.sh --only lint   # just some groups (changelog, site, lint, web, test); CI's lint and web jobs do this
+scripts/check.sh --only lint   # just some groups (changelog, site, lint, web, test); CI's lint job does this
 ```
 
 - `cargo test` regenerates `web/src/api/gen` and the website's plugin list (`site/src/data`): commit them, or the
@@ -104,11 +104,11 @@ names another (below, "Runners").
 
 | Check | Does | Pull requests | Merge queue |
 |---|---|---|---|
-| lint (linux) | version sync, fmt, clippy (pdtd also without integration features) | unless docs only | unless docs only |
-| test (linux) | nextest at the stand-in version 9.9.9 (pdtd also without integration features); generated files are committed | unless docs only | unless docs only |
-| web (linux) | web typecheck, vitest, build | unless docs only | unless docs only |
+| lint (linux) | version sync, fmt, clippy (pdtd also without integration features) | a Rust change | unless docs only |
+| test (linux) | nextest at the stand-in version 9.9.9 (pdtd also without integration features); generated files are committed | a Rust change | unless docs only |
+| web (linux) | web typecheck and build; vitest in 4 shards (`PDT_WEB_SHARDS`) | a web change | unless docs only |
 | build (macos-latest) | clippy, nextest, desktop crate clippy and test | `macos` label, or a `.github/` change | unless docs only |
-| build (windows-latest) | clippy, nextest | `windows` label, or a change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | same |
+| build (windows-latest) | clippy, nextest | `windows` label, or a Rust change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | same |
 | site | the install scripts' lint, the website's tests (the docs check included) and build | a change to `site/`, `docs/`, the pnpm lockfile or workspace, `ci.yml` or `pages.yml` | same |
 | changelog | a fragment or the `no-changelog` label; the scripts' tests | unless docs only | skipped |
 | bundle (…) | the macOS app, the Windows installer, the Linux tarball and AppImage, as workflow artifacts (GitHub's runners always: signing) | the release PR only | never |
@@ -116,7 +116,12 @@ names another (below, "Runners").
 - **Docs-only PRs** (every changed file under `docs/` or `site/`, or a `*.md`) run only `changes` and `site`. The
   guides pdtd builds in with `include_str!` (`docs/agent-guide.md`, `docs/run-config.md`, `docs/prompts/`,
   `docs/user/automation/run-configuration.md`; `crates/pdt-api/src/guides.rs`) count as code, since Rust tests check
-  them. If other code starts reading a Markdown file, add it to that rule in the `changes` job.
+  them, and so do the install scripts in `site/public`. If other code starts reading a file there, add it to
+  `builtin` in the `changes` job.
+- **Per job on a PR**: a *Rust change* is any code change outside `web/`; a *web change* touches `web/`,
+  `package.json`, the pnpm lockfile or workspace, `scripts/check.sh` or `.github/`. A PR that changes only `web/`
+  skips the Rust jobs, and one that leaves those alone skips the web jobs. The merge queue runs both whatever
+  changed (a few Rust tests read `web/`, such as the brand check).
 - **Tests never depend on the checked-in version**: `test (linux)` sets it to 9.9.9 in its own checkout, so a test
   that hard-codes `0.x.y` fails on its own PR. Compare with `pdt_core::BUILD_VERSION` or `env!("CARGO_PKG_VERSION")`.
 - **Main runs no checks**: `ci.yml` has no `push` trigger (the queue has just checked that tree). On main,
@@ -139,28 +144,39 @@ names another (below, "Runners").
 For each OS, `rust.yml` runs:
 
 - **build**: compiles every test binary once into a nextest archive (`cargo nextest archive`), uploaded as an artifact
-  for a day; it also runs what the partitions don't (pdtd without its integration features on Linux, the desktop
-  crate's tests on macOS).
+  for a day.
+- **minimal** (Linux): pdtd's tests without its integration features, a build of its own beside the others.
 - **test (1…N)**: each downloads the archive, extracts it into its checkout (so `target/` is where the build had it
   and `env!("CARGO_BIN_EXE_…")` paths hold) and runs one slice of the tests (`--partition slice:i/N`). They need no
   Rust toolchain. On Linux each checks the generated files its tests wrote.
-- **clippy** (macOS and Windows; Linux lints in `lint (linux)`): beside the build, so it adds no wall time. Windows
-  keeps full clippy: its `cfg(windows)` code is in most crates, and a separate job costs no waiting.
+- **clippy** (macOS and Windows; Linux lints in `lint (linux)`): beside the build, so it adds no wall time; on macOS
+  also the desktop crate's clippy and tests. Windows keeps full clippy: its `cfg(windows)` code is in most crates,
+  and a separate job costs no waiting.
 
-N is 3 on Linux and Windows and 2 on macOS; the repo variables `PDT_LINUX_PARTITIONS`, `PDT_MACOS_PARTITIONS` and
-`PDT_WINDOWS_PARTITIONS` change it, as a JSON list (`gh variable set PDT_WINDOWS_PARTITIONS --body '[1,2,3,4]'`).
+N is 3 on Linux, 4 on Windows and 2 on macOS; the repo variables `PDT_LINUX_PARTITIONS`, `PDT_MACOS_PARTITIONS` and
+`PDT_WINDOWS_PARTITIONS` change it, as a JSON list (`gh variable set PDT_WINDOWS_PARTITIONS --body '[1,2,3,4,5]'`).
+
+The builds are lean: no debug info (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_DEV_STRIP=debuginfo`), no
+incremental state (`CARGO_INCREMENTAL=0`), and Windows links with `rust-lld` instead of MSVC's `link.exe`. Linux
+already links with Rust's bundled lld.
 
 ### Caching
 
+- **Only main saves caches; every other run only restores.** PRs and queue runs can read only their own branch's
+  caches and main's, so a save anywhere else would be read by no one and fill the repo's 10 GB.
 - On GitHub's runners `setup` restores `Swatinem/rust-cache`, one cache per OS and build (`linux-lint`,
-  `linux-build`, `macos-clippy`, `macos-build`, `windows-clippy`, `windows-build`). Each holds the cargo registry and
+  `linux-build`, `linux-minimal`, `macos-clippy`, `macos-build`, `windows-clippy`, `windows-build`). Each holds the cargo registry and
   the dependencies' build output (no debug info, not the workspace's crates), keyed on `Cargo.lock`, the manifests,
   the toolchain and the OS. When the key misses it restores the newest cache for the same OS and build, and rebuilds
   only what changed.
-- PRs and the queue can read only their own branch's caches and main's, so only main saves: `cache.yml` runs the same
-  builds on main when `Cargo.lock`, a `Cargo.toml`, the toolchain or the CI files change, weekly (GitHub drops caches
-  unused for 7 days), and by hand (Actions → cache → Run workflow; run it once after changing the caching). It then
-  deletes the caches the new ones replace, keeping the repo inside GitHub's 10 GB.
+- The pnpm store (`.github/actions/pnpm`, used by every job that needs Node) is cached per OS, keyed on
+  `pnpm-lock.yaml`, saved on main only.
+- `cache.yml` saves them: it runs the same builds on main when `Cargo.lock`, a `Cargo.toml`, `pnpm-lock.yaml`, the
+  toolchain or the CI files change, weekly (GitHub drops caches unused for 7 days), and by hand (Actions → cache →
+  Run workflow). Then `.github/scripts/prune-caches.sh` keeps only main's newest cache of each kind and deletes the
+  rest. Run it with `--dry-run` to see what it would delete.
+- sccache isn't used: rust-cache with keys per OS and build already restores every dependency. Only the workspace's
+  own crates compile on each run, and a shared compiler cache would need storage outside GitHub's 10 GB.
 - Namespace runners keep their cache volume instead (`target/`, the cargo registry, the pnpm store, saved when a job
   exits cleanly); `cache.yml` skips an OS whose runner variable names a Namespace profile.
 - Windows: `setup` excludes the checkout, the temp folders and the cargo and rustup homes from Defender's scanning,

@@ -54,20 +54,13 @@ runs:
         if [ ! -x /bin/zsh ]; then sudo apt-get update -qq && sudo apt-get install -y -qq zsh >/dev/null; fi
         [ -e ~/.zshrc ] || touch ~/.zshrc
         [ -e ~/.zshenv ] || echo skip_global_compinit=1 > ~/.zshenv
-    - uses: pnpm/action-setup@v6
+    - uses: ./.github/actions/pnpm
       if: inputs.pnpm == 'true'
-    - uses: actions/setup-node@v7
-      if: inputs.pnpm == 'true'
-      with:
-        node-version: 24
-        cache: ${{ !startsWith(runner.name, 'nsc-runner') && 'pnpm' || '' }}
     - name: Cache volume (Namespace)
-      if: startsWith(runner.name, 'nsc-runner') && (inputs.rust == 'true' || inputs.pnpm == 'true')
+      if: startsWith(runner.name, 'nsc-runner') && inputs.rust == 'true'
       uses: namespacelabs/nscloud-cache-action@v1
       with:
-        cache: |
-          ${{ inputs.rust == 'true' && 'rust' || '' }}
-          ${{ inputs.pnpm == 'true' && 'pnpm' || '' }}
+        cache: rust
     - name: Rust cache (GitHub)
       if: ${{ inputs.rust == 'true' && !startsWith(runner.name, 'nsc-runner') }}
       uses: Swatinem/rust-cache@v2
@@ -76,8 +69,8 @@ runs:
         # build output only (not the workspace's crates) and the cargo registry, under a key from Cargo.lock, the
         # manifests and the toolchain; when those change it restores the newest older one and rebuilds the rest.
         shared-key: ${{ inputs.cache-key }}
-        # Only main saves (cache.yml, when the dependencies change): PRs and the queue restore it. PR runs skip
-        # uploading ~1 GB, and the repo stays inside GitHub's 10 GB cache limit.
+        # Only main saves (cache.yml): PRs and the queue restore it. Caches are per branch, and PRs and queue runs can
+        # read only their own and main's, so a save anywhere else would be read by nobody and fill the 10 GB.
         save-if: ${{ github.ref == 'refs/heads/main' }}
     - uses: taiki-e/install-action@v2
       if: inputs.nextest == 'true'

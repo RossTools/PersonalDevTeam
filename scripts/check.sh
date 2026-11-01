@@ -5,7 +5,7 @@
 #   scripts/check.sh --docs        a docs-only change: site (the docs check, the website's tests and build), changelog
 #   scripts/check.sh --no-rust     skip lint and test (the Rust checks)
 #   scripts/check.sh --no-web      skip web;  --no-site skips site
-#   scripts/check.sh --only <group>[,<group>...]   just those groups (CI's lint and web jobs run theirs this way)
+#   scripts/check.sh --only <group>[,<group>...]   just those groups (CI's lint job runs its group this way)
 #
 # Groups, in the order they run (cheap ones first, so a slip fails fast):
 #   changelog  the changelog fragments and version (scripts/changelog.sh check, scripts/version.sh check) and the

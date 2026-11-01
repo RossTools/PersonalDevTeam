@@ -3,10 +3,10 @@ name: rust
 # parallel partitions. ci.yml's aggregate jobs (`test (linux)`, `build (macos-latest)`, `build (windows-latest)`) carry
 # the required check names; these jobs' names are not required checks (docs/SDLC.md "CI").
 #
-# - clippy (macOS, Windows): clippy for their `cfg` code, beside the build so it adds no wall time. Linux lints in
-#   ci.yml's `lint (linux)`.
-# - build: compiles every test binary once into a nextest archive (an artifact for the partitions), and runs what
-#   the partitions don't: pdtd without its integrations (Linux), the desktop crate (macOS).
+# - clippy (macOS, Windows): clippy for their `cfg` code, and on macOS the desktop crate's clippy and tests, beside
+#   the build so it adds no wall time. Linux lints in ci.yml's `lint (linux)`.
+# - build: compiles every test binary once into a nextest archive, an artifact for the partitions.
+# - minimal (Linux): pdtd's tests without its integrations, a build of its own beside the others.
 # - test: the archive's tests, split into `partitions` jobs (`--partition slice:i/N`). They need no Rust toolchain.
 on:
   workflow_call:
@@ -40,9 +40,13 @@ defaults:
     shell: bash
 
 env:
-  # CI never debugs its builds: no debug info makes compiling, linking and the cache much smaller and faster. The
-  # caches' keys include it, so ci.yml and cache.yml must agree.
+  # CI never debugs its builds: no debug info (and none left from std), no incremental state. Compiling, linking, the
+  # archive and the cache are smaller and faster. The caches' keys include these, so ci.yml and cache.yml agree.
   CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_DEV_STRIP: debuginfo
+  CARGO_INCREMENTAL: "0"
+  # Windows links with LLVM's lld (shipped with Rust) rather than MSVC's link.exe, which is much slower.
+  CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld
   ARCHIVE: nextest-${{ inputs.os }}.tar.zst
 
 jobs:
@@ -62,6 +66,9 @@ jobs:
         run: pnpm install --frozen-lockfile && pnpm --dir web build
       - if: inputs.os == 'macos'
         run: cargo clippy -p pdt-desktop --all-targets -- -D warnings
+      # Here rather than in build, so the partitions don't wait for it.
+      - if: inputs.os == 'macos'
+        run: cargo test -p pdt-desktop
       - if: inputs.os == 'windows' && !inputs.warm
         run: pwsh -NoProfile -File scripts/scratch-daemon.test.ps1
 
@@ -75,7 +82,6 @@ jobs:
           cache-key: ${{ inputs.os }}-build
           nextest: "true"
           zsh: ${{ inputs.os == 'linux' }}
-          pnpm: ${{ inputs.os == 'macos' }}
       # Linux tests at a version no release has (PDT-216): a test that hard-codes the checked-in version fails on its
       # own PR, not first on the release PR that bumps it. The release PR tests its real version; macOS and Windows
       # always test the checked-in one. The partitions set it too, so the files match the binaries.
@@ -91,13 +97,27 @@ jobs:
           retention-days: 1
           # zstd already.
           compression-level: 0
-      # pdtd with no integration built in (the archive has them all; PDT-173). Small: only pdtd rebuilds.
-      - if: inputs.os == 'linux'
+
+  # pdtd with no integration built in (the archive has them all; PDT-173). Its own job: the build without the
+  # features recompiles pdt-api and pdtd, which took 2.5 min after the archive.
+  minimal:
+    if: inputs.os == 'linux'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: ${{ inputs.os }}-minimal
+          nextest: "true"
+          zsh: "true"
+      - name: Set a stand-in version
+        if: inputs.release != 'true'
+        run: scripts/version.sh set 9.9.9
+      - if: ${{ !inputs.warm }}
         run: cargo nextest run --profile ci -p pdtd --no-default-features
-      - if: inputs.os == 'macos'
-        run: pnpm install --frozen-lockfile && pnpm --dir web build
-      - if: inputs.os == 'macos'
-        run: cargo test -p pdt-desktop
+      - if: inputs.warm
+        run: cargo nextest archive --profile ci -p pdtd --no-default-features --archive-file "$RUNNER_TEMP/minimal.tar.zst"
 
   test:
     name: test (${{ matrix.partition }})
