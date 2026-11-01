@@ -173,6 +173,53 @@ pub async fn recorded_launches(dir: &std::path::Path, name: &str, want: usize) -
     found
 }
 
+/// A raw Windows command line (a [`recorded_launches`] line on Windows) split into its arguments, by the rules
+/// programs built with MSVC parse it with (and portable-pty quotes it by): `\\"` is a quote, `"` starts or ends a
+/// quoted part, backslashes elsewhere are plain.
+pub fn windows_args(line: &str) -> Vec<String> {
+    let mut out = vec![];
+    let (mut arg, mut started, mut quoted, mut slashes) = (String::new(), false, false, 0usize);
+    for c in line.chars() {
+        match c {
+            '\\' => slashes += 1,
+            '"' => {
+                arg.extend(std::iter::repeat_n('\\', slashes / 2));
+                if slashes % 2 == 1 {
+                    arg.push('"');
+                } else {
+                    quoted = !quoted;
+                }
+                (slashes, started) = (0, true);
+            }
+            _ => {
+                arg.extend(std::iter::repeat_n('\\', slashes));
+                started |= slashes > 0;
+                slashes = 0;
+                if (c == ' ' || c == '\t') && !quoted {
+                    if started {
+                        out.push(std::mem::take(&mut arg));
+                    }
+                    started = false;
+                } else {
+                    arg.push(c);
+                    started = true;
+                }
+            }
+        }
+    }
+    arg.extend(std::iter::repeat_n('\\', slashes));
+    if started || slashes > 0 {
+        out.push(arg);
+    }
+    out
+}
+
+#[test]
+fn windows_command_lines_split_into_their_arguments() {
+    let line = r#"--a "b c" "" \ x\y "k={v = [\"N\"]}" "d\\" e\\\"f"#;
+    assert_eq!(windows_args(line), ["--a", "b c", "", r"\", r"x\y", r#"k={v = ["N"]}"#, r"d\", r#"e\"f"#]);
+}
+
 /// Parks the test's idle conversation, retrying for up to 10 s: a turn's end is stored before the conversation's
 /// runtime state says the turn is over, so a test that saw the stored end can call park a moment too early.
 pub async fn park_once_idle(st: &pdt_api::AppState) {
