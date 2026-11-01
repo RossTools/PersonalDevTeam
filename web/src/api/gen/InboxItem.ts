@@ -26,6 +26,7 @@ title: string,
 /**
  * Kind-specific: `questions` (question), `question`/`choices` (gate), `outcomes`, `summary`, `turns`
  * (stalled), `passes` (loop limit), `request` (approval), `notice`/`key`/`text`/`pr`/`url` (notice),
- * `summary`/`issue`/`external` (admit), `tool`/`toolTitle`/`input`/`agent`/`sessionTitle` (confirm).
+ * `summary`/`issue`/`external` (admit), `tool`/`toolTitle`/`input`/`agent`/`sessionTitle` (confirm),
+ * `description`/`priority`/`labels`/`reason`/`persona`/`fromTicket`/`fromTicketId` (ticket proposal).
  */
 body: Record<string, unknown>, choices: Array<InboxChoice>, resolution: unknown, createdAt: number, resolvedAt: number | null, };

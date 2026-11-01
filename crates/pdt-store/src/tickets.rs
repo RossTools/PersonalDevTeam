@@ -173,6 +173,12 @@ const PRIORITY_WEIGHT: &str = "(CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high'
 /// How many open tickets block `t`.
 const BLOCKED_BY: &str = "(SELECT COUNT(*) FROM ticket_links l JOIN tickets b ON b.id = l.from_id \
                           WHERE l.to_id = t.id AND l.kind = 'blocks' AND b.stage NOT IN ('done', 'wont_do'))";
+/// Whether `t` is a ticket proposal waiting for the user (PDT-366): held from its making until it leaves Draft.
+const PROPOSED: &str = "(t.proposed_at IS NOT NULL)";
+/// Whether `t` waits in the Inbox as a proposal (PDT-366): lists leave it out. A held ticket the workflow never put in
+/// the Inbox (it was off, its conditions didn't match, its run failed) stays listed, in Draft, for the user to decide.
+const IN_INBOX: &str = "EXISTS (SELECT 1 FROM inbox_items i WHERE i.ticket_id = t.id AND i.kind = 'ticket_proposal' \
+                        AND i.status = 'open')";
 const FROM: &str =
     " FROM tickets t JOIN projects p ON p.id = t.project_id LEFT JOIN tickets par ON par.id = t.parent_id";
 
@@ -180,7 +186,7 @@ fn summary_select() -> String {
     format!(
         "SELECT t.id, t.project_id, COALESCE(p.key, '') AS pkey, t.number, t.title, t.stage, t.priority, t.rank, \
          t.waiting, t.created_at, t.updated_at, t.closed_at, {BLOCKED_BY} AS blocked_by, {PRIORITY_WEIGHT} AS pw, \
-         t.parent_id, par.number AS parent_number, par.title AS parent_title, t.pipeline_stage, t.source, t.admitted_at, t.created_by{FROM}"
+         t.parent_id, par.number AS parent_number, par.title AS parent_title, t.pipeline_stage, t.source, t.admitted_at, t.created_by, {PROPOSED} AS proposed{FROM}"
     )
 }
 
@@ -236,6 +242,7 @@ fn to_summary(r: &SqliteRow) -> Result<TicketSummary, StoreError> {
         },
         admitted: r.try_get::<Option<i64>, _>("admitted_at")?.is_some(),
         created_by: r.try_get::<Option<String>, _>("created_by")?.and_then(|j| serde_json::from_str(&j).ok()),
+        proposed: r.try_get::<i64, _>("proposed")? != 0,
     })
 }
 
@@ -389,6 +396,8 @@ fn push_filters(qb: &mut QueryBuilder<Sqlite>, f: &TicketFilter) {
         }
         None => {}
     }
+    // Proposals wait in the Inbox, off the board and lists, until the user decides (PDT-366).
+    qb.push(format!(" AND {}{IN_INBOX}", if f.proposed { "" } else { "NOT " }));
     if let Some(after) = f.closed_after {
         qb.push(" AND (t.closed_at IS NULL OR t.closed_at >= ").push_bind(after).push(")");
     }
@@ -722,7 +731,12 @@ async fn change_stage_by(
     .execute(&mut *conn)
     .await?;
     if !matches!(to, TicketStage::Draft | TicketStage::Ready) {
-        close_admit_items(conn, id, json!({"moved": to}), now).await?;
+        close_admit_items(conn, id, "admit", json!({"moved": to}), now).await?;
+    }
+    if to != TicketStage::Draft {
+        // Decided: no longer held (PDT-366).
+        sqlx::query("UPDATE tickets SET proposed_at = NULL WHERE id = ?").bind(id).execute(&mut *conn).await?;
+        close_admit_items(conn, id, "ticket_proposal", json!({"moved": to}), now).await?;
     }
     let mut data = json!({"from": from, "to": to});
     if let (Some(d), Some(serde_json::Value::Object(x))) = (data.as_object_mut(), extra) {
@@ -743,20 +757,23 @@ async fn change_stage_by(
     Ok(())
 }
 
-/// Closes a ticket's open "triaged ticket" Inbox items (PDT-225): it moved past Ready, so nothing is left to approve.
+/// Closes a ticket's open "triaged ticket" Inbox items (`admit`, PDT-225: it moved past Ready) or "ticket proposal"
+/// ones (`ticket_proposal`, PDT-366: it left Draft): nothing is left to decide.
 async fn close_admit_items(
     conn: &mut SqliteConnection,
     id: &str,
+    kind: &str,
     resolution: serde_json::Value,
     now: i64,
 ) -> Result<(), StoreError> {
     sqlx::query(
         "UPDATE inbox_items SET status = 'closed', resolution = ?, resolved_at = ? \
-         WHERE ticket_id = ? AND kind = 'admit' AND status = 'open'",
+         WHERE ticket_id = ? AND kind = ? AND status = 'open'",
     )
     .bind(resolution.to_string())
     .bind(now)
     .bind(id)
+    .bind(kind)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -768,8 +785,19 @@ async fn touch(conn: &mut SqliteConnection, id: &str, now: i64) -> Result<(), St
 }
 
 /// PDT-201's Todo gate on a change to `cur`: refused when it would put an external ticket the user hasn't let in in
-/// front of agents and `by` isn't the user (or a call they confirmed); when it may, the ticket is let in.
-async fn gate(conn: &mut SqliteConnection, cur: &TicketSummary, boards: bool, by: &By, now: i64) -> TResult<()> {
+/// front of agents and `by` isn't the user (or a call they confirmed); when it may, the ticket is let in. A ticket
+/// proposal (PDT-366) refuses an agent's move to an open stage (`to`) or its `agentic` label.
+async fn gate(
+    conn: &mut SqliteConnection,
+    cur: &TicketSummary,
+    boards: bool,
+    to: Option<TicketStage>,
+    by: &By,
+    now: i64,
+) -> TResult<()> {
+    let moves = to.is_some_and(|s| s != cur.stage && !s.is_closed());
+    pdt_core::ticket_proposal::agent_gate(cur.proposed, by.actor, boards || moves, &cur.key)
+        .map_err(TicketError::Untrusted)?;
     let admits = pdt_core::ticket::external_gate(cur.source, cur.admitted, boards, by, &cur.key)
         .map_err(TicketError::Untrusted)?;
     if admits {
@@ -817,11 +845,13 @@ async fn delete_rows(conn: &mut SqliteConnection, ids: &[String]) -> Result<(), 
             .fetch_optional(&mut *conn)
             .await?;
         workspaces.extend(ws.map(|(w,)| w));
-        // Nothing is left to approve (PDT-225).
-        sqlx::query("DELETE FROM inbox_items WHERE ticket_id = ? AND kind = 'admit' AND status = 'open'")
-            .bind(id)
-            .execute(&mut *conn)
-            .await?;
+        // Nothing is left to approve (PDT-225) or decide (PDT-366).
+        sqlx::query(
+            "DELETE FROM inbox_items WHERE ticket_id = ? AND kind IN ('admit', 'ticket_proposal') AND status = 'open'",
+        )
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
         sqlx::query("DELETE FROM tickets WHERE id = ?").bind(id).execute(&mut *conn).await?;
     }
     for w in workspaces {
@@ -893,6 +923,16 @@ async fn parted_events(
     Ok(())
 }
 
+/// How a ticket was made (PDT-366): with Make into parts and the agent's reason (both on its `created` event), and
+/// whether it is held as a proposal for the user from the start, so no agent can move it on before its Inbox item
+/// exists.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Made<'a> {
+    pub via_parts: bool,
+    pub reason: Option<&'a str>,
+    pub proposal: bool,
+}
+
 /// Inserts a ticket with the project's next number (see `Store::create_ticket`). A part (`t.parent`) is checked
 /// against the parent rules, goes after the parent's last part (or right after the parent) unless `before`/`after`
 /// say otherwise, and with `blocked_by_previous` is blocked by that last part.
@@ -902,7 +942,7 @@ async fn insert_ticket(
     project_id: &str,
     t: &ValidNewTicket,
     by: &By,
-    via_parts: bool,
+    made: Made<'_>,
     now: i64,
 ) -> TResult<()> {
     let number: Option<(i64,)> = sqlx::query_as(
@@ -937,8 +977,8 @@ async fn insert_ticket(
         .then_some(now);
     sqlx::query(
         "INSERT INTO tickets (id, seq, project_id, number, title, description, stage, priority, rank, created_at, \
-         updated_at, closed_at, parent_id, source, admitted_at, created_by) \
-         VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM tickets), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         updated_at, closed_at, parent_id, source, admitted_at, created_by, proposed_at) \
+         VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM tickets), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(project_id)
@@ -955,6 +995,7 @@ async fn insert_ticket(
     .bind(t.source.as_str())
     .bind(admitted)
     .bind(by.agent.as_ref().and_then(|a| serde_json::to_string(a).ok()))
+    .bind((made.proposal && t.stage == TicketStage::Draft).then_some(now))
     .execute(&mut *conn)
     .await?;
     replace_set(conn, "ticket_labels", "label", id, &t.labels).await?;
@@ -971,8 +1012,11 @@ async fn insert_ticket(
         rebalance(conn, project_id).await?;
     }
     let mut data = json!({"stage": t.stage});
-    if via_parts {
+    if made.via_parts {
         data["viaParts"] = json!(true);
+    }
+    if let Some(r) = made.reason.map(str::trim).filter(|r| !r.is_empty()) {
+        data["reason"] = json!(r);
     }
     insert_event(conn, id, EventKind::Created, by, None, Some(data), now).await?;
     if let Some(parent) = &t.parent {
@@ -1062,7 +1106,7 @@ impl Store {
         if let Some((other,)) = existing {
             return Ok(Err(other));
         }
-        insert_ticket(&mut tx, id, project_id, t, &by.into(), false, now).await?;
+        insert_ticket(&mut tx, id, project_id, t, &by.into(), Made::default(), now).await?;
         sqlx::query(
             "INSERT INTO ticket_links_external (ticket_id, system, connection_id, key, url, created_at) \
              VALUES (?, ?, ?, ?, ?, ?)",
@@ -1181,8 +1225,21 @@ impl Store {
         by: impl Into<By>,
         now: i64,
     ) -> TResult<Ticket> {
+        self.create_ticket_made(id, project_id, t, by, Made::default(), now).await
+    }
+
+    /// [`Store::create_ticket_by`] with the agent's `reason` for it and whether it is held as a proposal (PDT-366).
+    pub async fn create_ticket_made(
+        &self,
+        id: &str,
+        project_id: &str,
+        t: &ValidNewTicket,
+        by: impl Into<By>,
+        made: Made<'_>,
+        now: i64,
+    ) -> TResult<Ticket> {
         let mut tx = self.write_tx().await?;
-        insert_ticket(&mut tx, id, project_id, t, &by.into(), false, now).await?;
+        insert_ticket(&mut tx, id, project_id, t, &by.into(), Made { via_parts: false, ..made }, now).await?;
         tx.commit().await?;
         self.get_ticket(id).await?.ok_or(TicketError::NotFound("ticket"))
     }
@@ -1223,7 +1280,7 @@ impl Store {
                 blocked_by_previous: v.blocked_by_previous,
                 source,
             };
-            insert_ticket(&mut tx, &id, &project_id, &t, &by, true, now).await?;
+            insert_ticket(&mut tx, &id, &project_id, &t, &by, Made { via_parts: true, ..Made::default() }, now).await?;
             ids.push(id);
         }
         tx.commit().await?;
@@ -1459,7 +1516,7 @@ impl Store {
         let mut tx = self.write_tx().await?;
         let Some(cur) = summary(&mut tx, id).await? else { return Ok(None) };
         let boards = pdt_core::ticket::boards(Some(cur.stage), p.stage, &cur.labels, p.labels.as_deref());
-        gate(&mut tx, &cur, boards, &by, now).await?;
+        gate(&mut tx, &cur, boards, p.stage, &by, now).await?;
         let (description,): (String,) =
             sqlx::query_as("SELECT description FROM tickets WHERE id = ?").bind(id).fetch_one(&mut *tx).await?;
         let mut fields: Vec<&str> = vec![];
@@ -1964,7 +2021,8 @@ impl Store {
         let by = by.into();
         let mut tx = self.write_tx().await?;
         let Some(cur) = summary(&mut tx, id).await? else { return Ok(None) };
-        gate(&mut tx, &cur, pdt_core::ticket::boards(Some(cur.stage), Some(stage), &[], None), &by, now).await?;
+        let boards = pdt_core::ticket::boards(Some(cur.stage), Some(stage), &[], None);
+        gate(&mut tx, &cur, boards, Some(stage), &by, now).await?;
         if stage != cur.stage {
             if stage.is_closed() {
                 let open = open_part_keys(&mut tx, id, &HashSet::new()).await?;
@@ -3922,6 +3980,85 @@ mod tests {
         let part = store.create_parts("u", &v, 4).await.unwrap().remove(0);
         let [e] = logged(&store, TICKET_CREATED, &part.id).await.try_into().unwrap();
         assert_eq!((e["actor"].as_str(), e["viaParts"].as_bool()), (Some("user"), Some(true)));
+    }
+
+    /// PDT-366: an agent's ticket proposal is held from its making (before any Inbox item exists) and off the lists
+    /// until it is decided; an agent can't move it on or label it agentic, the user can; leaving Draft releases it and
+    /// closes its item; its `created` event carries the agent's reason.
+    #[tokio::test]
+    async fn a_ticket_proposal_waits_off_the_lists() {
+        use pdt_core::inbox::{InboxGroup, InboxItem, InboxKind, InboxStatus};
+        use pdt_core::workflow::events::TICKET_CREATED;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        let proposal = |id: &str, ticket: &str| InboxItem {
+            id: id.into(),
+            kind: InboxKind::TicketProposal,
+            group: InboxGroup::TicketProposal,
+            status: InboxStatus::Open,
+            project_id: Some("p".into()),
+            ticket_id: Some(ticket.into()),
+            ticket_key: None,
+            ticket_title: None,
+            attempt_id: None,
+            session_id: None,
+            run_id: None,
+            step_id: None,
+            persona_id: None,
+            persona_name: None,
+            change_request: None,
+            title: "Follow-up".into(),
+            body: json!({}),
+            choices: vec![],
+            resolution: serde_json::Value::Null,
+            created_at: 1,
+            resolved_at: None,
+        };
+        let t = ValidNewTicket { source: TicketSource::Agent, ..new("Follow-up") };
+        let held = |reason| Made { reason, proposal: true, ..Made::default() };
+        store.create_ticket_made("a", "p", &t, coder_on("PX-9"), held(Some(" It flakes ")), 1).await.unwrap();
+        store.create_ticket_made("b", "p", &t, coder_on("PX-9"), held(None), 1).await.unwrap();
+        store.create_ticket_by("c", "p", &t, coder_on("PX-9"), 1).await.unwrap();
+        add(&store, "u", new("Mine")).await;
+        let [e] = logged(&store, TICKET_CREATED, "a").await.try_into().unwrap();
+        assert_eq!(e["reason"], "It flakes");
+        assert_eq!(logged(&store, TICKET_CREATED, "b").await[0]["reason"], json!(null));
+        // Held from the start, before the workflow puts its item in the Inbox.
+        assert!(store.get_ticket_summary("a").await.unwrap().unwrap().proposed);
+        assert!(!store.get_ticket_summary("c").await.unwrap().unwrap().proposed, "not held: proposals were off");
+        assert!(!store.get_ticket_summary("u").await.unwrap().unwrap().proposed);
+        // Listed until the workflow puts it in the Inbox: one it never does stays reachable.
+        assert_eq!(ids(&store, in_project()).await.len(), 4, "no item yet: still listed");
+        assert!(ids(&store, TicketQuery { proposed: Some(true), ..in_project() }).await.is_empty());
+
+        // At once, before any item: the agent can't move it on or label it agentic; it can edit it or withdraw it.
+        let agent = coder_on("PX-9");
+        let moved = store.move_ticket_by("a", TicketStage::Todo, &agent, None, 2).await;
+        assert!(matches!(moved, Err(TicketError::Untrusted(_))), "{moved:?}");
+        let label = ValidPatch { labels: Some(vec![pdt_core::ticket::AGENTIC_LABEL.into()]), ..Default::default() };
+        assert!(matches!(store.patch_ticket_by("a", &label, &agent, 2).await, Err(TicketError::Untrusted(_))));
+        let todo = ValidPatch { stage: Some(TicketStage::Todo), ..Default::default() };
+        assert!(matches!(store.patch_ticket_by("a", &todo, &agent, 2).await, Err(TicketError::Untrusted(_))));
+        let edit = ValidPatch { title: Some("Better".into()), ..Default::default() };
+        store.patch_ticket_by("a", &edit, &agent, 2).await.unwrap();
+        store.add_inbox_item_once(&proposal("ia", "a"), "ticket-proposal:a").await.unwrap();
+        store.add_inbox_item_once(&proposal("ib", "b"), "ticket-proposal:b").await.unwrap();
+        let mut listed = ids(&store, in_project()).await;
+        listed.sort();
+        assert_eq!(listed, ["c", "u"], "in the Inbox: off the board and lists");
+        let mut only = ids(&store, TicketQuery { proposed: Some(true), ..in_project() }).await;
+        only.sort();
+        assert_eq!(only, ["a", "b"]);
+        store.move_ticket_by("b", TicketStage::WontDo, &agent, None, 2).await.unwrap();
+        let b = store.get_inbox_item("ib").await.unwrap().unwrap();
+        assert_eq!((b.status, b.resolution), (InboxStatus::Closed, json!({"moved": "wont_do"})));
+        assert!(!store.get_ticket_summary("b").await.unwrap().unwrap().proposed);
+
+        // The user moving it out of Draft decides it: the item closes and it is listed again.
+        store.move_ticket_by("a", TicketStage::Ready, Actor::User, None, 3).await.unwrap();
+        assert_eq!(store.get_inbox_item("ia").await.unwrap().unwrap().status, InboxStatus::Closed);
+        assert!(!store.get_ticket_summary("a").await.unwrap().unwrap().proposed);
+        assert!(ids(&store, in_project()).await.contains(&"a".to_string()));
     }
 
     #[tokio::test]

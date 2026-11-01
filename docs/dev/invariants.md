@@ -53,6 +53,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   parts): without it the caller is an agent, the session its `x-agent-session` header names (persona, the ticket it
   works on), and the ticket's source is `agent` (`pm`, `external` for a PM or triage session). The web client sends
   the token when it creates tickets and parts; a new route that makes tickets uses `creator` too.
+- **Only the user decides a ticket proposal** (pdt-core `ticket_proposal.rs`): a held ticket is `proposed` from the
+  transaction that makes it (`tickets.proposed_at`), before its Inbox item exists. The store refuses an agent's move
+  of it out of Draft (closing it is allowed) or its `agentic` label; without the UI token, PATCH, bulk actions and
+  Start refuse the same (`untrusted::decides_proposal`), and auto-start never starts it; the Inbox answer needs the UI
+  token. Any move out of Draft releases it and closes the open `ticket_proposal` item; deleting the ticket removes it.
+  Lists hide a ticket only while that item is open, so a held ticket with no item is never out of the user's reach.
 - **Fresh Codex launches in one folder stay at least 5 s apart**, or PDT can't tell their conversations apart.
 
 ## Tabs, tickets and attempts

@@ -169,7 +169,7 @@ pub const EVENT_TYPES: &[EventType] = &[
         title: "Ticket created",
         description: "A ticket was made: by the user, the PM, an agent, a workflow or from outside input (`actor`). An \
                       agent's has its `persona`, `sessionId` and the ticket it was working on (`fromTicket`); parts \
-                      made with Make into parts have `viaParts`.",
+                      made with Make into parts have `viaParts`; an agent's `reason` says why it made it.",
         schema: schema_of::<TicketCreated>,
         outside: &[],
     },
@@ -674,6 +674,9 @@ pub struct TicketCreated {
     pub from_ticket_id: Option<String>,
     /// Made with Make into parts.
     pub via_parts: bool,
+    /// Why the agent made it (`create_ticket`'s `reason`; PDT-366).
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// Who changed a ticket, on the `ticket.*_changed` events (PDT-363).

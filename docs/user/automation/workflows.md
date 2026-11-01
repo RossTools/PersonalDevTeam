@@ -20,6 +20,7 @@ These come with PDT. You can turn them off, edit them or copy them, but not dele
 | **Ticket comments to the agent** | Sends your comments and the PM's on a ticket to the agent working on it, with where to find the files they attach. Other agents' comments stay on the ticket. | On |
 | **PR comments to the agent** | Sends other people's comments and reviews on the pull request to the agent. | Off |
 | **Base moved while a PR waits** | Tells the agent when the base branch moves while its pull request waits (**PR notices** covers this too). | Off |
+| **Ticket proposals** | Holds a ticket an agent files while it works (not the PM's, and not parts from **Make into parts**) in **Draft**, off the board, and puts it in your Inbox to accept, mark as a duplicate or reject. See [Ticket proposals](../using-pdt/the-inbox.md#to-act-on). Turn it off and agents' tickets go straight to the board. | On |
 | **PM daily checkpoint** | Brings the PM's open conversations up to date once a day and has each write a journal checkpoint. See [Change when it's brought up to date](the-pm.md#change-when-its-brought-up-to-date). | On |
 
 Plugins add their own while they're on: Jira, say, adds **Import assigned Jira issues** and **Done moves the Jira
@@ -208,7 +209,8 @@ request conflicts, left the merge queue or merged; a new GitHub issue or outside
 run. These ones react to changes to tickets:
 
 - **Ticket created**: says who made it (you, the PM, an agent, a workflow, or outside input). An agent's ticket names
-  its persona and the ticket it was working on. Parts made with **Make into parts** are marked as parts.
+  its persona, the ticket it was working on and the reason it gave. Parts made with **Make into parts** are marked as
+  parts.
 - **Ticket unblocked**: the last open ticket blocking it reached Done or Won't do, or its link was removed.
 - **Ticket labels changed**: the labels added and removed.
 - **Ticket priority changed**: the old priority and the new one.

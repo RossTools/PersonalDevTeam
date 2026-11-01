@@ -32,6 +32,9 @@ struct CreateTicket {
     /// this conversation (`pasted:2` the one before). Never secrets: dotfiles and key folders are refused.
     #[serde(default)]
     files: Vec<String>,
+    /// Why you're making it: what you found and why it matters. The user reads it when they decide on your proposal.
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -113,8 +116,10 @@ pub(super) fn defs() -> Vec<Tool> {
             decl: ToolDecl::new("create_ticket", "Create tickets").asks().pm(),
             title: "Create a ticket",
             description: "Adds a ticket to a project (a draft unless you give a stage), recorded as the PM's, with \
-                          `files` attached (an image the user pasted here is `pasted:1`). The user confirms each call \
-                          unless the project lets you act.",
+                          `files` attached (an image the user pasted here is `pasted:1`). Outside the PM, while the \
+                          Ticket proposals workflow is on, it is a proposal: it waits in Draft, off the board, for the \
+                          user's decision in the Inbox, so say why in `reason`. The user confirms each call unless the \
+                          project lets you act.",
             schema: schema::<CreateTicket>,
         },
         Tool {
@@ -196,13 +201,27 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 parent,
                 blocked_by_previous: None,
             };
-            let valid = pdt_core::ticket::ValidNewTicket { source, ..input.validate().map_err(|e| api(e.into()))? };
+            let mut valid = pdt_core::ticket::ValidNewTicket { source, ..input.validate().map_err(|e| api(e.into()))? };
+            // An agent's ticket waits for the user as a proposal (PDT-366).
+            let proposed = pdt_core::ticket_proposal::proposes(source, false)
+                && crate::workflow::nodes::ticket_proposal::proposals_on(st).await;
+            if proposed {
+                pdt_core::ticket_proposal::hold(&mut valid);
+            }
+            let reason = a.reason.as_deref().map(str::trim).filter(|r| !r.is_empty());
             let read = crate::ticket_attachments::read_files(st, cx.session, &a.files).await?;
             let id = uuid::Uuid::now_v7().to_string();
             let by_agent = agent_by(st, cx.session).await;
             let t = st
                 .store
-                .create_ticket_by(&id, &project, &valid, by_agent.clone(), now_ms())
+                .create_ticket_made(
+                    &id,
+                    &project,
+                    &valid,
+                    by_agent.clone(),
+                    pdt_store::Made { reason, proposal: proposed, ..Default::default() },
+                    now_ms(),
+                )
                 .await
                 .map_err(|e| api(e.into()))?;
             let attached = crate::ticket_attachments::attach_read(st, &id, read, &by_agent).await?;
@@ -211,12 +230,21 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 false => cx.session.persona.as_ref().map_or("an agent".into(), |p| format!("the {}", p.name)),
             };
             // `created` lets the session edit it later as its own (PDT-162).
-            record_agent_note(cx, &t.summary.id, &format!("Created by {by}."), json!({"created": true})).await;
+            let note = match reason {
+                Some(r) => format!("Created by {by}. Why: {r}"),
+                None => format!("Created by {by}."),
+            };
+            record_agent_note(cx, &t.summary.id, &note, json!({"created": true})).await;
             if triaging {
                 crate::untrusted::record_triage(st, cx.session, &t.summary.id).await;
             }
-            Ok(json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage,
-                      "attachments": crate::ticket_attachments::attached_json(st, &attached)}))
+            let mut out = json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage,
+                                 "attachments": crate::ticket_attachments::attached_json(st, &attached)});
+            if proposed {
+                out["proposal"] = json!(true);
+                out["note"] = json!(pdt_core::ticket_proposal::created_note(&t.summary.key));
+            }
+            Ok(out)
         }
         "edit_ticket" => {
             let raw = a.clone();

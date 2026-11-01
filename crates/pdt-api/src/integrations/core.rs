@@ -44,6 +44,7 @@ impl Integration for Core {
             Box::new(notify::Notify),
             Box::new(inbox_notice::InboxNotice),
             Box::new(inbox_admit::InboxAdmit),
+            Box::new(ticket_proposal::TicketProposal),
             Box::new(brief::Archive),
             Box::new(brief::Read),
             Box::new(pm::PmUpdate),

@@ -2,6 +2,7 @@ import type { InboxGroup } from '../api/gen/InboxGroup';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { InboxKind } from '../api/gen/InboxKind';
 import type { InboxSection } from '../api/gen/InboxSection';
+import type { Priority } from '../api/gen/Priority';
 import { routePath } from '../shell/route';
 
 /** Where each group is listed (PDT-361): a few sections, as the API sorts them. */
@@ -14,6 +15,7 @@ export const SECTION_OF: Record<InboxGroup, InboxSection> = {
   notice: 'act',
   admit: 'act',
   proposal: 'act',
+  ticket_proposal: 'act',
   gate: 'accept',
   accept: 'accept',
 };
@@ -37,6 +39,7 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   admit: 'Triaged ticket',
   confirm: 'Agent call',
   proposal: 'Workflow proposal',
+  ticket_proposal: 'Ticket proposal',
   mcp_sign_in: 'Sign in again',
   storage: "Can't save",
   low_disk: 'Low disk space',
@@ -170,6 +173,31 @@ export function proposalOf(item: InboxItem): { workflowId: string; workflow: str
     version: typeof b.version === 'number' ? b.version : 0,
     note: typeof b.note === 'string' ? b.note : '',
     summary: typeof b.summary === 'string' ? b.summary : '',
+  };
+}
+
+/** A ticket an agent proposed (PDT-366): its description, priority and labels as proposed, who proposed it, from which ticket and why. */
+export interface TicketProposal {
+  description: string;
+  priority: Priority;
+  labels: string[];
+  reason: string | null;
+  persona: string | null;
+  fromTicket: string | null;
+  fromTicketId: string | null;
+}
+
+export function ticketProposalOf(item: InboxItem): TicketProposal {
+  const b = item.body;
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null);
+  return {
+    description: typeof b.description === 'string' ? b.description : '',
+    priority: (typeof b.priority === 'string' ? b.priority : 'none') as Priority,
+    labels: Array.isArray(b.labels) ? b.labels.filter((l): l is string => typeof l === 'string') : [],
+    reason: str(b.reason),
+    persona: str(b.persona),
+    fromTicket: str(b.fromTicket),
+    fromTicketId: str(b.fromTicketId),
   };
 }
 

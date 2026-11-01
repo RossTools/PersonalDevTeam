@@ -32,7 +32,9 @@ pub use host::ProjectSettings;
 pub use local_forge::{LocalChange, LocalCiRun};
 pub use notifications::NotificationFilter;
 pub use pm::{NoteFilter, PmSessionRow};
-pub use tickets::{AttemptInfo, DeleteTicket, OverlapRow, PartRow, StartedAttempt, StoredExternalLink, TicketError};
+pub use tickets::{
+    AttemptInfo, DeleteTicket, Made, OverlapRow, PartRow, StartedAttempt, StoredExternalLink, TicketError,
+};
 pub use todos::TodoFilter;
 pub use workflows::{RUN_RETENTION_MS, RunFilter, SessionMessage};
 pub use workspaces::DeleteWorkspace;

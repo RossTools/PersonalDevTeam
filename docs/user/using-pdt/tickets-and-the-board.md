@@ -44,6 +44,9 @@ A ticket you didn't make carries a badge saying who did: **PM**, **Workflow**, *
 agent that filed it (**Coder**, say). Hover over an agent's badge to see the ticket it was working on: "Created by
 Coder · from APP-12".
 
+A ticket an agent filed while it worked is a **proposal** at first: it waits in your [Inbox](the-inbox.md#to-act-on),
+not on the board or in the backlog, until you accept it. Opened from the Inbox, it shows a **Proposal** badge.
+
 ## Screenshots and logs
 
 Paste or drop a screenshot or text file (a log, a JSON response, a config) into a description or comment, or use the

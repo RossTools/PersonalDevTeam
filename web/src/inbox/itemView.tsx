@@ -2,12 +2,16 @@
 // kind's style, the note box and the actions. The desktop and the phone lay the same spec out their own way.
 import { useState, type ReactNode } from 'react';
 import {
-  AgentMessage, ApprovalCard, Callout, CodeCard, DiffViewer, Facts, Field, Input, NO_ANSWER, PassList, QuestionCard,
-  answerText, otherInputId, type ApprovalAnswer, type QuestionAnswer,
+  AgentMessage, ApprovalCard, Callout, Checkbox, CodeCard, DiffViewer, Facts, Field, Input, NO_ANSWER, PassList, QuestionCard,
+  Select, Textarea, answerText, otherInputId, type ApprovalAnswer, type QuestionAnswer,
 } from '@ui';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
+import type { Priority } from '../api/gen/Priority';
 import { Markdown } from '../common/Markdown';
+import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
+import { LabelsEditor } from '../tickets/LabelsEditor';
+import { TicketPicker } from '../tickets/TicketPicker';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { navigate } from '../shell/router';
 import { useOpenSession, useOpenTicket } from '../tickets/actions';
@@ -15,7 +19,7 @@ import { formatBytes, STORAGE_PATH, useCleanFinished } from '../projects/worktre
 import type { ItemLink } from './ItemLinks';
 import {
   confirmOf, CONNECT_PATH, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
-  proposalPath, questionsOf, resends, triageOf,
+  proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerApproval } from './approval';
 
@@ -106,6 +110,12 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   const [secret, setSecret] = useState('');
   const [approving, setApproving] = useState(false);
   const [clean, cleaning] = useCleanFinished();
+  // A ticket proposal's edits, the agentic box and Duplicate of… (PDT-366).
+  const [proposed] = useState(() => ticketProposalOf(item));
+  const [editing, setEditing] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+  const [agentic, setAgentic] = useState(false);
+  const [draft, setDraft] = useState(() => ({ title: item.title, description: proposed.description, priority: proposed.priority, labels: proposed.labels }));
   const openTicket = useOpenTicket();
   const openSession = useOpenSession();
   const withNote = (choice: string) => void answer({ choice, ...(note.trim() ? { text: note } : {}) });
@@ -374,6 +384,58 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
           ),
           actions: choiceActions(item, plain, busy),
           links: [{ label: 'Versions', 'aria-label': "Open the workflow's versions", onClick: () => navigate(proposalPath(item)) }],
+        };
+      }
+      case 'ticket_proposal': {
+        const by = proposed.persona ?? item.personaName ?? 'An agent';
+        const edits = editing ? { title: draft.title, description: draft.description, priority: draft.priority, labels: draft.labels } : {};
+        // Reject takes only the reason; Accept and Duplicate of… the edits and the box.
+        const decide = (choice: string, extra: Record<string, unknown> = {}) =>
+          void answer({ choice, ...(choice === 'reject' ? {} : { proposal: { ...edits, agentic, ...extra } }), ...(note.trim() ? { text: note } : {}) });
+        const set = (patch: Partial<typeof draft>) => setDraft((d) => ({ ...d, ...patch }));
+        return {
+          region: 'Ticket proposal',
+          why: `${by} proposed this ticket${proposed.fromTicket ? ` while working on ${proposed.fromTicket}` : ''}. It waits in Draft, off the board, until you decide; ${by} hears what you choose.`,
+          content: (
+            <>
+              {editing ? (
+                <div className="flex flex-col gap-3">
+                  <Field label="Title"><Input value={draft.title} onChange={(e) => set({ title: e.target.value })} /></Field>
+                  <Field label="Description"><Textarea rows={8} value={draft.description} onChange={(e) => set({ description: e.target.value })} /></Field>
+                  <Field label="Priority">
+                    <Select options={PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABEL[p] }))} value={draft.priority} onChange={(p: Priority) => set({ priority: p })} />
+                  </Field>
+                  <Field label="Labels"><LabelsEditor labels={draft.labels} onChange={(labels) => set({ labels })} /></Field>
+                </div>
+              ) : (
+                <div aria-label="Proposed ticket" className="flex flex-col gap-2">
+                  {proposed.description.trim() ? <Markdown>{proposed.description}</Markdown> : <p className="text-sm text-muted-foreground">No description.</p>}
+                  {(proposed.priority !== 'none' || proposed.labels.length > 0) && (
+                    <p className="text-sm text-muted-foreground">
+                      {[proposed.priority !== 'none' ? `${PRIORITY_LABEL[proposed.priority]} priority` : null, ...proposed.labels].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              )}
+              {proposed.reason && <AgentMessage name={by} label={`Why ${by} proposed it`}><Markdown>{proposed.reason}</Markdown></AgentMessage>}
+              <Checkbox checked={agentic} onChange={setAgentic} disabled={busy}>Label it agentic, so agents can pick it up</Checkbox>
+              {duplicating && (
+                <TicketPicker projectId={item.projectId} label="Duplicate of" placeholder="The ticket it repeats: key or title…"
+                  exclude={item.ticketId ? [item.ticketId] : []} onPick={(t) => decide('duplicate', { duplicateOf: t.id })} />
+              )}
+            </>
+          ),
+          note: { label: 'Reason (optional)', placeholder: 'Why (optional): the agent gets it with your decision' },
+          actions: [
+            { id: 'accept_todo', title: 'Accept to Todo', short: 'To do', primary: true, pending: busy, disabled: busy || (editing && !draft.title.trim()), run: () => decide('accept_todo') },
+            { id: 'accept_backlog', title: 'Accept to backlog', short: 'Backlog', disabled: busy || (editing && !draft.title.trim()), run: () => decide('accept_backlog') },
+            { id: 'edit', title: 'Edit', expanded: editing, disabled: busy, run: () => setEditing((e) => !e) },
+            { id: 'duplicate', title: 'Duplicate of…', short: 'Duplicate', expanded: duplicating, disabled: busy, run: () => setDuplicating((d) => !d) },
+            { id: 'reject', title: 'Reject', end: true, danger: true, disabled: busy, run: () => decide('reject') },
+          ],
+          links: proposed.fromTicketId && item.projectId
+            ? [{ label: `From ${proposed.fromTicket ?? 'ticket'}`, 'aria-label': `Open ${proposed.fromTicket ?? 'the ticket it came from'}`, onClick: () => openTicket({ id: proposed.fromTicketId!, projectId: item.projectId! }) }]
+            : [],
         };
       }
       case 'confirm': {

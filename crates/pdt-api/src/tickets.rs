@@ -74,17 +74,33 @@ pub(crate) async fn creator(st: &AppState, headers: &HeaderMap) -> Result<(By, T
     Ok((crate::mcp::tools::agent_by(st, &s).await, source))
 }
 
+/// `POST /api/projects/{id}/tickets`: a [`NewTicket`], and from an agent why it makes it (`reason`; PDT-366).
+#[derive(serde::Deserialize)]
+pub(crate) struct CreateTicket {
+    #[serde(flatten)]
+    ticket: NewTicket,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
 pub(crate) async fn create(
     State(st): State<AppState>,
     Path(project_id): Path<String>,
     headers: HeaderMap,
-    payload: Result<Json<NewTicket>, JsonRejection>,
+    payload: Result<Json<CreateTicket>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Ticket>), ApiError> {
-    let Json(input) = payload?;
+    let Json(CreateTicket { ticket: input, reason }) = payload?;
     let (by, source) = creator(&st, &headers).await?;
-    let t = pdt_core::ticket::ValidNewTicket { source, ..input.validate()? };
+    let mut t = pdt_core::ticket::ValidNewTicket { source, ..input.validate()? };
+    // An agent's ticket waits for the user as a proposal (PDT-366).
+    let proposal = pdt_core::ticket_proposal::proposes(source, false)
+        && crate::workflow::nodes::ticket_proposal::proposals_on(&st).await;
+    if proposal {
+        pdt_core::ticket_proposal::hold(&mut t);
+    }
     let id = uuid::Uuid::now_v7().to_string();
-    let ticket = st.store.create_ticket_by(&id, &project_id, &t, by, now_ms()).await?;
+    let made = pdt_store::Made { reason: reason.as_deref(), proposal, ..Default::default() };
+    let ticket = st.store.create_ticket_made(&id, &project_id, &t, by, made, now_ms()).await?;
     Ok((StatusCode::CREATED, reply(&st, ticket).await?))
 }
 
@@ -111,9 +127,12 @@ pub(crate) async fn update(
     // Only the user's own click lets an external ticket in (PDT-204): an agent's curl counts as the user otherwise.
     if !crate::untrusted::from_ui(&st, &headers)?
         && let Some(t) = st.store.get_ticket_summary(&id).await?
-        && crate::untrusted::lets_in(&t, &patch)
     {
-        return Err(crate::untrusted::refused(&t.key));
+        if crate::untrusted::lets_in(&t, &patch) {
+            return Err(crate::untrusted::refused(&t.key));
+        }
+        // Nor does it decide a ticket proposal (PDT-366).
+        crate::untrusted::decides_proposal(&t, &patch)?;
     }
     let since = now_ms();
     let t = st.store.patch_ticket(&id, &patch, since).await?.ok_or_else(unknown_ticket)?;
@@ -183,10 +202,11 @@ pub(crate) async fn bulk(
         && !crate::untrusted::from_ui(&st, &headers)?
     {
         for id in &req.ids {
-            if let Some(t) = st.store.get_ticket_summary(id).await?
-                && crate::untrusted::lets_in(&t, &patch)
-            {
-                return Err(crate::untrusted::refused(&t.key));
+            if let Some(t) = st.store.get_ticket_summary(id).await? {
+                if crate::untrusted::lets_in(&t, &patch) {
+                    return Err(crate::untrusted::refused(&t.key));
+                }
+                crate::untrusted::decides_proposal(&t, &patch)?;
             }
         }
     }

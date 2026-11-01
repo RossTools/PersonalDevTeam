@@ -1,7 +1,7 @@
 // Each Inbox kind's icon and colour (PDT-361): the list's icons and the kind chip over an item.
 import type { ComponentType } from 'react';
 import {
-  CircleAlert, CircleCheck, CircleHelp, CircleX, Clock, FileCheck, GitBranch, Hand, HardDrive, KeyRound, LogIn, MessageSquare,
+  CircleAlert, CircleCheck, CircleHelp, CircleX, Clock, FileCheck, FilePlus, GitBranch, Hand, HardDrive, KeyRound, LogIn, MessageSquare,
   Plug, RotateCw, ShieldQuestion, SquareTerminal, type LucideProps,
 } from 'lucide-react';
 import { Badge, type BadgeTone } from '@ui';
@@ -28,6 +28,7 @@ const KINDS: Record<InboxKind, { icon: ComponentType<LucideProps>; tone: Tone }>
   low_disk: { icon: HardDrive, tone: 'waiting' },
   admit: { icon: FileCheck, tone: 'accent' },
   proposal: { icon: GitBranch, tone: 'accent' },
+  ticket_proposal: { icon: FilePlus, tone: 'accent' },
   gate: { icon: CircleCheck, tone: 'accent' },
   manual: { icon: Hand, tone: 'accent' },
 };

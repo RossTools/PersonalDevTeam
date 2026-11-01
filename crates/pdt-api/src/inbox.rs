@@ -405,6 +405,10 @@ pub(crate) async fn answer(
             crate::workflow::nodes::inbox_admit::answer(&st, &item, c, from_ui).await.map_err(bad)?
         }
         (InboxKind::Admit, None) => return Err(bad("choose Approve or Reject")),
+        (InboxKind::TicketProposal, _) => {
+            let from_ui = crate::untrusted::from_ui(&st, &headers)?;
+            crate::workflow::nodes::ticket_proposal::answer(&st, &item, &a, from_ui).await.map_err(bad)?
+        }
         // An agent can't allow its own call (PDT-256): only the user's click in PDT does.
         (InboxKind::Confirm, Some(c)) => {
             if c == inbox::ALLOW && !crate::untrusted::from_ui(&st, &headers)? {

@@ -23,4 +23,8 @@ fromTicket: string | null, fromTicketId: string | null,
 /**
  * Made with Make into parts.
  */
-viaParts: boolean, };
+viaParts: boolean, 
+/**
+ * Why the agent made it (`create_ticket`'s `reason`; PDT-366).
+ */
+reason: string | null, };
