@@ -1,19 +1,29 @@
 import type { InboxGroup } from '../api/gen/InboxGroup';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { InboxKind } from '../api/gen/InboxKind';
+import type { InboxSection } from '../api/gen/InboxSection';
 import { routePath } from '../shell/route';
 
-/** The Inbox's groups, most urgent first (UX spec §8.4), as the API sorts them. */
-export const GROUPS: { id: InboxGroup; title: string }[] = [
+/** Where each group is listed (PDT-361): a few sections, as the API sorts them. */
+export const SECTION_OF: Record<InboxGroup, InboxSection> = {
+  question: 'question',
+  approval: 'approval',
+  stalled: 'stuck',
+  loop_limit: 'stuck',
+  session: 'act',
+  notice: 'act',
+  admit: 'act',
+  proposal: 'act',
+  gate: 'accept',
+  accept: 'accept',
+};
+
+/** The Inbox's sections, most urgent first. */
+export const SECTIONS: { id: InboxSection; title: string }[] = [
   { id: 'question', title: 'Questions' },
   { id: 'approval', title: 'Approvals' },
-  { id: 'session', title: 'Sessions waiting' },
-  { id: 'stalled', title: 'Stalled' },
-  { id: 'loop_limit', title: 'Loop limit' },
-  { id: 'notice', title: 'Unheard notices' },
-  { id: 'admit', title: 'Triaged tickets' },
-  { id: 'proposal', title: 'Workflow proposals' },
-  { id: 'gate', title: 'Gates' },
+  { id: 'stuck', title: 'Stuck' },
+  { id: 'act', title: 'To act on' },
   { id: 'accept', title: 'Ready to accept' },
 ];
 
@@ -32,9 +42,9 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   low_disk: 'Low disk space',
 };
 
-/** The items of each group that has any, in the API's order. */
-export function grouped(items: InboxItem[]): { id: InboxGroup; title: string; items: InboxItem[] }[] {
-  return GROUPS.map((g) => ({ ...g, items: items.filter((i) => i.group === g.id) })).filter((g) => g.items.length > 0);
+/** The items of each section that has any, in the API's order. */
+export function grouped(items: InboxItem[]): { id: InboxSection; title: string; items: InboxItem[] }[] {
+  return SECTIONS.map((g) => ({ ...g, items: items.filter((i) => SECTION_OF[i.group] === g.id) })).filter((g) => g.items.length > 0);
 }
 
 /** The item `by` places after (or before) `id` in list order; the first one when `id` is gone. */
@@ -67,6 +77,14 @@ export function questionsOf(item: InboxItem): InboxQuestion[] {
     if (typeof r.question !== 'string') return [];
     return [{ question: r.question, choices: Array.isArray(r.choices) ? r.choices.filter((c): c is string => typeof c === 'string') : [] }];
   });
+}
+
+/** A pass's outcome as good (approved, pass), bad (changes requested, fail) or neither, for its chip. */
+export function outcomeTone(outcome: string | null): 'good' | 'bad' | 'neutral' {
+  if (!outcome) return 'neutral';
+  if (/^(approved?|pass(ed)?|done|ok|success|accepted?|merged?)$/i.test(outcome)) return 'good';
+  if (/(changes|request|fail|reject|block|error)/i.test(outcome)) return 'bad';
+  return 'neutral';
 }
 
 /** An earlier pass of a looping step. */
