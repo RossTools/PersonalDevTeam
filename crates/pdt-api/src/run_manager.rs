@@ -55,14 +55,15 @@ impl RunControl {
 }
 
 /// Whether nothing listens on `p` on either loopback: dev servers bound to `localhost` often listen only on `::1`
-/// (PDT-356). A machine without IPv6 (binding `::1` fails with "address not available") counts on `127.0.0.1` alone.
+/// (PDT-356). Only "in use" (or "permission denied", Windows' answer for an exclusively held port) on `::1` counts as
+/// taken: any other error means the machine has no IPv6 (no `::1`, or no IPv6 stack at all), so `127.0.0.1` decides.
 pub(crate) fn port_is_free(p: u16) -> bool {
     if std::net::TcpListener::bind(("127.0.0.1", p)).is_err() {
         return false;
     }
     match std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, p)) {
         Ok(_) => true,
-        Err(e) => e.kind() == std::io::ErrorKind::AddrNotAvailable,
+        Err(e) => !matches!(e.kind(), std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied),
     }
 }
 
