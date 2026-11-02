@@ -112,7 +112,7 @@ setting.
 
 Each row you allow is decided exactly as if you had clicked it in the Inbox. The ticket's activity shows it as yours,
 **proposed by PM**. The rows you untick stay in the Inbox for you to decide. Only the PM can propose these decisions:
-the agents working on tickets can't decide proposals, theirs or anyone else's.
+the agents working on tickets aren't given a way to decide proposals, theirs or anyone else's.
 
 ## Watch a ticket or run
 

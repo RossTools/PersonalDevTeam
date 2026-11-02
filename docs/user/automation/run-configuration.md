@@ -46,7 +46,7 @@ cloned, a branch, an agent working in a ticket's folder. So PDT runs a command o
 - **Commands you write in the host overrides** count as approved when you save them.
 
 Projects you'd added before PDT asked keep their main checkout's commands approved. A project you add now starts with
-nothing approved. Only you can approve a command, in PDT's own window; an agent can't approve one for you.
+nothing approved. You approve commands in PDT's own window, and agents aren't given a way to approve one for you.
 
 ## Runs
 
