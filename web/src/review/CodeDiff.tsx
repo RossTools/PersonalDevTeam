@@ -288,8 +288,11 @@ const diffTheme = EditorView.theme({
   '.cm-collapsedLines:hover': { color: v('accent') },
   '.cm-line.cm-picked-line': { backgroundImage: `linear-gradient(${v('diff-picked')}, ${v('diff-picked')})` },
   '.cm-gutterElement.cm-picked-gutter': { backgroundImage: `linear-gradient(${v('diff-picked')}, ${v('diff-picked')})` },
+  // The read-only editor hides the caret (codeTheme), and caret-color is inherited: the comment boxes under the lines
+  // get it back.
   '.cm-review-anchor': {
     whiteSpace: 'normal', fontFamily: v('font-sans'), padding: '6px 8px', maxWidth: '48rem', cursor: 'auto',
+    caretColor: v('fg'),
   },
 });
 

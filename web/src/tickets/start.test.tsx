@@ -35,6 +35,14 @@ function open(props: Partial<Parameters<typeof StartDialog>[0]> = {}) {
   return { onStarted, onClose };
 }
 
+/** The Agent select's trigger. */
+const agentPicker = (dialog: HTMLElement) => within(dialog).getByRole('button', { name: /Agent/ });
+
+async function pickAgent(dialog: HTMLElement, name: string) {
+  await userEvent.click(agentPicker(dialog));
+  await userEvent.click(await screen.findByRole('option', { name }));
+}
+
 describe('Start dialog', () => {
   it('starts with a check, the chosen agent, typed branch and base, and the tab placement', async () => {
     const calls = stub(ready);
@@ -43,7 +51,7 @@ describe('Start dialog', () => {
     const branch = within(dialog).getByRole('textbox', { name: 'Branch' });
     expect(branch).toHaveAttribute('placeholder', 'pdt/ALP-1-fix-login');
     await waitFor(() => expect(within(dialog).getByRole('textbox', { name: 'Base branch' })).toHaveAttribute('placeholder', 'trunk'));
-    await userEvent.click(within(dialog).getByRole('radio', { name: 'Codex' }));
+    await pickAgent(dialog, 'Codex');
     await userEvent.type(branch, 'feat/login');
     // On by default; turned off here so the placement is used.
     await userEvent.click(within(dialog).getByRole('switch', { name: 'Open in a new workspace' }));
@@ -60,7 +68,7 @@ describe('Start dialog', () => {
     const calls = stub(ready, undefined, hostDefaults('codex', 'terminal'));
     open();
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
-    await waitFor(() => expect(within(dialog).getByRole('radio', { name: 'Codex' })).toBeChecked());
+    await waitFor(() => expect(agentPicker(dialog)).toHaveTextContent('Codex'));
     expect(within(dialog).getByRole('radio', { name: 'Terminal' })).toBeChecked();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'codex', sessionMode: 'terminal' }));
@@ -70,7 +78,7 @@ describe('Start dialog', () => {
     const calls = stub(ready, undefined, hostDefaults('devin', 'conversation'));
     open();
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
-    await waitFor(() => expect(within(dialog).getByRole('radio', { name: 'Devin' })).toBeChecked());
+    await waitFor(() => expect(agentPicker(dialog)).toHaveTextContent('Devin'));
     expect(within(dialog).getByRole('radio', { name: 'Conversation' })).toBeChecked();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'devin', sessionMode: 'conversation' }));
@@ -87,10 +95,11 @@ describe('Start dialog', () => {
     });
     open();
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
-    await waitFor(() => expect(within(dialog).queryByRole('radio', { name: /Devin/ })).toBeNull());
     // The default Devin is missing: the first agent the host has instead.
-    expect(within(dialog).getByRole('radio', { name: 'Claude · not logged in' })).toBeChecked();
-    expect(within(dialog).getByRole('radio', { name: 'Codex' })).toBeInTheDocument();
+    await waitFor(() => expect(agentPicker(dialog)).toHaveTextContent('Claude · not logged in'));
+    await userEvent.click(agentPicker(dialog));
+    expect(within(screen.getByRole('listbox')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Claude · not logged in', 'Codex']);
+    await userEvent.keyboard('{Escape}');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'claude' }));
   });
@@ -112,7 +121,7 @@ describe('Start dialog', () => {
     const { onStarted } = open();
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
     await userEvent.click(within(dialog).getByRole('radio', { name: 'No session' }));
-    expect(within(dialog).queryByRole('radio', { name: 'Claude' })).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: /Agent/ })).toBeNull();
     expect(within(dialog).queryByRole('checkbox', { name: /Skip permission prompts/ })).toBeNull();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(onStarted).toHaveBeenCalled());
@@ -206,7 +215,7 @@ describe('Start dialog', () => {
     await within(dialog).findByText(/Personal project \(no repository\)/);
     expect(within(dialog).queryByRole('textbox', { name: 'Branch' })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole('textbox', { name: 'Base branch' })).not.toBeInTheDocument();
-    expect(within(dialog).getByRole('radio', { name: 'Claude' })).toBeInTheDocument();
+    expect(agentPicker(dialog)).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(starts(calls)).toHaveLength(1));
     expect(starts(calls)[0]).not.toHaveProperty('branch');

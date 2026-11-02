@@ -8,6 +8,9 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
 
+#[path = "../../../../test-support/wait.rs"]
+pub mod wait;
+
 /// Sends one request through the router and returns the status and the JSON body (`Null` when it is not JSON).
 pub async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     call_with(app, method, uri, body, &[]).await
@@ -106,6 +109,19 @@ pub fn fake_agent() -> String {
         .clone()
 }
 
+/// The `AppState` a test starts from: its data in `<dir>/data`, and its home folder and the agents' config folders
+/// (`~/.claude`, `~/.codex`, Devin's config file) in `<dir>/home`, so no test reads or writes the developer's own.
+pub fn app_state(store: pdt_store::Store, dir: &std::path::Path) -> pdt_api::AppState {
+    let mut st = pdt_api::AppState::new(store, dir.join("data"));
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    st.platform.claude_config_dir = Some(home.join(".claude"));
+    st.platform.codex_home = Some(home.join(".codex"));
+    st.platform.devin_config_file = Some(home.join(".config").join("devin").join("config.yaml"));
+    st.home_dir = Some(home);
+    st
+}
+
 /// The smallest bytes PDT takes for a PNG (it reads the signature, not the pixels).
 pub const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDRfake";
 
@@ -166,26 +182,27 @@ pub fn argv_agent(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
     path
 }
 
-/// The launches [`argv_agent`] recorded, each as its arguments (on Windows: one string, the raw `%*` line). Waits up
-/// to 10 s for `want` of them. Only complete launches count: the fake writes one argument at a time, so a launch
-/// still being written (no end marker yet) is left out rather than returned with only its first arguments.
+/// The launches [`argv_agent`] recorded, each as its arguments (on Windows: one string, the raw `%*` line). Waits for
+/// `want` of them, and panics when they never come. Only complete launches count: the fake writes one argument at a
+/// time, so a launch still being written (no end marker yet) is left out rather than returned with only its first
+/// arguments.
 pub async fn recorded_launches(dir: &std::path::Path, name: &str, want: usize) -> Vec<Vec<String>> {
-    let mut found = vec![];
-    for _ in 0..100 {
+    let read = || {
         let text = std::fs::read_to_string(dir.join(format!("{name}.args"))).unwrap_or_default();
-        found = if cfg!(windows) {
+        let found: Vec<Vec<String>> = if cfg!(windows) {
             text.split_inclusive('\n').filter(|l| l.ends_with('\n')).map(|l| vec![l.trim().to_string()]).collect()
         } else {
             let mut launches: Vec<&str> = text.split("<<LAUNCH>>\n").collect();
             launches.pop(); // what follows the last end marker: nothing, or a launch still being written
             launches.into_iter().map(|l| l.split_terminator("\n<<END>>\n").map(String::from).collect()).collect()
         };
-        if found.len() >= want {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    found
+        found
+    };
+    wait::wait_until(&format!("{want} launches of {name}"), async || {
+        let found = read();
+        if found.len() >= want { Ok(found) } else { Err(found) }
+    })
+    .await
 }
 
 /// A raw Windows command line (a [`recorded_launches`] line on Windows) split into its arguments, by the rules
@@ -261,6 +278,7 @@ pub async fn fail_events(db: &std::path::Path, kind: Option<&str>) {
     }
     c.close().await.unwrap();
 }
+pub mod conversation;
 pub mod issues;
 pub mod pm;
 pub mod workflows;

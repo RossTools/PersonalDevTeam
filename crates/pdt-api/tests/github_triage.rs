@@ -41,7 +41,7 @@ async fn setup() -> Env {
     git(&repo, &["remote", "add", "origin", &format!("https://github.com/{RELEASE_REPO}.git")]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     retired::install(&store, retired::BUG_TRIAGE, true).await;
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.claude_program = FAKE.to_string();
     state.platform.codex_program = FAKE.to_string();
     state.platform.devin_program = FAKE.to_string();

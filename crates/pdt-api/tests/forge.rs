@@ -6,6 +6,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, call_as_ui, git};
 use pdt_api::{AppState, router};
 use pdt_forge::Capabilities;
@@ -39,7 +40,7 @@ async fn setup(forge: Option<Arc<FakeForge>>, github: Option<Arc<GithubApi>>) ->
     git(&repo, &["commit", "-m", "init", "-q"]);
     git(&repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.claude_program = FAKE.to_string();
     state.platform.login_path = None;
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
@@ -91,15 +92,11 @@ async fn agent_says(env: &Env, session: &str) -> Vec<String> {
 }
 
 async fn wait_said(env: &Env, session: &str, n: usize) -> String {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
+    wait_until(&format!("the agent to say {n} things"), async || {
         let said = agent_says(env, session).await;
-        if said.len() >= n {
-            return said[n - 1].clone();
-        }
-        assert!(Instant::now() < deadline, "the agent said only {said:?}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        if said.len() >= n { Ok(said[n - 1].clone()) } else { Err(said) }
+    })
+    .await
 }
 
 async fn say(env: &Env, session: &str, text: &str) -> String {

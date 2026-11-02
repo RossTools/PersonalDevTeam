@@ -3,6 +3,8 @@
 
 use crate::common;
 
+use common::conversation;
+use common::wait::still_after;
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -25,7 +27,7 @@ async fn setup(tmp: &Path) -> Env {
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["commit", "--allow-empty", "-m", "init", "-q"]);
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.platform.claude_program = FAKE.to_string();
     state.platform.codex_program = FAKE.to_string();
     state.platform.login_path = None;
@@ -63,22 +65,11 @@ async fn chat(env: &Env, agent: &str, worktree: Option<&str>) -> String {
 }
 
 async fn events(env: &Env, id: &str) -> Vec<Value> {
-    let (s, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?after=0"), None).await;
-    assert_eq!(s, 200, "{v}");
-    let mut all = v.as_array().unwrap().clone();
-    all.sort_by_key(|e| e["pos"].as_i64());
-    all
+    conversation::events(&env.app, id).await
 }
 
 async fn wait_turns(env: &Env, id: &str, n: usize) -> Vec<Value> {
-    for _ in 0..300 {
-        let all = events(env, id).await;
-        if all.iter().filter(|e| e["event"]["kind"] == "turn" && e["event"]["phase"] == "ended").count() >= n {
-            return all;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("never saw {n} turns end: {:#?}", events(env, id).await);
+    conversation::wait_turns(&env.app, id, n).await
 }
 
 async fn send(env: &Env, id: &str, text: &str) {
@@ -162,8 +153,12 @@ async fn make_ticket_drafts_from_a_fork_and_leaves_the_chat_alone() {
     let desc = d["description"].as_str().unwrap();
     // A fork of the saved conversation, with no tools, never saved, shaped by the schema; the prompt on stdin.
     assert!(desc.starts_with(r#"resumed=true tools="" saved=false schema=true prompt=Draft a ticket"#), "{desc}");
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(events(&env, &id).await.len(), before, "the conversation shows nothing of it");
+    still_after(
+        "an event in the conversation (the conversation shows nothing of it)",
+        Duration::from_millis(200),
+        async || events(&env, &id).await.len() != before,
+    )
+    .await;
 
     // Terminals have no conversation to draft from.
     let body = json!({"projectId": env.pid, "kind": "shell", "cols": 80, "rows": 24});
@@ -190,8 +185,12 @@ async fn codex_drafts_from_an_ephemeral_read_only_fork() {
     assert_eq!(s, 200, "{d}");
     assert_eq!(d["title"], format!("Draft of {thread}"));
     assert_eq!(d["description"], "ephemeral=true sandbox=read-only approval=never schema=true");
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(events(&env, &id).await.len(), before, "the side turn never reaches the conversation");
+    still_after(
+        "an event in the conversation (the side turn never reaches the conversation)",
+        Duration::from_millis(200),
+        async || events(&env, &id).await.len() != before,
+    )
+    .await;
     kill(&env, &id).await;
     pdt_api::shutdown_conversations(&env.state).await;
 }
@@ -228,8 +227,12 @@ async fn a_chat_in_a_worktree_starts_its_ticket_without_a_new_session() {
     let tabs = project_tabs(&env).await;
     let at = tabs.iter().position(|x| x == &("session".to_string(), id.clone())).unwrap();
     assert!(at > 0 && tabs[at - 1] == ("ticket".to_string(), t.clone()), "{tabs:?}");
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(events(&env, &id).await.len(), before, "nothing is sent to the agent");
+    still_after(
+        "an event in the conversation (nothing is sent to the agent)",
+        Duration::from_millis(200),
+        async || events(&env, &id).await.len() != before,
+    )
+    .await;
 
     // A chat works on one ticket; a chat in the main checkout can't adopt a worktree.
     let t2 = ticket(&env, "Other").await;

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { FlowGraph, type FlowNode } from './FlowGraph';
+import { FlowGraph, openingViewport, type FlowNode } from './FlowGraph';
 
 const nodes: FlowNode[] = [
   { id: 'ci', title: 'CI failed', subtitle: 'ci.run_failed', input: false, ports: [{ id: 'out', label: 'Then' }], position: { x: 0, y: 0 } },
@@ -22,5 +22,28 @@ describe('FlowGraph', () => {
     expect(screen.getByLabelText('Error: ask needs a choice')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Ask'));
     expect(onSelect).toHaveBeenCalledWith({ kind: 'node', id: 'ask' });
+  });
+
+  describe('openingViewport', () => {
+    it('centres a graph that fits, at no more than 100%', () => {
+      expect(openingViewport({ x: 0, y: 0, width: 200, height: 100 }, { width: 800, height: 600 })).toEqual({ x: 300, y: 250, zoom: 1 });
+    });
+
+    it('shrinks a graph to fit while its titles stay readable', () => {
+      const v = openingViewport({ x: 0, y: 0, width: 880, height: 100 }, { width: 800, height: 600 });
+      expect(v.zoom).toBeCloseTo(720 / 880);
+      expect(v.x).toBeCloseTo(40);
+    });
+
+    it('opens a wide graph at the minimum zoom, pinned left and centred vertically', () => {
+      // Six nodes in a row next to the inspector: the case that used to open at a zoom of about 0.4.
+      expect(openingViewport({ x: 100, y: -50, width: 1700, height: 200 }, { width: 740, height: 820 }))
+        .toEqual({ x: 40 - 75, y: (820 - 150) / 2 + 37.5, zoom: 0.75 });
+    });
+
+    it('pins a tall graph to the top', () => {
+      const v = openingViewport({ x: 0, y: 0, width: 200, height: 2000 }, { width: 800, height: 600 });
+      expect(v).toEqual({ x: (800 - 150) / 2, y: 40, zoom: 0.75 });
+    });
   });
 });

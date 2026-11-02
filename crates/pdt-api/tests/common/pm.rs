@@ -2,6 +2,7 @@
 //! PM tools: a project served on a free port with `fake-agent` as every agent, starting a PM conversation, and
 //! reading what it said and asked.
 
+use super::wait::wait_until;
 use super::{call, git};
 use axum::http::StatusCode;
 use pdt_api::{AppState, router};
@@ -32,7 +33,7 @@ pub async fn setup_with(tweak: impl FnOnce(&mut AppState)) -> Env {
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "init", "-q"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = super::app_state(store, tmp.path());
     let fake = super::fake_agent();
     state.platform.claude_program = fake.clone();
     state.platform.codex_program = fake.clone();
@@ -101,16 +102,15 @@ pub async fn agent_says(env: &Env, session: &str) -> Vec<String> {
 
 /// Waits until the agent has said `n` things (ticking the engine, which delivers outbox messages); returns them.
 pub async fn wait_said(env: &Env, session: &str, n: usize) -> Vec<String> {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until(&format!("the agent to say {n} things"), async || {
         let said = agent_says(env, session).await;
         if said.len() >= n {
-            return said;
+            return Ok(said);
         }
-        assert!(Instant::now() < deadline, "the agent said only {said:?}");
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        Err(said)
+    })
+    .await
 }
 
 /// Sends a message and returns what the agent said to it.

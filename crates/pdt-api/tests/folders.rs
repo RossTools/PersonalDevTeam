@@ -18,7 +18,7 @@ async fn setup(tmp: &Path) -> (axum::Router, AppState, PathBuf) {
     std::fs::write(home.join("file.txt"), "x").unwrap();
     git(&home.join("work/app"), &["init", "-q", "-b", "main"]);
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.home_dir = Some(home.clone());
     (router(state.clone(), None), state, home)
 }

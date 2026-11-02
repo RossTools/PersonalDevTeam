@@ -6,6 +6,8 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::conversation::{self, said};
+use common::wait::wait_until;
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -35,7 +37,7 @@ async fn setup() -> Env {
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::copy(FAKE, bin.join(format!("grok{}", std::env::consts::EXE_SUFFIX))).unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.login_path = Some(bin.to_string_lossy().into_owned());
     state.conversations.notice_quiet = Duration::ZERO;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -50,32 +52,17 @@ async fn setup() -> Env {
 }
 
 async fn events(env: &Env, id: &str) -> Vec<Value> {
-    let (s, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?after=0&limit=1000"), None).await;
-    assert_eq!(s, StatusCode::OK, "{v}");
-    let mut all = v.as_array().unwrap().clone();
-    all.sort_by_key(|e| e["pos"].as_i64());
-    all
+    conversation::events(&env.app, id).await
 }
 
-/// Ticks the workflow engine until `f` holds for the session's events (up to 20 s).
+/// Ticks the workflow engine until `f` holds for the session's events.
 async fn wait_for(env: &Env, id: &str, what: &str, f: impl Fn(&[Value]) -> bool) -> Vec<Value> {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until(what, async || {
         pdt_api::run_workflows(&env.state).await;
         let all = events(env, id).await;
-        if f(&all) {
-            return all;
-        }
-        assert!(Instant::now() < deadline, "never saw {what}: {all:#?}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-fn said(all: &[Value]) -> Vec<String> {
-    all.iter()
-        .filter(|e| e["event"]["kind"] == "agent_message")
-        .map(|e| e["event"]["markdown"].as_str().unwrap().to_string())
-        .collect()
+        if f(&all) { Ok(all) } else { Err(all) }
+    })
+    .await
 }
 
 fn ended(all: &[Value]) -> usize {

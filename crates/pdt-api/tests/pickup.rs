@@ -27,7 +27,7 @@ async fn setup() -> Env {
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "init", "-q"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.claude_program = env!("CARGO_BIN_EXE_fake-agent").to_string();
     state.platform.login_path = None;
     let app = router(state.clone(), None);
@@ -569,7 +569,11 @@ async fn a_start_refused_for_an_overlap_starts_on_the_next_run_once_the_overlap_
     // The conflicting ticket merges: the next run starts it, with nobody touching it.
     move_to(&env, &busy, "done").await;
     let step = run_start_step(&env, &wf).await;
-    assert_eq!(step["port"], "started", "{step}");
+    // The move frees room, so the built-in "Pick up tickets" runs too (as does its every-minute sweep): when its run
+    // goes first, this one finds the ticket already started. Either way the overlap no longer holds it back.
+    let started = step["port"] == "started"
+        || (step["port"] == "skipped" && step["output"]["skipped"][0]["reason"] == "already started");
+    assert!(started, "{step}");
     assert_eq!(stage(&env, &next).await, "in_progress");
 }
 

@@ -414,7 +414,9 @@ describe('inbox', () => {
     const region = screen.getByRole('region', { name: 'Ticket proposal' });
     expect(region).toHaveTextContent('Coder proposed this ticket while working on PDT-3');
     expect(within(region).getByText('fails').tagName).toBe('STRONG');
-    expect(region).toHaveTextContent('Medium priority · bug');
+    expect(region).toHaveTextContent('Medium priority');
+    // The labels show as label chips, not as plain words after the description.
+    expect(within(region).getByText('bug').closest('.font-mono')).not.toBeNull();
     expect(region).toHaveTextContent('It failed twice today.');
     const answers = () => calls.filter((c) => c.method === 'POST' && c.path === '/api/inbox/tp/answer').map((c) => c.body);
     // Enter accepts it to To do, agentic unticked.

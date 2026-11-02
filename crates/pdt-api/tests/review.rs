@@ -65,7 +65,7 @@ async fn setup(tmp: &Path, mode: &str) -> Env {
     let bin = tmp.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.platform.claude_config_dir = Some(tmp.join("claude-config"));
     state.platform.login_path = None;
     state.platform.claude_program =
@@ -842,7 +842,7 @@ async fn hosts_with_the_old_finish_merged_tickets_get_the_new_condition() {
         .unwrap();
 
     // pdtd starts again.
-    let state = AppState::new(Store::open(&tmp.path().join("pdt.db")).await.unwrap(), tmp.path().join("data"));
+    let state = common::app_state(Store::open(&tmp.path().join("pdt.db")).await.unwrap(), tmp.path());
     pdt_api::run_workflows(&state).await;
     let w = state.store.workflow_by_builtin("finish-merged").await.unwrap().unwrap();
     let now = serde_json::to_value(state.store.workflow_doc(&w.id, w.version).await.unwrap().unwrap()).unwrap();

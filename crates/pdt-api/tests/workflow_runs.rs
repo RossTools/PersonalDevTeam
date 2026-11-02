@@ -53,7 +53,7 @@ async fn setup() -> Env {
 /// A pdtd on the data in `db`, with `gh` as GitHub.
 async fn state_on(db: &std::path::Path, dir: &std::path::Path, gh: &Arc<FakeForge>) -> AppState {
     let store = Store::open(db).await.unwrap();
-    let mut state = AppState::new(store, dir.join("data"));
+    let mut state = common::app_state(store, dir);
     state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_forge::testing::fake_github(gh))]);
     state
 }

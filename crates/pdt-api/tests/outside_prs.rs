@@ -52,7 +52,7 @@ async fn setup_with(template: Option<Option<bool>>) -> Env {
     if template.is_none() {
         retired::install(&store, retired::PR_REVIEW, true).await;
     }
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.claude_program = FAKE.to_string();
     state.platform.codex_program = FAKE.to_string();
     state.platform.devin_program = FAKE.to_string();
@@ -798,8 +798,7 @@ async fn a_workflow_from_before_the_option_keeps_its_tickets() {
     store.set_workflow_state(&env.wf, "_pdt.template", &old, false, 1).await.unwrap();
 
     // pdtd starts again.
-    let state =
-        AppState::new(Store::open(&env._tmp.path().join("pdt.db")).await.unwrap(), env._tmp.path().join("data"));
+    let state = common::app_state(Store::open(&env._tmp.path().join("pdt.db")).await.unwrap(), env._tmp.path());
     pdt_api::run_workflows(&state).await;
     let app = router(state.clone(), None);
     let (_, w) = call(&app, "GET", &format!("/api/workflows/{}", env.wf), None).await;

@@ -28,7 +28,7 @@ async fn setup(tmp: &Path) -> Env {
     let bin = tmp.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.platform.codex_home = Some(tmp.join("codex-home"));
     state.platform.claude_config_dir = Some(tmp.join("claude-config"));
     state.platform.claude_program = argv_agent(&bin, "fakeclaude").to_string_lossy().into_owned();

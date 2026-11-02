@@ -20,7 +20,7 @@ async fn setup() -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let (base, gh) = FakeIssues::serve().await;
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = pdt_api::AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.update = Arc::new(pdt_api::UpdateService::new(&base, "o/r", false, "0.1.0-local"));
     state.home_dir = Some(tmp.path().join("home"));
     Env { app: pdt_api::router(state.clone(), None), state, gh, tmp }
@@ -172,7 +172,7 @@ async fn an_unreachable_github_asks_to_try_again() {
     let tmp = tempfile::tempdir().unwrap();
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = pdt_api::AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.update =
         Arc::new(pdt_api::UpdateService::new(&format!("http://127.0.0.1:{port}"), "o/r", false, "0.1.0-local"));
     state.secrets.set(&state.update_token_account, TOKEN).unwrap();

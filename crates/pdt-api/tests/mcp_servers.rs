@@ -8,6 +8,7 @@ use crate::common;
 use axum::extract::{Form, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
+use common::wait::wait_until;
 use common::{argv_agent, call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -42,7 +43,7 @@ async fn setup() -> Env {
     std::fs::create_dir_all(&codex_home).unwrap();
     std::fs::write(codex_home.join("config.toml"), "[mcp_servers.mine]\ncommand = \"my-mcp\"\n").unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.claude_program = argv_agent(&bin, "fakeclaude").to_string_lossy().into_owned();
     state.platform.codex_program = argv_agent(&bin, "fakecodex").to_string_lossy().into_owned();
     state.platform.devin_program = FAKE.to_string();
@@ -90,14 +91,13 @@ async fn recorded_launches(bin: &std::path::Path, name: &str, want: usize) -> Ve
 
 /// The recorded launch of a Claude session (its `--session-id`).
 async fn launch_of(env: &Env, session: &str) -> Vec<String> {
-    for _ in 0..100 {
+    wait_until(&format!("a launch of {session}"), async || {
         let all = recorded_launches(&env.bin, "fakeclaude", 1).await;
-        if let Some(l) = all.into_iter().find(|l| l.iter().any(|a| a == session)) {
-            return l;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("no launch of {session}: {}", std::fs::read_to_string(env.bin.join("fakeclaude.args")).unwrap_or_default());
+        all.into_iter()
+            .find(|l| l.iter().any(|a| a == session))
+            .ok_or_else(|| std::fs::read_to_string(env.bin.join("fakeclaude.args")).unwrap_or_default())
+    })
+    .await
 }
 
 fn arg_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Checkbox, Dialog, Field, Input, SegmentedControl, Skeleton, Switch } from '@ui';
+import { Alert, Button, Checkbox, Dialog, Field, Input, SegmentedControl, Select, Skeleton, Switch } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { PermissionMode } from '../api/gen/PermissionMode';
@@ -244,11 +244,12 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
           </Field>
           {!noSession && (
             <Field label="Agent">
-              <SegmentedControl
-                aria-label="Agent"
+              {/* A Select, not a segmented control: the agents (with ACP ones and login hints) outgrow the dialog's width (PDT-470). */}
+              <Select<AgentKind>
                 options={offeredAgents.map((a) => ({ value: a, label: availability.hint(a) ? `${agents.label(a)} · ${availability.hint(a)}` : agents.label(a) }))}
                 value={agent}
                 onChange={setAgent}
+                className="w-64"
               />
             </Field>
           )}
