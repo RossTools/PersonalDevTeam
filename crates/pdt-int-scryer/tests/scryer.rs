@@ -113,13 +113,14 @@ async fn scryer_searches_adds_once_and_reads_its_queue_and_library() {
     assert!(r["error"].as_str().unwrap().contains("(the API key is wrong)"), "{r}");
 }
 
-/// Any query or mutation (PDT-150), checked against the bundled schema when Scryer doesn't answer introspection, with
-/// a connection's secret filled in and credentials redacted from the output.
+/// Any query or mutation (PDT-150), checked against Scryer's own schema (nothing is sent when Scryer doesn't give it),
+/// with a connection's secret filled in and credentials redacted from the output.
 #[tokio::test]
 async fn scryer_runs_any_query_or_mutation_checked_against_its_schema() {
     use fake_scryer::{FakeScryer, KEY};
+    use std::sync::atomic::Ordering;
     let (url, scryer) = FakeScryer::serve().await;
-    scryer.introspection.store(false, std::sync::atomic::Ordering::SeqCst);
+    scryer.introspection.store(false, Ordering::SeqCst);
     let env = setup().await;
     connection(&env, "media", "scryer", &url, json!({}), Some(KEY)).await;
     connection(&env, "sab", "http", "http://nas:8080", json!({}), Some("sab-pass-456")).await;
@@ -129,17 +130,23 @@ async fn scryer_runs_any_query_or_mutation_checked_against_its_schema() {
             json!({"id": "q", "kind": "scryer.query", "version": 1, "config": {"connection": "media", "query": q}}),
         )
     };
+    // Without Scryer's schema, nothing is sent.
     let wf = create(&env, query("query Settings { generalSettings { historyRetentionDays } }")).await;
+    let r = run_now(&env, &wf, json!({})).await;
+    assert!(r["error"].as_str().unwrap().contains("introspection"), "{r}");
+    let ops = scryer.ops();
+    assert!(ops.iter().all(|o| o == "PdtIntrospection"), "only the schema was asked for: {ops:?}");
+
+    scryer.introspection.store(true, Ordering::SeqCst);
     let r = run_now(&env, &wf, json!({})).await;
     assert_eq!(r["status"], "succeeded", "{r}");
     assert_eq!(step(&r, "q")["output"]["data"]["generalSettings"]["historyRetentionDays"], 30);
-    // The bundled schema doesn't have what only a newer Scryer has: nothing is sent.
+    // A field Scryer's schema doesn't have: nothing is sent.
     let n = scryer.seen.lock().unwrap().len();
-    let wf = create(&env, query("query { fakeVersion }")).await;
+    let wf = create(&env, query("query { notAField }")).await;
     let r = run_now(&env, &wf, json!({})).await;
-    assert!(r["error"].as_str().unwrap().contains("fakeVersion"), "{r}");
-    let ops = scryer.ops();
-    assert!(ops[n..].iter().all(|o| o == "PdtIntrospection"), "only the schema was asked for: {ops:?}");
+    assert!(r["error"].as_str().unwrap().contains("notAField"), "{r}");
+    assert_eq!(scryer.seen.lock().unwrap().len(), n, "nothing was sent");
 
     // A mutation with a password by reference.
     let wf = create(

@@ -27,7 +27,7 @@ const LIBRARY_LIMIT: usize = 50;
 /// How many queue items are read unless told (Scryer allows 200).
 const QUEUE_LIMIT: usize = 50;
 
-/// The GraphQL operations PDT sends, each checked against Scryer's published schema by a test (`scryer/schema.graphql`).
+/// The GraphQL operations PDT sends, each checked against Scryer's published schema by a test (`tests/scryer-schema.graphql`).
 mod ops {
     const TITLE_FIELDS: &str = "id name year facet monitored libraryName contentStatus episodesOwned episodesTotal \
                                 sizeBytes externalIds { source value }";
@@ -923,8 +923,8 @@ mod tests {
     #[test]
     fn every_operation_fits_scryers_schema() {
         use apollo_compiler::ExecutableDocument;
-        let schema = graphql::bundled();
-        let schema = &schema.schema;
+        let schema = graphql::test_schema();
+        let schema = &*schema;
         // The errors, if any.
         let check = |op: &str| match ExecutableDocument::parse_and_validate(schema, op, "op.graphql") {
             Ok(_) => None,
