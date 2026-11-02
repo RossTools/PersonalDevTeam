@@ -3,7 +3,9 @@
 //! 17.1+, an OAuth application with the device flow on); renewing an OAuth token with its refresh token.
 
 use pdt_forge::login::{DeviceCode, DevicePoll, TokenGrant, Whoami};
-use pdt_forge::transport::{Request, Transport, form};
+pub use pdt_forge::oauth::RefreshError;
+use pdt_forge::oauth::{self, OAuthApp};
+use pdt_forge::transport::{Request, Transport};
 use serde_json::Value;
 
 /// gitlab.com's API.
@@ -45,130 +47,39 @@ pub(crate) fn headers(token: &str) -> Vec<(&'static str, String)> {
     vec![("Authorization", format!("Bearer {token}")), ("Accept", "application/json".into())]
 }
 
-fn post_form(t: &dyn Transport, url: String, pairs: &[(&str, &str)]) -> Result<(u16, Value), String> {
-    let req = Request {
-        method: "POST",
-        url,
-        headers: vec![
-            ("Accept", "application/json".into()),
-            ("Content-Type", "application/x-www-form-urlencoded".into()),
-        ],
-        body: Some(form(pairs)),
-    };
-    let res = t.send(&req)?;
-    let v: Value = serde_json::from_str(&res.body).map_err(|_| format!("GitLab answered {}", res.status))?;
-    Ok((res.status, v))
-}
-
-fn oauth_error(v: &Value) -> Option<String> {
-    let e = v["error"].as_str()?;
-    Some(v["error_description"].as_str().unwrap_or(e).to_string())
+/// The OAuth endpoints of the GitLab site of API URL `api` (an OAuth application with the device flow on).
+pub fn oauth_app(api: &str) -> OAuthApp {
+    let web = web_url(api);
+    OAuthApp {
+        forge: "GitLab",
+        device_code_url: format!("{web}/oauth/authorize_device"),
+        token_url: format!("{web}/oauth/token"),
+        scopes: SCOPES,
+        no_device_flow: "this GitLab has no device flow (it needs GitLab 17.1 or later)",
+        start_errors: &[("invalid_client", "GitLab does not know this OAuth application, or its device flow is off")],
+        code_expires_in: 300,
+    }
 }
 
 /// Starts a device flow for OAuth application `client_id` (GitLab 17.1+).
 pub fn start_device_flow(t: &dyn Transport, api: &str, client_id: &str) -> Result<DeviceCode, String> {
-    let url = format!("{}/oauth/authorize_device", web_url(api));
-    let (status, v) = post_form(t, url, &[("client_id", client_id), ("scope", SCOPES)])?;
-    if status == 404 {
-        return Err("this GitLab has no device flow (it needs GitLab 17.1 or later)".into());
-    }
-    if let Some(e) = oauth_error(&v) {
-        return Err(match v["error"].as_str() {
-            Some("invalid_client") => "GitLab does not know this OAuth application, or its device flow is off".into(),
-            _ => e,
-        });
-    }
-    if !(200..300).contains(&status) {
-        return Err(format!("GitLab answered {status}"));
-    }
-    let s = |k: &str| v[k].as_str().map(String::from).ok_or_else(|| format!("no {k} in GitLab's answer"));
-    Ok(DeviceCode {
-        device_code: s("device_code")?,
-        user_code: s("user_code")?,
-        verification_uri: s("verification_uri")?,
-        expires_in: v["expires_in"].as_u64().unwrap_or(300),
-        interval: v["interval"].as_u64().unwrap_or(5),
-    })
+    oauth::start_device_flow(t, &oauth_app(api), client_id)
 }
 
 /// Asks whether the user has entered the code yet.
 pub fn poll_device_flow(t: &dyn Transport, api: &str, client_id: &str, device_code: &str) -> DevicePoll {
-    let url = format!("{}/oauth/token", web_url(api));
-    let pairs = [
-        ("client_id", client_id),
-        ("device_code", device_code),
-        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-    ];
-    let v = match post_form(t, url, &pairs) {
-        Ok((_, v)) => v,
-        Err(e) => return DevicePoll::Failed(e),
-    };
-    if let Some(g) = grant(&v) {
-        return DevicePoll::Token(g);
-    }
-    match v["error"].as_str() {
-        Some("authorization_pending") => DevicePoll::Pending,
-        Some("slow_down") => DevicePoll::SlowDown(v["interval"].as_u64().unwrap_or(10)),
-        Some("expired_token") => DevicePoll::Expired,
-        Some("access_denied") => DevicePoll::Denied,
-        Some(e) => DevicePoll::Failed(v["error_description"].as_str().unwrap_or(e).to_string()),
-        None => DevicePoll::Failed("no token in GitLab's answer".into()),
-    }
-}
-
-/// The token of an `oauth/token` answer: GitLab's OAuth tokens expire (in two hours) and come with a refresh token.
-fn grant(v: &Value) -> Option<TokenGrant> {
-    let token = v["access_token"].as_str().filter(|t| !t.is_empty())?;
-    Some(TokenGrant {
-        token: token.into(),
-        expires_in: v["expires_in"].as_u64().filter(|s| *s > 0),
-        refresh_token: v["refresh_token"].as_str().filter(|t| !t.is_empty()).map(String::from),
-        refresh_token_expires_in: None,
-    })
-}
-
-/// Why a refresh got no new token.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RefreshError {
-    /// GitLab refused the refresh token (revoked, or already used): only signing in again helps.
-    Refused(String),
-    /// No answer, or a server error: ask again later.
-    Failed(String),
+    oauth::poll_device_flow(t, &oauth_app(api), client_id, device_code)
 }
 
 /// Swaps `refresh_token` of OAuth application `client_id` for a new token and a new refresh token (the old one stops
-/// working).
+/// working). GitLab's OAuth tokens expire in two hours.
 pub fn refresh_token(
     t: &dyn Transport,
     api: &str,
     client_id: &str,
     refresh_token: &str,
 ) -> Result<TokenGrant, RefreshError> {
-    let req = Request {
-        method: "POST",
-        url: format!("{}/oauth/token", web_url(api)),
-        headers: vec![
-            ("Accept", "application/json".into()),
-            ("Content-Type", "application/x-www-form-urlencoded".into()),
-        ],
-        body: Some(form(&[
-            ("client_id", client_id),
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-        ])),
-    };
-    let res = t.send(&req).map_err(RefreshError::Failed)?;
-    if res.status >= 500 || res.status == 429 {
-        return Err(RefreshError::Failed(format!("GitLab answered {}", res.status)));
-    }
-    let v: Value = serde_json::from_str(&res.body).unwrap_or(Value::Null);
-    if let Some(e) = oauth_error(&v) {
-        return Err(RefreshError::Refused(e));
-    }
-    if !(200..300).contains(&res.status) {
-        return Err(RefreshError::Refused(format!("GitLab answered {}", res.status)));
-    }
-    grant(&v).ok_or_else(|| RefreshError::Failed("no token in GitLab's answer".into()))
+    oauth::refresh_token(t, &oauth_app(api), client_id, refresh_token)
 }
 
 /// Checks `token` against GitLab: who it is (`GET /user`), and its scopes when it is an access token

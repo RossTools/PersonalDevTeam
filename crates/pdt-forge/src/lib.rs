@@ -10,6 +10,8 @@
 
 pub mod ci;
 pub mod login;
+pub mod oauth;
+pub mod rest;
 pub mod transport;
 pub use ci::{CiCapabilities, CiConfig, CiProvider};
 pub use login::{ForgeAccount, ForgeLogin};
@@ -18,6 +20,19 @@ pub use pdt_core::forge::{ForgeKind, ForgeLinks, ForgeNotes};
 pub use pdt_core::github_issue::CloseReason;
 use pdt_core::pr::{Mergeable, PrState, QueueRemoval};
 use std::sync::Arc;
+
+/// The longest comment PDT sends to a forge (GitHub's own limit is 65536, GitLab's a million).
+pub const MAX_COMMENT: usize = 60_000;
+
+/// A comment cut to [`MAX_COMMENT`] characters.
+pub fn comment_body(body: &str) -> String {
+    if body.chars().count() <= MAX_COMMENT {
+        return body.to_string();
+    }
+    let mut out: String = body.chars().take(MAX_COMMENT - 1).collect();
+    out.push('…');
+    out
+}
 
 /// What a forge can do beyond reading a branch's change request, so the SDLC skips (or does itself) what it can't.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

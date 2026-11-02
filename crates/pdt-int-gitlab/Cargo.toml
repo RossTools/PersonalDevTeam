@@ -12,7 +12,6 @@ pdt-core.workspace = true
 pdt-api.workspace = true
 pdt-forge.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

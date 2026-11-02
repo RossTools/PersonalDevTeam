@@ -13,30 +13,21 @@ pub mod transport;
 pub use actions::GithubActions;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval, QueueRemovalReason};
+use pdt_forge::comment_body;
+use pdt_forge::oauth::OAuthApp;
+pub use pdt_forge::rest::{CallRecord, LoginCheck, RenewedHook, next_link};
+use pdt_forge::rest::{Flavor, RestClient, RestError};
 pub use pdt_forge::{
     Capabilities, ChangeComment, ChangeFile, ChangeRequest, ChangeReview, ChangeStats, CloseReason, FileWrite, Forge,
-    ForgeError, ForgeNotes, Issue, IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue,
+    ForgeError, ForgeNotes, Issue, IssueDetail, MAX_COMMENT, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue,
     OpenedChangeRequest, Release, ReleaseAsset, RepoChangeRequest, RepoFile, ReviewVerdict,
 };
 use serde_json::{Value, json};
-use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
-use transport::{Request, Response, Transport, encode};
+use std::sync::Arc;
+use transport::{Response, Transport, encode};
 
 /// How many recent runs are read per branch (and of merge-queue runs per repo).
 const RUN_LIMIT: u32 = 30;
-/// The most pages one list read follows.
-const MAX_PAGES: usize = 10;
-/// The most GET answers kept for conditional requests.
-const ETAG_CACHE: usize = 500;
-/// The most recent calls kept, for the log of a refused login (PDT-252).
-const RECENT_CALLS: usize = 50;
-/// How long before its token expires a login is renewed (PDT-260): more than the login check's 5 minutes, so an idle
-/// PDT renews it in time too.
-const RENEW_BEFORE_MS: i64 = 15 * 60_000;
-/// How long after a refresh that got no answer the next one waits.
-const RENEW_RETRY_MS: i64 = 60_000;
 
 const PR_FIELDS: &str = "number url title state createdAt isDraft headRefOid baseRefName mergeable \
 mergeStateStatus isInMergeQueue mergeQueueEntry{position} autoMergeRequest{enabledAt} \
@@ -75,36 +66,39 @@ enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:$method,expected
 const ENQUEUE_AT: &str = "mutation($id:ID!,$head:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,\
 expectedHeadOid:$head}){clientMutationId}}";
 
-/// The text of a call made before the user connected GitHub.
-pub fn not_connected() -> String {
-    format!("GitHub is not connected: connect it in {SHORT_NAME}'s Settings › Plugins › GitHub")
+/// GitHub's REST API, for the shared client: names, URLs, headers and error messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Github;
+
+impl Flavor for Github {
+    const NAME: &'static str = "GitHub";
+    /// `GET /rate_limit` costs no rate limit.
+    const CHECK_PATH: &'static str = "rate_limit";
+    /// GitHub refuses a call over its primary or secondary limit with a 403 or a 429.
+    const LIMIT_REFUSALS: &'static [u16] = &[403, 429];
+    const LIMIT_HEADERS: &'static str = "x-ratelimit-";
+    const REFUSAL_HEADERS: &'static [&'static str] =
+        &["x-github-request-id", "x-github-sso", "www-authenticate", "x-oauth-scopes"];
+    const ETAGS: bool = true;
+    fn api_url(given: &str) -> String {
+        login::api_url(given)
+    }
+    fn web_host(api: &str) -> String {
+        login::web_host(api)
+    }
+    fn headers(token: &str) -> Vec<(&'static str, String)> {
+        headers(token)
+    }
+    fn message(res: &Response) -> String {
+        message(res)
+    }
+    fn oauth(api: &str) -> OAuthApp {
+        login::oauth_app(api)
+    }
 }
 
 /// What went wrong talking to GitHub.
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
-pub enum GhError {
-    #[error("{}", not_connected())]
-    NotConnected,
-    #[error("GitHub no longer accepts {SHORT_NAME}'s login: connect GitHub again in Settings › Plugins › GitHub")]
-    Rejected,
-    #[error("GitHub answered {0}: {1}")]
-    Status(u16, String),
-    #[error("GitHub's rate limit is used up until {0}")]
-    RateLimited(String),
-    #[error("GitHub could not be reached: {0}")]
-    Network(String),
-    #[error("unexpected answer from GitHub: {0}")]
-    BadAnswer(String),
-}
-
-impl From<GhError> for ForgeError {
-    fn from(e: GhError) -> Self {
-        match e {
-            GhError::NotConnected | GhError::Rejected => ForgeError::Unavailable(e.to_string()),
-            _ => ForgeError::Failed(e.to_string()),
-        }
-    }
-}
+pub type GhError = RestError<Github>;
 
 /// GitHub's part of agents' instructions: PDT's forge tools (pdt-mcp), not the GitHub CLI.
 pub fn agent_notes() -> ForgeNotes {
@@ -125,9 +119,6 @@ pub const CI_DIRS: &[&str] = &[".github/workflows"];
 
 /// What GitHub can do: everything.
 pub const CAPABILITIES: Capabilities = Capabilities::ALL;
-
-/// The longest comment PDT sends (GitHub's own limit is 65536).
-pub const MAX_COMMENT: usize = 60_000;
 
 /// Issues (and pull requests, which share their numbers) per page of [`GithubApi::recent_issues`], and the most pages
 /// one read takes.
@@ -150,483 +141,27 @@ pub(crate) fn headers(token: &str) -> Vec<(&'static str, String)> {
 /// The login PDT uses: a token and the API it is for (one per host, PDT-244).
 pub type Account = pdt_forge::ForgeAccount;
 
-/// One call to GitHub, for the log of a refused login: never its token, query or body.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CallRecord {
-    /// Unix ms.
-    pub at: i64,
-    pub method: &'static str,
-    pub path: String,
-    /// None: no answer (a network failure).
-    pub status: Option<u16>,
-}
-
-/// What [`GithubApi::check_login`] found.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LoginCheck {
-    /// GitHub accepts the login.
-    Ok,
-    /// GitHub accepts a login it had refused: the mark is cleared.
-    Recovered,
-    /// GitHub refuses the login.
-    Rejected,
-    /// No answer, or one that says nothing about the login.
-    Failed(String),
-}
-
-/// Called with the token a renewal replaced and the renewed account, to store it.
-pub type RenewedHook = Arc<dyn Fn(&str, &Account) + Send + Sync>;
-
-/// How one try of a call ended.
-enum Once {
-    Done(Result<Response, GhError>),
-    /// A 401 from the API's own host, with GitHub's message.
-    Refused(String),
-}
-
-/// The GitHub forge. With no [`Account`] every call fails as [`GhError::NotConnected`].
+/// The GitHub forge: the shared REST client ([`RestClient`], which it derefs to) and GitHub's GraphQL. With no
+/// [`Account`] every call fails as [`GhError::NotConnected`].
 pub struct GithubApi {
-    transport: Arc<dyn Transport>,
-    account: RwLock<Option<Account>>,
-    /// GET answers by URL: ETag and body.
-    etags: Mutex<HashMap<String, (String, String)>>,
-    /// When the rate limit resets (Unix seconds), while it is used up.
-    limited_until: Mutex<Option<u64>>,
-    /// A call wanted GitHub while it was not connected.
-    wanted: AtomicBool,
-    /// When GitHub refused the login (401, Unix ms): it is kept, but no call is sent until the user signs in again.
-    rejected_at: Mutex<Option<i64>>,
-    /// The last [`RECENT_CALLS`] calls, oldest first.
-    recent: Mutex<VecDeque<CallRecord>>,
-    /// When GitHub last accepted the login (Unix ms).
-    last_ok_at: Mutex<Option<i64>>,
-    /// The recent calls were logged for this login's first 401.
-    logged_calls: AtomicBool,
-    /// Held while the token is renewed: two refreshes never run at once (the first one's refresh token is spent).
-    renewing: Mutex<()>,
-    /// No refresh before this (Unix ms), after one that got no answer.
-    renew_after: Mutex<Option<i64>>,
-    /// Stores a renewed account.
-    on_renewed: RwLock<Option<RenewedHook>>,
+    rest: RestClient<Github>,
+}
+
+impl std::ops::Deref for GithubApi {
+    type Target = RestClient<Github>;
+    fn deref(&self) -> &RestClient<Github> {
+        &self.rest
+    }
 }
 
 impl GithubApi {
     pub fn new(transport: Arc<dyn Transport>) -> Self {
-        Self {
-            transport,
-            account: RwLock::new(None),
-            etags: Mutex::default(),
-            limited_until: Mutex::default(),
-            wanted: AtomicBool::new(false),
-            rejected_at: Mutex::default(),
-            recent: Mutex::default(),
-            last_ok_at: Mutex::default(),
-            logged_calls: AtomicBool::new(false),
-            renewing: Mutex::default(),
-            renew_after: Mutex::default(),
-            on_renewed: RwLock::default(),
-        }
-    }
-
-    /// Sets what stores the account once its token is renewed (PDT-260).
-    pub fn on_renewed(&self, hook: Option<RenewedHook>) {
-        *self.on_renewed.write().unwrap_or_else(|e| e.into_inner()) = hook;
+        Self { rest: RestClient::new(transport) }
     }
 
     /// No network and no login: `AppState::new`'s forge, so tests can never reach GitHub.
     pub fn offline() -> Self {
-        Self::new(Arc::new(transport::Offline))
-    }
-
-    pub fn transport(&self) -> Arc<dyn Transport> {
-        self.transport.clone()
-    }
-
-    pub fn account(&self) -> Option<Account> {
-        self.account.read().unwrap_or_else(|e| e.into_inner()).clone()
-    }
-
-    /// Signs in (or out, with None). Cached answers belong to the old login, so they go, and so does a refusal.
-    pub fn set_account(&self, account: Option<Account>) {
-        *self.account.write().unwrap_or_else(|e| e.into_inner()) = account;
-        self.etags.lock().unwrap_or_else(|e| e.into_inner()).clear();
-        *self.limited_until.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        *self.rejected_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        *self.last_ok_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        self.logged_calls.store(false, Ordering::SeqCst);
-        self.wanted.store(false, Ordering::SeqCst);
-        *self.renew_after.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    }
-
-    /// Renews the token of `stale` with its refresh token (PDT-260), and stores the new account at once: GitHub issues
-    /// a new refresh token with each new token and the old one stops working. One renewal at a time; one that finds
-    /// the token already renewed (or replaced by a new sign-in) returns that account. A refresh token GitHub refuses,
-    /// or one that has expired, marks the login rejected ("Reconnect GitHub"); no answer is [`GhError::Network`], and
-    /// the next try waits [`RENEW_RETRY_MS`].
-    fn renew(&self, stale: &Account) -> Result<Account, GhError> {
-        let _held = self.renewing.lock().unwrap_or_else(|e| e.into_inner());
-        let cur = self.account().ok_or(GhError::NotConnected)?;
-        if cur.token != stale.token {
-            return Ok(cur);
-        }
-        let Some(r) = cur.refresh.clone() else { return Err(GhError::Rejected) };
-        let host = login::web_host(&cur.api_url);
-        let now = now_ms();
-        if r.expires_at.is_some_and(|t| now >= t) {
-            tracing::warn!(login = %cur.login, host, "the GitHub login's refresh token has expired: connect GitHub again");
-            self.reject(&cur.token);
-            return Err(GhError::Rejected);
-        }
-        if self.renew_after.lock().unwrap_or_else(|e| e.into_inner()).is_some_and(|t| now < t) {
-            return Err(GhError::Network("the last try to renew the login got no answer".into()));
-        }
-        match login::refresh_token(self.transport.as_ref(), &cur.api_url, &r.client_id, &r.token) {
-            Ok(g) => {
-                let now = now_ms();
-                let (expires_at, refresh) = g.renewal(now, &r.client_id);
-                let new = Account { token: g.token, expires_at, refresh, ..cur.clone() };
-                {
-                    let mut account = self.account.write().unwrap_or_else(|e| e.into_inner());
-                    if account.as_ref().is_none_or(|a| a.token != cur.token) {
-                        // The user signed in again meanwhile: theirs stands.
-                        return account.clone().ok_or(GhError::NotConnected);
-                    }
-                    *account = Some(new.clone());
-                }
-                *self.rejected_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
-                *self.renew_after.lock().unwrap_or_else(|e| e.into_inner()) = None;
-                self.logged_calls.store(false, Ordering::SeqCst);
-                let left = |t: Option<i64>| t.map_or_else(|| "never".into(), |t| minutes(t - now));
-                tracing::info!(
-                    login = %new.login, host, client_id = %r.client_id, expires_in = %left(new.expires_at),
-                    refresh_expires_in = %left(new.refresh.as_ref().and_then(|r| r.expires_at)),
-                    "renewed the GitHub login's token"
-                );
-                let hook = self.on_renewed.read().unwrap_or_else(|e| e.into_inner()).clone();
-                if let Some(hook) = hook {
-                    hook(&cur.token, &new);
-                }
-                Ok(new)
-            }
-            Err(login::RefreshError::Refused(e)) => {
-                tracing::warn!(login = %cur.login, host, error = %e, "GitHub refused to renew the login: connect GitHub again");
-                self.reject(&cur.token);
-                Err(GhError::Rejected)
-            }
-            Err(login::RefreshError::Failed(e)) => {
-                tracing::warn!(login = %cur.login, host, error = %e, "renewing the GitHub login got no answer: trying again shortly");
-                *self.renew_after.lock().unwrap_or_else(|e| e.into_inner()) = Some(now_ms() + RENEW_RETRY_MS);
-                Err(GhError::Network(e))
-            }
-        }
-    }
-
-    /// The last calls to GitHub, oldest first.
-    pub fn recent_calls(&self) -> Vec<CallRecord> {
-        self.recent.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
-    }
-
-    /// Sends one request and keeps a record of it.
-    fn send(&self, req: &Request) -> Result<Response, String> {
-        let res = self.transport.send(req);
-        let status = res.as_ref().ok().map(|r| r.status);
-        let mut recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
-        if recent.len() >= RECENT_CALLS {
-            recent.pop_front();
-        }
-        recent.push_back(CallRecord { at: now_ms(), method: req.method, path: path_of(&req.url), status });
-        drop(recent);
-        if matches!(status, Some(200..=299 | 304)) {
-            *self.last_ok_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(now_ms());
-        }
-        res
-    }
-
-    /// Logs a 401 or 403 (PDT-252): the call, GitHub's answer and the login's age; never the token. The first 401 of
-    /// a login also logs the recent calls.
-    fn log_refusal(&self, a: &Account, req: &Request, res: &Response) {
-        let h = |name| res.header(name).unwrap_or("-").to_string();
-        let now = now_ms();
-        let ago = |t: Option<i64>| t.map_or_else(|| "unknown".into(), |t| minutes(now - t));
-        let last_ok = *self.last_ok_at.lock().unwrap_or_else(|e| e.into_inner());
-        let fields = format!(
-            "method={} endpoint={} final_url={} message={:?} request_id={} sso={:?} www_authenticate={:?} \
-             scopes={:?} login={} login_age={} last_worked={}",
-            req.method,
-            bare_url(&req.url),
-            if res.url.is_empty() { bare_url(&req.url) } else { res.url.clone() },
-            message(res),
-            h("x-github-request-id"),
-            h("x-github-sso"),
-            h("www-authenticate"),
-            h("x-oauth-scopes"),
-            a.login,
-            ago(a.signed_in_at),
-            last_ok.map_or_else(
-                || "never (since pdtd started or the login was made)".into(),
-                |t| format!("{} ago", minutes(now - t))
-            ),
-        );
-        if res.status == 403 {
-            tracing::info!("GitHub answered 403: {fields}");
-            return;
-        }
-        tracing::warn!("GitHub answered 401: {fields}");
-        if !self.logged_calls.swap(true, Ordering::SeqCst) {
-            let calls: Vec<String> = self
-                .recent_calls()
-                .iter()
-                .map(|c| {
-                    let status = c.status.map_or_else(|| "no answer".into(), |s| s.to_string());
-                    format!("{} {} {} {}", clock_ms(c.at), c.method, c.path, status)
-                })
-                .collect();
-            tracing::warn!("the last {} GitHub calls before the first 401:\n{}", calls.len(), calls.join("\n"));
-        }
-    }
-
-    /// After a 401: whether GitHub really refuses the login, asked again with `GET /user`. Only a 401 from the API's
-    /// own host counts; no answer doesn't (the login check asks again later).
-    fn confirm_refused(&self, a: &Account) -> bool {
-        let req = Request {
-            method: "GET",
-            url: format!("{}/user", login::api_url(&a.api_url)),
-            headers: headers(&a.token),
-            body: None,
-        };
-        match self.send(&req) {
-            Ok(res) if res.status == 401 && same_host(&res.url, &req.url) => true,
-            Ok(res) => {
-                tracing::warn!(status = res.status, "GitHub refused one call, but accepts the login when asked again");
-                false
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "GitHub refused one call, and could not be asked again");
-                false
-            }
-        }
-    }
-
-    /// The light login check (PDT-252), every few minutes: `GET /rate_limit` (it costs no rate limit), so the time
-    /// GitHub stops accepting the login is known to the minute. While the login is marked rejected, `GET /user`
-    /// instead, and the mark goes when GitHub accepts it again. None without a login.
-    pub fn check_login(&self) -> Option<LoginCheck> {
-        let a = self.account()?;
-        if self.rejected_at().is_none() {
-            return Some(match self.call("GET", "rate_limit", None, false) {
-                Ok(_) => LoginCheck::Ok,
-                Err(GhError::Rejected) => LoginCheck::Rejected,
-                Err(e) => LoginCheck::Failed(e.to_string()),
-            });
-        }
-        if a.refresh.is_some() {
-            // A refused token renews; a refused refresh token stays refused.
-            return Some(match self.renew(&a) {
-                Ok(_) => {
-                    tracing::info!(login = %a.login, "GitHub accepts the login it had refused again, renewed");
-                    LoginCheck::Recovered
-                }
-                Err(GhError::Rejected) => LoginCheck::Rejected,
-                Err(e) => LoginCheck::Failed(e.to_string()),
-            });
-        }
-        let req = Request {
-            method: "GET",
-            url: format!("{}/user", login::api_url(&a.api_url)),
-            headers: headers(&a.token),
-            body: None,
-        };
-        Some(match self.send(&req) {
-            Ok(res) if (200..300).contains(&res.status) => {
-                let account = self.account.read().unwrap_or_else(|e| e.into_inner());
-                if account.as_ref().is_some_and(|x| x.token == a.token) {
-                    *self.rejected_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
-                    self.logged_calls.store(false, Ordering::SeqCst);
-                }
-                tracing::info!(login = %a.login, "GitHub accepts the login it had refused again");
-                LoginCheck::Recovered
-            }
-            Ok(res) if res.status == 401 => LoginCheck::Rejected,
-            Ok(res) => LoginCheck::Failed(format!("GitHub answered {}: {}", res.status, message(&res))),
-            Err(e) => LoginCheck::Failed(e),
-        })
-    }
-
-    /// When GitHub stopped accepting the stored login (Unix ms), until the user signs in again.
-    pub fn rejected_at(&self) -> Option<i64> {
-        *self.rejected_at.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// The login to call with: none, or one GitHub refused, sends nothing. One whose token expires within
-    /// [`RENEW_BEFORE_MS`] is renewed first (PDT-260); while renewing gets no answer, the old token serves until it
-    /// expires.
-    fn signed_in(&self) -> Result<Account, GhError> {
-        let a = self.account().ok_or_else(|| {
-            self.wanted.store(true, Ordering::SeqCst);
-            GhError::NotConnected
-        })?;
-        if self.rejected_at().is_some() {
-            return Err(GhError::Rejected);
-        }
-        match a.expires_at {
-            Some(t) if a.refresh.is_some() && now_ms() >= t - RENEW_BEFORE_MS => match self.renew(&a) {
-                Err(GhError::Network(_)) if now_ms() < t => Ok(a),
-                r => r,
-            },
-            _ => Ok(a),
-        }
-    }
-
-    /// GitHub answered 401 to `token`. A call in flight when the user signed in again doesn't mark the new login.
-    fn reject(&self, token: &str) {
-        let account = self.account.read().unwrap_or_else(|e| e.into_inner());
-        if account.as_ref().is_some_and(|a| a.token == token) {
-            let mut at = self.rejected_at.lock().unwrap_or_else(|e| e.into_inner());
-            if at.is_none() {
-                tracing::warn!(login = %account.as_ref().map_or("", |a| a.login.as_str()), "GitHub refuses the login: no more calls until it accepts it again or the user signs in again");
-            }
-            at.get_or_insert_with(now_ms);
-        }
-    }
-
-    fn url(a: &Account, path: &str) -> String {
-        if path.starts_with("https://") || path.starts_with("http://") {
-            path.into()
-        } else {
-            format!("{}/{path}", login::api_url(&a.api_url))
-        }
-    }
-
-    fn check_limit(&self) -> Result<(), GhError> {
-        let mut until = self.limited_until.lock().unwrap_or_else(|e| e.into_inner());
-        match *until {
-            Some(t) if t > now_secs() => Err(GhError::RateLimited(clock(t))),
-            Some(_) => {
-                *until = None;
-                Ok(())
-            }
-            None => Ok(()),
-        }
-    }
-
-    /// Notes a used-up rate limit from an answer: Err when this answer is the refusal.
-    fn note_limit(&self, res: &Response) -> Result<(), GhError> {
-        let refused = matches!(res.status, 403 | 429);
-        let until = match (res.header("retry-after"), res.header("x-ratelimit-remaining")) {
-            (Some(after), _) if refused => after.trim().parse::<u64>().ok().map(|s| now_secs() + s.max(1)),
-            (_, Some("0")) => res.header("x-ratelimit-reset").and_then(|r| r.trim().parse::<u64>().ok()),
-            _ => None,
-        };
-        let Some(until) = until else { return Ok(()) };
-        *self.limited_until.lock().unwrap_or_else(|e| e.into_inner()) = Some(until);
-        if refused { Err(GhError::RateLimited(clock(until))) } else { Ok(()) }
-    }
-
-    /// One call: a JSON `body` for POST/PATCH/PUT. GETs are conditional when `cache`. Any 2xx is Ok.
-    fn call(&self, method: &'static str, path: &str, body: Option<&Value>, cache: bool) -> Result<Response, GhError> {
-        let mut a = self.signed_in()?;
-        let mut renewed = false;
-        loop {
-            match self.call_once(&a, method, path, body, cache) {
-                Once::Done(r) => return r,
-                // A login that renews gets a new token and one more try (PDT-260) before it counts as refused.
-                Once::Refused(_) if !renewed && a.refresh.is_some() => {
-                    renewed = true;
-                    tracing::info!(login = %a.login, "GitHub refused the login's token: renewing it and asking again");
-                    a = self.renew(&a)?;
-                }
-                // Only a 401 whose `GET /user` is refused too marks the login: not one GitHub takes back when asked
-                // again (PDT-252).
-                Once::Refused(m) => {
-                    if self.confirm_refused(&a) {
-                        self.reject(&a.token);
-                        return Err(GhError::Rejected);
-                    }
-                    return Err(GhError::Status(401, m));
-                }
-            }
-        }
-    }
-
-    /// One try of [`Self::call`] with the login `a`.
-    fn call_once(&self, a: &Account, method: &'static str, path: &str, body: Option<&Value>, cache: bool) -> Once {
-        if let Err(e) = self.check_limit() {
-            return Once::Done(Err(e));
-        }
-        let url = Self::url(a, path);
-        let mut headers = headers(&a.token);
-        let cached = if cache && method == "GET" {
-            self.etags.lock().unwrap_or_else(|e| e.into_inner()).get(&url).cloned()
-        } else {
-            None
-        };
-        if let Some((etag, _)) = &cached {
-            headers.push(("If-None-Match", etag.clone()));
-        }
-        if body.is_some() {
-            headers.push(("Content-Type", "application/json".into()));
-        }
-        let req = Request { method, url: url.clone(), headers, body: body.map(Value::to_string) };
-        let mut res = match self.send(&req) {
-            Ok(res) => res,
-            Err(e) => return Once::Done(Err(GhError::Network(e))),
-        };
-        if let Err(e) = self.note_limit(&res) {
-            return Once::Done(Err(e));
-        }
-        if res.status == 304
-            && let Some((_, body)) = cached
-        {
-            res.status = 200;
-            res.body = body;
-            return Once::Done(Ok(res));
-        }
-        if matches!(res.status, 401 | 403) {
-            self.log_refusal(a, &req, &res);
-        }
-        // A 401 from a redirect's other host (a log's storage) says nothing about the login.
-        if res.status == 401 && same_host(&res.url, &url) {
-            return Once::Refused(message(&res));
-        }
-        if !(200..300).contains(&res.status) {
-            return Once::Done(Err(GhError::Status(res.status, message(&res))));
-        }
-        if cache
-            && method == "GET"
-            && let Some(etag) = res.header("etag")
-        {
-            let mut c = self.etags.lock().unwrap_or_else(|e| e.into_inner());
-            if c.len() >= ETAG_CACHE {
-                c.clear();
-            }
-            c.insert(url, (etag.to_string(), res.body.clone()));
-        }
-        Once::Done(Ok(res))
-    }
-
-    fn get(&self, path: &str) -> Result<Value, GhError> {
-        json(&self.call("GET", path, None, true)?.body)
-    }
-
-    fn send_json(&self, method: &'static str, path: &str, body: Value) -> Result<Value, GhError> {
-        let res = self.call(method, path, Some(&body), false)?;
-        if res.body.trim().is_empty() { Ok(Value::Null) } else { json(&res.body) }
-    }
-
-    /// Every item of a list, following its `Link: next` pages (at most [`MAX_PAGES`]).
-    fn get_pages(&self, path: &str) -> Result<Vec<Value>, GhError> {
-        let mut out = vec![];
-        let mut next = Some(path.to_string());
-        for _ in 0..MAX_PAGES {
-            let Some(p) = next.take() else { break };
-            let res = self.call("GET", &p, None, true)?;
-            match json(&res.body)? {
-                Value::Array(items) => out.extend(items),
-                _ => return Err(GhError::BadAnswer("a list is not an array".into())),
-            }
-            next = res.header("link").and_then(next_link);
-        }
-        Ok(out)
+        Self { rest: RestClient::offline() }
     }
 
     /// A GraphQL query's `data`; its first error as [`GhError::Status`].
@@ -671,19 +206,6 @@ impl GithubApi {
     }
 }
 
-/// Unix seconds.
-fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
-
-/// Unix milliseconds.
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
-
 /// An answer's message (and its first error's), for errors and logs.
 fn message(res: &Response) -> String {
     let v: Value = serde_json::from_str(&res.body).unwrap_or(Value::Null);
@@ -697,60 +219,8 @@ fn message(res: &Response) -> String {
     m
 }
 
-/// A URL without its query or fragment (a signed link's signature).
-fn bare_url(url: &str) -> String {
-    url.split(['?', '#']).next().unwrap_or_default().to_string()
-}
-
-/// A URL's path, without host or query.
-fn path_of(url: &str) -> String {
-    let u = bare_url(url);
-    let rest = u.split_once("://").map_or(u.as_str(), |(_, r)| r);
-    rest.find('/').map_or_else(|| "/".into(), |i| rest[i..].to_string())
-}
-
-/// A URL's scheme, host and port.
-fn origin(url: &str) -> &str {
-    let start = url.find("://").map_or(0, |i| i + 3);
-    url[start..].find('/').map_or(url, |i| &url[..start + i])
-}
-
-/// Whether the answer came from the request's own host (an empty answer URL is the request's).
-fn same_host(answered: &str, asked: &str) -> bool {
-    answered.is_empty() || origin(answered).eq_ignore_ascii_case(origin(asked))
-}
-
-/// A duration in ms, for logs: `95 min`.
-fn minutes(ms: i64) -> String {
-    format!("{} min", ms.max(0) / 60_000)
-}
-
-/// A time in Unix ms, for logs: `HH:MM:SS UTC`.
-fn clock_ms(ms: i64) -> String {
-    let day = (ms / 1000).rem_euclid(86_400);
-    format!("{:02}:{:02}:{:02} UTC", day / 3600, (day % 3600) / 60, day % 60)
-}
-
-/// A reset time for a message: `HH:MM UTC`.
-fn clock(t: u64) -> String {
-    let day = t % 86_400;
-    format!("{:02}:{:02} UTC", day / 3600, (day % 3600) / 60)
-}
-
-/// The `rel="next"` URL of a `Link` header.
-pub fn next_link(link: &str) -> Option<String> {
-    link.split(',').find_map(|part| {
-        let (url, rest) = part.split_once(';')?;
-        rest.contains("rel=\"next\"").then(|| url.trim().trim_start_matches('<').trim_end_matches('>').to_string())
-    })
-}
-
 fn owner_name(repo: &str) -> Result<(&str, &str), GhError> {
     repo.split_once('/').ok_or_else(|| GhError::BadAnswer(format!("not owner/name: {repo}")))
-}
-
-fn json(out: &str) -> Result<Value, GhError> {
-    serde_json::from_str(out).map_err(|e| GhError::BadAnswer(e.to_string()))
 }
 
 fn graphql_data(v: Value) -> Result<Value, GhError> {
@@ -765,16 +235,6 @@ fn graphql_data(v: Value) -> Result<Value, GhError> {
 
 fn s(v: &Value, k: &str) -> String {
     v[k].as_str().unwrap_or_default().to_string()
-}
-
-/// A comment cut to [`MAX_COMMENT`] characters.
-fn comment_body(body: &str) -> String {
-    if body.chars().count() <= MAX_COMMENT {
-        return body.to_string();
-    }
-    let mut out: String = body.chars().take(MAX_COMMENT - 1).collect();
-    out.push('…');
-    out
 }
 
 /// Whether an item's author is an insider on the repository (`author_association` OWNER, MEMBER or COLLABORATOR;
