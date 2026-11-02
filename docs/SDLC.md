@@ -97,7 +97,8 @@ The board no longer jumps back to the top when a ticket moves.
 ## CI
 
 `.github/workflows/ci.yml`; the Rust checks per OS in `.github/workflows/rust.yml`; shared setup (toolchain, cache,
-nextest, pnpm, Windows Defender exclusions) in `.github/actions/setup`, bundle steps in `.github/actions/bundle`.
+nextest, pnpm, Windows Defender exclusions) in `.github/actions/setup`, bundle steps in `.github/actions/bundle` and
+`.github/actions/bundle-macos` (which joins the two macOS builds into the universal app).
 Linux does every check that doesn't depend on the OS, in parallel jobs; macOS and Windows run only what they can break
 on their own (clippy for `cfg` code, the Rust tests). Every job runs on GitHub's hosted runners unless a repo variable
 names another (below, "Runners").
@@ -111,7 +112,7 @@ names another (below, "Runners").
 | build (windows-latest) | clippy, nextest | `windows` label, or a Rust change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | same |
 | site | the install scripts' lint, the website's tests (the docs check included) and build | a change to `site/`, `docs/`, the pnpm lockfile or workspace, `ci.yml` or `pages.yml` | same |
 | changelog | a fragment or the `no-changelog` label; the scripts' tests | unless docs only | skipped |
-| bundle (…) | the macOS app (universal: Apple silicon and Intel, checked with `lipo -archs`), the Windows installer, the Linux tarball and AppImage, as workflow artifacts (GitHub's runners always: signing) | the release PR only | never |
+| bundle (…) | the macOS app (each CPU built in its own job, `bundle (macos, <target>)`, then joined into the universal app, signed and checked with `lipo -archs` in `bundle (macos-latest, app)`), the Windows installer, the Linux tarball and AppImage, as workflow artifacts (GitHub's runners always: signing) | the release PR only | never |
 
 - **Docs-only PRs** (every changed file under `docs/` or `site/`, or a `*.md`) run only `changes` and `site`. The
   guides pdtd builds in with `include_str!` (`docs/agent-guide.md`, `docs/run-config.md`, `docs/prompts/`,
@@ -172,6 +173,12 @@ less CPU. Local builds keep `opt-level=0`.
 
 - **Only main saves caches; every other run only restores.** PRs and queue runs can read only their own branch's
   caches and main's, so a save anywhere else would be read by no one and fill the repo's 10 GB.
+- The bundles (`.github/actions/bundle`) keep their own Rust caches, one per bundle and CPU (`bundle-nsis`,
+  `bundle-linux` on each Linux CPU, `bundle-app-aarch64-apple-darwin`, `bundle-app-x86_64-apple-darwin`): release
+  builds share nothing with the checks' debug builds. Nightly releases save them (they run on main), along with the
+  pnpm store of each runner's OS and CPU; the release PR and a stable release's tag run (in a pull request's scope,
+  where a save would reach no one) restore the newest nightly's. `release.yml` sets the same `CARGO_*` variables as
+  `ci.yml`, because they are part of the keys.
 - On GitHub's runners `setup` restores `Swatinem/rust-cache`, one cache per OS and build (`linux-lint`,
   `linux-build`, `linux-minimal`, `macos-clippy`, `macos-build`, `windows-clippy`, `windows-build`). Each holds the cargo registry and
   the dependencies' build output (no debug info, not the workspace's crates), keyed on `Cargo.lock`, the manifests,
@@ -182,9 +189,13 @@ less CPU. Local builds keep `opt-level=0`.
 - `cache.yml` saves them: it runs the same builds on main when `Cargo.lock`, a `Cargo.toml`, `pnpm-lock.yaml`, the
   toolchain or the CI files change, weekly (GitHub drops caches unused for 7 days), and by hand (Actions → cache →
   Run workflow). Then `.github/scripts/prune-caches.sh` keeps only main's newest cache of each kind and deletes the
-  rest. Run it with `--dry-run` to see what it would delete.
+  rest; each nightly runs it too, after saving the bundles' caches. Past 10 GB GitHub evicts the least recently used
+  caches, which are the bundles' (read once a night), so pruning is what keeps them. Run it with `--dry-run` to see
+  what it would delete.
 - sccache isn't used: rust-cache with keys per OS and build already restores every dependency. Only the workspace's
-  own crates compile on each run, and a shared compiler cache would need storage outside GitHub's 10 GB.
+  own crates compile on each run, and a shared compiler cache would need storage outside GitHub's 10 GB (a bucket such
+  as Cloudflare R2, with its credentials as secrets); it would mostly speed up the bundles' release builds of the
+  workspace's crates.
 - Namespace runners keep their cache volume instead (`target/`, the cargo registry, the pnpm store, saved when a job
   exits cleanly); `cache.yml` skips an OS whose runner variable names a Namespace profile.
 - Windows: `setup` excludes the checkout, the temp folders and the cargo and rustup homes from Defender's scanning,

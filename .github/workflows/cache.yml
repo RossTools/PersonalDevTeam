@@ -84,13 +84,16 @@ jobs:
   # Only main's newest caches are any use: PRs and queue runs read only their own branch's and main's, and a save
   # replaces an older key (an older Cargo.lock or pnpm-lock.yaml) without removing it. Once the new caches are saved,
   # this keeps the newest per kind on main and deletes the rest (caches other branches saved, and old ones such as
-  # the bundles' that nothing saves any more), so the repo stays inside its 10 GB.
+  # keys from before a Cargo.lock or toolchain change), so the repo stays inside its 10 GB. The bundles' caches
+  # (release.yml's nightlies save them) count as kinds too: main's newest of each stays.
   prune:
     needs: [lint-linux, rust-linux, rust-macos, rust-windows, pnpm-linux]
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
+    # Job permissions replace the workflow's: the checkout needs contents too.
     permissions:
       actions: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - env:
