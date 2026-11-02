@@ -246,16 +246,83 @@ impl InboxStatus {
     }
 }
 
+/// The longest `question` an agent may ask ([`valid_questions`]): one line, the background goes in `context`.
+pub const QUESTION_MAX: usize = 120;
+
+// Items asked before PDT-476 have plain-string choices ([`Choice`] reads them) and no context.
 /// One of an agent's questions (`ask_user`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Question {
-    /// The question, one or two sentences.
+    /// The question itself, one line of at most 120 characters ("Which approach do you want?"). The background
+    /// goes in `context`, each option's trade-offs in its choice's `description`.
     pub question: String,
+    /// Markdown: the background the user needs to answer (what you found, what is at stake).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub context: Option<String>,
     /// Answers to pick from, if it has a few likely ones (the user can still write their own).
     #[serde(default)]
-    pub choices: Vec<String>,
+    pub choices: Vec<Choice>,
+    /// The `label` of the choice you recommend; it is pre-selected for the user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recommended: Option<String>,
+    /// Why you recommend it, one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub why: Option<String>,
+}
+
+/// One of a question's answers to pick from: a short label, and what it means in Markdown. A plain string is a label.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export)]
+pub struct Choice {
+    /// A few words ("Pair the browser"): the answer the user picks and you get back.
+    pub label: String,
+    /// Markdown: what it means, its pros and cons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub description: Option<String>,
+}
+
+impl Choice {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self { label: label.into(), description: None }
+    }
+}
+
+impl From<&str> for Choice {
+    fn from(s: &str) -> Self {
+        Self::new(s)
+    }
+}
+
+/// A choice as `ask_user` takes it: an object, or (the old shape) a plain label.
+impl<'de> Deserialize<'de> for Choice {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Full {
+            label: String,
+            #[serde(default)]
+            description: Option<String>,
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum In {
+            Label(String),
+            Full(Full),
+        }
+        match In::deserialize(d).map_err(|_| {
+            serde::de::Error::custom("a choice is {\"label\": \"…\", \"description\": \"…\"} (or a plain label)")
+        })? {
+            In::Label(label) => Ok(Self { label, description: None }),
+            In::Full(f) => Ok(Self { label: f.label, description: f.description }),
+        }
+    }
 }
 
 /// A choice an item offers (`POST /api/inbox/{id}/answer {choice}`).
@@ -610,13 +677,22 @@ pub fn answers_message(questions: &[Question], answer: &InboxAnswer) -> Result<S
     Ok(out)
 }
 
-/// Checks `ask_user`'s questions.
+/// Checks `ask_user`'s questions: trimmed, each `question` one short line, `recommended` one of its choices.
 pub fn valid_questions(questions: Vec<Question>) -> Result<Vec<Question>, String> {
+    let text = |s: Option<String>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let qs: Vec<Question> = questions
         .into_iter()
         .map(|q| Question {
             question: q.question.trim().to_string(),
-            choices: q.choices.into_iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect(),
+            context: text(q.context),
+            choices: q
+                .choices
+                .into_iter()
+                .map(|c| Choice { label: c.label.trim().to_string(), description: text(c.description) })
+                .filter(|c| !c.label.is_empty())
+                .collect(),
+            why: text(q.why).filter(|_| text(q.recommended.clone()).is_some()),
+            recommended: text(q.recommended),
         })
         .filter(|q| !q.question.is_empty())
         .collect();
@@ -625,6 +701,26 @@ pub fn valid_questions(questions: Vec<Question>) -> Result<Vec<Question>, String
     }
     if qs.len() > 10 {
         return Err("ask at most 10 questions at a time".into());
+    }
+    for (n, q) in qs.iter().enumerate() {
+        let len = q.question.chars().count();
+        if len > QUESTION_MAX || q.question.contains('\n') {
+            return Err(format!(
+                "question {} is too long ({len} characters, {} line(s)): keep `question` to one line of at most \
+                 {QUESTION_MAX} characters (\"Which approach do you want?\"), and move the background into `context` \
+                 (Markdown) and each option's trade-offs into its choice's `description`",
+                n + 1,
+                q.question.lines().count()
+            ));
+        }
+        if let Some(r) = &q.recommended
+            && !q.choices.iter().any(|c| &c.label == r)
+        {
+            return Err(format!(
+                "question {}'s `recommended` is \"{r}\", which is none of its choices: give the `label` of one",
+                n + 1
+            ));
+        }
     }
     Ok(qs)
 }
@@ -694,8 +790,8 @@ mod tests {
     #[test]
     fn answers_go_back_one_per_question_or_as_one_text() {
         let qs = vec![
-            Question { question: "Which DB?".into(), choices: vec!["SQLite".into()] },
-            Question { question: "Keep the old API?".into(), choices: vec![] },
+            Question { question: "Which DB?".into(), choices: vec!["SQLite".into()], ..Default::default() },
+            Question { question: "Keep the old API?".into(), ..Default::default() },
         ];
         let a = InboxAnswer { answers: Some(vec!["SQLite".into(), "".into()]), ..Default::default() };
         let m = answers_message(&qs, &a).unwrap();
@@ -709,11 +805,65 @@ mod tests {
 
     #[test]
     fn questions_are_trimmed_and_bounded() {
-        let q = |s: &str| Question { question: s.into(), choices: vec![" a ".into(), " ".into()] };
+        let q =
+            |s: &str| Question { question: s.into(), choices: vec![" a ".into(), " ".into()], ..Default::default() };
         let v = valid_questions(vec![q(" Why? "), q("  ")]).unwrap();
-        assert_eq!(v, vec![Question { question: "Why?".into(), choices: vec!["a".into()] }]);
+        assert_eq!(v, vec![Question { question: "Why?".into(), choices: vec!["a".into()], ..Default::default() }]);
         assert!(valid_questions(vec![q(" ")]).is_err());
         assert!(valid_questions((0..11).map(|_| q("x")).collect()).is_err());
+    }
+
+    #[test]
+    fn a_question_takes_context_described_choices_and_a_recommendation_or_the_old_plain_labels() {
+        let q: Question = serde_json::from_value(serde_json::json!({
+            "question": "Which approach do you want?",
+            "context": "The ticket's fixes **don't** stop an agent.",
+            "choices": [{"label": "A", "description": "Pair the browser."}, "B"],
+            "recommended": "A", "why": "A much higher bar."
+        }))
+        .unwrap();
+        assert_eq!(
+            q.choices,
+            vec![Choice { label: "A".into(), description: Some("Pair the browser.".into()) }, "B".into()]
+        );
+        assert_eq!(valid_questions(vec![q.clone()]).unwrap(), vec![q.clone()]);
+        // Stored as objects, which read back.
+        let back: Question = serde_json::from_value(serde_json::to_value(&q).unwrap()).unwrap();
+        assert_eq!(back, q);
+        let old: Question =
+            serde_json::from_value(serde_json::json!({"question": "Which?", "choices": ["x", "y"]})).unwrap();
+        assert_eq!(old.choices, vec![Choice::new("x"), Choice::new("y")]);
+        assert_eq!(
+            serde_json::to_value(&old).unwrap(),
+            serde_json::json!({"question": "Which?", "choices": [{"label": "x"}, {"label": "y"}]})
+        );
+        assert!(
+            serde_json::from_value::<Question>(serde_json::json!({"question": "Q", "choices": [{"name": "x"}]}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_long_question_or_a_recommendation_of_no_choice_is_refused_with_what_to_do() {
+        let long = Question { question: "x".repeat(QUESTION_MAX + 1), ..Default::default() };
+        let e = valid_questions(vec![long]).unwrap_err();
+        assert!(e.contains("question 1 is too long") && e.contains("`context`") && e.contains("`description`"), "{e}");
+        assert!(valid_questions(vec![Question { question: "x".repeat(QUESTION_MAX), ..Default::default() }]).is_ok());
+        assert!(valid_questions(vec![Question { question: "One?\nTwo?".into(), ..Default::default() }]).is_err());
+        let rec = |r: &str| Question {
+            question: "Which?".into(),
+            choices: vec!["A".into(), "B".into()],
+            recommended: Some(r.into()),
+            why: Some(" Simpler. ".into()),
+            ..Default::default()
+        };
+        let e = valid_questions(vec![rec("C")]).unwrap_err();
+        assert!(e.contains("`recommended` is \"C\""), "{e}");
+        assert_eq!(valid_questions(vec![rec(" B ")]).unwrap()[0].why.as_deref(), Some("Simpler."));
+        // A why without a recommendation says nothing.
+        let mut q = rec("A");
+        q.recommended = None;
+        assert_eq!(valid_questions(vec![q]).unwrap()[0].why, None);
     }
 
     #[test]

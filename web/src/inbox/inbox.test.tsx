@@ -10,7 +10,8 @@ import { TicketTabsContext } from '../workspaces/ticketTabs';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { InboxList } from './InboxList';
 import { InboxView } from './InboxView';
-import { after, dismissable, grouped, SECTION_OF, step } from './model';
+import { structuredQuestion, structuredQuestionItem } from './fixtures';
+import { after, dismissable, grouped, questionsOf, SECTION_OF, step } from './model';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -113,6 +114,68 @@ describe('question cards (PDT-361)', () => {
     await userEvent.click(screen.getByRole('radio', { name: /no-reply/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Send answers' }));
     await waitFor(() => expect(answered(calls)).toEqual({ answers: ['Both, as a link', 'no-reply@acme.shop'] }));
+  });
+});
+
+describe('structured questions (PDT-476)', () => {
+  const asked = structuredQuestionItem();
+  const answered = (calls: Call[]) => calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body;
+
+  it('shows the short question once, the context as the agent\'s message, and each choice with its description', () => {
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[asked]} selectedId="q401" onSelect={() => {}} />);
+    expect(screen.getByRole('heading', { name: structuredQuestion.question })).toBeInTheDocument();
+    expect(screen.getAllByText(structuredQuestion.question)).toHaveLength(1);
+    const context = screen.getByRole('group', { name: 'Context' });
+    expect(context).toHaveTextContent("Coder's context");
+    expect(within(context).getByText('index.html').tagName).toBe('CODE');
+    const card = screen.getByRole('region', { name: 'Question 1 of 1' });
+    expect(card).not.toHaveTextContent(structuredQuestion.question);
+    const a = within(card).getByRole('radio', { name: /A: Pair the browser/ });
+    expect(a).toHaveTextContent('Recommended');
+    expect(a).toHaveAccessibleDescription(/one-time pairing link.*Why: It closes the hole/);
+    // The description is Markdown: its list and code.
+    expect(within(card).getByText(/read PDT's data folder/).tagName).toBe('LI');
+    expect(within(card).getByText('HttpOnly SameSite=Strict').tagName).toBe('CODE');
+    expect(within(card).getByRole('radio', { name: /B: Peer-process check/ })).toHaveAccessibleDescription(/per-OS code/);
+    expect(within(card).getByRole('radio', { name: /B: Peer-process check/ })).not.toHaveTextContent('Recommended');
+    expect(within(card).getByRole('radio', { name: 'Something else' })).toBeInTheDocument();
+  });
+
+  it('pre-selects the recommended choice but sends nothing until the user does', async () => {
+    const calls = stubApi({ 'POST /api/inbox/q401/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[asked]} selectedId="q401" onSelect={() => {}} />);
+    expect(screen.getByRole('radio', { name: /A: Pair the browser/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('1 of 1 answered')).toBeInTheDocument();
+    expect(answered(calls)).toBeUndefined();
+    // A click on a choice's description picks it too.
+    await userEvent.click(screen.getByText(/A double-forked/));
+    expect(screen.getByRole('radio', { name: /B: Peer-process check/ })).toHaveAttribute('aria-checked', 'true');
+    await userEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    await waitFor(() => expect(answered(calls)).toEqual({ answers: ['B: Peer-process check'] }));
+  });
+
+  it('still reads the old shape: plain choices, no context, a long question clamped in the title and whole in the card', () => {
+    const long = 'PDT-401: The ticket\'s suggested fixes don\'t stop an agent. '.repeat(4) + 'Which approach do you want?';
+    const old = item('old', {
+      kind: 'question', group: 'question', personaName: 'Coder', title: long,
+      body: { questions: [{ question: long, choices: ['A: pair the browser (recommended)', 'B: peer-process check'] }] },
+    });
+    expect(questionsOf(old)[0]).toEqual({ question: long, context: null, recommended: null, why: null,
+      choices: [{ label: 'A: pair the browser (recommended)', description: null }, { label: 'B: peer-process check', description: null }] });
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[old]} selectedId="old" onSelect={() => {}} />);
+    expect(screen.getByRole('heading', { name: long })).toHaveClass('line-clamp-2');
+    expect(screen.queryByRole('group', { name: 'Context' })).not.toBeInTheDocument();
+    const card = screen.getByRole('region', { name: 'Question 1 of 1' });
+    expect(card).toHaveTextContent('Which approach do you want?');
+    expect(within(card).getAllByRole('radio').map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'false', 'false']);
+    expect(screen.queryByText('Recommended')).not.toBeInTheDocument();
+  });
+
+  it('ignores a recommendation that names none of the choices', () => {
+    const odd = structuredQuestionItem({ body: { questions: [{ ...structuredQuestion, recommended: 'D' }] } });
+    expect(questionsOf(odd)[0]).toMatchObject({ recommended: null, why: null });
   });
 });
 

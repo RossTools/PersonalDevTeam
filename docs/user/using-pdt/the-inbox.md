@@ -30,8 +30,11 @@ Items are listed in five sections, most urgent first.
 
 ### Questions
 
-An agent asked you something. Each question is a card: pick one of its choices (or press its number), or pick
-**Something else…** and write your own. **Send answers** says how many you've answered. A request for a secret (a
+An agent asked you something. The title is the question in one line; what the agent found and why it asks shows
+under it as the agent's message. Each question is a card: each choice has its label and what it means, with its pros
+and cons. The choice the agent recommends is marked **Recommended**, says why, and is already picked: nothing is sent
+until you press **Send answers**. Pick another choice (or press its number), or pick **Something else…** and write
+your own. **Send answers** says how many you've answered. A request for a secret (a
 token, a password) has a masked field, and the value goes straight to PDT's secret store, never the agent (see
 [Secrets](../your-machine/secrets.md)).
 

@@ -1,6 +1,6 @@
 // What an Inbox item shows and offers (PDT-361), whatever the screen: one line on why it waits, its content in the
 // kind's style, the note box and the actions. The desktop and the phone lay the same spec out their own way.
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import {
   AgentMessage, ApprovalCard, Callout, Checkbox, CodeCard, DiffViewer, Facts, Field, Input, NO_ANSWER, PassList, QuestionCard,
   Select, Textarea, answerText, otherInputId, type ApprovalAnswer, type QuestionAnswer,
@@ -19,7 +19,7 @@ import { formatBytes, STORAGE_PATH, useCleanFinished } from '../projects/worktre
 import type { ItemLink } from './ItemLinks';
 import {
   confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
-  proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
+  longTitle, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerApproval } from './approval';
 import { DecideRows } from './DecideRows';
@@ -105,7 +105,9 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   phone?: boolean;
 }): { spec: ItemSpec; note: string; setNote: (s: string) => void } {
   const [note, setNote] = useState('');
-  const [answers, setAnswers] = useState<QuestionAnswer[]>([]);
+  // A question's recommended choice starts picked (PDT-476); the user still sends it.
+  const [answers, setAnswers] = useState<QuestionAnswer[]>(() =>
+    item.kind === 'question' ? questionsOf(item).map((q) => (q.recommended ? { choice: q.recommended, other: null } : NO_ANSWER)) : []);
   const [active, setActive] = useState(0);
   const [takingOver, setTakingOver] = useState(false);
   const [secret, setSecret] = useState('');
@@ -140,7 +142,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
           const k = Number(key);
           if (!q || !Number.isInteger(k) || k < 1 || k > q.choices.length + 1 || q.choices.length === 0) return false;
           if (k <= q.choices.length) {
-            set(n, { choice: q.choices[k - 1], other: null });
+            set(n, { choice: q.choices[k - 1].label, other: null });
             if (n + 1 < qs.length) setActive(n + 1);
           } else {
             set(n, { choice: at(n).choice, other: at(n).other ?? '' });
@@ -151,10 +153,22 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         return {
           region: 'Questions',
           why: `${persona} waits for your answers${item.ticketKey ? ` on ${item.ticketKey}` : ''}; its step carries on with them.`,
+          // The title shows a lone short question; the card repeats only a longer one (asked before PDT-476), which
+          // the title clamps. Its context is the agent's message above it.
           content: qs.map((q, n) => (
-            <QuestionCard key={n} id={`${item.id}-q${n}`} index={n} total={qs.length} label={q.question} numbers={!phone}
-              question={<Markdown>{q.question}</Markdown>} choices={q.choices.map((label) => ({ label }))}
-              value={at(n)} disabled={busy} onChange={(a) => { set(n, a); setActive(n); }} />
+            <Fragment key={n}>
+              {q.context && (
+                <AgentMessage aria-label={qs.length > 1 ? `Context of question ${n + 1}` : 'Context'} name={persona}
+                  label={`${persona}'s context`}>
+                  <Markdown>{q.context}</Markdown>
+                </AgentMessage>
+              )}
+              <QuestionCard id={`${item.id}-q${n}`} index={n} total={qs.length} label={q.question} numbers={!phone}
+                question={qs.length === 1 && q.question === item.title && !longTitle(item) ? undefined : <Markdown>{q.question}</Markdown>}
+                choices={q.choices.map((c) => ({ label: c.label, description: c.description ? <Markdown className="text-muted-foreground">{c.description}</Markdown> : undefined }))}
+                recommended={q.recommended} why={q.why}
+                value={at(n)} disabled={busy} onChange={(a) => { set(n, a); setActive(n); }} />
+            </Fragment>
           )),
           actions: [
             { id: 'send', title: 'Send answers', short: 'Send', primary: true, pending: busy, disabled: answered === 0,
