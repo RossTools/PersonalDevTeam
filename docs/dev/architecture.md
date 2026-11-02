@@ -501,8 +501,13 @@ jobs pass the repository's secrets through `.github/actions/bundle`; a build wit
 client, `IntegrationInfo.signIn.builtIn`). Their only redirect URI is the website's `/oauth/google` page
 (`site/public/oauth/google.js`): `state` is `<nonce>.<base64url(origin)>`, the page forwards only to an origin that
 looks like a PDT (loopback, private and Tailscale addresses, `localhost`, `*.ts.net`: the same rule as
-`builtin::pdt_origin`, which pdtd applies before issuing one) and asks first, and the callback takes only a state it
-issued, traded with its PKCE verifier. Signing in with no account (`POST /api/google/sign-in`) adds the connection,
+`builtin::pdt_origin`, which pdtd applies before issuing one) and asks first (with a stronger warning when it isn't
+loopback), and the callback takes only a state it issued, traded with its PKCE verifier. The page also starts each
+sign-in, so the code goes back only to the PDT that started it: the sign-in answer carries `relay` (that page), the UI's
+sign-in window opens it, the page posts `{pdtRelay: 'ready'}` to its opener, which posts back `{pdtRelayTo: url}`;
+the page takes it only when the message's origin (which the browser sets) is the state's, keeps the state in its
+`localStorage` for 15 minutes, and later forwards only a state it kept, once. Anyone can start a flow with the built-in
+client, but a Google link they hand someone else then stops at the page. Signing in with no account (`POST /api/google/sign-in`) adds the connection,
 named after the email, once Google says who it is. There are two clients, after Google's rule for apps that are
 partly an agent: the standard one for the user's own calls and the agentic one for agents' document tools.
 `pdt_api::sdk::documents::by_agent` (a task-local set around every agent tool call, `AnyAction::call`) tells the

@@ -88,7 +88,10 @@ Each step runs in the checkout's folder with your machine's environment (the sam
 | `$PDT_OWNER_LOGIN` | your Tailscale login, when remote access has one |
 
 PDT fills in these variables (as `$NAME` or `${NAME}`) in `setup`, `command` and `env`; anything else, such as
-`$HOME`, is left to the shell. A web run is ready once something answers on its port (on `127.0.0.1` or `::1`);
+`$HOME`, is left to the shell. A value is never run as part of the command: on macOS and Linux, one with characters
+the shell would act on (a branch named `fix;rm`, a folder with a space) is left for the shell to read from the
+environment, so quote it as usual (`"$PDT_RUN_DATA/db"`). On Windows, a run fails to start, saying why, when a value
+it uses has `& | < > ^ % ! "` in it; rename the branch, or read the variable in your program instead. A web run is ready once something answers on its port (on `127.0.0.1` or `::1`);
 another run as soon as its command starts.
 
 ### Runs that outlive PDT

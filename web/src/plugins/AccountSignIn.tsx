@@ -1,8 +1,9 @@
 // A plugin's account sign-in in the browser (PDT-316, PDT-378), from what it declares (`SignIn`): each account signs
 // in on the service's consent page, in a window of its own, which comes back to PDT and closes. With PDT's own
-// client (`builtIn`) Sign in with … adds an account, and each account lets agents in with a consent of its own; an
+// client (`builtIn`) the window starts at the website's page (`relay`), which goes back only to the PDT that hands it
+// the consent page (PDT-410). Sign in with … adds an account, and each account lets agents in with a consent of its own; an
 // account with the user's own OAuth client is under Advanced.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, Section, Skeleton } from '@ui';
 import { api } from '../api/client';
@@ -37,6 +38,13 @@ export function AccountSignIn({ signIn: s }: { signIn: SignIn }) {
   const accounts = useSignInAccounts(url, waiting);
   const builtIn = s.builtIn;
   const refresh = () => void qc.invalidateQueries({ queryKey: signInAccountsKey(url) });
+  // The relay page's handshake for the sign-in under way: a new one replaces it (the window is the same one).
+  const handshake = useRef<((e: MessageEvent) => void) | null>(null);
+  const stopHandshake = () => {
+    if (handshake.current) window.removeEventListener('message', handshake.current);
+    handshake.current = null;
+  };
+  useEffect(() => stopHandshake, []);
   // The callback page tells this one when it is done.
   useEffect(() => {
     const done = (e: MessageEvent) => {
@@ -51,10 +59,23 @@ export function AccountSignIn({ signIn: s }: { signIn: SignIn }) {
   const consent = async (start: () => Promise<AccountSignInStart>) => {
     setError(null);
     // Opened now, in the click, so the browser doesn't block it; it goes to the service once PDT says where.
+    stopHandshake();
     const w = window.open('', 'pdt-sign-in', 'popup,width=520,height=680');
     try {
-      const { url: to } = await start();
-      if (w) w.location.href = to;
+      const { url: to, relay } = await start();
+      if (relay) {
+        if (!w) throw new Error(`Allow pop-ups for PDT, then sign in again: ${s.service}’s sign-in needs a window of its own.`);
+        // Once the relay page says it is listening, hand it the consent page; the browser tells it this PDT sent it.
+        const from = new URL(relay).origin;
+        const ready = (e: MessageEvent) => {
+          if (e.source !== w || e.origin !== from || (e.data as { pdtRelay?: unknown } | null)?.pdtRelay !== 'ready') return;
+          stopHandshake();
+          w.postMessage({ pdtRelayTo: to }, from);
+        };
+        handshake.current = ready;
+        window.addEventListener('message', ready);
+        w.location.href = relay;
+      } else if (w) w.location.href = to;
       else window.location.assign(to);
       setWaiting(true);
     } catch (e) {
