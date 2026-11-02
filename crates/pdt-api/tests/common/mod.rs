@@ -13,9 +13,17 @@ pub async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Valu
     call_with(app, method, uri, body, &[]).await
 }
 
-/// [`call`] as PDT's web client makes it (PDT-204): with the UI token it fetches as a same-origin browser fetch.
-pub async fn call_as_ui(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
-    let req = Request::builder().uri("/api/ui/token").header("sec-fetch-site", "same-origin");
+/// [`call`] as PDT's web client makes it (PDT-204): with the UI token it fetches as a paired browser's same-origin fetch
+/// (PDT-401).
+pub async fn call_as_ui(
+    state: &pdt_api::AppState,
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let cookie = pdt_api::ui_pairing::paired_cookie(state).await;
+    let req = Request::builder().uri("/api/ui/token").header("sec-fetch-site", "same-origin").header("cookie", cookie);
     let res = app.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let bytes = res.into_body().collect().await.unwrap().to_bytes();

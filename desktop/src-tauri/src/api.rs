@@ -22,6 +22,12 @@ pub fn call(port: u16, method: &str, path: &str, body: Option<&str>) -> Result<(
     Ok((status, serde_json::from_str(body).unwrap_or(serde_json::Value::Null)))
 }
 
+/// Whether pdtd took an Open (`POST /api/ui/open`): it opened the browser, or just did (a second click). Otherwise
+/// (an older pdtd without the route, one that can't open a browser, no answer) the tray opens the plain URL.
+pub fn daemon_opened(status: Result<u16, String>) -> bool {
+    matches!(status, Ok(204 | 429))
+}
+
 /// The Update menu item for a `/api/host/update` status: (label, enabled).
 pub fn update_label(status: &serde_json::Value) -> (String, bool) {
     match status["state"].as_str() {
@@ -39,6 +45,15 @@ pub fn update_label(status: &serde_json::Value) -> (String, bool) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn opens_fall_back_to_the_plain_url_unless_pdtd_took_them() {
+        assert!(daemon_opened(Ok(204)));
+        assert!(daemon_opened(Ok(429)), "a second click");
+        assert!(!daemon_opened(Ok(404)), "an older pdtd");
+        assert!(!daemon_opened(Ok(409)), "no browser");
+        assert!(!daemon_opened(Err("refused".into())));
+    }
 
     #[test]
     fn labels() {

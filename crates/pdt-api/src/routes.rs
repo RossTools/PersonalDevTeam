@@ -93,6 +93,10 @@ pub struct AppState {
     pub(crate) grants: std::sync::Arc<crate::untrusted::Grants>,
     /// This pdtd's UI token (PDT-204): PDT's web client sends it, an agent's curl doesn't.
     pub(crate) ui_token: crate::untrusted::UiToken,
+    /// The pairing codes waiting to be used (PDT-401).
+    pub(crate) pairing: std::sync::Arc<crate::ui_pairing::Pairing>,
+    /// Opens a pairing link in the system's browser. `new` opens nothing; only pdtd's wiring installs the real one.
+    pub browser: crate::ui_pairing::BrowserOpener,
     /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
     /// instance's own port for any other, so a dev instance never takes over the stable one's mapping.
     pub remote_https_port: u16,
@@ -281,6 +285,8 @@ impl AppState {
             local_ci: Default::default(),
             grants: Default::default(),
             ui_token: Default::default(),
+            pairing: Default::default(),
+            browser: crate::ui_pairing::no_browser(),
             remote_https_port: crate::remote::HOST_HTTPS_PORT,
             tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
             remote: Default::default(),
@@ -496,6 +502,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::todos::router())
         .merge(crate::toolchains::router())
         .merge(crate::untrusted::router())
+        .merge(crate::ui_pairing::router())
         .merge(crate::update::router())
         .merge(crate::vault::router())
         .merge(crate::watches::router())

@@ -11,6 +11,7 @@ import { hostApi } from './host';
 import { inboxApi } from './inbox';
 import { installUpdatesApi } from './installUpdates';
 import { notificationRulesApi } from './notificationRules';
+import { pairingApi } from './pairing';
 import { personasApi } from './personas';
 import { pmApi } from './pm';
 import { pmCheckpointApi } from './pmCheckpoint';
@@ -40,6 +41,7 @@ export const api = {
   ...hostApi,
   ...inboxApi,
   ...notificationRulesApi,
+  ...pairingApi,
   ...installUpdatesApi,
   ...personasApi,
   ...pmApi,

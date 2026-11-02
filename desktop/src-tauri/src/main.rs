@@ -267,10 +267,18 @@ fn open_ui(app: &AppHandle) {
     if !tray.ready.load(Ordering::SeqCst) {
         return;
     }
-    let url = tray.url();
-    if let Err(e) = app.opener().open_url(url.clone(), None::<&str>) {
-        error_dialog(app, format!("Could not open {url}: {e}")).show(|_| {});
-    }
+    let (url, port) = (tray.url(), tray.port());
+    let app = app.clone();
+    // pdtd opens the browser itself, with a pairing link the tray never sees (PDT-401); an older pdtd can't, so the
+    // tray opens the plain URL.
+    std::thread::spawn(move || {
+        if api::daemon_opened(api::call(port, "POST", "/api/ui/open", None).map(|r| r.0)) {
+            return;
+        }
+        if let Err(e) = app.opener().open_url(url.clone(), None::<&str>) {
+            error_dialog(&app, format!("Could not open {url}: {e}")).show(|_| {});
+        }
+    });
 }
 
 /// Shows (or, with `None`, removes) the placement item at the top of the menu.

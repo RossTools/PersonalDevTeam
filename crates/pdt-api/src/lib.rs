@@ -68,6 +68,7 @@ mod ticket_attachments;
 mod tickets;
 mod todos;
 pub mod toolchains;
+pub mod ui_pairing;
 mod untrusted;
 pub mod update;
 pub mod vault;

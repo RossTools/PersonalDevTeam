@@ -349,7 +349,7 @@ async fn only_the_web_client_lets_an_external_ticket_in() {
     assert_eq!((s, v["code"].as_str()), (StatusCode::FORBIDDEN, Some("stale_ui_token")), "{v}");
 
     // The web client: let in.
-    let (s, v) = common::call_as_ui(&app, "PATCH", "/api/tickets/ext", Some(json!({"stage": "todo"}))).await;
+    let (s, v) = common::call_as_ui(&st, &app, "PATCH", "/api/tickets/ext", Some(json!({"stage": "todo"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!((v["stage"].as_str(), v["admitted"].as_bool()), (Some("todo"), Some(true)), "{v}");
     // Once let in, the gate is open to anyone.

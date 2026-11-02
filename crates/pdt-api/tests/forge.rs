@@ -696,6 +696,7 @@ async fn the_user_files_a_ticket_as_a_github_issue_and_the_ticket_links_it() {
     assert_eq!(f["queueName"], json!(null));
     *gh.capabilities.lock().unwrap() = Capabilities::ALL;
     let (_, t) = call_as_ui(
+        &env.state,
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -712,7 +713,7 @@ async fn the_user_files_a_ticket_as_a_github_issue_and_the_ticket_links_it() {
     assert_eq!((s, v["code"].as_str()), (StatusCode::FORBIDDEN, Some("not_the_ui")), "{v}");
     assert!(gh.created_issues.lock().unwrap().is_empty());
 
-    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(body.clone())).await;
+    let (s, v) = call_as_ui(&env.state, &env.app, "POST", &issues, Some(body.clone())).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
     let key = t["key"].as_str().unwrap();
     assert_eq!(
@@ -735,16 +736,16 @@ async fn the_user_files_a_ticket_as_a_github_issue_and_the_ticket_links_it() {
     assert_eq!((linked["actor"].as_str(), linked["data"]["key"].as_str()), (Some("user"), Some("o/r#500")));
 
     // A ticket links one issue.
-    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(body)).await;
+    let (s, v) = call_as_ui(&env.state, &env.app, "POST", &issues, Some(body)).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("already_linked")), "{v}");
     // A new issue, from no ticket; one without a title is refused.
-    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(json!({"title": "Docs typo"}))).await;
+    let (s, v) = call_as_ui(&env.state, &env.app, "POST", &issues, Some(json!({"title": "Docs typo"}))).await;
     assert_eq!((s, v["number"].as_u64(), &v["ticketKey"]), (StatusCode::CREATED, Some(501), &Value::Null), "{v}");
-    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(json!({"title": "  "}))).await;
+    let (s, v) = call_as_ui(&env.state, &env.app, "POST", &issues, Some(json!({"title": "  "}))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
     // GitHub refusing it is the forge's error.
     *gh.error.lock().unwrap() = Some("GitHub is not connected".into());
-    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(json!({"title": "Later"}))).await;
+    let (s, v) = call_as_ui(&env.state, &env.app, "POST", &issues, Some(json!({"title": "Later"}))).await;
     assert_eq!((s, v["message"].as_str()), (StatusCode::BAD_GATEWAY, Some("GitHub is not connected")), "{v}");
 }
 
@@ -755,7 +756,7 @@ async fn a_forge_without_issues_files_none() {
     let (_, f) = call(&env.app, "GET", &format!("/api/projects/{}/forge", env.project), None).await;
     assert_eq!(f["issues"], false);
     let issues = format!("/api/projects/{}/issues", env.project);
-    let (s, v) = call_as_ui(&env.app, "POST", &issues, Some(json!({"title": "Crash"}))).await;
+    let (s, v) = call_as_ui(&env.state, &env.app, "POST", &issues, Some(json!({"title": "Crash"}))).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("unsupported")), "{v}");
     assert!(gh.created_issues.lock().unwrap().is_empty());
 }

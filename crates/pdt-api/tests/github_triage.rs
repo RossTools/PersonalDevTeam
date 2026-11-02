@@ -181,7 +181,8 @@ async fn submit(env: &Env, wf: &str, session: &str, outcome: &str, summary: &str
 
 async fn move_ticket(env: &Env, id: &str, stage: &str) {
     let (s, v) =
-        common::call_as_ui(&env.app, "PATCH", &format!("/api/tickets/{id}"), Some(json!({"stage": stage}))).await;
+        common::call_as_ui(&env.state, &env.app, "PATCH", &format!("/api/tickets/{id}"), Some(json!({"stage": stage})))
+            .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     for _ in 0..3 {
         pdt_api::run_workflows(&env.state).await;
@@ -274,7 +275,7 @@ async fn bug_reports_are_triaged_into_tickets_duplicates_and_rejections() {
     assert_eq!((t["stage"].as_str(), t["admitted"].as_bool()), (Some("draft"), Some(false)));
     assert!(admit_item(&env, &id).await.is_some(), "still waiting");
     // The user's Approve puts it in To do and lets it in, without the agentic label.
-    let (s, v) = common::call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "approve"}))).await;
+    let (s, v) = common::call_as_ui(&env.state, &env.app, "POST", &answer, Some(json!({"choice": "approve"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let t = &tickets(&env).await[0];
     assert_eq!((t["stage"].as_str(), t["admitted"].as_bool()), (Some("todo"), Some(true)));
@@ -434,6 +435,7 @@ fn step<'a>(run: &'a Value, node: &str) -> &'a Value {
 async fn a_workflow_files_a_ticket_as_an_issue() {
     let env = setup().await;
     let (s, t) = call_as_ui(
+        &env.state,
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),

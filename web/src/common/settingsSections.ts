@@ -23,6 +23,7 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
   { label: 'PM', terms: ['Daily checkpoint', 'Daily update', 'Journal', 'At a set time', 'Days'] },
   { label: 'Network', terms: ['Port', 'Allowed hosts', 'Restart', 'PDT_PORT', 'PDT_ALLOWED_HOSTS'] },
   { label: 'Remote access', terms: ['Serve on the tailnet', 'Tailscale', 'Owner', 'Status'] },
+  { label: 'Browsers', terms: ['Pair this browser', 'Pair another browser', 'Pairing link', 'Unpair all browsers', 'Paired browsers'] },
   { label: 'Runs', terms: ['Ports', 'Max concurrent runs'] },
   {
     label: 'Storage',

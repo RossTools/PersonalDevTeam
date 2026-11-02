@@ -26,6 +26,7 @@ import { agentsOff, AgentSwitch, offNote, switchBlocked } from './AgentSwitch';
 import { BugReportDialog } from './BugReportDialog';
 import { Storage } from './StorageSettings';
 import { InstallUpdates } from './InstallUpdates';
+import { PairedBrowsers } from './PairedBrowsers';
 import { StuckAgents } from './StuckAgents';
 import { PmCheckpointSettings } from '../pm/PmCheckpointSettings';
 import { documentKeys, useDocumentProviders } from '../documents/queries';
@@ -911,6 +912,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
     'PM': <PmCheckpointSettings />,
     'Network': <Network v={v} />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,
+    'Browsers': <PairedBrowsers />,
     'Runs': <Runs v={v} />,
     'Storage': <Storage />,
     'Projects folder': <ProjectsFolder v={v} />,

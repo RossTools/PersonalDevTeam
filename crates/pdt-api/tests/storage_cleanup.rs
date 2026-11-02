@@ -82,7 +82,8 @@ async fn put(env: &Env, values: Value) -> (StatusCode, Value) {
 
 async fn todo_ticket(env: &Env, title: &str) -> String {
     let body = json!({"title": title, "stage": "todo"});
-    let (s, t) = call_as_ui(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(body)).await;
+    let (s, t) =
+        call_as_ui(&env.state, &env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{t}");
     t["id"].as_str().unwrap().to_string()
 }
@@ -90,7 +91,8 @@ async fn todo_ticket(env: &Env, title: &str) -> String {
 /// A Done ticket whose worktree was kept, with build output in it: (worktree id, its path).
 async fn finished_ticket(env: &Env, title: &str) -> (String, PathBuf) {
     let body = json!({"title": title});
-    let (_, t) = call_as_ui(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(body)).await;
+    let (_, t) =
+        call_as_ui(&env.state, &env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(body)).await;
     let id = t["id"].as_str().unwrap().to_string();
     let body = json!({"agent": "claude", "noSession": true});
     let (s, v) = call(&env.app, "POST", &format!("/api/tickets/{id}/start"), Some(body)).await;

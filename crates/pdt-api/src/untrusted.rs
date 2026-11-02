@@ -1,5 +1,6 @@
 //! Untrusted input (PDT-201): which sessions read it, the PM's confirmed calls that may let an external ticket in, and
-//! the secret tools kept away from it, and the UI token that tells the user's clicks from an agent's curl (PDT-204). The
+//! the secret tools kept away from it, and the UI token that tells the user's clicks from an agent's curl (PDT-204;
+//! only paired browsers get it, `ui_pairing.rs`). The
 //! Todo gate itself is pdt-core's `external_gate`, applied by the store. PDT-202: the record of outside input reaching
 //! agent sessions (`session.outside_input`, on the ticket's timeline), and what outsiders wrote kept out of them.
 //! Prompts fence outside text in the engine (`engine::fence_input`).
@@ -74,17 +75,39 @@ fn same_call(a: &Value, b: &Value) -> bool {
 pub(crate) const UI_TOKEN_HEADER: &str = "x-ui-token";
 
 /// This pdtd's UI token (PDT-204), new at every start: PDT's web client fetches it and sends it with its changes, so
-/// the HTTP API can tell the user's clicks from an agent's curl for the changes that let an external ticket in.
+/// the HTTP API can tell the user's clicks from an agent's curl for the changes only the user may make. Only a browser
+/// the user paired gets it (PDT-401, `ui_pairing.rs`).
 #[derive(Clone)]
-pub(crate) struct UiToken(std::sync::Arc<str>);
+pub(crate) struct UiToken(std::sync::Arc<std::sync::RwLock<String>>);
 
 impl Default for UiToken {
     fn default() -> Self {
-        UiToken(uuid::Uuid::new_v4().simple().to_string().into())
+        UiToken(std::sync::Arc::new(std::sync::RwLock::new(new_ui_token())))
     }
 }
 
-/// `GET /api/ui/token`: only to a browser's same-origin fetch (it sends `Sec-Fetch-Site`; a plain curl doesn't).
+fn new_ui_token() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+impl UiToken {
+    fn is(&self, sent: &[u8]) -> bool {
+        self.0.read().unwrap_or_else(|e| e.into_inner()).as_bytes() == sent
+    }
+
+    fn get(&self) -> String {
+        self.0.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// A new token (unpairing every browser, PDT-401): the old one is stale, so a page that held it fetches again and
+    /// is refused until its browser pairs again.
+    pub(crate) fn rotate(&self) {
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = new_ui_token();
+    }
+}
+
+/// `GET /api/ui/token`: only to a paired browser (its cookie, PDT-401). Its fetch must be same-origin as well, so another
+/// page on the same host (a dev server on another port shares the cookie) can't fetch it either.
 pub(crate) async fn ui_token(
     State(st): State<AppState>,
     headers: HeaderMap,
@@ -92,7 +115,14 @@ pub(crate) async fn ui_token(
     if headers.get("sec-fetch-site").is_none_or(|v| v.as_bytes() != b"same-origin") {
         return Err(ApiError::new(StatusCode::FORBIDDEN, "not_the_ui", "only PDT's web app gets its UI token"));
     }
-    Ok(Json(serde_json::json!({ "token": &*st.ui_token.0 })))
+    if !crate::ui_pairing::is_paired(&st, &headers).await? {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "not_paired",
+            "this browser isn't paired with PDT: pair it to make changes only the user may make",
+        ));
+    }
+    Ok(Json(serde_json::json!({ "token": st.ui_token.get() })))
 }
 
 /// Whether a request came from PDT's web client: it carries this pdtd's UI token. A token from an earlier pdtd (it
@@ -100,7 +130,7 @@ pub(crate) async fn ui_token(
 pub fn from_ui(st: &AppState, headers: &HeaderMap) -> Result<bool, ApiError> {
     match headers.get(UI_TOKEN_HEADER) {
         None => Ok(false),
-        Some(v) if v.as_bytes() == st.ui_token.0.as_bytes() => Ok(true),
+        Some(v) if st.ui_token.is(v.as_bytes()) => Ok(true),
         Some(_) => Err(ApiError::new(StatusCode::FORBIDDEN, "stale_ui_token", "the UI token is from an earlier start")),
     }
 }

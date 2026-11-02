@@ -69,6 +69,7 @@ mod ticket_attachments;
 mod ticket_conversations;
 mod tickets;
 mod todos;
+mod ui_pairing;
 mod update;
 mod watches;
 mod workflow_runs;

@@ -5,6 +5,8 @@
 # Windows twin: scripts/scratch-daemon.ps1. Tests: scripts/scratch-daemon.test.sh.
 #
 #   scripts/scratch-daemon.sh start [--seed <seed>]   start one; prints port=, dir=, url=
+#   scripts/scratch-daemon.sh pair <port>             a pairing link (good once, for 5 minutes): open it first in the
+#                                                     test browser, or the app shows only "Pair this browser"
 #   scripts/scratch-daemon.sh stop <port>             stop it by port and delete its scratch folder
 #   scripts/scratch-daemon.sh list                    the scratch folders and whether each daemon is up
 #
@@ -86,7 +88,7 @@ start() {
   [ -n "$port" ] || die "no free port in $first_port-$last_port"
   local dir="$parent/$port"
   PDT_PROFILE=dev PDT_PORT="$port" PDT_DATA_DIR="$dir/data" PDT_WEB_DIR="$root/web/dist" PDT_SECRET_STORE=memory \
-    PDT_SEED="$seed" PDT_TAILSCALE_BIN=/nonexistent PDT_GITHUB_OFFLINE=1 \
+    PDT_SEED="$seed" PDT_TAILSCALE_BIN=/nonexistent PDT_GITHUB_OFFLINE=1 PDT_BROWSER="$root/scripts/scratch-browser.sh" \
     nohup "$bin" >"$dir/pdtd.out" 2>&1 </dev/null &
   local url="http://127.0.0.1:$port"
   for _ in $(seq 1 150); do
@@ -103,6 +105,25 @@ start() {
   exit 1
 }
 
+# A pairing link: the daemon "opens" it with scratch-browser.sh, which leaves it in the scratch folder.
+pair() {
+  local port="$1" dir
+  dir="$(scratch_dir "$port")" || exit 1
+  rm -f -- "$dir/pair-url"
+  # pdtd opens one browser every few seconds at most: a second pair soon after the first waits its turn.
+  local tries=0
+  until curl -sf -X POST "http://127.0.0.1:$port/api/ui/open" >/dev/null; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 5 ] || die "pdtd on port $port opened no pairing link"
+    sleep 1
+  done
+  for _ in $(seq 1 25); do
+    [ -s "$dir/pair-url" ] && { printf 'pair=%s\n' "$(cat "$dir/pair-url")"; return 0; }
+    sleep 0.2
+  done
+  die "no pairing link from pdtd on port $port"
+}
+
 list() {
   local dir port state
   for dir in "$parent"/*; do
@@ -116,7 +137,8 @@ list() {
 
 case "${1:-}" in
   start) shift; start "$@" ;;
+  pair) [ $# -eq 2 ] || die "usage: scratch-daemon.sh pair <port>"; pair "$2" ;;
   stop) [ $# -eq 2 ] || die "usage: scratch-daemon.sh stop <port>"; stop_port "$2" ;;
   list) list ;;
-  *) die "usage: scratch-daemon.sh start [--seed <seed>] | stop <port> | list" ;;
+  *) die "usage: scratch-daemon.sh start [--seed <seed>] | pair <port> | stop <port> | list" ;;
 esac

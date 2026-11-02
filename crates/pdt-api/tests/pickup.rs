@@ -70,6 +70,7 @@ async fn settings(env: &Env, body: Value) {
 
 async fn ticket(env: &Env, title: &str, stage: &str) -> String {
     let (s, t) = call_as_ui(
+        &env.state,
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -240,6 +241,7 @@ async fn pick_up_steps_can_narrow_to_a_label_and_their_own_cap() {
     let wf = workflow(&env, doc).await;
     let plain = ticket(&env, "Plain", "todo").await;
     let (s, t) = call_as_ui(
+        &env.state,
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -344,6 +346,7 @@ async fn a_stale_pick_is_checked_again_and_skipped_when_a_cap_filled_since() {
     let env = setup().await;
     settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 5, "startDelaySeconds": 0})).await;
     let (_, t) = call_as_ui(
+        &env.state,
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -423,6 +426,7 @@ async fn pick_up_tickets_avoids_hot_areas_in_flight_and_says_why() {
         let env = &env;
         async move {
             let (s, t) = call_as_ui(
+                &env.state,
                 &env.app,
                 "POST",
                 &format!("/api/projects/{}/tickets", env.project),
@@ -485,6 +489,7 @@ fn areas_config(env: &Env, toml: &str) {
 /// A To do ticket in `areas`: its id and key.
 async fn tagged(env: &Env, title: &str, areas: Value) -> (String, String) {
     let (s, t) = call_as_ui(
+        &env.state,
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),

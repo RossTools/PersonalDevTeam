@@ -74,6 +74,13 @@ which wins over the setting, so you can't change it here. See
 **Serve on the tailnet**, its **Status** and address, and the **Owner**. See
 [Remote access and your phone](remote-access.md).
 
+### Browsers
+
+PDT takes approvals and the other changes only you may make from a browser you've paired, so an agent on this
+computer can't make them for you. **Pair another browser** makes a link that pairs the browser that opens it (a phone
+too): it works once, within 5 minutes. **Unpair all browsers** makes every browser, this one too, pair again. See
+[The first run](../getting-started/first-run.md#pair-your-browser).
+
 ### Runs
 
 - **Ports**: the range runs (dev servers, tests) get their ports from.

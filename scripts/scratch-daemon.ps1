@@ -4,6 +4,8 @@
 # that parent and refuses anything else. Tests: scripts/scratch-daemon.test.ps1.
 #
 #   scripts\scratch-daemon.ps1 start [-Seed <seed>]   start one; prints port=, dir=, url=
+#   scripts\scratch-daemon.ps1 pair <port>            a pairing link (good once, for 5 minutes) to open first in the
+#                                                     test browser
 #   scripts\scratch-daemon.ps1 stop <port>            stop it by port and delete its scratch folder
 #   scripts\scratch-daemon.ps1 list                   the scratch folders and whether each daemon is up
 #
@@ -85,7 +87,7 @@ function Start-Scratch {
     $vars = @{
         PDT_PROFILE = 'dev'; PDT_PORT = "$port"; PDT_DATA_DIR = (Join-Path $dir 'data')
         PDT_WEB_DIR = (Join-Path $root 'web\dist'); PDT_SECRET_STORE = 'memory'; PDT_SEED = $Seed
-        PDT_TAILSCALE_BIN = 'C:\nonexistent'; PDT_GITHUB_OFFLINE = '1'
+        PDT_TAILSCALE_BIN = 'C:\nonexistent'; PDT_GITHUB_OFFLINE = '1'; PDT_BROWSER = (Join-Path $root 'scripts\scratch-browser.cmd')
     }
     $saved = @{}
     foreach ($k in $vars.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $vars[$k]) }
@@ -110,6 +112,25 @@ function Start-Scratch {
     exit 1
 }
 
+function Get-PairLink([string]$p) {
+    $dir = Get-ScratchDir $p
+    $file = Join-Path $dir 'pair-url'
+    Remove-Item -LiteralPath $file -ErrorAction SilentlyContinue
+    # pdtd opens one browser every few seconds at most: a second pair soon after the first waits its turn.
+    for ($try = 1; ; $try++) {
+        try { Invoke-WebRequest -Uri "http://127.0.0.1:$p/api/ui/open" -Method Post -UseBasicParsing -TimeoutSec 5 | Out-Null; break }
+        catch { if ($try -ge 5) { Fail "pdtd on port $p opened no pairing link" }; Start-Sleep -Seconds 1 }
+    }
+    for ($i = 0; $i -lt 25; $i++) {
+        if ((Test-Path -LiteralPath $file) -and (Get-Item -LiteralPath $file).Length -gt 0) {
+            "pair=$((Get-Content -LiteralPath $file -Raw).Trim())"
+            return
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    Fail "no pairing link from pdtd on port $p"
+}
+
 function Get-ScratchList {
     foreach ($d in Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue) {
         $state = 'down'
@@ -120,7 +141,8 @@ function Get-ScratchList {
 
 switch ($Command) {
     'start' { Start-Scratch }
+    'pair' { if (-not $Port) { Fail 'usage: scratch-daemon.ps1 pair <port>' }; Get-PairLink $Port }
     'stop' { if (-not $Port) { Fail 'usage: scratch-daemon.ps1 stop <port>' }; Stop-Port $Port }
     'list' { Get-ScratchList }
-    default { Fail 'usage: scratch-daemon.ps1 start [-Seed <seed>] | stop <port> | list' }
+    default { Fail 'usage: scratch-daemon.ps1 start [-Seed <seed>] | pair <port> | stop <port> | list' }
 }

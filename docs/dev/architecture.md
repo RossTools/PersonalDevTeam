@@ -31,7 +31,8 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   installer's registry keys, `nsis_registry.rs`) when it fails. It
   is registered to start at login: a LaunchAgent on macOS, an HKCU Run value on Windows, a systemd user unit on Linux.
 - **The tray app** (`desktop/src-tauri`, Tauri v2) is optional and has no window of its own: it starts pdt-host when
-  pdtd doesn't answer, opens the UI in the browser and can restart the daemon. Quitting it leaves PDT running.
+  pdtd doesn't answer, opens the UI in the browser (it asks pdtd to, `POST /api/ui/open`, so the browser gets a
+  pairing link the tray never sees; an older pdtd gets the plain URL) and can restart the daemon. Quitting it leaves PDT running.
 - **The web UI** (`web/`, React + Vite) talks only to pdtd's `/api`: JSON over HTTP, polled every 2 s, plus
   WebSockets for terminals and conversation events and an SSE stream for notifications. It reloads itself when pdtd
   reports a new build.

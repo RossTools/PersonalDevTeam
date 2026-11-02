@@ -50,6 +50,9 @@ pub struct Config {
     pub claude_program: Option<String>,
     pub codex_program: Option<String>,
     pub devin_program: Option<String>,
+    /// `PDT_BROWSER`: the program that opens a pairing link (run with the URL), instead of the system's browser
+    /// (scratch daemons, tests).
+    pub browser_program: Option<String>,
     /// `PDT_SUPERVISED=1`: pdt-host started this pdtd. Only a supervised stable instance offers and hands off updates
     /// (`update_disabled_reason`).
     pub supervised: bool,
@@ -155,6 +158,7 @@ impl Config {
         let claude_program = lookup("PDT_CLAUDE_PROGRAM");
         let codex_program = lookup("PDT_CODEX_PROGRAM");
         let devin_program = lookup("PDT_DEVIN_PROGRAM");
+        let browser_program = lookup("PDT_BROWSER").filter(|p| !p.trim().is_empty());
         let supervised = lookup("PDT_SUPERVISED").as_deref() == Some("1");
         let updates_unsupported = lookup("PDT_UPDATES_UNSUPPORTED").map(|v| v.trim().to_string());
         let seed = match lookup("PDT_SEED").as_deref().map(str::trim) {
@@ -184,6 +188,7 @@ impl Config {
             claude_program,
             codex_program,
             devin_program,
+            browser_program,
             supervised,
             updates_unsupported,
             seed,

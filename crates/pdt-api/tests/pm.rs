@@ -867,7 +867,8 @@ fn mcp_servers_of(env: &Env, session: &str) -> Vec<String> {
 async fn approve_open(env: &Env, session: &str) {
     let req = open_request(env, session).await;
     let url = format!("/api/sessions/{session}/requests/{req}");
-    let (s, _) = common::call_as_ui(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    let (s, _) =
+        common::call_as_ui(&env.state, &env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
 }
 
@@ -1029,7 +1030,7 @@ async fn a_codex_pm_reports_a_bug_after_the_users_allow_in_the_inbox() {
 
     // The user's Allow runs the call as given and tells the PM what came of it.
     let n = agent_says(&env, &id).await.len();
-    let (s, v) = common::call_as_ui(&env.app, "POST", &url, Some(json!({"choice": "allow"}))).await;
+    let (s, v) = common::call_as_ui(&env.state, &env.app, "POST", &url, Some(json!({"choice": "allow"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["allowed"], true, "{v}");
     assert_eq!(v["result"]["kind"], "issue", "{v}");
@@ -1038,7 +1039,7 @@ async fn a_codex_pm_reports_a_bug_after_the_users_allow_in_the_inbox() {
     let said = tool_answer(&env, &id, n, "The user allowed your report_bug call").await;
     assert!(said.contains("\"kind\": \"issue\"") || said.contains("\"kind\":\"issue\""), "{said}");
     assert!(confirm().await.is_none(), "answered");
-    let (s, _) = common::call_as_ui(&env.app, "POST", &url, Some(json!({"choice": "allow"}))).await;
+    let (s, _) = common::call_as_ui(&env.state, &env.app, "POST", &url, Some(json!({"choice": "allow"}))).await;
     assert_eq!(s, StatusCode::CONFLICT, "a second click runs nothing");
     assert_eq!(gh.created.lock().unwrap().len(), 1);
 

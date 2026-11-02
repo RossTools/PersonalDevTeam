@@ -319,6 +319,7 @@ async fn low_disk_space_warns_in_the_inbox_and_pauses_auto_start_when_critical()
     assert_eq!(v["autoStartPaused"], true);
     assert_eq!(v["pickupPause"]["reason"], "the disk is almost full (3.0 GB free)");
     let (s, t) = common::call_as_ui(
+        &env.state,
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),

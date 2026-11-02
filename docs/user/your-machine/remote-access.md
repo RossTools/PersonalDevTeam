@@ -47,7 +47,9 @@ to Tailscale with.
 
 ## Using PDT on a phone
 
-Open your PDT address in the phone's browser; add it to your home screen to reach it quicker.
+Open your PDT address in the phone's browser; add it to your home screen to reach it quicker. The first time, pair
+the phone's browser: on the computer, open **Settings › This host › Browsers**, click **New link**, and open the
+**Pairing link on the tailnet** on the phone (see [Pair your browser](../getting-started/first-run.md#pair-your-browser)).
 
 - **The top bar** has **☰** (the menu), the screen's title, the bell (what **Needs you**, with its count), search, and
   the screen's own actions.

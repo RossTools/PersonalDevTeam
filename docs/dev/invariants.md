@@ -48,7 +48,17 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   a project with an enabled release workflow. PDT's own process lives in AGENTS.md and docs/SDLC.md. pdtd's
   `prompts_and_guides_carry_no_pdt_development_assumptions` checks it (with an allow list).
 - **Routes that act as the user need the UI token** (`x-ui-token`, new at each start; pdt-api `untrusted.rs`): admitting
-  an external ticket, filing issues, the PM's approvals. An agent's `curl` can't do them.
+  an external ticket, filing issues, the PM's approvals.
+- **Only a paired browser gets the UI token** (pdt-api `ui_pairing.rs`): `GET /api/ui/token` needs the instance's
+  pairing cookie (`pdt_ui_<port>`, `HttpOnly; SameSite=Strict`, its secret stored only as a SHA-256 in the host value
+  `ui.paired_browsers`) and a same-origin fetch. No header a caller sends pairs a browser: not `Sec-Fetch-Site`, not
+  Tailscale's identity headers (a local process can send those too). A browser pairs by opening a pairing link (a
+  one-time code, good for 5 minutes, kept in memory only): pdtd opens one in the system's browser itself
+  (`POST /api/ui/open`, which answers nothing about the code and opens at most one browser every 3 s), or a paired
+  browser makes one (`POST /api/ui/pair-links`, with the UI token). Unpairing every browser also changes the UI token, so open pages lose it. The link always points at pdtd's own loopback
+  port, never at an origin the caller names. Nothing logs a link or a code (request logs carry the path only). What is
+  left: a process running as the user can read the browser's cookie store, or catch the URL in the opener's arguments
+  (`xdg-open` on Linux) as it starts.
 - **Making tickets over the HTTP API records the user only with the UI token** (pdt-api `tickets::creator`, also
   parts): without it the caller is an agent, the session its `x-agent-session` header names (persona, the ticket it
   works on), and the ticket's source is `agent` (`pm`, `external` for a PM or triage session). The web client sends

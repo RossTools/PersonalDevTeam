@@ -101,15 +101,21 @@ impl pdt_api::Integration for FakeCi {
 }
 
 async fn ticket(env: &Env, title: &str) -> String {
-    let (s, t) =
-        call_as_ui(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": title})))
-            .await;
+    let (s, t) = call_as_ui(
+        &env.state,
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": title})),
+    )
+    .await;
     assert_eq!(s, StatusCode::CREATED, "{t}");
     t["id"].as_str().unwrap().to_string()
 }
 
 async fn labelled(env: &Env, title: &str, labels: &[&str]) -> String {
     let (s, t) = call_as_ui(
+        &env.state,
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -287,6 +293,7 @@ async fn a_draft_goes_through_refine_code_review_and_qa_and_merges_once_accepted
 
 async fn todo(env: &Env, title: &str) -> String {
     let (s, t) = call_as_ui(
+        &env.state,
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -329,7 +336,8 @@ async fn a_refined_external_ticket_waits_in_ready_for_the_user() {
 
     // The user moves it to To do: let in, auto-start takes it.
     let (s, v) =
-        common::call_as_ui(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
+        common::call_as_ui(&env.state, &env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"})))
+            .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     tick_until(&env, "the ticket started", || async {
         let v = get_ticket(&env, &t).await;
@@ -379,7 +387,8 @@ async fn a_session_on_an_external_ticket_gets_no_secrets_until_it_is_let_in() {
     assert!(said.contains("failed") && said.contains("no secrets"), "{said}");
 
     // Let in: the same call runs.
-    common::call_as_ui(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
+    common::call_as_ui(&env.state, &env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"})))
+        .await;
     let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": run}))).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     let said = answer(1).await;
@@ -444,6 +453,7 @@ async fn auto_start_waits_until_a_ticket_has_been_quiet_for_the_start_delay() {
 
 async fn todo_at(env: &Env, title: &str, priority: &str) -> String {
     let (s, t) = call_as_ui(
+        &env.state,
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),

@@ -159,6 +159,8 @@ async fn run() -> anyhow::Result<()> {
     if let Some(id) = &cfg.gitlab_client_id {
         state.forge_client_ids.insert("gitlab".into(), id.clone());
     }
+    // Pairing links open a browser only here (PDT-401); `AppState::new` opens none.
+    state.browser = pdt_api::ui_pairing::system_browser(cfg.browser_program.clone());
     // The real CLI is installed only here; `AppState::new` runs no tailscale command at all.
     state.tailscale = match &cfg.tailscale_bin {
         Some(bin) => std::sync::Arc::new(pdt_tailscale::TailscaleCli::new(bin.clone())),

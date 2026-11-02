@@ -24,7 +24,8 @@ How PDT's own tests are run and what they must never touch. Before pushing, run 
 - **Desktop:** `cargo test -p pdt-desktop` needs `pnpm --dir web build` first; plain `cargo test` skips that crate.
 - **Core logic is test-first.** Rules live in pdt-core as pure functions, so most of them are unit tests there; the
   routes are tested through the router in `crates/pdt-api/tests/` (helpers in `tests/common`: `call`, and
-  `call_as_ui` for routes that need the UI token); the daemon end to end in `crates/pdtd/tests/`.
+  `call_as_ui(&state, &app, …)` for routes that need the UI token: it pairs a browser through
+  `ui_pairing::paired_cookie`); the daemon end to end in `crates/pdtd/tests/`.
 - **One integration test binary per crate:** a crate's `tests/*.rs` files are modules of its `tests/main.rs` (the
   `integration` target; Cargo.toml sets `autotests = false`), not a binary each. A new file needs `mod <name>;` there;
   a test in each `main.rs` (`test-support/all_listed.rs`) fails when one is left out. Shared helpers (`common`,
@@ -90,7 +91,11 @@ on Windows), and label the PR `windows` for any path, process or file-system cha
 - For an agent (screenshots, Playwright): build `target/debug/pdtd` and `web/dist`, then
   `scripts/scratch-daemon.sh start` (Windows: `scripts\scratch-daemon.ps1`). It prints `port=`, `dir=`, `url=`; stop
   it with `scripts/scratch-daemon.sh stop <port>`, which also deletes its folder. Set the `PDT_*_PROGRAM` variables to
-  a stand-in, or new sessions start the real agents.
+  a stand-in, or new sessions start the real agents. The app shows only "Pair this browser" until the test browser
+  opens a pairing link: `scripts/scratch-daemon.sh pair <port>` prints one (`pair=`; the daemon's `PDT_BROWSER` is
+  `scripts/scratch-browser.sh`, which keeps the link instead of opening it). Open it first in each browser context.
+- With `pnpm --dir web dev` (port 5173, proxied to 7421), pair the dev server's origin: open a pairing link with its
+  host and port in place of `127.0.0.1:7421`.
 - Seeds (`PDT_SEED`, dev profile only, on a database with no projects; `crates/pdtd/src/seed.rs`): `demo` fills in
   sample projects, tickets, sessions and runs; `website` is the made-up Acme Shop project the website's screenshots
   are taken from (`seed/website.rs`, `scripts/site-screenshots.mjs`, site/README.md "Screenshots"). Nothing is

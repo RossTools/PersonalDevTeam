@@ -1395,9 +1395,14 @@ async fn a_workflow_never_puts_an_external_ticket_in_to_do() {
     assert_eq!(v["stage"], "ready");
 
     // Making one in To do from outside input is refused too; a workflow's own tickets are `workflow`'s.
-    let (_, made) =
-        call_as_ui(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "Mine"})))
-            .await;
+    let (_, made) = call_as_ui(
+        &env.state,
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": "Mine"})),
+    )
+    .await;
     assert_eq!(made["source"], "user");
     let wf = create(
         &env,
@@ -1418,7 +1423,8 @@ async fn a_workflow_never_puts_an_external_ticket_in_to_do() {
 
     // The user moving it to To do lets it in: from then on workflows move it as any other.
     let (s, v) =
-        common::call_as_ui(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
+        common::call_as_ui(&env.state, &env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"})))
+            .await;
     assert_eq!((s, v["admitted"].as_bool()), (StatusCode::OK, Some(true)), "{v}");
     call(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "ready"}))).await;
     let wf = create(&env, mover("todo", None)).await;

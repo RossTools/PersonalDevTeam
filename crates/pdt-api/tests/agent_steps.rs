@@ -59,9 +59,14 @@ async fn setup_with(change: impl FnOnce(&mut AppState)) -> Env {
 
 /// A ticket the user makes (from PDT's web client).
 async fn ticket(env: &Env, title: &str) -> String {
-    let (s, t) =
-        call_as_ui(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": title})))
-            .await;
+    let (s, t) = call_as_ui(
+        &env.state,
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": title})),
+    )
+    .await;
     assert_eq!(s, StatusCode::CREATED, "{t}");
     t["id"].as_str().unwrap().to_string()
 }
@@ -969,9 +974,14 @@ async fn a_personal_projects_tickets_run_in_a_folder() {
     assert!(folder.is_dir() && folder.starts_with(&env.state.data_dir));
     let (s, _) = call(&env.app, "POST", &format!("/api/projects/{pid}/worktrees"), Some(json!({"branch": "x"}))).await;
     assert_eq!(s, StatusCode::CONFLICT);
-    let (_, t) =
-        call_as_ui(&env.app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "Weekly brief"})))
-            .await;
+    let (_, t) = call_as_ui(
+        &env.state,
+        &env.app,
+        "POST",
+        &format!("/api/projects/{pid}/tickets"),
+        Some(json!({"title": "Weekly brief"})),
+    )
+    .await;
     let (s, started) = call(
         &env.app,
         "POST",
@@ -1617,7 +1627,7 @@ async fn a_coder_edits_only_its_own_tickets_unless_it_names_another_by_key() {
         call(&env.app, "GET", &format!("/api/events?type=ticket.created&ticket={}", v["id"].as_str().unwrap()), None)
             .await;
     assert_eq!(log[0]["payload"]["actor"], "agent", "{log}");
-    let (_, v) = call_as_ui(&env.app, "POST", &new_ticket, Some(json!({"title": "Clicked"}))).await;
+    let (_, v) = call_as_ui(&env.state, &env.app, "POST", &new_ticket, Some(json!({"title": "Clicked"}))).await;
     assert_eq!((v["source"].as_str(), v["createdBy"].clone()), (Some("user"), json!(null)), "{v}");
     let parts = format!("/api/tickets/{own}/parts");
     let (s, v) = call_with(
@@ -1781,7 +1791,7 @@ async fn ticket_proposals_wait_for_the_user() {
 
     // Accept to Todo with the user's edits and the agentic box: the agent hears it in its session.
     let body = json!({"choice": "accept_todo", "proposal": {"title": "Fix the flaky test", "priority": "high", "agentic": true}});
-    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(body)).await;
+    let (s, v) = call_as_ui(&env.state, &env.app, "POST", &answer, Some(body)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{made}"), None).await;
     assert_eq!(
@@ -1805,7 +1815,7 @@ async fn ticket_proposals_wait_for_the_user() {
     })
     .await;
     assert!(heard.as_str().unwrap().contains("to To do, labelled agentic"), "{heard}");
-    let (s, _) = call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "reject"}))).await;
+    let (s, _) = call_as_ui(&env.state, &env.app, "POST", &answer, Some(json!({"choice": "reject"}))).await;
     assert_eq!(s, StatusCode::CONFLICT, "answered once");
 
     // Its session gone, the decision goes on the ticket it came from; curl with its header makes proposals too.
@@ -1845,7 +1855,8 @@ async fn ticket_proposals_wait_for_the_user() {
     assert_eq!(item["body"]["reason"], "Found it.");
     let answer = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
     let (s, v) =
-        call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "reject", "text": "Not worth it."}))).await;
+        call_as_ui(&env.state, &env.app, "POST", &answer, Some(json!({"choice": "reject", "text": "Not worth it."})))
+            .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{rejected}"), None).await;
     assert_eq!(t["stage"], "wont_do");
@@ -1857,10 +1868,10 @@ async fn ticket_proposals_wait_for_the_user() {
     let dup = curl("Fix the flaky test again").await;
     let item = proposal_of(dup.clone()).await;
     let answer = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
-    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "duplicate"}))).await;
+    let (s, v) = call_as_ui(&env.state, &env.app, "POST", &answer, Some(json!({"choice": "duplicate"}))).await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
     let body = json!({"choice": "duplicate", "proposal": {"duplicateOf": made}});
-    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(body)).await;
+    let (s, v) = call_as_ui(&env.state, &env.app, "POST", &answer, Some(body)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{dup}"), None).await;
     assert_eq!(t["stage"], "wont_do");
@@ -1871,7 +1882,8 @@ async fn ticket_proposals_wait_for_the_user() {
     );
 
     // The user's own tickets and Make into parts' parts are no proposals.
-    let (_, v) = call_as_ui(&env.app, "POST", &new_ticket, Some(json!({"title": "Clicked", "stage": "todo"}))).await;
+    let (_, v) =
+        call_as_ui(&env.state, &env.app, "POST", &new_ticket, Some(json!({"title": "Clicked", "stage": "todo"}))).await;
     assert_eq!((v["stage"].as_str(), v["proposed"].as_bool()), (Some("todo"), Some(false)), "{v}");
     let parts = format!("/api/tickets/{own}/parts");
     let body = json!({"parts": [{"title": "Part"}]});

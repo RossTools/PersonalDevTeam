@@ -140,7 +140,8 @@ async fn an_inbox_item_fires_once_when_it_opens_and_once_when_it_is_answered() {
 
     let item = p["itemId"].as_str().unwrap().to_string();
     let (s, r) =
-        call_as_ui(&env.app, "POST", &format!("/api/inbox/{item}/answer"), Some(json!({"choice": "yes"}))).await;
+        call_as_ui(&env.state, &env.app, "POST", &format!("/api/inbox/{item}/answer"), Some(json!({"choice": "yes"})))
+            .await;
     assert_eq!(s, StatusCode::OK, "{r}");
     settle(&env, 3).await;
     let done = events(&env, "inbox.answered").await;

@@ -15,6 +15,20 @@ When all four are done, PDT says **You're set up.** with **Go to the board** and
 
 **Dismiss setup** hides the checklist; **Settings › This host › Setup** opens it again.
 
+## Pair your browser
+
+When you open PDT from the tray, your browser is paired with PDT. A browser that isn't shows **Pair this browser**
+instead of PDT: PDT takes approvals and the other changes only you may make from a paired browser, so an agent on
+this computer can't make them for you.
+
+- **On this computer**: click **Pair this browser**. PDT opens itself, paired, in your default browser.
+- **On another device or browser**: in a browser you've paired, open **Settings › This host › Browsers**, click
+  **New link** under **Pair another browser**, and open the link in the other browser. A link works once, within 5
+  minutes.
+
+A browser stays paired until you unpair it in **Settings › This host › Browsers**, or don't open PDT in it for about
+a year.
+
 ## Getting around
 
 - The **rail** on the left switches between **Project manager** (the PM), **Sessions** (your projects and the agents

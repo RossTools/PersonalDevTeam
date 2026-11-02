@@ -70,6 +70,15 @@ async function api(path, init) {
   return res.status === 204 ? null : res.json();
 }
 
+/** Pairs the page's browser with the scratch daemon (a pairing link from it, opened first), or it shows only "Pair this
+ * browser". */
+async function pair(page) {
+  const out = execFileSync(daemon, ['pair', port], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+  const link = /^pair=(.+)$/m.exec(out)?.[1];
+  if (!link) throw new Error(`no pairing link from the scratch daemon:\n${out}`);
+  await page.goto(link);
+}
+
 /** Polls `check` until it returns something truthy (or throws after `ms`). */
 async function until(what, check, ms = 15_000) {
   const end = Date.now() + ms;
@@ -192,6 +201,7 @@ try {
     route.fulfill({ json: { backend: 'keychain', path: null, problem: null } }),
   );
   const page = await context.newPage();
+  await pair(page);
 
   // The board's lanes end about 750px down: a shorter window leaves no empty band under them.
   await page.setViewportSize({ width: VIEWPORT.width, height: 800 });
@@ -257,6 +267,7 @@ try {
     await route.fulfill({ response: res, json: { ...(await res.json()), dev: false } });
   });
   const phonePage = await phone.newPage();
+  await pair(phonePage);
   await phonePage.goto(`${base}/inbox`);
   await phonePage.getByText('attach a PDF invoice').first().waitFor();
   await shoot(phonePage, 'phone');

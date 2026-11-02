@@ -85,6 +85,7 @@ async fn sign_in(env: &Env, id: &str) {
     .await;
     assert_eq!(s, 403, "only the web app signs in: {v}");
     let (s, v) = call_as_ui(
+        &env.st,
         &env.app,
         "POST",
         &format!("/api/google/accounts/{id}/sign-in"),
@@ -145,7 +146,7 @@ async fn sign_in_pick_read_and_edit_google_docs_and_sheets() {
     env.google.ok("POST", TOKEN_URL, TOKEN);
     let (s, _) = call(&env.app, "GET", &format!("/api/google/accounts/{id}/picker"), None).await;
     assert_eq!(s, 403);
-    let (s, v) = call_as_ui(&env.app, "GET", &format!("/api/google/accounts/{id}/picker"), None).await;
+    let (s, v) = call_as_ui(&env.st, &env.app, "GET", &format!("/api/google/accounts/{id}/picker"), None).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v,
@@ -285,7 +286,7 @@ async fn sign_in_pick_read_and_edit_google_docs_and_sheets() {
 
     // Signing out takes PDT's access back.
     env.google.ok("POST", REVOKE_URL, "{}");
-    let (s, _) = call_as_ui(&env.app, "DELETE", &format!("/api/google/accounts/{id}/sign-in"), None).await;
+    let (s, _) = call_as_ui(&env.st, &env.app, "DELETE", &format!("/api/google/accounts/{id}/sign-in"), None).await;
     assert_eq!(s, 204);
     assert!(env.google.urls().iter().any(|u| u.starts_with(&format!("POST {REVOKE_URL}?token=rt1"))));
     let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
@@ -375,9 +376,10 @@ async fn sign_in_with_pdts_own_clients_and_a_separate_permission_for_agents() {
     let (s, _) = call(&env.app, "POST", "/api/google/sign-in", Some(from.clone())).await;
     assert_eq!(s, 403);
     let (s, v) =
-        call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "https://evil.example"}))).await;
+        call_as_ui(&env.st, &env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "https://evil.example"})))
+            .await;
     assert_eq!(s, 400, "{v}");
-    let (s, v) = call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(from)).await;
+    let (s, v) = call_as_ui(&env.st, &env.app, "POST", "/api/google/sign-in", Some(from)).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["redirectUri"], "https://pdt.dev/oauth/google");
     let url = v["url"].as_str().unwrap();
@@ -419,7 +421,7 @@ async fn sign_in_with_pdts_own_clients_and_a_separate_permission_for_agents() {
 
     // The picker has PDT's key and project.
     env.google.ok("POST", TOKEN_URL, TOKEN);
-    let (s, v) = call_as_ui(&env.app, "GET", &format!("/api/google/accounts/{id}/picker"), None).await;
+    let (s, v) = call_as_ui(&env.st, &env.app, "GET", &format!("/api/google/accounts/{id}/picker"), None).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!((&v["apiKey"], &v["appId"], &v["clientId"]), (&json!("pk"), &json!("42"), &json!("std-id")));
 
@@ -447,6 +449,7 @@ async fn sign_in_with_pdts_own_clients_and_a_separate_permission_for_agents() {
 
     // Allowing agents: a consent of its own, with the agentic client, as the same account.
     let (s, v) = call_as_ui(
+        &env.st,
         &env.app,
         "POST",
         &format!("/api/google/accounts/{id}/sign-in"),
@@ -464,6 +467,7 @@ async fn sign_in_with_pdts_own_clients_and_a_separate_permission_for_agents() {
     let (s, _) = call(&env.app, "GET", &format!("/api/google/callback?code=c2&state={}", state_of(url)), None).await;
     assert_eq!(s, 400, "another Google account can't be the agents'");
     let (_, v) = call_as_ui(
+        &env.st,
         &env.app,
         "POST",
         &format!("/api/google/accounts/{id}/sign-in"),
@@ -505,7 +509,7 @@ async fn sign_in_with_pdts_own_clients_and_a_separate_permission_for_agents() {
     // Taking the agents' permission away forgets their sign-in, without asking Google (which would sign the user out).
     let (s, _) = call(&env.app, "DELETE", &format!("/api/google/accounts/{id}/agents"), None).await;
     assert_eq!(s, 403);
-    let (s, _) = call_as_ui(&env.app, "DELETE", &format!("/api/google/accounts/{id}/agents"), None).await;
+    let (s, _) = call_as_ui(&env.st, &env.app, "DELETE", &format!("/api/google/accounts/{id}/agents"), None).await;
     assert_eq!(s, 204);
     assert_eq!(env.st.secrets.get(&pdt_int_google::accounts::agent_key(&id)).unwrap(), None);
     assert!(env.st.secrets.get(&pdt_int_google::accounts::sign_in_key(&id)).unwrap().is_some());
@@ -517,7 +521,8 @@ async fn sign_in_with_pdts_own_clients_and_a_separate_permission_for_agents() {
 
     // Signing in again as the same account keeps it one account.
     let (_, v) =
-        call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "http://localhost:7421"}))).await;
+        call_as_ui(&env.st, &env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "http://localhost:7421"})))
+            .await;
     env.google.ok("POST", TOKEN_URL, r#"{"access_token":"u1","expires_in":3600,"refresh_token":"user-rt2"}"#).ok(
         "GET",
         USERINFO_URL,
@@ -545,6 +550,7 @@ async fn an_account_with_its_own_client_works_beside_pdts() {
     let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
     assert_eq!((&v[0]["builtIn"], &v[0]["agents"]), (&json!(false), &json!(true)));
     let (s, _) = call_as_ui(
+        &env.st,
         &env.app,
         "POST",
         &format!("/api/google/accounts/{id}/sign-in"),
@@ -566,6 +572,7 @@ async fn without_pdts_clients_only_your_own() {
     let google = v.as_array().unwrap().iter().find(|p| p["id"] == "google").unwrap();
     assert_eq!(google["signIn"]["builtIn"], false);
     let (s, v) =
-        call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "http://127.0.0.1:7420"}))).await;
+        call_as_ui(&env.st, &env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "http://127.0.0.1:7420"})))
+            .await;
     assert_eq!(s, 400, "{v}");
 }

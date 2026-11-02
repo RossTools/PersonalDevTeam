@@ -34,7 +34,8 @@ async fn setup() -> Env {
 }
 
 async fn ticket(env: &Env, body: Value) -> String {
-    let (s, v) = call_as_ui(&env.app, "POST", &format!("/api/projects/{}/tickets", env.pid), Some(body)).await;
+    let (s, v) =
+        call_as_ui(&env.state, &env.app, "POST", &format!("/api/projects/{}/tickets", env.pid), Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
     v["id"].as_str().unwrap().to_string()
 }
