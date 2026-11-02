@@ -262,7 +262,7 @@ keyed by id and opening time (items already open at startup are left alone). `in
 agent session's activity change (`activity.rs` `persist` for terminals, `conversations.rs` `refresh_activity`), each
 transition once. `session.exited`: a terminal's exit (with `Notifier::take_expected_exit` as `stoppedByPdt`), a
 conversation's process dying, or its Stop. `run.failed` and `run.finished`: `finish_run`. None of them goes through
-notification settings.
+notification levels.
 
 **Stuck agent steps** (`workflow/stuck.rs`). A working step that stalls (`agent.rs` `stall`, after a turn without an
 outcome or its session going), reaches its loop limit (`start_step`) or times out (`complete_step` by `timeout`) is
@@ -276,6 +276,23 @@ Inbox) when the workflow is off, its run for the step ended without acting, or n
 `START_GRACE_MS`. The workflow's inputs are template params: Settings → Agents reads them back from its document
 (`templates::unfill`) and saves a version noted `stuck_agents::SETTINGS_NOTE`, which still follows PDT's newer
 versions; any other edit makes it the user's (`stuck_agents::customized`).
+
+**Notification rules** (`builtins/notification_rules.rs`). Each kind's level and quiet hours live in the built-in's
+`notification.levels` nodes (`nodes/notification_levels.rs`: a trigger kind with no event type and no ports, so it
+starts no runs). The Notifier reads them with `notifications::rules` as it makes each notification, never through a
+run: from the enabled workflow (cached by its id, version and enabled flag), PDT's defaults while it is off, and the
+old host value `notifications.show` while it isn't installed yet (the first install copies that value in, as
+`notification_rules::migrated`). A levels node with `projects` sets those projects' levels. In quiet hours
+`notify_at` makes a toast or desktop notification at `inbox` and keeps it in the host value
+`notifications.quiet_held`; the first sync once no quiet hours hold makes one `notifications.quiet_summary`. The
+optional rules are branches on `inbox.created` and `run.failed` whose triggers' `where` holds a param, so with a rule
+off no run starts. Escalation waits for `inbox.answered` up to `escalateAfter`, then `notify` with `show: desktop` and
+`whileOpen` (`inbox::is_open`). Chat posts are `notify` steps with `show: off` and `chat`. `notify` finds the
+integration that declares a `NotificationChannel` for the connection's kind and runs its node kind with `connection`
+and `content`, so pdt-api never names the plugin. Settings → Notifications (`notification_rules.rs`,
+`/api/notification-rules`; the old `PATCH /api/notifications/settings` sets the same levels) reads and writes the
+inputs as stuck agents' are. `builtins::refill_of` lists the built-ins whose inputs Settings sets, which follow PDT's
+newer versions with their inputs kept.
 
 **Host and integration events** are logged where each thing is noticed, each once per occurrence (the event key, or a
 level remembered in a host value). `release.published`: `forge_releases.rs` in the 60 s poll, for the projects an

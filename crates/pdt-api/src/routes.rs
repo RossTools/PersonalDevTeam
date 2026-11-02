@@ -484,6 +484,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::stop::router())
         .merge(crate::storage::router())
         .merge(crate::stuck_agents::router())
+        .merge(crate::notification_rules::router())
         .merge(crate::ticket_attachments::router())
         .merge(crate::tickets::router())
         .merge(crate::todos::router())

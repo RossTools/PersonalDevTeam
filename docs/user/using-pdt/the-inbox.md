@@ -116,6 +116,21 @@ In **Settings › Notifications**, each kind of notification shows as:
 
 Each level includes the ones before it. Things that wait on you never go below **Inbox**.
 
+The same page has rules you can turn on:
+
+- **Escalate what waits**: something still unanswered in the Inbox after a while (2 hours unless you change it) comes
+  back as a desktop notification, and goes to your chat channel if you set one.
+- **Quiet hours**: between two times (22:00 to 07:00 unless you change them), nothing pops up. What would have been a
+  toast or a desktop notification waits in the Inbox, and one summary comes when quiet hours end.
+- **Chat channel**: questions, approvals and failed workflow runs are posted to a chat channel, such as a Discord
+  webhook. You can pick which of the three are posted. It's there while a plugin that posts notifications (Discord) is
+  on.
+
+All of this is the **Notification rules** workflow, and the page sets it for you. To go further (different levels for
+one project, a rule of your own), use **Customize as a workflow →**. Once you change the workflow beyond these settings,
+the page says **Notifications follow your customized workflow** and offers **Open** and **Reset to default**. Turn the
+workflow off and every kind shows at PDT's default level, with none of the rules.
+
 Desktop notifications are per device: turn on **Desktop notifications** under **This device** on each one and allow
 them when the browser asks. **Test** sends one; clicking a notification opens what it's about.
 

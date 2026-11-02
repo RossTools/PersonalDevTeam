@@ -3,6 +3,20 @@ import type { NotifyLevel } from "./NotifyLevel";
 
 export type NotifyConfig = { title: string, body: string, level: NotifyLevel, 
 /**
- * A ticket key (`PDT-42`, opens the ticket) or a URL.
+ * A ticket key (`PDT-42`, opens the ticket), `inbox:<item id>` (opens the Inbox item) or a URL.
  */
-link: string | null, };
+link: string | null, 
+/**
+ * How far it reaches you: `off` (nothing in PDT: only Discord), `dot`, `inbox`, `toast` or `desktop`. Default: the
+ * level Settings → Notifications sets for Workflow notification.
+ */
+show?: "off" | "dot" | "inbox" | "toast" | "desktop" | null, 
+/**
+ * A chat connection to post it to as well: one of a kind a plugin posts notifications through (a Discord
+ * webhook); empty: none.
+ */
+chat?: string, 
+/**
+ * An Inbox item's id: only while it is still open (else it does nothing and goes on, `skipped` in its output).
+ */
+whileOpen?: string, };
