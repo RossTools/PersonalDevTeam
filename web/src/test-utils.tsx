@@ -26,7 +26,7 @@ export function renderWithQuery(ui: ReactNode) {
 /** A connected GitHub login (Settings › Plugins › GitHub). */
 /** GitHub's forge login (PDT-244), with `accounts`. */
 export const githubLogin = (over: object = {}) => ({
-  kind: 'github', label: 'GitHub', defaultApiUrl: 'https://api.github.com', apiUrlExample: 'https://github.example.com/api/v3',
+  kind: 'github', label: 'GitHub', changeRequestName: 'pull request', defaultApiUrl: 'https://api.github.com', apiUrlExample: 'https://github.example.com/api/v3',
   scopes: 'repo', tokenHelp: 'A classic token with the repo scope.', hasDeviceFlow: true, deviceFlow: true, accounts: [],
   pending: null, error: null, ...over,
 });

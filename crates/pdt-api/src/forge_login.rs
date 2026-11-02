@@ -88,6 +88,8 @@ pub struct ForgeAccountView {
 pub struct ForgeLoginView {
     pub kind: String,
     pub label: String,
+    /// What the forge calls a change request (`pull request`, GitLab's `merge request`), for its page's wording.
+    pub change_request_name: String,
     /// The public host's API, for the form (github.com's); None when the forge is only self-hosted.
     pub default_api_url: Option<String>,
     /// An example of a self-hosted server's API URL.
@@ -172,6 +174,7 @@ pub(crate) fn view(st: &AppState, p: &dyn ForgePlugin) -> ForgeLoginView {
     ForgeLoginView {
         kind: kind.to_string(),
         label: p.label().into(),
+        change_request_name: p.change_request_name().into(),
         default_api_url: spec.default_api_url,
         api_url_example: spec.api_url_example,
         scopes: spec.scopes,

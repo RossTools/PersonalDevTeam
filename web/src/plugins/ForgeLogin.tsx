@@ -42,8 +42,8 @@ export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
   const cancel = useMutation({ mutationFn: () => api.forgeCancelDevice(kind), onSuccess: set });
   const disconnect = useMutation({ mutationFn: (host: string) => api.forgeDisconnect(kind, host), onSuccess: set });
   const confirm = useConfirm();
-  // What the forge calls its change requests.
-  const changes = kind === 'gitlab' ? 'merge requests' : 'pull requests';
+  // What the forge calls its change requests (a generic name until its login is read).
+  const changes = `${view.data?.changeRequestName ?? 'change request'}s`;
   const description = `The logins PDT reads ${changes}, CI and issues with, and merges and comments as: one for each ${label} host.`;
   if (!v) {
     return (

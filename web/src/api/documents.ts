@@ -13,10 +13,6 @@ import type { DocumentProvidersView } from './gen/DocumentProvidersView';
 import type { DocumentRead } from './gen/DocumentRead';
 import type { DocumentsBeside } from './gen/DocumentsBeside';
 import type { EditResult } from './gen/EditResult';
-import type { GoogleAccount } from './gen/GoogleAccount';
-import type { GoogleClient } from './gen/GoogleClient';
-import type { GooglePicker } from './gen/GooglePicker';
-import type { GoogleSignInStart } from './gen/GoogleSignInStart';
 import type { ImportDocument } from './gen/ImportDocument';
 import type { NewDocument } from './gen/NewDocument';
 import type { ProjectDocumentSettings } from './gen/ProjectDocumentSettings';
@@ -105,28 +101,6 @@ export const documentsApi = {
     }),
   /** Its version now (cheap): an open page reads it again when this changes. */
   documentVersion: (id: string) => request<EditResult>(`/api/documents/${enc(id)}/version`),
-  /** The Google plugin's accounts (PDT-316). */
-  googleAccounts: () => request<GoogleAccount[]>('/api/google/accounts'),
-  /** Whether this PDT has its own Google sign-in (PDT-360). */
-  googleClient: () => request<GoogleClient>('/api/google/client'),
-  /** Where the browser signs in to add a Google account, with PDT's own sign-in; Google sends it back to `origin`. */
-  googleAddAccount: (origin: string) =>
-    request<GoogleSignInStart>('/api/google/sign-in', { method: 'POST', body: JSON.stringify({ origin }) }, { asUser: true }),
-  /** Where the browser signs an account in to Google (or, with `agent`, lets agents use it); Google sends it back to `origin`. */
-  googleSignIn: (connectionId: string, origin: string, agent = false) =>
-    request<GoogleSignInStart>(
-      `/api/google/accounts/${enc(connectionId)}/sign-in`,
-      { method: 'POST', body: JSON.stringify(agent ? { origin, agent } : { origin }) },
-      { asUser: true },
-    ),
-  googleSignOut: (connectionId: string) =>
-    request<void>(`/api/google/accounts/${enc(connectionId)}/sign-in`, { method: 'DELETE' }, { asUser: true }),
-  /** Agents may no longer use the account. */
-  googleForgetAgents: (connectionId: string) =>
-    request<void>(`/api/google/accounts/${enc(connectionId)}/agents`, { method: 'DELETE' }, { asUser: true }),
-  /** What Google's file picker needs in the browser. */
-  googlePicker: (connectionId: string) =>
-    request<GooglePicker>(`/api/google/accounts/${enc(connectionId)}/picker`, undefined, { asUser: true }),
   /** A ticket's design doc, from the template, in its project's default provider. */
   createDesignDoc: (ticketId: string) =>
     request<Document>(`/api/tickets/${enc(ticketId)}/design-doc`, { method: 'POST', body: JSON.stringify({ by: 'user' }) }),

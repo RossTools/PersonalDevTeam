@@ -282,6 +282,26 @@ pub struct ProviderInfo {
     /// Its name for people (`Local`, `Google`).
     pub label: String,
     pub capabilities: ProviderCapabilities,
+    /// The provider's own file picker in the browser, if it has one.
+    #[serde(default)]
+    pub picker: Option<ProviderPicker>,
+}
+
+/// A provider's file picker in the browser (PDT-378): a script of its own the import dialog loads and runs for an
+/// account. `module` is an ES module exporting `pick({ account, request })`, which resolves to the references of
+/// the files picked (none when cancelled); `request(path)` is a GET as PDT's web app (with its UI token).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProviderPicker {
+    /// Its button: `{label}`, then ` ({account})` when there is more than one.
+    pub label: String,
+    /// The module's address.
+    pub module: String,
+    /// The accounts' list ([`crate::integration::SignInAccount`]): those with `picker` open it.
+    pub accounts: String,
+    /// What the dialog says when no account opens it.
+    pub help: String,
 }
 
 /// A file a provider holds, as its search (the import picker) or create gives it.

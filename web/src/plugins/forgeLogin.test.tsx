@@ -13,6 +13,13 @@ const LOGIN = '/api/forges/github/login';
 const ui = () => renderWithQuery(<ForgeLogin kind="github" label="GitHub" />);
 
 describe('ForgeLogin', () => {
+  it('says what the forge calls its change requests', async () => {
+    stubApi({ 'GET /api/forges/hub/login': login({ kind: 'hub', label: 'Hub', changeRequestName: 'merge request' }) });
+    renderWithQuery(<ForgeLogin kind="hub" label="Hub" />);
+    expect(await screen.findByText(/PDT can’t follow merge requests or CI/)).toBeInTheDocument();
+    expect(screen.getByText(/The logins PDT reads merge requests, CI and issues with/)).toBeInTheDocument();
+  });
+
   it('connects with a code entered on GitHub', async () => {
     let entered = false;
     const pending = { userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device', expiresAt: 1, apiUrl: 'https://api.github.com' };

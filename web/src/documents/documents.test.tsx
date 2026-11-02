@@ -10,6 +10,7 @@ import { DocumentPage } from './DocumentPage';
 import { DocumentsList, useDocumentsFilters } from './DocumentsList';
 import { anchorLabel, headingsOf } from './DocumentComments';
 import { ImportDocumentDialog, NewDocumentDialog } from './DocumentDialogs';
+import { pickerModules } from './picker';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -20,8 +21,8 @@ const all = { docs: true, sheets: true, create: true, search: true, edit: true, 
 
 const providers: DocumentProvidersView = {
   providers: [
-    { id: 'fake', label: 'Fake', capabilities: all },
-    { id: 'reader', label: 'Reader', capabilities: { ...all, create: false, search: false, delete: false } },
+    { id: 'fake', label: 'Fake', capabilities: all, picker: null },
+    { id: 'reader', label: 'Reader', capabilities: { ...all, create: false, search: false, delete: false }, picker: null },
   ],
   default: 'fake',
   folder: '/data/documents',
@@ -292,17 +293,38 @@ describe('documents', () => {
     expect(calls.some((c) => c.path === '/api/documents/d2/version')).toBe(false);
   });
 
-  it('Google’s import offers its Drive picker for each signed-in account', async () => {
-    const google = { id: 'google', label: 'Google', capabilities: { ...all, embed: true } };
-    stubApi({
-      'GET /api/documents/providers': { ...providers, providers: [google], default: 'google' },
-      'GET /api/documents/providers/google/files': [],
-      'GET /api/google/accounts': [
-        { connectionId: 'c1', name: 'Work', signedIn: true, email: 'me@work.com', hasClient: true, picker: true },
-        { connectionId: 'c2', name: 'Home', signedIn: false, email: null, hasClient: true, picker: true },
+  it('a provider’s own picker opens for each signed-in account and imports what it picks', async () => {
+    const picker = { label: 'Pick from the drive', module: '/api/drive/picker.js', accounts: '/api/drive/accounts', help: 'Sign in to pick.' };
+    const drive = { id: 'drive', label: 'Drive', capabilities: { ...all, embed: true }, picker };
+    const pick = vi.fn().mockResolvedValue(['c1/f1']);
+    const load = vi.spyOn(pickerModules, 'load').mockResolvedValue({ pick });
+    const onImported = vi.fn();
+    const calls = stubApi({
+      'GET /api/ui/token': { token: 'ui' },
+      'GET /api/documents/providers': { ...providers, providers: [drive], default: 'drive' },
+      'GET /api/documents/providers/drive/files': [],
+      'GET /api/drive/accounts': [
+        { connectionId: 'c1', name: 'Work', signedIn: true, email: 'me@work.com', hasClient: true, builtIn: true, agents: false, picker: true, note: null },
+        { connectionId: 'c2', name: 'Home', signedIn: false, email: null, hasClient: true, builtIn: true, agents: false, picker: true, note: null },
       ],
+      'POST /api/documents/import': doc('d9', 'Picked'),
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={onImported} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Pick from the drive' }));
+    await waitFor(() => expect(onImported).toHaveBeenCalled());
+    expect(load).toHaveBeenCalledWith('/api/drive/picker.js');
+    expect(pick.mock.calls[0][0].account).toBe('c1');
+    expect(calls.find((c) => c.path === '/api/documents/import')?.body).toEqual({ provider: 'drive', reference: 'c1/f1', by: 'user' });
+  });
+
+  it('a provider’s picker says how to get one when no account opens it', async () => {
+    const picker = { label: 'Pick from the drive', module: '/api/drive/picker.js', accounts: '/api/drive/accounts', help: 'Sign in to pick.' };
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker }], default: 'drive' },
+      'GET /api/documents/providers/drive/files': [],
+      'GET /api/drive/accounts': [],
     });
     renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
-    expect(await screen.findByRole('button', { name: 'Pick from Google Drive' })).toBeInTheDocument();
+    expect(await screen.findByText('Sign in to pick.')).toBeInTheDocument();
   });
 });

@@ -701,3 +701,76 @@ mod tests {
         assert!(v["fields"][0].get("options").is_none());
     }
 }
+
+/// A plugin's account sign-in in the browser (PDT-378): accounts that sign in on the service's own consent page, in
+/// a window of their own, which comes back to PDT and closes. Settings → Plugins shows it on the plugin's page. Its
+/// routes are under [`SignIn::api`]: `GET {api}/accounts` ([`SignInAccount`]), `POST {api}/sign-in` (adds an
+/// account, with PDT's own client), `POST`/`DELETE {api}/accounts/{id}/sign-in` ([`AccountSignInInput`], [`AccountSignInStart`]),
+/// `DELETE {api}/accounts/{id}/agents`; the service sends the browser back to `{api}/callback`, whose page posts
+/// `{pdtSignIn: ok}` to the window that opened it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SignIn {
+    /// Where its routes are (`/api/<plugin>`).
+    pub api: String,
+    /// Who an account signs in with, for people: "Sign in with {service}".
+    pub service: String,
+    /// The connection kind an account is.
+    pub kind: String,
+    /// PDT has its own client: Sign in with … adds an account (instead of Add), and a connection of the kind is
+    /// only for the user's own client (under Advanced).
+    pub built_in: bool,
+    /// What the section says with PDT's own client.
+    pub description: String,
+    /// What Advanced says, with PDT's own client, before the redirect URI to add.
+    pub own_client: String,
+}
+
+/// An account (connection) a plugin signs in ([`SignIn`]), as Settings shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SignInAccount {
+    pub connection_id: String,
+    pub name: String,
+    pub signed_in: bool,
+    /// The account's email, once signed in.
+    pub email: Option<String>,
+    /// Has the OAuth client signing in needs, its own or PDT's.
+    pub has_client: bool,
+    /// Signs in with PDT's own client; else with its own.
+    pub built_in: bool,
+    /// Agents may use it: with PDT's own client, once the user allowed them (a sign-in of their own); with its own
+    /// client, whenever it is signed in.
+    pub agents: bool,
+    /// It opens its document provider's file picker ([`crate::document::ProviderPicker`]).
+    pub picker: bool,
+    /// What it lacks, in a line on its row (`No file picker (…)`).
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// `POST {api}/sign-in` and `POST {api}/accounts/{id}/sign-in` ([`SignIn`]).
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AccountSignInInput {
+    /// The address PDT is open at in the browser (`http://127.0.0.1:7420`): the service sends the browser back there.
+    pub origin: String,
+    /// Asks the account's consent for agents (PDT's agentic client) instead of signing it in.
+    #[serde(default)]
+    #[ts(optional)]
+    pub agent: Option<bool>,
+}
+
+/// Where a sign-in goes ([`SignIn`]).
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AccountSignInStart {
+    /// The service's consent page, to open in a new window.
+    pub url: String,
+    /// The address the service sends the browser back to (it must be one of the OAuth client's redirect URIs).
+    pub redirect_uri: String,
+}
