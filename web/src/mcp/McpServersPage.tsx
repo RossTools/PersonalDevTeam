@@ -274,13 +274,27 @@ export function audience(a: AgentAccess): string {
   return who.length ? `For ${who.join(', ')}${where}` : 'No agents';
 }
 
+/** Whether the browser may go to a sign-in address: only http(s), never `javascript:` or `data:` (it would run in
+ * PDT's own page). PDT checks the service's addresses too; this holds if it ever misses one. */
+export function signInUrlOk(url: string): boolean {
+  try {
+    return ['https:', 'http:'].includes(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
 function SignIn({ server }: { server: McpServerView }) {
   const qc = useQueryClient();
   const o = server.oauth;
   // The tab opens on the click (a tab opened after the request returns would be blocked as a popup), and goes to the
   // service once PDT says where.
   const signIn = useMutation({
-    mutationFn: async (tab: Window | null) => ({ tab, start: await api.signInMcpServer(server.connection.id, window.location.origin) }),
+    mutationFn: async (tab: Window | null) => {
+      const start = await api.signInMcpServer(server.connection.id, window.location.origin);
+      if (!signInUrlOk(start.url)) throw new Error("The service's sign-in address isn't a web address, so PDT won't open it.");
+      return { tab, start };
+    },
     onSuccess: ({ tab, start }) => {
       if (tab) {
         tab.opener = null;

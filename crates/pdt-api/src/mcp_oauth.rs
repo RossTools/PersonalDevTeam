@@ -206,6 +206,9 @@ enum TokenError {
 }
 
 async fn token_request(endpoint: &str, form: &[(&str, String)]) -> Result<TokenResponse, TokenError> {
+    if !ms::endpoint_ok(endpoint) {
+        return Err(TokenError::Refused(format!("the token address ({endpoint}) isn't https: sign in again")));
+    }
     let pairs: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let r = crate::workflow::nodes::http::client()
         .post(endpoint)
@@ -274,10 +277,16 @@ async fn discover(server_url: &str) -> Result<(AuthServer, Vec<String>), String>
         .and_then(|p| p["authorization_servers"][0].as_str().map(String::from))
         .or_else(|| server_url.split_once("://").map(|(s, r)| format!("{s}://{}", r.split('/').next().unwrap_or(r))))
         .ok_or_else(|| format!("{server_url} is not an address"))?;
+    if !ms::endpoint_ok(&issuer) {
+        return Err(format!("{server_url} signs in at {issuer}, which isn't https (or http on this computer)"));
+    }
     for url in ms::auth_metadata_urls(&issuer) {
         if let Some(v) = get_json(&url).await
             && let Ok(a) = serde_json::from_value::<AuthServer>(v)
         {
+            // The browser opens its sign-in address in PDT's own tab, and PDT sends its token address a client
+            // secret: neither may be a `javascript:` address or plain http over the network.
+            a.check(&issuer)?;
             return Ok((a, scopes));
         }
     }
@@ -474,7 +483,7 @@ pub(crate) async fn callback(State(st): State<AppState>, Query(q): Query<Callbac
     let (Some(code), Some(state)) = (q.code, q.state) else {
         return page(false, "This page needs the service's code and state. Sign in from Settings → MCP servers.");
     };
-    let Some(p) = st.mcp.oauth.pending.lock().unwrap().remove(&state) else {
+    let Some(p) = st.mcp.oauth.pending.lock().unwrap().remove(&state).filter(|p| now_ms() - p.at < PENDING_MS) else {
         return page(false, "This sign-in is unknown or too old. Sign in again from Settings → MCP servers.");
     };
     let Ok(Some(conn)) = st.store.get_connection(&p.connection_id).await else {
@@ -492,6 +501,9 @@ pub(crate) async fn callback(State(st): State<AppState>, Query(q): Query<Callbac
         form.push(("client_secret", s.clone()));
     }
     // The raw answer too, for who signed in.
+    if !ms::endpoint_ok(&p.token_endpoint) {
+        return page(false, "The service's token address isn't https. Sign in again from Settings → MCP servers.");
+    }
     let pairs: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let r = crate::workflow::nodes::http::client()
         .post(&p.token_endpoint)

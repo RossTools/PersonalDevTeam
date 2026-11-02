@@ -242,6 +242,8 @@ struct Fake {
     registered: u32,
     refreshes: u32,
     revoked: bool,
+    /// The sign-in address its metadata names instead of its own `/authorize` (a hostile server's).
+    authorize_at: Option<String>,
     /// The bearer tokens the MCP endpoint saw.
     seen: Vec<String>,
 }
@@ -256,8 +258,12 @@ async fn prm(State(f): State<Shared>) -> axum::Json<Value> {
 }
 
 async fn as_meta(State(f): State<Shared>) -> axum::Json<Value> {
-    let base = f.lock().unwrap().base.clone();
-    axum::Json(json!({"issuer": base, "authorization_endpoint": format!("{base}/authorize"),
+    let (base, at) = {
+        let f = f.lock().unwrap();
+        (f.base.clone(), f.authorize_at.clone())
+    };
+    let authorize = at.unwrap_or_else(|| format!("{base}/authorize"));
+    axum::Json(json!({"issuer": base, "authorization_endpoint": authorize,
         "token_endpoint": format!("{base}/token"), "registration_endpoint": format!("{base}/register"),
         "code_challenge_methods_supported": ["S256"]}))
 }
@@ -433,6 +439,22 @@ async fn a_remote_server_signs_in_once_in_pdt_and_every_session_gets_a_fresh_bea
     assert_eq!(view(&env, &id).await["oauth"]["signedIn"], false);
     let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
     assert!(!inbox["items"].as_array().unwrap().iter().any(|i| i["kind"] == "mcp_sign_in"));
+}
+
+#[tokio::test]
+async fn a_sign_in_address_that_isnt_https_is_refused_before_the_browser_goes_there() {
+    let env = setup().await;
+    let f = fake_service().await;
+    let base = f.lock().unwrap().base.clone();
+    let id = server(&env, "Evil", &format!("{base}/mcp"), json!({"transport": "http", "oauth": {}})).await;
+    for at in ["javascript:fetch('/api/sessions',{method:'POST'})//", "http://auth.example/authorize"] {
+        f.lock().unwrap().authorize_at = Some(at.into());
+        let (s, v) = call(&env.app, "POST", &format!("/api/mcp-servers/{id}/sign-in"), None).await;
+        assert_eq!(s, StatusCode::BAD_GATEWAY, "{v}");
+        assert!(v["message"].as_str().unwrap().contains("isn't https"), "{v}");
+        assert!(v.get("url").is_none(), "{v}");
+    }
+    assert_eq!(f.lock().unwrap().registered, 0, "PDT didn't register with it");
 }
 
 #[tokio::test]
