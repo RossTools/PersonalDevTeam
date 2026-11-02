@@ -472,3 +472,144 @@ async fn pick_up_tickets_avoids_hot_areas_in_flight_and_says_why() {
     assert_eq!(stage(&env, &hot).await, "in_progress");
     assert_eq!(get_ticket(&env, &hot).await["pickupHold"], Value::Null);
 }
+
+/// Writes the project's areas into its repo's `.pdt/project.toml` and commits them.
+fn areas_config(env: &Env, toml: &str) {
+    let repo = env._tmp.path().join("repo");
+    std::fs::create_dir_all(repo.join(".pdt")).unwrap();
+    std::fs::write(repo.join(".pdt/project.toml"), toml).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-m", "areas", "-q"]);
+}
+
+/// A To do ticket in `areas`: its id and key.
+async fn tagged(env: &Env, title: &str, areas: Value) -> (String, String) {
+    let (s, t) = call_as_ui(
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": title, "stage": "todo", "areas": areas})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    (t["id"].as_str().unwrap().to_string(), t["key"].as_str().unwrap().to_string())
+}
+
+/// The user's Start, with no session.
+async fn start_by_hand(env: &Env, id: &str) {
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{id}/start"),
+        Some(json!({"agent": "claude", "noSession": true})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+}
+
+/// Runs a Run now workflow once: its `start` step.
+async fn run_start_step(env: &Env, wf: &str) -> Value {
+    let (_, r) = call(&env.app, "POST", &format!("/api/workflows/{wf}/run"), Some(json!({}))).await;
+    pdt_api::run_workflows(&env.state).await;
+    let (_, run) = call(&env.app, "GET", &format!("/api/workflow-runs/{}", r["runId"].as_str().unwrap()), None).await;
+    run["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "start").cloned().unwrap_or(Value::Null)
+}
+
+/// Choose and Start agree (PDT-381): a ticket sharing a non-hot area with one in flight is one choose allows, and
+/// Start starts it rather than refusing it for the overlap (and pickup then passing it over for good).
+#[tokio::test]
+async fn choose_and_start_agree_on_a_shared_area_that_is_not_hot() {
+    let env = setup().await;
+    areas_config(
+        &env,
+        "[[area]]\nname = \"api\"\npaths = [\"api/**\"]\n\n[[area]]\nname = \"web\"\npaths = [\"web/**\"]\n",
+    );
+    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 5, "startDelaySeconds": 0, "hotAreas": ["api"]}))
+        .await;
+    let (busy, busy_key) = tagged(&env, "In flight", json!(["web"])).await;
+    start_by_hand(&env, &busy).await;
+    let (shared, _) = tagged(&env, "Shares web", json!(["web"])).await;
+    assert_eq!(get_ticket(&env, &shared).await["overlapWith"], json!([busy_key]), "it overlaps the one in flight");
+    common::pick_up(&env.state).await;
+    assert_eq!(stage(&env, &shared).await, "in_progress");
+    // A person's Start still refuses for the overlap (and offers Start anyway).
+    let (other, _) = tagged(&env, "Also web", json!(["web"])).await;
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{other}/start"),
+        Some(json!({"agent": "claude", "noSession": true})),
+    )
+    .await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("start_blocked")), "{v}");
+}
+
+/// Start refusing a pick for now (here a conflict in an exclusive area, which this pickup lets through choose) is no
+/// failure (PDT-381): the ticket isn't passed over until it changes, the Board says why it waits, and once the
+/// conflicting ticket is done the next run starts it.
+#[tokio::test]
+async fn a_start_refused_for_an_overlap_starts_on_the_next_run_once_the_overlap_is_gone() {
+    let env = setup().await;
+    areas_config(&env, "[[area]]\nname = \"db\"\npaths = [\"db/**\"]\nexclusive = true\n");
+    settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 5, "startDelaySeconds": 0})).await;
+    let mut doc = pickup_by_hand();
+    doc["nodes"][1]["config"] = json!({"excludeConflicts": false});
+    let wf = workflow(&env, doc).await;
+    let (busy, busy_key) = tagged(&env, "In flight", json!(["db"])).await;
+    start_by_hand(&env, &busy).await;
+    let (next, _) = tagged(&env, "Next", json!(["db"])).await;
+    let step = run_start_step(&env, &wf).await;
+    assert_eq!(step["port"], "skipped", "{step}");
+    let why = step["output"]["skipped"][0]["reason"].as_str().unwrap().to_string();
+    assert!(why.contains(&busy_key), "{why}");
+    let t = get_ticket(&env, &next).await;
+    assert_eq!((t["stage"].as_str(), t["pickupFailed"].clone()), (Some("todo"), Value::Null), "{t}");
+    assert_eq!(t["pickupHold"], json!(why));
+
+    // The conflicting ticket merges: the next run starts it, with nobody touching it.
+    move_to(&env, &busy, "done").await;
+    let step = run_start_step(&env, &wf).await;
+    assert_eq!(step["port"], "started", "{step}");
+    assert_eq!(stage(&env, &next).await, "in_progress");
+}
+
+/// A start that really failed (here git: the repository is gone) is passed over until the ticket changes, and the
+/// ticket says so, with the error (PDT-381); Try again has the next run try it.
+#[tokio::test]
+async fn a_failed_start_shows_its_error_and_try_again_starts_it() {
+    let env = setup().await;
+    settings(&env, json!({"autoStart": "todo", "startDelaySeconds": 0})).await;
+    let wf = workflow(&env, pickup_by_hand()).await;
+    let t = ticket(&env, "Next", "todo").await;
+    let repo = env._tmp.path().join("repo");
+    let away = env._tmp.path().join("away");
+    std::fs::rename(&repo, &away).unwrap();
+    let step = run_start_step(&env, &wf).await;
+    std::fs::rename(&away, &repo).unwrap();
+    assert_eq!(step["port"], "failed", "{step}");
+    let error = step["output"]["failed"][0]["error"].as_str().unwrap().to_string();
+    let v = get_ticket(&env, &t).await;
+    assert_eq!(v["pickupFailed"], json!(error), "{v}");
+    let (_, list) = call(&env.app, "GET", &format!("/api/tickets?project={}", env.project), None).await;
+    let row = list["items"].as_array().unwrap().iter().find(|x| x["id"] == t).unwrap().clone();
+    assert_eq!(row["pickupFailed"], json!(error));
+    // Passed over, with the error, until it changes.
+    let (_, run) = {
+        let (_, r) = call(&env.app, "POST", &format!("/api/workflows/{wf}/run"), Some(json!({}))).await;
+        pdt_api::run_workflows(&env.state).await;
+        call(&env.app, "GET", &format!("/api/workflow-runs/{}", r["runId"].as_str().unwrap()), None).await
+    };
+    let choose = run["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "choose").unwrap().clone();
+    assert_eq!(choose["port"], "none", "{choose}");
+    assert_eq!(choose["output"]["passed"][0]["reason"], "failed_before");
+    assert_eq!(choose["output"]["passed"][0]["error"], json!(error));
+
+    let (s, v) = call(&env.app, "POST", &format!("/api/tickets/{t}/retry-auto-start"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["pickupFailed"], Value::Null, "{v}");
+    let step = run_start_step(&env, &wf).await;
+    assert_eq!(step["port"], "started", "{step}");
+    assert_eq!(stage(&env, &t).await, "in_progress");
+    let (s, _) = call(&env.app, "POST", "/api/tickets/nope/retry-auto-start", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}

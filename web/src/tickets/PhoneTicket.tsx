@@ -22,8 +22,8 @@ import { MergeDialog } from '../review/MergeDialog';
 import { useDiffSize } from '../review/queries';
 import { useTopBarActions, useTopBarEdit } from '../shell/PhoneTopBar';
 import {
-  abandonAttempt, canRefine, canStart, deleteTicket, moveToEntries, patchTicket, priorityEntries, refineTicket, startNextPart,
-  stopWaitingEntry, useOpenSession, useOpenTicket, useStartTicket,
+  abandonAttempt, canRefine, canStart, deleteTicket, moveToEntries, patchTicket, priorityEntries, refineTicket, retryAutoStartEntry,
+  startNextPart, stopWaitingEntry, useOpenSession, useOpenTicket, useStartTicket,
 } from './actions';
 import { AttemptSection, MergedBanner } from './Attempt';
 import { agentLine } from './Board';
@@ -111,6 +111,7 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
   useTopBarActions((): MenuEntry[] => [
     watchEntry(qc, { ticket: t.id }, watches),
     ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
+    ...(t.pickupFailed ? [retryAutoStartEntry(qc, t)] : []),
     { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
     { submenu: 'Priority', entries: priorityEntries(qc, t) },
     ...(t.parts && !isClosed(t.stage) ? [{ label: 'Start next part', onSelect: () => void runAction(() => startNextPart(start, t)) }] : []),

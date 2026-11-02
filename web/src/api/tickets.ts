@@ -80,6 +80,8 @@ export const ticketsApi = {
   startTicket: (id: string, b: StartTicket) =>
     request<StartResult>(`/api/tickets/${enc(id)}/start`, { method: 'POST', body: JSON.stringify(b) }, { asUser: true }),
   checkMerge: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/check-merge`, { method: 'POST' }),
+  /** Auto-start forgets the ticket's failed start, and its next run tries it again. */
+  retryAutoStart: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/retry-auto-start`, { method: 'POST' }),
   /** Asks the project's pipeline to refine a Draft or Ready ticket (Phase 7c). */
   refineTicket: (id: string) =>
     request<Ticket>(`/api/tickets/${enc(id)}/refine`, { method: 'POST', body: JSON.stringify({ by: 'user' }) }),
