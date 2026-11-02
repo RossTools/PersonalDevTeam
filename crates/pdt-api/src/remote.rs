@@ -4,6 +4,9 @@
 //! The machine's Tailscale is shared with every other instance on it (the stable one serves 443 there), so this
 //! process only ever undoes what it did itself (ruling F1): with the setting off and nothing mapped by this process,
 //! applying runs no tailscale command at all, and turning the setting off unmaps only the ports this process mapped.
+//! `serve --bg` mappings outlive pdtd, so the ports this instance mapped are kept in its store (`remote.served`) and
+//! count as its own after a restart: turning the setting off removes them, and so does resuming the runs when a run
+//! moved to another port or did not come back.
 
 use crate::error::ApiError;
 use crate::routes::AppState;
@@ -34,11 +37,17 @@ pub struct RemoteStatus {
     pub tailscale_login: Option<String>,
 }
 
-/// What this process changed, so that turning remote access off undoes exactly that.
+/// The host value that keeps [`Applied::served`] across restarts.
+const SERVED_KEY: &str = "remote.served";
+
+/// What this instance changed, so that turning remote access off undoes exactly that.
 #[derive(Debug, Default)]
 pub(crate) struct Applied {
-    /// HTTPS ports this process mapped with `tailscale serve`.
+    /// HTTPS ports this instance mapped with `tailscale serve`, by this process or a previous one (kept under
+    /// [`SERVED_KEY`]; changed only under `settings_lock`).
     pub(crate) served: BTreeSet<u16>,
+    /// Whether `served` has had the stored ports added (once per process, on first use).
+    loaded: bool,
     /// The tailnet name this process added to the allowlist (absent when it was already allowed by configuration).
     pub(crate) added_host: Option<String>,
 }
@@ -68,6 +77,7 @@ fn extra_ports(st: &AppState) -> Vec<u16> {
 /// turning remote access off removes it). With remote access inactive it runs no tailscale command.
 pub(crate) async fn map_run_port(st: &AppState, port: u16) {
     let _guard = st.settings_lock.lock().await;
+    load_served(st).await;
     if !st.remote.lock().unwrap_or_else(|e| e.into_inner()).active {
         return;
     }
@@ -76,9 +86,30 @@ pub(crate) async fn map_run_port(st: &AppState, port: u16) {
     }
 }
 
-/// Removes a run port's mapping, but only one this process made (ruling F1); pdtd's own HTTPS port is never touched.
+/// Removes a run port's mapping, but only one this instance made (ruling F1); pdtd's own HTTPS port is never touched.
 pub(crate) async fn unmap_run_port(st: &AppState, port: u16) {
     let _guard = st.settings_lock.lock().await;
+    load_served(st).await;
+    unmap_locked(st, port).await;
+    save_served(st).await;
+}
+
+/// Removes the run-port mappings a previous process made for runs this one does not drive (a run that moved to
+/// another port, failed to resume or whose row was removed). pdtd awaits it after resuming the runs.
+pub(crate) async fn unmap_stale_run_ports(st: &AppState) {
+    let _guard = st.settings_lock.lock().await;
+    load_served(st).await;
+    let driven = extra_ports(st);
+    let stale: Vec<u16> =
+        applied(st).served.iter().copied().filter(|p| *p != st.remote_https_port && !driven.contains(p)).collect();
+    for p in stale {
+        unmap_locked(st, p).await;
+    }
+    save_served(st).await;
+}
+
+/// [`unmap_run_port`] for callers that hold `settings_lock` and save `served` afterwards.
+async fn unmap_locked(st: &AppState, port: u16) {
     if port == st.remote_https_port || !applied(st).served.contains(&port) {
         return;
     }
@@ -95,6 +126,37 @@ fn applied(st: &AppState) -> std::sync::MutexGuard<'_, Applied> {
     st.remote_applied.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Adds the ports a previous process mapped to `served`, once. A stored value that cannot be read is logged and
+/// left alone (`save_served` then replaces it).
+async fn load_served(st: &AppState) {
+    if applied(st).loaded {
+        return;
+    }
+    let stored: Vec<u16> = match st.store.get_host_value(SERVED_KEY).await {
+        Ok(v) => v.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the ports a previous process mapped");
+            Vec::new()
+        }
+    };
+    let mut a = applied(st);
+    a.served.extend(stored);
+    a.loaded = true;
+}
+
+/// Stores `served`, so the next process knows which mappings are this instance's.
+async fn save_served(st: &AppState) {
+    let ports: Vec<u16> = applied(st).served.iter().copied().collect();
+    let r = if ports.is_empty() {
+        st.store.delete_host_value(SERVED_KEY).await
+    } else {
+        st.store.put_host_value(SERVED_KEY, &serde_json::json!(ports)).await
+    };
+    if let Err(e) = r {
+        tracing::warn!(error = %e, "could not store the ports this instance mapped");
+    }
+}
+
 /// The Host value browsers send for `https://<dns_name>:<port>/` (no port for 443).
 fn tailnet_host(dns_name: &str, https_port: u16) -> String {
     if https_port == HOST_HTTPS_PORT { dns_name.to_string() } else { format!("{dns_name}:{https_port}") }
@@ -109,6 +171,7 @@ pub async fn apply_remote_access(st: &AppState) -> RemoteStatus {
 
 /// [`apply_remote_access`] for callers that already hold `settings_lock`.
 pub(crate) async fn apply_locked(st: &AppState) -> RemoteStatus {
+    load_served(st).await;
     let previous = st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let before = previous.active.then(|| previous.dns_name.clone()).flatten();
     let out = match st.store.get_host_settings().await {
@@ -184,13 +247,13 @@ async fn enable(st: &AppState) -> RemoteStatus {
 /// One `tailscale serve`, recorded as this process's mapping when it succeeded or timed out (it may still land).
 async fn serve(st: &AppState, https_port: u16, target_port: u16) -> Result<(), TsError> {
     let r = blocking(st, move |t| t.serve(https_port, target_port)).await;
-    if matches!(r, Ok(()) | Err(TsError::TimedOut)) {
-        applied(st).served.insert(https_port);
+    if matches!(r, Ok(()) | Err(TsError::TimedOut)) && applied(st).served.insert(https_port) {
+        save_served(st).await;
     }
     r
 }
 
-/// Undoes what this process did, and nothing else: no tailscale command runs when it mapped nothing.
+/// Undoes what this instance did, and nothing else: no tailscale command runs when it mapped nothing.
 async fn disable(st: &AppState, previous: RemoteStatus) -> RemoteStatus {
     let (served, added_host) = {
         let mut a = applied(st);
@@ -209,6 +272,7 @@ async fn disable(st: &AppState, previous: RemoteStatus) -> RemoteStatus {
     let error = failed.first().map(|(p, e)| format!("could not remove the mapping on port {p}: {e}"));
     // Keep what is still mapped, so a later refresh retries it.
     applied(st).served.extend(failed.iter().map(|(p, _)| *p));
+    save_served(st).await;
     RemoteStatus { enabled: false, error, tailscale_login: previous.tailscale_login, ..Default::default() }
 }
 

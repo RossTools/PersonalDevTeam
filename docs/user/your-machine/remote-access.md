@@ -26,7 +26,9 @@ Set the owner on the machine itself: until there is one, PDT turns every remote 
 - **From the internet**: nobody. PDT doesn't use Funnel and opens no port.
 
 Runs started from PDT (a dev server, say) get an HTTPS address on the tailnet too, so their links work from your
-phone. See [Run configuration](../automation/run-configuration.md).
+phone. A run's address goes away when the run ends, when it comes back on another port after PDT restarts, and when
+you turn remote access off, including addresses PDT made before it last restarted. See
+[Run configuration](../automation/run-configuration.md).
 
 To open PDT on its own machine by another name (an alias in your hosts file), add it under **Allowed hosts**: see
 [Settings](settings.md#network).
