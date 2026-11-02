@@ -1,7 +1,7 @@
 // Make ticket… from a scratch chat (structured agents spec §10): the agent drafts a title and description in a hidden
 // side request (it forks the conversation and changes nothing), then the new-ticket form opens with them. "Start from
 // this chat" (a chat in its own worktree) makes the chat the ticket's attempt; nothing is sent to the agent.
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Dialog, Spinner } from '@ui';
 import { api } from '../api/client';
@@ -10,7 +10,7 @@ import type { Ticket } from '../api/gen/Ticket';
 import type { TicketDraft } from '../api/gen/TicketDraft';
 import { useAgents } from '../common/agents';
 import { actionError } from '../common/useAction';
-import { NewTicketDialog } from './NewTicketDialog';
+import { NewTicketDialog } from '../shell/screens';
 import { invalidateTickets } from './queries';
 import { invalidateWorktrees } from '../common/worktrees';
 
@@ -54,7 +54,7 @@ export function MakeTicketDialog({ session, canStartHere, onClose, onCreated }: 
       void qc.invalidateQueries({ queryKey: ['workspaces'] });
     };
     return (
-      <NewTicketDialog
+      <Suspense fallback={null}><NewTicketDialog
         heading="Make ticket"
         projects={projects.data}
         projectId={session.projectId}
@@ -67,7 +67,7 @@ export function MakeTicketDialog({ session, canStartHere, onClose, onCreated }: 
         } : undefined}
         onClose={onClose}
         onCreated={onCreated}
-      />
+      /></Suspense>
     );
   }
 
