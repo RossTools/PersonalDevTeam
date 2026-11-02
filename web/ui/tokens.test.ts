@@ -98,3 +98,38 @@ describe('focus ring contrast (PDT-447)', () => {
     });
   }
 });
+
+describe('accent and status text contrast (PDT-449)', () => {
+  // Text on a soft fill is checked against the fill laid over each surface it sits on (badges, the danger button).
+  const surfaces = ['--pdt-bg', '--pdt-surface', '--pdt-surface-2'];
+  const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const toHex = (c: number[]) => `#${c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
+  /** An `rgba(r, g, b, a)` fill laid over an opaque `#rrggbb`. */
+  const over = (fill: string, under: string) => {
+    const m = fill.match(/^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/);
+    expect(m, fill).not.toBeNull();
+    const [r, g, b, a] = m!.slice(1).map(Number);
+    return toHex([r, g, b].map((c, i) => c * a + rgb(under)[i] * (1 - a)));
+  };
+  for (const [theme, marker] of [
+    ['light', ':root {'],
+    ['dark', ":root[data-theme='dark']"],
+  ] as const) {
+    const palette = block(marker);
+    const get = (t: string) => {
+      const v = palette.get(t);
+      expect(v, `${theme} ${t}`).toBeDefined();
+      return v!;
+    };
+    it.each([...surfaces, '--pdt-accent-soft'])(`${theme}: link text passes AA (4.5:1) on %s`, (bg) => {
+      expect(contrast(get('--pdt-link'), get(bg))).toBeGreaterThanOrEqual(4.5);
+    });
+    for (const status of ['running', 'waiting', 'failed']) {
+      it.each(surfaces)(`${theme}: ${status} text passes AA on %s and on its soft fill there`, (bg) => {
+        const fg = get(`--pdt-${status}`);
+        expect(contrast(fg, get(bg))).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(fg, over(get(`--pdt-${status}-soft`), get(bg)))).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+  }
+});

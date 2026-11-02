@@ -28,7 +28,7 @@ export function AttachmentImage({ src, alt }: { src: string; alt: string }) {
           onOpenChange={setOpen}
           title={alt || 'Image'}
           size="full"
-          headerActions={<a href={src} target="_blank" rel="noreferrer" className="ml-auto text-xs text-primary hover:underline">Open in a new tab</a>}
+          headerActions={<a href={src} target="_blank" rel="noreferrer" className="ml-auto text-xs text-link hover:underline">Open in a new tab</a>}
         >
           <img src={src} alt={alt} className="mx-auto max-w-full" />
         </Dialog>
@@ -65,7 +65,7 @@ export function AttachmentLink({ src, name, children }: { src: string; name: str
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex h-5 max-w-full min-w-0 items-center gap-1 rounded-md bg-muted px-1.5 align-middle font-mono text-meta text-foreground outline-none hover:bg-accent hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
+        className="inline-flex h-5 max-w-full min-w-0 items-center gap-1 rounded-md bg-muted px-1.5 align-middle font-mono text-meta text-foreground outline-none hover:bg-accent hover:text-link focus-visible:ring-2 focus-visible:ring-ring"
       >
         <FileText aria-hidden className="size-3 shrink-0 text-muted-foreground" />
         <span className="min-w-0 truncate">{children ?? name}</span>
@@ -78,7 +78,7 @@ export function AttachmentLink({ src, name, children }: { src: string; name: str
           size="xl"
           footer={
             <>
-              <a href={src} target="_blank" rel="noreferrer" className="mr-auto self-center text-xs text-primary hover:underline">Open raw</a>
+              <a href={src} target="_blank" rel="noreferrer" className="mr-auto self-center text-xs text-link hover:underline">Open raw</a>
               <Button onClick={() => setOpen(false)}>Close</Button>
             </>
           }

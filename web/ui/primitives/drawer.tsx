@@ -106,7 +106,9 @@ function DrawerContent({
     swipeDirection === "down" || swipeDirection === "up" ? "y" : "x"
 
   return (
-    <DrawerPortal data-slot="drawer-portal">
+    // A top layer for React Aria: a sheet opened from a dialog stays visible, focusable and clickable (the dialog
+    // would otherwise hide it from screen readers, pull focus back and count its clicks as outside).
+    <DrawerPortal data-slot="drawer-portal" data-react-aria-top-layer="">
       {modal === true && (
         <DrawerOverlay data-snap-points={hasSnapPoints ? "" : undefined} />
       )}

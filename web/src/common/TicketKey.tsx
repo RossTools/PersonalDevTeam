@@ -29,7 +29,7 @@ export function TicketKey({ ticketKey, onClick, href, title, className }: Ticket
         title={title}
         onClick={onClick}
         className={cn(
-          'inline-flex max-w-full min-w-0 shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring hover:[&>span]:bg-accent hover:[&>span]:text-primary',
+          'inline-flex max-w-full min-w-0 shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring hover:[&>span]:bg-accent hover:[&>span]:text-link',
           className,
         )}
       >

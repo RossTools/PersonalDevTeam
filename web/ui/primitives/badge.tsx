@@ -7,7 +7,7 @@ const badgeVariants = cva(
     variants: {
       variant: {
         neutral: "bg-muted text-muted-foreground [a]:hover:text-foreground",
-        accent: "bg-accent text-primary",
+        accent: "bg-accent text-link",
         running: "bg-running-soft text-running",
         waiting: "bg-waiting-soft text-waiting",
         failed: "bg-failed-soft text-failed",

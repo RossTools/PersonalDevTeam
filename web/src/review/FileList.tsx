@@ -7,7 +7,7 @@ import type { ChangeStatus } from '../api/gen/ChangeStatus';
 
 const LETTER: Record<ChangeStatus, string> = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R' };
 const LETTER_TONE: Record<ChangeStatus, string> = {
-  added: 'text-running', modified: 'text-waiting', deleted: 'text-failed', renamed: 'text-primary',
+  added: 'text-running', modified: 'text-waiting', deleted: 'text-failed', renamed: 'text-link',
 };
 
 interface Node extends TreeNode {
