@@ -1,7 +1,8 @@
 import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { onlineManager } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderWithQuery, stubApi } from '../test-utils';
+import { renderWithQuery, Reply, stubApi } from '../test-utils';
 import { plugins } from '../api/gen/plugins';
 import { AppShell } from './AppShell';
 import { project, hostRoutes, health, stubAlpha, stubWorkspaces } from './fixtures';
@@ -270,5 +271,32 @@ describe('Get started (PDT-230)', () => {
     expect(await within(setup).findByText('1 of 4 steps done.')).toBeInTheDocument();
     await userEvent.click(within(setup).getByRole('button', { name: 'Open Get started' }));
     await waitFor(() => expect(here()).toBe('/setup'));
+  });
+
+  it("shows that the host can't be reached on desktop, and the Inbox says it can't load", async () => {
+    window.history.replaceState(null, '', '/inbox');
+    stubWorkspaces({
+      'GET /api/workspaces': new Reply(502, { code: 'unreachable', message: 'down' }),
+      'GET /api/inbox': new Reply(502, { code: 'unreachable', message: 'down' }),
+    });
+    renderWithQuery(<AppShell />);
+    expect((await screen.findByText(/Can't reach the host/)).closest('[role=alert]')).toBeInTheDocument();
+    expect(await screen.findAllByText(/Can't load the Inbox/)).not.toHaveLength(0);
+    expect(screen.queryByText(/Nothing waits on you/)).toBeNull();
+  });
+
+  it('shows no connection banner while the host answers, and one while the browser is offline', async () => {
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('row', { name: /Alpha/ });
+    expect(screen.queryByText(/Can't reach the host/)).toBeNull();
+    // Offline, queries pause rather than fail: the browser's own state shows it.
+    act(() => onlineManager.setOnline(false));
+    try {
+      expect(await screen.findByText(/Can't reach the host/)).toBeInTheDocument();
+    } finally {
+      act(() => onlineManager.setOnline(true));
+    }
+    await waitFor(() => expect(screen.queryByText(/Can't reach the host/)).toBeNull());
   });
 });

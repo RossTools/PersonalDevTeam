@@ -57,6 +57,7 @@ import { BottomPanel } from './BottomPanel';
 import { RightPanel, RightPanelContent, useRightPanelKey, useRightPanelOpen } from './RightPanel';
 import type { TodoFocus } from '../todos/TodoList';
 import { IconRail } from './IconRail';
+import { ConnectionBanner, useConnected } from './connection';
 import { InstanceBadge } from './InstanceBadge';
 import { InboxList } from '../inbox/InboxList';
 import { PhoneInboxList } from '../inbox/PhoneInboxList';
@@ -509,6 +510,10 @@ export function AppShell() {
 
   // Notifications (PDT-108): the Inbox's Updates, the stream's toasts and desktop notifications, and where a click goes.
   const updates = useUpdates();
+  const connected = useConnected(ws.workspacesError);
+  // Empty Inbox lists say they can't load, not that nothing waits, while their poll fails or the host is unreachable.
+  const inboxFailed = !connected || inbox.isError;
+  const updatesFailed = !connected || updates.isError;
   const readAllUpdates = useReadAllUpdates();
   const clearUpdate = useClearUpdate();
   const clearAllUpdates = useClearAllUpdates();
@@ -624,6 +629,7 @@ export function AppShell() {
     </>
   ) : view === 'inbox' ? (
     <InboxList items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} loading={inbox.isLoading}
+      failed={inboxFailed} updatesFailed={updatesFailed}
       onSelect={(id) => { setInboxId(id); setSheetOpen(false); }}
       onReadAll={() => readAllUpdates.mutate()} onClear={(id) => clearUpdate.mutate(id)} onClearAll={() => clearAllUpdates.mutate()}
       onSettings={() => showProjectSettings(NOTIFICATIONS)} />
@@ -829,6 +835,7 @@ export function AppShell() {
         </>
       )}
       <main className="relative flex-1 flex flex-col min-w-0 min-h-0">
+        <ConnectionBanner connected={connected} />
         <UpdateBanner />
         {view === 'sessions' && !phoneList && !setupShown ? (
           <WorkspaceBar
@@ -926,6 +933,7 @@ export function AppShell() {
               <TabOverview ws={ws} onClose={() => setOverviewOpen(false)} onRename={setRenamingTabId} />
             ) : phoneList && view === 'inbox' ? (
               <PhoneInboxList items={inboxItems} updates={updates.data?.items ?? []} loading={inbox.isLoading}
+                failed={inboxFailed} updatesFailed={updatesFailed}
                 onOpen={(id) => go({ view: 'inbox', itemId: id })}
                 onReadAll={() => readAllUpdates.mutate()} onClear={(id) => clearUpdate.mutate(id)} onClearAll={() => clearAllUpdates.mutate()}
                 onSettings={() => showProjectSettings(NOTIFICATIONS)} />
@@ -942,7 +950,7 @@ export function AppShell() {
               <ScreenSuspense><PhoneInboxItem items={inboxItems} updates={updates.data?.items ?? []}
                 itemId={inboxId} loading={inbox.isLoading} onMove={moveInbox} onList={() => goBack(routePath(viewRoute('inbox')))} onOpenTarget={openTarget} /></ScreenSuspense>
             ) : view === 'inbox' ? (
-              <ScreenSuspense><InboxView items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} /></ScreenSuspense>
+              <ScreenSuspense><InboxView items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} failed={inboxFailed} /></ScreenSuspense>
             ) : view === 'pm' ? (
               <ScreenSuspense><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></ScreenSuspense>
             ) : view === 'notes' ? (

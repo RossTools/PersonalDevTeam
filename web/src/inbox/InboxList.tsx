@@ -24,20 +24,29 @@ function context(i: InboxItem): string {
   return [who, i.ticketTitle ?? (i.ticketKey ? null : KIND_LABEL[i.kind])].filter(Boolean).join(' · ');
 }
 
+/** An empty list's line: what it says when empty, or that `what` can't be loaded. */
+function EmptyLine({ failed, what, children }: { failed?: boolean; what: string; children: string }) {
+  return failed
+    ? <p role="alert" className="px-3 py-2 text-xs text-failed">Can't load {what}.</p>
+    : <p className="px-3 py-2 text-xs text-muted-foreground">{children}</p>;
+}
+
 /**
  * Needs you: the items under their sections, most urgent first. Each row: the kind's icon in its colour, the title,
  * then the ticket's key and who asks; the age on the right.
  */
-export function NeedsYouGroups({ items, selectedId, onSelect, loading }: {
+export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }: {
   items: InboxItem[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   loading?: boolean;
+  /** The Inbox can't be loaded (or the host reached): an empty list says so rather than that nothing waits. */
+  failed?: boolean;
 }) {
   const groups = grouped(items);
   return (
     <>
-      {groups.length === 0 && !loading && <p className="px-3 py-2 text-xs text-muted-foreground">Nothing waits on you.</p>}
+      {groups.length === 0 && !loading && <EmptyLine failed={failed} what="the Inbox">Nothing waits on you.</EmptyLine>}
       {groups.map((g) => (
         <section key={g.id} aria-label={g.title}>
           <h3 className={cn(heading, 'flex items-center gap-1.5')}>
@@ -73,17 +82,19 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading }: {
  * Updates: notifications that wait on nothing, newest first: unread in bold, resolved ones dimmed. With `onClear`, each
  * row has a Clear button (on hover, always on touch).
  */
-export function UpdatesList({ updates, selectedId, onSelect, onClear, loading }: {
+export function UpdatesList({ updates, selectedId, onSelect, onClear, loading, failed }: {
   updates: Notification[];
   selectedId: string | null;
   onSelect: (selection: string) => void;
   onClear?: (id: string) => void;
   loading?: boolean;
+  /** The Updates can't be loaded (or the host reached): an empty list says so rather than that there are none. */
+  failed?: boolean;
 }) {
   const update = selectedUpdate(selectedId);
   return (
     <>
-      {updates.length === 0 && !loading && <p className="px-3 py-2 text-xs text-muted-foreground">No updates.</p>}
+      {updates.length === 0 && !loading && <EmptyLine failed={failed} what="updates">No updates.</EmptyLine>}
       {updates.length > 0 && (
         <List aria-label="Updates" onAction={(id) => onSelect(updateSelection(id))}>
           {updates.map((u) => (
@@ -114,7 +125,7 @@ export function UpdatesList({ updates, selectedId, onSelect, onClear, loading }:
  * The Inbox's list column (UX spec §8.4, PDT-108 §5.1): **Needs you**, then **Updates**, with Mark all read, Clear all
  * (and Clear on each Update) and a way to the notification settings.
  */
-export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll, onClear, onClearAll, onSettings, loading }: {
+export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll, onClear, onClearAll, onSettings, loading, failed, updatesFailed }: {
   items: InboxItem[];
   updates?: Notification[];
   selectedId: string | null;
@@ -124,12 +135,14 @@ export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll
   onClearAll?: () => void;
   onSettings?: () => void;
   loading?: boolean;
+  failed?: boolean;
+  updatesFailed?: boolean;
 }) {
   const unread = updates.some((u) => u.readAt === null && u.clearedAt === null);
   return (
     <nav aria-label="Inbox items" className="flex flex-col gap-0.5 py-1">
       <h2 className={heading}>Needs you</h2>
-      <NeedsYouGroups items={items} selectedId={selectedId} onSelect={onSelect} loading={loading} />
+      <NeedsYouGroups items={items} selectedId={selectedId} onSelect={onSelect} loading={loading} failed={failed} />
       <section aria-label="Updates">
         <div className="flex items-center gap-1 pt-1 pr-2">
           <h2 className={cn(heading, 'flex-1')}>Updates</h2>
@@ -137,7 +150,7 @@ export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll
           {onClearAll && <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" disabled={updates.length === 0} onClick={onClearAll}>Clear all</Button>}
           {onSettings && <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" onClick={onSettings}>Settings</Button>}
         </div>
-        <UpdatesList updates={updates} selectedId={selectedId} onSelect={onSelect} onClear={onClear} loading={loading} />
+        <UpdatesList updates={updates} selectedId={selectedId} onSelect={onSelect} onClear={onClear} loading={loading} failed={updatesFailed} />
       </section>
     </nav>
   );
