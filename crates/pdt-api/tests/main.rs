@@ -32,6 +32,7 @@ mod git_integration;
 mod github_pulls;
 mod github_triage;
 mod host;
+mod host_triggers;
 mod identity;
 mod integrations;
 mod liveness;

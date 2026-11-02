@@ -235,9 +235,58 @@ pub fn disk_level(free: u64, low_gb: u32, critical_gb: u32) -> DiskLevel {
     }
 }
 
+impl DiskLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DiskLevel::Ok => "ok",
+            DiskLevel::Low => "low",
+            DiskLevel::Critical => "critical",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<DiskLevel> {
+        [DiskLevel::Ok, DiskLevel::Low, DiskLevel::Critical].into_iter().find(|l| l.as_str() == s)
+    }
+}
+
+/// What a disk's level going from `before` to `now` is news of (PDT-365): it got worse (`disk.low`, at its new
+/// level), or it is fine again (`disk.recovered`). A critical disk that is only low again is still low: no news.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiskNews {
+    Low,
+    Recovered,
+}
+
+pub fn disk_news(before: DiskLevel, now: DiskLevel) -> Option<DiskNews> {
+    if now > before {
+        Some(DiskNews::Low)
+    } else if now == DiskLevel::Ok && before != DiskLevel::Ok {
+        Some(DiskNews::Recovered)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_disk_level_is_news_when_it_drops_or_recovers() {
+        use DiskLevel::*;
+        assert_eq!(disk_news(Ok, Ok), None);
+        assert_eq!(disk_news(Ok, Low), Some(DiskNews::Low));
+        assert_eq!(disk_news(Low, Low), None);
+        assert_eq!(disk_news(Low, Critical), Some(DiskNews::Low));
+        assert_eq!(disk_news(Ok, Critical), Some(DiskNews::Low));
+        assert_eq!(disk_news(Critical, Critical), None);
+        assert_eq!(disk_news(Critical, Low), None);
+        assert_eq!(disk_news(Critical, Ok), Some(DiskNews::Recovered));
+        assert_eq!(disk_news(Low, Ok), Some(DiskNews::Recovered));
+        for l in [Ok, Low, Critical] {
+            assert_eq!(DiskLevel::parse(l.as_str()), Some(l));
+        }
+    }
 
     #[test]
     fn detects_build_output_from_the_files_at_the_root() {

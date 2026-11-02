@@ -65,6 +65,11 @@ pub fn start_background(state: &AppState) {
             }
         });
     }
+    // The update pdt-host just installed, as a workflow event (PDT-365).
+    tokio::spawn({
+        let st = state.clone();
+        async move { crate::update::log_installed(&st).await }
+    });
     // Hourly update checks (and the auto-when-idle install); returns at once unless pdt-host supervises this pdtd.
     // A panic in it is logged and it starts again a minute later.
     {

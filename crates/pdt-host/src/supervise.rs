@@ -8,7 +8,7 @@ use crate::install::Installer;
 use crate::log::{log, log_path};
 use pdt_core::handoff::{
     StartedEnv, UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, request_path, result_path, skip_path,
-    started_env_path, update_dir,
+    started_env_path, taken_request_path, update_dir,
 };
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
@@ -64,7 +64,7 @@ pub fn take_request(data_dir: &Path) -> TakenRequest {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return TakenRequest::None,
         Err(e) => return TakenRequest::Stuck(format!("could not read {}: {e}", path.display())),
     };
-    if let Err(rename) = std::fs::rename(&path, path.with_extension("taken.json"))
+    if let Err(rename) = std::fs::rename(&path, taken_request_path(data_dir))
         && let Err(remove) = std::fs::remove_file(&path)
     {
         return TakenRequest::Stuck(format!("could not take {} ({rename}; {remove})", path.display()));
@@ -617,6 +617,7 @@ mod tests {
             asset: "a".into(),
             from_version: "0.1.6".into(),
             requested_at: 1,
+            automatic: false,
         };
         let p = request_path(tmp.path());
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();

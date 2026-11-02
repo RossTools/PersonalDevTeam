@@ -209,7 +209,7 @@ Failed runs also show in the Inbox's **Updates**. To hear when one run finishes,
 
 Every kind of event in PDT is a trigger: a ticket moved, started, commented on or merged; CI failed or passed; a pull
 request conflicts, left the merge queue or merged; a new GitHub issue or outside pull request; a failed GitHub Actions
-run. These ones react to changes to tickets:
+run; a new release, a PDT update, low disk space, a failing connection or a todo coming due. These ones react to changes to tickets:
 
 - **Ticket created**: says who made it (you, the PM, an agent, a workflow, or outside input). An agent's ticket names
   its persona, the ticket it was working on and the reason it gave. Parts made with **Make into parts** are marked as
@@ -249,6 +249,25 @@ Each session event says whether a workflow's agent step runs the session or it's
 few lines the agent wrote. A workflow never reacts to its own runs, their Inbox items or their agent steps' sessions,
 so one that reports failed runs never reports itself. To react to them too, turn on **Include own** on the trigger.
 Runs that start each other through run events stop after three in a row.
+
+These ones react to releases, PDT itself and what it looks after:
+
+- **Release published**: a release or pre-release appeared on a project's repository (GitHub or GitLab). It carries
+  the tag, name, link, notes, its files and whether it's a pre-release. PDT looks every minute at the projects a
+  turned-on trigger covers; the first look only notes the releases already there.
+- **PDT update available**: a newer version of PDT is out on this computer's update channel, once per version.
+- **PDT updated**: PDT started on a version it just updated to, and says whether it updated by itself (when idle)
+  or because you asked.
+- **Disk space low**: a disk PDT uses fell below the low-space level in Settings, or below the critical one. It
+  carries the free space, the level, and how much cleaning finished tickets' build output would free. It fires
+  when the level drops, not on every check.
+- **Disk space recovered**: a disk that was low has enough free space again.
+- **Connection failing**: a connection, or your sign-in to a forge such as GitHub, stopped working (a revoked token,
+  the service down). It fires when it starts failing, not on every failed use.
+- **Todo due**: one of your todos comes due, with its title, notes and when it was due (or that it's overdue, if PDT
+  was off then).
+- **Scryer download finished** (with the Scryer plugin): Scryer finished a download and added it to your library,
+  with the title, its type, quality and folder. PDT looks every minute while a trigger is on.
 
 Some triggers have settings of their own:
 

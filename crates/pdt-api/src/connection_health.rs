@@ -5,6 +5,8 @@
 
 use crate::routes::{AppState, now_ms};
 use pdt_core::notification::{NewNotification, NotificationKind, NotificationTarget, Severity, connection_key};
+use pdt_core::workflow::api::NewLogEvent;
+use pdt_core::workflow::events::{CONNECTION_FAILED, ConnectionFailed};
 use std::collections::BTreeMap;
 
 /// One sensor pass's uses of connections, by name: the first failure of each, or None when every use worked.
@@ -55,6 +57,11 @@ pub async fn report(st: &AppState, name: &str, error: Option<&str>) {
     match error {
         Some(e) => {
             tracing::warn!(connection = name, error = e, "a connection is failing");
+            // Only when it starts failing: another error while it fails is the same failure.
+            if conn.as_ref().is_none_or(|c| c.last_error.is_none()) {
+                let kind = conn.as_ref().map(|c| c.kind.clone()).unwrap_or_default();
+                log_failed(st, name, &kind, "connection", e, &format!("connection:{name}:{}", now_ms())).await;
+            }
             let mut n = NewNotification::new(
                 NotificationKind::ConnectionFailed,
                 key,
@@ -69,6 +76,16 @@ pub async fn report(st: &AppState, name: &str, error: Option<&str>) {
             tracing::info!(connection = name, "a connection works again");
             crate::notifications::clear(st, &key).await;
         }
+    }
+}
+
+/// `connection.failed` (PDT-365): `name` (of `kind`, from `source`: `connection` or `forge`) started failing with
+/// `error`. `key` names this failure, so it is logged once.
+pub(crate) async fn log_failed(st: &AppState, name: &str, kind: &str, source: &str, error: &str, key: &str) {
+    let payload = ConnectionFailed { name: name.into(), kind: kind.into(), source: source.into(), error: error.into() };
+    let e = NewLogEvent::new(CONNECTION_FAILED, key, "connections", payload);
+    if let Err(x) = st.store.emit_event(&e, now_ms()).await {
+        tracing::warn!(connection = name, error = %x, "could not log a failing connection");
     }
 }
 

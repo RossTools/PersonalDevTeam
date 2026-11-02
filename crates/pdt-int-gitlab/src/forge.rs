@@ -10,7 +10,7 @@ use pdt_forge::transport::encode;
 use pdt_forge::{
     Capabilities, ChangeComment, ChangeFile, ChangeRequest, ChangeReview, ChangeStats, CloseReason, Forge, ForgeError,
     ForgeNotes, Issue, IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest,
-    Release, RepoChangeRequest, ReviewVerdict,
+    Release, ReleaseAsset, RepoChangeRequest, ReviewVerdict,
 };
 use serde_json::{Value, json};
 
@@ -238,6 +238,17 @@ pub fn parse_release(v: &Value) -> Result<Option<Release>, GlError> {
         published_at: v["released_at"].as_str().map(String::from),
         notes: s(v, "description"),
         tag,
+        prerelease: false,
+        assets: v["assets"]["links"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|a| ReleaseAsset {
+                name: s(a, "name"),
+                url: a["direct_asset_url"].as_str().map_or_else(|| s(a, "url"), String::from),
+                size: None,
+            })
+            .collect(),
     }))
 }
 

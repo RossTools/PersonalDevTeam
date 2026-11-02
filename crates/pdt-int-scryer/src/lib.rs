@@ -1,14 +1,17 @@
 //! Scryer (films, series and anime, PDT-147): its connection and its actions (each a node kind and a tool), and its
 //! whole GraphQL API for the PM (PDT-150), with the credentials an agent writes into a call kept out of what PDT
-//! stores. pdtd's `scryer` feature.
+//! stores. Its finished downloads are a workflow trigger (`scryer.download_finished`, PDT-365). pdtd's `scryer`
+//! feature.
 
 mod actions;
 mod core;
 mod graphql;
+mod sensor;
 
 use crate::core::SCRYER;
-use pdt_api::sdk::{AnyAction, Integration};
+use pdt_api::sdk::{AnyAction, AppState, BoxFut, Integration, Poller};
 use pdt_core::integration::ConnectionKind;
+use pdt_core::workflow::events::EventType;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -16,6 +19,7 @@ pub use crate::actions::*;
 pub use crate::graphql::{
     ScryerMutateConfig, ScryerMutateOutput, ScryerQueryConfig, ScryerQueryOutput, ScryerSchemaArgs,
 };
+pub use crate::sensor::{SCRYER_DOWNLOAD_FINISHED, ScryerDownloadFinished, refresh_scryer};
 
 pub struct Scryer;
 
@@ -74,6 +78,17 @@ impl Integration for Scryer {
 
     fn actions(&self) -> Vec<Arc<dyn AnyAction>> {
         actions::actions()
+    }
+
+    fn event_types(&self) -> &'static [EventType] {
+        sensor::EVENT_TYPES
+    }
+
+    fn pollers(&self) -> Vec<Poller> {
+        fn run(st: AppState) -> BoxFut<'static, ()> {
+            Box::pin(async move { refresh_scryer(&st).await })
+        }
+        vec![Poller { name: "the Scryer check", run }]
     }
 }
 

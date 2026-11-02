@@ -264,6 +264,16 @@ transition once. `session.exited`: a terminal's exit (with `Notifier::take_expec
 conversation's process dying, or its Stop. `run.failed` and `run.finished`: `finish_run`. None of them goes through
 notification settings.
 
+**Host and integration events** are logged where each thing is noticed, each once per occurrence (the event key, or a
+level remembered in a host value). `release.published`: `forge_releases.rs` in the 60 s poll, for the projects an
+enabled trigger covers (`sensor.releases.<project>` holds the tags seen; the first look only records).
+`update.available`: `update.rs` `check_now`, keyed by version. `update.installed`: `update::log_installed` at
+startup, from pdt-host's `result.json` and the request it took (`request.taken.json`, whose `automatic` pdtd set).
+`disk.low` / `disk.recovered`: `storage::watch_disks` in the storage loop, by pdt-core `disk_news` over the levels in
+`sensor.disk_levels`. `connection.failed`: `connection_health::report` when a connection starts failing, and
+`forge_login::check` for each refused forge account (keyed by its refusal time). `todo.due`: the Notifier's todo pass,
+keyed as the reminder. An integration's own (`scryer.download_finished`) come from its poller.
+
 **Auto-start** is the host built-in "Pick up tickets" (`workflow/builtins/pick_up_tickets.rs`): `ticket.startable`, `slot.freed` and a
 one-minute `schedule` lead to `tickets.candidates` → `tickets.choose` → `ticket.start` (`workflow/nodes/pickup.rs`;
 the rules, pure, in pdt-core `pickup.rs`). A config field left out is the project's auto-start setting, so Settings

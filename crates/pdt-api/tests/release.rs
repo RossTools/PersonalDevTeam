@@ -83,6 +83,7 @@ fn release(tag: &str) -> Release {
         url: format!("https://github.com/{REPO}/releases/tag/{tag}"),
         published_at: Some("2026-10-28T12:00:00Z".into()),
         notes: "### Added\n- things".into(),
+        ..Default::default()
     }
 }
 

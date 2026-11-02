@@ -15,6 +15,7 @@ mod finish;
 mod folders;
 mod forge;
 pub mod forge_login;
+mod forge_releases;
 mod github;
 mod github_issues;
 mod github_pulls;
@@ -77,6 +78,7 @@ pub use conversations::{
     run_conversation_ticker, shutdown_conversations,
 };
 pub use error::ApiErrorBody;
+pub use forge_releases::refresh_releases;
 pub use github::refresh_prs;
 pub use github_issues::refresh_issues;
 pub use github_pulls::refresh_pulls;

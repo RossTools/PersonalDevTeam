@@ -11,10 +11,12 @@ use axum::http::StatusCode;
 use pdt_core::inbox::InboxItem;
 use pdt_core::project::{Project, ProjectKind};
 use pdt_core::storage::{
-    Cleanup, DiskLevel, DiskSpace, MAX_CLEANUP_DAYS, OutputPath, StorageSettings, WorktreeTicket, cleanup_due,
-    detect_build_output, disk_level,
+    Cleanup, DiskLevel, DiskNews, DiskSpace, MAX_CLEANUP_DAYS, OutputPath, StorageSettings, WorktreeTicket,
+    cleanup_due, detect_build_output, disk_level, disk_news,
 };
 use pdt_core::ticket::TicketStage;
+use pdt_core::workflow::api::NewLogEvent;
+use pdt_core::workflow::events::{DISK_LOW, DISK_RECOVERED, DiskEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path as FsPath, PathBuf};
@@ -347,6 +349,10 @@ pub struct DiskView {
     pub folders: Vec<String>,
     pub space: DiskSpace,
     pub level: DiskLevel,
+    /// Which disk it is (`disk_id`), for the disk events.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub(crate) id: Option<String>,
 }
 
 /// Which disk a folder is on (the nearest folder above it that exists): its device on Unix, its volume (drive or
@@ -386,7 +392,7 @@ fn group_disks(found: Vec<(String, Option<String>, DiskSpace)>, low_gb: u32, cri
                     d.space = space;
                 }
             }
-            None => groups.push((id, DiskView { folders: vec![folder], space, level: DiskLevel::Ok })),
+            None => groups.push((id.clone(), DiskView { folders: vec![folder], space, level: DiskLevel::Ok, id })),
         }
     }
     groups
@@ -707,6 +713,70 @@ pub async fn auto_cleanup_at(st: &AppState, now: i64) {
     }
 }
 
+/// Where each disk's level was at the last look (`{disk: level}`), so a level change is news once, also over a restart.
+const DISK_LEVELS_KEY: &str = "sensor.disk_levels";
+
+/// Logs `disk.low` when a disk PDT uses drops to a lower level, and `disk.recovered` when one that was low is fine
+/// again (PDT-365; the rule is pdt-core `disk_news`). The storage loop runs it every minute. A disk not seen before
+/// was fine.
+pub async fn watch_disks(st: &AppState) {
+    let host = st.store.get_host_settings().await.unwrap_or_default();
+    let disks = disks(st).await;
+    if disks.is_empty() {
+        // None could be read: nothing is known, nothing forgotten.
+        return;
+    }
+    let before = match st.store.get_host_value(DISK_LEVELS_KEY).await {
+        Ok(v) => v.unwrap_or_default(),
+        Err(e) => return tracing::warn!(error = %e, "could not read the disks' last levels"),
+    };
+    let mut after = serde_json::Map::new();
+    let mut reclaimable = None;
+    for d in &disks {
+        let id = d.id.clone().unwrap_or_else(|| d.folders.first().cloned().unwrap_or_default());
+        let was = before.get(&id).and_then(|v| v.as_str()).and_then(DiskLevel::parse).unwrap_or(DiskLevel::Ok);
+        after.insert(id.clone(), d.level.as_str().into());
+        let kind = match disk_news(was, d.level) {
+            Some(DiskNews::Low) => DISK_LOW,
+            Some(DiskNews::Recovered) => DISK_RECOVERED,
+            None => continue,
+        };
+        if reclaimable.is_none() {
+            reclaimable = Some(finished_build_bytes(st).await);
+        }
+        let payload = DiskEvent {
+            folders: d.folders.clone(),
+            free: d.space.free,
+            total: d.space.total,
+            level: d.level.as_str().into(),
+            from: was.as_str().into(),
+            low_gb: host.low_disk_gb,
+            critical_gb: host.critical_disk_gb,
+            reclaimable: reclaimable.unwrap_or(0),
+        };
+        let now = now_ms();
+        let key = format!("disk:{id}:{}:{now}", d.level.as_str());
+        if let Err(e) = st.store.emit_event(&NewLogEvent::new(kind, key, "storage", payload), now).await {
+            // Not recorded: the next look tries again.
+            tracing::warn!(error = %e, "could not log a disk's level");
+            after.insert(id, was.as_str().into());
+        }
+    }
+    // Disks no longer used are forgotten.
+    let after = serde_json::Value::Object(after);
+    if after != before
+        && let Err(e) = st.store.put_host_value(DISK_LEVELS_KEY, &after).await
+    {
+        tracing::warn!(error = %e, "could not record the disks' levels");
+    }
+}
+
+/// Bytes of build output in finished tickets' worktrees, as last measured.
+async fn finished_build_bytes(st: &AppState) -> u64 {
+    let finished = finished_worktrees(st, None).await.unwrap_or_default();
+    finished.iter().filter_map(|(id, _)| st.storage.size(id)).map(|s| s.build).sum()
+}
+
 /// pdtd's storage loop: measures stale worktrees in the background, and runs the automatic cleanup hourly.
 pub async fn run_storage(st: AppState) {
     crate::loops::run_every(st, "storage", STORAGE_EVERY, crate::loops::Start::AfterOnePeriod, |st| async move {
@@ -721,6 +791,7 @@ pub async fn run_storage(st: AppState) {
         if due {
             auto_cleanup(&st).await;
         }
+        watch_disks(&st).await;
         spawn_measure(&st, false);
     })
     .await

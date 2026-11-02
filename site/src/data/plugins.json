@@ -843,7 +843,13 @@
           "pm": true
         }
       ],
-      "triggers": [],
+      "triggers": [
+        {
+          "description": "Scryer finished a download and imported it into the library (checked every minute while a trigger is on; turning one on only records what Scryer has already finished).",
+          "id": "scryer.download_finished",
+          "title": "Scryer download finished"
+        }
+      ],
       "workflows": []
     },
     {
