@@ -31,11 +31,6 @@ function remarkHtmlAsText() {
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** Turns ticket keys of the given projects in text into links (not inside links or code, which are not text nodes). */
-export function remarkTicketKeys(keys: readonly string[]) {
-  return remarkRefs(keys, null);
-}
-
 /**
  * Ticket keys in text become links to the ticket (not inside links or code, which are not text nodes). In a
  * conversation (`refs`, PDT-382) also: `#12` a link to the forge's PR, a commit SHA inline code (shown muted), and a
