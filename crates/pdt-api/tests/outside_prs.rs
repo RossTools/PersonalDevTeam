@@ -8,6 +8,7 @@ use crate::common;
 use crate::retired;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_core::brand::RELEASE_REPO;
@@ -18,7 +19,7 @@ use pdt_store::Store;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 
@@ -191,20 +192,20 @@ async fn run(env: &Env, id: &str) -> Value {
     call(&env.app, "GET", &format!("/api/workflow-runs/{id}"), None).await.1
 }
 
-/// The run's waiting step (its node and id), once there is one.
+/// The run's waiting step (its node and id), once there is one. Each look drives the engine, so it waits on the
+/// engine's steps, not on wall time; the timeout only catches a run that never gets there.
 async fn waiting(env: &Env, id: &str) -> (String, String) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until("the run to wait at a step", async || {
         pdt_api::run_workflows(&env.state).await;
         let r = run(env, id).await;
-        let s = r["steps"].as_array().unwrap().iter().rev().find(|s| s["status"] == "waiting").cloned();
-        if let Some(s) = s.filter(|s| s["kind"] != "agent") {
-            return (s["nodeId"].as_str().unwrap().to_string(), s["id"].as_str().unwrap().to_string());
-        }
         assert_ne!(r["status"], "failed", "{r}");
-        assert!(Instant::now() < deadline, "not waiting: {r}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        let s = r["steps"].as_array().unwrap().iter().rev().find(|s| s["status"] == "waiting").cloned();
+        match s.filter(|s| s["kind"] != "agent") {
+            Some(s) => Ok((s["nodeId"].as_str().unwrap().to_string(), s["id"].as_str().unwrap().to_string())),
+            None => Err(r),
+        }
+    })
+    .await
 }
 
 /// Cuts the run's current wait short, and lets the engine go on.
@@ -233,21 +234,17 @@ async fn newest_run(env: &Env) -> String {
 
 /// The next PR Reviewer session (one not in `seen`).
 async fn reviewer(env: &Env, seen: &mut HashSet<String>) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    let id = wait_until("a new PR Reviewer session", async || {
         pdt_api::run_workflows(&env.state).await;
         let (_, list) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await;
-        let found = list.as_array().unwrap().iter().find_map(|s| {
+        list.as_array().unwrap().iter().find_map(|s| {
             let id = s["id"].as_str().unwrap().to_string();
             (s["persona"]["name"] == "PR Reviewer" && !seen.contains(&id)).then_some(id)
-        });
-        if let Some(id) = found {
-            seen.insert(id.clone());
-            return id;
-        }
-        assert!(Instant::now() < deadline, "no PR Reviewer session");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        })
+    })
+    .await;
+    seen.insert(id.clone());
+    id
 }
 
 async fn reviewer_sessions(env: &Env) -> usize {
@@ -256,15 +253,12 @@ async fn reviewer_sessions(env: &Env) -> usize {
 }
 
 async fn first_prompt(env: &Env, session: &str) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until("the session's prompt", async || {
         let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
-        if let Some(e) = v.as_array().unwrap().iter().find(|e| e["event"]["kind"] == "user_message") {
-            return e["event"]["text"].as_str().unwrap().to_string();
-        }
-        assert!(Instant::now() < deadline, "the session got no prompt");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        let e = v.as_array().unwrap().iter().find(|e| e["event"]["kind"] == "user_message").cloned();
+        e.map(|e| e["event"]["text"].as_str().unwrap().to_string())
+    })
+    .await
 }
 
 async fn agent_says(env: &Env, session: &str) -> Vec<String> {
@@ -277,30 +271,27 @@ async fn agent_says(env: &Env, session: &str) -> Vec<String> {
         .collect()
 }
 
-/// Has the session's agent say `text` and returns what it says back.
+/// Has the session's agent run `text` (an `mcp: …` or `mcp-list` message) and returns what it says back.
 async fn say(env: &Env, session: &str, text: &str) -> String {
     let before = agent_says(env, session).await.len();
     let (s, v) =
         call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        // The fake agent echoes PDT's stall nudge too (its first turn ends without an outcome), and on a slow machine
-        // that echo can come after `before`: it is not the answer to `text`.
+    // The fake agent echoes its prompt and PDT's stall nudge (its first turn ends without an outcome), and on a slow
+    // machine those echoes can come after `before`: only an `mcp …` line answers `text`.
+    wait_until(&format!("the agent's answer to {text}"), async || {
         let said = agent_says(env, session).await;
-        if let Some(reply) = said.iter().skip(before).find(|m| !m.starts_with("echo: [PDT]")) {
-            return reply.clone();
-        }
-        assert!(Instant::now() < deadline, "the agent said nothing to {text}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        said.iter().skip(before).find(|m| m.starts_with("mcp ")).cloned().ok_or(said)
+    })
+    .await
 }
 
 /// The reviewer submits `outcome`; the run then waits at the Inbox (`decide`).
 async fn review(env: &Env, session: &str, outcome: &str, feedback: &str) -> (String, String) {
     first_prompt(env, session).await;
     let args = json!({"outcome": outcome, "summary": format!("Suggests {outcome}."), "data": {"feedback": feedback}});
-    say(env, session, &format!("mcp: submit_outcome {args}")).await;
+    let said = say(env, session, &format!("mcp: submit_outcome {args}")).await;
+    assert!(said.starts_with("mcp submit_outcome:"), "{said}");
     let id = newest_run(env).await;
     let w = waiting(env, &id).await;
     assert_eq!(w.0, "decide");
