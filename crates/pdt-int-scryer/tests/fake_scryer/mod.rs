@@ -23,6 +23,8 @@ pub struct FakeScryer {
     pub clients: Arc<Mutex<Vec<Value>>>,
     /// It answers introspection (on unless a test turns it off).
     pub introspection: Arc<AtomicBool>,
+    /// The download history's successful items, newest first (PDT-365).
+    pub history: Arc<Mutex<Vec<Value>>>,
 }
 
 /// The fake's schema: the bundled one and a field only a live Scryer has.
@@ -173,6 +175,9 @@ impl FakeScryer {
                  "remainingSeconds": 600, "clientName": "sabnzbd", "attentionRequired": false},
                 {"titleName": "Dune", "progressPercent": 100, "displayState": "IMPORT_BLOCKED",
                  "clientName": "qbit", "attentionRequired": true, "attentionReason": "no matching file"}]}}),
+            "PdtHistory" => {
+                json!({"downloadHistory": {"items": self.history.lock().unwrap().clone(), "hasMore": false}})
+            }
             "PdtLibrary" => {
                 let page: Vec<Value> = titles
                     .iter()

@@ -22,7 +22,7 @@ use pdt_core::notification::{
 };
 use pdt_core::pr::{Mergeable, NoticeKind, PrState};
 use pdt_core::session::{SessionKind, SessionStatus};
-use pdt_core::workflow::api::LogEvent;
+use pdt_core::workflow::api::{LogEvent, NewLogEvent};
 use pdt_core::workflow::events as ev;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -305,6 +305,23 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
             n.project_id = t.project_id.clone();
             n.ticket_id = t.ticket_id.clone();
             notify(st, n).await;
+            // A workflow event too (PDT-365), whatever the notification's Show; its key is the reminder's.
+            let due = ev::TodoDue {
+                todo_id: t.id.clone(),
+                title: t.title.clone(),
+                body: t.body.clone(),
+                due_on: due_on.to_string(),
+                due_time: t.due_time.clone(),
+                due_at: at,
+                overdue: due_on < today.as_str(),
+                project_id: t.project_id.clone(),
+                ticket_id: t.ticket_id.clone(),
+                ticket_key: t.ticket_key.clone(),
+            };
+            let e = NewLogEvent::new(ev::TODO_DUE, key.clone(), "todos", due);
+            if let Err(x) = st.store.emit_event(&e, now).await {
+                tracing::warn!(todo = %t.id, error = %x, "could not log a todo coming due");
+            }
         }
         wanted.insert(key);
     }

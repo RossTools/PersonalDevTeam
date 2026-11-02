@@ -274,6 +274,7 @@ async fn busy_hosts_ask_first_then_the_release_is_handed_off() {
     let req: pdt_core::handoff::UpdateRequest =
         serde_json::from_slice(&std::fs::read(request_path(&data(tmp.path()))).unwrap()).unwrap();
     assert_eq!((req.version.as_str(), req.from_version.as_str()), ("0.1.7", "0.1.0-local"));
+    assert!(!req.automatic, "the user asked for it");
     assert_eq!(std::fs::read(&req.asset).unwrap(), if cfg!(windows) { WIN } else { MAC });
     assert_eq!(req.asset, downloads_dir(&data(tmp.path())).join("0.1.7").join(ASSET), "the folder is the version");
     assert!(!old.exists(), "older downloads are pruned");
@@ -623,6 +624,9 @@ async fn the_loop_installs_when_idle_under_auto_when_idle() {
     task.abort();
     assert!(request_path(&data(tmp.path())).exists());
     assert_eq!(call(&app, "GET", "/api/host/update", None).await.1["state"], "installing");
+    let req: pdt_core::handoff::UpdateRequest =
+        serde_json::from_slice(&std::fs::read(request_path(&data(tmp.path()))).unwrap()).unwrap();
+    assert!(req.automatic, "pdtd installed it by itself");
 }
 
 #[tokio::test]
@@ -1005,4 +1009,88 @@ async fn a_check_with_updates_off_says_why() {
     let (app, _, _) = setup(tmp.path(), false).await;
     let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
     assert_eq!(v["result"]["reason"], "disabled", "{v}");
+}
+
+async fn update_events(state: &pdt_api::AppState, kind: &str) -> Vec<pdt_core::workflow::api::LogEvent> {
+    let f = pdt_store::EventFilter { kind: Some(kind.into()), limit: 100, ..Default::default() };
+    state.store.list_log_events(&f).await.unwrap()
+}
+
+/// PDT-365: a newer version is `update.available` once, however often the checks find it.
+#[tokio::test]
+async fn an_available_update_is_a_workflow_event_once_per_version() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, fake) = setup(tmp.path(), true).await;
+    store_token(&state);
+    for _ in 0..2 {
+        let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+        assert_eq!(v["state"], "available", "{v}");
+    }
+    let got = update_events(&state, "update.available").await;
+    assert_eq!(got.len(), 1, "{got:?}");
+    let p = &got[0].payload;
+    assert_eq!(
+        (&p["version"], &p["current"], &p["channel"], &p["nightly"], &p["notes"]),
+        (&json!("0.1.7"), &json!("0.1.0-local"), &json!("stable"), &json!(false), &json!("notes"))
+    );
+    assert_eq!(p["notesUrl"], "https://github.com/o/r/releases/tag/v0.1.7");
+    // Still waiting once the event log has forgotten it: still not news.
+    pdt_api::run_workflows(&state).await;
+    assert!(state.store.prune_events(i64::MAX).await.unwrap() > 0);
+    call(&app, "POST", "/api/host/update/check", None).await;
+    assert!(update_events(&state, "update.available").await.is_empty());
+
+    // A newer one is news again; being up to date is none.
+    *fake.latest_tag.lock().unwrap() = "v0.1.8".into();
+    call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(update_events(&state, "update.available").await.len(), 1);
+}
+
+fn write_json(path: &std::path::Path, v: &impl serde::Serialize) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, serde_json::to_vec(v).unwrap()).unwrap();
+}
+
+/// PDT-365: pdtd starting on the version pdt-host just installed is `update.installed` once, saying whether pdtd
+/// asked for it by itself; a rollback, or a result for another version, is not.
+#[tokio::test]
+async fn an_installed_update_is_a_workflow_event_once() {
+    use pdt_core::handoff::{UpdateOutcome, UpdateRequest, UpdateResult, result_path, taken_request_path};
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, state, _) = setup_with(tmp.path(), true, "0.1.7").await;
+    let result = |outcome, to: &str| UpdateResult {
+        outcome,
+        from_version: "0.1.6".into(),
+        to_version: to.into(),
+        message: String::new(),
+        log: None,
+        at: 5,
+    };
+    let taken = UpdateRequest {
+        version: "0.1.7".into(),
+        tag: "v0.1.7".into(),
+        asset: "a".into(),
+        from_version: "0.1.6".into(),
+        requested_at: 1,
+        automatic: true,
+    };
+    let d = data(tmp.path());
+    write_json(&result_path(&d), &result(UpdateOutcome::RolledBack, "0.1.7"));
+    pdt_api::update::log_installed(&state).await;
+    write_json(&result_path(&d), &result(UpdateOutcome::Installed, "0.1.8"));
+    pdt_api::update::log_installed(&state).await;
+    assert!(update_events(&state, "update.installed").await.is_empty());
+
+    write_json(&result_path(&d), &result(UpdateOutcome::Installed, "0.1.7"));
+    write_json(&taken_request_path(&d), &taken);
+    pdt_api::update::log_installed(&state).await;
+    pdt_api::update::log_installed(&state).await;
+    let got = update_events(&state, "update.installed").await;
+    assert_eq!(got.len(), 1, "once, also over a restart: {got:?}");
+    let p = &got[0].payload;
+    assert_eq!(
+        (&p["version"], &p["fromVersion"], &p["automatic"], &p["channel"], &p["at"]),
+        (&json!("0.1.7"), &json!("0.1.6"), &json!(true), &json!("stable"), &json!(5))
+    );
+    assert_eq!(p["notesUrl"], "https://github.com/o/r/releases/tag/v0.1.7");
 }

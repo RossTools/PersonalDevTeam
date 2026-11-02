@@ -43,6 +43,13 @@ pub const SESSION_TURN_ENDED: &str = "session.turn_ended";
 pub const SESSION_EXITED: &str = "session.exited";
 pub const RUN_FAILED: &str = "run.failed";
 pub const RUN_FINISHED: &str = "run.finished";
+pub const RELEASE_PUBLISHED: &str = "release.published";
+pub const UPDATE_AVAILABLE: &str = "update.available";
+pub const UPDATE_INSTALLED: &str = "update.installed";
+pub const DISK_LOW: &str = "disk.low";
+pub const DISK_RECOVERED: &str = "disk.recovered";
+pub const CONNECTION_FAILED: &str = "connection.failed";
+pub const TODO_DUE: &str = "todo.due";
 
 pub const AGENT_OUTCOME: &str = "agent.outcome";
 pub const OUTSIDE_INPUT: &str = "session.outside_input";
@@ -384,6 +391,61 @@ pub const EVENT_TYPES: &[EventType] = &[
                       node it ended at (`endNode`) and `durationMs`. Never this workflow's own runs unless the trigger \
                       sets `includeOwn`.",
         schema: schema_of::<RunEnded>,
+        outside: &[],
+    },
+    EventType {
+        id: RELEASE_PUBLISHED,
+        title: "Release published",
+        description: "A release (or pre-release: `prerelease`) was published on a project's repository, on a forge \
+                      that has releases (GitHub, GitLab). Checked every minute for the projects an enabled trigger \
+                      covers; the first look at a project only records its releases.",
+        schema: schema_of::<ReleasePublished>,
+        outside: &[],
+    },
+    EventType {
+        id: UPDATE_AVAILABLE,
+        title: "PDT update available",
+        description: "A check found a newer version of PDT on this host's update channel (once per version).",
+        schema: schema_of::<UpdateAvailable>,
+        outside: &[],
+    },
+    EventType {
+        id: UPDATE_INSTALLED,
+        title: "PDT updated",
+        description: "PDT started on a version it was just updated to (`automatic`: installed without the user asking).",
+        schema: schema_of::<UpdateInstalled>,
+        outside: &[],
+    },
+    EventType {
+        id: DISK_LOW,
+        title: "Disk space low",
+        description: "A disk PDT uses fell below the low-disk threshold (`level`: `low`), or below the critical one \
+                      (`critical`). Once per drop, not every check; `reclaimable` is the build output in finished \
+                      tickets' worktrees.",
+        schema: schema_of::<DiskEvent>,
+        outside: &[],
+    },
+    EventType {
+        id: DISK_RECOVERED,
+        title: "Disk space recovered",
+        description: "A disk that was low has enough free space again (`from`: the level it was at).",
+        schema: schema_of::<DiskEvent>,
+        outside: &[],
+    },
+    EventType {
+        id: CONNECTION_FAILED,
+        title: "Connection failing",
+        description: "A connection (`source`: `connection`) or a forge login (`forge`) stopped working: a revoked \
+                      token, the service down. Once each time it starts failing, not on every failed use.",
+        schema: schema_of::<ConnectionFailed>,
+        outside: &[],
+    },
+    EventType {
+        id: TODO_DUE,
+        title: "Todo due",
+        description: "One of the user's todos comes due: its day starts, or its time comes (`overdue` when PDT was \
+                      off then). Once per todo and due date.",
+        schema: schema_of::<TodoDue>,
         outside: &[],
     },
     EventType {
@@ -1232,6 +1294,132 @@ pub struct RunEnded {
     pub parent_run_id: Option<String>,
     /// How far down a chain of runs started by `run.*` events it is (0: not started by one).
     pub chain: u32,
+}
+
+/// A release asset (PDT-365).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReleaseAssetRef {
+    pub name: String,
+    /// Where it downloads from.
+    pub url: String,
+    /// Bytes, when the forge says.
+    #[ts(type = "number | null")]
+    pub size: Option<u64>,
+}
+
+/// `release.published` (PDT-365).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReleasePublished {
+    pub project_id: String,
+    /// The forge (`github`, `gitlab` …) and the repository on it (`owner/name`).
+    pub forge: String,
+    pub repo: String,
+    pub tag: String,
+    pub name: String,
+    /// Its page.
+    pub url: String,
+    pub prerelease: bool,
+    /// When it was published (the forge's timestamp text), when known.
+    pub published_at: Option<String>,
+    /// Its notes (Markdown).
+    pub notes: String,
+    pub assets: Vec<ReleaseAssetRef>,
+}
+
+/// `update.available` (PDT-365).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UpdateAvailable {
+    /// The new version, and the one running.
+    pub version: String,
+    pub current: String,
+    pub tag: String,
+    /// The host's update channel (`stable` or `nightly`).
+    pub channel: String,
+    /// A nightly build.
+    pub nightly: bool,
+    /// The release's page.
+    pub notes_url: String,
+    pub notes: String,
+    pub published_at: Option<String>,
+}
+
+/// `update.installed` (PDT-365).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UpdateInstalled {
+    pub version: String,
+    pub from_version: String,
+    pub channel: String,
+    /// The release's page.
+    pub notes_url: String,
+    /// Installed without the user asking (the automatic update when idle).
+    pub automatic: bool,
+    /// When it was installed (ms since the epoch).
+    #[ts(type = "number")]
+    pub at: i64,
+}
+
+/// `disk.low` and `disk.recovered` (PDT-365).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DiskEvent {
+    /// PDT's data folder and the projects' folders on this disk.
+    pub folders: Vec<String>,
+    #[ts(type = "number")]
+    pub free: u64,
+    #[ts(type = "number")]
+    pub total: u64,
+    /// `ok`, `low` or `critical`, now; and before.
+    pub level: String,
+    pub from: String,
+    /// The thresholds, in GB (0: that warning is off).
+    pub low_gb: u32,
+    pub critical_gb: u32,
+    /// Bytes of build output in finished tickets' worktrees (as last measured): what cleaning them would free.
+    #[ts(type = "number")]
+    pub reclaimable: u64,
+}
+
+/// `connection.failed` (PDT-365).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConnectionFailed {
+    /// The connection's name, or for a forge login the forge and host (`GitHub (github.com)`).
+    pub name: String,
+    /// The connection's kind (`http`, `jira`, `scryer` …), or the forge's (`github`, `gitlab` …).
+    pub kind: String,
+    /// `connection` or `forge`.
+    pub source: String,
+    pub error: String,
+}
+
+/// `todo.due` (PDT-365).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TodoDue {
+    pub todo_id: String,
+    pub title: String,
+    pub body: String,
+    /// The day (`YYYY-MM-DD`) and time (`HH:MM`), local; and when that is (ms since the epoch).
+    pub due_on: String,
+    pub due_time: Option<String>,
+    #[ts(type = "number")]
+    pub due_at: i64,
+    /// It was due before today (PDT was off when it came due).
+    pub overdue: bool,
+    pub project_id: Option<String>,
+    pub ticket_id: Option<String>,
+    pub ticket_key: Option<String>,
 }
 
 /// `schedule.fired`.

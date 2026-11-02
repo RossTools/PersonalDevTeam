@@ -16,7 +16,7 @@ use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval, QueueRemovalReason};
 pub use pdt_forge::{
     Capabilities, ChangeComment, ChangeFile, ChangeRequest, ChangeReview, ChangeStats, CloseReason, Forge, ForgeError,
     ForgeNotes, Issue, IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest,
-    Release, RepoChangeRequest, ReviewVerdict,
+    Release, ReleaseAsset, RepoChangeRequest, ReviewVerdict,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -1179,6 +1179,13 @@ fn parse_release_or_pre(v: &Value, prereleases: bool) -> Result<Option<Release>,
         url: s(v, "html_url"),
         published_at: v["published_at"].as_str().map(String::from),
         notes: s(v, "body"),
+        prerelease: v["prerelease"].as_bool() == Some(true),
+        assets: v["assets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|a| ReleaseAsset { name: s(a, "name"), url: s(a, "browser_download_url"), size: a["size"].as_u64() })
+            .collect(),
     }))
 }
 

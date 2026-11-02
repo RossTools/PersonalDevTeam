@@ -215,3 +215,64 @@ async fn scryer_dry_runs_call_nothing() {
     }
     assert!(seen.all().is_empty());
 }
+
+/// A download history item as Scryer gives it.
+fn done(id: &str, name: &str) -> Value {
+    json!({"id": id, "titleName": name, "facet": "MOVIE", "clientName": "qbit", "sizeBytes": 42,
+           "importedAt": "2026-11-01T10:00:00Z",
+           "title": {"currentQualityTier": "2160p", "rootFolderPath": format!("/media/films/{name}")}})
+}
+
+#[tokio::test]
+async fn a_finished_download_fires_once_and_turning_the_trigger_on_replays_nothing() {
+    use fake_scryer::{FakeScryer, KEY};
+    let env = common::workflows::setup(vec![Arc::new(pdt_int_scryer::Scryer)]).await;
+    let (base, scryer) = FakeScryer::serve().await;
+    let (s, c) = call(
+        &env.app,
+        "POST",
+        "/api/connections",
+        Some(json!({"name": "media", "kind": "scryer", "url": base, "config": {}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{c}");
+    let conn = c["id"].as_str().unwrap().to_string();
+    call(&env.app, "PUT", &format!("/api/connections/{conn}/secret"), Some(json!({"secret": KEY}))).await;
+    scryer.history.lock().unwrap().push(done("d1", "Old"));
+    let events = || async {
+        let f = pdt_store::EventFilter {
+            kind: Some(pdt_int_scryer::SCRYER_DOWNLOAD_FINISHED.into()),
+            limit: 100,
+            ..Default::default()
+        };
+        env.state.store.list_log_events(&f).await.unwrap()
+    };
+
+    // No trigger: Scryer isn't asked.
+    pdt_int_scryer::refresh_scryer(&env.state).await;
+    assert!(!scryer.ops().contains(&"PdtHistory".to_string()));
+
+    let doc = json!({"name": "on download", "nodes": [
+        {"id": "t", "kind": "scryer.download_finished", "version": 1, "config": {}},
+        {"id": "e", "kind": "end", "version": 1}], "edges": [{"from": "t", "to": "e"}]});
+    let wf = common::workflows::create(&env, doc).await;
+    // The first look only records what is there.
+    pdt_int_scryer::refresh_scryer(&env.state).await;
+    assert!(events().await.is_empty());
+
+    scryer.history.lock().unwrap().insert(0, done("d2", "Dune"));
+    pdt_int_scryer::refresh_scryer(&env.state).await;
+    pdt_int_scryer::refresh_scryer(&env.state).await;
+    let got = events().await;
+    assert_eq!(got.len(), 1, "{got:?}");
+    let p = &got[0].payload;
+    assert_eq!(
+        (&p["title"], &p["type"], &p["quality"], &p["path"], &p["connection"], &p["downloadId"]),
+        (&json!("Dune"), &json!("movie"), &json!("2160p"), &json!("/media/films/Dune"), &json!("media"), &json!("d2"))
+    );
+    // It starts the workflow.
+    pdt_api::run_workflows(&env.state).await;
+    let runs = common::workflows::runs(&env, &wf).await;
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(runs[0]["trigger"]["title"], "Dune");
+}

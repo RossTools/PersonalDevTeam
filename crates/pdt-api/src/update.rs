@@ -8,13 +8,19 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use pdt_core::activity::Activity;
-use pdt_core::handoff::{UpdateRequest, UpdateResult, UpdateSkip, downloads_dir, request_path, result_path, skip_path};
+use pdt_core::handoff::{
+    UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, downloads_dir, request_path, result_path, skip_path,
+    taken_request_path,
+};
 use pdt_core::host::{DEFAULT_UPDATE_CHECK_MINUTES, UpdateChannel, UpdatePolicy};
 use pdt_core::release::{APPIMAGE_MARKER, HostOs, TokenState, Version, compare_base, parse_version, token_state};
 use pdt_core::run::RunState;
 use pdt_core::session::SessionStatus;
+use pdt_core::workflow::api::NewLogEvent;
+use pdt_core::workflow::events::{self as ev, UpdateAvailable, UpdateInstalled};
 use pdt_update::{Changes, GitHubClient, Release, UpdateError, fetch_verified};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -473,41 +479,125 @@ async fn check_now(st: &AppState) -> (UpdateStatus, CheckResult) {
         _ => (None, None),
     };
     let now = now_ms();
-    let mut s = svc.status.lock().unwrap_or_else(|e| e.into_inner());
-    s.last_checked_at = Some(now);
-    s.release_repo.moved_to = svc.client.moved_to();
-    // An install that started while GitHub was answering keeps its state and release.
-    let busy = in_progress(s.state);
-    let found = match result {
-        Ok(l) => {
-            s.token = token_state(true, l.token_expires_at, false, now);
-            if !busy {
-                set_found(&mut s, svc, &l.release, &current, changes, releases);
-            }
-            let version = l.release.version.to_string();
-            if l.release.version.is_newer_than(&current) {
-                CheckResult::Available { version }
-            } else {
-                CheckResult::UpToDate { version: current.to_string() }
-            }
-        }
-        Err(e) => {
-            let reason = match e {
-                UpdateError::Unauthorized => CannotCheckReason::TokenRejected,
-                UpdateError::Network(_) => CannotCheckReason::Network,
-                _ => CannotCheckReason::Github,
-            };
-            if e == UpdateError::Unauthorized {
-                s.token = TokenState::Expired;
-            }
-            s.error = Some(e.to_string());
-            if !busy {
-                s.state = resting(&s);
-            }
-            cannot(reason, e.to_string())
-        }
+    // A newer version is a workflow event (PDT-365), once per version: logged once the status lock is let go.
+    let available = match &result {
+        Ok(l) if l.release.version.is_newer_than(&current) => Some(UpdateAvailable {
+            version: l.release.version.to_string(),
+            current: svc.current.clone(),
+            tag: l.release.tag.clone(),
+            channel: channel_name(channel),
+            nightly: l.release.version.is_nightly(),
+            notes_url: notes_url(svc, &l.release.tag),
+            notes: l.release.notes.clone(),
+            published_at: l.release.published_at.clone(),
+        }),
+        _ => None,
     };
-    (s.clone(), found)
+    let out = {
+        let mut s = svc.status.lock().unwrap_or_else(|e| e.into_inner());
+        s.last_checked_at = Some(now);
+        s.release_repo.moved_to = svc.client.moved_to();
+        // An install that started while GitHub was answering keeps its state and release.
+        let busy = in_progress(s.state);
+        let found = match result {
+            Ok(l) => {
+                s.token = token_state(true, l.token_expires_at, false, now);
+                if !busy {
+                    set_found(&mut s, svc, &l.release, &current, changes, releases);
+                }
+                let version = l.release.version.to_string();
+                if l.release.version.is_newer_than(&current) {
+                    CheckResult::Available { version }
+                } else {
+                    CheckResult::UpToDate { version: current.to_string() }
+                }
+            }
+            Err(e) => {
+                let reason = match e {
+                    UpdateError::Unauthorized => CannotCheckReason::TokenRejected,
+                    UpdateError::Network(_) => CannotCheckReason::Network,
+                    _ => CannotCheckReason::Github,
+                };
+                if e == UpdateError::Unauthorized {
+                    s.token = TokenState::Expired;
+                }
+                s.error = Some(e.to_string());
+                if !busy {
+                    s.state = resting(&s);
+                }
+                cannot(reason, e.to_string())
+            }
+        };
+        (s.clone(), found)
+    };
+    if let Some(a) = available {
+        let key = format!("update:{}", a.version);
+        log_once(st, ev::UPDATE_AVAILABLE, key, a).await;
+    }
+    out
+}
+
+/// Where the update events note the last one they logged: the event log forgets after a while, a version waiting
+/// longer than that is still not news.
+const UPDATE_EVENTS_KEY: &str = "sensor.update_events";
+
+/// Logs `kind` with `key` unless the last one of its kind had that key.
+async fn log_once(st: &AppState, kind: &str, key: String, payload: impl Serialize) {
+    let mut seen = st.store.get_host_value(UPDATE_EVENTS_KEY).await.ok().flatten().unwrap_or_else(|| json!({}));
+    if seen[kind].as_str() == Some(key.as_str()) {
+        return;
+    }
+    if let Err(e) = st.store.emit_event(&NewLogEvent::new(kind, key.clone(), "update", payload), now_ms()).await {
+        return tracing::warn!(kind, error = %e, "could not log an update event");
+    }
+    seen[kind] = json!(key);
+    if let Err(e) = st.store.put_host_value(UPDATE_EVENTS_KEY, &seen).await {
+        tracing::warn!(error = %e, "could not record the update event logged");
+    }
+}
+
+/// A channel's name in an event (`stable`, `nightly`).
+fn channel_name(c: UpdateChannel) -> String {
+    serde_json::to_value(c).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()
+}
+
+/// The page of the release tagged `tag` in the release repository.
+fn notes_url(svc: &UpdateService, tag: &str) -> String {
+    format!("https://github.com/{}/releases/tag/{tag}", svc.client.repo())
+}
+
+/// pdtd started on the version pdt-host just installed: `update.installed` (PDT-365), once per install (the event's key
+/// is the install's), with whether pdtd asked for it by itself (the request pdt-host took says).
+pub async fn log_installed(st: &AppState) {
+    let svc = &st.update;
+    let Some(r) = std::fs::read(result_path(&st.data_dir))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<UpdateResult>(&b).ok())
+        .filter(|r| r.outcome == UpdateOutcome::Installed && r.to_version == svc.current)
+    else {
+        return;
+    };
+    let taken = std::fs::read(taken_request_path(&st.data_dir))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<UpdateRequest>(&b).ok())
+        .filter(|q| q.version == r.to_version);
+    let tag = taken.as_ref().map_or_else(|| format!("v{}", r.to_version), |q| q.tag.clone());
+    let channel = host_channel(st).await;
+    let payload = UpdateInstalled {
+        version: r.to_version.clone(),
+        from_version: r.from_version.clone(),
+        channel: channel_name(channel),
+        notes_url: notes_url(svc, &tag),
+        automatic: taken.is_some_and(|q| q.automatic),
+        at: r.at,
+    };
+    let key = format!("update:{}:installed:{}", r.to_version, r.at);
+    log_once(st, ev::UPDATE_INSTALLED, key, payload).await;
+}
+
+/// The host's update channel, from its settings.
+async fn host_channel(st: &AppState) -> UpdateChannel {
+    st.store.get_host_settings().await.map(|s| s.update_channel).unwrap_or_default()
 }
 
 /// The commits from the installed version to `release`, from the cache when the pair was compared before. None when
@@ -711,7 +801,8 @@ fn prune_downloads(downloads: &Path, keep: &str) {
 
 /// Downloads and verifies the available release, hands it to pdt-host and asks pdtd to stop. The download and
 /// hand-off run in their own task, so a dropped request does not cancel them halfway.
-pub(crate) async fn install(st: &AppState, force: bool) -> Result<UpdateStatus, ApiError> {
+/// `automatic`: pdtd installs it by itself (auto-when-idle), not because the user asked.
+pub(crate) async fn install(st: &AppState, force: bool, automatic: bool) -> Result<UpdateStatus, ApiError> {
     let svc = &st.update;
     if !svc.enabled {
         return Err(conflict("updates_disabled", svc.snapshot().disabled_reason.unwrap_or_default()));
@@ -746,7 +837,7 @@ pub(crate) async fn install(st: &AppState, force: bool) -> Result<UpdateStatus, 
         let st = st.clone();
         async move {
             let _guard = guard;
-            download_and_hand_off(&st, release, tok, force).await
+            download_and_hand_off(&st, release, tok, force, automatic).await
         }
     });
     task.await.map_err(ApiError::internal)?
@@ -776,6 +867,7 @@ async fn download_and_hand_off(
     release: Release,
     tok: String,
     force: bool,
+    automatic: bool,
 ) -> Result<UpdateStatus, ApiError> {
     let svc = &st.update;
     let mut reset = ResetOnDrop { svc, done: false };
@@ -805,6 +897,7 @@ async fn download_and_hand_off(
         asset,
         from_version: svc.current.clone(),
         requested_at: now_ms(),
+        automatic,
     };
     write_atomic(&request_path(&st.data_dir), &serde_json::to_vec_pretty(&req).expect("json")).map_err(|e| {
         fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", format!("could not write the update request: {e}"))
@@ -863,7 +956,7 @@ pub async fn run_update_loop(st: AppState) {
                 && policy == UpdatePolicy::AutoWhenIdle
                 && !failed_before
                 && busy_reasons(&st).await.is_empty()
-                && let Err(e) = install(&st, false).await
+                && let Err(e) = install(&st, false, true).await
             {
                 tracing::warn!(error = e.message(), "automatic update did not start");
             }
@@ -922,7 +1015,7 @@ pub(crate) async fn post_install(
     payload: Result<Json<InstallBody>, JsonRejection>,
 ) -> Result<Json<UpdateStatus>, ApiError> {
     let Json(b) = payload?;
-    let status = install(&st, b.force).await?;
+    let status = install(&st, b.force, false).await?;
     // A manual update of a skipped version is the retry ruling B allows; the skip is lifted.
     let _ = std::fs::remove_file(skip_path(&st.data_dir));
     Ok(Json(link_tickets(&st, status).await))

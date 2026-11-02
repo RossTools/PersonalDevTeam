@@ -1041,7 +1041,7 @@ export const plugins: IntegrationInfo[] = [
     "status": "needs_setup",
     "error": null,
     "errorConnection": null,
-    "checkable": false,
+    "checkable": true,
     "connectionKinds": [
       {
         "id": "scryer",
@@ -1064,6 +1064,10 @@ export const plugins: IntegrationInfo[] = [
       }
     ],
     "nodeKinds": [
+      {
+        "id": "scryer.download_finished",
+        "title": "Scryer download finished"
+      },
       {
         "id": "scryer.library",
         "title": "Scryer library"

@@ -265,8 +265,8 @@ pub struct ChangeReview {
     pub collaborator: bool,
 }
 
-/// A published release (never a draft or a pre-release).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A published release (never a draft; a pre-release only where a call says so).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Release {
     /// Its tag (`v0.2.0`).
     pub tag: String,
@@ -276,6 +276,20 @@ pub struct Release {
     pub published_at: Option<String>,
     /// Its notes (Markdown).
     pub notes: String,
+    /// Published as a pre-release.
+    pub prerelease: bool,
+    /// Its files (PDT-365).
+    pub assets: Vec<ReleaseAsset>,
+}
+
+/// A file attached to a release.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReleaseAsset {
+    pub name: String,
+    /// Where it downloads from.
+    pub url: String,
+    /// Bytes, when the forge says.
+    pub size: Option<u64>,
 }
 
 /// A forge call that failed. The text is the forge's own (e.g. "GitHub is not connected").

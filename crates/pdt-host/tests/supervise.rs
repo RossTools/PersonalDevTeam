@@ -183,6 +183,7 @@ fn update_request(version: &str, asset: &Path) -> UpdateRequest {
         asset: asset.to_path_buf(),
         from_version: "0.1.5".into(),
         requested_at: 1,
+        automatic: false,
     }
 }
 

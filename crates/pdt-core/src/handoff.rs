@@ -11,6 +11,10 @@ pub fn update_dir(data_dir: &Path) -> PathBuf {
 pub fn request_path(data_dir: &Path) -> PathBuf {
     update_dir(data_dir).join("request.json")
 }
+/// Where pdt-host moves the request it took (`take_request`): the next pdtd reads whether its update was automatic.
+pub fn taken_request_path(data_dir: &Path) -> PathBuf {
+    request_path(data_dir).with_extension("taken.json")
+}
 /// Written by pdt-host after an install attempt; shown by pdtd until dismissed.
 pub fn result_path(data_dir: &Path) -> PathBuf {
     update_dir(data_dir).join("result.json")
@@ -43,6 +47,9 @@ pub struct UpdateRequest {
     pub asset: PathBuf,
     pub from_version: String,
     pub requested_at: i64,
+    /// pdtd installs it by itself (the automatic update when idle), not because the user asked (PDT-365).
+    #[serde(default)]
+    pub automatic: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -155,6 +162,7 @@ mod tests {
         assert_eq!(result_path(d), d.join("update").join("result.json"));
         assert_eq!(downloads_dir(d), d.join("update").join("downloads"));
         assert_eq!(skip_path(d), d.join("update").join("skip.json"));
+        assert_eq!(taken_request_path(d), d.join("update").join("request.taken.json"));
     }
 
     #[test]
@@ -165,9 +173,13 @@ mod tests {
             asset: PathBuf::from("a.exe"),
             from_version: "0.1.6".into(),
             requested_at: 1,
+            automatic: true,
         };
         let j = serde_json::to_string(&r).unwrap();
         assert!(j.contains("\"fromVersion\":\"0.1.6\""), "{j}");
         assert_eq!(serde_json::from_str::<UpdateRequest>(&j).unwrap(), r);
+        // An older pdtd's request has no `automatic`: it was the user's.
+        let old = j.replace(",\"automatic\":true", "");
+        assert!(!serde_json::from_str::<UpdateRequest>(&old).unwrap().automatic, "{old}");
     }
 }

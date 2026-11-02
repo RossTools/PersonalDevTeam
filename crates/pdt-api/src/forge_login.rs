@@ -14,6 +14,7 @@ use axum::http::StatusCode;
 use pdt_forge::login::{AccountStore, DevicePoll, TokenGrant};
 use pdt_forge::{ForgeAccount, ForgeKind, ForgeLogin, ForgePlugin};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -356,11 +357,42 @@ pub async fn check(st: &AppState) {
         }
         recovered |= tokio::task::spawn_blocking(move || login_of(p.as_ref()).check_accounts()).await.unwrap_or(false);
     }
+    log_refused(st).await;
     if recovered {
         crate::notifications::kick(st);
         crate::refresh_prs(st).await;
         crate::refresh_issues(st).await;
         crate::refresh_pulls(st).await;
+    }
+}
+
+/// The refusals [`log_refused`] logged, by account: the event log forgets after a while, a refusal is news once.
+const REFUSED_KEY: &str = "sensor.forge_refused";
+
+/// Each account a forge refuses is a `connection.failed` event (PDT-365), once per refusal (its time is in the key).
+pub(crate) async fn log_refused(st: &AppState) {
+    let before = st.store.get_host_value(REFUSED_KEY).await.ok().flatten().unwrap_or_else(|| json!({}));
+    let mut after = serde_json::Map::new();
+    for p in st.forge_plugins() {
+        let Some(l) = p.login() else { continue };
+        for a in l.accounts() {
+            let Some(at) = a.rejected_at else { continue };
+            let key = format!("forge:{}:{}:{at}", p.kind(), a.host);
+            let account = format!("{}:{}", p.kind(), a.host);
+            after.insert(account.clone(), json!(key));
+            if before[&account].as_str() == Some(key.as_str()) {
+                continue;
+            }
+            let name = format!("{} ({})", p.label(), a.host);
+            let error = format!("{} refused the login of {} on {}: sign in again", p.label(), a.account.login, a.host);
+            crate::connection_health::log_failed(st, &name, p.kind().as_str(), "forge", &error, &key).await;
+        }
+    }
+    let after = serde_json::Value::Object(after);
+    if after != before
+        && let Err(e) = st.store.put_host_value(REFUSED_KEY, &after).await
+    {
+        tracing::warn!(error = %e, "could not record the refused forge logins");
     }
 }
 

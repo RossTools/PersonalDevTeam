@@ -930,7 +930,7 @@ mod tests {
             Ok(_) => None,
             Err(e) => Some(e.errors.to_string()),
         };
-        for op in ops::all() {
+        for op in ops::all().into_iter().chain([crate::sensor::HISTORY.to_string()]) {
             if let Some(e) = check(&op) {
                 panic!("{op}\n{e}");
             }
