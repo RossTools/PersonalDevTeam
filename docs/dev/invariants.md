@@ -132,6 +132,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **Only Install updates installs by itself.** The update loop checks and logs `update.available`; it never installs.
   An automatic install goes through `host.install_update` with `automatic`, which keeps to the host's policy and never
   retries a version pdt-host skipped. With the workflow off, nothing installs without the user.
+- **Only Clean up storage cleans by itself, and only a pause pauses pickup.** The storage loop measures and logs
+  `disk.low` / `disk.recovered`; it never cleans or pauses. Auto-start checks `pickup_pause::paused`, never the disk
+  level, so with Clean up storage off a full disk only warns. A pause stays over a restart until a `pickup.resume` or
+  the user resumes it.
 - **`_pdt.*` state keys are PDT's own.**
 - **Every manual start checks the Run now trigger's declared inputs.** Run now, `POST /api/workflows/{id}/run`, the
   PM's `workflow_run`, a `workflow.call` and a manual dry run all go through `ManualConfig::input` (pdt-api

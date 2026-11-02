@@ -42,6 +42,7 @@ mod notifications;
 mod overlap;
 mod parts;
 mod personas;
+pub mod pickup_pause;
 mod pm;
 mod pm_checkpoint;
 mod project_settings;

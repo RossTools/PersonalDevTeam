@@ -487,6 +487,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::notification_rules::router())
         .merge(crate::install_updates::router())
         .merge(crate::pm_checkpoint::router())
+        .merge(crate::pickup_pause::router())
         .merge(crate::ticket_attachments::router())
         .merge(crate::tickets::router())
         .merge(crate::todos::router())

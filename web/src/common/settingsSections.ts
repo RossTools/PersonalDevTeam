@@ -26,7 +26,7 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
   { label: 'Runs', terms: ['Ports', 'Max concurrent runs'] },
   {
     label: 'Storage',
-    terms: ['Disk space', 'Free space', 'Worktrees', 'Build output', 'Clean all finished', 'Low-disk warning', 'Pause auto-start below'],
+    terms: ['Disk space', 'Free space', 'Worktrees', 'Build output', 'Clean all finished', 'Cleanup', 'Low-disk warning', 'Almost full below', 'Pause pickup', 'Resume pickup', 'Clean up storage'],
   },
   { label: 'Projects folder', terms: ['Folder', 'Clone by URL'] },
   { label: 'Documents', terms: ['Default provider', 'Local documents folder', 'Docs', 'Sheets'] },

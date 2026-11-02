@@ -65,7 +65,7 @@ from an agent that can't ask in its own prompt shows here too, with its argument
   starts what waited, and the item goes.
 - **Low disk space**: a disk with PDT's data or a project is running out of space (with how much is free).
   **Open Storage** shows what each worktree takes; **Clean all finished** removes finished tickets' build output. When
-  it is almost full, auto-start waits too. The item goes once there is more space (see
+  it is almost full, pickup pauses too (auto-start starts no new tickets). The item goes once there is more space (see
   [Disk space](../your-machine/your-data.md#disk-space)).
 - **Triaged tickets**: a workflow drafted a ticket from a new issue. **Approve** moves it to **To do**, **Reject** to
   **Won't do** (moving it on the board does the same).

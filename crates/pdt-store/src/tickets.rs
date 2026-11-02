@@ -235,6 +235,7 @@ fn to_summary(r: &SqliteRow) -> Result<TicketSummary, StoreError> {
         agent: None,
         auto_start_at: None,
         pickup_hold: None,
+        pickup_paused: None,
         pickup_failed: None,
         external: vec![],
         source: {

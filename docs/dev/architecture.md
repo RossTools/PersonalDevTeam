@@ -89,12 +89,21 @@ free-form. A tab holds exactly one session, run, ticket or worktree's changes, a
 (pdt-core `worktree.rs`). Deleting one is refused while a session, run or active attempt uses it, or while it has
 uncommitted changes (unless forced). Storage (pdt-api `storage.rs`, rules in pdt-core `storage.rs`): the `storage`
 loop (every 60 s) measures each worktree whose size is missing or 30 minutes old in a task of its own (one at a time;
-`AppState::storage` keeps the sizes in memory, so a restart measures again), and hourly runs the automatic cleanup,
-which cleans or removes finished tickets' worktrees per the project's `project_settings.storage`. A project's build
+`AppState::storage` keeps the sizes in memory, so a restart measures again) and logs the disks' level changes
+(`watch_disks`). The cleanup is the built-in Clean up storage's (below): `storage::auto_cleanup` cleans or removes
+finished tickets' worktrees per the project's `project_settings.storage`. A project's build
 output is `[storage] build_output` from its main checkout's run configuration, else detected from the files at its
 root (`detect_build_output`). Free space comes from `AppState::disk_space` (fs4, installed by pdtd; `AppState::new` reads none, tests set a fake) for the data
-folder and each project's folder, grouped by device (`storage::disk_id`) with the least free space any read; below the host's `low_disk_gb` the Inbox lists a `low_disk` item, below
-`critical_disk_gb` `ticket.start` starts nothing, the pickup watch tells nothing and `autoStartAt` is left out.
+folder and each project's folder, grouped by device (`storage::disk_id`) with the least free space any read, at the
+thresholds `storage::thresholds` reads from Clean up storage's inputs (the host settings' `low_disk_gb` /
+`critical_disk_gb` until it is installed, and once to fill its inputs). Below the low one the Inbox lists a `low_disk`
+item.
+
+**Pickup paused** (`pickup_pause.rs`, the host value `pickup.paused`: a reason and the workflow that paused it). While
+it is set, `ticket.start` starts nothing, the pickup watch tells nothing, `autoStartAt` is left out and
+`pickupPaused` is filled in on each ticket auto-start would take (`scheduler::apply_auto_start`). `pickup.pause` /
+`pickup.resume` (`nodes/pickup_pause.rs`) set and clear it, a resume only its own workflow's pause unless `any`;
+`DELETE /api/pickup/pause` is the user's Resume.
 
 **Runs.** A run is a `[[run]]` or `[[test]]` from `.pdt/project.toml` (plus host overrides; the user docs' Run configuration page)
 started in a checkout, on a port from the host's range. Runs live in PTYs, or detached (`detach = true`) so they
@@ -308,6 +317,14 @@ its version installed when it runs again after the restart. `update.installed` l
 `settleMs`: the running version and `Loops::health`) and an optional `notify`; failures and `update.failed` are
 `inbox.notice` items. Settings → Updates (`install_updates.rs`, `/api/install-updates`) reads and writes the inputs as
 stuck agents' are; the policy, channel and check interval stay host settings, since the checks use them.
+
+**Clean up storage** (`builtins/clean_up_storage.rs`). Hourly, `storage.clean` (`which: due`: `auto_cleanup`) then
+`storage.measure`; `disk.low` and `disk.recovered` go to `storage.measure` too (`nodes/storage.rs`). Critical leads to
+`pickup.pause` and `storage.clean` with `which: finished` (each behind a condition on its input); low or ok to
+`pickup.resume`, so a disk no longer critical resumes pickup at the next hourly look even without `disk.recovered`.
+Its inputs are the thresholds (`lowGb`, `criticalGb`; `storage.measure`'s config, read back by `storage::thresholds`
+for the storage loop, the Storage view and the Inbox) and `pausePickup` / `cleanNow`. Settings → Storage is
+`/api/storage/cleanup`. The write floor that stops PDT writing to a full disk stays in pdt-store.
 
 **Settings backed by a built-in's inputs.** A behaviour that became a built-in keeps its home in Settings. The shared
 pieces: `builtins/inputs.rs` (`InputsBuiltin`: the params, the template, an optional `finish` that writes what the

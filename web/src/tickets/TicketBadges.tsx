@@ -6,7 +6,7 @@ import type { AgentBy } from '../api/gen/AgentBy';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 
 type BadgeTicket = Pick<TicketSummary, 'blockedBy' | 'overlap' | 'overlapWith' | 'waiting' | 'clearToStart'> &
-  Partial<Pick<TicketSummary, 'pipelineStage' | 'autoStartAt' | 'source' | 'admitted' | 'pickupHold' | 'pickupFailed' | 'createdBy' | 'proposed'>>;
+  Partial<Pick<TicketSummary, 'pipelineStage' | 'autoStartAt' | 'source' | 'admitted' | 'pickupHold' | 'pickupPaused' | 'pickupFailed' | 'createdBy' | 'proposed'>>;
 
 /** `m:ss` until `at`, never below 0:00. */
 export function countdown(at: number, now: number): string {
@@ -64,8 +64,9 @@ export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; cl
   const source = t.source ?? 'user';
   const hold = t.pickupHold ?? null;
   const failed = t.pickupFailed ?? null;
+  const paused = t.pickupPaused ?? null;
   const any =
-    source !== 'user' || t.proposed === true || refining || mergeBlocked || t.blockedBy > 0 || t.overlap !== 'none' || t.waiting || autoStartAt !== null || hold !== null || failed !== null;
+    source !== 'user' || t.proposed === true || refining || mergeBlocked || t.blockedBy > 0 || t.overlap !== 'none' || t.waiting || autoStartAt !== null || hold !== null || paused !== null || failed !== null;
   if (!any) return null;
   return (
     <span className={cn('flex max-w-full min-w-0 shrink items-center gap-1', className)}>
@@ -88,6 +89,11 @@ export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; cl
       {hold !== null && (
         <Badge tone="waiting" title={`Auto-start passed it over: ${hold}. It starts once that work is done.`}>
           <Clock aria-hidden /> Waiting: {hold}
+        </Badge>
+      )}
+      {paused !== null && (
+        <Badge tone="waiting" title={`Pickup is paused: ${paused}. Auto-start takes it once pickup resumes.`}>
+          <Clock aria-hidden /> Pickup paused
         </Badge>
       )}
       {failed !== null && (

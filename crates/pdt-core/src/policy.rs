@@ -307,7 +307,7 @@ pub fn settles_at(policy: &ProjectPolicy, t: &TicketSummary) -> i64 {
 }
 
 /// Whether auto-start takes tickets in `t`'s stage under `policy`.
-fn takes_stage(policy: &ProjectPolicy, t: &TicketSummary) -> bool {
+pub fn takes_stage(policy: &ProjectPolicy, t: &TicketSummary) -> bool {
     use crate::ticket::TicketStage;
     match policy.auto_start {
         AutoStart::Off => false,
@@ -412,6 +412,7 @@ pub(crate) mod tests {
             agent: None,
             auto_start_at: None,
             pickup_hold: None,
+            pickup_paused: None,
             pickup_failed: None,
             external: vec![],
             source: Default::default(),

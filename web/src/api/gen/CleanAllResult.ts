@@ -7,7 +7,11 @@ export type CleanAllResult = {
 /**
  * Worktrees that had build output removed.
  */
-cleaned: number, freed: number, 
+cleaned: number, 
+/**
+ * Worktrees removed (their branches stay).
+ */
+removed: number, freed: number, 
 /**
  * Worktrees skipped or failed, with why.
  */

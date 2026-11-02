@@ -105,10 +105,11 @@ documentsDir: string | null,
  */
 mcpOnlyPdt: boolean, 
 /**
- * Free space (GB) below which the Inbox warns that a disk with PDT's data or a project is running out; 0: off.
+ * The low-disk threshold (GB; 0: off) as set before it was Clean up storage's input (PDT-370): read once, when
+ * that workflow is installed.
  */
 lowDiskGb: number, 
 /**
- * Free space (GB) below which auto-start waits until space is freed; 0: off.
+ * The same for the critical threshold.
  */
 criticalDiskGb: number, };

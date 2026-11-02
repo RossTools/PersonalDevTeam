@@ -104,12 +104,12 @@ const HALF_DONE_AFTER_MS: i64 = 2 * 60 * 1000;
 /// announced; in each project with auto-start on, `ticket.startable` for each ticket that became one auto-start could
 /// take (its start delay over, its blocker or conflict gone) and `slot.freed` when a ticket in flight ended (room under
 /// the cap, or a hot area free: PDT-329) or its cap rose; and
-/// `slot.freed` when an agent slot freed on the host. Nothing is told while auto-start waits for disk space.
+/// `slot.freed` when an agent slot freed on the host. Nothing is told while pickup is paused.
 pub async fn watch_pickup(st: &AppState) {
     repair_half_done_starts(st).await;
-    // A disk almost full: nothing new starts (PDT-324), so nothing is told; once there is space, every ticket that can
-    // start is.
-    if crate::storage::auto_start_paused(st).await {
+    // Pickup paused (a disk almost full, PDT-370): nothing new starts, so nothing is told; once it resumes, every ticket
+    // that can start is.
+    if crate::pickup_pause::paused(st).await.is_some() {
         return;
     }
     let now = crate::routes::now_ms();
@@ -308,15 +308,20 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
 /// project's policy.
 pub(crate) async fn apply_auto_start(st: &AppState, items: &mut [TicketSummary]) {
     let now = crate::routes::now_ms();
-    // No countdown while auto-start waits for disk space.
-    let paused = !items.is_empty() && crate::storage::auto_start_paused(st).await;
+    // No countdown while pickup is paused: the tickets it would take say why instead (PDT-370).
+    let paused = if items.is_empty() { None } else { crate::pickup_pause::paused(st).await };
     let mut policies: HashMap<String, Option<pdt_core::policy::ProjectPolicy>> = HashMap::new();
     for t in items.iter_mut() {
         if !policies.contains_key(&t.project_id) {
             let p = st.store.get_project_settings(&t.project_id).await.ok().map(|s| s.policy);
             policies.insert(t.project_id.clone(), p);
         }
-        t.auto_start_at = policies[&t.project_id].as_ref().filter(|_| !paused).and_then(|p| auto_start_at(p, t, now));
+        let policy = policies[&t.project_id].as_ref();
+        t.auto_start_at = policy.filter(|_| paused.is_none()).and_then(|p| auto_start_at(p, t, now));
+        t.pickup_paused = paused
+            .as_ref()
+            .filter(|_| policy.is_some_and(|p| pdt_core::policy::takes_stage(p, t) && pdt_core::policy::startable(t)))
+            .map(|p| p.reason.clone());
     }
     apply_pickup_holds(st, items, &policies, now);
 }

@@ -1,5 +1,6 @@
 //! Worktree storage (PDT-324): sizes measured in the background, cleaning build output, the automatic cleanup of
-//! finished tickets' worktrees, and low disk space (an Inbox item; auto-start waits while it is critical).
+//! finished tickets' worktrees, and low disk space (an Inbox item; the built-in Clean up storage pauses pickup while it
+//! is critical: more in `storage_cleanup.rs`).
 
 use crate::common;
 
@@ -137,6 +138,15 @@ async fn cleanup_at(env: &Env, now: i64) {
     while storage(env).await["measuring"] == true {
         assert!(Instant::now() < deadline, "still measuring");
         tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// The storage loop's look at the disks, then the engine (Clean up storage acting on what it logged).
+async fn disk_check(env: &Env) {
+    pdt_api::run_workflows(&env.state).await;
+    pdt_api::storage::watch_disks(&env.state).await;
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
     }
 }
 
@@ -301,11 +311,14 @@ async fn low_disk_space_warns_in_the_inbox_and_pauses_auto_start_when_critical()
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     env.free.store(3 * GB, Ordering::SeqCst);
+    disk_check(&env).await;
     let items = inbox().await;
     assert_eq!(items[0]["id"], "low_disk:critical");
-    assert!(items[0]["title"].as_str().unwrap().contains("auto-start is paused"));
-    assert_eq!(storage(&env).await["autoStartPaused"], true);
-    let (s, t) = call(
+    assert!(items[0]["title"].as_str().unwrap().contains("auto-start is paused"), "{items:?}");
+    let v = storage(&env).await;
+    assert_eq!(v["autoStartPaused"], true);
+    assert_eq!(v["pickupPause"]["reason"], "the disk is almost full (3.0 GB free)");
+    let (s, t) = common::call_as_ui(
         &env.app,
         "POST",
         &format!("/api/projects/{}/tickets", env.project),
@@ -318,9 +331,13 @@ async fn low_disk_space_warns_in_the_inbox_and_pauses_auto_start_when_critical()
     let t = call(&env.app, "GET", &format!("/api/tickets/{id}"), None).await.1;
     assert_eq!((t["stage"].as_str(), &t["autoStartAt"]), (Some("todo"), &Value::Null), "{t}");
 
-    // Space again: the warning goes, and auto-start takes the ticket.
+    assert_eq!(t["pickupPaused"], "the disk is almost full (3.0 GB free)", "the Board says why");
+
+    // Space again: the warning goes, pickup resumes, and auto-start takes the ticket.
     env.free.store(100 * GB, Ordering::SeqCst);
+    disk_check(&env).await;
     assert!(inbox().await.is_empty());
+    assert_eq!(storage(&env).await["pickupPause"], Value::Null);
     common::pick_up(&env.state).await;
     let t = call(&env.app, "GET", &format!("/api/tickets/{id}"), None).await.1;
     assert_eq!(t["stage"], "in_progress", "{t}");

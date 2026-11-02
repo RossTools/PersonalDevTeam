@@ -115,6 +115,11 @@ autoStartAt: number | null,
  */
 pickupHold: string | null, 
 /**
+ * Why pickup is paused, on a ticket auto-start would take but for the pause ("the disk is almost full"; PDT-370;
+ * filled in by the API).
+ */
+pickupPaused: string | null, 
+/**
  * Why "Pick up tickets" passes it over until it changes: its start failed with this error (PDT-381; filled in by
  * the API, in memory). Try again (`POST /api/tickets/{id}/retry-auto-start`) clears it.
  */

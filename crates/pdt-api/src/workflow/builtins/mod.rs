@@ -3,6 +3,7 @@
 //! disabled, not deleted.
 
 mod base_moved;
+pub(crate) mod clean_up_storage;
 mod close_parents;
 mod comments_to_agent;
 mod cut_release;
@@ -53,6 +54,7 @@ pub const CLOSE_PARENTS: &str = "close-parents";
 pub const STUCK_AGENTS: &str = "stuck-agents";
 pub const NOTIFICATION_RULES: &str = "notification-rules";
 pub const INSTALL_UPDATES: &str = "install-updates";
+pub const CLEAN_UP_STORAGE: &str = "clean-up-storage";
 /// The Cut a release template (without `builtin:`); a built-in workflow until PDT-301 ([`RETIRED`]).
 pub const CUT_RELEASE: &str = "cut-release";
 
@@ -91,6 +93,12 @@ pub const BUILTINS: &[Builtin] = &[
         doc: notification_rules::notification_rules,
     },
     Builtin { id: INSTALL_UPDATES, enabled: true, category: Category::Releases, doc: install_updates::install_updates },
+    Builtin {
+        id: CLEAN_UP_STORAGE,
+        enabled: true,
+        category: Category::Tickets,
+        doc: clean_up_storage::clean_up_storage,
+    },
 ];
 
 /// The GitHub plugin's built-ins ([`crate::integrations::Integration::builtin_workflows`]): left out while it is off
@@ -212,6 +220,8 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
                     Some(old) => notification_rules::migrated(&old),
                     None => template,
                 },
+                // The thresholds set in Settings before they were the workflow's come along (PDT-370).
+                CLEAN_UP_STORAGE => clean_up_storage::migrated(&st.store.get_host_settings().await?),
                 _ => template,
             };
             let enabled = b.enabled;
@@ -265,6 +275,7 @@ fn refill_of(id: &str) -> Option<Refill> {
         NOTIFICATION_RULES => Some(|d| notification_rules::filled(&notification_rules::values_of(d))),
         INSTALL_UPDATES => Some(|d| install_updates::filled(&install_updates::values_of(d))),
         PM_DAILY_CHECKPOINT => Some(|d| pm_daily_checkpoint::SETTINGS.refill(d)),
+        CLEAN_UP_STORAGE => Some(|d| clean_up_storage::SETTINGS.refill(d)),
         _ => None,
     }
 }

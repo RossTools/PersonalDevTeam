@@ -1,14 +1,15 @@
 // Settings › Storage (PDT-324): free disk space, what each project's worktrees take (build output apart), Clean and
-// Remove, Clean all finished, and the low-disk thresholds.
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+// Remove, Clean all finished, and Cleanup: the built-in Clean up storage's inputs (PDT-370), its thresholds and what
+// happens when a disk is almost full.
+import { useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
-import { Alert, Banner, Button, EmptyState, Section, SettingsRow, Skeleton } from '@ui';
+import { Alert, Banner, Button, EmptyState, Section, SettingsRow, Skeleton, Switch } from '@ui';
 import { api } from '../api/client';
-import type { HostSettingsPatch } from '../api/gen/HostSettingsPatch';
-import type { HostSettingsView } from '../api/gen/HostSettingsView';
+import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import type { ProjectStorage } from '../api/gen/ProjectStorage';
 import type { WorktreeStorage } from '../api/gen/WorktreeStorage';
-import { AutoSaveText } from '../common/AutoSave';
+import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
+import { BuiltinSettingsSection, type PutInputs } from '../common/BuiltinSettings';
 import { BranchChip } from '../common/BranchChip';
 import { useAction } from '../common/useAction';
 import { TicketKey } from '../common/TicketKey';
@@ -19,28 +20,64 @@ function gb(text: string): number {
   return Number(text);
 }
 
-function Thresholds({ v }: { v: HostSettingsView }) {
+export const STORAGE_CLEANUP_KEY = ['storage-cleanup'];
+
+/** Settings › Storage › Cleanup: the built-in Clean up storage's inputs. */
+function Cleanup() {
+  return (
+    <BuiltinSettingsSection
+      calls={api.storageCleanup}
+      queryKey={STORAGE_CLEANUP_KEY}
+      label="Cleanup"
+      description="Every hour, finished tickets' worktrees are cleaned as each project's Worktrees settings say. When a disk with PDT's data or a project is almost full, PDT does what is set here."
+      follows="Cleanup follows"
+      off="finished tickets' worktrees are not cleaned on their own, and nothing pauses when a disk is almost full."
+    >
+      {(v, put) => <CleanupInputs v={v} put={put} />}
+    </BuiltinSettingsSection>
+  );
+}
+
+function CleanupInputs({ v, put }: { v: BuiltinSettingsView; put: PutInputs }) {
   const qc = useQueryClient();
-  const m = useMutation({
-    meta: { errorShown: true },
-    mutationFn: (p: HostSettingsPatch) => api.saveHostSettings(p),
-    onSuccess: (view) => {
-      qc.setQueryData(['host-settings'], view);
-      void qc.invalidateQueries({ queryKey: ['storage'] });
-    },
-  });
-  const s = v.settings;
+  // The thresholds also set the disks' levels on this page.
+  const save = async (values: Record<string, unknown>) => {
+    await put(values);
+    void qc.invalidateQueries({ queryKey: ['storage'] });
+  };
+  const num = (id: string) => String(typeof v.values[id] === 'number' ? v.values[id] : '');
   return (
     <>
       <SettingsRow label="Low-disk warning" description="The Inbox warns when a disk with PDT's data or a project has less free than this (GB; 0: never).">
-        <AutoSaveText aria-label="Low-disk warning (GB)" inputMode="numeric" className="w-20" value={String(s.lowDiskGb)}
-          onSave={async (t) => m.mutateAsync({ lowDiskGb: gb(t) })} />
+        <AutoSaveText aria-label="Low-disk warning (GB)" inputMode="numeric" className="w-20" value={num('lowGb')}
+          onSave={async (t) => save({ lowGb: gb(t) })} />
       </SettingsRow>
-      <SettingsRow label="Pause auto-start below" description="Below this (GB; 0: never), auto-start starts no new tickets until space is freed. Running agents carry on.">
-        <AutoSaveText aria-label="Pause auto-start below (GB)" inputMode="numeric" className="w-20" value={String(s.criticalDiskGb)}
-          onSave={async (t) => m.mutateAsync({ criticalDiskGb: gb(t) })} />
+      <SettingsRow label="Almost full below" description="Below this (GB; 0: never) a disk is almost full, and PDT does what is set below.">
+        <AutoSaveText aria-label="Almost full below (GB)" inputMode="numeric" className="w-20" value={num('criticalGb')}
+          onSave={async (t) => save({ criticalGb: gb(t) })} />
       </SettingsRow>
+      <AutoSaveRow label="Pause pickup" description="While a disk is almost full, auto-start starts no new tickets, and the Board says why. Running agents carry on.">
+        {(track) => <Switch aria-label="Pause pickup" checked={v.values.pausePickup === true} onChange={(on) => void track(save({ pausePickup: on }))} />}
+      </AutoSaveRow>
+      <AutoSaveRow label="Clean finished worktrees now" description="When a disk is almost full, remove the build output of every Done or Won't do ticket's worktree at once.">
+        {(track) => <Switch aria-label="Clean finished worktrees now" checked={v.values.cleanNow === true} onChange={(on) => void track(save({ cleanNow: on }))} />}
+      </AutoSaveRow>
     </>
+  );
+}
+
+/** Pickup is paused (a disk almost full, or a workflow of yours): why, and Resume. */
+function PausedBanner({ reason }: { reason: string }) {
+  const qc = useQueryClient();
+  const [resume, resuming] = useAction(async () => {
+    await api.resumePickup();
+    void qc.invalidateQueries({ queryKey: ['storage'] });
+    void qc.invalidateQueries({ queryKey: ['tickets'] });
+  });
+  return (
+    <Banner tone="failed" actions={<Button size="sm" variant="secondary" pending={resuming} onClick={() => void resume()}>Resume pickup</Button>}>
+      Pickup is paused: {reason}. Auto-start starts no new tickets until it resumes. Running agents carry on.
+    </Banner>
   );
 }
 
@@ -87,7 +124,7 @@ function ProjectWorktrees({ p }: { p: ProjectStorage }) {
   );
 }
 
-export function Storage({ v }: { v: HostSettingsView }) {
+export function Storage() {
   const qc = useQueryClient();
   const storage = useStorage();
   const settle = () => void qc.invalidateQueries({ queryKey: ['storage'] });
@@ -103,7 +140,7 @@ export function Storage({ v }: { v: HostSettingsView }) {
         label="Storage"
         description="Free disk space, and what each worktree takes. Finished tickets' build output is cleaned on its own (each project's Worktrees settings say when)."
         actions={<Button size="sm" variant="ghost" pending={refreshing || !!s?.measuring} onClick={() => void refresh()}><RefreshCw aria-hidden /> Measure again</Button>}
-        notice={s?.autoStartPaused ? <Banner tone="failed">A disk is almost full: auto-start starts no new tickets until there is more space. Running agents carry on.</Banner> : undefined}
+        notice={s?.pickupPause ? <PausedBanner reason={s.pickupPause.reason} /> : undefined}
       >
         {storage.isPending && <Skeleton lines={2} label="Loading storage" />}
         {storage.isError && <Alert tone="error">Storage could not be loaded: {storage.error.message}</Alert>}
@@ -116,8 +153,8 @@ export function Storage({ v }: { v: HostSettingsView }) {
         <SettingsRow label="Clean all finished" description="Removes the build output of every Done or Won't do ticket's worktree now.">
           <Button size="sm" pending={cleaning} onClick={() => void cleanAll()}>Clean all finished</Button>
         </SettingsRow>
-        <Thresholds v={v} />
       </Section>
+      <Cleanup />
       {s && s.projects.length === 0 && <EmptyState>No projects with worktrees.</EmptyState>}
       {s?.projects.map((p) => <ProjectWorktrees key={p.projectId} p={p} />)}
     </>

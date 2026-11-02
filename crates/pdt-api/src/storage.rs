@@ -1,6 +1,8 @@
 //! Worktree storage (PDT-324): what each worktree takes on disk (measured in the background and kept in memory),
 //! cleaning its build output, the automatic cleanup of finished tickets' worktrees, and low free disk space (an Inbox
-//! item, and auto-start waits while a disk is critically low). The rules are pdt-core `storage`.
+//! item). The rules are pdt-core `storage`. The storage loop only measures and logs `disk.low` / `disk.recovered`;
+//! what to do about them (cleaning, pausing pickup) is the built-in Clean up storage's (PDT-370), whose inputs hold
+//! the thresholds.
 
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
@@ -25,12 +27,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use ts_rs::TS;
 
-/// How often the storage loop runs: it starts measuring what is stale, and cleans up hourly.
+/// How often the storage loop runs: it looks at the disks and starts measuring what is stale.
 const STORAGE_EVERY: Duration = Duration::from_secs(60);
 /// A worktree's size is measured again once it is this old.
 const MEASURE_EVERY_MS: i64 = 30 * 60 * 1000;
-/// How often the automatic cleanup looks for finished tickets' worktrees.
-const CLEANUP_EVERY_MS: i64 = 60 * 60 * 1000;
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// How deep a `**/<name>` build output is looked for.
 const MAX_DEPTH: usize = 12;
 
@@ -71,11 +72,8 @@ pub struct StorageState {
     measuring: AtomicBool,
     /// Measure again once the pass under way ends (something was cleaned or a refresh asked meanwhile).
     again: AtomicBool,
-    last_cleanup: Mutex<Option<i64>>,
     /// Since when a disk has been low (the Inbox item's time).
     low_since: Mutex<Option<i64>>,
-    /// Auto-start was paused at the scheduler's last look (logged once when it changes).
-    paused: AtomicBool,
 }
 
 impl StorageState {
@@ -404,9 +402,27 @@ fn group_disks(found: Vec<(String, Option<String>, DiskSpace)>, low_gb: u32, cri
         .collect()
 }
 
-/// The disks with PDT's data folder and each project's folder, one entry per disk.
-pub(crate) async fn disks(st: &AppState) -> Vec<DiskView> {
+/// The low and critical thresholds in GB (0: off): the built-in Clean up storage's inputs (PDT-370); before it is
+/// installed, the host settings that held them.
+pub async fn thresholds(st: &AppState) -> (u32, u32) {
+    use crate::workflow::builtins::{CLEAN_UP_STORAGE, clean_up_storage};
+    if let Ok(Some(w)) = st.store.workflow_by_builtin(CLEAN_UP_STORAGE).await
+        && let Ok(Some(doc)) = st.store.workflow_doc(&w.id, w.version).await
+    {
+        return clean_up_storage::thresholds(&clean_up_storage::SETTINGS.values_of(&doc));
+    }
     let host = st.store.get_host_settings().await.unwrap_or_default();
+    (host.low_disk_gb, host.critical_disk_gb)
+}
+
+/// The disks with PDT's data folder and each project's folder, one entry per disk, at the thresholds.
+pub(crate) async fn disks(st: &AppState) -> Vec<DiskView> {
+    let (low, critical) = thresholds(st).await;
+    disks_at(st, low, critical).await
+}
+
+/// [`disks`] at other thresholds (`storage.measure`'s own).
+pub(crate) async fn disks_at(st: &AppState, low_gb: u32, critical_gb: u32) -> Vec<DiskView> {
     let mut folders = vec![st.data_dir.clone()];
     folders.extend(st.store.list_projects().await.unwrap_or_default().into_iter().map(|p| PathBuf::from(p.repo_path)));
     let probe = st.disk_space.clone();
@@ -421,32 +437,22 @@ pub(crate) async fn disks(st: &AppState) -> Vec<DiskView> {
     })
     .await
     .unwrap_or_default();
-    group_disks(found, host.low_disk_gb, host.critical_disk_gb)
-}
-
-/// Whether auto-start waits: a disk PDT uses is below the critical threshold.
-pub(crate) async fn auto_start_paused(st: &AppState) -> bool {
-    let paused = disks(st).await.iter().any(|d| d.level == DiskLevel::Critical);
-    if st.storage.paused.swap(paused, Ordering::SeqCst) != paused {
-        if paused {
-            tracing::warn!("a disk is almost full: auto-start starts no new tickets until space is freed");
-        } else {
-            tracing::info!("there is disk space again: auto-start goes on");
-        }
-    }
-    paused
+    group_disks(found, low_gb, critical_gb)
 }
 
 /// The Inbox's low-disk item while a disk PDT uses is low: the fullest one.
 pub(crate) async fn low_disk(st: &AppState) -> Option<InboxItem> {
     let worst = disks(st).await.into_iter().filter(|d| d.level != DiskLevel::Ok).min_by_key(|d| d.space.free);
-    let mut since = st.storage.low_since.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(d) = worst else {
-        *since = None;
-        return None;
+    let at = {
+        let mut since = st.storage.low_since.lock().unwrap_or_else(|e| e.into_inner());
+        if worst.is_none() {
+            *since = None;
+        }
+        *since.get_or_insert_with(now_ms)
     };
-    let at = *since.get_or_insert_with(now_ms);
-    Some(pdt_core::inbox::low_disk_item(d.space.free, &d.folders, d.level == DiskLevel::Critical, at))
+    let d = worst?;
+    let paused = d.level == DiskLevel::Critical && crate::pickup_pause::paused(st).await.is_some();
+    Some(pdt_core::inbox::low_disk_item(d.space.free, &d.folders, d.level == DiskLevel::Critical, paused, at))
 }
 
 /// A worktree's ticket, for the Storage view.
@@ -501,10 +507,13 @@ pub struct ProjectStorage {
 pub struct StorageView {
     pub disks: Vec<DiskView>,
     pub projects: Vec<ProjectStorage>,
+    /// The thresholds (Clean up storage's inputs).
     pub low_disk_gb: u32,
     pub critical_disk_gb: u32,
-    /// A disk is below the critical threshold: auto-start starts nothing new.
+    /// Pickup is paused: auto-start starts nothing new.
     pub auto_start_paused: bool,
+    /// Why, and by which workflow.
+    pub pickup_pause: Option<crate::pickup_pause::PickupPause>,
     /// Worktrees are being measured now.
     pub measuring: bool,
 }
@@ -558,7 +567,7 @@ pub(crate) async fn view(
     State(st): State<AppState>,
     Query(q): Query<ProjectQuery>,
 ) -> Result<Json<StorageView>, ApiError> {
-    let host = st.store.get_host_settings().await?;
+    let (low_disk_gb, critical_disk_gb) = thresholds(&st).await;
     let mut projects = vec![];
     for p in st.store.list_projects().await? {
         if p.kind == ProjectKind::Personal || q.project.as_ref().is_some_and(|id| *id != p.id) {
@@ -566,13 +575,14 @@ pub(crate) async fn view(
         }
         projects.push(project_storage(&st, &p).await?);
     }
-    let disks = disks(&st).await;
+    let pickup_pause = crate::pickup_pause::paused(&st).await;
     Ok(Json(StorageView {
-        auto_start_paused: disks.iter().any(|d| d.level == DiskLevel::Critical),
-        disks,
+        disks: disks_at(&st, low_disk_gb, critical_disk_gb).await,
+        auto_start_paused: pickup_pause.is_some(),
+        pickup_pause,
         projects,
-        low_disk_gb: host.low_disk_gb,
-        critical_disk_gb: host.critical_disk_gb,
+        low_disk_gb,
+        critical_disk_gb,
         measuring: st.storage.measuring.load(Ordering::SeqCst),
     }))
 }
@@ -617,6 +627,8 @@ pub(crate) async fn clean(State(st): State<AppState>, Path(id): Path<String>) ->
 pub struct CleanAllResult {
     /// Worktrees that had build output removed.
     pub cleaned: u32,
+    /// Worktrees removed (their branches stay).
+    pub removed: u32,
     #[ts(type = "number")]
     pub freed: u64,
     /// Worktrees skipped or failed, with why.
@@ -625,18 +637,83 @@ pub struct CleanAllResult {
 
 /// The worktrees of finished tickets (Done or Won't do, no attempt in them), by project.
 async fn finished_worktrees(st: &AppState, project: Option<&str>) -> Result<Vec<(String, String)>, ApiError> {
+    let f = Finished { project: project.map(String::from), ..Default::default() };
+    Ok(finished_matching(st, &f, now_ms()).await?.into_iter().map(|t| (t.worktree_id, t.ticket_key)).collect())
+}
+
+/// Which finished tickets' worktrees [`clean_finished_now`] takes.
+#[derive(Debug, Clone)]
+pub(crate) struct Finished {
+    /// Done, Won't do, or both.
+    pub stages: Vec<TicketStage>,
+    /// At least this long since the ticket closed (0: any).
+    pub older_than_days: u32,
+    /// One project's only.
+    pub project: Option<String>,
+    /// Remove the worktree (its branch stays; never with uncommitted changes), not only its build output.
+    pub remove: bool,
+}
+
+impl Default for Finished {
+    fn default() -> Self {
+        Self { stages: vec![TicketStage::Done, TicketStage::WontDo], older_than_days: 0, project: None, remove: false }
+    }
+}
+
+async fn finished_matching(
+    st: &AppState,
+    f: &Finished,
+    now: i64,
+) -> Result<Vec<pdt_store::WorktreeTicketRow>, ApiError> {
     let mut out = vec![];
     for p in st.store.list_projects().await? {
-        if project.is_some_and(|id| id != p.id) {
+        if p.kind == ProjectKind::Personal || f.project.as_ref().is_some_and(|id| *id != p.id) {
             continue;
         }
         for t in st.store.worktree_tickets(&p.id).await? {
-            if t.stage.is_closed() && !t.attempt_active {
-                out.push((t.worktree_id, t.ticket_key));
+            let old_enough =
+                f.older_than_days == 0 || t.closed_at.is_some_and(|c| now - c >= i64::from(f.older_than_days) * DAY_MS);
+            if t.stage.is_closed() && !t.attempt_active && f.stages.contains(&t.stage) && old_enough {
+                out.push(t);
             }
         }
     }
     Ok(out)
+}
+
+/// Cleans (or removes) the finished tickets' worktrees `f` names, now; worktrees in use or with uncommitted changes
+/// are skipped, with why.
+pub(crate) async fn clean_finished_now(st: &AppState, f: &Finished, now: i64) -> Result<CleanAllResult, ApiError> {
+    let mut r = CleanAllResult::default();
+    for t in finished_matching(st, f, now).await? {
+        let done = if f.remove {
+            remove(st, &t.worktree_id, &mut r).await
+        } else {
+            clean_into(st, &t.worktree_id, &mut r).await
+        };
+        if let Err(e) = done {
+            r.skipped.push(format!("{}: {}", t.ticket_key, e.message()));
+        }
+    }
+    Ok(r)
+}
+
+async fn clean_into(st: &AppState, id: &str, r: &mut CleanAllResult) -> Result<(), ApiError> {
+    let c = clean_worktree(st, id).await?;
+    if !c.removed.is_empty() {
+        r.cleaned += 1;
+        r.freed += c.freed;
+    }
+    Ok(())
+}
+
+async fn remove(st: &AppState, id: &str, r: &mut CleanAllResult) -> Result<(), ApiError> {
+    let size = st.storage.size(id);
+    crate::worktrees::remove_worktree(st, id, false, false).await?;
+    st.storage.forget(id);
+    r.removed += 1;
+    r.freed += size.map_or(0, |s| s.total);
+    Ok(())
 }
 
 /// `POST /api/storage/clean-finished?project=`: cleans the build output of every finished ticket's worktree.
@@ -644,18 +721,8 @@ pub(crate) async fn clean_finished(
     State(st): State<AppState>,
     Query(q): Query<ProjectQuery>,
 ) -> Result<Json<CleanAllResult>, ApiError> {
-    let mut r = CleanAllResult::default();
-    for (id, key) in finished_worktrees(&st, q.project.as_deref()).await? {
-        match clean_worktree(&st, &id).await {
-            Ok(c) if !c.removed.is_empty() => {
-                r.cleaned += 1;
-                r.freed += c.freed;
-            }
-            Ok(_) => {}
-            Err(e) => r.skipped.push(format!("{key}: {}", e.message())),
-        }
-    }
-    Ok(Json(r))
+    let f = Finished { project: q.project, ..Default::default() };
+    Ok(Json(clean_finished_now(&st, &f, now_ms()).await?))
 }
 
 /// `PUT /api/projects/{id}/storage`: the project's automatic cleanup.
@@ -677,40 +744,40 @@ pub(crate) async fn put_settings(
     Ok(Json(s))
 }
 
-/// One pass of the automatic cleanup: each finished ticket's worktree, once its project's delays have passed, has
-/// its build output cleaned or is removed (its branch stays). Worktrees in use, with uncommitted changes, or
-/// without a ticket are left alone.
-pub async fn auto_cleanup(st: &AppState) {
+/// One pass of the automatic cleanup (`storage.clean` with `which: due`, hourly in Clean up storage): each finished
+/// ticket's worktree, once its project's delays have passed, has its build output cleaned or is removed (its branch
+/// stays). Worktrees in use, with uncommitted changes, or without a ticket are left alone.
+pub async fn auto_cleanup(st: &AppState) -> CleanAllResult {
     auto_cleanup_at(st, now_ms()).await
 }
 
 /// [`auto_cleanup`] as of `now` (tests move the clock).
-pub async fn auto_cleanup_at(st: &AppState, now: i64) {
-    let Ok(projects) = st.store.list_projects().await else { return };
+pub async fn auto_cleanup_at(st: &AppState, now: i64) -> CleanAllResult {
+    let mut r = CleanAllResult::default();
+    let Ok(projects) = st.store.list_projects().await else { return r };
     for p in projects.iter().filter(|p| p.kind != ProjectKind::Personal) {
         let Ok(settings) = st.store.get_project_storage(&p.id).await else { continue };
         let Ok(tickets) = st.store.worktree_tickets(&p.id).await else { continue };
         for t in tickets {
             let ticket = WorktreeTicket { stage: t.stage, closed_at: t.closed_at, attempt_active: t.attempt_active };
-            match cleanup_due(Some(ticket), settings, now) {
-                Cleanup::Nothing => {}
-                Cleanup::Clean => {
-                    if let Err(e) = clean_worktree(st, &t.worktree_id).await {
-                        tracing::info!(ticket = %t.ticket_key, error = %e.message(), "cleanup left a worktree's build output");
-                    }
-                }
-                Cleanup::Remove => match crate::worktrees::remove_worktree(st, &t.worktree_id, false, false).await {
-                    Ok(()) => {
-                        st.storage.forget(&t.worktree_id);
+            let done = match cleanup_due(Some(ticket), settings, now) {
+                Cleanup::Nothing => continue,
+                Cleanup::Clean => clean_into(st, &t.worktree_id, &mut r).await,
+                Cleanup::Remove => {
+                    let removed = remove(st, &t.worktree_id, &mut r).await;
+                    if removed.is_ok() {
                         tracing::info!(ticket = %t.ticket_key, "cleanup removed a finished ticket's worktree");
                     }
-                    Err(e) => {
-                        tracing::info!(ticket = %t.ticket_key, error = %e.message(), "cleanup kept a finished ticket's worktree")
-                    }
-                },
+                    removed
+                }
+            };
+            if let Err(e) = done {
+                tracing::info!(ticket = %t.ticket_key, error = %e.message(), "cleanup left a finished ticket's worktree");
+                r.skipped.push(format!("{}: {}", t.ticket_key, e.message()));
             }
         }
     }
+    r
 }
 
 /// Where each disk's level was at the last look (`{disk: level}`), so a level change is news once, also over a restart.
@@ -720,8 +787,8 @@ const DISK_LEVELS_KEY: &str = "sensor.disk_levels";
 /// again (PDT-365; the rule is pdt-core `disk_news`). The storage loop runs it every minute. A disk not seen before
 /// was fine.
 pub async fn watch_disks(st: &AppState) {
-    let host = st.store.get_host_settings().await.unwrap_or_default();
-    let disks = disks(st).await;
+    let (low_gb, critical_gb) = thresholds(st).await;
+    let disks = disks_at(st, low_gb, critical_gb).await;
     if disks.is_empty() {
         // None could be read: nothing is known, nothing forgotten.
         return;
@@ -750,8 +817,8 @@ pub async fn watch_disks(st: &AppState) {
             total: d.space.total,
             level: d.level.as_str().into(),
             from: was.as_str().into(),
-            low_gb: host.low_disk_gb,
-            critical_gb: host.critical_disk_gb,
+            low_gb,
+            critical_gb,
             reclaimable: reclaimable.unwrap_or(0),
         };
         let now = now_ms();
@@ -772,25 +839,15 @@ pub async fn watch_disks(st: &AppState) {
 }
 
 /// Bytes of build output in finished tickets' worktrees, as last measured.
-async fn finished_build_bytes(st: &AppState) -> u64 {
+pub(crate) async fn finished_build_bytes(st: &AppState) -> u64 {
     let finished = finished_worktrees(st, None).await.unwrap_or_default();
     finished.iter().filter_map(|(id, _)| st.storage.size(id)).map(|s| s.build).sum()
 }
 
-/// pdtd's storage loop: measures stale worktrees in the background, and runs the automatic cleanup hourly.
+/// pdtd's storage loop: logs the disks' level changes and measures stale worktrees in the background. The cleanup is
+/// Clean up storage's (hourly, and when a disk runs low).
 pub async fn run_storage(st: AppState) {
     crate::loops::run_every(st, "storage", STORAGE_EVERY, crate::loops::Start::AfterOnePeriod, |st| async move {
-        let due = {
-            let mut last = st.storage.last_cleanup.lock().unwrap_or_else(|e| e.into_inner());
-            let due = last.is_none_or(|at| now_ms() - at >= CLEANUP_EVERY_MS);
-            if due {
-                *last = Some(now_ms());
-            }
-            due
-        };
-        if due {
-            auto_cleanup(&st).await;
-        }
         watch_disks(&st).await;
         spawn_measure(&st, false);
     })
@@ -806,6 +863,10 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/storage/refresh", post(refresh))
         .route("/storage/clean-finished", post(clean_finished))
         .route("/projects/{id}/storage", put(put_settings))
+        .merge(crate::builtin_settings::router(
+            "/storage/cleanup",
+            &crate::workflow::builtins::clean_up_storage::SETTINGS,
+        ))
 }
 
 #[cfg(test)]

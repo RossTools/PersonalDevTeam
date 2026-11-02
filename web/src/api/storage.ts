@@ -1,3 +1,4 @@
+import { builtinSettingsApi } from './builtinSettings';
 import { enc, queryString, request } from './core';
 import type { CleanAllResult } from './gen/CleanAllResult';
 import type { CleanResult } from './gen/CleanResult';
@@ -13,4 +14,8 @@ export const storageApi = {
     request<CleanAllResult>(`/api/storage/clean-finished${queryString({ project })}`, { method: 'POST' }),
   putProjectStorage: (projectId: string, s: StorageSettings) =>
     request<StorageSettings>(`/api/projects/${enc(projectId)}/storage`, { method: 'PUT', body: JSON.stringify(s) }),
+  /** The built-in Clean up storage's inputs: the thresholds and what happens when a disk is almost full. */
+  storageCleanup: builtinSettingsApi('/api/storage/cleanup'),
+  /** Resumes pickup, whoever paused it. */
+  resumePickup: () => request<void>('/api/pickup/pause', { method: 'DELETE' }),
 };

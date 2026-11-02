@@ -468,7 +468,7 @@ impl NodeKind for Start {
              agent session of its own. Given choose's tickets, it starts the first of each project still free (no \
              active attempt, under the cap it was chosen under, an agent slot free when it needs one). `started`: \
              `ticketId`, `key`, `attemptId`; `skipped`: none was free, Start refused for now (an overlap, a blocker; \
-             tried again next run), or the disk is almost full; `failed`: a start failed, and that ticket is passed \
+             tried again next run), or pickup is paused; `failed`: a start failed, and that ticket is passed \
              over until it changes (or the user's Try again).",
             &[("started", "Started"), ("skipped", "Skipped"), ("failed", "Failed")],
             false,
@@ -489,9 +489,10 @@ impl NodeKind for Start {
             if cx.dry_run {
                 return Ok(Outcome::next("started", json!({"would": dry_run(cx.st, &tickets, per_project).await})));
             }
-            // A disk almost full: nothing new starts until space is freed (PDT-324).
-            if crate::storage::auto_start_paused(cx.st).await {
-                return Ok(Outcome::next("skipped", json!({"reason": "the disk is almost full", "quiet": true})));
+            // Pickup paused (a disk almost full, PDT-370): nothing new starts until it resumes.
+            if let Some(p) = crate::pickup_pause::paused(cx.st).await {
+                let reason = format!("pickup is paused: {}", p.reason);
+                return Ok(Outcome::next("skipped", json!({"reason": reason, "quiet": true})));
             }
             let host = cx.st.store.get_host_settings().await.map_err(|e| e.to_string())?;
             let _held = cx.st.pickup_lock.lock().await;

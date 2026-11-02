@@ -25,6 +25,7 @@ These come with PDT. You can turn them off, edit them or copy them, but not dele
 | **When an agent is stuck** | Nudges an agent step that stops without an outcome, restarts it in a fresh session, then asks you in the Inbox; asks you at a loop limit; restarts a step that ran out of time once, then asks you. Set it in **Settings › This host › Agents**. See [When an agent is stuck](personas-and-approvals.md#when-an-agent-is-stuck). | On |
 | **Notification rules** | How far each kind of notification reaches you (off, a dot, the Inbox, a toast, a desktop notification), and quiet hours. You can turn on escalating what waits unanswered and posting questions, approvals and failed runs to a chat channel. Set it in **Settings › Notifications**. See [Notifications](../using-pdt/the-inbox.md#notifications). Turned off, every kind shows at its default level. | On |
 | **Install updates** | With updates set to install automatically when idle, waits until no agent is working, then installs the update and checks PDT once it restarts. You can set a time window, install anyway after a while, and be told what changed. A failed update or check goes to your Inbox. Set it in **Settings › This host › Updates**. See [Installing updates by themselves](../your-machine/updates.md#installing-updates-by-themselves). Turned off, updates install only when you say. | On |
+| **Clean up storage** | Every hour, cleans finished tickets' worktrees as each project's **Worktrees** settings say. When a disk PDT uses is almost full, pauses pickup and cleans every finished ticket's build output at once; once there is space again, pickup resumes. Set the thresholds and what happens in **Settings › This host › Storage**. See [Disk space](../your-machine/your-data.md#disk-space). Turned off, finished worktrees are cleaned only when you say, and nothing pauses. | On |
 | **PM daily checkpoint** | Brings the PM's open conversations up to date once a day and has each write a journal checkpoint. You can set a time, the days and a chat channel to post the update to in **Settings › This host › PM**. See [Change when it's brought up to date](the-pm.md#change-when-its-brought-up-to-date). | On |
 
 Plugins add their own while they're on: Jira, say, adds **Import assigned Jira issues** and **Done moves the Jira
@@ -266,7 +267,7 @@ These ones react to releases, PDT itself and what it looks after:
   or because you asked.
 - **PDT update failed**: an update failed, or the new version didn't start and PDT went back to the one before. It
   carries both versions and what went wrong.
-- **Disk space low**: a disk PDT uses fell below the low-space level in Settings, or below the critical one. It
+- **Disk space low**: a disk PDT uses fell below the low-space level in Settings, or below the almost-full one. It
   carries the free space, the level, and how much cleaning finished tickets' build output would free. It fires
   when the level drops, not on every check.
 - **Disk space recovered**: a disk that was low has enough free space again.
@@ -298,7 +299,11 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
 - **Decide**: **If** (yes or no), **Switch** (one exit per value), **Wait** (for a time, or an event with a time
   limit), **Ask the user** (a gate).
 - **Look after PDT**: **Wait until PDT is idle** (no agent working, inside a time window if you set one, or until a
-  time limit), **Install the update** and **Check PDT is healthy**.
+  time limit), **Install the update** and **Check PDT is healthy**. **Check disk space** goes on by how full the
+  fullest disk PDT uses is (enough space, low, almost full). **Clean up worktrees** frees space in finished tickets'
+  worktrees: those whose project's delays have passed, or every finished one now (by stage and age), removing build
+  output or the whole worktree when nothing would be lost. **Pause pickup** stops auto-start, with a reason the Board
+  shows, until **Resume pickup** in the same workflow (or you) resumes it.
 - **Tell people**: **Notify me**, **Put it in my Inbox**, a Discord post, a comment on a GitHub issue. **Notify me**
   can set how far it reaches you (from a dot to a desktop notification, or only the chat channel), post to a chat
   channel too, and do nothing once a given Inbox item is answered.
