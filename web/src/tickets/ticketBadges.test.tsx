@@ -48,3 +48,12 @@ describe('the pickup hold', () => {
     expect(screen.queryByText(/Waiting:/)).not.toBeInTheDocument();
   });
 });
+
+describe('a failed auto-start', () => {
+  it('says auto-start failed, with the error in its title', () => {
+    const { rerender } = render(<TicketBadges ticket={summary(1, { stage: 'todo', pickupFailed: 'git failed: no repo' })} />);
+    expect(screen.getByText('Auto-start failed').closest('[title]')).toHaveAttribute('title', expect.stringContaining('git failed: no repo'));
+    rerender(<TicketBadges ticket={summary(1, { stage: 'todo' })} />);
+    expect(screen.queryByText('Auto-start failed')).not.toBeInTheDocument();
+  });
+});

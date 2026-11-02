@@ -488,6 +488,10 @@ pub struct TicketSummary {
     /// PDT-329; filled in by the API, in memory).
     #[serde(default)]
     pub pickup_hold: Option<String>,
+    /// Why "Pick up tickets" passes it over until it changes: its start failed with this error (PDT-381; filled in by
+    /// the API, in memory). Try again (`POST /api/tickets/{id}/retry-auto-start`) clears it.
+    #[serde(default)]
+    pub pickup_failed: Option<String>,
     /// The issues in other trackers it is linked to (an issue it was imported from).
     #[serde(default)]
     pub external: Vec<ExternalLink>,
@@ -1506,6 +1510,7 @@ mod tests {
             agent: None,
             auto_start_at: None,
             pickup_hold: None,
+            pickup_failed: None,
             external: vec![],
             source: TicketSource::External,
             admitted: false,

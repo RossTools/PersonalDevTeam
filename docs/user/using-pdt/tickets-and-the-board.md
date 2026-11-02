@@ -194,6 +194,10 @@ In **Settings**, on the project's page:
   starts like any other. Off, it waits while a ticket in a hot area is in progress, and a ticket in a hot area waits
   while one without areas is in progress.
 
+If auto-start can't start a ticket for a reason that won't pass by itself (a git error, say), its card shows
+**Auto-start failed** and the ticket says why. Auto-start leaves it until you change the ticket, or until you click **Try
+again** on the ticket (or **Try auto-start again** in its menu).
+
 Auto-start skips parents, blocked or conflicting tickets, and outside tickets you haven't let in. It uses your default
 agent, view and permission mode (**Settings › This host › Agents**), or the project's workflow if it has one. Starting
 a ticket yourself is never delayed.

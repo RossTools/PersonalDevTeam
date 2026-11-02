@@ -467,8 +467,9 @@ impl NodeKind for Start {
              permission mode and view unless given; handed to the workflow on `attempt.started` (the Pipeline) or an \
              agent session of its own. Given choose's tickets, it starts the first of each project still free (no \
              active attempt, under the cap it was chosen under, an agent slot free when it needs one). `started`: \
-             `ticketId`, `key`, `attemptId`; `skipped`: none was free (or the disk is almost full); `failed`: a start \
-             failed, and that ticket is passed over until it changes.",
+             `ticketId`, `key`, `attemptId`; `skipped`: none was free, Start refused for now (an overlap, a blocker; \
+             tried again next run), or the disk is almost full; `failed`: a start failed, and that ticket is passed \
+             over until it changes (or the user's Try again).",
             &[("started", "Started"), ("skipped", "Skipped"), ("failed", "Failed")],
             false,
         )
@@ -577,9 +578,10 @@ impl NodeKind for Start {
                     rows: None,
                 };
                 let mut v = input.validate().map_err(|e| e.to_string())?;
-                // Checked just now, with the cap it was chosen under: a step's cap above the project's running cap
-                // holds (Start still refuses for blockers and overlaps).
-                v.cap_checked = caps.is_some();
+                // Checked just now, with the caps and overlap rule it was chosen under: a step's cap above the
+                // project's running cap holds, and a ticket sharing an area choose allows starts (PDT-381). Start
+                // still refuses for blockers and conflicts.
+                v.pickup_checked = caps.is_some();
                 cx.save_progress(&json!({TRYING: t.id})).await?;
                 match crate::start::start_ticket(cx.st, t.id.clone(), v, Starter::Auto).await {
                     Ok(r) => {
@@ -590,17 +592,27 @@ impl NodeKind for Start {
                     }
                     // Started meanwhile (by the user, say): not this ticket's failure.
                     Err(e) if e.code() == "ticket_active" => skipped.push(note("already started")),
+                    // Refused for now (an overlap, a blocker, the cap): it waits, and the next run tries it again
+                    // (PDT-381). The Board says why, as for choose's overlaps.
+                    Err(e) if e.code() == "start_blocked" => {
+                        let message = e.message().to_string();
+                        let why = message.strip_prefix(&format!("{} ", t.key)).unwrap_or(&message).to_string();
+                        let hold = crate::scheduler::PickupHold {
+                            project_id: t.project_id.clone(),
+                            why: why.clone(),
+                            at: crate::routes::now_ms(),
+                        };
+                        cx.st.pickup_holds.lock().unwrap_or_else(|e| e.into_inner()).insert(t.id.clone(), hold);
+                        skipped.push(note(&why));
+                    }
                     Err(e) => {
                         let message = e.message().to_string();
                         // A failed write (a full disk) is tried again once writes work, not passed over (PDT-323).
                         let transient = pdt_store::is_write_failure(&message);
                         if !transient {
                             tracing::warn!(ticket = %t.key, error = %message, "could not start a ticket; passing it over until it changes");
-                            cx.st
-                                .auto_start_failed
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .insert(t.id.clone(), t.updated_at);
+                            let f = pdt_core::pickup::FailedStart { updated_at: t.updated_at, error: message.clone() };
+                            cx.st.auto_start_failed.lock().unwrap_or_else(|e| e.into_inner()).insert(t.id.clone(), f);
                         }
                         failed.push(json!({"ticketId": t.id, "key": t.key, "error": message, "transient": transient}));
                     }

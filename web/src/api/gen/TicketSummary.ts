@@ -83,6 +83,11 @@ autoStartAt: number | null,
  */
 pickupHold: string | null, 
 /**
+ * Why "Pick up tickets" passes it over until it changes: its start failed with this error (PDT-381; filled in by
+ * the API, in memory). Try again (`POST /api/tickets/{id}/retry-auto-start`) clears it.
+ */
+pickupFailed: string | null, 
+/**
  * The issues in other trackers it is linked to (an issue it was imported from).
  */
 external: Array<ExternalLink>, 

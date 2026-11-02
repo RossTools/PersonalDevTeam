@@ -354,9 +354,9 @@ pub enum PassedReason {
         #[ts(type = "number")]
         at: i64,
     },
-    /// It failed to start and hasn't changed since.
+    /// It failed to start (`error`) and hasn't changed since.
     #[serde(rename = "failed_before")]
-    FailedBefore,
+    FailedBefore { error: String },
     /// `with` (ticket keys) are in flight in `area`, which takes `cap` at a time.
     #[serde(rename = "overlaps")]
     Overlaps { area: String, with: Vec<String>, cap: u32 },
@@ -376,7 +376,9 @@ impl PassedReason {
             PassedReason::AreaCap { area, cap } => format!("area {area} is at its cap of {cap}"),
             PassedReason::LabelCap { label, cap } => format!("label {label} is at its cap of {cap}"),
             PassedReason::Settling { .. } => "changed within the start delay".into(),
-            PassedReason::FailedBefore => "it failed to start and hasn't changed since".into(),
+            PassedReason::FailedBefore { error } => {
+                format!("it failed to start and hasn't changed since: {error}")
+            }
             PassedReason::Overlaps { area, with, cap: 1 } => format!("overlaps {} in {area}", with.join(", ")),
             PassedReason::Overlaps { area, with, cap } => {
                 format!("overlaps {} in {area} ({cap} at a time)", with.join(", "))
@@ -450,9 +452,29 @@ pub struct Choice {
     pub passed: Vec<Passed>,
 }
 
-/// Choose from `projects`' candidates under `rules` at `now`. `failed`: tickets that failed to start, with their
-/// `updated_at` then.
-pub fn choose(projects: &[PickupProject], rules: &ChooseRules, failed: &HashMap<String, i64>, now: i64) -> Choice {
+/// A ticket's start that failed for a reason that won't pass by itself (a bad branch name, a git failure): pickup
+/// passes it over until it changes. Start refusing for now (an overlap, the cap, a blocker) is never one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailedStart {
+    /// The ticket's `updated_at` when it failed.
+    pub updated_at: i64,
+    pub error: String,
+}
+
+impl FailedStart {
+    /// Whether it still holds for a ticket last updated at `updated_at` (it hasn't changed since).
+    pub fn holds(&self, updated_at: i64) -> bool {
+        self.updated_at == updated_at
+    }
+}
+
+/// Choose from `projects`' candidates under `rules` at `now`. `failed`: tickets that failed to start, by id.
+pub fn choose(
+    projects: &[PickupProject],
+    rules: &ChooseRules,
+    failed: &HashMap<String, FailedStart>,
+    now: i64,
+) -> Choice {
     let mut out = Choice::default();
     for p in projects {
         let cap = rules.cap.unwrap_or(p.cap);
@@ -475,8 +497,8 @@ pub fn choose(projects: &[PickupProject], rules: &ChooseRules, failed: &HashMap<
                 Some(PassedReason::AtCap { cap, active })
             } else if at > now {
                 Some(PassedReason::Settling { at })
-            } else if rules.skip_failed && failed.get(&t.id) == Some(&t.updated_at) {
-                Some(PassedReason::FailedBefore)
+            } else if let Some(f) = failed.get(&t.id).filter(|f| rules.skip_failed && f.holds(t.updated_at)) {
+                Some(PassedReason::FailedBefore { error: f.error.clone() })
             } else if let Some((area, cap)) = full(&rules.area_caps, &t.areas, &|a| &a.areas) {
                 Some(PassedReason::AreaCap { area, cap })
             } else if let Some((label, cap)) = full(&rules.label_caps, &t.labels, &|a| &a.labels) {
@@ -533,8 +555,11 @@ mod tests {
     /// What the built-in "Pick up tickets" starts next: candidates and choose with the project's settings (what
     /// `policy::pick_next` did before PDT-327).
     fn pick(policy: &ProjectPolicy, active: u32, list: &[TicketSummary], skip: &[String], now: i64) -> Option<String> {
-        let failed: HashMap<String, i64> =
-            list.iter().filter(|t| skip.contains(&t.id)).map(|t| (t.id.clone(), t.updated_at)).collect();
+        let failed: HashMap<String, FailedStart> = list
+            .iter()
+            .filter(|t| skip.contains(&t.id))
+            .map(|t| (t.id.clone(), FailedStart { updated_at: t.updated_at, error: "no".into() }))
+            .collect();
         choose(&[project(policy, active, list)], &ChooseRules::auto_start(), &failed, now)
             .chosen
             .first()
@@ -585,7 +610,12 @@ mod tests {
         // A failed ticket that changed since is tried again.
         let mut changed = list.clone();
         changed[4].updated_at = 5;
-        let failed = HashMap::from([("overlap".to_string(), 0)]);
+        let failed =
+            HashMap::from([("overlap".to_string(), FailedStart { updated_at: 0, error: "bad branch".into() })]);
+        let c = choose(&[project(&todo, 0, &list)], &ChooseRules::auto_start(), &failed, LATER);
+        let passed = c.passed.iter().find(|p| p.id == "overlap").unwrap();
+        assert_eq!(passed.reason, PassedReason::FailedBefore { error: "bad branch".into() });
+        assert_eq!(passed.why, "it failed to start and hasn't changed since: bad branch");
         let c = choose(&[project(&todo, 0, &changed)], &ChooseRules::auto_start(), &failed, LATER);
         assert_eq!(c.chosen[0].ticket.id, "overlap");
         // At the cap: nothing.

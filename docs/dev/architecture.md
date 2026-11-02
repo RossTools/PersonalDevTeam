@@ -255,9 +255,14 @@ again), and `slot.freed` when a ticket in flight ended (room under the cap, or a
 host's free agent slots went from none to some. `ticket.start` holds `AppState::pickup_lock` while it checks and starts, so concurrent pickup runs
 neither start a ticket twice (the store's one-active-attempt rule is the backstop) nor go over the caps a pick was
 chosen under (project, area and label, and the overlap rule, carried on each pick); it takes the first of each project's chosen tickets
-still free. Having checked the cap itself, it sets `ValidStart::cap_checked`, so Start doesn't refuse for the
-project's running cap (a step's cap may be higher) while still refusing for blockers and overlaps. A failed start is skipped until the ticket
-changes (`AppState::auto_start_failed`), unless it failed to write (a full disk), which the next run tries again. The
+still free. Having checked the caps and the overlap rule itself, it sets `ValidStart::pickup_checked`, so Start
+doesn't refuse for the project's running cap (a step's cap may be higher) and refuses only conflicts among overlaps
+(`start::refusing_overlaps`): choose and Start keep tickets apart by the same rule. Start refusing for now
+(`start_blocked`: a blocker, a conflict) is a skip, never a failure: the ticket's `pickup_hold` says why, and the next
+run tries it again. A real failure (a git error, say) is skipped until the ticket changes
+(`AppState::auto_start_failed`, with the error, which fills `TicketSummary::pickup_failed` while auto-start is on), or
+until Try again (`POST /api/tickets/{id}/retry-auto-start`, `scheduler::forget_failed_start`); a failed write (a full
+disk) is tried again on the next run. The
 watch also announces starts left half-done: an active attempt whose `started` timeline event never reached the event
 log (pdtd stopped, or the write failed, between `start_attempt` and `announce_start`), once it is two minutes old
 (`Store::unannounced_starts`).
