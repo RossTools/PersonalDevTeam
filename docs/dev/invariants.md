@@ -76,6 +76,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   UI token, runs it with `cx.confirmed`, narrowed to the rows the user kept. It refuses non-PM sessions even when a
   persona lists it. Each row goes through `ticket_proposal::decide` as `By::user_via(<the PM>)`: the user's events,
   with the PM as `proposedBy`.
+- **An asking tool asks somewhere the user sees** (pdt-api `mcp::tools::confirmable`): Claude's permission prompt
+  only while the session isn't in Bypass (`Session::asks_nothing`); otherwise, as for Codex and Devin, the Inbox unless
+  the project lets the PM act. A `ToolDecl::public` tool (posts on the forge) asks in the Inbox outside an active agent
+  step. A new path that runs an asking or public tool goes through `confirmable` (`AnyAction::call` does for actions).
+- **Tool lists fail closed** (pdt-api `mcp::session_tools`, pdt-core `PersonaSetup::tool_set`): an empty persona tool
+  list is no tools, and a persona version that can't be read gives none. Only a session with no persona gets
+  `DEFAULT_TOOLS`.
 - **Fresh Codex launches in one folder stay at least 5 s apart**, or PDT can't tell their conversations apart.
 
 ## Tabs, tickets and attempts
@@ -196,9 +203,17 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 
 ## Secrets and GitHub
 
-- **Agents and workflows use secrets but never see them.** Values never go in the database, a response, a log or a
-  tool result; `pdt_core::secret::Redactor` replaces them wherever the store, pdt-mcp, conversations and the logs
-  write.
+- **Agents and workflows use secrets by name; values never go in the chat.** Values never go in the database, a
+  response, a log or a tool result; `pdt_core::secret::Redactor` replaces them (and their hex, base64 and URL-encoded
+  forms) wherever the store, pdt-mcp, conversations and the logs write. It is a safety net, not a wall: a command run
+  with a secret can print it some other way, so the docs promise "never pasted into the chat", not "never seen".
+- **Every keychain value PDT reads or writes reaches the redactor.** `AppState::secrets` is wrapped in
+  `secrets::Redacting` (pdtd's `main.rs`, `AppState::new`); a value kept outside the keychain (Google's access tokens,
+  MCP sign-ins' refreshed tokens) is given to the redactor where it is made.
+- **Redact before cutting.** Output cut to a size is redacted first and then loses any end that could start a value
+  (`Redactor::string_cut`), so a cut never leaves part of one.
+- **A Codex terminal's secrets stay out of its shell commands**: each name `codex_tui_env` passes a secret in is in
+  the `shell_environment_policy.exclude` it gets (pdt-agents `mcp.rs`), after the user's own patterns.
 - **The secret tools are no way round the agent's sandbox.** `run_with_secrets` and `write_secret_file` run in pdtd, so
   they ask (unless the session asks before nothing), must name a secret, and stay in the session's folder, out of
   `.git` and off symlinks (pdt-api `vault.rs` `session_path`). Don't mark them non-asking or let the PM act for them.

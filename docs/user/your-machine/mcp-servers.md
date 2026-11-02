@@ -26,8 +26,10 @@ New sessions get the server; sessions already running don't until they restart.
 ## Keys and tokens
 
 A header or environment value can be **Text** or a **Secret**: pick **Secret** and choose one of your secrets (see
-[Secrets](secrets.md)). PDT fills in the value only in each session's launch settings, in a file only you can read. It
-never shows it, and each use appears in the secret's **Uses**. A secret limited to some projects or personas is only
+[Secrets](secrets.md)). PDT fills in the value only in each session's launch settings: a file only you can read for
+Claude Code, the environment for Codex in a terminal (kept out of the commands it runs). It never shows it in the chat,
+but an agent that reads those settings can see it, so pick servers' secrets you'd trust the session's agent with. Each
+use appears in the secret's **Uses**. A secret limited to some projects or personas is only
 filled in for those sessions. A session it can't be filled in for starts without the server.
 
 ## Sign in with OAuth

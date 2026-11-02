@@ -27,6 +27,6 @@ instructions: string,
  */
 permissionMode: PermissionMode | null, 
 /**
- * pdt-mcp tools; empty means the default set.
+ * pdt-mcp tools; empty means none (PDT-414: a list never falls back to the default set).
  */
 tools: Array<string>, };

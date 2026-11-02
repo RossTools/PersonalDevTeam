@@ -34,7 +34,8 @@ Open it in **Personas** and set:
 - **Model**: blank for the agent's default.
 - **Permission mode**: what its sessions may do without asking (**Ask**, **Accept edits**, **Plan**, **Bypass
   (dangerous)**), or **Project or host default** (see [Which permission mode wins](#which-permission-mode-wins)).
-- **Tools**: the PDT tools its sessions get (reading the ticket, handing in an outcome, asking you, commenting…).
+- **Tools**: the PDT tools its sessions get (reading the ticket, handing in an outcome, asking you, commenting…). A
+  new persona starts with PDT's default set; a persona with none ticked gets no PDT tools.
 - **Instructions**: Markdown added to its sessions' instructions, on top of PDT's own and the project's.
 
 Click **Save a new version**, with an optional **Note**. **Versions** lists every save, newest first; tick two to
@@ -147,6 +148,11 @@ With the Pipeline and these rules, PDT asks you, in the [Inbox](../using-pdt/the
 - when a merge is blocked for a reason no agent can fix;
 - when a step goes past its loop limit, stalls, or runs out of time;
 - when an agent asks a question, or wants permission its permission mode doesn't give;
+- before an agent uses a PDT tool that acts for you (creating or editing tickets, messaging another agent, running a
+  workflow, filing an issue…) in a session that never asks itself: Codex, Devin, or Claude in **Bypass**. Where you let
+  the PM act without asking, it goes ahead;
+- before an agent outside a workflow step posts where others can read it (comments on a pull request or issue, or
+  opening a pull request). Workflow steps that do this, such as the Coder opening its pull request, don't ask;
 - before the PM changes tickets or messages agents, unless you let it act without asking (see
   [The PM](the-pm.md#when-it-asks-first));
 - before a ticket from outside PDT goes on the board.

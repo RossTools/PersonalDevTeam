@@ -5,10 +5,11 @@
 
 use crate::oauth;
 use pdt_api::sdk::documents::ProviderError;
+use pdt_core::secret::Redactor;
 use pdt_forge::transport::{Request, Response, Transport};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub const DRIVE: &str = "https://www.googleapis.com/drive/v3";
 pub const DOCS: &str = "https://docs.googleapis.com/v1";
@@ -39,20 +40,31 @@ pub fn token_key(connection_id: &str, agent: bool) -> String {
     if agent { format!("{connection_id}:agent") } else { connection_id.to_string() }
 }
 
-/// Access tokens by connection, with when they expire (ms).
+/// Access tokens by connection, with when they expire (ms). Each new one is also given to pdtd's redactor (once it is
+/// known, [`Tokens::redact_with`]), so it is kept out of what PDT stores and logs as the sign-ins are.
 #[derive(Default)]
-pub struct Tokens(Mutex<HashMap<String, (String, i64)>>);
+pub struct Tokens {
+    by_id: Mutex<HashMap<String, (String, i64)>>,
+    redactor: OnceLock<Arc<Redactor>>,
+}
 
 impl Tokens {
+    /// Registers each access token from now on with `r` (the first call's).
+    pub fn redact_with(&self, r: &Arc<Redactor>) {
+        let _ = self.redactor.set(r.clone());
+    }
     fn get(&self, id: &str, now: i64) -> Option<String> {
-        let m = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let m = self.by_id.lock().unwrap_or_else(|e| e.into_inner());
         m.get(id).filter(|(_, exp)| *exp > now + 60_000).map(|(t, _)| t.clone())
     }
     fn put(&self, id: &str, token: &str, expires_at: i64) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).insert(id.into(), (token.into(), expires_at));
+        if let Some(r) = self.redactor.get() {
+            r.set_labelled(&format!("google-access:{id}"), token, "google");
+        }
+        self.by_id.lock().unwrap_or_else(|e| e.into_inner()).insert(id.into(), (token.into(), expires_at));
     }
     pub fn forget(&self, id: &str) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+        self.by_id.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     }
 }
 

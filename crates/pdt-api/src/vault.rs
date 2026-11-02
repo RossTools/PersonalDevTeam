@@ -1,4 +1,4 @@
-//! Secrets agents can use but never see (PDT-158). The user keeps them in Settings → Secrets or types one into the
+//! Secrets agents and workflows use by name, never pasted into the chat (PDT-158). The user keeps them in Settings → Secrets or types one into the
 //! Inbox when an agent asks (`request_secret`); the values live in the OS keychain (account `secret:<id>`) and in the
 //! store's [`Redactor`](pdt_core::secret::Redactor), which replaces them with `[secret:<name>]` in everything PDT
 //! stores, shows or logs. Agents use them through `run_with_secrets` and `write_secret_file`, workflows through
@@ -487,9 +487,9 @@ pub(crate) async fn run_tool(st: &AppState, s: &Session, a: RunWithSecrets) -> R
     Ok(json!({
         "exitCode": out.code,
         "timedOut": out.timed_out,
-        "stdout": r.string(&out.stdout),
-        "stderr": r.string(&out.stderr),
-        "truncated": out.truncated,
+        "stdout": r.string_cut(&out.stdout, out.stdout_cut),
+        "stderr": r.string_cut(&out.stderr, out.stderr_cut),
+        "truncated": out.stdout_cut || out.stderr_cut,
         "secrets": values.keys().collect::<Vec<_>>(),
     }))
 }
@@ -498,7 +498,9 @@ struct ShellOutput {
     code: Option<i32>,
     stdout: String,
     stderr: String,
-    truncated: bool,
+    /// Cut at [`OUTPUT_CAP`]: redacted with [`Redactor::string_cut`](pdt_core::secret::Redactor::string_cut).
+    stdout_cut: bool,
+    stderr_cut: bool,
     timed_out: bool,
 }
 
@@ -545,7 +547,8 @@ async fn run_shell(
                 code: status.code(),
                 stdout: String::from_utf8_lossy(&out.0).into_owned(),
                 stderr: String::from_utf8_lossy(&err.0).into_owned(),
-                truncated: out.1 || err.1,
+                stdout_cut: out.1,
+                stderr_cut: err.1,
                 timed_out: false,
             })
         }
@@ -554,7 +557,8 @@ async fn run_shell(
             code: None,
             stdout: String::new(),
             stderr: format!("stopped after {} s", limit.as_secs()),
-            truncated: false,
+            stdout_cut: false,
+            stderr_cut: false,
             timed_out: true,
         }),
     }

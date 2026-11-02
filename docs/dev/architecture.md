@@ -417,8 +417,11 @@ as `proposedBy` on the events and the item's resolution.
 
 **Secrets.** Values live in the OS keychain (or, on Linux without a Secret Service, a file only the user can read) and
 in memory; agents and workflows refer to them by name (`run_with_secrets`, `write_secret_file`, `{{secret.x}}` in a
-node's config). pdt-core `secret::Redactor` replaces any value with `[secret:<name>]` in everything the store writes,
-in pdt-mcp results, in conversation deltas and in the logs. `run_with_secrets` and `write_secret_file` run in pdtd,
+node's config). pdt-core `secret::Redactor` replaces any value, as it is and in its JSON-escaped, hex, URL-encoded and
+base64 forms (`secret::forms`), with `[secret:<name>]` in everything the store writes, in pdt-mcp results, in
+conversation deltas and in the logs. It also knows PDT's own keychain values (connections, sign-ins, forge logins, the
+update token) through the `secrets::Redacting` store that wraps `AppState::secrets`, labelled by kind
+(`[secret:connection]`). `run_with_secrets` and `write_secret_file` run in pdtd,
 outside the agent's sandbox and permission mode, so they are asking tools (out of Claude's `--allowedTools`; the
 Inbox for other agents) unless `Session::asks_nothing`, and the PM's "act without asking" never covers them. Each must
 name a secret, and pdt-core `secret::checkout_path` plus the on-disk checks in `vault.rs` keep their folder and file

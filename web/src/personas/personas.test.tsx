@@ -36,8 +36,8 @@ const TOOLS_ROUTE = {
 };
 
 describe('normalTools', () => {
-  it('saves the default set as empty and never drops a name it does not know', () => {
-    expect(normalTools([...DEFAULTS].reverse())).toEqual([]);
+  it('saves the list as picked, without repeats, and never drops a name it does not know', () => {
+    expect(normalTools([])).toEqual([]);
     expect(normalTools(['get_ticket', 'brand_new_tool', 'get_ticket'])).toEqual(['get_ticket', 'brand_new_tool']);
   });
 });
@@ -273,7 +273,8 @@ describe('on a phone', () => {
     renderWithQuery(<PersonaPage personaId="a" onSelect={() => {}} />);
     expect(await screen.findByRole('heading', { name: 'Build it' })).toBeInTheDocument();
     expect(screen.getByText('opus')).toBeInTheDocument();
-    expect(within(screen.getByRole('list', { name: 'Tools' })).getAllByRole('listitem')).toHaveLength(DEFAULTS.length);
+    expect(within(screen.getByRole('list', { name: 'Tools' })).queryAllByRole('listitem')).toEqual([]);
+    expect(screen.getByText('None.')).toBeInTheDocument();
     expect(screen.queryAllByRole('textbox')).toEqual([]);
     for (const name of [/Save/, 'Archive', 'Delete persona…']) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
   });

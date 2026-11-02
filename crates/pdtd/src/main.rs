@@ -117,7 +117,9 @@ async fn run() -> anyhow::Result<()> {
     }
     state.owner_from_env = cfg.owner_login.clone();
     state.refresh_owner().await;
-    (state.secrets, state.secret_store) = secret_store(&cfg).await;
+    let (secrets, info) = secret_store(&cfg).await;
+    state.secrets = std::sync::Arc::new(pdt_api::secrets::Redacting::new(secrets, state.store.redactor().clone()));
+    state.secret_store = info;
     state.listen_port = cfg.port;
     state.host_env = std::sync::Arc::new(pdt_api::HostEnv {
         port: cfg.port_from_env.then_some(cfg.port),
