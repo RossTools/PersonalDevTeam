@@ -318,7 +318,7 @@ pub(crate) async fn apply_auto_start(st: &AppState, items: &mut [TicketSummary])
         }
         t.auto_start_at = policies[&t.project_id].as_ref().filter(|_| !paused).and_then(|p| auto_start_at(p, t, now));
     }
-    apply_pickup_holds(st, items, now);
+    apply_pickup_holds(st, items, &policies, now);
 }
 
 /// Why a choose passed a ticket over for overlapping work in flight (PDT-329).
@@ -336,15 +336,33 @@ pub(crate) struct PickupHold {
 pub(crate) const PICKUP_HOLD_SHOWN_MS: i64 = 3 * 60 * 1000;
 
 /// Fills in `pickup_hold` on tickets of a list that could still start: why pickup recently passed them over for
-/// overlap.
-fn apply_pickup_holds(st: &AppState, items: &mut [TicketSummary], now: i64) {
+/// overlap; and `pickup_failed` on those it passes over because their start failed and they haven't changed since
+/// (PDT-381), in projects whose auto-start is on.
+fn apply_pickup_holds(
+    st: &AppState,
+    items: &mut [TicketSummary],
+    policies: &HashMap<String, Option<pdt_core::policy::ProjectPolicy>>,
+    now: i64,
+) {
     let holds = st.pickup_holds.lock().unwrap_or_else(|e| e.into_inner());
+    let failed = st.auto_start_failed.lock().unwrap_or_else(|e| e.into_inner());
     for t in items {
         let could_start = matches!(t.stage, TicketStage::Todo | TicketStage::Ready)
             && t.attempt.as_ref().is_none_or(|a| a.state != pdt_core::ticket::AttemptState::Active);
         t.pickup_hold =
             holds.get(&t.id).filter(|h| could_start && now - h.at < PICKUP_HOLD_SHOWN_MS).map(|h| h.why.clone());
+        let auto_start =
+            policies.get(&t.project_id).and_then(Option::as_ref).is_some_and(|p| p.auto_start != AutoStart::Off);
+        t.pickup_failed =
+            failed.get(&t.id).filter(|f| could_start && auto_start && f.holds(t.updated_at)).map(|f| f.error.clone());
     }
+}
+
+/// Forgets that auto-start failed to start `ticket_id` (Try again, PDT-381): its next run tries it, and the pickup
+/// watch tells `ticket.startable` for it again on its next pass.
+pub(crate) fn forget_failed_start(st: &AppState, ticket_id: &str) {
+    st.auto_start_failed.lock().unwrap_or_else(|e| e.into_inner()).remove(ticket_id);
+    st.pickup_watch.lock().unwrap_or_else(|e| e.into_inner()).startable.remove(ticket_id);
 }
 
 /// Forgets the holds of `project_id` (its auto-start is off: nothing picks its tickets up).
