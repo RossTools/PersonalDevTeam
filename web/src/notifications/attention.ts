@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { InboxItem } from '../api/gen/InboxItem';
-import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import { itemState } from '../common/AgentState';
 import { useInbox } from '../inbox/useInbox';
-import { isUnread, usePm } from '../pm/usePm';
+import { pmUnread, usePmSummary, type PmSummary } from '../pm/usePm';
 import type { ItemInfo } from '../workspaces/useWorkspaces';
 
 /**
@@ -26,7 +25,7 @@ export interface AttentionSources {
   /** Every project's sessions and runs (the rail's and tree's dots). */
   items: ItemInfo[];
   /** The PM's conversations, and the one on screen (it reads as seen). */
-  pm: PmSessionInfo[];
+  pm: PmSummary[];
   pmShown: string | null;
 }
 
@@ -42,7 +41,7 @@ export function attentionOf({ inbox, items, pm, pmShown }: AttentionSources): At
   const level: AttentionLevel =
     open.some((i) => i.kind === 'session') || states.some((s) => s.label === 'Needs you') ? 'needs_you'
     : open.length > 0 ? 'inbox'
-    : news.some((s) => s.unseen) || pm.some((p) => isUnread(p, pmShown)) ? 'idle'
+    : news.some((s) => s.unseen) || pmUnread(pm, pmShown) ? 'idle'
     : 'none';
   return { level, count: open.length };
 }
@@ -56,7 +55,7 @@ const isStepSession = (i: ItemInfo) => !!i.session?.persona?.stepId;
  */
 export function useAttention(items: ItemInfo[], pmShown: string | null): Attention {
   const inbox = useInbox().data?.items;
-  const pm = usePm().data?.sessions;
+  const pm = usePmSummary().data?.conversations;
   const { level, count } = useMemo(
     () => attentionOf({ inbox: inbox ?? [], items, pm: pm ?? [], pmShown }),
     [inbox, items, pm, pmShown],

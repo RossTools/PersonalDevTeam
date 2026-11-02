@@ -1,7 +1,7 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboxItem } from '../api/gen/InboxItem';
-import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
+import { pmSummary, type PmSummary } from '../pm/usePm';
 import type { Run } from '../api/gen/Run';
 import type { Session } from '../api/gen/Session';
 import { stubApi } from '../test-utils';
@@ -21,7 +21,7 @@ const item = (id: string, kind: InboxItem['kind'], more: Partial<InboxItem> = {}
   personaId: null, personaName: null, changeRequest: null, title: id, body: {}, choices: [], resolution: null, createdAt: 1, resolvedAt: null, ...more,
 });
 
-const pm = (s: Session, open = true): PmSessionInfo => ({
+const pm = (s: Session, open = true): PmSummary => pmSummary({
   session: s, open, title: s.title, unseen: s.unseen, lastActivity: 1, rotation: 'none', reason: null, journal: null, via: null, resetFrom: null,
 });
 
