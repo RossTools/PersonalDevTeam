@@ -155,6 +155,10 @@ pub(crate) async fn server_for(st: &AppState, s: &Session) -> Option<pdt_agents:
             (Some(AgentKind::Codex), Some(home)) => pdt_agents::mcp::codex_config_servers(home),
             _ => vec![],
         },
+        codex_shell_exclude: match (s.agent, st.platform.codex_home.as_deref()) {
+            (Some(AgentKind::Codex), Some(home)) => pdt_agents::mcp::codex_config_shell_exclude(home),
+            _ => vec![],
+        },
     };
     if s.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude {
         let dir: PathBuf = st.data_dir.join("sessions").join(&s.id);

@@ -192,7 +192,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
           why: (
             <>
               {str(item.body.sessionTitle) ?? 'An agent'} asks for the secret <code>{name}</code>{purpose ? `: ${purpose}` : '.'} It is
-              kept in this machine&apos;s keychain; the agent can use it but never sees it. Never paste it into the chat.
+              kept in this machine&apos;s keychain; the agent uses it by name and never gets it in the chat. Never paste it into the chat.
             </>
           ),
           content: (

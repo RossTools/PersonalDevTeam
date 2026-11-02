@@ -651,7 +651,8 @@ async fn a_stdio_mcp_servers_tools_are_listed_and_called() {
     assert_eq!(step(&r, "echo")["output"], "hihi", "text content");
     assert_eq!(step(&r, "add")["output"], json!({"sum": 3.0}), "structured content");
     let who = &step(&r, "who")["output"];
-    assert_eq!(who["secret"], "s3cret", "the secret is in the env var the connection names");
+    // The secret is in the env var the connection names; the step's record has it redacted (PDT-413).
+    assert_eq!(who["secret"], "[secret:connection]", "{who}");
     assert_eq!(step(&r, "again")["output"]["pid"], who["pid"], "one process serves the calls");
 
     // A changed connection starts the server again.

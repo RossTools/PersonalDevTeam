@@ -23,7 +23,7 @@ pub(super) fn defs() -> Vec<Tool> {
         Tool {
             decl: ToolDecl::new(
                 "run_with_secrets",
-                "Run a command with secrets in its environment (it never sees them; asks you first)",
+                "Run a command with secrets in its environment, never pasted into the chat (asks you first)",
             )
             .asks()
             .pm(),
@@ -37,7 +37,7 @@ pub(super) fn defs() -> Vec<Tool> {
         Tool {
             decl: ToolDecl::new(
                 "write_secret_file",
-                "Write a file (a .env) with secrets filled in, without seeing it (asks you first)",
+                "Write a file (a .env) with secrets filled in, never pasted into the chat (asks you first)",
             )
             .asks()
             .pm(),

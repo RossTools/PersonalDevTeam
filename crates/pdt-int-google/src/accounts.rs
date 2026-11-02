@@ -160,6 +160,7 @@ pub async fn client(st: &AppState, shared: &Shared, c: &Connection, agent: bool)
 /// sign-in, which agents use too.
 pub async fn account(st: &AppState, shared: &Shared, c: &Connection, agent: bool) -> Result<Account, ProviderError> {
     let agent = agent && shared.uses_built_in(c);
+    shared.tokens.redact_with(st.store.redactor());
     let s = sign_in(st, &c.id).await?.ok_or_else(|| {
         ProviderError::Failed(format!(
             "the Google connection {} isn't signed in: sign in in Settings → Plugins → Google",
