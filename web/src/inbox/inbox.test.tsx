@@ -660,9 +660,23 @@ describe('inbox', () => {
     renderWithQuery(<InboxView items={[]} selectedId={null} onSelect={() => {}} />);
     expect(screen.getByText(/Nothing waits on you/)).toBeInTheDocument();
   });
+
+  it("says it can't load, not that nothing waits, when the Inbox failed", () => {
+    renderWithQuery(<InboxView items={[]} selectedId={null} onSelect={() => {}} failed />);
+    expect(screen.getByText(/Can't load the Inbox/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing waits on you/)).toBeNull();
+  });
 });
 
 describe('inbox sections (PDT-108)', () => {
+  it("says the lists can't load, not that they are empty, when they failed", () => {
+    renderWithQuery(<InboxList items={[]} updates={[]} selectedId={null} onSelect={() => {}} failed updatesFailed />);
+    expect(screen.getByText("Can't load the Inbox.")).toBeInTheDocument();
+    expect(screen.getByText("Can't load updates.")).toBeInTheDocument();
+    expect(screen.queryByText('Nothing waits on you.')).toBeNull();
+    expect(screen.queryByText('No updates.')).toBeNull();
+  });
+
   it('lists Needs you, then Updates with unread in bold, and marks them all read', async () => {
     const { notification } = await import('../notifications/fixtures');
     const waiting = item('session:s1', { kind: 'session', group: 'session', sessionId: 's1', title: 'Fix the build', ticketKey: null });
