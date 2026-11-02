@@ -40,16 +40,35 @@ export interface PartsStepperProps {
   className?: string;
 }
 
-/** One segment per part, in order, coloured by where it is (done, merged, in review, in progress, to do, not started). */
+/** Above this many parts the stepper is one bar of proportional segments: separate segments would be slivers. */
+export const PARTS_BAR_ABOVE = 20;
+
+/** The bar's segments, in this order: closed first, not started last. */
+const BAR_ORDER: PartState[] = ['done', 'merged', 'review', 'progress', 'todo', 'backlog'];
+
+/**
+ * One segment per part, in order, coloured by where it is (done, merged, in review, in progress, to do, not started);
+ * past `PARTS_BAR_ABOVE` parts, one bar with a segment per state, sized by its count. Either way the segments shrink
+ * to the width they're given and never overflow it; the tooltip gives the counts.
+ */
 export function PartsStepper({ parts, showCount = false, className }: PartsStepperProps) {
   const summary = partsSummary(parts);
+  const bar = parts.segments.length > PARTS_BAR_ABOVE;
   return (
     <span role="img" aria-label={summary} title={summary} className={cn('flex min-w-0 items-center gap-1.5', className)}>
-      <span aria-hidden className="flex min-w-8 flex-1 items-center gap-0.5">
-        {parts.segments.map((s, i) => (
-          <span key={i} data-state={s} className={cn('h-1.5 min-w-1.5 flex-1 rounded-full', SEGMENT[s])} />
-        ))}
-      </span>
+      {bar ? (
+        <span aria-hidden data-bar className="flex h-1.5 min-w-8 flex-1 overflow-hidden rounded-full bg-border">
+          {BAR_ORDER.filter((s) => parts[s] > 0).map((s) => (
+            <span key={s} data-state={s} className={cn('h-full min-w-0.5', SEGMENT[s])} style={{ flexGrow: parts[s], flexBasis: 0 }} />
+          ))}
+        </span>
+      ) : (
+        <span aria-hidden className="flex min-w-8 flex-1 items-center gap-0.5 overflow-hidden">
+          {parts.segments.map((s, i) => (
+            <span key={i} data-state={s} className={cn('h-1.5 min-w-0.5 flex-1 rounded-full', SEGMENT[s])} />
+          ))}
+        </span>
+      )}
       {showCount && <span aria-hidden className="shrink-0 text-meta text-muted-foreground tabular-nums">{partsCount(parts)}</span>}
     </span>
   );

@@ -23,7 +23,7 @@ import { TicketKey } from '../common/TicketKey';
 import { agentLine } from '../common/ticketAgent';
 import { runAction } from '../common/useAction';
 import { canStart, moveTicket, startNextPart, ticketMenu, useOpenTicket, useStartTicket } from './actions';
-import { buildLanes, laneIds, lanePr, readCollapsed, writeCollapsed, type Lane } from './BoardLanes';
+import { buildLanes, laneIds, readCollapsed, writeCollapsed, type Lane } from './BoardLanes';
 import { useAllSessions, useTicketPages } from './queries';
 import { useClearToStartToasts } from './clearToStart';
 import { CiBadge, PrBadge } from './PullRequest';
@@ -375,10 +375,11 @@ function ColumnStatus({ col, title, stage, showEmpty, doneDays }: { col: ColumnD
 }
 
 /**
- * A parent's lane header: its key (opens the peek), title, stage, the parts' stepper and count, the PR of a part in
- * review, Start next part, its menu, and the collapse toggle.
+ * A parent's lane header: its key (opens the peek), title, stage, the parts' stepper and count, Start next part, its
+ * menu, and the collapse toggle. The title gives way first (it truncates); the rest keep their width. No PR here: the
+ * parts run side by side, and each card shows its own.
  */
-function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
+export function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
   lane: Lane;
   collapsed: boolean;
   onToggle: () => void;
@@ -392,7 +393,6 @@ function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
   const start = useStartTicket();
   const parent = lane.parent!;
   const t = lane.ticket;
-  const pr = lanePr(lane);
   const openStage = t ? t.stage !== 'done' && t.stage !== 'wont_do' : true;
   const entries = (): MenuEntry[] =>
     t ? ticketMenu({ qc, confirm, ticket: t, onOpen: () => open(t) }) : [{ label: 'Open', onSelect: () => open({ id: parent.id, projectId: '' }) }];
@@ -401,19 +401,18 @@ function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
       role="group"
       aria-label={`${parent.key} ${parent.title}`}
       data-peek
-      className={cn('flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1', compact ? 'px-1 pt-3 pb-1' : 'px-1 pt-3 pb-1.5')}
+      className={cn('flex min-w-0 items-center gap-2 px-1 pt-3', compact ? 'pb-1' : 'pb-1.5')}
     >
       <IconButton label={collapsed ? `Expand ${parent.key}` : `Collapse ${parent.key}`} size="sm" onClick={onToggle}>
         {collapsed ? <ChevronRight aria-hidden /> : <ChevronDown aria-hidden />}
       </IconButton>
-      <TicketKey ticketKey={parent.key} title={parent.title} onClick={() => onPeek(parent.id)} />
-      <h4 className="min-w-0 flex-1 truncate text-xs font-medium sm:flex-none" title={parent.title}>{parent.title}</h4>
+      <TicketKey ticketKey={parent.key} title={parent.title} onClick={() => onPeek(parent.id)} className="shrink-0" />
+      <h4 className={cn('min-w-8 truncate text-xs font-medium', compact ? 'flex-1' : 'flex-initial')} title={parent.title}>{parent.title}</h4>
       {t && <span className="shrink-0 text-meta text-muted-foreground">{STAGE_LABEL[t.stage]}</span>}
-      {t?.parts && <PartsStepper parts={t.parts} showCount className={compact ? 'w-24' : 'w-32'} />}
-      {pr && !compact && <PrBadge pr={pr} />}
-      {!compact && <span className="hidden flex-1 sm:block" />}
+      {t?.parts && <PartsStepper parts={t.parts} showCount className={cn('shrink-0', compact ? 'w-20' : 'w-36')} />}
+      {!compact && <span className="flex-1" />}
       {openStage && !compact && (
-        <Button variant="ghost" size="sm" onClick={() => void runAction(() => startNextPart(start, parent))}>
+        <Button variant="ghost" size="sm" className="shrink-0" onClick={() => void runAction(() => startNextPart(start, parent))}>
           Start next part
         </Button>
       )}
