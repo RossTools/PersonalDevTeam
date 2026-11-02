@@ -38,7 +38,8 @@ ticket.
 
 Bugs and ideas: open an issue (or use **Report a bug…** in PDT). Security problems: see [SECURITY.md](SECURITY.md),
 never a public issue. To work on PDT, start with [CONTRIBUTING.md](CONTRIBUTING.md): what to install, how to make a
-change and open a pull request, and how to try your branch. A dev build, on its own port and data folder:
+change and open a pull request, and how to try your branch. Everyone taking part follows the
+[code of conduct](CODE_OF_CONDUCT.md). A dev build, on its own port and data folder:
 
 ```sh
 pnpm install --frozen-lockfile

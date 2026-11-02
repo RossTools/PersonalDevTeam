@@ -2,7 +2,8 @@
 
 Thanks for helping. Bugs and ideas: open an issue (or use **Report a bug…** in PDT). Security problems: see
 [SECURITY.md](SECURITY.md), never a public issue. For a larger change, open an issue first so we can agree on the
-approach before you build it.
+approach before you build it. Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md); report
+problems to [security@pdt.dev](mailto:security@pdt.dev).
 
 This page is what you need from a fresh clone to a pull request. The full process (CI, the merge queue, releases) is
 in [docs/SDLC.md](docs/SDLC.md), how the code works in the [developer guide](docs/dev/architecture.md), and
