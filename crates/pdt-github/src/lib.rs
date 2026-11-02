@@ -931,11 +931,6 @@ pub fn job_list(v: &Value) -> Result<&Vec<Value>, GhError> {
     v["jobs"].as_array().ok_or_else(|| GhError::BadAnswer("no jobs in the answer".into()))
 }
 
-/// A jobs answer (`GET …/jobs`): the jobs that failed.
-pub fn failed_job_list(v: &Value) -> Result<Vec<Value>, GhError> {
-    Ok(job_list(v)?.iter().filter(|j| failed(j)).cloned().collect())
-}
-
 /// The end of a job's log: its last [`LOG_LINES`] lines (at most [`LOG_CHARS`] characters), without Actions'
 /// timestamps and terminal colours.
 pub fn log_tail(raw: &str) -> String {
