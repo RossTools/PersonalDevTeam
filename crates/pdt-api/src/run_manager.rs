@@ -9,6 +9,7 @@
 //! port a stored row mentions.
 
 use crate::error::ApiError;
+use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use axum::http::StatusCode;
 use pdt_agents::SpawnSpec;
@@ -133,7 +134,10 @@ pub(crate) fn restart_host_dependent_runs(st: &AppState) {
             if let Err(e) = restart_in_place(&st, &id).await {
                 tracing::warn!(run = %id, error = %e, "could not restart a run for its new host");
                 let msg = format!("could not start again for remote access's new address: {e}");
-                let _ = st.store.finish_run(&id, RunState::Failed, None, Some(&msg), now_ms()).await;
+                st.store
+                    .finish_run(&id, RunState::Failed, None, Some(&msg), now_ms())
+                    .await
+                    .log_warn("record the run ending");
             }
         });
     }
@@ -374,7 +378,7 @@ type Outcome = (RunState, Option<i32>, Option<String>);
 type ExitFuture = Pin<Box<dyn Future<Output = Option<i32>> + Send>>;
 
 async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) -> Outcome {
-    let _ = st.store.set_run_process(&run.id, def.detach, None).await;
+    st.store.set_run_process(&run.id, def.detach, None).await.log_warn("record the run process");
     let v = vars(st, run);
     let pairs = v.pairs();
     let shell = if st.platform.windows { CommandShell::Cmd } else { CommandShell::Sh };
@@ -389,7 +393,7 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
         return (RunState::Failed, None, Some(format!("could not create the data folder {dir}: {e}")));
     }
     if let Some(setup) = &def.setup {
-        let _ = st.store.set_run_state(&run.id, RunState::SettingUp, now_ms()).await;
+        st.store.set_run_state(&run.id, RunState::SettingUp, now_ms()).await.log_warn("record the run state");
         let setup = match expand_command(setup, &pairs, shell) {
             Ok(s) => s,
             Err(e) => return (RunState::Failed, None, Some(format!("setup did not start: {e}"))),
@@ -410,7 +414,7 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
         return (RunState::Stopped, None, stop_reason(ctl));
     }
     let first = if run.kind == RunKind::Test { RunState::Running } else { RunState::Starting };
-    let _ = st.store.set_run_state(&run.id, first, now_ms()).await;
+    st.store.set_run_state(&run.id, first, now_ms()).await.log_warn("record the run state");
     let command = match expand_command(&def.command, &pairs, shell) {
         Ok(c) => c,
         Err(e) => return (RunState::Failed, None, Some(format!("the command did not start: {e}"))),
@@ -424,7 +428,7 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
             Ok(d) => d,
             Err(e) => return (RunState::Failed, None, Some(format!("the command could not start: {e}"))),
         };
-        let _ = st.store.set_run_process(&run.id, true, Some(&d.process)).await;
+        st.store.set_run_process(&run.id, true, Some(&d.process)).await.log_warn("record the run process");
         let rx = detached::watch(d.process, Some(d.main));
         Box::pin(async move { rx.await.ok().flatten() })
     } else {
@@ -439,7 +443,7 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
     }
     let mut ready = run.kind == RunKind::Test;
     if run.kind == RunKind::Run && !def.web {
-        let _ = st.store.set_run_state(&run.id, RunState::Ready, now_ms()).await;
+        st.store.set_run_state(&run.id, RunState::Ready, now_ms()).await.log_warn("record the run state");
         ready = true;
     }
     watch_command(st, ctl, run, def.detach, ready, exit).await
@@ -462,7 +466,7 @@ async fn watch_command(
                     && answers(p).await
                 {
                     ready = true;
-                    let _ = st.store.set_run_state(&run.id, RunState::Ready, now_ms()).await;
+                    st.store.set_run_state(&run.id, RunState::Ready, now_ms()).await.log_warn("record the run state");
                 }
             }
         }
@@ -613,7 +617,10 @@ async fn stop_inner(st: &AppState, id: &str, reason: Option<String>, counted: bo
                 if let Some(p) = r.process {
                     let _ = tokio::task::spawn_blocking(move || detached::terminate(&p)).await;
                 }
-                let _ = st.store.finish_run(id, RunState::Stopped, None, reason.as_deref(), now_ms()).await;
+                st.store
+                    .finish_run(id, RunState::Stopped, None, reason.as_deref(), now_ms())
+                    .await
+                    .log_warn("record the run ending");
             }
             true
         }
@@ -642,7 +649,7 @@ pub async fn resume_runs(st: &AppState) -> usize {
             if alive {
                 if let Some(p) = run.port {
                     let url = run_url(st, p);
-                    let _ = st.store.set_run_port(&run.id, Some(p), Some(&url)).await;
+                    st.store.set_run_port(&run.id, Some(p), Some(&url)).await.log_warn("record the run port");
                     run.url = Some(url);
                 }
                 let def = crate::runs::definition_for(st, &run).await.ok();
@@ -651,7 +658,10 @@ pub async fn resume_runs(st: &AppState) -> usize {
                 started += 1;
             } else {
                 let msg = "the command exited while PDT was not running";
-                let _ = st.store.finish_run(&run.id, RunState::Stopped, None, Some(msg), now_ms()).await;
+                st.store
+                    .finish_run(&run.id, RunState::Stopped, None, Some(msg), now_ms())
+                    .await
+                    .log_warn("record the run ending");
                 let id = pty_id(&run.id, RunStep::Command);
                 if st.ptys.follow_log(&id, log_path(st, &run.id)).is_ok() {
                     st.ptys.end_log(&id, None);
@@ -666,7 +676,10 @@ pub async fn resume_runs(st: &AppState) -> usize {
         let def = match def {
             Ok(d) => d,
             Err(msg) => {
-                let _ = st.store.finish_run(&run.id, RunState::Failed, None, Some(&msg), now_ms()).await;
+                st.store
+                    .finish_run(&run.id, RunState::Failed, None, Some(&msg), now_ms())
+                    .await
+                    .log_warn("record the run ending");
                 continue;
             }
         };
@@ -674,12 +687,15 @@ pub async fn resume_runs(st: &AppState) -> usize {
             match allocate_port(st, run.port, Some(&run.id)).await {
                 None => {
                     let msg = "no free port in the host's run port range";
-                    let _ = st.store.finish_run(&run.id, RunState::Failed, None, Some(msg), now_ms()).await;
+                    st.store
+                        .finish_run(&run.id, RunState::Failed, None, Some(msg), now_ms())
+                        .await
+                        .log_warn("record the run ending");
                     continue;
                 }
                 Some(p) => {
                     let url = run_url(st, p);
-                    let _ = st.store.set_run_port(&run.id, Some(p), Some(&url)).await;
+                    st.store.set_run_port(&run.id, Some(p), Some(&url)).await.log_warn("record the run port");
                     run.port = Some(p);
                     run.url = Some(url);
                 }

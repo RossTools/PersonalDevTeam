@@ -4,6 +4,7 @@
 
 use crate::error::ApiError;
 use crate::forge::ProjectForge;
+use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::body::Bytes;
@@ -748,7 +749,7 @@ pub(crate) async fn merge_attempt(
     let repo = PathBuf::from(&info.repo_path);
     let branch_ref = format!("refs/heads/{}", info.attempt.branch);
     if let Ok(Some(head)) = tokio::task::spawn_blocking(move || pdt_git::rev_parse(&repo, &branch_ref)).await {
-        let _ = st.store.set_attempt_head(&info.attempt.id, &head, true).await;
+        st.store.set_attempt_head(&info.attempt.id, &head, true).await.log_warn("record the merged head");
     }
     let pr = crate::github::watched_pr(&st, &info.attempt.id).map(|p| p.number);
     // The user's own Merge… finishes the ticket itself; a workflow's or an agent's leaves it to Finish merged tickets,

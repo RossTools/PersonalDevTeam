@@ -5,6 +5,7 @@
 //! `stop_ticket`.
 
 use crate::error::ApiError;
+use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -445,10 +446,13 @@ pub(crate) async fn clean_up_closed(st: &AppState, info: &AttemptInfo, now: bool
             notes.push(format!("Kept the branch: {n}."));
         }
         // The ticket's tabs elsewhere close too.
-        if let Ok(all) = st.store.list_workspaces().await {
-            for tab in all.iter().flat_map(|w| &w.tabs) {
-                if tab.ticket_id.as_deref() == Some(info.ticket_id.as_str()) {
-                    let _ = st.store.close_tab(&tab.id).await;
+        match st.store.list_workspaces().await {
+            Err(e) => tracing::warn!(error = %e, "could not read the workspaces to close the ticket's tabs"),
+            Ok(all) => {
+                for tab in all.iter().flat_map(|w| &w.tabs) {
+                    if tab.ticket_id.as_deref() == Some(info.ticket_id.as_str()) {
+                        st.store.close_tab(&tab.id).await.log_warn("close a removed ticket's tab");
+                    }
                 }
             }
         }

@@ -29,8 +29,10 @@ function foreign(e: KeyboardEvent): boolean {
  * a question's choices, `y`/`n` answer an approval; answering moves to the next item. An Update (PDT-108) shows what
  * it says and opens what it is about.
  */
-export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTarget }: {
+export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTarget, failed }: {
   items: InboxItem[];
+  /** The Inbox can't be loaded (or the host reached): no item says so rather than that nothing waits. */
+  failed?: boolean;
   updates?: Notification[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
@@ -54,6 +56,7 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
     return update ? <UpdateView update={update} onOpenTarget={onOpenTarget} onCleared={() => onSelect(null)} /> : <EmptyState>This update is gone.</EmptyState>;
   }
   if (!item) {
+    if (items.length === 0 && failed) return <EmptyState>Can't load the Inbox. It shows again once the host answers.</EmptyState>;
     return <EmptyState>{items.length === 0 ? 'Nothing waits on you. Questions, approvals and gates from agents and workflows show up here.' : 'Choose an item.'}</EmptyState>;
   }
   return <ItemPane key={item.id} item={item} items={items} onSelect={onSelect} />;

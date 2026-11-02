@@ -6,6 +6,7 @@
 
 use crate::routes::AppState;
 use pdt_core::forge::ForgeKind;
+use pdt_core::runconfig::RunConfig;
 use pdt_forge::{Capabilities, CiProvider, Forge, ForgePlugin};
 use std::sync::Arc;
 
@@ -45,11 +46,29 @@ impl AppState {
     }
 }
 
+/// The run configuration of the project at `repo_path`, for picking its forge and CI providers. None when it can't be
+/// read (the defaults apply): logged when that is news, as these are read on every poll.
+pub(crate) async fn run_config(st: &AppState, project_id: &str, repo_path: &str) -> Option<RunConfig> {
+    let what = format!("runconfig:{project_id}");
+    match crate::runconfig::load_effective(st, project_id, std::path::Path::new(repo_path)).await {
+        Ok(c) => {
+            crate::github::failure_cleared(st, &what);
+            Some(c)
+        }
+        Err(e) => {
+            if crate::github::newly_failed(st, &what, e.message()) {
+                tracing::warn!(project = %project_id, error = %e.message(), "could not read the run configuration; the forge and CI fall back to the defaults");
+            }
+            None
+        }
+    }
+}
+
 /// The forge of the project at `repo_path` (its main checkout); None when it has none (`forge = "none"`, an origin
 /// no forge claims, a Personal project's folder).
 pub(crate) async fn project_forge(st: &AppState, project_id: &str, repo_path: &str) -> Option<ProjectForge> {
     // A file that can't be read leaves the choice to the origin, as a project without one.
-    let config = crate::runconfig::load_effective(st, project_id, std::path::Path::new(repo_path)).await.ok();
+    let config = run_config(st, project_id, repo_path).await;
     let named = config.as_ref().and_then(|c| c.forge.clone());
     if named == Some(ForgeKind::NONE) {
         return None;

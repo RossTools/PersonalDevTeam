@@ -27,6 +27,15 @@ reports**). It can attach the end of the log, with tokens and your machine's nam
 On Linux, `systemctl --user status pdt-host` says whether the service runs, and `journalctl --user -u pdt-host` shows
 its output.
 
+## "Can't reach the host"
+
+A red strip above the page says **Can't reach the host** when your browser is offline or PDT stops answering. What is
+on screen may be out of date. PDT keeps trying and the strip goes away once it answers; if it stays, see
+[PDT doesn't open](#pdt-doesnt-open).
+
+When the Inbox can't load its items (with or without the strip), it says **Can't load the Inbox** rather than that
+nothing waits on you.
+
 ## The port is in use, or the field is locked
 
 **The log says `port 7420 is already in use`.** Another program has PDT's port. Find it (`lsof -i :7420` on macOS

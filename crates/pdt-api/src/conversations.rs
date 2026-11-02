@@ -3,6 +3,7 @@
 //! WebSocket viewers and derives the session's activity from them.
 
 use crate::error::ApiError;
+use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -524,7 +525,7 @@ async fn pump(
                     }
                 };
                 if let Some(m) = mode_changed {
-                    let _ = st.store.set_session_permission_mode(&c.id, m).await;
+                    st.store.set_session_permission_mode(&c.id, m).await.log_warn("save the session's permission mode");
                 }
                 c.push_state();
             }

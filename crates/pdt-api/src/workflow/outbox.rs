@@ -203,7 +203,7 @@ pub(crate) async fn deliver(st: &AppState) {
                 Ok(()) => tracing::info!(session = %sid, messages = list.len(), "gave the agent its messages"),
                 Err(e) => {
                     tracing::warn!(session = %sid, error = %e.message(), "could not send messages to the conversation");
-                    let _ = st.store.unsend_session_messages(&pending_id).await;
+                    unsend(st, &sid, &pending_id).await;
                 }
             }
             continue;
@@ -218,6 +218,22 @@ pub(crate) async fn deliver(st: &AppState) {
             Err(e) => tracing::warn!(session = %sid, error = %e, "could not type a message into the session"),
         }
     }
+}
+
+/// Puts a batch that never went in back to waiting, for the next pass. Tried twice (a busy database); failing that,
+/// the batch would stay marked on its way with nothing to tell the agent, so it is given up and the user told.
+async fn unsend(st: &AppState, sid: &str, pending_id: &str) {
+    let mut last = None;
+    for _ in 0..2 {
+        match st.store.unsend_session_messages(pending_id).await {
+            Ok(_) => return,
+            Err(e) => last = Some(e),
+        }
+    }
+    if let Some(e) = last {
+        tracing::warn!(session = %sid, error = %e, "could not put unsent messages back in the queue");
+    }
+    lost(st, &[pending_id.to_string()], Some("PDT could not send it, nor queue it again."));
 }
 
 /// One message for a session's batch. Workflows' messages (PR notices) meeting a step that hands in work (a Coder's,

@@ -41,6 +41,16 @@ fn is_binary(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(SNIFF)].contains(&0)
 }
 
+/// A failed merge's error, saying so when undoing it failed too (the checkout is left mid-merge).
+fn undone(failed: String, undo: Result<String, GitError>) -> GitError {
+    match undo {
+        Ok(_) => GitError::Command(failed),
+        Err(e) => GitError::Command(format!(
+            "{failed}; and the merge couldn't be undone, so the checkout needs cleaning up: {e}"
+        )),
+    }
+}
+
 fn run(dir: &Path, args: &[&str]) -> Result<String, GitError> {
     git_with_env(dir, args, &[])?.map_err(|f| GitError::Command(f.stderr))
 }
@@ -363,13 +373,11 @@ pub fn merge_local(
                 Err(f) => Err(f),
             };
             if let Err(f) = done {
-                let _ = git_with_env(&dir, &["reset", "--merge"], &[]);
-                return Err(GitError::Command(f.stderr));
+                return Err(undone(f.stderr, run(&dir, &["reset", "--merge"])));
             }
         } else if let Err(f) = git_with_env(&dir, &["merge", "--no-ff", "--no-edit", "-m", message, &branch_ref], &[])?
         {
-            let _ = git_with_env(&dir, &["merge", "--abort"], &[]);
-            return Err(GitError::Command(f.stderr));
+            return Err(undone(f.stderr, run(&dir, &["merge", "--abort"])));
         }
         let commit = run(&dir, &["rev-parse", "HEAD"])?;
         return Ok(MergeOutcome::Merged { commit });
