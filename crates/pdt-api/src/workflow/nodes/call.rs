@@ -19,12 +19,14 @@ pub struct CallConfig {
     pub input: Value,
 }
 
+pub const KIND: &str = "workflow.call";
+
 pub struct Call;
 
 impl NodeKind for Call {
     fn spec(&self) -> KindSpec {
         spec::<CallConfig, Value>(
-            "workflow.call",
+            KIND,
             1,
             Category::Flow,
             "Run a workflow",

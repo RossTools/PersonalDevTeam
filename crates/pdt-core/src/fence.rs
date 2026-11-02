@@ -59,10 +59,18 @@ impl Fence {
     }
 }
 
+/// The outside fields that say all of `root` is outside (`root` itself and everything in it): a sub-workflow's input
+/// when outside input started the run that called it (PDT-415).
+pub const ALL: &[&str] = &["*"];
+
 /// Whether a reference's `path` (`trigger.body.message`) reads one of the outside fields `paths` under `root` (the
-/// field itself, or something inside it).
+/// field itself, or something inside it; [`ALL`]: anything under `root`, or `root` itself).
 pub fn reads_outside(path: &str, root: &str, paths: &[&str]) -> bool {
-    let Some(rest) = path.trim().strip_prefix(root).and_then(|r| r.strip_prefix('.')) else { return false };
+    let Some(rest) = path.trim().strip_prefix(root) else { return false };
+    if paths == ALL {
+        return rest.is_empty() || rest.starts_with('.');
+    }
+    let Some(rest) = rest.strip_prefix('.') else { return false };
     paths.iter().any(|p| rest == *p || rest.strip_prefix(p).is_some_and(|r| r.starts_with('.')))
 }
 
@@ -172,6 +180,17 @@ mod tests {
         assert_eq!(fill("{{secret.k}}"), "{{secret.k}}");
         assert!(reads_outside("trigger.body", "trigger", &paths) && !reads_outside("trigger.bodyx", "trigger", &paths));
         assert!(!reads_outside("steps.body", "trigger", &paths));
+    }
+
+    #[test]
+    fn all_of_a_root_can_be_outside() {
+        let f = Fence::new("w");
+        let ctx = serde_json::json!({"trigger": {"text": "hi", "n": 3}, "steps": {"a": "x"}});
+        let fill = |s: &str| resolve_fenced(&serde_json::json!(s), &ctx, &["secret"], "trigger", ALL, &f);
+        assert_eq!(fill("{{trigger.text}} {{trigger.n}}"), format!("{} {}", f.wrap("hi"), f.wrap("3")));
+        assert_eq!(fill("{{trigger}}"), f.wrap(r#"{"n":3,"text":"hi"}"#));
+        assert_eq!(fill("{{steps.a}}"), "x");
+        assert!(!reads_outside("triggers.x", "trigger", ALL));
     }
 
     #[test]
