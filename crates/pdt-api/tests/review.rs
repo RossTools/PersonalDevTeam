@@ -888,3 +888,55 @@ async fn two_finishes_at_once_leave_both_runs_and_move_the_ticket_to_done_once()
         .count();
     assert_eq!(to_done, 1, "{events}");
 }
+
+/// PDT-182: a finish spares only the runs about to finish the ticket themselves; a run advancing toward anything else
+/// is cancelled, so nothing works on the Done ticket.
+#[tokio::test]
+async fn a_finish_cancels_running_runs_unless_their_next_step_finishes_the_ticket() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    let started = |name: &str, nodes: Value, edges: Value| {
+        let doc = json!({"name": name, "nodes": nodes, "edges": edges});
+        let (app, ticket) = (env.app.clone(), env.ticket.clone());
+        async move {
+            let (s, w) = call(&app, "POST", "/api/workflows", Some(json!({"doc": doc, "enabled": true}))).await;
+            assert_eq!(s, StatusCode::CREATED, "{w}");
+            let wf = w["id"].as_str().unwrap();
+            let body = json!({"input": {"ticketId": ticket}});
+            let (s, r) = call(&app, "POST", &format!("/api/workflows/{wf}/run"), Some(body)).await;
+            assert_eq!(s, StatusCode::OK, "{r}");
+            r["runId"].as_str().unwrap().to_string()
+        }
+    };
+    let trigger = json!({"id": "t", "kind": "manual", "version": 1});
+    let finish = |id: &str| json!({"id": id, "kind": "ticket.finish", "version": 1, "config": {"ticket": "{{trigger.ticketId}}"}});
+    // Started, not advanced yet: each is running, with its next step queued. The mover's finish is two steps on, as
+    // in the Pipeline, where nearly every step leads to its finish some time.
+    let mover = started(
+        "Move it",
+        json!([trigger, {"id": "move", "kind": "ticket.move", "version": 1,
+                         "config": {"ticket": "{{trigger.ticketId}}", "stage": "todo"}},
+               {"id": "say", "kind": "ticket.comment", "version": 1,
+                "config": {"ticket": "{{trigger.ticketId}}", "body": "moved"}},
+               finish("end")]),
+        json!([{"from": "t", "to": "move"}, {"from": "move", "to": "say"}, {"from": "say", "to": "end"}]),
+    )
+    .await;
+    let finisher = started("Finish it", json!([trigger, finish("end")]), json!([{"from": "t", "to": "end"}])).await;
+    let status = |id: String| {
+        let app = env.app.clone();
+        async move { call(&app, "GET", &format!("/api/workflow-runs/{id}"), None).await.1["status"].clone() }
+    };
+    assert_eq!((status(mover.clone()).await, status(finisher.clone()).await), (json!("running"), json!("running")));
+
+    let (s, r) =
+        call(&env.app, "POST", &format!("/api/tickets/{}/finish", env.ticket), Some(json!({"stopRunning": true})))
+            .await;
+    assert_eq!((s, r["outcome"].as_str()), (StatusCode::OK, Some("finished")), "{r}");
+    assert_eq!(status(mover).await, "cancelled");
+    assert_eq!(status(finisher.clone()).await, "running");
+    pdt_api::run_workflows(&env.state).await;
+    assert_eq!(status(finisher).await, "succeeded", "it found the ticket finished already");
+    let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
+    assert_eq!(t["stage"], "done", "{t}");
+}

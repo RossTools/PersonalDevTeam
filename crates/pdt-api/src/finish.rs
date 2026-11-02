@@ -224,8 +224,8 @@ async fn move_to_done(st: &AppState, ticket_id: &str, by: Option<&By>) -> Result
     Ok(())
 }
 
-/// Cancels the ticket's runs still going, except `by`'s run and the runs that called it, and the runs on their way to
-/// a `ticket.finish` (PDT-182): those finish the ticket themselves, and find it finished already. Each cancel takes
+/// Cancels the ticket's runs still going, except `by`'s run and the runs that called it, and the runs about to
+/// finish the ticket themselves (PDT-182), which then find it finished already. Each cancel takes
 /// the engine lock: a `ticket.finish` step's body runs outside it (PDT-128).
 async fn cancel_runs(st: &AppState, ticket_id: &str, by: Option<&By>) {
     let filter = pdt_store::RunFilter { ticket_id: Some(ticket_id.to_string()), limit: 500, ..Default::default() };
@@ -258,14 +258,17 @@ async fn cancel_runs(st: &AppState, ticket_id: &str, by: Option<&By>) {
     }
 }
 
-/// Whether a run advancing (not waiting) has a step to run that leads to a `ticket.finish`, or is in one.
+/// Whether a run advancing (not waiting) is in a `ticket.finish` step, or has a step to run with an edge straight to
+/// one (Finish merged tickets' gate that answers itself, the Pipeline's merge). Only one step away: in the Pipeline
+/// nearly every step leads to its finish some time, and a run further back works on a Done ticket, so it is cancelled.
 async fn heading_to_finish(st: &AppState, run: &Run) -> bool {
     let Ok((_, doc)) = crate::workflow::engine::load(st, run).await else { return false };
     let Ok(steps) = st.store.list_steps(&run.id).await else { return false };
+    let finish = |id: &str| doc.node(id).is_some_and(|n| n.kind == "ticket.finish");
     steps
         .iter()
         .filter(|s| matches!(s.status, StepStatus::Pending | StepStatus::Running))
-        .any(|s| doc.reaches(&s.node_id, "ticket.finish"))
+        .any(|s| finish(&s.node_id) || doc.edges.iter().any(|e| e.from == s.node_id && finish(&e.to)))
 }
 
 async fn pull(st: &AppState, project_id: &str, branch: Option<String>) -> Option<PullResult> {
