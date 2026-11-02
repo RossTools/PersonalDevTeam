@@ -37,6 +37,11 @@ Agents never get the value. PDT gives them three tools instead:
 - **write a secret file**: writes a file from a template with the secrets filled in (a `.npmrc` or `.env`, say),
   readable only by you. The agent gets back where it wrote it and how big it is, not its content.
 
+Running a command or writing a file this way happens in PDT, outside the agent's own sandbox, so PDT asks you first:
+the agent's permission prompt, or an **Allow** / **Deny** item in your Inbox for agents that don't ask themselves. It
+doesn't ask a session you started with permissions bypassed. Either way, the command must use a secret, and it runs
+and writes only in the session's own folder: never in `.git`, and never through a link to somewhere else.
+
 Agents reading outside input (triaging a new issue, or working on a ticket from outside you haven't let in yet) can't
 use secrets at all. See [Outside contributions](../automation/outside-contributions.md).
 

@@ -6,6 +6,11 @@ Everything PDT knows stays on your machine: tickets, conversations, workflows, s
 server (there isn't one). Your code stays in your repositories; the agents you run send what they read to their own
 providers, as they would outside PDT.
 
+PDT trusts everything that runs as you on this machine: your agents, terminals and runs, and any other program you
+run, can do anything you can in PDT. Where PDT asks you to approve something (a run's commands, a ticket proposal),
+that stops an agent doing it by mistake, not one set on doing it. Other people's web pages can't reach PDT, and from
+another device only you get in (see [Remote access](remote-access.md)).
+
 ## Where it is
 
 PDT keeps everything in one data folder:

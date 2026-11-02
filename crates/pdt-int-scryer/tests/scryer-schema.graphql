@@ -1,6 +1,8 @@
-# Scryer's GraphQL schema (https://github.com/scryer-media/scryer, api/graphql/schema.graphql at 2ef7757c),
-# which PDT's Scryer operations are checked against (pdt-api src/scryer.rs) and the PM's GraphQL tools use when a
-# Scryer doesn't answer introspection (src/scryer/graphql.rs). Refresh it from there.
+# Scryer's GraphQL schema (https://github.com/scryer-media/scryer, api/graphql/schema.graphql at 2ef7757c).
+# Copyright Scryer's authors, licensed under the GNU General Public License v3.0 (see Scryer's repository), not
+# under PDT's licence. It is used only by PDT's tests: they check PDT's Scryer operations against it
+# (src/actions.rs), and the fake Scryer answers introspection from it (tests/fake_scryer). It is never built into
+# PDT. Refresh it from there.
 """
 Result of giving up on an operation nobody is running.
 """

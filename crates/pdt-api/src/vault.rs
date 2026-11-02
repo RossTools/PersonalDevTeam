@@ -415,14 +415,28 @@ pub(crate) async fn answer_request(st: &AppState, item: &InboxItem, answer: &Inb
     Ok(json!({"name": s.name, "stored": true}))
 }
 
-/// A path the session gave: relative ones are under its folder.
-fn session_path(s: &Session, given: Option<&str>) -> PathBuf {
+/// A folder or file a secret tool uses (PDT-404): inside the session's folder ([`secret::checkout_path`]), and what of
+/// it is already on disk resolves inside it too and into no `.git` folder, so a symlink can't lead it elsewhere.
+fn session_path(s: &Session, given: Option<&str>) -> Result<PathBuf, String> {
     let base = PathBuf::from(&s.cwd);
-    match given.map(str::trim).filter(|p| !p.is_empty()) {
-        Some(p) if std::path::Path::new(p).is_absolute() => PathBuf::from(p),
-        Some(p) => base.join(p),
-        None => base,
+    let path = secret::checkout_path(&base, given)?;
+    let root = std::fs::canonicalize(&base).map_err(|e| format!("this session's folder {}: {e}", base.display()))?;
+    let mut on_disk = path.as_path();
+    while std::fs::symlink_metadata(on_disk).is_err() {
+        on_disk = on_disk.parent().ok_or_else(|| format!("{} is not in this session's folder", path.display()))?;
     }
+    inside(&root, on_disk, &path)?;
+    Ok(path)
+}
+
+/// `on_disk` (`path` or a folder it is in) resolves inside `root` and into no `.git` folder.
+fn inside(root: &std::path::Path, on_disk: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
+    let real = std::fs::canonicalize(on_disk).map_err(|e| format!("{}: {e}", on_disk.display()))?;
+    let rel = real.strip_prefix(root).map_err(|_| format!("{} leads outside this session's folder", path.display()))?;
+    if rel.components().any(|c| c.as_os_str().eq_ignore_ascii_case(".git")) {
+        return Err(format!("{} leads into a .git folder: secret tools never write there", path.display()));
+    }
+    Ok(())
 }
 
 /// How much of stdout and of stderr `run_with_secrets` gives back.
@@ -430,8 +444,8 @@ const OUTPUT_CAP: usize = 64 * 1024;
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const MAX_TIMEOUT_SECS: u64 = 1800;
 
-/// `run_with_secrets`: the command with the secrets in its environment; what it printed comes back redacted.
-pub(crate) async fn run_tool(st: &AppState, s: &Session, a: RunWithSecrets) -> Result<Value, String> {
+/// What `run_with_secrets` refuses before it asks the user: the secrets it names and the folder it runs in.
+pub(crate) fn check_run(s: &Session, a: &RunWithSecrets) -> Result<(Vec<String>, PathBuf), String> {
     if a.command.trim().is_empty() {
         return Err("the command is empty".into());
     }
@@ -439,16 +453,28 @@ pub(crate) async fn run_tool(st: &AppState, s: &Session, a: RunWithSecrets) -> R
         return Err("secrets go in env (\"VAR\": \"secret:<name>\"), never in the command line".into());
     }
     let names: Vec<String> = a.env.values().filter_map(|v| secret::env_ref(v)).map(String::from).collect();
+    // It is for using secrets, not a way round the agent's own shell and its sandbox (PDT-404).
+    if names.is_empty() {
+        return Err("name a secret in env (\"VAR\": \"secret:<name>\"): run_with_secrets runs only commands that use \
+                    one; run anything else with your own shell"
+            .into());
+    }
+    let dir = session_path(s, a.cwd.as_deref())?;
+    if !dir.is_dir() {
+        return Err(format!("{} is not a folder", dir.display()));
+    }
+    Ok((names, dir))
+}
+
+/// `run_with_secrets`: the command with the secrets in its environment; what it printed comes back redacted.
+pub(crate) async fn run_tool(st: &AppState, s: &Session, a: RunWithSecrets) -> Result<Value, String> {
+    let (names, dir) = check_run(s, &a)?;
     let values = values_for(st, &names, session_user(s), &session_usage(s, "run_with_secrets")).await?;
     let env: BTreeMap<String, String> = a
         .env
         .iter()
         .map(|(k, v)| (k.clone(), secret::env_ref(v).and_then(|n| values.get(n)).cloned().unwrap_or_else(|| v.clone())))
         .collect();
-    let dir = session_path(s, a.cwd.as_deref());
-    if !dir.is_dir() {
-        return Err(format!("{} is not a folder", dir.display()));
-    }
     let limit =
         std::time::Duration::from_secs(a.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).clamp(1, MAX_TIMEOUT_SECS));
     let out = run_shell(&a.command, &env, &dir, limit).await?;
@@ -529,18 +555,32 @@ async fn run_shell(
     }
 }
 
-/// `write_secret_file`: the template with its secrets filled in, written to the file (owner-only on macOS and
-/// Linux); nothing of the content comes back.
-pub(crate) async fn write_file_tool(st: &AppState, s: &Session, a: WriteSecretFile) -> Result<Value, String> {
+/// What `write_secret_file` refuses before it asks the user: the secrets it names and the file it writes.
+pub(crate) fn check_write(s: &Session, a: &WriteSecretFile) -> Result<(Vec<String>, PathBuf), String> {
     if a.path.trim().is_empty() {
         return Err("the path is empty".into());
     }
     let names = secret::template_names(&a.template);
+    // It is for files with secrets in, not a way round the agent's own edits and its sandbox (PDT-404).
+    if names.is_empty() {
+        return Err("name a secret in the template ({{secret.<name>}}): write_secret_file writes only files with one \
+                    in; write anything else with your own tools"
+            .into());
+    }
+    Ok((names, session_path(s, Some(&a.path))?))
+}
+
+/// `write_secret_file`: the template with its secrets filled in, written to the file (owner-only on macOS and
+/// Linux); nothing of the content comes back.
+pub(crate) async fn write_file_tool(st: &AppState, s: &Session, a: WriteSecretFile) -> Result<Value, String> {
+    let (names, path) = check_write(s, &a)?;
     let values = values_for(st, &names, session_user(s), &session_usage(s, "write_secret_file")).await?;
     let text = secret::fill_template(&a.template, &values);
-    let path = session_path(s, Some(&a.path));
     if let Some(dir) = path.parent() {
         tokio::fs::create_dir_all(dir).await.map_err(|e| format!("could not make {}: {e}", dir.display()))?;
+        // Checked again now the folders are there.
+        let root = std::fs::canonicalize(&s.cwd).map_err(|e| format!("this session's folder {}: {e}", s.cwd))?;
+        inside(&root, dir, &path)?;
     }
     write_private(&path, text.as_bytes()).map_err(|e| format!("could not write {}: {e}", path.display()))?;
     Ok(json!({"path": path.display().to_string(), "bytes": text.len(), "secrets": names}))
@@ -551,13 +591,25 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     {
         use std::io::Write;
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+        // Never through a symlink (PDT-404): it would write wherever that points.
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)?;
         // An existing file keeps its mode on open: make it owner-only too.
         f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         f.write_all(bytes)
     }
     #[cfg(not(unix))]
-    std::fs::write(path, bytes)
+    {
+        if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(std::io::Error::other("it is a symlink"));
+        }
+        std::fs::write(path, bytes)
+    }
 }
 
 // ---- workflows ----
