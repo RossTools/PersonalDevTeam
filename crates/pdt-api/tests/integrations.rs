@@ -192,6 +192,37 @@ async fn a_script_refuses_data_references() {
     }
 }
 
+/// PDT-412: a workflow saved before the rule (its doc written straight to the store) stops at the step instead of
+/// pasting the trigger's text into the shell.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_stored_script_with_a_reference_fails_at_its_step() {
+    let env = setup(vec![]).await;
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "run", "kind": "command", "version": 1,
+        "config": {"script": "echo fine", "parse": "text"}})),
+    )
+    .await;
+    let marker = std::env::temp_dir().join(format!("pdt-412-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    let bad = manual_then(json!({"id": "run", "kind": "command", "version": 1,
+        "config": {"script": "echo {{trigger.title}}", "parse": "text"}}));
+    let bad: pdt_core::workflow::doc::WorkflowDoc = serde_json::from_value(bad).unwrap();
+    env.state
+        .store
+        .save_workflow_version(&wf, &bad, pdt_core::workflow::api::Author::User, "", 2)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let r = run_now(&env, &wf, json!({"title": format!("$(touch {})", marker.display())})).await;
+    assert_eq!(r["status"], "failed", "{r}");
+    let e = step(&r, "run")["error"].as_str().unwrap_or_default().to_string();
+    assert!(e.contains("pasted into the shell unquoted"), "{r}");
+    assert!(!marker.exists(), "the title ran as code");
+}
+
 #[tokio::test]
 async fn a_dry_run_shows_the_script() {
     let env = setup(vec![]).await;

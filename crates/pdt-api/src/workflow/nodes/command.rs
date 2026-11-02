@@ -164,6 +164,14 @@ impl NodeKind for Command {
         Ok(())
     }
 
+    /// A workflow saved before scripts refused references would otherwise still paste outside text into the shell.
+    fn check_at_run(&self, config: &Value) -> Result<(), String> {
+        match config.get("script").and_then(Value::as_str) {
+            Some(script) => script_refs_ok(script),
+            None => Ok(()),
+        }
+    }
+
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: CommandConfig = parse(&input)?;
