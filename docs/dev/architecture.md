@@ -97,7 +97,9 @@ folder and each project's folder, grouped by device (`storage::disk_id`) with th
 
 **Runs.** A run is a `[[run]]` or `[[test]]` from `.pdt/project.toml` (plus host overrides; the user docs' Run configuration page)
 started in a checkout, on a port from the host's range. Runs live in PTYs, or detached (`detach = true`) so they
-outlive pdtd and are reattached after a restart. When remote access changes the host, the runs (never tests) that use
+outlive pdtd and are reattached after a restart. On Windows each PTY session's processes are in a kill-on-close job
+object only `PtyManager` holds (`pty/job.rs`), so the whole tree ends when pdtd does, however it ends, or when the
+session is removed; a process that asks to break away (a detached run) may. When remote access changes the host, the runs (never tests) that use
 `$PDT_RUN_HOST` or `$PDT_RUN_URL` restart (`run_manager::restart_host_dependent_runs`); any stop of the run meanwhile
 cancels that restart (`AppState::run_stops`), and one that cannot start again fails the run with the reason.
 

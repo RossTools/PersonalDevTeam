@@ -12,6 +12,9 @@ use tokio::sync::{broadcast, oneshot};
 
 use crate::output_file::{self, OutputFile};
 
+#[cfg(windows)]
+mod job;
+
 pub const SCROLLBACK_BYTES: usize = 512 * 1024;
 /// After the child exits, give the reader a moment to flush the last output before announcing the exit.
 const FLUSH_GRACE: Duration = Duration::from_millis(200);
@@ -145,6 +148,10 @@ struct Proc {
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     pid: Option<u32>,
+    /// The session's job ([`job`]), owned by the manager so that it closes (ending the tree) with the manager or
+    /// once the session is removed, not when the last of the session's threads lets go.
+    #[cfg(windows)]
+    job: std::sync::Weak<job::Job>,
 }
 
 /// A followed log's controls.
@@ -167,9 +174,10 @@ impl Handle {
 
     /// Asks the OS to end the process and everything it started; the waiter thread reports the exit.
     ///
-    /// - Windows: `taskkill /T /F` ends the whole tree first, while the root is still alive (taskkill finds the tree
-    ///   through it), then portable-pty's killer ends the root if it is somehow still there. A run's
-    ///   `cmd.exe /c script.cmd` (or an npm shim) otherwise leaves its server running, holding ports and files.
+    /// - Windows: the session's job is terminated, ending every process in it (with no job, `taskkill /T /F` ends the
+    ///   tree, while the root is still alive: taskkill finds the tree through it), then portable-pty's killer ends
+    ///   the root if it is somehow still there. A run's `cmd.exe /c script.cmd` (or an npm shim) otherwise leaves its
+    ///   server running, holding ports and files.
     /// - unix: SIGHUP to the child's process group, which a shell can sit on (macOS's /bin/sh handles it only once
     ///   its read returns), so after `HANGUP_GRACE` the group (and the child) get SIGKILL. The group is killed even
     ///   when the shell has already exited, since its children may still be in it.
@@ -178,7 +186,9 @@ impl Handle {
     fn kill(self: &Arc<Self>) -> std::io::Result<()> {
         let Some(p) = &self.proc else { return Ok(()) };
         #[cfg(windows)]
-        if let Some(pid) = p.pid {
+        if let Some(job) = p.job.upgrade() {
+            job.terminate();
+        } else if let Some(pid) = p.pid {
             kill_tree(pid);
         }
         let result = p.killer.lock().unwrap().kill();
@@ -235,6 +245,9 @@ pub struct PtyManager {
     sessions: Arc<Mutex<HashMap<String, Arc<Handle>>>>,
     /// Set by `shutdown`, under the `sessions` lock, so no process can start after the snapshot it kills.
     shut_down: Arc<std::sync::atomic::AtomicBool>,
+    /// Each session's job, by id: dropping the last clone of the manager ends every session's process tree.
+    #[cfg(windows)]
+    jobs: Arc<Mutex<HashMap<String, Arc<job::Job>>>>,
 }
 
 impl PtyManager {
@@ -270,6 +283,15 @@ impl PtyManager {
         drop(pair.slave);
         let killer = child.clone_killer();
         let pid = child.process_id();
+        #[cfg(windows)]
+        let job = match pid.map(job::Job::assign) {
+            Some(Ok(job)) => Some(Arc::new(job)),
+            Some(Err(e)) => {
+                tracing::warn!(session = %spec.id, error = %e, "could not put the terminal in a job; its processes may outlive pdtd");
+                None
+            }
+            None => None,
+        };
         let io = pair.master.try_clone_reader().and_then(|r| Ok((r, pair.master.take_writer()?)));
         let (mut reader, mut writer) = match io {
             Ok(rw) => rw,
@@ -293,6 +315,8 @@ impl PtyManager {
                 master: Mutex::new(Some(pair.master)),
                 killer: Mutex::new(killer),
                 pid,
+                #[cfg(windows)]
+                job: job.as_ref().map(Arc::downgrade).unwrap_or_default(),
             }),
             follow: Follow::default(),
         });
@@ -371,6 +395,10 @@ impl PtyManager {
             let _ = exit_tx.send(code);
         });
 
+        #[cfg(windows)]
+        if let Some(job) = job {
+            self.jobs.lock().unwrap().insert(spec.id.clone(), job);
+        }
         sessions.insert(spec.id, handle);
         Ok(exit_rx)
     }
@@ -431,6 +459,9 @@ impl PtyManager {
                 let _ = h.kill();
             }
         }
+        // Closing the job ends whatever the session's process left running.
+        #[cfg(windows)]
+        self.jobs.lock().unwrap().remove(id);
     }
 
     /// Shows the file at `log` as terminal `id`, read-only: its last `SCROLLBACK_BYTES` (from a line start), then
