@@ -154,6 +154,20 @@ async fn still_busy_after_the_longest_wait_it_goes_on_by_timeout() {
     assert!(s["output"]["busy"][0].as_str().unwrap().contains("is working"), "{s}");
 }
 
+/// Time outside the window doesn't count towards installing anyway: the window opening on busy agents waits for them.
+#[tokio::test]
+async fn time_outside_the_window_does_not_count_towards_installing_anyway() {
+    let env = setup("0.1.0").await;
+    busy_session(&env).await;
+    let later = json!({"on": true, "from": clock(120), "to": clock(180)});
+    let config = json!({"checkEveryMs": 20, "maxWaitMs": 1, "window": later});
+    let id = one_step(&env, "host.wait_idle", config, WAIT_PORTS).await;
+    let r = still_waiting(&env, &id).await;
+    let out = &step(&r, "n")["output"];
+    assert!(out["waiting"].as_str().unwrap().starts_with("outside the window"), "{r}");
+    assert_eq!(out["since"], Value::Null, "the clock doesn't run outside the window: {out}");
+}
+
 #[tokio::test]
 async fn outside_its_window_it_waits_even_when_idle() {
     let env = setup("0.1.0").await;

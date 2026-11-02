@@ -53,8 +53,9 @@ With **Install automatically when idle**, the built-in **Install updates** workf
 
 - **Only in a time window**: updates install by themselves only between two times, such as 02:00 to 06:00 (your
   computer's time). Outside it, an update waits for the window.
-- **While agents work**: **Wait for them to finish** (the default), or install anyway after a few hours. Installing
-  anyway stops what's running; sessions resume afterwards.
+- **While agents work**: **Wait for them to finish** (the default), or install anyway after a few hours. With a time
+  window, only the time agents work inside it counts. Installing anyway stops what's running; sessions resume
+  afterwards.
 - **Stable releases only**: on the nightly channel, a nightly build doesn't install by itself. Install it from the
   banner.
 - **Check PDT after installing** (on by default): a few minutes after PDT starts on the new version, it checks that it

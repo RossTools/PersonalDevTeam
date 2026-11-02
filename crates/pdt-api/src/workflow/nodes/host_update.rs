@@ -32,8 +32,8 @@ fn since(cx: &StepCx<'_>, now: i64) -> i64 {
     cx.step.output.get("since").and_then(Value::as_i64).unwrap_or(now)
 }
 
-/// Looks again in `every_ms`, saying why it waits.
-fn wait_again(since: i64, every_ms: u64, why: &str) -> Outcome {
+/// Looks again in `every_ms`, saying why it waits (`since`: what the next look reads back).
+fn wait_again(since: Option<i64>, every_ms: u64, why: &str) -> Outcome {
     let every = i64::try_from(every_ms.max(10)).unwrap_or(i64::MAX / 2);
     Outcome::Wait {
         wait: json!({"retry": true, (crate::workflow::engine::POLL): true, "waiting": why}),
@@ -145,7 +145,8 @@ impl NodeKind for WaitIdle {
                 return Ok(Outcome::next("idle", json!({"would": "wait until PDT is idle"})));
             }
             let now = now_ms();
-            let since = since(cx, now);
+            // When PDT was first found busy inside the window: only that time counts towards `maxWaitMs`.
+            let busy_since = cx.step.output.get("since").and_then(Value::as_i64);
             if let Some(v) = c.update.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
                 if let Some(why) = gone(cx, v) {
                     return Ok(Outcome::next("skipped", json!({"reason": why})));
@@ -154,27 +155,52 @@ impl NodeKind for WaitIdle {
                     return Ok(Outcome::next("skipped", json!({"reason": why})));
                 }
             }
-            if let Some(w) = c.window()?
-                && !w.contains(crate::notifications::minute_now())
-            {
-                let why = format!(
-                    "outside the window {}–{}",
-                    c.window.as_ref().map_or("", |w| &w.from),
-                    c.window.as_ref().map_or("", |w| &w.to)
-                );
-                return Ok(wait_again(since, c.check_every_ms, &why));
-            }
-            let busy = update::busy_reasons(cx.st).await;
-            let waited = now - since;
-            if busy.is_empty() {
-                return Ok(Outcome::next("idle", json!({"waitedMs": waited})));
-            }
-            if c.max_wait_ms > 0 && waited >= i64::try_from(c.max_wait_ms).unwrap_or(i64::MAX) {
-                return Ok(Outcome::next("timeout", json!({"busy": busy, "waitedMs": waited})));
-            }
-            Ok(wait_again(since, c.check_every_ms, &format!("busy: {}", busy.join("; "))))
+            let in_window = c.window()?.is_none_or(|w| w.contains(crate::notifications::minute_now()));
+            let busy = if in_window { update::busy_reasons(cx.st).await } else { Vec::new() };
+            Ok(match look(busy_since, now, in_window, !busy.is_empty(), c.max_wait_ms) {
+                Look::Idle => Outcome::next("idle", json!({})),
+                Look::Timeout { waited } => Outcome::next("timeout", json!({"busy": busy, "waitedMs": waited})),
+                Look::Wait { since } if !in_window => {
+                    let w = c.window.as_ref();
+                    let why = format!("outside the window {}–{}", w.map_or("", |w| &w.from), w.map_or("", |w| &w.to));
+                    wait_again(since, c.check_every_ms, &why)
+                }
+                Look::Wait { since } => wait_again(since, c.check_every_ms, &format!("busy: {}", busy.join("; "))),
+            })
         })
     }
+}
+
+/// What one look of `host.wait_idle` comes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Look {
+    Idle,
+    /// Busy inside the window for `waited` ms, at least `maxWaitMs`.
+    Timeout {
+        waited: i64,
+    },
+    /// Look again; `since` is when PDT was first found busy inside the window (None outside it: the clock starts
+    /// again at the next look inside).
+    Wait {
+        since: Option<i64>,
+    },
+}
+
+/// `since`: when an earlier look first found PDT busy inside the window. Only time busy inside the window counts
+/// towards `max_wait_ms`: a window that opens on a busy PDT waits for its agents first.
+fn look(since: Option<i64>, now: i64, in_window: bool, busy: bool, max_wait_ms: u64) -> Look {
+    if !in_window {
+        return Look::Wait { since: None };
+    }
+    if !busy {
+        return Look::Idle;
+    }
+    let since = since.unwrap_or(now);
+    let waited = now - since;
+    if max_wait_ms > 0 && waited >= i64::try_from(max_wait_ms).unwrap_or(i64::MAX) {
+        return Look::Timeout { waited };
+    }
+    Look::Wait { since: Some(since) }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -339,4 +365,27 @@ fn problems(cx: &StepCx<'_>, version: Option<&str>, now: i64) -> Vec<String> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HOUR: i64 = 60 * 60 * 1000;
+
+    /// Install anyway after 2 h with a window: an update found by day waits outside the window without the clock
+    /// running, and the window opening on a busy PDT starts it, so its agents get the 2 h.
+    #[test]
+    fn only_time_busy_inside_the_window_counts() {
+        let max = 2 * 3_600_000;
+        // Outside the window: no clock, whatever came before.
+        assert_eq!(look(Some(0), 12 * HOUR, false, true, max), Look::Wait { since: None });
+        // The window opens on a busy PDT: the clock starts now, not at the update's discovery.
+        assert_eq!(look(None, 14 * HOUR, true, true, max), Look::Wait { since: Some(14 * HOUR) });
+        assert_eq!(look(Some(14 * HOUR), 15 * HOUR, true, true, max), Look::Wait { since: Some(14 * HOUR) });
+        assert_eq!(look(Some(14 * HOUR), 16 * HOUR, true, true, max), Look::Timeout { waited: 2 * HOUR });
+        // Idle inside the window installs; no limit waits for the agents however long.
+        assert_eq!(look(Some(0), 20 * HOUR, true, false, max), Look::Idle);
+        assert_eq!(look(Some(0), 100 * HOUR, true, true, 0), Look::Wait { since: Some(0) });
+    }
 }

@@ -297,8 +297,9 @@ newer versions with their inputs kept.
 **Install updates** (`builtins/install_updates.rs`). The update loop (`update::run_update_loop`) only checks; what a
 check finds is `update.available`, and this built-in installs it: `host.wait_idle` → `host.install_update`
 (`nodes/host_update.rs`). The wait looks again every minute (a `retry` wait, keeping `since` in its output) until
-`update::busy_reasons` is empty, inside its window (pdt-core `InstallWindow`), or `maxWaitMs` is up (`timeout`, then
-an install with `force`). Given the update's version it ends by `skipped` once that version is installed or another is
+`update::busy_reasons` is empty, inside its window (pdt-core `InstallWindow`), or it has been busy inside the window for
+`maxWaitMs` (`timeout`, then an install with `force`; `since` is cleared outside the window, so the clock starts at the
+first busy look inside it). Given the update's version it ends by `skipped` once that version is installed or another is
 on offer, and while the host's policy isn't auto-when-idle, so under Notify only no run waits.
 `install_updates::wake` gives the update on offer a run when the policy turns to auto-when-idle or the workflow is
 turned on. `host.install_update` with `automatic` refuses a version pdt-host skipped (`update::skipped`), and finds
