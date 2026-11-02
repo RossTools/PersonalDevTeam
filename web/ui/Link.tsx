@@ -23,7 +23,7 @@ export function Link({ children, href, external = false, onClick, className, ...
       onPress={onClick}
       {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
       className={cn(
-        'inline-flex items-center gap-0.5 rounded-sm text-primary underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring data-disabled:opacity-50 cursor-pointer',
+        'inline-flex items-center gap-0.5 rounded-sm text-link underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring data-disabled:opacity-50 cursor-pointer',
         className,
       )}
     >

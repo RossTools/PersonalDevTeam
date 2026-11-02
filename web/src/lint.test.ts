@@ -36,6 +36,10 @@ describe('design system rules', () => {
     expect(offenders(/#[0-9a-fA-F]{3,8}\b(?![\w-])|\b(rgba?|hsla?)\(|\b(bg|text|border)-(black|white)\b/)).toEqual([]);
   });
 
+  it('colours accent text with text-link: text-primary is the fill colour, too light for text in dark mode', () => {
+    expect(offenders(/(?<![\w-])text-primary(?![\w-])/)).toEqual([]);
+  });
+
   it('uses theme sizes and layers, not arbitrary ones', () => {
     expect(offenders(/\btext-\[\d+px\]|\bz-\[/)).toEqual([]);
     // App layers come from --pdt-z-*; a small z-10 inside a primitive only stacks that component's own parts.
@@ -48,6 +52,12 @@ describe('design system rules', () => {
 
   it("merges classes with web/ui/lib/utils' cn, which knows our theme names", () => {
     expect(offenders(/from ['"]cn['"]/)).toEqual([]);
+  });
+
+  it('builds overlays from @ui, never a hand-rolled role="dialog", menu, listbox or tooltip', () => {
+    // @ui's Dialog, Sheet, Popover, Menu, Select and Tooltip move focus in, trap or restore it and close on Escape. A
+    // CSS selector naming the role (`[role="dialog"]`) is fine.
+    expect(offenders(/(?<![[\w-])role=\{?['"`](alertdialog|dialog|menu|listbox|tooltip)['"`]/, (p) => !p.startsWith('ui/'))).toEqual([]);
   });
 
   it('keeps React Aria, Base UI, React Flow and the primitives behind @ui', () => {

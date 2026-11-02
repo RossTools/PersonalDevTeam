@@ -90,7 +90,7 @@ const ring: Record<FlowStatus, string> = {
   waiting: 'ring-2 ring-waiting',
   failed: 'ring-2 ring-failed',
   succeeded: 'ring-2 ring-running/60',
-  skipped: 'opacity-60',
+  skipped: 'border-dashed text-muted-foreground',
 };
 
 type CardData = FlowNode & Record<string, unknown>;

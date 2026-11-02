@@ -59,7 +59,7 @@ function Card({ icon, heading, aside, children, label }: {
   return (
     <section aria-label={label} data-slot="pdt-card" className="rounded-lg border border-border bg-card text-sm shadow-card">
       <header className={cn('flex min-h-9 items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground', children && 'border-b border-border')}>
-        <span aria-hidden className="grid size-4 shrink-0 place-items-center text-primary [&>svg]:size-3.5">{icon}</span>
+        <span aria-hidden className="grid size-4 shrink-0 place-items-center text-link [&>svg]:size-3.5">{icon}</span>
         <span className="flex min-w-0 flex-wrap items-center gap-1.5">{heading}</span>
         <span className="flex-1" />
         {aside}
@@ -243,7 +243,7 @@ export function WorkflowRunCard({ call }: { call: PdtCall }) {
         <div className="flex items-center gap-2 py-2 text-xs">
           {r.error && <span className="min-w-0 flex-1 truncate text-failed" title={r.error}>{r.error}</span>}
           <span className="flex-1" />
-          <a href={`/workflows/${encodeURIComponent(r.workflowId)}/runs/${encodeURIComponent(r.id)}`} className="text-primary underline-offset-2 hover:underline">
+          <a href={`/workflows/${encodeURIComponent(r.workflowId)}/runs/${encodeURIComponent(r.id)}`} className="text-link underline-offset-2 hover:underline">
             Open the run
           </a>
         </div>

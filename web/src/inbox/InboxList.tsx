@@ -94,7 +94,7 @@ export function UpdatesList({ updates, selectedId, onSelect, onClear, loading }:
               textValue={u.title}
               current={u.id === update}
               bold={u.readAt === null && u.clearedAt === null}
-              className={u.clearedAt !== null ? 'opacity-60' : undefined}
+              className={u.clearedAt !== null ? 'text-muted-foreground' : undefined}
               secondary={[u.body, relativeTime(u.createdAt)].filter(Boolean).join(' · ')}
               trailing={onClear && (
                 <IconButton label="Clear" size="sm" onClick={() => onClear(u.id)}

@@ -24,7 +24,8 @@ import type { Project } from '../../api/gen/Project';
 import type { PullRequestStatus } from '../../api/gen/PullRequestStatus';
 import type { Ticket as FullTicket } from '../../api/gen/Ticket';
 import type { TicketSummary } from '../../api/gen/TicketSummary';
-import { BoardCard } from '../../tickets/Board';
+import { BoardCard, LaneHeader } from '../../tickets/Board';
+import { ConfirmProvider } from '@ui/Confirm';
 import { StartDialog } from '../../tickets/StartDialog';
 import { PrDetails } from '../../tickets/PullRequest';
 
@@ -67,11 +68,14 @@ function Pieces() {
           </div>
         </div>
       </Demo>
-      <Demo label="PartsStepper · every part state, with and without the count">
+      <Demo label="PartsStepper · every part state, with and without the count; 20 parts narrow; 70 parts as a bar">
         <div className="flex max-w-80 flex-col gap-3">
           <PartsStepper parts={progressOf(['done', 'merged', 'review', 'progress', 'todo', 'backlog'])} showCount />
           <PartsStepper parts={progressOf(['done', 'done', 'review', 'backlog'])} showCount />
           <PartsStepper parts={progressOf(['done', 'done', 'done'])} />
+          <PartsStepper parts={progressOf(epicParts(20))} showCount className="w-20" />
+          <PartsStepper parts={progressOf(epicParts(70))} showCount />
+          <PartsStepper parts={progressOf(epicParts(70))} showCount className="w-20" />
         </div>
       </Demo>
     </div>
@@ -370,6 +374,32 @@ function Cards() {
   );
 }
 
+/** `n` parts, spread over the states the way a long epic is: most done, a few running, the rest waiting. */
+const epicParts = (n: number): PartState[] =>
+  Array.from({ length: n }, (_, i): PartState => {
+    const f = i / n;
+    return f < 0.2 ? 'done' : f < 0.3 ? 'merged' : f < 0.35 ? 'review' : f < 0.45 ? 'progress' : f < 0.7 ? 'todo' : 'backlog';
+  });
+
+function LaneHeaders() {
+  const lane = (n: number) => {
+    const t = card(380 + n, { stage: 'in_progress', title: `Epic with ${n} parts: a long title that gives way before the stepper does`, parts: progressOf(epicParts(n)) });
+    return { id: t.id, parent: { id: t.id, key: t.key, title: t.title }, ticket: t, items: { todo: [], in_progress: [], done: [] } };
+  };
+  const headers = (compact: boolean) => [5, 20, 70].map((n) => (
+    <LaneHeader key={n} lane={lane(n)} collapsed={false} onToggle={() => {}} onPeek={() => {}} compact={compact} />
+  ));
+  return (
+    <ConfirmProvider>
+      <div className="flex flex-col gap-3">
+        <div className="rounded-md bg-surface-2 p-2">{headers(false)}</div>
+        <div className="max-w-md rounded-md bg-surface-2 p-2">{headers(false)}</div>
+        <div className="max-w-[366px] rounded-md bg-surface-2 p-2">{headers(true)}</div>
+      </div>
+    </ConfirmProvider>
+  );
+}
+
 const startTicket = (over: Partial<FullTicket> = {}): FullTicket => ({
   ...card(47, { title: 'Start a ticket from the board' }), description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-47-start-a-ticket', sessions: [], overlaps: [], partList: [], createdBy: null, ...over,
 });
@@ -427,6 +457,7 @@ export const section = {
       <Writing />
       <Demo label="DataList · FilterBar ⇄ BulkActionBar (2,000 rows, virtualised)"><Backlog /></Demo>
       <Demo label="Board cards (drag, right-click, ⋯)"><Cards /></Demo>
+      <Demo label="Lane headers · 5, 20 and 70 parts; wide, narrow, phone"><LaneHeaders /></Demo>
       <Demo label="Start dialog · open it in each state"><StartDemo /></Demo>
     </div>
   ),

@@ -42,7 +42,7 @@ export function Chip({
         rel={ext ? 'noreferrer' : undefined}
         className={cn(
           base,
-          'outline-none hover:bg-accent hover:text-primary focus-visible:ring-2 focus-visible:ring-ring',
+          'outline-none hover:bg-accent hover:text-link focus-visible:ring-2 focus-visible:ring-ring',
           className,
         )}
       >

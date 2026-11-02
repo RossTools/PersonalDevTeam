@@ -1,5 +1,4 @@
 // The board's lanes (PDT-38): cards grouped by their parent. Pure, so the grouping is tested on its own.
-import type { PullRequestStatus } from '../api/gen/PullRequestStatus';
 import type { TicketParent } from '../api/gen/TicketParent';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import type { BoardStage } from './Board';
@@ -48,16 +47,6 @@ export function buildLanes(columns: Record<BoardStage, TicketSummary[]>, parents
 
 /** Every ticket id in a lane, all columns. */
 export const laneIds = (lane: Lane) => new Set(STAGES.flatMap((s) => lane.items[s].map((t) => t.id)));
-
-/** The PR of a part in review in the lane (an active attempt with an open PR), if one is on the board. */
-export function lanePr(lane: Lane): PullRequestStatus | null {
-  for (const s of STAGES) {
-    for (const t of lane.items[s]) {
-      if (t.attempt?.state === 'active' && t.attempt.pr?.state === 'open') return t.attempt.pr;
-    }
-  }
-  return null;
-}
 
 /** The lanes collapsed in this browser (localStorage; any failure reads as none and writes nothing). */
 export const COLLAPSED_KEY = 'pdt.board.collapsedLanes';
