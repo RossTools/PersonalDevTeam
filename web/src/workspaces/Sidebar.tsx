@@ -1,4 +1,4 @@
-import { useState, type MouseEvent, type ReactNode } from 'react';
+import { memo, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { Badge, EmptyState, IconButton, List, ListRow, useMenuAt, type ListDropEvent } from '@ui';
@@ -21,6 +21,7 @@ import { startedByStep } from '../sessions/status';
 import { applyDrop } from './WorkspaceBar';
 import { RowField } from '../common/RowField';
 import { worktreesQuery } from '../common/worktrees';
+import { useSameList } from '../common/useSameList';
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
@@ -66,7 +67,7 @@ const TOUCH_ROW = 'min-h-14 pointer-coarse:min-h-14';
  * full-screen version (`/sessions`): taller rows, no dragging. `adding`/`onAddingChange` control the New workspace
  * field from outside (the phone's ⋯).
  */
-export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose, touch = false, adding: addingProp, onAddingChange }: {
+export const Sidebar = memo(function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose, touch = false, adding: addingProp, onAddingChange }: {
   ws: WorkspacesApi;
   onRenameTab: (tabId: string) => void;
   /** Opens a project's page in Settings. */
@@ -211,7 +212,7 @@ export function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose, touch = 
       {menu}
     </div>
   );
-}
+});
 
 /** Every agent session the user started, with its state and where it is (the Sessions sidebar, the phone drawer). */
 export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
@@ -224,19 +225,24 @@ export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
 }) {
   const { openMenu, menu } = useMenuAt();
   // The user's own conversations: a workflow step's session never, even in a tab (PDT-299).
-  const agents = ws.everyInfo
+  const { everyInfo, workspaces } = ws;
+  const agents = useMemo(() => everyInfo
     .filter((i) => i.session?.kind === 'agent_tui' && !startedByStep(i.session))
-    .map((i) => ({ id: i.item.id, info: i, where: findTab(ws.workspaces, i.item) }))
+    .map((i) => ({ id: i.item.id, info: i, where: findTab(workspaces, i.item) }))
     .sort((a, b) => {
       const wa = a.where ? a.where.workspace.position : Infinity;
       const wb = b.where ? b.where.workspace.position : Infinity;
       return wa - wb || (a.where?.tab.position ?? 0) - (b.where?.tab.position ?? 0) || (a.info.session!.createdAt - b.info.session!.createdAt);
-    });
+    }), [everyInfo, workspaces]);
   // Shared with the place picker and the views' cached queries.
   const worktreeQs = useQueries({
     queries: ws.projects.map((p) => worktreesQuery(p.id)),
   });
-  const branches = new Map(worktreeQs.flatMap((q) => (q.data ?? []).map((w) => [w.id, w.branch] as const)));
+  const worktreeData = useSameList(worktreeQs.map((q) => q.data));
+  const branches = useMemo(
+    () => new Map(worktreeData.flatMap((d) => (d ?? []).map((w) => [w.id, w.branch] as const))),
+    [worktreeData],
+  );
   /** The worktree's branch (its folder name until the worktrees load); null for the main checkout. */
   const branchOf = (i: ItemInfo) => {
     if (!i.worktreeId) return null;

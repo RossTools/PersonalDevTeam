@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, MenuButton, SegmentedControl, toast, useConfirm, ViewHeader, type MenuEntry } from '@ui';
 import { api, ApiError } from '../api/client';
@@ -45,12 +45,15 @@ export interface SessionViewProps {
   socketFactory?: (url: string) => EventsSocketLike;
 }
 
-/** A session: its header over its terminal, or over its conversation (one events socket shared by both). */
-export function SessionView(props: SessionViewProps) {
+/**
+ * A session: its header over its terminal, or over its conversation (one events socket shared by both). Memoized: the
+ * shell re-renders on its other polls, which change nothing here (PDT-454).
+ */
+export const SessionView = memo(function SessionView(props: SessionViewProps) {
   return props.session.mode === 'conversation'
     ? <ConversationSession key={props.session.id} {...props} />
     : <SessionBody {...props} conv={null} />;
-}
+});
 
 function ConversationSession(props: SessionViewProps) {
   const conv = useConversation(props.session.id, props.socketFactory);

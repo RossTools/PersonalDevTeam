@@ -3,7 +3,10 @@
 use super::*;
 use pdt_core::pr::CiState;
 use pdt_forge::CiProvider;
+use pdt_forge::rest::{RECENT_CALLS, now_ms, now_secs};
 use std::collections::BTreeMap;
+use std::sync::Mutex;
+use transport::Request;
 use transport::testing::Recorded;
 
 /// The Actions calls of a forge's login, as tests make them.
@@ -177,16 +180,6 @@ fn the_login_check_finds_a_refused_login_and_clears_the_mark_once_github_accepts
     assert_eq!((g.login_needed(), g.login_rejected_at()), (false, None));
     let paths: Vec<_> = t.urls().into_iter().map(|u| u.replace(API, "")).collect();
     assert_eq!(paths, ["GET /rate_limit", "GET /rate_limit", "GET /user", "GET /user", "GET /user"]);
-}
-
-#[test]
-fn urls_for_logs() {
-    assert_eq!(path_of("https://api.github.com/repos/o/r?x=1"), "/repos/o/r");
-    assert_eq!(path_of("https://api.github.com"), "/");
-    assert!(same_host("", "https://api.github.com/x"));
-    assert!(same_host("https://API.github.com/y", "https://api.github.com/x"));
-    assert!(!same_host("https://blob.core.windows.net/y", "https://api.github.com/x"));
-    assert_eq!(clock_ms(90_061_000), "01:01:01 UTC");
 }
 
 #[test]

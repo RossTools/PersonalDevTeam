@@ -62,7 +62,7 @@ and `backups/` (a copy taken before migrations).
 | `pdt-git` | The git CLI: worktrees, branches, diffs, merge detection, local merges, pulls. |
 | `pdt-agents` | Running agents: PTYs (`pty.rs`), detached runs (`detached.rs`), launching (`launch.rs`), hooks, instruction files, MCP wiring, and the adapters in `adapter/` (Claude, Codex, Devin, ACP). |
 | `pdt-api` | The axum routes and everything that ties the crates together: `routes.rs` (`AppState`, and the router merging each module's routes), one module per area, the background loops (`background.rs`), the workflow engine and nodes (`workflow/`), pdt-mcp (`mcp/`), the integration SDK (`sdk.rs`, `integrations/`). Test fakes in `src/bin` (`fake-agent`, `fake-mcp`, `fake-command`). |
-| `pdt-forge` | The `Forge` trait (change requests, CI, merges, reviews, issues, with declared capabilities), `CiProvider`, the login store, the forges' shared HTTP `transport` (reqwest, `Offline`, recorded answers), and `FakeForge` (`testing.rs`). |
+| `pdt-forge` | The `Forge` trait (change requests, CI, merges, reviews, issues, with declared capabilities), `CiProvider`, the login store, the forges' shared HTTP `transport` (reqwest, `Offline`, recorded answers), their shared REST client (`rest.rs`: `RestClient<F: Flavor>`, rate limit, token renewal, refused logins, paging, ETags) and OAuth device flow and refresh (`oauth.rs`), and `FakeForge` (`testing.rs`). |
 | `pdt-github` | The GitHub forge over GitHub's REST and GraphQL APIs (nothing runs `gh`): pull requests, Actions, merges, issues, the OAuth device-flow login, rate limits. The `Forge` methods are in `forge.rs`. |
 | `pdt-tailscale` | The `tailscale` CLI (`serve`, `status`), and `fake-tailscale` for tests. |
 | `pdt-update` | The GitHub release client: finding a release, verified downloads. |
@@ -445,7 +445,10 @@ inside the session's folder, out of `.git`, and off symlinks (the file is opened
 `vault.rs` and `secrets.rs`, pdt-store `secrets.rs`.
 
 **GitHub.** The forge (`crates/pdt-github`) signs in with the OAuth device flow or a pasted token; logins are stored
-in the keychain (pdt-forge `login.rs`, pdt-api `forge_login.rs`). A 401 marks the login rejected only after
+in the keychain (pdt-forge `login.rs`, pdt-api `forge_login.rs`). Its REST calls go through pdt-forge's shared
+`RestClient` with GitHub's `Flavor` (names, URLs, headers, rate-limit headers, ETags), and its device flow through
+pdt-forge `oauth.rs` with GitHub's endpoints, as GitLab's do: a new forge adds a `Flavor` and an `OAuthApp`, not a
+copy of the client. A 401 marks the login rejected only after
 `GET /user` also answers 401; a rate limit blocks calls locally until it resets. The device flow needs an OAuth App's
 client ID, `GITHUB_OAUTH_CLIENT_ID` in `brand.rs` (`PDT_GITHUB_CLIENT_ID` overrides it). PDT's app is owned by the
 RossTools organization with Device Flow on and token expiry off. To register another (a fork, an Enterprise host):

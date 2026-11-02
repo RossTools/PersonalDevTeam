@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { Alert, Button, Link, MenuButton, SegmentedControl, useConfirm, ViewHeader, type MenuEntry } from '@ui';
 import { api } from '../api/client';
 import type { Run } from '../api/gen/Run';
@@ -17,8 +17,8 @@ import type { ForgeLinks } from '../api/gen/ForgeLinks';
 
 type Step = 'setup' | 'command';
 
-/** Keyed by run id by its parent, so tab state never carries over from another run. */
-export function RunView({ run, onRemoved, branchLink, forge, baseBranch }: {
+/** Keyed by run id by its parent, so tab state never carries over from another run. Memoized, like SessionView. */
+export const RunView = memo(function RunView({ run, onRemoved, branchLink, forge, baseBranch }: {
   run: Run;
   onRemoved: () => void;
   /** The run's branch on its forge, when known. Superseded by the branch chip's menu when `forge` is known. */
@@ -174,4 +174,4 @@ export function RunView({ run, onRemoved, branchLink, forge, baseBranch }: {
       />
     </div>
   );
-}
+});

@@ -16,7 +16,7 @@ impl Forge for GithubApi {
         Some(queue_branch_prefix(base, number))
     }
     fn login_needed(&self) -> bool {
-        (self.account().is_none() && self.wanted.load(Ordering::SeqCst)) || self.rejected_at().is_some()
+        (self.account().is_none() && self.wanted()) || self.rejected_at().is_some()
     }
     fn login_rejected_at(&self) -> Option<i64> {
         self.rejected_at()
@@ -151,7 +151,7 @@ impl Forge for GithubApi {
     fn reply_review_comment(&self, repo: &str, number: u32, comment_id: u64, body: &str) -> Result<String, ForgeError> {
         Ok(self.post_comment(&format!("repos/{repo}/pulls/{number}/comments/{comment_id}/replies"), body)?)
     }
-    /// GitHub lists at most 3000 files, 100 a page ([`MAX_PAGES`] pages are read).
+    /// GitHub lists at most 3000 files, 100 a page ([`pdt_forge::rest::MAX_PAGES`] pages are read).
     fn change_request_files(&self, repo: &str, number: u32) -> Result<Vec<ChangeFile>, ForgeError> {
         Ok(parse_files(&self.get_pages(&format!("repos/{repo}/pulls/{number}/files?per_page=100"))?))
     }
