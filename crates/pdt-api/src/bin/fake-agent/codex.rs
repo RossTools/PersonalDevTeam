@@ -203,7 +203,7 @@ async fn handle(server: &Arc<Server>, conn: &Arc<Conn>, method: &str, p: &Value)
         }
         "thread/start" => {
             let n = server.next.fetch_add(1, Ordering::SeqCst);
-            let id = format!("thr-{}-{n}", std::process::id());
+            let id = format!("thr-{}-{n}", super::run_tag());
             server.store.lock().unwrap().loaded.insert(id.clone(), Vec::new());
             if p.get("developerInstructions").and_then(Value::as_str).is_some_and(|t| t.contains("Running in")) {
                 conn.instructed.lock().unwrap().insert(id.clone());
@@ -243,7 +243,7 @@ async fn handle(server: &Arc<Server>, conn: &Arc<Conn>, method: &str, p: &Value)
                 return Err("ephemeral paginated thread/fork requires `excludeTurns: true`".into());
             }
             let n = server.next.fetch_add(1, Ordering::SeqCst);
-            let id = format!("fork-{}-{n}", std::process::id());
+            let id = format!("fork-{}-{n}", super::run_tag());
             st.forks.insert(id.clone(), (thread.clone(), p.clone()));
             Ok(json!({"thread": {"id": id}}))
         }

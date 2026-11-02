@@ -22,6 +22,7 @@ export function UpdateBanner() {
   useReloadOnNewVersion(status.data?.current);
   const refresh = () => qc.invalidateQueries({ queryKey: ['host-update'] });
   const install = useMutation({
+    meta: { errorShown: true },
     mutationFn: async () => {
       try {
         return await api.installUpdate(false);
@@ -39,7 +40,7 @@ export function UpdateBanner() {
     },
     onSettled: refresh,
   });
-  const dismiss = useMutation({ mutationFn: api.dismissUpdateResult, onSettled: refresh });
+  const dismiss = useMutation({ meta: { errorShown: true }, mutationFn: api.dismissUpdateResult, onSettled: refresh });
   const [notesOpen, setNotesOpen] = useState(false);
   const s = status.data;
   if (!s) return null;

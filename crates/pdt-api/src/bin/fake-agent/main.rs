@@ -42,7 +42,7 @@ mod codex;
 
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
-use std::sync::mpsc;
+use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
 struct Agent {
@@ -101,6 +101,13 @@ fn rpc(server: &(String, String), method: &str, params: Value) -> Result<Value, 
     Ok(v["result"].clone())
 }
 
+/// A tag for the ids this process makes, unique across processes: a pid alone repeats when the OS reuses it, and a
+/// later fake would then name a new session or thread after an earlier one's and load its history.
+fn run_tag() -> &'static str {
+    static TAG: OnceLock<String> = OnceLock::new();
+    TAG.get_or_init(|| uuid::Uuid::new_v4().simple().to_string()[..12].to_string())
+}
+
 fn out(v: Value) {
     let mut o = std::io::stdout().lock();
     let _ = writeln!(o, "{v}");
@@ -110,7 +117,7 @@ fn out(v: Value) {
 impl Agent {
     fn next_id(&mut self, p: &str) -> String {
         self.msg += 1;
-        format!("{p}_{}_{}", self.msg, std::process::id())
+        format!("{p}_{}_{}", self.msg, run_tag())
     }
 
     fn init(&self) {

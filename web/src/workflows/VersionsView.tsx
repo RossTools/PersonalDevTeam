@@ -56,6 +56,7 @@ export function VersionsView({ w, dirty, readOnly, onChanged, initial }: {
   const proposal = useProposal(w, dirty, (d) => { setPicked(null); onChanged(d); });
   const { done, replaceDraft } = proposal;
   const restore = useMutation({
+    meta: { errorShown: true },
     mutationFn: async (n: number) => {
       const doc = (await api.workflowVersion(w.id, n)).doc!;
       return api.saveWorkflow(w.id, { doc, note: `Restored v${n}`, propose: false });

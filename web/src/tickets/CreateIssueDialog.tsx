@@ -22,6 +22,7 @@ export function CreateIssueDialog({ projectId, repo, ticket, onClose }: {
   const [title, setTitle] = useState(ticket?.title ?? '');
   const [body, setBody] = useState(ticket?.description ?? '');
   const run = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.createIssue(projectId, { title: title.trim(), body, labels: [], ...(ticket ? { ticketId: ticket.id } : {}) }),
     onSuccess: (r) => {
       if (ticket) invalidateTickets(qc, [ticket.id]);
