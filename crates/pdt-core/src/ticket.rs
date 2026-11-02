@@ -44,6 +44,18 @@ pub enum TicketStage {
 str_enum!(TicketStage { Draft => "draft", Ready => "ready", Todo => "todo", InProgress => "in_progress", Done => "done", WontDo => "wont_do" });
 
 impl TicketStage {
+    /// Its name as the board shows it (`Won't do`).
+    pub fn label(self) -> &'static str {
+        match self {
+            TicketStage::Draft => "Draft",
+            TicketStage::Ready => "Ready",
+            TicketStage::Todo => "To do",
+            TicketStage::InProgress => "In progress",
+            TicketStage::Done => "Done",
+            TicketStage::WontDo => "Won't do",
+        }
+    }
+
     /// Done and Won't do are closed: hidden like done, and they no longer block anything.
     pub fn is_closed(self) -> bool {
         matches!(self, TicketStage::Done | TicketStage::WontDo)

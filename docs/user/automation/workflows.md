@@ -21,6 +21,7 @@ These come with PDT. You can turn them off, edit them or copy them, but not dele
 | **PR comments to the agent** | Sends other people's comments and reviews on the pull request to the agent. | Off |
 | **Base moved while a PR waits** | Tells the agent when the base branch moves while its pull request waits (**PR notices** covers this too). | Off |
 | **Ticket proposals** | Holds a ticket an agent files while it works (not the PM's, and not parts from **Make into parts**) in **Draft**, off the board, and puts it in your Inbox to accept, mark as a duplicate or reject. See [Ticket proposals](../using-pdt/the-inbox.md#to-act-on). Turn it off and agents' tickets go straight to the board. | On |
+| **Close finished parents** | Closes a parent when its last part closes (to **Won't do** if every part was **Won't do**), with a comment and a notification, unless it has an attempt or a running agent session of its own. Moving a part out of **Done** or **Won't do** moves its closed parent back to **In progress**. See [Parts and epics](../using-pdt/tickets-and-the-board.md#parts-and-epics). | On |
 | **PM daily checkpoint** | Brings the PM's open conversations up to date once a day and has each write a journal checkpoint. See [Change when it's brought up to date](the-pm.md#change-when-its-brought-up-to-date). | On |
 
 Plugins add their own while they're on: Jira, say, adds **Import assigned Jira issues** and **Done moves the Jira

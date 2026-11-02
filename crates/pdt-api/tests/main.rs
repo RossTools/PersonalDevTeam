@@ -17,6 +17,7 @@ mod agent_steps;
 mod api;
 mod bug_reports;
 mod checks;
+mod close_parents;
 mod codex_conversations;
 mod conversations;
 mod delivery;

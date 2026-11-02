@@ -443,6 +443,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         // Each module lists its own routes in `router()`; one sorted line per module here.
         .merge(crate::activity::router())
         .merge(crate::attachments::router())
+        .merge(crate::board::router())
         .merge(crate::bug_reports::router())
         .merge(crate::checks::router())
         .merge(crate::conversations::router())

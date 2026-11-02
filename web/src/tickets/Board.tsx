@@ -1,4 +1,4 @@
-// The Tickets view's Board: committed work in three columns (To do, In progress, Done in the last two weeks). Ready
+// The Tickets view's Board: committed work in three columns (To do, In progress, Done in the project's window). Ready
 // tickets wait in the backlog until they are moved to To do. Rows are lanes (PDT-38): tickets that are not parts
 // first, then one lane per parent with its parts, under a header that tracks the parent. With a pipeline workflow at
 // work (Phase 7c), In progress splits into its stages: Code, Review, QA, Accept and Merge.
@@ -29,6 +29,7 @@ import { CiBadge, PrBadge } from './PullRequest';
 import { ExternalKeys } from './ExternalKeys';
 import { TicketBadges } from './TicketBadges';
 import { LabelChips } from './TicketParts';
+import { DAY_MS, DEFAULT_DONE_DAYS, useDoneWindow } from './BoardViewMenu';
 
 export type BoardStage = Extract<TicketStage, 'todo' | 'in_progress' | 'done'>;
 
@@ -98,8 +99,8 @@ export function agentLine(a: TicketAgent): { text: string; dot: AgentStateValue 
   }
 }
 
-/** The Done column shows tickets closed in the last two weeks. */
-export const DONE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+/** The Done column shows tickets closed in the last two weeks unless the project's board says otherwise. */
+export const DONE_WINDOW_MS = DEFAULT_DONE_DAYS * DAY_MS;
 const BOARD_PAGE = 50;
 
 /**
@@ -502,8 +503,10 @@ export function ColumnChips({ ref, columns, counts, value, onChange }: {
  * move from their menu (Move to), never by drag.
  */
 export function Board({ projectId, onPeek, phone }: { projectId: string | null; onPeek: (id: string) => void; phone: boolean }) {
-  // Fixed while the board is on screen: a new value every render would be a new query every render.
-  const [closedAfter] = useState(() => Date.now() - DONE_WINDOW_MS);
+  // Fixed while the board is on screen and its window stays the same: a new value every render would be a new query
+  // every render.
+  const doneDays = useDoneWindow(projectId);
+  const closedAfter = useMemo(() => Date.now() - doneDays * DAY_MS, [doneDays]);
   const [shown, setShown] = useState<string>('todo');
   const sessions = useAllSessions();
   const qc = useQueryClient();

@@ -103,9 +103,12 @@ cancels that restart (`AppState::run_stops`), and one that cannot start again fa
 
 **Tickets.** Numbered per project (`<KEY>-<n>`, never reused), in a stage (draft, ready, todo, in progress, done,
 won't do), ordered by a fractional `rank`, linked (`blocks`, `relates`), with a timeline of events (comments are
-events). A parent ticket's parts are tickets one level down; the parent is never started itself. Tickets from outside
-(`source: external`) need the user's admission before agents work on them. `pipelineStage` is the Board column a
-workflow step sets.
+events). A parent ticket's parts are tickets one level down; the parent is never started itself. Starting a part
+moves its parent to In progress (`Store::part_started`); the "Close finished parents" built-in closes and reopens it
+as its parts close and reopen (`ticket.close_parent`, the rule in pdt-core `parts::parent_follow`). Tickets from
+outside (`source: external`) need the user's admission before agents work on them. `pipelineStage` is the Board column
+a workflow step sets. The board's Done window is a per-project host setting (`project_settings.board`, pdt-core
+`board::BoardSettings`, `GET`/`PUT /api/projects/{id}/board`).
 
 **Attempts.** One go at a ticket: its branch (`pdt-<KEY>-<n>-<slug>`), worktree, base branch, workspace and the merge
 state. Start (pdt-api `start.rs`) makes the branch and worktree, the attempt and the first agent session, whose

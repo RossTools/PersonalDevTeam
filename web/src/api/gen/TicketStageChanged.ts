@@ -12,4 +12,8 @@ githubIssue: string | null,
  * The issue in each other tracker the ticket is linked to, by the tracker (an integration's id, or `github`):
  * `{{trigger.external.<tracker>}}`.
  */
-external: { [key in string]: string }, };
+external: { [key in string]: string }, 
+/**
+ * Its parent, when it is a part: id and key (PDT-377).
+ */
+parentId: string | null, parentKey: string | null, };

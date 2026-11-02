@@ -17,6 +17,7 @@ pub mod mcp_tool;
 pub mod merge;
 pub mod notify;
 pub mod outside_pr;
+pub mod parent;
 pub mod pickup;
 pub mod pm;
 pub mod release;

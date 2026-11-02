@@ -176,7 +176,7 @@ pub const EVENT_TYPES: &[EventType] = &[
     EventType {
         id: TICKET_STAGE_CHANGED,
         title: "Ticket moved",
-        description: "A ticket moved to another stage.",
+        description: "A ticket moved to another stage. A part names its parent (`parentId`, `parentKey`).",
         schema: schema_of::<TicketStageChanged>,
         outside: &[],
     },
@@ -647,6 +647,11 @@ pub struct TicketStageChanged {
     /// `{{trigger.external.<tracker>}}`.
     #[serde(default)]
     pub external: std::collections::BTreeMap<String, String>,
+    /// Its parent, when it is a part: id and key (PDT-377).
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub parent_key: Option<String>,
 }
 
 /// `ticket.created` (PDT-363).

@@ -26,6 +26,7 @@ import { AgentDot } from '../common/AgentState';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { AttemptSection, MergedBanner } from './Attempt';
 import { agentLine, Board, PIPELINE_LABEL } from './Board';
+import { BoardViewMenu } from './BoardViewMenu';
 import { NewTicketFab, PhoneToolbar } from './PhoneTickets';
 import { PhoneTicket } from './PhoneTicket';
 import { useClearToStartToasts } from './clearToStart';
@@ -661,6 +662,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
         }
         actions={
           <>
+            {mode === 'board' && project && <BoardViewMenu projectId={project.id} />}
             {project && imports.map((i) => (
               <Button key={i.integration} size="sm" onClick={() => setImporting(i)}>{i.title}…</Button>
             ))}

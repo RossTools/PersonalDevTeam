@@ -36,6 +36,7 @@ impl Integration for Core {
             Box::new(ticket::Move),
             Box::new(ticket::Comment),
             Box::new(ticket::Create),
+            Box::new(parent::CloseParent),
             Box::new(pickup::Candidates),
             Box::new(pickup::Choose),
             Box::new(pickup::Start),

@@ -103,7 +103,8 @@ async fn the_catalog_and_the_builtins_are_served() {
         .map(|w| (w["builtin"].as_str().unwrap(), w["enabled"].as_bool().unwrap()))
         .collect();
     assert!(builtins.contains(&("pm-daily-checkpoint", true)), "{list}");
-    assert_eq!(builtins.len(), 10, "no integration's built-ins until it is enabled: {list}");
+    assert!(builtins.contains(&("close-parents", true)), "{list}");
+    assert_eq!(builtins.len(), 11, "no integration's built-ins until it is enabled: {list}");
     // PDT's own development's are not built-ins (PDT-295): neither installed nor offered.
     assert!(builtins.contains(&("github-issue-done", true)) && !builtins.iter().any(|b| b.0 == "pdt-bug-triage"));
     let (_, templates) = call(&env.app, "GET", "/api/workflow-templates", None).await;
