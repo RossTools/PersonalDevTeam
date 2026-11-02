@@ -79,7 +79,7 @@ describe('Sheet', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it('opened from a dialog, is usable and closes on Escape without closing the dialog', async () => {
+  it('opened from a dialog, is usable, keeps Tab inside and closes on Escape without closing the dialog', async () => {
     const user = userEvent.setup();
     const onDialog = vi.fn();
     function Picker() {
@@ -97,8 +97,14 @@ describe('Sheet', () => {
     // Not hidden by the dialog: found without `hidden`, and focus moves into it.
     const sheet = await screen.findByRole('dialog', { name: 'Preview' }, { timeout: 5000 });
     await waitFor(() => expect(sheet).toContainElement(document.activeElement as HTMLElement));
-    await user.click(within(sheet).getByRole('button', { name: 'Create' }));
-    expect(within(sheet).getByRole('button', { name: 'Create' })).toHaveFocus();
+    const create = within(sheet).getByRole('button', { name: 'Create' });
+    await user.click(create);
+    expect(create).toHaveFocus();
+    // Tab keeps to the sheet: past its last control to the first (Close), and back.
+    await user.tab();
+    expect(within(sheet).getByRole('button', { name: 'Close' })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(create).toHaveFocus();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Preview' })).not.toBeInTheDocument());
     expect(onDialog).not.toHaveBeenCalled();

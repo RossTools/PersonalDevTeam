@@ -75,15 +75,18 @@ export function UpdateBanner() {
                   trigger={<Button size="sm" variant="ghost" compact>Release notes</Button>}
                   label="Release notes"
                   placement="bottom end"
-                  className="max-h-[50vh] w-[min(40rem,calc(100vw-2rem))] p-3"
+                  className="w-[min(40rem,calc(100vw-2rem))] p-3"
                 >
                   {({ close }) => (
                     <>
-                      {releases
-                        ? <ReleaseList releases={releases} since={s.current} />
-                        : changes
-                        ? <ChangeList changes={changes} onOpened={close} />
-                        : <pre className="font-sans text-xs whitespace-pre-wrap text-foreground">{s.latest?.notes}</pre>}
+                      {/* React Aria sets the popover's own max height inline; the notes keep to half the screen. */}
+                      <div className="max-h-[50vh] min-h-0 overflow-y-auto">
+                        {releases
+                          ? <ReleaseList releases={releases} since={s.current} />
+                          : changes
+                          ? <ChangeList changes={changes} onOpened={close} />
+                          : <pre className="font-sans text-xs whitespace-pre-wrap text-foreground">{s.latest?.notes}</pre>}
+                      </div>
                       <Button size="sm" variant="ghost" className="self-start" onClick={close}>Close</Button>
                     </>
                   )}
