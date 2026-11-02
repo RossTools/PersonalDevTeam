@@ -287,11 +287,11 @@ mod tests {
         t.on(
             "GET",
             "https://api.github.com/user",
-            Response::new(200, r#"{"login":"ross"}"#).with_header("X-OAuth-Scopes", "repo, read:org"),
+            Response::new(200, r#"{"login":"alex"}"#).with_header("X-OAuth-Scopes", "repo, read:org"),
         );
         t.on("GET", "https://api.github.com/user", Response::new(401, r#"{"message":"Bad credentials"}"#));
         let w = whoami(&t, "", "gho_x").unwrap();
-        assert_eq!((w.login.as_str(), w.scopes.clone()), ("ross", vec!["repo".to_string(), "read:org".to_string()]));
+        assert_eq!((w.login.as_str(), w.scopes.clone()), ("alex", vec!["repo".to_string(), "read:org".to_string()]));
         assert!(t.sent()[0].headers.contains(&("Authorization", "Bearer gho_x".into())));
         assert!(whoami(&t, "", "bad").unwrap_err().contains("does not accept"));
     }

@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn private_link_local_and_mdns_hosts_are_local() {
         for h in [
-            "192.168.0.69",
+            "192.168.1.10",
             "10.1.2.3",
             "172.16.0.1",
             "172.31.255.255",
@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn host_unreachable_to_a_private_address_on_macos_names_the_setting() {
-        let m = explain_failure(true, Some("192.168.0.69"), Some(65)).unwrap();
+        let m = explain_failure(true, Some("192.168.1.10"), Some(65)).unwrap();
         assert!(m.contains("Local Network") && m.contains("System Settings") && m.contains(PRODUCT_NAME), "{m}");
     }
 
@@ -126,9 +126,9 @@ mod tests {
         assert_eq!(explain_failure(true, Some("[2606:4700::1111]"), Some(65)), None, "a public IPv6 address");
         assert_eq!(explain_failure(true, Some("example.com"), Some(61)), None, "a name, connection refused");
         assert_eq!(explain_failure(false, Some("example.com"), Some(65)), None, "a name, not macOS");
-        assert_eq!(explain_failure(true, Some("192.168.0.69"), Some(61)), None, "connection refused");
-        assert_eq!(explain_failure(true, Some("192.168.0.69"), None), None, "no OS error");
+        assert_eq!(explain_failure(true, Some("192.168.1.10"), Some(61)), None, "connection refused");
+        assert_eq!(explain_failure(true, Some("192.168.1.10"), None), None, "no OS error");
         assert_eq!(explain_failure(true, None, Some(65)), None, "no host");
-        assert_eq!(explain_failure(false, Some("192.168.0.69"), Some(65)), None, "not macOS");
+        assert_eq!(explain_failure(false, Some("192.168.1.10"), Some(65)), None, "not macOS");
     }
 }
