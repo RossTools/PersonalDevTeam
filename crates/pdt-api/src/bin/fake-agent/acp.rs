@@ -101,10 +101,20 @@ fn out(mut v: Value) {
 }
 
 /// A session's saved history: one `{"text", "atMs"}` line per prompt (tests add lines to stand in for turns taken in
-/// Devin's terminal). It exists once the session was prompted. Kept next to the `--config` file PDT passes (the PDT
-/// session's data folder, which the test's temp folder holds), else in the temp folder.
+/// Devin's terminal). It exists once the session was prompted. Kept inside the test's temp folder, which the test
+/// removes: next to the `--config` file PDT passes (the PDT session's data folder), else in the `.git` folder of the
+/// repository the session runs in (git never lists it), else (outside a repository) in the working directory.
 fn saved_marker(id: &str) -> std::path::PathBuf {
-    SAVED_DIR.get().cloned().unwrap_or_else(std::env::temp_dir).join(format!("fake-acp-saved-{id}"))
+    let dir = SAVED_DIR.get().cloned().or_else(repo_git_dir).or_else(|| std::env::current_dir().ok());
+    let dir = dir.unwrap_or_else(std::env::temp_dir);
+    dir.join(format!("fake-acp-saved-{id}"))
+}
+
+/// The `.git` folder of the main checkout holding the working directory (a worktree's `.git` is a file: its main
+/// checkout's is further up).
+fn repo_git_dir() -> Option<std::path::PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    cwd.ancestors().map(|d| d.join(".git")).find(|g| g.is_dir())
 }
 
 fn now_ms() -> i64 {
