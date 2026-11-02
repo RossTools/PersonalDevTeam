@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SignIn } from '../api/gen/SignIn';
 import { renderWithQuery, stubApi } from '../test-utils';
+import { connectionsKey } from '../connections/ConnectionDialog';
 import { AccountSignIn, redirectUri } from './AccountSignIn';
 
 afterEach(() => {
@@ -112,5 +113,20 @@ describe('A plugin’s account sign-in', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Sign in with Acme' }));
     expect(await screen.findByText(/Allow pop-ups for PDT/)).toBeInTheDocument();
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('lists a connection as soon as it is saved, without a reload', async () => {
+    let accounts: object[] = [];
+    stubApi({
+      'GET /api/ui/token': { token: 'ui' },
+      'GET /api/acme/accounts': () => accounts,
+    });
+    const { qc } = renderWithQuery(<AccountSignIn signIn={signIn(false)} />);
+    expect(await screen.findByText('Add a connection for your Acme account first.')).toBeInTheDocument();
+    accounts = [{ connectionId: 'c1', name: 'Work', signedIn: false, email: null, hasClient: true, builtIn: false, agents: false, picker: false, note: null }];
+    // What saving or deleting a connection does.
+    await qc.invalidateQueries({ queryKey: connectionsKey });
+    expect(await screen.findByText('Work')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
   });
 });
