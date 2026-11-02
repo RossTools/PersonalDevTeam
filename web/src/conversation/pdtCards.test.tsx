@@ -102,12 +102,12 @@ describe('PDT tool cards', () => {
     expect(screen.getByRole('region', { name: 'Unlinked' })).toHaveTextContent('ALP-1no longer relates toALP-2');
   });
 
-  it('send_to_session: the quoted message, who got it, sent', () => {
+  it('send_to_session: the quoted message, who gets it, queued', () => {
     stubApi({});
     renderWithQuery(<PdtToolCard call={done('send_to_session', { session: 's9', text: 'Skip the e2e run locally.' }, { queued: true, to: 'Coder · ALP-19', ticket: 'ALP-19' })} />);
     const card = screen.getByRole('region', { name: 'Message to Coder · ALP-19' });
     expect(within(card).getByText('Skip the e2e run locally.').tagName).toBe('BLOCKQUOTE');
-    expect(card).toHaveTextContent('Sent');
+    expect(card).toHaveTextContent('Queued');
   });
 
   it('add_ticket_comment: the comment previewed on its ticket', () => {

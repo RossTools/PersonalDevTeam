@@ -180,7 +180,7 @@ export function LinkCard({ call }: { call: PdtCall }) {
   );
 }
 
-/** `send_to_session`: the quoted message, who got it, and that it went. */
+/** `send_to_session`: the quoted message, who gets it, and that it is queued (delivered when that session is free). */
 export function MessageCard({ call }: { call: PdtCall }) {
   const m = sentMessage(call.input, call.output);
   const state = callState(call);
@@ -190,7 +190,7 @@ export function MessageCard({ call }: { call: PdtCall }) {
       icon={<Mail />}
       label={`Message to ${to}`}
       heading={<>Message to <span className="font-medium text-foreground">{to}</span>{m.ticket && !m.to?.includes(m.ticket) && <Key value={m.ticket} />}</>}
-      aside={state?.aside ?? <span>Sent</span>}
+      aside={state?.aside ?? <span title="Delivered when the session next takes input">Queued</span>}
     >
       <blockquote className="my-2 border-l-2 border-border pl-3 text-muted-foreground whitespace-pre-wrap">{m.text}</blockquote>
       {state?.error && <Failure text={state.error} />}
