@@ -38,9 +38,15 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   (pdt-api `conversations.rs` `tell_stopped_background`); a workflow step waiting on them gets that message at once,
   as an automatic nudge (`workflow/agent.rs` `restarted_while_waiting`). Terminals don't report background tasks, so
   their agents aren't told.
-- **Text from outside is fenced.** Issue and PR text, webhook payloads and other outside fields (`EventType.outside`)
-  are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions that read untrusted
-  input run locked down (`persona::locked_down`: read-only tools, no secrets).
+- **Text from outside is fenced.** Issue and PR text (titles too), webhook payloads and other outside fields
+  (`EventType.outside`) are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions
+  that read untrusted input run locked down (`persona::locked_down`: read-only tools, no secrets). Bots' comments and
+  reviews are outside text whatever their role on the repository (they relay others' text). A sub-workflow's run
+  inherits its `workflow.call` chain's first run (`untrusted::origin`, `StepCx::origin`): when that run's trigger
+  carries outside text, all of the child's `{{trigger…}}` is fenced (`fence::ALL`), its sessions are locked down and
+  outsiders' text is refused as in the caller; the triage cap counts a workflow whose calls reach an agent step
+  (`engine::reaches_agent`). New code that reads "was this run started by outside input" goes through
+  `untrusted::untrusted_run` / `run_source`, never the run's own trigger alone.
 - **What every user's agents read is about their project, not PDT's development.** The built-in personas'
   instructions, the PM's prompt, the tools' descriptions and schemas (doc comments on their argument types too), the
   agent context and the served guides name no ticket keys of PDT's own (examples use `ABC-12`), and nothing of PDT's own
