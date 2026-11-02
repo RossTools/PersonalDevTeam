@@ -1,0 +1,26 @@
+# The secret scan (gitleaks) CI runs on every pull request and in the merge queue (docs/SDLC.md "CI"): the default
+# rules, less the known false positives below. To allowlist a new test fixture, add an [[allowlists]] entry naming the
+# rule (targetRules), its path and a regex for the value, so a real key in the same file is still caught: a global
+# entry with paths skips the whole file for every rule.
+title = "PDT"
+
+[extend]
+useDefault = true
+
+# Claude Code transcripts recorded as fixtures: `api_message_id` values are Anthropic message ids, not keys.
+[[allowlists]]
+description = "Anthropic message ids in recorded Claude transcripts"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^crates/pdt-core/tests/fixtures/claude/.*\.jsonl$''']
+regexTarget = "line"
+regexes = ['''"api_message_id":"msg_[0-9A-Za-z]+"''']
+
+# The keychain entry name of a dev instance's update token, in a test.
+[[allowlists]]
+description = "update-token keychain entry names"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^crates/pdt-api/src/secrets\.rs$''']
+regexTarget = "line"
+regexes = ['''update-token:[0-9a-f]{12}''']

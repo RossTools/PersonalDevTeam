@@ -33,7 +33,7 @@ env:
   CARGO_INCREMENTAL: "0"
 
 # What a pull request, and its run in the merge queue, waits for (docs/SDLC.md "CI"):
-# - nothing but `changes` and `site` when it only touches docs and the website (`docs/**`, `site/**` or any `*.md`,
+# - nothing but `changes`, `secrets` and `site` when it only touches docs and the website (`docs/**`, `site/**` or any `*.md`,
 #   except the guides pdtd builds in): every other job is skipped.
 # - site: builds the website (site/, Astro + Starlight) when `site/**` or `docs/**` changes (the site reads docs/ in
 #   place), or the pnpm lockfile or workspace. pages.yml deploys it from main.
@@ -57,6 +57,7 @@ env:
 #   run by hand (workflow_dispatch with `bundles`). They publish nothing here: release.yml publishes the tag's. Linux builds the tarball and AppImage on native x86_64 and arm64
 #   runners (bundle (linux, <arch>)); a release's SHA256SUMS lists them with the others.
 # - version: the workspace version in Cargo.toml and desktop/src-tauri/tauri.conf.json agree (in `lint (linux)`).
+# - secrets: gitleaks over the commits the PR or queued group adds, always (.gitleaks.toml allowlists test fixtures).
 # - changelog: on PRs (not docs-only ones), a changelog fragment or the `no-changelog` label (docs/SDLC.md).
 # A skipped job still reports its check, which counts as passing for main's required checks; the job names are
 # those required checks, so they must not change without changing the ruleset.
@@ -194,6 +195,44 @@ jobs:
           re-runs CI). See docs/SDLC.md "Changelog".
           EOF
           exit 1
+
+  # The secret scan: gitleaks over the commits a PR (or the queued group) adds, on every PR, docs-only ones included.
+  # .gitleaks.toml allowlists the known test fixtures (docs/SDLC.md "CI"). The release binary, checksum-pinned:
+  # gitleaks-action needs a licence for organisations.
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        env:
+          VERSION: 8.30.1
+          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          curl -fsSL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v$VERSION/gitleaks_${VERSION}_linux_x64.tar.gz"
+          echo "$SHA256  gitleaks.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf gitleaks.tar.gz -C "$RUNNER_TEMP/gitleaks" gitleaks
+          rm gitleaks.tar.gz
+          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
+      - name: gitleaks
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}
+        run: |
+          # The commits the PR or the queued group adds; run by hand, the whole history.
+          case "$EVENT" in
+            pull_request) range="$PR_BASE..$PR_HEAD" ;;
+            merge_group) range="$QUEUE_BASE..$QUEUE_HEAD" ;;
+            *) range="" ;;
+          esac
+          echo "Scanning ${range:-every commit}"
+          gitleaks git --no-banner --redact --verbose ${range:+--log-opts="$range"} .
 
   # The website (site/README.md): it builds, with the docs it reads from docs/. pages.yml deploys it from main.
   site:
