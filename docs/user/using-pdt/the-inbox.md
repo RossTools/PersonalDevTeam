@@ -43,8 +43,9 @@ from an agent that can't ask in its own prompt shows here too, with its argument
 
 ### Stuck
 
-- **Stalled**: a workflow step's agent stopped without saying it was done. **Nudge** reminds it (optionally in your
-  words); **Take over** finishes the step with the outcome you pick.
+- **Stalled**: a workflow step's agent stopped without saying it was done, and the nudges and fresh session of
+  [When an agent is stuck](../automation/personas-and-approvals.md#when-an-agent-is-stuck) didn't get it going.
+  **Nudge** reminds it (optionally in your words); **Take over** finishes the step with the outcome you pick.
 - **Loop limit**: a step has gone round as often as it may (a review that keeps sending work back, say). Its passes are
   listed with each one's outcome. Allow one more round, pick the outcome yourself, or stop.
 - **Timed out**: a step ran out of time. **Resume** runs it again (with an optional note), **Stop** leaves it.

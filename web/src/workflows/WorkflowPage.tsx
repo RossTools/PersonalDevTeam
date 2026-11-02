@@ -16,6 +16,8 @@ import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { runAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { useTopBarActions } from '../shell/PhoneTopBar';
+import { routePath } from '../shell/route';
+import { navigate } from '../shell/router';
 import { DryRunDialog } from './DryRunDialog';
 import { EnableDialog, EnableSwitch, useEnable } from './EnableSwitch';
 import { ExportDialog } from './ExportDialog';
@@ -34,6 +36,9 @@ import { useProposal } from './useProposal';
 import { VersionsView } from './VersionsView';
 
 export type WorkflowTab = 'graph' | 'outline' | 'text' | 'runs' | 'versions';
+
+/** The built-in whose inputs Settings → Agents sets (PDT-367). */
+const STUCK_AGENTS = 'stuck-agents';
 
 /** Issue codes for what the workflow names that is not on this host (an imported workflow's, PDT-155). */
 const SETUP_CODES = ['missing_connection', 'connection_kind', 'hook_secret', 'missing_persona', 'missing_project'];
@@ -243,6 +248,11 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
         )}
       />
       {w.source === 'repo' && <Banner tone="neutral">This workflow lives in the repo ({w.repoFile}): edit the file to change it.</Banner>}
+      {w.builtin === STUCK_AGENTS && (
+        <Banner tone="neutral" actions={<Button size="sm" variant="ghost" onClick={() => navigate(routePath({ view: 'settings', page: { kind: 'host', section: 'agents' } }))}>Open Settings</Button>}>
+          Its nudges, messages and limits are set in Settings → This host → Agents. Changing more here makes it your own: Settings then only offers Reset to default.
+        </Banner>
+      )}
       {setup.length > 0 && (
         <Banner tone="waiting">
           <span className="flex flex-col">

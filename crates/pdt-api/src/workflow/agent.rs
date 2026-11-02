@@ -46,11 +46,11 @@ fn restart_key(step_id: &str) -> String {
 
 /// What an agent node's step resolves to before it starts.
 pub(crate) struct Target {
-    project_id: String,
+    pub(crate) project_id: String,
     /// No ticket and no project (a personal workflow, PDT-152): the step runs in the host project, as the PM does.
     pub(crate) host: bool,
-    ticket: Option<(String, String, String)>,
-    attempt: Option<pdt_store::AttemptInfo>,
+    pub(crate) ticket: Option<(String, String, String)>,
+    pub(crate) attempt: Option<pdt_store::AttemptInfo>,
 }
 
 /// Where a step runs: its ticket's project, else the run's or the workflow's, else the host project. A dry run
@@ -166,7 +166,12 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     let allowed = cx.step.wait.get("loopAllowed").and_then(Value::as_bool) == Some(true);
     let limit = c.loop_limit();
     if limit > 0 && passes.len() > usize::try_from(limit).unwrap_or(usize::MAX) && !allowed {
-        return loop_limit(cx, &c, &passes).await;
+        // "When an agent is stuck" decides (PDT-367), else the Inbox asks.
+        if super::stuck::escalate_loop_limit(cx, &c, &passes).await {
+            return Ok(super::stuck::loop_limit_wait());
+        }
+        loop_limit_item(st, cx.run, &cx.step.id, &cx.node.id, cx.node_title(), &c, &passes).await?;
+        return Ok(super::stuck::loop_limit_wait());
     }
     let persona = step_persona(st, &c.persona).await?;
     // A switched-off agent fails the step (PDT-270): it never falls back to another agent.
@@ -182,12 +187,21 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     // A resumed step (PDT-123) goes on in the session of the step it resumes, while that is there.
     let resume_of = cx.step.wait.get("resumeOf").and_then(Value::as_str).map(String::from);
     let note = cx.step.wait.get("note").and_then(Value::as_str).map(String::from);
+    // Resumed in a fresh session ("When an agent is stuck" restarted it after it timed out, PDT-367).
+    let fresh = c.owner == Owner::Agent && cx.step.wait.get("fresh").and_then(Value::as_bool) == Some(true);
     let resumed = match (&resume_of, c.owner) {
-        (Some(id), Owner::Agent) => resumed_session(st, id).await,
+        (Some(id), Owner::Agent) if !fresh => resumed_session(st, id).await,
         _ => None,
     };
+    let earlier = match &resume_of {
+        Some(id) => st.store.get_agent_step(id).await.map_err(err)?,
+        None => None,
+    };
+    let restarts = cx.step.wait.get("restarts").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok());
+    let restarts = restarts.or_else(|| earlier.as_ref().map(|a| a.restarts)).unwrap_or(0);
     let reused = match (c.owner, c.session) {
         _ if resumed.is_some() => resumed.clone(),
+        _ if fresh => None,
         (Owner::Agent, SessionChoice::Reuse) => reusable_session(st, cx, Some(&t)).await,
         (Owner::Agent, SessionChoice::Own) => reusable_session(st, cx, None).await,
         _ => None,
@@ -232,6 +246,7 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         comments: vec![],
         data: None,
         by_user: false,
+        restarts,
         created_at: now,
         updated_at: now,
     };
@@ -257,6 +272,13 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         && let Some(why) = why_back(st, cx).await
     {
         message.push_str(&format!("\n\nThis step is back for another pass. {why}"));
+    }
+    if fresh {
+        let why = cx.step.wait.get("why").and_then(Value::as_str).unwrap_or("it timed out");
+        message = super::stuck::fresh_session_message(st, &message, why, earlier.as_ref(), &t).await;
+        if let Some(old) = earlier.as_ref().and_then(|a| a.session_id.clone()) {
+            super::stuck::stop_stuck_session(st, &old).await;
+        }
     }
     let fresh = reused.is_none();
     let session_id = match reused {
@@ -284,7 +306,13 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         }
         None => {
             let attempt_for_session = (c.session == SessionChoice::Reuse).then(|| binding.attempt_id.clone()).flatten();
-            new_session(st, cx, &persona, &t, attempt_for_session, message).await?.id
+            let at = StepAt {
+                step_id: &cx.step.id,
+                run: cx.run,
+                workflow_id: &cx.workflow.id,
+                workflow_name: &cx.workflow.name,
+            };
+            new_session(st, at, &persona, &t, attempt_for_session, message).await?.id
         }
     };
     binding.session_id = Some(session_id.clone());
@@ -349,6 +377,15 @@ fn stop_reason(step: &Step) -> String {
 /// the ticket, step and session, with Resume and Stop (PDT-123). The step has ended, so the item stays open until the
 /// user answers it, the run is resumed or cancelled.
 pub(crate) async fn timed_out(st: &AppState, step: &Step, run: &pdt_core::workflow::api::Run) {
+    // "When an agent is stuck" decides (PDT-367), else the Inbox asks.
+    if super::stuck::escalate_timed_out(st, step, run).await {
+        return;
+    }
+    timed_out_item(st, step, run).await;
+}
+
+/// [`timed_out`]'s Inbox item.
+pub(crate) async fn timed_out_item(st: &AppState, step: &Step, run: &pdt_core::workflow::api::Run) {
     let Ok(Some(a)) = st.store.get_agent_step(&step.id).await else { return };
     // A removed session is not offered (PDT-93).
     let session_id = match &a.session_id {
@@ -463,7 +500,7 @@ async fn reusable_session(st: &AppState, cx: &StepCx<'_>, t: Option<&Target>) ->
 /// Where a step's new session on a ticket opens its tab (Coder, Reviewer, QA, Refiner alike): at the end of the
 /// workspace the attempt's Start made, so after the ticket's tab and the sessions before it; the project's workspace
 /// when there is no attempt (Refine) or its workspace is gone. None (no tab) for a step with no ticket.
-async fn step_tab(st: &AppState, t: &Target) -> Option<Option<TabPlacement>> {
+pub(crate) async fn step_tab(st: &AppState, t: &Target) -> Option<Option<TabPlacement>> {
     t.ticket.as_ref()?;
     let workspace = match t.attempt.as_ref().and_then(|a| a.attempt.workspace_id.as_ref()) {
         Some(id) => st.store.get_workspace(id).await.ok().flatten(),
@@ -472,10 +509,19 @@ async fn step_tab(st: &AppState, t: &Target) -> Option<Option<TabPlacement>> {
     Some(workspace.map(|w| TabPlacement { workspace_id: w.id, position: None }))
 }
 
+/// The step a session is started for: its id, run and workflow.
+#[derive(Clone, Copy)]
+pub(crate) struct StepAt<'a> {
+    pub step_id: &'a str,
+    pub run: &'a pdt_core::workflow::api::Run,
+    pub workflow_id: &'a str,
+    pub workflow_name: &'a str,
+}
+
 /// A new conversation for the persona (spec §4.2), its first message the step's.
-async fn new_session(
+pub(crate) async fn new_session(
     st: &AppState,
-    cx: &StepCx<'_>,
+    cx: StepAt<'_>,
     persona: &Persona,
     t: &Target,
     attempt_id: Option<String>,
@@ -538,7 +584,7 @@ async fn new_session(
             id: persona.id.clone(),
             name: persona.name.clone(),
             version: persona.version,
-            step_id: Some(cx.step.id.clone()),
+            step_id: Some(cx.step_id.to_string()),
         }),
         cwd,
         id: None,
@@ -547,7 +593,7 @@ async fn new_session(
     if let Some((ticket_id, _, _)) = &t.ticket {
         let data = json!({"sessionId": s.id, "agent": persona.setup.agent, "persona": persona.name,
                           "personaVersion": persona.version, "attemptId": s.attempt_id, "runId": cx.run.id,
-                          "workflowId": cx.workflow.id, "workflowName": cx.workflow.name});
+                          "workflowId": cx.workflow_id, "workflowName": cx.workflow_name});
         if let Err(e) =
             st.store.add_ticket_event(ticket_id, EventKind::Session, Actor::System, None, Some(data), now_ms()).await
         {
@@ -560,18 +606,18 @@ async fn new_session(
 /// Who a message to a step's session comes from: the user (their click: the cap never holds it, and it reopens a
 /// stopped conversation), or PDT, whose message `reopens` a conversation that is not running only when it says so.
 #[derive(Clone, Copy)]
-struct Delivery {
+pub(crate) struct Delivery {
     by_user: bool,
     reopens: bool,
 }
 
 const USER: Delivery = Delivery { by_user: true, reopens: true };
-const PDT: Delivery = Delivery { by_user: false, reopens: false };
+pub(crate) const PDT: Delivery = Delivery { by_user: false, reopens: false };
 /// PDT's own message that reopens the conversation a restart interrupted (PDT-311).
-const PDT_REOPENS: Delivery = Delivery { by_user: false, reopens: true };
+pub(crate) const PDT_REOPENS: Delivery = Delivery { by_user: false, reopens: true };
 
 /// Queues a message to a session through the outbox (7a's delivery rule: never into a running turn).
-async fn queue_message(
+pub(crate) async fn queue_message(
     st: &AppState,
     s: &Session,
     text: &str,
@@ -601,7 +647,7 @@ async fn queue_message(
     Ok(())
 }
 
-fn outcome_output(a: &AgentStep) -> Value {
+pub(crate) fn outcome_output(a: &AgentStep) -> Value {
     json!({
         "outcome": a.outcome, "summary": a.summary, "comments": a.comments, "data": a.data.clone().unwrap_or_else(|| json!({})),
         "sessionId": a.session_id,
@@ -610,9 +656,16 @@ fn outcome_output(a: &AgentStep) -> Value {
     })
 }
 
-/// The loop limit's Inbox item, and a wait for its answer.
-async fn loop_limit(cx: &StepCx<'_>, c: &AgentConfig, passes: &[AgentStep]) -> R<Outcome> {
-    let st = cx.st;
+/// The loop limit's Inbox item; the step waits for its answer ([`super::stuck::loop_limit_wait`]).
+pub(crate) async fn loop_limit_item(
+    st: &AppState,
+    run: &pdt_core::workflow::api::Run,
+    step_id: &str,
+    node_id: &str,
+    node_title: &str,
+    c: &AgentConfig,
+    passes: &[AgentStep],
+) -> R<()> {
     let first = passes.first();
     let mut choices = vec![InboxChoice::new(inbox::AGAIN, "Once more", true)];
     choices.extend(
@@ -630,26 +683,26 @@ async fn loop_limit(cx: &StepCx<'_>, c: &AgentConfig, passes: &[AgentStep]) -> R
         kind: InboxKind::LoopLimit,
         group: InboxGroup::LoopLimit,
         status: InboxStatus::Open,
-        project_id: first.and_then(|a| a.project_id.clone()).or_else(|| cx.run.project_id.clone()),
-        ticket_id: first.and_then(|a| a.ticket_id.clone()).or_else(|| cx.run.ticket_id.clone()),
+        project_id: first.and_then(|a| a.project_id.clone()).or_else(|| run.project_id.clone()),
+        ticket_id: first.and_then(|a| a.ticket_id.clone()).or_else(|| run.ticket_id.clone()),
         ticket_key: None,
         ticket_title: None,
-        attempt_id: first.and_then(|a| a.attempt_id.clone()).or_else(|| cx.run.attempt_id.clone()),
+        attempt_id: first.and_then(|a| a.attempt_id.clone()).or_else(|| run.attempt_id.clone()),
         session_id: None,
-        run_id: Some(cx.run.id.clone()),
-        step_id: Some(cx.step.id.clone()),
+        run_id: Some(run.id.clone()),
+        step_id: Some(step_id.to_string()),
         persona_id: first.and_then(|a| a.persona_id.clone()),
         persona_name: None,
         change_request: None,
-        title: format!("{} has run {} times in this run", cx.node_title(), passes.len()),
-        body: json!({"passes": history, "outcomes": c.outcomes, "limit": c.loop_limit(), "node": cx.node.id}),
+        title: format!("{node_title} has run {} times in this run", passes.len()),
+        body: json!({"passes": history, "outcomes": c.outcomes, "limit": c.loop_limit(), "node": node_id}),
         choices,
         resolution: Value::Null,
         created_at: now_ms(),
         resolved_at: None,
     };
     st.store.open_inbox_item(&item).await.map_err(err)?;
-    Ok(Outcome::Wait { wait: json!({"loopLimit": true}), until: None, timeout_port: None, output: Value::Null })
+    Ok(())
 }
 
 /// The step section a persona's session gets in its instructions, when it runs a step.
@@ -671,7 +724,7 @@ pub(crate) async fn step_attempt_branch(st: &AppState, s: &Session) -> Option<St
 }
 
 /// The waiting step of a binding, or why the binding is over.
-async fn waiting_step(st: &AppState, a: &AgentStep) -> R<Step> {
+pub(crate) async fn waiting_step(st: &AppState, a: &AgentStep) -> R<Step> {
     let step = st.store.get_step(&a.step_id).await.map_err(err)?.ok_or("the workflow step is gone")?;
     if step.status != StepStatus::Waiting {
         let mut done = a.clone();
@@ -702,6 +755,8 @@ async fn finish_with(
     a.background.clear();
     a.updated_at = now_ms();
     st.store.put_agent_step(&a).await.map_err(err)?;
+    // Nothing is stuck any more ("When an agent is stuck" leaves it alone, PDT-367).
+    st.store.take_escalation(&a.step_id).await.map_err(err)?;
     // A stalled step that gets its outcome after all (the agent went on by itself) needs nothing from the user now.
     for item in st.store.open_items_for_step(&a.step_id).await.map_err(err)? {
         if item.kind == InboxKind::Stalled {
@@ -1137,7 +1192,8 @@ async fn outcome_less_turn(st: &AppState, mut a: AgentStep, step: &Step, session
         }
         return;
     }
-    if a.nudges < a.auto_nudges {
+    // While "When an agent is stuck" is on, it decides the nudges (PDT-367).
+    if a.nudges < a.auto_nudges && !super::stuck::on_for(st, &a.run_id).await {
         a.nudges += 1;
         if let Err(e) = st.store.put_agent_step(&a).await {
             tracing::warn!(step = %a.step_id, error = %e, "could not write an agent step's binding");
@@ -1201,8 +1257,12 @@ fn background_why(a: &AgentStep, now: i64) -> String {
     format!("Waiting on background tasks for {mins} min: {}.", a.background.join(", "))
 }
 
-/// Marks a binding stalled and puts it in the Inbox (Nudge / Take over).
+/// Marks a binding stalled and hands it to "When an agent is stuck" (PDT-367), or puts it in the Inbox (Nudge / Take
+/// over). A step that waited on the user's answer goes to the Inbox.
 async fn stall(st: &AppState, a: AgentStep, why: &str) {
+    if a.state == AgentStepState::Working && super::stuck::escalate_stall(st, &a, why).await {
+        return;
+    }
     stall_item(st, a, why, None).await;
 }
 
@@ -1213,7 +1273,7 @@ async fn stall_undelivered(st: &AppState, a: AgentStep, text: &str) {
     stall_item(st, a, &format!("Its message was never delivered: {quote}{ellipsis}"), Some(text)).await;
 }
 
-async fn stall_item(st: &AppState, mut a: AgentStep, why: &str, undelivered: Option<&str>) {
+pub(crate) async fn stall_item(st: &AppState, mut a: AgentStep, why: &str, undelivered: Option<&str>) {
     a.state = AgentStepState::Stalled;
     a.updated_at = now_ms();
     if let Err(e) = st.store.put_agent_step(&a).await {
@@ -1266,6 +1326,7 @@ async fn stall_item(st: &AppState, mut a: AgentStep, why: &str, undelivered: Opt
 /// Part of the engine tick: a working step whose session ended (stopped, crashed, or pdtd restarted mid-turn) is
 /// stalled, and so is an asking one whose session was removed (its question closed with it: nothing can answer it).
 pub(crate) async fn sweep(st: &AppState) {
+    super::stuck::sweep(st).await;
     let Ok(active) = st.store.active_agent_steps().await else { return };
     let now = now_ms();
     for mut a in active {

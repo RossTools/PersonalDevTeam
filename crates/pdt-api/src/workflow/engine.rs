@@ -99,6 +99,19 @@ pub(crate) async fn lock_run<'a>(st: &'a AppState, run_id: Option<&str>) -> Lock
     Locked { _run: run, _engine: st.engine_lock.lock().await }
 }
 
+/// [`lock_run`] for a step of run `current` acting on run `other` ("When an agent is stuck", PDT-367): `current`'s lock
+/// is held already, so `other`'s is taken only when it is a different one (runs of one ticket share theirs).
+pub(crate) async fn lock_other_run<'a>(st: &'a AppState, current: &Run, other: &str) -> Locked<'a> {
+    let same = match st.store.get_workflow_run(other).await {
+        Ok(Some(r)) => lock_key(&r) == lock_key(current),
+        _ => false,
+    };
+    if same {
+        return Locked { _run: None, _engine: st.engine_lock.lock().await };
+    }
+    lock_run(st, Some(other)).await
+}
+
 /// Parsed documents of workflows as they were at `updated_at` (`AppState::workflow_docs`), so the 2 s passes over
 /// enabled workflows don't parse every document each tick.
 #[derive(Default)]
@@ -286,7 +299,7 @@ pub(crate) async fn start_run(
     Ok(started.then_some(run.id))
 }
 
-async fn load(st: &AppState, run: &Run) -> R<(Workflow, WorkflowDoc)> {
+pub(crate) async fn load(st: &AppState, run: &Run) -> R<(Workflow, WorkflowDoc)> {
     let wf = st.store.get_workflow(&run.workflow_id).await.map_err(err)?.ok_or("the workflow is gone")?;
     let doc = st.store.workflow_doc(&wf.id, run.version).await.map_err(err)?.ok_or("the workflow version is gone")?;
     Ok((wf, doc))

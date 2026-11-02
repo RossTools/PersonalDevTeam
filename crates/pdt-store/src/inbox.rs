@@ -2,7 +2,7 @@
 
 use crate::{Store, StoreError};
 use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
-use pdt_core::workflow::agent::{AgentStep, AgentStepState};
+use pdt_core::workflow::agent::{AgentStep, AgentStepState, Escalation};
 use serde_json::Value;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
@@ -12,7 +12,7 @@ const ITEM_COLUMNS: &str = "id, kind, grp, status, project_id, ticket_id, attemp
 const STEP_COLUMNS: &str = "step_id, run_id, node_id, session_id, persona_id, persona_name, persona_version, \
                             project_id, ticket_id, attempt_id, outcomes, state, turns, nudges, max_turns, auto_nudges, \
                             outcome, summary, comments, by_user, created_at, updated_at, background_since, \
-                            background, background_wait_ms, data";
+                            background, background_wait_ms, data, restarts";
 
 fn corrupt(what: &str, v: &str) -> StoreError {
     StoreError::Corrupt(format!("{what} {v:?}"))
@@ -53,6 +53,16 @@ fn to_item(r: &SqliteRow) -> Result<InboxItem, StoreError> {
     })
 }
 
+fn to_escalation(r: &SqliteRow) -> Result<Escalation, StoreError> {
+    Ok(Escalation {
+        step_id: r.try_get("step_id")?,
+        run_id: r.try_get("run_id")?,
+        kind: r.try_get("kind")?,
+        why: r.try_get("why")?,
+        at: r.try_get("at")?,
+    })
+}
+
 fn to_step(r: &SqliteRow) -> Result<AgentStep, StoreError> {
     let state: String = r.try_get("state")?;
     let n = |k: &str| -> Result<u32, StoreError> { Ok(u32::try_from(r.try_get::<i64, _>(k)?).unwrap_or(0)) };
@@ -83,6 +93,7 @@ fn to_step(r: &SqliteRow) -> Result<AgentStep, StoreError> {
         background: serde_json::from_value(json(r.try_get("background")?)).unwrap_or_default(),
         background_wait_ms: u64::try_from(r.try_get::<i64, _>("background_wait_ms")?).unwrap_or(0),
         data: Some(json(r.try_get("data")?)).filter(|d| !d.is_null()),
+        restarts: n("restarts")?,
     })
 }
 
@@ -303,13 +314,13 @@ impl Store {
         sqlx::query(
             "INSERT INTO agent_steps (step_id, run_id, node_id, session_id, persona_id, persona_name, persona_version, \
              project_id, ticket_id, attempt_id, outcomes, state, turns, nudges, max_turns, auto_nudges, outcome, \
-             summary, comments, by_user, created_at, updated_at, background_since, background, background_wait_ms, data) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             summary, comments, by_user, created_at, updated_at, background_since, background, background_wait_ms, data, \
+             restarts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(step_id) DO UPDATE SET session_id = excluded.session_id, state = excluded.state, \
              turns = excluded.turns, nudges = excluded.nudges, outcome = excluded.outcome, \
              summary = excluded.summary, comments = excluded.comments, by_user = excluded.by_user, \
              updated_at = excluded.updated_at, background_since = excluded.background_since, \
-             background = excluded.background, data = excluded.data",
+             background = excluded.background, data = excluded.data, restarts = excluded.restarts",
         )
         .bind(&a.step_id)
         .bind(&a.run_id)
@@ -337,9 +348,53 @@ impl Store {
         .bind(serde_json::to_string(&a.background).unwrap_or_else(|_| "[]".into()))
         .bind(i64::try_from(a.background_wait_ms).unwrap_or(i64::MAX))
         .bind(a.data.as_ref().map(|d| d.to_string()))
+        .bind(i64::from(a.restarts))
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Hands a stuck step to "When an agent is stuck" (PDT-367), replacing what it was handed before.
+    pub async fn put_escalation(&self, e: &Escalation) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO agent_escalations (step_id, run_id, kind, why, at) VALUES (?, ?, ?, ?, ?) \
+             ON CONFLICT(step_id) DO UPDATE SET run_id = excluded.run_id, kind = excluded.kind, why = excluded.why, \
+             at = excluded.at",
+        )
+        .bind(&e.step_id)
+        .bind(&e.run_id)
+        .bind(&e.kind)
+        .bind(&e.why)
+        .bind(e.at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Ends a step's escalation (something acted on it): whether it had one.
+    pub async fn take_escalation(&self, step_id: &str) -> Result<Option<Escalation>, StoreError> {
+        let row =
+            sqlx::query("DELETE FROM agent_escalations WHERE step_id = ? RETURNING step_id, run_id, kind, why, at")
+                .bind(step_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        row.as_ref().map(to_escalation).transpose()
+    }
+
+    pub async fn get_escalation(&self, step_id: &str) -> Result<Option<Escalation>, StoreError> {
+        let row = sqlx::query("SELECT step_id, run_id, kind, why, at FROM agent_escalations WHERE step_id = ?")
+            .bind(step_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.as_ref().map(to_escalation).transpose()
+    }
+
+    /// Every step waiting on "When an agent is stuck", oldest first.
+    pub async fn escalations(&self) -> Result<Vec<Escalation>, StoreError> {
+        let rows = sqlx::query("SELECT step_id, run_id, kind, why, at FROM agent_escalations ORDER BY at")
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter().map(to_escalation).collect()
     }
 
     /// Forgets a step's binding (one whose session never started: the step starts over, PDT-129).

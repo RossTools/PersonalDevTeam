@@ -61,11 +61,11 @@ For a workflow step's session, PDT takes the first of these that is set:
 - **Outcome**: the agent finishes by handing in one of the step's outcomes with a summary. A Coder can't hand in work
   with uncommitted changes or unpushed commits; PDT tells it what's left.
 - **Questions**: an agent that needs you asks in the Inbox under **Questions**; the step waits for your answer.
-- **Stalls**: an agent that ends its turn without an outcome or a question is reminded once. If it stops again, the
-  step shows under **Stalled** in the Inbox: **Nudge** reminds it again (in your words if you like), **Take over**
-  picks the outcome for it.
-- **Time limits**: a step that runs too long (four hours, or ten turns without an outcome) stops and shows in the
-  Inbox. **Resume** restarts it in the same session, with an optional note; **Stop** ends the run.
+- **Stalls**: an agent that ends its turn without an outcome or a question, or whose session stops, is stuck. See
+  [When an agent is stuck](#when-an-agent-is-stuck).
+- **Time limits**: a step that runs too long (four hours, or ten turns without an outcome) stops. It is restarted
+  once in a fresh session, then shows in the Inbox: **Resume** restarts it in the same session, with an optional
+  note; **Stop** ends the run.
 
 To do a stage yourself, set its **Who …** setting to `user` in the [Pipeline's settings](workflows.md#pipeline-settings).
 
@@ -75,6 +75,32 @@ Work can go round: the Reviewer sends it back, the Coder fixes it, the Reviewer 
 has a **loop limit** (the Pipeline's **Passes before asking**, 3 by default). When a step would go round once more,
 the Inbox shows it under **Loop limit** with each pass's outcome and summary: **Once more** allows one more pass,
 **Take over** picks the outcome, **Stop** ends the run.
+
+### When an agent is stuck
+
+The built-in workflow **When an agent is stuck** decides what happens to a step that stalls, reaches its loop limit
+or runs out of time. By default:
+
+1. A stalled agent is nudged: "You stopped without an outcome. Finish with submit_outcome, or ask_user if you're
+   blocked."
+2. If it stops again, it is nudged again, with the step's goal and the end of its last message.
+3. Then the step starts again in a fresh session, with its task, the earlier session's last message and the state of
+   the branch. The earlier session is stopped.
+4. If that stalls too, the step shows under **Stalled** in the Inbox: **Nudge** reminds it again (in your words if
+   you like), **Take over** picks the outcome for it.
+
+At a loop limit the Inbox asks you. A step that runs out of time is restarted once in a fresh session, then the Inbox
+asks you.
+
+Change it in **Settings › This host › Agents**, under **When an agent is stuck**: how many nudges, the nudge messages
+(**Reset to default text** brings one back), whether to restart in a fresh session before asking you, and what
+happens at a loop limit (**Ask me** or **Stop the step**) and at a time limit. **Customize as a workflow →** opens the
+workflow for anything more; once you change it there beyond these settings, Settings names your workflow, with
+**Open** and **Reset to default**.
+
+Turned off, or if the workflow fails or ends without doing anything with the step, PDT handles the step itself: a
+stalled agent is nudged once, then the step shows in the Inbox, and loop limits and time limits go straight to the
+Inbox.
 
 ### How many agents run at once
 

@@ -65,6 +65,9 @@ async fn setup_with(gh: Option<std::sync::Arc<FakeForge>>) -> Env {
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
     assert_eq!(s, StatusCode::CREATED, "{p}");
+    // The fake agents here hand in outcomes only when a test tells them to, from the session it holds: "When an agent
+    // is stuck" would nudge and restart them meanwhile (its tests: stuck_agents.rs).
+    common::stuck_agents_off(&app).await;
     Env { app, state, project: p["id"].as_str().unwrap().into(), repo, _tmp: tmp }
 }
 

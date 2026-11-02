@@ -1,6 +1,7 @@
 //! The built-in node kinds, one module each (Phase 7a spec §4.4).
 
 pub mod agent;
+pub mod agent_stuck;
 pub mod attempt;
 pub mod brief;
 pub mod call;

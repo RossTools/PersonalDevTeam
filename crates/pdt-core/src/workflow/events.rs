@@ -52,6 +52,9 @@ pub const CONNECTION_FAILED: &str = "connection.failed";
 pub const TODO_DUE: &str = "todo.due";
 
 pub const AGENT_OUTCOME: &str = "agent.outcome";
+pub const AGENT_STALLED: &str = "agent.stalled";
+pub const AGENT_LOOP_LIMIT: &str = "agent.loop_limit";
+pub const AGENT_TIMED_OUT: &str = "agent.timed_out";
 pub const OUTSIDE_INPUT: &str = "session.outside_input";
 pub const TRIAGE_SKIPPED: &str = "triage.skipped";
 pub const TICKET_REFINE_REQUESTED: &str = "ticket.refine_requested";
@@ -85,8 +88,21 @@ pub fn by_user(payload: &serde_json::Value) -> bool {
 /// The event types a workflow's own runs can cause (PDT-364): their payload's `workflowId` names the workflow whose run
 /// caused them (the run itself, its Inbox item, its agent step's session). A trigger skips its own workflow's unless
 /// it sets `includeOwn`, so a workflow that reports run failures never reports its own.
-pub const OWN_RUN_EVENTS: &[&str] =
-    &[INBOX_CREATED, INBOX_ANSWERED, SESSION_NEEDS_YOU, SESSION_TURN_ENDED, SESSION_EXITED, RUN_FAILED, RUN_FINISHED];
+pub const OWN_RUN_EVENTS: &[&str] = &[
+    INBOX_CREATED,
+    INBOX_ANSWERED,
+    SESSION_NEEDS_YOU,
+    SESSION_TURN_ENDED,
+    SESSION_EXITED,
+    RUN_FAILED,
+    RUN_FINISHED,
+    AGENT_STALLED,
+    AGENT_LOOP_LIMIT,
+    AGENT_TIMED_OUT,
+];
+
+/// The events of an agent step that is stuck (PDT-367): "When an agent is stuck" handles them.
+pub const AGENT_STUCK_EVENTS: &[&str] = &[AGENT_STALLED, AGENT_LOOP_LIMIT, AGENT_TIMED_OUT];
 
 /// Whether an event of type `kind` with `payload` came from a run of workflow `workflow_id` (see [`OWN_RUN_EVENTS`]).
 pub fn from_own_run(kind: &str, payload: &serde_json::Value, workflow_id: &str) -> bool {
@@ -315,6 +331,33 @@ pub const EVENT_TYPES: &[EventType] = &[
         title: "Agent outcome",
         description: "An agent step on a ticket ended with an outcome (submitted by the agent, or taken over by the user).",
         schema: schema_of::<AgentOutcome>,
+        outside: &[],
+    },
+    EventType {
+        id: AGENT_STALLED,
+        title: "Agent stalled",
+        description: "An agent step's turn ended without an outcome, or its session stopped or was removed (`why`). \
+                      `nudges` and `restarts` count what was already tried for the step; `goal` is its prompt and \
+                      `lastMessage` the end of what the agent last said. Skips this workflow's own steps unless the \
+                      trigger sets `includeOwn`.",
+        schema: schema_of::<AgentStuck>,
+        outside: &[],
+    },
+    EventType {
+        id: AGENT_LOOP_LIMIT,
+        title: "Agent step at its loop limit",
+        description: "An agent step is about to run more times in one run than its loop limit allows (`passes`). \
+                      Skips this workflow's own steps unless the trigger sets `includeOwn`.",
+        schema: schema_of::<AgentStuck>,
+        outside: &[],
+    },
+    EventType {
+        id: AGENT_TIMED_OUT,
+        title: "Agent step timed out",
+        description: "An agent step had no outcome within its time limit or its turns (`why`); `restarts` counts the \
+                      fresh sessions it already had. Skips this workflow's own steps unless the trigger sets \
+                      `includeOwn`.",
+        schema: schema_of::<AgentStuck>,
         outside: &[],
     },
     EventType {
@@ -1248,6 +1291,42 @@ pub struct SessionEvent {
     pub workflow_id: Option<String>,
     /// The end of what the agent last said (at most a few hundred characters; empty when PDT can't tell).
     pub last_message: String,
+}
+
+/// `agent.stalled`, `agent.loop_limit` and `agent.timed_out` (PDT-367): an agent step that is stuck, for "When an
+/// agent is stuck" to handle (`agent.nudge`, `agent.restart`, `agent.inbox`, `agent.stop`).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AgentStuck {
+    /// `stalled`, `loop_limit` or `timed_out`.
+    pub kind: String,
+    /// What happened, in a sentence.
+    pub why: String,
+    /// The stuck step (the one `agent.*` nodes act on), its node, run and workflow.
+    pub step_id: String,
+    pub node_id: String,
+    pub run_id: String,
+    pub workflow_id: String,
+    pub workflow_name: String,
+    pub persona: String,
+    pub session_id: Option<String>,
+    pub project_id: Option<String>,
+    pub ticket_id: Option<String>,
+    pub ticket_key: Option<String>,
+    pub attempt_id: Option<String>,
+    /// The step's prompt.
+    pub goal: String,
+    /// The end of what the agent last said (empty when PDT can't tell).
+    pub last_message: String,
+    /// Automatic and the user's nudges the step had.
+    pub nudges: u32,
+    /// Fresh sessions the step had (`agent.restart`).
+    pub restarts: u32,
+    /// Turns that ended without an outcome.
+    pub turns: u32,
+    /// Earlier passes of the node in the run (`agent.loop_limit`).
+    pub passes: u32,
 }
 
 /// `session.exited` (PDT-364).

@@ -273,3 +273,12 @@ pub async fn disk_full(db: &std::path::Path, table: &str, when: Option<&str>) {
     }
     c.close().await.unwrap();
 }
+
+/// Turns "When an agent is stuck" off (PDT-367): stuck agent steps get PDT's own handling, one nudge then the Inbox.
+pub async fn stuck_agents_off(app: &axum::Router) {
+    let (s, v) = call(app, "GET", "/api/stuck-agents", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let id = v["workflowId"].as_str().unwrap();
+    let (s, v) = call(app, "PATCH", &format!("/api/workflows/{id}"), Some(serde_json::json!({"enabled": false}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+}

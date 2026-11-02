@@ -158,7 +158,7 @@ async fn session_event(st: &AppState, s: &Session) -> SessionEvent {
 }
 
 /// The end of what the agent last said: a conversation's last message, else the end of its terminal's text.
-async fn last_message(st: &AppState, s: &Session) -> String {
+pub(crate) async fn last_message(st: &AppState, s: &Session) -> String {
     if s.mode == pdt_core::conversation::SessionMode::Conversation {
         let events = st.store.recent_session_events(&s.id, 40).await.unwrap_or_default();
         return events

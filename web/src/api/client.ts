@@ -18,6 +18,7 @@ import { secretsApi } from './secrets';
 import { sessionsApi } from './sessions';
 import { signInApi } from './signIn';
 import { storageApi } from './storage';
+import { stuckAgentsApi } from './stuckAgents';
 import { ticketsApi } from './tickets';
 import { todosApi } from './todos';
 import { watchesApi } from './watches';
@@ -44,6 +45,7 @@ export const api = {
   ...sessionsApi,
   ...signInApi,
   ...storageApi,
+  ...stuckAgentsApi,
   ...ticketsApi,
   ...todosApi,
   ...watchesApi,

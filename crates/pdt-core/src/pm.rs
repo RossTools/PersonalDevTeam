@@ -638,6 +638,9 @@ const UPDATE_NOISE: &[&str] = &[
     crate::workflow::events::SESSION_EXITED,
     crate::workflow::events::INBOX_CREATED,
     crate::workflow::events::INBOX_ANSWERED,
+    crate::workflow::events::AGENT_STALLED,
+    crate::workflow::events::AGENT_LOOP_LIMIT,
+    crate::workflow::events::AGENT_TIMED_OUT,
 ];
 /// Tickets an update lists.
 pub const UPDATE_TICKETS: usize = 20;
