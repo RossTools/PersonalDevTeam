@@ -1,9 +1,15 @@
 # How we work on PDT
 
-PDT is built inside PDT: agent sessions run on the stable instance (port 7420), each change lives in its own worktree,
-and the user tests it in a dev instance of PDT started with **Run**. This page is the process: branches, checks, pull
-requests, CI, the merge queue, the changelog and releases. How the code works is in the developer guide
-([architecture.md](dev/architecture.md), [invariants.md](dev/invariants.md), [testing.md](dev/testing.md)).
+PDT is built inside PDT: the maintainer's agent sessions run on their stable instance (port 7420), each change lives
+in its own worktree, and the maintainer tests it in a dev instance of PDT started with **Run**. This page is the
+process: branches, checks, pull requests, CI, the merge queue, the changelog and releases. How the code works is in
+the developer guide ([architecture.md](dev/architecture.md), [invariants.md](dev/invariants.md),
+[testing.md](dev/testing.md)).
+
+**Contributing from outside** (no maintainer PDT, no `PDT` tickets): [CONTRIBUTING.md](../CONTRIBUTING.md) is your
+version of this page. The parts below that use the stable PDT on port 7420, its tickets, `gh pr merge`, labels,
+releases or the stable data folder are for maintainers; use a plain branch (or `git worktree add`) instead, and name
+your changelog fragment after your issue or PR (`GH-45.md`).
 
 ## The loop
 
@@ -30,7 +36,8 @@ Worktrees live at `.worktrees/<branch>` inside the repo (`/` in a branch name be
 `.git/info/exclude`. Ticket Start names branches `pdt-<KEY>-<n>-<slug>` (no `/`: some tools break on it); other
 branches are short and kebab-case.
 
-Create them **through the stable PDT**, so its sessions group under the branch and Run uses that checkout:
+Maintainers create them **through the stable PDT**, so its sessions group under the branch and Run uses that
+checkout (without a PDT, `git worktree add .worktrees/<branch> -b <branch> origin/main` or just a branch):
 
 ```sh
 git -C <repo> fetch origin && git -C <repo> merge --ff-only origin/main   # keep the main checkout clean
@@ -347,12 +354,15 @@ range with the branch's own data folder, and shows the link (also from the phone
 side; restart the run after pushing fixes. **Test rust** and **Test web** are the `[[test]]` entries.
 `.pdt/project.toml` is this repo's run configuration; its comments explain each setting.
 
-**By hand**, one at a time (pdtd refuses a data folder another pdtd holds):
+**By hand**, one at a time per data folder (pdtd refuses a data folder another pdtd holds):
 
 ```sh
 pnpm --dir web build
-PDT_PROFILE=dev PDT_WEB_DIR=$PWD/web/dist cargo run -p pdtd      # port 7421, data dir pdt-dev
+PDT_PROFILE=dev PDT_PORT=7421 PDT_DATA_DIR=/tmp/pdt-try PDT_WEB_DIR=$PWD/web/dist cargo run -p pdtd
 ```
+
+Without `PDT_PORT` and `PDT_DATA_DIR`, `PDT_PROFILE=dev` uses port 7421 and the `pdt-dev` data folder next to the
+installed PDT's; `PDT_SEED=demo` fills an empty one with demo data.
 
 For UI work, `pnpm --dir web dev` serves the UI with hot reload on 5173 and proxies `/api` to 7421. For an agent that
 needs to look at the app, see [testing.md](dev/testing.md#looking-at-the-app).
@@ -361,7 +371,7 @@ needs to look at the app, see [testing.md](dev/testing.md#looking-at-the-app).
 pdt-desktop`. To check the bundle, `scripts/release-stable.sh --build-only` (Windows: `-BuildOnly`); never without it,
 never run a built installer, never `pdt-host install`/`uninstall`.
 
-**Upgrade rehearsal** before a release with migrations or plugin changes: `scripts/rehearse-upgrade.sh` runs this
+**Upgrade rehearsal** (maintainers) before a release with migrations or plugin changes: `scripts/rehearse-upgrade.sh` runs this
 checkout's pdtd on port 7421 against a copy of the stable data folder (SQLite's online backup, plus `sessions/` and
 `pm/`) with `PDT_REHEARSAL=1`: it migrates, installs the built-in workflows and personas and serves the API, but
 resumes nothing, starts no loop, keeps secrets in memory and never acts on the copy's repos or connections. It

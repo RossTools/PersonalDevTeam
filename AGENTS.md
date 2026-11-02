@@ -21,6 +21,11 @@ Where things are written down (one home each; link, don't repeat):
 
 Add or update tickets through the API when work finishes or new work turns up.
 
+**Not the maintainer?** The parts that use the stable PDT on port 7420, its `PDT` tickets, `gh pr merge` and labels
+describe the maintainer's own setup. If `curl -s 127.0.0.1:7420/api/projects` doesn't list this repository, follow
+CONTRIBUTING.md instead: a plain branch (or `git worktree add`), a changelog fragment named after the issue or PR
+(`GH-45.md`), and no calls to a PDT that isn't there.
+
 ## Writing docs
 - **User docs (`docs/user`)**: what the user does and how PDT behaves, task-first and concise (style notes: docs/user/README.md).
   - **Never** ticket keys (`PDT-123`), code paths, API routes, internal history ("before …", "we decided …"), or reasoning, unless the reason is core to how something works.
@@ -33,15 +38,16 @@ Add or update tickets through the API when work finishes or new work turns up.
 - When behaviour changes, update docs/user and docs/dev in the same PR.
 
 ## Workflow (docs/SDLC.md has the full version)
-- **A branch and worktree per change, made through the stable PDT**: find the project id with
-  `curl -s 127.0.0.1:7420/api/projects` (match `repoPath`), then `POST 127.0.0.1:7420/api/projects/<id>/worktrees`
-  with `{"branch":"..."}`; `cd` into `.worktrees/<branch, / replaced by ->`. Never commit on `main` in the main checkout.
+- **A branch and worktree per change, made through the stable PDT** (outside contributors: CONTRIBUTING.md): find
+  the project id with `curl -s 127.0.0.1:7420/api/projects` (match `repoPath`), then
+  `POST 127.0.0.1:7420/api/projects/<id>/worktrees` with `{"branch":"..."}`; `cd` into
+  `.worktrees/<branch, / replaced by ->`. Never commit on `main` in the main checkout.
 - **A fresh worktree** needs `pnpm install --frozen-lockfile` once; its first cargo build is slow.
 - **Before pushing**: `scripts/check.sh` (what CI runs); docs-only changes `scripts/check.sh --docs`. Commit
   `web/src/api/gen` (and `site/src/data`) when `cargo test` changes them.
-- **Every PR adds a changelog fragment**, `.changes/unreleased/<TICKET>.md` (`kind: added | changed | fixed | breaking
-  | internal`, then one or two sentences for users), or carries the `no-changelog` label when it only changes docs,
-  CI or tests. `scripts/changelog.sh check`.
+- **Every PR adds a changelog fragment**, `.changes/unreleased/<TICKET>.md` (no ticket:
+  `GH-<issue or PR>.md`; `kind: added | changed | fixed | breaking | internal`, then one or two sentences for users),
+  or carries the `no-changelog` label when it only changes docs, CI or tests. `scripts/changelog.sh check`.
 - **Labels**: `windows` for any path, process or file-system change; `macos` to run the macOS checks on the PR.
   Don't rename CI jobs (they are the ruleset's required checks). Only a release PR changes the version.
 - **PR against `main`**; the user tests the branch with Run → pdt. When the user says merge, `gh pr merge <n> --auto`
