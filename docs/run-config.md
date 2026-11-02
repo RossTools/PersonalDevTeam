@@ -14,10 +14,15 @@ The address of PDT is `127.0.0.1:7420` for the stable instance. Agent sessions s
 | `GET /api/projects/{id}/areas` | `{ areas: [{ name, paths, exclusive }], error }` from the main checkout and the overrides |
 | `GET /api/projects/{id}/settings` | `{ agentCredentials, effectiveCredentials, runOverrides, agentInstructions, mergeViaPr }` |
 | `PUT /api/projects/{id}/settings` | `{ agentCredentials, runOverrides, agentInstructions?, mergeViaPr? }`; replaces `agentCredentials` and `runOverrides`, so send back the `agentCredentials` you read. An empty `runOverrides` clears them. Text that isn't valid TOML, or has an unknown section, is refused (`invalid_run_config`); check `run-config`'s `error` for the rest. `agentInstructions` and `mergeViaPr` are kept when left out (`""` clears the instructions) |
+| `GET /api/projects/{id}/commands[?worktreeId=…]` | the checkout's `commands` (`fingerprint`, `uses`, `setup`, `command`, `env`) and the `untrusted` fingerprints, which wait on the user's approval |
 | `GET /api/guides` · `/api/guides/{name}` | PDT's built-in guides (Markdown): `agents`, `run-config` (this one), `set-up-project`, `set-up-workflow` |
 | `POST /api/projects/{id}/runs` | `{ name, kind: "run" \| "test", worktreeId? }`; without `worktreeId` (or `branch`) it uses the main checkout. Opens a tab in the project's workspace |
 | `GET /api/runs/{id}` | `state` (`setting_up`, `starting`, `ready`, `running`, `passed`, `failed`, `stopped`), `url`, `exitCode`, `error` |
 | `POST /api/runs/{id}/stop` · `/restart` · `/reset-data` | as named |
+
+A run or test whose command the user hasn't approved is refused with `409 untrusted_commands`, naming the commands.
+You can't approve one: ask the user to start it in PDT, or to approve it in the project's Settings. Changing a
+command in `.pdt/project.toml` (in your worktree too) makes it new, so the user is asked again.
 
 Notes for writing it:
 

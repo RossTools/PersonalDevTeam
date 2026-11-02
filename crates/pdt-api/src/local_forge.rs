@@ -211,6 +211,8 @@ impl LocalForge {
         };
         let mergeable = if preview.conflicts.is_empty() { Mergeable::Mergeable } else { Mergeable::Conflicting };
         let ci = match (&self.command, attempt.worktree_path.as_deref().map(PathBuf::from).filter(|w| w.is_dir())) {
+            // A command the user hasn't approved waits for them (PDT-405).
+            (Some(command), Some(_)) if !self.approved(&change, command).await? => None,
             (Some(command), Some(worktree)) => self.run_ci(&change, command, &worktree).await?,
             // No worktree to run in: CI waits for one.
             (Some(_), None) => None,
@@ -462,6 +464,21 @@ impl LocalForge {
     async fn stepped(&self, change: LocalChange, mergeable: Mergeable) -> Stepped {
         let newest = self.store.local_ci_runs(change.id).await.ok().and_then(|r| r.last().map(|r| r.id));
         Stepped { url: newest.map(|id| log_url(self.port, id)).unwrap_or_default(), change, mergeable }
+    }
+
+    /// Whether the user approved the CI command; when not, the Inbox says CI waits on them.
+    async fn approved(&self, change: &LocalChange, command: &str) -> Result<bool, ForgeError> {
+        let repo = self.repo.to_string_lossy();
+        let commands = vec![pdt_core::command_trust::of_ci(command)];
+        let left = crate::command_trust::untrusted(&self.st, &self.project_id, &repo, commands)
+            .await
+            .map_err(|e| failed(e.message()))?;
+        if left.is_empty() {
+            return Ok(true);
+        }
+        let what = format!("CI for change request #{}", change.number);
+        crate::command_trust::notify(&self.st, &self.project_id, &left, &what).await;
+        Ok(false)
     }
 
     /// CI on the change request's head: stops runs of older heads, starts one on the head unless it has one (a run

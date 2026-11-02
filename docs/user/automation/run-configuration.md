@@ -31,6 +31,23 @@ environment variable name that isn't letters, digits and `_`) doesn't run at all
 what's wrong. A whole section PDT doesn't know (one added by a newer PDT) is skipped and noted in **Settings**, so the
 rest still runs.
 
+## Approving commands
+
+The configuration names shell commands, and anyone who can change the file can change them: the repository you
+cloned, a branch, an agent working in a ticket's folder. So PDT runs a command only once you've approved it:
+
+- **Starting a run or test** whose command PDT hasn't run before shows the command first. **Approve and run** starts
+  it; PDT doesn't ask again for that command.
+- **CI and regeneration rules** wait instead, and the Inbox says what's waiting. Approve the command in the project's
+  **Settings**, under **Runs on this host** › **Commands**, which lists every command with what uses it. CI starts on
+  its own once you approve it.
+- **A changed command is a new command.** Editing a run's command, its `setup` or its `env` asks again, wherever the
+  change comes from.
+- **Commands you write in the host overrides** count as approved when you save them.
+
+Projects you'd added before PDT asked keep their main checkout's commands approved. A project you add now starts with
+nothing approved. Only you can approve a command, in PDT's own window; an agent can't approve one for you.
+
 ## Runs
 
 ```toml
@@ -225,6 +242,9 @@ run   = "pnpm install"
 
 - **`paths`**: the files the rule covers, as patterns like an area's.
 - **`run`**: the command that regenerates them, run in the ticket's worktree with your login shell's `PATH`.
+
+The rules come from the base branch's committed file (`main`'s), never from the ticket's own folder, so a branch
+can't add a rule for itself. A rule runs only once you've approved its command (see **Approving commands**).
 
 When every conflicting file matches a rule, PDT takes the base's version of each, runs each matching rule's command,
 and commits what changed under its `paths` with the merge. If a command fails, or other files conflict too, the agent

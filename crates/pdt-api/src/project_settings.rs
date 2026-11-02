@@ -155,6 +155,13 @@ async fn linked_connection(st: &AppState, name: &str, kind: &str) -> Result<Opti
     }
 }
 
+/// The fingerprints of the commands the overrides alone configure (none when they are absent or invalid alone).
+fn override_commands(text: Option<&str>) -> std::collections::HashSet<String> {
+    text.and_then(crate::runconfig::overrides_only)
+        .map(|c| pdt_core::command_trust::of_config(&c).into_iter().map(|c| c.fingerprint).collect())
+        .unwrap_or_default()
+}
+
 pub(crate) async fn get_settings(
     State(st): State<AppState>,
     Path(id): Path<String>,
@@ -165,15 +172,20 @@ pub(crate) async fn get_settings(
 pub(crate) async fn put_settings(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
     payload: Result<Json<ProjectSettingsInput>, JsonRejection>,
 ) -> Result<Json<ProjectSettingsView>, ApiError> {
     let Json(input) = payload?;
+    let from_ui = crate::untrusted::from_ui(&st, &headers)?;
     st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let run_overrides = input.run_overrides.filter(|t| !t.trim().is_empty());
     if let Some(t) = &run_overrides {
         crate::runconfig::validate_overrides(t)?;
     }
     let current = st.store.get_project_settings(&id).await?;
+    // The overrides' commands before this write: an agent may have put them there, and resending them (every section's
+    // save sends the stored overrides back) is no approval of them.
+    let stored: std::collections::HashSet<String> = override_commands(current.run_overrides.as_deref());
     let agent_instructions = match input.agent_instructions.as_deref() {
         Some(text) => pdt_core::agent_context::clean_project_instructions(Some(text))
             .map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m))?,
@@ -256,7 +268,18 @@ pub(crate) async fn put_settings(
         policy,
         integrations,
     };
+    // The commands the user wrote in PDT's settings are theirs: approved (PDT-405). An API caller's are not.
+    // The commands the user writes in PDT's settings are theirs: those new in this write are approved (PDT-405). The
+    // ones already stored keep their state, and an API caller's are never approved.
+    let approved: Vec<String> = if from_ui {
+        override_commands(settings.run_overrides.as_deref()).into_iter().filter(|f| !stored.contains(f)).collect()
+    } else {
+        vec![]
+    };
     st.store.put_project_settings(&id, &settings).await?;
+    if !approved.is_empty() {
+        st.store.trust_commands(&id, &approved, crate::routes::now_ms()).await?;
+    }
     Ok(Json(view(&st, &id).await?))
 }
 

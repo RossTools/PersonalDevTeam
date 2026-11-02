@@ -18,6 +18,10 @@ use ts_rs::TS;
 pub struct ApiErrorBody {
     pub code: String,
     pub message: String,
+    /// What the client needs to act on the error, for the few that carry it (`untrusted_commands`: the commands).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "unknown")]
+    pub data: Option<serde_json::Value>,
 }
 
 #[derive(Debug)]
@@ -25,11 +29,18 @@ pub struct ApiError {
     status: StatusCode,
     code: &'static str,
     message: String,
+    data: Option<serde_json::Value>,
 }
 
 impl ApiError {
     pub fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
-        Self { status, code, message: message.into() }
+        Self { status, code, message: message.into(), data: None }
+    }
+
+    /// The error with what the client needs to act on it ([`ApiErrorBody::data`]).
+    pub fn with_data(mut self, data: serde_json::Value) -> Self {
+        self.data = Some(data);
+        self
     }
 
     pub fn message(&self) -> &str {
@@ -73,7 +84,9 @@ struct WriteFailed(String);
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let failed = (self.code == "write_failed").then(|| WriteFailed(self.message.clone()));
-        let mut r = (self.status, Json(ApiErrorBody { code: self.code.into(), message: self.message })).into_response();
+        let mut r =
+            (self.status, Json(ApiErrorBody { code: self.code.into(), message: self.message, data: self.data }))
+                .into_response();
         if let Some(f) = failed {
             r.extensions_mut().insert(f);
         }

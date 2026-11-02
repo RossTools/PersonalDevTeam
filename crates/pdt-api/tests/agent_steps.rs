@@ -628,7 +628,10 @@ async fn questions_nudges_stalls_and_take_over_go_through_the_inbox() {
     let t = ticket(&env, "Unclear").await;
     let wf = create_workflow(
         &env,
-        review_doc(r#"mcp: ask_user {"questions": [{"question": "Which file?", "choices": ["a.txt"]}]}"#, json!({})),
+        review_doc(
+            r#"mcp: ask_user {"questions": [{"question": "Which file?", "context": "Two files **match**.", "choices": [{"label": "a.txt", "description": "The newer one."}, "b.txt"], "recommended": "a.txt", "why": "It is newer."}]}"#,
+            json!({}),
+        ),
     )
     .await;
     let id = run_now(&env, &wf, json!({"ticketId": t})).await;
@@ -638,6 +641,14 @@ async fn questions_nudges_stalls_and_take_over_go_through_the_inbox() {
     assert_eq!(
         (q["title"].as_str(), q["ticketTitle"].as_str(), q["personaName"].as_str()),
         (Some("Which file?"), Some("Unclear"), Some("Reviewer"))
+    );
+    // PDT-476: the context, the described choices (a plain one as a label) and the recommendation are kept.
+    assert_eq!(
+        q["body"]["questions"][0],
+        json!({"question": "Which file?", "context": "Two files **match**.",
+               "choices": [{"label": "a.txt", "description": "The newer one."}, {"label": "b.txt"}],
+               "recommended": "a.txt", "why": "It is newer."}),
+        "{q}"
     );
     let (s, v) = call(
         &env.app,

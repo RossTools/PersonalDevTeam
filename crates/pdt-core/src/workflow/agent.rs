@@ -410,7 +410,8 @@ pub fn step_section(persona: &str, instructions: &str, outcomes: &[OutcomeSpec])
          submit, never from what you write.\n\
          - Finish by calling `submit_outcome` with one of: {}, and a short summary.\n\
          - If only the user can unblock you, call `ask_user` with your questions and end your turn; their answers \
-         come back as a message.\n\
+         come back as a message. Keep each question to one line; put the background in `context`, each option's \
+         trade-offs in its choice's `description`, and say which you recommend (`recommended`, `why`).\n\
          - Ending a turn without either counts as stalled.\n",
         outcome_list(outcomes)
     );
@@ -614,6 +615,8 @@ mod tests {
         let s = step_section("Reviewer", "Be strict.\n", &outs());
         assert!(s.contains("# Your role: Reviewer"));
         assert!(s.contains("`approved` (it can merge), `changes_requested`"));
+        // How to ask (PDT-476): one line, the background and trade-offs apart, a recommendation.
+        assert!(s.contains("one line; put the background in `context`") && s.contains("(`recommended`, `why`)"), "{s}");
         assert!(s.ends_with("\nBe strict.\n"));
         assert!(!step_section("R", "  ", &outs()).ends_with("\n\n"));
     }

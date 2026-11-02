@@ -49,6 +49,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `prompts_and_guides_carry_no_pdt_development_assumptions` checks it (with an allow list).
 - **Routes that act as the user need the UI token** (`x-ui-token`, new at each start; pdt-api `untrusted.rs`): admitting
   an external ticket, filing issues, the PM's approvals. An agent's `curl` can't do them.
+- **A run configuration's commands run only once the user approved them** (pdt-core `command_trust.rs`, pdt-api
+  `command_trust.rs`): runs and tests (`runs::create`, `restart`, and `run_manager`'s restarts), the local forge's
+  `[ci] command` (it waits, with an Inbox notice) and `[[merge.regenerate]]` rules (read from the base branch's
+  committed file, never the worktree's). An approval is the command's fingerprint (setup, command, env), kept in
+  `trusted_commands`; only the UI token approves (`POST …/commands/trust`, or overrides saved from the web app).
+  Projects from before carry a `legacy` mark that trusts the main checkout's commands once. A new place that runs a
+  configured command checks it first.
 - **Making tickets over the HTTP API records the user only with the UI token** (pdt-api `tickets::creator`, also
   parts): without it the caller is an agent, the session its `x-agent-session` header names (persona, the ticket it
   works on), and the ticket's source is `agent` (`pm`, `external` for a PM or triage session). The web client sends

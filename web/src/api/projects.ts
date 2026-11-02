@@ -31,6 +31,7 @@ export const projectsApi = {
   getProjectAreas: (projectId: string) => request<ProjectAreas>(`/api/projects/${enc(projectId)}/areas`),
   listBranches: (projectId: string) => request<Branch[]>(`/api/projects/${enc(projectId)}/branches`),
   projectSettings: (projectId: string) => request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`),
+  /** As the user: the run commands they write in the overrides count as approved. */
   saveProjectSettings: (projectId: string, s: ProjectSettingsInput) =>
-    request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`, { method: 'PUT', body: JSON.stringify(s) }),
+    request<ProjectSettingsView>(`/api/projects/${enc(projectId)}/settings`, { method: 'PUT', body: JSON.stringify(s) }, { asUser: true }),
 };
