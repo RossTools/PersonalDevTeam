@@ -671,6 +671,8 @@ fn issue(n: u64, title: &str, body: &str) -> pdt_forge::Issue {
 #[tokio::test]
 async fn the_triage_template_has_triage_draft_an_external_ticket_for_a_new_issue() {
     let env = setup().await;
+    // The test talks to the Triage session it holds: "When an agent is stuck" would nudge and restart it meanwhile.
+    common::stuck_agents_off(&env.app).await;
     let (s, w) = call(
         &env.app,
         "POST",

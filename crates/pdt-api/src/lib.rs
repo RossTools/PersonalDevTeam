@@ -58,6 +58,7 @@ mod slow;
 mod start;
 mod stop;
 pub mod storage;
+pub mod stuck_agents;
 mod ticket_attachments;
 mod tickets;
 mod todos;

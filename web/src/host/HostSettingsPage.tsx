@@ -25,6 +25,7 @@ import { AcpAgents } from './AcpAgents';
 import { agentsOff, AgentSwitch, offNote, switchBlocked } from './AgentSwitch';
 import { BugReportDialog } from './BugReportDialog';
 import { Storage } from './StorageSettings';
+import { StuckAgents } from './StuckAgents';
 import { documentKeys, useDocumentProviders } from '../documents/queries';
 
 /** The stored token's state as a badge (never the token itself). */
@@ -904,7 +905,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
   const nodes: Record<string, ReactNode> = {
     'Setup': <Setup />,
     'Updates': <Updates v={v} />,
-    'Agents': <><Agents v={v} /><DefaultModels v={v} /><Programs v={v} /><AcpAgents v={v} /></>,
+    'Agents': <><Agents v={v} /><StuckAgents /><DefaultModels v={v} /><Programs v={v} /><AcpAgents v={v} /></>,
     'Network': <Network v={v} />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,
     'Runs': <Runs v={v} />,

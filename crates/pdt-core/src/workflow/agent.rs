@@ -116,11 +116,31 @@ pub struct AgentStep {
     pub data: Option<serde_json::Value>,
     /// The user took it over and picked the outcome.
     pub by_user: bool,
+    /// Fresh sessions it was restarted in ("When an agent is stuck", PDT-367), its own and the steps it resumes'.
+    #[serde(default)]
+    pub restarts: u32,
     #[ts(type = "number")]
     pub created_at: i64,
     #[ts(type = "number")]
     pub updated_at: i64,
 }
+
+/// A stuck agent step handed to "When an agent is stuck" (PDT-367), until one of its nodes acts on it or PDT falls back
+/// to the Inbox.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Escalation {
+    pub step_id: String,
+    pub run_id: String,
+    /// `stalled`, `loop_limit` or `timed_out`.
+    pub kind: String,
+    /// What happened, for the Inbox when PDT falls back to it.
+    pub why: String,
+    pub at: i64,
+}
+
+pub const STALLED: &str = "stalled";
+pub const LOOP_LIMIT: &str = "loop_limit";
+pub const TIMED_OUT: &str = "timed_out";
 
 /// Whether `id` can be an outcome (and so a port).
 pub fn valid_outcome_id(id: &str) -> Result<(), String> {
@@ -260,6 +280,70 @@ pub fn nudge_message(outcomes: &[OutcomeSpec]) -> String {
     )
 }
 
+/// A nudge "When an agent is stuck" sends (PDT-367): the workflow's `message`, then the step's outcomes.
+pub fn stuck_nudge_message(message: &str, outcomes: &[OutcomeSpec]) -> String {
+    format!("[{SHORT_NAME}] {}\n\nThe step's outcomes: {}.", message.trim(), outcome_list(outcomes))
+}
+
+/// What the branch looks like when a step restarts in a fresh session (PDT-367).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BranchState {
+    pub branch: String,
+    /// Tracked files with uncommitted changes.
+    pub changed: Vec<String>,
+    /// Commits its upstream doesn't have.
+    pub ahead: u32,
+    /// The branch was never pushed.
+    pub unpushed: bool,
+    /// Its latest commits, newest first (`<short sha> <subject>`).
+    pub commits: Vec<String>,
+}
+
+/// The first message of a fresh session a stuck step restarts in (PDT-367): the step's own first message
+/// (`first`), then why it restarts, what the earlier session last said and the branch's state.
+pub fn restart_message(first: &str, why: &str, last_message: &str, branch: Option<&BranchState>) -> String {
+    let mut out = first.trim().to_string();
+    out.push_str(&format!(
+        "\n\n[{SHORT_NAME}] This is a fresh session: the step's earlier session got stuck ({}). Pick the work up \
+         from where it is; don't start over.",
+        why.trim().trim_end_matches('.')
+    ));
+    let last = last_message.trim();
+    if !last.is_empty() {
+        let quoted = last.lines().map(|l| format!("> {l}")).collect::<Vec<_>>().join("\n");
+        out.push_str(&format!("\n\nIts last message:\n\n{quoted}"));
+    }
+    if let Some(b) = branch {
+        let mut state = vec![];
+        if b.changed.is_empty() {
+            state.push("no uncommitted changes".to_string());
+        } else {
+            const SHOWN: usize = 10;
+            let mut files = b.changed.iter().take(SHOWN).map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ");
+            if b.changed.len() > SHOWN {
+                files.push_str(&format!(" and {} more", b.changed.len() - SHOWN));
+            }
+            state.push(format!("uncommitted changes to {files}"));
+        }
+        if b.unpushed {
+            state.push("never pushed".into());
+        } else if b.ahead > 0 {
+            state.push(format!(
+                "{} not pushed",
+                if b.ahead == 1 { "1 commit".into() } else { format!("{} commits", b.ahead) }
+            ));
+        }
+        out.push_str(&format!("\n\nThe branch `{}`: {}.", b.branch, state.join("; ")));
+        if !b.commits.is_empty() {
+            out.push_str(&format!(
+                "\nIts latest commits:\n{}",
+                b.commits.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")
+            ));
+        }
+    }
+    out
+}
+
 /// What a step's session gets when the user resumes the step after it timed out or stopped (PDT-123): the user's note
 /// first, if any, then why it stopped and how to finish.
 pub fn resume_message(why: Option<&str>, note: Option<&str>, outcomes: &[OutcomeSpec]) -> String {
@@ -340,6 +424,42 @@ pub fn step_section(persona: &str, instructions: &str, outcomes: &[OutcomeSpec])
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn outcomes() -> Vec<OutcomeSpec> {
+        vec![OutcomeSpec { id: "submitted".into(), description: "built".into() }]
+    }
+
+    /// PDT-367: the stuck workflow's nudge is its own message, then the step's outcomes.
+    #[test]
+    fn a_stuck_nudge_names_the_outcomes() {
+        let m = stuck_nudge_message("  Finish with submit_outcome. ", &outcomes());
+        assert_eq!(
+            m,
+            format!("[{SHORT_NAME}] Finish with submit_outcome.\n\nThe step's outcomes: `submitted` (built).")
+        );
+    }
+
+    /// PDT-367: a fresh session gets the step's task, why it restarted, the last message and the branch.
+    #[test]
+    fn a_restart_message_carries_the_task_the_last_message_and_the_branch() {
+        let b = BranchState {
+            branch: "pdt-1".into(),
+            changed: vec!["a.rs".into()],
+            ahead: 2,
+            unpushed: false,
+            commits: vec!["abc123 Add a".into()],
+        };
+        let m = restart_message("Build it.", "Its turn ended without an outcome.", "Done\nmostly", Some(&b));
+        assert!(m.starts_with("Build it.\n\n"), "{m}");
+        assert!(m.contains("got stuck (Its turn ended without an outcome)"), "{m}");
+        assert!(m.contains("> Done\n> mostly"), "{m}");
+        assert!(m.contains("The branch `pdt-1`: uncommitted changes to `a.rs`; 2 commits not pushed."), "{m}");
+        assert!(m.contains("- abc123 Add a"), "{m}");
+        let clean = BranchState { branch: "b".into(), ..Default::default() };
+        let m = restart_message("Build it.", "why", "", Some(&clean));
+        assert!(!m.contains("last message") && m.contains("`b`: no uncommitted changes."), "{m}");
+        assert!(!restart_message("Do.", "why", "", None).contains("branch"));
+    }
 
     fn outs() -> Vec<OutcomeSpec> {
         vec![

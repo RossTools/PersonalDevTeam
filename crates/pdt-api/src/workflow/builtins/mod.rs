@@ -14,6 +14,7 @@ mod pick_up_tickets;
 mod pm_daily_checkpoint;
 mod pr_feedback;
 mod pr_notices;
+pub(crate) mod stuck_agents;
 mod ticket_proposals;
 
 pub(crate) use cut_release::cut_release_template;
@@ -46,6 +47,7 @@ pub const PICK_UP_TICKETS: &str = "pick-up-tickets";
 pub const PM_DAILY_CHECKPOINT: &str = "pm-daily-checkpoint";
 pub const TICKET_PROPOSALS: &str = "ticket-proposals";
 pub const CLOSE_PARENTS: &str = "close-parents";
+pub const STUCK_AGENTS: &str = "stuck-agents";
 /// The Cut a release template (without `builtin:`); a built-in workflow until PDT-301 ([`RETIRED`]).
 pub const CUT_RELEASE: &str = "cut-release";
 
@@ -76,6 +78,7 @@ pub const BUILTINS: &[Builtin] = &[
         doc: ticket_proposals::ticket_proposals,
     },
     Builtin { id: CLOSE_PARENTS, enabled: true, category: Category::Tickets, doc: close_parents::close_parents },
+    Builtin { id: STUCK_AGENTS, enabled: true, category: Category::Tickets, doc: stuck_agents::stuck_agents },
 ];
 
 /// The GitHub plugin's built-ins ([`crate::integrations::Integration::builtin_workflows`]): left out while it is off
@@ -212,7 +215,17 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
         }
         Some(w) => {
             let current = st.store.workflow_doc(&w.id, w.version).await?;
-            let untouched = st.store.current_version_author(&w.id).await? == Some(Author::Builtin);
+            let mut untouched = st.store.current_version_author(&w.id).await? == Some(Author::Builtin);
+            // One whose inputs the user changed in Settings follows newer versions with them (PDT-367).
+            let mut template = template;
+            if b.id == STUCK_AGENTS {
+                untouched = untouched || inputs_only(st, &w).await?;
+                if let Some(c) = &current
+                    && let Ok(d) = stuck_agents::filled(&stuck_agents::values_of(c))
+                {
+                    template = d;
+                }
+            }
             if untouched && current.as_ref() != Some(&template) {
                 st.store.save_workflow_version(&w.id, &template, Author::Builtin, "updated by PDT", now).await?;
                 tracing::info!(builtin = b.id, "updated a built-in workflow");
@@ -220,6 +233,12 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
         }
     }
     Ok(())
+}
+
+/// Whether a workflow's current version was saved from Settings: only its inputs changed (PDT-367).
+pub(crate) async fn inputs_only(st: &AppState, w: &Workflow) -> Result<bool, pdt_store::StoreError> {
+    let versions = st.store.list_workflow_versions(&w.id).await?;
+    Ok(versions.iter().any(|v| v.version == w.version && v.note == stuck_agents::SETTINGS_NOTE))
 }
 
 #[cfg(test)]

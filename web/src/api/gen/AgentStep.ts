@@ -39,4 +39,8 @@ data: Record<string, unknown> | null,
 /**
  * The user took it over and picked the outcome.
  */
-byUser: boolean, createdAt: number, updatedAt: number, };
+byUser: boolean, 
+/**
+ * Fresh sessions it was restarted in ("When an agent is stuck", PDT-367), its own and the steps it resumes'.
+ */
+restarts: number, createdAt: number, updatedAt: number, };

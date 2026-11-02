@@ -22,6 +22,7 @@ These come with PDT. You can turn them off, edit them or copy them, but not dele
 | **Base moved while a PR waits** | Tells the agent when the base branch moves while its pull request waits (**PR notices** covers this too). | Off |
 | **Ticket proposals** | Holds a ticket an agent files while it works (not the PM's, and not parts from **Make into parts**) in **Draft**, off the board, and puts it in your Inbox to accept, mark as a duplicate or reject. See [Ticket proposals](../using-pdt/the-inbox.md#to-act-on). Turn it off and agents' tickets go straight to the board. | On |
 | **Close finished parents** | Closes a parent when its last part closes (to **Won't do** if every part was **Won't do**), with a comment and a notification, unless it has an attempt or a running agent session of its own. Moving a part out of **Done** or **Won't do** moves its closed parent back to **In progress**. See [Parts and epics](../using-pdt/tickets-and-the-board.md#parts-and-epics). | On |
+| **When an agent is stuck** | Nudges an agent step that stops without an outcome, restarts it in a fresh session, then asks you in the Inbox; asks you at a loop limit; restarts a step that ran out of time once, then asks you. Set it in **Settings › This host › Agents**. See [When an agent is stuck](personas-and-approvals.md#when-an-agent-is-stuck). | On |
 | **PM daily checkpoint** | Brings the PM's open conversations up to date once a day and has each write a journal checkpoint. See [Change when it's brought up to date](the-pm.md#change-when-its-brought-up-to-date). | On |
 
 Plugins add their own while they're on: Jira, say, adds **Import assigned Jira issues** and **Done moves the Jira
@@ -244,6 +245,9 @@ These ones react to the Inbox, agent sessions and workflow runs:
 - **Workflow run failed**: the workflow, the step that failed and its error.
 - **Workflow run finished**: a run ended without failing (succeeded, quiet or cancelled), with the step it ended at
   and how long it took.
+- **Agent stalled**, **Agent step at its loop limit**, **Agent step timed out**: a workflow's agent step is stuck. Each
+  carries why, the step, its persona, session and ticket, the step's goal, the end of the agent's last message, and
+  how many nudges and fresh sessions it already had.
 
 Each session event says whether a workflow's agent step runs the session or it's your own, and ends with the last
 few lines the agent wrote. A workflow never reacts to its own runs, their Inbox items or their agent steps' sessions,
@@ -285,7 +289,8 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
   its runs, remove its worktree), **Update with the base**, **Merge the attempt**, and **Find tickets to start**, **Choose tickets to start** and
   **Start the ticket** (see [Pick up tickets](#pick-up-tickets)).
 - **Talk to agents**: **Tell the agent** messages the ticket's agent once it's between turns; an **Agent step** has a
-  persona do a piece of work.
+  persona do a piece of work. For a stuck agent step: **Nudge the agent**, **Restart in a fresh session**, **Ask me in
+  the Inbox** and **Stop the step**.
 - **Decide**: **If** (yes or no), **Switch** (one exit per value), **Wait** (for a time, or an event with a time
   limit), **Ask the user** (a gate).
 - **Tell people**: **Notify me**, **Put it in my Inbox**, a Discord post, a comment on a GitHub issue.

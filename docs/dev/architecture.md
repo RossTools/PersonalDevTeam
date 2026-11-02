@@ -264,6 +264,19 @@ transition once. `session.exited`: a terminal's exit (with `Notifier::take_expec
 conversation's process dying, or its Stop. `run.failed` and `run.finished`: `finish_run`. None of them goes through
 notification settings.
 
+**Stuck agent steps** (`workflow/stuck.rs`). A working step that stalls (`agent.rs` `stall`, after a turn without an
+outcome or its session going), reaches its loop limit (`start_step`) or times out (`complete_step` by `timeout`) is
+handed to the built-in "When an agent is stuck" (`builtins/stuck_agents.rs`) while it is on: a row in
+`agent_escalations` and an `agent.stalled` / `agent.loop_limit` / `agent.timed_out` event, with no Inbox item yet. Its
+nodes (`nodes/agent_stuck.rs`: `agent.nudge`, `agent.restart`, `agent.inbox`, `agent.stop`) act on the step, taking
+its run's lock (`engine::lock_other_run`, since runs of one ticket share a lock), and end the escalation. A stalled
+step restarts in place (a new session bound to the same step); a timed-out one is reopened (`reopen_at`) with a step
+whose `wait` says `fresh`. `stuck::sweep` (in the agent sweep) gives a step PDT's own handling (one nudge, then the
+Inbox) when the workflow is off, its run for the step ended without acting, or none started within
+`START_GRACE_MS`. The workflow's inputs are template params: Settings → Agents reads them back from its document
+(`templates::unfill`) and saves a version noted `stuck_agents::SETTINGS_NOTE`, which still follows PDT's newer
+versions; any other edit makes it the user's (`stuck_agents::customized`).
+
 **Host and integration events** are logged where each thing is noticed, each once per occurrence (the event key, or a
 level remembered in a host value). `release.published`: `forge_releases.rs` in the 60 s poll, for the projects an
 enabled trigger covers (`sensor.releases.<project>` holds the tags seen; the first look only records).

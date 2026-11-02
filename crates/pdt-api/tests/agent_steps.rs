@@ -52,6 +52,8 @@ async fn setup_with(change: impl FnOnce(&mut AppState)) -> Env {
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
     assert_eq!(s, StatusCode::CREATED, "{p}");
+    // These tests are PDT's own handling of stuck steps: "When an agent is stuck" off (its tests: stuck_agents.rs).
+    common::stuck_agents_off(&app).await;
     Env { app, state, project: p["id"].as_str().unwrap().into(), _tmp: tmp }
 }
 
@@ -968,7 +970,8 @@ async fn a_personal_projects_tickets_run_in_a_folder() {
     let (s, _) = call(&env.app, "POST", &format!("/api/projects/{pid}/worktrees"), Some(json!({"branch": "x"}))).await;
     assert_eq!(s, StatusCode::CONFLICT);
     let (_, t) =
-        call(&env.app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "Weekly brief"}))).await;
+        call_as_ui(&env.app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "Weekly brief"})))
+            .await;
     let (s, started) = call(
         &env.app,
         "POST",
