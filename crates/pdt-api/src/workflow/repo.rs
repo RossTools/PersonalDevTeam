@@ -1,6 +1,7 @@
 //! Workflows kept in a project's repo (Phase 7a spec §3.3): each `.pdt/workflows/<name>.json` in the main checkout is
-//! a workflow with `source: repo`, read-only in PDT. A changed file is a new version (author `repo`); a new one starts
-//! disabled (enabling stays the user's choice on this host); a removed file removes its workflow.
+//! a workflow with `source: repo`, read-only in PDT. A changed file is a new version (author `repo`), proposed for the
+//! user to accept while the workflow is enabled; a new one starts disabled (enabling stays the user's choice on this
+//! host); a removed file removes its workflow.
 
 use crate::routes::{AppState, now_ms};
 use pdt_core::workflow::api::{Author, Scope, Source, Workflow};
@@ -46,11 +47,7 @@ pub(crate) async fn sync_project(
     for (file, doc) in found {
         seen.insert(file.clone());
         match st.store.workflow_by_repo_file(&project.id, &file).await? {
-            Some(w) => {
-                if st.store.workflow_doc(&w.id, w.version).await?.as_ref() != Some(&doc) {
-                    st.store.save_workflow_version(&w.id, &doc, Author::Repo, "changed in the repo", now).await?;
-                }
-            }
+            Some(w) => changed(st, &w, &file, &doc, now).await?,
             None => {
                 let w = Workflow {
                     id: uuid::Uuid::now_v7().to_string(),
@@ -80,6 +77,43 @@ pub(crate) async fn sync_project(
             st.store.delete_workflow(&w.id).await?;
             tracing::info!(project = %project.name, workflow = %w.name, "its file left the repo: removed the workflow");
         }
+    }
+    Ok(())
+}
+
+/// Who proposes a changed file's version (shown as "The repo proposed …").
+const PROPOSED_BY: &str = "The repo";
+
+/// A known repo workflow whose file now reads as `doc`. Enabling a workflow is consent to what it does then, so a
+/// change to an enabled one waits as a proposal the user accepts (PDT-406: a merge to main must not swap in a new
+/// command that runs on the next trigger); a disabled one just takes it, since turning it on is the consent. A file
+/// that went back to the current version removes a pending proposal; one that matches the newest version (a pending or
+/// discarded proposal) changes nothing, so a discarded change stays discarded until the file changes again.
+async fn changed(
+    st: &AppState,
+    w: &Workflow,
+    file: &str,
+    doc: &WorkflowDoc,
+    now: i64,
+) -> Result<(), pdt_store::StoreError> {
+    if st.store.workflow_doc(&w.id, w.version).await?.as_ref() == Some(doc) {
+        if let Some(v) = w.proposed {
+            st.store.drop_workflow_proposal(&w.id, v).await?;
+        }
+        return Ok(());
+    }
+    if st.store.newest_workflow_doc(&w.id).await?.as_ref() == Some(doc) {
+        return Ok(());
+    }
+    let note = format!("changed in {file}");
+    if w.enabled {
+        st.store.propose_workflow_version(&w.id, doc, Author::Repo, &note, Some(PROPOSED_BY), now).await?;
+        tracing::info!(workflow = %w.name, file = %file, "its file changed: the change waits for the user to accept it");
+    } else {
+        if let Some(v) = w.proposed {
+            st.store.discard_workflow_version(&w.id, v).await?;
+        }
+        st.store.save_workflow_version(&w.id, doc, Author::Repo, &note, now).await?;
     }
     Ok(())
 }

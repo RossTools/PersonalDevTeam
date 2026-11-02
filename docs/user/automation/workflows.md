@@ -192,7 +192,9 @@ one back.
 - **Duplicate** copies it; **Delete…** removes it with its runs.
 - **Export…** and **Import…** (at the top of the list) move workflows between PDT hosts as a file.
 - Workflows kept in a project's repository, under `.pdt/workflows/`, are added off and marked **In the repo**. Edit
-  them in the repository, not in PDT.
+  them in the repository, not in PDT. Once you turn one on, a change to its file doesn't run until you accept it: it
+  waits as a proposal from the repo under **Workflow proposals** in the Inbox. A change you discard stays discarded
+  until the file changes again.
 
 ## Read a run
 

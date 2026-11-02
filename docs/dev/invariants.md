@@ -163,6 +163,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   of a workflow without a project is refused and Run now asks for one (`WorkflowDetail::needs_project`).
 - **Built-in workflows, templates and personas follow newer versions only while the user hasn't edited them.** Repo
   workflows (`.pdt/workflows/`) are read-only through the API; imported and instantiated workflows start disabled.
+- **Enabling a workflow is consent to the version it has then.** A changed repo file of an enabled workflow is a
+  proposal (pdt-api `workflow/repo.rs`), never a saved version, so a merge can't swap in new commands that run on the
+  next trigger; only a disabled one takes the file's version directly.
 
 ## Secrets and GitHub
 
