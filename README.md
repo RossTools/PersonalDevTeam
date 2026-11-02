@@ -37,13 +37,14 @@ ticket.
 ## Contributing
 
 Bugs and ideas: open an issue (or use **Report a bug…** in PDT). Security problems: see [SECURITY.md](SECURITY.md),
-never a public issue. To work on PDT, read [docs/SDLC.md](docs/SDLC.md) and [AGENTS.md](AGENTS.md) (the guide coding
-agents follow, and a good summary for people too). A dev build:
+never a public issue. To work on PDT, start with [CONTRIBUTING.md](CONTRIBUTING.md): what to install, how to make a
+change and open a pull request, and how to try your branch. A dev build, on its own port and data folder:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm --dir web build
-PDT_PROFILE=dev PDT_SEED=demo PDT_WEB_DIR=$PWD/web/dist cargo run -p pdtd   # http://127.0.0.1:7421, demo data
+PDT_PROFILE=dev PDT_PORT=7421 PDT_DATA_DIR=/tmp/pdt-try PDT_SEED=demo PDT_WEB_DIR=$PWD/web/dist cargo run -p pdtd
+# http://127.0.0.1:7421, with demo data
 ```
 
 Run `scripts/check.sh` before you push: it runs what CI runs.
