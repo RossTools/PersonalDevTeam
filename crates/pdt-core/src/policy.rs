@@ -412,6 +412,7 @@ pub(crate) mod tests {
             agent: None,
             auto_start_at: None,
             pickup_hold: None,
+            pickup_failed: None,
             external: vec![],
             source: Default::default(),
             admitted: false,

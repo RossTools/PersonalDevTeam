@@ -29,6 +29,8 @@ export interface TicketRef {
   waiting?: boolean;
   /** Where a pipeline workflow has it (Phase 7c). */
   pipelineStage?: PipelineStage | null;
+  /** Auto-start passes it over: its start failed with this error. */
+  pickupFailed?: string | null;
 }
 
 /** Opens (or focuses) a ticket's tab in its project's workspace. AppShell provides it. */
@@ -135,6 +137,19 @@ export const stopWaitingEntry = (qc: QueryClient, t: Pick<TicketRef, 'id' | 'key
   onSelect: () => void runAction(() => setWaiting(qc, t, false)),
 });
 
+/** Try again: auto-start forgets the ticket's failed start, and its next run tries it; the result toasts. */
+export async function retryAutoStart(qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>) {
+  await api.retryAutoStart(t.id);
+  invalidateTickets(qc, [t.id]);
+  toast.success(`Auto-start will try ${t.key} again`);
+}
+
+/** "Try auto-start again", for menus of a ticket auto-start passes over after a failed start. */
+export const retryAutoStartEntry = (qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>): MenuEntry => ({
+  label: 'Try auto-start again',
+  onSelect: () => void runAction(() => retryAutoStart(qc, t)),
+});
+
 type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
 
 /** Asks, then deletes the ticket (its tab goes with it). Resolves true when it was deleted. */
@@ -174,7 +189,7 @@ export function priorityEntries(qc: QueryClient, t: TicketRef): MenuEntry[] {
 
 /**
  * A ticket's menu (backlog row right-click / long press, the peek's and the tab's ⋯): Open, Start…, Stop waiting,
- * Move to ›, Priority ›,
+ * Try auto-start again, Move to ›, Priority ›,
  * optionally Move to top / bottom (backlog), Delete….
  */
 export function ticketMenu(opts: {
@@ -201,6 +216,7 @@ export function ticketMenu(opts: {
     ...(opts.onStart ? [{ label: 'Start…', onSelect: opts.onStart }] : []),
     ...(canRefine(t) ? [{ label: 'Refine', onSelect: () => void runAction(() => refineTicket(qc, t)) }] : []),
     ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
+    ...(t.pickupFailed ? [retryAutoStartEntry(qc, t)] : []),
     ...(opts.onMakeParts ? [{ label: 'Make into parts…', onSelect: opts.onMakeParts }] : []),
     { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
     { submenu: 'Priority', entries: priorityEntries(qc, t) },

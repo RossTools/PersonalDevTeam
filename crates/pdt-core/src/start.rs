@@ -4,7 +4,9 @@
 use crate::brand::{SHORT_NAME, SLUG};
 use crate::conversation::{PermissionMode, SessionMode};
 use crate::session::{AgentKind, Session, TerminalSize};
-use crate::ticket::{AttemptSummary, MAX_SLUG, Ticket, TicketValidationError, format_key, slug};
+use crate::ticket::{
+    AttemptSummary, MAX_SLUG, OverlapLevel, Ticket, TicketOverlap, TicketValidationError, format_key, slug,
+};
 use crate::workspace::TabPlacement;
 use crate::worktree::NewWorktree;
 use serde::{Deserialize, Serialize};
@@ -318,9 +320,10 @@ pub struct ValidStart {
     /// On a parent: start its next part.
     pub next: bool,
     pub size: TerminalSize,
-    /// The caller checked the running cap itself, under its own lock (`ticket.start`, with the cap a workflow chose
-    /// under, PDT-327): Start doesn't refuse for the project's cap. Never set from a request.
-    pub cap_checked: bool,
+    /// The caller checked the running cap and the overlap rule itself, under its own lock (`ticket.start`, with the
+    /// caps and overlap rule a workflow chose under, PDT-327, PDT-381): Start doesn't refuse for the project's cap, and
+    /// refuses only for conflicts ([`refusing_overlaps`]). Never set from a request.
+    pub pickup_checked: bool,
 }
 
 impl StartTicket {
@@ -371,9 +374,16 @@ impl StartTicket {
             no_session,
             next: self.next.unwrap_or(false),
             size: TerminalSize { cols, rows },
-            cap_checked: false,
+            pickup_checked: false,
         })
     }
+}
+
+/// The overlaps Start refuses for (unless forced). A pickup that checked its own overlap rule (`pickup_checked`) has
+/// already kept the ticket apart from work in flight as that rule says (by default only in hot areas), so Start refuses
+/// it only for a conflict, which pickup's candidates leave out too; anyone else's Start refuses for any overlap.
+pub fn refusing_overlaps(overlaps: &[TicketOverlap], pickup_checked: bool) -> Vec<&TicketOverlap> {
+    overlaps.iter().filter(|o| !pickup_checked || o.level == OverlapLevel::Conflict).collect()
 }
 
 /// What Start made.
@@ -593,7 +603,7 @@ mod tests {
                 no_session: false,
                 next: false,
                 size: DEFAULT_SIZE,
-                cap_checked: false,
+                pickup_checked: false,
             }
         );
         assert!(start(serde_json::json!({"agent": "claude", "next": true})).unwrap().next);
@@ -634,6 +644,25 @@ mod tests {
             assert!(matches!(start(bad.clone()), Err(TicketValidationError::Invalid(_))), "{bad}");
         }
         assert!(serde_json::from_value::<StartTicket>(serde_json::json!({"agent": "claude", "mode": "wait"})).is_err());
+    }
+
+    #[test]
+    fn a_pickup_start_refuses_only_conflicts_and_anyone_elses_any_overlap() {
+        let with = |key: &str, level| TicketOverlap {
+            ticket_id: key.into(),
+            key: key.into(),
+            title: String::new(),
+            stage: crate::ticket::TicketStage::InProgress,
+            level,
+            areas: vec!["web".into()],
+            files: vec![],
+            files_total: 0,
+        };
+        let list = vec![with("P-1", OverlapLevel::Overlap), with("P-2", OverlapLevel::Conflict)];
+        let keys = |v: Vec<&TicketOverlap>| v.iter().map(|o| o.key.clone()).collect::<Vec<_>>();
+        assert_eq!(keys(refusing_overlaps(&list, false)), ["P-1", "P-2"]);
+        assert_eq!(keys(refusing_overlaps(&list, true)), ["P-2"]);
+        assert!(refusing_overlaps(&list[..1], true).is_empty(), "a shared area pickup allowed starts");
     }
 
     #[test]

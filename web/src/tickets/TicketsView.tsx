@@ -19,7 +19,10 @@ import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { actionError, runAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
-import { canStart, deleteTicket, isBeforeWork, moveToEntries, startNextPart, stopWaitingEntry, ticketMenu, useOpenTicket, useStartTicket } from './actions';
+import {
+  canStart, deleteTicket, isBeforeWork, moveToEntries, retryAutoStartEntry, startNextPart, stopWaitingEntry, ticketMenu, useOpenTicket,
+  useStartTicket,
+} from './actions';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
 import { PartsStepper } from '../common/PartsStepper';
 import { AgentDot } from '../common/AgentState';
@@ -278,6 +281,7 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirt
         placement="top end"
         entries={() => [
           ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
+          ...(t.pickupFailed ? [retryAutoStartEntry(qc, t)] : []),
           { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
           ...(canMakeParts(t) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
           { separator: true },

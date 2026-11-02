@@ -89,6 +89,15 @@ describe('ticket tab', () => {
     expect(within(screen.getByRole('list', { name: 'Related' })).getByText('Docs')).toBeInTheDocument();
   });
 
+  it('says why auto-start passes the ticket over after a failed start, and Try again asks it to try again', async () => {
+    const failed = { ...base, stage: 'todo' as const, pickupFailed: 'git failed: no repo' };
+    const calls = stub({ 'GET /api/tickets/t1': failed, 'POST /api/tickets/t1/retry-auto-start': { ...failed, pickupFailed: null } });
+    view();
+    expect(await screen.findByText("Auto-start couldn't start it: git failed: no repo")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/tickets/t1/retry-auto-start')).toBe(true));
+  });
+
   it('moves between sections with the arrow keys, each shown in its tab panel', async () => {
     stub();
     view();

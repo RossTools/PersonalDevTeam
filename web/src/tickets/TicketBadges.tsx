@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { CircleCheck, Clock, Timer } from 'lucide-react';
+import { CircleAlert, CircleCheck, Clock, Timer } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { Badge, OverlapBadge } from '@ui';
 import type { AgentBy } from '../api/gen/AgentBy';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 
 type BadgeTicket = Pick<TicketSummary, 'blockedBy' | 'overlap' | 'overlapWith' | 'waiting' | 'clearToStart'> &
-  Partial<Pick<TicketSummary, 'pipelineStage' | 'autoStartAt' | 'source' | 'admitted' | 'pickupHold' | 'createdBy' | 'proposed'>>;
+  Partial<Pick<TicketSummary, 'pipelineStage' | 'autoStartAt' | 'source' | 'admitted' | 'pickupHold' | 'pickupFailed' | 'createdBy' | 'proposed'>>;
 
 /** `m:ss` until `at`, never below 0:00. */
 export function countdown(at: number, now: number): string {
@@ -54,7 +54,7 @@ function SourceBadge({ source, admitted, createdBy }: Pick<TicketSummary, 'sourc
 
 /**
  * Who made it (unless you did), Proposal (waiting in the Inbox), Refining, Merge blocked, Blocked, overlap/conflict, Waiting (or Clear to start), Auto-starts in and
- * why auto-start passed it over (PDT-329) for rows, cards
+ * why auto-start passes it over (waiting on overlapping work, or its start failed) for rows, cards
  * and the ticket header.
  */
 export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; className?: string }) {
@@ -63,8 +63,9 @@ export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; cl
   const autoStartAt = t.autoStartAt ?? null;
   const source = t.source ?? 'user';
   const hold = t.pickupHold ?? null;
+  const failed = t.pickupFailed ?? null;
   const any =
-    source !== 'user' || t.proposed === true || refining || mergeBlocked || t.blockedBy > 0 || t.overlap !== 'none' || t.waiting || autoStartAt !== null || hold !== null;
+    source !== 'user' || t.proposed === true || refining || mergeBlocked || t.blockedBy > 0 || t.overlap !== 'none' || t.waiting || autoStartAt !== null || hold !== null || failed !== null;
   if (!any) return null;
   return (
     <span className={cn('flex min-w-0 shrink items-center gap-1', className)}>
@@ -87,6 +88,11 @@ export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; cl
       {hold !== null && (
         <Badge tone="waiting" className="min-w-0" title={`Auto-start passed it over: ${hold}. It starts once that work is done.`}>
           <Clock aria-hidden /> <span className="truncate">Waiting: {hold}</span>
+        </Badge>
+      )}
+      {failed !== null && (
+        <Badge tone="failed" title={`Auto-start couldn't start it: ${failed}. It tries again once the ticket changes, or when you choose Try auto-start again.`}>
+          <CircleAlert aria-hidden /> Auto-start failed
         </Badge>
       )}
     </span>

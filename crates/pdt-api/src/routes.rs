@@ -170,8 +170,10 @@ pub struct AppState {
     pub(crate) mcp_key: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
     /// The built-in personas were installed or updated in this daemon run.
     pub(crate) personas_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Tickets auto-start failed to start, with their `updated_at` then: skipped until they change.
-    pub(crate) auto_start_failed: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
+    /// Tickets auto-start failed to start, with their `updated_at` and the error then: skipped until they change, or
+    /// until the user's Try again (PDT-381). Start refusing for now (an overlap, the cap, a blocker) is never one.
+    pub(crate) auto_start_failed:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, pdt_core::pickup::FailedStart>>>,
     /// Tickets "Pick up tickets" last passed over for overlapping work in flight (PDT-329): the Board shows why while
     /// it is recent. Each choose replaces its projects' entries.
     pub(crate) pickup_holds:

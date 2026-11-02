@@ -123,7 +123,7 @@ rose, an agent slot freed up), and every minute. It has three steps:
    areas to take, whether to leave out blocked, conflicting and parent tickets, and the order (`priority`, `rank` or
    `age`).
 2. **Choose tickets to start** keeps to the caps (per project, and optionally per area or label), the quiet period,
-   and passes over a ticket that failed to start until it changes. It also keeps tickets apart from work in progress,
+   and passes over a ticket that failed to start until it changes (or you click **Try again** on it). It also keeps tickets apart from work in progress,
    by area (**Overlap**):
    - `avoid` (the default when the project has hot areas): no ticket in a hot area while another ticket in that area
      is in progress.
@@ -133,7 +133,9 @@ rose, an agent slot freed up), and every minute. It has three steps:
    **Hot areas** and **Untagged alongside hot** default to the project's settings. The run shows why it passed over
    each ticket, and a ticket waiting on overlapping work says why on its card.
 3. **Start the ticket** starts the first one still free, with the agent, permission mode and view you give it (your
-   defaults otherwise), handed to the project's workflow (the Pipeline) or to an agent session of its own.
+   defaults otherwise), handed to the project's workflow (the Pipeline) or to an agent session of its own. It starts a
+   ticket that shares an area with work in progress when the second step allowed it, and refuses only a conflict.
+   A ticket it can't start yet (a conflict, a blocker) waits for the next run.
 
 A setting left empty is the project's auto-start setting (**Settings**, on the project's page), so with the project's
 auto-start off it starts nothing. Set one in the step and it applies whatever the project says. **Dry run** shows what
