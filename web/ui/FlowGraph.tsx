@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Background,
   Controls,
@@ -8,6 +8,9 @@ import {
   ReactFlow,
   ReactFlowProvider,
   applyNodeChanges,
+  useNodesInitialized,
+  useReactFlow,
+  useStore,
   type Edge,
   type Node,
   type NodeChange,
@@ -75,12 +78,55 @@ export interface FlowGraphProps {
   onDelete?: (what: { nodes: string[]; edges: FlowEdge[] }) => void;
   /** No dragging, connecting or deleting (a run's path, a repo workflow). */
   readOnly?: boolean;
-  /** Where the graph opens (pan and zoom, a remembered one); without it the graph fits the view. */
+  /** Where the graph opens (pan and zoom, a remembered one); without it see openingViewport. */
   viewport?: FlowViewport;
   /** Hears the pan and zoom after the user moves the graph. */
   onViewportChange?: (v: FlowViewport) => void;
   'aria-label'?: string;
   className?: string;
+}
+
+/** The opening zoom stays between these: below the minimum the titles can't be read, so the graph scrolls instead. */
+const OPEN_MIN_ZOOM = 0.75;
+const OPEN_MAX_ZOOM = 1;
+/** Space (px) kept between the graph and the canvas's edges when it opens. */
+const OPEN_PADDING = 40;
+
+/**
+ * Where the graph opens without a remembered viewport: the whole graph when it fits at a readable zoom, centred;
+ * otherwise at the minimum zoom, pinned to the left (and the top) along the side it overflows, for the user to pan.
+ */
+export function openingViewport(
+  bounds: { x: number; y: number; width: number; height: number },
+  canvas: { width: number; height: number },
+): FlowViewport {
+  const room = { width: Math.max(canvas.width - 2 * OPEN_PADDING, 1), height: Math.max(canvas.height - 2 * OPEN_PADDING, 1) };
+  const fit = Math.min(room.width / Math.max(bounds.width, 1), room.height / Math.max(bounds.height, 1));
+  const zoom = Math.min(OPEN_MAX_ZOOM, Math.max(OPEN_MIN_ZOOM, fit));
+  const axis = (start: number, size: number, space: number, total: number) =>
+    size * zoom <= space ? (total - size * zoom) / 2 - start * zoom : OPEN_PADDING - start * zoom;
+  return {
+    x: axis(bounds.x, bounds.width, room.width, canvas.width),
+    y: axis(bounds.y, bounds.height, room.height, canvas.height),
+    zoom,
+  };
+}
+
+/** Opens the graph at openingViewport once its nodes are measured (React Flow's own fitView only centres). */
+function OpeningFit() {
+  const { getNodes, getNodesBounds, setViewport } = useReactFlow();
+  const measured = useNodesInitialized();
+  const width = useStore((s) => s.width);
+  const height = useStore((s) => s.height);
+  const done = useRef(false);
+  useLayoutEffect(() => {
+    if (done.current || !measured || !width || !height) return;
+    const nodes = getNodes();
+    if (!nodes.length) return;
+    done.current = true;
+    void setViewport(openingViewport(getNodesBounds(nodes), { width, height }));
+  }, [measured, width, height, getNodes, getNodesBounds, setViewport]);
+  return null;
 }
 
 const edgeId = (e: { from: string; port: string; to: string }) => `${e.from}\u0000${e.port}\u0000${e.to}`;
@@ -201,13 +247,14 @@ function Graph({
       nodesConnectable={!readOnly}
       elementsSelectable
       deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
-      {...(opened ? { defaultViewport: opened } : { fitView: true, fitViewOptions: { padding: 0.2, maxZoom: 1 } })}
+      {...(opened ? { defaultViewport: opened } : {})}
       onMoveEnd={(_, v) => onViewportChange?.({ x: v.x, y: v.y, zoom: v.zoom })}
       minZoom={0.2}
       proOptions={{ hideAttribution: true }}
     >
       <Background gap={20} size={1} />
       <Controls showInteractive={false} />
+      {!opened && <OpeningFit />}
     </ReactFlow>
   );
 }
