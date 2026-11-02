@@ -2,6 +2,9 @@
 docs/superpowers/
 .remember/
 /target/
+# Worktrees made by hand (PDT adds this to .git/info/exclude for the ones it makes)
+/.worktrees/
+.DS_Store
 node_modules/
 dist/
 *.db
