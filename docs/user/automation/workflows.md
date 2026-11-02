@@ -326,6 +326,10 @@ A step's settings can use what came before: `{{trigger.ticketKey}}` is the event
 is what the step called `review` handed in; the settings panel has a picker for these. Secrets go in as
 `{{secret.name}}` and are filled in only as the step runs (see [Secrets](../your-machine/secrets.md)).
 
+A **Run a command** script can't use these directly: text from an issue or a webhook would run as part of the script.
+Put each one in the step's **env** (`"TITLE": "{{trigger.title}}"`) and use `"$TITLE"` in the script (`$env:TITLE` in
+PowerShell). A program's **args** take them as they are; put `--` before them when a value could start with `-`.
+
 A step that can't run as set up (no project to work on, a repository that isn't `owner/name`) fails the run at once
 with that message.
 
