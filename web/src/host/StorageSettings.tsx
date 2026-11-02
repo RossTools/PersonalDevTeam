@@ -22,6 +22,7 @@ function gb(text: string): number {
 function Thresholds({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
   const m = useMutation({
+    meta: { errorShown: true },
     mutationFn: (p: HostSettingsPatch) => api.saveHostSettings(p),
     onSuccess: (view) => {
       qc.setQueryData(['host-settings'], view);

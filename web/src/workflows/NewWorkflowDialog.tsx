@@ -100,6 +100,7 @@ function Preview({ t, projects, onClose, onCreated, onEditTemplate }: {
   const off = pluginOff(t);
   const plugin = t.plugin;
   const create = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => {
       const scope: Scope = where === 'host' || where === 'personal' ? where : 'project';
       const filled = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== ''));

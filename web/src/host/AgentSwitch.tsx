@@ -26,6 +26,7 @@ export const offNote = (v: HostSettingsView, agent: AgentKind): string | undefin
 export function AgentSwitch({ v, agent, label }: { v: HostSettingsView; agent: AgentKind; label: string }) {
   const qc = useQueryClient();
   const save = useMutation({
+    meta: { errorShown: true },
     mutationFn: (on: boolean) => api.saveHostSettings({ disabledAgents: switched(agentsOff(v), agent, on) }),
     onSuccess: (view) => {
       qc.setQueryData(['host-settings'], view);

@@ -64,6 +64,7 @@ export function DryRunDialog({ open, onOpenChange, doc, workflowId, catalog }: {
     parseError = (e as Error).message;
   }
   const run = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.dryRunWorkflow({
       doc, workflowId: workflowId ?? null,
       event: source === 'write' ? { type, payload: parsed } : null,

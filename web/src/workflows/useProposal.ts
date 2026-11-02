@@ -22,8 +22,8 @@ export function useProposal(w: WorkflowDetail, dirty: boolean, onChanged: (d: Wo
   /** Whether to go on and replace the editor's draft (it asks only when there are unsaved changes). */
   const replaceDraft = async (action: string) =>
     !dirty || (await confirm({ title: `${action} and lose your unsaved changes?`, body: 'The editor has changes that are not saved.', action, danger: true })).ok;
-  const accept = useMutation({ mutationFn: (n: number) => api.acceptWorkflowVersion(w.id, n), onSuccess: done });
-  const discard = useMutation({ mutationFn: (n: number) => api.discardWorkflowVersion(w.id, n), onSuccess: done });
+  const accept = useMutation({ meta: { errorShown: true }, mutationFn: (n: number) => api.acceptWorkflowVersion(w.id, n), onSuccess: done });
+  const discard = useMutation({ meta: { errorShown: true }, mutationFn: (n: number) => api.discardWorkflowVersion(w.id, n), onSuccess: done });
   return {
     done,
     replaceDraft,

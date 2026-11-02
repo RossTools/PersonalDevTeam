@@ -36,8 +36,8 @@ export function AddProjectForm({ onAdded, autoFocus = false, initialMode = 'path
     void qc.invalidateQueries({ queryKey: ['workspaces'] });
     onAdded?.(p);
   };
-  const add = useMutation({ mutationFn: api.createProject, onSuccess: done });
-  const clone = useMutation({ mutationFn: api.cloneProject, onSuccess: done });
+  const add = useMutation({ meta: { errorShown: true }, mutationFn: api.createProject, onSuccess: done });
+  const clone = useMutation({ meta: { errorShown: true }, mutationFn: api.cloneProject, onSuccess: done });
   const m = mode === 'clone' ? clone : add;
   // A submit error moves focus to its Alert (spec §6.3).
   useEffect(() => {
