@@ -4,13 +4,9 @@ import { api } from '../api/client';
 import type { InstallUpdatesView } from '../api/gen/InstallUpdatesView';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
-import { connectionsKey } from '../connections/ConnectionDialog';
-import { routePath } from '../shell/route';
-import { navigate } from '../shell/router';
+import { ChatChannelRow, CustomizedNotice, openWorkflow } from '../common/BuiltinSettings';
 
 const KEY = ['install-updates'];
-
-const openWorkflow = (id: string) => navigate(routePath({ view: 'workflows', target: { kind: 'workflow', id } }));
 
 const text = (v: unknown) => (typeof v === 'string' ? v : '');
 
@@ -67,17 +63,7 @@ export function InstallUpdates({ policy }: { policy: UpdatePolicy }) {
           The workflow {v.name} is off: updates install only when you say.
         </Alert>
       ) : v.customized ? (
-        <Alert
-          tone="info"
-          action={
-            <span className="flex gap-1">
-              <Button size="sm" variant="secondary" onClick={() => openWorkflow(v.workflowId)}>Open</Button>
-              <Button size="sm" variant="secondary" pending={reset.isPending} onClick={() => reset.mutate()}>Reset to default</Button>
-            </span>
-          }
-        >
-          Updates follow your customized workflow {v.name}.
-        </Alert>
+        <CustomizedNotice name={v.name} workflowId={v.workflowId} follows="Updates follow" onReset={() => reset.mutate()} resetting={reset.isPending} />
       ) : (
         <Inputs v={v} put={(values) => save.mutateAsync(values)} auto={auto} />
       )}
@@ -118,29 +104,7 @@ function Inputs({ v, put, auto }: { v: InstallUpdatesView; put: Put; auto: boole
       {flag('stableOnly', 'Stable releases only', 'On the nightly channel, a nightly build doesn’t install by itself: install it from the banner.', !auto)}
       {flag('checkAfter', 'Check PDT after installing', 'A few minutes after PDT starts on the new version, check it runs that version and its background work keeps going. If not, it goes to your Inbox.')}
       {flag('announce', 'Tell me what changed', 'A notification linking to the release notes, once PDT runs the new version.')}
-      {value('announce') === true && v.channels.length > 0 && <Chat v={v} put={put} />}
+      {value('announce') === true && v.channels.length > 0 && <ChatChannelRow v={v} id="chat" put={put} what="Post it" />}
     </>
-  );
-}
-
-/** A chat channel to post what changed to as well: a connection of a kind a plugin posts to. */
-function Chat({ v, put }: { v: InstallUpdatesView; put: Put }) {
-  const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
-  const kinds = new Set(v.channels.map((c) => c.connectionKind));
-  const label = (kind: string) => v.channels.find((c) => c.connectionKind === kind)?.label ?? kind;
-  const usable = (connections.data ?? []).filter((c) => kinds.has(c.kind));
-  const chat = text(v.values.chat);
-  const options = [
-    { value: '', label: 'None' },
-    ...usable.map((c) => ({ value: c.name, label: `${c.name} (${label(c.kind)})` })),
-    ...(chat && !usable.some((c) => c.name === chat) ? [{ value: chat, label: `${chat} (missing)` }] : []),
-  ];
-  return (
-    <AutoSaveRow label="Chat channel" description={`Post it to ${v.channels.map((c) => c.label).join(' or ')} as well. Add a connection in Settings → Plugins.`}>
-      {(track) => (
-        <Select<string> aria-label="Chat channel" className="w-56" options={options} value={chat}
-          onChange={(name) => void track(put({ chat: name }))} />
-      )}
-    </AutoSaveRow>
   );
 }

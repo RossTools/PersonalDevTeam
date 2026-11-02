@@ -13,6 +13,7 @@ import { installUpdatesApi } from './installUpdates';
 import { notificationRulesApi } from './notificationRules';
 import { personasApi } from './personas';
 import { pmApi } from './pm';
+import { pmCheckpointApi } from './pmCheckpoint';
 import { projectsApi } from './projects';
 import { reviewApi } from './review';
 import { runsApi } from './runs';
@@ -42,6 +43,7 @@ export const api = {
   ...installUpdatesApi,
   ...personasApi,
   ...pmApi,
+  ...pmCheckpointApi,
   ...projectsApi,
   ...reviewApi,
   ...runsApi,

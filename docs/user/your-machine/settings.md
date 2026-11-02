@@ -48,6 +48,12 @@ How PDT updates itself. See [Updates](updates.md#updates) for what each choice d
 - **ACP agents**: other agents that speak the Agent Client Protocol. See
   [Connect agents and GitHub](../getting-started/connect.md#other-agents-acp).
 
+### PM
+
+- **Daily checkpoint**: when the PM's conversations are brought up to date: at a set time or each hour, on which
+  days, and a chat channel to post the update to. These set the **PM daily checkpoint** workflow. See
+  [Change when it's brought up to date](../automation/the-pm.md#change-when-its-brought-up-to-date).
+
 ### Network
 
 Where PDT listens. Changes apply when PDT restarts: a banner offers **Restart now**, and **Network** shows a

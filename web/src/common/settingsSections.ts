@@ -20,6 +20,7 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
       'PDT_CODEX_PROGRAM', 'PDT_DEVIN_PROGRAM', 'ACP agents', 'Add ACP agent', 'Agent Client Protocol',
     ],
   },
+  { label: 'PM', terms: ['Daily checkpoint', 'Daily update', 'Journal', 'At a set time', 'Days'] },
   { label: 'Network', terms: ['Port', 'Allowed hosts', 'Restart', 'PDT_PORT', 'PDT_ALLOWED_HOSTS'] },
   { label: 'Remote access', terms: ['Serve on the tailnet', 'Tailscale', 'Owner', 'Status'] },
   { label: 'Runs', terms: ['Ports', 'Max concurrent runs'] },
