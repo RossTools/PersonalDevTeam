@@ -345,16 +345,16 @@ async fn finish(worktree: &Path, p: &Prepared, how: &str, regenerated: &[String]
     if let Some(remote) = p.push.clone() {
         let (wt, refspec, before) = (worktree.to_path_buf(), format!("HEAD:refs/heads/{}", p.branch), p.before.clone());
         let result = tokio::task::spawn_blocking(move || {
-            let r = match pdt_git::push(&wt, &remote, &[&refspec], REMOTE_LIMIT) {
+            match pdt_git::push(&wt, &remote, &[&refspec], REMOTE_LIMIT) {
                 Ok(pdt_git::PushOutcome::Pushed) => Ok(()),
                 Ok(pdt_git::PushOutcome::Rejected(why)) => Err(format!("the branch moved on the remote: {why}")),
                 Err(e) => Err(e.to_string()),
-            };
-            if r.is_err() {
-                // Only the merge just made goes: the worktree was clean before it.
-                let _ = pdt_git::undo_merge(&wt, &before);
             }
-            r
+            // Only the merge just made goes: the worktree was clean before it.
+            .map_err(|why| match pdt_git::undo_merge(&wt, &before) {
+                Ok(()) => why,
+                Err(e) => format!("{why}; and the merge couldn't be undone, so the worktree still has it: {e}"),
+            })
         })
         .await;
         match result.map_err(|e| e.to_string()).and_then(|r| r) {

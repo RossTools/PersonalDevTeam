@@ -459,7 +459,9 @@ pub(crate) async fn webhook_tool(st: &AppState, a: DiscordWebhookArgs) -> Result
         if let Err(e) =
             pdt_api::sdk::connections::put_secret(State(st.clone()), Path(c.id.clone()), Ok(Json(secret))).await
         {
-            let _ = st.store.delete_connection(&c.id).await;
+            if let Err(d) = st.store.delete_connection(&c.id).await {
+                tracing::warn!(connection = %c.id, error = %d, "could not remove a Discord channel connection whose webhook failed to save");
+            }
             return Err(api(e));
         }
         Ok(c)
