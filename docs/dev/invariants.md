@@ -169,6 +169,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **Agents and workflows use secrets but never see them.** Values never go in the database, a response, a log or a
   tool result; `pdt_core::secret::Redactor` replaces them wherever the store, pdt-mcp, conversations and the logs
   write.
+- **The secret tools are no way round the agent's sandbox.** `run_with_secrets` and `write_secret_file` run in pdtd, so
+  they ask (unless the session asks before nothing), must name a secret, and stay in the session's folder, out of
+  `.git` and off symlinks (pdt-api `vault.rs` `session_path`). Don't mark them non-asking or let the PM act for them.
 - **Tokens are never returned by the API or logged**, and follow a redirect only to the same host.
 - **A dev instance never reads stable's keychain entries**: keys outside the stable data folder are scoped by the data
   folder (pdt-api `secrets.rs`).

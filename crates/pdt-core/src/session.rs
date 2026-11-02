@@ -268,6 +268,20 @@ impl Session {
     pub fn claude_conversation_id(&self) -> &str {
         self.external_session_id.as_deref().unwrap_or(&self.id)
     }
+
+    /// The agent runs with its permission prompts bypassed: it asks the user before nothing. A conversation's mode
+    /// says (the user can change it as it runs); a terminal keeps the flag it was launched with.
+    pub fn asks_nothing(&self) -> bool {
+        asks_nothing(self.permission_mode, self.bypass_permissions)
+    }
+}
+
+/// [`Session::asks_nothing`] from a session's mode and launch flag.
+pub fn asks_nothing(mode: Option<crate::conversation::PermissionMode>, bypass_permissions: bool) -> bool {
+    match mode {
+        Some(m) => m == crate::conversation::PermissionMode::Bypass,
+        None => bypass_permissions,
+    }
 }
 
 /// Whether `id` looks like a Claude conversation id (a UUID): it becomes an argument and a transcript file name, so
@@ -669,6 +683,16 @@ mod tests {
 
     fn launch_of(l: Launch) -> (String, Vec<String>) {
         (l.program, l.args)
+    }
+
+    #[test]
+    fn a_session_asks_nothing_only_in_bypass() {
+        use crate::conversation::PermissionMode as M;
+        assert!(asks_nothing(Some(M::Bypass), true) && asks_nothing(Some(M::Bypass), false));
+        // A conversation moved out of bypass asks again, whatever it was launched with.
+        assert!(!asks_nothing(Some(M::Plan), true));
+        assert!(!asks_nothing(Some(M::Ask), false) && !asks_nothing(Some(M::AcceptEdits), false));
+        assert!(asks_nothing(None, true) && !asks_nothing(None, false));
     }
 
     #[test]

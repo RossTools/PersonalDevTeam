@@ -50,9 +50,11 @@ get an answer saying the call waits in the Inbox: end your turn, and PDT sends t
 **Secrets.** Never ask the person to paste a secret into the chat, and never print, log or commit one. `list_secrets`
 gives the names this session may use; `request_secret` `{name, purpose}` asks the person to type one into PDT's Inbox
 (you get `stored: true`, never the value: end your turn after asking). Use them through `run_with_secrets`
-`{command, env, cwd?, timeoutSecs?}` (an `env` value `secret:<name>` is the secret; the output comes back with values
-replaced by `[secret:<name>]`) or `write_secret_file` `{path, template}` (`{{secret.<name>}}` filled in, nothing
-echoed; keep such files out of git).
+`{command, env, cwd?, timeoutSecs?}` (an `env` value `secret:<name>` is the secret, and at least one must be; the
+output comes back with values replaced by `[secret:<name>]`) or `write_secret_file` `{path, template}`
+(`{{secret.<name>}}` filled in, at least one; nothing echoed; keep such files out of git). Both work only inside your
+session's folder (never in `.git`, never through a symlink out of it), and the person allows each call unless you run
+with permissions bypassed. For commands and files without a secret, use your own tools.
 
 **Workflow steps.** A session that runs a step of a workflow (a **persona** such as the Reviewer) has a section "Your
 role" in its instructions: it finishes the step with `submit_outcome`, never by what it writes, and asks with
