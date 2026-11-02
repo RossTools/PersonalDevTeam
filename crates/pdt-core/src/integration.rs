@@ -811,4 +811,9 @@ pub struct AccountSignInStart {
     pub url: String,
     /// The address the service sends the browser back to (it must be one of the OAuth client's redirect URIs).
     pub redirect_uri: String,
+    /// With PDT's own client, the website's page to open first: once it says it is ready, the window that opened it
+    /// sends it `url` (`{pdtRelayTo: url}`), so it sends the answer back only to the PDT that started the sign-in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub relay: Option<String>,
 }
