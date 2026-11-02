@@ -388,6 +388,18 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Removes a pending proposal as if it was never made (a repo file that went back before the user decided).
+    /// False when it isn't a pending proposal.
+    pub async fn drop_workflow_proposal(&self, id: &str, version: u32) -> Result<bool, StoreError> {
+        let r =
+            sqlx::query("DELETE FROM workflow_versions WHERE workflow_id = ? AND version = ? AND status = 'proposed'")
+                .bind(id)
+                .bind(i64::from(version))
+                .execute(&self.pool)
+                .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn get_workflow(&self, id: &str) -> Result<Option<Workflow>, StoreError> {
         let sql = format!("SELECT {WF_COLUMNS} FROM workflows WHERE id = ?");
         let row = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&self.pool).await?;
@@ -454,6 +466,17 @@ impl Store {
             sqlx::query_as("SELECT doc FROM workflow_versions WHERE workflow_id = ? AND version = ?")
                 .bind(id)
                 .bind(i64::from(version))
+                .fetch_optional(&self.pool)
+                .await?;
+        row.map(|(d,)| serde_json::from_str(&d).map_err(|e| corrupt("workflow doc", e))).transpose()
+    }
+
+    /// The newest version's document, whatever its status (saved, proposed or discarded); None for an unknown
+    /// workflow.
+    pub async fn newest_workflow_doc(&self, id: &str) -> Result<Option<WorkflowDoc>, StoreError> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT doc FROM workflow_versions WHERE workflow_id = ? ORDER BY version DESC LIMIT 1")
+                .bind(id)
                 .fetch_optional(&self.pool)
                 .await?;
         row.map(|(d,)| serde_json::from_str(&d).map_err(|e| corrupt("workflow doc", e))).transpose()
