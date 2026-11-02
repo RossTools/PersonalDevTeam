@@ -279,6 +279,26 @@ async fn a_failed_unserve_is_reported_and_retried() {
     );
 }
 
+/// PDT-355: `serve --bg` mappings outlive pdtd, so the next process on the same data folder knows them as this
+/// instance's: turned off after a restart in which Tailscale was down, it still removes the mapping.
+#[tokio::test]
+async fn turning_off_after_a_restart_unserves_what_the_previous_process_served() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = Arc::new(RecordingTailscale::new(Ok(ts(true))));
+    let (app, _) = setup(tmp.path(), fake.clone()).await;
+    call(&app, "PUT", "/api/host/settings", Some(on())).await;
+    assert_eq!(fake.calls(), ["serve --bg --https=443 http://127.0.0.1:7999"]);
+
+    let next = Arc::new(RecordingTailscale::new(Err(TsError::NotRunning("state Stopped".into()))));
+    let (app, state) = setup(tmp.path(), next.clone()).await;
+    let r = apply_remote_access(&state).await;
+    assert!(!r.active);
+    next.set_status(Ok(ts(true)));
+    let (_, v) = call(&app, "PUT", "/api/host/settings", Some(json!({"remoteAccess": false}))).await;
+    assert_eq!(v["remote"]["error"], json!(null), "{v}");
+    assert_eq!(next.calls(), ["serve --https=443 off"]);
+}
+
 // PDT-148: after a restart Tailscale can come up after pdtd; the watch makes remote access follow it.
 
 fn quick_watch(state: &mut AppState) {

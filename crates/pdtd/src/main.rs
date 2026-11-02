@@ -215,10 +215,11 @@ async fn run() -> anyhow::Result<()> {
         web_dir = ?cfg.web_dir, "{PRODUCT_NAME} daemon listening on http://127.0.0.1:{}", cfg.port
     );
     // One background task, in order (ruling F4): remote access first, so resumed runs get tailnet links and their
-    // ports' mappings are this process's (an old port can then be unmapped when a run moves); then the runs and
-    // sessions the previous pdtd left; then the 60 s poll (`poll_pass`: gone runs, PRs and CI, merges, issues, Jira,
-    // workflow upkeep). With remote access off this runs no tailscale command; `serve --bg` mappings persist across
-    // restarts, so with it on this re-adds the allowlist entry and reports the state.
+    // ports' mappings are this instance's; then the runs and sessions the previous pdtd left (after which the run-port
+    // mappings a previous pdtd made, kept in the store, go when no resumed run uses them); then the 60 s poll
+    // (`poll_pass`: gone runs, PRs and CI, merges, issues, Jira, workflow upkeep). With remote access off and nothing
+    // left mapped by this instance this runs no tailscale command; `serve --bg` mappings persist across restarts, so
+    // with it on this re-adds the allowlist entry and reports the state.
     // Every loop's passes are contained (a panic ends the pass, not the loop) and recorded for /api/health (PDT-127).
     state.loops.register("poll", POLL_EVERY, Some(pdt_api::loops::POLL_STALE_AFTER.as_millis() as i64));
     {
