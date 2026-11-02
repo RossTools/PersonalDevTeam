@@ -145,9 +145,22 @@ describe('board', () => {
     const dt = transfer();
     fireEvent.dragStart(c, { dataTransfer: dt });
     expect(dt.data['text/plain']).toBe('pdt:ticket:t1');
+    fireEvent.dragOver(column('Done'), { dataTransfer: dt });
+    fireEvent.drop(column('Done'), { dataTransfer: dt });
+    await waitFor(() => expect(calls.find((x) => x.method === 'PATCH')?.body).toEqual({ stage: 'done' }));
+  });
+
+  it('opens the Start dialog for a To do card dropped on In progress, rather than moving it with nobody on it', async () => {
+    const calls = stub();
+    const onStart = vi.fn();
+    renderWithQuery(<Harness onStart={onStart} />);
+    const c = await card(/ALP-1 Ticket 1/);
+    const dt = transfer();
+    fireEvent.dragStart(c, { dataTransfer: dt });
     fireEvent.dragOver(column('In progress'), { dataTransfer: dt });
     fireEvent.drop(column('In progress'), { dataTransfer: dt });
-    await waitFor(() => expect(calls.find((x) => x.method === 'PATCH')?.body).toEqual({ stage: 'in_progress' }));
+    await waitFor(() => expect(onStart).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' })));
+    expect(calls.find((x) => x.method === 'PATCH')).toBeUndefined();
   });
 
   it('ignores a drop on the column the card is already in', async () => {
@@ -286,20 +299,26 @@ describe('board pipeline stages', () => {
         ],
         done: columns.done,
       } as Record<string, ReturnType<typeof summary>[]>)[params(c.path).stage] ?? []),
+      'PATCH /api/tickets/t3': (c: Call) => ticket(3, c.body as object),
     });
-    renderWithQuery(<Harness />);
+    const onStart = vi.fn();
+    renderWithQuery(<Harness onStart={onStart} />);
     expect(await within(await screen.findByRole('region', { name: 'Review' })).findByText('Reviewing')).toBeInTheDocument();
     expect(within(column('Review')).getByText('Reviewer · working')).toBeInTheDocument();
     expect(within(column('Accept')).getByText('Your turn')).toBeInTheDocument();
     // No stage yet: under Code.
     expect(within(column('Code')).getByText('Cache')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'In progress' })).toBeNull();
-    // Dropping on a stage moves the card to In progress; the workflow owns the stage.
-    const c = await card(/ALP-1 Ticket 1/);
+    // A To do card dropped on any stage opens the Start dialog (the workflow owns the stage); a Done card dropped on
+    // one moves back to In progress.
     const dt = transfer();
-    fireEvent.dragStart(c, { dataTransfer: dt });
+    fireEvent.dragStart(await card(/ALP-1 Ticket 1/), { dataTransfer: dt });
     fireEvent.dragOver(column('QA'), { dataTransfer: dt });
     fireEvent.drop(column('QA'), { dataTransfer: dt });
+    await waitFor(() => expect(onStart).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' })));
+    expect(calls.find((x) => x.method === 'PATCH')).toBeUndefined();
+    fireEvent.dragStart(await card(/ALP-3 Ticket 3/), { dataTransfer: dt });
+    fireEvent.drop(column('Code'), { dataTransfer: dt });
     await waitFor(() => expect(calls.find((x) => x.method === 'PATCH')?.body).toEqual({ stage: 'in_progress' }));
   });
 
