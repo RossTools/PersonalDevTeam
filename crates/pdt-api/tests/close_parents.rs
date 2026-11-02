@@ -1,4 +1,4 @@
-//! Close finished parents (PROJ-377): a parent closes when its last part does, with a comment; a part opening again
+//! Close finished parents (PDT-377): a parent closes when its last part does, with a comment; a part opening again
 //! reopens it; a parent with work of its own stays open; and the board's Done window is a project setting.
 
 use crate::common;

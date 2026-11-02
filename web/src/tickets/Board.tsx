@@ -29,7 +29,7 @@ import { CiBadge, PrBadge } from './PullRequest';
 import { ExternalKeys } from './ExternalKeys';
 import { TicketBadges } from './TicketBadges';
 import { LabelChips } from './TicketParts';
-import { DAY_MS, DEFAULT_DONE_DAYS, useDoneWindow } from './BoardViewMenu';
+import { DAY_MS, DEFAULT_DONE_DAYS, doneWindowLabel, useDoneWindow } from './BoardViewMenu';
 
 export type BoardStage = Extract<TicketStage, 'todo' | 'in_progress' | 'done'>;
 
@@ -369,7 +369,7 @@ function Cell({ label, stage, items, lane, env, height, children }: {
 }
 
 /** A column's loading, error and empty states, and Show more. */
-function ColumnStatus({ col, title, stage, showEmpty }: { col: ColumnData; title: string; stage: BoardStage; showEmpty: boolean }) {
+function ColumnStatus({ col, title, stage, showEmpty, doneDays }: { col: ColumnData; title: string; stage: BoardStage; showEmpty: boolean; doneDays: number }) {
   const { pages, items } = col;
   return (
     <>
@@ -378,7 +378,7 @@ function ColumnStatus({ col, title, stage, showEmpty }: { col: ColumnData; title
       ) : pages.isError && !pages.data ? (
         <p className="p-2 text-xs text-destructive">{pages.error.message}</p>
       ) : showEmpty && items.length === 0 ? (
-        <p className="p-2 text-xs text-muted-foreground">{stage === 'done' ? 'Nothing done in the last two weeks.' : 'No tickets.'}</p>
+        <p className="p-2 text-xs text-muted-foreground">{stage === 'done' ? `Nothing done in the ${doneWindowLabel(doneDays).toLowerCase()}.` : 'No tickets.'}</p>
       ) : null}
       {pages.hasNextPage && (
         <Button variant="ghost" size="sm" className="mt-2 w-full" pending={pages.isFetchingNextPage} onClick={() => void pages.fetchNextPage()}>
@@ -564,7 +564,7 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
   };
   const status = (c: DisplayColumn, showEmpty: boolean) =>
     ownsStatus(c) ? (
-      <ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty={showEmpty} />
+      <ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty={showEmpty} doneDays={doneDays} />
     ) : showEmpty && cards(cols.in_progress.items, c).length === 0 ? (
       <p className="p-2 text-xs text-muted-foreground">No tickets.</p>
     ) : null;
