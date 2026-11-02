@@ -760,7 +760,7 @@ pub(crate) async fn sheet(
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, ApiError> {
     let (d, local) = local_doc(&st, &id).await?;
-    let (bytes, seq) = local.sheet_bytes(&d.provider_ref)?;
+    let (bytes, seq) = local.sheet_bytes(&d.provider_ref).await?;
     Ok(bytes_response(
         bytes,
         "application/octet-stream",
@@ -788,7 +788,7 @@ pub(crate) async fn sheet_diffs(
     if view.is_empty() || view == "pdt" || view.len() > 64 {
         return Err(invalid("give the view's own id"));
     }
-    let r = local.view_diffs(&d.provider_ref, view, q.seq, &body).map_err(|e| match e {
+    let r = local.view_diffs(&d.provider_ref, view, q.seq, body.into()).await.map_err(|e| match e {
         ProviderError::Invalid(m) => ApiError::new(StatusCode::CONFLICT, "sheet_conflict", m),
         e => e.into(),
     })?;
@@ -821,7 +821,7 @@ pub(crate) async fn events(
     let (d, local) = local_doc(&st, &id).await?;
     let reference = d.provider_ref.clone();
     let rx = local.subscribe(&reference);
-    local.check_external(&reference);
+    local.check_external(&reference).await;
     let wake = st.resume_changed.subscribe();
     let mut tick = tokio::time::interval(WATCH_EVERY);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -834,7 +834,7 @@ pub(crate) async fn events(
             let got = tokio::select! {
                 r = rx.recv() => r,
                 _ = tick.tick() => {
-                    local.check_external(&reference);
+                    local.check_external(&reference).await;
                     continue;
                 }
                 w = wake.changed() => {
@@ -901,7 +901,7 @@ pub(crate) async fn export(
     let format = q.format.trim().to_ascii_lowercase();
     let sheet = q.sheet.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let out = if d.provider == local::ID {
-        st.local.export(&d.provider_ref, &d.title, &format, sheet)?
+        st.local.export(&d.provider_ref, &d.title, &format, sheet).await?
     } else {
         let p = provider_of(&st, &d)?;
         let stem = local::file_stem(&d.title);
@@ -994,7 +994,7 @@ pub(crate) async fn upload(
     }
     let (project, ticket) = targets(&st, q.project_id.as_deref(), q.ticket_id.as_deref()).await?;
     let folder = folder(&st, project.as_deref()).await?;
-    let (file, dropped) = st.local.import_file(&folder, q.name.trim(), &body)?;
+    let (file, dropped) = st.local.import_file(folder, q.name.trim().to_string(), body.into()).await?;
     let (_, document) = record(&st, local::ID, file, project.as_deref(), ticket.as_deref(), &by_of(q.by)).await?;
     Ok((StatusCode::CREATED, Json(UploadedDocument { document, dropped })))
 }
@@ -1023,7 +1023,7 @@ pub(crate) async fn image(
     if body.is_empty() {
         return Err(invalid("the image is empty"));
     }
-    let path = local.save_image(&d.provider_ref, q.name.trim(), &body)?;
+    let path = local.save_image(&d.provider_ref, q.name.trim(), body.into()).await?;
     Ok((StatusCode::CREATED, Json(SavedImage { path })))
 }
 
@@ -1033,7 +1033,7 @@ pub(crate) async fn asset(
     Path((id, path)): Path<(String, String)>,
 ) -> Result<axum::response::Response, ApiError> {
     let (d, local) = local_doc(&st, &id).await?;
-    let (bytes, mime) = local.asset(&d.provider_ref, &path)?;
+    let (bytes, mime) = local.asset(&d.provider_ref, &path).await?;
     Ok(bytes_response(
         bytes,
         mime,
