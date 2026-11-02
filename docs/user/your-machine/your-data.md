@@ -50,8 +50,16 @@ can take gigabytes per worktree. Worktrees stay after a ticket is done, so PDT c
 - **On Won't do** says what becomes of a worktree when its ticket goes to Won't do or its attempt is abandoned:
   **Clean up at once** (the default: the worktree, its branch and the ticket's workspace go), **Keep for some days**
   (then it is removed) or **Keep**. Work not committed or not pushed is always kept.
-- When a disk has less than 20 GB free, the Inbox says so. Below 5 GB, auto-start starts no new tickets until there is
-  more space; agents already running carry on. Change both in **Settings › This host › Storage** (0 turns one off).
+- When a disk has less than 20 GB free, the Inbox says so. Below 5 GB it is almost full: PDT pauses pickup (auto-start
+  starts no new tickets; agents already running carry on) and cleans every finished ticket's build output at once.
+  The Board shows **Pickup paused** on each ticket auto-start would take, with why. Once the disk is no longer almost
+  full (within the hour), or has enough space again, pickup resumes; **Resume pickup** in **Settings › This host ›
+  Storage** resumes it now.
+- The built-in **Clean up storage** workflow does the cleaning and the pausing. Change its thresholds (0 turns one
+  off) and what it does when a disk is almost full in **Settings › This host › Storage › Cleanup**, or customize it as
+  a workflow.
+- However the workflow is set, PDT stops saving changes when the disk is completely full, and saves again once there
+  is space.
 
 ## Logs
 

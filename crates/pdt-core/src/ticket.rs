@@ -488,6 +488,10 @@ pub struct TicketSummary {
     /// PDT-329; filled in by the API, in memory).
     #[serde(default)]
     pub pickup_hold: Option<String>,
+    /// Why pickup is paused, on a ticket auto-start would take but for the pause ("the disk is almost full"; PDT-370;
+    /// filled in by the API).
+    #[serde(default)]
+    pub pickup_paused: Option<String>,
     /// Why "Pick up tickets" passes it over until it changes: its start failed with this error (PDT-381; filled in by
     /// the API, in memory). Try again (`POST /api/tickets/{id}/retry-auto-start`) clears it.
     #[serde(default)]
@@ -1510,6 +1514,7 @@ mod tests {
             agent: None,
             auto_start_at: None,
             pickup_hold: None,
+            pickup_paused: None,
             pickup_failed: None,
             external: vec![],
             source: TicketSource::External,

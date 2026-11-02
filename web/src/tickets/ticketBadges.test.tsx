@@ -49,6 +49,13 @@ describe('the pickup hold', () => {
   });
 });
 
+describe('paused pickup', () => {
+  it('says pickup is paused, with why in its title', () => {
+    render(<TicketBadges ticket={summary(1, { stage: 'todo', pickupPaused: 'the disk is almost full (3.0 GB free)' })} />);
+    expect(screen.getByText('Pickup paused').closest('[title]')).toHaveAttribute('title', expect.stringContaining('the disk is almost full'));
+  });
+});
+
 describe('a failed auto-start', () => {
   it('says auto-start failed, with the error in its title', () => {
     const { rerender } = render(<TicketBadges ticket={summary(1, { stage: 'todo', pickupFailed: 'git failed: no repo' })} />);

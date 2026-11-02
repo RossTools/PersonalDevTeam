@@ -912,7 +912,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
     'Network': <Network v={v} />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,
     'Runs': <Runs v={v} />,
-    'Storage': <Storage v={v} />,
+    'Storage': <Storage />,
     'Projects folder': <ProjectsFolder v={v} />,
     'Documents': <Documents v={v} />,
     'Appearance': <Appearance />,

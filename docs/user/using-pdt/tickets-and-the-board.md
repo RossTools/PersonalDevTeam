@@ -207,8 +207,9 @@ Auto-start is the built-in **Pick up tickets** workflow, and these settings are 
 own way (only some labels, Ready tickets only at night), edit or copy it: see
 [Pick up tickets](../automation/workflows.md#pick-up-tickets).
 
-While a disk PDT uses is almost full, auto-start starts nothing new (see
-[Disk space](../your-machine/your-data.md#disk-space)).
+While pickup is paused, auto-start starts nothing new, and each ticket it would take shows **Pickup paused** with why.
+PDT pauses it while a disk it uses is almost full (see [Disk space](../your-machine/your-data.md#disk-space)); a
+workflow of yours can pause it too.
 
 ## On a phone
 

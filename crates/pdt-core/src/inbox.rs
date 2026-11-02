@@ -372,13 +372,14 @@ pub const LOW_DISK_ID: &str = "low_disk";
 pub const CRITICAL_DISK_ID: &str = "low_disk:critical";
 
 /// The item that says a disk is running low (PDT-324): the fullest disk's free bytes and the folders on it,
-/// `critical` when it is below the critical threshold (auto-start waits then), since `since`.
-pub fn low_disk_item(free: u64, folders: &[String], critical: bool, since: i64) -> InboxItem {
+/// `critical` when it is below the critical threshold, `paused` when pickup is paused (Clean up storage pauses it then,
+/// PDT-370), since `since`.
+pub fn low_disk_item(free: u64, folders: &[String], critical: bool, paused: bool, since: i64) -> InboxItem {
     let free_text = human_bytes(free);
-    let title = if critical {
-        format!("The disk is almost full ({free_text} free): auto-start is paused")
-    } else {
-        format!("Disk space is low ({free_text} free)")
+    let title = match (critical, paused) {
+        (true, true) => format!("The disk is almost full ({free_text} free): auto-start is paused"),
+        (true, false) => format!("The disk is almost full ({free_text} free)"),
+        _ => format!("Disk space is low ({free_text} free)"),
     };
     let on = match folders {
         [] => String::new(),
@@ -389,7 +390,7 @@ pub fn low_disk_item(free: u64, folders: &[String], critical: bool, since: i64) 
         "The disk{on} has {free_text} free. Worktrees' build output is usually what fills it: clean it in Settings › \
          Storage, or clean every finished ticket's worktree at once."
     );
-    if critical {
+    if critical && paused {
         text.push_str(" Until there is more space, auto-start starts no new tickets; agents already running carry on.");
     }
     InboxItem {
@@ -759,7 +760,7 @@ mod tests {
     #[test]
     fn the_low_disk_item_says_what_is_free_and_whether_auto_start_waits() {
         let gb = 1024 * 1024 * 1024;
-        let low = low_disk_item(12 * gb, &["/work".into()], false, 7);
+        let low = low_disk_item(12 * gb, &["/work".into()], false, false, 7);
         assert_eq!(
             (low.id.as_str(), low.kind, low.group, low.created_at),
             (LOW_DISK_ID, InboxKind::LowDisk, InboxGroup::Notice, 7)
@@ -767,11 +768,18 @@ mod tests {
         assert_eq!(low.title, "Disk space is low (12 GB free)");
         let text = low.body["text"].as_str().unwrap();
         assert!(text.contains("(with `/work`)") && !text.contains("auto-start"), "{text}");
-        let critical = low_disk_item(3 * gb, &["/a".into(), "/b".into()], true, 7);
+        let critical = low_disk_item(3 * gb, &["/a".into(), "/b".into()], true, true, 7);
         assert_eq!(critical.id, CRITICAL_DISK_ID);
         assert_eq!(critical.title, "The disk is almost full (3.0 GB free): auto-start is paused");
         let text = critical.body["text"].as_str().unwrap();
         assert!(text.contains("`/a`, `/b`") && text.contains("auto-start starts no new tickets"), "{text}");
+        // Clean up storage set not to pause pickup: it says nothing of auto-start.
+        let unpaused = low_disk_item(3 * gb, &["/a".into()], true, false, 7);
+        assert_eq!(
+            (unpaused.id.as_str(), unpaused.title.as_str()),
+            (CRITICAL_DISK_ID, "The disk is almost full (3.0 GB free)")
+        );
+        assert!(!unpaused.body["text"].as_str().unwrap().contains("auto-start"));
     }
 
     #[test]

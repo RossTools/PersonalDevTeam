@@ -86,8 +86,15 @@ See [Run configuration](../automation/run-configuration.md).
 Free space on each disk PDT uses, and what each project's worktrees take, with their build output apart.
 
 - **Clean** or **Remove…** a worktree, or **Clean all finished** tickets' worktrees at once.
-- **Low-disk warning**: below this much free space (20 GB unless you change it), the Inbox warns you.
-- **Pause auto-start below**: below this (5 GB), auto-start starts no new tickets.
+- While pickup is paused, why, with **Resume pickup**.
+- **Cleanup** sets the **Clean up storage** workflow:
+  - **Low-disk warning**: below this much free space (20 GB unless you change it), the Inbox warns you.
+  - **Almost full below**: below this (5 GB), a disk is almost full.
+  - **Pause pickup**: while a disk is almost full, auto-start starts no new tickets (on unless you turn it off).
+  - **Clean finished worktrees now**: when a disk is almost full, clean every finished ticket's build output at once
+    (on unless you turn it off).
+  - **Customize as a workflow →** opens the workflow. Once you change it there beyond these settings, this section
+    says so, with **Open** and **Reset to default**.
 
 See [Disk space](your-data.md#disk-space).
 
