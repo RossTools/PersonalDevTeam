@@ -1885,6 +1885,185 @@ async fn ticket_proposals_wait_for_the_user() {
     assert!(listed().await.contains(&part));
 }
 
+/// PDT-475: the PM proposes decisions on many ticket proposals in one `inbox_decide` call. Nothing changes until the
+/// user confirms: the call waits in the Inbox as one table (even where the project lets the PM act), an agent can't
+/// allow it, and the user's Allow with rows unticked resolves only the rows they kept, as their own decisions with the
+/// PM kept as the proposer. Another persona given the tool is refused.
+#[tokio::test]
+async fn the_pm_decides_ticket_proposals_in_a_batch_the_user_confirms() {
+    let env = setup().await;
+    let (s, p) = call(
+        &env.app,
+        "POST",
+        "/api/personas",
+        Some(json!({"name": "Sneaky", "role": "coder", "agent": "claude", "instructions": "Build it.",
+                    "permissionMode": "bypass", "tools": ["get_ticket", "submit_outcome", "inbox_decide"]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{p}");
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let own = ticket(&env, "Mine").await;
+    let wf = create_workflow(
+        &env,
+        json!({
+            "name": "Build",
+            "nodes": [
+                {"id": "go", "kind": "manual", "version": 1},
+                {"id": "code", "kind": "agent", "version": 1, "config": {"persona": "Sneaky",
+                    "prompt": "Build it.", "outcomes": [{"id": "submitted"}]}},
+                {"id": "done", "kind": "end", "version": 1},
+            ],
+            "edges": [{"from": "go", "to": "code"}, {"from": "code", "port": "submitted", "to": "done"}],
+        }),
+    )
+    .await;
+    run_now(&env, &wf, json!({"ticketId": own})).await;
+    let coder = tick_until(&env, "the coder", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{own}"), None).await;
+        v["sessions"][0]["id"].as_str().map(|s| json!(s))
+    })
+    .await;
+    let coder = coder.as_str().unwrap().to_string();
+    let said_to = |session: String, text: String| {
+        let env = &env;
+        async move {
+            let n = agent_says(env, &session).await.len();
+            let (s, v) =
+                call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
+            assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+            tick_until(env, "the agent's answer", || async {
+                agent_says(env, &session).await.into_iter().skip(n).find(|m| m.starts_with("mcp ")).map(|m| json!(m))
+            })
+            .await
+            .as_str()
+            .unwrap()
+            .to_string()
+        }
+    };
+    // Three proposals from the coder's session.
+    let mut made = vec![];
+    for title in ["Flaky test", "Same flaky test", "Rename everything"] {
+        let url = format!("/api/projects/{}/tickets", env.project);
+        let body = json!({"title": title, "stage": "todo", "reason": "Found it."});
+        let (s, v) = call_with(&env.app, "POST", &url, Some(body), &[("x-agent-session", &coder)]).await;
+        assert_eq!((s, v["stage"].as_str()), (StatusCode::CREATED, Some("draft")), "{v}");
+        made.push((v["id"].as_str().unwrap().to_string(), v["key"].as_str().unwrap().to_string()));
+    }
+    for (id, _) in &made {
+        tick_until(&env, "the proposal", || async {
+            inbox(&env).await.into_iter().find(|i| i["kind"] == "ticket_proposal" && i["ticketId"] == id.as_str())
+        })
+        .await;
+    }
+    let (a, b, c) = (&made[0], &made[1], &made[2]);
+    let call_ = json!({"items": [
+        {"item": a.1, "decision": "accept_todo", "agentic": true, "priority": "high", "note": "Worth fixing."},
+        {"item": b.1, "decision": "duplicate", "duplicateOf": a.1},
+        {"item": c.1, "decision": "reject", "note": "Not worth it."},
+    ]});
+
+    // Another persona given the tool can't use it.
+    let said = said_to(coder.clone(), format!("mcp: inbox_decide {call_}")).await;
+    assert!(said.contains("failed") && said.contains("project manager's tool"), "{said}");
+    assert!(!inbox(&env).await.iter().any(|i| i["kind"] == "confirm"), "nothing asked");
+
+    // The PM's call waits for the user, with no prompt of Claude's and despite the project letting the PM act.
+    let (s, v) = call(&env.app, "POST", "/api/pm/sessions", Some(json!({"text": "hi"}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let pm = v["id"].as_str().unwrap().to_string();
+    let said = said_to(pm.clone(), format!("mcp: inbox_decide {call_}")).await;
+    assert!(said.starts_with("mcp inbox_decide:") && said.contains("Nothing has changed yet"), "{said}");
+    let stage = |id: String| {
+        let env = &env;
+        async move { call(&env.app, "GET", &format!("/api/tickets/{id}"), None).await.1 }
+    };
+    for (id, _) in &made {
+        assert_eq!(stage(id.clone()).await["stage"], "draft", "nothing before the user's yes");
+    }
+    // Mistakes are refused before anything is asked.
+    let said =
+        said_to(pm.clone(), r#"mcp: inbox_decide {"items": [{"item": "NOPE-1", "decision": "accept_todo"}]}"#.into())
+            .await;
+    assert!(said.contains("failed"), "{said}");
+    let bad = json!({"items": [{"item": a.1, "decision": "accept_todo"}, {"item": a.1, "decision": "accept_backlog"}]});
+    let said = said_to(pm.clone(), format!("mcp: inbox_decide {bad}")).await;
+    assert!(said.contains("failed") && said.contains("twice"), "{said}");
+    let confirms: Vec<Value> = inbox(&env).await.into_iter().filter(|i| i["kind"] == "confirm").collect();
+    assert_eq!(confirms.len(), 1, "{confirms:?}");
+    let item = &confirms[0];
+    assert_eq!(item["body"]["tool"], "inbox_decide");
+    let rows = item["body"]["rows"].as_array().unwrap();
+    let keys: Vec<&str> = rows.iter().map(|r| r["ticketKey"].as_str().unwrap()).collect();
+    assert_eq!(keys, [a.1.as_str(), b.1.as_str(), c.1.as_str()]);
+    assert_eq!(
+        (rows[0]["decision"].as_str(), rows[0]["ticketTitle"].as_str()),
+        (Some("accept_todo"), Some("Flaky test"))
+    );
+    assert_eq!(rows[2]["note"], "Not worth it.");
+
+    // An agent can't allow it.
+    let answer = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
+    let (s, v) = call(&env.app, "POST", &answer, Some(json!({"choice": "allow"}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "allow", "rows": []}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "none kept: {v}");
+
+    // The user unticks the duplicate and allows the rest.
+    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "allow", "rows": [0, 2]}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["allowed"], true, "{v}");
+    let t = stage(a.0.clone()).await;
+    assert_eq!(
+        (t["stage"].as_str(), t["priority"].as_str(), t["labels"].clone(), t["proposed"].as_bool()),
+        (Some("todo"), Some("high"), json!(["agentic"]), Some(false)),
+        "{t}"
+    );
+    assert_eq!(stage(c.0.clone()).await["stage"], "wont_do");
+    assert_eq!(stage(b.0.clone()).await["stage"], "draft", "unticked: left as it was");
+    let left: Vec<Value> = inbox(&env).await.into_iter().filter(|i| i["kind"] == "ticket_proposal").collect();
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert_eq!(left[0]["ticketId"], b.0.as_str());
+
+    // The decisions are the user's, proposed by the PM: on the ticket's history and the item's resolution.
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{}/events", a.0), None).await;
+    let moved = events["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "moved" && e["data"]["to"] == "todo")
+        .unwrap_or_else(|| panic!("no move: {events}"))
+        .clone();
+    assert_eq!(moved["actor"], "user", "{moved}");
+    assert_eq!(
+        (moved["proposedBy"]["persona"].as_str(), moved["proposedBy"]["sessionId"].as_str()),
+        (Some("PM"), Some(pm.as_str())),
+        "{moved}"
+    );
+    assert!(moved["agent"].is_null(), "not an agent's move: {moved}");
+    let proposal = env.state.store.open_inbox_items_of(pdt_core::inbox::InboxKind::TicketProposal).await.unwrap();
+    assert_eq!(proposal.len(), 1, "only the unticked one is open");
+    let confirm = env.state.store.get_inbox_item(item["id"].as_str().unwrap()).await.unwrap().unwrap();
+    assert_eq!(confirm.resolution, json!({"choice": "allow", "rows": [0, 2]}));
+    // The PM hears what happened, and the proposing agent the user's decision as usual.
+    let heard = tick_until(&env, "the PM hearing it", || async {
+        agent_took(&env, &pm).await.into_iter().find(|m| m.contains("[PDT] The user allowed")).map(|m| json!(m))
+    })
+    .await;
+    let heard = heard.as_str().unwrap();
+    assert!(heard.contains("unticked") && heard.contains(b.1.as_str()) && heard.contains("\"decided\""), "{heard}");
+    let heard = tick_until(&env, "the coder hearing it", || async {
+        agent_took(&env, &coder)
+            .await
+            .into_iter()
+            .find(|m| m.contains("rejected your ticket proposal"))
+            .map(|m| json!(m))
+    })
+    .await;
+    assert!(heard.as_str().unwrap().contains("Their reason: Not worth it."), "{heard}");
+}
+
 /// A switched-off agent (PDT-270): Settings lists the agents still on and won't switch off the default; no new
 /// session starts on it; a step whose persona uses it fails (no fallback), and validation warns ahead of time.
 #[tokio::test]

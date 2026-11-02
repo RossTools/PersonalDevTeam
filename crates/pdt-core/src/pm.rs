@@ -567,6 +567,15 @@ fn inbox_section(inbox: &[BriefInbox], out: &mut String) {
     if inbox.is_empty() {
         out.push_str("- Empty.\n");
     }
+    let proposals = inbox.iter().filter(|i| i.kind == "ticket_proposal").count();
+    if proposals > 0 {
+        out.push_str(&format!(
+            "{proposals} ticket proposal{} wait{} for the user's decision. When they ask you to sort them, propose \
+             the decisions with `inbox_decide` (one call for many); the user confirms them in the Inbox.\n\n",
+            if proposals == 1 { "" } else { "s" },
+            if proposals == 1 { "s" } else { "" },
+        ));
+    }
     capped(inbox, out, |i| match &i.ticket {
         Some(k) => format!("- {} · {k}: {}", i.kind, i.title),
         None => format!("- {}: {}", i.kind, i.title),
@@ -976,15 +985,22 @@ pub struct PmContext<'a> {
 
 /// A PM session's instructions: who it is, its tools, the persona's instructions and the briefing.
 pub fn instructions(ctx: &PmContext) -> String {
-    let tools = |asking: bool| {
+    // Each tool in one group: reads and plain changes, asking (unless the project lets the PM act), and asking in the
+    // Inbox always (PDT-475).
+    let tools = |group: u8| {
+        let t = ctx.tool_table;
         ctx.tools
             .iter()
-            .filter(|t| ctx.tool_table.asks(t) == asking)
+            .filter(|n| match group {
+                0 => !t.asks(n),
+                1 => t.asks(n) && !t.asks_in_inbox(n),
+                _ => t.asks_in_inbox(n),
+            })
             .map(|t| format!("`{t}`"))
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let asking = tools(true);
+    let (asking, in_inbox) = (tools(1), tools(2));
     let mut out = format!(
         "# {PRODUCT_NAME}'s project manager\n\n\
          {SHORT_NAME} started this session (`{session}`) as the user's project manager (the PM). It is not in any \
@@ -1000,13 +1016,20 @@ pub fn instructions(ctx: &PmContext) -> String {
         work = ctx.work_folder,
         port = ctx.port,
         server = crate::mcp::SERVER_NAME,
-        read = tools(false),
+        read = tools(0),
     );
     if !asking.is_empty() {
         out.push_str(&format!(
             "- These act for the user, so each call waits for their yes (they see the call and its arguments) unless \
              the project (for an integration's tools, their connection) lets you act without asking: {asking}. A refusal is an \
              answer: don't retry it unchanged.\n"
+        ));
+    }
+    if !in_inbox.is_empty() {
+        out.push_str(&format!(
+            "- These always wait for the user in {SHORT_NAME}'s Inbox, whatever the project lets you do: {in_inbox}. \
+             The call returns at once with nothing changed; the user confirms it there (unticking rows they don't \
+             want) and {SHORT_NAME} sends you the result.\n"
         ));
     }
     let role = match ctx.step {
@@ -1388,14 +1411,21 @@ mod tests {
             .map(|i| BriefInbox { kind: "gate".into(), ticket: None, title: format!("g{i}") })
             .collect();
         assert!(briefing(&d).contains("- … and 3 more"));
+        assert!(!briefing(&d).contains("inbox_decide"));
+        d.inbox.push(BriefInbox { kind: "ticket_proposal".into(), ticket: Some("PDT-9".into()), title: "t".into() });
+        assert!(briefing(&d).contains("1 ticket proposal waits for the user's decision"), "{}", briefing(&d));
+        assert!(briefing(&d).contains("`inbox_decide`"));
     }
 
     #[test]
     fn instructions_split_the_tools_that_ask() {
         let tools: Vec<String> = ["get_overview", "create_ticket"].map(String::from).to_vec();
         use crate::integration::{ToolDecl, ToolTable};
-        let table =
-            ToolTable::new([ToolDecl::new("get_overview", "").read_only(), ToolDecl::new("create_ticket", "").asks()]);
+        let table = ToolTable::new([
+            ToolDecl::new("get_overview", "").read_only(),
+            ToolDecl::new("create_ticket", "").asks(),
+            ToolDecl::new("inbox_decide", "").asks_in_inbox(),
+        ]);
         let text = instructions(&PmContext {
             session_id: "s1",
             port: 7421,
@@ -1409,6 +1439,21 @@ mod tests {
         });
         assert!(text.contains("are how you see and change PDT: `get_overview`."), "{text}");
         assert!(text.contains("lets you act without asking: `create_ticket`."), "{text}");
+        assert!(!text.contains("`inbox_decide`"), "a tool the session lacks: {text}");
+        let all: Vec<String> = ["get_overview", "create_ticket", "inbox_decide"].map(String::from).to_vec();
+        let with = instructions(&PmContext {
+            session_id: "s1",
+            port: 7421,
+            work_folder: "/w",
+            tools: &all,
+            tool_table: &table,
+            persona: "You are the PM.",
+            integrations: &[],
+            briefing: "# Briefing\n",
+            step: None,
+        });
+        assert!(with.contains("lets you act without asking: `create_ticket`."), "{with}");
+        assert!(with.contains("whatever the project lets you do: `inbox_decide`."), "{with}");
         assert!(text.contains("## Your role\n\nYou are the PM.\n\n# Briefing\n"), "{text}");
         for want in
             ["from the work folder `/w`", "search and read the web", "install tools", "127.0.0.1:7421/api/guides"]

@@ -15,4 +15,8 @@ data: unknown, createdAt: number,
 /**
  * The agent session that made it, when known (PDT-163; from `data`).
  */
-agent: AgentBy | null, };
+agent: AgentBy | null, 
+/**
+ * The agent that proposed the user's decision (PDT-475; from `data.proposedBy`): "you, proposed by the PM".
+ */
+proposedBy: AgentBy | null, };

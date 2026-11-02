@@ -21,4 +21,9 @@ answers?: Array<string>,
  * A ticket proposal's Accept or Duplicate of… (PDT-366): the user's edits, the `agentic` box and the ticket it
  * repeats. Reject's reason is `text`.
  */
-proposal?: ProposalAnswer, };
+proposal?: ProposalAnswer, 
+/**
+ * A batch call's Allow (the PM's `inbox_decide`, PDT-475): the rows the user left ticked (0-based); every row
+ * when absent.
+ */
+rows?: Array<number>, };

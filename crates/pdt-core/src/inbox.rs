@@ -561,6 +561,11 @@ pub struct InboxAnswer {
     #[serde(default)]
     #[ts(optional)]
     pub proposal: Option<crate::ticket_proposal::ProposalAnswer>,
+    /// A batch call's Allow (the PM's `inbox_decide`, PDT-475): the rows the user left ticked (0-based); every row
+    /// when absent.
+    #[serde(default)]
+    #[ts(optional)]
+    pub rows: Option<Vec<u32>>,
 }
 
 /// Never shows a secret's value.
@@ -572,6 +577,7 @@ impl std::fmt::Debug for InboxAnswer {
             .field("text", &self.text)
             .field("answers", &self.answers)
             .field("proposal", &self.proposal)
+            .field("rows", &self.rows)
             .finish()
     }
 }

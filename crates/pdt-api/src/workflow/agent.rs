@@ -1031,17 +1031,51 @@ pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question
 /// An asking tool's call from an agent that can't ask in its own prompt (PDT-256): an Inbox item with Allow and Deny,
 /// which [`answer_confirm`] answers.
 pub(crate) async fn ask_confirm(st: &AppState, s: &Session, tool: &str, input: &Value) -> R<InboxItem> {
+    ask_confirm_rows(st, s, tool, input, Value::Null).await
+}
+
+/// [`ask_confirm`] for a batch call (the PM's `inbox_decide`, PDT-475): `rows` (an array, one per entry of the
+/// input's `items`) is the table the user unticks rows of; their Allow runs the call with the rows they kept.
+pub(crate) async fn ask_confirm_rows(
+    st: &AppState,
+    s: &Session,
+    tool: &str,
+    input: &Value,
+    rows: Value,
+) -> R<InboxItem> {
     let info = st.registry().tool_infos().into_iter().find(|t| t.name == tool);
     let title = info.map(|t| t.title).filter(|t| !t.is_empty()).unwrap_or_else(|| tool.to_string());
     let agent = s.agent.map(|a| a.label());
-    let body = json!({"tool": tool, "toolTitle": title, "input": st.store.redactor().json(input), "agent": agent,
-                      "sessionTitle": s.title});
+    let mut body = json!({"tool": tool, "toolTitle": title, "input": st.store.redactor().json(input), "agent": agent,
+                          "sessionTitle": s.title});
+    if rows.is_array() {
+        body["rows"] = rows;
+    }
     ask(st, s, InboxKind::Confirm, title, body).await
+}
+
+/// A batch call's input narrowed to the rows the user kept (`kept`, 0-based; every row when None): its `items`, and
+/// the tickets of the rows they unticked. The input as it is when the item has no rows.
+fn kept_input(item: &InboxItem, input: Value, kept: Option<&[u32]>) -> R<(Value, Vec<String>)> {
+    let Some(rows) = item.body.get("rows").and_then(Value::as_array) else { return Ok((input, vec![])) };
+    let keep = pdt_core::inbox_decide::kept(rows.len(), kept)?;
+    let mut input = input;
+    let items = input.get_mut("items").and_then(Value::as_array_mut).ok_or("the call has no items")?;
+    if items.len() != rows.len() {
+        return Err("the call's items don't match its rows".into());
+    }
+    let dropped = (0..rows.len())
+        .filter(|n| !keep.contains(n))
+        .map(|n| rows[n].get("ticketKey").and_then(Value::as_str).unwrap_or("?").to_string())
+        .collect();
+    *items = keep.into_iter().map(|n| items[n].clone()).collect();
+    Ok((input, dropped))
 }
 
 /// The user's Allow or Deny of an asking tool's call (PDT-256): Allow runs it as the session's call with the user's
 /// yes; the session hears the result either way.
-pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str) -> R<Value> {
+/// `kept`: the rows a batch call's Allow keeps ([`ask_confirm_rows`]).
+pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str, kept: Option<&[u32]>) -> R<Value> {
     let s = asker(st, item).await?;
     let tool = item.body.get("tool").and_then(Value::as_str).ok_or("the item names no tool")?;
     let title = item.body.get("toolTitle").and_then(Value::as_str).unwrap_or(tool);
@@ -1050,24 +1084,37 @@ pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str
         inbox::DENY => false,
         other => return Err(format!("{other} is not a choice here")),
     };
+    // The rows are checked before the item is answered.
+    let input = item.body.get("input").cloned().unwrap_or_else(|| json!({}));
+    let (input, dropped) = if allowed { kept_input(item, input, kept)? } else { (input, vec![]) };
+    let unticked = if dropped.is_empty() {
+        String::new()
+    } else {
+        format!(" The user unticked {}, so PDT left them as they were.", dropped.join(", "))
+    };
     // Ended first, so a second click runs nothing.
-    end_item(st, item, json!({"choice": choice})).await?;
+    let resolution = match (allowed, kept) {
+        (true, Some(rows)) if item.body.get("rows").is_some() => json!({"choice": choice, "rows": rows}),
+        _ => json!({"choice": choice}),
+    };
+    end_item(st, item, resolution).await?;
     let (text, out) = if allowed {
-        let input = item.body.get("input").cloned().unwrap_or_else(|| json!({}));
         let cx = crate::mcp::tools::Cx { st, session: &s, input: &input, confirmed: true };
         let r = st.store.redactor();
         match st.registry().call_tool(&cx, tool, input.clone()).await {
             Ok(v) => {
                 let v = r.json(&v);
                 (
-                    format!("[PDT] The user allowed your {tool} call ({title}). PDT ran it; its result:\n{v}"),
+                    format!(
+                        "[PDT] The user allowed your {tool} call ({title}).{unticked} PDT ran it; its result:\n{v}"
+                    ),
                     json!({"allowed": true, "result": v}),
                 )
             }
             Err(e) => {
                 let e = r.string(&e);
                 (
-                    format!("[PDT] The user allowed your {tool} call ({title}), but it failed: {e}"),
+                    format!("[PDT] The user allowed your {tool} call ({title}), but it failed: {e}{unticked}"),
                     json!({"allowed": true, "error": e}),
                 )
             }

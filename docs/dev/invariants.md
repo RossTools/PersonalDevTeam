@@ -59,6 +59,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   Start refuse the same (`untrusted::decides_proposal`), and auto-start never starts it; the Inbox answer needs the UI
   token. Any move out of Draft releases it and closes the open `ticket_proposal` item; deleting the ticket removes it.
   Lists hide a ticket only while that item is open, so a held ticket with no item is never out of the user's reach.
+- **The PM's `inbox_decide` never decides without the user's Allow** (pdt-api `mcp/tools/inbox.rs`): it is
+  `asks_in_inbox` (pdt-core `ToolDecl::inbox_only`), so it is in Claude's `--allowedTools`, has no `ask_target` (no
+  project policy answers it) and always opens a `confirm` item with `body.rows`; only that item's Allow, which needs the
+  UI token, runs it with `cx.confirmed`, narrowed to the rows the user kept. It refuses non-PM sessions even when a
+  persona lists it. Each row goes through `ticket_proposal::decide` as `By::user_via(<the PM>)`: the user's events,
+  with the PM as `proposedBy`.
 - **Fresh Codex launches in one folder stay at least 5 s apart**, or PDT can't tell their conversations apart.
 
 ## Tabs, tickets and attempts

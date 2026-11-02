@@ -1,3 +1,4 @@
+import type { DecideRow } from '../api/gen/DecideRow';
 import type { InboxGroup } from '../api/gen/InboxGroup';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { InboxKind } from '../api/gen/InboxKind';
@@ -162,6 +163,12 @@ export function confirmOf(item: InboxItem): { tool: string; agent: string | null
     session: typeof b.sessionTitle === 'string' && b.sessionTitle ? b.sessionTitle : null,
     input: JSON.stringify(b.input ?? {}, null, 2),
   };
+}
+
+/** A batch call's rows (the PM's `inbox_decide`, PDT-475): the table the user unticks rows of; null for a plain call. */
+export function decideRowsOf(item: InboxItem): DecideRow[] | null {
+  const rows = item.body.rows;
+  return Array.isArray(rows) ? (rows as DecideRow[]) : null;
 }
 
 /** A workflow version an agent proposed (PDT-320): the workflow, the version, who proposed it, their note and what changed. */
