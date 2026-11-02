@@ -98,7 +98,11 @@ fn mark_key(node: &str) -> String {
 /// Emits `schedule.fired` for every enabled schedule whose slot came (engine tick, before matching events).
 pub(crate) async fn fire_schedules(st: &AppState) {
     let now = now_ms();
-    for (wf, doc) in crate::workflow::engine::enabled_with_docs(st).await {
+    let enabled = match crate::workflow::engine::enabled_with_docs(st).await {
+        Ok(w) => w,
+        Err(e) => return tracing::warn!(error = %e, "could not read the enabled workflows"),
+    };
+    for (wf, doc) in enabled {
         let nodes: Vec<&Node> = doc.nodes.iter().filter(|n| n.kind == SCHEDULE).collect();
         if nodes.is_empty() {
             continue;

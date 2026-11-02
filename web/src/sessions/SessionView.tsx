@@ -23,6 +23,7 @@ import { EndedBar } from './EndedBar';
 import { INITIAL_SIZE } from './status';
 import { useViewTracking } from './useViewTracking';
 import { usePolledAt } from '../common/usePolledAt';
+import { worktreesQuery } from '../common/worktrees';
 import { useOpenChanges } from '../review/open';
 import { ChangesButton } from '../review/ChangesButton';
 import { DocumentsBesideLayout, useOpenBesidePicker } from '../documents/BesidePanel';
@@ -94,10 +95,8 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
   const needProject = forge === undefined || baseBranch === undefined || (projectKey === undefined && !session.worktreeId);
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects, enabled: needProject, staleTime: 30_000 });
   const worktrees = useQuery({
-    queryKey: ['worktrees', session.projectId],
-    queryFn: () => api.listWorktrees(session.projectId),
+    ...worktreesQuery(session.projectId),
     enabled: !!session.worktreeId && branch === undefined,
-    staleTime: 30_000,
   });
   const project = projects.data?.find((p) => p.id === session.projectId);
   const theForge = forge !== undefined ? forge : project?.forge ?? null;

@@ -48,7 +48,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   a project with an enabled release workflow. PDT's own process lives in AGENTS.md and docs/SDLC.md. pdtd's
   `prompts_and_guides_carry_no_pdt_development_assumptions` checks it (with an allow list).
 - **Routes that act as the user need the UI token** (`x-ui-token`, new at each start; pdt-api `untrusted.rs`): admitting
-  an external ticket, filing issues, the PM's approvals. An agent's `curl` can't do them.
+  an external ticket, filing issues, the PM's approvals, approving a run configuration's commands, deciding a ticket
+  proposal, Google's sign-in and picker token. This stops accidents (an agent calling the REST API approving its own
+  prompt or proposal), not a process that means to: `GET /api/ui/token` hands the token to any request that sends
+  `Sec-Fetch-Site: same-origin`, which a local process can (see "Requests" for the trust model). A new route that acts
+  as the user still checks the token, and nothing may treat it as proof a person clicked.
 - **A run configuration's commands run only once the user approved them** (pdt-core `command_trust.rs`, pdt-api
   `command_trust.rs`): runs and tests (`runs::create`, `restart`, and `run_manager`'s restarts), the local forge's
   `[ci] command` (it waits, with an Inbox notice) and `[[merge.regenerate]]` rules (read from the base branch's
@@ -163,6 +167,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   in a `format!`), never replace it with your own words. A route answers it with 503 `write_failed` and its message
   (`ApiError::write_failed`, also from `ApiError::internal` given its text), and the router's `note_write_failures`
   records it, so the Inbox says so whoever wrote; a `BEGIN` that can't start (`Store::write_tx`) is recorded too.
+- **An event is marked processed only after it was matched against everything.** `match_events` returns before
+  marking any event when it can't read the new events, the enabled workflows (`enabled_with_docs` gives `Err`) or the
+  steps waiting for events: an empty list from a failed read would drop the events for good. Never
+  `unwrap_or_default()` those reads. A workflow whose document is corrupt is left out with a warning instead, so one
+  bad row doesn't hold up every event.
 - **Conversation events are never skipped.** `conversations.rs` `append` applies an event to the runtime state as
   it comes (a message the agent took leaves `pending`, a turn's leftover streamed text goes), then stores it through
   the conversation's `unstored` queue: one that can't be written waits there with every event after it, is retried
@@ -206,6 +215,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 
 ## Requests
 
+- **Anything running as the user on this machine can act as the user in PDT**, by choice: agents, terminals, runs and
+  any other local program. The UI token and `from_ui` checks only guard against accidents (above); they are not a
+  boundary. The boundaries are the Tailscale owner check for remote requests, the Host and Origin checks against web
+  pages (DNS rebinding, CSRF), and fencing of outside input sent to agents ("Talking to agents"). Don't build on the UI
+  token as if it kept a local process out, and don't weaken the real boundaries.
 - **The Host guard and owner-only checks cover every route** (pdt-api `host_guard.rs`, `identity_guard.rs`): only
   loopback hosts and the allowed hosts; remote requests carry the owner's Tailscale identity. Hooks
   (`/api/hooks/*`) authenticate with their own secret instead. Don't add a route outside the guards.

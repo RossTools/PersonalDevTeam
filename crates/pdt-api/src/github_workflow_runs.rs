@@ -120,7 +120,11 @@ pub async fn refresh_workflow_runs(st: &AppState) {
     if !st.integrations.is_enabled("github") {
         return;
     }
-    for (wf, doc) in crate::workflow::engine::enabled_with_docs(st).await {
+    let enabled = match crate::workflow::engine::enabled_with_docs(st).await {
+        Ok(w) => w,
+        Err(e) => return tracing::warn!(error = %e, "could not read the enabled workflows"),
+    };
+    for (wf, doc) in enabled {
         let nodes: Vec<&Node> = doc.nodes.iter().filter(|n| n.kind == GITHUB_WORKFLOW_FAILED).collect();
         if nodes.is_empty() {
             continue;

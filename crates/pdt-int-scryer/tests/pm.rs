@@ -110,9 +110,9 @@ async fn the_pm_sets_up_an_indexer_and_a_download_client_through_scryers_api() {
     wait_said(&env, &id, 1).await;
     assert!(instructions(&env, &id).contains("`scryer_mutate`"));
 
-    // It finds the operations, in the live schema.
+    // It finds the operations, in Scryer's own schema.
     let said = ask(&env, &id, r#"mcp: scryer_schema {"search": "indexer config"}"#).await;
-    assert!(said.contains("\"createIndexerConfig\"") && said.contains("\"schema\": \"live\""), "{said}");
+    assert!(said.contains("\"createIndexerConfig\""), "{said}");
     let said = ask(&env, &id, r#"mcp: scryer_schema {"operation": "createIndexerConfig"}"#).await;
     assert!(said.contains("CreateIndexerConfigInput!") && said.contains("ProviderConfigValueInput"), "{said}");
     let said = ask(

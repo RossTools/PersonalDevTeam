@@ -13,3 +13,8 @@ licensed under the SIL Open Font License, Version 1.1
   JetBrains Mono
   Copyright 2020 The JetBrains Mono Project Authors
   (https://github.com/JetBrains/JetBrainsMono)
+
+The source repository also holds a copy of Scryer's GraphQL schema
+(crates/pdt-int-scryer/tests/scryer-schema.graphql, from
+https://github.com/scryer-media/scryer), licensed under the GNU General Public
+License v3.0. Only PDT's tests use it; it is not part of PDT's binaries.

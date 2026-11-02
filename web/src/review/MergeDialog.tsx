@@ -8,6 +8,7 @@ import type { Ticket } from '../api/gen/Ticket';
 import { actionError } from '../common/useAction';
 import { finishMerged, patchTicket } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
+import { invalidateWorktrees } from '../common/worktrees';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -122,6 +123,7 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
       if (!viaForge) saveStyle(ticket.projectId, style);
       const r = await api.mergeAttempt(attemptId, viaForge ? { finishOnMerge, deleteBranch: finishOnMerge && deleteBranch } : { style });
       invalidateTickets(qc, [ticket.id]);
+      invalidateWorktrees(qc, ticket.projectId);
       onClose();
       if (r.outcome === 'queued') {
         const then = finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : '';

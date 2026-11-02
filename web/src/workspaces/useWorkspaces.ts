@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useQueries, useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query';
 import { useConfirm, type Status } from '@ui';
 import { api } from '../api/client';
 import type { Activity } from '../api/gen/Activity';
@@ -16,6 +16,7 @@ import { hiddenStepSession, toDot } from '../sessions/status';
 import { sessionUnseen } from '../common/AgentState';
 import { useSameList } from '../common/useSameList';
 import { pruneTabViewStates } from '../common/viewState';
+import { worktreesQuery } from '../common/worktrees';
 import { findTab, itemOf, openTabBody, resolveCurrent, type CurrentChoice, type Item } from './model';
 
 const STORAGE_KEY = 'pdt.workspaces.current';
@@ -101,6 +102,28 @@ export interface RoutedChoice {
 const TICKET_TAB_POLL = 5000;
 
 /**
+ * A ticket tab's poll: none while another view (the ticket's own, `useTicket`, every 2 s) watches the same ticket, so
+ * it isn't fetched twice (PDT-451). The count is read again when [`useTicketWatchers`] re-renders.
+ */
+export const ticketTabPoll = (q: Query) => (q.getObserversCount() > 1 ? false : TICKET_TAB_POLL);
+
+/**
+ * Re-renders when a view starts or stops watching one of `ids` (the tabs' tickets), so their polls ([`ticketTabPoll`])
+ * follow it; other tickets' views don't re-render the shell.
+ */
+function useTicketWatchers(qc: QueryClient, ids: string[]) {
+  const subscribe = useCallback(
+    (changed: () => void) => qc.getQueryCache().subscribe((e) => {
+      if ((e.type === 'observerAdded' || e.type === 'observerRemoved') && e.query.queryKey[0] === 'ticket') changed();
+    }),
+    [qc],
+  );
+  const watched = () =>
+    ids.filter((id) => (qc.getQueryCache().find({ queryKey: ['ticket', id], exact: true })?.getObserversCount() ?? 0) > 1).join(',');
+  useSyncExternalStore(subscribe, watched);
+}
+
+/**
  * Workspaces, the per-device choice of workspace and tab, every project's sessions and runs (the same queries the
  * tree uses), and the tab actions.
  */
@@ -137,17 +160,16 @@ export function useWorkspaces(routed?: RoutedChoice) {
     () => [...new Set(workspaces.flatMap((w) => w.tabs.flatMap((t) => (t.ticketId ? [t.ticketId] : []))))].sort(),
     [workspaces],
   );
+  useTicketWatchers(qc, ticketIds);
   const ticketQs = useQueries({
-    queries: ticketIds.map((id) => ({ queryKey: ['ticket', id], queryFn: () => api.getTicket(id), refetchInterval: TICKET_TAB_POLL })),
+    queries: ticketIds.map((id) => ({ queryKey: ['ticket', id], queryFn: () => api.getTicket(id), refetchInterval: ticketTabPoll })),
   });
   const ticketData = useSameList(ticketQs.map((q) => q.data));
   const ticketInfos = useMemo(() => ticketData.flatMap((t) => (t ? [ticketInfo(t)] : [])), [ticketData]);
   // Changes tabs: their worktrees, from the projects' worktree lists (read only while such a tab exists).
   const hasChangesTab = workspaces.some((w) => w.tabs.some((t) => t.worktreeId));
   const worktreeQs = useQueries({
-    queries: projectList.map((p) => ({
-      queryKey: ['worktrees', p.id], queryFn: () => api.listWorktrees(p.id), enabled: hasChangesTab, staleTime: 30_000,
-    })),
+    queries: projectList.map((p) => ({ ...worktreesQuery(p.id), enabled: hasChangesTab })),
   });
   const worktreeData = useSameList(worktreeQs.map((q) => q.data));
   const changesInfos = useMemo(() => worktreeData.flatMap((d) => (d ?? []).map(changesInfo)), [worktreeData]);

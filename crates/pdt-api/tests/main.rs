@@ -53,6 +53,7 @@ mod pm;
 mod pr;
 mod project_settings;
 mod pty_ws;
+mod read_failures;
 mod release;
 mod remote;
 mod retired_builtins;
