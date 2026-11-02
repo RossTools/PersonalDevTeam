@@ -14,9 +14,9 @@ pub use actions::GithubActions;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::pr::{CiRun, Mergeable, PrState, QueueRemoval, QueueRemovalReason};
 pub use pdt_forge::{
-    Capabilities, ChangeComment, ChangeFile, ChangeRequest, ChangeReview, ChangeStats, CloseReason, Forge, ForgeError,
-    ForgeNotes, Issue, IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest,
-    Release, ReleaseAsset, RepoChangeRequest, ReviewVerdict,
+    Capabilities, ChangeComment, ChangeFile, ChangeRequest, ChangeReview, ChangeStats, CloseReason, FileWrite, Forge,
+    ForgeError, ForgeNotes, Issue, IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue,
+    OpenedChangeRequest, Release, ReleaseAsset, RepoChangeRequest, RepoFile, ReviewVerdict,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -1195,3 +1195,22 @@ fn merge_method(s: MergeStrategy) -> &'static str {
 
 #[cfg(test)]
 mod tests;
+
+/// A contents-API answer for one file (PDT-373): its text (base64, wrapped) and blob sha.
+pub fn parse_file(v: &Value) -> Result<RepoFile, GhError> {
+    use base64::Engine;
+    if v["type"].as_str() != Some("file") {
+        return Err(GhError::BadAnswer(format!("{} is not a file", s(v, "path"))));
+    }
+    let packed: String = s(v, "content").chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(packed)
+        .map_err(|e| GhError::BadAnswer(format!("a file's content doesn't decode: {e}")))?;
+    let text = String::from_utf8(bytes).map_err(|_| GhError::BadAnswer(format!("{} is not text", s(v, "path"))))?;
+    Ok(RepoFile { text, id: s(v, "sha") })
+}
+
+/// A repository path for a URL: each segment escaped, the slashes kept.
+fn path_segments(path: &str) -> String {
+    path.split('/').filter(|p| !p.is_empty()).map(encode).collect::<Vec<_>>().join("/")
+}

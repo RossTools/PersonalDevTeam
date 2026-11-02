@@ -62,6 +62,14 @@ pub struct FakeForge {
     pub reviews_submitted: Mutex<Vec<(String, u32, ReviewVerdict, String)>>,
     /// Change requests closed: repo and number.
     pub closed_changes: Mutex<Vec<(String, u32)>>,
+    /// Files by (repo, branch, path) ([`Forge::file`]); [`Forge::write_file`] writes here too.
+    pub repo_files: Mutex<HashMap<(String, String, String), String>>,
+    /// Branches made by [`Forge::create_branch`] (a branch with files counts too): repo and branch.
+    pub branches: Mutex<Vec<(String, String)>>,
+    /// [`Forge::default_branch`] by repo (`main` when unset).
+    pub default_branches: Mutex<HashMap<String, String>>,
+    /// Files written, in order: repo and the write.
+    pub written: Mutex<Vec<(String, FileWrite)>>,
     pub calls: Mutex<Vec<String>>,
 }
 
@@ -96,9 +104,21 @@ impl Default for FakeForge {
             files: Default::default(),
             reviews_submitted: Default::default(),
             closed_changes: Default::default(),
+            repo_files: Default::default(),
+            branches: Default::default(),
+            default_branches: Default::default(),
+            written: Default::default(),
             calls: Default::default(),
         }
     }
+}
+
+/// The fake's id of a file's text ([`RepoFile::id`]).
+pub fn fake_file_id(text: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    format!("{:016x}", h.finish())
 }
 
 /// How an issue was closed: the reason, and the duplicate's canonical issue id.
@@ -161,6 +181,18 @@ impl FakeForge {
     pub fn comments_on(&self, repo: &str, number: u64) -> Vec<String> {
         let all = self.issue_comments.lock().unwrap();
         all.iter().filter(|(r, n, _)| r == repo && *n == number).map(|(_, _, b)| b.clone()).collect()
+    }
+    /// Puts a file on a branch.
+    pub fn set_file(&self, repo: &str, branch: &str, path: &str, text: &str) {
+        self.repo_files.lock().unwrap().insert((repo.into(), branch.into(), path.into()), text.into());
+    }
+    /// A file on a branch.
+    pub fn file_text(&self, repo: &str, branch: &str, path: &str) -> Option<String> {
+        self.repo_files.lock().unwrap().get(&(repo.into(), branch.into(), path.into())).cloned()
+    }
+    fn has_branch(&self, repo: &str, branch: &str) -> bool {
+        self.branches.lock().unwrap().iter().any(|(r, b)| r == repo && b == branch)
+            || self.repo_files.lock().unwrap().keys().any(|(r, b, _)| r == repo && b == branch)
     }
     fn call(&self, what: String) {
         self.calls.lock().unwrap().push(what);
@@ -462,5 +494,49 @@ impl Forge for FakeForge {
         self.call(format!("compare {repo} {base}...{head}"));
         self.failing()?;
         Ok(self.ahead.lock().unwrap().get(&(repo.into(), base.into(), head.into())).copied())
+    }
+    fn default_branch(&self, repo: &str) -> Result<String, ForgeError> {
+        self.call(format!("default branch {repo}"));
+        self.failing()?;
+        Ok(self.default_branches.lock().unwrap().get(repo).cloned().unwrap_or_else(|| "main".into()))
+    }
+    /// A file's id is a hash of its text.
+    fn file(&self, repo: &str, path: &str, branch: &str) -> Result<Option<RepoFile>, ForgeError> {
+        self.call(format!("file {repo} {branch} {path}"));
+        self.failing()?;
+        Ok(self.file_text(repo, branch, path).map(|text| RepoFile { id: fake_file_id(&text), text }))
+    }
+    /// The new branch gets a copy of `from`'s files.
+    fn create_branch(&self, repo: &str, branch: &str, from: &str) -> Result<bool, ForgeError> {
+        self.call(format!("create branch {repo} {branch} from {from}"));
+        self.failing()?;
+        if self.has_branch(repo, branch) {
+            return Ok(false);
+        }
+        if !self.has_branch(repo, from) {
+            return Err(ForgeError::Failed(format!("{repo} has no branch {from}")));
+        }
+        let mut files = self.repo_files.lock().unwrap();
+        let copies: Vec<_> = files
+            .iter()
+            .filter(|((r, b, _), _)| r == repo && b == from)
+            .map(|((r, _, p), t)| ((r.clone(), branch.to_string(), p.clone()), t.clone()))
+            .collect();
+        files.extend(copies);
+        self.branches.lock().unwrap().push((repo.into(), branch.into()));
+        Ok(true)
+    }
+    /// Refused when the file isn't the version `replaces` names, like a real forge.
+    fn write_file(&self, repo: &str, write: &FileWrite) -> Result<String, ForgeError> {
+        self.call(format!("write file {repo} {} {}", write.branch, write.path));
+        self.failing()?;
+        let now = self.file_text(repo, &write.branch, &write.path).map(|t| fake_file_id(&t));
+        if now != write.replaces {
+            return Err(ForgeError::Failed(format!("{} changed since it was read", write.path)));
+        }
+        self.set_file(repo, &write.branch, &write.path, &write.text);
+        let mut written = self.written.lock().unwrap();
+        written.push((repo.into(), write.clone()));
+        Ok(format!("commit{}", written.len()))
     }
 }

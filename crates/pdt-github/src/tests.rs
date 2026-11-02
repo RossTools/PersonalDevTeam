@@ -1123,3 +1123,46 @@ fn reads_a_workflows_completed_runs_and_one_run() {
     ci.retry("o/r", &r.run, true).unwrap();
     assert!(t.sent().last().unwrap().url.ends_with("/actions/runs/77/rerun-failed-jobs"));
 }
+
+/// PDT-373: a file read, a branch made from another, and a commit of the file to it.
+#[test]
+fn reads_and_writes_a_file_on_a_new_branch() {
+    let (g, t) = forge();
+    t.ok("GET", &format!("{API}/repos/o/tap"), r#"{"default_branch":"trunk"}"#);
+    assert_eq!(g.default_branch("o/tap").unwrap(), "trunk");
+    t.ok(
+        "GET",
+        &format!("{API}/repos/o/tap/contents/Casks/thing.rb?ref=trunk"),
+        r#"{"type":"file","path":"Casks/thing.rb","sha":"blob1","content":"Y2FzayAi\ndGhpbmci\n"}"#,
+    );
+    let f = g.file("o/tap", "Casks/thing.rb", "trunk").unwrap().unwrap();
+    assert_eq!((f.text.as_str(), f.id.as_str()), ("cask \"thing\"", "blob1"));
+    t.on("GET", &format!("{API}/repos/o/tap/contents/Casks/none.rb?ref=trunk"), Response::new(404, "{}"));
+    assert_eq!(g.file("o/tap", "Casks/none.rb", "trunk").unwrap(), None);
+
+    t.ok("GET", &format!("{API}/repos/o/tap/git/ref/heads/trunk"), r#"{"object":{"sha":"abc"}}"#);
+    t.ok("POST", &format!("{API}/repos/o/tap/git/refs"), r#"{"ref":"refs/heads/thing-1.0.0"}"#);
+    assert!(g.create_branch("o/tap", "thing-1.0.0", "trunk").unwrap());
+    assert_eq!(body_of(t.sent().last().unwrap()), json!({"ref": "refs/heads/thing-1.0.0", "sha": "abc"}));
+    t.ok("GET", &format!("{API}/repos/o/tap/git/ref/heads/trunk"), r#"{"object":{"sha":"abc"}}"#);
+    t.on(
+        "POST",
+        &format!("{API}/repos/o/tap/git/refs"),
+        Response::new(422, r#"{"message":"Reference already exists"}"#),
+    );
+    assert!(!g.create_branch("o/tap", "thing-1.0.0", "trunk").unwrap(), "already there");
+
+    t.ok("PUT", &format!("{API}/repos/o/tap/contents/Casks/thing.rb"), r#"{"commit":{"sha":"c0ffee"}}"#);
+    let w = FileWrite {
+        branch: "thing-1.0.0".into(),
+        path: "Casks/thing.rb".into(),
+        text: "cask \"thing\"".into(),
+        message: "thing 1.0.0".into(),
+        replaces: Some("blob1".into()),
+    };
+    assert_eq!(g.write_file("o/tap", &w).unwrap(), "c0ffee");
+    assert_eq!(
+        body_of(t.sent().last().unwrap()),
+        json!({"message": "thing 1.0.0", "content": "Y2FzayAidGhpbmci", "branch": "thing-1.0.0", "sha": "blob1"})
+    );
+}

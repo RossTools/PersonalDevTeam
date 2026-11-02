@@ -114,6 +114,11 @@
           "title": "Watch for a scheduled release"
         },
         {
+          "description": "Sets a Homebrew cask in a tap on GitHub to a release: downloads the release's macOS file for its sha256, sets the cask's `version` and `sha256`, and opens a pull request on the tap (or with `push`, commits to its branch). `updated` with `version`, `sha256`, `commit` and the pull request's `number` and `url`; `unchanged` when the cask is already at that version and checksum. The cask needs one `version \"…\"` and one `sha256 \"…\"` (one file for every Mac).",
+          "id": "github.homebrew_cask",
+          "title": "Bump a Homebrew cask"
+        },
+        {
           "description": "Puts one Inbox item about a failed GitHub Actions run (`runId`) in the Inbox: its workflow, title, branch, what started it, its version or tag when it has one, its failed jobs and a link, with Re-run failed jobs (`rerun`) and Dismiss (`dismiss`). It looks at the run again every 10 minutes: the item closes by itself when a later attempt passes (`passed`), and a later failed attempt replaces it. After `watchFor` (default 7 days) it stops looking and the item waits for you. `cancelled` when the run was cancelled before it was reported, `none` when there is no such run, `already` when its attempt is in the Inbox already.",
           "id": "github.workflow.watch",
           "title": "Report a failed workflow run"
@@ -134,7 +139,8 @@
         "Cut a release",
         "Report a missing scheduled release",
         "Report failed workflow runs",
-        "Review outside pull requests"
+        "Review outside pull requests",
+        "After a release"
       ],
       "tools": [
         {

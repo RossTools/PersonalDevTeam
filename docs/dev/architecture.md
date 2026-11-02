@@ -255,7 +255,9 @@ persona and wait for its `submit_outcome`; messages to agents go through the out
 waits for the agent to be idle. Built-in workflows (`workflow/builtins/`) and templates (the Pipeline:
 `workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. A template fills
 `{{params.x}}` into its one document, except "Review outside pull requests" (`workflow/outside_prs.rs`), whose
-`tickets` param picks one of two node sets (`templates::filled`); a workflow recorded before a param existed gets its
+`tickets` param picks one of two node sets, and "After a release" (`workflow/after_release.rs`), which has its
+announcement only with a chat connection and its cask bump (`github.homebrew_cask`, `workflow/nodes/homebrew.rs`, files
+through `Forge::file` / `create_branch` / `write_file`) only with a tap (both in `templates::filled`); a workflow recorded before a param existed gets its
 old behaviour as the value (`outside_prs::upgrade`). Triggers on things
 outside PDT poll: new GitHub issues (`github_issues.rs`), outside pull requests (`github_pulls.rs`) and failed runs of a
 CI workflow (`github_workflow_runs.rs`: `github.workflow.failed`, read through `CiProvider::workflow_runs` since a

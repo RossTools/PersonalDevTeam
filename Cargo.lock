@@ -3640,6 +3640,7 @@ name = "pdt-github"
 version = "0.5.0"
 dependencies = [
  "axum",
+ "base64 0.23.1",
  "pdt-core",
  "pdt-forge",
  "serde",
