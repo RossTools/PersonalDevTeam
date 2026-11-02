@@ -23,7 +23,7 @@ pub struct Env {
 pub async fn setup(integrations: Vec<Arc<dyn pdt_api::Integration>>) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = super::app_state(store, tmp.path());
     let ids: Vec<String> = integrations.iter().map(|i| i.id().to_string()).collect();
     state.integrations = Arc::new(pdt_api::Integrations::new(integrations));
     state.integrations.enable(&ids);
@@ -171,7 +171,7 @@ pub async fn start_slow(env: &mut Env, wf: &str, input: Value) -> String {
 /// A second daemon on the same database and keychain: the first one stopped.
 pub async fn restarted(env: &Env) -> (AppState, axum::Router) {
     let store = Store::open(&env.tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, env.tmp.path().join("data"));
+    let mut state = super::app_state(store, env.tmp.path());
     state.secrets = env.state.secrets.clone();
     state.integrations = env.state.integrations.clone();
     let app = router(state.clone(), None);

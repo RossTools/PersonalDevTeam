@@ -33,7 +33,7 @@ async fn setup() -> Env {
     git(&repo, &["commit", "-m", "init", "-q"]);
     git(&repo, &["remote", "add", "origin", "https://github.com/o/r.git"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     let gh = Arc::new(FakeForge::default());
     state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_forge::testing::fake_github(&gh))]);
     let app = router(state.clone(), None);

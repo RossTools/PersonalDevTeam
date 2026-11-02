@@ -13,7 +13,7 @@ async fn setup(tmp: &Path) -> (axum::Router, AppState, String) {
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["commit", "--allow-empty", "-m", "init", "-q"]);
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let state = AppState::new(store, tmp.join("data"));
+    let state = common::app_state(store, tmp);
     let app = router(state.clone(), None);
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;

@@ -7,7 +7,7 @@ use crate::common;
 
 use axum::http::StatusCode;
 use common::{call, git};
-use pdt_api::{AppState, router};
+use pdt_api::router;
 use pdt_store::Store;
 use serde_json::{Value, json};
 use sha2::Digest;
@@ -74,7 +74,7 @@ async fn antigravity_installs_verified_signs_in_and_runs_a_conversation() {
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["commit", "--allow-empty", "-m", "init", "-q"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.login_path = None;
     // Never the real ~/.gemini.
     state.home_dir = Some(tmp.path().join("home"));

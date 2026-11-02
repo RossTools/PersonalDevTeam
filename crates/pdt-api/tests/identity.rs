@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use pdt_api::{AppState, router};
+use pdt_api::router;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -25,7 +25,7 @@ async fn put(app: &axum::Router, body: Value) {
 
 async fn app(tmp: &std::path::Path, env_owner: Option<&str>, web_dir: Option<std::path::PathBuf>) -> axum::Router {
     let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.owner_from_env = env_owner.map(String::from);
     state.refresh_owner().await;
     router(state, web_dir)

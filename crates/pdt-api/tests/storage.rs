@@ -41,7 +41,7 @@ async fn setup() -> Env {
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "init", "-q"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.claude_program = FAKE.to_string();
     state.platform.login_path = None;
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
@@ -155,7 +155,7 @@ async fn disk_check(env: &Env) {
 async fn a_state_without_a_probe_sees_no_disks_and_never_warns() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let app = router(AppState::new(store, tmp.path().join("data")), None);
+    let app = router(common::app_state(store, tmp.path()), None);
     let (_, v) = call(&app, "GET", "/api/storage", None).await;
     assert_eq!((v["disks"].clone(), v["autoStartPaused"].clone()), (json!([]), json!(false)));
     let (_, inbox) = call(&app, "GET", "/api/inbox", None).await;

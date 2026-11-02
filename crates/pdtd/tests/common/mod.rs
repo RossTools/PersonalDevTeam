@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 
 #[path = "../../../../test-support/port_blocks.rs"]
 pub mod port_blocks;
+#[path = "../../../../test-support/wait.rs"]
+pub mod wait;
 
 /// A running pdtd and, once it answered, the port it serves.
 pub struct Daemon(pub Child, Option<u16>);

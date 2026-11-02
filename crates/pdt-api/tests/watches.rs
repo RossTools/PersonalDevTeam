@@ -6,6 +6,7 @@ use crate::common;
 use axum::http::StatusCode;
 use common::call;
 use common::pm::*;
+use common::wait::wait_until;
 use pdt_core::ticket::{Actor, EventKind};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -49,23 +50,20 @@ async fn told(env: &Env, session: &str) -> Vec<String> {
 
 /// Ticks until the conversation was told `n` things.
 async fn wait_told(env: &Env, session: &str, n: usize) -> Vec<String> {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until(&format!("the conversation to be told {n} things"), async || {
         let t = told(env, session).await;
         if t.len() >= n {
-            return t;
-        }
-        if Instant::now() >= deadline {
-            let waiting = env.state.store.waiting_session_messages().await.unwrap();
-            let watches = env.state.store.active_watches().await.unwrap();
-            panic!(
-                "told only {t:?}; said {:?}; waiting {waiting:?}; watches {watches:?}",
-                agent_says(env, session).await
-            );
+            return Ok(t);
         }
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        let waiting = env.state.store.waiting_session_messages().await.unwrap();
+        let watches = env.state.store.active_watches().await.unwrap();
+        Err(format!(
+            "told only {t:?}; said {:?}; waiting {waiting:?}; watches {watches:?}",
+            agent_says(env, session).await
+        ))
+    })
+    .await
 }
 
 /// A few engine ticks, for what should not happen.

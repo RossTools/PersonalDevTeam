@@ -23,7 +23,7 @@ struct Env {
 async fn setup(current: &str) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = pdt_api::AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.update = Arc::new(pdt_api::UpdateService::new("http://127.0.0.1:9", "o/r", true, current));
     Env { app: pdt_api::router(state.clone(), None), state, tmp }
 }

@@ -60,7 +60,7 @@ async fn setup_with(gh_repo: &str, retired: &[&str]) -> Env {
     for id in retired {
         retired::install(&store, id, true).await;
     }
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     let gh = Arc::new(FakeForge::default());
     state.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::testing::fake_github(&gh))]);
     let app = router(state.clone(), None);

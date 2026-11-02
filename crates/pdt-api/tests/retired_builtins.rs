@@ -33,7 +33,7 @@ async fn setup(stored: &[(&str, bool)]) -> Env {
         let wf = retired::install(&store, id, *enabled).await;
         store.set_workflow_state(&wf, "seen", &json!(["o/r#1"]), false, 2).await.unwrap();
     }
-    let state = AppState::new(store, tmp.path().join("data"));
+    let state = common::app_state(store, tmp.path());
     let app = router(state.clone(), None);
     let (s, p) = call(
         &app,
@@ -94,7 +94,7 @@ async fn an_upgraded_host_keeps_them_as_its_own_workflows() {
     // Nothing is installed in their place, and the next start changes nothing.
     let names = |all: &[Value]| all.iter().map(|w| w["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
     let before = names(&workflows(&env).await);
-    let again = AppState::new(env.state.store.clone(), env._tmp.path().join("data"));
+    let again = common::app_state(env.state.store.clone(), env._tmp.path());
     pdt_api::run_workflows(&again).await;
     assert_eq!(names(&workflows(&env).await), before);
     assert_eq!(versions(&env, &retired::id(retired::NIGHTLY_MISSING)).await.len(), 2);

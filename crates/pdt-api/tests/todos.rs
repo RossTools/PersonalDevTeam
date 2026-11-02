@@ -22,7 +22,7 @@ async fn setup() -> Env {
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q", "-b", "main"]);
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let state = pdt_api::AppState::new(store, tmp.path().join("data"));
+    let state = common::app_state(store, tmp.path());
     let app = pdt_api::router(state.clone(), None);
     let (s, p) = call(
         &app,
@@ -261,7 +261,7 @@ async fn a_reminder_missed_while_pdtd_was_down_comes_once_on_start() {
     // Added while no notifier ran (pdtd down at the due moment).
     {
         let store = pdt_store::Store::open(&db).await.unwrap();
-        let app = pdt_api::router(pdt_api::AppState::new(store.clone(), tmp.path().join("data")), None);
+        let app = pdt_api::router(common::app_state(store.clone(), tmp.path()), None);
         let (s, v) =
             call(&app, "POST", "/api/todos", Some(json!({"title": "Call the bank", "dueOn": "2020-01-01"}))).await;
         assert_eq!(s, StatusCode::CREATED, "{v}");
@@ -269,7 +269,7 @@ async fn a_reminder_missed_while_pdtd_was_down_comes_once_on_start() {
     }
     for start in 0..2 {
         let store = pdt_store::Store::open(&db).await.unwrap();
-        let state = pdt_api::AppState::new(store.clone(), tmp.path().join("data"));
+        let state = common::app_state(store.clone(), tmp.path());
         let app = pdt_api::router(state.clone(), None);
         pdt_api::sync_notifications(&state).await;
         let (_, v) = call(&app, "GET", "/api/notifications?section=updates", None).await;

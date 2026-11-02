@@ -151,3 +151,29 @@ describe('CodeDiff collapsed runs and picked lines', () => {
     expect(onComment).toHaveBeenCalledWith({ side: 'new', line: 2, endLine: 3, lineText: 'CHANGED 2\nline 3' });
   });
 });
+
+describe('CodeDiff comment boxes', () => {
+  // The read-only editor hides the browser's caret, and caret-color is inherited: a box under a line must reset it.
+  for (const mode of ['split', 'unified'] as const) {
+    it(`shows the caret in a box under a line (${mode})`, async () => {
+      render(
+        <CodeDiff
+          path="a.ts"
+          oldText={'one\ntwo\n'}
+          newText={'one\nTWO\n'}
+          mode={mode}
+          wholeFile
+          anchors={[{ id: 't1', side: 'new', line: 2 }, { id: 't2', side: 'old', line: 2 }]}
+          renderAnchor={(id) => <textarea aria-label={`reply ${id}`} />}
+          onComment={vi.fn()}
+        />,
+      );
+      for (const id of ['t1', 't2']) {
+        const box = await screen.findByLabelText(`reply ${id}`);
+        const hidden = getComputedStyle(box.closest('.cm-content')!).caretColor;
+        expect(hidden).toBe('rgba(0, 0, 0, 0)');
+        expect(getComputedStyle(box).caretColor).not.toBe(hidden);
+      }
+    });
+  }
+});

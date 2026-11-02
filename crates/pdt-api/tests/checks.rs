@@ -1,4 +1,4 @@
-use pdt_api::{AppState, run_host_checks};
+use pdt_api::run_host_checks;
 use pdt_tailscale::testing::RecordingTailscale;
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ fn fake(dir: &std::path::Path, name: &str, out: &str, code: i32) -> String {
 async fn reports_logins_and_missing_tools() {
     let tmp = tempfile::tempdir().unwrap();
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut st = AppState::new(store, tmp.path().join("data"));
+    let mut st = crate::common::app_state(store, tmp.path());
     st.platform.claude_program = fake(tmp.path(), "claude", r#"{"loggedIn": false, "authMethod": "none"}"#, 0);
     st.platform.codex_program = fake(tmp.path(), "codex", "Logged in using ChatGPT", 0);
     st.platform.devin_program = fake(tmp.path(), "devin", "Not logged in.", 0);
@@ -53,7 +53,7 @@ async fn an_unanswered_check_is_not_missing() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut st = AppState::new(store, tmp.path().join("data"));
+    let mut st = crate::common::app_state(store, tmp.path());
     st.platform.claude_program = fake(tmp.path(), "claude", r#"{"loggedIn": true}"#, 0);
     st.platform.codex_program = fake(tmp.path(), "codex", "Logged in using ChatGPT", 0);
     let devin = tmp.path().join("devin");
