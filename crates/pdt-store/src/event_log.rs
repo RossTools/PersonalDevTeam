@@ -201,18 +201,19 @@ pub(crate) async fn mirror_timeline(
     let null = serde_json::Value::Null;
     let data = data.unwrap_or(&null);
     let s = |k: &str| data.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    // The first issue of each other tracker it is linked to, by system (`github` also as `github_issue`): those Done
-    // closes, so the trackers' Done built-ins leave an issue linked by hand alone unless the user asked (PDT-481).
-    let external: std::collections::BTreeMap<String, String> = if kind == K::Moved {
-        sqlx::query_as::<_, (String, String)>(
-            "SELECT system, MIN(key) FROM ticket_links_external WHERE ticket_id = ? AND close_on_done = 1 \
-             GROUP BY system",
+    // The first issue of each other tracker it is linked to, by system (`github` also as `github_issue`), and the
+    // first of those Done closes (PDT-481: a manual link only when the user turned it on).
+    type Issues = std::collections::BTreeMap<String, String>;
+    let (external, closing): (Issues, Issues) = if kind == K::Moved {
+        let rows = sqlx::query_as::<_, (String, String, Option<String>)>(
+            "SELECT system, MIN(key), MIN(CASE WHEN close_on_done = 1 THEN key END) FROM ticket_links_external \
+             WHERE ticket_id = ? GROUP BY system",
         )
         .bind(ticket_id)
         .fetch_all(&mut *conn)
-        .await?
-        .into_iter()
-        .collect()
+        .await?;
+        let closing = rows.iter().filter_map(|(s, _, c)| c.clone().map(|c| (s.clone(), c))).collect();
+        (rows.into_iter().map(|(s, k, _)| (s, k)).collect(), closing)
     } else {
         Default::default()
     };
@@ -286,6 +287,7 @@ pub(crate) async fn mirror_timeline(
                     actor: actor.as_str().into(),
                     github_issue: external.get("github").cloned(),
                     external,
+                    closing,
                     parent_id: parent.as_ref().map(|p| p.id.clone()),
                     parent_key: parent.map(|p| p.key),
                 },

@@ -1262,10 +1262,11 @@ impl Store {
         Ok(row.map(|(t,)| t))
     }
 
-    /// A ticket's links to issues of `system` that Done closes (or moves): what the trackers' Done built-ins and steps
-    /// act on. An issue linked by hand without "Close it when this ticket is done" is left alone (PDT-481).
-    pub async fn closing_links(&self, ticket_id: &str, system: &str) -> Result<Vec<StoredExternalLink>, StoreError> {
-        let sql = format!("{STORED_LINK} WHERE ticket_id = ? AND system = ? AND close_on_done = 1 ORDER BY key");
+    /// A ticket's links to issues of `system`, those Done closes (or moves) first: a step given the ticket (closing
+    /// its GitHub issue, moving its Jira issue) acts on the first, which is the one the Done built-ins mean when their
+    /// trigger's `closing` names it (PDT-481).
+    pub async fn external_links(&self, ticket_id: &str, system: &str) -> Result<Vec<StoredExternalLink>, StoreError> {
+        let sql = format!("{STORED_LINK} WHERE ticket_id = ? AND system = ? ORDER BY close_on_done DESC, key");
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(ticket_id).bind(system).fetch_all(&self.pool).await?;
         rows.iter().map(to_stored_link).collect()
     }
@@ -3084,7 +3085,7 @@ mod tests {
         assert!(store.get_ticket("t2").await.unwrap().is_none(), "nothing made the second time");
         assert_eq!(store.ticket_for_external("tracker", "c", "ABC-1").await.unwrap().as_deref(), Some("t1"));
         assert_eq!(store.ticket_for_external("tracker", "other", "ABC-1").await.unwrap(), None);
-        assert_eq!(store.closing_links("t1", "tracker").await.unwrap()[0].connection_id, "c");
+        assert_eq!(store.external_links("t1", "tracker").await.unwrap()[0].connection_id, "c");
         let page = store.query_tickets(&filter(in_project())).await.unwrap();
         assert_eq!(page.items[0].external[0].key, "ABC-1", "lists carry the link too");
         store.delete_ticket("t1").await.unwrap();
@@ -3150,14 +3151,14 @@ mod tests {
         let l = &t.summary.external[0];
         assert_eq!((l.origin, l.close_on_done), (LinkOrigin::Manual, false));
         assert_eq!((l.title.as_deref(), l.state), (Some("Crash"), Some(IssueState::Open)));
-        assert!(store.closing_links("t1", "github").await.unwrap().is_empty(), "Done leaves it alone");
+        assert!(!store.external_links("t1", "github").await.unwrap()[0].close_on_done, "Done leaves it alone");
         assert_eq!(store.issue_links("t1").await.unwrap().len(), 1);
         assert!(store.issue_links_to_read("t1", 4).await.unwrap().is_empty(), "read when it was linked");
         assert_eq!(store.issue_links_to_read("t1", 5).await.unwrap().len(), 1);
 
         let t = store.set_close_on_done("t1", "github", "o/r#7", true, 6).await.unwrap();
         assert!(t.summary.external[0].close_on_done);
-        assert_eq!(store.closing_links("t1", "github").await.unwrap()[0].key, "o/r#7");
+        assert!(store.external_links("t1", "github").await.unwrap()[0].close_on_done);
         assert!(matches!(
             store.set_close_on_done("t1", "github", "o/r#8", true, 6).await,
             Err(TicketError::NotFound("link"))

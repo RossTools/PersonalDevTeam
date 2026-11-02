@@ -6,7 +6,8 @@ import type { ExternalLink } from '../api/gen/ExternalLink';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { OpenTicketContext } from './actions';
 import { ExternalKeys } from './ExternalKeys';
-import { ticket } from './fixtures';
+import { event, ticket } from './fixtures';
+import { eventTitle } from './model';
 import { TicketView } from './TicketView';
 
 beforeEach(() => localStorage.clear());
@@ -120,5 +121,23 @@ describe('issue links', () => {
     const link = screen.getByRole('link', { name: /#12/ });
     await waitFor(() => expect(link.getAttribute('title')).toBe('GitHub issue o/r#12: Crash on start (closed)'));
     expect(link).toHaveClass('line-through');
+  });
+
+  it('says on the timeline what was linked and unlinked, naming the tracker from its plugin', async () => {
+    const label = (system: string) => ({ github: 'GitHub', jira: 'Jira', gitlab: 'GitLab' })[system];
+    const title = (kind: 'linked' | 'unlinked', data: Record<string, unknown>) => eventTitle(event('e', { kind, data }), label);
+    expect(title('linked', { system: 'jira', key: 'ABC-3', url: 'u', origin: 'manual' })).toBe('Linked: Jira issue ABC-3');
+    expect(title('unlinked', { system: 'github', key: 'o/r#12', url: 'u' })).toBe('Unlinked: GitHub issue o/r#12');
+    expect(title('linked', { system: 'gitlab', key: 'g/app#4', url: 'u' })).toBe('Linked: GitLab issue g/app#4');
+    expect(title('linked', { url: 'https://www.figma.com/file/abc', label: 'Figma' })).toBe('Linked: Figma');
+    expect(title('unlinked', { url: 'https://docs.example.com/x', label: '' })).toBe('Unlinked: https://docs.example.com/x');
+    expect(title('unlinked', { kind: 'blocks', direction: 'incoming', key: 'ALP-2' })).toBe('Unlinked: blocked by ALP-2');
+
+    // In a ticket's timeline, the tracker's name comes from its plugin.
+    stub(ticket(1), {
+      'GET /api/tickets/t1/events': { items: [event('e1', { kind: 'unlinked', data: { system: 'jira', key: 'ABC-3', url: 'u' } })], nextCursor: null },
+    });
+    view();
+    expect(await screen.findByText('Unlinked: Jira issue ABC-3')).toBeInTheDocument();
   });
 });

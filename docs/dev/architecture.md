@@ -128,9 +128,11 @@ imported, manual; pdt-core `issue_link`), `close_on_done`, and the issue's title
 linked to one ticket. Each tracker plugin recognizes its own addresses and keys (`Integration::find_issue`; GitHub's and
 GitLab's through `issue_links::find_forge_issue` with their page parsers) and reads a link again
 (`Integration::read_issue`) when the ticket is viewed and the link is `REFRESH_AFTER_MS` old (`POST
-/api/tickets/{id}/issues/refresh`). The trackers' Done built-ins only see links with `close_on_done`
-(`Store::closing_links`, and the `external` map of `ticket.stage_changed`), so a manual link, off by default, never
-closes someone else's issue unless the user turns it on; created and imported links always have it. Plain links (an
+/api/tickets/{id}/issues/refresh`). `ticket.stage_changed` carries every link in `external` (and
+`githubIssue`), and those with `close_on_done` in `closing`; the trackers' Done built-ins test `closing`, so a manual
+link, off by default, never closes someone else's issue unless the user turns it on (created and imported links always
+have it), while the user's own workflows see and act on every link. A step given a ticket acts on its first link
+(`Store::external_links`: closing ones first). Plain links (an
 address and label) are `ticket_web_links`, kept apart.
 
 **Attempts.** One go at a ticket: its branch (`pdt-<KEY>-<n>-<slug>`), worktree, base branch, workspace and the merge

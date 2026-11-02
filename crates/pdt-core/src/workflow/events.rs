@@ -870,9 +870,14 @@ pub struct TicketStageChanged {
     #[serde(default)]
     pub github_issue: Option<String>,
     /// The issue in each other tracker the ticket is linked to, by the tracker (an integration's id, or `github`):
-    /// `{{trigger.external.<tracker>}}`.
+    /// `{{trigger.external.<tracker>}}`. Every link, however it was made.
     #[serde(default)]
     pub external: std::collections::BTreeMap<String, String>,
+    /// Of those, the issue Done closes (or moves) in each tracker, `{{trigger.closing.<tracker>}}`: the issues PDT filed
+    /// or imported, and those linked by hand with "Close it when this ticket is done" on. The trackers' Done built-ins
+    /// act on these.
+    #[serde(default)]
+    pub closing: std::collections::BTreeMap<String, String>,
     /// Its parent, when it is a part: id and key (PDT-377).
     #[serde(default)]
     pub parent_id: Option<String>,

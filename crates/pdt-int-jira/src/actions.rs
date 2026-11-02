@@ -1147,7 +1147,7 @@ async fn transition_target(
 ) -> Result<Result<(String, String, String), JiraTransitionOutput>, String> {
     Ok(Ok(match nonblank(&c.ticket) {
         Some(ticket) => {
-            let links = cx.st.store.closing_links(ticket, JIRA).await.map_err(|e| e.to_string())?;
+            let links = cx.st.store.external_links(ticket, JIRA).await.map_err(|e| e.to_string())?;
             let Some(link) = links.into_iter().next() else {
                 return Ok(Err(JiraTransitionOutput {
                     reason: Some("the ticket is not linked to a Jira issue".into()),

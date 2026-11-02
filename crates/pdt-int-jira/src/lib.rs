@@ -265,11 +265,12 @@ fn jira_done() -> WorkflowDoc {
     doc(json!({
         "name": "Done moves the Jira issue",
         "description": "Moving a ticket linked to a Jira issue to Done moves the issue to Done too (the project's done \
-                        transition, in its settings). Nothing else goes to Jira unless a workflow says so.",
+                        transition, in its settings). An issue linked by hand moves only when its \"Close it when this ticket is \
+                        done\" is on. Nothing else goes to Jira unless a workflow says so.",
         "nodes": [
             {"id": "done", "kind": "ticket.stage_changed", "version": 1, "position": {"x": 0, "y": 0}, "config": {"where": [
                 {"left": "{{trigger.to}}", "op": "eq", "right": "done"},
-                {"left": "{{trigger.external.jira}}", "op": "exists"}]}},
+                {"left": "{{trigger.closing.jira}}", "op": "exists"}]}},
             {"id": "move", "kind": "jira.transition", "version": 1, "position": {"x": 320, "y": 0}, "config": {
                 "ticket": "{{trigger.ticketId}}"}},
         ],

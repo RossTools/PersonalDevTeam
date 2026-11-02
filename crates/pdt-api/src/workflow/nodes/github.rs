@@ -84,7 +84,7 @@ impl IssueTarget {
     async fn resolve(&self, st: &AppState) -> Result<Option<(String, u64)>, String> {
         if let Some(t) = nonblank(&self.ticket) {
             let id = crate::mcp::tools::resolve_ticket(st, t, None).await?;
-            let links = st.store.closing_links(&id, GITHUB).await.map_err(|e| e.to_string())?;
+            let links = st.store.external_links(&id, GITHUB).await.map_err(|e| e.to_string())?;
             // The URL keeps the repository's own spelling; the key is lower case.
             return Ok(links.iter().find_map(|l| parse_issue(&l.url, None).or_else(|| parse_issue(&l.key, None))));
         }

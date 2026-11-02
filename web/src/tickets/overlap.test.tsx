@@ -77,7 +77,7 @@ describe('model', () => {
 
   it('describes waiting and overlap events', () => {
     expect(eventTitle(event('e', { kind: 'waiting', data: { waiting: true } }))).toBe('Waiting until clear');
-    expect(eventTitle(event('e', { kind: 'linked', data: { system: 'github', key: 'o/r#12', url: 'u' } }))).toBe('Linked: GitHub issue o/r#12');
+    expect(eventTitle(event('e', { kind: 'linked', data: { system: 'github', key: 'o/r#12', url: 'u' } }), () => 'GitHub')).toBe('Linked: GitHub issue o/r#12');
     expect(eventTitle(event('e', { kind: 'waiting', data: { waiting: false } }))).toBe('Stopped waiting');
     expect(eventTitle(event('e', { kind: 'overlap', data: { ticketId: 't2', key: 'ALP-2', files: ['a', 'b'], level: 'conflict' } })))
       .toBe('Conflicts with ALP-2: 2 shared files');

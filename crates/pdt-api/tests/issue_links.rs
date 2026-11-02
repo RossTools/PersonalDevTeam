@@ -195,6 +195,39 @@ async fn done_closes_created_and_imported_issues_and_manual_ones_only_when_asked
     assert_eq!(closed(&env, "o/r", 2), Some(CloseReason::Completed));
     assert_eq!(closed(&env, "o/r", 3), Some(CloseReason::Completed));
     assert_eq!(closed(&env, "o/r", filed_n), Some(CloseReason::Completed));
+
+    // A user's own workflows still see every link (`external`, `githubIssue`); only `closing` leaves the manual one
+    // out, and that is what the Done built-ins look at.
+    let moved = |id: &str| {
+        let (app, id) = (env.app.clone(), id.to_string());
+        async move {
+            let (_, log) = call(&app, "GET", &format!("/api/events?type=ticket.stage_changed&ticket={id}"), None).await;
+            log.as_array().unwrap().last().cloned().unwrap_or_else(|| panic!("{log}"))
+        }
+    };
+    let m = moved(&manual).await;
+    let d = &m["payload"];
+    assert_eq!((&d["githubIssue"], &d["external"]["github"]), (&json!("o/r#1"), &json!("o/r#1")), "{m}");
+    assert_eq!(d["closing"], json!({}), "{m}");
+    let a = moved(&asked).await;
+    let d = &a["payload"];
+    assert_eq!(d["closing"]["github"], "o/r#2", "{a}");
+
+    // A step a user's own workflow gives the ticket acts on its issue linked by hand.
+    let doc = json!({"name": "Close it", "nodes": [
+        {"id": "start", "kind": "manual", "version": 1},
+        {"id": "act", "kind": "github.close", "version": 1, "config": {"ticket": manual, "reason": "not_planned"}},
+        {"id": "end", "kind": "end", "version": 1, "config": {"quiet": true}}],
+      "edges": [{"from": "start", "to": "act"}]});
+    let (s, w) = call(&env.app, "POST", "/api/workflows", Some(json!({"doc": doc, "enabled": true}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    let uri = format!("/api/workflows/{}/run", w["id"].as_str().unwrap());
+    let (s, r) = call(&env.app, "POST", &uri, Some(json!({"input": {}}))).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    assert_eq!(closed(&env, "o/r", 1), Some(CloseReason::NotPlanned));
 }
 
 /// A tool's answer as JSON (`mcp <tool>: <json>`).

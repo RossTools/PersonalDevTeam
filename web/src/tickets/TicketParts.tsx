@@ -26,7 +26,8 @@ import { useWatches, Watchers } from '../common/Watch';
 import { actionError, useAction } from '../common/useAction';
 import { moveTicket, patchTicket, useOpenSession, useOpenTicket } from './actions';
 import { ParentField } from './PartsSection';
-import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole } from './model';
+import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole, type TrackerLabel } from './model';
+import { usePluginList } from './ExternalKeys';
 import { invalidateTickets, pagedPoll, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
 import { AreaChips, AreasEditor } from './Areas';
 import { ATTACH_ACCEPT, AttachButton, attachmentMarkdown, UploadList, useAttachmentUploads } from './attachments';
@@ -540,7 +541,7 @@ function outcomeBody(e: TicketEvent) {
   );
 }
 
-function toItem(e: TicketEvent): TimelineItem {
+function toItem(e: TicketEvent, trackerLabel: TrackerLabel): TimelineItem {
   const icon = iconFor(e);
   const outcome = e.kind === 'outcome' ? outcomeBody(e) : undefined;
   return {
@@ -552,7 +553,7 @@ function toItem(e: TicketEvent): TimelineItem {
       ? { actorLabel: <>You · proposed by <AgentLabel agent={{ ...e.proposedBy, fromTicket: null }} name={e.proposedBy.persona ?? 'Agent'} /></> }
       : {}),
     time: e.createdAt,
-    title: eventTitle(e),
+    title: eventTitle(e, trackerLabel),
     ...(icon ? { icon } : {}),
     ...(e.kind === 'comment' && e.body ? { body: <Markdown>{e.body}</Markdown> } : {}),
     ...(outcome ? { body: outcome } : {}),
@@ -602,7 +603,9 @@ export function TicketTimeline({ ticketId, recent, composer = false }: { ticketI
     enabled: recent !== undefined,
   });
   const newestFirst = recent === undefined ? full.data?.pages.flatMap((p) => p.items) ?? [] : short.data?.items ?? [];
-  const items = [...newestFirst].reverse().map(toItem);
+  const plugins = usePluginList();
+  const trackerLabel: TrackerLabel = (system) => plugins?.find((p) => p.id === system)?.label;
+  const items = [...newestFirst].reverse().map((e) => toItem(e, trackerLabel));
   const loading = recent === undefined ? full.isPending : short.isPending;
   return (
     <OverviewSection title="Activity">

@@ -10,9 +10,15 @@ export type TicketStageChanged = { projectId: string, ticketId: string, ticketKe
 githubIssue: string | null, 
 /**
  * The issue in each other tracker the ticket is linked to, by the tracker (an integration's id, or `github`):
- * `{{trigger.external.<tracker>}}`.
+ * `{{trigger.external.<tracker>}}`. Every link, however it was made.
  */
 external: { [key in string]: string }, 
+/**
+ * Of those, the issue Done closes (or moves) in each tracker, `{{trigger.closing.<tracker>}}`: the issues PDT filed
+ * or imported, and those linked by hand with "Close it when this ticket is done" on. The trackers' Done built-ins
+ * act on these.
+ */
+closing: { [key in string]: string }, 
 /**
  * Its parent, when it is a part: id and key (PDT-377).
  */
