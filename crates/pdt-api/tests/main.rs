@@ -19,6 +19,7 @@ mod bug_reports;
 mod checks;
 mod close_parents;
 mod codex_conversations;
+mod command_trust;
 mod conversations;
 mod delivery;
 mod devin;

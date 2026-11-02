@@ -105,6 +105,7 @@ fn project_with_web_run(port: u16, tmp: &Path) -> (String, u16) {
     assert_eq!(http(port, "PUT", "/api/host/settings", Some(&body)).0, 200);
     let body = serde_json::json!({"name": "P", "repoPath": repo.to_string_lossy()}).to_string();
     let (_, p) = http(port, "POST", "/api/projects", Some(&body));
+    approve_commands(port, p["id"].as_str().unwrap());
     let body = serde_json::json!({"name": "web", "kind": "run"}).to_string();
     let (s, r) = http(port, "POST", &format!("/api/projects/{}/runs", p["id"].as_str().unwrap()), Some(&body));
     assert_eq!(s, 201, "{r}");

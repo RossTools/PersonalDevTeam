@@ -7,6 +7,7 @@ mod bug_reports;
 pub mod builtin_settings;
 mod checks;
 mod ci;
+mod command_trust;
 mod connection_health;
 mod conversations;
 pub mod documents;

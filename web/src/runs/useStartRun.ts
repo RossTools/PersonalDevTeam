@@ -3,14 +3,17 @@ import { useConfirm, type ConfirmOptions, type ConfirmResult } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { NewRun } from '../api/gen/NewRun';
 import type { Run } from '../api/gen/Run';
+import { withApproval } from './ApproveCommands';
 
 type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
 
 /** Runs `attempt`. At the host's run limit it asks (the confirm dialog, with the server's message) before stopping the
- * oldest active run and trying again with that run's id; declining resolves to null without an error. */
+ * oldest active run and trying again with that run's id; a command the user hasn't approved is shown for them to
+ * approve first (`withApproval`). Declining either resolves to null without an error. */
 export async function withStopConfirm<T>(confirm: Confirm, attempt: (stopRunId?: string) => Promise<T>): Promise<T | null> {
+  const approved = (stopRunId?: string) => withApproval(confirm, () => attempt(stopRunId));
   try {
-    return await attempt();
+    return await approved();
   } catch (e) {
     if (!(e instanceof ApiError) || e.code !== 'too_many_runs') throw e;
     const { ok } = await confirm({
@@ -21,7 +24,7 @@ export async function withStopConfirm<T>(confirm: Confirm, attempt: (stopRunId?:
     if (!ok) return null;
     const oldest = (await api.listActiveRuns()).find((x) => x.kind === 'run');
     if (!oldest) throw e;
-    return attempt(oldest.id);
+    return approved(oldest.id);
   }
 }
 
