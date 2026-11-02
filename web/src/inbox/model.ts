@@ -138,7 +138,7 @@ export function gateQuestion(item: InboxItem): string | null {
   return item.kind === 'gate' && typeof q === 'string' && q.trim() && q.trim() !== item.title.trim() ? q : null;
 }
 
-/** The button that opens the pull request a gate is about, in its forge's words: "Open merge request" on GitLab. */
+/** The button that opens the pull request a gate is about, in its forge's words (`Open merge request`). */
 export function changeRequestLabel(item: InboxItem): string | null {
   return item.changeRequest ? `Open ${item.changeRequest.name}` : null;
 }

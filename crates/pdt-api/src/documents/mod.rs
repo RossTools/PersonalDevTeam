@@ -17,7 +17,7 @@ use crate::routes::AppState;
 use crate::workflow::catalog::BoxFut;
 pub use pdt_core::document::{
     CommentAnchor, CommentReply, DocumentComment, DocumentContent, DocumentEdit, DocumentKind, ProviderCapabilities,
-    ProviderFile, ProviderInfo,
+    ProviderFile, ProviderInfo, ProviderPicker,
 };
 use pdt_core::ticket::Actor;
 use std::sync::Arc;
@@ -142,8 +142,18 @@ pub trait DocumentProvider: Send + Sync {
         None
     }
 
+    /// Its own file picker in the browser, if it has one.
+    fn picker(&self) -> Option<ProviderPicker> {
+        None
+    }
+
     fn info(&self) -> ProviderInfo {
-        ProviderInfo { id: self.id().into(), label: self.label().into(), capabilities: self.capabilities() }
+        ProviderInfo {
+            id: self.id().into(),
+            label: self.label().into(),
+            capabilities: self.capabilities(),
+            picker: self.picker(),
+        }
     }
 }
 

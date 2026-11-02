@@ -1,6 +1,6 @@
 // A document's content as its provider reads it, kept live (PDT-317): read again whenever PDT sees the document change
 // (an agent's edit through PDT touches it), with what changed lit up for a moment. The Documents view and the panel
-// beside a conversation both show it. A provider with a page of its own (Google's editor, PDT-316) shows that page, or
+// beside a conversation both show it. A provider with a page of its own (its own editor, PDT-316) shows that page, or
 // PDT's own reading of it (Read in PDT), which also reads again when the provider's version changes (edits made there).
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -195,7 +195,7 @@ export function DocumentBody({ id, providerLabel, className, onSheet }: {
   const embed = content.data?.embedUrl ?? null;
   const [view, setView] = useState<View>(() => (localStorage.getItem(VIEW_KEY) === 'pdt' ? 'pdt' : 'live'));
   const live = embed !== null && view === 'live';
-  // Edits made at the provider (in Google's editor) don't pass through PDT: its version says when to read again. The
+  // Edits made at the provider (in its own editor) don't pass through PDT: its version says when to read again. The
   // embedded editor follows them itself, and a provider without one is only changed through PDT (`updatedAt`).
   const version = useDocumentVersion(id, content.isSuccess && embed !== null && view === 'pdt');
   const shownVersion = content.data?.content.version ?? null;

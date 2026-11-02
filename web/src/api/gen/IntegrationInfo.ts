@@ -5,6 +5,7 @@ import type { PluginIcon } from "./PluginIcon";
 import type { PluginPart } from "./PluginPart";
 import type { PluginProject } from "./PluginProject";
 import type { PluginStatus } from "./PluginStatus";
+import type { SignIn } from "./SignIn";
 
 /**
  * An integration as Settings → Plugins lists it: a card in the catalog, and its page.
@@ -31,7 +32,11 @@ forgeProjects: Array<PluginProject>,
 /**
  * The forge it provides (`github`, `gitlab`), whose logins its page shows (`/api/forges/{kind}/login`).
  */
-forgeKind: string | null, status: PluginStatus, 
+forgeKind: string | null, 
+/**
+ * How its accounts sign in in the browser ([`Integration::sign_in`]), while this build has it.
+ */
+signIn: SignIn | null, status: PluginStatus, 
 /**
  * What is failing, for [`PluginStatus::Error`]: the connection's name and its error.
  */
