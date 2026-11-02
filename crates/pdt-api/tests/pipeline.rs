@@ -1428,6 +1428,7 @@ async fn a_conflict_only_in_generated_files_is_regenerated_without_an_agent() {
     std::fs::write(env.repo.join("gen/out.txt"), "one\n").unwrap();
     git(&env.repo, &["add", "."]);
     git(&env.repo, &["commit", "-qm", "regeneration rules"]);
+    common::approve_commands(&env.app, &env.project, None).await;
     pipeline(
         &env,
         json!({"autoAcceptLabels": ["agentic"]}),
@@ -1455,6 +1456,69 @@ async fn a_conflict_only_in_generated_files_is_regenerated_without_an_agent() {
     let generated = std::fs::read_to_string(env.repo.join("gen/out.txt")).unwrap();
     assert_eq!(generated.trim(), "regenerated", "merged into main as regenerated");
     assert!(env.repo.join("b.txt").exists());
+}
+
+/// PDT-405: a regeneration rule runs only from the base branch's committed file, and only once the user approved its
+/// command. Unapproved, the files are a conflict for the agent and the Inbox says the rule waits; a rule the branch adds
+/// to its own file is never run.
+#[tokio::test]
+async fn a_regeneration_rule_runs_only_from_the_base_and_once_approved() {
+    let env = setup().await;
+    std::fs::create_dir_all(env.repo.join(".pdt")).unwrap();
+    std::fs::write(
+        env.repo.join(".pdt/project.toml"),
+        "[[merge.regenerate]]\npaths = [\"gen/**\"]\nrun = \"cd gen && echo regenerated> out.txt\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(env.repo.join("gen")).unwrap();
+    std::fs::write(env.repo.join("gen/out.txt"), "one\n").unwrap();
+    std::fs::write(env.repo.join("a.txt"), "one\n").unwrap();
+    git(&env.repo, &["add", "."]);
+    git(&env.repo, &["commit", "-qm", "regeneration rules"]);
+    pipeline(
+        &env,
+        json!({"autoAcceptLabels": ["agentic"]}),
+        &[("code", "submitted"), ("review", "approved"), ("qa", "pass")],
+    )
+    .await;
+    let t = labelled(&env, "Change gen", &["agentic"]).await;
+    let (s, started) =
+        call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(json!({"agent": "claude", "noSession": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{started}");
+    let worktree = env.repo.join(".worktrees").join(started["attempt"]["branch"].as_str().unwrap());
+    // The branch adds a rule of its own for a.txt, which would write a marker if it ran.
+    std::fs::write(
+        worktree.join(".pdt/project.toml"),
+        "[[merge.regenerate]]\npaths = [\"gen/**\"]\nrun = \"cd gen && echo regenerated> out.txt\"\n\n\
+         [[merge.regenerate]]\npaths = [\"a.txt\"]\nrun = \"echo ran> marker.txt\"\n",
+    )
+    .unwrap();
+    std::fs::write(worktree.join("gen/out.txt"), "branch\n").unwrap();
+    std::fs::write(worktree.join("a.txt"), "branch\n").unwrap();
+    git(&worktree, &["commit", "-qam", "build"]);
+    std::fs::write(env.repo.join("gen/out.txt"), "main\n").unwrap();
+    std::fs::write(env.repo.join("a.txt"), "main\n").unwrap();
+    git(&env.repo, &["commit", "-qam", "main moves"]);
+
+    let updates = tick_until(&env, "a merge update", || async {
+        let u = merge_updates(&env, &t).await;
+        (!u.is_empty()).then(|| Value::from(u))
+    })
+    .await;
+    let updates = updates.as_array().unwrap();
+    assert_eq!(hows(updates), ["conflict"], "{updates:?}");
+    let mut files: Vec<&str> = updates[0]["files"].as_array().unwrap().iter().map(|f| f.as_str().unwrap()).collect();
+    files.sort();
+    assert_eq!(files, ["a.txt", "gen/out.txt"], "the unapproved rule's files are the agent's");
+    assert!(!worktree.join("marker.txt").exists(), "the branch's own rule never ran");
+    assert!(
+        !worktree.join("gen/out.txt").exists()
+            || !std::fs::read_to_string(worktree.join("gen/out.txt")).unwrap().contains("regenerated")
+    );
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    assert!(inbox.to_string().contains("cd gen && echo regenerated> out.txt"), "the Inbox says it waits: {inbox}");
+    assert!(!inbox.to_string().contains("marker.txt"), "the branch's rule is not offered: {inbox}");
 }
 
 /// PDT-328: while the ticket is in code (review, QA or accept), a conflict is recorded and shown, not sent to its

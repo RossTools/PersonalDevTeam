@@ -17,6 +17,7 @@ mod secrets;
 mod sessions;
 mod tickets;
 mod todos;
+mod trusted_commands;
 mod watches;
 mod workflows;
 mod workspaces;

@@ -9,6 +9,7 @@ import { useAgentDefaults } from '../common/useAgentDefaults';
 import { agentOf, byDefault, choiceFor, newSession } from '../sessions/newSession';
 import { useOpenSession } from '../tickets/actions';
 import { AreasEditor } from '../tickets/Areas';
+import { ConfigCommands } from './ApproveCommands';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { AutoStart } from '../api/gen/AutoStart';
@@ -56,6 +57,7 @@ function useSaveProjectSettings(project: Project, current: ProjectSettingsView |
     onSuccess: (v) => {
       qc.setQueryData(['project-settings', project.id], v);
       void qc.invalidateQueries({ queryKey: ['run-config', project.id] });
+      void qc.invalidateQueries({ queryKey: ['project-commands', project.id] });
     },
   });
 }
@@ -160,6 +162,13 @@ function RunConfiguration({ project, settings, setUpEntries }: { project: Projec
           )}
           {config.data?.error && <Alert tone="error">{config.data.error}</Alert>}
           {ignored && <Alert>{ignored}</Alert>}
+        </SettingsRow>
+        <SettingsRow
+          stacked
+          label="Commands"
+          description="What PDT runs for this project: runs, tests, local CI and regeneration rules. PDT runs a command only once you approve it here or when you start it, and asks again when it changes."
+        >
+          <ConfigCommands projectId={project.id} />
         </SettingsRow>
         {config.data?.effective?.forge === 'local' && <LocalForgeRow push={config.data.effective.push ?? null} />}
         <Field

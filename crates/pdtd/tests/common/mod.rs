@@ -122,11 +122,30 @@ pub fn diagnose(d: &mut Daemon, port: u16, data: &Path) -> String {
 }
 
 pub fn http(port: u16, method: &str, path: &str, body: Option<&str>) -> (u16, serde_json::Value) {
+    http_with(port, method, path, body, "")
+}
+
+/// Approves, as the user in PDT's web app (the UI token), every command the project's main checkout configures, so
+/// its runs start (PDT-405).
+pub fn approve_commands(port: u16, project_id: &str) {
+    let (s, t) = http_with(port, "GET", "/api/ui/token", None, "Sec-Fetch-Site: same-origin\r\n");
+    assert_eq!(s, 200, "{t}");
+    let token = t["token"].as_str().unwrap().to_string();
+    let (s, c) = http(port, "GET", &format!("/api/projects/{project_id}/commands"), None);
+    assert_eq!(s, 200, "{c}");
+    let body = serde_json::json!({ "fingerprints": c["untrusted"] }).to_string();
+    let path = format!("/api/projects/{project_id}/commands/trust");
+    let (s, r) = http_with(port, "POST", &path, Some(&body), &format!("X-UI-Token: {token}\r\n"));
+    assert_eq!(s, 204, "{r}");
+}
+
+/// [`http`] with extra header lines (each ending in `\r\n`).
+pub fn http_with(port: u16, method: &str, path: &str, body: Option<&str>, headers: &str) -> (u16, serde_json::Value) {
     let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) else { return (0, serde_json::Value::Null) };
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     let body = body.unwrap_or("");
     let req = format!(
-        "{method} {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        "{method} {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n{headers}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     );
     if s.write_all(req.as_bytes()).is_err() {
