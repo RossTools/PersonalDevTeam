@@ -137,7 +137,7 @@ function Progress({ done }: { done: number }) {
   return (
     <div className="flex items-center gap-3 text-muted-foreground">
       <div role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={4} aria-valuenow={done} className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-        <div className="h-full bg-running transition-[width]" style={{ width: `${(done / 4) * 100}%` }} />
+        <div className="h-full bg-running transition-[width] motion-reduce:transition-none" style={{ width: `${(done / 4) * 100}%` }} />
       </div>
       <span>{done} of 4</span>
     </div>
@@ -170,7 +170,7 @@ function Step({ id, state, open, onToggle, title, summary, tag, children }: Step
           <span className="text-xs text-muted-foreground">{summary}</span>
         </span>
         {tag && <Badge>{tag}</Badge>}
-        <ChevronDown aria-hidden className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
+        <ChevronDown aria-hidden className={cn('size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', open && 'rotate-180')} />
       </button>
       {open && <div id={bodyId} className="flex flex-col gap-3 px-3.5 pb-3.5 sm:pl-12">{children}</div>}
     </section>

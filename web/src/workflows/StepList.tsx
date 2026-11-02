@@ -72,7 +72,7 @@ export function StepList({ steps, doc, catalog, expandable = false }: { steps: S
               <button type="button" aria-expanded={shown}
                 onClick={() => setOpen((o) => { const n = new Set(o); if (n.has(s.key)) n.delete(s.key); else n.add(s.key); return n; })}
                 className="-m-1 flex min-h-control-touch flex-wrap items-center gap-2 rounded-md p-1 text-left text-sm hover:bg-accent">
-                <ChevronRight aria-hidden className={cn('size-4 shrink-0 text-muted-foreground transition-transform', shown && 'rotate-90')} />
+                <ChevronRight aria-hidden className={cn('size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', shown && 'rotate-90')} />
                 {head}
               </button>
             ) : (

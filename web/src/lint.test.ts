@@ -50,6 +50,15 @@ describe('design system rules', () => {
     expect(offenders(/from ['"]cn['"]/)).toEqual([]);
   });
 
+  it('turns movement off under motion-reduce', () => {
+    // Animations, transforms and layout transitions: the same class string also says `motion-reduce:`. Colour and
+    // opacity transitions don't move anything; index.css's reduced-motion rule shortens them too.
+    const moves = /(?<![\w-])(animate-(in|out|spin|pulse|pulse-slow|bounce|ping)|transition-transform|transition-\[[^\]]+\]|transition)(?=[\s'"`])/;
+    expect(
+      offenders(moves, (p) => p.endsWith('.tsx')).filter((line) => !line.includes('motion-reduce:')),
+    ).toEqual([]);
+  });
+
   it('keeps React Aria, Base UI, React Flow and the primitives behind @ui', () => {
     expect(
       offenders(/from ['"](react-aria-components|react-aria|react-stately|@base-ui\/react[^'"]*|@xyflow\/react[^'"]*|@ui\/primitives[^'"]*)['"]/, (p) => !p.startsWith('ui/')),

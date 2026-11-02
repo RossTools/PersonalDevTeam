@@ -33,7 +33,9 @@
   `rounded-md` (follows `--radius`, 6px).
 - Dark mode: `dark:` follows our theme rule; usually no `dark:` is needed because the tokens switch.
 - Motion: `duration-(--pdt-duration)` / default transition duration; nothing animates under
-  `motion-reduce`.
+  `motion-reduce`. Anything that animates, transforms or transitions layout says `motion-reduce:animate-none` /
+  `motion-reduce:transition-none` in the same class string (`src/lint.test.ts` checks); `src/index.css` also cuts
+  every animation and transition to near zero under reduced motion, as a safety net.
 
 ## Component rules
 
