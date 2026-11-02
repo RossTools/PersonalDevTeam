@@ -61,7 +61,7 @@ describe('workspaces', () => {
     const b = within(tabs).getByRole('tab', { name: /Codex B/ });
     expect(within(b).getByRole('img', { name: 'unseen' })).toBeInTheDocument();
     expect(within(tabs).getByRole('tab', { name: /Claude A/ })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('main').querySelector('[data-testid="terminal-view"]')).toHaveTextContent('a');
+    expect(await within(screen.getByRole('main')).findByTestId('terminal-view')).toHaveTextContent('a');
     await userEvent.click(b);
     expect(b).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('main').querySelector('[data-testid="terminal-view"]')).toHaveTextContent('b');

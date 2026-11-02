@@ -23,7 +23,7 @@ use sha2::Digest;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::broadcast;
 
 pub const ID: &str = "local";
@@ -95,12 +95,43 @@ pub struct LocalProvider {
     store: Store,
     data_dir: PathBuf,
     home: Option<PathBuf>,
-    live: Mutex<HashMap<String, Arc<Mutex<Live>>>>,
+    files: Arc<Files>,
+}
+
+/// The provider's files and live sheets: everything that reads, parses or writes a file, called off the runtime's
+/// threads ([`LocalProvider::blocking`]).
+#[derive(Default)]
+struct Files {
+    /// One slot per live sheet, filled when it is first used: the map's lock is only held to find the slot, so
+    /// loading one big workbook holds up that sheet alone.
+    live: Mutex<HashMap<String, Arc<Mutex<Option<Live>>>>>,
     events: Mutex<HashMap<String, broadcast::Sender<DocEvent>>>,
     /// Each file's version as PDT last wrote or read it, to notice changes made outside PDT.
-    known: Mutex<HashMap<String, String>>,
+    known: Mutex<HashMap<String, Seen>>,
     /// Per doc: held while its file is read and remembered or written, so those don't interleave.
     doc_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+}
+
+/// A file's version as PDT last saw it, and its modified time and length then.
+struct Seen {
+    version: String,
+    stamp: Option<Stamp>,
+}
+
+type Stamp = (SystemTime, u64);
+
+/// A file modified this recently may change again within its file system's clock tick without its stamp moving, so
+/// its bytes are read all the same.
+const SETTLED: Duration = Duration::from_secs(3);
+
+fn stamp_of(path: &Path) -> Option<Stamp> {
+    let m = std::fs::metadata(path).ok()?;
+    Some((m.modified().ok()?, m.len()))
+}
+
+/// Whether a stamp can stand for the file's bytes: it is old enough that a later write would move it.
+fn settled(stamp: &Stamp) -> bool {
+    SystemTime::now().duration_since(stamp.0).is_ok_and(|age| age >= SETTLED)
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -109,6 +140,20 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 fn failed(e: impl std::fmt::Display) -> ProviderError {
     ProviderError::Failed(e.to_string())
+}
+
+/// The file a reference names, checked to be a doc or sheet that exists.
+fn path_of(reference: &str) -> ProviderResult<(PathBuf, DocumentKind)> {
+    let p = PathBuf::from(reference);
+    let kind = kind_of(&p).ok_or(ProviderError::NotFound)?;
+    if !p.is_absolute() || !p.is_file() {
+        return Err(ProviderError::NotFound);
+    }
+    Ok((p, kind))
+}
+
+fn sheet_name(path: &Path) -> String {
+    path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 /// A file's version: a hash of its bytes.
@@ -211,31 +256,12 @@ fn chart_view(wb: &Workbook, sheet: String, chart: Chart) -> ChartView {
     ChartView { sheet, chart, labels, series }
 }
 
-impl LocalProvider {
-    pub fn new(store: Store, data_dir: PathBuf, home: Option<PathBuf>) -> Self {
-        Self {
-            store,
-            data_dir,
-            home,
-            live: Default::default(),
-            events: Default::default(),
-            known: Default::default(),
-            doc_locks: Default::default(),
-        }
-    }
-
-    /// The file a reference names, checked to be a doc or sheet that exists.
-    fn path(&self, reference: &str) -> ProviderResult<(PathBuf, DocumentKind)> {
-        let p = PathBuf::from(reference);
-        let kind = kind_of(&p).ok_or(ProviderError::NotFound)?;
-        if !p.is_absolute() || !p.is_file() {
-            return Err(ProviderError::NotFound);
-        }
-        Ok((p, kind))
-    }
-
+impl Files {
+    /// A document's event sender, made when it has none; senders nobody listens to any more are let go.
     fn sender(&self, reference: &str) -> broadcast::Sender<DocEvent> {
-        lock(&self.events).entry(reference.to_string()).or_insert_with(|| broadcast::channel(256).0).clone()
+        let mut all = lock(&self.events);
+        all.retain(|r, tx| r == reference || tx.receiver_count() > 0);
+        all.entry(reference.to_string()).or_insert_with(|| broadcast::channel(256).0).clone()
     }
 
     fn send(&self, reference: &str, e: DocEvent) {
@@ -244,56 +270,77 @@ impl LocalProvider {
         }
     }
 
-    /// A document's changes as they happen.
-    pub fn subscribe(&self, reference: &str) -> broadcast::Receiver<DocEvent> {
-        self.sender(reference).subscribe()
+    /// Remembers a file's version as PDT wrote or read it, with its stamp (taken before a read, after a write).
+    fn remember(&self, reference: &str, version: &str, stamp: Option<Stamp>) {
+        lock(&self.known).insert(reference.to_string(), Seen { version: version.to_string(), stamp });
     }
 
-    /// Tells a document's open views that its comments changed.
-    pub fn comments_changed(&self, reference: &str) {
-        self.send(reference, DocEvent::Comments);
+    /// Remembers the version of a file PDT just wrote.
+    fn wrote(&self, reference: &str, bytes: &[u8]) -> String {
+        let v = version_of(bytes);
+        self.remember(reference, &v, stamp_of(Path::new(reference)));
+        v
     }
 
-    fn remember(&self, reference: &str, version: &str) {
-        lock(&self.known).insert(reference.to_string(), version.to_string());
+    /// Whether the file is as PDT last saw it, by its modified time and length (no read).
+    fn unchanged(&self, reference: &str, stamp: Option<&Stamp>) -> bool {
+        let Some(stamp) = stamp.filter(|s| settled(s)) else { return false };
+        lock(&self.known).get(reference).is_some_and(|s| s.stamp.as_ref() == Some(stamp))
     }
 
-    /// The live model of a sheet, loaded from its file when it isn't held yet. Sheets idle for a while, with no view
-    /// open, are let go first.
-    fn live(&self, reference: &str) -> ProviderResult<Arc<Mutex<Live>>> {
-        let (path, kind) = self.path(reference)?;
+    /// Runs `f` on the live model of a sheet, loaded from its file when it isn't held yet. Sheets idle for a while,
+    /// with no view open, are let go first.
+    fn with_live<R>(&self, reference: &str, f: impl FnOnce(&mut Live) -> R) -> ProviderResult<R> {
+        let (path, kind) = path_of(reference)?;
         if kind != DocumentKind::Sheet {
             return Err(ProviderError::Unsupported("a text document has no sheets or cells".into()));
         }
-        let mut all = lock(&self.live);
-        let watched: Vec<String> = {
-            let ev = lock(&self.events);
-            ev.iter().filter(|(_, tx)| tx.receiver_count() > 0).map(|(r, _)| r.clone()).collect()
+        let slot = {
+            let mut all = lock(&self.live);
+            let watched: Vec<String> = {
+                let ev = lock(&self.events);
+                ev.iter().filter(|(_, tx)| tx.receiver_count() > 0).map(|(r, _)| r.clone()).collect()
+            };
+            all.retain(|r, slot| {
+                r == reference
+                    || watched.contains(r)
+                    || match slot.try_lock() {
+                        Ok(l) => l.as_ref().is_some_and(|l| l.used.elapsed() < IDLE),
+                        Err(std::sync::TryLockError::Poisoned(l)) => {
+                            l.into_inner().as_ref().is_some_and(|l| l.used.elapsed() < IDLE)
+                        }
+                        // In use (or loading) right now.
+                        Err(std::sync::TryLockError::WouldBlock) => true,
+                    }
+            });
+            all.entry(reference.to_string()).or_default().clone()
         };
-        all.retain(|r, l| r == reference || watched.contains(r) || lock(l).used.elapsed() < IDLE);
-        if let Some(l) = all.get(reference) {
-            lock(l).used = Instant::now();
-            return Ok(l.clone());
-        }
-        let bytes = std::fs::read(&path).map_err(failed)?;
-        let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let mut wb = Workbook::from_xlsx(&bytes, &name).map_err(ProviderError::Invalid)?;
-        wb.flush();
-        self.remember(reference, &version_of(&bytes));
-        let l = Arc::new(Mutex::new(Live { wb, seq: 0, used: Instant::now() }));
-        all.insert(reference.to_string(), l.clone());
-        Ok(l)
+        let mut slot = lock(&slot);
+        let l = match &mut *slot {
+            Some(l) => l,
+            empty => {
+                let stamp = stamp_of(&path);
+                let bytes = std::fs::read(&path).map_err(failed)?;
+                let mut wb = Workbook::from_xlsx(&bytes, &sheet_name(&path)).map_err(ProviderError::Invalid)?;
+                wb.flush();
+                self.remember(reference, &version_of(&bytes), stamp);
+                empty.insert(Live { wb, seq: 0, used: Instant::now() })
+            }
+        };
+        l.used = Instant::now();
+        Ok(f(l))
     }
 
     /// Reads a live sheet's file again (dropping what isn't saved), and tells its views to reload.
     fn reread(&self, reference: &str, l: &mut Live) {
-        if let Ok(bytes) = std::fs::read(reference) {
-            let name = Path::new(reference).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-            if let Ok(mut wb) = Workbook::from_xlsx(&bytes, &name) {
-                wb.flush();
-                l.wb = wb;
-                self.remember(reference, &version_of(&bytes));
-            }
+        let path = Path::new(reference);
+        let stamp = stamp_of(path);
+        if let Ok(bytes) = std::fs::read(path)
+            && let Ok(mut wb) = Workbook::from_xlsx(&bytes, &sheet_name(path))
+        {
+            wb.flush();
+            l.wb = wb;
+            self.remember(reference, &version_of(&bytes), stamp);
         }
         l.seq += 1;
         self.send(reference, DocEvent::Reload { seq: l.seq });
@@ -303,66 +350,63 @@ impl LocalProvider {
     fn save(&self, reference: &str, l: &Live) -> ProviderResult<String> {
         let bytes = l.wb.to_xlsx().map_err(failed)?;
         write_atomic(Path::new(reference), &bytes).map_err(failed)?;
-        let v = version_of(&bytes);
-        self.remember(reference, &v);
-        Ok(v)
+        Ok(self.wrote(reference, &bytes))
     }
 
-    /// A sheet's model as IronCalc's bytes, for a view to load, and the number of its last change.
-    pub fn sheet_bytes(&self, reference: &str) -> ProviderResult<(Vec<u8>, u64)> {
-        let l = self.live(reference)?;
-        let l = lock(&l);
-        Ok((l.wb.to_bytes(), l.seq))
+    fn sheet_bytes(&self, reference: &str) -> ProviderResult<(Vec<u8>, u64)> {
+        self.with_live(reference, |l| (l.wb.to_bytes(), l.seq))
     }
 
-    /// A view's edits (IronCalc diffs) made on top of change `seq`: applied, saved, and passed on to the other views.
-    /// When someone else's change came in between, they are applied all the same (the last write wins) and the view
-    /// is told to load the sheet again.
-    pub fn view_diffs(&self, reference: &str, view: &str, seq: u64, diffs: &[u8]) -> ProviderResult<DiffsApplied> {
-        let l = self.live(reference)?;
-        let mut l = lock(&l);
-        let conflict = seq != l.seq;
-        if let Err(e) = l.wb.apply_diffs(diffs) {
-            // A half-applied list: the model is read from the file again, and every view reloads it.
-            self.reread(reference, &mut l);
-            return Err(ProviderError::Invalid(format!("the change could not be applied: {e}")));
-        }
-        l.seq += 1;
-        l.used = Instant::now();
-        self.save(reference, &l)?;
-        let data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, diffs);
-        self.send(reference, DocEvent::Diffs { seq: l.seq, from: view.to_string(), data });
-        Ok(DiffsApplied { seq: l.seq, conflict })
+    fn view_diffs(&self, reference: &str, view: &str, seq: u64, diffs: &[u8]) -> ProviderResult<DiffsApplied> {
+        self.with_live(reference, |l| {
+            let conflict = seq != l.seq;
+            if let Err(e) = l.wb.apply_diffs(diffs) {
+                // A half-applied list: the model is read from the file again, and every view reloads it.
+                self.reread(reference, l);
+                return Err(ProviderError::Invalid(format!("the change could not be applied: {e}")));
+            }
+            l.seq += 1;
+            self.save(reference, l)?;
+            let data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, diffs);
+            self.send(reference, DocEvent::Diffs { seq: l.seq, from: view.to_string(), data });
+            Ok(DiffsApplied { seq: l.seq, conflict })
+        })?
     }
 
-    /// Notices a file changed outside PDT (an agent editing it in place, a sync tool): a doc's views are told, a live
-    /// sheet is read again and its views reload.
-    pub fn check_external(&self, reference: &str) {
-        let Ok((path, kind)) = self.path(reference) else { return };
+    fn check_external(&self, reference: &str) {
+        let Ok((path, kind)) = path_of(reference) else { return };
         match kind {
             DocumentKind::Doc => {
                 // Read, compare and remember under the doc's lock, so a save (which holds it while it writes and
                 // remembers) can't land in between and make the old file look like a change.
                 let doc = self.doc_lock(reference);
                 let _held = lock(&doc);
+                let stamp = stamp_of(&path);
+                if self.unchanged(reference, stamp.as_ref()) {
+                    return;
+                }
                 let Ok(bytes) = std::fs::read(&path) else { return };
-                if let Some(v) = self.changed_outside(reference, &bytes) {
+                if let Some(v) = self.changed_outside(reference, &bytes, stamp) {
                     self.send(reference, DocEvent::Changed { version: v });
                 }
             }
             DocumentKind::Sheet => {
-                let Some(l) = lock(&self.live).get(reference).cloned() else {
+                let Some(slot) = lock(&self.live).get(reference).cloned() else {
                     // Not open: nothing to reload; what the file is now is read when it opens.
                     return;
                 };
                 // The same for a live sheet: its saves hold its lock while they write and remember.
-                let mut l = lock(&l);
-                let Ok(bytes) = std::fs::read(&path) else { return };
-                if self.changed_outside(reference, &bytes).is_none() {
+                let mut slot = lock(&slot);
+                let Some(l) = slot.as_mut() else { return };
+                let stamp = stamp_of(&path);
+                if self.unchanged(reference, stamp.as_ref()) {
                     return;
                 }
-                let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                let Ok(mut wb) = Workbook::from_xlsx(&bytes, &name) else { return };
+                let Ok(bytes) = std::fs::read(&path) else { return };
+                if self.changed_outside(reference, &bytes, stamp).is_none() {
+                    return;
+                }
+                let Ok(mut wb) = Workbook::from_xlsx(&bytes, &sheet_name(&path)) else { return };
                 wb.flush();
                 l.wb = wb;
                 l.seq += 1;
@@ -373,31 +417,27 @@ impl LocalProvider {
 
     /// The file's new version when it differs from the one PDT last wrote or read (and remembers it); none when it
     /// is the same, or PDT hadn't seen the file yet.
-    fn changed_outside(&self, reference: &str, bytes: &[u8]) -> Option<String> {
+    fn changed_outside(&self, reference: &str, bytes: &[u8], stamp: Option<Stamp>) -> Option<String> {
         let v = version_of(bytes);
-        let before = lock(&self.known).insert(reference.to_string(), v.clone());
-        (before.is_some() && before.as_deref() != Some(v.as_str())).then_some(v)
+        let before = lock(&self.known).insert(reference.to_string(), Seen { version: v.clone(), stamp });
+        before.is_some_and(|b| b.version != v).then_some(v)
     }
 
-    /// The lock a doc's file is read, written and remembered under.
+    /// The lock a doc's file is read, written and remembered under; the locks nobody holds are let go.
     fn doc_lock(&self, reference: &str) -> Arc<Mutex<()>> {
-        lock(&self.doc_locks).entry(reference.to_string()).or_default().clone()
+        let mut all = lock(&self.doc_locks);
+        all.retain(|r, l| r == reference || Arc::strong_count(l) > 1);
+        all.entry(reference.to_string()).or_default().clone()
     }
 
-    /// A sheet's charts with the numbers they draw, read from the live model.
-    pub async fn charts(&self, document_id: &str, reference: &str) -> ProviderResult<Vec<ChartView>> {
-        let charts = self.store.document_charts(document_id).await.map_err(failed)?;
-        if charts.is_empty() {
-            return Ok(vec![]);
-        }
-        let l = self.live(reference)?;
-        let l = lock(&l);
-        Ok(charts.into_iter().map(|(sheet, chart)| chart_view(&l.wb, sheet, chart)).collect())
+    fn chart_views(&self, reference: &str, charts: Vec<(String, Chart)>) -> ProviderResult<Vec<ChartView>> {
+        self.with_live(reference, |l| {
+            charts.into_iter().map(|(sheet, chart)| chart_view(&l.wb, sheet, chart)).collect()
+        })
     }
 
-    /// A document as a file: a doc as `.md`; a sheet as `.xlsx`, or one of its sheets as `.csv`.
-    pub fn export(&self, reference: &str, title: &str, format: &str, sheet: Option<&str>) -> ProviderResult<Export> {
-        let (path, kind) = self.path(reference)?;
+    fn export(&self, reference: &str, title: &str, format: &str, sheet: Option<&str>) -> ProviderResult<Export> {
+        let (path, kind) = path_of(reference)?;
         let stem = file_stem(title);
         match (kind, format) {
             (DocumentKind::Doc, "md") => Ok(Export {
@@ -406,33 +446,27 @@ impl LocalProvider {
                 mime: "text/markdown; charset=utf-8",
             }),
             (DocumentKind::Sheet, "xlsx") => {
-                let l = self.live(reference)?;
-                let bytes = lock(&l).wb.to_xlsx().map_err(failed)?;
+                let bytes = self.with_live(reference, |l| l.wb.to_xlsx().map_err(failed))??;
                 Ok(Export {
                     bytes,
                     file_name: format!("{stem}.xlsx"),
                     mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 })
             }
-            (DocumentKind::Sheet, "csv") => {
-                let l = self.live(reference)?;
-                let l = lock(&l);
+            (DocumentKind::Sheet, "csv") => self.with_live(reference, |l| {
                 let names = l.wb.sheet_names();
                 let name = sheet.map(str::to_string).unwrap_or_else(|| names[0].clone());
                 let csv = l.wb.to_csv(&name).map_err(ProviderError::Invalid)?;
                 let file_name =
                     if names.len() > 1 { format!("{stem} - {}.csv", file_stem(&name)) } else { format!("{stem}.csv") };
                 Ok(Export { bytes: csv.into_bytes(), file_name, mime: "text/csv; charset=utf-8" })
-            }
+            })?,
             (DocumentKind::Doc, _) => Err(ProviderError::Invalid("a text document exports as md".into())),
             (DocumentKind::Sheet, _) => Err(ProviderError::Invalid("a spreadsheet exports as xlsx or csv".into())),
         }
     }
 
-    /// A file from the user's computer made into a local document in `folder`: `.md` (or `.markdown`, `.txt`) as a
-    /// doc; `.xlsx` or `.csv` as a sheet. Its title, and what of it PDT can't keep (charts, images and pivot tables of
-    /// a `.xlsx`).
-    pub fn import_file(&self, folder: &Path, name: &str, bytes: &[u8]) -> ProviderResult<(ProviderFile, Vec<String>)> {
+    fn import_file(&self, folder: &Path, name: &str, bytes: &[u8]) -> ProviderResult<(ProviderFile, Vec<String>)> {
         let given = Path::new(name);
         let ext = given.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
         let title = given.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Imported".into());
@@ -472,14 +506,12 @@ impl LocalProvider {
         };
         write_atomic(&path, &data).map_err(failed)?;
         let reference = path.to_string_lossy().into_owned();
-        let version = version_of(&data);
-        self.remember(&reference, &version);
+        let version = self.wrote(&reference, &data);
         Ok((ProviderFile { reference, title, kind, url: None, version: Some(version) }, dropped))
     }
 
-    /// Saves an image for a doc beside it (`<doc>.assets/<name>`); the path to write in its Markdown.
-    pub fn save_image(&self, reference: &str, name: &str, bytes: &[u8]) -> ProviderResult<String> {
-        let (path, kind) = self.path(reference)?;
+    fn save_image(&self, reference: &str, name: &str, bytes: &[u8]) -> ProviderResult<String> {
+        let (path, kind) = path_of(reference)?;
         if kind != DocumentKind::Doc {
             return Err(ProviderError::Unsupported("images go in text documents".into()));
         }
@@ -505,9 +537,8 @@ impl LocalProvider {
         Ok(format!("{}/{file}", folder.replace(' ', "%20")))
     }
 
-    /// One of a doc's images (a path under its `.assets` folder, as its Markdown names it), and its type.
-    pub fn asset(&self, reference: &str, rel: &str) -> ProviderResult<(Vec<u8>, &'static str)> {
-        let (path, _) = self.path(reference)?;
+    fn asset(&self, reference: &str, rel: &str) -> ProviderResult<(Vec<u8>, &'static str)> {
+        let (path, _) = path_of(reference)?;
         let rel = rel.replace("%20", " ");
         let mut parts = rel.split('/').filter(|p| !p.is_empty());
         let (Some(folder), Some(file), None) = (parts.next(), parts.next(), parts.next()) else {
@@ -530,6 +561,257 @@ impl LocalProvider {
             _ => "application/octet-stream",
         };
         Ok((bytes, mime))
+    }
+
+    fn read_now(&self, reference: &str) -> ProviderResult<DocumentContent> {
+        let (path, kind) = path_of(reference)?;
+        match kind {
+            DocumentKind::Doc => {
+                let doc = self.doc_lock(reference);
+                let _held = lock(&doc);
+                let stamp = stamp_of(&path);
+                let bytes = std::fs::read(&path).map_err(failed)?;
+                let v = version_of(&bytes);
+                self.remember(reference, &v, stamp);
+                Ok(DocumentContent::Doc { markdown: String::from_utf8_lossy(&bytes).into_owned(), version: Some(v) })
+            }
+            DocumentKind::Sheet => {
+                let sheets = self.with_live(reference, |l| l.wb.sheets().map_err(failed))??;
+                Ok(DocumentContent::Sheet { sheets, version: self.version_now(reference) })
+            }
+        }
+    }
+
+    /// The file's version: the one PDT last saw when the file's stamp hasn't moved since, else a hash of it now.
+    fn version_now(&self, reference: &str) -> Option<String> {
+        let stamp = stamp_of(Path::new(reference));
+        if self.unchanged(reference, stamp.as_ref()) {
+            return lock(&self.known).get(reference).map(|s| s.version.clone());
+        }
+        std::fs::read(reference).ok().map(|b| version_of(&b))
+    }
+
+    fn apply_text(&self, reference: &str, edits: &[DocumentEdit]) -> ProviderResult<String> {
+        let (path, _) = path_of(reference)?;
+        let doc = self.doc_lock(reference);
+        let _held = lock(&doc);
+        let mut text = String::from_utf8_lossy(&std::fs::read(&path).map_err(failed)?).into_owned();
+        for e in edits {
+            text = apply_doc_edit(&text, e).map_err(edit_error)?;
+        }
+        write_atomic(&path, text.as_bytes()).map_err(failed)?;
+        let v = self.wrote(reference, text.as_bytes());
+        self.send(reference, DocEvent::Changed { version: v.clone() });
+        Ok(v)
+    }
+
+    /// Cell edits on the live model, in order: all or none (a failed list leaves the model as the file has it).
+    fn apply_cells(&self, reference: &str, edits: &[DocumentEdit]) -> ProviderResult<String> {
+        self.with_live(reference, |l| {
+            let r = edits.iter().try_for_each(|e| match e {
+                DocumentEdit::SetCells { sheet, cell, values } => l.wb.set_cells(sheet, cell, values),
+                DocumentEdit::AddSheet { name } => l.wb.add_sheet(name),
+                DocumentEdit::RenameSheet { sheet, name } => l.wb.rename_sheet(sheet, name),
+                DocumentEdit::DeleteSheet { sheet } => l.wb.delete_sheet(sheet),
+                DocumentEdit::FormatRange { sheet, range, format } => l.wb.format(sheet, range, format),
+                DocumentEdit::ConditionalFormat { sheet, range, when, format } => {
+                    l.wb.conditional_format(sheet, range, when, format)
+                }
+                DocumentEdit::Sort { sheet, range, by, header } => l.wb.sort(sheet, range, by, *header),
+                DocumentEdit::Filter { sheet, range, column, when } => l.wb.filter(sheet, range, column, when),
+                DocumentEdit::ClearFilter { sheet } => l.wb.clear_filter(sheet),
+                DocumentEdit::AddChart { sheet, chart, .. } => l.wb.sheet_index(sheet).and_then(|_| {
+                    parse_range(&chart.data).map(|_| ()).ok_or_else(|| format!("{} is not a range", chart.data))
+                }),
+                DocumentEdit::UpdateChart { chart, .. } => {
+                    parse_range(&chart.data).map(|_| ()).ok_or_else(|| format!("{} is not a range", chart.data))
+                }
+                DocumentEdit::DeleteChart { .. } => Ok(()),
+                DocumentEdit::SetBorders { sheet, range, style, color, inner } => {
+                    l.wb.borders(sheet, range, *style, color.as_deref(), *inner)
+                }
+                DocumentEdit::ColumnWidth { sheet, columns, width } => l.wb.column_width(sheet, columns, *width),
+                DocumentEdit::Freeze { sheet, rows, columns } => l.wb.freeze(sheet, *rows, *columns),
+                DocumentEdit::Validate { .. } => {
+                    Err(format!("{UNSUPPORTED}PDT's local sheets have no data validation yet: leave validate out"))
+                }
+                e => Err(format!("{UNSUPPORTED}{} is for text documents, and this is a spreadsheet", e.op())),
+            });
+            if let Err(e) = r {
+                // Undo what part of the list did by reading the file again; open views reload.
+                self.reread(reference, l);
+                return Err(match e.strip_prefix(UNSUPPORTED) {
+                    Some(m) => ProviderError::Unsupported(m.to_string()),
+                    None => ProviderError::Invalid(e),
+                });
+            }
+            let diffs = l.wb.flush();
+            let v = self.save(reference, l)?;
+            if diffs.len() > 1 {
+                l.seq += 1;
+                let data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &diffs);
+                self.send(reference, DocEvent::Diffs { seq: l.seq, from: "pdt".into(), data });
+            }
+            Ok(v)
+        })?
+    }
+
+    fn create(&self, new: &NewFile) -> ProviderResult<ProviderFile> {
+        std::fs::create_dir_all(&new.folder).map_err(failed)?;
+        let stem = file_stem(&new.title);
+        let (path, bytes) = match new.kind {
+            DocumentKind::Doc => {
+                (free_path(&new.folder, &stem, "md"), new.markdown.clone().unwrap_or_default().into_bytes())
+            }
+            DocumentKind::Sheet => {
+                let wb = Workbook::new(&new.title).map_err(failed)?;
+                (free_path(&new.folder, &stem, "xlsx"), wb.to_xlsx().map_err(failed)?)
+            }
+        };
+        write_atomic(&path, &bytes).map_err(failed)?;
+        let reference = path.to_string_lossy().into_owned();
+        let version = self.wrote(&reference, &bytes);
+        Ok(ProviderFile { reference, title: new.title.clone(), kind: new.kind, url: None, version: Some(version) })
+    }
+
+    fn delete(&self, reference: &str) -> ProviderResult<()> {
+        let (path, _) = path_of(reference)?;
+        lock(&self.live).remove(reference);
+        std::fs::remove_file(&path).map_err(failed)?;
+        let assets = assets_dir(&path);
+        if assets.is_dir() {
+            std::fs::remove_dir_all(&assets).map_err(failed)?;
+        }
+        lock(&self.known).remove(reference);
+        Ok(())
+    }
+
+    /// The docs and sheets in `folders` whose names have every word of `q` (lowercase), newest first.
+    fn search(folders: &[PathBuf], q: &str, kind: Option<DocumentKind>) -> Vec<ProviderFile> {
+        let mut found: Vec<(SystemTime, ProviderFile)> = Vec::new();
+        for folder in folders {
+            let Ok(entries) = std::fs::read_dir(folder) else { continue };
+            for e in entries.flatten() {
+                let p = e.path();
+                let Some(k) = kind_of(&p) else { continue };
+                let title = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                if kind.is_some_and(|w| w != k)
+                    || !q.split_whitespace().all(|w| title.to_lowercase().contains(w))
+                    || !p.is_file()
+                {
+                    continue;
+                }
+                let when = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+                let reference = p.to_string_lossy().into_owned();
+                found.push((when, ProviderFile { reference, title, kind: k, url: None, version: None }));
+            }
+        }
+        found.sort_by_key(|f| std::cmp::Reverse(f.0));
+        found.into_iter().map(|(_, f)| f).collect()
+    }
+}
+
+impl LocalProvider {
+    pub fn new(store: Store, data_dir: PathBuf, home: Option<PathBuf>) -> Self {
+        Self { store, data_dir, home, files: Default::default() }
+    }
+
+    /// Runs file work (reads, xlsx parsing and writing) on a blocking thread, not the runtime's.
+    async fn blocking<R: Send + 'static>(
+        &self,
+        f: impl FnOnce(&Files) -> ProviderResult<R> + Send + 'static,
+    ) -> ProviderResult<R> {
+        let files = self.files.clone();
+        tokio::task::spawn_blocking(move || f(&files)).await.map_err(failed)?
+    }
+
+    /// A document's changes as they happen.
+    pub fn subscribe(&self, reference: &str) -> broadcast::Receiver<DocEvent> {
+        self.files.sender(reference).subscribe()
+    }
+
+    /// Tells a document's open views that its comments changed.
+    pub fn comments_changed(&self, reference: &str) {
+        self.files.send(reference, DocEvent::Comments);
+    }
+
+    /// A sheet's model as IronCalc's bytes, for a view to load, and the number of its last change.
+    pub async fn sheet_bytes(&self, reference: &str) -> ProviderResult<(Vec<u8>, u64)> {
+        let r = reference.to_string();
+        self.blocking(move |f| f.sheet_bytes(&r)).await
+    }
+
+    /// A view's edits (IronCalc diffs) made on top of change `seq`: applied, saved, and passed on to the other views.
+    /// When someone else's change came in between, they are applied all the same (the last write wins) and the view
+    /// is told to load the sheet again.
+    pub async fn view_diffs(
+        &self,
+        reference: &str,
+        view: &str,
+        seq: u64,
+        diffs: Vec<u8>,
+    ) -> ProviderResult<DiffsApplied> {
+        let (r, view) = (reference.to_string(), view.to_string());
+        self.blocking(move |f| f.view_diffs(&r, &view, seq, &diffs)).await
+    }
+
+    /// Notices a file changed outside PDT (an agent editing it in place, a sync tool): a doc's views are told, a live
+    /// sheet is read again and its views reload. A file whose modified time and length haven't moved isn't read.
+    pub async fn check_external(&self, reference: &str) {
+        let r = reference.to_string();
+        let _ = self
+            .blocking(move |f| {
+                f.check_external(&r);
+                Ok(())
+            })
+            .await;
+    }
+
+    /// A sheet's charts with the numbers they draw, read from the live model.
+    pub async fn charts(&self, document_id: &str, reference: &str) -> ProviderResult<Vec<ChartView>> {
+        let charts = self.store.document_charts(document_id).await.map_err(failed)?;
+        if charts.is_empty() {
+            return Ok(vec![]);
+        }
+        let r = reference.to_string();
+        self.blocking(move |f| f.chart_views(&r, charts)).await
+    }
+
+    /// A document as a file: a doc as `.md`; a sheet as `.xlsx`, or one of its sheets as `.csv`.
+    pub async fn export(
+        &self,
+        reference: &str,
+        title: &str,
+        format: &str,
+        sheet: Option<&str>,
+    ) -> ProviderResult<Export> {
+        let (r, title, format) = (reference.to_string(), title.to_string(), format.to_string());
+        let sheet = sheet.map(str::to_string);
+        self.blocking(move |f| f.export(&r, &title, &format, sheet.as_deref())).await
+    }
+
+    /// A file from the user's computer made into a local document in `folder`: `.md` (or `.markdown`, `.txt`) as a
+    /// doc; `.xlsx` or `.csv` as a sheet. Its title, and what of it PDT can't keep (charts, images and pivot tables of
+    /// a `.xlsx`).
+    pub async fn import_file(
+        &self,
+        folder: PathBuf,
+        name: String,
+        bytes: Vec<u8>,
+    ) -> ProviderResult<(ProviderFile, Vec<String>)> {
+        self.blocking(move |f| f.import_file(&folder, &name, &bytes)).await
+    }
+
+    /// Saves an image for a doc beside it (`<doc>.assets/<name>`); the path to write in its Markdown.
+    pub async fn save_image(&self, reference: &str, name: &str, bytes: Vec<u8>) -> ProviderResult<String> {
+        let (r, name) = (reference.to_string(), name.to_string());
+        self.blocking(move |f| f.save_image(&r, &name, &bytes)).await
+    }
+
+    /// One of a doc's images (a path under its `.assets` folder, as its Markdown names it), and its type.
+    pub async fn asset(&self, reference: &str, rel: &str) -> ProviderResult<(Vec<u8>, &'static str)> {
+        let (r, rel) = (reference.to_string(), rel.to_string());
+        self.blocking(move |f| f.asset(&r, &rel)).await
     }
 
     /// The folders local documents can be in: the host's and each project's.
@@ -561,96 +843,9 @@ impl LocalProvider {
         Ok(())
     }
 
-    fn read_now(&self, reference: &str) -> ProviderResult<DocumentContent> {
-        let (path, kind) = self.path(reference)?;
-        match kind {
-            DocumentKind::Doc => {
-                let doc = self.doc_lock(reference);
-                let _held = lock(&doc);
-                let bytes = std::fs::read(&path).map_err(failed)?;
-                let v = version_of(&bytes);
-                self.remember(reference, &v);
-                Ok(DocumentContent::Doc { markdown: String::from_utf8_lossy(&bytes).into_owned(), version: Some(v) })
-            }
-            DocumentKind::Sheet => {
-                let l = self.live(reference)?;
-                let l = lock(&l);
-                Ok(DocumentContent::Sheet {
-                    sheets: l.wb.sheets().map_err(failed)?,
-                    version: self.version_now(reference),
-                })
-            }
-        }
-    }
-
-    fn version_now(&self, reference: &str) -> Option<String> {
-        std::fs::read(reference).ok().map(|b| version_of(&b))
-    }
-
-    fn apply_text(&self, reference: &str, edits: Vec<DocumentEdit>) -> ProviderResult<String> {
-        let (path, _) = self.path(reference)?;
-        let doc = self.doc_lock(reference);
-        let _held = lock(&doc);
-        let mut text = String::from_utf8_lossy(&std::fs::read(&path).map_err(failed)?).into_owned();
-        for e in &edits {
-            text = apply_doc_edit(&text, e).map_err(edit_error)?;
-        }
-        write_atomic(&path, text.as_bytes()).map_err(failed)?;
-        let v = version_of(text.as_bytes());
-        self.remember(reference, &v);
-        self.send(reference, DocEvent::Changed { version: v.clone() });
-        Ok(v)
-    }
-
-    /// Cell edits on the live model, in order: all or none (a failed list leaves the model as the file has it).
-    fn apply_cells(&self, reference: &str, edits: &[DocumentEdit]) -> ProviderResult<String> {
-        let l = self.live(reference)?;
-        let mut l = lock(&l);
-        let r = edits.iter().try_for_each(|e| match e {
-            DocumentEdit::SetCells { sheet, cell, values } => l.wb.set_cells(sheet, cell, values),
-            DocumentEdit::AddSheet { name } => l.wb.add_sheet(name),
-            DocumentEdit::RenameSheet { sheet, name } => l.wb.rename_sheet(sheet, name),
-            DocumentEdit::DeleteSheet { sheet } => l.wb.delete_sheet(sheet),
-            DocumentEdit::FormatRange { sheet, range, format } => l.wb.format(sheet, range, format),
-            DocumentEdit::ConditionalFormat { sheet, range, when, format } => {
-                l.wb.conditional_format(sheet, range, when, format)
-            }
-            DocumentEdit::Sort { sheet, range, by, header } => l.wb.sort(sheet, range, by, *header),
-            DocumentEdit::Filter { sheet, range, column, when } => l.wb.filter(sheet, range, column, when),
-            DocumentEdit::ClearFilter { sheet } => l.wb.clear_filter(sheet),
-            DocumentEdit::AddChart { sheet, chart, .. } => l.wb.sheet_index(sheet).and_then(|_| {
-                parse_range(&chart.data).map(|_| ()).ok_or_else(|| format!("{} is not a range", chart.data))
-            }),
-            DocumentEdit::UpdateChart { chart, .. } => {
-                parse_range(&chart.data).map(|_| ()).ok_or_else(|| format!("{} is not a range", chart.data))
-            }
-            DocumentEdit::DeleteChart { .. } => Ok(()),
-            DocumentEdit::SetBorders { sheet, range, style, color, inner } => {
-                l.wb.borders(sheet, range, *style, color.as_deref(), *inner)
-            }
-            DocumentEdit::ColumnWidth { sheet, columns, width } => l.wb.column_width(sheet, columns, *width),
-            DocumentEdit::Freeze { sheet, rows, columns } => l.wb.freeze(sheet, *rows, *columns),
-            DocumentEdit::Validate { .. } => {
-                Err(format!("{UNSUPPORTED}PDT's local sheets have no data validation yet: leave validate out"))
-            }
-            e => Err(format!("{UNSUPPORTED}{} is for text documents, and this is a spreadsheet", e.op())),
-        });
-        if let Err(e) = r {
-            // Undo what part of the list did by reading the file again; open views reload.
-            self.reread(reference, &mut l);
-            return Err(match e.strip_prefix(UNSUPPORTED) {
-                Some(m) => ProviderError::Unsupported(m.to_string()),
-                None => ProviderError::Invalid(e),
-            });
-        }
-        let diffs = l.wb.flush();
-        let v = self.save(reference, &l)?;
-        if diffs.len() > 1 {
-            l.seq += 1;
-            let data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &diffs);
-            self.send(reference, DocEvent::Diffs { seq: l.seq, from: "pdt".into(), data });
-        }
-        Ok(v)
+    async fn version_now(&self, reference: &str) -> Option<String> {
+        let r = reference.to_string();
+        self.blocking(move |f| Ok(f.version_now(&r))).await.ok().flatten()
     }
 }
 
@@ -679,7 +874,7 @@ impl DocumentProvider for LocalProvider {
 
     fn file<'a>(&'a self, reference: &'a str) -> BoxFut<'a, ProviderResult<ProviderFile>> {
         Box::pin(async move {
-            let (path, kind) = self.path(reference)?;
+            let (path, kind) = path_of(reference)?;
             let title = match self.store.document_by_ref(ID, reference).await.map_err(failed)? {
                 Some(d) => d.title,
                 None => {
@@ -700,14 +895,15 @@ impl DocumentProvider for LocalProvider {
                 title,
                 kind,
                 url: None,
-                version: self.version_now(reference),
+                version: self.version_now(reference).await,
             })
         })
     }
 
     fn read<'a>(&'a self, reference: &'a str) -> BoxFut<'a, ProviderResult<DocumentContent>> {
         Box::pin(async move {
-            let mut content = self.read_now(reference)?;
+            let r = reference.to_string();
+            let mut content = self.blocking(move |f| f.read_now(&r)).await?;
             if let DocumentContent::Sheet { sheets, .. } = &mut content
                 && let Some(d) = self.store.document_by_ref(ID, reference).await.map_err(failed)?
             {
@@ -724,55 +920,21 @@ impl DocumentProvider for LocalProvider {
     fn search<'a>(&'a self, q: &'a str, kind: Option<DocumentKind>) -> BoxFut<'a, ProviderResult<Vec<ProviderFile>>> {
         Box::pin(async move {
             let q = q.to_lowercase();
-            let mut found: Vec<(std::time::SystemTime, ProviderFile)> = Vec::new();
-            for folder in self.folders().await? {
-                let Ok(entries) = std::fs::read_dir(&folder) else { continue };
-                for e in entries.flatten() {
-                    let p = e.path();
-                    let Some(k) = kind_of(&p) else { continue };
-                    let title = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                    if kind.is_some_and(|w| w != k)
-                        || !q.split_whitespace().all(|w| title.to_lowercase().contains(w))
-                        || !p.is_file()
-                    {
-                        continue;
-                    }
-                    let when = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
-                    let reference = p.to_string_lossy().into_owned();
-                    found.push((when, ProviderFile { reference, title, kind: k, url: None, version: None }));
-                }
-            }
-            found.sort_by_key(|f| std::cmp::Reverse(f.0));
-            Ok(found.into_iter().map(|(_, f)| f).collect())
+            let folders = self.folders().await?;
+            self.blocking(move |_| Ok(Files::search(&folders, &q, kind))).await
         })
     }
 
     fn create<'a>(&'a self, new: NewFile) -> BoxFut<'a, ProviderResult<ProviderFile>> {
-        Box::pin(async move {
-            std::fs::create_dir_all(&new.folder).map_err(failed)?;
-            let stem = file_stem(&new.title);
-            let (path, bytes) = match new.kind {
-                DocumentKind::Doc => {
-                    (free_path(&new.folder, &stem, "md"), new.markdown.clone().unwrap_or_default().into_bytes())
-                }
-                DocumentKind::Sheet => {
-                    let wb = Workbook::new(&new.title).map_err(failed)?;
-                    (free_path(&new.folder, &stem, "xlsx"), wb.to_xlsx().map_err(failed)?)
-                }
-            };
-            write_atomic(&path, &bytes).map_err(failed)?;
-            let reference = path.to_string_lossy().into_owned();
-            let version = version_of(&bytes);
-            self.remember(&reference, &version);
-            Ok(ProviderFile { reference, title: new.title, kind: new.kind, url: None, version: Some(version) })
-        })
+        Box::pin(async move { self.blocking(move |f| f.create(&new)).await })
     }
 
     fn apply<'a>(&'a self, reference: &'a str, edits: Vec<DocumentEdit>) -> BoxFut<'a, ProviderResult<Option<String>>> {
         Box::pin(async move {
-            let (_, kind) = self.path(reference)?;
+            let (_, kind) = path_of(reference)?;
+            let r = reference.to_string();
             if kind == DocumentKind::Doc {
-                return self.apply_text(reference, edits).map(Some);
+                return self.blocking(move |f| f.apply_text(&r, &edits)).await.map(Some);
             }
             let charting = edits.iter().any(|e| {
                 matches!(
@@ -809,7 +971,13 @@ impl DocumentProvider for LocalProvider {
                     }
                 }
             }
-            let v = self.apply_cells(reference, &edits)?;
+            let (v, edits) = self
+                .blocking(move |f| {
+                    let v = f.apply_cells(&r, &edits);
+                    Ok((v, edits))
+                })
+                .await?;
+            let v = v?;
             if let Some(doc) = doc {
                 let mut charts = self.store.document_charts(&doc).await.map_err(failed)?;
                 let mut changed = false;
@@ -856,7 +1024,7 @@ impl DocumentProvider for LocalProvider {
                     }
                 }
                 if changed {
-                    self.send(reference, DocEvent::Charts);
+                    self.files.send(reference, DocEvent::Charts);
                 }
             }
             Ok(Some(v))
@@ -864,17 +1032,8 @@ impl DocumentProvider for LocalProvider {
     }
 
     fn delete<'a>(&'a self, reference: &'a str) -> BoxFut<'a, ProviderResult<()>> {
-        Box::pin(async move {
-            let (path, _) = self.path(reference)?;
-            lock(&self.live).remove(reference);
-            std::fs::remove_file(&path).map_err(failed)?;
-            let assets = assets_dir(&path);
-            if assets.is_dir() {
-                std::fs::remove_dir_all(&assets).map_err(failed)?;
-            }
-            lock(&self.known).remove(reference);
-            Ok(())
-        })
+        let r = reference.to_string();
+        Box::pin(async move { self.blocking(move |f| f.delete(&r)).await })
     }
 
     fn comments<'a>(&'a self, reference: &'a str) -> BoxFut<'a, ProviderResult<Vec<DocumentComment>>> {
@@ -946,8 +1105,8 @@ impl DocumentProvider for LocalProvider {
 
     fn version<'a>(&'a self, reference: &'a str) -> BoxFut<'a, ProviderResult<Option<String>>> {
         Box::pin(async move {
-            self.path(reference)?;
-            Ok(self.version_now(reference))
+            path_of(reference)?;
+            Ok(self.version_now(reference).await)
         })
     }
 }
@@ -972,5 +1131,84 @@ mod tests {
         let b = free_path(dir.path(), "Plan", "md");
         assert_eq!(b.file_name().unwrap(), "Plan 2.md");
         assert_eq!(assets_dir(&a).file_name().unwrap(), "Plan.assets");
+    }
+
+    fn sheet_file(dir: &Path, name: &str) -> String {
+        let p = dir.join(name);
+        std::fs::write(&p, Workbook::new("S").unwrap().to_xlsx().unwrap()).unwrap();
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_sheet_in_use_holds_up_no_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (sheet_file(dir.path(), "A.xlsx"), sheet_file(dir.path(), "B.xlsx"));
+        let files = Arc::new(Files::default());
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let t = {
+            let (files, a) = (files.clone(), a.clone());
+            std::thread::spawn(move || {
+                files
+                    .with_live(&a, |_| {
+                        held_tx.send(()).unwrap();
+                        go_rx.recv().unwrap();
+                    })
+                    .unwrap()
+            })
+        };
+        held_rx.recv().unwrap();
+        // A is held (as while it loads or saves): B still opens, and A isn't let go from under it.
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        {
+            let (files, b) = (files.clone(), b.clone());
+            std::thread::spawn(move || done_tx.send(files.with_live(&b, |l| l.seq).unwrap()).unwrap());
+        }
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(10)), Ok(0));
+        assert!(lock(&files.live).contains_key(&a));
+        go_tx.send(()).unwrap();
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn senders_and_locks_nobody_uses_are_let_go() {
+        let files = Files::default();
+        let rx = files.sender("/a.md").subscribe();
+        drop(rx);
+        let _b = files.sender("/b.md").subscribe();
+        assert_eq!(lock(&files.events).keys().collect::<Vec<_>>(), vec!["/b.md"]);
+        drop(files.doc_lock("/a.md"));
+        let _held = files.doc_lock("/b.md");
+        assert_eq!(lock(&files.doc_locks).keys().collect::<Vec<_>>(), vec!["/b.md"]);
+    }
+
+    #[test]
+    fn an_unmoved_file_is_not_read_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Plan.md");
+        let reference = path.to_string_lossy().into_owned();
+        let old = SystemTime::now() - Duration::from_secs(60);
+        let write = |text: &str| {
+            std::fs::write(&path, text).unwrap();
+            std::fs::File::options().write(true).open(&path).unwrap().set_modified(old).unwrap();
+        };
+        write("one");
+        let files = Files::default();
+        let mut rx = files.sender(&reference).subscribe();
+        let DocumentContent::Doc { version, .. } = files.read_now(&reference).unwrap() else { panic!() };
+        // Same length and modified time: taken as unchanged, without reading it.
+        write("two");
+        files.check_external(&reference);
+        assert!(rx.try_recv().is_err());
+        assert_eq!(files.version_now(&reference), version);
+        // Its length moved: read, and the views hear of it.
+        write("three");
+        files.check_external(&reference);
+        assert!(matches!(rx.try_recv(), Ok(DocEvent::Changed { .. })));
+        assert_eq!(files.version_now(&reference), Some(version_of(b"three")));
+        // Modified just now: read whatever its stamp says.
+        std::fs::write(&path, "four!").unwrap();
+        files.check_external(&reference);
+        assert!(matches!(rx.try_recv(), Ok(DocEvent::Changed { .. })));
     }
 }

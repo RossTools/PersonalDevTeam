@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
+import { Suspense, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, Eye, FolderGit2, Globe, Pencil, Pin, Ticket } from 'lucide-react';
 import { Alert, Button, EmptyState, IconButton, Input, MenuButton, RelativeTime, SegmentedControl, Skeleton, StatusDot, useConfirm, type MenuEntry } from '@ui';
@@ -12,7 +12,7 @@ import { Markdown } from '../common/Markdown';
 import { useAction } from '../common/useAction';
 import { useRefreshPm } from '../pm/usePm';
 import { useTopBarActions } from '../shell/PhoneTopBar';
-import { NewTicketDialog } from '../tickets/NewTicketDialog';
+import { NewTicketDialog } from '../shell/screens';
 import { ALL, HOST_WIDE, shortDate, ticketDescription, titleFor, TITLE_MAX, wordCount, type Whose } from './model';
 import { useProjects } from './useNotes';
 import { useNoteDraft, type SaveState } from './useNoteDraft';
@@ -337,7 +337,7 @@ function SaveStatus({ state, savedAt, onRetry }: { state: SaveState; savedAt: nu
 function TicketFromNote({ note, projects, onClose }: { note: PmNote; projects: Project[]; onClose: () => void }) {
   if (projects.length === 0) return null;
   return (
-    <NewTicketDialog
+    <Suspense fallback={null}><NewTicketDialog
       heading="Make a ticket"
       projects={projects}
       projectId={note.projectId}
@@ -345,6 +345,6 @@ function TicketFromNote({ note, projects, onClose }: { note: PmNote; projects: P
       description={ticketDescription(note)}
       onClose={onClose}
       onCreated={onClose}
-    />
+    /></Suspense>
   );
 }

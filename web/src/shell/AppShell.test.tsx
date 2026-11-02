@@ -112,7 +112,7 @@ describe('AppShell', () => {
     renderWithQuery(<AppShell />);
     expect(screen.queryByRole('region', { name: 'Terminal panel' })).not.toBeInTheDocument();
     await userEvent.keyboard('{Control>}`{/Control}');
-    expect(screen.getByRole('region', { name: 'Terminal panel' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Terminal panel' })).toBeInTheDocument();
     await userEvent.keyboard('{Control>}`{/Control}');
     expect(screen.queryByRole('region', { name: 'Terminal panel' })).not.toBeInTheDocument();
     const toggle = screen.getByRole('button', { name: 'Toggle terminal panel' });

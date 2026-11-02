@@ -9,7 +9,7 @@ import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { readViewState, useViewKey, writeViewState } from '../common/viewState';
 import { KindIcon, KindPicker } from './KindPicker';
 import {
-  ERROR_PORT, addNode, connect, disconnect, drawnPorts, issuesOf, kindOf, layout, moveNode, newNode, nodeTitle, portsOf,
+  ERROR_PORT, addNode, connect, disconnect, drawnPorts, edgeKey, issuesOf, kindOf, layout, moveNode, newNode, nodeTitle, portsOf,
   removeNode, spotAfter, type Catalog,
 } from './model';
 import { useCheck } from './useDraft';
@@ -19,8 +19,6 @@ export interface PathOverlay {
   status: Map<string, FlowStatus>;
   taken: Set<string>;
 }
-
-export const edgeKey = (from: string, port: string, to: string) => `${from} ${port} ${to}`;
 
 export interface GraphViewProps {
   doc: WorkflowDoc;

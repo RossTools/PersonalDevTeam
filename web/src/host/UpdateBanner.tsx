@@ -4,7 +4,7 @@ import { Badge, Banner, Button, Link, Popover, useConfirm } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { ReleaseChanges } from '../api/gen/ReleaseChanges';
 import type { ReleaseNotes } from '../api/gen/ReleaseNotes';
-import { Markdown } from '../common/Markdown';
+import { Markdown } from '../common/LazyMarkdown';
 import { useOpenTicket } from '../tickets/actions';
 
 // Banner buttons stay 24px on touch screens too: the strip is a fixed h-8 (a 44px button would be clipped, and growing

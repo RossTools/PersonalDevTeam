@@ -284,9 +284,6 @@ for (const tag of SOURCED) {
 const plugins = [remarkGfm, remarkHtmlAsText];
 const withBreaks = [...plugins, remarkBreaks];
 
-/** A Markdown file by its name (the Files view and the review show these rendered on request). */
-export const isMarkdownPath = (path: string) => /\.(md|markdown|mdx)$/i.test(path);
-
 export interface MarkdownProps {
   /** The Markdown source (GitHub-flavoured: tables, task lists, strikethrough, autolinks). */
   children: string;

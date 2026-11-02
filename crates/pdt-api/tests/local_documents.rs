@@ -111,7 +111,7 @@ async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
 
     // The file changed outside PDT: an open view hears of it.
     std::fs::write(&path, "# Edited by hand\n").unwrap();
-    env.state.local.check_external(&path.to_string_lossy());
+    env.state.local.check_external(&path.to_string_lossy()).await;
     assert!(matches!(next_event(&mut rx), DocEvent::Changed { .. }));
     let (_, c) = call(&env.app, "GET", &format!("/api/documents/{id}/content"), None).await;
     assert_eq!(c["content"]["markdown"], "# Edited by hand\n");
@@ -388,12 +388,12 @@ async fn an_open_sheet_is_live_both_ways() {
 
     // PDT's own saves are not changes from outside; a write by another program reloads the open sheet.
     while rx.try_recv().is_ok() {}
-    env.state.local.check_external(&reference);
+    env.state.local.check_external(&reference).await;
     assert!(rx.try_recv().is_err(), "its own save is not news");
     let mut outside = Workbook::open(std::path::Path::new(&reference)).unwrap();
     outside.set_cells("Sheet1", "E1", &[vec!["by hand".into()]]).unwrap();
     outside.save(std::path::Path::new(&reference)).unwrap();
-    env.state.local.check_external(&reference);
+    env.state.local.check_external(&reference).await;
     assert!(matches!(next_event(&mut rx), DocEvent::Reload { .. }));
     let (_, c) = call(&env.app, "GET", &format!("/api/documents/{id}/content"), None).await;
     assert_eq!(c["content"]["sheets"][0]["rows"][0][4]["value"], "by hand", "{c}");
