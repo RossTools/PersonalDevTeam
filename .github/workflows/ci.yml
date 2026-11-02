@@ -48,7 +48,8 @@ env:
 #   check names.
 # - Runners are GitHub's hosted ones unless the repo variables PDT_LINUX_RUNNER / PDT_MACOS_RUNNER /
 #   PDT_WINDOWS_RUNNER name others (Namespace profiles, larger runners); PDT_<OS>_PARTITIONS (a JSON list, "[1,2,3]")
-#   change the partitions. .github/actions/setup picks the cache to match; cache.yml saves GitHub's from main.
+#   change the partitions. .github/actions/setup picks the cache to match; cache.yml saves GitHub's from main. A pull
+#   request from a fork always runs on GitHub's (the `changes` job picks the runners).
 # - A push to main runs nothing here: the queue just ran the checks on the same tree (group size 1, squash merge),
 #   and merges are not released (docs/SDLC.md "Releases"). cache.yml rebuilds the build caches when the dependencies
 #   change.
@@ -58,7 +59,8 @@ env:
 #   runners (bundle (linux, <arch>)); a release's SHA256SUMS lists them with the others.
 # - version: the workspace version in Cargo.toml and desktop/src-tauri/tauri.conf.json agree (in `lint (linux)`).
 # - secrets: gitleaks over the commits the PR or queued group adds, always (.gitleaks.toml allowlists test fixtures).
-# - changelog: on PRs (not docs-only ones), a changelog fragment or the `no-changelog` label (docs/SDLC.md).
+# - changelog: on PRs (not docs-only ones), a changelog fragment, the `no-changelog` label or `[no-changelog]` in the
+#   PR's description (docs/SDLC.md).
 # A skipped job still reports its check, which counts as passing for main's required checks; the job names are
 # those required checks, so they must not change without changing the ruleset.
 jobs:
@@ -76,7 +78,23 @@ jobs:
       release: ${{ steps.pick.outputs.release }}
       site: ${{ steps.pick.outputs.site }}
       web: ${{ steps.pick.outputs.web }}
+      linux-runner: ${{ steps.runners.outputs.linux }}
+      macos-runner: ${{ steps.runners.outputs.macos }}
+      windows-runner: ${{ steps.runners.outputs.windows }}
     steps:
+      # The runners for the checks: the PDT_<OS>_RUNNER variables, except for a pull request from a fork, which runs
+      # on GitHub's hosted runners whatever they name (no paid minutes, and no write to a Namespace cache volume that
+      # later runs restore). A fork's PR still waits for a maintainer's approval before it runs at all.
+      - id: runners
+        env:
+          OUTSIDE: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          LINUX: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
+          MACOS: ${{ vars.PDT_MACOS_RUNNER || 'macos-latest' }}
+          WINDOWS: ${{ vars.PDT_WINDOWS_RUNNER || 'windows-latest' }}
+        run: |
+          if [ "$OUTSIDE" = true ]; then LINUX=ubuntu-latest MACOS=macos-latest WINDOWS=windows-latest; fi
+          echo "linux=$LINUX macos=$MACOS windows=$WINDOWS"
+          { echo "linux=$LINUX"; echo "macos=$MACOS"; echo "windows=$WINDOWS"; } >> "$GITHUB_OUTPUT"
       - id: pick
         env:
           GH_TOKEN: ${{ github.token }}
@@ -146,7 +164,8 @@ jobs:
           # Bundles run for the release PR only, never in the queue (the tag builds its own; a dispatch builds them).
           out "$code" "$rust" "$macos" "$windows" "$release"
 
-  # A pull request adds a changelog fragment, or carries the `no-changelog` label (docs/SDLC.md "Changelog").
+  # A pull request adds a changelog fragment, or carries the `no-changelog` label or says `[no-changelog]` in its
+  # description (docs/SDLC.md "Changelog").
   # Docs-only PRs, the merge queue and main skip it (the queue runs main plus a PR that already passed it).
   changelog:
     needs: changes
@@ -167,6 +186,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          BODY: ${{ github.event.pull_request.body }}
           PR: ${{ github.event.pull_request.number }}
           RELEASE_PR: ${{ needs.changes.outputs.release }}
         run: |
@@ -178,7 +198,10 @@ jobs:
             --jq '.[] | select(.status != "removed") | .filename' | grep -E '^\.changes/unreleased/[^/]+\.md$' || true)"
           if [ -n "$added" ]; then printf 'Fragments:\n%s\n' "$added"; exit 0; fi
           if printf '%s' "$LABELS" | grep -q '"no-changelog"'; then echo "No fragment: the PR has the no-changelog label."; exit 0; fi
-          echo "::error title=No changelog fragment::Add .changes/unreleased/<TICKET>.md, or the no-changelog label for a docs, CI or tests-only PR."
+          # The same in the PR's description, for a contributor who can't set labels (the run sees the description as
+          # it was at the push or label that started it).
+          if printf '%s' "$BODY" | grep -qF '[no-changelog]'; then echo "No fragment: the PR's description says [no-changelog]."; exit 0; fi
+          echo "::error title=No changelog fragment::Add .changes/unreleased/<TICKET>.md, or the no-changelog label (or [no-changelog] in the description) for a docs, CI or tests-only PR."
           cat <<'EOF'
           This pull request adds no changelog fragment. Add one at .changes/unreleased/<TICKET>.md (for example
           .changes/unreleased/PDT-193.md; a second note for the same ticket is <TICKET>-<anything>.md):
@@ -192,7 +215,8 @@ jobs:
           Check it with: scripts/changelog.sh check
 
           A PR that only changes docs, CI or tests needs no fragment: add the no-changelog label instead (that
-          re-runs CI). See docs/SDLC.md "Changelog".
+          re-runs CI). Without permission to label, write [no-changelog] in the PR's description and push again.
+          See docs/SDLC.md "Changelog".
           EOF
           exit 1
 
@@ -261,7 +285,7 @@ jobs:
     name: lint (linux)
     needs: changes
     if: needs.changes.outputs.linux == 'true'
-    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ needs.changes.outputs.linux-runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -281,7 +305,7 @@ jobs:
     uses: ./.github/workflows/rust.yml
     with:
       os: linux
-      runner: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
+      runner: ${{ needs.changes.outputs.linux-runner }}
       partitions: ${{ vars.PDT_LINUX_PARTITIONS || '[1,2,3]' }}
       split: true
       release: ${{ needs.changes.outputs.release }}
@@ -303,7 +327,7 @@ jobs:
     name: web (typecheck, build)
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ needs.changes.outputs.linux-runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -320,7 +344,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: ${{ fromJSON(vars.PDT_WEB_SHARDS || '[1,2,3,4]') }}
-    runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ needs.changes.outputs.linux-runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -349,7 +373,7 @@ jobs:
     uses: ./.github/workflows/rust.yml
     with:
       os: macos
-      runner: ${{ vars.PDT_MACOS_RUNNER || 'macos-latest' }}
+      runner: ${{ needs.changes.outputs.macos-runner }}
       partitions: ${{ vars.PDT_MACOS_PARTITIONS || '[1,2]' }}
 
   # The job name is a required check, so it keeps "macos-latest" whichever Mac runs it.
@@ -373,7 +397,7 @@ jobs:
     uses: ./.github/workflows/rust.yml
     with:
       os: windows
-      runner: ${{ vars.PDT_WINDOWS_RUNNER || 'windows-latest' }}
+      runner: ${{ needs.changes.outputs.windows-runner }}
       partitions: ${{ vars.PDT_WINDOWS_PARTITIONS || '[1,2,3,4,5,6,7,8]' }}
       split: true
 
