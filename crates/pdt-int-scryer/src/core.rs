@@ -50,14 +50,6 @@ impl Facet {
     pub fn from_gql(v: &Value) -> Option<Facet> {
         v.as_str().and_then(|s| Facet::parse(s).ok())
     }
-
-    /// The id it is mainly known by in Scryer (films by TMDB, series and anime by TVDB).
-    pub fn main_source(self) -> &'static str {
-        match self {
-            Facet::Movie => "tmdb",
-            Facet::Series | Facet::Anime => "tvdb",
-        }
-    }
 }
 
 /// How an added series' episodes are monitored: Scryer's `MonitorTypeValue`.
