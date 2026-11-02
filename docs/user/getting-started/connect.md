@@ -28,6 +28,10 @@ installed and signed in:
   Google's ACP server and verifies it), then **Sign in** to sign in with your Google account in your browser. This
   sign-in is separate from the `agy` CLI's. **Update** gets a newer version.
 
+  Antigravity writes a `skills/system/` folder into the folder it works in (a ticket's worktree, say) and writes it
+  again if you delete it. It needs that folder, so PDT leaves it alone. To keep it out of `git status`, add
+  `/skills/system/` to your repository's `.gitignore`, or to `.git/info/exclude` to ignore it on your machine only.
+
 To add another, open **Settings › This host › Agents › ACP agents**, click **Add ACP agent**, and give it a name,
 the command that starts it in ACP mode, its arguments and any environment variables (`NAME=value`), one per line.
 Save, and PDT shows whether it found the command.

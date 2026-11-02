@@ -2,17 +2,18 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Play } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Button, DiffStat, EmptyState, MenuButton, Skeleton, tabListKeyDown, useConfirm, ViewHeader } from '@ui';
+import { Banner, Button, DiffStat, EmptyState, MenuButton, Skeleton, tabListKeyDown, useConfirm, ViewHeader } from '@ui';
 import type { Ticket } from '../api/gen/Ticket';
 import { BranchChip } from '../common/BranchChip';
 import { PriorityIcon } from '../common/PriorityIcon';
 import { StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { WatchButton } from '../common/Watch';
-import { runAction } from '../common/useAction';
+import { runAction, useAction } from '../common/useAction';
 import { AttemptSection, MergedBanner } from './Attempt';
 import {
-  abandonAttempt, canRefine, canStart, deleteTicket, moveToEntries, refineTicket, startNextPart, stopWaitingEntry, useStartTicket,
+  abandonAttempt, canRefine, canStart, deleteTicket, moveToEntries, refineTicket, retryAutoStart, retryAutoStartEntry, startNextPart,
+  stopWaitingEntry, useStartTicket,
 } from './actions';
 import { isClosed } from './model';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
@@ -153,6 +154,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
             entries={() => [
               ...(canRefine(ticket) ? [{ label: 'Refine', onSelect: () => void runAction(() => refineTicket(qc, ticket)) }] : []),
               ...(ticket.waiting ? [stopWaitingEntry(qc, ticket)] : []),
+              ...(ticket.pickupFailed ? [retryAutoStartEntry(qc, ticket)] : []),
               { submenu: 'Move to', entries: moveToEntries(qc, ticket, confirm) },
               ...(ticket.parts && !isClosed(ticket.stage)
                 ? [{ label: 'Start next part', onSelect: () => void runAction(() => startNextPart(start, ticket)) }]
@@ -178,6 +180,27 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
     {merging && attempt && <MergeDialog ticket={ticket} attemptId={attempt.id} onClose={() => setMerging(false)} />}
     {filing && forge && <CreateIssueDialog projectId={ticket.projectId} repo={forge.repo} ticket={ticket} onClose={() => setFiling(false)} />}
     </>
+  );
+}
+
+/** Auto-start passes the ticket over because its start failed: the error, and Try again. */
+export function AutoStartFailedBanner({ ticket: t }: { ticket: Ticket }) {
+  const qc = useQueryClient();
+  const [retry, pending] = useAction(() => retryAutoStart(qc, t));
+  if (!t.pickupFailed) return null;
+  const text = `Auto-start couldn't start it: ${t.pickupFailed}`;
+  return (
+    <Banner
+      tone="failed"
+      title={`${text}. It tries again once the ticket changes.`}
+      actions={
+        <Button size="sm" compact pending={pending} onClick={() => void retry()}>
+          Try again
+        </Button>
+      }
+    >
+      {text}
+    </Banner>
   );
 }
 
@@ -223,6 +246,7 @@ export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticke
     <div className="flex min-h-0 flex-1 flex-col">
       <TicketHeader ticket={t} onDeleted={onDeleted} />
       {mergedBanner && <MergedBanner ticket={t} />}
+      <AutoStartFailedBanner ticket={t} />
       <HubTabs value={tab} onChange={setTab} diff={diff} />
       {tab !== 'overview' ? (
         <HubPanel ticket={t} tab={tab} />

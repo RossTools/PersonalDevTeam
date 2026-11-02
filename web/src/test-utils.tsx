@@ -1,16 +1,17 @@
 import { act, render } from '@testing-library/react';
 import { EditorView } from '@codemirror/view';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { vi } from 'vitest';
 import { ConfirmProvider, Toaster } from '@ui';
+import { createQueryClient } from './common/queryClient';
 import { connectionKinds } from './api/gen/connectionKinds';
 import type { ForgeLinks } from './api/gen/ForgeLinks';
 import { projectSettingsSchemas } from './api/gen/projectSettingsSchemas';
 
 export function renderWithQuery(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  // The same providers as main.tsx: confirm dialogs and toasts.
+  // The same client and providers as main.tsx: the fallback mutation toast, confirm dialogs and toasts.
+  const qc = createQueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrap = (node: ReactNode) => (
     <QueryClientProvider client={qc}>
       <ConfirmProvider>

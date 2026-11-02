@@ -65,6 +65,7 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, descrip
   const askUrl = !!k?.url || (!!k?.urlWhen && whenHolds(k.urlWhen, settings));
   const extraField = auth === 'basic' ? 'username' : auth === 'header' ? 'header' : auth === 'query' ? 'param' : null;
   const save = useMutation({
+    meta: { errorShown: true },
     mutationFn: async () => {
       const own: Record<string, unknown> = k?.auth
         ? { auth, ...(extraField ? { [extraField]: extra.trim() } : {}) }

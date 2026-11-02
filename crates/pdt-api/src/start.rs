@@ -126,13 +126,15 @@ pub(crate) async fn start_ticket(
         .filter(|l| l.kind == LinkKind::Blocks && l.direction == LinkDirection::Incoming && !l.stage.is_closed())
         .map(|l| l.key.clone())
         .collect();
-    // Overlap with the project's active tickets: what this one would share once started.
-    let overlaps = ticket.overlaps.clone();
+    // Overlap with the project's active tickets: what this one would share once started. A pickup's start checked its
+    // own overlap rule, the one choose applied (PDT-381): only a conflict refuses it.
+    let overlaps: Vec<_> =
+        pdt_core::start::refusing_overlaps(&ticket.overlaps, v.pickup_checked).into_iter().cloned().collect();
     // The project's cap on running attempts (Phase 7c §4).
     let policy = st.store.get_project_settings(&ticket.summary.project_id).await?.policy;
     let active = st.store.count_active_attempts(&ticket.summary.project_id).await?;
     // A workflow's start that checked its own cap (PDT-327) may go over the project's: the step's cap is the one.
-    let over_cap = !v.cap_checked && policy.over_cap(active);
+    let over_cap = !v.pickup_checked && policy.over_cap(active);
     if (!blockers.is_empty() || !overlaps.is_empty() || over_cap) && v.mode == StartMode::Check {
         let mut why = vec![];
         if !blockers.is_empty() {
@@ -746,12 +748,24 @@ async fn outside_ticket(st: &AppState, t: &pdt_core::ticket::TicketSummary, sess
     }
 }
 
+/// `POST /api/tickets/{id}/retry-auto-start`: auto-start forgets that it failed to start the ticket (PDT-381), and
+/// its next run tries it again.
+pub(crate) async fn retry_auto_start(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Ticket>, ApiError> {
+    load_ticket(&st, &id).await?;
+    crate::scheduler::forget_failed_start(&st, &id);
+    Ok(Json(load_ticket(&st, &id).await?))
+}
+
 /// This module's API routes; `routes::router` merges them under `/api`.
 pub(crate) fn router() -> axum::Router<crate::AppState> {
     use axum::routing::post;
     axum::Router::new()
         .route("/tickets/{id}/start", post(start))
         .route("/tickets/{id}/check-merge", post(check_merge))
+        .route("/tickets/{id}/retry-auto-start", post(retry_auto_start))
         .route("/attempts/{id}/abandon", post(abandon))
         .route("/attempts/{id}/clean-up", post(clean_up))
 }

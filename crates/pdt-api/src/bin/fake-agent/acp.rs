@@ -246,7 +246,7 @@ impl Acp {
         self.joined.clear();
         self.update(json!({"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "Thinking."}}));
         self.next += 1;
-        let call = format!("call_{}_{}", self.next, std::process::id());
+        let call = format!("call_{}_{}", self.next, super::run_tag());
         if !images.is_empty() {
             self.say(&format!("saw {} images ({})", images.len(), images.join(", ")));
         } else if let Some(cmd) = text.strip_prefix("run: ") {
@@ -452,7 +452,7 @@ pub fn serve(args: &[String]) {
                 a.cwd = p["cwd"].as_str().unwrap_or("?").to_string();
                 a.mcp = mcp_server(&p);
                 a.servers = server_names(&p);
-                a.session = format!("fake-{}-{}", std::process::id(), a.next);
+                a.session = format!("fake-{}-{}", super::run_tag(), a.next);
                 a.announce();
                 ok(a.opened(json!({"sessionId": a.session, "configOptions": a.config()})));
             }

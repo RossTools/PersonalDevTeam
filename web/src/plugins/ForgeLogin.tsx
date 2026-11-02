@@ -31,16 +31,18 @@ export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
   // The public host's API is the server's default: sent only when it is another host.
   const given = isPublic || !url ? undefined : url;
   const device = useMutation({
+    meta: { errorShown: true },
     mutationFn: (b: { apiUrl?: string; clientId?: string }) => api.forgeLoginDevice(kind, b),
     onSuccess: set,
   });
-  const test = useMutation({ mutationFn: () => api.forgeTestToken(kind, token.trim(), given), onSuccess: setTested });
+  const test = useMutation({ meta: { errorShown: true }, mutationFn: () => api.forgeTestToken(kind, token.trim(), given), onSuccess: setTested });
   const paste = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.forgeLoginToken(kind, token.trim(), given),
     onSuccess: (r) => { set(r); setToken(''); setTested(null); },
   });
   const cancel = useMutation({ mutationFn: () => api.forgeCancelDevice(kind), onSuccess: set });
-  const disconnect = useMutation({ mutationFn: (host: string) => api.forgeDisconnect(kind, host), onSuccess: set });
+  const disconnect = useMutation({ meta: { errorShown: true }, mutationFn: (host: string) => api.forgeDisconnect(kind, host), onSuccess: set });
   const confirm = useConfirm();
   // What the forge calls its change requests (a generic name until its login is read).
   const changes = `${view.data?.changeRequestName ?? 'change request'}s`;

@@ -25,11 +25,12 @@ export async function withStopConfirm<T>(confirm: Confirm, attempt: (stopRunId?:
   }
 }
 
-/** Starts a run, asking before it stops another one when the host is at its limit. */
+/** Starts a run, asking before it stops another one when the host is at its limit. Callers show its error. */
 export function useStartRun(projectId: string, onStarted: (runId: string) => void) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   return useMutation({
+    meta: { errorShown: true },
     mutationFn: (r: NewRun): Promise<Run | null> =>
       withStopConfirm(confirm, (stopRunId) => api.startRun(projectId, stopRunId ? { ...r, stopRunId } : r)),
     onSuccess: (run) => {

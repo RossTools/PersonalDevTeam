@@ -103,6 +103,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
     onClose();
   };
   const create = useMutation({
+    meta: { errorShown: true },
     mutationFn: (choice: Choice) => api.createSession({ ...newSession(place!.projectId, place!.worktreeId, choice, { bypass, permissionMode }), ...(placement ? { tab: placement } : {}) }),
     onSuccess: async (s) => {
       void qc.invalidateQueries({ queryKey: ['sessions', s.projectId] });
