@@ -42,6 +42,8 @@
   `Button` API working (`variant` primary | secondary | ghost; adds danger; `size` sm | md; `pending`).
 - **Accessible by default.** Real roles; icon-only controls require a `label`; every overlay closes on Escape and
   returns focus to what opened it; Up/Down/Home/End in lists and menus; long press = right-click on touch.
+  Features build overlays from `Dialog`, `Sheet`, `Popover`, `Menu`, `Select` and `Tooltip`, never a hand-made
+  `role="dialog|menu|listbox|tooltip"` (a test fails on one); a `Sheet` can open from a `Dialog`.
   A hand-built `role="tablist"` takes `onKeyDown={tabListKeyDown}` and gives its tabs `tabIndexOf(…)` (Left/Right/Home/End,
   one Tab stop); what a tab shows is a `role="tabpanel"` labelled by the tab's id.
 - **Touch.** Long press opens the same menu as right-click (`MenuTrigger trigger="contextMenu"`). Drag data is

@@ -574,7 +574,7 @@ describe('HostSettingsPage', () => {
 });
 
 describe('UpdateBanner', () => {
-  it('stays one line and shows the release notes over the page, not in it', async () => {
+  it('stays one line and shows the release notes in a popover over the page, closed by Escape or Close', async () => {
     stubApi({ 'GET /api/host/update': update({ state: 'available', latest: { ...release, notes: 'Fixes things' } }) });
     renderWithQuery(<UpdateBanner />);
     const toggle = await screen.findByRole('button', { name: 'Release notes' });
@@ -583,10 +583,17 @@ describe('UpdateBanner', () => {
     expect(screen.queryByText('Fixes things')).not.toBeInTheDocument();
     await userEvent.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('region', { name: 'Release notes' })).toHaveClass('absolute');
+    const notes = screen.getByRole('dialog', { name: 'Release notes' });
+    expect(toggle).toHaveAttribute('aria-controls', notes.id);
+    expect(notes).not.toBeEmptyDOMElement();
+    expect(strip).not.toContainElement(notes);
     expect(screen.getByText('Fixes things')).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByText('Fixes things')).not.toBeInTheDocument());
+    await waitFor(() => expect(toggle).toHaveFocus());
+    await userEvent.click(toggle);
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(screen.queryByText('Fixes things')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Fixes things')).not.toBeInTheDocument());
   });
 
   it('shows the notes of every release since the installed version, newest first', async () => {
@@ -596,7 +603,7 @@ describe('UpdateBanner', () => {
     stubApi({ 'GET /api/host/update': update({ current: '0.1.840', state: 'available', latest: { ...release, version: '0.2.1', changes, releases } }) });
     renderWithQuery(<UpdateBanner />);
     await userEvent.click(await screen.findByRole('button', { name: 'Release notes' }));
-    const notes = screen.getByRole('region', { name: 'Release notes' });
+    const notes = screen.getByRole('dialog', { name: 'Release notes' });
     expect(within(notes).getByText('2 releases since v0.1.840')).toBeInTheDocument();
     const sections = within(notes).getAllByRole('region');
     expect(sections.map((r) => r.getAttribute('aria-label'))).toEqual(['v0.2.1', 'v0.2.0']);
@@ -615,7 +622,7 @@ describe('UpdateBanner', () => {
     expect(within(strip).getByText('Nightly')).toBeInTheDocument();
     expect(strip).toHaveClass('h-8', 'flex-nowrap');
     await userEvent.click(screen.getByRole('button', { name: 'Release notes' }));
-    const section = within(screen.getByRole('region', { name: 'Release notes' })).getByRole('region', { name: 'v0.2.1-nightly.20261030' });
+    const section = within(screen.getByRole('dialog', { name: 'Release notes' })).getByRole('region', { name: 'v0.2.1-nightly.20261030' });
     expect(within(section).getByText('Nightly')).toBeInTheDocument();
     expect(within(section).getByText('Things.')).toBeInTheDocument();
   });
@@ -631,7 +638,7 @@ describe('UpdateBanner', () => {
     stubApi({ 'GET /api/host/update': update({ state: 'available', latest: { ...release, changes } }) });
     renderWithQuery(<UpdateBanner />);
     await userEvent.click(await screen.findByRole('button', { name: 'Release notes' }));
-    const notes = screen.getByRole('region', { name: 'Release notes' });
+    const notes = screen.getByRole('dialog', { name: 'Release notes' });
     expect(within(notes).getByText('2 changes since v0.1.741')).toBeInTheDocument();
     const items = within(notes).getAllByRole('listitem');
     expect(items.map((li) => li.textContent)).toEqual(['PDT-9 Second change #11', 'PDT-5 First change #10']);

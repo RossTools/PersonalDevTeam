@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Banner, Button, Link, useConfirm } from '@ui';
+import { Badge, Banner, Button, Link, Popover, useConfirm } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { ReleaseChanges } from '../api/gen/ReleaseChanges';
 import type { ReleaseNotes } from '../api/gen/ReleaseNotes';
@@ -41,7 +41,6 @@ export function UpdateBanner() {
     onSettled: refresh,
   });
   const dismiss = useMutation({ meta: { errorShown: true }, mutationFn: api.dismissUpdateResult, onSettled: refresh });
-  const [notesOpen, setNotesOpen] = useState(false);
   const s = status.data;
   if (!s) return null;
   const r = s.lastResult;
@@ -50,9 +49,9 @@ export function UpdateBanner() {
   const releases = s.latest?.releases?.length ? s.latest.releases : null;
   const changes = s.latest?.changes?.entries.length ? s.latest.changes : null;
   const hasNotes = !!(releases || changes || s.latest?.notes);
-  // Every strip is one line of fixed height, and the release notes float over the page: the banner sits above the
-  // terminal, so any change in its height resizes the PTY and makes the agent redraw (on a phone, a wrapped banner
-  // with open notes left Claude one row).
+  // Every strip is one line of fixed height, and the release notes open in a popover over the page: the banner sits
+  // above the terminal, so any change in its height resizes the PTY and makes the agent redraw (on a phone, a wrapped
+  // banner with open notes left Claude one row).
   return (
     <>
       {r && (
@@ -67,39 +66,37 @@ export function UpdateBanner() {
         </Banner>
       )}
       {s.state === 'available' && s.latest && (
-        <div className="relative shrink-0">
-          <Banner
-            tone="accent"
-            actions={
-              <>
-                {hasNotes && (
-                  <Button size="sm" variant="ghost" compact aria-expanded={notesOpen} onClick={() => setNotesOpen((o) => !o)}>
-                    Release notes
-                  </Button>
-                )}
-                <Button size="sm" variant="primary" compact pending={install.isPending} onClick={() => install.mutate()}>Update</Button>
-              </>
-            }
-          >
-            Update to v{s.latest.version} available
-            {s.latest.nightly && <> <Badge>Nightly</Badge></>}
-            {install.isError && <span role="alert" className="text-destructive" title={install.error.message}> · {install.error.message}</span>}
-          </Banner>
-          {notesOpen && hasNotes && (
-            <div
-              role="region"
-              aria-label="Release notes"
-              className="absolute inset-x-0 top-full z-(--pdt-z-popover) max-h-[50vh] overflow-auto border-b border-border bg-popover p-3 shadow-popover"
-            >
-              {releases
-                ? <ReleaseList releases={releases} since={s.current} />
-                : changes
-                ? <ChangeList changes={changes} onOpened={() => setNotesOpen(false)} />
-                : <pre className="font-sans text-xs whitespace-pre-wrap text-foreground">{s.latest.notes}</pre>}
-              <Button size="sm" variant="ghost" className="mt-2" onClick={() => setNotesOpen(false)}>Close</Button>
-            </div>
-          )}
-        </div>
+        <Banner
+          tone="accent"
+          actions={
+            <>
+              {hasNotes && (
+                <Popover
+                  trigger={<Button size="sm" variant="ghost" compact>Release notes</Button>}
+                  label="Release notes"
+                  placement="bottom end"
+                  className="max-h-[50vh] w-[min(40rem,calc(100vw-2rem))] p-3"
+                >
+                  {({ close }) => (
+                    <>
+                      {releases
+                        ? <ReleaseList releases={releases} since={s.current} />
+                        : changes
+                        ? <ChangeList changes={changes} onOpened={close} />
+                        : <pre className="font-sans text-xs whitespace-pre-wrap text-foreground">{s.latest?.notes}</pre>}
+                      <Button size="sm" variant="ghost" className="self-start" onClick={close}>Close</Button>
+                    </>
+                  )}
+                </Popover>
+              )}
+              <Button size="sm" variant="primary" compact pending={install.isPending} onClick={() => install.mutate()}>Update</Button>
+            </>
+          }
+        >
+          Update to v{s.latest.version} available
+          {s.latest.nightly && <> <Badge>Nightly</Badge></>}
+          {install.isError && <span role="alert" className="text-destructive" title={install.error.message}> · {install.error.message}</span>}
+        </Banner>
       )}
       {(s.state === 'downloading' || s.state === 'installing') && (
         <Banner tone="waiting">
