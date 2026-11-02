@@ -3,6 +3,7 @@
 //! (so retries and the error port apply); the node's time limit kills the whole process tree.
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, setup_error, spec};
+use pdt_core::secret::Redactor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -186,7 +187,7 @@ impl NodeKind for Command {
                 return Ok(Outcome::next("out", json!({"would": would})));
             }
             let dir = working_dir(cx, &c.cwd).await?;
-            let out = run_command(&c, &dir).await?;
+            let out = run_command(&c, &dir, cx.st.store.redactor()).await?;
             Ok(Outcome::next("out", out))
         })
     }
@@ -297,7 +298,9 @@ fn tail(s: &str, max: usize) -> String {
     format!("…{}", &s[start..])
 }
 
-pub(crate) async fn run_command(c: &CommandConfig, dir: &Path) -> Result<CommandOutput, String> {
+/// Runs the step's command. What it printed is redacted before it is cut to size, so a value across the cut is never
+/// left half there (the store redacts the step's record again, whole values only).
+pub(crate) async fn run_command(c: &CommandConfig, dir: &Path, r: &Redactor) -> Result<CommandOutput, String> {
     let (program, args) = c.command_line();
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(&args)
@@ -325,8 +328,8 @@ pub(crate) async fn run_command(c: &CommandConfig, dir: &Path) -> Result<Command
         tokio::join!(read_capped(stdout, OUTPUT_CAP), read_capped(stderr, 1024 * 1024), child.wait());
     let status = status.map_err(|e| e.to_string())?;
     guard.0 = None;
-    let stdout = String::from_utf8_lossy(&out.0).into_owned();
-    let stderr = tail(&String::from_utf8_lossy(&err.0), OUTPUT_CAP);
+    let stdout = r.string_cut(&String::from_utf8_lossy(&out.0), out.1);
+    let stderr = tail(&r.string_cut(&String::from_utf8_lossy(&err.0), err.1), OUTPUT_CAP);
     let code = status.code().unwrap_or(-1);
     if !status.success() {
         let last: Vec<&str> = stderr.lines().rev().filter(|l| !l.trim().is_empty()).take(5).collect();

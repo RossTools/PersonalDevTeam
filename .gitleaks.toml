@@ -24,3 +24,12 @@ targetRules = ["generic-api-key"]
 paths = ['''^crates/pdt-api/src/secrets\.rs$''']
 regexTarget = "line"
 regexes = ['''update-token:[0-9a-f]{12}''']
+
+# Made-up forge tokens in the test that PDT's own keychain values are redacted.
+[[allowlists]]
+description = "fake forge tokens in the redaction test"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^crates/pdt-api/src/secrets\.rs$''']
+regexTarget = "line"
+regexes = ['''gh[or]_0123456789abcdef''']

@@ -466,6 +466,104 @@ impl SecretStore for Cached {
     }
 }
 
+/// Gives every value PDT reads from or writes to `inner` to the redactor, so the secrets PDT keeps for itself (the
+/// update token, the forge logins, connections' secrets and sign-ins) are kept out of what it stores, shows and logs
+/// as the user's secrets are. A value holding JSON (a login with its tokens) gives the strings under its token, secret
+/// and password fields. The user's secrets (`secret:<id>`) are left to the vault, which knows them by name.
+pub struct Redacting {
+    inner: std::sync::Arc<dyn SecretStore>,
+    redactor: std::sync::Arc<pdt_core::secret::Redactor>,
+}
+
+impl Redacting {
+    pub fn new(inner: std::sync::Arc<dyn SecretStore>, redactor: std::sync::Arc<pdt_core::secret::Redactor>) -> Self {
+        Self { inner, redactor }
+    }
+
+    fn learn(&self, account: &str, value: &str) {
+        if account.starts_with("secret:") {
+            return;
+        }
+        let label = redaction_label(account);
+        match serde_json::from_str::<serde_json::Value>(value) {
+            Ok(v @ (serde_json::Value::Object(_) | serde_json::Value::Array(_))) => {
+                let mut found = vec![];
+                credential_strings(&v, "", &mut found);
+                for (path, s) in found {
+                    self.redactor.set_labelled(&format!("{account}/{path}"), &s, label);
+                }
+            }
+            _ => self.redactor.set_labelled(account, value, label),
+        }
+    }
+}
+
+/// What a redacted value of PDT's own reads as (`[secret:<label>]`).
+fn redaction_label(account: &str) -> &'static str {
+    let is = |name: &str| account == name || account.strip_prefix(name).is_some_and(|r| r.starts_with(':'));
+    if is(UPDATE_TOKEN) {
+        "update-token"
+    } else if is(GITHUB_LOGIN) || is(FORGE_LOGINS) {
+        "forge-login"
+    } else if account.starts_with("mcp-oauth:") {
+        "mcp-sign-in"
+    } else if account.starts_with("connection:") {
+        "connection"
+    } else {
+        "pdt"
+    }
+}
+
+/// The strings under credential fields (`token`, `access_token`, `refreshToken`, `client_secret`, `password`…) in `v`,
+/// with their paths; not addresses, types or times (`token_endpoint`, `token_type`, `expires_at`), and not short
+/// ones (`"bearer"`).
+fn credential_strings(v: &serde_json::Value, path: &str, out: &mut Vec<(String, String)>) {
+    let credential = |key: &str| {
+        let k = key.to_ascii_lowercase();
+        ["token", "secret", "password"].iter().any(|w| k.contains(w))
+            && !["endpoint", "url", "uri", "type", "expires", "_at"].iter().any(|w| k.contains(w))
+    };
+    match v {
+        serde_json::Value::Object(m) => {
+            for (k, x) in m {
+                let p = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
+                match x {
+                    serde_json::Value::String(s) if credential(k) && s.chars().count() >= 12 => {
+                        out.push((p, s.clone()))
+                    }
+                    _ => credential_strings(x, &p, out),
+                }
+            }
+        }
+        serde_json::Value::Array(a) => {
+            for (i, x) in a.iter().enumerate() {
+                credential_strings(x, &format!("{path}.{i}"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+impl SecretStore for Redacting {
+    fn get(&self, name: &str) -> Result<Option<String>, SecretError> {
+        let v = self.inner.get(name)?;
+        if let Some(v) = &v {
+            self.learn(name, v);
+        }
+        Ok(v)
+    }
+    fn set(&self, name: &str, value: &str) -> Result<(), SecretError> {
+        self.inner.set(name, value)?;
+        self.learn(name, value);
+        Ok(())
+    }
+    fn delete(&self, name: &str) -> Result<(), SecretError> {
+        self.inner.delete(name)?;
+        // The value stays known: it may still be in a step's output or a log.
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -764,5 +862,35 @@ mod tests {
         assert_eq!(s.get("probe").unwrap().as_deref(), Some("v"));
         s.delete("probe").unwrap();
         assert_eq!(s.get("probe").unwrap(), None);
+    }
+
+    #[test]
+    fn values_pdt_keeps_for_itself_are_redacted() {
+        let r = Arc::new(pdt_core::secret::Redactor::default());
+        let s = Redacting::new(Arc::new(MemorySecretStore::default()), r.clone());
+        s.set("connection:c1", "conn-secret-value").unwrap();
+        let login = serde_json::json!({"accounts": {"github:github.com": {
+            "token": "gho_0123456789abcdef", "api_url": "https://api.github.com", "login": "octocat",
+            "refresh": {"refresh_token": "ghr_0123456789abcdef", "token_endpoint": "https://github.com/x/token-path"},
+        }}});
+        s.set(FORGE_LOGINS, &login.to_string()).unwrap();
+        let text =
+            "a conn-secret-value b gho_0123456789abcdef c ghr_0123456789abcdef octocat https://github.com/x/token-path";
+        assert_eq!(
+            r.string(text),
+            "a [secret:connection] b [secret:forge-login] c [secret:forge-login] octocat https://github.com/x/token-path"
+        );
+        // A value read (pdtd starting with the keychain full) is learnt too; the vault's own are left to it.
+        let inner = Arc::new(MemorySecretStore::default());
+        inner.set(UPDATE_TOKEN, "github_pat_update_0123").unwrap();
+        inner.set("secret:s1", "vault-value-1").unwrap();
+        let s = Redacting::new(inner, r.clone());
+        s.get(UPDATE_TOKEN).unwrap();
+        s.get("secret:s1").unwrap();
+        assert_eq!(r.string("github_pat_update_0123 vault-value-1"), "[secret:update-token] vault-value-1");
+        // A new login replaces the old one's tokens.
+        let s = Redacting::new(Arc::new(MemorySecretStore::default()), r.clone());
+        s.set("connection:c1", "conn-secret-value-2").unwrap();
+        assert_eq!(r.string("conn-secret-value"), "conn-secret-value");
     }
 }

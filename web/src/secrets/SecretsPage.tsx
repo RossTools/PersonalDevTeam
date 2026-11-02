@@ -1,4 +1,4 @@
-// Settings → Secrets (PDT-158): secrets agents and workflows can use but never see. A value goes to this machine's
+// Settings → Secrets (PDT-158): secrets agents and workflows use by name, never pasted into the chat. A value goes to this machine's
 // keychain and is never shown again; the list shows each secret's name, who may use it and its last use, and each
 // secret's uses on request. It also says where values are kept: the system keyring, or (Linux without a Secret
 // Service, PDT-197) a file in the data folder.
@@ -63,7 +63,7 @@ export function SecretDialog({ secret, onClose }: { secret?: Secret; onClose: ()
       onOpenChange={(o) => { if (!o) onClose(); }}
       dismissable={false}
       title={secret ? `Edit ${secret.name}` : 'New secret'}
-      description="Agents and workflows use it by name; its value is kept in this machine's keychain and never shown to them, or to you, again."
+      description="Agents and workflows use it by name; its value is kept in this machine's keychain and never shown in the chat, or to you, again."
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!nameOk || !valueOk} pending={save.isPending} onClick={() => save.mutate()}>Save</Button></>}
     >
       <div className="flex flex-col gap-3">
@@ -184,7 +184,7 @@ export function SecretsPage() {
   return (
     <Page
       title="Secrets"
-      description="API keys, tokens and passwords agents and workflows can use but never see. Values are kept in this machine's keychain and replaced by [secret:NAME] wherever PDT stores, shows or logs them."
+      description="API keys, tokens and passwords agents and workflows use by name, never pasted into the chat. Values are kept in this machine's keychain and replaced by [secret:NAME] wherever PDT stores, shows or logs them."
     >
       <StoreNote />
       {list.error && <Alert tone="error">Secrets could not be loaded: {list.error.message}</Alert>}
