@@ -18,10 +18,11 @@ import { useOpenSession, useOpenTicket } from '../tickets/actions';
 import { formatBytes, STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
 import type { ItemLink } from './ItemLinks';
 import {
-  confirmOf, CONNECT_PATH, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
+  confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
   proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerApproval } from './approval';
+import { DecideRows } from './DecideRows';
 
 /** One of an item's actions. */
 export interface ItemAction {
@@ -116,6 +117,8 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   const [duplicating, setDuplicating] = useState(false);
   const [agentic, setAgentic] = useState(false);
   const [draft, setDraft] = useState(() => ({ title: item.title, description: proposed.description, priority: proposed.priority, labels: proposed.labels }));
+  // A batch call's rows the user unticked (PDT-475).
+  const [unticked, setUnticked] = useState<ReadonlySet<number>>(() => new Set());
   const openTicket = useOpenTicket();
   const openSession = useOpenSession();
   const withNote = (choice: string) => void answer({ choice, ...(note.trim() ? { text: note } : {}) });
@@ -440,6 +443,27 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
       }
       case 'confirm': {
         const { tool, agent, session, input } = confirmOf(item);
+        const rows = decideRowsOf(item);
+        if (rows) {
+          // The PM's decisions (PDT-475): Allow applies the rows left ticked, as if each was clicked here.
+          const kept = rows.map((_, n) => n).filter((n) => !unticked.has(n));
+          const toggle = (n: number, on: boolean) => setUnticked((u) => {
+            const next = new Set(u);
+            if (on) next.delete(n); else next.add(n);
+            return next;
+          });
+          return {
+            region: 'Agent call',
+            why: `${session ?? 'The PM'} proposes ${rows.length === 1 ? 'a decision' : `${rows.length} decisions`} on your Inbox. Untick any you don't want; Allow applies the rest as your own decisions, Deny changes nothing.`,
+            content: <DecideRows rows={rows} kept={(n) => !unticked.has(n)} onToggle={toggle} disabled={busy} />,
+            actions: [
+              { id: 'allow', title: kept.length === rows.length ? 'Allow' : `Allow ${kept.length} of ${rows.length}`, short: 'Allow', primary: true,
+                pending: busy, disabled: busy || kept.length === 0, run: () => void answer({ choice: 'allow', rows: kept }) },
+              { id: 'deny', title: 'Deny', end: true, disabled: busy, run: () => plain('deny') },
+            ],
+            hint: `${kept.length} of ${rows.length} ticked`,
+          };
+        }
         return {
           region: 'Agent call',
           why: `${session ?? 'An agent session'}${agent ? ` (${agent})` : ''} wants to call ${tool}. ${agent ?? 'Its agent'} can't ask in its own prompt, so PDT asks here; either way the agent hears what happened.`,

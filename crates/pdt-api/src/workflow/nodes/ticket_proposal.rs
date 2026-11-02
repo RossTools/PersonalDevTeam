@@ -8,7 +8,7 @@ use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use pdt_core::inbox::{self, InboxAnswer, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
 use pdt_core::session::{SessionKind, SessionStatus};
-use pdt_core::ticket::{Actor, LinkKind, TicketPatch, TicketStage};
+use pdt_core::ticket::{Actor, By, LinkKind, TicketPatch, TicketStage};
 use pdt_core::ticket_proposal::{self as proposal, Decision};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -154,6 +154,16 @@ pub(crate) async fn answer(st: &AppState, item: &InboxItem, a: &InboxAnswer, fro
     if !from_ui {
         return Err("only the user decides a ticket proposal, from PDT's Inbox".into());
     }
+    decide(st, item, a, Actor::User.into()).await
+}
+
+/// Applies the user's decision `a` on a ticket proposal's item, as `by`: the user's click, or the user's Allow of the
+/// PM's `inbox_decide` ([`By::user_via`], PDT-475), whose events and resolution keep the PM as `proposedBy`. Never
+/// reached from an agent's own request.
+pub(crate) async fn decide(st: &AppState, item: &InboxItem, a: &InboxAnswer, by: By) -> Result<Value, String> {
+    if item.kind != InboxKind::TicketProposal {
+        return Err("that item is not a ticket proposal".into());
+    }
     let store = &st.store;
     let id = item.ticket_id.as_deref().ok_or("the item has no ticket")?;
     let t = store.get_ticket_summary(id).await.map_err(|e| e.to_string())?.ok_or("the ticket is gone")?;
@@ -192,19 +202,22 @@ pub(crate) async fn answer(st: &AppState, item: &InboxItem, a: &InboxAnswer, fro
         ),
         _ => None,
     };
-    let resolution = json!({"choice": a.choice, "note": note, "duplicateOf": duplicate_of});
+    let mut resolution = json!({"choice": a.choice, "note": note, "duplicateOf": duplicate_of});
+    if let Some(p) = &by.proposed_by {
+        resolution["proposedBy"] = json!(p);
+    }
     if !store.end_inbox_item(&item.id, InboxStatus::Resolved, &resolution, now_ms()).await.map_err(|e| e.to_string())? {
         return Err("this item was already answered".into());
     }
     let to = decision.stage();
     let ticket = match accept {
-        Some(patch) => store.patch_ticket_by(id, &patch, Actor::User, now_ms()).await,
+        Some(patch) => store.patch_ticket_by(id, &patch, &by, now_ms()).await,
         None => {
             if let Some(other) = &duplicate_of {
                 store.add_link(id, other, LinkKind::Relates, now_ms()).await.map_err(|e| e.to_string())?;
             }
             let since = now_ms();
-            let moved = store.move_ticket_by(id, to, Actor::User, Some(&json!({"via": "inbox"})), since).await;
+            let moved = store.move_ticket_by(id, to, &by, Some(&json!({"via": "inbox"})), since).await;
             if moved.as_ref().is_ok_and(|m| m.is_some()) {
                 crate::start::close_attempt(st, id, to, since, Actor::User, None)
                     .await
