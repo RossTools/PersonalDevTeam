@@ -12,6 +12,7 @@ import { useAgents } from '../common/agents';
 import { actionError } from '../common/useAction';
 import { NewTicketDialog } from './NewTicketDialog';
 import { invalidateTickets } from './queries';
+import { invalidateWorktrees } from '../common/worktrees';
 
 export interface MakeTicketDialogProps {
   session: Session;
@@ -48,6 +49,7 @@ export function MakeTicketDialog({ session, canStartHere, onClose, onCreated }: 
     const startHere = async (t: Ticket) => {
       await api.startTicket(t.id, { agent: session.agent ?? 'claude', fromSession: session.id, mode: 'force' });
       invalidateTickets(qc);
+      invalidateWorktrees(qc, t.projectId);
       void qc.invalidateQueries({ queryKey: ['sessions'] });
       void qc.invalidateQueries({ queryKey: ['workspaces'] });
     };

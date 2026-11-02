@@ -1,13 +1,16 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { toast } from '@ui';
 import { api } from '../api/client';
 import { actionError } from '../common/useAction';
+import { invalidateWorkflow } from '../workflows/invalidate';
 import type { NotificationList } from '../api/gen/NotificationList';
 import type { NotificationRulesView } from '../api/gen/NotificationRulesView';
 
+const UPDATES = ['notifications', 'updates'];
+
 /** The Inbox's Updates, newest first, polled with the rest of the UI; `unreadUpdates` is the rail's dot. */
 export function useUpdates() {
-  return useQuery({ queryKey: ['notifications', 'updates'], queryFn: () => api.notifications({ section: 'updates', limit: 100 }), refetchInterval: 2000 });
+  return useQuery({ queryKey: UPDATES, queryFn: () => api.notifications({ section: 'updates', limit: 100 }), refetchInterval: 2000 });
 }
 
 export function useRefreshNotifications() {
@@ -36,14 +39,32 @@ export function useReadAllUpdates() {
   });
 }
 
-/** Clears one Update from the Inbox (PDT-224); it is gone from the list at once. */
+/**
+ * Shows the Updates as `change` leaves them before the server answers, and gives back the list as it was (for a
+ * failure). A poll in flight would land the old list over it (PDT-451), so it is cancelled first.
+ */
+async function optimistic(qc: QueryClient, change: (l: NotificationList) => NotificationList) {
+  await qc.cancelQueries({ queryKey: UPDATES });
+  const previous = qc.getQueryData<NotificationList>(UPDATES);
+  if (previous) qc.setQueryData(UPDATES, change(previous));
+  return { previous };
+}
+
+const rollBack = (qc: QueryClient, context: { previous?: NotificationList } | undefined) => {
+  if (context?.previous) qc.setQueryData(UPDATES, context.previous);
+};
+
+/** Clears one Update from the Inbox (PDT-224); it is gone from the list at once (back if clearing fails). */
 export function useClearUpdate() {
   const qc = useQueryClient();
   const refresh = useRefreshNotifications();
   return useMutation({
     mutationFn: (id: string) => api.clearNotification(id),
-    onMutate: (id) => qc.setQueryData<NotificationList>(['notifications', 'updates'], (l) => l && { ...l, items: l.items.filter((u) => u.id !== id) }),
-    onError: (e) => toast.error(`Couldn't clear the update: ${actionError(e)}`),
+    onMutate: (id) => optimistic(qc, (l) => ({ ...l, items: l.items.filter((u) => u.id !== id) })),
+    onError: (e, _id, context) => {
+      rollBack(qc, context);
+      toast.error(`Couldn't clear the update: ${actionError(e)}`);
+    },
     onSettled: () => void refresh(),
   });
 }
@@ -54,8 +75,11 @@ export function useClearAllUpdates() {
   const refresh = useRefreshNotifications();
   return useMutation({
     mutationFn: () => api.clearUpdates(),
-    onMutate: () => qc.setQueryData<NotificationList>(['notifications', 'updates'], (l) => l && { ...l, items: [], unreadUpdates: 0 }),
-    onError: (e) => toast.error(`Couldn't clear the updates: ${actionError(e)}`),
+    onMutate: () => optimistic(qc, (l) => ({ ...l, items: [], unreadUpdates: 0 })),
+    onError: (e, _v, context) => {
+      rollBack(qc, context);
+      toast.error(`Couldn't clear the updates: ${actionError(e)}`);
+    },
     onSettled: () => void refresh(),
   });
 }
@@ -79,10 +103,7 @@ export function useNotificationRulesActions() {
   const enable = useMutation({
     meta: { errorShown: true },
     mutationFn: ({ id, on }: { id: string; on: boolean }) => api.patchWorkflow(id, { enabled: on }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: RULES });
-      void qc.invalidateQueries({ queryKey: ['workflows'] });
-    },
+    onSuccess: (_d, { id }) => invalidateWorkflow(qc, id),
   });
   return { save, reset, enable };
 }

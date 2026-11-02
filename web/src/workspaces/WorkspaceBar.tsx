@@ -49,6 +49,7 @@ function TabButton({ ws, tab, info, selected, tabIndex, renaming, setRenaming, o
         await api.renameSession(tab.sessionId!, t);
       } finally {
         if (info) void qc.invalidateQueries({ queryKey: ['sessions', info.projectId] });
+        void qc.invalidateQueries({ queryKey: ['session', tab.sessionId] });
       }
     });
   return (

@@ -36,6 +36,7 @@ import { useCheck, useDraft } from './useDraft';
 import { useProposal } from './useProposal';
 import { VersionsView } from './VersionsView';
 import { BuiltinSettingsBanner } from './BuiltinSettingsBanner';
+import { invalidateWorkflowViews } from './invalidate';
 
 export type WorkflowTab = 'graph' | 'outline' | 'text' | 'runs' | 'versions';
 
@@ -160,7 +161,8 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
 
   const saved = (d: WorkflowDetail) => {
     qc.setQueryData(['workflow', d.id], d);
-    void qc.invalidateQueries({ queryKey: ['workflows'] });
+    // Settings shows a built-in as customized once it is saved here.
+    invalidateWorkflowViews(qc);
     void qc.invalidateQueries({ queryKey: ['workflow-versions', d.id] });
   };
   const save = useMutation({

@@ -20,6 +20,7 @@ import { SessionTicketChip } from './SessionTicketChip';
 import { startedByStep } from '../sessions/status';
 import { applyDrop } from './WorkspaceBar';
 import { RowField } from '../common/RowField';
+import { worktreesQuery } from '../common/worktrees';
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
@@ -233,7 +234,7 @@ export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
     });
   // Shared with the place picker and the views' cached queries.
   const worktreeQs = useQueries({
-    queries: ws.projects.map((p) => ({ queryKey: ['worktrees', p.id], queryFn: () => api.listWorktrees(p.id), staleTime: 30_000 })),
+    queries: ws.projects.map((p) => worktreesQuery(p.id)),
   });
   const branches = new Map(worktreeQs.flatMap((q) => (q.data ?? []).map((w) => [w.id, w.branch] as const)));
   /** The worktree's branch (its folder name until the worktrees load); null for the main checkout. */
