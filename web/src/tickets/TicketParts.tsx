@@ -26,10 +26,12 @@ import { useWatches, Watchers } from '../common/Watch';
 import { actionError, useAction } from '../common/useAction';
 import { moveTicket, patchTicket, useOpenSession, useOpenTicket } from './actions';
 import { ParentField } from './PartsSection';
-import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole } from './model';
+import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole, type TrackerLabel } from './model';
+import { usePluginList } from './ExternalKeys';
 import { invalidateTickets, pagedPoll, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
 import { AreaChips, AreasEditor } from './Areas';
 import { ATTACH_ACCEPT, AttachButton, attachmentMarkdown, UploadList, useAttachmentUploads } from './attachments';
+import { IssueRows, LinkIssueDialog, useRefreshIssues, WebLinkRows } from './IssueLinks';
 import { LabelsEditor } from './LabelsEditor';
 import { TicketPicker } from './TicketPicker';
 
@@ -388,17 +390,25 @@ function LinkRow({ ticket, link }: { ticket: Ticket; link: LinkedTicket }) {
 /** Blocked by / Blocks / Related, each ticket with its key, title and stage; "Link ticket…" adds one. */
 export function TicketLinks({ ticket }: { ticket: Ticket }) {
   const [linking, setLinking] = useState(false);
+  const [linkingIssue, setLinkingIssue] = useState(false);
+  useRefreshIssues(ticket);
   const byRole = (r: LinkRole) => ticket.links.filter((l) => linkRole(l) === r);
+  const none = ticket.links.length === 0 && ticket.external.length === 0 && ticket.webLinks.length === 0;
   return (
     <OverviewSection
       title="Links"
       actions={
-        <Button variant="ghost" size="sm" compact onClick={() => setLinking(true)}>
-          <Link2 aria-hidden /> Link ticket…
-        </Button>
+        <span className="flex items-center">
+          <Button variant="ghost" size="sm" compact onClick={() => setLinking(true)}>
+            <Link2 aria-hidden /> Link ticket…
+          </Button>
+          <Button variant="ghost" size="sm" compact onClick={() => setLinkingIssue(true)}>
+            Link issue…
+          </Button>
+        </span>
       }
     >
-      {ticket.links.length === 0 && <p className="text-xs text-muted-foreground">No links.</p>}
+      {none && <p className="text-xs text-muted-foreground">No links.</p>}
       {ROLES.map((r) => {
         const list = byRole(r);
         if (list.length === 0) return null;
@@ -411,7 +421,10 @@ export function TicketLinks({ ticket }: { ticket: Ticket }) {
           </div>
         );
       })}
+      <IssueRows ticket={ticket} />
+      <WebLinkRows ticket={ticket} />
       {linking && <LinkTicketDialog ticket={ticket} onClose={() => setLinking(false)} />}
+      {linkingIssue && <LinkIssueDialog ticket={ticket} onClose={() => setLinkingIssue(false)} />}
     </OverviewSection>
   );
 }
@@ -528,7 +541,7 @@ function outcomeBody(e: TicketEvent) {
   );
 }
 
-function toItem(e: TicketEvent): TimelineItem {
+function toItem(e: TicketEvent, trackerLabel: TrackerLabel): TimelineItem {
   const icon = iconFor(e);
   const outcome = e.kind === 'outcome' ? outcomeBody(e) : undefined;
   return {
@@ -540,7 +553,7 @@ function toItem(e: TicketEvent): TimelineItem {
       ? { actorLabel: <>You · proposed by <AgentLabel agent={{ ...e.proposedBy, fromTicket: null }} name={e.proposedBy.persona ?? 'Agent'} /></> }
       : {}),
     time: e.createdAt,
-    title: eventTitle(e),
+    title: eventTitle(e, trackerLabel),
     ...(icon ? { icon } : {}),
     ...(e.kind === 'comment' && e.body ? { body: <Markdown>{e.body}</Markdown> } : {}),
     ...(outcome ? { body: outcome } : {}),
@@ -590,7 +603,9 @@ export function TicketTimeline({ ticketId, recent, composer = false }: { ticketI
     enabled: recent !== undefined,
   });
   const newestFirst = recent === undefined ? full.data?.pages.flatMap((p) => p.items) ?? [] : short.data?.items ?? [];
-  const items = [...newestFirst].reverse().map(toItem);
+  const plugins = usePluginList();
+  const trackerLabel: TrackerLabel = (system) => plugins?.find((p) => p.id === system)?.label;
+  const items = [...newestFirst].reverse().map((e) => toItem(e, trackerLabel));
   const loading = recent === undefined ? full.isPending : short.isPending;
   return (
     <OverviewSection title="Activity">

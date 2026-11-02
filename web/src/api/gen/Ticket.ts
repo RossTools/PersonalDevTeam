@@ -14,6 +14,7 @@ import type { TicketParent } from "./TicketParent";
 import type { TicketSource } from "./TicketSource";
 import type { TicketStage } from "./TicketStage";
 import type { TicketSummary } from "./TicketSummary";
+import type { WebLink } from "./WebLink";
 
 /**
  * A full ticket.
@@ -46,7 +47,11 @@ overlaps: Array<TicketOverlap>,
 /**
  * Its parts in rank order (empty when it has none).
  */
-partList: Array<TicketSummary>, id: string, projectId: string, 
+partList: Array<TicketSummary>, 
+/**
+ * Its plain links (docs, designs), oldest first; its tracker issues are `external`.
+ */
+webLinks: Array<WebLink>, id: string, projectId: string, 
 /**
  * `<project key>-<number>`, e.g. `PDT-42`.
  */

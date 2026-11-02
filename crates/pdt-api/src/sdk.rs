@@ -41,6 +41,14 @@ pub mod ci {
     pub use crate::github::{attempt_ref, merge_refused, merge_requested, run_refs, watched_pr};
 }
 
+/// Linking tickets to issues already in a tracker (PDT-481, [`crate::Integration::find_issue`]); a forge plugin's
+/// issues are found and read through its forge.
+pub mod issues {
+    pub use crate::issue_links::{FoundIssue, IssueNow, IssuePage, find_forge_issue, read_forge_link};
+    pub use pdt_core::issue_link::IssueState;
+    pub use pdt_store::StoredExternalLink;
+}
+
 /// Document providers (PDT-314: Google's Docs and Sheets, [`crate::Integration::document_providers`]).
 pub mod documents {
     pub use crate::documents::{DocumentProvider, NewFile, ProviderError, ProviderResult};

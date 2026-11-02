@@ -164,6 +164,30 @@ pub fn issue_key(s: &str) -> Option<String> {
     (project_ok && number_ok).then_some(k)
 }
 
+/// The issue key an address on Jira site `site_url` names (`<site>/browse/ABC-1`, a board's `?selectedIssue=ABC-1`,
+/// `…/issues/ABC-1`), or None when it is another site's or names no issue.
+pub fn key_in_url(site_url: &str, url: &str) -> Option<String> {
+    let (site_host, site_path) = pdt_core::issue_link::url_parts(site_url)?;
+    let (host, path) = pdt_core::issue_link::url_parts(url)?;
+    if host != site_host || !path.starts_with(&site_path) {
+        return None;
+    }
+    let path = &path[site_path.len()..];
+    let after = |word: &str| path.iter().position(|s| s == word).and_then(|i| path.get(i + 1));
+    after("browse")
+        .or_else(|| after("issues"))
+        .and_then(|k| issue_key(k))
+        .or_else(|| pdt_core::issue_link::query_param(url, "selectedIssue").and_then(|k| issue_key(&k)))
+}
+
+/// An issue's state from its `status` field: closed once its status is in Jira's Done category.
+pub fn issue_state(fields: &Value) -> pdt_core::issue_link::IssueState {
+    match fields["status"]["statusCategory"]["key"].as_str() {
+        Some("done") => pdt_core::issue_link::IssueState::Closed,
+        _ => pdt_core::issue_link::IssueState::Open,
+    }
+}
+
 /// The site's base URL without a trailing slash.
 pub fn site(url: &str) -> &str {
     url.trim().trim_end_matches('/')
@@ -467,6 +491,37 @@ pub struct JiraIssueCommented {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn issue_addresses_on_the_site_name_their_key() {
+        let s = "https://acme.atlassian.net/";
+        assert_eq!(key_in_url(s, "https://acme.atlassian.net/browse/abc-12").as_deref(), Some("ABC-12"));
+        assert_eq!(
+            key_in_url(s, "https://acme.atlassian.net/jira/software/projects/ABC/boards/1?selectedIssue=ABC-3")
+                .as_deref(),
+            Some("ABC-3")
+        );
+        assert_eq!(
+            key_in_url(s, "https://acme.atlassian.net/jira/software/projects/ABC/issues/ABC-4").as_deref(),
+            Some("ABC-4")
+        );
+        assert_eq!(key_in_url(s, "https://other.atlassian.net/browse/ABC-12"), None, "another site's");
+        assert_eq!(key_in_url(s, "https://acme.atlassian.net/wiki/x"), None);
+        let server = "https://example.com/jira";
+        assert_eq!(key_in_url(server, "https://example.com/jira/browse/OPS-1").as_deref(), Some("OPS-1"));
+        assert_eq!(key_in_url(server, "https://example.com/browse/OPS-1"), None, "outside the site's path");
+    }
+
+    #[test]
+    fn an_issue_is_closed_in_the_done_category() {
+        use pdt_core::issue_link::IssueState;
+        assert_eq!(
+            issue_state(&json!({"status": {"name": "Shipped", "statusCategory": {"key": "done"}}})),
+            IssueState::Closed
+        );
+        assert_eq!(issue_state(&json!({"status": {"statusCategory": {"key": "indeterminate"}}})), IssueState::Open);
+        assert_eq!(issue_state(&json!({})), IssueState::Open);
+    }
 
     fn issue_json() -> Value {
         json!({

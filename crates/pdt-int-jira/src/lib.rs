@@ -7,6 +7,7 @@
 mod actions;
 mod client;
 mod core;
+mod links;
 mod meta;
 mod sensor;
 
@@ -53,6 +54,32 @@ impl Integration for Jira {
         key: &'a str,
     ) -> BoxFut<'a, Result<Imported, ApiError>> {
         Box::pin(sensor::import_by_key(st, project_id, key))
+    }
+
+    fn find_issue<'a>(
+        &'a self,
+        st: &'a AppState,
+        project_id: &'a str,
+        given: &'a str,
+    ) -> BoxFut<'a, Option<Result<pdt_api::sdk::issues::FoundIssue, String>>> {
+        Box::pin(links::find(st, project_id, given))
+    }
+
+    fn read_issue<'a>(
+        &'a self,
+        st: &'a AppState,
+        link: &'a pdt_api::sdk::issues::StoredExternalLink,
+    ) -> BoxFut<'a, Option<Result<pdt_api::sdk::issues::IssueNow, String>>> {
+        Box::pin(async move { Some(links::read_link(st, link).await) })
+    }
+
+    fn issue_example(&self) -> Option<&'static str> {
+        Some("ABC-123, or the issue's address")
+    }
+
+    /// "Done moves the Jira issue".
+    fn closes_issues(&self) -> bool {
+        true
     }
 
     fn builtin_workflows(&self) -> Vec<Builtin> {
@@ -238,11 +265,12 @@ fn jira_done() -> WorkflowDoc {
     doc(json!({
         "name": "Done moves the Jira issue",
         "description": "Moving a ticket linked to a Jira issue to Done moves the issue to Done too (the project's done \
-                        transition, in its settings). Nothing else goes to Jira unless a workflow says so.",
+                        transition, in its settings). An issue linked by hand moves only when its \"Close it when this ticket is \
+                        done\" is on. Nothing else goes to Jira unless a workflow says so.",
         "nodes": [
             {"id": "done", "kind": "ticket.stage_changed", "version": 1, "position": {"x": 0, "y": 0}, "config": {"where": [
                 {"left": "{{trigger.to}}", "op": "eq", "right": "done"},
-                {"left": "{{trigger.external.jira}}", "op": "exists"}]}},
+                {"left": "{{trigger.closing.jira}}", "op": "exists"}]}},
             {"id": "move", "kind": "jira.transition", "version": 1, "position": {"x": 320, "y": 0}, "config": {
                 "ticket": "{{trigger.ticketId}}"}},
         ],

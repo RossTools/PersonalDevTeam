@@ -53,6 +53,40 @@ impl Integration for Github {
         true
     }
 
+    /// An issue's page on github.com or the Enterprise Server PDT signs in to, or `owner/name#12` (`#12`) in a
+    /// project on GitHub.
+    fn find_issue<'a>(
+        &'a self,
+        st: &'a crate::AppState,
+        project_id: &'a str,
+        given: &'a str,
+    ) -> BoxFut<'a, Option<Result<crate::issue_links::FoundIssue, String>>> {
+        let kind = pdt_core::forge::ForgeKind::GITHUB;
+        Box::pin(async move {
+            crate::issue_links::find_forge_issue(st, &kind, project_id, given, pdt_core::github_issue::issue_url).await
+        })
+    }
+
+    fn read_issue<'a>(
+        &'a self,
+        st: &'a crate::AppState,
+        link: &'a pdt_store::StoredExternalLink,
+    ) -> BoxFut<'a, Option<Result<crate::issue_links::IssueNow, String>>> {
+        let kind = pdt_core::forge::ForgeKind::GITHUB;
+        Box::pin(async move {
+            crate::issue_links::read_forge_link(st, &kind, link, pdt_core::github_issue::issue_url).await
+        })
+    }
+
+    fn issue_example(&self) -> Option<&'static str> {
+        Some("owner/name#12, or the issue's address")
+    }
+
+    /// "Done closes the GitHub issue".
+    fn closes_issues(&self) -> bool {
+        true
+    }
+
     fn event_types(&self) -> &'static [EventType] {
         GITHUB_EVENT_TYPES
     }

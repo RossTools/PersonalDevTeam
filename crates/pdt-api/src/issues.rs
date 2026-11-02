@@ -11,6 +11,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use pdt_core::forge::ForgeKind;
 use pdt_core::github_issue::{GITHUB, issue_key, repo_id};
+use pdt_core::issue_link::LinkOrigin;
 use pdt_core::ticket::{Actor, By};
 use pdt_forge::{ForgeError, NewIssue};
 use pdt_store::StoredExternalLink;
@@ -156,6 +157,7 @@ pub(crate) async fn file(st: &AppState, project_id: &str, new: NewForgeIssue, by
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "unsupported", format!("{} has no issues", f.api.name())));
     }
     let (api, repo) = (f.api.clone(), f.repo.clone());
+    let title_filed = title.clone();
     let ask = NewIssue { title, body: new.body, labels };
     let issue = tokio::task::spawn_blocking(move || api.create_issue(&repo, &ask))
         .await
@@ -164,13 +166,9 @@ pub(crate) async fn file(st: &AppState, project_id: &str, new: NewForgeIssue, by
     let key = issue_key(&f.repo, issue.number);
     let mut ticket_key = None;
     if let Some(t) = ticket {
-        let link = StoredExternalLink {
-            ticket_id: t.summary.id.clone(),
-            system: GITHUB.into(),
-            connection_id: repo_id(&f.repo),
-            key: key.clone(),
-            url: issue.url.clone(),
-        };
+        let mut link =
+            StoredExternalLink::new(&t.summary.id, GITHUB, repo_id(&f.repo), &key, &issue.url, LinkOrigin::Created);
+        (link.title, link.state) = (Some(title_filed), Some(pdt_core::issue_link::IssueState::Open));
         // The issue is filed whatever happens to the link: say so rather than lose it.
         match st.store.link_external(&link, by, now_ms()).await {
             Ok(Ok(_)) => ticket_key = Some(t.summary.key),

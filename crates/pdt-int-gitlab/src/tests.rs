@@ -657,3 +657,15 @@ fn a_ticket_runs_end_to_end_merge_request_pipeline_merge() {
         ]
     );
 }
+
+#[test]
+fn issue_pages_parse_with_any_depth_of_groups() {
+    let o = |h: &str, r: &str, n: u64| Some((h.to_string(), r.to_string(), n));
+    assert_eq!(crate::issue_url("https://gitlab.com/team/app/-/issues/12"), o("gitlab.com", "team/app", 12));
+    assert_eq!(crate::issue_url("https://gitlab.com/g/sub/app/-/issues/3#note_9"), o("gitlab.com", "g/sub/app", 3));
+    assert_eq!(crate::issue_url("https://git.example.com/g/app/-/work_items/4"), o("git.example.com", "g/app", 4));
+    assert_eq!(crate::issue_url("https://gitlab.com/team/app/-/merge_requests/12"), None);
+    assert_eq!(crate::issue_url("https://gitlab.com/app/-/issues/12"), None, "a project is in a group");
+    assert_eq!(crate::issue_url("https://gitlab.com/team/app/-/issues/0"), None);
+    assert_eq!(crate::issue_url("https://github.com/o/r/issues/1"), None);
+}

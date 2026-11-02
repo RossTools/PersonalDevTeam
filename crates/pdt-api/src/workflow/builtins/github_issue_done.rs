@@ -3,18 +3,20 @@
 use super::*;
 
 /// A ticket linked to a GitHub issue that finishes closes it (PDT-154): Done as completed, Won't do as not planned,
-/// each with a comment, once per ticket (the run key).
+/// each with a comment, once per ticket (the run key). Only an issue Done closes (`closing`, PDT-481): one PDT filed or
+/// imported, or one linked by hand with "Close it when this ticket is done" on.
 pub(super) fn github_issue_done() -> WorkflowDoc {
     let trigger = |to: &str| {
         json!({"runKey": "{{trigger.ticketId}}", "where": [
             {"left": "{{trigger.to}}", "op": "eq", "right": to},
-            {"left": "{{trigger.githubIssue}}", "op": "exists"}]})
+            {"left": "{{trigger.closing.github}}", "op": "exists"}]})
     };
     doc(json!({
         "name": "Done closes the GitHub issue",
         "description": "Moving a ticket linked to a GitHub issue to Done closes the issue as completed, with a comment \
                         naming the ticket; Won't do closes it as not planned. Once per ticket: moving it again \
-                        changes nothing on GitHub. An issue closed already is left as it is.",
+                        changes nothing on GitHub. An issue closed already is left as it is, and one linked by hand only \
+                        closes when its \"Close it when this ticket is done\" is on.",
         "nodes": [
             {"id": "done", "kind": "ticket.stage_changed", "version": 1, "position": {"x": 0, "y": 0},
              "config": trigger("done")},

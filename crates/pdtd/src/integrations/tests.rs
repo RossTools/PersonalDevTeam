@@ -58,6 +58,8 @@ fn the_tools_are_where_they_were() {
             "link_tickets",
             "unlink_tickets",
             "stop_ticket",
+            "link_issue",
+            "unlink_issue",
             "send_to_session",
             "inbox_decide",
             "change_request_view",
@@ -121,6 +123,8 @@ fn the_tools_are_where_they_were() {
             "link_tickets",
             "unlink_tickets",
             "stop_ticket",
+            "link_issue",
+            "unlink_issue",
             "send_to_session",
             "inbox_decide",
             "doc_edit",
@@ -184,10 +188,11 @@ fn the_tools_are_where_they_were() {
         || n.starts_with("jira_")
         || n.starts_with("scryer_")
         || *n == "report_bug"
+        || *n == "link_issue"
         || forge.contains(n)));
-    assert_eq!(open.len(), 35);
+    assert_eq!(open.len(), 36);
     let pm = pdt_core::persona::builtin_persona("pm").unwrap().setup(t);
-    assert_eq!(pm.tool_set(t).len(), 75);
+    assert_eq!(pm.tool_set(t).len(), 77);
 }
 
 #[test]

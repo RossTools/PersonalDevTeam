@@ -52,7 +52,8 @@ With a login, PDT:
 - opens pull requests for agents, and lets them read CI's failed logs and reply to review comments;
 - merges when you (or a workflow you turned on) say so: through the merge queue or auto-merge when the repository
   uses them, otherwise itself, once CI passes;
-- reads, comments on and files issues, when you or a workflow ask it to;
+- reads, comments on and files issues, when you or a workflow ask it to, and shows the title and state of issues
+  [linked to tickets](../using-pdt/tickets-and-the-board.md#issues-in-github-gitlab-and-jira);
 - reruns CI or starts a GitHub Actions workflow, when a workflow asks it to.
 
 Agents push their branches with plain `git`, using your own git setup, not PDT's login. Everything else on GitHub goes

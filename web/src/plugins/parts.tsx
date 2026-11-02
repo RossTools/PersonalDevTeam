@@ -13,7 +13,7 @@ import { STATUS_LABEL, STATUS_TONE, enabledWith, offWith, pluginsKey, stuckOn, t
 export const usePlugins = () => useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations });
 
 /** A plugin's letters on its own colour (the brand's, from the plugin: not a theme colour). */
-export function PluginIcon({ p, size = 'md' }: { p: Plugin; size?: 'sm' | 'md' | 'lg' }) {
+export function PluginIcon({ p, size = 'md' }: { p: Plugin; size?: 'xs' | 'sm' | 'md' | 'lg' }) {
   return (
     <span
       aria-hidden
@@ -21,7 +21,7 @@ export function PluginIcon({ p, size = 'md' }: { p: Plugin; size?: 'sm' | 'md' |
       style={{ backgroundColor: p.icon.color }}
       className={cn(
         'grid shrink-0 place-items-center font-bold text-primary-foreground',
-        size === 'sm' ? 'size-6 rounded-md text-xs' : size === 'md' ? 'size-8 rounded-lg text-sm' : 'size-12 rounded-xl text-lg',
+        size === 'xs' ? 'size-4 rounded-sm text-2xs leading-none' : size === 'sm' ? 'size-6 rounded-md text-xs' : size === 'md' ? 'size-8 rounded-lg text-sm' : 'size-12 rounded-xl text-lg',
         // Not in this build: only the icon fades; the name and text keep their contrast and the badge says why.
         !p.built && 'opacity-50',
       )}

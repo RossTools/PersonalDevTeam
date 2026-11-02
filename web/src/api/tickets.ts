@@ -6,9 +6,13 @@ import type { EventPage } from './gen/EventPage';
 import type { EventQuery } from './gen/EventQuery';
 import type { FinishRequest } from './gen/FinishRequest';
 import type { FinishResult } from './gen/FinishResult';
+import type { IssueClose } from './gen/IssueClose';
+import type { IssueRef } from './gen/IssueRef';
+import type { LinkIssue } from './gen/LinkIssue';
 import type { NewComment } from './gen/NewComment';
 import type { NewParts } from './gen/NewParts';
 import type { NewTicket } from './gen/NewTicket';
+import type { NewWebLink } from './gen/NewWebLink';
 import type { PartsCreated } from './gen/PartsCreated';
 import type { RankMove } from './gen/RankMove';
 import type { StartResult } from './gen/StartResult';
@@ -42,6 +46,20 @@ export const ticketsApi = {
     request<Ticket>(`/api/tickets/${enc(id)}/links`, { method: 'POST', body: JSON.stringify(l) }),
   unlinkTicket: (id: string, l: TicketLink) =>
     request<Ticket>(`/api/tickets/${enc(id)}/links`, { method: 'DELETE', body: JSON.stringify(l) }),
+  /** Links an issue already in a tracker, by address or key; 422 `unrecognized` when no tracker plugin knows it. */
+  linkIssue: (id: string, l: LinkIssue) =>
+    request<Ticket>(`/api/tickets/${enc(id)}/issues`, { method: 'POST', body: JSON.stringify(l) }),
+  unlinkIssue: (id: string, r: IssueRef) =>
+    request<Ticket>(`/api/tickets/${enc(id)}/issues${queryString({ system: r.system, key: r.key })}`, { method: 'DELETE' }),
+  /** A linked issue's "Close it when this ticket is done". */
+  setIssueClose: (id: string, c: IssueClose) =>
+    request<Ticket>(`/api/tickets/${enc(id)}/issues`, { method: 'PATCH', body: JSON.stringify(c) }),
+  /** Reads the linked issues' titles and states again, where they are a few minutes old. */
+  refreshIssues: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/issues/refresh`, { method: 'POST' }),
+  addWebLink: (id: string, l: NewWebLink) =>
+    request<Ticket>(`/api/tickets/${enc(id)}/web-links`, { method: 'POST', body: JSON.stringify(l) }),
+  removeWebLink: (id: string, linkId: string) =>
+    request<Ticket>(`/api/tickets/${enc(id)}/web-links/${enc(linkId)}`, { method: 'DELETE' }),
   ticketEvents: (id: string, q: EventQuery = {}) =>
     request<EventPage>(`/api/tickets/${enc(id)}/events${queryString(q)}`),
   commentOnTicket: (id: string, body: string) =>

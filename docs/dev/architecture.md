@@ -122,6 +122,19 @@ outside (`source: external`) need the user's admission before agents work on the
 a workflow step sets. The board's Done window is a per-project host setting (`project_settings.board`, pdt-core
 `board::BoardSettings`, `GET`/`PUT /api/projects/{id}/board`).
 
+**Issue links.** A ticket's links to issues in other trackers are `ticket_links_external` rows: the tracker (`system`,
+a plugin's id), the connection or repository it is read through, the key and URL, how it was made (`origin`: created,
+imported, manual; pdt-core `issue_link`), `close_on_done`, and the issue's title and state as last read. An issue is
+linked to one ticket. Each tracker plugin recognizes its own addresses and keys (`Integration::find_issue`; GitHub's and
+GitLab's through `issue_links::find_forge_issue` with their page parsers) and reads a link again
+(`Integration::read_issue`) when the ticket is viewed and the link is `REFRESH_AFTER_MS` old (`POST
+/api/tickets/{id}/issues/refresh`). `ticket.stage_changed` carries every link in `external` (and
+`githubIssue`), and those with `close_on_done` in `closing`; the trackers' Done built-ins test `closing`, so a manual
+link, off by default, never closes someone else's issue unless the user turns it on (created and imported links always
+have it), while the user's own workflows see and act on every link. A step given a ticket acts on its first link
+(`Store::external_links`: closing ones first). Plain links (an
+address and label) are `ticket_web_links`, kept apart.
+
 **Attempts.** One go at a ticket: its branch (`pdt-<KEY>-<n>-<slug>`), worktree, base branch, workspace and the merge
 state. Start (pdt-api `start.rs`) makes the branch and worktree, the attempt and the first agent session, whose
 prompt is pdt-core `start::start_prompt`. An attempt ends as merged or abandoned. Merge detection (pdt-git

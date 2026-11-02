@@ -46,6 +46,16 @@ pub fn parse_issue(given: &str, repo: Option<&str>) -> Option<(String, u64)> {
     Some((valid_repo(repo?)?, number(g)?))
 }
 
+/// The host (lower case), repository and number of a GitHub issue's page on any host
+/// (`https://<host>/owner/name/issues/12`): github.com's, or an Enterprise Server's. A pull request's is not one.
+pub fn issue_url(url: &str) -> Option<(String, String, u64)> {
+    let (host, path) = crate::issue_link::url_parts(url)?;
+    let [owner, name, kind, n] = path.as_slice() else { return None };
+    let number = n.parse::<u64>().ok().filter(|n| *n > 0)?;
+    (kind == "issues").then_some(())?;
+    Some((host, valid_repo(&format!("{owner}/{name}"))?, number))
+}
+
 /// Why an issue is closed (GitHub's `state_reason`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseReason {
@@ -99,6 +109,18 @@ mod tests {
         assert_eq!(parse_issue("a/b/c#3", None), None);
         assert_eq!(parse_issue("o/r#x", None), None);
         assert_eq!(valid_repo("o/r s"), None);
+    }
+
+    #[test]
+    fn issue_pages_parse_on_any_host() {
+        let o = |h: &str, r: &str, n: u64| Some((h.to_string(), r.to_string(), n));
+        assert_eq!(issue_url("https://github.com/Own/Repo/issues/7"), o("github.com", "Own/Repo", 7));
+        assert_eq!(issue_url("https://github.com/o/r/issues/7#issuecomment-1"), o("github.com", "o/r", 7));
+        assert_eq!(issue_url("https://ghe.example.com/o/r/issues/2/"), o("ghe.example.com", "o/r", 2));
+        assert_eq!(issue_url("https://github.com/o/r/pull/7"), None);
+        assert_eq!(issue_url("https://github.com/o/r/issues"), None);
+        assert_eq!(issue_url("https://github.com/o/r/issues/0"), None);
+        assert_eq!(issue_url("https://gitlab.com/g/p/-/issues/3"), None);
     }
 
     #[test]

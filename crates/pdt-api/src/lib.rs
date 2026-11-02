@@ -30,6 +30,7 @@ mod identity_guard;
 mod inbox;
 pub mod install_updates;
 mod integrations;
+mod issue_links;
 mod issues;
 mod local_forge;
 mod local_network;
