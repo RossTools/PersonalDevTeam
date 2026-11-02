@@ -138,21 +138,32 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
 
 /// An asking tool from an agent that can't ask the user per call (Codex, Devin: PDT's tools run without asking
 /// there) runs where the project lets the PM act; elsewhere PDT asks in its Inbox (PDT-256): the call waits there, and
-/// the user's Allow runs it and tells the agent the result. Claude asks through its permission prompt (spec §4).
+/// the user's Allow runs it and tells the agent the result. Claude asks through its permission prompt (spec §4), unless
+/// it runs in Bypass, which never shows that prompt (PDT-414): then it is one that can't ask. A public-posting tool
+/// asks in the Inbox outside a workflow step, which expects it (PDT-414).
 pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) -> Result<(), String> {
     use pdt_core::session::AgentKind;
     let reg = cx.st.registry();
     let table = reg.tool_table();
-    // One that asks in PDT's Inbox (PDT-475) asks there for every agent, whatever the project lets the PM do.
-    let in_inbox = table.asks_in_inbox(tool);
-    if cx.confirmed
-        || !table.asks(tool)
-        || (!in_inbox && cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude)
-    {
+    if cx.confirmed {
         return Ok(());
     }
-    if !in_inbox && crate::pm::acts_without_asking(cx.st, target).await {
-        return Ok(());
+    if !table.asks(tool) {
+        let in_step = cx.st.store.active_agent_step(&cx.session.id).await.ok().flatten().is_some();
+        if !table.public(tool) || in_step {
+            return Ok(());
+        }
+    } else {
+        // One that asks in PDT's Inbox (PDT-475) asks there for every agent, whatever the project lets the PM do.
+        let in_inbox = table.asks_in_inbox(tool);
+        let claude_prompts =
+            cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude && !cx.session.asks_nothing();
+        if !in_inbox && claude_prompts {
+            return Ok(());
+        }
+        if !in_inbox && crate::pm::acts_without_asking(cx.st, target).await {
+            return Ok(());
+        }
     }
     let item = crate::workflow::agent::ask_confirm(cx.st, cx.session, tool, cx.input).await?;
     Err(format!(

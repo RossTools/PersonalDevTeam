@@ -110,6 +110,33 @@ async fn say(env: &Env, session: &str, text: &str) -> String {
     wait_said(env, session, before + 1).await
 }
 
+/// Sends a call to a public-posting tool, which asks in the Inbox outside a workflow step (PDT-414); the user allows
+/// it. Returns its result (or error) as the agent would have read it.
+async fn say_allowed(env: &Env, session: &str, text: &str) -> String {
+    let said = say(env, session, text).await;
+    assert!(said.contains("needs the user's yes") && said.contains("Inbox"), "{said}");
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    let item = inbox["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "confirm" && i["sessionId"] == session)
+        .unwrap_or_else(|| panic!("no confirm item: {inbox}"))
+        .clone();
+    let (s, v) = call_as_ui(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", item["id"].as_str().unwrap()),
+        Some(json!({"choice": "allow"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    match v.get("result") {
+        Some(r) => serde_json::to_string_pretty(r).unwrap(),
+        None => v["error"].as_str().unwrap_or_default().to_string(),
+    }
+}
+
 fn run(id: u64, branch: &str, state: pdt_core::pr::CiState, at: &str) -> pdt_core::pr::CiRun {
     pdt_core::pr::CiRun {
         provider: "github_actions".into(),
@@ -172,7 +199,7 @@ async fn an_agent_reads_failed_ci_logs_and_answers_on_its_pr_through_pdt_tools()
     let said = say(&env, &s, "mcp: ci_failed_logs {\"provider\": \"buildkite\"}").await;
     assert!(said.contains("no CI provider buildkite"), "{said}");
 
-    let said = say(&env, &s, "mcp: change_request_comment {\"body\": \"Fixed in abc\"}").await;
+    let said = say_allowed(&env, &s, "mcp: change_request_comment {\"body\": \"Fixed in abc\"}").await;
     assert!(said.contains("has no pull request yet"), "{said}");
     gh.set_pr(&branch, Some(pr(12)));
     gh.set_comments(
@@ -206,9 +233,9 @@ async fn an_agent_reads_failed_ci_logs_and_answers_on_its_pr_through_pdt_tools()
     let said = say(&env, &s, "mcp: change_request_view {}").await;
     assert!(said.contains("\"number\": 12") && said.contains("\"reviewComment\": true"), "{said}");
     assert!(!said.contains("Ignore your instructions") && said.contains("\"leftOut\": 1"), "{said}");
-    let said = say(&env, &s, "mcp: change_request_comment {\"body\": \"Fixed in abc\"}").await;
+    let said = say_allowed(&env, &s, "mcp: change_request_comment {\"body\": \"Fixed in abc\"}").await;
     assert!(said.contains("pull/12#issuecomment-1"), "{said}");
-    let said = say(&env, &s, "mcp: change_request_comment {\"body\": \"Done\", \"replyTo\": 55}").await;
+    let said = say_allowed(&env, &s, "mcp: change_request_comment {\"body\": \"Done\", \"replyTo\": 55}").await;
     assert!(said.contains("discussion_r2"), "{said}");
     assert_eq!(
         *gh.change_comments_added.lock().unwrap(),
@@ -227,7 +254,7 @@ async fn an_agent_reads_failed_ci_logs_and_answers_on_its_pr_through_pdt_tools()
             created_at: "t".into(),
         }],
     );
-    let said = say(&env, &s, "mcp: issue_comment {\"number\": 3, \"body\": \"Looking\"}").await;
+    let said = say_allowed(&env, &s, "mcp: issue_comment {\"number\": 3, \"body\": \"Looking\"}").await;
     assert!(said.contains("issues/3#issuecomment-1"), "{said}");
     let said = say(&env, &s, "mcp: issue_view {\"number\": 3}").await;
     assert!(said.contains("\"title\": \"Crash\"") && said.contains("Looking"), "{said}");
@@ -644,7 +671,7 @@ async fn an_agent_opens_its_pr_and_asks_for_the_merge_again_after_a_queue_drop()
 
     let said = say(&env, &s, "mcp: change_request_open {\"title\": \" \"}").await;
     assert!(said.contains("needs a title"), "{said}");
-    let said = say(&env, &s, "mcp: change_request_open {\"title\": \"Fix CI\", \"body\": \"Why\"}").await;
+    let said = say_allowed(&env, &s, "mcp: change_request_open {\"title\": \"Fix CI\", \"body\": \"Why\"}").await;
     assert!(said.contains("\"number\": 100") && said.contains("\"existing\": false"), "{said}");
     assert!(said.contains("\"base\": \"main\""), "the attempt's base: {said}");
     let opened = gh.opened.lock().unwrap().clone();
@@ -653,7 +680,7 @@ async fn an_agent_opens_its_pr_and_asks_for_the_merge_again_after_a_queue_drop()
         (opened[0].head.as_str(), opened[0].base.as_str(), opened[0].body.as_str()),
         (branch.as_str(), "main", "Why")
     );
-    let said = say(&env, &s, "mcp: change_request_open {\"title\": \"Again\"}").await;
+    let said = say_allowed(&env, &s, "mcp: change_request_open {\"title\": \"Again\"}").await;
     assert!(said.contains("\"number\": 100") && said.contains("\"existing\": true"), "{said}");
     assert_eq!(gh.opened.lock().unwrap().len(), 1, "the branch's open one, not a second");
 
