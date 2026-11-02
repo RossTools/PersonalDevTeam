@@ -36,7 +36,9 @@
   or not built shows as muted text, a dashed edge or a badge, so its text keeps 4.5:1 (tokens.test.ts checks the token pairs).
 - Dark mode: `dark:` follows our theme rule; usually no `dark:` is needed because the tokens switch.
 - Motion: `duration-(--pdt-duration)` / default transition duration; nothing animates under
-  `motion-reduce`.
+  `motion-reduce`. Anything that animates, transforms or transitions layout says `motion-reduce:animate-none` /
+  `motion-reduce:transition-none` in the same class string (`src/lint.test.ts` checks); `src/index.css` also cuts
+  every animation and transition to near zero under reduced motion, as a safety net.
 
 ## Component rules
 
