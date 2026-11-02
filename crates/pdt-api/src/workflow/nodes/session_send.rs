@@ -97,7 +97,7 @@ impl NodeKind for SessionSend {
         Box::pin(async move {
             let c: SessionSendConfig = parse(&input)?;
             // What an outsider wrote stays in PDT (PDT-202): the ticket's timeline shows it.
-            if let Some(why) = crate::untrusted::outsider_refusal(cx.ctx) {
+            if let Some(why) = crate::untrusted::outsider_refusal(cx.ctx, cx.origin) {
                 tracing::info!(run = %cx.run.id, "a message an outsider wrote was not sent to the agent");
                 return Ok(Outcome::next("skipped", json!({"quiet": true, "reason": why})));
             }

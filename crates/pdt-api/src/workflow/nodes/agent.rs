@@ -189,7 +189,7 @@ impl NodeKind for Agent {
                     );
                     return Ok(Outcome::next(&first, json!({"would": would})));
                 }
-                if let Some(why) = crate::untrusted::outsider_refusal(cx.ctx) {
+                if let Some(why) = crate::untrusted::outsider_refusal(cx.ctx, cx.origin) {
                     return Err(why);
                 }
                 // What a real run would check first (PDT-152): the persona, and where the step runs.

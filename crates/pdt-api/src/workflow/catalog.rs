@@ -102,6 +102,8 @@ pub struct StepCx<'a> {
     pub node: &'a Node,
     /// The run's context (`trigger`, `steps`, `state`, `run`), for kinds that resolve more later.
     pub ctx: &'a Value,
+    /// For a sub-workflow's run, the trigger of the run that called it first (PDT-415): what its input may carry.
+    pub origin: Option<&'a Value>,
     /// A dry run: report what would happen, change nothing.
     pub dry_run: bool,
     /// The step ran before and was cut short (PDT stopped while it ran, or it timed out): it may have done some or all

@@ -421,7 +421,7 @@ async fn resolve(st: &AppState, m: &SessionMessage, session: Option<&str>) {
     if let (Some(sid), Some(run_id), false) = (session, &m.run_id, step_prompt)
         && pdt_core::fence::fenced(&m.text)
         && let Ok(Some(run)) = st.store.get_workflow_run(run_id).await
-        && let Some((source, url)) = crate::untrusted::trigger_source(&st.registry(), &run.trigger)
+        && let Some((source, url)) = crate::untrusted::run_source(st, &run).await
     {
         let e = pdt_core::workflow::events::OutsideInput {
             project_id: run.project_id.clone(),

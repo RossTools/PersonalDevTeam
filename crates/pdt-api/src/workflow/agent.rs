@@ -137,7 +137,7 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     let st = cx.st;
     // What an outsider wrote never goes into a session (PDT-202).
     if c.owner == Owner::Agent
-        && let Some(why) = crate::untrusted::outsider_refusal(cx.ctx)
+        && let Some(why) = crate::untrusted::outsider_refusal(cx.ctx, cx.origin)
     {
         return Err(why);
     }
@@ -340,7 +340,7 @@ async fn record_outside_input(cx: &StepCx<'_>, c: &AgentConfig, a: &AgentStep, s
         workflow_name: Some(cx.workflow.name.clone()),
     };
     if pdt_core::fence::fenced(&c.prompt)
-        && let Some((source, url)) = crate::untrusted::trigger_source(&st.registry(), &cx.run.trigger)
+        && let Some((source, url)) = crate::untrusted::run_source(st, cx.run).await
     {
         crate::untrusted::record_input(st, record(source, url, "prompt")).await;
     }

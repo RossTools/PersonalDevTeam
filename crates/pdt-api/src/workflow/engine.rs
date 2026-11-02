@@ -197,29 +197,41 @@ fn context(wf: &Workflow, run: &Run, steps: &[Step], state: serde_json::Map<Stri
     })
 }
 
+/// The outside fields of `trigger` (its event type's `outside`), none when it carries none or the user wrote them (a
+/// comment of theirs on a document, PDT-318).
+fn outside_fields(reg: &crate::integrations::Registry, trigger: &Value) -> &'static [&'static str] {
+    let Some(t) = trigger.get("type").and_then(Value::as_str).and_then(|k| reg.event_type(k)) else { return &[] };
+    if pdt_core::workflow::events::by_user(trigger) { &[] } else { t.outside }
+}
+
 /// The outside text an agent gets, fenced (PDT-202): each of `fields` (`NodeKind::agent_text`) is resolved again, each
 /// reference that reads one of the trigger's outside fields (its event type's `outside`, or something inside one:
 /// `{{trigger.body.message}}`) put in a block tagged with an id picked for this prompt, and the fixed instruction goes
-/// before it. Other fields, and other nodes, get the text as it is, as does a trigger the user wrote (`byUser`).
+/// before it. Other fields, and other nodes, get the text as it is, as does a trigger the user wrote (`byUser`). In a
+/// sub-workflow's run whose `origin` (the trigger of the run that called it first) carries outside text, all of the
+/// trigger (its input) counts as outside (PDT-415).
 pub(crate) fn fence_input(
     reg: &crate::integrations::Registry,
     fields: &[&str],
     config: &Value,
     ctx: &Value,
+    origin: Option<&Value>,
     input: &mut Value,
 ) {
     if fields.is_empty() {
         return;
     }
-    let Some(t) = ctx.pointer("/trigger/type").and_then(Value::as_str).and_then(|k| reg.event_type(k)) else { return };
-    // The user wrote it (a comment of theirs on a document, PDT-318): not outside input.
-    if t.outside.is_empty() || pdt_core::workflow::events::by_user(&ctx["trigger"]) {
+    let outside = match origin {
+        Some(o) if !outside_fields(reg, o).is_empty() => pdt_core::fence::ALL,
+        _ => outside_fields(reg, &ctx["trigger"]),
+    };
+    if outside.is_empty() {
         return;
     }
     let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
     for f in fields {
         let (Some(raw), Some(slot)) = (config.get(*f), input.get_mut(*f)) else { continue };
-        let fenced = pdt_core::fence::resolve_fenced(raw, ctx, &["event", "secret"], "trigger", t.outside, &fence);
+        let fenced = pdt_core::fence::resolve_fenced(raw, ctx, &["event", "secret"], "trigger", outside, &fence);
         if let Value::String(text) = fenced {
             *slot = Value::String(fence.with_note(&text));
         }
@@ -317,6 +329,52 @@ pub(crate) async fn load(st: &AppState, run: &Run) -> R<(Workflow, WorkflowDoc)>
     Ok((wf, doc))
 }
 
+/// How many workflows [`reaches_agent`] looks through.
+const MAX_REACH: usize = 64;
+
+/// Whether a run of `doc` can get to an agent step: one of its own, or one of a workflow it runs (`workflow.call`, at
+/// any depth, PDT-415). A call whose workflow is a reference (known only once it runs), or too deep to follow, counts
+/// as one that does; one whose workflow is gone doesn't (the call fails).
+async fn reaches_agent(st: &AppState, doc: &WorkflowDoc) -> bool {
+    use super::nodes::{agent, call};
+    let reg = st.registry();
+    // True when `doc` has an agent step; else the workflows it calls go on `todo`.
+    let scan = |doc: &WorkflowDoc, todo: &mut Vec<String>| {
+        for n in &doc.nodes {
+            if n.kind == agent::KIND {
+                return true;
+            }
+            if n.kind != call::KIND {
+                continue;
+            }
+            match reg.catalog().current_config(n).ok().and_then(|c| parse::<call::CallConfig>(&c).ok()) {
+                Some(c) if !c.workflow.contains("{{") => todo.push(c.workflow),
+                _ => return true,
+            }
+        }
+        false
+    };
+    let mut todo = vec![];
+    if scan(doc, &mut todo) {
+        return true;
+    }
+    let mut seen = HashSet::new();
+    while let Some(id) = todo.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        if seen.len() > MAX_REACH {
+            return true;
+        }
+        let Ok(Some(wf)) = st.store.get_workflow(&id).await else { continue };
+        let Ok(Some(d)) = st.store.workflow_doc(&wf.id, wf.version).await else { continue };
+        if scan(&d, &mut todo) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Matches new events to enabled triggers (starting runs) and to steps waiting for events.
 async fn match_events(st: &AppState) {
     let events = match st.store.unprocessed_events(200).await {
@@ -363,9 +421,7 @@ async fn match_events(st: &AppState) {
                     .map(|k| resolve(&Value::String(k), &ctx))
                     .and_then(|v| v.as_str().map(String::from).or_else(|| (!v.is_null()).then(|| v.to_string())))
                     .unwrap_or_else(|| format!("{}:{}", node.id, e.id));
-                if pdt_core::workflow::events::untrusted(&e.kind)
-                    && doc.nodes.iter().any(|n| n.kind == super::nodes::agent::KIND)
-                {
+                if pdt_core::workflow::events::untrusted(&e.kind) && reaches_agent(st, doc).await {
                     if capped.is_none() {
                         capped = Some(crate::untrusted::triage_cap(st, &e, &trigger).await);
                     }
@@ -634,6 +690,7 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
                 step: &job.step,
                 node: job.node,
                 ctx: &job.ctx,
+                origin: job.origin.as_ref(),
                 dry_run: false,
                 rerun: job.rerun,
             };
@@ -701,6 +758,8 @@ struct Job<'a> {
     config: Value,
     input: Value,
     ctx: Value,
+    /// The trigger of the run that called this one first (`StepCx::origin`).
+    origin: Option<Value>,
     limit: std::time::Duration,
     /// The body runs under the engine lock.
     locked: bool,
@@ -759,7 +818,8 @@ async fn claim<'a>(
     let state = st.store.workflow_state(&wf.id).await.map_err(err)?;
     let ctx = context(wf, run, steps, state, false);
     let mut input = resolve_keeping(&config, &ctx, &["event", "secret"]);
-    fence_input(&reg, kind.agent_text(), &config, &ctx, &mut input);
+    let origin = crate::untrusted::origin(st, run).await.map(|r| r.trigger);
+    fence_input(&reg, kind.agent_text(), &config, &ctx, origin.as_ref(), &mut input);
     // Found running, it was cut short by a restart (PDT-131); a retry after a timeout says so in its wait. A restart
     // doesn't use up one of the node's retries.
     let restarted = step.status == StepStatus::Running;
@@ -782,7 +842,7 @@ async fn claim<'a>(
     let outside =
         matches!(reg.catalog().spec(&node.kind).map(|s| s.category), Some(Category::Action | Category::Agent));
     let locked = !outside || kind.in_engine_lock();
-    Ok(Claim::Run(Box::new(Job { step, node, kind, config, input, ctx, limit, locked, rerun })))
+    Ok(Claim::Run(Box::new(Job { step, node, kind, config, input, ctx, origin, limit, locked, rerun })))
 }
 
 /// Writes what a step's body came to, under the engine lock. True when the run ended.
@@ -1441,9 +1501,19 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
         };
         let ctx = context(wf, &run, &done, state.clone(), true);
         let mut input = resolve_keeping(&config, &ctx, &["event", "secret"]);
-        fence_input(&reg, kind.agent_text(), &config, &ctx, &mut input);
+        fence_input(&reg, kind.agent_text(), &config, &ctx, None, &mut input);
         ds.input = input.clone();
-        let cx = StepCx { st, workflow: wf, run: &run, step: &step, node, ctx: &ctx, dry_run: true, rerun: false };
+        let cx = StepCx {
+            st,
+            workflow: wf,
+            run: &run,
+            step: &step,
+            node,
+            ctx: &ctx,
+            origin: None,
+            dry_run: true,
+            rerun: false,
+        };
         let result = kind.dry_run(&cx, input).await.map_err(|e| super::catalog::setup_split(&e).1.to_string());
         let port = match result {
             Ok(Outcome::Next { port, output }) => {
