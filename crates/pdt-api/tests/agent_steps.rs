@@ -988,8 +988,11 @@ async fn a_timed_out_step_is_in_the_inbox_and_resumes_in_its_session() {
     assert_eq!(reviews.len(), 2, "{r:#}");
     assert_eq!(reviews[1]["output"]["sessionId"].as_str(), Some(session.as_str()), "the same session");
     assert!(r["resumeFrom"].is_null());
-    let said = agent_says(&env, &session).await;
-    assert!(said.iter().any(|m| m.starts_with("mcp submit_outcome:")), "{said:?}");
+    // The run ends when submit_outcome takes the outcome, before the agent writes the tool's reply: wait for it.
+    tick_until(&env, "the submit_outcome reply", || async {
+        agent_says(&env, &session).await.iter().any(|m| m.starts_with("mcp submit_outcome:")).then_some(json!(null))
+    })
+    .await;
     assert!(inbox(&env).await.is_empty());
 }
 
