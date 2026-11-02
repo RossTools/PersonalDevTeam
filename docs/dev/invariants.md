@@ -35,9 +35,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   interrupted; the UI offers Continue. Only interrupted terminal sessions are resumed by themselves. Background
   tasks a restart stopped (kept per session, `sessions.background_tasks`, moved to `stopped_background` by
   `recover_conversations`) are told to the agent only along with the next message the user or a workflow sends
-  (pdt-api `conversations.rs` `tell_stopped_background`); a workflow step waiting on them gets that message at once,
-  as an automatic nudge (`workflow/agent.rs` `restarted_while_waiting`). Terminals don't report background tasks, so
-  their agents aren't told.
+  (pdt-api `conversations/mod.rs` `tell_stopped_background`); a workflow step waiting on them gets that message at
+  once, as an automatic nudge (`workflow/agent/recovery.rs` `restarted_while_waiting`). Terminals don't report
+  background tasks, so their agents aren't told.
 - **Text from outside is fenced.** Issue and PR text (titles too), webhook payloads and other outside fields
   (`EventType.outside`) are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions
   that read untrusted input run locked down (`persona::locked_down`: read-only tools, no secrets). Bots' comments and
@@ -190,7 +190,7 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   steps waiting for events: an empty list from a failed read would drop the events for good. Never
   `unwrap_or_default()` those reads. A workflow whose document is corrupt is left out with a warning instead, so one
   bad row doesn't hold up every event.
-- **Conversation events are never skipped.** `conversations.rs` `append` applies an event to the runtime state as
+- **Conversation events are never skipped.** `conversations/live.rs` `append` applies an event to the runtime state as
   it comes (a message the agent took leaves `pending`, a turn's leftover streamed text goes), then stores it through
   the conversation's `unstored` queue: one that can't be written waits there with every event after it, is retried
   with a backoff and stored in the order received, and only a stored event goes to viewers. What reads the log (a

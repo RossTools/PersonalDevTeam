@@ -246,7 +246,7 @@ conversation's watches to the fresh one (`watches::follow`); a tick during the r
 
 **Workflows.** Everything that happens is an event in the event log (`events`, keyed so a duplicate is dropped). A
 workflow is a versioned graph of nodes (pdt-core `workflow/`): a trigger, conditions, actions, waits, agent steps,
-gates. The engine (pdt-api `workflow/engine.rs`) matches new events to enabled workflows, starts runs, and advances
+gates. The engine (pdt-api `workflow/engine/`) matches new events to enabled workflows, starts runs, and advances
 their steps; node kinds live in `workflow/nodes/` or in an integration's crate. While writes fail (a full disk), the
 engine's tick waits, writing a probe row (`Store::probe_writes`) after a backoff of 2 s doubling to 30 s; once one
 works, events that could not be logged (kept in memory by `emit_event`) are logged, and unprocessed events start their
@@ -271,12 +271,12 @@ turn at once.
 hands it every open item, stored or listed (approvals, proposals, low disk), and it logs the ones it hasn't seen,
 keyed by id and opening time (items already open at startup are left alone). `inbox.answered`: the answer routes
 (the Inbox's, a permission request's, a gate's in the run view). `session.needs_you` and `session.turn_ended`: an
-agent session's activity change (`activity.rs` `persist` for terminals, `conversations.rs` `refresh_activity`), each
-transition once. `session.exited`: a terminal's exit (with `Notifier::take_expected_exit` as `stoppedByPdt`), a
+agent session's activity change (`activity.rs` `persist` for terminals, `conversations/live.rs` `refresh_activity`),
+each transition once. `session.exited`: a terminal's exit (with `Notifier::take_expected_exit` as `stoppedByPdt`), a
 conversation's process dying, or its Stop. `run.failed` and `run.finished`: `finish_run`. None of them goes through
 notification levels.
 
-**Stuck agent steps** (`workflow/stuck.rs`). A working step that stalls (`agent.rs` `stall`, after a turn without an
+**Stuck agent steps** (`workflow/stuck.rs`). A working step that stalls (`agent/mod.rs` `stall`, after a turn without an
 outcome or its session going), reaches its loop limit (`start_step`) or times out (`complete_step` by `timeout`) is
 handed to the built-in "When an agent is stuck" (`builtins/stuck_agents.rs`) while it is on: a row in
 `agent_escalations` and an `agent.stalled` / `agent.loop_limit` / `agent.timed_out` event, with no Inbox item yet. Its
@@ -573,7 +573,7 @@ shell. `AppShell`'s tests are split by area (`AppShell.<area>.test.tsx`), with s
 | PRs, CI, forges | pdt-api `github.rs`, `ci.rs`, `forge.rs`, `local_forge.rs`; `crates/pdt-forge`, `crates/pdt-github`, `crates/pdt-int-gitlab` | `web/src/tickets`, `web/src/plugins` |
 | Review and merge | pdt-api `review.rs`; pdt-core `review.rs`; pdt-git `review.rs` | `web/src/review` |
 | Sessions and terminals | pdt-api `sessions.rs`, `pty_ws.rs`, `activity.rs`; `crates/pdt-agents` | `web/src/sessions`, `web/src/terminal` |
-| Conversations | pdt-api `conversations.rs`; pdt-core `conversation/`; pdt-agents `adapter/` | `web/src/conversation` |
+| Conversations | pdt-api `conversations/`; pdt-core `conversation/`; pdt-agents `adapter/` | `web/src/conversation` |
 | Agent instructions and guides | pdt-core `agent_context.rs`; pdt-api `guides.rs` (serves `docs/agent-guide.md`, the run-config guide (`docs/user/automation/run-configuration.md` then `docs/run-config.md`), `docs/prompts/`) | |
 | pdt-mcp and personas | pdt-api `mcp/` (tools in `mcp/tools/`), `personas.rs`; pdt-core `persona.rs` (prompts in `persona/`), `mcp.rs` | `web/src/personas` |
 | Workflows, Inbox, notifications | pdt-api `workflow/`, `inbox.rs`, `notifications.rs`; pdt-core `workflow/`; pdt-store `workflows.rs`, `event_log.rs` | `web/src/workflows`, `web/src/inbox`, `web/src/notifications` |
