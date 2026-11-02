@@ -155,15 +155,25 @@ describe('new workflow gallery on a phone', () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: query.includes('max-width'), media: query, addEventListener: () => {}, removeEventListener: () => {},
     }));
-    open();
+    const { onClose } = open();
     await screen.findByRole('button', { name: /^Mine/ });
     const chips = screen.getByRole('group', { name: 'Categories' });
     expect(within(chips).getByRole('button', { name: 'Built-in' })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: /Preview/ })).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: /^Mine/ }));
-    const sheet = screen.getByRole('dialog', { name: 'Mine' });
+    const card = screen.getByRole('button', { name: /^Mine/ });
+    await userEvent.click(card);
+    const sheet = await screen.findByRole('dialog', { name: 'Mine' });
     expect(within(sheet).getByRole('button', { name: 'Create workflow' })).toBeInTheDocument();
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Back to templates' }));
-    expect(screen.queryByRole('dialog', { name: 'Mine' })).toBeNull();
+    // Focus moves into the sheet; Escape closes the sheet only, and focus goes back to the card.
+    await waitFor(() => expect(sheet).toContainElement(document.activeElement as HTMLElement));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Mine' })).toBeNull());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'New workflow' })).toBeInTheDocument();
+    await waitFor(() => expect(card).toHaveFocus());
+    // Close shuts it too.
+    await userEvent.click(card);
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Mine' })).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Mine' })).toBeNull());
   });
 });

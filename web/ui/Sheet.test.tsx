@@ -1,6 +1,8 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { useState } from 'react';
+import { Dialog } from './Dialog';
 import { Sheet } from './Sheet';
 import { Button } from './primitives/button';
 
@@ -75,6 +77,38 @@ describe('Sheet', () => {
     expect(onOpenChange).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Beside' }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('opened from a dialog, is usable, keeps Tab inside and closes on Escape without closing the dialog', async () => {
+    const user = userEvent.setup();
+    const onDialog = vi.fn();
+    function Picker() {
+      const [open, setOpen] = useState(false);
+      return (
+        <Dialog open onOpenChange={onDialog} title="Gallery">
+          <Button onPress={() => setOpen(true)}>Pick</Button>
+          <Sheet side="bottom" title="Preview" open={open} onOpenChange={setOpen}><Button>Create</Button></Sheet>
+        </Dialog>
+      );
+    }
+    render(<Picker />);
+    const pick = screen.getByRole('button', { name: 'Pick' });
+    await user.click(pick);
+    // Not hidden by the dialog: found without `hidden`, and focus moves into it.
+    const sheet = await screen.findByRole('dialog', { name: 'Preview' }, { timeout: 5000 });
+    await waitFor(() => expect(sheet).toContainElement(document.activeElement as HTMLElement));
+    const create = within(sheet).getByRole('button', { name: 'Create' });
+    await user.click(create);
+    expect(create).toHaveFocus();
+    // Tab keeps to the sheet: past its last control to the first (Close), and back.
+    await user.tab();
+    expect(within(sheet).getByRole('button', { name: 'Close' })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(create).toHaveFocus();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Preview' })).not.toBeInTheDocument());
+    expect(onDialog).not.toHaveBeenCalled();
+    await waitFor(() => expect(pick).toHaveFocus());
   });
 
   it('keeps a hidden title for screen readers', async () => {

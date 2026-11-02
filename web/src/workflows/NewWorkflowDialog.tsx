@@ -3,8 +3,8 @@
 // enabled. PDT's built-in workflows sit in their own collapsed group at the end, to add one back (or copy it).
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, X } from 'lucide-react';
-import { Alert, Badge, Button, Dialog, Field, Input, Link, Select, Skeleton, Switch, Textarea } from '@ui';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Alert, Badge, Button, Dialog, Field, Input, Link, Select, Sheet, Skeleton, Switch, Textarea } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { ConnectionPicker } from '../connections/ConnectionPicker';
@@ -252,16 +252,13 @@ export function NewWorkflowDialog({ projects, templateId, onClose, onCreated, on
       headerActions={<Input aria-label="Search templates" placeholder="Search templates" value={q} onChange={(e) => setQ(e.target.value)} className="flex-1" />}
     >
       {phone ? (
-        <div className="relative flex h-full flex-col">
+        <div className="flex h-full flex-col">
           {nav}
           <div className="min-h-0 flex-1 overflow-auto">{body}</div>
-          {sheet && preview && (
-            <div role="dialog" aria-label={template.name} className="absolute inset-x-0 bottom-0 flex max-h-[85%] flex-col rounded-t-xl border-t border-border bg-popover shadow-lg">
-              <div className="flex justify-end px-2 pt-2">
-                <Button size="sm" variant="ghost" aria-label="Back to templates" onClick={() => setSheet(false)}><X aria-hidden /></Button>
-              </div>
-              <div className="min-h-0 overflow-auto px-3 pb-3">{preview}</div>
-            </div>
+          {template && (
+            <Sheet side="bottom" title={template.id === BLANK ? 'Start from scratch' : template.name} hideTitle open={sheet} onOpenChange={setSheet} className="max-h-[85dvh]">
+              {preview}
+            </Sheet>
           )}
         </div>
       ) : (

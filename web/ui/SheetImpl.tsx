@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
 import { cn } from '@ui/lib/utils';
 import { DialogTrigger } from 'react-aria-components';
 import { XIcon } from 'lucide-react';
@@ -25,6 +25,23 @@ const topLevel = (el: Element) => {
   while (e.parentElement && e.parentElement !== document.body) e = e.parentElement;
   return e;
 };
+
+const TABBABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+// A modal sheet keeps Tab inside itself: past the last control to the first, and back. Base UI's focus guards do this
+// on their own, but not when the sheet opened from a React Aria dialog (its focus containment sends the guard's focus
+// back to the dialog behind the sheet).
+function wrapTab(e: KeyboardEvent<HTMLElement>) {
+  if (e.key !== 'Tab' || e.altKey || e.ctrlKey || e.metaKey) return;
+  const all = [...e.currentTarget.querySelectorAll<HTMLElement>(TABBABLE)].filter((el) => !el.closest('[hidden]') && (!el.checkVisibility || el.checkVisibility()));
+  if (!all.length) return;
+  const [first, last] = [all[0], all[all.length - 1]];
+  const at = document.activeElement;
+  const to = e.shiftKey ? (at === first || at === e.currentTarget ? last : null) : at === last ? first : null;
+  if (to) {
+    e.preventDefault();
+    to.focus();
+  }
+}
 
 export interface SheetProps {
   side?: SheetSide;
@@ -97,7 +114,7 @@ export function Sheet({
       swipeDirection={swipe[side]}
       showSwipeHandle={side === 'bottom'}
     >
-      <DrawerContent className={cn('bg-surface', className)}>
+      <DrawerContent className={cn('bg-surface', className)} onKeyDown={modal ? wrapTab : undefined}>
         <DrawerHeader className={cn('relative p-3 pr-10 text-left', hideTitle && 'sr-only')}>
           <DrawerTitle className="text-sm font-semibold">{title}</DrawerTitle>
           {description && <DrawerDescription className="text-xs">{description}</DrawerDescription>}

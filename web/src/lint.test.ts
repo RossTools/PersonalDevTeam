@@ -54,6 +54,12 @@ describe('design system rules', () => {
     expect(offenders(/from ['"]cn['"]/)).toEqual([]);
   });
 
+  it('builds overlays from @ui, never a hand-rolled role="dialog", menu, listbox or tooltip', () => {
+    // @ui's Dialog, Sheet, Popover, Menu, Select and Tooltip move focus in, trap or restore it and close on Escape. A
+    // CSS selector naming the role (`[role="dialog"]`) is fine.
+    expect(offenders(/(?<![[\w-])role=\{?['"`](alertdialog|dialog|menu|listbox|tooltip)['"`]/, (p) => !p.startsWith('ui/'))).toEqual([]);
+  });
+
   it('keeps React Aria, Base UI, React Flow and the primitives behind @ui', () => {
     expect(
       offenders(/from ['"](react-aria-components|react-aria|react-stately|@base-ui\/react[^'"]*|@xyflow\/react[^'"]*|@ui\/primitives[^'"]*)['"]/, (p) => !p.startsWith('ui/')),
