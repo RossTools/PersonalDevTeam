@@ -81,6 +81,7 @@ function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog
   const [view, setView] = useState<'graph' | 'text'>('graph');
   const dirty = name !== t.name || description !== t.description || JSON.stringify(params) !== JSON.stringify(t.params) || JSON.stringify(doc) !== JSON.stringify(t.doc);
   const save = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.saveWorkflowTemplate(t.id, { name, description, params, doc }),
     onSuccess: (saved) => {
       qc.setQueryData(['workflow-template', t.id], saved);

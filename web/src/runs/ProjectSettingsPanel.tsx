@@ -44,6 +44,7 @@ type SetupAgent = (typeof SETUP_AGENTS)[number];
 function useSaveProjectSettings(project: Project, current: ProjectSettingsView | undefined) {
   const qc = useQueryClient();
   return useMutation({
+    meta: { errorShown: true },
     mutationFn: async (p: Partial<ProjectSettingsInput>) => {
       if (!current) throw new Error("The project's settings have not loaded, so nothing was saved. Try again once they have.");
       return api.saveProjectSettings(project.id, {

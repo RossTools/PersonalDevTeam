@@ -44,6 +44,7 @@ export function SecretDialog({ secret, onClose }: { secret?: Secret; onClose: ()
   const [projectIds, setProjectIds] = useState<string[]>(secret?.projects ?? []);
   const [personaIds, setPersonaIds] = useState<string[]>(secret?.personas ?? []);
   const save = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => secret
       ? api.patchSecret(secret.id, { description, projects: projectIds, personas: personaIds, ...(value ? { value } : {}) })
       : api.createSecret({ name: name.trim(), description, projects: projectIds, personas: personaIds, value }),
@@ -162,6 +163,7 @@ export function SecretsPage() {
   const personas = useQuery({ queryKey: ['personas'], queryFn: api.listPersonas });
   const [editing, setEditing] = useState<{ secret?: Secret } | null>(null);
   const remove = useMutation({
+    meta: { errorShown: true },
     mutationFn: (s: Secret) => api.deleteSecret(s.id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: secretsKey }),
   });

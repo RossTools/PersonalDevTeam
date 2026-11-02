@@ -7,11 +7,12 @@ import { api } from '../api/client';
 import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
 import { summary, type Catalog } from './model';
 
-/** Turning a workflow on (after the dialog) or off, for the switch and for the phone's ⋯ (PDT-120). */
+/** Turning a workflow on (after the dialog) or off, for the switch and for the phone's ⋯ (PDT-120). Callers show its error. */
 export function useEnable(w: WorkflowDetail) {
   const qc = useQueryClient();
   const [asking, setAsking] = useState(false);
   const toggle = useMutation({
+    meta: { errorShown: true },
     mutationFn: (enabled: boolean) => api.patchWorkflow(w.id, { enabled }),
     onSuccess: () => {
       setAsking(false);

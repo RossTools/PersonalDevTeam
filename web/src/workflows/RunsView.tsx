@@ -62,12 +62,12 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
     qc.setQueryData(['workflow-run', id], d);
     void qc.invalidateQueries({ queryKey: ['workflow-runs'] });
   };
-  const retry = useMutation({ mutationFn: () => api.retryWorkflowRun(id), onSuccess: done });
-  const resume = useMutation({ mutationFn: () => api.resumeWorkflowRun(id), onSuccess: done });
-  const cancel = useMutation({ mutationFn: () => api.cancelWorkflowRun(id), onSuccess: done });
-  const answer = useMutation({ mutationFn: (a: { step: string; choice: string }) => api.answerWorkflowStep(id, a.step, a.choice), onSuccess: done });
+  const retry = useMutation({ meta: { errorShown: true }, mutationFn: () => api.retryWorkflowRun(id), onSuccess: done });
+  const resume = useMutation({ meta: { errorShown: true }, mutationFn: () => api.resumeWorkflowRun(id), onSuccess: done });
+  const cancel = useMutation({ meta: { errorShown: true }, mutationFn: () => api.cancelWorkflowRun(id), onSuccess: done });
+  const answer = useMutation({ meta: { errorShown: true }, mutationFn: (a: { step: string; choice: string }) => api.answerWorkflowStep(id, a.step, a.choice), onSuccess: done });
   const openSession = useOpenSession();
-  const open = useMutation({ mutationFn: (id: string) => api.getSession(id), onSuccess: (s) => openSession(s) });
+  const open = useMutation({ meta: { errorShown: true }, mutationFn: (id: string) => api.getSession(id), onSuccess: (s) => openSession(s) });
   const [selected, setSelected] = useState<string | null>(null);
   if (run.error) return <Alert tone="error">The run could not be loaded: {run.error.message}</Alert>;
   if (!run.data) return <Skeleton lines={6} className="p-3" />;

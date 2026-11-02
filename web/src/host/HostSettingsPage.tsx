@@ -98,6 +98,7 @@ function useSaveSettings() {
   const qc = useQueryClient();
   const [state, track] = useSaveState();
   const m = useMutation({
+    meta: { errorShown: true },
     mutationFn: (p: HostSettingsPatch) => api.saveHostSettings(p),
     onSuccess: (v) => qc.setQueryData(['host-settings'], v),
   });
@@ -196,6 +197,7 @@ function Updates({ v }: { v: HostSettingsView }) {
   const repoSave = useSaveSettings();
   const [secret, setSecret] = useState('');
   const token = useMutation({
+    meta: { errorShown: true },
     mutationFn: (t: string) => api.saveToken(t),
     onSuccess: (u) => {
       qc.setQueryData(['host-update'], u);

@@ -127,6 +127,7 @@ export function McpServerDialog({ server, onClose }: { server?: McpServerView; o
   const [access, setAccess] = useState<AgentAccess>(server?.access ?? DEFAULT_ACCESS);
   const remote = transport !== 'stdio';
   const save = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => {
       const own: Record<string, unknown> = remote
         ? { transport, headers: pairsValue(headers), oauth: useOauth ? { clientId: clientId.trim() || null, clientSecret: clientSecret || null, scopes: scopes.trim() || null } : null }
@@ -229,6 +230,7 @@ function Probe({ server, probe }: { server: McpServerView; probe: McpProbe }) {
   const qc = useQueryClient();
   const policy = server.access.tools;
   const setMode = useMutation({
+    meta: { errorShown: true },
     mutationFn: ({ tool, mode }: { tool: string; mode: ToolMode }) => {
       const overrides = { ...policy.overrides };
       if (mode === policy.default) delete overrides[tool];
@@ -288,6 +290,7 @@ function SignIn({ server }: { server: McpServerView }) {
     onError: (_e, tab) => tab?.close(),
   });
   const signOut = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.signOutMcpServer(server.connection.id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: mcpServersKey }),
   });
@@ -313,6 +316,7 @@ function Row({ server, onEdit, onDelete }: { server: McpServerView; onEdit: () =
   const [probe, setProbe] = useState<McpProbe | null>(null);
   const qc = useQueryClient();
   const test = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.testMcpServer(server.connection.id),
     onSuccess: (p) => { setProbe(p); void qc.invalidateQueries({ queryKey: mcpServersKey }); },
   });
@@ -340,10 +344,12 @@ export function McpServersPage() {
   const list = useQuery({ queryKey: mcpServersKey, queryFn: api.mcpServers });
   const [editing, setEditing] = useState<{ server?: McpServerView } | null>(null);
   const remove = useMutation({
+    meta: { errorShown: true },
     mutationFn: (s: McpServerView) => api.deleteConnection(s.connection.id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: mcpServersKey }),
   });
   const onlyPdt = useMutation({
+    meta: { errorShown: true },
     mutationFn: (on: boolean) => api.saveHostSettings({ mcpOnlyPdt: on }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: mcpServersKey });
