@@ -345,6 +345,20 @@ function Cards() {
           </div>
         </Demo>
       </div>
+      <div className="flex w-40 flex-col gap-2 rounded-md bg-surface-2 p-2">
+        <Demo label="Narrow column · long badges truncate">
+          <ul className="flex flex-col gap-2">
+            <BoardCard ticket={card(56, {
+              source: 'pm', overlap: 'overlap', overlapWith: ['PDT-367', 'PDT-375'], waiting: true, autoStartAt: NOW + 65_000,
+              pickupHold: 'overlaps PDT-367 in workflows', title: 'Waits for overlapping work to finish',
+            })} onOpen={() => {}} entries={noMenu} draggable />
+            <BoardCard ticket={card(57, {
+              overlap: 'conflict', overlapWith: ['PDT-367'], pickupFailed: 'the worktree for pdt-PDT-57-a-long-branch is busy', labels: ['agentic', 'a-very-long-label-name'],
+              stage: 'in_progress', attempt: { ...attempt, branch: 'pdt/PDT-57-a-very-long-branch-name', pr: galleryPr({ number: 1234, ci: failedCi }) }, title: 'Conflicts and failed to start',
+            })} onOpen={() => {}} entries={noMenu} draggable />
+          </ul>
+        </Demo>
+      </div>
       <div className="flex flex-col gap-2 rounded-md bg-surface-2 p-2">
         <Demo label="Done · merged attempt">
           <ul className="flex flex-col gap-2">
