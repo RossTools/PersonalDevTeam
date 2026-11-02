@@ -2,10 +2,10 @@
 // opened by the user (here, from the Documents view or a ticket's documents) or by the agent's own tool. The tabs and
 // the one shown are PDT's (every device sees them); the panel's width and whether it is collapsed are this browser's,
 // per conversation. On a phone the panel is a pane of its own beside the conversation's.
-import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ExternalLink, FileStack, PanelRightClose, Plus, X } from 'lucide-react';
-import { ContextMenu, IconButton, SegmentedControl, dragData, parseDragData, tabIndexOf, tabListKeyDown, type MenuEntry } from '@ui';
+import { ContextMenu, IconButton, SegmentedControl, Skeleton, dragData, parseDragData, tabIndexOf, tabListKeyDown, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { DocumentsBeside } from '../api/gen/DocumentsBeside';
@@ -14,10 +14,12 @@ import { usePm } from '../pm/usePm';
 import { routePath } from '../shell/route';
 import { navigate } from '../shell/router';
 import { useOpenSession } from '../tickets/actions';
-import { DocumentBody } from './DocumentBody';
 import { LinkDocumentDialog } from './DocumentDialogs';
 import { KindIcon } from './LinkedDocuments';
 import { openDocument, providerLabel, useDocument, useDocumentProviders } from './queries';
+
+// The document's editors and the Markdown libraries load when a document is first shown beside a conversation.
+const DocumentBody = lazy(() => import('./DocumentBody').then((m) => ({ default: m.DocumentBody })));
 
 const POLL = 2000;
 export const BESIDE_WIDTH = { default: 440, min: 280, max: 960 };
@@ -191,7 +193,9 @@ function Shown({ id }: { id: string | null }) {
   const provider = doc.data ? providerLabel(providers.data?.providers, doc.data.provider) : 'Its provider';
   return (
     <div role="tabpanel" aria-labelledby={`beside-tab-${id}`} className="flex min-h-0 flex-1 flex-col overflow-auto p-3">
-      <DocumentBody key={id} id={id} providerLabel={provider} className="flex min-h-0 flex-1 flex-col" />
+      <Suspense fallback={<Skeleton lines={6} />}>
+        <DocumentBody key={id} id={id} providerLabel={provider} className="flex min-h-0 flex-1 flex-col" />
+      </Suspense>
     </div>
   );
 }

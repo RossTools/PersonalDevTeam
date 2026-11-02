@@ -1,8 +1,9 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import { Skeleton } from '@ui';
 
-// The screens and dialogs the shell loads the first time they're shown (the ticket screens and the Markdown libraries
-// they use, among others): a new one is one line here, sorted by name.
+// The screens and dialogs the shell loads the first time they're shown (the ticket screens, the terminal views and
+// the Markdown libraries they use, among others): a new one is one line here, sorted by name.
+export const BottomPanel = lazy(() => import('./BottomPanel').then((m) => ({ default: m.BottomPanel })));
 export const ChangesView = lazy(() => import('../review/ChangesView').then((m) => ({ default: m.ChangesView })));
 export const CreateIssueDialog = lazy(() => import('../tickets/CreateIssueDialog').then((m) => ({ default: m.CreateIssueDialog })));
 export const DocumentPage = lazy(() => import('../documents/DocumentPage').then((m) => ({ default: m.DocumentPage })));
@@ -13,6 +14,8 @@ export const NoteScreen = lazy(() => import('../notes/NotePage').then((m) => ({ 
 export const PersonaPage = lazy(() => import('../personas/PersonaPage').then((m) => ({ default: m.PersonaPage })));
 export const PhoneInboxItem = lazy(() => import('../inbox/PhoneInbox').then((m) => ({ default: m.PhoneInboxItem })));
 export const PmView = lazy(() => import('../pm/PmView').then((m) => ({ default: m.PmView })));
+export const RunView = lazy(() => import('../runs/RunView').then((m) => ({ default: m.RunView })));
+export const SessionView = lazy(() => import('../sessions/SessionView').then((m) => ({ default: m.SessionView })));
 export const StartDialog = lazy(() => import('../tickets/StartDialog').then((m) => ({ default: m.StartDialog })));
 export const TicketView = lazy(() => import('../tickets/TicketView').then((m) => ({ default: m.TicketView })));
 export const TicketsView = lazy(() => import('../tickets/TicketsView').then((m) => ({ default: m.TicketsView })));
