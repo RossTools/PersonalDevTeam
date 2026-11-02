@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Alert, Button, Page, Section, Select, SettingsRow, Skeleton, Switch, toast } from '@ui';
 import type { KindSetting } from '../api/gen/KindSetting';
 import type { Show } from '../api/gen/Show';
-import { actionError } from '../common/useAction';
 import { desktopNotificationsOn, setDesktopNotifications, showDesktop } from './desktop';
 import { useNotificationSettings, useSetNotificationSettings } from './queries';
 
@@ -22,7 +21,7 @@ export function NotificationSettingsPage() {
   const settings = useNotificationSettings();
   const set = useSetNotificationSettings();
   const kinds = settings.data;
-  const change = (c: Record<string, Show | null>) => set.mutate(c, { onError: (err) => toast.error(actionError(err)) });
+  const change = (c: Record<string, Show | null>) => set.mutate(c); // a failure toasts (the QueryClient's fallback)
   const changed = (kinds ?? []).filter((k) => k.show !== k.defaultShow);
   return (
     <Page

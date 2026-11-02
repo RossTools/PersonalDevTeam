@@ -68,6 +68,7 @@ export function usePluginSwitch(plugins: Plugin[]): { toggle: (p: Plugin, on: bo
   const qc = useQueryClient();
   const [asking, setAsking] = useState<{ p: Plugin; kind: string } | null>(null);
   const set = useMutation({
+    meta: { errorShown: true },
     mutationFn: ({ enabled, off }: { enabled: string[]; off: string[]; id: string; on: boolean }) => api.setIntegrations(enabled, off),
     onSuccess: (next, { id, on }) => {
       qc.setQueryData(pluginsKey, next);

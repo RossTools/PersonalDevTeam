@@ -66,6 +66,7 @@ function SaveAsTemplateDialog({ w, doc, onClose, onSaved }: { w: WorkflowDetail;
   const [name, setName] = useState(w.name);
   const [description, setDescription] = useState(w.description);
   const save = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.createWorkflowTemplate({ name, description, params: [], doc }),
     onSuccess: (t) => onSaved(t.id),
   });
@@ -158,6 +159,7 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
     void qc.invalidateQueries({ queryKey: ['workflow-versions', d.id] });
   };
   const save = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.saveWorkflow(w.id, { doc: draft.doc, note: note.trim(), propose: false }),
     onSuccess: (d) => { setNote(''); saved(d); toast.success(`Saved version ${d.version}`); },
   });

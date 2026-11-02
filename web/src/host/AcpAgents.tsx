@@ -47,6 +47,7 @@ export function AcpAgents({ v }: { v: HostSettingsView }) {
   const [pathFor, setPathFor] = useState<AcpAgentView | null>(null);
   const user = v.acpAgents.filter((a) => !a.builtin);
   const save = useMutation({
+    meta: { errorShown: true },
     mutationFn: (acpAgents: AcpAgentConfig[]) => api.saveHostSettings({ acpAgents }),
     onSuccess: (view) => {
       qc.setQueryData(['host-settings'], view);
@@ -137,8 +138,8 @@ function InstallerActions({ a, onPath }: { a: AcpAgentView; onPath: () => void }
     qc.setQueryData(['host-settings'], view);
     void qc.invalidateQueries({ queryKey: ['host-checks'] });
   };
-  const install = useMutation({ mutationFn: () => api.installAcpAgent(a.id), onSuccess: done });
-  const signIn = useMutation({ mutationFn: () => api.signInAcpAgent(a.id), onSuccess: done });
+  const install = useMutation({ meta: { errorShown: true }, mutationFn: () => api.installAcpAgent(a.id), onSuccess: done });
+  const signIn = useMutation({ meta: { errorShown: true }, mutationFn: () => api.signInAcpAgent(a.id), onSuccess: done });
   const error = install.error ?? signIn.error;
   return (
     <>
@@ -166,6 +167,7 @@ function ProgramDialog({ a, onClose }: { a: AcpAgentView; onClose: () => void })
   const qc = useQueryClient();
   const [path, setPath] = useState(a.program ?? '');
   const save = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.saveHostSettings({ acpPrograms: { [a.id]: path.trim() } }),
     onSuccess: (view) => {
       qc.setQueryData(['host-settings'], view);

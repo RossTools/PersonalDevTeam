@@ -58,6 +58,7 @@ export function SetupPage(props: SetupPageProps) {
   const checks = useQuery({ queryKey: ['host-checks'], queryFn: api.hostChecks });
   const [open, setOpen] = useState<StepId | null | undefined>(undefined);
   const dismiss = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.saveHostSetup({ dismissed: true }),
     onSuccess: (v) => {
       qc.setQueryData(['host-setup'], v);
@@ -234,6 +235,7 @@ function ProgramPathForm({ onSaved }: { onSaved: () => void }) {
   const [path, setPath] = useState<string | null>(null);
   const shown = path ?? stored(agent);
   const save = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.saveHostSettings({ [PROGRAM[agent]]: shown }),
     onSuccess: (s) => {
       qc.setQueryData(['host-settings'], s);
@@ -270,10 +272,12 @@ function GithubStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
     refetchInterval: (q) => (q.state.data?.pending ? 2000 : false),
   });
   const device = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.forgeLoginDevice('github', {}),
     onSuccess: (v) => qc.setQueryData(['forge-login', 'github'], v),
   });
   const skip = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.saveHostSetup({ githubSkipped: true }),
     onSuccess: (v) => {
       qc.setQueryData(['host-setup'], v);
@@ -344,6 +348,7 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
   const [picked, setPicked] = useState<AgentKind | null>(null);
   const agent = picked ?? preset;
   const save = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.saveHostSettings({ defaultAgent: agent }),
     onSuccess: (s) => {
       qc.setQueryData(['host-settings'], s);

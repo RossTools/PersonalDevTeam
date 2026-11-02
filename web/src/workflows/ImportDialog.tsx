@@ -151,11 +151,13 @@ export function ImportDialog({ projects, onClose, onImported }: {
   const [result, setResult] = useState<ImportResult | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   const check = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.checkImport(text),
     onSuccess: (c) => { setAnswers(noAnswers()); setChoices(c.workflows.map(() => ({ where: '', clash: 'copy' }))); },
   });
   const report = check.data;
   const run = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => {
       const mapping: ImportMapping = { connections: answers.connections, personas: answers.personas, projects: answers.projects };
       return api.importWorkflows({ text, mapping, targets: report!.workflows.map((w, i) => target(choices[i], whereOf(choices[i], w, report!, answers), w)) });

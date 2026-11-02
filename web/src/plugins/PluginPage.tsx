@@ -61,11 +61,12 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
   // With PDT's own Google sign-in, Sign in with Google adds an account (GoogleSignIn), not Add.
   const googleBuiltIn = useGoogleClient(id === 'google').data?.builtIn === true;
   const [editing, setEditing] = useState<{ connection?: Connection; kind?: string } | null>(null);
-  const check = useMutation({ mutationFn: () => api.checkIntegration(id), onSuccess: (next) => {
+  const check = useMutation({ meta: { errorShown: true }, mutationFn: () => api.checkIntegration(id), onSuccess: (next) => {
     qc.setQueryData(pluginsKey, next);
     void qc.invalidateQueries({ queryKey: connectionsKey });
   } });
   const remove = useMutation({
+    meta: { errorShown: true },
     mutationFn: (c: Connection) => api.deleteConnection(c.id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: connectionsKey });

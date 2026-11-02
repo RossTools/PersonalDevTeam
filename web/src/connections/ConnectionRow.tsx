@@ -11,7 +11,7 @@ export function McpToolsLine({ c }: { c: Connection }) {
   const qc = useQueryClient();
   const key = ['connection-tools', c.id];
   const tools = useQuery({ queryKey: key, queryFn: () => api.connectionTools(c.id), refetchInterval: 10_000 });
-  const relist = useMutation({ mutationFn: () => api.refreshConnectionTools(c.id), onSuccess: (t) => qc.setQueryData(key, t) });
+  const relist = useMutation({ meta: { errorShown: true }, mutationFn: () => api.refreshConnectionTools(c.id), onSuccess: (t) => qc.setQueryData(key, t) });
   const t = tools.data;
   return (
     <div className="flex w-full flex-wrap items-center gap-2 pl-2 text-xs text-muted-foreground">

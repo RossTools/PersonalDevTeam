@@ -25,6 +25,7 @@ export function ImportByKeyDialog({ projectId, source, onClose }: { projectId: s
   const open = useOpenTicket();
   const [key, setKey] = useState('');
   const run = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.importIssue(projectId, source.integration, key.trim()),
     onSuccess: (r) => {
       invalidateTickets(qc, [r.ticket.id]);

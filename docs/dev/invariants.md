@@ -198,3 +198,7 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.
 - **The UI re-renders every 2 s**: effects must be idempotent, and never focus from an inline ref callback.
+- **A failed mutation is reported once.** The app's QueryClient (web `common/queryClient.ts`) toasts a mutation's error
+  unless it has its own `onError` or `meta: { errorShown: true }`. Give a `useMutation` that renders its error inline
+  (or awaits `mutateAsync` in a save status) that meta, and a hook that returns its mutation's error the same, so the
+  error doesn't show twice; leave the rest to the fallback toast.
