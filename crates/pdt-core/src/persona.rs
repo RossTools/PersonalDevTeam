@@ -99,7 +99,7 @@ pub struct PersonaSetup {
     /// None: the project's override, else the host default (spec §3).
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
-    /// pdt-mcp tools; empty means the default set.
+    /// pdt-mcp tools; empty means none (PDT-414: a list never falls back to the default set).
     #[serde(default)]
     pub tools: Vec<String>,
 }
@@ -107,11 +107,7 @@ pub struct PersonaSetup {
 impl PersonaSetup {
     /// The tools the persona's sessions get, in `all`'s order.
     pub fn tool_set(&self, all: &ToolTable) -> Vec<String> {
-        if self.tools.is_empty() {
-            DEFAULT_TOOLS.iter().map(|t| t.to_string()).collect()
-        } else {
-            all.names().into_iter().filter(|t| self.tools.iter().any(|x| x == t)).map(String::from).collect()
-        }
+        all.names().into_iter().filter(|t| self.tools.iter().any(|x| x == t)).map(String::from).collect()
     }
 
     /// The setup with names trimmed, or why it can't be saved (`all`: the tools PDT has).
@@ -371,7 +367,7 @@ pub struct BuiltinPersona {
 
 /// A built-in persona's pdt-mcp tools.
 pub enum BuiltinTools {
-    /// These (empty: the default set).
+    /// These.
     These(&'static [&'static str]),
     /// Every tool the PM has ([`ToolDecl::pm`](crate::integration::ToolDecl::pm)), from every integration.
     Pm,
@@ -417,7 +413,7 @@ pub const BUILTIN_PERSONAS: &[BuiltinPersona] = &[
         role: "coder",
         description: "Builds the ticket on its branch, runs the checks and commits.",
         permission_mode: None,
-        tools: BuiltinTools::These(&[]),
+        tools: BuiltinTools::These(&DEFAULT_TOOLS),
         instructions: include_str!("persona/coder.md"),
     },
     BuiltinPersona {
@@ -426,7 +422,7 @@ pub const BUILTIN_PERSONAS: &[BuiltinPersona] = &[
         role: "reviewer",
         description: "Reviews the attempt's changes against the ticket.",
         permission_mode: None,
-        tools: BuiltinTools::These(&[]),
+        tools: BuiltinTools::These(&DEFAULT_TOOLS),
         instructions: include_str!("persona/reviewer.md"),
     },
     BuiltinPersona {
@@ -435,7 +431,7 @@ pub const BUILTIN_PERSONAS: &[BuiltinPersona] = &[
         role: "qa",
         description: "Runs the project's tests and tries the change.",
         permission_mode: None,
-        tools: BuiltinTools::These(&[]),
+        tools: BuiltinTools::These(&DEFAULT_TOOLS),
         instructions: include_str!("persona/qa.md"),
     },
     BuiltinPersona {
@@ -518,11 +514,11 @@ mod tests {
     }
 
     #[test]
-    fn empty_tools_mean_the_default_set_and_unknown_tools_are_refused() {
+    fn empty_tools_mean_none_and_unknown_tools_are_refused() {
         let t = table();
         let s = setup().validate(&t).unwrap();
         assert_eq!(s.model.as_deref(), Some("opus"));
-        assert_eq!(s.tool_set(&t), DEFAULT_TOOLS.to_vec());
+        assert!(s.tool_set(&t).is_empty(), "an empty list never falls back to the default set");
         let s = PersonaSetup { tools: vec!["catalog_get".into(), "get_ticket".into(), "get_ticket".into()], ..setup() };
         let s = s.validate(&t).unwrap();
         assert_eq!(s.tools, ["catalog_get", "get_ticket"]);
@@ -632,8 +628,8 @@ mod tests {
         // Edited instructions stay the user's, and are named.
         let mine = PersonaSetup { instructions: "Mine.".into(), ..old.clone() };
         assert_eq!(follow_template(&old, &mine, &new, &t), (mine.clone(), vec!["instructions"]));
-        // Tools compare as sets the persona gets (empty is the default set).
-        let base = PersonaSetup { tools: vec![], ..old.clone() };
+        // Tools compare as sets the persona gets, whatever their order.
+        let base = PersonaSetup { tools: DEFAULT_TOOLS.iter().rev().map(|t| t.to_string()).collect(), ..old.clone() };
         let same = PersonaSetup { tools: DEFAULT_TOOLS.map(String::from).to_vec(), ..old.clone() };
         let more = PersonaSetup { tools: t.names().into_iter().map(String::from).collect(), ..old.clone() };
         assert_eq!(follow_template(&base, &same, &more, &t).0.tools, more.tools);

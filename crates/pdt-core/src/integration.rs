@@ -27,6 +27,9 @@ pub struct ToolDecl {
     /// It always asks in PDT's Inbox (PDT-475), for every agent and whatever the project's policy: never Claude's
     /// permission prompt (so it is in `--allowedTools`), and never answered for the user. Implies [`ToolDecl::asks`].
     pub inbox_only: bool,
+    /// It posts where anyone can read it (a forge comment, a pull request): outside a workflow step, which expects it,
+    /// the call asks in PDT's Inbox, so an agent can't post what it read without the user's yes.
+    pub public: bool,
 }
 
 impl ToolDecl {
@@ -41,6 +44,7 @@ impl ToolDecl {
             destructive: false,
             pm: false,
             inbox_only: false,
+            public: false,
         }
     }
     pub const fn read_only(self) -> Self {
@@ -60,6 +64,9 @@ impl ToolDecl {
     }
     pub const fn asks_in_inbox(self) -> Self {
         Self { asks: true, inbox_only: true, ..self }
+    }
+    pub const fn public(self) -> Self {
+        Self { public: true, ..self }
     }
 }
 
@@ -106,6 +113,11 @@ impl ToolTable {
     /// Whether a call to `tool` always asks in PDT's Inbox ([`ToolDecl::inbox_only`]).
     pub fn asks_in_inbox(&self, tool: &str) -> bool {
         self.get(tool).is_some_and(|t| t.inbox_only)
+    }
+
+    /// Whether a call to `tool` posts publicly ([`ToolDecl::public`]).
+    pub fn public(&self, tool: &str) -> bool {
+        self.get(tool).is_some_and(|t| t.public)
     }
 
     /// Whether Claude asks before a call to `tool` (its permission prompt): an asking tool that doesn't ask in PDT's
