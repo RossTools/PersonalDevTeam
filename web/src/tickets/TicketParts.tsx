@@ -535,6 +535,10 @@ function toItem(e: TicketEvent): TimelineItem {
     id: e.id,
     actor: actorOf(e),
     ...(e.actor === 'agent' && e.agent ? { actorLabel: <AgentLabel agent={e.agent} name={actorOf(e)} made={e.kind === 'created'} /> } : {}),
+    // Your decision on the PM's proposal (PDT-475): "You · proposed by PM".
+    ...(e.actor === 'user' && e.proposedBy
+      ? { actorLabel: <>You · proposed by <AgentLabel agent={{ ...e.proposedBy, fromTicket: null }} name={e.proposedBy.persona ?? 'Agent'} /></> }
+      : {}),
     time: e.createdAt,
     title: eventTitle(e),
     ...(icon ? { icon } : {}),

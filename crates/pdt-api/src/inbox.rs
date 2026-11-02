@@ -433,7 +433,7 @@ pub(crate) async fn answer(
             if c == inbox::ALLOW && !crate::untrusted::from_ui(&st, &headers)? {
                 return Err(bad("only the user can allow this call, from PDT's Inbox"));
             }
-            crate::workflow::agent::answer_confirm(&st, &item, c).await.map_err(bad)?
+            crate::workflow::agent::answer_confirm(&st, &item, c, a.rows.as_deref()).await.map_err(bad)?
         }
         (InboxKind::Confirm, None) => return Err(bad("choose Allow or Deny")),
         _ => crate::workflow::agent::answer_item(&st, &item, &a).await.map_err(bad)?,

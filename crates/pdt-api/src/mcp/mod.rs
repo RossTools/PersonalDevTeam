@@ -139,10 +139,11 @@ pub(crate) async fn server_for(st: &AppState, s: &Session) -> Option<pdt_agents:
     let mut m = pdt_agents::mcp::McpServer {
         url: format!("http://127.0.0.1:{}/api/mcp", st.listen_port),
         token,
-        // Asking tools (PDT-81) stay out of Claude's allowed list, so it asks before each call.
+        // Asking tools (PDT-81) stay out of Claude's allowed list, so it asks before each call; one that asks in PDT's
+        // Inbox (PDT-475) is in it, so the user isn't asked twice.
         tools: {
             let reg = st.registry();
-            session_tools(st, s).await.into_iter().filter(|t| !reg.tool_table().asks(t)).collect()
+            session_tools(st, s).await.into_iter().filter(|t| !reg.tool_table().claude_asks(t)).collect()
         },
         claude_config: None,
         pm: crate::pm::is_pm_session(st, s).await,

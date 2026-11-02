@@ -15,7 +15,7 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary font-semibold text-primary-foreground hover:brightness-110",
+        default: "bg-primary font-semibold text-primary-foreground hover:brightness-110 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         outline:
           "border-input bg-card text-foreground hover:bg-surface-2 aria-expanded:bg-surface-2 aria-pressed:bg-accent",
         secondary:
@@ -23,7 +23,7 @@ const buttonVariants = cva(
         ghost:
           "text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground aria-pressed:bg-accent aria-pressed:text-foreground",
         destructive:
-          "border-destructive/30 bg-failed-soft font-semibold text-destructive hover:bg-destructive/20 focus-visible:ring-destructive/40",
+          "border-destructive/30 bg-failed-soft font-semibold text-destructive hover:bg-destructive/20 focus-visible:ring-destructive",
         link: "h-auto px-0 text-primary underline-offset-4 hover:underline",
       },
       size: {

@@ -288,6 +288,11 @@ pub struct AgentBy {
 }
 
 impl AgentBy {
+    /// The agent that proposed the user's decision an event records (`proposedBy`, PDT-475).
+    pub fn proposed(data: Option<&serde_json::Value>) -> Option<AgentBy> {
+        serde_json::from_value(data?.get("proposedBy")?.clone()).ok()
+    }
+
     /// Who made an event, as its data says: `agent`, or the `sessionId` and `persona` an agent's comment carried
     /// before PDT-163. None when nothing is known.
     pub fn of_event(kind: EventKind, actor: Actor, data: Option<&serde_json::Value>) -> Option<AgentBy> {
@@ -311,30 +316,46 @@ pub struct By {
     pub agent: Option<AgentBy>,
     /// The user confirmed this very call (the PM's `edit_ticket`, PDT-201): it may let an external ticket in.
     pub confirmed: bool,
+    /// The agent that proposed what the user decided (the PM's `inbox_decide`, PDT-475): the events are the user's,
+    /// with this agent kept as `proposedBy`.
+    pub proposed_by: Option<AgentBy>,
 }
 
 impl By {
     pub fn agent(a: AgentBy) -> By {
-        By { actor: Actor::Agent, agent: Some(a), confirmed: false }
+        By { actor: Actor::Agent, agent: Some(a), confirmed: false, proposed_by: None }
+    }
+
+    /// The user's decision, proposed by the agent `a` and confirmed by the user (PDT-475).
+    pub fn user_via(a: AgentBy) -> By {
+        By { actor: Actor::User, agent: None, confirmed: true, proposed_by: Some(a) }
     }
 
     /// `data` with the agent added as `agent` (an object, or a new one when there is no data).
+    /// The agent that proposed it goes in as `proposedBy`.
     pub fn stamp(&self, data: Option<serde_json::Value>) -> Option<serde_json::Value> {
-        let Some(a) = &self.agent else { return data };
+        if self.agent.is_none() && self.proposed_by.is_none() {
+            return data;
+        }
         let mut data = match data {
             Some(serde_json::Value::Object(m)) => m,
             None | Some(serde_json::Value::Null) => serde_json::Map::new(),
             // Not an object: left as it is.
             Some(other) => return Some(other),
         };
-        data.insert("agent".into(), serde_json::to_value(a).unwrap_or_default());
+        if let Some(a) = &self.agent {
+            data.insert("agent".into(), serde_json::to_value(a).unwrap_or_default());
+        }
+        if let Some(a) = &self.proposed_by {
+            data.insert("proposedBy".into(), serde_json::to_value(a).unwrap_or_default());
+        }
         Some(serde_json::Value::Object(data))
     }
 }
 
 impl From<Actor> for By {
     fn from(actor: Actor) -> By {
-        By { actor, agent: None, confirmed: false }
+        By { actor, agent: None, confirmed: false, proposed_by: None }
     }
 }
 
@@ -778,6 +799,9 @@ pub struct TicketEvent {
     /// The agent session that made it, when known (PDT-163; from `data`).
     #[serde(default)]
     pub agent: Option<AgentBy>,
+    /// The agent that proposed the user's decision (PDT-475; from `data.proposedBy`): "you, proposed by the PM".
+    #[serde(default)]
+    pub proposed_by: Option<AgentBy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -1623,6 +1647,18 @@ mod tests {
         let user: By = Actor::User.into();
         assert_eq!(user.stamp(None), None);
         assert_eq!(AgentBy::of_event(EventKind::Edited, Actor::User, None), None);
+    }
+
+    #[test]
+    fn a_decision_the_pm_proposed_is_the_users_with_the_pm_kept() {
+        let by = By::user_via(coder());
+        assert_eq!((by.actor, by.confirmed), (Actor::User, true));
+        let data = by.stamp(Some(serde_json::json!({"via": "inbox"}))).unwrap();
+        assert_eq!((data["via"].as_str(), data["proposedBy"]["sessionId"].as_str()), (Some("inbox"), Some("s1")));
+        assert!(data.get("agent").is_none(), "not an agent's change");
+        assert_eq!(AgentBy::of_event(EventKind::Moved, Actor::User, Some(&data)), None);
+        assert_eq!(AgentBy::proposed(Some(&data)), Some(coder()));
+        assert_eq!(AgentBy::proposed(None), None);
     }
 
     #[test]

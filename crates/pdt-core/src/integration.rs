@@ -24,12 +24,24 @@ pub struct ToolDecl {
     pub destructive: bool,
     /// The PM persona has it (PDT-81 spec §4).
     pub pm: bool,
+    /// It always asks in PDT's Inbox (PDT-475), for every agent and whatever the project's policy: never Claude's
+    /// permission prompt (so it is in `--allowedTools`), and never answered for the user. Implies [`ToolDecl::asks`].
+    pub inbox_only: bool,
 }
 
 impl ToolDecl {
     /// A tool that changes PDT and asks for nothing, not the PM's; the flags are set with the builders.
     pub const fn new(name: &'static str, does: &'static str) -> Self {
-        Self { name, does, read_only: false, asks: false, open_world: false, destructive: false, pm: false }
+        Self {
+            name,
+            does,
+            read_only: false,
+            asks: false,
+            open_world: false,
+            destructive: false,
+            pm: false,
+            inbox_only: false,
+        }
     }
     pub const fn read_only(self) -> Self {
         Self { read_only: true, ..self }
@@ -45,6 +57,9 @@ impl ToolDecl {
     }
     pub const fn pm(self) -> Self {
         Self { pm: true, ..self }
+    }
+    pub const fn asks_in_inbox(self) -> Self {
+        Self { asks: true, inbox_only: true, ..self }
     }
 }
 
@@ -86,6 +101,17 @@ impl ToolTable {
     /// Whether a call to `tool` needs the user's yes ([`ToolDecl::asks`]).
     pub fn asks(&self, tool: &str) -> bool {
         self.get(tool).is_some_and(|t| t.asks)
+    }
+
+    /// Whether a call to `tool` always asks in PDT's Inbox ([`ToolDecl::inbox_only`]).
+    pub fn asks_in_inbox(&self, tool: &str) -> bool {
+        self.get(tool).is_some_and(|t| t.inbox_only)
+    }
+
+    /// Whether Claude asks before a call to `tool` (its permission prompt): an asking tool that doesn't ask in PDT's
+    /// Inbox instead, so it stays out of `--allowedTools`.
+    pub fn claude_asks(&self, tool: &str) -> bool {
+        self.get(tool).is_some_and(|t| t.asks && !t.inbox_only)
     }
 
     /// The PM persona's tools, in order.
@@ -602,6 +628,18 @@ mod tests {
             ],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_tool_that_asks_in_the_inbox_asks_but_never_through_claude() {
+        let t = ToolTable::new([
+            ToolDecl::new("plain", ""),
+            ToolDecl::new("prompted", "").asks(),
+            ToolDecl::new("inbox", "").asks_in_inbox().pm(),
+        ]);
+        assert_eq!(t.asking_tools(), ["prompted", "inbox"]);
+        assert!(t.claude_asks("prompted") && !t.claude_asks("inbox") && !t.claude_asks("plain"));
+        assert!(t.asks_in_inbox("inbox") && !t.asks_in_inbox("prompted") && !t.asks_in_inbox("missing"));
     }
 
     fn map(v: Value) -> IntegrationSettings {

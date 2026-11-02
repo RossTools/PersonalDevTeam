@@ -1,6 +1,7 @@
 //! pdt-mcp's tools (Phase 7b spec §2.2). Inputs are the API's request types where one exists (their JSON Schema from
 //! schemars), and each tool runs the function the matching route runs, so the API and the tools can't drift.
 
+mod inbox;
 mod notes;
 mod overview;
 mod secrets;
@@ -95,6 +96,7 @@ pub(crate) fn defs() -> Vec<Tool> {
         watches::defs(),
         tickets::defs(),
         sessions::defs(),
+        inbox::defs(),
     ]
     .into_iter()
     .flatten()
@@ -127,6 +129,8 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         tickets::call(cx, name, a).await
     } else if listed(sessions::defs) {
         sessions::call(cx, name, a).await
+    } else if listed(inbox::defs) {
+        inbox::call(cx, name, a).await
     } else {
         Err(format!("no tool is called {name}"))
     }
@@ -137,13 +141,17 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
 /// the user's Allow runs it and tells the agent the result. Claude asks through its permission prompt (spec §4).
 pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) -> Result<(), String> {
     use pdt_core::session::AgentKind;
+    let reg = cx.st.registry();
+    let table = reg.tool_table();
+    // One that asks in PDT's Inbox (PDT-475) asks there for every agent, whatever the project lets the PM do.
+    let in_inbox = table.asks_in_inbox(tool);
     if cx.confirmed
-        || !cx.st.registry().tool_table().asks(tool)
-        || cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude
+        || !table.asks(tool)
+        || (!in_inbox && cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude)
     {
         return Ok(());
     }
-    if crate::pm::acts_without_asking(cx.st, target).await {
+    if !in_inbox && crate::pm::acts_without_asking(cx.st, target).await {
         return Ok(());
     }
     let item = crate::workflow::agent::ask_confirm(cx.st, cx.session, tool, cx.input).await?;
