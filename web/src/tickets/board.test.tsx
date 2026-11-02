@@ -435,6 +435,39 @@ describe('board lanes', () => {
     await waitFor(() => expect(calls.find((x) => x.method === 'PATCH')).toMatchObject({ path: '/api/tickets/t11', body: { stage: 'done' } }));
   });
 
+  it('shows a large epic as a bar, and no PR in any lane header', async () => {
+    const big = summary(30, {
+      title: 'Big epic', stage: 'in_progress', rank: 'c',
+      parts: progress([...Array(15).fill('done'), ...Array(5).fill('progress'), ...Array(50).fill('backlog')]),
+    });
+    // A part in review with an open PR: its card shows the PR, the lane header doesn't.
+    const pr = { number: 77, url: 'https://example.com/pull/77', title: 'Part 31', state: 'open' as const, draft: false, baseBranch: 'main',
+      headSha: 'abc', mergeable: 'mergeable' as const, behind: false, autoMerge: false, inMergeQueue: false, queuePosition: null,
+      ci: null, queueCi: null, checkedAt: 0, error: null, local: false, mergeHeld: false };
+    const part = summary(31, {
+      stage: 'in_progress', title: 'Part 31', parent: { id: big.id, key: big.key, title: big.title },
+      attempt: { id: 'a31', branch: 'b31', baseBranch: 'main', worktreeId: 'w31', state: 'active', createdAt: 0, endedAt: null, lastHead: null, workspaceId: null, ci: null, pr },
+    });
+    stubApi({
+      'GET /api/tickets': (c: Call) => {
+        const q = params(c.path);
+        if (q.hasParts === 'true') return page(q.stage === 'todo,in_progress' ? [p10, big] : []);
+        return page(q.stage === 'in_progress' ? [...lanes.in_progress, part] : lanes[q.stage] ?? []);
+      },
+      'GET /api/projects': [project],
+      [`GET /api/projects/${project.id}/sessions`]: [],
+    });
+    renderWithQuery(<Harness />);
+    const header = await lane('ALP-30');
+    const img = within(header).getByRole('img', { name: /15 of 70 parts done, 5 in progress, 50 not started/ });
+    expect(img.querySelector('[data-bar]')).not.toBeNull();
+    expect(within(header).getByText('15/70')).toBeInTheDocument();
+    // The small epic keeps its dots.
+    expect(within(await lane('ALP-10')).getByRole('img').querySelector('[data-bar]')).toBeNull();
+    expect(within(column('ALP-30 · In progress')).getByText(/#77/)).toBeInTheDocument();
+    for (const h of [header, await lane('ALP-10')]) expect(within(h).queryByText(/#77/)).not.toBeInTheDocument();
+  });
+
   it('shows parents as group headings in the one column on a phone', async () => {
     vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} }));
     laneStub();
