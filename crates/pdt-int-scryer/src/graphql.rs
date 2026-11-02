@@ -1,10 +1,10 @@
 //! Scryer's whole GraphQL API for the PM and workflows (PDT-150): the actions `scryer_schema` (a tool only) finds and describes
 //! operations and types, query (`scryer_query`, `scryer.query`) runs a query document and mutate (`scryer_mutate`, an
 //! asking tool, and `scryer.mutate`) runs one mutation. Every document is checked against Scryer's schema
-//! before it is sent: the live one from introspection, kept per connection for a while, else the one PDT bundles
-//! (`schema.graphql`). Credentials are redacted from what comes back, and a mutation can take a connection's secret by
-//! reference (`{"$secret": "<connection>"}`), filled in here so the agent never sees it. Subscriptions are not
-//! offered.
+//! before it is sent: Scryer's own, from introspection, kept per connection for a while. PDT ships no copy of it
+//! (Scryer's schema is GPL-3.0; the tests' copy is `tests/scryer-schema.graphql`). Credentials are redacted from
+//! what comes back, and a mutation can take a connection's secret by reference (`{"$secret": "<connection>"}`),
+//! filled in here so the agent never sees it. Subscriptions are not offered.
 
 use crate::actions::{CONNECTION, Client, THEN};
 use crate::core::{MutationRule, REDACTED, SCRYER, mutation_rule, redact, secret_ref};
@@ -22,16 +22,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use ts_rs::TS;
 
-/// Scryer's schema as PDT bundles it, for a Scryer that doesn't answer introspection.
-const BUNDLED: &str = include_str!("schema.graphql");
-/// How long a Scryer's live schema is kept.
+/// How long a Scryer's schema is kept.
 const SCHEMA_TTL: Duration = Duration::from_secs(10 * 60);
-/// How long a Scryer that didn't answer introspection uses the bundled schema before PDT asks again.
-const FALLBACK_TTL: Duration = Duration::from_secs(60);
 /// The most a tool's answer holds, in bytes of JSON; longer lists are cut.
 const MAX_ANSWER: usize = 48 * 1024;
 /// The most an introspection answer may be, in bytes (Scryer's is a few MB of JSON).
@@ -41,31 +37,19 @@ const SEARCH_LIMIT: usize = 30;
 /// Descriptions are cut to this many characters.
 const DESCRIPTION_CHARS: usize = 300;
 
-/// A Scryer's schema and where it came from.
-pub(crate) struct ScryerSchema {
-    pub schema: Valid<Schema>,
-    /// From the Scryer itself (introspection), not the bundled copy.
-    pub live: bool,
-}
-
-impl ScryerSchema {
-    fn source(&self) -> &'static str {
-        if self.live { "live" } else { "bundled" }
-    }
-}
-
-/// The bundled schema.
-pub(crate) fn bundled() -> Arc<ScryerSchema> {
-    static B: OnceLock<Arc<ScryerSchema>> = OnceLock::new();
-    B.get_or_init(|| {
-        let schema = Schema::parse_and_validate(BUNDLED, "scryer-schema.graphql").expect("the bundled Scryer schema");
-        Arc::new(ScryerSchema { schema, live: false })
+/// Scryer's published schema, for the tests (GPL-3.0, so never built into PDT).
+#[cfg(test)]
+pub(crate) fn test_schema() -> Arc<Valid<Schema>> {
+    static S: std::sync::OnceLock<Arc<Valid<Schema>>> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        let text = include_str!("../tests/scryer-schema.graphql");
+        Arc::new(Schema::parse_and_validate(text, "scryer-schema.graphql").expect("the tests' Scryer schema"))
     })
     .clone()
 }
 
 /// Each Scryer's schema by its address, and when it was read.
-type Cached = (Instant, Arc<ScryerSchema>);
+type Cached = (Instant, Arc<Valid<Schema>>);
 static SCHEMAS: LazyLock<Mutex<HashMap<String, Cached>>> = LazyLock::new(Default::default);
 
 /// The standard introspection query, without directives (PDT writes none of Scryer's).
@@ -79,28 +63,24 @@ const INTROSPECTION: &str = "query PdtIntrospection { __schema { queryType { nam
     ofType { kind name ofType { kind name ofType { kind name } } } } } } } }";
 
 impl Client {
-    /// Scryer's schema: its own (introspection), kept for a while; the bundled one when it doesn't answer.
-    pub(crate) async fn schema(&self) -> Arc<ScryerSchema> {
+    /// Scryer's schema: its own (introspection), kept for a while.
+    pub(crate) async fn schema(&self) -> Result<Arc<Valid<Schema>>, String> {
         let key = format!("{}\n{}", self.conn.name, self.conn.url);
-        if let Some((at, s)) = SCHEMAS.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
-            let ttl = if s.live { SCHEMA_TTL } else { FALLBACK_TTL };
-            if at.elapsed() < ttl {
-                return s.clone();
-            }
+        if let Some((at, s)) = SCHEMAS.lock().unwrap_or_else(|e| e.into_inner()).get(&key)
+            && at.elapsed() < SCHEMA_TTL
+        {
+            return Ok(s.clone());
         }
-        let s = match self
+        let s = self
             .gql_capped(INTROSPECTION, json!({}), None, INTROSPECTION_CAP)
             .await
             .and_then(|d| live_schema(&d))
-        {
-            Ok(schema) => Arc::new(ScryerSchema { schema, live: true }),
-            Err(e) => {
-                tracing::info!(connection = %self.conn.name, error = %e, "Scryer's own schema: using the bundled one");
-                bundled()
-            }
-        };
+            .map(Arc::new)
+            .map_err(|e| {
+                format!("Scryer didn't give its schema (introspection), which PDT checks every document against: {e}")
+            })?;
         SCHEMAS.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (Instant::now(), s.clone()));
-        s
+        Ok(s)
     }
 }
 
@@ -582,10 +562,9 @@ pub(crate) fn search_schema(schema: &Schema, words: &str) -> Value {
 }
 
 /// The answer to `scryer_schema`.
-pub(crate) fn schema_answer(s: &ScryerSchema, a: &ScryerSchemaArgs) -> Result<Value, String> {
+pub(crate) fn schema_answer(schema: &Schema, a: &ScryerSchemaArgs) -> Result<Value, String> {
     let given = |v: &Option<String>| v.as_deref().map(str::trim).filter(|x| !x.is_empty()).map(String::from);
-    let schema = &s.schema;
-    let mut v = if let Some(op) = given(&a.operation) {
+    let v = if let Some(op) = given(&a.operation) {
         describe_operation(schema, &op)
             .ok_or_else(|| format!("Scryer has no query or mutation {op}: find it with scryer_schema's search"))?
     } else if let Some(t) = given(&a.type_name) {
@@ -600,7 +579,6 @@ pub(crate) fn schema_answer(s: &ScryerSchema, a: &ScryerSchemaArgs) -> Result<Va
                "hint": "search words (`indexer`, `download client`, `settings`), then describe an operation or a type; \
                         read with scryer_query, change with scryer_mutate. Subscriptions are not offered."})
     };
-    v["schema"] = json!(s.source());
     Ok(v)
 }
 
@@ -687,9 +665,9 @@ pub(crate) async fn query(client: &Client, c: &ScryerQueryConfig) -> Result<Valu
     if crate::core::has_secret_ref(&variables) {
         return Err("a query sends no secrets: $secret references go in scryer_mutate".into());
     }
-    let s = client.schema().await;
+    let s = client.schema().await?;
     let name = c.operation_name.as_deref().map(str::trim).filter(|n| !n.is_empty());
-    check_document(&s.schema, &c.query, name, &variables, true)?;
+    check_document(&s, &c.query, name, &variables, true)?;
     let vars = if variables.is_null() { json!({}) } else { variables };
     let data = client.gql_named(&c.query, vars, name).await?;
     Ok(redact(&data))
@@ -706,11 +684,11 @@ pub(crate) async fn mutate(st: &AppState, client: &Client, c: &ScryerMutateConfi
         Some(Value::Object(o)) => o,
         Some(_) => return Err("args must be an object of the mutation's arguments by name".into()),
     };
-    let s = client.schema().await;
-    let document = mutation_document(&s.schema, m, &args, c.select.as_deref())?;
+    let s = client.schema().await?;
+    let document = mutation_document(&s, m, &args, c.select.as_deref())?;
     // Checked with a stand-in for each secret, so no secret is in an error.
     let stand_in = replace_refs(&Value::Object(args.clone()), &|_| json!("secret"));
-    check_document(&s.schema, &document, None, &stand_in, false)?;
+    check_document(&s, &document, None, &stand_in, false)?;
     let (vars, sent) = resolve_secrets(st, &Value::Object(args)).await?;
     let data = client.gql_named(&document, vars, Some("PdtMutate")).await.map_err(|e| scrub_text(&e, &sent))?;
     Ok(scrub(&data[m], &sent))
@@ -806,7 +784,7 @@ impl Action for SchemaLookup {
 
     fn run<'a>(&'a self, cx: &'a ActionCx<'a>, a: ScryerSchemaArgs) -> BoxFut<'a, Result<Value, String>> {
         Box::pin(async move {
-            let s = Client::open(cx.st, &a.connection).await?.schema().await;
+            let s = Client::open(cx.st, &a.connection).await?.schema().await?;
             schema_answer(&s, &a)
         })
     }
@@ -981,91 +959,87 @@ impl Action for Mutate {
 mod tests {
     use super::*;
 
-    fn schema() -> Arc<ScryerSchema> {
-        bundled()
+    fn schema() -> Arc<Valid<Schema>> {
+        test_schema()
     }
 
     #[test]
     fn queries_are_checked_against_the_schema() {
         let s = schema();
         let ok = "query { indexers { id name } }";
-        assert!(check_document(&s.schema, ok, None, &Value::Null, true).is_ok());
-        let e = check_document(&s.schema, "query { indexers { nope } }", None, &Value::Null, true).unwrap_err();
+        assert!(check_document(&s, ok, None, &Value::Null, true).is_ok());
+        let e = check_document(&s, "query { indexers { nope } }", None, &Value::Null, true).unwrap_err();
         assert!(e.contains("nope") && e.contains("scryer_schema"), "{e}");
-        let e = check_document(&s.schema, "mutation { triggerRssSync { __typename } }", None, &Value::Null, true)
-            .unwrap_err();
+        let e = check_document(&s, "mutation { triggerRssSync { __typename } }", None, &Value::Null, true).unwrap_err();
         assert!(e.contains("scryer_mutate"), "{e}");
         // A variable of the wrong type.
         let q = "query Q($limit: Int!) { downloadQueuePage(limit: $limit) { totalCount } }";
-        let e = check_document(&s.schema, q, None, &json!({"limit": "ten"}), true).unwrap_err();
+        let e = check_document(&s, q, None, &json!({"limit": "ten"}), true).unwrap_err();
         assert!(e.contains("variables"), "{e}");
-        assert!(check_document(&s.schema, q, None, &json!({"limit": 10}), true).is_ok());
+        assert!(check_document(&s, q, None, &json!({"limit": 10}), true).is_ok());
         let two = "query A { indexers { id } } query B { downloadClientConfigs { id } }";
-        assert!(check_document(&s.schema, two, None, &Value::Null, true).unwrap_err().contains("operationName"));
-        assert!(check_document(&s.schema, two, Some("B"), &Value::Null, true).is_ok());
+        assert!(check_document(&s, two, None, &Value::Null, true).unwrap_err().contains("operationName"));
+        assert!(check_document(&s, two, Some("B"), &Value::Null, true).is_ok());
     }
 
     #[test]
     fn a_mutation_document_types_its_arguments_from_the_schema() {
         let s = schema();
         let args = json!({"input": {"name": "NZBgeek", "providerType": "newznab"}});
-        let d =
-            mutation_document(&s.schema, "createIndexerConfig", args.as_object().unwrap(), Some("id name")).unwrap();
+        let d = mutation_document(&s, "createIndexerConfig", args.as_object().unwrap(), Some("id name")).unwrap();
         assert_eq!(
             d,
             "mutation PdtMutate($input: CreateIndexerConfigInput!) { createIndexerConfig(input: $input) { id name } }"
         );
         // Left out, the selection is its scalar fields.
-        let d = mutation_document(&s.schema, "createIndexerConfig", args.as_object().unwrap(), None).unwrap();
+        let d = mutation_document(&s, "createIndexerConfig", args.as_object().unwrap(), None).unwrap();
         assert!(d.contains("{ id name providerType") && d.contains("hasApiKey"), "{d}");
-        assert!(check_document(&s.schema, &d, None, &args, false).is_ok());
-        let e = mutation_document(&s.schema, "createIndexer", &Default::default(), None).unwrap_err();
+        assert!(check_document(&s, &d, None, &args, false).is_ok());
+        let e = mutation_document(&s, "createIndexer", &Default::default(), None).unwrap_err();
         assert!(e.contains("createIndexerConfig"), "{e}");
-        let e = mutation_document(&s.schema, "createIndexerConfig", json!({"name": "x"}).as_object().unwrap(), None)
-            .unwrap_err();
+        let e =
+            mutation_document(&s, "createIndexerConfig", json!({"name": "x"}).as_object().unwrap(), None).unwrap_err();
         assert!(e.contains("takes no argument name"), "{e}");
         // A wrong argument type is caught before anything is sent.
         let bad = json!({"input": {"name": 7}});
-        let d = mutation_document(&s.schema, "createIndexerConfig", bad.as_object().unwrap(), None).unwrap();
-        assert!(check_document(&s.schema, &d, None, &bad, false).unwrap_err().contains("variables"));
+        let d = mutation_document(&s, "createIndexerConfig", bad.as_object().unwrap(), None).unwrap();
+        assert!(check_document(&s, &d, None, &bad, false).unwrap_err().contains("variables"));
     }
 
     #[test]
     fn schema_search_finds_operations_by_words() {
         let s = schema();
-        let found = search_schema(&s.schema, "indexer config");
+        let found = search_schema(&s, "indexer config");
         let names: Vec<&str> = found["matches"].as_array().unwrap().iter().filter_map(|m| m["name"].as_str()).collect();
         assert!(names.contains(&"createIndexerConfig") && names.contains(&"indexers"), "{names:?}");
-        let found = search_schema(&s.schema, "download clients");
+        let found = search_schema(&s, "download clients");
         let names: Vec<&str> = found["matches"].as_array().unwrap().iter().filter_map(|m| m["name"].as_str()).collect();
         assert!(names.contains(&"createDownloadClientConfig"), "{names:?}");
-        let op = describe_operation(&s.schema, "createIndexerConfig").unwrap();
+        let op = describe_operation(&s, "createIndexerConfig").unwrap();
         assert_eq!(op["kind"], "mutation");
         assert_eq!(op["args"][0]["type"], "CreateIndexerConfigInput!");
         let inputs: Vec<&str> =
             op["inputTypes"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(inputs.contains(&"CreateIndexerConfigInput") && inputs.contains(&"ProviderConfigValueInput"));
-        assert_eq!(describe_operation(&s.schema, "deleteIndexerConfig").unwrap()["asks"], "always asks the user");
-        let t = describe_type(&s.schema, "MediaFacetValue").unwrap();
+        assert_eq!(describe_operation(&s, "deleteIndexerConfig").unwrap()["asks"], "always asks the user");
+        let t = describe_type(&s, "MediaFacetValue").unwrap();
         assert!(t["values"].as_array().unwrap().iter().any(|v| v["name"] == "MOVIE"));
         let a = ScryerSchemaArgs { connection: "x".into(), search: None, operation: None, type_name: None };
         let v = schema_answer(&s, &a).unwrap();
-        assert!(v["mutations"].as_u64().unwrap() > 200 && v["schema"] == "bundled", "{v}");
+        assert!(v["mutations"].as_u64().unwrap() > 200, "{v}");
     }
 
-    /// An introspection answer becomes the same schema (the fake Scryer answers introspection from the bundled one).
+    /// An introspection answer becomes the same schema (the fake Scryer answers introspection from the tests' copy).
     #[test]
     fn a_live_schema_is_read_from_introspection() {
         let s = schema();
-        let doc = ExecutableDocument::parse_and_validate(&s.schema, INTROSPECTION, "i.graphql").unwrap();
+        let doc = ExecutableDocument::parse_and_validate(&s, INTROSPECTION, "i.graphql").unwrap();
         let op = doc.operations.get(None).unwrap();
-        let vars = apollo_compiler::request::coerce_variable_values(&s.schema, op, &JsonMap::new()).unwrap();
-        let r =
-            apollo_compiler::introspection::partial_execute(&s.schema, &s.schema.implementers_map(), &doc, op, &vars)
-                .unwrap();
+        let vars = apollo_compiler::request::coerce_variable_values(&s, op, &JsonMap::new()).unwrap();
+        let r = apollo_compiler::introspection::partial_execute(&s, &s.implementers_map(), &doc, op, &vars).unwrap();
         let data = serde_json::to_value(r.data).unwrap();
         let live = live_schema(&data).unwrap();
-        assert_eq!(live.types.len(), s.schema.types.len());
+        assert_eq!(live.types.len(), s.types.len());
         assert!(describe_operation(&live, "createIndexerConfig").is_some());
         assert!(live_schema(&json!({"__schema": {"types": []}})).is_err());
     }

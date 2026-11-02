@@ -1,7 +1,7 @@
 //! A fake Scryer (PDT-147): its GraphQL endpoint under a base path (`/scryer/graphql`), answering the operations PDT
 //! sends by name, with a library that starts with Severance. The API key it takes is [`KEY`]. For the PM's GraphQL
-//! tools (PDT-150) it answers introspection from the bundled schema plus a field the bundled one lacks
-//! (`fakeVersion`, so a test sees the live schema is used), queries for indexers, download clients and the general
+//! tools (PDT-150) it answers introspection from Scryer's published schema (`tests/scryer-schema.graphql`) plus a
+//! field that one lacks (`fakeVersion`, so a test sees Scryer's own schema is used), queries for indexers, download clients and the general
 //! settings by their root fields, and `PdtMutate`'s indexer and download-client changes.
 
 use axum::http::StatusCode;
@@ -27,11 +27,11 @@ pub struct FakeScryer {
     pub history: Arc<Mutex<Vec<Value>>>,
 }
 
-/// The fake's schema: the bundled one and a field only a live Scryer has.
+/// The fake's schema: Scryer's published one and a field it doesn't have (so a test sees Scryer's own is used).
 fn schema() -> &'static apollo_compiler::validation::Valid<apollo_compiler::Schema> {
     static S: OnceLock<apollo_compiler::validation::Valid<apollo_compiler::Schema>> = OnceLock::new();
     S.get_or_init(|| {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/schema.graphql");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/scryer-schema.graphql");
         let text = std::fs::read_to_string(path).unwrap() + "\nextend type QueryRoot { fakeVersion: String }\n";
         apollo_compiler::Schema::parse_and_validate(text, "schema.graphql").unwrap()
     })
