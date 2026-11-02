@@ -54,6 +54,15 @@ describe('design system rules', () => {
     expect(offenders(/from ['"]cn['"]/)).toEqual([]);
   });
 
+  it('turns movement off under motion-reduce', () => {
+    // Animations, transforms and layout transitions: the same class string also says `motion-reduce:`. Colour and
+    // opacity transitions don't move anything; index.css's reduced-motion rule shortens them too.
+    const moves = /(?<![\w-])(animate-(in|out|spin|pulse|pulse-slow|bounce|ping)|transition-transform|transition-\[[^\]]+\]|transition)(?=[\s'"`])/;
+    expect(
+      offenders(moves, (p) => p.endsWith('.tsx')).filter((line) => !line.includes('motion-reduce:')),
+    ).toEqual([]);
+  });
+
   it('builds overlays from @ui, never a hand-rolled role="dialog", menu, listbox or tooltip', () => {
     // @ui's Dialog, Sheet, Popover, Menu, Select and Tooltip move focus in, trap or restore it and close on Escape. A
     // CSS selector naming the role (`[role="dialog"]`) is fine.
