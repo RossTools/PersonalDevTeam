@@ -147,3 +147,42 @@ async fn overrides_the_user_saves_are_approved_but_an_api_callers_are_not() {
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("untrusted_commands")), "{v}");
     env.state.ptys.shutdown().await;
 }
+
+/// An agent's overrides stay unapproved when the user later saves another setting (every section's save sends the
+/// stored overrides back) or the same text; a command the user adds in that save is approved.
+#[tokio::test]
+async fn resending_an_api_callers_overrides_from_the_ui_approves_none_of_them() {
+    let env = setup().await;
+    let settings = format!("/api/projects/{}/settings", env.pid);
+    let theirs = "[[run]]\nname = \"theirs\"\ncommand = \"echo pwned\"\n";
+    let (s, v) = call(&env.app, "PUT", &settings, Some(json!({"runOverrides": theirs}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let waiting = untrusted(&commands(&env, None).await);
+
+    // The user saves an unrelated setting: the web app sends the stored overrides back with it.
+    let body = json!({"runOverrides": theirs, "agentCredentials": null, "agentInstructions": "Use make."});
+    let (s, v) = call_as_ui(&env.app, "PUT", &settings, Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(untrusted(&commands(&env, None).await), waiting, "nothing the agent wrote was approved");
+    let (s, v) = start(&env, json!({"name": "theirs", "kind": "run"})).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("untrusted_commands")), "{v}");
+
+    // The user adds a run of their own next to it: only theirs is approved.
+    let both = format!("{theirs}\n[[run]]\nname = \"mine\"\ncommand = \"node -e \\\"process.exit(0)\\\"\"\n");
+    let (s, v) = call_as_ui(&env.app, "PUT", &settings, Some(json!({"runOverrides": both}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let listed = commands(&env, None).await;
+    let theirs_fp = listed["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["command"] == "echo pwned")
+        .map(|c| c["fingerprint"].as_str().unwrap().to_string())
+        .unwrap();
+    assert!(untrusted(&listed).contains(&theirs_fp), "the agent's command still waits: {listed}");
+    let (s, v) = start(&env, json!({"name": "mine", "kind": "run"})).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let (s, v) = start(&env, json!({"name": "theirs", "kind": "run"})).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("untrusted_commands")), "{v}");
+    env.state.ptys.shutdown().await;
+}
