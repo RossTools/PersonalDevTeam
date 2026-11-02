@@ -230,6 +230,33 @@ async fn the_web_ui_is_compressed_and_hashed_assets_are_cached_for_good() {
 }
 
 #[tokio::test]
+async fn no_page_may_frame_pdt_and_the_ui_runs_under_a_content_security_policy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let web = tmp.path().join("web");
+    std::fs::create_dir_all(&web).unwrap();
+    std::fs::write(web.join("index.html"), "<html>PDT</html>").unwrap();
+    let app = app(tmp.path(), Some(web)).await;
+
+    for uri in ["/", "/some/app/route", "/api/health", "/api/no-such-route"] {
+        let res = get_with(&app, uri, &[]).await;
+        let h = res.headers();
+        assert_eq!(h["x-frame-options"], "DENY", "{uri}");
+        assert_eq!(h["x-content-type-options"], "nosniff", "{uri}");
+        assert_eq!(h["referrer-policy"], "no-referrer", "{uri}");
+        let csp = h["content-security-policy"].to_str().unwrap();
+        assert!(csp.contains("frame-ancestors 'none'"), "{uri}: {csp}");
+    }
+    // The UI's script comes only from PDT itself.
+    let res = get_with(&app, "/", &[]).await;
+    let csp = res.headers()["content-security-policy"].to_str().unwrap();
+    for directive in
+        ["default-src 'self'", "script-src 'self' 'wasm-unsafe-eval';", "object-src 'none'", "base-uri 'none'"]
+    {
+        assert!(csp.contains(directive), "{directive} in {csp}");
+    }
+}
+
+#[tokio::test]
 async fn host_guard_allows_only_listed_hosts() {
     let tmp = tempfile::tempdir().unwrap();
     let web = tmp.path().join("web");
