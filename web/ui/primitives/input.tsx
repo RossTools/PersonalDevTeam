@@ -9,7 +9,7 @@ import {
 
 /** Shared look of text controls (Input, Textarea, Select trigger): Graphite density, tokens only. */
 const fieldControlClass =
-  "w-full min-w-0 rounded-md border border-input bg-card text-sm text-foreground transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive/30 data-invalid:border-destructive motion-reduce:transition-none"
+  "w-full min-w-0 rounded-md border border-input bg-card text-sm text-foreground transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive data-invalid:border-destructive motion-reduce:transition-none"
 
 const inputSizeClass = {
   sm: "h-control-sm px-2 text-xs pointer-coarse:h-control-touch pointer-coarse:text-base",

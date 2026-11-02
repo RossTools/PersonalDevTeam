@@ -79,3 +79,22 @@ describe('dark mode keeps its look (PDT-249)', () => {
     expect(dark.get('--pdt-shadow-card')).toBe('none');
   });
 });
+
+describe('focus ring contrast (PDT-447)', () => {
+  // Opaque, so it can be contrast-checked as is; 3:1 against every surface it is drawn on (WCAG 1.4.11, 2.4.11).
+  const surfaces = ['--pdt-bg', '--pdt-surface', '--pdt-surface-2', '--pdt-accent-soft'];
+  for (const [theme, marker] of [
+    ['light', ':root {'],
+    ['dark', ":root[data-theme='dark']"],
+  ] as const) {
+    const palette = block(marker);
+    const get = (t: string) => {
+      const v = palette.get(t);
+      expect(v, `${theme} ${t}`).toMatch(/^#[0-9a-f]{6}$/i);
+      return v!;
+    };
+    it.each(surfaces)(`${theme}: the ring passes 3:1 on %s`, (bg) => {
+      expect(contrast(get('--pdt-ring'), get(bg))).toBeGreaterThanOrEqual(3);
+    });
+  }
+});
