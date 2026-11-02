@@ -12,7 +12,7 @@ import { agentLine } from './ticketAgent';
 
 /** A key or number in a pill: mono, a quiet fill and edge, the accent on hover. */
 export const PILL =
-  'inline-flex items-center rounded-md border border-border bg-muted px-1 font-mono text-meta leading-[1.45] text-foreground no-underline outline-none align-baseline hover:border-primary hover:text-primary focus-visible:ring-2 focus-visible:ring-ring';
+  'inline-flex items-center rounded-md border border-border bg-muted px-1 font-mono text-meta leading-[1.45] text-foreground no-underline outline-none align-baseline hover:border-primary hover:text-link focus-visible:ring-2 focus-visible:ring-ring';
 
 /** The ticket a hover card shows, by key: fetched on the first hover, then kept a while (React Query). */
 export function useTicketCard(ticketKey: string, enabled: boolean) {

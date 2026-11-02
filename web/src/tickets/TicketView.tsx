@@ -89,7 +89,7 @@ export function HubTabs({ value, onChange, diff }: {
           className={cn(
             '-mb-px border-b-2 px-2 py-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-control-touch',
             t.id === value ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground',
-            t.arrives && 'cursor-not-allowed opacity-60',
+            t.arrives && 'cursor-not-allowed opacity-50',
           )}
         >
           {t.label}

@@ -123,7 +123,7 @@ const components: Components = {
     : <ResolvedImage {...p} alt={alt ?? ''} />,
 };
 
-const LINK = 'text-primary underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none';
+const LINK = 'text-link underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none';
 
 /** A ticket's path (`/tickets/PDT-12`) → its key. */
 const ticketOfHref = (href: string | undefined) => (href ? /^\/tickets\/([A-Za-z][A-Za-z0-9]*-\d+)$/.exec(href)?.[1] ?? null : null);
@@ -162,7 +162,7 @@ function FileLink({ href, sessionId, children }: { href: string; sessionId: stri
   });
   if (!exists.data) return <>{children}</>;
   return (
-    <a href={href} title={`Open ${path}`} data-slot="file-link" className="underline decoration-border underline-offset-2 hover:decoration-primary focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&>code]:text-primary">
+    <a href={href} title={`Open ${path}`} data-slot="file-link" className="underline decoration-border underline-offset-2 hover:decoration-primary focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&>code]:text-link">
       {children}
     </a>
   );
