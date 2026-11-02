@@ -9,10 +9,8 @@ publish.workspace = true
 [dependencies]
 pdt-core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 reqwest = { version = "0.13.5", default-features = false, features = ["native-tls", "system-proxy"] }
-
-[dev-dependencies]
-serde_json.workspace = true

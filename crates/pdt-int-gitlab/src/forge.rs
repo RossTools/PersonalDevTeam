@@ -6,20 +6,18 @@
 use crate::api::{GitlabApi, GlError, project_path, s};
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::pr::{Mergeable, PrState, QueueRemoval, QueueRemovalReason};
+pub use pdt_forge::MAX_COMMENT;
 use pdt_forge::transport::encode;
 use pdt_forge::{
     Capabilities, ChangeComment, ChangeFile, ChangeRequest, ChangeReview, ChangeStats, CloseReason, Forge, ForgeError,
     ForgeNotes, Issue, IssueDetail, MergeSettings, MergeStrategy, NewChangeRequest, NewIssue, OpenedChangeRequest,
-    Release, ReleaseAsset, RepoChangeRequest, ReviewVerdict,
+    Release, ReleaseAsset, RepoChangeRequest, ReviewVerdict, comment_body,
 };
 use serde_json::{Value, json};
 
 /// What GitLab can do: everything. Merge trains are found per project ([`Forge::merge_settings`]); the capability
 /// says only that a base branch can have one.
 pub const CAPABILITIES: Capabilities = Capabilities::ALL;
-
-/// The longest comment PDT sends.
-pub const MAX_COMMENT: usize = 60_000;
 
 /// Items per page of a list PDT reads back to an earlier point (issues, merge requests), and the most pages.
 pub const PAGE: usize = 100;
@@ -42,15 +40,6 @@ pub fn agent_notes() -> ForgeNotes {
 /// The ref a merge train's pipeline for merge request `iid` runs on.
 pub fn train_ref(iid: u32) -> String {
     format!("refs/merge-requests/{iid}/train")
-}
-
-fn comment_body(body: &str) -> String {
-    if body.chars().count() <= MAX_COMMENT {
-        return body.to_string();
-    }
-    let mut out: String = body.chars().take(MAX_COMMENT - 1).collect();
-    out.push('…');
-    out
 }
 
 fn u32_of(v: &Value) -> Option<u32> {

@@ -1,8 +1,10 @@
 //! Signing in to GitHub (PDT-177): GitHub's hosts (github.com or a GitHub Enterprise Server, by its API URL), the
 //! OAuth device flow ("Connect GitHub": the user enters a code on GitHub) and checking a token.
 
-use crate::transport::{Request, Transport, form};
+use crate::transport::{Request, Transport};
 pub use pdt_forge::login::{DeviceCode, DevicePoll, TokenGrant, Whoami};
+pub use pdt_forge::oauth::RefreshError;
+use pdt_forge::oauth::{self, OAuthApp};
 use serde_json::Value;
 
 /// github.com's API.
@@ -47,94 +49,31 @@ pub fn web_host(api: &str) -> String {
     rest.split(['/', ':']).next().unwrap_or_default().to_ascii_lowercase()
 }
 
-fn post_form(t: &dyn Transport, url: String, pairs: &[(&str, &str)]) -> Result<Value, String> {
-    let req = Request {
-        method: "POST",
-        url,
-        headers: vec![
-            ("Accept", "application/json".into()),
-            ("Content-Type", "application/x-www-form-urlencoded".into()),
-        ],
-        body: Some(form(pairs)),
-    };
-    let res = t.send(&req)?;
-    let v: Value = serde_json::from_str(&res.body).map_err(|_| format!("GitHub answered {}", res.status))?;
-    if res.status == 404 {
-        return Err("GitHub does not know this OAuth App, or its device flow is off".into());
+/// The OAuth endpoints of the GitHub site of API URL `api` (an OAuth App's device flow, PDT's own or the user's).
+pub fn oauth_app(api: &str) -> OAuthApp {
+    let web = web_url(api);
+    OAuthApp {
+        forge: "GitHub",
+        device_code_url: format!("{web}/login/device/code"),
+        token_url: format!("{web}/login/oauth/access_token"),
+        scopes: SCOPES,
+        no_device_flow: "GitHub does not know this OAuth App, or its device flow is off",
+        start_errors: &[(
+            "device_flow_disabled",
+            "the OAuth App's device flow is off (enable it in the app's settings)",
+        )],
+        code_expires_in: 900,
     }
-    if !(200..300).contains(&res.status) {
-        let m = v["error_description"].as_str().or(v["message"].as_str()).unwrap_or("an error");
-        return Err(format!("GitHub answered {}: {m}", res.status));
-    }
-    Ok(v)
 }
 
 /// Starts a device flow for OAuth App `client_id`.
 pub fn start_device_flow(t: &dyn Transport, api: &str, client_id: &str) -> Result<DeviceCode, String> {
-    let url = format!("{}/login/device/code", web_url(api));
-    let v = post_form(t, url, &[("client_id", client_id), ("scope", SCOPES)])?;
-    if let Some(e) = v["error"].as_str() {
-        let m = v["error_description"].as_str().unwrap_or(e);
-        return Err(match e {
-            "device_flow_disabled" => "the OAuth App's device flow is off (enable it in the app's settings)".into(),
-            _ => m.to_string(),
-        });
-    }
-    let s = |k: &str| v[k].as_str().map(String::from).ok_or_else(|| format!("no {k} in GitHub's answer"));
-    Ok(DeviceCode {
-        device_code: s("device_code")?,
-        user_code: s("user_code")?,
-        verification_uri: s("verification_uri")?,
-        expires_in: v["expires_in"].as_u64().unwrap_or(900),
-        interval: v["interval"].as_u64().unwrap_or(5),
-    })
+    oauth::start_device_flow(t, &oauth_app(api), client_id)
 }
 
 /// Asks whether the user has entered the code yet.
 pub fn poll_device_flow(t: &dyn Transport, api: &str, client_id: &str, device_code: &str) -> DevicePoll {
-    let url = format!("{}/login/oauth/access_token", web_url(api));
-    let pairs = [
-        ("client_id", client_id),
-        ("device_code", device_code),
-        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-    ];
-    let v = match post_form(t, url, &pairs) {
-        Ok(v) => v,
-        Err(e) => return DevicePoll::Failed(e),
-    };
-    if let Some(g) = grant(&v) {
-        return DevicePoll::Token(g);
-    }
-    match v["error"].as_str() {
-        Some("authorization_pending") => DevicePoll::Pending,
-        Some("slow_down") => DevicePoll::SlowDown(v["interval"].as_u64().unwrap_or(10)),
-        Some("expired_token") => DevicePoll::Expired,
-        Some("access_denied") => DevicePoll::Denied,
-        Some(e) => DevicePoll::Failed(v["error_description"].as_str().unwrap_or(e).to_string()),
-        None => DevicePoll::Failed("no token in GitHub's answer".into()),
-    }
-}
-
-/// The token in an answer of `login/oauth/access_token`, with its expiry and refresh token when the OAuth App issues
-/// expiring tokens (PDT-260).
-fn grant(v: &Value) -> Option<TokenGrant> {
-    let token = v["access_token"].as_str().filter(|t| !t.is_empty())?;
-    let refresh_token = v["refresh_token"].as_str().filter(|t| !t.is_empty()).map(String::from);
-    Some(TokenGrant {
-        token: token.into(),
-        expires_in: v["expires_in"].as_u64().filter(|s| *s > 0),
-        refresh_token_expires_in: refresh_token.as_ref().and(v["refresh_token_expires_in"].as_u64()),
-        refresh_token,
-    })
-}
-
-/// Why a refresh got no new token.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RefreshError {
-    /// GitHub refused the refresh token (revoked, expired or already used): only signing in again helps.
-    Refused(String),
-    /// No answer, or a server error: ask again later.
-    Failed(String),
+    oauth::poll_device_flow(t, &oauth_app(api), client_id, device_code)
 }
 
 /// Swaps refresh token `refresh_token` of OAuth App `client_id` for a new token and a new refresh token (the old one
@@ -145,31 +84,7 @@ pub fn refresh_token(
     client_id: &str,
     refresh_token: &str,
 ) -> Result<TokenGrant, RefreshError> {
-    let req = Request {
-        method: "POST",
-        url: format!("{}/login/oauth/access_token", web_url(api)),
-        headers: vec![
-            ("Accept", "application/json".into()),
-            ("Content-Type", "application/x-www-form-urlencoded".into()),
-        ],
-        body: Some(form(&[
-            ("client_id", client_id),
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-        ])),
-    };
-    let res = t.send(&req).map_err(RefreshError::Failed)?;
-    if res.status >= 500 || res.status == 429 {
-        return Err(RefreshError::Failed(format!("GitHub answered {}", res.status)));
-    }
-    let v: Value = serde_json::from_str(&res.body).unwrap_or(Value::Null);
-    if let Some(e) = v["error"].as_str() {
-        return Err(RefreshError::Refused(v["error_description"].as_str().unwrap_or(e).to_string()));
-    }
-    if !(200..300).contains(&res.status) {
-        return Err(RefreshError::Refused(format!("GitHub answered {}", res.status)));
-    }
-    grant(&v).ok_or_else(|| RefreshError::Failed("no token in GitHub's answer".into()))
+    oauth::refresh_token(t, &oauth_app(api), client_id, refresh_token)
 }
 
 /// Checks `token` against GitHub: who it is.
