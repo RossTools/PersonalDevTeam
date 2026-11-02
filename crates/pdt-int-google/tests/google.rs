@@ -93,6 +93,8 @@ async fn sign_in(env: &Env, id: &str) {
     .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["redirectUri"], "http://127.0.0.1:7421/api/google/callback");
+    // The user's own client comes straight back: no website page to start at.
+    assert!(v.get("relay").is_none(), "{v}");
     let url = v["url"].as_str().unwrap();
     assert!(url.contains("drive.file") && url.contains("client_id=cid.apps.googleusercontent.com"), "{url}");
     let state = url.split("state=").nth(1).unwrap().split('&').next().unwrap();
@@ -380,6 +382,8 @@ async fn sign_in_with_pdts_own_clients_and_a_separate_permission_for_agents() {
     let (s, v) = call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(from)).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["redirectUri"], "https://pdt.dev/oauth/google");
+    // The browser starts there too, so the page knows which PDT started the sign-in.
+    assert_eq!(v["relay"], "https://pdt.dev/oauth/google");
     let url = v["url"].as_str().unwrap();
     assert!(url.contains("client_id=std-id") && url.contains("code_challenge="), "{url}");
     let state = state_of(url);
