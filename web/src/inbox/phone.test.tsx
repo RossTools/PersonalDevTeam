@@ -7,6 +7,7 @@ import type { Notification } from '../api/gen/Notification';
 import type { PullRequestStatus } from '../api/gen/PullRequestStatus';
 import { ticket } from '../tickets/fixtures';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
+import { structuredQuestion, structuredQuestionItem } from './fixtures';
 import { merges, triageTitle } from './model';
 import { PhoneInboxItem } from './PhoneInbox';
 import { PhoneInboxList } from './PhoneInboxList';
@@ -113,6 +114,24 @@ describe('phone inbox: opening a question (PDT-209)', () => {
     await userEvent.click(screen.getByRole('radio', { name: 'Hold: I will do the dry run first' }));
     await userEvent.click(bar().getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(answered(calls)).toEqual({ answers: ['Hold: I will do the dry run first'] }));
+  });
+
+  it('shows a structured question (PDT-476): the short title, the context, described choices, the recommended one picked', async () => {
+    const q = structuredQuestionItem();
+    const calls = stubApi({ 'POST /api/notifications/read-all': undefined, 'POST /api/inbox/q401/answer': {} });
+    renderWithQuery(<PhoneInbox items={[q]} />);
+    await userEvent.click(screen.getByText(q.title));
+    expect(screen.getByRole('heading', { name: structuredQuestion.question })).toBeInTheDocument();
+    expect(screen.getAllByText(structuredQuestion.question)).toHaveLength(1);
+    expect(screen.getByRole('group', { name: 'Context' })).toHaveTextContent('any local process can do whatever a browser can');
+    const a = screen.getByRole('radio', { name: /A: Pair the browser/ });
+    expect(a).toHaveAttribute('aria-checked', 'true');
+    expect(a).toHaveTextContent('Recommended');
+    expect(screen.getByRole('radio', { name: /C: Both/ })).toHaveAccessibleDescription('A and B together: the most work, and B still has its gaps.');
+    // No number keys on the phone.
+    expect(a).not.toHaveTextContent('1');
+    await userEvent.click(bar().getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(answered(calls)).toEqual({ answers: ['A: Pair the browser'] }));
   });
 
   it("opens an approval wrapping the agent's AskUserQuestion from the list and answers it in its session", async () => {

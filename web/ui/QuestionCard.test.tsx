@@ -22,7 +22,7 @@ describe('QuestionCard', () => {
     const card = screen.getByRole('region', { name: 'Question 1 of 2' });
     expect(card).toHaveTextContent('1 / 2');
     expect(screen.getByRole('radiogroup', { name: 'Attach a PDF?' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: /Attach a PDF/ })).toHaveTextContent('About a day more.');
+    expect(screen.getByRole('radio', { name: /Attach a PDF/ })).toHaveAccessibleDescription('About a day more.');
     expect(screen.getByRole('radio', { name: /Text is enough/ })).toHaveTextContent('2');
     expect(screen.getByRole('radio', { name: 'Something else' })).toBeInTheDocument();
   });

@@ -9,6 +9,7 @@ import { TicketKey } from '../common/TicketKey';
 import { ItemLinks } from './ItemLinks';
 import type { ItemAction, ItemSpec } from './itemView';
 import { KindChip } from './kinds';
+import { longTitle } from './model';
 
 /** The kind, the ticket's key and title, the persona and the age; then the title and the links row. */
 export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: ItemSpec; className?: string }) {
@@ -35,7 +36,10 @@ export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: I
           </Fragment>
         ))}
       </div>
-      <h2 className="text-base leading-snug font-semibold break-words">{item.title}</h2>
+      {/* A long old-style question (the card below has it whole) is clamped, so it shows once. */}
+      <h2 className={cn('text-base leading-snug font-semibold break-words', longTitle(item) && 'line-clamp-2')} title={longTitle(item) ? item.title : undefined}>
+        {item.title}
+      </h2>
       <ItemLinks item={item} extra={spec.links} />
     </header>
   );

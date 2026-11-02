@@ -386,7 +386,9 @@ is off. Agents tag areas through `update_ticket`
 
 **The Inbox and notifications.** The Inbox (pdt-api and pdt-store `inbox.rs`) holds what waits on the user:
 questions, gates, stalled steps, secrets to enter, confirmations. An item's `title` is one line; a gate's question
-(Markdown) is in `body.question`, and `inbox::decorate` adds what is computed per request: ticket key and title,
+(Markdown) is in `body.question`, an agent's in `body.questions` (`inbox::Question`: `ask_user` checks each `question`
+is one line and its `recommended` one of its `choices`; items stored before structured choices have plain-string
+`choices`, which `Choice` still reads), and `inbox::decorate` adds what is computed per request: ticket key and title,
 persona name, and a gate's `changeRequest` (its attempt's pull request, else the run trigger's or the ticket's external
 link that a forge plugin's `is_change_request_url` accepts, named by its `change_request_name`). Some items are not
 stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, "PDT can't save changes"
