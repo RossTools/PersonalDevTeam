@@ -6,6 +6,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{argv_agent, call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -42,7 +43,7 @@ async fn setup_with(tmp: &Path, config: &str, approved: bool) -> Env {
     let bin = tmp.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.platform.claude_config_dir = Some(tmp.join("claude-config"));
     state.platform.claude_program = argv_agent(&bin, "fakeclaude").to_string_lossy().into_owned();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -91,17 +92,13 @@ async fn ticket(env: &Env) -> Value {
     call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1
 }
 
-/// The ticket once `done` says so (polling, as CI runs on its own), or the last look.
+/// The ticket once `done` says so (polling, as CI runs on its own).
 async fn wait_for(env: &Env, done: impl Fn(&Value) -> bool) -> Value {
-    for _ in 0..300 {
+    wait_until("the ticket", async || {
         let t = ticket(env).await;
-        if done(&t) {
-            return t;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let t = ticket(env).await;
-    panic!("timed out; the ticket is {t:#}")
+        if done(&t) { Ok(t) } else { Err(t) }
+    })
+    .await
 }
 
 async fn events(env: &Env, kind: &str) -> Vec<Value> {

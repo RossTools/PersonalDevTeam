@@ -4,7 +4,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{argv_agent, call, git, recorded_launches};
+use common::{argv_agent, call, conversation, git, recorded_launches};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -29,7 +29,7 @@ async fn setup(tmp: &Path) -> Env {
     std::fs::create_dir_all(user_config.parent().unwrap()).unwrap();
     std::fs::write(&user_config, "{\n  // mine\n  \"devin\": { \"org_id\": \"org-1\" },\n}\n").unwrap();
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.platform.devin_program = argv_agent(&bin, "fakedevin").to_string_lossy().into_owned();
     state.platform.devin_config_file = Some(user_config);
     let app = router(state.clone(), None);
@@ -40,14 +40,7 @@ async fn setup(tmp: &Path) -> Env {
 }
 
 async fn wait_status(app: &axum::Router, id: &str, want: &str) -> Value {
-    for _ in 0..100 {
-        let (_, s) = call(app, "GET", &format!("/api/sessions/{id}"), None).await;
-        if s["status"] == want {
-            return s;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    panic!("session {id} never became {want}");
+    conversation::wait_session(app, id, "status", want).await
 }
 
 #[tokio::test]

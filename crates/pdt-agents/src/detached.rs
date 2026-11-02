@@ -479,8 +479,9 @@ mod tests {
     #[tokio::test]
     async fn a_child_that_outlives_the_main_process_keeps_it_alive() {
         let tmp = tempfile::tempdir().unwrap();
+        // The child outlives the check by far: a loaded Windows runner is slow to start one.
         let command =
-            if cfg!(windows) { "start /b ping -n 3 127.0.0.1 >nul && exit /b 0" } else { "(sleep 2) & exit 0" };
+            if cfg!(windows) { "start /b ping -n 6 127.0.0.1 >nul && exit /b 0" } else { "(sleep 5) & exit 0" };
         let d = spawn(&spec(tmp.path(), "t3", command)).unwrap();
         let process = d.process.clone();
         let done = watch(process.clone(), Some(d.main));

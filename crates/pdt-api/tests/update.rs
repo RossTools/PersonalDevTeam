@@ -2,6 +2,7 @@ use crate::common;
 
 use axum::http::StatusCode;
 use common::call;
+use common::wait::{still_after, wait_until};
 use pdt_core::activity::Activity;
 use pdt_core::handoff::{downloads_dir, request_path};
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
@@ -147,7 +148,7 @@ async fn fake_github() -> (String, Fake) {
 async fn setup_with(tmp: &std::path::Path, supervised: bool, current: &str) -> (axum::Router, pdt_api::AppState, Fake) {
     let (base, fake) = fake_github().await;
     let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = pdt_api::AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     let mut svc = pdt_api::UpdateService::new(&base, "o/r", supervised, current);
     svc.first_check_delay = Duration::ZERO;
     svc.check_interval = Some(Duration::from_millis(50));
@@ -207,17 +208,13 @@ async fn add_busy_session(app: &axum::Router, state: &pdt_api::AppState, tmp: &s
         .unwrap();
 }
 
-/// Polls GET /api/host/update until `pred` holds (5 s at most) and returns that status.
+/// Polls GET /api/host/update until `pred` holds and returns that status.
 async fn wait_status(app: &axum::Router, pred: impl Fn(&Value) -> bool) -> Value {
-    for _ in 0..500 {
+    wait_until("the update status", async || {
         let (_, v) = call(app, "GET", "/api/host/update", None).await;
-        if pred(&v) {
-            return v;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let (_, v) = call(app, "GET", "/api/host/update", None).await;
-    panic!("status never matched: {v}");
+        if pred(&v) { Ok(v) } else { Err(v) }
+    })
+    .await
 }
 
 fn state_is(s: &'static str) -> impl Fn(&Value) -> bool {
@@ -611,9 +608,8 @@ async fn the_loop_never_checks_under_the_manual_policy() {
     store_token(&state);
     set_policy(&app, "manual").await;
     let task = tokio::spawn(pdt_api::run_update_loop(state.clone()));
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    still_after("a check for updates", Duration::from_millis(300), async || fake.hits.load(Ordering::SeqCst) > 0).await;
     task.abort();
-    assert_eq!(fake.hits.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -624,12 +620,16 @@ async fn the_loop_only_notifies_under_the_notify_policy() {
     set_policy(&app, "notify").await;
     let (task, workflows) = (tokio::spawn(pdt_api::run_update_loop(state.clone())), engine(&state));
     wait_status(&app, state_is("available")).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // It checks again every interval, and the engine has settled the version's run.
+    let runs = wait_until("a second check and a settled run", async || {
+        let runs = install_runs(&app).await;
+        let settled = !runs.is_empty() && runs.iter().all(|r| r["status"] == "quiet");
+        if fake.hits.load(Ordering::SeqCst) >= 2 && settled { Ok(runs) } else { Err(runs) }
+    })
+    .await;
     task.abort();
     workflows.abort();
-    assert!(fake.hits.load(Ordering::SeqCst) >= 2, "it checks again every interval");
     assert!(!request_path(&data(tmp.path())).exists());
-    let runs = install_runs(&app).await;
     assert_eq!(runs.len(), 1, "one per version: {runs:?}");
     assert_eq!(runs[0]["status"], "quiet", "nothing waits while updates only notify: {runs:?}");
 }
@@ -954,7 +954,7 @@ async fn a_range_too_long_for_github_links_to_the_rest() {
 async fn setup_moved(tmp: &std::path::Path, env: Option<&str>) -> (axum::Router, pdt_api::AppState) {
     let (base, _) = fake_github().await;
     let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = pdt_api::AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     let svc = pdt_api::UpdateService::new(&base, "gone/r", true, "0.1.5")
         .with_repo_id(1)
         .with_env_repo(env.map(String::from));

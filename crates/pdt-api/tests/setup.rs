@@ -35,7 +35,7 @@ fn fake(dir: &Path, name: &str) -> String {
 /// A host with no agent found (their programs point nowhere) unless `codex` is given.
 async fn host(tmp: &Path, codex: Option<String>) -> (axum::Router, AppState) {
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut st = AppState::new(store, tmp.join("data"));
+    let mut st = common::app_state(store, tmp);
     st.platform.claude_program = missing(tmp, "claude");
     st.platform.codex_program = codex.unwrap_or_else(|| missing(tmp, "codex"));
     st.platform.devin_program = missing(tmp, "devin");

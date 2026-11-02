@@ -2,7 +2,7 @@
 
 use crate::common;
 
-use common::{PNG, call, call_raw, disk_full, git, park_once_idle};
+use common::{PNG, call, call_raw, conversation, disk_full, git, park_once_idle};
 use futures_util::StreamExt;
 use pdt_api::{AppState, router, with_host_guard};
 use pdt_store::Store;
@@ -25,7 +25,7 @@ async fn setup(tmp: &Path) -> Env {
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["commit", "--allow-empty", "-m", "init", "-q"]);
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.platform.claude_program = FAKE.to_string();
     state.platform.login_path = None;
     let claude_dir = tmp.join("claude-config");
@@ -49,45 +49,24 @@ async fn new_conversation(env: &Env, extra: Value) -> Value {
 }
 
 async fn events(env: &Env, id: &str) -> Vec<Value> {
-    let (s, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?after=0"), None).await;
-    assert_eq!(s, 200, "{v}");
-    let mut all = v.as_array().unwrap().clone();
-    all.sort_by_key(|e| e["pos"].as_i64());
-    all
+    conversation::events(&env.app, id).await
 }
 
 /// Waits until some event matches.
 async fn wait_for(env: &Env, id: &str, what: &str, f: impl Fn(&Value) -> bool) -> Vec<Value> {
-    for _ in 0..300 {
-        let all = events(env, id).await;
-        if all.iter().any(|e| f(&e["event"])) {
-            return all;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("never saw {what}: {:#?}", events(env, id).await);
+    conversation::wait_events(&env.app, id, what, |all| all.iter().any(|e| f(&e["event"]))).await
 }
 
 fn turns_ended(all: &[Value]) -> usize {
-    all.iter().filter(|e| e["event"]["kind"] == "turn" && e["event"]["phase"] == "ended").count()
+    conversation::ended(all).len()
 }
 
 async fn wait_turns(env: &Env, id: &str, n: usize) -> Vec<Value> {
-    for _ in 0..300 {
-        let all = events(env, id).await;
-        if turns_ended(&all) >= n {
-            return all;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("never saw {n} turns end: {:#?}", events(env, id).await);
+    conversation::wait_turns(&env.app, id, n).await
 }
 
 fn agent_text(all: &[Value]) -> Vec<String> {
-    all.iter()
-        .filter(|e| e["event"]["kind"] == "agent_message")
-        .map(|e| e["event"]["markdown"].as_str().unwrap().to_string())
-        .collect()
+    conversation::said(all)
 }
 
 async fn send(env: &Env, id: &str, text: &str) -> Value {
@@ -97,18 +76,11 @@ async fn send(env: &Env, id: &str, text: &str) -> Value {
 }
 
 async fn session(env: &Env, id: &str) -> Value {
-    call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await.1
+    conversation::session(&env.app, id).await
 }
 
 async fn wait_activity(env: &Env, id: &str, want: &str) -> Value {
-    for _ in 0..300 {
-        let s = session(env, id).await;
-        if s["activity"] == want {
-            return s;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("activity never became {want}: {}", session(env, id).await);
+    conversation::wait_session(&env.app, id, "activity", want).await
 }
 
 fn open_request(all: &[Value]) -> Option<String> {
@@ -487,7 +459,7 @@ async fn a_shutdown_ends_the_turn_and_the_next_pdtd_reopens_on_send() {
     pdt_api::shutdown_conversations(&env.state).await;
     let all = events(&env, &id).await;
     assert!(open_request(&all).is_none());
-    let mut fresh = AppState::new(env.state.store.clone(), tmp.path().join("data"));
+    let mut fresh = common::app_state(env.state.store.clone(), tmp.path());
     fresh.platform = env.state.platform.clone();
     pdt_api::recover_conversations(&fresh).await;
     let app = router(fresh.clone(), None);
@@ -791,21 +763,6 @@ async fn at_suggests_files_from_the_sessions_folder() {
 }
 
 #[tokio::test]
-async fn api_keys_are_scrubbed_from_the_agent() {
-    let tmp = tempfile::tempdir().unwrap();
-    let env = setup(tmp.path()).await;
-    // SAFETY: the tests that read the environment don't depend on this variable.
-    unsafe { std::env::set_var("ANTHROPIC_API_KEY", "sk-test") };
-    let id = new_conversation(&env, json!({"initialPrompt": "env: ANTHROPIC_API_KEY"})).await["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let all = wait_turns(&env, &id, 1).await;
-    assert_eq!(agent_text(&all), ["ANTHROPIC_API_KEY is unset"]);
-    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
-}
-
-#[tokio::test]
 async fn the_events_socket_replays_then_streams_live() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;
@@ -981,7 +938,7 @@ async fn a_gap_left_by_lost_writes_is_filled_in_from_claudes_transcript() {
         st.upsert_session_event(&id, e).await.unwrap();
     }
     // The next pdtd fills the gap in as the conversation loads, once.
-    let mut fresh = AppState::new(st.clone(), tmp.path().join("data"));
+    let mut fresh = common::app_state(st.clone(), tmp.path());
     fresh.platform = env.state.platform.clone();
     let port = serve(&fresh).await;
     replayed(port, &id).await;

@@ -250,7 +250,7 @@ fn a_rehearsal_serves_the_copy_and_resumes_nothing() {
     let _d = start_with(port, &data, &[("PDT_REHEARSAL", "1")]);
     let (_, workflows) = http(port, "GET", "/api/workflows", None);
     assert!(workflows.as_array().unwrap().iter().any(|w| !w["builtin"].is_null()), "built-ins installed: {workflows}");
-    std::thread::sleep(Duration::from_secs(2));
-    let (_, s) = http(port, "GET", &format!("/api/sessions/{id}"), None);
-    assert_eq!(s["status"], "interrupted", "not resumed: {s}");
+    wait::still_after_blocking("the session resuming", Duration::from_secs(2), || {
+        http(port, "GET", &format!("/api/sessions/{id}"), None).1["status"] != "interrupted"
+    });
 }

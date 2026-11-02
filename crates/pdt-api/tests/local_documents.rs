@@ -25,7 +25,7 @@ struct Env {
 async fn setup() -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.home_dir = Some(tmp.path().join("home"));
     let app = router(state.clone(), None);
     Env { app, state, tmp }
