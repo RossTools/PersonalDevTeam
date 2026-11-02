@@ -1125,7 +1125,7 @@ mod tests {
             assert_eq!(shim_prompt(None, bad), None, "{bad:?}");
         }
         // Spaces are fine: cmd passes a quoted argument through.
-        assert!(shim_prompt(None, r"C:\Users\Ross West\p.md").unwrap().contains("Ross West"));
+        assert!(shim_prompt(None, r"C:\Users\Alex Kim\p.md").unwrap().contains("Alex Kim"));
     }
 
     #[test]

@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn host_and_port_come_from_the_url() {
-        assert_eq!(host_port("http://192.168.0.69:32773/"), Some(("192.168.0.69".into(), 32773)));
+        assert_eq!(host_port("http://192.168.1.10:8080/"), Some(("192.168.1.10".into(), 8080)));
         assert_eq!(host_port("https://nas.local"), Some(("nas.local".into(), 443)));
         assert_eq!(host_port("http://[fd00::1]:8080/x"), Some(("fd00::1".into(), 8080)));
         assert_eq!(host_port("not a url"), None);
@@ -81,7 +81,7 @@ mod tests {
 
     #[tokio::test]
     async fn only_local_addresses_are_touched() {
-        assert_eq!(local_addr("http://192.168.0.69:32773/").await, Some("192.168.0.69:32773".parse().unwrap()));
+        assert_eq!(local_addr("http://192.168.1.10:8080/").await, Some("192.168.1.10:8080".parse().unwrap()));
         assert_eq!(local_addr("https://8.8.8.8/").await, None);
         assert_eq!(local_addr("http://127.0.0.1:7/").await, None);
         assert_eq!(local_addr("").await, None);

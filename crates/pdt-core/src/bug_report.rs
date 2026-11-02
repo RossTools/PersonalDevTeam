@@ -398,13 +398,13 @@ mod tests {
     fn redaction_strips_the_token_and_home_paths() {
         let r = Redactions {
             secrets: vec!["github_pat_11ABCDEF0123456789_secretvalue".into()],
-            home: Some("/Users/rwest".into()),
-            hostnames: vec!["rosss-mac-mini".into()],
+            home: Some("/Users/alex".into()),
+            hostnames: vec!["alexs-mac-mini".into()],
         };
         let text = "loaded github_pat_11ABCDEF0123456789_secretvalue from keychain\n\
-                    opened /Users/rwest/work/repo/file.rs\n\
+                    opened /Users/alex/work/repo/file.rs\n\
                     another /Users/alice/x and /home/bob/y and C:\\Users\\carol\\z\n\
-                    serving on Rosss-Mac-Mini.tail1234.ts.net:443 and box.tail99.ts.net\n\
+                    serving on Alexs-Mac-Mini.tail1234.ts.net:443 and box.tail99.ts.net\n\
                     header Authorization: Bearer abc.def-123 and bearer qq.rr\n\
                     {\"apiKey\": \"k-123456\", \"name\": \"ok\"} token=xyz&other=1\n\
                     stray ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa and sk-ant-0123456789abcdefghij\n\
@@ -412,11 +412,11 @@ mod tests {
         let out = redact(text, &r);
         for leaked in [
             "secretvalue",
-            "rwest",
+            "alex",
             "alice",
             "bob",
             "carol",
-            "Rosss-Mac-Mini",
+            "Alexs-Mac-Mini",
             "tail99",
             "abc.def-123",
             "qq.rr",
@@ -444,8 +444,8 @@ mod tests {
 
     #[test]
     fn windows_home_paths_are_hidden_with_either_slash() {
-        let r = Redactions { home: Some("C:\\Users\\Ross".into()), ..Default::default() };
-        assert_eq!(redact("C:\\Users\\Ross\\work and C:/Users/Ross/x", &r), "~\\work and ~/x");
+        let r = Redactions { home: Some("C:\\Users\\Alex".into()), ..Default::default() };
+        assert_eq!(redact("C:\\Users\\Alex\\work and C:/Users/Alex/x", &r), "~\\work and ~/x");
     }
 
     #[test]

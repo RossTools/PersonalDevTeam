@@ -227,7 +227,7 @@ mod tests {
         plugin
             .login()
             .unwrap()
-            .set_account("ghe.example.com", Some(account("rwest", "https://ghe.example.com/api/v3")));
+            .set_account("ghe.example.com", Some(account("alexk", "https://ghe.example.com/api/v3")));
         assert_eq!(r.detect("https://ghe.example.com/o/r.git").map(|(_, r)| r).as_deref(), Some("o/r"));
         assert_eq!(r.detect("git@github.com:o/r.git").map(|(_, r)| r).as_deref(), Some("o/r"), "github.com still");
         assert!(r.detect("https://ghe.example.com/o/r/tree/main").is_none());
@@ -246,20 +246,20 @@ mod tests {
         let l = p.login().unwrap();
         assert_eq!(l.host_of(&l.api_url("")), "github.com");
         assert_eq!(l.host_of("https://GHE.example.com/api/v3/"), "ghe.example.com");
-        l.set_account("github.com", Some(account("ross", "https://api.github.com")));
-        l.set_account("ghe.example.com", Some(account("rwest", "https://ghe.example.com/api/v3")));
+        l.set_account("github.com", Some(account("alex", "https://api.github.com")));
+        l.set_account("ghe.example.com", Some(account("alexk", "https://ghe.example.com/api/v3")));
         let hosts: Vec<_> = l.accounts().into_iter().map(|a| (a.host, a.account.login)).collect();
-        assert_eq!(hosts, [("github.com".to_string(), "ross".to_string()), ("ghe.example.com".into(), "rwest".into())]);
-        assert_eq!(api.account().unwrap().login, "ross", "github.com's client");
+        assert_eq!(hosts, [("github.com".to_string(), "alex".to_string()), ("ghe.example.com".into(), "alexk".into())]);
+        assert_eq!(api.account().unwrap().login, "alex", "github.com's client");
         let ghe = p.api_on("ghe.example.com").unwrap();
         assert!(!Arc::ptr_eq(&ghe, &api));
-        assert_eq!(ghe.account().unwrap().login, "rwest");
+        assert_eq!(ghe.account().unwrap().login, "alexk");
         assert!(Arc::ptr_eq(&p.api_on("www.github.com").unwrap(), &api));
         assert!(p.api_on("gitlab.com").is_none());
         // Replacing one host's account leaves the other's.
         l.set_account("ghe.example.com", Some(account("other", "https://ghe.example.com/api/v3")));
         assert!(Arc::ptr_eq(&p.api_on("ghe.example.com").unwrap(), &ghe), "the same client, signed in again");
-        assert_eq!((ghe.account().unwrap().login, api.account().unwrap().login), ("other".into(), "ross".into()));
+        assert_eq!((ghe.account().unwrap().login, api.account().unwrap().login), ("other".into(), "alex".into()));
         l.set_account("github.com", None);
         assert!(api.account().is_none());
         assert_eq!(l.accounts().len(), 1);
