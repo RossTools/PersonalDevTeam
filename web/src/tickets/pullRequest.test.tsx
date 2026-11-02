@@ -123,7 +123,7 @@ describe('pull request status', () => {
           onOpen={() => {}} entries={() => []} />
       </ul>,
     );
-    const badge = screen.getByText(/#12 · CI running/);
+    const badge = screen.getByText(/#12 · CI running/).closest('[data-slot=badge]') as HTMLElement;
     expect(within(badge).getByLabelText('Not updated')).toBeInTheDocument();
     expect(badge.getAttribute('title')).toContain('Not updated: gh failed');
   });
@@ -134,7 +134,7 @@ describe('pull request status', () => {
         <BoardCard ticket={summary(1, { stage: 'in_progress', attempt: attempt(pr({ ci: failed })) })} onOpen={() => {}} entries={() => []} />
       </ul>,
     );
-    expect(screen.getByText(/#12 · CI failed/)).toHaveAttribute('title', expect.stringMatching(/^PR #12: Fix login — failed: test \(linux\)\nLast checked /));
+    expect(screen.getByText(/#12 · CI failed/).closest('[data-slot=badge]')).toHaveAttribute('title', expect.stringMatching(/^PR #12: Fix login — failed: test \(linux\)\nLast checked /));
 
     const t = ticket(1, { stage: 'in_progress', attempt: attempt(pr()), attempts: [attempt(pr())] });
     stubApi({
