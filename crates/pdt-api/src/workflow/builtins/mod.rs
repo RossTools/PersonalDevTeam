@@ -3,6 +3,7 @@
 //! disabled, not deleted.
 
 mod base_moved;
+mod close_parents;
 mod comments_to_agent;
 mod cut_release;
 mod finish_merged;
@@ -44,6 +45,7 @@ pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
 pub const PICK_UP_TICKETS: &str = "pick-up-tickets";
 pub const PM_DAILY_CHECKPOINT: &str = "pm-daily-checkpoint";
 pub const TICKET_PROPOSALS: &str = "ticket-proposals";
+pub const CLOSE_PARENTS: &str = "close-parents";
 /// The Cut a release template (without `builtin:`); a built-in workflow until PDT-301 ([`RETIRED`]).
 pub const CUT_RELEASE: &str = "cut-release";
 
@@ -73,6 +75,7 @@ pub const BUILTINS: &[Builtin] = &[
         category: Category::Tickets,
         doc: ticket_proposals::ticket_proposals,
     },
+    Builtin { id: CLOSE_PARENTS, enabled: true, category: Category::Tickets, doc: close_parents::close_parents },
 ];
 
 /// The GitHub plugin's built-ins ([`crate::integrations::Integration::builtin_workflows`]): left out while it is off

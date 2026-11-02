@@ -104,6 +104,39 @@ describe('board', () => {
     expect(lists.every((q) => q.project === project.id)).toBe(true);
   });
 
+  it("keeps the project's Done window, for the Done column and the closed parents' lanes, and changes it from the View menu", async () => {
+    localStorage.setItem('pdt.tickets.view', JSON.stringify({ projectId: project.id, mode: 'board', filters: {} }));
+    const day = 24 * 60 * 60 * 1000;
+    const calls = stub({
+      // Nothing closed lately: the empty Done column names the window.
+      'GET /api/tickets': (c: Call) => page(params(c.path).stage === 'done' ? [] : columns[params(c.path).stage] ?? []),
+      [`GET /api/projects/${project.id}/board`]: { doneWindowDays: 3 },
+      [`PUT /api/projects/${project.id}/board`]: (c: Call) => c.body,
+    });
+    renderWithQuery(<Harness />);
+    const menu = await screen.findByRole('button', { name: 'Board view: Done shows last 3 days' });
+    const windows = (stage: string) => calls
+      .filter((c) => c.path.startsWith('/api/tickets?')).map((c) => params(c.path))
+      .filter((q) => q.stage === stage && q.closedAfter).map((q) => Math.round((Date.now() - Number(q.closedAfter)) / day));
+    await waitFor(() => expect(windows('done')).toContain(3));
+    expect(await within(column('Done')).findByText('Nothing done in the last 3 days.')).toBeInTheDocument();
+    expect(windows('done,wont_do')).toContain(3);
+    await userEvent.click(menu);
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Last 7 days' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ doneWindowDays: 7 }));
+    expect(await screen.findByRole('button', { name: 'Board view: Done shows last 7 days' })).toBeInTheDocument();
+    await waitFor(() => expect(windows('done')).toContain(7));
+    expect(await within(column('Done')).findByText('Nothing done in the last 7 days.')).toBeInTheDocument();
+    expect(windows('done,wont_do')).toContain(7);
+  });
+
+  it('has no View menu on the board across all projects', async () => {
+    stub();
+    renderWithQuery(<Harness />);
+    await within(column('To do')).findByText('Ticket 1');
+    expect(screen.queryByRole('button', { name: /Board view/ })).not.toBeInTheDocument();
+  });
+
   it('moves a card to another column by dragging it there', async () => {
     const calls = stub();
     renderWithQuery(<Harness />);

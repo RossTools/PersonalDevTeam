@@ -244,6 +244,35 @@ pub fn open_parts<'a>(parts: impl IntoIterator<Item = (&'a str, TicketStage)>) -
     parts.into_iter().filter(|(_, s)| !s.is_closed()).map(|(k, _)| k.to_string()).collect()
 }
 
+/// What happens to a parent when one of its parts moves (PDT-377, the "Close finished parents" workflow).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParentFollow {
+    /// Its last open part closed: it closes too, to this stage (Won't do when every part was Won't do, else Done).
+    Close(TicketStage),
+    /// Its parts are all closed, but it has work of its own (an active attempt, a running session): it stays open.
+    Hold,
+    /// It is closed and a part is open again: back to In progress.
+    Reopen,
+    /// Nothing to do: a part is still open, or nothing changed.
+    Nothing,
+}
+
+/// What a parent in `parent` does now that its parts are in `parts` (`busy`: it has work of its own going).
+pub fn parent_follow(parent: TicketStage, parts: &[TicketStage], busy: bool) -> ParentFollow {
+    let open = parts.iter().any(|s| !s.is_closed());
+    if parent.is_closed() {
+        return if open { ParentFollow::Reopen } else { ParentFollow::Nothing };
+    }
+    if parts.is_empty() || open {
+        return ParentFollow::Nothing;
+    }
+    if busy {
+        return ParentFollow::Hold;
+    }
+    let dropped = parts.iter().all(|s| *s == TicketStage::WontDo);
+    ParentFollow::Close(if dropped { TicketStage::WontDo } else { TicketStage::Done })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,5 +373,19 @@ mod tests {
         let parts = [("A", TicketStage::Done), ("B", TicketStage::WontDo), ("C", TicketStage::Ready)];
         assert_eq!(open_parts(parts), ["C"]);
         assert!(open_parts([("A", TicketStage::Done)]).is_empty());
+    }
+
+    #[test]
+    fn a_parent_follows_its_parts() {
+        use ParentFollow::*;
+        use TicketStage::{Done as D, InProgress, Ready, Todo, WontDo};
+        assert_eq!(parent_follow(InProgress, &[D, WontDo], false), Close(D));
+        assert_eq!(parent_follow(Todo, &[WontDo, WontDo], false), Close(WontDo), "every part dropped");
+        assert_eq!(parent_follow(InProgress, &[D, Ready], false), Nothing, "a part still open");
+        assert_eq!(parent_follow(InProgress, &[], false), Nothing, "no parts");
+        assert_eq!(parent_follow(InProgress, &[D, D], true), Hold, "work of its own");
+        assert_eq!(parent_follow(D, &[D, InProgress], false), Reopen);
+        assert_eq!(parent_follow(WontDo, &[Todo], true), Reopen);
+        assert_eq!(parent_follow(D, &[D, D], false), Nothing, "closed already");
     }
 }

@@ -18,7 +18,9 @@ of the same tickets.
 | **Won't do** | Closed without doing it. |
 
 The **Backlog** lists **Draft** and **Ready** tickets in your order. The **Board** has columns for **To do**, **In
-progress** and **Done** (closed in the last two weeks).
+progress** and **Done** (closed in the last two weeks). To change how far back **Done** reaches, open the board's view
+menu (**Done: last 14 days**, at the top) and pick the last day, 3, 7, 14 or 30 days. Each project keeps its own
+choice on this computer; the board across all projects shows two weeks.
 
 Move a ticket by dragging its card, with **Move to** in its menu (**⋯**), or with the stage stepper on its page.
 Moving a ticket that's being worked on back to **Draft**, **Ready** or **To do** stops its agent and ends the attempt
@@ -87,9 +89,15 @@ its own.
 - Or set an existing ticket's **Parent** field.
 
 A parent is never started itself: **Start next part** starts its first unblocked open part. The parent moves to **In
-progress** with its first part and to **Done** when every part is closed, and can't be closed while a part is open. On
-the board each parent gets its own lane, with a stepper showing progress. A part's agent also gets the parent's
-description and the list of other parts.
+progress** with its first part, and can't be closed while a part is open. On the board each parent gets its own lane,
+with a stepper showing progress; a closed parent's lane stays as long as **Done** shows it. A part's agent also gets
+the parent's description and the list of other parts.
+
+When the last open part reaches **Done** or **Won't do**, the parent closes too: to **Done**, or to **Won't do** if
+every part was **Won't do**. It gets an "All parts closed" comment and you get a notification. A parent that has work
+of its own (an attempt or a running agent session) stays open, and the notification says so. Moving a part out of
+**Done** or **Won't do** moves its closed parent back to **In progress**. This is the **Close finished parents**
+[workflow](../automation/workflows.md); turn it off to close parents yourself.
 
 ## Links and blocking
 

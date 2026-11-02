@@ -4,6 +4,7 @@ pub mod acp_agent;
 pub mod acp_registry;
 pub mod activity;
 pub mod agent_context;
+pub mod board;
 pub mod brand;
 pub mod bug_report;
 pub mod conversation;

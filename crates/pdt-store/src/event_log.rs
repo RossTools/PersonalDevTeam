@@ -269,21 +269,26 @@ pub(crate) async fn mirror_timeline(
                 },
             )
         }
-        K::Moved => NewLogEvent::new(
-            ev::TICKET_STAGE_CHANGED,
-            timeline_id,
-            "tickets",
-            ev::TicketStageChanged {
-                project_id,
-                ticket_id: ticket_id.into(),
-                ticket_key,
-                from: s("from"),
-                to: s("to"),
-                actor: actor.as_str().into(),
-                github_issue: external.get("github").cloned(),
-                external,
-            },
-        ),
+        K::Moved => {
+            let parent = crate::tickets::summary(&mut *conn, ticket_id).await?.and_then(|t| t.parent);
+            NewLogEvent::new(
+                ev::TICKET_STAGE_CHANGED,
+                timeline_id,
+                "tickets",
+                ev::TicketStageChanged {
+                    project_id,
+                    ticket_id: ticket_id.into(),
+                    ticket_key,
+                    from: s("from"),
+                    to: s("to"),
+                    actor: actor.as_str().into(),
+                    github_issue: external.get("github").cloned(),
+                    external,
+                    parent_id: parent.as_ref().map(|p| p.id.clone()),
+                    parent_key: parent.map(|p| p.key),
+                },
+            )
+        }
         K::Comment => {
             let attempt: Option<(String,)> =
                 sqlx::query_as("SELECT id FROM attempts WHERE ticket_id = ? AND state = 'active'")

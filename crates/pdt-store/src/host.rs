@@ -326,6 +326,34 @@ impl Store {
             .await?;
         Ok(())
     }
+
+    /// A project's board settings (PDT-377); the defaults for a project that has none.
+    pub async fn get_project_board(&self, project_id: &str) -> Result<pdt_core::board::BoardSettings, StoreError> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT board FROM project_settings WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        match row {
+            None => Ok(Default::default()),
+            Some((v,)) => serde_json::from_str(&v).map_err(|e| StoreError::Corrupt(format!("board settings: {e}"))),
+        }
+    }
+
+    pub async fn put_project_board(
+        &self,
+        project_id: &str,
+        s: &pdt_core::board::BoardSettings,
+    ) -> Result<(), StoreError> {
+        // The row gets the other settings as they read now, so a project with none keeps its defaults.
+        let current = self.get_project_settings(project_id).await?;
+        self.put_project_settings(project_id, &current).await?;
+        sqlx::query("UPDATE project_settings SET board = ? WHERE project_id = ?")
+            .bind(serde_json::to_string(s).expect("board settings serialize"))
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -346,6 +374,19 @@ mod tests {
         assert_eq!(store.get_project_storage("p").await.unwrap(), s);
         assert_eq!(store.get_project_settings("p").await.unwrap(), ProjectSettings::default());
         assert!(store.put_project_storage("missing", &s).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn project_board_defaults_then_roundtrips_and_keeps_the_other_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        assert_eq!(store.get_project_board("p").await.unwrap().done_window_days, 14);
+        let s = pdt_core::board::BoardSettings { done_window_days: 3 };
+        store.put_project_board("p", &s).await.unwrap();
+        assert_eq!(store.get_project_board("p").await.unwrap(), s);
+        assert_eq!(store.get_project_settings("p").await.unwrap(), ProjectSettings::default());
+        assert_eq!(store.get_project_storage("p").await.unwrap(), Default::default());
+        assert!(store.put_project_board("missing", &s).await.is_err());
     }
 
     #[tokio::test]

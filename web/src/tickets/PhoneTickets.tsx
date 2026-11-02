@@ -10,6 +10,7 @@ import type { TicketStage } from '../api/gen/TicketStage';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { STAGES, type BacklogFilters, type GroupBy } from './model';
+import { BoardViewMenu } from './BoardViewMenu';
 import { SaveFilterDialog } from './TicketsList';
 import type { BacklogState, TicketsMode } from './useBacklog';
 
@@ -168,6 +169,7 @@ export function PhoneToolbar({ backlog, labels }: { backlog: BacklogState; label
           onChange={backlog.setMode}
         />
         <span className="flex-1" />
+        {mode === 'board' && backlog.projectId && <BoardViewMenu projectId={backlog.projectId} compact />}
         {mode === 'backlog' && (
           <>
             <IconButton

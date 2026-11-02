@@ -789,17 +789,6 @@ pub(crate) async fn instructions(st: &AppState, s: &Session) -> Result<String, A
     }))
 }
 
-fn stage_label(s: TicketStage) -> &'static str {
-    match s {
-        TicketStage::Draft => "Draft",
-        TicketStage::Ready => "Ready",
-        TicketStage::Todo => "To do",
-        TicketStage::InProgress => "In progress",
-        TicketStage::Done => "Done",
-        TicketStage::WontDo => "Won't do",
-    }
-}
-
 const OPEN_STAGES: [TicketStage; 4] =
     [TicketStage::Draft, TicketStage::Ready, TicketStage::Todo, TicketStage::InProgress];
 
@@ -815,7 +804,7 @@ pub(crate) async fn stage_counts(st: &AppState, project_id: &str) -> Result<Vec<
         };
         let n = st.store.query_tickets(&q.validate()?).await?.total;
         if n > 0 {
-            out.push((stage_label(stage).to_string(), n));
+            out.push((stage.label().to_string(), n));
         }
     }
     Ok(out)
@@ -890,7 +879,7 @@ async fn briefing_data(st: &AppState, session_id: &str, reset_from: Option<&str>
         .map(|t| BriefTicket {
             key: t.key.clone(),
             title: t.title.clone(),
-            stage: stage_label(t.stage).into(),
+            stage: t.stage.label().into(),
             state: pm::ticket_state(t),
         })
         .collect();

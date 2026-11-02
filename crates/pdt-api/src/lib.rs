@@ -2,6 +2,7 @@ mod activity;
 mod agent_mcp;
 mod attachments;
 mod background;
+mod board;
 mod bug_reports;
 mod checks;
 mod ci;
