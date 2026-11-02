@@ -17,6 +17,7 @@ import { useAction } from '../common/useAction';
 import { useProjectSettingsSections } from '../runs/ProjectSettingsPanel';
 import { SettingsScreens, type SettingsSection } from '../common/SettingsScreens';
 import { repoUrl } from './forgeLinks';
+import { invalidateWorktrees, worktreesQuery } from '../common/worktrees';
 import { useOpenChanges } from '../review/open';
 import { ProjectDocuments } from '../documents/DocumentSettings';
 
@@ -92,7 +93,7 @@ function WorktreeRow({ project, wt, storage }: { project: Project; wt: Worktree;
     try {
       await api.removeWorktree(wt.id, { force: false, deleteBranch: false });
     } finally {
-      void qc.invalidateQueries({ queryKey: ['worktrees', project.id] });
+      invalidateWorktrees(qc, project.id);
       void qc.invalidateQueries({ queryKey: ['storage'] });
     }
   });
@@ -169,7 +170,7 @@ function Cleanup({ project, settings }: { project: Project; settings: StorageSet
 }
 
 function Worktrees({ project }: { project: Project }) {
-  const list = useQuery({ queryKey: ['worktrees', project.id], queryFn: () => api.listWorktrees(project.id) });
+  const list = useQuery(worktreesQuery(project.id));
   const storage = useStorage(project.id);
   const mine = storage.data?.projects.find((p) => p.projectId === project.id) ?? null;
   const byId = new Map((mine?.worktrees ?? []).map((w) => [w.id, w]));

@@ -14,6 +14,7 @@ import type { PartsProgress } from '../api/gen/PartsProgress';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { runAction } from '../common/useAction';
+import { invalidateWorktrees } from '../common/worktrees';
 import { isClosed, nextPart, STAGES } from './model';
 import { invalidateTickets } from './queries';
 
@@ -339,7 +340,7 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket,
     r = await api.finishTicket(t.id, req);
   }
   invalidateTickets(qc, [t.id]);
-  void qc.invalidateQueries({ queryKey: ['worktrees', t.projectId] });
+  invalidateWorktrees(qc, t.projectId);
   void qc.invalidateQueries({ queryKey: ['sessions'] });
   void qc.invalidateQueries({ queryKey: ['workspaces'] });
   void qc.invalidateQueries({ queryKey: ['branches', t.projectId] });

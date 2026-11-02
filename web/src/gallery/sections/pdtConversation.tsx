@@ -8,6 +8,7 @@ import { MarkdownRefsContext, type MarkdownRefs } from '../../common/markdownRef
 import { TicketKeysContext } from '../../common/ticketKeys';
 import { CreateTicketsCard, PdtToolCard, type PdtCall } from '../../conversation/PdtToolCard';
 import { PdtProposal } from '../../conversation/PdtProposal';
+import { ticketKeys } from '../../tickets/queries';
 import { ticket } from '../../tickets/fixtures';
 
 function Demo({ label, children }: { label: string; children: ReactNode }) {
@@ -42,11 +43,11 @@ const watch = { id: 'w1', target: 'ticket', targetId: 't31', targetLabel: 'SHOP-
 function Seeded({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   useState(() => {
-    qc.setQueryData(['ticket-card', 'SHOP-19'], ticket(19, {
+    qc.setQueryData(ticketKeys.card('SHOP-19'), ticket(19, {
       key: 'SHOP-19', title: 'Save the cart across visits', stage: 'in_progress', priority: 'medium', labels: ['agentic'], attempt,
       agent: { persona: 'Coder', state: 'stalled', sessionId: 's', busy: false, runId: 'r', background: [] },
     }));
-    qc.setQueryData(['ticket-card', 'SHOP-31'], ticket(31, { key: 'SHOP-31', title: 'Guest checkout: email-only orders', stage: 'todo', priority: 'high', labels: ['agentic'] }));
+    qc.setQueryData(ticketKeys.card('SHOP-31'), ticket(31, { key: 'SHOP-31', title: 'Guest checkout: email-only orders', stage: 'todo', priority: 'high', labels: ['agentic'] }));
     for (const f of ['e2e/cart.spec.ts', 'src/checkout/session.ts']) qc.setQueryData(['session-file', 'gallery', f], true);
     qc.setQueryData(['workflow-run', 'r1'], { id: 'r1', workflowId: 'wf1', workflowName: 'Cut a release', status: 'running', error: null, steps: [] });
     qc.setQueryData(['watches', { session: 'pm' }], [watch]);
