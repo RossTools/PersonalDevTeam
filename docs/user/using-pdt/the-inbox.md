@@ -39,7 +39,9 @@ token, a password) has a masked field, and the value goes straight to PDT's secr
 
 An agent wants to run a command or edit a file, shown as it would run: **Allow once**, **Always allow**, or **Deny**
 (with an optional reason). Answering here or in the agent's conversation answers both. A call to one of PDT's own tools
-from an agent that can't ask in its own prompt shows here too, with its arguments.
+from an agent that can't ask in its own prompt shows here too, with its arguments. When the PM proposes decisions on
+your ticket proposals, they wait here as one table: untick the rows you don't want, then **Allow** the rest (see
+[Decide Inbox items](../automation/the-pm.md#decide-inbox-items)).
 
 ### Stuck
 
@@ -80,7 +82,8 @@ from an agent that can't ask in its own prompt shows here too, with its argument
   The optional reason goes to the agent with your decision: in its session if it's still running, otherwise as a
   comment on the ticket it was working on. Tickets you or the PM make, and parts from **Make into parts**, aren't
   proposals. To let agents' tickets go straight to the board, turn off the **Ticket proposals** workflow (see
-  [Workflows](../automation/workflows.md#turn-a-workflow-on-or-off)).
+  [Workflows](../automation/workflows.md#turn-a-workflow-on-or-off)). With many waiting, the PM can propose a
+  decision for each and you confirm them together (see [Decide Inbox items](../automation/the-pm.md#decide-inbox-items)).
 - **Workflow proposals**: an agent (the PM, say) changed one of your workflows. The item shows their note and what
   changed. **Accept** makes it the current version, **Discard** sets it aside, **Versions** shows the whole change in
   the workflow's **Versions** tab. The item goes once you decide, or when a newer proposal replaces it.

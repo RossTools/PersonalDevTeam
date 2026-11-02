@@ -478,7 +478,8 @@ impl Registry {
     /// that doesn't ask, or a call that names nothing.
     pub fn ask_target(&self, tool: &str, input: &Value) -> Option<AskTarget> {
         let (name, e, int) = self.agent_tool(tool)?;
-        if !self.table.asks(name) {
+        // One that asks in PDT's Inbox has no target: no policy answers it for the user (PDT-475).
+        if !self.table.claude_asks(name) {
             return None;
         }
         match &e.runner {

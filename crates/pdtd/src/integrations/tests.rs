@@ -59,6 +59,7 @@ fn the_tools_are_where_they_were() {
             "unlink_tickets",
             "stop_ticket",
             "send_to_session",
+            "inbox_decide",
             "change_request_view",
             "change_request_diff",
             "change_request_comment",
@@ -119,6 +120,7 @@ fn the_tools_are_where_they_were() {
             "unlink_tickets",
             "stop_ticket",
             "send_to_session",
+            "inbox_decide",
             "doc_edit",
             "sheet_edit",
             "document_create",
@@ -183,7 +185,7 @@ fn the_tools_are_where_they_were() {
         || forge.contains(n)));
     assert_eq!(open.len(), 35);
     let pm = pdt_core::persona::builtin_persona("pm").unwrap().setup(t);
-    assert_eq!(pm.tool_set(t).len(), 74);
+    assert_eq!(pm.tool_set(t).len(), 75);
 }
 
 #[test]

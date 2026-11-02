@@ -398,6 +398,36 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/inbox/c/answer').map((c) => c.body)).toContainEqual({ choice: 'deny' }));
   });
 
+  it('shows the PM’s batch of decisions as rows: unticked rows stay out of Allow, and none ticked can’t be allowed (PDT-475)', async () => {
+    const row = (n: number, decision: string, extra: object = {}) => ({
+      itemId: `i${n}`, ticketId: `t${n}`, ticketKey: `PDT-${n}`, ticketTitle: `Proposal ${n}`, decision, agentic: false, ...extra,
+    });
+    const call = item('b', {
+      kind: 'confirm', group: 'approval', runId: null, stepId: null, title: 'Decide Inbox items',
+      body: {
+        tool: 'inbox_decide', toolTitle: 'Decide Inbox items', agent: 'Claude', sessionTitle: 'PM', input: { items: [] },
+        rows: [row(1, 'accept_todo', { agentic: true, priority: 'high' }), row(2, 'duplicate', { duplicateOf: 'PDT-1' }), row(3, 'reject', { note: 'Not worth it' })],
+      },
+      choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+    });
+    const calls = stubApi({ 'POST /api/inbox/b/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[call]} selectedId="b" onSelect={() => {}} />);
+    const table = screen.getByRole('table', { name: 'Decisions' });
+    expect(table).toHaveTextContent('PDT-1 Proposal 1');
+    expect(table).toHaveTextContent('Accept to Todoagentic · High priority');
+    expect(table).toHaveTextContent('Duplicateof PDT-1');
+    expect(table).toHaveTextContent('Not worth it');
+    expect(screen.getByRole('region', { name: 'Agent call' })).toHaveTextContent('PM proposes 3 decisions');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Keep PDT-2' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Allow 2 of 3' }));
+    const answers = () => calls.filter((c) => c.path === '/api/inbox/b/answer').map((c) => c.body);
+    await waitFor(() => expect(answers()).toContainEqual({ choice: 'allow', rows: [0, 2] }));
+    for (const k of ['PDT-1', 'PDT-3']) await userEvent.click(screen.getByRole('checkbox', { name: `Keep ${k}` }));
+    expect(screen.getByRole('button', { name: 'Allow 0 of 3' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    await waitFor(() => expect(answers()).toContainEqual({ choice: 'deny' }));
+  });
+
   it('asks to connect GitHub: Enter opens GitHub’s plugin page, and it is not dismissed', async () => {
     const connect = item('connect:github', {
       kind: 'connect', group: 'notice', projectId: null, ticketId: null, runId: null, stepId: null, title: 'Connect GitHub',
