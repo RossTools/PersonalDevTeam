@@ -112,6 +112,8 @@ fn the_tools_are_where_they_were() {
     assert_eq!(
         t.asking_tools(),
         [
+            "run_with_secrets",
+            "write_secret_file",
             "workflow_run",
             "workflow_import",
             "create_ticket",

@@ -418,8 +418,12 @@ as `proposedBy` on the events and the item's resolution.
 **Secrets.** Values live in the OS keychain (or, on Linux without a Secret Service, a file only the user can read) and
 in memory; agents and workflows refer to them by name (`run_with_secrets`, `write_secret_file`, `{{secret.x}}` in a
 node's config). pdt-core `secret::Redactor` replaces any value with `[secret:<name>]` in everything the store writes,
-in pdt-mcp results, in conversation deltas and in the logs. Code: pdt-api `vault.rs` and `secrets.rs`, pdt-store
-`secrets.rs`.
+in pdt-mcp results, in conversation deltas and in the logs. `run_with_secrets` and `write_secret_file` run in pdtd,
+outside the agent's sandbox and permission mode, so they are asking tools (out of Claude's `--allowedTools`; the
+Inbox for other agents) unless `Session::asks_nothing`, and the PM's "act without asking" never covers them. Each must
+name a secret, and pdt-core `secret::checkout_path` plus the on-disk checks in `vault.rs` keep their folder and file
+inside the session's folder, out of `.git`, and off symlinks (the file is opened `O_NOFOLLOW`). Code: pdt-api
+`vault.rs` and `secrets.rs`, pdt-store `secrets.rs`.
 
 **GitHub.** The forge (`crates/pdt-github`) signs in with the OAuth device flow or a pasted token; logins are stored
 in the keychain (pdt-forge `login.rs`, pdt-api `forge_login.rs`). A 401 marks the login rejected only after

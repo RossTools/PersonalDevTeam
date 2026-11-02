@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 use ts_rs::TS;
 
@@ -177,6 +178,36 @@ pub fn env_ref(v: &str) -> Option<&str> {
 pub fn json_ref(v: &Value) -> Option<&str> {
     let m = v.as_object().filter(|m| m.len() == 1)?;
     m.get("$secret")?.as_str().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Where a secret tool writes or runs (PDT-404): `given` under `base`, the session's checkout (relative, or absolute
+/// inside it; none is `base` itself), with no `..` and no `.git` folder in it. Lexical only: pdt-api then checks
+/// the folders on disk, so a symlink can't lead it out.
+pub fn checkout_path(base: &Path, given: Option<&str>) -> Result<PathBuf, String> {
+    let Some(g) = given.map(str::trim).filter(|g| !g.is_empty()) else { return Ok(base.to_path_buf()) };
+    let p = Path::new(g);
+    let rel = if p.is_absolute() {
+        p.strip_prefix(base).map_err(|_| format!("{g} is outside this session's folder ({})", base.display()))?
+    } else {
+        p
+    };
+    let mut out = base.to_path_buf();
+    for c in rel.components() {
+        match c {
+            Component::CurDir => {}
+            Component::Normal(n) if n.eq_ignore_ascii_case(".git") => {
+                return Err(format!("{g} is in a .git folder: secret tools never write there"));
+            }
+            Component::Normal(n) => out.push(n),
+            Component::ParentDir => {
+                return Err(format!("{g} goes up with ..: give a path inside this session's folder"));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("{g} is outside this session's folder ({})", base.display()));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The secrets `{{secret.<name>}}` names in `s`, in order.
@@ -380,6 +411,24 @@ impl Redactor {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn secret_tools_stay_in_the_checkout() {
+        let base = std::env::temp_dir().join("pdt-checkout");
+        assert_eq!(checkout_path(&base, None).unwrap(), base);
+        assert_eq!(checkout_path(&base, Some("  ")).unwrap(), base);
+        assert_eq!(checkout_path(&base, Some("./web/.env")).unwrap(), base.join("web").join(".env"));
+        let inside = base.join("a.env");
+        assert_eq!(checkout_path(&base, inside.to_str()).unwrap(), inside);
+        // Out of it: up, elsewhere, or into git's own files (its hooks and config run commands).
+        for bad in ["../x", "a/../../x", ".git/config", "sub/.GIT/hooks/pre-commit", ".git"] {
+            assert!(checkout_path(&base, Some(bad)).is_err(), "{bad}");
+        }
+        let outside = std::env::temp_dir().join("elsewhere").join(".zshrc");
+        assert!(checkout_path(&base, outside.to_str()).is_err());
+        let sibling = std::env::temp_dir().join("pdt-checkout-2").join("x");
+        assert!(checkout_path(&base, sibling.to_str()).is_err());
+    }
 
     fn secret(projects: &[&str], personas: &[&str]) -> Secret {
         Secret {
