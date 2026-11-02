@@ -13,4 +13,11 @@ describe('Kbd', () => {
     const keys = [...container.querySelectorAll('[data-slot=kbd]')].map((k) => k.textContent);
     expect(keys).toEqual(['Ctrl', ']']);
   });
+
+  it('hides on touch screens', () => {
+    render(<Kbd>Esc</Kbd>);
+    expect(screen.getByText('Esc').className).toContain('pointer-coarse:hidden');
+    const { container } = render(<Kbd keys={['Ctrl', ']']} />);
+    expect(container.querySelector('[data-slot=kbd-group]')!.className).toContain('pointer-coarse:hidden');
+  });
 });
