@@ -69,11 +69,25 @@ describe('Get started', () => {
     // The project step is open (the first not done); open the agents.
     const agents = await step('Agents on this machine');
     await userEvent.click(within(agents).getByRole('button', { expanded: false }));
-    expect(await within(agents).findByText('/u/.local/bin/claude')).toBeInTheDocument();
-    expect(within(agents).getByText('/usr/bin/git')).toBeInTheDocument();
+    // Each path cuts in the middle (the folders shrink, the program's name stays), with the whole path in a tooltip.
+    const claude = await within(agents).findByTitle('/u/.local/bin/claude');
+    expect(claude).toHaveTextContent('/u/.local/bin/claude');
+    expect(within(claude).getByText('/claude')).toHaveClass('shrink-0');
+    expect(within(claude).getByText('/u/.local/bin')).toHaveClass('truncate');
+    expect(claude.closest('td')).toHaveClass('w-full', 'max-w-0');
+    expect(within(agents).getByTitle('/usr/bin/git')).toBeInTheDocument();
     const devin = within(agents).getByRole('row', { name: /Devin/ });
     expect(within(devin).getByRole('link', { name: /How to install/ })).toHaveAttribute('href', 'https://cli.devin.ai');
     expect(screen.queryByText(/You’re set up/)).not.toBeInTheDocument();
+  });
+
+  it('cuts a Windows path in the middle too, keeping the program\'s name', async () => {
+    const win = 'C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd';
+    stub(view(), { 'GET /api/host/checks': { ...checks(), claude: tool(true, win) } });
+    renderWithQuery(<SetupPage {...props()} />);
+    const claude = await within(await step('Agents on this machine')).findByTitle(win);
+    expect(within(claude).getByText('\\claude.cmd')).toHaveClass('shrink-0');
+    expect(within(claude).getByText('C:\\Users\\me\\AppData\\Roaming\\npm')).toHaveClass('truncate');
   });
 
   it('saves an agent path set by hand, then checks again', async () => {
@@ -121,6 +135,14 @@ describe('Get started', () => {
     expect(await within(proj).findByText('/u/work')).toBeInTheDocument();
     await userEvent.click(within(proj).getByRole('link', { name: 'change' }));
     expect(p.onHostSettings).toHaveBeenCalledWith('projects-folder');
+  });
+
+  it('wraps a long project path in the step’s summary instead of running off the card', async () => {
+    const repoPath = '/private/var/folders/xc/1dctjgbs0wzc9g83j2hjy3qc0000gn/T/scratch/7600/data/website/acme-shop';
+    stub(view({ steps: { agents: 'done', github: 'done', project: 'done' } }), { 'GET /api/projects': [{ id: 'p1', name: 'Acme Shop', repoPath }] });
+    renderWithQuery(<SetupPage {...props()} />);
+    const summary = await within(await step('Add a project')).findByText(`Acme Shop · ${repoPath}`);
+    expect(summary).toHaveClass('wrap-anywhere');
   });
 
   it('hides Clone from GitHub while GitHub is not connected', async () => {
