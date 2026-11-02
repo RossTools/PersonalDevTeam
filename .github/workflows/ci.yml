@@ -352,19 +352,22 @@ jobs:
   # The bundles keep their names (required checks, skipped on PRs but the release PR, and in the queue). On the release
   # PR they are release builds (the version as is, signed and notarized); run by hand they build the app and installer,
   # signed when the secret is there. Either way they are kept as workflow artifacts and publish nothing.
-  bundle-macos:
-    name: bundle (macos-latest, app)
+  # macOS builds each CPU in its own job, side by side and each with its own cache; `bundle (macos-latest, app)` joins
+  # them into the universal app, signs, notarizes and checks it (.github/actions/bundle-macos).
+  bundle-macos-cpu:
+    name: bundle (macos, ${{ matrix.target }})
     needs: changes
     if: needs.changes.outputs.bundle == 'true'
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/bundle
         with:
           bundles: app
+          target: ${{ matrix.target }}
           release: ${{ needs.changes.outputs.release }}
           google-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_CLIENT_ID || '' }}
           google-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_CLIENT_SECRET || '' }}
@@ -372,6 +375,17 @@ jobs:
           google-agent-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET || '' }}
           google-picker-key: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PICKER_KEY || '' }}
           google-project-number: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PROJECT_NUMBER || '' }}
+
+  bundle-macos:
+    name: bundle (macos-latest, app)
+    needs: [changes, bundle-macos-cpu]
+    if: needs.changes.outputs.bundle == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/bundle-macos
+        with:
+          release: ${{ needs.changes.outputs.release }}
           signing-p12: ${{ secrets.MACOS_SIGNING_P12 }}
           signing-password: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
           notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
@@ -385,9 +399,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/bundle
         with:
           bundles: nsis
@@ -416,9 +427,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/bundle
         with:
           bundles: linux

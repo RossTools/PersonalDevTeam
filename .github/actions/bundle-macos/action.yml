@@ -1,0 +1,114 @@
+name: PDT universal macOS app
+description: Joins the two macOS apps .github/actions/bundle built (macos-app-aarch64-apple-darwin and macos-app-x86_64-apple-darwin artifacts) into the universal app with lipo, signs and notarizes it, checks it, and keeps it as the bundle-app workflow artifact (*.app.tar.gz). It publishes nothing. Needs a checkout (the signing scripts) on macOS.
+inputs:
+  release:
+    description: '"true" for a release build: must be signed, and is notarized when the API key is given'
+    default: "false"
+  signing-p12:
+    description: base64 .p12 of the macOS release certificate
+    default: ''
+  signing-password:
+    description: its password
+    default: ''
+  notary-key:
+    description: base64 App Store Connect API key (.p8) for notarization; notarizes when set with the id and issuer
+    default: ''
+  notary-key-id:
+    description: the API key's id
+    default: ''
+  notary-issuer:
+    description: the API key's issuer id
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v8
+      with:
+        pattern: macos-app-*
+        path: ${{ runner.temp }}/apps
+    # The Apple silicon app is the base: every executable in Contents/MacOS (the app, pdtd and pdt-host) becomes a
+    # lipo of its two builds; the rest (Info.plist, the web UI, the icons) is the same in both.
+    - name: Join the apps
+      shell: bash
+      run: |
+        apps="$RUNNER_TEMP/apps"
+        for t in aarch64-apple-darwin x86_64-apple-darwin; do
+          mkdir -p "$apps/$t"
+          tar -xzf "$(ls "$apps/macos-app-$t"/*.app.tar.gz | head -n 1)" -C "$apps/$t"
+        done
+        name="$(cd "$apps/aarch64-apple-darwin" && ls -d *.app | head -n 1)"
+        arm="$apps/aarch64-apple-darwin/$name"
+        x86="$apps/x86_64-apple-darwin/$name"
+        [ -d "$x86" ] || { echo "::error::the x86_64 build has no $name"; exit 1; }
+        if ! diff -rq -x MacOS -x _CodeSignature "$arm" "$x86"; then
+          echo "::warning::The two builds differ outside Contents/MacOS; the universal app takes the Apple silicon build's files."
+        fi
+        out="$RUNNER_TEMP/universal"
+        mkdir -p "$out"
+        ditto "$arm" "$out/$name"
+        # The old seal covers the Apple silicon executables only.
+        rm -rf "$out/$name/Contents/_CodeSignature"
+        while IFS= read -r exe; do
+          rel="${exe#"$arm/"}"
+          [ -f "$x86/$rel" ] || { echo "::error::the x86_64 build has no $rel"; exit 1; }
+          lipo -create -output "$out/$name/$rel" "$exe" "$x86/$rel"
+        done < <(find "$arm/Contents/MacOS" -type f -perm -u+x)
+        echo "PDT_APP=$out/$name" >> "$GITHUB_ENV"
+    # One certificate signs every macOS release (scripts/sign-macos.sh). With a Developer ID certificate the keychain
+    # trusts every release; a self-signed one still makes it ask after each update (docs/SDLC.md
+    # "Signing"). Releases must be signed; other builds are signed when the secret is available to them, and are
+    # otherwise signed ad hoc (Apple silicon runs only signed code, and joining the builds broke their seal).
+    - name: Sign the app bundle
+      shell: bash
+      env:
+        MACOS_SIGNING_P12: ${{ inputs.signing-p12 }}
+        MACOS_SIGNING_P12_PASSWORD: ${{ inputs.signing-password }}
+      run: |
+        if [ -z "$MACOS_SIGNING_P12" ] && [ "${{ inputs.release }}" != true ]; then
+          echo "::notice::No signing certificate; this build is not a release, so it is signed ad hoc."
+          codesign --force --deep --sign - "$PDT_APP"
+          exit 0
+        fi
+        scripts/sign-macos.sh "$PDT_APP"
+        echo "PDT_SIGNED=true" >> "$GITHUB_ENV"
+    # Notarized only when the API key secrets are set (they need a Developer ID signature), and only for releases:
+    # Apple's service takes minutes.
+    - name: Notarize the app bundle
+      if: inputs.notary-key != '' && inputs.release == 'true'
+      shell: bash
+      env:
+        MACOS_NOTARY_KEY: ${{ inputs.notary-key }}
+        MACOS_NOTARY_KEY_ID: ${{ inputs.notary-key-id }}
+        MACOS_NOTARY_ISSUER: ${{ inputs.notary-issuer }}
+      run: |
+        scripts/notarize-macos.sh "$PDT_APP"
+        echo "PDT_NOTARIZED=true" >> "$GITHUB_ENV"
+    # Every executable in the app runs on both CPUs; a signed app passes codesign's strict check, and a notarized one
+    # Gatekeeper's.
+    - name: Check the app bundle
+      shell: bash
+      run: |
+        status=0
+        while IFS= read -r exe; do
+          archs="$(lipo -archs "$exe")"
+          echo "$exe: $archs"
+          case " $archs " in *" x86_64 "*) ;; *) echo "::error::$exe is not built for x86_64"; status=1 ;; esac
+          case " $archs " in *" arm64 "*) ;; *) echo "::error::$exe is not built for arm64"; status=1 ;; esac
+        done < <(find "$PDT_APP/Contents/MacOS" -type f -perm -u+x)
+        if [ "${PDT_SIGNED:-}" = true ]; then codesign --verify --deep --strict --verbose=2 "$PDT_APP" || status=1; fi
+        if [ "${PDT_NOTARIZED:-}" = true ]; then spctl -a -vv "$PDT_APP" || status=1; fi
+        exit "$status"
+    # The asset name must match what hosts install (pdt_core::release::select_asset): *.app.tar.gz.
+    - name: Collect the bundle
+      shell: bash
+      run: |
+        mkdir -p "$RUNNER_TEMP/release"
+        # tar keeps the bundle's symlinks and permissions.
+        tar -czf "$RUNNER_TEMP/release/$(basename "$PDT_APP").tar.gz" -C "$(dirname "$PDT_APP")" "$(basename "$PDT_APP")"
+        ls -l "$RUNNER_TEMP/release"
+    - uses: actions/upload-artifact@v7
+      with:
+        name: bundle-app
+        path: ${{ runner.temp }}/release/*
+        if-no-files-found: error
+        retention-days: ${{ inputs.release == 'true' && 30 || 5 }}

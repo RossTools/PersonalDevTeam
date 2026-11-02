@@ -63,6 +63,11 @@ permissions:
 
 env:
   TAG_PREFIX: ${{ vars.PDT_RELEASE_TAG_PREFIX || 'v' }}
+  # As ci.yml's. The bundles' build caches have these in their keys (rust-cache hashes every CARGO_* variable), so with
+  # the same values the release PR's bundles (ci.yml) restore the caches the nightlies save here.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_DEV_STRIP: debuginfo
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   prepare:
@@ -250,23 +255,26 @@ jobs:
   # The bundles, built from the tagged commit as release builds (the version as is, signed, notarized), as ci.yml's
   # bundle jobs build them. A nightly release sets its version in their checkout. Each runs after `tag` (a stable
   # release) or `nightly`, whichever ran (and didn't skip).
-  bundle-macos:
-    name: bundle (macos-latest, app)
+  # macOS builds each CPU in its own job, side by side and each with its own cache; `bundle (macos-latest, app)` joins
+  # them into the universal app, signs, notarizes and checks it (.github/actions/bundle-macos).
+  bundle-macos-cpu:
+    name: bundle (macos, ${{ matrix.target }})
     needs: [tag, nightly]
     if: >-
       ${{ !cancelled() && (needs.tag.result == 'success' ||
       (needs.nightly.result == 'success' && needs.nightly.outputs.skip != 'true')) }}
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.tag.outputs.sha || needs.nightly.outputs.sha }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: false
       - uses: ./.github/actions/bundle
         with:
           bundles: app
+          target: ${{ matrix.target }}
           release: "true"
           version: ${{ needs.nightly.outputs.version }}
           google-client-id: ${{ secrets.PDT_GOOGLE_CLIENT_ID }}
@@ -275,6 +283,19 @@ jobs:
           google-agent-client-secret: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET }}
           google-picker-key: ${{ secrets.PDT_GOOGLE_PICKER_KEY }}
           google-project-number: ${{ secrets.PDT_GOOGLE_PROJECT_NUMBER }}
+
+  bundle-macos:
+    name: bundle (macos-latest, app)
+    needs: [tag, nightly, bundle-macos-cpu]
+    if: ${{ !cancelled() && needs.bundle-macos-cpu.result == 'success' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.tag.outputs.sha || needs.nightly.outputs.sha }}
+      - uses: ./.github/actions/bundle-macos
+        with:
+          release: "true"
           signing-p12: ${{ secrets.MACOS_SIGNING_P12 }}
           signing-password: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
           notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
@@ -292,9 +313,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.tag.outputs.sha || needs.nightly.outputs.sha }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: false
       - uses: ./.github/actions/bundle
         with:
           bundles: nsis
@@ -326,9 +344,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.tag.outputs.sha || needs.nightly.outputs.sha }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: false
       - uses: ./.github/actions/bundle
         with:
           bundles: linux
@@ -417,3 +432,19 @@ jobs:
             fi
             echo "Deleted $t" | tee -a "$GITHUB_STEP_SUMMARY"
           done
+
+  # The bundles' build caches are saved on main (a nightly); a changed Cargo.lock or toolchain saves new ones beside
+  # the old. Over the repo's 10 GB GitHub evicts the least recently used caches, and those are the nightly's, so each
+  # nightly prunes to main's newest cache of each kind as cache.yml does (docs/SDLC.md "Caching").
+  prune-caches:
+    needs: [bundle-macos-cpu, bundle-windows, bundle-linux]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && !contains(needs.*.result, 'failure') && contains(needs.*.result, 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/prune-caches.sh
