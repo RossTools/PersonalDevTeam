@@ -319,7 +319,7 @@ async fn remote_runs_get_https_links_and_mappings() {
 
 /// Review Focus 5, with the controller's ruling: a run the previous pdtd left on a port that is now taken moves to a
 /// free one. Applying remote access at startup maps nothing for it (the old port may now be another instance's),
-/// the resumed run maps its new port, and the old port is never unserved.
+/// the resumed run maps its new port, and the old port, which this instance never mapped, is never unserved.
 #[tokio::test]
 async fn a_resumed_run_that_moves_port_maps_only_its_new_port() {
     let mut env = setup().await;
@@ -379,6 +379,78 @@ async fn a_resumed_run_that_moves_port_maps_only_its_new_port() {
     call(&env.app, "POST", "/api/runs/left-behind/stop", None).await;
     wait_state(&env.app, "left-behind", &["stopped"]).await;
     env.state.ptys.shutdown().await;
+}
+
+/// PDT-355: a pdtd with remote access on maps a web run's port, then exits; the run's row stays active and the
+/// mapping stays in Tailscale. Returns the run's id and port.
+async fn exit_with_a_mapped_web_run(env: &mut Env, fake: &Arc<RecordingTailscale>) -> (String, u16) {
+    env.state.tailscale = fake.clone();
+    env.app = router(env.state.clone(), None);
+    let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, r) = start(env, json!({"name": "web", "kind": "run"})).await;
+    let id = r["id"].as_str().unwrap().to_string();
+    let r = wait_state(&env.app, &id, &["ready"]).await;
+    let port = r["port"].as_u64().unwrap() as u16;
+    assert!(fake.calls().contains(&format!("serve --bg --https={port} http://127.0.0.1:{port}")), "{:?}", fake.calls());
+    env.state.shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
+    env.state.ptys.shutdown().await;
+    (id, port)
+}
+
+/// The next pdtd on the same database and data folder, with its own recording Tailscale.
+fn next_pdtd(env: &Env, fake: &Arc<RecordingTailscale>) -> (AppState, axum::Router) {
+    let mut next = AppState::new(env.state.store.clone(), env._tmp.path().join("data"));
+    next.tailscale = fake.clone();
+    (next.clone(), router(next, None))
+}
+
+/// PDT-355: when the run a previous pdtd of this instance mapped moves to another port on resume, its old port's
+/// mapping is removed: the store says this instance made it.
+#[tokio::test]
+async fn a_resumed_run_that_moves_port_unmaps_the_port_this_instance_mapped() {
+    let mut env = setup().await;
+    let (id, old) = exit_with_a_mapped_web_run(&mut env, &recording()).await;
+    let mut squatter = None;
+    for _ in 0..100 {
+        if let Ok(l) = std::net::TcpListener::bind(("127.0.0.1", old)) {
+            squatter = Some(l);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let _squatter = squatter.expect("the old run's server let go of its port");
+    let fake = recording();
+    let (next, app) = next_pdtd(&env, &fake);
+    pdt_api::apply_remote_access(&next).await;
+    assert_eq!(pdt_api::resume_runs(&next).await, 1);
+    let (_, r) = call(&app, "GET", &format!("/api/runs/{id}"), None).await;
+    let new = r["port"].as_u64().unwrap() as u16;
+    assert_ne!(new, old, "{r}");
+    let calls = fake.calls();
+    assert!(calls.contains(&format!("serve --https={old} off")), "{calls:?}");
+    call(&app, "POST", &format!("/api/runs/{id}/stop"), None).await;
+    wait_state(&app, &id, &["stopped"]).await;
+    next.ptys.shutdown().await;
+}
+
+/// PDT-355: a run left active whose row is gone by the next start loses its mapping, and the port is no longer
+/// recorded: turning remote access off afterwards removes only pdtd's own mapping.
+#[tokio::test]
+async fn a_mapped_run_that_does_not_come_back_is_unmapped_after_resume() {
+    let mut env = setup().await;
+    let (id, port) = exit_with_a_mapped_web_run(&mut env, &recording()).await;
+    env.state.store.delete_run(&id).await.unwrap();
+    let fake = recording();
+    let (next, app) = next_pdtd(&env, &fake);
+    pdt_api::apply_remote_access(&next).await;
+    assert_eq!(pdt_api::resume_runs(&next).await, 0);
+    let (s, v) = call(&app, "PUT", "/api/host/settings", Some(json!({"remoteAccess": false}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let offs: Vec<String> = fake.calls().into_iter().filter(|c| c.ends_with(" off")).collect();
+    assert_eq!(offs, [format!("serve --https={port} off"), "serve --https=443 off".to_string()]);
+    next.ptys.shutdown().await;
 }
 
 /// Turning remote access on maps the running web runs and gives them tailnet links; turning it off removes those

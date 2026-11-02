@@ -38,7 +38,8 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
 - **Agents** (Claude Code, Codex, Devin, ACP agents) are child processes of pdtd. They report activity through hooks
   (`pdtd hook …`, which posts to the pdtd that launched them) and call PDT through pdt-mcp.
 - **Remote access** is `tailscale serve` in front of pdtd (pdt-api `remote.rs`, `crates/pdt-tailscale`); requests from
-  the tailnet must carry the owner's Tailscale identity.
+  the tailnet must carry the owner's Tailscale identity. pdtd only removes mappings its instance made; it keeps their
+  ports in the store (host value `remote.served`), since `serve --bg` mappings outlive the process.
 
 **Instances.** A profile picks the defaults: `stable` (port 7420, data folder `<local data dir>/pdt`) and `dev` (7421,
 `pdt-dev`; debug builds default to it). `PDT_PORT` and `PDT_DATA_DIR` override them, and a lock file stops two pdtd

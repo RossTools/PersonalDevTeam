@@ -603,8 +603,9 @@ async fn stop_inner(st: &AppState, id: &str, reason: Option<String>, counted: bo
 
 /// Restarts the runs a previous pdtd left active (spec §4.2 "Restarts"). Returns how many started (or, for a
 /// detached run still running, were reattached). pdtd calls it after applying remote access (ruling F4), so links
-/// use the tailnet name; each run maps its port as it starts. A run that moves to another port leaves the old port's
-/// mapping alone: this process never made it.
+/// use the tailnet name; each run maps its port as it starts. Afterwards the run-port mappings this instance made
+/// before the restart (kept in its store) that no resumed run uses are removed: a run that moved to another port, failed
+/// to resume or whose row was removed. A port this instance never mapped is left alone (ruling F1).
 ///
 /// A detached run whose processes are still alive is reattached, never started again; one whose processes all
 /// exited while no pdtd was running is marked stopped (its exit code is unknown), and its log stays readable.
@@ -663,6 +664,11 @@ pub async fn resume_runs(st: &AppState) -> usize {
         }
         start(st, run, def);
         started += 1;
+    }
+    // The runs that came back are driven now; the mappings a previous process left for any other port go (a run
+    // that moved port, failed to resume or was removed).
+    if !st.shutting_down.load(Ordering::SeqCst) {
+        crate::remote::unmap_stale_run_ports(st).await;
     }
     started
 }
