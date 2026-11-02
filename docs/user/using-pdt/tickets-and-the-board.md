@@ -136,7 +136,8 @@ The ticket's **Watching** section lists who watches it: you, and any PM conversa
   conflicts with.
 
 In rank order, drag rows (or **Alt+↑** / **Alt+↓**) to reorder; **Move to top** is in the row menu. **Select** (or the
-row checkboxes) picks several tickets to move, label, prioritise or delete together.
+row checkboxes) picks several tickets to move, label, prioritise or delete together. Tickets an action moves out of
+the list leave the selection; **Clear** or **Esc** clears it.
 
 ## Start a ticket
 
