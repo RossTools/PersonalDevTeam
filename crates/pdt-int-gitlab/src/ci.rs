@@ -175,7 +175,7 @@ impl CiProvider for GitlabCi {
         Ok(jobs.iter().filter_map(parse_job).collect())
     }
     fn job_log_tail(&self, repo: &str, _run: &CiRun, job: &CiJob, lines: usize) -> Result<String, ForgeError> {
-        match self.api.call("GET", &format!("{}/jobs/{}/trace", project_path(repo), job.id), None) {
+        match self.api.call("GET", &format!("{}/jobs/{}/trace", project_path(repo), job.id), None, false) {
             Ok(res) => Ok(log_tail(&res.body, lines)),
             // Logs expire (and a job that never started has none): say so instead of failing.
             Err(GlError::Status(404 | 410, _)) => Ok("(no log: GitLab has none for this job)".into()),

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   DEFAULT_FILTERS, loadSavedFilters, READY_TO_START, storeSavedFilters, type BacklogFilters, type SavedFilter,
 } from './model';
@@ -82,12 +82,12 @@ export function useBacklog() {
     [update],
   );
 
-  return {
+  return useMemo(() => ({
     ...state,
     setProjectId, setMode, setFilters, resetFilters,
     // The built-in filter comes first; the browser's own follow.
     saved: [READY_TO_START, ...saved], saveFilter, deleteFilter, applyFilter,
-  };
+  }), [state, setProjectId, setMode, setFilters, resetFilters, saved, saveFilter, deleteFilter, applyFilter]);
 }
 
 export type BacklogState = ReturnType<typeof useBacklog>;
