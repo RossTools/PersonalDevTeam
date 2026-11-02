@@ -88,7 +88,10 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
     forge: project?.forge ?? null,
   }), [project, session.id, session.worktreeId]);
 
-  const refreshSessions = () => qc.invalidateQueries({ queryKey: ['sessions', session.projectId] });
+  const refreshSessions = () => Promise.all([
+    qc.invalidateQueries({ queryKey: ['sessions', session.projectId] }),
+    qc.invalidateQueries({ queryKey: ['session', session.id] }),
+  ]);
   const patch = useMutation({
     mutationFn: (p: SessionPatch) => api.updateSession(session.id, p),
     onSuccess: () => void refreshSessions(),

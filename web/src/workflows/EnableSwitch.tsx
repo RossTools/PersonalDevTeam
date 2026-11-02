@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Dialog, Switch } from '@ui';
 import { api } from '../api/client';
 import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
+import { invalidateWorkflow } from './invalidate';
 import { summary, type Catalog } from './model';
 
 /** Turning a workflow on (after the dialog) or off, for the switch and for the phone's ⋯ (PDT-120). Callers show its error. */
@@ -16,8 +17,7 @@ export function useEnable(w: WorkflowDetail) {
     mutationFn: (enabled: boolean) => api.patchWorkflow(w.id, { enabled }),
     onSuccess: () => {
       setAsking(false);
-      void qc.invalidateQueries({ queryKey: ['workflows'] });
-      void qc.invalidateQueries({ queryKey: ['workflow', w.id] });
+      invalidateWorkflow(qc, w.id);
     },
   });
   return { asking, setAsking, toggle };
