@@ -58,6 +58,7 @@ mod runs;
 mod scheduler;
 pub mod sdk;
 pub mod secrets;
+mod security_headers;
 mod sessions;
 mod setup;
 mod slow;
