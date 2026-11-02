@@ -10,7 +10,8 @@ import { api } from '../api/client';
 import type { ChangedFile } from '../api/gen/ChangedFile';
 import type { CommentSide } from '../api/gen/CommentSide';
 import type { ReviewComment } from '../api/gen/ReviewComment';
-import { isMarkdownPath, Markdown } from '../common/Markdown';
+import { Markdown } from '../common/Markdown';
+import { isMarkdownPath } from '../common/markdownPath';
 import { actionError, runAction } from '../common/useAction';
 import { readViewState, useViewKey, useViewState, writeViewState } from '../common/viewState';
 
