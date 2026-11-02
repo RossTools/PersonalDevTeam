@@ -116,6 +116,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   data. Stored step inputs, outputs and errors are redacted. Errors from outbound HTTP go through `send_error`, which
   drops the URL (it can carry a secret).
 - **Event payloads are an API.** Users' workflows read them as `{{trigger.x}}`; renaming a field breaks them silently.
+- **A workflow never reacts to its own runs by default.** The events in pdt-core `events::OWN_RUN_EVENTS` (`run.*`,
+  `inbox.*`, `session.needs_you`, `session.turn_ended`, `session.exited`) carry `workflowId`: the workflow whose run
+  caused them (the run, its agent step's session, its Inbox item). `EventTrigger::accepts` skips them for that
+  workflow unless the trigger sets `includeOwn`. A new event a run can cause about itself joins the list and carries
+  `workflowId`. Runs started by `run.*` events count a `chain`, and one `MAX_RUN_CHAIN` deep logs no `run.*` event,
+  so two workflows reporting each other's runs stop.
 - **`_pdt.*` state keys are PDT's own.**
 - **Every manual start checks the Run now trigger's declared inputs.** Run now, `POST /api/workflows/{id}/run`, the
   PM's `workflow_run`, a `workflow.call` and a manual dry run all go through `ManualConfig::input` (pdt-api

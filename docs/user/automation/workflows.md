@@ -230,6 +230,26 @@ Each watches the document you name, or every document linked to the workflow's p
 document linked to a project). PDT looks every minute; the first look only notes where a document is, so turning a
 workflow on, or on again, never replays old changes or comments. A document linked to several projects starts each workflow once.
 
+These ones react to the Inbox, agent sessions and workflow runs:
+
+- **Inbox item opened**: something new waits on you (a question, a gate, an approval, a stalled step, a proposal). It
+  carries the item's kind, title, ticket, session, persona and project. A session waiting on you is **Session needs
+  you** instead.
+- **Inbox item answered**: the choice or answer, who gave it (you, or an agent through the API) and how long the item
+  waited.
+- **Session needs you**: an agent session waits on a permission prompt or a question.
+- **Session turn ended**: an agent session finished a turn. This fires on every turn of every session, so narrow it
+  with a condition or a project.
+- **Session exited**: an agent session's process ended, with its exit code and whether PDT (or you) stopped it.
+- **Workflow run failed**: the workflow, the step that failed and its error.
+- **Workflow run finished**: a run ended without failing (succeeded, quiet or cancelled), with the step it ended at
+  and how long it took.
+
+Each session event says whether a workflow's agent step runs the session or it's your own, and ends with the last
+few lines the agent wrote. A workflow never reacts to its own runs, their Inbox items or their agent steps' sessions,
+so one that reports failed runs never reports itself. To react to them too, turn on **Include own** on the trigger.
+Runs that start each other through run events stop after three in a row.
+
 Some triggers have settings of their own:
 
 - **On a schedule**: every so often, or at set times (a cron line, in your time zone).

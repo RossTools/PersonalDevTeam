@@ -385,8 +385,14 @@ pub(crate) async fn answer(
     if id.starts_with("session:") {
         return Err(bad("answer the session in its tab"));
     }
+    let by = if crate::untrusted::from_ui(&st, &headers)? { "user" } else { "agent" };
     if id.starts_with("proposal:") {
-        return answer_proposal(&st, &id, a.choice.as_deref()).await;
+        let item = proposals(&st, None).await?.into_iter().find(|i| i.id == id);
+        let r = answer_proposal(&st, &id, a.choice.as_deref()).await?;
+        if let Some(item) = item {
+            crate::workflow::sensors::inbox_answered(&st, &item, a.choice.as_deref(), None, by).await;
+        }
+        return Ok(r);
     }
     let item = load(&st, &id).await?;
     if let Some(c) = &a.choice
@@ -419,6 +425,9 @@ pub(crate) async fn answer(
         (InboxKind::Confirm, None) => return Err(bad("choose Allow or Deny")),
         _ => crate::workflow::agent::answer_item(&st, &item, &a).await.map_err(bad)?,
     };
+    // What was written (never a secret's value).
+    let text = a.text.clone().or_else(|| a.answers.as_ref().map(|all| all.join("\n")));
+    crate::workflow::sensors::inbox_answered(&st, &item, a.choice.as_deref(), text.as_deref(), by).await;
     crate::notifications::kick(&st);
     Ok(Json(r))
 }

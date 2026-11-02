@@ -36,6 +36,13 @@ pub const SCHEDULE_FIRED: &str = "schedule.fired";
 pub const WEBHOOK_RECEIVED: &str = "webhook.received";
 pub const DOCUMENT_CHANGED: &str = "document.changed";
 pub const DOCUMENT_COMMENT_ADDED: &str = "document.comment_added";
+pub const INBOX_CREATED: &str = "inbox.created";
+pub const INBOX_ANSWERED: &str = "inbox.answered";
+pub const SESSION_NEEDS_YOU: &str = "session.needs_you";
+pub const SESSION_TURN_ENDED: &str = "session.turn_ended";
+pub const SESSION_EXITED: &str = "session.exited";
+pub const RUN_FAILED: &str = "run.failed";
+pub const RUN_FINISHED: &str = "run.finished";
 
 pub const AGENT_OUTCOME: &str = "agent.outcome";
 pub const OUTSIDE_INPUT: &str = "session.outside_input";
@@ -66,6 +73,51 @@ pub fn by_outsider(payload: &serde_json::Value) -> bool {
 /// `document.comment_added`, PDT-318): they are not fenced, and no outside input is recorded.
 pub fn by_user(payload: &serde_json::Value) -> bool {
     payload.get("byUser").and_then(serde_json::Value::as_bool) == Some(true)
+}
+
+/// The event types a workflow's own runs can cause (PDT-364): their payload's `workflowId` names the workflow whose run
+/// caused them (the run itself, its Inbox item, its agent step's session). A trigger skips its own workflow's unless
+/// it sets `includeOwn`, so a workflow that reports run failures never reports its own.
+pub const OWN_RUN_EVENTS: &[&str] =
+    &[INBOX_CREATED, INBOX_ANSWERED, SESSION_NEEDS_YOU, SESSION_TURN_ENDED, SESSION_EXITED, RUN_FAILED, RUN_FINISHED];
+
+/// Whether an event of type `kind` with `payload` came from a run of workflow `workflow_id` (see [`OWN_RUN_EVENTS`]).
+pub fn from_own_run(kind: &str, payload: &serde_json::Value, workflow_id: &str) -> bool {
+    OWN_RUN_EVENTS.contains(&kind) && payload.get("workflowId").and_then(serde_json::Value::as_str) == Some(workflow_id)
+}
+
+/// How many runs in a row `run.*` events may start one another (PDT-364): workflow A reports B's runs and B reports
+/// A's would go on forever. A run started by a `run.*` event is one further down the chain than that event's run;
+/// a run this far down logs no `run.*` events.
+pub const MAX_RUN_CHAIN: u32 = 3;
+
+/// A run's place in a chain of runs started by `run.*` events, from its trigger: 0 unless a `run.*` event started it.
+pub fn run_chain(trigger: &serde_json::Value) -> u32 {
+    match trigger.get("type").and_then(serde_json::Value::as_str) {
+        Some(RUN_FAILED | RUN_FINISHED) => {
+            let up = trigger.get("chain").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            u32::try_from(up).unwrap_or(MAX_RUN_CHAIN).saturating_add(1)
+        }
+        _ => 0,
+    }
+}
+
+/// A short tail of an agent's last message for a payload (`lastMessage`): its last `max` characters, on a word
+/// boundary when one is near, with `…` before it when it was cut.
+pub fn message_tail(text: &str, max: usize) -> String {
+    let text = text.trim();
+    let count = text.chars().count();
+    if count <= max {
+        return text.to_string();
+    }
+    let start = text.char_indices().nth(count - max).map_or(0, |(i, _)| i);
+    let tail = &text[start..];
+    // Start at the next word when one begins soon.
+    let tail = match tail.find(char::is_whitespace) {
+        Some(i) if i < max / 5 => tail[i..].trim_start(),
+        _ => tail,
+    };
+    format!("…{tail}")
 }
 
 /// The CI provider of GitHub Actions runs.
@@ -273,6 +325,66 @@ pub const EVENT_TYPES: &[EventType] = &[
         schema: schema_of::<PrReviewed>,
         // Only collaborators' reach agents (`outside`); their text is still fenced where a workflow quotes it.
         outside: &["body"],
+    },
+    EventType {
+        id: INBOX_CREATED,
+        title: "Inbox item opened",
+        description: "Something new waits on the user in the Inbox: a question, a gate, an approval, a stalled step, a \
+                      proposal … (`kind`, `group`). Not a session waiting: that is `session.needs_you`. Skips items \
+                      this workflow's own runs opened unless the trigger sets `includeOwn`.",
+        schema: schema_of::<InboxCreated>,
+        outside: &[],
+    },
+    EventType {
+        id: INBOX_ANSWERED,
+        title: "Inbox item answered",
+        description: "Someone answered an Inbox item (`choice`, `answer`; `by`: `user` or `agent`). `ageMs` is how long \
+                      it waited. Skips items this workflow's own runs opened unless the trigger sets `includeOwn`.",
+        schema: schema_of::<InboxAnswered>,
+        outside: &[],
+    },
+    EventType {
+        id: SESSION_NEEDS_YOU,
+        title: "Session needs you",
+        description: "An agent session waits on a permission prompt or a question. `workflowStep` says whether a \
+                      workflow's agent step runs it or it is the user's own; `lastMessage` is the end of what the \
+                      agent last said. Skips this workflow's own steps' sessions unless the trigger sets `includeOwn`.",
+        schema: schema_of::<SessionEvent>,
+        outside: &[],
+    },
+    EventType {
+        id: SESSION_TURN_ENDED,
+        title: "Session turn ended",
+        description: "An agent session finished a turn and waits for its next message (once per turn: can be many). \
+                      Skips this workflow's own steps' sessions unless the trigger sets `includeOwn`.",
+        schema: schema_of::<SessionEvent>,
+        outside: &[],
+    },
+    EventType {
+        id: SESSION_EXITED,
+        title: "Session exited",
+        description: "An agent session's process ended: `exitCode` (none when unknown), `stoppedByPdt` when PDT or the \
+                      user stopped it rather than the agent ending or crashing. Skips this workflow's own steps' \
+                      sessions unless the trigger sets `includeOwn`.",
+        schema: schema_of::<SessionExited>,
+        outside: &[],
+    },
+    EventType {
+        id: RUN_FAILED,
+        title: "Workflow run failed",
+        description: "A workflow run failed: its failing step (`failedNode`, `failedKind`) and `error`. Never this \
+                      workflow's own runs unless the trigger sets `includeOwn`.",
+        schema: schema_of::<RunEnded>,
+        outside: &[],
+    },
+    EventType {
+        id: RUN_FINISHED,
+        title: "Workflow run finished",
+        description: "A workflow run ended without failing (`status`: `succeeded`, `quiet` or `cancelled`), with the \
+                      node it ended at (`endNode`) and `durationMs`. Never this workflow's own runs unless the trigger \
+                      sets `includeOwn`.",
+        schema: schema_of::<RunEnded>,
+        outside: &[],
     },
     EventType {
         id: SCHEDULE_FIRED,
@@ -997,6 +1109,131 @@ pub struct GithubWorkflowFailed {
     pub updated_at: String,
 }
 
+/// The Inbox item an `inbox.*` event is about (PDT-364).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct InboxRef {
+    pub item_id: String,
+    /// `question`, `gate`, `approval`, `stalled`, `ticket_proposal` …
+    pub kind: String,
+    /// Its group in the Inbox (`question`, `approval`, `gate`, `accept` …).
+    pub group: String,
+    pub title: String,
+    pub project_id: Option<String>,
+    pub ticket_id: Option<String>,
+    pub ticket_key: Option<String>,
+    /// The agent session it is from, when it is one's (a question, an approval).
+    pub session_id: Option<String>,
+    /// The persona whose step it is (`Coder` …).
+    pub persona: Option<String>,
+    /// The workflow run it waits in, and its workflow.
+    pub run_id: Option<String>,
+    pub workflow_id: Option<String>,
+    /// When it opened (ms since the epoch), and how long ago that was when the event was logged.
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub age_ms: i64,
+}
+
+/// `inbox.created` (PDT-364).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct InboxCreated {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub item: InboxRef,
+}
+
+/// `inbox.answered` (PDT-364).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct InboxAnswered {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub item: InboxRef,
+    /// The choice taken (`allow`, `approve`, `outcome:approved` …), when it was one.
+    pub choice: Option<String>,
+    /// What was written: a question's answer, a note.
+    pub answer: Option<String>,
+    /// `user` (in PDT) or `agent` (through the API).
+    pub by: String,
+}
+
+/// The agent session a `session.*` event is about (PDT-364).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SessionEvent {
+    pub session_id: String,
+    pub title: String,
+    pub project_id: String,
+    pub ticket_id: Option<String>,
+    pub ticket_key: Option<String>,
+    /// `claude`, `codex`, `devin` …
+    pub agent: Option<String>,
+    /// `terminal` or `conversation`.
+    pub mode: String,
+    /// The persona a workflow's agent step runs in it (`Coder` …).
+    pub persona: Option<String>,
+    /// A workflow's agent step runs it (else it is the user's own session).
+    pub workflow_step: bool,
+    /// That step's run and workflow.
+    pub run_id: Option<String>,
+    pub workflow_id: Option<String>,
+    /// The end of what the agent last said (at most a few hundred characters; empty when PDT can't tell).
+    pub last_message: String,
+}
+
+/// `session.exited` (PDT-364).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SessionExited {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub session: SessionEvent,
+    /// The process's exit code, when it has one.
+    pub exit_code: Option<i32>,
+    /// PDT stopped it (the user's Stop or close, a restart): the agent didn't end or crash on its own.
+    pub stopped_by_pdt: bool,
+}
+
+/// `run.failed` and `run.finished` (PDT-364).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RunEnded {
+    pub workflow_id: String,
+    pub workflow_name: String,
+    pub run_id: String,
+    /// `succeeded`, `quiet`, `failed` or `cancelled`.
+    pub status: String,
+    pub project_id: Option<String>,
+    pub ticket_id: Option<String>,
+    pub ticket_key: Option<String>,
+    /// The run's error (a failed run's).
+    pub error: Option<String>,
+    /// The step that failed: its node id, kind and error.
+    pub failed_node: Option<String>,
+    pub failed_kind: Option<String>,
+    pub failed_error: Option<String>,
+    /// The node of the last step to end, and its kind.
+    pub end_node: Option<String>,
+    pub end_kind: Option<String>,
+    #[ts(type = "number")]
+    pub duration_ms: i64,
+    /// The event type that started it (`ticket.stage_changed` …), or `manual`.
+    pub trigger_type: String,
+    /// The run that called it as a sub-workflow.
+    pub parent_run_id: Option<String>,
+    /// How far down a chain of runs started by `run.*` events it is (0: not started by one).
+    pub chain: u32,
+}
+
 /// `schedule.fired`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
@@ -1169,6 +1406,39 @@ mod tests {
         for f in ["kind", "fork", "headRepo", "updateType", "changedFiles", "previousHead", "merged"] {
             assert!(schema["properties"].get(f).is_some(), "{f}");
         }
+    }
+
+    #[test]
+    fn own_runs_are_told_by_the_payloads_workflow() {
+        let p = serde_json::json!({"workflowId": "w1"});
+        assert!(from_own_run(RUN_FAILED, &p, "w1"));
+        assert!(!from_own_run(RUN_FAILED, &p, "w2"));
+        assert!(!from_own_run(RUN_FINISHED, &serde_json::json!({}), "w1"));
+        assert!(from_own_run(SESSION_TURN_ENDED, &p, "w1") && from_own_run(INBOX_CREATED, &p, "w1"));
+        // Older events carry a workflowId too (an agent outcome is its own run's step): not guarded.
+        assert!(!from_own_run(AGENT_OUTCOME, &p, "w1"));
+        for id in OWN_RUN_EVENTS {
+            let schema = serde_json::to_value((event_type(id).unwrap().schema)()).unwrap();
+            assert!(schema["properties"].get("workflowId").is_some(), "{id}");
+            assert!(event_type(id).unwrap().description.contains("includeOwn"), "{id}");
+        }
+    }
+
+    #[test]
+    fn a_chain_of_runs_started_by_run_events_counts_up() {
+        assert_eq!(run_chain(&serde_json::json!({"type": "ticket.stage_changed"})), 0);
+        assert_eq!(run_chain(&serde_json::json!({})), 0);
+        assert_eq!(run_chain(&serde_json::json!({"type": RUN_FAILED, "chain": 0})), 1);
+        assert_eq!(run_chain(&serde_json::json!({"type": RUN_FINISHED, "chain": 2})), 3);
+    }
+
+    #[test]
+    fn a_message_tail_keeps_the_end() {
+        assert_eq!(message_tail("  short  ", 20), "short");
+        let t = message_tail("The first part goes away and the last words stay", 20);
+        assert!(t.starts_with('…') && t.ends_with("words stay"), "{t}");
+        assert!(t.chars().count() <= 21, "{t}");
+        assert_eq!(message_tail("ééééé", 3), "…ééé");
     }
 
     #[test]

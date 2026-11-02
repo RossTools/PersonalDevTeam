@@ -220,6 +220,8 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
     items.extend(crate::mcp_oauth::inbox_items(st).await);
     items.extend(crate::inbox::proposals(st, None).await?);
     items.extend(crate::storage::low_disk(st).await);
+    // New ones are workflow events too, whatever their notification's Show (PDT-364).
+    crate::workflow::sensors::inbox_open(st, &items).await;
     let fresh: Vec<&InboxItem> = items.iter().filter(|i| !live.contains_key(&inbox_key(&i.id))).collect();
     let mut fresh: Vec<InboxItem> = fresh.into_iter().cloned().collect();
     crate::inbox::decorate(st, &mut fresh).await?;
@@ -357,9 +359,9 @@ fn with_ticket(body: &str, key: Option<&str>) -> String {
 
 // ---- event causes ----
 
-/// A session's agent exited on its own (not a Stop, close or restart by PDT) with a failure code.
-pub(crate) async fn session_exited(st: &AppState, id: &str, code: i32) {
-    if st.notifier.take_expected_exit(id) || st.shutting_down.load(Ordering::SeqCst) || code == 0 {
+/// A session's agent exited on its own (not `stopped` by PDT: a Stop, close or restart) with a failure code.
+pub(crate) async fn session_exited(st: &AppState, id: &str, code: i32, stopped: bool) {
+    if stopped || st.shutting_down.load(Ordering::SeqCst) || code == 0 {
         return;
     }
     let Ok(Some(s)) = st.store.get_session(id).await else { return };

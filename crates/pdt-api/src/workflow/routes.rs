@@ -537,7 +537,12 @@ pub(crate) async fn answer(
 ) -> Result<Json<RunDetail>, ApiError> {
     let a = body(payload)?;
     run_detail(&st, &id).await?;
+    // The gate's Inbox item, for `inbox.answered` (PDT-364; once per item, whichever way it was answered).
+    let items = st.store.open_items_for_step(&step).await?;
     engine::answer(&st, &id, &step, &a.choice, a.text.as_deref()).await.map_err(|e| conflict("cannot_answer", e))?;
+    for item in &items {
+        crate::workflow::sensors::inbox_answered(&st, item, Some(&a.choice), a.text.as_deref(), "user").await;
+    }
     Ok(Json(run_detail(&st, &id).await?))
 }
 

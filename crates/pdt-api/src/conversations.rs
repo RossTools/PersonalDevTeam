@@ -588,6 +588,7 @@ async fn pump(
                     }
                 }
                 if !expected {
+                    crate::workflow::sensors::session_exited(&st, &c.id, code, false).await;
                     // What it had not taken yet is lost with it: say so (PDT-129).
                     let lost: Vec<String> = c.state().pending.drain(..).map(|p| p.id).collect();
                     let why = format!("{} stopped before it took it.", agent.label());
@@ -894,6 +895,7 @@ async fn refresh_activity(st: &AppState, c: &Arc<Conv>) {
         tracing::warn!(session = %c.id, error = %e, "could not record conversation activity");
     }
     crate::notifications::kick(st);
+    crate::workflow::sensors::activity_changed(st, &c.id, prev, next);
     c.push_state();
 }
 
@@ -1226,11 +1228,16 @@ fn idle(c: &Conv) -> bool {
 }
 
 async fn stop_conv(st: &AppState, session: &Session, c: &Arc<Conv>) -> Result<(), ApiError> {
-    if st.ptys.is_running(&session.id) {
+    // A terminal's exit is told where it ends (`session.exited`); a conversation's process, here.
+    let terminal = st.ptys.is_running(&session.id);
+    if terminal {
         let _ = st.kill_pty(&session.id).await;
     }
     park(st, c).await;
     st.store.end_session(&session.id, SessionStatus::Finished, None, now_ms()).await?;
+    if !terminal && session.status == SessionStatus::Running {
+        crate::workflow::sensors::session_exited(st, &session.id, None, true).await;
+    }
     let dropped: Vec<String> = {
         let mut s = c.state();
         s.activity = None;
@@ -1934,11 +1941,33 @@ pub(crate) async fn post_answer(
     let Json(body) = payload?;
     let from_ui = crate::untrusted::from_ui(&st, &headers)?;
     let session = conversation_session(&st, &id).await?;
+    // Its Inbox item, for `inbox.answered` (PDT-364).
+    let item_id = format!("approval:{}:{request_id}", session.id);
+    let item = crate::inbox::approvals(&st, Some(&session.project_id)).await?.into_iter().find(|i| i.id == item_id);
     answer_request(&st, &session, &request_id, &body.answer).await?;
     // The user's own answer: a yes to a call PDT held for them is good for that call (PDT-201), when it came from PDT's
     // web client and not an agent's curl (PDT-204).
     let approved = from_ui && matches!(body.answer, pdt_core::conversation::Answer::Approve { .. });
     st.grants.answered(&session.id, &request_id, approved);
+    // Told after the grant: the agent's call may already be checking it.
+    if let Some(item) = item {
+        use pdt_core::conversation::Answer;
+        let (choice, text) = match &body.answer {
+            Answer::Approve { always: true } => ("allow_always", None),
+            Answer::Approve { .. } => ("allow", None),
+            Answer::Deny { message } => ("deny", message.clone()),
+            Answer::Question { answers } => {
+                ("answer", Some(answers.values().map(|a| a.join(", ")).collect::<Vec<_>>().join("\n")))
+            }
+            Answer::Plan { approve, feedback, .. } => {
+                (if *approve { "approve" } else { "keep_planning" }, feedback.clone())
+            }
+            #[allow(unreachable_patterns)]
+            _ => ("answer", None),
+        };
+        let by = if from_ui { "user" } else { "agent" };
+        crate::workflow::sensors::inbox_answered(&st, &item, Some(choice), text.as_deref(), by).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

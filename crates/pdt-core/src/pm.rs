@@ -627,11 +627,17 @@ pub fn update_due(caught_up_at: i64, now: i64, after: i64) -> bool {
     now - caught_up_at + UPDATE_SLACK_MS >= after
 }
 
-/// Events an update leaves out (PDT-211): the clock and overlaps, which say nothing the PM acts on.
+/// Events an update leaves out (PDT-211): the clock and overlaps, which say nothing the PM acts on, and sessions' turns
+/// and Inbox items (PDT-364), which come by the dozen and which the PM sees for itself.
 const UPDATE_NOISE: &[&str] = &[
     crate::workflow::events::SCHEDULE_FIRED,
     crate::workflow::events::TICKET_OVERLAP_FOUND,
     crate::workflow::events::TICKET_OVERLAP_CLEARED,
+    crate::workflow::events::SESSION_TURN_ENDED,
+    crate::workflow::events::SESSION_NEEDS_YOU,
+    crate::workflow::events::SESSION_EXITED,
+    crate::workflow::events::INBOX_CREATED,
+    crate::workflow::events::INBOX_ANSWERED,
 ];
 /// Tickets an update lists.
 pub const UPDATE_TICKETS: usize = 20;
@@ -687,6 +693,8 @@ fn event_words(e: &BriefEvent) -> String {
             (who, what) if !who.is_empty() && !what.is_empty() => format!("{who} {what}"),
             _ => "an agent step ended".into(),
         },
+        ev::RUN_FAILED => format!("workflow {} failed", text("workflowName")),
+        ev::RUN_FINISHED => format!("workflow {} finished", text("workflowName")),
         kind => kind.to_string(),
     }
 }
@@ -1047,6 +1055,7 @@ mod tests {
         assert_eq!(words(ev::TICKET_CREATED, json!({"actor": "agent", "persona": "Coder"})), "created by Coder");
         assert_eq!(words(ev::TICKET_CREATED, json!({"actor": "user", "persona": null})), "created by user");
         assert_eq!(words(ev::TICKET_UNBLOCKED, json!({})), "unblocked");
+        assert_eq!(words(ev::RUN_FAILED, json!({"workflowName": "Pipeline"})), "workflow Pipeline failed");
         assert_eq!(words(ev::TICKET_LABELS_CHANGED, json!({"added": ["ui"], "removed": ["docs"]})), "labels +ui -docs");
         assert_eq!(words(ev::TICKET_PRIORITY_CHANGED, json!({"from": "low", "to": "high"})), "priority → high");
         assert_eq!(words(ev::TICKET_PARENT_CHANGED, json!({"to": "PDT-2"})), "part of PDT-2");

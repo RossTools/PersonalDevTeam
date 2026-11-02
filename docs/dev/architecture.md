@@ -247,6 +247,15 @@ workflow runs" follows each such run with `github.workflow.watch` (one gate item
 (pdt-core `policy.rs`) sets who merges, approvals, the running cap and auto-start; the host caps how many agents run a
 turn at once.
 
+**Inbox, session and run events** come from pdt-api `workflow/sensors.rs`. `inbox.created`: the Notifier's pass
+hands it every open item, stored or listed (approvals, proposals, low disk), and it logs the ones it hasn't seen,
+keyed by id and opening time (items already open at startup are left alone). `inbox.answered`: the answer routes
+(the Inbox's, a permission request's, a gate's in the run view). `session.needs_you` and `session.turn_ended`: an
+agent session's activity change (`activity.rs` `persist` for terminals, `conversations.rs` `refresh_activity`), each
+transition once. `session.exited`: a terminal's exit (with `Notifier::take_expected_exit` as `stoppedByPdt`), a
+conversation's process dying, or its Stop. `run.failed` and `run.finished`: `finish_run`. None of them goes through
+notification settings.
+
 **Auto-start** is the host built-in "Pick up tickets" (`workflow/builtins/pick_up_tickets.rs`): `ticket.startable`, `slot.freed` and a
 one-minute `schedule` lead to `tickets.candidates` → `tickets.choose` → `ticket.start` (`workflow/nodes/pickup.rs`;
 the rules, pure, in pdt-core `pickup.rs`). A config field left out is the project's auto-start setting, so Settings

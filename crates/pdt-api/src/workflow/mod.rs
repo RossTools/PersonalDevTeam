@@ -11,6 +11,7 @@ pub(crate) mod outside_prs;
 pub(crate) mod pipeline;
 pub(crate) mod repo;
 pub(crate) mod routes;
+pub(crate) mod sensors;
 pub(crate) mod templates;
 pub(crate) mod transfer;
 
