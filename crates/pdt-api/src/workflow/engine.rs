@@ -13,6 +13,7 @@ use pdt_core::workflow::cond::all;
 use pdt_core::workflow::doc::{ERROR_PORT, WorkflowDoc};
 use pdt_core::workflow::dry::with_stand_ins;
 use pdt_core::workflow::refs::{resolve, resolve_keeping};
+use pdt_store::StoreError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -119,11 +120,13 @@ pub(crate) struct DocCache(std::sync::Mutex<HashMap<(String, u32, i64), Arc<Work
 
 const DOC_CACHE_MAX: usize = 256;
 
-/// The enabled workflows with their current documents.
-pub(crate) async fn enabled_with_docs(st: &AppState) -> Vec<(Workflow, Arc<WorkflowDoc>)> {
+/// The enabled workflows with their current documents. Err when the store couldn't be read (PDT-431): callers that act
+/// on what is missing (marking events processed) must not take that for "no workflows". A workflow whose document is
+/// corrupt is left out, with a warning, so it doesn't hold up the others.
+pub(crate) async fn enabled_with_docs(st: &AppState) -> Result<Vec<(Workflow, Arc<WorkflowDoc>)>, StoreError> {
     let mut out = vec![];
     let reg = st.registry();
-    for wf in st.store.enabled_workflows().await.unwrap_or_default() {
+    for wf in st.store.enabled_workflows().await? {
         if super::builtins::hidden(&reg, &wf) {
             continue;
         }
@@ -132,7 +135,15 @@ pub(crate) async fn enabled_with_docs(st: &AppState) -> Vec<(Workflow, Arc<Workf
         let doc = match cached {
             Some(d) => d,
             None => {
-                let Ok(Some(doc)) = st.store.workflow_doc(&wf.id, wf.version).await else { continue };
+                let doc = match st.store.workflow_doc(&wf.id, wf.version).await {
+                    Ok(Some(doc)) => doc,
+                    Ok(None) => continue,
+                    Err(StoreError::Corrupt(e)) => {
+                        tracing::warn!(workflow = %wf.name, error = %e, "a workflow's document can't be read");
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                };
                 let doc = Arc::new(doc);
                 let mut m = st.workflow_docs.0.lock().unwrap_or_else(|e| e.into_inner());
                 if m.len() >= DOC_CACHE_MAX {
@@ -144,7 +155,7 @@ pub(crate) async fn enabled_with_docs(st: &AppState) -> Vec<(Workflow, Arc<Workf
         };
         out.push((wf, doc));
     }
-    out
+    Ok(out)
 }
 
 type R<T> = Result<T, String>;
@@ -312,9 +323,16 @@ async fn match_events(st: &AppState) {
         Ok(_) => return,
         Err(e) => return tracing::warn!(error = %e, "could not read new events"),
     };
-    let enabled = enabled_with_docs(st).await;
+    // Without the workflows or the waiting steps the events stay new, to be matched once reads work (PDT-431).
+    let enabled = match enabled_with_docs(st).await {
+        Ok(w) => w,
+        Err(e) => return tracing::warn!(error = %e, "could not read the enabled workflows"),
+    };
     // Read once for the batch; a step an earlier event resumed is not resumed again.
-    let waiting = st.store.steps_waiting_for_events().await.unwrap_or_default();
+    let waiting = match st.store.steps_waiting_for_events().await {
+        Ok(w) => w,
+        Err(e) => return tracing::warn!(error = %e, "could not read the steps waiting for events"),
+    };
     let mut resumed: HashSet<String> = HashSet::new();
     for e in events {
         let trigger = trigger_value(st, &e);
