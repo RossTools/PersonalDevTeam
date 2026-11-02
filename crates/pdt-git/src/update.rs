@@ -50,10 +50,12 @@ pub fn merge_base_in(worktree: &Path, base: &str) -> Result<BaseMerge, GitError>
     // rerere resolved every conflict: commit the merge.
     match commit_merge(worktree) {
         Ok(commit) => Ok(BaseMerge::Merged { commit }),
-        Err(e) => {
-            abort_merge(worktree);
-            Err(e)
-        }
+        Err(e) => Err(match abort_merge(worktree) {
+            Ok(()) => e,
+            Err(a) => {
+                GitError::Command(format!("{e}; and the merge couldn't be aborted, so it is still in progress: {a}"))
+            }
+        }),
     }
 }
 
@@ -103,11 +105,12 @@ pub fn commit_merge(worktree: &Path) -> Result<String, GitError> {
     run(worktree, &["rev-parse", "HEAD"])
 }
 
-/// Aborts the merge in progress, if any.
-pub fn abort_merge(worktree: &Path) {
+/// Aborts the merge in progress, if any. Err: the worktree is still mid-merge.
+pub fn abort_merge(worktree: &Path) -> Result<(), GitError> {
     if merge_in_progress(worktree) {
-        let _ = git_with_env(worktree, &["merge", "--abort"], &[]);
+        run(worktree, &["merge", "--abort"])?;
     }
+    Ok(())
 }
 
 /// Moves the worktree's branch back to `commit`, dropping a merge made since (the worktree was clean before it).
@@ -200,7 +203,7 @@ mod tests {
         std::fs::write(wt.join("gen.txt"), "regenerated\n").unwrap();
         stage_globs(&wt, &["gen.*".into(), "nothing/**".into()]).unwrap();
         assert_eq!(unmerged_files(&wt).unwrap(), ["a.txt"]);
-        abort_merge(&wt);
+        abort_merge(&wt).unwrap();
         assert!(!merge_in_progress(&wt));
         assert_eq!(std::fs::read_to_string(wt.join("a.txt")).unwrap(), "branch\n");
     }

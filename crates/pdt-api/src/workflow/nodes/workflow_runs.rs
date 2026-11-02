@@ -4,6 +4,7 @@
 //! The template "Report failed workflow runs" puts them after the `github.workflow.failed` trigger.
 
 use super::release::{RepoOf, check_repo, repo_for_step};
+use crate::log_err::LogErr;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, repo_missing, spec};
 use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
 use pdt_core::pr::CiState;
@@ -354,7 +355,10 @@ impl NodeKind for GithubWorkflowWatch {
             // A later failed attempt replaces the earlier one's item, here or in the run that reported it.
             for old in &open {
                 let gone = json!({"replacedBy": attempt});
-                let _ = store.end_inbox_item(&old.id, InboxStatus::Closed, &gone, now).await;
+                store
+                    .end_inbox_item(&old.id, InboxStatus::Closed, &gone, now)
+                    .await
+                    .log_warn("close a replaced Inbox item");
             }
             if added.is_none() {
                 return Ok(quiet("already", json!({"attempt": attempt})));

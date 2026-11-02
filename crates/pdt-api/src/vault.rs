@@ -242,7 +242,12 @@ async fn new_secret(st: &AppState, n: NewSecret) -> Result<Secret, ApiError> {
     // The value first: a row is never there without one.
     put_value(st, &s, &n.value).await?;
     if let Err(e) = st.store.insert_secret(&s).await {
-        let _ = keychain_delete(st, &s.id).await;
+        // The value goes too, or the keychain keeps a secret no row names: tried twice (a busy keychain), then logged.
+        if keychain_delete(st, &s.id).await.is_err()
+            && let Err(e) = keychain_delete(st, &s.id).await
+        {
+            tracing::warn!(secret = %s.name, error = %e, "could not remove a secret's value after its row failed; the keychain keeps it");
+        }
         st.store.redactor().remove(&s.name);
         return Err(match e {
             pdt_store::StoreError::Conflict(_) => exists(&s.name),

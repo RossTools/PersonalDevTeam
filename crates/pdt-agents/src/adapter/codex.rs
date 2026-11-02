@@ -652,8 +652,10 @@ impl CodexAdapter {
         match tokio::time::timeout(super::DRAFT_TIMEOUT, wait).await {
             Ok(r) => r,
             Err(_) => {
-                if let Some(t) = turn_id {
-                    let _ = conn.request("turn/interrupt", json!({"threadId": thread, "turnId": t})).await;
+                if let Some(t) = turn_id
+                    && let Err(e) = conn.request("turn/interrupt", json!({"threadId": thread, "turnId": t})).await
+                {
+                    tracing::warn!(error = %e, "could not interrupt a side turn that timed out");
                 }
                 Err(AdapterError::Timeout)
             }
@@ -724,7 +726,11 @@ impl LiveConversation for CodexLive {
             }
             (Some(turn), Delivery::Now) => {
                 self.mapper().note_interrupt();
-                let _ = self.conn.request("turn/interrupt", json!({"threadId": self.thread, "turnId": turn})).await;
+                if let Err(e) =
+                    self.conn.request("turn/interrupt", json!({"threadId": self.thread, "turnId": turn})).await
+                {
+                    tracing::warn!(error = %e, "could not interrupt the turn to send a message now");
+                }
                 self.start_turn(msg).await
             }
             (None, _) => self.start_turn(msg).await,

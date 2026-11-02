@@ -16,7 +16,7 @@ pub(crate) async fn project_ci(
     repo_path: &str,
     forge: Option<&ProjectForge>,
 ) -> Vec<Arc<dyn CiProvider>> {
-    let config = crate::runconfig::load_effective(st, project_id, std::path::Path::new(repo_path)).await.ok();
+    let config = crate::forge::run_config(st, project_id, repo_path).await;
     let mut found: Vec<Arc<dyn CiProvider>> = forge.and_then(|f| f.ci.clone()).into_iter().collect();
     if let Ok(settings) = st.store.get_project_settings(project_id).await {
         for i in st.registry().integrations() {

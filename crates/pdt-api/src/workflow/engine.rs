@@ -7,6 +7,7 @@
 
 use super::catalog::{Category, Outcome, StepCx, parse};
 use super::nodes::trigger::{MANUAL, ManualConfig, SharedTrigger};
+use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use pdt_core::workflow::api::{LogEvent, Run, RunStatus, Step, StepStatus, Workflow};
 use pdt_core::workflow::cond::all;
@@ -1246,10 +1247,10 @@ pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &
     }
     // Its Inbox item is answered, wherever the answer came from.
     for item in st.store.open_items_for_step(step_id).await.map_err(err)? {
-        let _ = st
-            .store
+        st.store
             .end_inbox_item(&item.id, pdt_core::inbox::InboxStatus::Resolved, &json!({"choice": choice}), now_ms())
-            .await;
+            .await
+            .log_warn("close an answered Inbox item");
     }
     let text = text.map(str::trim).filter(|t| !t.is_empty());
     // The gate's own ticket when the run has none (PDT-269).

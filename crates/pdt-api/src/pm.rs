@@ -3,6 +3,7 @@
 //! entry, the notes routes, and the project policy that answers the PM's asking tools for the user.
 
 use crate::error::ApiError;
+use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -416,7 +417,7 @@ async fn end_session(st: &AppState, s: &Session, from: Rotation, reason: Option<
         Err(e) => return tracing::warn!(session = %s.id, error = %e, "could not end a PM session"),
     }
     if from == Rotation::Journal && matches!(st.store.session_journal(&s.id).await, Ok(None)) {
-        let _ = write_journal(st, s, pm::NO_JOURNAL).await;
+        write_journal(st, s, pm::NO_JOURNAL).await.log_warn("record an ended PM session's journal");
     }
     if let Err(e) = crate::conversations::stop(st, s).await {
         tracing::warn!(session = %s.id, error = %e.message(), "could not stop an ended PM session");
@@ -599,7 +600,10 @@ async fn drop_checkpoints(st: &AppState, id: &str) {
 async fn drop_waiting(st: &AppState, id: &str, which: impl Fn(&pdt_store::SessionMessage) -> bool) {
     for m in st.store.waiting_session_messages().await.unwrap_or_default() {
         if m.session_id.as_deref() == Some(id) && which(&m) {
-            let _ = st.store.resolve_session_message(&m.id, None, now_ms()).await;
+            st.store
+                .resolve_session_message(&m.id, None, now_ms())
+                .await
+                .log_warn("drop a PM conversation's waiting message");
         }
     }
 }

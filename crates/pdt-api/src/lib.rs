@@ -33,6 +33,7 @@ mod integrations;
 mod issues;
 mod local_forge;
 mod local_network;
+mod log_err;
 pub mod loops;
 mod mcp;
 mod mcp_client;
