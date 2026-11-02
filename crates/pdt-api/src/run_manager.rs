@@ -15,7 +15,7 @@ use pdt_agents::SpawnSpec;
 use pdt_agents::detached::{self, DetachedSpec};
 use pdt_core::host::CredentialPolicy;
 use pdt_core::run::{Run, RunKind, RunState, RunStep, pick_port, pty_id, step_launch};
-use pdt_core::runconfig::{RunDef, RunVars, expand, run_env, uses_run_host};
+use pdt_core::runconfig::{CommandShell, RunDef, RunVars, expand_command, run_env, uses_run_host};
 use pdt_core::session::{SessionKind, is_scrubbed};
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -377,6 +377,7 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
     let _ = st.store.set_run_process(&run.id, def.detach, None).await;
     let v = vars(st, run);
     let pairs = v.pairs();
+    let shell = if st.platform.windows { CommandShell::Cmd } else { CommandShell::Sh };
     let mut env = pdt_core::session::terminal_env();
     if let Some(path) = &st.platform.login_path {
         env.push(("PATH".into(), path.clone()));
@@ -389,7 +390,11 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
     }
     if let Some(setup) = &def.setup {
         let _ = st.store.set_run_state(&run.id, RunState::SettingUp, now_ms()).await;
-        let rx = match start_step(st, ctl, run, RunStep::Setup, expand(setup, &pairs), &env).await {
+        let setup = match expand_command(setup, &pairs, shell) {
+            Ok(s) => s,
+            Err(e) => return (RunState::Failed, None, Some(format!("setup did not start: {e}"))),
+        };
+        let rx = match start_step(st, ctl, run, RunStep::Setup, setup, &env).await {
             Ok(rx) => rx,
             Err(e) => return (RunState::Failed, None, Some(format!("setup could not start: {e}"))),
         };
@@ -406,7 +411,10 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
     }
     let first = if run.kind == RunKind::Test { RunState::Running } else { RunState::Starting };
     let _ = st.store.set_run_state(&run.id, first, now_ms()).await;
-    let command = expand(&def.command, &pairs);
+    let command = match expand_command(&def.command, &pairs, shell) {
+        Ok(c) => c,
+        Err(e) => return (RunState::Failed, None, Some(format!("the command did not start: {e}"))),
+    };
     let exit: ExitFuture = if def.detach && run.kind == RunKind::Run {
         let (st2, ctl2, run2) = (st.clone(), ctl.clone(), run.clone());
         let started = tokio::task::spawn_blocking(move || spawn_detached(&st2, &ctl2, &run2, &command, &env))
