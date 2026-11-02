@@ -118,6 +118,8 @@ pub struct AppState {
     /// Serializes ticket Starts up to the attempt row (checks, worktree, attempt), so two Starts of one ticket can't
     /// both make a worktree.
     pub(crate) ticket_start_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// The finishes going on, per ticket: they run one at a time and spare each other's workflow runs (PDT-182).
+    pub(crate) finishes: std::sync::Arc<crate::finish::Finishes>,
     /// Each active attempt's changed files, refreshed by `refresh_overlaps` (actual overlap, tickets spec §7).
     pub(crate) changed_files: crate::overlap::ChangedFiles,
     /// How long stopping a run waits for its processes to end before reporting `run_stopping`.
@@ -288,6 +290,7 @@ impl AppState {
             run_stops: Default::default(),
             run_start_lock: Default::default(),
             ticket_start_lock: Default::default(),
+            finishes: Default::default(),
             changed_files: Default::default(),
             run_stop_wait: std::time::Duration::from_secs(20),
             hook_program: std::env::current_exe().unwrap_or_default(),

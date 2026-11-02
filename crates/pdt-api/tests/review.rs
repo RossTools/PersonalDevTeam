@@ -848,3 +848,43 @@ async fn hosts_with_the_old_finish_merged_tickets_get_the_new_condition() {
     let now = serde_json::to_value(state.store.workflow_doc(&w.id, w.version).await.unwrap().unwrap()).unwrap();
     assert_eq!(now["nodes"][0]["config"]["where"][0]["right"], json!(["detected", "automated"]), "{now}");
 }
+
+/// PDT-182: two workflows finish one merged ticket at the same moment (the Pipeline's `merged → finish` and Finish
+/// merged tickets): one cleans up, neither cancels the other's run, and the ticket moves to Done once.
+#[tokio::test]
+async fn two_finishes_at_once_leave_both_runs_and_move_the_ticket_to_done_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), "terminal").await;
+    let doc = json!({"name": "Also finish", "nodes": [
+        {"id": "merged", "kind": "attempt.merged", "version": 1},
+        {"id": "finish", "kind": "ticket.finish", "version": 1, "config": {"ticket": "{{trigger.ticketId}}"}}],
+        "edges": [{"from": "merged", "to": "finish"}]});
+    let (s, w) = call(&env.app, "POST", "/api/workflows", Some(json!({"doc": doc, "enabled": true}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    std::fs::write(env.wt_path.join("c.txt"), "c\n").unwrap();
+    commit_all(&env.wt_path, "add c");
+    assert_eq!(workflow_merge(&env, false).await, "merged");
+    pdt_api::run_workflows(&env.state).await;
+
+    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={}", env.ticket), None).await;
+    let statuses: Vec<(&str, &str)> = runs
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["workflowName"] == "Finish merged tickets" || r["workflowName"] == "Also finish")
+        .map(|r| (r["workflowName"].as_str().unwrap(), r["status"].as_str().unwrap()))
+        .collect();
+    assert_eq!(statuses.len(), 2, "{runs}");
+    assert!(statuses.iter().all(|(_, s)| *s == "succeeded"), "{statuses:?} {runs:#}");
+    let t: Value = call(&env.app, "GET", &format!("/api/tickets/{}", env.ticket), None).await.1;
+    assert_eq!(t["stage"], "done", "{t}");
+    assert!(!env.wt_path.exists(), "the worktree went");
+    let (_, events) = call(&env.app, "GET", &format!("/api/tickets/{}/events", env.ticket), None).await;
+    let to_done = events["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "moved" && e["data"]["to"] == "done")
+        .count();
+    assert_eq!(to_done, 1, "{events}");
+}

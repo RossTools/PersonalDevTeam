@@ -127,6 +127,22 @@ impl WorkflowDoc {
     pub fn has_edge_from(&self, from: &str, port: &str) -> bool {
         self.edges.iter().any(|e| e.from == from && e.port == port)
     }
+
+    /// Whether a node of `kind` is `from` or lies on some path of edges from it.
+    pub fn reaches(&self, from: &str, kind: &str) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut todo = vec![from];
+        while let Some(id) = todo.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if self.node(id).is_some_and(|n| n.kind == kind) {
+                return true;
+            }
+            todo.extend(self.edges.iter().filter(|e| e.from == id).map(|e| e.to.as_str()));
+        }
+        false
+    }
 }
 
 #[cfg(test)]
@@ -147,6 +163,22 @@ mod tests {
         assert_eq!(d.node("b").unwrap().max_visits(), DEFAULT_MAX_VISITS);
         assert_eq!(d.settings, RunSettings::default());
         assert!(d.has_edge_from("a", OUT));
+    }
+
+    #[test]
+    fn reaches_follows_every_port_through_loops() {
+        let d: WorkflowDoc = serde_json::from_value(serde_json::json!({
+            "name": "n",
+            "nodes": [{"id": "a", "kind": "gate", "version": 1}, {"id": "b", "kind": "wait", "version": 1},
+                      {"id": "f", "kind": "ticket.finish", "version": 1}, {"id": "e", "kind": "end", "version": 1}],
+            "edges": [{"from": "a", "port": "no", "to": "e"}, {"from": "a", "port": "yes", "to": "b"},
+                      {"from": "b", "to": "a"}, {"from": "b", "port": "event", "to": "f"}],
+        }))
+        .unwrap();
+        assert!(d.reaches("a", "ticket.finish"));
+        assert!(d.reaches("f", "ticket.finish"), "a node reaches itself");
+        assert!(!d.reaches("e", "ticket.finish"));
+        assert!(!d.reaches("gone", "ticket.finish"));
     }
 
     #[test]
