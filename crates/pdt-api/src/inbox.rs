@@ -303,6 +303,19 @@ async fn answer_proposal(st: &AppState, id: &str, choice: Option<&str>) -> Resul
     Ok(Json(json!({"workflowId": workflow, "version": d.workflow.version, "accepted": choice == Some(inbox::ACCEPT)})))
 }
 
+/// Whether an Inbox item is still open (PDT-368: an escalation): a stored one by its status, a listed one (an
+/// approval, a proposal, a sign-in) while it is still listed.
+pub(crate) async fn is_open(st: &AppState, id: &str) -> Result<bool, ApiError> {
+    if let Some(i) = st.store.get_inbox_item(id).await? {
+        return Ok(i.status == pdt_core::inbox::InboxStatus::Open);
+    }
+    let mut listed = approvals(st, None).await?;
+    listed.extend(proposals(st, None).await?);
+    listed.extend(connect_forge(st));
+    listed.extend(crate::mcp_oauth::inbox_items(st).await);
+    Ok(listed.iter().any(|i| i.id == id))
+}
+
 /// The open permission requests of live conversations, as items.
 pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Vec<InboxItem>, ApiError> {
     let mut out = vec![];

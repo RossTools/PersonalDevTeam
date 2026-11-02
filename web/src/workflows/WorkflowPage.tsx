@@ -40,6 +40,8 @@ export type WorkflowTab = 'graph' | 'outline' | 'text' | 'runs' | 'versions';
 
 /** The built-in whose inputs Settings → Agents sets (PDT-367). */
 const STUCK_AGENTS = 'stuck-agents';
+/** The built-in whose inputs Settings → Notifications sets (PDT-368). */
+const NOTIFICATION_RULES = 'notification-rules';
 
 /** Issue codes for what the workflow names that is not on this host (an imported workflow's, PDT-155). */
 const SETUP_CODES = ['missing_connection', 'connection_kind', 'hook_secret', 'missing_persona', 'missing_project'];
@@ -253,6 +255,11 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
       {w.builtin === STUCK_AGENTS && (
         <Banner tone="neutral" actions={<Button size="sm" variant="ghost" onClick={() => navigate(routePath({ view: 'settings', page: { kind: 'host', section: 'agents' } }))}>Open Settings</Button>}>
           Its nudges, messages and limits are set in Settings → This host → Agents. Changing more here makes it your own: Settings then only offers Reset to default.
+        </Banner>
+      )}
+      {w.builtin === NOTIFICATION_RULES && (
+        <Banner tone="neutral" actions={<Button size="sm" variant="ghost" onClick={() => navigate(routePath({ view: 'settings', page: { kind: 'notifications' } }))}>Open Settings</Button>}>
+          Its levels, quiet hours, escalation and chat channel are set in Settings → Notifications. Changing more here makes it your own: Settings then only offers Reset to default.
         </Banner>
       )}
       {setup.length > 0 && (

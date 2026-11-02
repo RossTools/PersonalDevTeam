@@ -108,6 +108,19 @@ pub fn start_services(st: &AppState) {
 
 /// What an integration adds to PDT. Everything but its id and label is optional: an integration declares only what it
 /// has.
+/// A chat service an integration posts notifications to (PDT-368): connections of `connection_kind` are posted to by
+/// its node kind `node_kind`, whose config takes `connection` and `content` (Markdown).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NotificationChannel {
+    /// The service, as the user knows it.
+    pub label: &'static str,
+    pub connection_kind: &'static str,
+    #[serde(skip)]
+    pub node_kind: &'static str,
+}
+
 pub trait Integration: Send + Sync {
     /// A short id (`chat`), unique among integrations: its entry in [`pdt_core::integration::KNOWN`].
     fn id(&self) -> &'static str;
@@ -271,6 +284,12 @@ pub trait Integration: Send + Sync {
 
     /// Its workflow templates (ids without `builtin:`).
     fn templates(&self) -> Vec<Template> {
+        vec![]
+    }
+
+    /// The chat services it posts notifications to ([`NotificationChannel`]): a `notify` step's `chat`, and the
+    /// Notification rules' (PDT-368).
+    fn notification_channels(&self) -> Vec<NotificationChannel> {
         vec![]
     }
 
@@ -559,6 +578,11 @@ impl Registry {
     /// The enabled integrations' built-in workflows.
     pub fn builtin_workflows(&self) -> Vec<Builtin> {
         self.integrations.iter().flat_map(|i| i.builtin_workflows()).collect()
+    }
+
+    /// The enabled integrations' notification channels.
+    pub fn notification_channels(&self) -> Vec<NotificationChannel> {
+        self.integrations.iter().flat_map(|i| i.notification_channels()).collect()
     }
 
     /// The enabled integrations' templates.

@@ -5,9 +5,15 @@
 //! 2 s and at once when something [`kick`]s it. A todo coming due (PDT-140) is state too: its one reminder per due date
 //! is remembered on the todo, so a pdtd that was down at the due moment makes it once when it starts. Needs-you notifications never go through workflows: they work with
 //! every workflow off.
+//!
+//! How far each kind reaches the user, and quiet hours, are the built-in Notification rules workflow's (PDT-368): its
+//! Show levels steps, read here as each notification is made ([`rules`]), never by a run. Turned off, every kind is at
+//! its default level. In quiet hours a toast or desktop notification is made at the Inbox level and remembered; the
+//! pass after they end makes one summary.
 
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
+use crate::workflow::nodes::notification_levels::{KIND as LEVELS_KIND, Levels, LevelsConfig};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
@@ -16,9 +22,9 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::Stream;
 use pdt_core::inbox::{InboxItem, InboxKind};
 use pdt_core::notification::{
-    Change, KindSetting, NewNotification, Notification, NotificationKind as K, NotificationList, NotificationSettings,
-    NotificationTarget, RETENTION_MS, ReadAll, Section, Severity, Show, attempt_key, inbox_key, session_key,
-    session_wants, todo_key,
+    Change, Held, KindSetting, NewNotification, Notification, NotificationKind as K, NotificationList,
+    NotificationSettings, NotificationTarget, QuietHours, RETENTION_MS, ReadAll, Section, Severity, Show, attempt_key,
+    inbox_key, quiet_summary, session_key, session_wants, todo_key,
 };
 use pdt_core::pr::{Mergeable, NoticeKind, PrState};
 use pdt_core::session::{SessionKind, SessionStatus};
@@ -31,18 +37,24 @@ use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 use tokio::sync::broadcast;
 
-/// The host setting that holds the overrides of each kind's Show.
+/// The host setting that held the overrides of each kind's Show before they were the Notification rules' (PDT-368):
+/// read once, when the workflow is first installed, and while it isn't yet.
 pub const SETTINGS_KEY: &str = "notifications.show";
+/// The host value that keeps what quiet hours held back, until their summary.
+const HELD_KEY: &str = "notifications.quiet_held";
 /// How often [`run_notifier`] syncs without a kick.
 const SYNC_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 /// How often old rows are pruned.
 const PRUNE_EVERY_MS: i64 = 60 * 60 * 1000;
 
-/// The Notifier's in-memory side: the stream's channel, the kick, the settings and the sessions PDT itself stopped.
+/// The Notifier's in-memory side: the stream's channel, the kick, the rules and the sessions PDT itself stopped.
 pub struct Notifier {
     tx: broadcast::Sender<(Change, Notification)>,
     kick: tokio::sync::Notify,
-    settings: Mutex<Option<NotificationSettings>>,
+    /// The rules, with the workflow version (and whether it was on) they were read from.
+    rules: Mutex<Option<(RulesFrom, Rules)>>,
+    /// Held around changes to what quiet hours held back.
+    held: tokio::sync::Mutex<()>,
     /// Sessions whose process PDT killed (Stop, close, restart): their exit is not news.
     killed: Mutex<HashSet<String>>,
     last_prune: Mutex<i64>,
@@ -53,7 +65,8 @@ impl Default for Notifier {
         Self {
             tx: broadcast::channel(256).0,
             kick: tokio::sync::Notify::new(),
-            settings: Mutex::new(None),
+            rules: Mutex::new(None),
+            held: tokio::sync::Mutex::new(()),
             killed: Mutex::new(HashSet::new()),
             last_prune: Mutex::new(0),
         }
@@ -86,23 +99,118 @@ pub(crate) fn kick(st: &AppState) {
     st.notifier.kick();
 }
 
-/// The host's settings (read once, then kept in memory until they change).
-pub(crate) async fn settings(st: &AppState) -> NotificationSettings {
-    if let Some(s) = st.notifier.settings.lock().unwrap_or_else(|e| e.into_inner()).clone() {
-        return s;
+/// Which workflow version the rules were read from: `None` before the built-in is installed.
+type RulesFrom = Option<(String, u32, bool)>;
+
+/// How far each kind reaches the user, and when it is quiet: the host's Show levels, then any for some projects.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct Rules {
+    host: Levels,
+    projects: Vec<Levels>,
+}
+
+impl Rules {
+    fn of(all: Vec<Levels>) -> Self {
+        let mut r = Rules::default();
+        for l in all {
+            if l.projects.is_empty() {
+                r.host = l;
+            } else {
+                r.projects.push(l);
+            }
+        }
+        r
     }
-    let stored = st.store.get_host_value(SETTINGS_KEY).await.ok().flatten();
-    let s = stored.as_ref().map(NotificationSettings::from_json).unwrap_or_default();
-    *st.notifier.settings.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.clone());
-    s
+
+    fn levels(&self, project: Option<&str>) -> &Levels {
+        project.and_then(|p| self.projects.iter().find(|l| l.projects.iter().any(|x| x == p))).unwrap_or(&self.host)
+    }
+
+    /// A kind's level for a project's notification (or the host's).
+    pub(crate) fn show(&self, kind: K, project: Option<&str>) -> Show {
+        self.levels(project).levels.show(kind)
+    }
+
+    /// The host-wide levels.
+    pub(crate) fn host(&self) -> &NotificationSettings {
+        &self.host.levels
+    }
+
+    /// Whether it is quiet for a project's notification at `minute` past local midnight.
+    fn quiet(&self, project: Option<&str>, minute: u16) -> bool {
+        self.levels(project).quiet.is_some_and(|q| q.contains(minute))
+    }
+
+    /// Whether any quiet hours hold now.
+    fn any_quiet(&self, minute: u16) -> bool {
+        std::iter::once(&self.host).chain(&self.projects).any(|l| l.quiet.is_some_and(|q| q.contains(minute)))
+    }
+}
+
+/// Minutes since local midnight.
+fn minute_now() -> u16 {
+    let t = jiff::Zoned::now();
+    u16::try_from(i32::from(t.hour()) * 60 + i32::from(t.minute())).unwrap_or(0)
+}
+
+/// The Show levels steps of a document.
+fn levels_of(doc: &pdt_core::workflow::doc::WorkflowDoc) -> Vec<Levels> {
+    doc.nodes
+        .iter()
+        .filter(|n| n.kind == LEVELS_KIND)
+        .filter_map(|n| {
+            let read = serde_json::from_value::<LevelsConfig>(n.config.clone()).map_err(|e| e.to_string());
+            read.and_then(|c| c.levels())
+                .map_err(|e| tracing::warn!(node = %n.id, error = %e, "a Show levels step doesn't read: left out"))
+                .ok()
+        })
+        .collect()
+}
+
+/// The rules now: the Notification rules workflow's while it is on, PDT's defaults while it is off, and the levels
+/// stored before it while it isn't installed yet. Read again when its version changes.
+pub(crate) async fn rules(st: &AppState) -> Rules {
+    let w = st.store.workflow_by_builtin(crate::workflow::builtins::NOTIFICATION_RULES).await.ok().flatten();
+    let from: RulesFrom = w.as_ref().map(|w| (w.id.clone(), w.version, w.enabled));
+    if let Some((f, r)) = st.notifier.rules.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
+        && *f == from
+    {
+        return r.clone();
+    }
+    let r = match &w {
+        None => {
+            let stored = st.store.get_host_value(SETTINGS_KEY).await.ok().flatten();
+            let levels = stored.as_ref().map(NotificationSettings::from_json).unwrap_or_default();
+            Rules { host: Levels { levels, ..Default::default() }, projects: vec![] }
+        }
+        Some(w) if !w.enabled => Rules::default(),
+        Some(w) => match st.store.workflow_doc(&w.id, w.version).await {
+            Ok(Some(doc)) => Rules::of(levels_of(&doc)),
+            // Not cached: read again next time.
+            _ => return Rules::default(),
+        },
+    };
+    *st.notifier.rules.lock().unwrap_or_else(|e| e.into_inner()) = Some((from, r.clone()));
+    r
 }
 
 /// Makes (or updates) a notification at its kind's Show; nothing below `inbox` is stored. An update to a live row
 /// the user dismissed (PDT-224) is kept quiet: the same cause doesn't raise it again.
 pub(crate) async fn notify(st: &AppState, n: NewNotification) -> Option<Notification> {
-    let show = settings(st).await.show(n.kind);
+    notify_at(st, n, None).await
+}
+
+/// [`notify`] at `show` when given (a `notify` step's), else at its kind's level. In quiet hours a toast or desktop
+/// notification is made at the Inbox level, and held for the summary.
+pub(crate) async fn notify_at(st: &AppState, n: NewNotification, show: Option<Show>) -> Option<Notification> {
+    let rules = rules(st).await;
+    let mut show = show.unwrap_or_else(|| rules.show(n.kind, n.project_id.as_deref()));
     if !show.stored() {
         return None;
+    }
+    if show > Show::Inbox && n.kind != K::QuietSummary && rules.quiet(n.project_id.as_deref(), minute_now()) {
+        hold(st, Held { key: n.dedupe_key.clone(), kind: n.kind, title: n.title.clone(), show }).await;
+        show = QuietHours::hold(show);
     }
     match st.store.put_notification(&n, show, now_ms()).await {
         Ok((row, change)) => {
@@ -116,6 +224,49 @@ pub(crate) async fn notify(st: &AppState, n: NewNotification) -> Option<Notifica
             None
         }
     }
+}
+
+async fn held(st: &AppState) -> Vec<Held> {
+    let v = st.store.get_host_value(HELD_KEY).await.ok().flatten();
+    v.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
+}
+
+/// Remembers a notification quiet hours held back (once per cause).
+async fn hold(st: &AppState, h: Held) {
+    let _lock = st.notifier.held.lock().await;
+    let mut all = held(st).await;
+    if all.iter().any(|x| x.key == h.key) {
+        return;
+    }
+    all.push(h);
+    if let Err(e) = st.store.put_host_value(HELD_KEY, &serde_json::json!(all)).await {
+        tracing::warn!(error = %e, "could not remember a notification quiet hours held back");
+    }
+}
+
+/// Once no quiet hours hold: one summary of what they held back.
+async fn end_quiet(st: &AppState) {
+    let rules = rules(st).await;
+    if rules.any_quiet(minute_now()) {
+        return;
+    }
+    let all = {
+        let _lock = st.notifier.held.lock().await;
+        let all = held(st).await;
+        if all.is_empty() {
+            return;
+        }
+        if let Err(e) = st.store.put_host_value(HELD_KEY, &serde_json::json!([])).await {
+            tracing::warn!(error = %e, "could not forget what quiet hours held back");
+            return;
+        }
+        all
+    };
+    let Some((title, body, most)) = quiet_summary(&all) else { return };
+    let show = rules.show(K::QuietSummary, None).min(most);
+    let mut n = NewNotification::new(K::QuietSummary, format!("quiet:{}", now_ms()), title, NotificationTarget::None);
+    n.body = body;
+    notify_at(st, n, Some(show)).await;
 }
 
 /// Clears a cause's live row, if it has one.
@@ -164,18 +315,20 @@ async fn notifier_pass(st: &AppState) {
 }
 
 /// One pass over the state-made causes: sessions waiting or left unseen, open Inbox items, PRs whose conflict or
-/// queue drop was fixed, sessions restarted or removed after exiting, background loops gone stale. Never fails; problems are logged.
+/// queue drop was fixed, sessions restarted or removed after exiting, background loops gone stale; then the summary of
+/// quiet hours that ended. Never fails; problems are logged.
 pub async fn sync(st: &AppState) {
     if let Err(e) = sync_inner(st).await {
         tracing::warn!(error = ?e, "could not sync notifications");
     }
+    end_quiet(st).await;
 }
 
 async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
     // Unheard notices whose cause went away close first, so their rows clear in this pass.
     crate::inbox::settle_notices(st, None).await;
     let now = now_ms();
-    let cfg = settings(st).await;
+    let cfg = rules(st).await;
     let live: HashMap<String, Notification> =
         st.store.live_notifications().await?.into_iter().map(|n| (n.dedupe_key.clone(), n)).collect();
     let mut wanted: HashSet<String> = HashSet::new();
@@ -188,7 +341,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
             continue;
         }
         let Some(kind) = session_wants(s.activity, s.attention_at, s.last_viewed_at, now) else { continue };
-        if (kind == K::SessionNeedsYou && asking.contains(&s.id)) || !cfg.show(kind).stored() {
+        if (kind == K::SessionNeedsYou && asking.contains(&s.id)) || !cfg.show(kind, Some(&s.project_id)).stored() {
             continue;
         }
         let key = session_key(&s.id, kind);
@@ -261,7 +414,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
     wanted.extend(items.iter().map(|i| inbox_key(&i.id)));
 
     // Background loops without a finished pass for too long (PDT-127). The notifier's own can't be seen here.
-    if cfg.show(K::HostLoopStale).stored() {
+    if cfg.show(K::HostLoopStale, None).stored() {
         for l in st.loops.health(now).into_iter().filter(|l| l.stale) {
             let key = loop_key(&l.name);
             if !live.contains_key(&key) {
@@ -549,28 +702,18 @@ pub(crate) async fn clear_all(State(st): State<AppState>) -> Result<StatusCode, 
 
 /// `GET /api/notifications/settings`: every kind with its section, current Show, default and allowed levels.
 pub(crate) async fn get_settings(State(st): State<AppState>) -> Json<Vec<KindSetting>> {
-    Json(settings(&st).await.kinds())
+    Json(rules(&st).await.host().kinds())
 }
 
-/// `PATCH /api/notifications/settings {kind: show | null}` (`null` restores the default).
+/// `PATCH /api/notifications/settings {kind: show | null}` (`null` restores the default): the Notification rules'
+/// levels (`PUT /api/notification-rules` with `levels`).
 pub(crate) async fn patch_settings(
     State(st): State<AppState>,
     payload: Result<Json<HashMap<String, Option<Show>>>, JsonRejection>,
 ) -> Result<Json<Vec<KindSetting>>, ApiError> {
-    let Json(changes) = payload?;
-    let _lock = st.settings_lock.lock().await;
-    let mut s = settings(&st).await;
-    for (kind, show) in changes {
-        let k = pdt_core::notification::NotificationKind::parse(&kind).ok_or_else(|| {
-            ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", format!("{kind} is not a kind of notification"))
-        })?;
-        s.set(k, show).map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m))?;
-    }
-    st.store.put_host_value(SETTINGS_KEY, &s.to_json()).await?;
-    *st.notifier.settings.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.clone());
-    // Rows of kinds turned down below `inbox` go; kinds turned up get theirs.
-    kick(&st);
-    Ok(Json(s.kinds()))
+    let Json(levels) = payload?;
+    crate::notification_rules::change(&st, levels, serde_json::Map::new()).await?;
+    Ok(Json(rules(&st).await.host().kinds()))
 }
 
 fn event(change: Change, n: &Notification) -> Event {

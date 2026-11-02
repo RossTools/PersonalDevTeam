@@ -47,6 +47,7 @@ impl Integration for Core {
             Box::new(agent_stuck::Stop),
             Box::new(command::Command),
             Box::new(notify::Notify),
+            Box::new(notification_levels::NotificationLevels),
             Box::new(inbox_notice::InboxNotice),
             Box::new(inbox_admit::InboxAdmit),
             Box::new(ticket_proposal::TicketProposal),
