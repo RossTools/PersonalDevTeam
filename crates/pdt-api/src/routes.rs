@@ -470,6 +470,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::identity_guard::router())
         .merge(crate::inbox::router())
         .merge(crate::issues::router())
+        .merge(crate::issue_links::router())
         .merge(crate::local_forge::router())
         .merge(crate::mcp::router())
         .merge(crate::mcp_servers::router())

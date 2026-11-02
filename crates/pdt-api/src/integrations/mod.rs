@@ -206,6 +206,40 @@ pub trait Integration: Send + Sync {
         Box::pin(async { Err(crate::error::ApiError::not_found("import")) })
     }
 
+    /// The issue `given` (an address or a key) names in its tracker, read through project `project_id`'s connection
+    /// (PDT-481: linking an issue that is already there): None when `given` isn't one of its issues, Err (for the
+    /// user) when it is but can't be read. Each tracker recognizes only its own addresses and keys.
+    fn find_issue<'a>(
+        &'a self,
+        _st: &'a AppState,
+        _project_id: &'a str,
+        _given: &'a str,
+    ) -> BoxFut<'a, Option<Result<crate::issue_links::FoundIssue, String>>> {
+        Box::pin(async { None })
+    }
+
+    /// What its tracker says now of a linked issue of its own (`link.system` is its id): its title and state. None:
+    /// it can't tell.
+    fn read_issue<'a>(
+        &'a self,
+        _st: &'a AppState,
+        _link: &'a pdt_store::StoredExternalLink,
+    ) -> BoxFut<'a, Option<Result<crate::issue_links::IssueNow, String>>> {
+        Box::pin(async { None })
+    }
+
+    /// What its issues look like, for the "Link issue" dialog (`owner/name#12`), when it links them
+    /// ([`Integration::find_issue`]).
+    fn issue_example(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// A built-in of its closes (or moves) a linked issue when the ticket is done, so a link made by hand can ask for
+    /// it ("Close it when this ticket is done").
+    fn closes_issues(&self) -> bool {
+        false
+    }
+
     /// How a connection of one of its kinds with [`ConnectionKind::status`] is doing, beyond OK or Failing
     /// (`GET /api/connections/{id}/status`). None: nothing to say.
     fn connection_status<'a>(
@@ -807,6 +841,19 @@ pub struct IntegrationInfo {
     pub project_settings: Option<String>,
     /// The projects linked to it.
     pub projects: Vec<PluginProject>,
+    /// Its issues can be linked to tickets ([`Integration::find_issue`]), while this build has it.
+    pub issues: Option<IssueLinking>,
+}
+
+/// How a tracker plugin's issues are linked to tickets (PDT-481).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct IssueLinking {
+    /// What its issues look like (`owner/name#12 or its address`).
+    pub example: String,
+    /// Done can close (or move) a linked issue: a link made by hand offers "Close it when this ticket is done".
+    pub closes_on_done: bool,
 }
 
 /// A forge plugin's login, for its integration's status.
@@ -973,6 +1020,7 @@ fn info(
             None => vec![],
         },
         project_settings: schema.map(|s| s.description),
+        issues: i.issue_example().map(|e| IssueLinking { example: e.to_string(), closes_on_done: i.closes_issues() }),
     }
 }
 
@@ -1013,6 +1061,7 @@ fn infos(ints: &Integrations, facts: &PluginFacts) -> Vec<IntegrationInfo> {
             pm_tools: vec![],
             project_settings: None,
             projects: vec![],
+            issues: None,
         });
     }
     out

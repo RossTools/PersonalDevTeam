@@ -422,6 +422,18 @@ pub struct ExternalLink {
     /// `ABC-123`.
     pub key: String,
     pub url: String,
+    /// How it was made: PDT filed the issue, the ticket came from it, or someone linked it by hand.
+    pub origin: crate::issue_link::LinkOrigin,
+    /// Done closes (or moves) the issue, through the tracker's built-in workflow: always for issues PDT filed or
+    /// imported; a link made by hand only when the user turned it on.
+    pub close_on_done: bool,
+    /// The issue's title, as the tracker last said (None until it is read).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub state: Option<crate::issue_link::IssueState>,
 }
 
 /// The ticket a session works on (through its attempt, else the ticket a workflow step started it on), for the sidebar
@@ -647,6 +659,8 @@ pub struct Ticket {
     pub overlaps: Vec<TicketOverlap>,
     /// Its parts in rank order (empty when it has none).
     pub part_list: Vec<TicketSummary>,
+    /// Its plain links (docs, designs), oldest first; its tracker issues are `external`.
+    pub web_links: Vec<crate::issue_link::WebLink>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, TS)]
@@ -1555,6 +1569,7 @@ mod tests {
             sessions: vec![],
             overlaps: vec![],
             part_list: vec![],
+            web_links: vec![],
         };
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(v["key"], "PDT-1");

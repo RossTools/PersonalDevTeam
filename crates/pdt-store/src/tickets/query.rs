@@ -224,6 +224,15 @@ impl Store {
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_all(&mut *conn).await?;
         let mut part_list = rows.iter().map(to_summary).collect::<Result<Vec<_>, _>>()?;
         decorate(&mut conn, &mut part_list).await?;
+        let web_links = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT id, url, label FROM ticket_web_links WHERE ticket_id = ? ORDER BY created_at, id",
+        )
+        .bind(id)
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .map(|(id, url, label)| WebLink { id, url, label })
+        .collect();
         Ok(Some(Ticket {
             summary: s,
             description,
@@ -233,6 +242,7 @@ impl Store {
             sessions,
             overlaps: vec![],
             part_list,
+            web_links,
         }))
     }
 

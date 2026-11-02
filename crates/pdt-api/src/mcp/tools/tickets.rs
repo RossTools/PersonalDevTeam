@@ -35,6 +35,11 @@ struct CreateTicket {
     /// Why you're making it: what you found and why it matters. The user reads it when they decide on your proposal.
     #[serde(default)]
     reason: Option<String>,
+    /// Issues in other trackers to link it to, by address or key (`https://github.com/o/r/issues/12`, `o/r#12`,
+    /// `ABC-123`), as link_issue links them (Done leaves them alone); addresses no tracker recognizes become plain
+    /// links.
+    #[serde(default)]
+    external: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -210,6 +215,8 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             }
             let reason = a.reason.as_deref().map(str::trim).filter(|r| !r.is_empty());
             let read = crate::ticket_attachments::read_files(st, cx.session, &a.files).await?;
+            // Every issue is read before the ticket is made: one that can't be stops it.
+            let external = super::issue_links::recognize_all(st, &project, &a.external).await?;
             let id = uuid::Uuid::now_v7().to_string();
             let by_agent = agent_by(st, cx.session).await;
             let t = st
@@ -225,6 +232,13 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 .await
                 .map_err(|e| api(e.into()))?;
             let attached = crate::ticket_attachments::attach_read(st, &id, read, &by_agent).await?;
+            // The ticket is made: a link that fails now (another ticket took the issue meanwhile) is reported.
+            let mut not_linked = vec![];
+            for f in &external {
+                if let Err(e) = super::issue_links::link(st, &id, f, None, by_agent.clone()).await {
+                    not_linked.push(e);
+                }
+            }
             let by = match pm {
                 true => "the PM".to_string(),
                 false => cx.session.persona.as_ref().map_or("an agent".into(), |p| format!("the {}", p.name)),
@@ -240,6 +254,14 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             }
             let mut out = json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage,
                                  "attachments": crate::ticket_attachments::attached_json(st, &attached)});
+            if !external.is_empty() {
+                let t = st.store.get_ticket(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
+                out["issues"] = json!(t.summary.external.iter().map(|l| &l.key).collect::<Vec<_>>());
+                out["links"] = json!(t.web_links.iter().map(|l| &l.url).collect::<Vec<_>>());
+                if !not_linked.is_empty() {
+                    out["notLinked"] = json!(not_linked);
+                }
+            }
             if proposed {
                 out["proposal"] = json!(true);
                 out["note"] = json!(pdt_core::ticket_proposal::created_note(&t.summary.key));

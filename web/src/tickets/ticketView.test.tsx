@@ -376,7 +376,7 @@ describe('Create GitHub issue (PDT-221)', () => {
     expect(screen.queryByRole('menuitem', { name: 'Create GitHub issue…' })).not.toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
     unmount();
-    const linked = { ...base, external: [{ system: 'github', key: 'o/r#3', url: 'https://github.com/o/r/issues/3' }] };
+    const linked = { ...base, external: [{ system: 'github', key: 'o/r#3', url: 'https://github.com/o/r/issues/3', origin: 'created' as const, closeOnDone: true }] };
     stub({ ...forge, 'GET /api/tickets/t1': linked });
     view();
     await userEvent.click(await screen.findByRole('button', { name: 'Ticket actions' }));

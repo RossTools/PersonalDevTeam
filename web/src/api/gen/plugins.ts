@@ -51,7 +51,8 @@ export const plugins: IntegrationInfo[] = [
     "tools": [],
     "pmTools": [],
     "projectSettings": null,
-    "projects": []
+    "projects": [],
+    "issues": null
   },
   {
     "id": "github",
@@ -199,7 +200,11 @@ export const plugins: IntegrationInfo[] = [
       "issue_create"
     ],
     "projectSettings": null,
-    "projects": []
+    "projects": [],
+    "issues": {
+      "example": "owner/name#12, or the issue's address",
+      "closesOnDone": true
+    }
   },
   {
     "id": "http",
@@ -250,7 +255,8 @@ export const plugins: IntegrationInfo[] = [
     "tools": [],
     "pmTools": [],
     "projectSettings": null,
-    "projects": []
+    "projects": [],
+    "issues": null
   },
   {
     "id": "mcp",
@@ -379,7 +385,8 @@ export const plugins: IntegrationInfo[] = [
     "tools": [],
     "pmTools": [],
     "projectSettings": null,
-    "projects": []
+    "projects": [],
+    "issues": null
   },
   {
     "id": "discord",
@@ -508,7 +515,8 @@ export const plugins: IntegrationInfo[] = [
       "discord_webhook"
     ],
     "projectSettings": null,
-    "projects": []
+    "projects": [],
+    "issues": null
   },
   {
     "id": "jira",
@@ -742,7 +750,11 @@ export const plugins: IntegrationInfo[] = [
       "jira_epic"
     ],
     "projectSettings": "Issues assigned to you in this scope become Draft tickets (checked every minute), and moving a linked ticket to Done moves its issue.",
-    "projects": []
+    "projects": [],
+    "issues": {
+      "example": "ABC-123, or the issue's address",
+      "closesOnDone": true
+    }
   },
   {
     "id": "buildkite",
@@ -808,7 +820,8 @@ export const plugins: IntegrationInfo[] = [
     "tools": [],
     "pmTools": [],
     "projectSettings": "Builds of the tickets' branches show as their CI, and failures are told to the agent like GitHub's.",
-    "projects": []
+    "projects": [],
+    "issues": null
   },
   {
     "id": "gitlab",
@@ -837,7 +850,11 @@ export const plugins: IntegrationInfo[] = [
     "tools": [],
     "pmTools": [],
     "projectSettings": null,
-    "projects": []
+    "projects": [],
+    "issues": {
+      "example": "group/project#12, or the issue's address",
+      "closesOnDone": false
+    }
   },
   {
     "id": "google",
@@ -923,7 +940,8 @@ export const plugins: IntegrationInfo[] = [
     "tools": [],
     "pmTools": [],
     "projectSettings": null,
-    "projects": []
+    "projects": [],
+    "issues": null
   },
   {
     "id": "arr",
@@ -1046,7 +1064,8 @@ export const plugins: IntegrationInfo[] = [
     "tools": [],
     "pmTools": [],
     "projectSettings": null,
-    "projects": []
+    "projects": [],
+    "issues": null
   },
   {
     "id": "scryer",
@@ -1140,7 +1159,8 @@ export const plugins: IntegrationInfo[] = [
       "scryer_mutate"
     ],
     "projectSettings": null,
-    "projects": []
+    "projects": [],
+    "issues": null
   },
   {
     "id": "plex",
@@ -1200,6 +1220,7 @@ export const plugins: IntegrationInfo[] = [
     "tools": [],
     "pmTools": [],
     "projectSettings": null,
-    "projects": []
+    "projects": [],
+    "issues": null
   }
 ];

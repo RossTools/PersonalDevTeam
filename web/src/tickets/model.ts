@@ -205,7 +205,7 @@ export function linkCall(selfId: string, otherId: string, role: LinkRole): { fro
   return { from: selfId, to: otherId, kind: role === 'blocks' ? 'blocks' : 'relates' };
 }
 
-interface LinkData { kind?: string; direction?: string; key?: string; system?: string }
+interface LinkData { kind?: string; direction?: string; key?: string; system?: string; url?: string; label?: string }
 interface MovedData { from?: string; to?: string }
 interface EditedData { fields?: string[] }
 interface WaitingData { waiting?: boolean }
@@ -229,7 +229,10 @@ function prEventTitle(d: PrEventData | null): string {
   return `${what}${pr}${jobs}${d?.told ? ' · told the agent' : ' · no agent running to tell'}`;
 }
 
-export function eventTitle(e: TicketEvent): string {
+/** A tracker's name for people, from its plugin (`GitHub`, `Jira`). */
+export type TrackerLabel = (system: string) => string | undefined;
+
+export function eventTitle(e: TicketEvent, trackerLabel: TrackerLabel = () => undefined): string {
   const data = (e.data ?? {}) as LinkData & MovedData & EditedData & WaitingData & OverlapData;
   switch (e.kind) {
     case 'created': return 'Created';
@@ -237,10 +240,13 @@ export function eventTitle(e: TicketEvent): string {
     case 'edited': return data.fields?.length ? `Edited ${data.fields.join(', ')}` : 'Edited';
     case 'linked':
     case 'unlinked': {
-      // A GitHub issue the ticket was filed as (PDT-221): `{system, key, url}`.
-      if (data.system) return `Linked: ${data.system === 'github' ? 'GitHub issue' : 'issue'} ${data.key ?? ''}`.trimEnd();
+      const did = e.kind === 'linked' ? 'Linked' : 'Unlinked';
+      // An issue in a tracker (`{system, key, url}`: filed, imported or linked by hand).
+      if (data.system) return `${did}: ${trackerLabel(data.system) ?? data.system} issue ${data.key ?? ''}`.trimEnd();
+      // A plain link (`{url, label}`).
+      if (data.url) return `${did}: ${data.label || data.url}`;
       const role = data.kind === 'relates' ? 'related to' : data.direction === 'incoming' ? 'blocked by' : 'blocks';
-      return `${e.kind === 'linked' ? 'Linked' : 'Unlinked'}: ${role} ${data.key ?? 'a ticket'}`;
+      return `${did}: ${role} ${data.key ?? 'a ticket'}`;
     }
     case 'comment': return 'Commented';
     case 'unblocked': return 'Unblocked';

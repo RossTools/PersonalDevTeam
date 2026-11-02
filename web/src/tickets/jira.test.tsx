@@ -133,7 +133,7 @@ describe('Jira and Buildkite', () => {
   });
 
   it("shows a ticket's Jira key, as a link where it can, and a branch's own CI", () => {
-    const links = [{ system: 'jira', key: 'ABC-1', url: 'https://acme.atlassian.net/browse/ABC-1' }];
+    const links = [{ system: 'jira', key: 'ABC-1', url: 'https://acme.atlassian.net/browse/ABC-1', origin: 'imported' as const, closeOnDone: true }];
     const { unmount } = renderWithQuery(<ExternalKeys links={links} linked />);
     expect(screen.getByRole('link', { name: /ABC-1/ }).getAttribute('href')).toBe(links[0].url);
     unmount();
@@ -145,7 +145,7 @@ describe('Jira and Buildkite', () => {
 
   it("shows a ticket's GitHub issue by its number, naming the repository and its plugin", async () => {
     stubApi({ 'GET /api/integrations': plugins });
-    const links = [{ system: 'github', key: 'o/r#12', url: 'https://github.com/o/r/issues/12' }];
+    const links = [{ system: 'github', key: 'o/r#12', url: 'https://github.com/o/r/issues/12', origin: 'created' as const, closeOnDone: true }];
     renderWithQuery(<ExternalKeys links={links} linked />);
     const link = screen.getByRole('link', { name: /#12/ });
     expect(link.getAttribute('href')).toBe(links[0].url);

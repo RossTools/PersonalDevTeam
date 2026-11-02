@@ -3,6 +3,7 @@
 
 use crate::{Store, StoreError};
 use pdt_core::conversation::SessionMode;
+use pdt_core::issue_link::{IssueState, LinkOrigin, WebLink};
 use pdt_core::links::would_cycle;
 use pdt_core::overlap::Reported;
 use pdt_core::parts::{ParentFacts, TicketParent, ValidParts, open_parts, valid_parent};
@@ -254,12 +255,23 @@ async fn decorate(conn: &mut SqliteConnection, items: &mut [TicketSummary]) -> R
     let mut external: HashMap<String, Vec<ExternalLink>> = HashMap::new();
     for chunk in ids.chunks(500) {
         let mut qb = QueryBuilder::<Sqlite>::new(
-            "SELECT ticket_id, system, key, url FROM ticket_links_external WHERE ticket_id IN ",
+            "SELECT ticket_id, system, key, url, origin, close_on_done, title, state FROM ticket_links_external \
+             WHERE ticket_id IN ",
         );
         push_in(&mut qb, chunk);
         qb.push(" ORDER BY ticket_id, system, key");
         for r in qb.build().fetch_all(&mut *conn).await? {
-            let link = ExternalLink { system: r.try_get(1)?, key: r.try_get(2)?, url: r.try_get(3)? };
+            let origin: String = r.try_get(4)?;
+            let state: Option<String> = r.try_get(7)?;
+            let link = ExternalLink {
+                system: r.try_get(1)?,
+                key: r.try_get(2)?,
+                url: r.try_get(3)?,
+                origin: LinkOrigin::parse(&origin).ok_or_else(|| corrupt("link origin", &origin))?,
+                close_on_done: r.try_get(5)?,
+                title: r.try_get(6)?,
+                state: state.as_deref().and_then(IssueState::parse),
+            };
             external.entry(r.try_get(0)?).or_default().push(link);
         }
     }
