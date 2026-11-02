@@ -102,14 +102,23 @@ async fn authorize(st: &AppState, headers: &HeaderMap) -> Option<Session> {
     (!matches!(s.status, SessionStatus::Finished) && s.kind == SessionKind::AgentTui).then_some(s)
 }
 
-/// The tools a session gets: its persona version's set, else the default set.
+/// The tools a session gets: its persona version's set, else (no persona) the default set. A persona version PDT can't
+/// read gives none (PDT-414: it fails closed).
 pub(crate) async fn session_tools(st: &AppState, s: &Session) -> Vec<String> {
-    if let Some(p) = &s.persona
-        && let Ok(Some(v)) = st.store.get_persona_version(&p.id, p.version).await
-    {
-        return v.setup.tool_set(st.registry().tool_table());
+    let Some(p) = &s.persona else {
+        return pdt_core::persona::DEFAULT_TOOLS.iter().map(|t| t.to_string()).collect();
+    };
+    match st.store.get_persona_version(&p.id, p.version).await {
+        Ok(Some(v)) => v.setup.tool_set(st.registry().tool_table()),
+        Ok(None) => {
+            tracing::warn!(session = %s.id, persona = %p.id, version = p.version, "the session's persona version is gone: no tools");
+            vec![]
+        }
+        Err(e) => {
+            tracing::warn!(session = %s.id, persona = %p.id, error = %e, "could not read the session's persona version: no tools");
+            vec![]
+        }
     }
-    pdt_core::persona::DEFAULT_TOOLS.iter().map(|t| t.to_string()).collect()
 }
 
 /// Whether a session runs a locked-down persona (PDT-201).

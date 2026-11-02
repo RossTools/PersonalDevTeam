@@ -27,19 +27,12 @@ export function usePersonaTools() {
   return useQuery({ queryKey: personaKeys.tools, queryFn: api.personaTools, staleTime: Infinity });
 }
 
-/** What an empty tool list means (pdt-core `DEFAULT_TOOLS`). */
-export const DEFAULT_TOOLS = ['get_ticket', 'submit_outcome', 'ask_user', 'add_ticket_comment', 'add_review_comment'];
+/** The default set (what a session with no persona gets, and what a new persona starts with), from the server. */
+export const defaultTools = (known: PersonaTool[]) => known.filter((t) => t.default).map((t) => t.name);
 
-/** A tool list as checked on screen: an empty one is the default set. */
-export const shownTools = (tools: string[]) => (tools.length ? tools : DEFAULT_TOOLS);
-
-/** The tool list to save, without repeats: the default set (in any order) is saved as empty, so it follows PDT's
- *  default. It never drops a name, even one this page doesn't know (PDT-110). */
-export function normalTools(tools: string[]): string[] {
-  const unique = [...new Set(tools)];
-  const isDefault = unique.length === DEFAULT_TOOLS.length && DEFAULT_TOOLS.every((n) => unique.includes(n));
-  return isDefault ? [] : unique;
-}
+/** The tool list to save, without repeats (empty: no tools). It never drops a name, even one this page doesn't know
+ *  (PDT-110). */
+export const normalTools = (tools: string[]) => [...new Set(tools)];
 
 /** `tools` in the order of `known` (the server's list), names it doesn't list kept at the end. */
 export const orderTools = (tools: string[], known: PersonaTool[]) => [

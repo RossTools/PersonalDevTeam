@@ -451,7 +451,8 @@ impl Action for ChangeRequestComment {
     fn tool(&self) -> ToolFace {
         tool(
             ToolDecl::new("change_request_comment", "Comment on a pull request or answer a review comment")
-                .open_world(),
+                .open_world()
+                .public(),
             "Comment on the pull request",
             "Adds a comment to the session's pull request (or one by number), or with `replyTo` answers a review \
              comment in its thread. It is posted as the user's GitHub login.",
@@ -523,7 +524,7 @@ impl Action for ChangeRequestOpen {
 
     fn tool(&self) -> ToolFace {
         tool(
-            ToolDecl::new("change_request_open", "Open a pull request for the session's branch").open_world(),
+            ToolDecl::new("change_request_open", "Open a pull request for the session's branch").open_world().public(),
             "Open a pull request",
             "Opens a pull request from the session's branch (push it first) into the ticket attempt's base branch, or \
              `base`, with a title and a Markdown body; `draft` opens it as a draft. A branch that already has an open \
@@ -1039,7 +1040,7 @@ impl Action for IssueComment {
 
     fn tool(&self) -> ToolFace {
         tool(
-            ToolDecl::new("issue_comment", "Comment on an issue").open_world(),
+            ToolDecl::new("issue_comment", "Comment on an issue").open_world().public(),
             "Comment on an issue",
             "Adds a comment to an issue of the project's repository, posted as the user's forge login.",
         )

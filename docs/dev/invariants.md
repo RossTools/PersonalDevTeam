@@ -82,6 +82,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   UI token, runs it with `cx.confirmed`, narrowed to the rows the user kept. It refuses non-PM sessions even when a
   persona lists it. Each row goes through `ticket_proposal::decide` as `By::user_via(<the PM>)`: the user's events,
   with the PM as `proposedBy`.
+- **An asking tool asks somewhere the user sees** (pdt-api `mcp::tools::confirmable`): Claude's permission prompt
+  only while the session isn't in Bypass (`Session::asks_nothing`); otherwise, as for Codex and Devin, the Inbox unless
+  the project lets the PM act. A `ToolDecl::public` tool (posts on the forge) asks in the Inbox outside an active agent
+  step. A new path that runs an asking or public tool goes through `confirmable` (`AnyAction::call` does for actions).
+- **Tool lists fail closed** (pdt-api `mcp::session_tools`, pdt-core `PersonaSetup::tool_set`): an empty persona tool
+  list is no tools, and a persona version that can't be read gives none. Only a session with no persona gets
+  `DEFAULT_TOOLS`.
 - **Fresh Codex launches in one folder stay at least 5 s apart**, or PDT can't tell their conversations apart.
 
 ## Tabs, tickets and attempts

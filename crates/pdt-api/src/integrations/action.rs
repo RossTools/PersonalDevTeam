@@ -178,9 +178,7 @@ impl<A: Action> AnyAction for A {
         Box::pin(async move {
             let decl = self.tool().decl;
             let mut args = if args.is_null() { json!({}) } else { args };
-            if decl.asks {
-                confirmable(cx, decl.name, &Action::ask_target(self, &args)).await?;
-            }
+            let target = Action::ask_target(self, &args);
             if let Some(c) = self.connection()
                 && let Some(a) = args.as_object_mut()
             {
@@ -189,6 +187,11 @@ impl<A: Action> AnyAction for A {
                 a.insert("connection".into(), json!(conn.name));
             }
             let input: A::Input = crate::mcp::tools::args(args)?;
+            if decl.asks || decl.public {
+                // A call that can't run isn't put to the user.
+                self.check(&input)?;
+                confirmable(cx, decl.name, &target).await?;
+            }
             let cx = ActionCx { st: cx.st, via: Via::Tool, session: Some(cx.session) };
             let out = as_agent(self.run(&cx, input)).await?;
             self.tool_output(out)
