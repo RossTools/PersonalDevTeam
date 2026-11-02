@@ -1,4 +1,4 @@
-import { useCallback, type ReactNode } from 'react';
+import { useCallback, useMemo, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MessagesSquare } from 'lucide-react';
 import { EmptyState, toast, type ApprovalAnswer } from '@ui';
@@ -6,6 +6,7 @@ import { cn } from '@ui/lib/utils';
 import { api, ApiError, type SessionPatch } from '../api/client';
 import type { Delivery } from '../api/gen/Delivery';
 import type { Session } from '../api/gen/Session';
+import type { MarkdownRefs } from '../common/markdownRefs';
 import { actionError, runAction } from '../common/useAction';
 import { latestUsage } from './blocks';
 import { limitWarning } from './completion';
@@ -77,6 +78,15 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
   const agentName = useAgents().label(agent);
   const caps = useQuery({ queryKey: ['agent-capabilities', agent], queryFn: () => api.agentCapabilities(agent), staleTime: 60_000 });
   const hostSettings = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings, staleTime: 60_000, retry: false });
+  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects, staleTime: 60_000 });
+  const project = projects.data?.find((p) => p.id === session.projectId) ?? null;
+  // Ticket keys, PRs, the checkout's file paths and SHAs show as pills and links (PDT-382).
+  const refs = useMemo<MarkdownRefs>(() => ({
+    sessionId: project ? session.id : null,
+    projectKey: project?.key ?? null,
+    worktreeId: session.worktreeId,
+    forge: project?.forge ?? null,
+  }), [project, session.id, session.worktreeId]);
 
   const refreshSessions = () => qc.invalidateQueries({ queryKey: ['sessions', session.projectId] });
   const patch = useMutation({
@@ -125,6 +135,7 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
         imageUrl={imageUrl}
         agent={agent}
         onContinue={continueTurn}
+        refs={refs}
         empty={
           conv.ready ? (
             <EmptyState icon={<MessagesSquare />} className="mt-16 border-0">

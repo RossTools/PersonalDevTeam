@@ -182,6 +182,14 @@ Install downloads it from the agent's own site, checks the registry's sha256 and
 `<data dir>/toolchains/<registry id>/<version>/`; Sign in asks the server to `authenticate`, and it keeps the
 credentials itself.
 
+The web's conversation view folds tool calls into summary rows (`web/src/conversation/blocks.ts`), except pdt-mcp's
+actions (`pdtTools.ts` `isCardTool`: tickets created or edited, links, messages, comments, workflow runs, watches),
+which render as cards (`PdtToolCard.tsx`) from the call's input and pdt-mcp's JSON result; an approval of one shows
+`PdtProposal.tsx`. Its Markdown gets `MarkdownRefsContext` (web/src/common/markdownRefs.ts): with it, ticket keys
+become pills with a hover card (`TicketPill.tsx`, fetched on first hover), `#12` and the forge's PR links PR pills,
+inline-code file paths links to the file viewer once the session's folder has them, SHAs muted, tables framed with
+status chips. Without it (ticket descriptions, notes) Markdown only links ticket keys.
+
 **pdt-mcp.** PDT's MCP server at `/api/mcp` (pdt-api `mcp/`). Each session gets a token (its id, signed with a key in
 the data folder) and the tools of its persona; each tool calls the API route's own function. Tools that need the
 user's say are asked in the agent's own prompt where it supports that, or through the Inbox.

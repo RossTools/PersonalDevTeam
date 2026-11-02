@@ -72,6 +72,8 @@ async fn the_pm_answers_from_pdt_and_creates_tickets_after_a_yes() {
     assert_eq!(v["policy"]["pmActs"], true);
     let said = ask(&env, &id, r#"mcp: edit_ticket {"ticket": "PX-2", "stage": "ready"}"#).await;
     assert!(said.contains("\"updated\": true") && said.contains("\"stage\": \"ready\""), "{said}");
+    // What changed, from → to, for the conversation's card.
+    assert!(said.contains("\"field\": \"stage\"") && said.contains("\"to\": \"ready\""), "{said}");
 
     // Messaging a session asks too (its project doesn't let the PM act), and a PM can't message itself.
     let n = agent_says(&env, &id).await.len();

@@ -316,8 +316,9 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 None => {}
             }
             let attached = crate::ticket_attachments::attach_read(st, &id, read, &by).await?;
+            let changes = changes(&current, &t);
             Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage,
-                      "parent": t.summary.parent.map(|p| p.key),
+                      "parent": t.summary.parent.map(|p| p.key), "changes": changes,
                       "attachments": crate::ticket_attachments::attached_json(st, &attached)}))
         }
         "link_tickets" | "unlink_tickets" => {
@@ -379,6 +380,28 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         }
         other => Err(format!("no tool is called {other}")),
     }
+}
+
+/// What an edit changed, field by field, for the conversation's card (`from` → `to`; a description only says it
+/// changed).
+fn changes(before: &pdt_core::ticket::Ticket, after: &pdt_core::ticket::Ticket) -> Vec<Value> {
+    let (b, a) = (&before.summary, &after.summary);
+    let mut out = vec![];
+    let mut field = |name: &str, from: Value, to: Value| {
+        if from != to {
+            out.push(json!({"field": name, "from": from, "to": to}));
+        }
+    };
+    field("title", json!(b.title), json!(a.title));
+    field("stage", json!(b.stage), json!(a.stage));
+    field("priority", json!(b.priority), json!(a.priority));
+    field("labels", json!(b.labels), json!(a.labels));
+    field("areas", json!(b.areas), json!(a.areas));
+    field("parent", json!(b.parent.as_ref().map(|p| &p.key)), json!(a.parent.as_ref().map(|p| &p.key)));
+    if before.description.trim() != after.description.trim() {
+        out.push(json!({"field": "description"}));
+    }
+    out
 }
 
 /// Notes on the ticket's timeline that an agent changed it through PDT's tools (principle 5: changes are on record).

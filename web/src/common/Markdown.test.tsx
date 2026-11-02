@@ -1,6 +1,8 @@
 import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderWithQuery, stubApi } from '../test-utils';
 import { Markdown } from './Markdown';
+import { MarkdownRefsContext, type MarkdownRefs } from './markdownRefs';
 import { TicketKeysContext } from './ticketKeys';
 
 describe('Markdown', () => {
@@ -86,5 +88,60 @@ describe('Markdown', () => {
   it('sizes headings for a ticket body', () => {
     render(<Markdown>{'# Title'}</Markdown>);
     expect(screen.getByRole('heading', { level: 1, name: 'Title' }).className).toContain('text-base');
+  });
+});
+
+describe('Markdown in a conversation (refs)', () => {
+  const forge = { kind: 'github', name: 'GitHub', repo: 'acme/shop', repoUrl: 'https://github.com/acme/shop', branchUrl: null, compareUrl: null };
+  const refs: MarkdownRefs = { sessionId: 's1', projectKey: 'ALP', worktreeId: null, forge };
+  const inConversation = (md: string) => renderWithQuery(
+    <TicketKeysContext.Provider value={['ALP']}>
+      <MarkdownRefsContext.Provider value={refs}>
+        <Markdown>{md}</Markdown>
+      </MarkdownRefsContext.Provider>
+    </TicketKeysContext.Provider>,
+  );
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('shows ticket keys and PRs as pills, not inside code or links', () => {
+    stubApi({});
+    const { container } = inConversation('ALP-12 waits on PR #7 and https://github.com/acme/shop/pull/9; not `ALP-5`, [ALP-6](https://x.test) or a#3.\n\n```\nALP-8\n```');
+    const pills = [...container.querySelectorAll('[data-slot=ticket-pill],[data-slot=pr-pill]')];
+    expect(pills.map((p) => [p.textContent, p.getAttribute('href')])).toEqual([
+      ['ALP-12', '/tickets/ALP-12'],
+      ['PR #7', 'https://github.com/acme/shop/pull/7'],
+      ['PR #9', 'https://github.com/acme/shop/pull/9'],
+    ]);
+    expect(screen.getByRole('link', { name: 'ALP-6' })).toHaveAttribute('href', 'https://x.test');
+    expect(container.textContent).toContain('waits on PR #7 and');
+    expect(screen.getByText('ALP-5').tagName).toBe('CODE');
+  });
+
+  it('shows commit SHAs in muted mono', () => {
+    stubApi({});
+    inConversation('Pushed 4427552e on top.');
+    expect(screen.getByText('4427552e')).toHaveClass('text-muted-foreground', 'font-mono');
+  });
+
+  it('leaves SHAs and #numbers alone outside a conversation', () => {
+    render(<Markdown>{'`4427552e` and #7'}</Markdown>);
+    expect(screen.getByText('4427552e')).toHaveClass('bg-muted');
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+
+  it("links the session's files to the file viewer, and leaves other paths as code", async () => {
+    stubApi({ 'GET /api/sessions/s1/files': (c: { path: string }) => (c.path.includes('real') ? ['src/real.ts'] : []) });
+    inConversation('See `src/real.ts` and `src/gone.ts`.');
+    const link = await screen.findByRole('link', { name: 'src/real.ts' });
+    expect(link).toHaveAttribute('href', '/files/src/real.ts?project=ALP');
+    expect(screen.getByText('src/gone.ts').closest('a')).toBeNull();
+  });
+
+  it('frames tables as a card with status chips', () => {
+    stubApi({});
+    const { container } = inConversation('| Ticket | State |\n|---|---|\n| ALP-1 | CI failed |\n| ALP-2 | Guest checkout |');
+    expect(container.querySelector('[data-slot=table-card]')).not.toBeNull();
+    expect(screen.getByText('CI failed')).toHaveAttribute('data-slot', 'badge');
+    expect(screen.getByText('Guest checkout')).not.toHaveAttribute('data-slot', 'badge');
   });
 });

@@ -25,8 +25,12 @@ import type { MessageSource } from '../api/gen/MessageSource';
 import type { PdtMessage } from '../api/gen/PdtMessage';
 import type { PendingMessage } from '../api/gen/PendingMessage';
 import { Markdown } from '../common/Markdown';
+import { MarkdownRefsContext, type MarkdownRefs } from '../common/markdownRefs';
 import { blockItemIds, buildBlocks, currentTool, reuseBlocks, turnStartedAt, type Block, type RowNode } from './blocks';
 import type { Streams } from './model';
+import { CreateTicketsCard, PdtToolCard, type PdtCall } from './PdtToolCard';
+import { PdtProposal } from './PdtProposal';
+import { isCardTool, pdtApprovalTitle } from './pdtTools';
 import { approvalTitle, clock, duration, inputText, planOf, questionsOf, summarizeTools, toolVerb } from './tools';
 
 type Ev<K extends AgentEvent['kind']> = Extract<AgentEvent, { kind: K }>;
@@ -74,6 +78,8 @@ export interface MessageListProps {
   onContinue?: () => Promise<unknown>;
   /** Shown when there is nothing yet. */
   empty?: ReactNode;
+  /** Where the conversation is: its ticket keys, PRs, file paths and SHAs show as pills and links (PDT-382). */
+  refs?: MarkdownRefs | null;
   className?: string;
 }
 
@@ -146,8 +152,16 @@ function WorkingRow({ rows }: { rows: ConversationEvent[] }) {
   );
 }
 
+/** A PDT tool call as its card wants it, with its streamed output. */
+function pdtCall(node: RowNode, streams: Streams): PdtCall {
+  const ev = node.row.event as Ev<'tool_call'>;
+  return { tool: ev.tool, input: ev.input, status: ev.status, output: (node.row.itemId && streams[node.row.itemId]?.output) || ev.output };
+}
+
 function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
   const ev = node.row.event as Ev<'tool_call'>;
+  // PDT's own actions show as cards (PDT-382); in a sub-agent, as rows like the rest.
+  if (isCardTool(ev.tool) && !ev.parentId) return <PdtToolCard call={pdtCall(node, streams)} />;
   const output = (node.row.itemId && streams[node.row.itemId]?.output) || ev.output;
   // A file change shows its diff instead of the raw input, and its output only when it failed.
   const diff = ev.diff || null;
@@ -206,13 +220,15 @@ function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: b
   if (ev.state === 'open') {
     const plan = ev.requestKind === 'plan' ? planOf(ev.input) : null;
     const args = ev.requestKind === 'approval' && !ev.diff ? inputText(ev.tool, ev.input) : '';
+    // PDT's own tools say what they will create or change (PDT-382).
+    const pdtTitle = ev.requestKind === 'approval' ? pdtApprovalTitle(ev.tool, ev.input) : null;
     return (
       <ApprovalCard
         id={requestAnchor(ev.id)}
         kind={ev.requestKind}
-        title={ev.requestKind === 'question' ? 'A question for you' : ev.requestKind === 'plan' ? 'Approve this plan?' : approvalTitle(ev.tool)}
-        subject={ev.requestKind === 'approval' && !ev.diff ? ev.title || undefined : undefined}
-        preview={ev.diff ? <DiffViewer diff={ev.diff} /> : undefined}
+        title={ev.requestKind === 'question' ? 'A question for you' : ev.requestKind === 'plan' ? 'Approve this plan?' : pdtTitle ?? approvalTitle(ev.tool)}
+        subject={ev.requestKind === 'approval' && !ev.diff && !pdtTitle ? ev.title || undefined : undefined}
+        preview={ev.diff ? <DiffViewer diff={ev.diff} /> : pdtTitle ? <PdtProposal tool={ev.tool} input={ev.input} /> : undefined}
         planAcceptEdits={agent === 'claude'}
         description={ev.description}
         details={args && args !== '{}' && args !== ev.title ? <ToolOutput>{args}</ToolOutput> : undefined}
@@ -400,6 +416,7 @@ const BlockView = memo(
     keyboardFor: string | null;
     onAnswer: MessageListProps['onAnswer'];
   }) {
+    if (block.type === 'tickets') return <CreateTicketsCard calls={block.nodes.map((n) => pdtCall(n, streams))} />;
     if (block.type === 'group') {
       return (
         <ToolCallRow verb={summarizeTools(block.calls)}>
@@ -469,6 +486,7 @@ export function MessageList({
   onContinue,
   imageUrl,
   empty,
+  refs = null,
   className,
 }: MessageListProps) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -534,6 +552,7 @@ export function MessageList({
 
   const nothing = rows.length === 0 && provisional.length === 0 && pending.length === 0 && !turnRunning;
   return (
+    <MarkdownRefsContext.Provider value={refs}>
     <ListCtx.Provider value={ctx}>
     <div className={cn('relative flex min-h-0 flex-1 flex-col', className)}>
       <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto" role="log" aria-label="Conversation" aria-live="off">
@@ -576,5 +595,6 @@ export function MessageList({
       )}
     </div>
     </ListCtx.Provider>
+    </MarkdownRefsContext.Provider>
   );
 }

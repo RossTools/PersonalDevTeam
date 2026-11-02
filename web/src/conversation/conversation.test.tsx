@@ -506,9 +506,10 @@ describe('ConversationView', () => {
     });
     const bar = screen.getByRole('region', { name: 'Open request' });
     expect(bar).toHaveTextContent('wants create_ticket');
-    const card = screen.getByRole('region', { name: 'Use pdt: create_ticket?' });
-    // The arguments' summary, with all of them behind the ▾.
-    expect(within(card).getByText('New ticket in PDT: Fix it')).toBeInTheDocument();
+    const card = screen.getByRole('region', { name: 'Create this ticket?' });
+    // What it would create (PDT-382), with all the arguments behind the ▾.
+    expect(within(card).getByText('Fix it')).toBeInTheDocument();
+    expect(within(card).getByText('Draft')).toBeInTheDocument();
     await userEvent.click(within(card).getByRole('button', { name: 'All arguments' }));
     expect(within(card).getByText(/"project": "PDT"/)).toBeInTheDocument();
     await userEvent.click(within(bar).getByRole('button', { name: 'Review' }));

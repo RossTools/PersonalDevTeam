@@ -19,6 +19,7 @@ export * from './Link';
 export * from './Spinner';
 export * from './Skeleton';
 export * from './Tooltip';
+export * from './HoverCard';
 
 // Status and feedback
 export * from './StatusDot';

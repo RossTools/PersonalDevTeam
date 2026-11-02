@@ -62,7 +62,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 reopens: false,
             };
             let m = st.store.queue_session_message(&m).await.map_err(store)?;
-            Ok(json!({"queued": true, "messageId": m.id}))
+            Ok(json!({"queued": true, "messageId": m.id, "to": to.title, "ticket": to.ticket.as_ref().map(|t| &t.key)}))
         }
         other => Err(format!("no tool is called {other}")),
     }

@@ -1,5 +1,6 @@
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
 import { rowKey } from './model';
+import { isCardTool, pdtTool } from './pdtTools';
 
 /** A row and the sub-agent calls nested under it (tool calls whose `parentId` is its id). */
 export interface RowNode {
@@ -10,7 +11,9 @@ export interface RowNode {
 /** What the message list shows: single rows, and finished runs of tool calls collapsed under a summary. */
 export type Block =
   | { type: 'row'; key: string; node: RowNode }
-  | { type: 'group'; key: string; nodes: RowNode[]; calls: { tool: string; title: string }[] };
+  | { type: 'group'; key: string; nodes: RowNode[]; calls: { tool: string; title: string }[] }
+  /** `create_ticket` calls one after another: one card, "Created 2 tickets" (PDT-382). */
+  | { type: 'tickets'; key: string; nodes: RowNode[] };
 
 /** Rows never shown in the list (usage feeds the footer; turn diffs come in 5c; a turn starting says nothing). */
 function hidden(e: ConversationEvent): boolean {
@@ -28,7 +31,9 @@ const NARRATION_MAX = 160;
  */
 function isActivity(e: ConversationEvent, next: ConversationEvent | undefined): boolean {
   const ev = e.event;
-  if (ev.kind === 'tool_call' || ev.kind === 'reasoning') return true;
+  // PDT's own actions (a ticket made, a message sent) show as cards of their own (PDT-382).
+  if (ev.kind === 'tool_call') return !isCardTool(ev.tool);
+  if (ev.kind === 'reasoning') return true;
   if (ev.kind !== 'agent_message' || ev.phase !== 'commentary') return false;
   const text = ev.markdown.trim();
   return next?.event.kind === 'tool_call' && next.turnId === e.turnId && !text.includes('\n') && text.length <= NARRATION_MAX;
@@ -83,11 +88,21 @@ export function buildBlocks(rows: ConversationEvent[], turnRunning: boolean): Bl
       return;
     }
     flush(false);
+    const last = blocks[blocks.length - 1];
+    if (isCreate(n.row) && last && (last.type === 'tickets' || (last.type === 'row' && isCreate(last.node.row)))) {
+      const nodes = last.type === 'tickets' ? last.nodes : [last.node];
+      if (nodes[0].row.turnId === n.row.turnId) {
+        blocks[blocks.length - 1] = { type: 'tickets', key: `t:${rowKey(nodes[0].row)}`, nodes: [...nodes, n] };
+        return;
+      }
+    }
     blocks.push({ type: 'row', key: rowKey(n.row), node: n });
   });
   flush(true);
   return blocks;
 }
+
+const isCreate = (r: ConversationEvent) => r.event.kind === 'tool_call' && pdtTool(r.event.tool) === 'create_ticket';
 
 function sameNode(a: RowNode, b: RowNode): boolean {
   return a.row === b.row && a.children.length === b.children.length && a.children.every((c, i) => sameNode(c, b.children[i]));
@@ -95,7 +110,7 @@ function sameNode(a: RowNode, b: RowNode): boolean {
 
 function sameBlock(a: Block, b: Block): boolean {
   if (a.type === 'row' && b.type === 'row') return a.key === b.key && sameNode(a.node, b.node);
-  if (a.type === 'group' && b.type === 'group') {
+  if ((a.type === 'group' && b.type === 'group') || (a.type === 'tickets' && b.type === 'tickets')) {
     return a.key === b.key && a.nodes.length === b.nodes.length && a.nodes.every((n, i) => sameNode(n, b.nodes[i]));
   }
   return false;
