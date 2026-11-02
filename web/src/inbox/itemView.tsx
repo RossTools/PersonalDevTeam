@@ -11,6 +11,7 @@ import type { Priority } from '../api/gen/Priority';
 import { Markdown } from '../common/Markdown';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { LabelsEditor } from '../tickets/LabelsEditor';
+import { LabelChips } from '../tickets/TicketParts';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { navigate } from '../shell/router';
@@ -428,9 +429,10 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
                 <div aria-label="Proposed ticket" className="flex flex-col gap-2">
                   {proposed.description.trim() ? <Markdown>{proposed.description}</Markdown> : <p className="text-sm text-muted-foreground">No description.</p>}
                   {(proposed.priority !== 'none' || proposed.labels.length > 0) && (
-                    <p className="text-sm text-muted-foreground">
-                      {[proposed.priority !== 'none' ? `${PRIORITY_LABEL[proposed.priority]} priority` : null, ...proposed.labels].filter(Boolean).join(' · ')}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                      {proposed.priority !== 'none' && <span>{PRIORITY_LABEL[proposed.priority]} priority</span>}
+                      <LabelChips labels={proposed.labels} className="flex-wrap" />
+                    </div>
                   )}
                 </div>
               )}
