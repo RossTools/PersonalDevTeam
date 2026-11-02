@@ -25,7 +25,7 @@ function Card({ p, pending, onOpen, onToggle }: ItemProps) {
       role="group"
       aria-label={p.label}
       onClick={onOpen}
-      className={cn('flex min-h-32 cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 hover:border-primary', !p.built && 'opacity-55')}
+      className={cn('flex min-h-32 cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3.5 hover:border-primary', !p.built && 'border-dashed bg-transparent')}
     >
       <div className="flex items-center gap-2.5">
         <PluginIcon p={p} />
@@ -42,7 +42,7 @@ function Card({ p, pending, onOpen, onToggle }: ItemProps) {
 
 function Row({ p, pending, onOpen, onToggle }: ItemProps) {
   return (
-    <div role="group" aria-label={p.label} onClick={onOpen} className={cn('flex cursor-pointer items-center gap-3 px-3.5 py-2.5 hover:bg-muted', !p.built && 'opacity-55')}>
+    <div role="group" aria-label={p.label} onClick={onOpen} className="flex cursor-pointer items-center gap-3 px-3.5 py-2.5 hover:bg-muted">
       <PluginIcon p={p} size="sm" />
       <button type="button" className="w-36 shrink-0 truncate text-left text-sm font-semibold outline-none focus-visible:underline max-sm:flex-1" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
         {p.label}
@@ -116,7 +116,7 @@ export function PluginsPage({ onOpen, phone = false }: PluginsPageProps) {
               <Button key={c ?? 'all'} size="sm" variant={filter.category === c ? 'primary' : 'secondary'} aria-pressed={filter.category === c}
                 onClick={() => set({ category: c })}>
                 {c ? CATEGORY_LABEL[c] : 'All'}{' '}
-                <span className="opacity-70">{counts[c ?? 'all']}</span>
+                <span className="font-normal tabular-nums">{counts[c ?? 'all']}</span>
               </Button>
             ))}
           </div>

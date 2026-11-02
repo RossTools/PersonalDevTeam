@@ -367,7 +367,7 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
               className={cn(
                 'flex flex-col rounded-lg border border-border bg-background p-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 agent === a.id && 'border-primary ring-2 ring-accent',
-                !there && 'cursor-not-allowed opacity-45',
+                !there && 'cursor-not-allowed opacity-50',
               )}>
               <b className="font-semibold">{a.name}</b>
               <span className="text-xs text-muted-foreground">{there ? 'Found' : 'Not installed'}</span>

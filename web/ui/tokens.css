@@ -12,14 +12,18 @@
   --pdt-fg: #17181d;
   --pdt-muted: #565b6a;
   --pdt-accent: #2563eb;
+  /* The accent as text and icons (text-link: links, ticks, tinted badges): 4.5:1 or more on every surface and on
+     accent-soft, where the accent itself (a fill colour) falls short. Tested in tokens.test.ts. */
+  --pdt-link: #1d4ed8;
   --pdt-on-accent: #ffffff;
   --pdt-accent-soft: #dfe8fd;
   /* Keyboard focus (ring-ring, and the outline index.css gives every element): opaque, 3:1 or more on every surface
      (WCAG 1.4.11), tested in tokens.test.ts. */
   --pdt-ring: #2563eb;
-  --pdt-running: #15803d;
-  --pdt-waiting: #b45309;
-  --pdt-failed: #dc2626;
+  /* Status colours are also text, on the surfaces and on their own soft fills: 4.5:1 or more (tokens.test.ts). */
+  --pdt-running: #166534;
+  --pdt-waiting: #92400e;
+  --pdt-failed: #b91c1c;
   --pdt-idle: #565b6a;
   --pdt-running-soft: rgba(21, 128, 61, 0.12);
   --pdt-waiting-soft: rgba(180, 83, 9, 0.12);
@@ -103,6 +107,7 @@
     --pdt-fg: #e7e8ec;
     --pdt-muted: #8a8f9c;
     --pdt-accent: #3561b8;
+    --pdt-link: #7aa2f7;
     --pdt-on-accent: #eef2fb;
     --pdt-accent-soft: #171f33;
     --pdt-ring: #5b8def;
@@ -174,6 +179,7 @@
   --pdt-fg: #e7e8ec;
   --pdt-muted: #8a8f9c;
   --pdt-accent: #3561b8;
+  --pdt-link: #7aa2f7;
   --pdt-on-accent: #eef2fb;
   --pdt-accent-soft: #171f33;
   --pdt-ring: #5b8def;

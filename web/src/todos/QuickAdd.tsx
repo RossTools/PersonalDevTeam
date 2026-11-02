@@ -123,7 +123,7 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
         {expanded ? (
           <span aria-hidden className="size-4.5 shrink-0 rounded-full border-[1.5px] border-muted-foreground" />
         ) : (
-          <span aria-hidden className="grid size-4.5 shrink-0 place-items-center rounded-full border-[1.5px] border-dashed border-muted-foreground/60 text-primary">
+          <span aria-hidden className="grid size-4.5 shrink-0 place-items-center rounded-full border-[1.5px] border-dashed border-muted-foreground/60 text-link">
             <Plus className="size-3" />
           </span>
         )}

@@ -126,7 +126,7 @@ export function PromptBox({
       className={cn(
         'flex flex-col rounded-xl border border-input bg-card shadow-sm transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-ring motion-reduce:transition-none',
         dragging && 'border-primary ring-2 ring-ring',
-        disabled && 'opacity-60',
+        disabled && 'opacity-50',
       )}
       onDragOver={(e) => {
         if (!onFiles || !e.dataTransfer.types.includes('Files')) return;

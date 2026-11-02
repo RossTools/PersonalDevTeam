@@ -21,6 +21,8 @@ export const ticketKeys = {
   list: (q: TicketQuery) => ['tickets', 'list', q] as const,
   count: (projectId: string) => ['tickets', 'count', projectId] as const,
   search: (q: TicketQuery) => ['tickets', 'search', q] as const,
+  /** A ticket's hover card, by key (under `lists`, so a write refreshes it). */
+  card: (key: string) => ['tickets', 'card', key.toUpperCase()] as const,
   one: (id: string) => ['ticket', id] as const,
   events: (id: string) => ['ticketEvents', id] as const,
   labels: (projectId: string) => ['labels', projectId] as const,

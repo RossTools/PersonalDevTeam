@@ -62,7 +62,7 @@ export function SuggestionList({ id, label, items, active, onPick, onHover, empt
               className={cn(
                 'flex min-h-control-md cursor-default items-baseline gap-2 px-3 py-1 text-sm pointer-coarse:min-h-control-touch',
                 i === active && 'bg-accent',
-                it.disabled && 'opacity-60',
+                it.disabled && 'opacity-50',
               )}
             >
               <span className="shrink-0 font-mono text-xs">{it.label}</span>

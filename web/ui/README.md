@@ -18,7 +18,8 @@
 - Colours only through these Tailwind names (all aliases of `--pdt-*`):
   - surfaces: `bg-background` (= `bg-bg`), `bg-card`/`bg-popover` (= `bg-surface`), `bg-surface-2`, `bg-muted` (a quiet fill), `bg-band`
     (striped list rows), `bg-accent` (the soft selected/hover fill), `bg-primary` (accent blue, primary actions);
-  - text: `text-foreground` (= `text-fg`), `text-muted-foreground` (secondary text), `text-primary`,
+  - text: `text-foreground` (= `text-fg`), `text-muted-foreground` (secondary text), `text-link` (accent-coloured text and icons: links, ticks; never
+    `text-primary`, which is the fill colour and too light for text),
     `text-primary-foreground` (on `bg-primary`), `text-destructive`;
   - lines: `border-border` (dividers, cards), `border-input` (control edges: fields, checkboxes, outline buttons, the off switch), `ring-ring`;
   - status (state only, never decoration): `running`, `waiting`, `failed`, `idle`, and fills `running-soft`,
@@ -31,6 +32,8 @@
 - Sizes: controls are `h-control-sm` (24px) or `h-control-md` (28px, the default); on touch screens
   `pointer-coarse:h-control-touch` (44px) / `pointer-coarse:min-w-control-touch` for icon buttons. Corners
   `rounded-md` (follows `--radius`, 6px).
+- Dimming: disabled controls use `opacity-50`, and nothing else is dimmed with opacity. A state such as cleared, skipped
+  or not built shows as muted text, a dashed edge or a badge, so its text keeps 4.5:1 (tokens.test.ts checks the token pairs).
 - Dark mode: `dark:` follows our theme rule; usually no `dark:` is needed because the tokens switch.
 - Motion: `duration-(--pdt-duration)` / default transition duration; nothing animates under
   `motion-reduce`. Anything that animates, transforms or transitions layout says `motion-reduce:animate-none` /
@@ -44,6 +47,8 @@
   `Button` API working (`variant` primary | secondary | ghost; adds danger; `size` sm | md; `pending`).
 - **Accessible by default.** Real roles; icon-only controls require a `label`; every overlay closes on Escape and
   returns focus to what opened it; Up/Down/Home/End in lists and menus; long press = right-click on touch.
+  Features build overlays from `Dialog`, `Sheet`, `Popover`, `Menu`, `Select` and `Tooltip`, never a hand-made
+  `role="dialog|menu|listbox|tooltip"` (a test fails on one); a `Sheet` can open from a `Dialog`.
   A hand-built `role="tablist"` takes `onKeyDown={tabListKeyDown}` and gives its tabs `tabIndexOf(…)` (Left/Right/Home/End,
   one Tab stop); what a tab shows is a `role="tabpanel"` labelled by the tab's id.
 - **Touch.** Long press opens the same menu as right-click (`MenuTrigger trigger="contextMenu"`). Drag data is

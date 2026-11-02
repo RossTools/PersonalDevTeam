@@ -84,6 +84,7 @@ import { readViewState, tabScope, ViewScopeContext, writeViewState } from '../co
 import { isDetail, isOldPath, parseLocation, routePath, upRoute, viewRoute, type Route, type SettingsPage } from './route';
 import { currentLocation, goBack, navigate, useAppLinks, useLocation } from './router';
 import { PhoneDrawer } from './PhoneDrawer';
+import { invalidateWorktrees, worktreesQuery } from '../common/worktrees';
 import { PhoneTopBar, TopBarActionsContext, TopBarEditContext, type TopBarActions, type TopBarEdit } from './PhoneTopBar';
 import {
   ChangesView, CreateIssueDialog, DocumentPage, InboxView, NewTicketDialog, NewWorkflowDialog, NoteScreen, PersonaPage, PhoneInboxItem, PmView,
@@ -374,7 +375,7 @@ export function AppShell() {
     qc.setQueryData(['ticket', r.ticket.id], r.ticket);
     const projectId = r.ticket.projectId;
     void qc.invalidateQueries({ queryKey: ['sessions', projectId] });
-    void qc.invalidateQueries({ queryKey: ['worktrees', projectId] });
+    invalidateWorktrees(qc, projectId);
     void runAction(async () => {
       await ws.refresh();
       // Started without a session: the ticket's tab.
@@ -467,8 +468,7 @@ export function AppShell() {
   };
   const currentProject = ws.projects.find((p) => p.id === current?.projectId) ?? null;
   const worktrees = useQuery({
-    queryKey: ['worktrees', currentProject?.id ?? ''],
-    queryFn: () => api.listWorktrees(currentProject!.id),
+    ...worktreesQuery(currentProject?.id ?? ''),
     enabled: !!currentProject && !!current?.worktreeId,
   });
   const worktreeBranch = current?.worktreeId ? worktrees.data?.find((w) => w.id === current.worktreeId)?.branch : undefined;

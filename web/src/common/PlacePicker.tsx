@@ -6,6 +6,7 @@ import { CommandList, type CommandItem } from '@ui/CommandList';
 import { Popover } from '@ui/Popover';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
+import { worktreesQuery } from './worktrees';
 
 export type Place = { projectId: string; worktreeId: string | null };
 
@@ -20,7 +21,7 @@ function placeOf(id: string): Place {
 /** The list inside the popover: every project, each with its main checkout and its worktrees (missing ones left out). */
 function Places({ projects, place, onPick }: { projects: Project[]; place: Place; onPick: (p: Place) => void }) {
   const worktrees = useQueries({
-    queries: projects.map((p) => ({ queryKey: ['worktrees', p.id], queryFn: () => api.listWorktrees(p.id) })),
+    queries: projects.map((p) => worktreesQuery(p.id)),
   });
   const current = idOf(place);
   const icon = (id: string, fallback: ReactNode) => (id === current ? <Check aria-hidden /> : fallback);
@@ -49,7 +50,7 @@ export function PlacePicker({ projects, place, onPick, className }: {
   onPick: (p: Place) => void;
   className?: string;
 }) {
-  const worktrees = useQuery({ queryKey: ['worktrees', place.projectId], queryFn: () => api.listWorktrees(place.projectId), enabled: !!place.projectId });
+  const worktrees = useQuery({ ...worktreesQuery(place.projectId), enabled: !!place.projectId });
   const project = projects.find((p) => p.id === place.projectId);
   const where = place.worktreeId ? (worktrees.data?.find((w) => w.id === place.worktreeId)?.branch ?? '…') : REPOSITORY;
   const projectName = project?.name ?? 'No project';

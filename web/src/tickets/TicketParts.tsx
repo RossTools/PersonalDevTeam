@@ -509,7 +509,7 @@ function AgentLabel({ agent, name, made = false }: { agent: AgentBy; name: strin
       type="button"
       title={`Open the ${name} session`}
       onClick={() => openSession({ id: agent.sessionId, projectId })}
-      className="rounded-sm outline-none hover:text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+      className="rounded-sm outline-none hover:text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring"
     >
       {text}
     </button>

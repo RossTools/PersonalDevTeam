@@ -225,7 +225,7 @@ function SelectItem({
           <span className="flex flex-1 shrink-0 gap-2 whitespace-nowrap">
             {children}
           </span>
-          <span className="pointer-events-none absolute right-2 flex size-3.5 items-center justify-center text-primary">
+          <span className="pointer-events-none absolute right-2 flex size-3.5 items-center justify-center text-link">
             {isSelected ? (
               <CheckIcon className="pointer-events-none" />
             ) : null}

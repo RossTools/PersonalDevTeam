@@ -45,7 +45,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
           description: "text-meta text-muted-foreground",
           success: "[&_[data-icon]]:text-running",
           error: "[&_[data-icon]]:text-failed",
-          info: "[&_[data-icon]]:text-primary",
+          info: "[&_[data-icon]]:text-link",
           warning: "[&_[data-icon]]:text-waiting",
           actionButton: "bg-primary! text-primary-foreground!",
         },

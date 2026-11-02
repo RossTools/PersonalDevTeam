@@ -64,6 +64,7 @@
   --color-border: var(--pdt-border);
   --color-fg: var(--pdt-fg);
   --color-ring: var(--pdt-ring);
+  --color-link: var(--pdt-link);
   --color-muted: var(--muted);
   --color-accent: var(--accent);
   --color-running: var(--pdt-running);
