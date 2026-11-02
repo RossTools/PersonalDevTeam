@@ -481,7 +481,7 @@ model (`GET …/sheet`, IronCalc's bytes and `x-sheet-seq`), posts its own edits
 has (`POST …/sheet/diffs`), and follows `GET …/events` (SSE): `diffs` (from other views and agents' edits through
 `apply`), `reload`, `changed` (a doc saved), `comments`, `charts`. A view that missed a number reloads; diffs sent on
 an old number are applied anyway (last write wins) and the answer says `conflict`, so the view reloads and says so.
-Each stream also checks the file every 2 s, so a change made outside PDT reaches the open views. A doc's editor saves
+Each stream also checks the file every 2 s, so a change made outside PDT reaches the open views; the check reads the file only when its modified time or length moved since PDT last saw it (or it was modified in the last few seconds). The provider's file reads, xlsx parsing and writes run on blocking threads (`spawn_blocking`), and each live sheet loads under its own lock, so one big workbook holds up only itself. A doc's editor saves
 with `baseVersion` (a hash of the file) and gets `409 conflict` when it changed since. Charts are drawn in the browser
 with Chart.js from `GET …/charts`, which reads their numbers from pdtd's model; they float over the grid at their
 anchor cell. The web UI's `@ironcalc/workbook` must be the same version as pdt-sheet's `ironcalc` (they exchange
