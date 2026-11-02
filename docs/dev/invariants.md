@@ -49,6 +49,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `prompts_and_guides_carry_no_pdt_development_assumptions` checks it (with an allow list).
 - **Routes that act as the user need the UI token** (`x-ui-token`, new at each start; pdt-api `untrusted.rs`): admitting
   an external ticket, filing issues, the PM's approvals. An agent's `curl` can't do them.
+- **A run configuration's commands run only once the user approved them** (pdt-core `command_trust.rs`, pdt-api
+  `command_trust.rs`): runs and tests (`runs::create`, `restart`, and `run_manager`'s restarts), the local forge's
+  `[ci] command` (it waits, with an Inbox notice) and `[[merge.regenerate]]` rules (read from the base branch's
+  committed file, never the worktree's). An approval is the command's fingerprint (setup, command, env), kept in
+  `trusted_commands`; only the UI token approves (`POST …/commands/trust`, or overrides saved from the web app).
+  Projects from before carry a `legacy` mark that trusts the main checkout's commands once. A new place that runs a
+  configured command checks it first.
 - **Making tickets over the HTTP API records the user only with the UI token** (pdt-api `tickets::creator`, also
   parts): without it the caller is an agent, the session its `x-agent-session` header names (persona, the ticket it
   works on), and the ticket's source is `agent` (`pm`, `external` for a PM or triage session). The web client sends
@@ -59,6 +66,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   Start refuse the same (`untrusted::decides_proposal`), and auto-start never starts it; the Inbox answer needs the UI
   token. Any move out of Draft releases it and closes the open `ticket_proposal` item; deleting the ticket removes it.
   Lists hide a ticket only while that item is open, so a held ticket with no item is never out of the user's reach.
+- **The PM's `inbox_decide` never decides without the user's Allow** (pdt-api `mcp/tools/inbox.rs`): it is
+  `asks_in_inbox` (pdt-core `ToolDecl::inbox_only`), so it is in Claude's `--allowedTools`, has no `ask_target` (no
+  project policy answers it) and always opens a `confirm` item with `body.rows`; only that item's Allow, which needs the
+  UI token, runs it with `cx.confirmed`, narrowed to the rows the user kept. It refuses non-PM sessions even when a
+  persona lists it. Each row goes through `ticket_proposal::decide` as `By::user_via(<the PM>)`: the user's events,
+  with the PM as `proposedBy`.
 - **Fresh Codex launches in one folder stay at least 5 s apart**, or PDT can't tell their conversations apart.
 
 ## Tabs, tickets and attempts
@@ -163,6 +176,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   of a workflow without a project is refused and Run now asks for one (`WorkflowDetail::needs_project`).
 - **Built-in workflows, templates and personas follow newer versions only while the user hasn't edited them.** Repo
   workflows (`.pdt/workflows/`) are read-only through the API; imported and instantiated workflows start disabled.
+- **Enabling a workflow is consent to the version it has then.** A changed repo file of an enabled workflow is a
+  proposal (pdt-api `workflow/repo.rs`), never a saved version, so a merge can't swap in new commands that run on the
+  next trigger; only a disabled one takes the file's version directly.
 
 ## Secrets and GitHub
 

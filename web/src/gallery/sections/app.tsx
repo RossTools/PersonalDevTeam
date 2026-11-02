@@ -37,8 +37,8 @@ const states: [string, AgentStateInput][] = [
 ];
 
 const galleryForge: ForgeLinks = {
-  kind: 'github', name: 'GitHub', repo: 'ross/pdt', repoUrl: 'https://github.com/ross/pdt',
-  branchUrl: 'https://github.com/ross/pdt/tree/{branch}', compareUrl: 'https://github.com/ross/pdt/compare/{base}...{branch}?expand=1',
+  kind: 'github', name: 'GitHub', repo: 'alex/pdt', repoUrl: 'https://github.com/alex/pdt',
+  branchUrl: 'https://github.com/alex/pdt/tree/{branch}', compareUrl: 'https://github.com/alex/pdt/compare/{base}...{branch}?expand=1',
 };
 
 const projects: Project[] = [

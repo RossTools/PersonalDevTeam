@@ -3,7 +3,8 @@ import type { ApiErrorBody } from './gen/ApiErrorBody';
 // The client's shared plumbing: every area module (projects.ts, tickets.ts, ...) calls the server through these.
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  /** `data`: what the client needs to act on the error, for the few that carry it (`untrusted_commands`). */
+  constructor(public status: number, public code: string, message: string, public data?: unknown) {
     super(message);
     this.name = 'ApiError';
   }
@@ -33,7 +34,7 @@ async function errorOf(res: Response): Promise<ApiError> {
   } catch {
     // non-JSON error body (proxy, crash page)
   }
-  return new ApiError(res.status, body.code ?? 'http_error', body.message ?? `HTTP ${res.status}`);
+  return new ApiError(res.status, body.code ?? 'http_error', body.message ?? `HTTP ${res.status}`, body.data);
 }
 
 /** This pdtd's UI token (PDT-204), fetched once; it changes when pdtd restarts. */

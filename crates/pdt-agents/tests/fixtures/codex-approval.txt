@@ -3,7 +3,7 @@
 [K
 [K
   >_ [1mOpenAI Codex[22m[2m[1C(v0.162.1)[22m[K
-     [2m~\AppData\Local\Temp\claude\C--Users-ross-work-ai-dev-shop\e54e7808-d66e-4a22-9795-c8ae786d62bf\scratchpad\w[22m
+     [2m~\AppData\Local\Temp\claude\C--Users-alex-work-ai-dev-shop\e54e7808-d66e-4a22-9795-c8ae786d62bf\scratchpad\w[22m
 [K
 [K[1m[2m
 › [22mreply[1Cwith[1Cthe[1Cword[1Cok[10;2H[K[2m

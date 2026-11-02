@@ -673,6 +673,47 @@ async fn workflows_in_the_repo_are_read_disabled_and_follow_the_file() {
     pdt_api::maintain_workflows(&env.state).await;
     let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{id}"), None).await;
     assert_eq!((w["version"].as_u64(), w["description"].as_str()), (Some(2), Some("now with words")));
+
+    // Once enabled, a change to the file waits for the user to accept it (PDT-406).
+    let (s, _) = call(&env.app, "PATCH", &format!("/api/workflows/{id}"), Some(json!({"enabled": true}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let mut swapped = changed.clone();
+    swapped["description"] = json!("swapped in by a merge");
+    std::fs::write(dir.join("flow.json"), swapped.to_string()).unwrap();
+    pdt_api::maintain_workflows(&env.state).await;
+    pdt_api::maintain_workflows(&env.state).await;
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{id}"), None).await;
+    assert_eq!(
+        (w["version"].as_u64(), w["description"].as_str(), w["proposed"].as_u64(), w["enabled"].as_bool()),
+        (Some(2), Some("now with words"), Some(3), Some(true))
+    );
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    let item = inbox["items"].as_array().unwrap().iter().find(|i| i["id"] == format!("proposal:{id}:3")).unwrap();
+    assert_eq!(item["title"], "The repo proposed version 3 of repo flow");
+    // Discarded, it stays discarded while the file reads the same.
+    let (s, _) = call(&env.app, "POST", &format!("/api/workflows/{id}/versions/3/discard"), None).await;
+    assert_eq!(s, StatusCode::OK);
+    pdt_api::maintain_workflows(&env.state).await;
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{id}"), None).await;
+    assert_eq!((w["version"].as_u64(), w["proposed"].as_u64()), (Some(2), None));
+    // A further change is proposed again; the file going back to the current version drops it.
+    swapped["description"] = json!("and again");
+    std::fs::write(dir.join("flow.json"), swapped.to_string()).unwrap();
+    pdt_api::maintain_workflows(&env.state).await;
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{id}"), None).await;
+    assert_eq!((w["version"].as_u64(), w["proposed"].as_u64()), (Some(2), Some(4)));
+    std::fs::write(dir.join("flow.json"), changed.to_string()).unwrap();
+    pdt_api::maintain_workflows(&env.state).await;
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{id}"), None).await;
+    assert_eq!((w["version"].as_u64(), w["proposed"].as_u64()), (Some(2), None));
+    // Proposed again (in its place), and accepted, it becomes the version that runs.
+    std::fs::write(dir.join("flow.json"), swapped.to_string()).unwrap();
+    pdt_api::maintain_workflows(&env.state).await;
+    let (s, w) = call(&env.app, "POST", &format!("/api/workflows/{id}/versions/4/accept"), None).await;
+    assert_eq!(s, StatusCode::OK, "{w}");
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{id}"), None).await;
+    assert_eq!((w["version"].as_u64(), w["description"].as_str()), (Some(4), Some("and again")));
+
     std::fs::remove_file(dir.join("flow.json")).unwrap();
     pdt_api::maintain_workflows(&env.state).await;
     let (s, _) = call(&env.app, "GET", &format!("/api/workflows/{id}"), None).await;

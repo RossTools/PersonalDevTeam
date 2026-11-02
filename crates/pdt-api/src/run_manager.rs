@@ -162,7 +162,10 @@ async fn restart_in_place(st: &AppState, id: &str) -> Result<(), String> {
     }
     let stopped_since = || stops_and_running(st, id).0 != stops;
     let Some(run) = st.store.get_run(id).await.map_err(|e| e.to_string())? else { return Ok(()) };
-    let def = crate::runs::definition_for(st, &run).await;
+    let def = match crate::runs::definition_for(st, &run).await {
+        Ok(d) => approved(st, &run, d).await,
+        Err(e) => Err(e),
+    };
     if let Ok(def) = &def
         && def.web
     {
@@ -174,6 +177,14 @@ async fn restart_in_place(st: &AppState, id: &str) -> Result<(), String> {
         return Ok(());
     }
     relaunch(st, run, def?).await.map(|_| ()).map_err(|e| e.message().to_string())
+}
+
+/// `def` when the user approved its commands (PDT-405); else the error the run ends with.
+async fn approved(st: &AppState, run: &Run, def: RunDef) -> Result<RunDef, String> {
+    match crate::command_trust::check_run(st, &run.project_id, &def, run.kind == pdt_core::run::RunKind::Test).await {
+        Ok(()) => Ok(def),
+        Err(e) => Err(e.message().to_string()),
+    }
 }
 
 /// Starts a stopped run again: a port (its old one when free) and link for a web run, the first state, then the
@@ -641,6 +652,10 @@ pub async fn resume_runs(st: &AppState) -> usize {
             continue;
         }
         let def = match crate::runs::definition_for(st, &run).await {
+            Ok(d) => approved(st, &run, d).await,
+            Err(msg) => Err(msg),
+        };
+        let def = match def {
             Ok(d) => d,
             Err(msg) => {
                 let _ = st.store.finish_run(&run.id, RunState::Failed, None, Some(&msg), now_ms()).await;

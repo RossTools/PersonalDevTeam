@@ -52,7 +52,7 @@ const DIFF = [
   '+++ b/tests/login.rs',
   '@@ -40,7 +40,9 @@ async fn login_flow() {',
   '     let app = spawn_app().await;',
-  '     app.post_login("ross", "secret").await;',
+  '     app.post_login("alex", "secret").await;',
   '-    tokio::time::sleep(Duration::from_millis(100)).await;',
   '-    assert!(app.has_session_cookie());',
   '+    // Poll instead of a fixed sleep: CI machines are slower.',

@@ -386,7 +386,9 @@ is off. Agents tag areas through `update_ticket`
 
 **The Inbox and notifications.** The Inbox (pdt-api and pdt-store `inbox.rs`) holds what waits on the user:
 questions, gates, stalled steps, secrets to enter, confirmations. An item's `title` is one line; a gate's question
-(Markdown) is in `body.question`, and `inbox::decorate` adds what is computed per request: ticket key and title,
+(Markdown) is in `body.question`, an agent's in `body.questions` (`inbox::Question`: `ask_user` checks each `question`
+is one line and its `recommended` one of its `choices`; items stored before structured choices have plain-string
+`choices`, which `Choice` still reads), and `inbox::decorate` adds what is computed per request: ticket key and title,
 persona name, and a gate's `changeRequest` (its attempt's pull request, else the run trigger's or the ticket's external
 link that a forge plugin's `is_change_request_url` accepts, named by its `change_request_name`). Some items are not
 stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, "PDT can't save changes"
@@ -407,6 +409,11 @@ while the "Ticket proposals" built-in is on (`workflow::nodes::ticket_proposal::
 the workflow never put in the Inbox (turned off, its conditions edited, its run failed) stays listed in Draft. `ticket_proposal::answer` applies the user's Accept (the edits, the `agentic` box), Duplicate of…
 (a `relates` link, Won't do) or Reject (Won't do), then tells the proposing session while it runs, else comments on
 the ticket it came from.
+The PM's `inbox_decide` (pdt-api `mcp/tools/inbox.rs`, rules in pdt-core `inbox_decide.rs`) proposes decisions on
+many of them at once: it puts one `confirm` item in the Inbox whose `body.rows` the web shows as a table
+(`web/src/inbox/DecideRows.tsx`); the Allow sends the ticked rows (`InboxAnswer.rows`), `workflow::agent::answer_confirm`
+narrows the call to them and runs it, and each row is applied by `ticket_proposal::decide` as the user's, with the PM
+as `proposedBy` on the events and the item's resolution.
 
 **Secrets.** Values live in the OS keychain (or, on Linux without a Secret Service, a file only the user can read) and
 in memory; agents and workflows refer to them by name (`run_with_secrets`, `write_secret_file`, `{{secret.x}}` in a

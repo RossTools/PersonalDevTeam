@@ -101,6 +101,7 @@ async fn setup() -> Env {
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
     assert_eq!(s, StatusCode::CREATED);
+    common::approve_commands(&app, p["id"].as_str().unwrap(), None).await;
     let (start, end) = free_range();
     let (s, v) = call(&app, "PUT", "/api/host/settings", Some(json!({"runPorts": {"start": start, "end": end}}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");

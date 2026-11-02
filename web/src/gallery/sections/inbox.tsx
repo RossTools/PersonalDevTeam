@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { ConfirmProvider } from '@ui/Confirm';
 import { SegmentedControl } from '@ui/SegmentedControl';
 import type { InboxItem } from '../../api/gen/InboxItem';
+import { structuredQuestionItem } from '../../inbox/fixtures';
 import { InboxList } from '../../inbox/InboxList';
 import { InboxView } from '../../inbox/InboxView';
+import { PhoneInboxItem } from '../../inbox/PhoneInbox';
 
 const ago = (min: number) => Date.now() - min * 60_000;
 
@@ -16,6 +18,8 @@ const base = (id: string, over: Partial<InboxItem>): InboxItem => ({
 
 // One of each style the Inbox lays out (PDT-361): questions, passes, a notice, an approval, a stuck step, figures.
 const items: InboxItem[] = [
+  // An agent's question with its context, described choices and a recommended one (PDT-476).
+  structuredQuestionItem({ id: 'structured question', createdAt: ago(1) }),
   base('question', {
     kind: 'question', group: 'question', personaName: 'Coder', title: 'Should the receipt attach a PDF invoice?',
     body: { questions: [
@@ -75,4 +79,17 @@ function InboxDemo() {
   );
 }
 
-export const section = { title: 'Inbox items', order: 55, render: () => <ConfirmProvider><InboxDemo /></ConfirmProvider> };
+/** An item as the phone shows it, in a phone-wide frame. */
+function PhoneDemo() {
+  const [id, setId] = useState('structured question');
+  return (
+    <div aria-label="On the phone" className="flex h-[44rem] w-[390px] flex-col overflow-hidden rounded-md border border-border bg-background">
+      <PhoneInboxItem items={items} updates={[]} itemId={id} onMove={setId} onList={() => {}} />
+    </div>
+  );
+}
+
+export const section = {
+  title: 'Inbox items', order: 55,
+  render: () => <ConfirmProvider><div className="flex flex-col gap-6"><InboxDemo /><PhoneDemo /></div></ConfirmProvider>,
+};

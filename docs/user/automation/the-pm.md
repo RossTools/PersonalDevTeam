@@ -12,6 +12,9 @@ looked yet.
   reply, and creates them as **Draft**s once you agree, split into parts and linked in order when that helps.
 - **Write or refine a ticket**: "Turn my note about slow search into a ticket with a Done when."
 - **Tidy the backlog**: "Which tickets are duplicates or out of date?", "Rank the bugs by how much they hurt."
+- **Sort ticket proposals**: "Go through the ticket proposals in my Inbox." It reads each one and proposes Accept to
+  Todo, Accept to backlog, Duplicate of… or Reject for all of them at once; you confirm them in one step (see
+  [Decide Inbox items](#decide-inbox-items)).
 - **Say what's going on**: "What's in flight?", "Why is ABC-12 stuck?", "What needs me?" It reads the board, pull
   requests, CI, running agents and the Inbox.
 - **Talk to an agent**: "Tell the agent on ABC-12 to rebase before it pushes again." A comment the PM adds to a
@@ -96,7 +99,20 @@ project's page, under **Pipeline and policies**. A plugin's connection can have 
 These always ask, whatever the setting:
 
 - moving a ticket that came from outside PDT (an issue, say) onto the board, or labelling it `agentic`;
-- reporting a bug in PDT.
+- reporting a bug in PDT;
+- deciding Inbox items for you (below).
+
+## Decide Inbox items
+
+When ticket proposals pile up, ask the PM to sort them. It proposes a decision for each, and nothing changes until you
+confirm: one item under **Approvals** in the Inbox lists every proposal with its ticket, the PM's decision (and any
+edits, such as a new priority or the `agentic` label) and its reason. Untick the rows you don't want, then **Allow**
+the rest, or **Deny** them all. This always waits for you in the Inbox, whatever the PM's agent and the project's
+setting.
+
+Each row you allow is decided exactly as if you had clicked it in the Inbox. The ticket's activity shows it as yours,
+**proposed by PM**. The rows you untick stay in the Inbox for you to decide. Only the PM can propose these decisions:
+the agents working on tickets can't decide proposals, theirs or anyone else's.
 
 ## Watch a ticket or run
 

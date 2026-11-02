@@ -1,11 +1,12 @@
-import { useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useRef, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { Badge } from './Badge';
 import { Textarea } from './Textarea';
 import { cn } from './lib/utils';
 
 export interface QuestionChoice {
   label: string;
-  /** A line under the label, when the asker gave one. */
-  description?: string;
+  /** What it means (Markdown rendered by the caller), under the label, when the asker gave it. */
+  description?: ReactNode;
 }
 
 /** A question's answer: a choice's label, or (`other` not null) the user's own words. */
@@ -47,18 +48,24 @@ function Num({ n, show }: { n: number; show: boolean }) {
 
 /**
  * One of an agent's questions, as a card: "1 / 2" and the question, then its choices as radio options (each with its
- * number key when `numbers`) and a last "Something else…" option to type an own answer. A question without choices
- * is a text box. The parent keeps the answer and handles the number keys (`otherInputId` finds the text box).
+ * number key when `numbers`, its description under the label) and a last "Something else…" option to type an own
+ * answer. A question without choices is a text box. `recommended` names the choice the asker recommends: it carries a
+ * "Recommended" badge and `why`. Leave `question` out when the page already shows it (its title). The parent keeps the
+ * answer and handles the number keys (`otherInputId` finds the text box).
  */
-export function QuestionCard({ id, index, total, question, label, choices, value, onChange, numbers = false, disabled, className }: {
+export function QuestionCard({ id, index, total, question, label, choices, recommended, why, value, onChange, numbers = false, disabled, className }: {
   id: string;
   /** 0-based. */
   index: number;
   total: number;
-  question: ReactNode;
+  question?: ReactNode;
   /** The question as text: the options' group is named by it. */
   label: string;
   choices: QuestionChoice[];
+  /** The label of the recommended choice. */
+  recommended?: string | null;
+  /** Why it is recommended, one line. */
+  why?: ReactNode;
   value: QuestionAnswer;
   onChange: (a: QuestionAnswer) => void;
   /** Shows each option's number key (1–9). */
@@ -82,10 +89,12 @@ export function QuestionCard({ id, index, total, question, label, choices, value
   };
   return (
     <section aria-label={`Question ${index + 1} of ${total}`} className={cn('rounded-lg border border-border bg-card', className)}>
-      <div className="flex items-baseline gap-2.5 px-3.5 pt-3 pb-1">
-        {total > 1 && <span className="shrink-0 text-meta font-semibold text-muted-foreground tabular-nums">{index + 1} / {total}</span>}
-        <div className="min-w-0 text-sm font-semibold">{question}</div>
-      </div>
+      {(question || total > 1) && (
+        <div className="flex items-baseline gap-2.5 px-3.5 pt-3 pb-1">
+          {total > 1 && <span className="shrink-0 text-meta font-semibold text-muted-foreground tabular-nums">{index + 1} / {total}</span>}
+          {question && <div className="min-w-0 text-sm font-semibold">{question}</div>}
+        </div>
+      )}
       {choices.length === 0 ? (
         <div className="px-3.5 pt-1 pb-3.5">
           <Textarea id={otherInputId(id)} aria-label={`Answer ${index + 1}`} placeholder="Your answer" rows={2} disabled={disabled}
@@ -95,24 +104,41 @@ export function QuestionCard({ id, index, total, question, label, choices, value
         <div ref={group} role="radiogroup" aria-label={label} onKeyDown={onKeyDown} className="flex flex-col gap-1.5 px-3.5 pt-2 pb-3.5">
           {choices.map((c, n) => {
             const on = !otherOn && value.choice === c.label;
+            const pick = () => onChange({ choice: c.label, other: null });
+            const rec = recommended === c.label;
+            const about = c.description || (rec && why) ? `${id}-c${n}-about` : undefined;
+            // The card picks it too, but a link in its description stays a link.
+            const onCard = (e: MouseEvent) => {
+              if (!disabled && !(e.target as HTMLElement).closest('button, a')) pick();
+            };
             return (
-              <button
-                key={c.label}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                tabIndex={on || (n === 0 && !otherOn && !choices.some((x) => x.label === value.choice)) ? 0 : -1}
-                disabled={disabled}
-                onClick={() => onChange({ choice: c.label, other: null })}
-                className={cn(option, on ? 'border-primary bg-accent' : 'border-border bg-background hover:border-muted-foreground')}
-              >
-                <Radio on={on} />
-                <span className="flex min-w-0 flex-col">
-                  <span className="font-medium break-words">{c.label}</span>
-                  {c.description && <span className="text-xs text-muted-foreground">{c.description}</span>}
-                </span>
-                <Num n={n + 1} show={numbers && n < 9} />
-              </button>
+              <div key={c.label} onClick={onCard}
+                className={cn('flex flex-col rounded-lg border focus-within:ring-2 focus-within:ring-ring', about && 'cursor-pointer',
+                  on ? 'border-primary bg-accent' : 'border-border bg-background hover:border-muted-foreground')}>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  aria-describedby={about}
+                  tabIndex={on || (n === 0 && !otherOn && !choices.some((x) => x.label === value.choice)) ? 0 : -1}
+                  disabled={disabled}
+                  onClick={pick}
+                  className={cn(option, 'border-0 focus-within:ring-0')}
+                >
+                  <Radio on={on} />
+                  <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="font-semibold break-words">{c.label}</span>
+                    {rec && <Badge tone="accent">Recommended</Badge>}
+                  </span>
+                  <Num n={n + 1} show={numbers && n < 9} />
+                </button>
+                {about && (
+                  <div id={about} className="flex flex-col gap-1.5 pr-3 pb-2.5 pl-9.5 text-sm text-muted-foreground">
+                    {c.description && <div className="min-w-0 break-words">{c.description}</div>}
+                    {rec && why && <p className="min-w-0 text-xs break-words"><span className="font-medium text-foreground">Why:</span> {why}</p>}
+                  </div>
+                )}
+              </div>
             );
           })}
           <div className={cn(option, otherOn ? 'border-primary bg-accent' : 'border-border bg-background hover:border-muted-foreground')}>

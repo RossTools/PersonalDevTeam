@@ -21,7 +21,7 @@ const API: &str = "https://gitlab.com/api/v4";
 const P: &str = "https://gitlab.com/api/v4/projects/team%2Fapp";
 
 fn account(token: &str) -> ForgeAccount {
-    ForgeAccount { token: token.into(), api_url: API.into(), login: "rwest".into(), ..Default::default() }
+    ForgeAccount { token: token.into(), api_url: API.into(), login: "alexk".into(), ..Default::default() }
 }
 
 fn api(t: &Arc<Recorded>) -> Arc<GitlabApi> {
@@ -43,7 +43,7 @@ fn mr(iid: u32, state: &str, sha: &str) -> Value {
         "target_branch": "main", "detailed_merge_status": "mergeable", "has_conflicts": false,
         "merge_when_pipeline_succeeds": false, "created_at": "2026-10-29T10:00:00.000Z",
         "updated_at": "2026-10-29T11:00:00.000Z", "web_url": format!("https://gitlab.com/team/app/-/merge_requests/{iid}"),
-        "author": {"id": 7, "username": "rwest"}, "labels": ["pdt"]
+        "author": {"id": 7, "username": "alexk"}, "labels": ["pdt"]
     })
 }
 
@@ -231,13 +231,13 @@ fn a_merge_request_opens_as_a_draft_or_not() {
 fn discussions() -> String {
     json!([
         {"id": "d1", "individual_note": true, "notes": [
-            {"id": 501, "type": null, "body": "Looks good", "system": false, "author": {"id": 7, "username": "rwest"}}]},
+            {"id": 501, "type": null, "body": "Looks good", "system": false, "author": {"id": 7, "username": "alexk"}}]},
         {"id": "d2", "individual_note": false, "notes": [
             {"id": 502, "type": "DiffNote", "body": "Rename this", "system": false, "author": {"id": 8, "username": "al"},
              "position": {"new_path": "src/lib.rs", "new_line": 12, "old_path": "src/lib.rs", "old_line": null}},
-            {"id": 503, "type": "DiscussionNote", "body": "ok", "system": false, "author": {"id": 7, "username": "rwest"}}]},
+            {"id": 503, "type": "DiscussionNote", "body": "ok", "system": false, "author": {"id": 7, "username": "alexk"}}]},
         {"id": "d3", "individual_note": true, "notes": [
-            {"id": 504, "body": "added 1 commit", "system": true, "author": {"id": 7, "username": "rwest"}}]},
+            {"id": 504, "body": "added 1 commit", "system": true, "author": {"id": 7, "username": "alexk"}}]},
         {"id": "d4", "individual_note": true, "notes": [
             {"id": 505, "body": "Pipeline passed", "system": false, "author": {"id": 99, "username": "project_9_bot_abc"}}]}
     ])
@@ -499,7 +499,7 @@ fn a_refused_token_marks_the_login_until_the_user_signs_in_again() {
     assert!(!g.login_needed());
 
     // One refused call that GitLab takes back when asked again leaves the login alone.
-    t.on("GET", &format!("{P}/issues/1"), refused()).ok("GET", &format!("{API}/user"), r#"{"username":"rwest"}"#);
+    t.on("GET", &format!("{P}/issues/1"), refused()).ok("GET", &format!("{API}/user"), r#"{"username":"alexk"}"#);
     assert!(matches!(g.issue("team/app", 1), Err(ForgeError::Failed(_))));
     assert!(g.login_rejected_at().is_none());
 
@@ -516,7 +516,7 @@ fn an_oauth_token_renews_before_it_expires_and_the_new_one_is_stored() {
         "https://gitlab.com/oauth/token",
         r#"{"access_token":"glo_2","expires_in":7200,"refresh_token":"glr_2"}"#,
     )
-    .ok("GET", &format!("{API}/user"), r#"{"username":"rwest"}"#);
+    .ok("GET", &format!("{API}/user"), r#"{"username":"alexk"}"#);
     let g = GitlabApi::new(t.clone());
     let stored: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
     let s = stored.clone();
@@ -529,7 +529,7 @@ fn an_oauth_token_renews_before_it_expires_and_the_new_one_is_stored() {
         refresh: Some(Refresh { token: "glr_1".into(), client_id: "app".into(), expires_at: None }),
         ..account("glo_1")
     }));
-    assert_eq!(g.viewer_login().unwrap(), "rwest");
+    assert_eq!(g.viewer_login().unwrap(), "alexk");
     assert_eq!(*stored.lock().unwrap(), [("glo_1".to_string(), "glo_2".to_string())]);
     let a = g.account().unwrap();
     assert_eq!((a.token.as_str(), a.refresh.unwrap().token.as_str()), ("glo_2", "glr_2"));

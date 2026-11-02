@@ -218,7 +218,7 @@ pub(crate) async fn mirror_timeline(
         K::Created => {
             let Some(t) = crate::tickets::summary(&mut *conn, ticket_id).await? else { return Ok(()) };
             let agent = pdt_core::ticket::AgentBy::of_event(kind, actor, Some(data));
-            let by = pdt_core::ticket::By { actor, agent: agent.clone(), confirmed: false };
+            let by = pdt_core::ticket::By { actor, agent: agent.clone(), confirmed: false, proposed_by: None };
             NewLogEvent::new(
                 ev::TICKET_CREATED,
                 timeline_id,

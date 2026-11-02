@@ -108,7 +108,7 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
       }}
       className={cn(
         'flex flex-col rounded-lg border bg-background transition-colors duration-(--pdt-duration) motion-reduce:transition-none',
-        expanded ? 'border-primary ring-3 ring-ring/40' : 'border-border',
+        expanded ? 'border-primary ring-3 ring-ring/10' : 'border-border',
       )}
     >
       {/* A click anywhere on the line (the + circle too) puts the cursor in the text. */}

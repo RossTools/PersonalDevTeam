@@ -27,7 +27,7 @@ for what they cover, and the API for the rest. Which tools a session has depends
 |---|---|
 | `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history, `attachments` (each with a local `path`), `documents` (each `{id, title, kind, provider, url, read}`; see "Documents"), earlier steps' outcomes, and in a workflow step the outcomes it allows |
 | `submit_outcome` | `{outcome, summary, comments?, data?}`: ends this session's workflow step; `comments` (`{file, line, endLine?, body}`) become line comments on the changes, `data` holds fields the step's prompt asks for. `submitted` is refused while the worktree has uncommitted changes to tracked files, or commits or a branch not pushed: commit and push first |
-| `ask_user` | `{questions: [{question, choices?}]}`: questions in the person's Inbox; the answers come back as a message, so end your turn |
+| `ask_user` | `{questions: [{question, context?, choices?, recommended?, why?}]}`: questions in the person's Inbox; the answers come back as a message, so end your turn. `question` is one line (at most 120 characters); the background goes in `context` (Markdown), each choice is `{label, description?}` (the description in Markdown: what it means, its pros and cons), and `recommended` is the label of the choice you recommend, pre-selected for the person, with `why` in one line |
 | `add_ticket_comment` | `{body, ticket?, files?}`: a comment on the ticket's timeline, by the agent, with files attached |
 | `add_review_comment` | `{file, line, endLine?, body}`: a line comment on the attempt's changes |
 | `update_ticket` | `{title?, description?}`: rewrites this session's own ticket |
@@ -223,7 +223,7 @@ overrides, which keep the whole configuration out of the repository. `GET /api/g
 | Call | Does |
 |---|---|
 | `GET /api/projects/<id>/run-config?worktreeId=<id>` | the configuration: `file`, `overrides`, the merged `effective` (`runs`, `tests`, `areas`), or `error` |
-| `POST /api/projects/<id>/runs` | `{name, kind: "run" \| "test", worktreeId?}`: starts it (in the main checkout without `worktreeId`); the same run finished earlier in that checkout restarts (200) instead of adding one |
+| `POST /api/projects/<id>/runs` | `{name, kind: "run" \| "test", worktreeId?}`: starts it (in the main checkout without `worktreeId`); the same run finished earlier in that checkout restarts (200) instead of adding one. A command the user hasn't approved is `409 untrusted_commands`: you can't approve it; ask the user to start the run in PDT |
 | `GET /api/runs/<id>` | `state` (`setting_up`, `starting`, `ready`, `running`, `passed`, `failed`, `stopped`), `url`, `exitCode`, `error` |
 | `POST /api/runs/<id>/stop` · `/restart` | as named |
 

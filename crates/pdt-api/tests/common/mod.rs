@@ -23,6 +23,21 @@ pub async fn call_as_ui(app: &axum::Router, method: &str, uri: &str, body: Optio
     call_with(app, method, uri, body, &[("x-ui-token", &token)]).await
 }
 
+/// Approves, as the user in PDT's web app, every command the project's checkout (its main one, or `worktree_id`'s)
+/// configures (PDT-405), so the test's runs, tests, CI and regeneration rules run.
+pub async fn approve_commands(app: &axum::Router, project_id: &str, worktree_id: Option<&str>) {
+    let uri = match worktree_id {
+        Some(w) => format!("/api/projects/{project_id}/commands?worktreeId={w}"),
+        None => format!("/api/projects/{project_id}/commands"),
+    };
+    let (s, v) = call(app, "GET", &uri, None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let fingerprints: Vec<Value> = v["untrusted"].as_array().cloned().unwrap_or_default();
+    let body = serde_json::json!({ "fingerprints": fingerprints });
+    let (s, v) = call_as_ui(app, "POST", &format!("/api/projects/{project_id}/commands/trust"), Some(body)).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+}
+
 /// [`call`] with extra headers.
 pub async fn call_with(
     app: &axum::Router,

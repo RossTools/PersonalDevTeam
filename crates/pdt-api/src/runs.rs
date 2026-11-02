@@ -244,6 +244,9 @@ pub(crate) async fn create(
     let def = list.iter().find(|d| d.name == input.name).cloned().ok_or_else(|| {
         ApiError::new(StatusCode::NOT_FOUND, "unknown_run", format!("the configuration has no \"{}\"", input.name))
     })?;
+    // A command the user hasn't approved (a branch's or an agent-edited worktree's config, a new clone) waits for them.
+    let commands = vec![pdt_core::command_trust::of_run(&def, input.kind == RunKind::Test)];
+    crate::command_trust::check(&st, &project.id, &project.repo_path, commands).await?;
     let _start = st.run_start_lock.lock().await;
     if input.kind == RunKind::Run {
         check_run_limit(&st, input.stop_run_id.as_deref()).await?;
@@ -331,11 +334,13 @@ pub(crate) async fn restart(
     };
     let run = load(&st, &id).await?;
     let was_active = run.state.is_active();
+    // A command the user hasn't approved refuses the restart before the running one is stopped.
+    let def =
+        definition_for(&st, &run).await.map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_run_config", m))?;
+    crate::command_trust::check_run(&st, &run.project_id, &def, run.kind == RunKind::Test).await?;
     if was_active && !run_manager::stop(&st, &id, None).await {
         return Err(still_stopping());
     }
-    let def =
-        definition_for(&st, &run).await.map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_run_config", m))?;
     if was_active && def.web {
         run_manager::await_port_release(run.port).await;
     }

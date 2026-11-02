@@ -1,3 +1,4 @@
+import type { DecideRow } from '../api/gen/DecideRow';
 import type { InboxGroup } from '../api/gen/InboxGroup';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { InboxKind } from '../api/gen/InboxKind';
@@ -68,8 +69,23 @@ export function after(items: InboxItem[], id: string): string | null {
   return (rest[Math.min(Math.max(at, 0), rest.length - 1)] ?? rest[0]).id;
 }
 
-/** An agent's questions (`ask_user`). */
-export interface InboxQuestion { question: string; choices: string[] }
+/** An agent's questions (`ask_user`): a short question, its background (Markdown), described choices, and the one
+ * the agent recommends. Items asked before PDT-476 have plain-string choices and no context. */
+export interface InboxQuestion {
+  question: string;
+  context: string | null;
+  choices: { label: string; description: string | null }[];
+  /** One of the choices' labels. */
+  recommended: string | null;
+  why: string | null;
+}
+
+const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
+
+/** A question's title that is more than the one line `ask_user` now takes: the header clamps it. */
+export function longTitle(item: InboxItem): boolean {
+  return item.kind === 'question' && (item.title.length > 120 || item.title.includes('\n'));
+}
 
 export function questionsOf(item: InboxItem): InboxQuestion[] {
   const qs = item.body.questions;
@@ -78,7 +94,14 @@ export function questionsOf(item: InboxItem): InboxQuestion[] {
     if (typeof q !== 'object' || q === null) return [];
     const r = q as Record<string, unknown>;
     if (typeof r.question !== 'string') return [];
-    return [{ question: r.question, choices: Array.isArray(r.choices) ? r.choices.filter((c): c is string => typeof c === 'string') : [] }];
+    const choices = (Array.isArray(r.choices) ? r.choices : []).flatMap((c) => {
+      if (typeof c === 'string') return [{ label: c, description: null }];
+      if (typeof c !== 'object' || c === null) return [];
+      const o = c as Record<string, unknown>;
+      return typeof o.label === 'string' ? [{ label: o.label, description: text(o.description) }] : [];
+    });
+    const recommended = choices.some((c) => c.label === r.recommended) ? (r.recommended as string) : null;
+    return [{ question: r.question, context: text(r.context), choices, recommended, why: recommended ? text(r.why) : null }];
   });
 }
 
@@ -162,6 +185,12 @@ export function confirmOf(item: InboxItem): { tool: string; agent: string | null
     session: typeof b.sessionTitle === 'string' && b.sessionTitle ? b.sessionTitle : null,
     input: JSON.stringify(b.input ?? {}, null, 2),
   };
+}
+
+/** A batch call's rows (the PM's `inbox_decide`, PDT-475): the table the user unticks rows of; null for a plain call. */
+export function decideRowsOf(item: InboxItem): DecideRow[] | null {
+  const rows = item.body.rows;
+  return Array.isArray(rows) ? (rows as DecideRow[]) : null;
 }
 
 /** A workflow version an agent proposed (PDT-320): the workflow, the version, who proposed it, their note and what changed. */

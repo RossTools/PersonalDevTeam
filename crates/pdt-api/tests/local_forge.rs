@@ -24,6 +24,11 @@ struct Env {
 
 /// A repository with no remote on the local forge, whose CI passes once `ok.txt` is committed, and one started ticket.
 async fn setup(tmp: &Path, config: &str) -> Env {
+    setup_with(tmp, config, true).await
+}
+
+/// [`setup`], with the configuration's commands approved or not (PDT-405).
+async fn setup_with(tmp: &Path, config: &str, approved: bool) -> Env {
     let repo = tmp.join("repo");
     std::fs::create_dir_all(repo.join(".pdt")).unwrap();
     git(&repo, &["init", "-q", "-b", "main"]);
@@ -50,6 +55,9 @@ async fn setup(tmp: &Path, config: &str) -> Env {
         call(&app, "POST", "/api/projects", Some(json!({"name": "Offline", "repoPath": repo.to_string_lossy()}))).await;
     assert_eq!(s, StatusCode::CREATED, "{p}");
     let pid = p["id"].as_str().unwrap();
+    if approved {
+        common::approve_commands(&app, pid, None).await;
+    }
     let (_, t) = call(&app, "POST", &format!("/api/projects/{pid}/tickets"), Some(json!({"title": "Ship it"}))).await;
     let ticket = t["id"].as_str().unwrap().to_string();
     let (s, started) = call(
@@ -155,6 +163,34 @@ async fn a_ticket_goes_through_local_ci_to_a_local_merge() {
     let merged = events(&env, "pr.merged").await;
     assert_eq!(merged.len(), 1, "{merged:#?}");
     assert!(merged[0]["payload"]["notice"]["text"].as_str().unwrap().contains("change request #1 (pdt-"));
+}
+
+/// PDT-405: a CI command the user hasn't approved doesn't run: CI waits, the Inbox says so, and once the user approves
+/// it CI runs on the next read.
+#[tokio::test]
+async fn ci_waits_until_the_user_approves_its_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup_with(tmp.path(), CI, false).await;
+    commit(&env.worktree, "ok.txt", "work");
+    pdt_api::refresh_prs(&env.state).await;
+    let t = wait_for(&env, |t| t["attempt"]["pr"]["number"] == 1).await;
+    let waiting = notices(&env).await;
+    let notice = waiting.iter().find(|i| i.body["key"] == "untrusted-commands").expect("a notice");
+    assert!(notice.body["text"].as_str().unwrap().contains("git ls-files --error-unmatch ok.txt"), "{notice:?}");
+    // Still waiting a read later: nothing ran.
+    pdt_api::refresh_prs(&env.state).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let ci = ticket(&env).await["attempt"]["pr"]["ci"].clone();
+    assert!(!["running", "passed", "failed"].contains(&ci["state"].as_str().unwrap_or("")), "{ci}");
+    let pid = t["projectId"].as_str().unwrap();
+
+    common::approve_commands(&env.app, pid, None).await;
+    assert!(
+        !notices(&env).await.iter().any(|i| i.body["key"] == "untrusted-commands"),
+        "approving it closes the notice"
+    );
+    pdt_api::refresh_prs(&env.state).await;
+    wait_for(&env, |t| t["attempt"]["pr"]["ci"]["state"] == "passed").await;
 }
 
 #[tokio::test]

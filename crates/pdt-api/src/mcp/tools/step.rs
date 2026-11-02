@@ -69,7 +69,10 @@ pub(super) fn defs() -> Vec<Tool> {
             decl: ToolDecl::new("ask_user", "Ask you questions (they wait in the Inbox)").pm(),
             title: "Ask the user",
             description: "Puts questions in the user's Inbox. Their answers come back as a message; end your turn \
-                          after asking. In a workflow step the step waits for them instead of stalling.",
+                          after asking. In a workflow step the step waits for them instead of stalling. Keep each \
+                          `question` to one line (at most 120 characters); put the background in `context` \
+                          (Markdown), each option's meaning and trade-offs in its choice's `description`, and the \
+                          choice you recommend in `recommended` with `why`.",
             schema: schema::<AskUser>,
         },
         Tool {
@@ -333,4 +336,25 @@ pub(crate) async fn add_review_comment(
     };
     let author = cx.session.persona.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| "agent".into());
     crate::review::add_comment(st, &wt_id, input, &author, true).await.map_err(api)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ask_user_takes_context_described_choices_and_a_recommendation() {
+        let s = schema::<AskUser>().to_string();
+        for want in ["\"context\"", "\"recommended\"", "\"why\"", "\"label\"", "\"description\"", "120 characters"] {
+            assert!(s.contains(want), "missing {want} in {s}");
+        }
+        let a: AskUser = args(json!({"questions": [{"question": "Which?", "context": "Background.",
+            "choices": [{"label": "A", "description": "Pros."}, "B"], "recommended": "A", "why": "Simpler."}]}))
+        .unwrap();
+        assert_eq!(a.questions[0].choices[1].label, "B");
+        assert_eq!(a.questions[0].recommended.as_deref(), Some("A"));
+        // The old shape still fits.
+        let a: AskUser = args(json!({"questions": [{"question": "Which?", "choices": ["A", "B"]}]})).unwrap();
+        assert_eq!(a.questions[0].choices[0].description, None);
+    }
 }

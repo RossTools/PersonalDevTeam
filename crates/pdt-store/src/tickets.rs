@@ -576,6 +576,7 @@ fn to_event(r: &SqliteRow) -> Result<TicketEvent, StoreError> {
         actor,
         body: r.try_get("body")?,
         agent: AgentBy::of_event(kind, actor, data.as_ref()),
+        proposed_by: AgentBy::proposed(data.as_ref()),
         data,
         created_at: r.try_get("created_at")?,
     })
