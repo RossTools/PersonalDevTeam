@@ -433,6 +433,27 @@ pub fn parse_change(sha: &str, message: &str) -> Change {
     Change { sha: sha.to_string(), subject, title, ticket, pr }
 }
 
+/// Release notes cut to about `max` characters for an announcement (PDT-373): whole lines while they fit (at least
+/// the first, cut short), then `…`.
+pub fn notes_summary(notes: &str, max: usize) -> String {
+    let notes = notes.trim();
+    if notes.chars().count() <= max {
+        return notes.to_string();
+    }
+    let mut out = String::new();
+    for line in notes.lines() {
+        if out.chars().count() + line.chars().count() + 1 > max {
+            break;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if out.trim().is_empty() {
+        out = notes.chars().take(max.saturating_sub(1)).collect();
+    }
+    format!("{}\n…", out.trim_end())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -721,5 +742,13 @@ mod tests {
         let c = parse_change("d", "Note: not a key (#x)");
         assert_eq!((c.title.as_str(), c.ticket, c.pr), ("Note: not a key (#x)", None, None));
         assert_eq!(parse_change("d", "").title, "");
+    }
+
+    #[test]
+    fn notes_are_cut_at_a_line_for_an_announcement() {
+        assert_eq!(notes_summary("  short\n", 100), "short");
+        let notes = "### Added\n- one\n- two\n- three";
+        assert_eq!(notes_summary(notes, 20), "### Added\n- one\n…");
+        assert_eq!(notes_summary("abcdefghij", 5), "abcd\n…", "a first line too long is cut");
     }
 }

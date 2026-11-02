@@ -6,6 +6,7 @@ mod all_listed;
 #[path = "../../pdt-api/tests/common/mod.rs"]
 mod common;
 
+mod after_release;
 mod discord;
 mod dm;
 mod pm;

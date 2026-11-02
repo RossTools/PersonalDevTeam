@@ -1415,8 +1415,14 @@ pub struct ReleasePublished {
     pub published_at: Option<String>,
     /// Its notes (Markdown).
     pub notes: String,
+    /// The start of its notes, whole lines up to about 500 characters (an announcement's).
+    #[serde(default)]
+    pub summary: String,
     pub assets: Vec<ReleaseAssetRef>,
 }
+
+/// The length [`ReleasePublished::summary`] is cut to.
+pub const RELEASE_SUMMARY_CHARS: usize = 500;
 
 /// `update.available` (PDT-365).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]

@@ -265,6 +265,25 @@ pub struct ChangeReview {
     pub collaborator: bool,
 }
 
+/// A text file in a repository ([`Forge::file`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoFile {
+    pub text: String,
+    /// The forge's id of this version of it, which [`FileWrite::replaces`] names.
+    pub id: String,
+}
+
+/// A commit of one file ([`Forge::write_file`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileWrite {
+    pub branch: String,
+    pub path: String,
+    pub text: String,
+    pub message: String,
+    /// The [`RepoFile::id`] it replaces (the forge refuses the write when the file changed since); None for a new file.
+    pub replaces: Option<String>,
+}
+
 /// A published release (never a draft; a pre-release only where a call says so).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Release {
@@ -478,6 +497,22 @@ pub trait Forge: Send + Sync {
     /// (PDT-288: whether main changed since a release).
     fn commits_ahead(&self, _repo: &str, _base: &str, _head: &str) -> Result<Option<u64>, ForgeError> {
         unsupported(self.name(), "comparisons")
+    }
+    /// The repository's default branch (PDT-373).
+    fn default_branch(&self, _repo: &str) -> Result<String, ForgeError> {
+        unsupported(self.name(), "default branches")
+    }
+    /// A text file on `branch`; None when the branch has no file at `path`.
+    fn file(&self, _repo: &str, _path: &str, _branch: &str) -> Result<Option<RepoFile>, ForgeError> {
+        unsupported(self.name(), "files to read")
+    }
+    /// Makes `branch` at `from`'s head; false when `branch` is already there (left as it is).
+    fn create_branch(&self, _repo: &str, _branch: &str, _from: &str) -> Result<bool, ForgeError> {
+        unsupported(self.name(), "branches to make")
+    }
+    /// Commits one file to a branch; the new commit's id.
+    fn write_file(&self, _repo: &str, _write: &FileWrite) -> Result<String, ForgeError> {
+        unsupported(self.name(), "files to write")
     }
 }
 

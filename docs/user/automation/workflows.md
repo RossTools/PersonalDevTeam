@@ -260,7 +260,7 @@ Runs that start each other through run events stop after three in a row.
 These ones react to releases, PDT itself and what it looks after:
 
 - **Release published**: a release or pre-release appeared on a project's repository (GitHub or GitLab). It carries
-  the tag, name, link, notes, its files and whether it's a pre-release. PDT looks every minute at the projects a
+  the tag, name, link, notes (and `summary`, their start), its files and whether it's a pre-release. PDT looks every minute at the projects a
   turned-on trigger covers; the first look only notes the releases already there.
 - **PDT update available**: a newer version of PDT is out on this computer's update channel, once per version.
 - **PDT updated**: PDT started on a version it just updated to, and says whether it updated by itself (when idle)
@@ -430,6 +430,30 @@ Actions workflow you can start by hand) and follows it to the published release.
 major), which you confirm. Or ask the [PM](the-pm.md) ("cut a minor release") and it runs this for you. When the
 release is published you get a notification and an Inbox item with its link. Your workflow and GitHub do the merging
 and tagging, not PDT.
+
+### After a release
+
+**After a release** (under **Releases**) announces each new release of a project in a chat channel and bumps its
+Homebrew cask. Each part is optional: fill in the ones you want.
+
+1. **New workflow** › **After a release**, in the project.
+2. **Stable releases only** (on): pre-releases are left alone. Turn it off to announce and bump them too.
+3. **Announce in**: a chat connection (a Discord webhook, which posts to its channel). It posts the release's name,
+   the start of its notes and its link. Leave it empty for no announcement.
+4. **Homebrew tap** (`owner/homebrew-tap`, on GitHub) and **Cask** (its file is `Casks/<cask>.rb`): PDT downloads the
+   release's macOS file, then sets the cask's `version` and `sha256` and opens a pull request on the tap. Leave the
+   tap empty for no cask bump.
+5. Optionally **macOS file**, a pattern for which of the release's files the cask installs (`*.dmg`,
+   `*.app.tar.gz`; by default the first `.dmg`, else `.app.tar.gz`, else `.app.zip`), **Push instead of a pull
+   request** to commit to the tap straight away, and the **Tap branch** (its default branch when empty).
+6. **Create workflow**, check it with **Dry run**, and turn it on.
+
+The cask needs one `version "…"` line and one `sha256 "…"` line: one file for every Mac. A `url` that spells out the
+version gets the new one too; one with `#{version}` needs nothing. If the cask is already at the release, nothing
+changes. Your GitHub login needs push access to the tap.
+
+For PDT's own releases, set **macOS file** to `*.app.tar.gz` (the universal app) and point the cask's `url` at
+`…/releases/download/v#{version}/<that file's name>`.
 
 ### Report a missing scheduled release
 

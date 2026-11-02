@@ -62,7 +62,7 @@ impl Integration for Github {
     }
 
     fn templates(&self) -> Vec<pdt_core::workflow::template::Template> {
-        use crate::workflow::{outside_prs, templates};
+        use crate::workflow::{after_release, outside_prs, templates};
         vec![
             templates::issue_triage(),
             crate::workflow::builtins::cut_release_template(),
@@ -73,6 +73,12 @@ impl Integration for Github {
                 pdt_core::workflow::template::Category::Issues,
                 outside_prs::params(),
                 outside_prs::doc(),
+            ),
+            templates::builtin(
+                after_release::ID,
+                pdt_core::workflow::template::Category::Releases,
+                after_release::params(),
+                after_release::doc(),
             ),
         ]
     }
@@ -95,6 +101,7 @@ impl Integration for Github {
             Box::new(GithubChangeRequest),
             Box::new(GithubRelease),
             Box::new(GithubNightly),
+            Box::new(crate::workflow::nodes::homebrew::HomebrewCask),
             Box::new(crate::github_workflow_runs::WorkflowFailed),
             Box::new(crate::workflow::nodes::workflow_runs::GithubWorkflowWatch),
             Box::new(crate::workflow::nodes::workflow_runs::GithubWorkflowRerun),

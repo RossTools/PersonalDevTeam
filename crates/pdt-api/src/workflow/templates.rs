@@ -290,6 +290,9 @@ pub(crate) fn filled(t: &Template, values: &Map<String, Value>) -> Result<Workfl
     if t.builtin && t.id.strip_prefix(BUILTIN_PREFIX) == Some(super::outside_prs::ID) {
         return super::outside_prs::fill(values);
     }
+    if t.builtin && t.id.strip_prefix(BUILTIN_PREFIX) == Some(super::after_release::ID) {
+        return super::after_release::fill(values);
+    }
     fill(&t.doc, values)
 }
 
@@ -648,7 +651,7 @@ mod tests {
         for t in &all {
             assert!(ids.insert(t.id.clone()), "{} twice", t.id);
             check_params(&t.params).unwrap();
-            let d = fill(&t.doc, &placeholder_values(&t.params)).unwrap();
+            let d = filled(t, &placeholder_values(&t.params)).unwrap();
             let issues = validate(&d, crate::integrations::test_registry().catalog());
             let errors: Vec<_> = issues.iter().filter(|i| i.severity == Severity::Error).collect();
             assert!(errors.is_empty(), "{}: {errors:?}", t.id);

@@ -20,4 +20,8 @@ publishedAt: string | null,
 /**
  * Its notes (Markdown).
  */
-notes: string, assets: Array<ReleaseAssetRef>, };
+notes: string, 
+/**
+ * The start of its notes, whole lines up to about 500 characters (an announcement's).
+ */
+summary: string, assets: Array<ReleaseAssetRef>, };

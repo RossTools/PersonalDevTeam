@@ -16,6 +16,7 @@ pub mod forge;
 pub mod git_url;
 pub mod github_issue;
 pub mod handoff;
+pub mod homebrew;
 pub mod host;
 pub mod host_path;
 pub mod identity;

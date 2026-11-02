@@ -11,6 +11,7 @@ pub mod conflicts;
 pub mod end;
 pub mod gate;
 pub mod github;
+pub mod homebrew;
 pub mod host_update;
 pub mod http;
 pub mod inbox_admit;

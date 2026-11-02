@@ -1,6 +1,7 @@
 //! Workflows (Phase 7a): the node catalog, the durable
 //! engine, `session.send`'s outbox, the built-ins (and the templates with their own module: the Pipeline, outside pull requests), workflows kept in a repo, and the API.
 
+pub(crate) mod after_release;
 pub(crate) mod agent;
 pub(crate) mod builtins;
 pub(crate) mod catalog;

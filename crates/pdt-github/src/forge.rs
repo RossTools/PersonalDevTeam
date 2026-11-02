@@ -253,4 +253,50 @@ impl Forge for GithubApi {
             Err(e) => Err(e.into()),
         }
     }
+    fn default_branch(&self, repo: &str) -> Result<String, ForgeError> {
+        let v = self.get(&format!("repos/{repo}"))?;
+        Ok(v["default_branch"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| GhError::BadAnswer("a repository without default_branch".into()))?)
+    }
+    /// The contents API: the text comes base64-encoded, its blob sha is the id.
+    fn file(&self, repo: &str, path: &str, branch: &str) -> Result<Option<RepoFile>, ForgeError> {
+        match self.get(&format!("repos/{repo}/contents/{}?ref={}", path_segments(path), encode(branch))) {
+            Ok(v) => Ok(Some(parse_file(&v)?)),
+            Err(GhError::Status(404, _)) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+    fn create_branch(&self, repo: &str, branch: &str, from: &str) -> Result<bool, ForgeError> {
+        let head = self.get(&format!("repos/{repo}/git/ref/heads/{}", path_segments(from)))?;
+        let sha = head["object"]["sha"].as_str().ok_or_else(|| GhError::BadAnswer(format!("no head for {from}")))?;
+        let body = json!({"ref": format!("refs/heads/{branch}"), "sha": sha});
+        match self.send_json("POST", &format!("repos/{repo}/git/refs"), body) {
+            Ok(_) => Ok(true),
+            Err(GhError::Status(422, m)) if m.contains("already exists") => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+    fn write_file(&self, repo: &str, write: &FileWrite) -> Result<String, ForgeError> {
+        use base64::Engine;
+        let mut body = json!({
+            "message": write.message,
+            "content": base64::engine::general_purpose::STANDARD.encode(&write.text),
+            "branch": write.branch,
+        });
+        if let Some(id) = &write.replaces {
+            body["sha"] = json!(id);
+        }
+        match self.send_json("PUT", &format!("repos/{repo}/contents/{}", path_segments(&write.path)), body) {
+            Ok(v) => Ok(v["commit"]["sha"]
+                .as_str()
+                .map(String::from)
+                .ok_or_else(|| GhError::BadAnswer("a file write without its commit".into()))?),
+            Err(GhError::Status(409 | 422, m)) => {
+                Err(ForgeError::Failed(format!("GitHub refused to write {}: {m}. Did it change since?", write.path)))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
 }

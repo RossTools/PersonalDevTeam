@@ -140,6 +140,10 @@ export const plugins: IntegrationInfo[] = [
         "title": "Watch for a scheduled release"
       },
       {
+        "id": "github.homebrew_cask",
+        "title": "Bump a Homebrew cask"
+      },
+      {
         "id": "github.workflow.failed",
         "title": "GitHub workflow run failed"
       },
@@ -176,6 +180,10 @@ export const plugins: IntegrationInfo[] = [
       {
         "id": "builtin:review-outside-prs",
         "title": "Review outside pull requests"
+      },
+      {
+        "id": "builtin:after-release",
+        "title": "After a release"
       }
     ],
     "workflows": [

@@ -7,8 +7,9 @@
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::parse;
 use crate::workflow::nodes::trigger::TriggerConfig;
+use pdt_core::release::notes_summary;
 use pdt_core::workflow::api::{NewLogEvent, Scope};
-use pdt_core::workflow::events::{RELEASE_PUBLISHED, ReleaseAssetRef, ReleasePublished};
+use pdt_core::workflow::events::{RELEASE_PUBLISHED, RELEASE_SUMMARY_CHARS, ReleaseAssetRef, ReleasePublished};
 use serde_json::json;
 use std::collections::BTreeSet;
 
@@ -88,6 +89,7 @@ pub async fn refresh_releases(st: &AppState) {
                     prerelease: r.prerelease,
                     published_at: r.published_at.clone(),
                     notes: r.notes.clone(),
+                    summary: notes_summary(&r.notes, RELEASE_SUMMARY_CHARS),
                     assets: r
                         .assets
                         .iter()
