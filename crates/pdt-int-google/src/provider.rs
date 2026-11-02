@@ -9,7 +9,7 @@ use crate::api::{Account, Session};
 use crate::drive;
 use pdt_api::sdk::documents::{
     CommentReply, DocumentComment, DocumentContent, DocumentEdit, DocumentKind, DocumentProvider, NewFile,
-    ProviderCapabilities, ProviderError, ProviderFile, ProviderResult, by_agent,
+    ProviderCapabilities, ProviderError, ProviderFile, ProviderPicker, ProviderResult, by_agent,
 };
 use pdt_api::sdk::{AppState, BoxFut};
 use std::sync::Arc;
@@ -71,6 +71,16 @@ impl DocumentProvider for GoogleDocs {
     }
     fn label(&self) -> &'static str {
         "Google"
+    }
+    fn picker(&self) -> Option<ProviderPicker> {
+        Some(ProviderPicker {
+            label: "Pick from Google Drive".into(),
+            module: "/api/google/picker.js".into(),
+            accounts: "/api/google/accounts".into(),
+            help: "To pick any file from your Drive, sign in to Google in Settings → Plugins → Google and give the \
+                   account a picker API key and project number."
+                .into(),
+        })
     }
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {

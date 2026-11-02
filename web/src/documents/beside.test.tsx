@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 const all = { docs: true, sheets: true, create: true, search: true, edit: true, rename: true, delete: true, comments: true, embed: false, charts: false, live: false };
-const providers: DocumentProvidersView = { providers: [{ id: 'fake', label: 'Fake', capabilities: all }], default: 'fake', folder: '/d' };
+const providers: DocumentProvidersView = { providers: [{ id: 'fake', label: 'Fake', capabilities: all, picker: null }], default: 'fake', folder: '/d' };
 
 function doc(id: string, title: string, over: Partial<Document> = {}): Document {
   return {

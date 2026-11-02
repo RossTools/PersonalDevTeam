@@ -237,6 +237,12 @@ pub trait Integration: Send + Sync {
         None
     }
 
+    /// Its accounts' sign-in in the browser (PDT-378), if they sign in on the service's consent page: its page in
+    /// Settings → Plugins shows it.
+    fn sign_in(&self) -> Option<pdt_core::integration::SignIn> {
+        None
+    }
+
     /// One of PDT's own that the user can turn off (GitHub, PDT-251). A forge plugin ([`Integration::forge_kind`])
     /// can't be turned off while a project uses its forge.
     fn can_turn_off(&self) -> bool {
@@ -751,6 +757,8 @@ pub struct IntegrationInfo {
     pub forge_projects: Vec<PluginProject>,
     /// The forge it provides (`github`, `gitlab`), whose logins its page shows (`/api/forges/{kind}/login`).
     pub forge_kind: Option<String>,
+    /// How its accounts sign in in the browser ([`Integration::sign_in`]), while this build has it.
+    pub sign_in: Option<pdt_core::integration::SignIn>,
     pub status: PluginStatus,
     /// What is failing, for [`PluginStatus::Error`]: the connection's name and its error.
     pub error: Option<String>,
@@ -915,6 +923,7 @@ fn info(
         can_turn_off: core && i.can_turn_off(),
         forge_projects,
         forge_kind: i.forge_kind().map(|k| k.to_string()),
+        sign_in: i.sign_in(),
         status,
         error,
         error_connection,
@@ -966,6 +975,7 @@ fn infos(ints: &Integrations, facts: &PluginFacts) -> Vec<IntegrationInfo> {
             can_turn_off: false,
             forge_projects: vec![],
             forge_kind: None,
+            sign_in: None,
             status: PluginStatus::NotBuilt,
             error: None,
             error_connection: None,

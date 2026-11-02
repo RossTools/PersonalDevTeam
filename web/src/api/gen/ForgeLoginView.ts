@@ -7,6 +7,10 @@ import type { ForgeDeviceCode } from "./ForgeDeviceCode";
  */
 export type ForgeLoginView = { kind: string, label: string, 
 /**
+ * What the forge calls a change request (`pull request`, GitLab's `merge request`), for its page's wording.
+ */
+changeRequestName: string, 
+/**
  * The public host's API, for the form (github.com's); None when the forge is only self-hosted.
  */
 defaultApiUrl: string | null, 

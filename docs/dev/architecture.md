@@ -69,7 +69,7 @@ and `backups/` (a copy taken before migrations).
 | `pdt-sheet` | Local sheets on IronCalc: `.xlsx` and `.csv` in and out, cells with computed values, formats, sheets, sort and filter, and IronCalc's sync diffs. |
 | `pdt-host` | The supervisor: running pdtd, installing updates, rolling back, login registration. |
 | `pdtd` | The daemon binary: config, logging, startup (`main.rs`: the state, the startup resume and the poll), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
-| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them; the web shows what they declare: a connection kind's fields (switches, patterns, conditions), invite link (`link`), row summary (`summary`) and status line (`status`, `Integration::connection_status`, `GET /api/connections/{id}/status`), a project settings schema's import by key (`import`, `Integration::import_by_key`, `POST /api/projects/{id}/import/{integration}`), and each plugin's label. |
+| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them; the web shows what they declare: a connection kind's fields (switches, patterns, conditions), invite link (`link`), row summary (`summary`) and status line (`status`, `Integration::connection_status`, `GET /api/connections/{id}/status`), a project settings schema's import by key (`import`, `Integration::import_by_key`, `POST /api/projects/{id}/import/{integration}`), each plugin's label, its accounts' sign-in in the browser (`Integration::sign_in`, pdt-core `integration::SignIn`: the routes under its `api`, which the web's `AccountSignIn` calls), a document provider's own file picker (`DocumentProvider::picker`, `ProviderPicker`: an ES module the provider serves, which the import dialog loads and runs for an account) and a forge's name for a change request (`ForgeLoginView.changeRequestName`). |
 
 Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients match on `code`. API types derive ts-rs
 and are generated into `web/src/api/gen`.
@@ -400,7 +400,7 @@ authorization code flow with PKCE, the `drive.file` scope only) keeps the refres
 own (`connection:<id>:google`, `accounts.rs`), so editing the connection keeps them. A connection with no client ID
 uses PDT's own clients (`builtin.rs`), built in from `PDT_GOOGLE_*` (`option_env!`; the release and nightly bundle
 jobs pass the repository's secrets through `.github/actions/bundle`; a build without them offers only the user's own
-client, `GET /api/google/client`). Their only redirect URI is the website's `/oauth/google` page
+client, `IntegrationInfo.signIn.builtIn`). Their only redirect URI is the website's `/oauth/google` page
 (`site/public/oauth/google.js`): `state` is `<nonce>.<base64url(origin)>`, the page forwards only to an origin that
 looks like a PDT (loopback, private and Tailscale addresses, `localhost`, `*.ts.net`: the same rule as
 `builtin::pdt_origin`, which pdtd applies before issuing one) and asks first, and the callback takes only a state it
@@ -421,8 +421,10 @@ at one index, UTF-16 indexes, sections found in `documents.get`'s structure); `s
 `batchUpdate` requests and `values.batchUpdate` writes (`USER_ENTERED`), in order. A chart's PDT id becomes Google's numeric chart id by
 a hash and is kept in the spreadsheet's developer metadata (`pdt.chart`), so a read gives charts back under PDT's ids. `routes.rs` signs in and out
 (`/api/google/…`; the callback page is where Google sends the browser back) and gives the browser Google's file
-picker's token; signing in and the picker are for the web app only (its UI token). The web app loads the picker
-(`web/src/documents/google.tsx`); a picked file is imported like any other. The document page embeds the provider's
+picker's token; signing in and the picker are for the web app only (its UI token). The plugin declares both: its
+sign-in (`Integration::sign_in`), which Settings → Plugins → Google shows, and its picker, `src/picker.js` served at
+`/api/google/picker.js`, which the import dialog loads and runs (the module asks for the token through the web app's
+UI-token GET); a picked file is imported like any other. The document page embeds the provider's
 `embed_url` (Google's editor, with `authuser`) and falls back to PDT's own reading.
 
 **GitLab.** An optional plugin (`crates/pdt-int-gitlab`, pdtd's `gitlab` feature) over GitLab's REST API (v4), for
