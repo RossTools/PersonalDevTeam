@@ -166,6 +166,45 @@ describe('backlog', () => {
     await waitFor(() => expect(screen.queryByRole('toolbar', { name: 'Bulk actions' })).not.toBeInTheDocument());
   });
 
+  it('drops tickets a bulk action moves out of the list from the selection, so a row click opens it again', async () => {
+    let listed = rows;
+    const calls = stub({ 'POST /api/tickets/bulk': (c: Call) => {
+      const { ids } = c.body as { ids: string[] };
+      listed = rows.filter((t) => !ids.includes(t.id));
+      return { count: ids.length };
+    }, 'GET /api/tickets/t3': ticket(3), 'GET /api/tickets/t3/events': { items: [], nextCursor: null } }, () => page(listed, null, listed.length));
+    renderWithQuery(<Harness />);
+    const grid = await screen.findByRole('grid', { name: 'Tickets' });
+    await userEvent.click(within(within(grid).getByRole('row', { name: /ALP-1 / })).getByRole('checkbox'));
+    await userEvent.click(within(within(grid).getByRole('row', { name: /ALP-2 / })).getByRole('checkbox'));
+    await userEvent.click(within(screen.getByRole('toolbar', { name: 'Bulk actions' })).getByRole('button', { name: 'Move to To do' }));
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/tickets/bulk')).toBe(true));
+    await waitFor(() => expect(within(grid).queryByRole('row', { name: /ALP-1 / })).not.toBeInTheDocument());
+    expect(screen.queryByRole('toolbar', { name: 'Bulk actions' })).not.toBeInTheDocument();
+
+    await userEvent.click(within(grid).getByRole('row', { name: /ALP-3 / }));
+    expect(screen.queryByRole('toolbar', { name: 'Bulk actions' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: /ALP-3/ })).toBeInTheDocument();
+  });
+
+  it('keeps tickets a bulk action leaves in the list selected, and Escape clears them', async () => {
+    stub({ 'POST /api/tickets/bulk': { count: 2 } });
+    renderWithQuery(<Harness />);
+    const grid = await screen.findByRole('grid', { name: 'Tickets' });
+    await userEvent.click(within(within(grid).getByRole('row', { name: /ALP-1 / })).getByRole('checkbox'));
+    await userEvent.click(within(within(grid).getByRole('row', { name: /ALP-2 / })).getByRole('checkbox'));
+    const bar = screen.getByRole('toolbar', { name: 'Bulk actions' });
+    await userEvent.click(within(bar).getByRole('button', { name: 'Move to top' }));
+    await waitFor(() => expect(within(bar).getByRole('button', { name: 'Move to top' })).toBeEnabled());
+    expect(bar).toHaveTextContent('2 tickets selected');
+
+    // Escape from outside the list and the bar.
+    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('toolbar', { name: 'Bulk actions' })).not.toBeInTheDocument());
+    expect(within(within(grid).getByRole('row', { name: /ALP-1 / })).getByRole('checkbox')).not.toBeChecked();
+  });
+
   it('ranks with Alt+Up/Down in one project sorted by rank, and not otherwise', async () => {
     const calls = stub({ 'POST /api/tickets/t2/rank': ticket(2) });
     renderWithQuery(<Harness />);
