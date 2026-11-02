@@ -3,7 +3,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{argv_agent, call, git};
+use common::{argv_agent, call, conversation, git};
 use pdt_api::{AppState, router};
 use pdt_core::pr::{CiRun, CiState, Mergeable, PrState, QueueRemoval, QueueRemovalReason};
 use pdt_forge::ChangeRequest;
@@ -44,7 +44,7 @@ async fn setup_as(tmp: &std::path::Path, mode: &str) -> Env {
     let bin = tmp.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.platform.claude_config_dir = Some(tmp.join("claude-config"));
     state.platform.claude_program = if mode == "conversation" {
         env!("CARGO_BIN_EXE_fake-agent").to_string()
@@ -469,24 +469,9 @@ async fn moving_a_ticket_to_done_reads_its_pr_again() {
     env.state.ptys.shutdown().await;
 }
 
-async fn conversation_events(env: &Env) -> Vec<Value> {
-    let (s, v) = call(&env.app, "GET", &format!("/api/sessions/{}/events?after=0", env.session), None).await;
-    assert_eq!(s, StatusCode::OK, "{v}");
-    let mut all = v.as_array().unwrap().clone();
-    all.sort_by_key(|e| e["pos"].as_i64());
-    all
-}
-
 /// Waits until the conversation has taken `n` turns.
 async fn wait_turns(env: &Env, n: usize) -> Vec<Value> {
-    for _ in 0..300 {
-        let all = conversation_events(env).await;
-        if all.iter().filter(|e| e["event"]["kind"] == "turn" && e["event"]["phase"] == "ended").count() >= n {
-            return all;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("never saw {n} turns end: {:#?}", conversation_events(env).await);
+    conversation::wait_turns(&env.app, &env.session, n).await
 }
 
 #[tokio::test]

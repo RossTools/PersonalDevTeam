@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 async fn setup(tmp: &std::path::Path) -> (axum::Router, AppState) {
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let state = AppState::new(store, tmp.join("data"));
+    let state = common::app_state(store, tmp);
     (router(state.clone(), None), state)
 }
 
@@ -64,7 +64,7 @@ async fn token_presence_comes_from_the_secret_store() {
 async fn setup_env(tmp: &std::path::Path, env: pdt_api::HostEnv) -> (axum::Router, AppState) {
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
     std::fs::create_dir_all(tmp.join("data")).unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.listen_port = 7420;
     state.host_env = std::sync::Arc::new(env);
     (router(state.clone(), None), state)

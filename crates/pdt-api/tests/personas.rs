@@ -5,7 +5,7 @@ use crate::common;
 
 use axum::http::StatusCode;
 use common::call;
-use pdt_api::{AppState, router};
+use pdt_api::router;
 use pdt_core::persona::{PersonaAuthor, PersonaSetup};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -14,7 +14,7 @@ use std::path::Path;
 /// One daemon run on the data in `dir`: built-ins are installed or updated on its first persona request.
 async fn run(dir: &Path) -> (axum::Router, Store) {
     let store = Store::open(&dir.join("pdt.db")).await.unwrap();
-    let state = AppState::new(store.clone(), dir.join("data"));
+    let state = common::app_state(store.clone(), dir);
     (router(state, None), store)
 }
 

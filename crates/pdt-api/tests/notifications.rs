@@ -19,7 +19,7 @@ async fn setup(tmp: &Path) -> (axum::Router, pdt_api::AppState) {
     std::fs::create_dir_all(&repo).unwrap();
     common::git(&repo, &["init", "-q", "-b", "main"]);
     let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let state = pdt_api::AppState::new(store.clone(), tmp.join("data"));
+    let state = common::app_state(store.clone(), tmp);
     let app = pdt_api::router(state.clone(), None);
     let (_, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
@@ -172,7 +172,7 @@ async fn cleared_updates_stay_gone_and_their_cause_does_not_raise_them_again() {
     // After a restart (the store opened again) they are still gone.
     drop((app, st));
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let st = pdt_api::AppState::new(store, tmp.path().join("data"));
+    let st = common::app_state(store, tmp.path());
     let app = pdt_api::router(st.clone(), None);
     pdt_api::sync_notifications(&st).await;
     assert!(list(&app, "updates").await.is_empty());

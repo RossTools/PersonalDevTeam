@@ -5,6 +5,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -30,7 +31,7 @@ async fn setup() -> Env {
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "init", "-q"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.claude_program = FAKE.to_string();
     state.platform.login_path = None;
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
@@ -142,17 +143,13 @@ async fn say_allowed(env: &Env, session: &str, text: &str) -> String {
 }
 
 async fn wait_said(env: &Env, session: &str, n: usize) -> String {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
+    wait_until(&format!("the agent to say {n} things"), async || {
         // The engine's tick delivers the outbox (an Inbox answer's message).
         pdt_api::run_workflows(&env.state).await;
         let said = agent_says(env, session).await;
-        if said.len() >= n {
-            return said[n - 1].clone();
-        }
-        assert!(Instant::now() < deadline, "the agent said only {said:?}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        if said.len() >= n { Ok(said[n - 1].clone()) } else { Err(said) }
+    })
+    .await
 }
 
 #[tokio::test]

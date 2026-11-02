@@ -1,5 +1,7 @@
 #[path = "../../../test-support/port_blocks.rs"]
 mod port_blocks;
+#[path = "../../../test-support/wait.rs"]
+mod wait;
 
 use pdt_core::handoff::{
     DB_FILE, UpdateOutcome, UpdateRequest, UpdateResult, UpdateSkip, db_snapshot_dir, request_path, result_path,
@@ -15,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+use wait::{still_after_blocking, wait_until_blocking, wait_within_blocking};
 
 const EXE: &str = std::env::consts::EXE_SUFFIX;
 
@@ -151,29 +154,20 @@ impl Drop for Outside {
 }
 
 fn wait_version(port: u16, want: &str, within: Duration) {
-    let end = Instant::now() + within;
-    loop {
-        if probe(port) == (Probe::Ours { version: want.into() }) {
-            return;
-        }
-        assert!(Instant::now() < end, "never saw v{want} on port {port} (last: {:?})", probe(port));
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    wait_within_blocking(&format!("v{want} on port {port}"), within, || {
+        let p = probe(port);
+        if p == (Probe::Ours { version: want.into() }) { Ok(()) } else { Err(p) }
+    });
 }
 
 /// The final result: written, and the install marker gone (a provisional `installed` precedes the health check).
 fn read_result(data: &Path) -> UpdateResult {
-    let end = Instant::now() + Duration::from_secs(60);
-    loop {
-        if !marker_path(data).exists()
-            && let Ok(b) = std::fs::read(result_path(data))
-            && let Ok(r) = serde_json::from_slice(&b)
-        {
-            return r;
+    wait_within_blocking("the update result", Duration::from_secs(60), || {
+        if marker_path(data).exists() {
+            return None;
         }
-        assert!(Instant::now() < end, "no update result was written");
-        std::thread::sleep(Duration::from_millis(100));
-    }
+        serde_json::from_slice(&std::fs::read(result_path(data)).ok()?).ok()
+    })
 }
 
 fn update_request(version: &str, asset: &Path) -> UpdateRequest {
@@ -204,17 +198,14 @@ fn hand_over(port: u16) {
 
 /// Waits for pdt-host to log `needle` (the signal that it reached a step).
 fn wait_log(cfg: &HostConfig, needle: &str) {
-    let end = Instant::now() + Duration::from_secs(60);
-    while !read(&log_path(cfg)).contains(needle) {
-        let launch = cfg.data_dir.join("logs").join("pdtd-launch.log");
-        assert!(
-            Instant::now() < end,
-            "pdt-host never logged {needle:?}:\n{}\npdtd's output:\n{}",
-            read(&log_path(cfg)),
-            read(&launch)
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_until_blocking(&format!("pdt-host to log {needle:?}"), || {
+        let log = read(&log_path(cfg));
+        if log.contains(needle) {
+            return Ok(());
+        }
+        let launch = read(&cfg.data_dir.join("logs").join("pdtd-launch.log"));
+        Err(format!("pdt-host's log:\n{log}\npdtd's output:\n{launch}"))
+    });
 }
 
 fn read(path: &Path) -> String {
@@ -243,11 +234,7 @@ fn process_alive(pid: u32) -> bool {
 }
 
 fn wait_for_marker_gone(data: &Path) {
-    let end = Instant::now() + Duration::from_secs(30);
-    while marker_path(data).exists() {
-        assert!(Instant::now() < end, "the install marker was never removed");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_until_blocking("the install marker to be removed", || !marker_path(data).exists());
 }
 
 #[test]
@@ -260,8 +247,10 @@ fn starts_pdtd_supervised_and_restarts_it_after_a_crash() {
     assert!(install.join("crashed-once").exists(), "the first start crashed");
     assert_eq!(read(&install.join("env.txt")), "1", "PDT_SUPERVISED is set");
     // A clean exit (not an update) is restarted too.
+    // Each start writes env.txt: its return shows a new pdtd started, so the old one's answer can't pass for it.
+    std::fs::remove_file(install.join("env.txt")).unwrap();
     request_shutdown(port).unwrap();
-    std::thread::sleep(Duration::from_millis(300));
+    wait_until_blocking("pdtd to start again", || install.join("env.txt").exists());
     wait_version(port, "0.1.5", Duration::from_secs(20));
 }
 
@@ -627,8 +616,7 @@ fn with_nothing_to_run_it_keeps_trying() {
     std::fs::create_dir_all(&install).unwrap();
     let port = free_port();
     let h = supervise(config(&install, &tmp.path().join("data"), port), tmp.path().join("none"));
-    std::thread::sleep(Duration::from_secs(1));
-    assert!(h.is_running(), "pdt-host did not give up");
+    still_after_blocking("pdt-host giving up", Duration::from_secs(1), || !h.is_running());
     fake_install(&install, "0.1.5", "healthy");
     wait_version(port, "0.1.5", Duration::from_secs(20));
 }
@@ -644,9 +632,10 @@ fn adopts_a_running_pdtd_and_takes_over_when_it_stops() {
     wait_version(port, "0.1.5", Duration::from_secs(30));
     std::fs::remove_file(install.join("env.json")).unwrap();
     let _h = supervise(cfg.clone(), tmp.path().join("backup"));
-    std::thread::sleep(Duration::from_secs(2));
-    assert!(outside.0.try_wait().unwrap().is_none(), "the running pdtd was adopted, not restarted");
-    assert!(!install.join("env.json").exists(), "no pdtd was started");
+    // The running pdtd is adopted, not restarted, and no pdtd is started.
+    still_after_blocking("a restart of the adopted pdtd", Duration::from_secs(2), || {
+        outside.0.try_wait().unwrap().is_some() || install.join("env.json").exists()
+    });
     assert!(!read(&log_path(&cfg)).contains("different environment"), "{}", read(&log_path(&cfg)));
     request_shutdown(port).unwrap();
     let _ = outside.0.wait();
@@ -679,8 +668,9 @@ fn restarts_an_adopted_pdtd_started_with_other_variables() {
         std::thread::sleep(Duration::from_millis(100));
     }
     // Once: the restarted pdtd is this host's own and is left alone.
-    std::thread::sleep(Duration::from_secs(1));
-    assert_eq!(read(&log_path(&cfg)).matches("different environment").count(), 1, "{}", read(&log_path(&cfg)));
+    still_after_blocking("a second restart", Duration::from_secs(1), || {
+        read(&log_path(&cfg)).matches("different environment").count() != 1
+    });
 }
 
 /// Review round 2: a dismissed result is not written again when the new version passes its watch window.
@@ -791,10 +781,12 @@ fn recovery_waits_for_a_pdtd_that_will_not_stop() {
     let mut cfg = config(&install, &data, port);
     cfg.stop_timeout = Duration::from_secs(1);
     let _h = supervise(cfg, backup);
-    std::thread::sleep(Duration::from_secs(3));
-    assert!(marker_path(&data).exists(), "the marker is kept");
-    assert!(!result_path(&data).exists(), "nothing was rolled back yet");
-    assert!(read(&install.join("fake.json")).contains("0.1.6"), "the running version's files are untouched");
+    // The marker is kept, nothing is rolled back yet, and the running version's files are untouched.
+    still_after_blocking("a rollback", Duration::from_secs(3), || {
+        !marker_path(&data).exists()
+            || result_path(&data).exists()
+            || !read(&install.join("fake.json")).contains("0.1.6")
+    });
     // Still serving (one probe can take seconds on a loaded runner, so this is not a 1 s check).
     wait_version(port, "0.1.6", Duration::from_secs(10));
     drop(outside);
@@ -815,8 +807,8 @@ fn steps_down_when_another_pdt_host_takes_over() {
     let h = supervise(cfg.clone(), tmp.path().join("backup"));
     wait_version(port, "0.1.5", Duration::from_secs(20));
     std::fs::write(pdt_host::register::pid_path(&data), std::process::id().to_string()).unwrap();
-    std::thread::sleep(Duration::from_secs(1));
-    assert!(h.is_running(), "its own record is not another pdt-host");
+    // Its own record is not another pdt-host.
+    still_after_blocking("pdt-host stepping down", Duration::from_secs(1), || !h.is_running());
     let other = std::process::id().wrapping_add(1);
     std::fs::write(pdt_host::register::pid_path(&data), other.to_string()).unwrap();
     let end = Instant::now() + Duration::from_secs(20);

@@ -36,7 +36,7 @@ async fn setup_with(change: impl FnOnce(&mut AppState)) -> Env {
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "init", "-q"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.claude_program = FAKE.to_string();
     state.platform.login_path = None;
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
@@ -1249,7 +1249,7 @@ async fn restart(env: Env) -> Env {
     old.shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
     old.store.mark_running_interrupted(1).await.unwrap();
     pdt_api::shutdown_conversations(&old).await;
-    let mut state = AppState::new(old.store.clone(), tmp.path().join("data"));
+    let mut state = common::app_state(old.store.clone(), tmp.path());
     state.platform = old.platform.clone();
     state.conversations.notice_quiet = Duration::ZERO;
     state.conversations.background_grace = Duration::from_millis(500);

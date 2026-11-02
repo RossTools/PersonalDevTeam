@@ -11,7 +11,7 @@ async fn setup(tmp: &std::path::Path) -> (axum::Router, String) {
         std::process::Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success()
     );
     let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let app = pdt_api::router(pdt_api::AppState::new(store, tmp.join("data")), None);
+    let app = pdt_api::router(common::app_state(store, tmp), None);
     let (_, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
     (app, p["id"].as_str().unwrap().to_string())

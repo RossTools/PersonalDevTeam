@@ -46,7 +46,7 @@ async fn setup_with(gh: Option<std::sync::Arc<FakeForge>>) -> Env {
         git(&repo, &["config", "http.proxy", "http://127.0.0.1:1"]);
     }
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.claude_program = FAKE.to_string();
     state.platform.login_path = None;
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));

@@ -2,6 +2,7 @@
 
 use crate::common;
 
+use common::conversation::{self, ended, said};
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -26,7 +27,7 @@ async fn setup(tmp: &Path) -> Env {
     std::fs::create_dir_all(user_config.parent().unwrap()).unwrap();
     std::fs::write(&user_config, "{ \"devin\": { \"org_id\": \"org-1\" } }").unwrap();
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.platform.devin_program = FAKE.to_string();
     state.platform.devin_config_file = Some(user_config);
     state.platform.login_path = None;
@@ -48,41 +49,12 @@ async fn new_devin(env: &Env, extra: Value) -> String {
     v["id"].as_str().unwrap().to_string()
 }
 
-async fn events(env: &Env, id: &str) -> Vec<Value> {
-    let (s, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?after=0&limit=1000"), None).await;
-    assert_eq!(s, 200, "{v}");
-    let mut all = v.as_array().unwrap().clone();
-    all.sort_by_key(|e| e["pos"].as_i64());
-    all
-}
-
 async fn wait_for(env: &Env, id: &str, what: &str, f: impl Fn(&[Value]) -> bool) -> Vec<Value> {
-    for _ in 0..400 {
-        let all = events(env, id).await;
-        if f(&all) {
-            return all;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("never saw {what}: {:#?}", events(env, id).await);
-}
-
-fn ended(all: &[Value]) -> Vec<String> {
-    all.iter()
-        .filter(|e| e["event"]["kind"] == "turn" && e["event"]["phase"] == "ended")
-        .map(|e| e["event"]["status"].as_str().unwrap().to_string())
-        .collect()
+    conversation::wait_events(&env.app, id, what, f).await
 }
 
 async fn wait_turns(env: &Env, id: &str, n: usize) -> Vec<Value> {
-    wait_for(env, id, &format!("{n} turns"), |a| ended(a).len() >= n).await
-}
-
-fn said(all: &[Value]) -> Vec<String> {
-    all.iter()
-        .filter(|e| e["event"]["kind"] == "agent_message")
-        .map(|e| e["event"]["markdown"].as_str().unwrap().to_string())
-        .collect()
+    conversation::wait_turns(&env.app, id, n).await
 }
 
 fn open_request(all: &[Value]) -> Option<Value> {
@@ -102,18 +74,12 @@ async fn answer(env: &Env, id: &str, req: &str, a: Value) {
 }
 
 async fn session(env: &Env, id: &str) -> Value {
-    call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await.1
+    conversation::session(&env.app, id).await
 }
 
-/// Activity is recorded just after the event that changes it, so it is waited for (20 s: a loaded Windows runner).
+/// Activity is recorded just after the event that changes it, so it is waited for.
 async fn wait_activity(env: &Env, id: &str, want: &str) {
-    for _ in 0..800 {
-        if session(env, id).await["activity"] == want {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    panic!("activity never became {want}: {}", session(env, id).await);
+    conversation::wait_session(&env.app, id, "activity", want).await;
 }
 
 async fn stop(env: &Env, id: &str) {
@@ -287,7 +253,7 @@ async fn switching_to_the_terminal_and_back_imports_the_turns_taken_there() {
     assert!(env.state.ptys.is_running(&id), "Devin's own terminal runs the session");
     // A turn taken in the terminal lands in Devin's saved session (the stand-in's history file).
     tokio::time::sleep(Duration::from_millis(20)).await;
-    let saved = std::env::temp_dir().join(format!("fake-acp-saved-{devin_id}"));
+    let saved = env.state.data_dir.join("sessions").join(&id).join(format!("fake-acp-saved-{devin_id}"));
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
     let mut history = std::fs::read_to_string(&saved).unwrap();
     history.push_str(&format!("{}\n", json!({"text": "typed in the terminal", "atMs": at})));

@@ -25,7 +25,7 @@ async fn setup() -> Env {
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-q", "-m", "init"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let state = AppState::new(store, tmp.path().join("data"));
+    let state = common::app_state(store, tmp.path());
     let app = router(state.clone(), None);
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "Proj", "repoPath": repo.to_string_lossy()}))).await;
