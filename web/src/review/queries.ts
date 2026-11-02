@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { ChangedFile } from '../api/gen/ChangedFile';
 
@@ -37,11 +37,6 @@ export function useFileSides(worktreeId: string, file: ChangedFile | null) {
 
 export function useReviewComments(worktreeId: string) {
   return useQuery({ queryKey: commentsKey(worktreeId), queryFn: () => api.listReviewComments(worktreeId), refetchInterval: CHANGES_POLL });
-}
-
-export function useInvalidateReview(worktreeId: string) {
-  const qc = useQueryClient();
-  return () => invalidateReview(qc, worktreeId);
 }
 
 export function invalidateReview(qc: QueryClient, worktreeId: string) {

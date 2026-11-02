@@ -415,10 +415,3 @@ export function issuesOf(check: WorkflowCheck | null | undefined, id: string) {
 export function hasErrors(check: WorkflowCheck | null | undefined): boolean {
   return (check?.issues ?? []).some((i) => i.severity === 'error');
 }
-
-/** The document with positions filled in for every node (so a move in the graph doesn't jumble the rest). */
-export function withLayout(doc: WorkflowDoc, catalog: Catalog): WorkflowDoc {
-  if (doc.nodes.every((n) => n.position)) return doc;
-  const pos = layout(doc, catalog);
-  return { ...doc, nodes: doc.nodes.map((n) => (n.position ? n : { ...n, position: pos.get(n.id)! })) };
-}

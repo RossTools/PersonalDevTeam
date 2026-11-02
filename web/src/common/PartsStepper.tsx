@@ -4,15 +4,6 @@ import type { PartsProgress } from '../api/gen/PartsProgress';
 
 export type { PartState, PartsProgress };
 
-export const PART_STATE_LABEL: Record<PartState, string> = {
-  done: 'Done',
-  merged: 'Merged',
-  review: 'In review',
-  progress: 'In progress',
-  todo: 'To do',
-  backlog: 'Not started',
-};
-
 /** Status colours (state only): done and merged in the accent, review waiting, in progress running. */
 const SEGMENT: Record<PartState, string> = {
   done: 'bg-primary',
