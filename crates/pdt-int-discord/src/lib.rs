@@ -12,7 +12,7 @@ mod templates;
 
 use crate::core::DISCORD_BOT;
 use crate::post::DISCORD_WEBHOOK;
-use pdt_api::sdk::{AnyAction, AppState, BoxFut, Integration, NodeKind, Service};
+use pdt_api::sdk::{AnyAction, AppState, BoxFut, Integration, NodeKind, NotificationChannel, Service};
 use pdt_core::integration::{ConfigField, ConnectionKind, ConnectionLink, ConnectionStatus, FieldType, FieldWhen};
 use pdt_core::workflow::template::Template;
 use serde_json::Value;
@@ -43,6 +43,10 @@ impl Integration for Discord {
 
     fn templates(&self) -> Vec<Template> {
         templates::all()
+    }
+
+    fn notification_channels(&self) -> Vec<NotificationChannel> {
+        vec![NotificationChannel { label: "Discord", connection_kind: DISCORD_WEBHOOK, node_kind: "discord.post" }]
     }
 
     fn connection_kinds(&self) -> Vec<ConnectionKind> {

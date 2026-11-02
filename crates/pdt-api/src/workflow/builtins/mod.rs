@@ -10,6 +10,7 @@ mod finish_merged;
 mod github_issue_done;
 mod late_commits;
 mod missing_release;
+pub(crate) mod notification_rules;
 mod pick_up_tickets;
 mod pm_daily_checkpoint;
 mod pr_feedback;
@@ -48,6 +49,7 @@ pub const PM_DAILY_CHECKPOINT: &str = "pm-daily-checkpoint";
 pub const TICKET_PROPOSALS: &str = "ticket-proposals";
 pub const CLOSE_PARENTS: &str = "close-parents";
 pub const STUCK_AGENTS: &str = "stuck-agents";
+pub const NOTIFICATION_RULES: &str = "notification-rules";
 /// The Cut a release template (without `builtin:`); a built-in workflow until PDT-301 ([`RETIRED`]).
 pub const CUT_RELEASE: &str = "cut-release";
 
@@ -79,6 +81,12 @@ pub const BUILTINS: &[Builtin] = &[
     },
     Builtin { id: CLOSE_PARENTS, enabled: true, category: Category::Tickets, doc: close_parents::close_parents },
     Builtin { id: STUCK_AGENTS, enabled: true, category: Category::Tickets, doc: stuck_agents::stuck_agents },
+    Builtin {
+        id: NOTIFICATION_RULES,
+        enabled: true,
+        category: Category::Notifications,
+        doc: notification_rules::notification_rules,
+    },
 ];
 
 /// The GitHub plugin's built-ins ([`crate::integrations::Integration::builtin_workflows`]): left out while it is off
@@ -194,6 +202,14 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
     let now = now_ms();
     match st.store.workflow_by_builtin(b.id).await? {
         None => {
+            // The levels set in Settings before they were the workflow's come along (PDT-368).
+            let template = match b.id {
+                NOTIFICATION_RULES => match st.store.get_host_value(crate::notifications::SETTINGS_KEY).await? {
+                    Some(old) => notification_rules::migrated(&old),
+                    None => template,
+                },
+                _ => template,
+            };
             let enabled = b.enabled;
             let w = Workflow {
                 id: uuid::Uuid::now_v7().to_string(),
@@ -218,10 +234,10 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
             let mut untouched = st.store.current_version_author(&w.id).await? == Some(Author::Builtin);
             // One whose inputs the user changed in Settings follows newer versions with them (PDT-367).
             let mut template = template;
-            if b.id == STUCK_AGENTS {
+            if let Some(refill) = refill_of(b.id) {
                 untouched = untouched || inputs_only(st, &w).await?;
                 if let Some(c) = &current
-                    && let Ok(d) = stuck_agents::filled(&stuck_agents::values_of(c))
+                    && let Ok(d) = refill(c)
                 {
                     template = d;
                 }
@@ -233,6 +249,18 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
         }
     }
     Ok(())
+}
+
+/// A built-in's newer version of a document, filled in with the document's inputs.
+type Refill = fn(&WorkflowDoc) -> Result<WorkflowDoc, String>;
+
+/// The built-ins Settings sets the inputs of, with their [`Refill`].
+fn refill_of(id: &str) -> Option<Refill> {
+    match id {
+        STUCK_AGENTS => Some(|d| stuck_agents::filled(&stuck_agents::values_of(d))),
+        NOTIFICATION_RULES => Some(|d| notification_rules::filled(&notification_rules::values_of(d))),
+        _ => None,
+    }
 }
 
 /// Whether a workflow's current version was saved from Settings: only its inputs changed (PDT-367).

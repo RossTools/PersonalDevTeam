@@ -115,13 +115,16 @@ pub enum NotificationKind {
     /// Something happened to a ticket or run the user watches (PDT-319).
     #[serde(rename = "watch.event")]
     WatchEvent,
+    /// Quiet hours ended and toasts or desktop notifications waited for them (PDT-368).
+    #[serde(rename = "notifications.quiet_summary")]
+    QuietSummary,
 }
 
 use NotificationKind as K;
 
 impl NotificationKind {
     /// In Settings order: Needs you, then Updates.
-    pub const ALL: [NotificationKind; 21] = [
+    pub const ALL: [NotificationKind; 22] = [
         K::SessionNeedsYou,
         K::InboxQuestion,
         K::InboxApproval,
@@ -143,6 +146,7 @@ impl NotificationKind {
         K::HostLoopStale,
         K::TodoDue,
         K::WatchEvent,
+        K::QuietSummary,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -168,6 +172,7 @@ impl NotificationKind {
             K::HostLoopStale => "host.loop_stale",
             K::TodoDue => "todo.due",
             K::WatchEvent => "watch.event",
+            K::QuietSummary => "notifications.quiet_summary",
         }
     }
 
@@ -211,7 +216,7 @@ impl NotificationKind {
             | K::ConnectionFailed
             | K::HostLoopStale
             | K::TodoDue => Show::Toast,
-            K::WatchEvent => Show::Desktop,
+            K::WatchEvent | K::QuietSummary => Show::Desktop,
             K::SessionTurnEnded => Show::Dot,
             K::SessionExited | K::PrCiFailed | K::PrConflict | K::PrQueueLeft | K::PrMerged | K::WorkflowFailed => {
                 Show::Inbox
@@ -252,6 +257,7 @@ impl NotificationKind {
             K::HostLoopStale => "Background task stalled",
             K::TodoDue => "Todo due",
             K::WatchEvent => "Watched",
+            K::QuietSummary => "Quiet hours summary",
         }
     }
 
@@ -284,6 +290,7 @@ impl NotificationKind {
             K::WatchEvent => {
                 "A ticket or workflow run you watch finished, failed, got an outcome or a comment, or waits on you."
             }
+            K::QuietSummary => "Quiet hours ended, and toasts or desktop notifications waited for them.",
         }
     }
 
@@ -500,6 +507,78 @@ pub fn session_wants(
         Activity::Idle if attention_at.is_some_and(|a| now - a >= TURN_ENDED_AFTER_MS) => Some(K::SessionTurnEnded),
         _ => None,
     }
+}
+
+/// A time of day as `HH:MM` (24-hour), in minutes since midnight.
+pub fn parse_clock(s: &str) -> Option<u16> {
+    let (h, m) = s.trim().split_once(':')?;
+    if m.len() != 2 {
+        return None;
+    }
+    let (h, m): (u16, u16) = (h.parse().ok()?, m.parse().ok()?);
+    (h < 24 && m < 60).then_some(h * 60 + m)
+}
+
+/// Quiet hours (PDT-368): between two local times no toast or desktop notification is shown; what would have been
+/// one waits in the Inbox, and one summary comes when they end. `from` after `to` wraps midnight (22:00–07:00).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuietHours {
+    pub from: u16,
+    pub to: u16,
+}
+
+impl QuietHours {
+    pub fn parse(from: &str, to: &str) -> Result<Self, String> {
+        let at = |s: &str| parse_clock(s).ok_or_else(|| format!("{s:?} is not a time of day (HH:MM)"));
+        Ok(Self { from: at(from)?, to: at(to)? })
+    }
+
+    /// Whether `minute` (since local midnight) is in them. Equal ends make no quiet hours.
+    pub fn contains(self, minute: u16) -> bool {
+        match self.from.cmp(&self.to) {
+            std::cmp::Ordering::Less => (self.from..self.to).contains(&minute),
+            std::cmp::Ordering::Greater => minute >= self.from || minute < self.to,
+            std::cmp::Ordering::Equal => false,
+        }
+    }
+
+    /// The Show a notification is made at in quiet hours: a toast or desktop notification waits in the Inbox.
+    pub fn hold(show: Show) -> Show {
+        show.min(Show::Inbox)
+    }
+}
+
+/// A notification quiet hours held back: what the summary counts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Held {
+    /// Its dedupe key: a cause that fires again in quiet hours is counted once.
+    pub key: String,
+    pub kind: NotificationKind,
+    pub title: String,
+    /// The level it would have had.
+    pub show: Show,
+}
+
+/// The one notification that ends quiet hours: its title, body and level (the highest held back).
+pub fn quiet_summary(held: &[Held]) -> Option<(String, String, Show)> {
+    let show = held.iter().map(|h| h.show).max()?;
+    let mut counts: Vec<(NotificationKind, usize)> = vec![];
+    for h in held {
+        match counts.iter_mut().find(|(k, _)| *k == h.kind) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((h.kind, 1)),
+        }
+    }
+    counts.sort_by_key(|(k, _)| (!k.needs_you(), *k));
+    let n = held.len();
+    let title = format!("{n} notification{} during quiet hours", if n == 1 { "" } else { "s" });
+    let body = if n == 1 {
+        held[0].title.clone()
+    } else {
+        counts.iter().map(|(k, n)| format!("{} × {n}", k.label())).collect::<Vec<_>>().join(", ")
+    };
+    Some((title, body, show))
 }
 
 /// The host's settings: the overrides of each kind's default Show (host setting `notifications.show`).
@@ -727,6 +806,42 @@ mod tests {
         assert_eq!(attempt_key("a", K::PrCiFailed), "attempt:a:ci_failed");
         assert_eq!(todo_key("t", "2026-10-23", None), "todo:t:2026-10-23");
         assert_eq!(todo_key("t", "2026-10-23", Some("09:00")), "todo:t:2026-10-23T09:00");
+    }
+
+    #[test]
+    fn quiet_hours_wrap_midnight_and_hold_toasts_back() {
+        assert_eq!(parse_clock("07:30"), Some(450));
+        assert_eq!(parse_clock("7:05"), Some(425));
+        for bad in ["24:00", "7:5", "7", "ab:cd", "12:60"] {
+            assert_eq!(parse_clock(bad), None, "{bad}");
+        }
+        let night = QuietHours::parse("22:00", "07:00").unwrap();
+        assert!(night.contains(22 * 60) && night.contains(23 * 60 + 59) && night.contains(0) && night.contains(419));
+        assert!(!night.contains(420) && !night.contains(12 * 60) && !night.contains(21 * 60 + 59));
+        let lunch = QuietHours::parse("12:00", "13:00").unwrap();
+        assert!(lunch.contains(12 * 60) && !lunch.contains(13 * 60) && !lunch.contains(11 * 60));
+        assert!(!QuietHours::parse("09:00", "09:00").unwrap().contains(9 * 60), "equal ends: none");
+        assert!(QuietHours::parse("late", "07:00").is_err());
+        assert_eq!(QuietHours::hold(Show::Desktop), Show::Inbox);
+        assert_eq!(QuietHours::hold(Show::Toast), Show::Inbox);
+        assert_eq!(QuietHours::hold(Show::Dot), Show::Dot);
+    }
+
+    #[test]
+    fn one_summary_counts_what_quiet_hours_held() {
+        assert_eq!(quiet_summary(&[]), None);
+        let held = |kind, title: &str, show| Held { key: title.into(), kind, title: title.into(), show };
+        let one = quiet_summary(&[held(K::PrMerged, "PDT-1 merged", Show::Toast)]).unwrap();
+        assert_eq!(one, ("1 notification during quiet hours".into(), "PDT-1 merged".into(), Show::Toast));
+        let many = quiet_summary(&[
+            held(K::PrMerged, "a", Show::Toast),
+            held(K::InboxQuestion, "b", Show::Desktop),
+            held(K::PrMerged, "c", Show::Toast),
+        ])
+        .unwrap();
+        assert_eq!(many.0, "3 notifications during quiet hours");
+        assert_eq!(many.1, "Question × 1, Merged × 2", "needs-you kinds first");
+        assert_eq!(many.2, Show::Desktop, "the highest level held back");
     }
 
     #[test]

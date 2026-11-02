@@ -427,11 +427,30 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   // Only rows still in the list count as selected (a refetch may have dropped some).
   const selected = useMemo(() => items.filter((t) => selection.has(t.id)), [items, selection]);
   const selectedIds = selected.map((t) => t.id);
+  // The list gets only the rows still in it: a key it doesn't show would still make a row click select, not open (PDT-375).
+  const selectedKeys = useMemo(() => new Set(selected.map((t) => t.id)), [selected]);
   const bulkMode = !phone || selecting;
+  // Rows that left the list (a bulk move out of the filter, a refetch) leave the selection too.
+  useEffect(() => {
+    if (selection.size !== selected.length) setSelection(new Set(selected.map((t) => t.id)));
+  }, [selection, selected]);
   useEffect(() => {
     if (selecting && selected.length === 0) setSelecting(false);
   }, [selecting, selected.length]);
-  const clearSelection = () => { setSelection(new Set()); setSelecting(false); };
+  const clearSelection = useCallback(() => { setSelection(new Set()); setSelecting(false); }, []);
+  // Escape anywhere on the page clears the selection; the list, the bar, menus, dialogs and fields handle their own.
+  const hasSelection = selected.length > 0;
+  useEffect(() => {
+    if (!hasSelection) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const el = e.target instanceof Element ? e.target : null;
+      if (el?.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return;
+      clearSelection();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [hasSelection, clearSelection]);
   const allLabels = useMemo(
     () => [...new Set([...(labels.data ?? []), ...items.flatMap((t) => t.labels)])].sort(),
     [labels.data, items],
@@ -597,7 +616,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
         dependencies={[phone, rankable, bulkMode]}
         rowHeight={phone ? 56 : 36}
         selectable={bulkMode}
-        selectedKeys={selection}
+        selectedKeys={selectedKeys}
         onSelectionChange={setSelection}
         onAction={peekTo}
         // Phones rank from the row's menu (Move to top / bottom): no drag on touch.

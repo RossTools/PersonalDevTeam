@@ -3,7 +3,7 @@ import { toast } from '@ui';
 import { api } from '../api/client';
 import { actionError } from '../common/useAction';
 import type { NotificationList } from '../api/gen/NotificationList';
-import type { Show } from '../api/gen/Show';
+import type { NotificationRulesView } from '../api/gen/NotificationRulesView';
 
 /** The Inbox's Updates, newest first, polled with the rest of the UI; `unreadUpdates` is the rail's dot. */
 export function useUpdates() {
@@ -60,15 +60,29 @@ export function useClearAllUpdates() {
   });
 }
 
-/** Every kind with its Show (Settings → Notifications). */
-export function useNotificationSettings() {
-  return useQuery({ queryKey: ['notifications', 'settings'], queryFn: api.notificationSettings });
+const RULES = ['notifications', 'rules'];
+
+/** The Notification rules: every kind's level and the other rules (Settings → Notifications). */
+export function useNotificationRules() {
+  return useQuery({ queryKey: RULES, queryFn: api.notificationRules });
 }
 
-export function useSetNotificationSettings() {
+/** Changes, resets or turns the Notification rules on or off; each answers with the rules as they are now. */
+export function useNotificationRulesActions() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (changes: Record<string, Show | null>) => api.setNotificationSettings(changes),
-    onSuccess: (kinds) => qc.setQueryData(['notifications', 'settings'], kinds),
+  const done = (v: NotificationRulesView) => {
+    qc.setQueryData(RULES, v);
+    void qc.invalidateQueries({ queryKey: ['workflow', v.workflowId] });
+  };
+  const save = useMutation({ meta: { errorShown: true }, mutationFn: api.saveNotificationRules, onSuccess: done });
+  const reset = useMutation({ mutationFn: api.resetNotificationRules, onSuccess: done });
+  const enable = useMutation({
+    meta: { errorShown: true },
+    mutationFn: ({ id, on }: { id: string; on: boolean }) => api.patchWorkflow(id, { enabled: on }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: RULES });
+      void qc.invalidateQueries({ queryKey: ['workflows'] });
+    },
   });
+  return { save, reset, enable };
 }

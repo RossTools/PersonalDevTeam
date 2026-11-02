@@ -232,3 +232,60 @@ async fn the_discord_templates_instantiate_and_dry_run() {
         assert_eq!(s, StatusCode::NOT_FOUND, "{id}");
     }
 }
+
+/// PDT-368: the Notification rules post questions and failed runs to a chosen Discord webhook, and escalate to it.
+#[tokio::test]
+async fn notification_rules_post_questions_and_failed_runs_to_discord() {
+    let (url, seen) = fake_server(|_, n| (200, json!({"id": format!("m{n}")}))).await;
+    let env = setup().await;
+    connection(&env, "alerts", "discord_webhook", "", json!({}), Some(&format!("{url}/api/webhooks/1/abc"))).await;
+    let (_, v) = call(&env.app, "GET", "/api/notification-rules", None).await;
+    assert_eq!(v["channels"], json!([{"label": "Discord", "connectionKind": "discord_webhook"}]), "{v}");
+    let (s, v) = call(&env.app, "PUT", "/api/notification-rules", Some(json!({"values": {"chat": "alerts"}}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+
+    let fails = create(
+        &env,
+        manual_then(json!({"id": "move", "kind": "ticket.move", "version": 1,
+            "config": {"ticket": "nope", "stage": "done"}})),
+    )
+    .await;
+    let r = run_now(&env, &fails, json!({})).await;
+    assert_eq!(r["status"], "failed", "{r}");
+    let item = pdt_core::inbox::InboxItem {
+        id: "q1".into(),
+        kind: pdt_core::inbox::InboxKind::Question,
+        group: pdt_core::inbox::InboxGroup::Question,
+        status: pdt_core::inbox::InboxStatus::Open,
+        project_id: None,
+        ticket_id: None,
+        ticket_key: None,
+        ticket_title: None,
+        attempt_id: None,
+        session_id: None,
+        run_id: None,
+        step_id: None,
+        persona_id: None,
+        persona_name: None,
+        change_request: None,
+        title: "Which database?".into(),
+        body: json!({}),
+        choices: vec![],
+        resolution: Value::Null,
+        created_at: pdt_api::sdk::now_ms(),
+        resolved_at: None,
+    };
+    env.state.store.open_inbox_item(&item).await.unwrap();
+    pdt_api::sync_notifications(&env.state).await;
+    for _ in 0..6 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    let posted: Vec<String> =
+        seen.all().iter().map(|(_, _, b, _)| b["content"].as_str().unwrap_or_default().to_string()).collect();
+    assert_eq!(posted.len(), 2, "{posted:?}");
+    assert!(posted.iter().any(|c| c.starts_with("**Which database?**\nWaits on you")), "{posted:?}");
+    assert!(posted.iter().any(|c| c.starts_with("**") && c.contains("failed**\nmove:")), "{posted:?}");
+    // Nothing in PDT for them: the Notifier already made their notifications.
+    let (_, n) = call(&env.app, "GET", "/api/notifications?limit=100", None).await;
+    assert!(n["items"].as_array().unwrap().iter().all(|r| r["kind"] != "workflow.notify"), "{n}");
+}
