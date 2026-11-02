@@ -195,9 +195,13 @@ interface ControlProps {
   root: Schema;
   refs: string[];
   readOnly?: boolean;
+  /** The field may be left out (not required, or `null` allowed). */
+  optional?: boolean;
+  /** The field's name, for "Add …". */
+  name?: string;
 }
 
-function Control({ c, value, onChange, label, root, refs, readOnly }: ControlProps) {
+function Control({ c, value, onChange, label, root, refs, readOnly, optional, name = label }: ControlProps) {
   const f = c.field;
   const clear = (v: Value) => onChange(v === '' && c.nullable ? undefined : v);
   // Text fields take references inside the text.
@@ -312,10 +316,21 @@ function Control({ c, value, onChange, label, root, refs, readOnly }: ControlPro
       );
     }
     case 'object':
+      // An optional object that isn't set stays collapsed: its fields (and their required marks) appear once it's added.
+      if (optional && value == null) {
+        return readOnly
+          ? <span className="text-meta text-muted-foreground">Not set</span>
+          : <Button size="sm" variant="secondary" className="self-start" onClick={() => onChange(objectDefault(f.schema, root))}><Plus aria-hidden /> Add {name.toLowerCase()}</Button>;
+      }
       return (
         <div className="flex flex-col gap-2 rounded-md border border-border p-2">
           <SchemaForm schema={f.schema} root={root} value={(value ?? {}) as Record<string, Value>} refs={refs} readOnly={readOnly} label={label}
-            onChange={(v) => onChange(Object.keys(v).length ? v : c.nullable ? undefined : v)} />
+            onChange={(v) => onChange(Object.keys(v).length || optional ? v : c.nullable ? undefined : v)} />
+          {optional && !readOnly && (
+            <Button size="sm" variant="secondary" className="self-start" aria-label={`Remove ${label.toLowerCase()}`} onClick={() => onChange(undefined)}>
+              <Trash2 aria-hidden /> Remove
+            </Button>
+          )}
         </div>
       );
     case 'any':
@@ -376,7 +391,8 @@ export function SchemaForm({ schema, root = schema, value, onChange, refs = [], 
         const full = label ? `${label} ${name.toLowerCase()}` : name;
         return (
           <Field key={k} label={<>{name}{required.has(k) && <span className="text-muted-foreground"> *</span>}</>} hint={c.description}>
-            <Control c={c} value={value[k]} onChange={(v) => set(k, v)} label={full} root={root} refs={refs} readOnly={readOnly} />
+            <Control c={c} value={value[k]} onChange={(v) => set(k, v)} label={full} root={root} refs={refs} readOnly={readOnly}
+              optional={!required.has(k) || c.nullable} name={name} />
           </Field>
         );
       })}

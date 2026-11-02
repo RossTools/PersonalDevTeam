@@ -99,3 +99,49 @@ describe('expand', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
+
+// PDT-469: an optional object that isn't set is an "Add …" button, not an open form with required fields.
+describe('optional objects', () => {
+  const CONFIRM = {
+    type: 'object',
+    $defs: {
+      RunConfirm: {
+        type: 'object',
+        properties: { showIf: { anyOf: [{ $ref: '#/$defs/ShowIf' }, { type: 'null' }] }, text: { type: 'string', default: '' } },
+      },
+      ShowIf: { type: 'object', properties: { equals: true, field: { type: 'string' } }, required: ['field', 'equals'] },
+    },
+    properties: { confirm: { anyOf: [{ $ref: '#/$defs/RunConfirm' }, { type: 'null' }] } },
+  };
+
+  function ConfirmForm({ start, seen, readOnly }: { start: Record<string, unknown>; seen: (v: Record<string, unknown>) => void; readOnly?: boolean }) {
+    const [value, setValue] = useState(start);
+    return <SchemaForm schema={CONFIRM} value={value} readOnly={readOnly} onChange={(v) => { setValue(v); seen(v); }} />;
+  }
+
+  it('stay collapsed until added, then show their fields; Remove unsets them', async () => {
+    const user = userEvent.setup();
+    const seen = vi.fn();
+    render(<ConfirmForm start={{}} seen={seen} />);
+    expect(screen.queryByRole('textbox', { name: 'Confirm text' })).toBeNull();
+    expect(screen.queryByText('Field')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Add confirm' }));
+    expect(seen).toHaveBeenLastCalledWith({ confirm: {} });
+    expect(screen.getByRole('textbox', { name: 'Confirm text' })).toBeInTheDocument();
+    // The nested optional Show if is collapsed too: no required fields yet.
+    expect(screen.queryByRole('textbox', { name: 'Confirm show if field' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Add show if' }));
+    expect(screen.getByRole('textbox', { name: 'Confirm show if field' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove confirm' }));
+    expect(seen.mock.lastCall![0]).not.toHaveProperty('confirm');
+    expect(screen.getByRole('button', { name: 'Add confirm' })).toBeInTheDocument();
+  });
+
+  it('read-only shows "Not set" and no buttons', () => {
+    render(<ConfirmForm start={{}} seen={vi.fn()} readOnly />);
+    expect(screen.getByText('Not set')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+});
