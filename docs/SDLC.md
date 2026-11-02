@@ -88,7 +88,9 @@ The board no longer jumps back to the top when a ticket moves.
   tooling). The text is one or two sentences (or a short list) on what changed for the user, with no tickets, crates
   or file names unless the user sees them.
 - `scripts/changelog.sh check` checks the fragments. CI's `changelog` job fails a PR without one unless it has the
-  `no-changelog` label (for PRs that only change docs, CI or tests; adding it re-runs CI).
+  `no-changelog` label (for PRs that only change docs, CI or tests; adding it re-runs CI) or says `[no-changelog]`
+  in its description. The description is read when a push or a label starts the run, so after writing it there, push
+  again (or re-run the job). It is for contributors from a fork, who can't set labels.
 - At release, `scripts/changelog.sh <version>` adds a `## <version> (<date>)` section to `CHANGELOG.md` (Breaking,
   Added, Changed, Fixed), prints the notes, and moves the fragments to `.changes/<version>/`.
   `scripts/changelog.sh notes <version>` prints a version's section (the release's notes); `preview` prints the
@@ -229,9 +231,27 @@ conflict), push, and merge again.
 - **Namespace** (its GitHub App is installed on the repo): each profile has a cache volume. Its Linux image has no
   `SHELL` and no zsh, so `setup` with `zsh: true` installs zsh for pdtd's terminal tests.
 - The bundles and the small `changes`, `changelog`, `site` and reporting jobs always run on GitHub's runners.
+- **A pull request from a fork** runs every check on GitHub's hosted runners whatever the variables say (the
+  `changes` job picks each OS's runner): untrusted code never spends Namespace minutes or writes to a cache volume
+  later runs restore. In the merge queue it runs on the configured runners, after a maintainer has reviewed and
+  queued it.
 - `.github/workflows/bench.yml` (by hand only) times the same work on a list of runners, to compare hosts.
 - The Mac mini's old self-hosted runner is retired; if it is still listed under Settings → Actions → Runners, remove
   it, and never make the repo public while it is registered.
+
+### Outside pull requests
+
+- **Approval**: Settings → Actions → General → "Approval for running fork pull request workflows from
+  contributors" must be **Require approval for all external contributors**, so no fork's PR runs CI until a
+  maintainer approves that run (GitHub's default asks only first-time contributors).
+- **Secrets**: no workflow uses `pull_request_target`, and every workflow's token is `contents: read` unless a job
+  widens it. Fork PRs get no secrets; the bundles, the only jobs that sign, run only for this repository's `release`
+  branch.
+- **Labels**: a contributor can't set `no-changelog`, `windows` or `macos`. They write `[no-changelog]` in the PR's
+  description instead (above, "Changelog"); a maintainer adds `windows` or `macos` when the change needs those
+  checks.
+- **On a contributor's fork**, `pages.yml` and `cache.yml` skip (`github.event.repository.fork`); `ci.yml` checks
+  their PRs here; `release.yml` stops with a message when `PDT_RELEASE_TOKEN` is missing.
 
 ## Dependabot
 
