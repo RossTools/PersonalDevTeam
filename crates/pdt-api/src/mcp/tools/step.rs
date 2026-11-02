@@ -126,7 +126,8 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 .ok_or("that ticket no longer exists")?;
             let ids: Vec<String> = attached.iter().map(|a| a.id.clone()).collect();
             st.store.set_attachments_event(&ids, &e.id).await.map_err(store)?;
-            Ok(json!({"commented": true, "eventId": e.id,
+            let key = st.store.get_ticket(&id).await.map_err(store)?.map(|t| t.summary.key);
+            Ok(json!({"commented": true, "eventId": e.id, "key": key,
                       "attachments": crate::ticket_attachments::attached_json(st, &attached)}))
         }
         "add_review_comment" => {

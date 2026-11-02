@@ -20,6 +20,7 @@ import { PartsStepper, partsCount } from '../common/PartsStepper';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { PriorityIcon } from '../common/PriorityIcon';
 import { TicketKey } from '../common/TicketKey';
+import { agentLine } from '../common/ticketAgent';
 import { runAction } from '../common/useAction';
 import { canStart, moveTicket, startNextPart, ticketMenu, useOpenTicket, useStartTicket } from './actions';
 import { buildLanes, laneIds, lanePr, readCollapsed, writeCollapsed, type Lane } from './BoardLanes';
@@ -30,6 +31,8 @@ import { ExternalKeys } from './ExternalKeys';
 import { TicketBadges } from './TicketBadges';
 import { LabelChips } from './TicketParts';
 import { DAY_MS, DEFAULT_DONE_DAYS, doneWindowLabel, useDoneWindow } from './BoardViewMenu';
+
+export { agentLine };
 
 export type BoardStage = Extract<TicketStage, 'todo' | 'in_progress' | 'done'>;
 
@@ -79,24 +82,6 @@ export function inColumn(t: Pick<TicketSummary, 'pipelineStage'>, c: DisplayColu
   const at = t.pipelineStage === 'merge_blocked' ? 'merge'
     : t.pipelineStage && t.pipelineStage !== 'refine' ? t.pipelineStage : 'code';
   return at === c.pipeline;
-}
-
-/** The card's line about who owns its workflow step now and in what state (Phase 7c). */
-export function agentLine(a: TicketAgent): { text: string; dot: AgentStateValue } {
-  const dot = (kind: AgentStateValue['dot'], pulse = false): AgentStateValue =>
-    ({ dot: kind, pulse, label: null, tone: kind === 'running' ? 'running' : kind === 'waiting' ? 'waiting' : kind === 'failed' ? 'failed' : 'muted', unseen: false });
-  const who = a.persona ?? 'Agent';
-  switch (a.state) {
-    case 'working': return { text: `${who} · working`, dot: dot('running', a.busy) };
-    case 'asking': return { text: `${who} asks you`, dot: dot('waiting') };
-    case 'stalled': return { text: `${who} stalled`, dot: dot('failed') };
-    case 'yours': return { text: a.persona ? `Your turn · ${a.persona}` : 'Your turn', dot: dot('waiting') };
-    case 'queued': return { text: `${who} · waiting for a slot`, dot: dot('idle') };
-    case 'background': return {
-      text: a.background.length ? `${who} · waiting on background task: ${a.background.join(', ')}` : `${who} · waiting on background tasks`,
-      dot: dot('running'),
-    };
-  }
 }
 
 /** The Done column shows tickets closed in the last two weeks unless the project's board says otherwise. */

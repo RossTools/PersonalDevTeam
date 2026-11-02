@@ -73,19 +73,38 @@ describe('buildBlocks', () => {
     ev(4, call('b', 'WebSearch', 'pricing')),
     ev(5, call('c', 'WebSearch', 'r2 pricing')),
     ev(6, { kind: 'agent_message', id: 'm', markdown: 'We are at the limit.\n\n| Option | Price |\n| --- | --- |\n| A | $1 |', phase: 'commentary' }),
-    ev(7, call('d', 'mcp__pdt__add_ticket_comment', '')),
+    ev(7, call('d', 'mcp__pdt__list_watches', '')),
     ev(8, call('e', 'mcp__pdt__get_ticket', '')),
     ev(9, { kind: 'agent_message', id: 'f', markdown: 'Added to the ticket.', phase: 'final' }),
     turn(10, 'ended'),
   ];
   const shape = (blocks: ReturnType<typeof buildBlocks>) =>
-    blocks.map((b) => (b.type === 'group' ? `group(${b.nodes.map((n) => n.row.seq).join(',')})` : `row(${b.node.row.seq})`));
+    blocks.map((b) => (b.type === 'row' ? `row(${b.node.row.seq})` : `${b.type}(${b.nodes.map((n) => n.row.seq).join(',')})`));
 
   it('never folds the answer into a tool group, only a one-line narration before a call', () => {
     const blocks = buildBlocks(answerTurn(), false);
     expect(shape(blocks)).toEqual(['group(2,3,4,5)', 'row(6)', 'group(7,8)', 'row(9)', 'row(10)']);
     const summaries = blocks.flatMap((b) => (b.type === 'group' ? [summarizeTools(b.calls)] : []));
     expect(summaries).toEqual(['Ran 1 command, looked up 2 pages', 'Used 2 tools']);
+  });
+
+  it("shows PDT's actions as cards of their own, consecutive tickets made in one", () => {
+    const rows = [
+      turn(1, 'started'),
+      ev(2, call('a', 'Read', 'src/a.ts')),
+      ev(3, call('b', 'mcp__pdt__create_ticket', '')),
+      ev(4, call('c', 'mcp:pdt/create_ticket', '')),
+      ev(5, call('d', 'Grep', 'cart')),
+      ev(6, call('e', 'Read', 'src/b.ts')),
+      ev(7, call('f', 'mcp__pdt__link_tickets', '')),
+      ev(8, call('g', 'mcp__pdt__send_to_session', '')),
+      ev(9, call('h', 'mcp__pdt__create_ticket', '')),
+      turn(10, 'ended'),
+      ev(11, call('i', 'mcp__pdt__create_ticket', ''), 'u2'),
+    ];
+    expect(shape(buildBlocks(rows, false))).toEqual([
+      'row(2)', 'tickets(3,4)', 'group(5,6)', 'row(7)', 'row(8)', 'row(9)', 'row(10)', 'row(11)',
+    ]);
   });
 
   it('keeps commentary at top level when no tool call follows it directly', () => {
@@ -109,7 +128,7 @@ describe('buildBlocks', () => {
         if (b.type === 'group') expect(b.nodes.every((x) => x.row.event.kind !== 'agent_message' || x.row.seq === 3)).toBe(true);
       }
       // Every row seen so far is shown, in order.
-      expect(live.flatMap((b) => (b.type === 'group' ? b.nodes.map((x) => x.row.seq) : [b.node.row.seq])))
+      expect(live.flatMap((b) => (b.type === 'row' ? [b.node.row.seq] : b.nodes.map((x) => x.row.seq))))
         .toEqual(all.slice(1, n).map((r) => r.seq));
     }
     expect(shape(buildBlocks(all, true))).toEqual(shape(buildBlocks(all, false)));

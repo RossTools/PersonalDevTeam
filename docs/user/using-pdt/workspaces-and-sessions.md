@@ -55,6 +55,14 @@ An agent session is one of:
 - **A conversation**: PDT's chat view, with the agent's messages, tool calls folded to a line each ("Ran 3 commands")
   while the agent's text stays outside them, each edit's diff, and a **Changes** summary per turn. Questions and permission requests show as cards with
   **Allow** and **Deny**. Type `@` to mention a file, `/` for the agent's commands; paste or attach images.
+
+In a conversation, ticket keys show as pills: hover one (or tab to it) for its title, stage, priority, labels, who
+has it, its branch and its pull request with CI; click it to open the ticket. Pull request numbers (`#12`) link to the
+pull request, file paths of the project open in the file viewer, and status words in tables (**CI failed**, **ready
+to accept**) are coloured. What an agent does through PDT shows as a card rather than a folded line: the tickets it
+created, what it changed on a ticket (from → to), links, messages to other sessions, comments, workflow runs it
+started, and watches, with **Stop watching**. When one of these waits for your yes, its card shows what would be
+created or changed.
 - **A terminal**: the agent's own interface, as in your terminal app.
 
 Conversation is the default; change it in **Settings › This host › Agents**, or per session when you start one.

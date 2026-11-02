@@ -8,10 +8,10 @@ import type { CiStatus } from '../api/gen/CiStatus';
 import type { MergeUpdateStatus } from '../api/gen/MergeUpdateStatus';
 import type { PullRequestStatus } from '../api/gen/PullRequestStatus';
 
-const CI_LABEL: Record<CiState, string> = {
+export const CI_LABEL: Record<CiState, string> = {
   passed: 'CI passed', failed: 'CI failed', running: 'CI running', queued: 'CI queued', cancelled: 'CI cancelled',
 };
-const CI_TONE: Record<CiState, BadgeTone> = {
+export const CI_TONE: Record<CiState, BadgeTone> = {
   passed: 'running', failed: 'failed', running: 'waiting', queued: 'waiting', cancelled: 'neutral',
 };
 

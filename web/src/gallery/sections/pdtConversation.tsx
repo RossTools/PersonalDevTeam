@@ -1,0 +1,121 @@
+import { useState, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { ApprovalCard } from '@ui/ApprovalCard';
+import { toast } from '@ui/Toaster';
+import type { AttemptSummary } from '../../api/gen/AttemptSummary';
+import { Markdown } from '../../common/Markdown';
+import { MarkdownRefsContext, type MarkdownRefs } from '../../common/markdownRefs';
+import { TicketKeysContext } from '../../common/ticketKeys';
+import { CreateTicketsCard, PdtToolCard, type PdtCall } from '../../conversation/PdtToolCard';
+import { PdtProposal } from '../../conversation/PdtProposal';
+import { ticket } from '../../tickets/fixtures';
+
+function Demo({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+const refs: MarkdownRefs = {
+  sessionId: 'gallery',
+  projectKey: 'SHOP',
+  worktreeId: null,
+  forge: { kind: 'github', name: 'GitHub', repo: 'acme/shop', repoUrl: 'https://github.com/acme/shop', branchUrl: null, compareUrl: null },
+};
+
+const attempt: AttemptSummary = {
+  id: 'a1', branch: 'pdt-SHOP-19-save-the-cart', baseBranch: 'main', worktreeId: 'w1', state: 'active', createdAt: 1, endedAt: null,
+  lastHead: null, workspaceId: null, ci: null,
+  pr: {
+    number: 7, url: 'https://github.com/acme/shop/pull/7', title: 'Save the cart', state: 'open', draft: false, baseBranch: 'main', headSha: 'c3d',
+    mergeable: 'mergeable', behind: false, autoMerge: false, inMergeQueue: false, queuePosition: null,
+    ci: { state: 'failed', url: '#', runs: [] }, queueCi: null, checkedAt: 1, error: null, local: false, mergeHeld: false,
+  },
+};
+
+const watch = { id: 'w1', target: 'ticket', targetId: 't31', targetLabel: 'SHOP-31', sessionId: 'pm', watcher: 'PM', events: ['finished', 'failed', 'needs_you'], once: true, createdAt: 1 };
+
+/** What the cards and hover cards would fetch, so the gallery shows them without a daemon. */
+function Seeded({ children }: { children: ReactNode }) {
+  const qc = useQueryClient();
+  useState(() => {
+    qc.setQueryData(['ticket-card', 'SHOP-19'], ticket(19, {
+      key: 'SHOP-19', title: 'Save the cart across visits', stage: 'in_progress', priority: 'medium', labels: ['agentic'], attempt,
+      agent: { persona: 'Coder', state: 'stalled', sessionId: 's', busy: false, runId: 'r', background: [] },
+    }));
+    qc.setQueryData(['ticket-card', 'SHOP-31'], ticket(31, { key: 'SHOP-31', title: 'Guest checkout: email-only orders', stage: 'todo', priority: 'high', labels: ['agentic'] }));
+    for (const f of ['e2e/cart.spec.ts', 'src/checkout/session.ts']) qc.setQueryData(['session-file', 'gallery', f], true);
+    qc.setQueryData(['workflow-run', 'r1'], { id: 'r1', workflowId: 'wf1', workflowName: 'Cut a release', status: 'running', error: null, steps: [] });
+    qc.setQueryData(['watches', { session: 'pm' }], [watch]);
+    return true;
+  });
+  return (
+    <TicketKeysContext.Provider value={['SHOP']}>
+      <MarkdownRefsContext.Provider value={refs}>{children}</MarkdownRefsContext.Provider>
+    </TicketKeysContext.Provider>
+  );
+}
+
+const ANSWER = [
+  "**The cart ticket.** SHOP-19 isn't stuck on code: #7 fails in `e2e/cart.spec.ts` because the sandbox can't start Chrome",
+  "(last push 4427552e). The checkout lives in `src/checkout/session.ts`; `src/gone.ts` isn't a file here. Hover a key for its card.",
+  '',
+  '| Ticket | What | State |',
+  '| --- | --- | --- |',
+  '| SHOP-31 | Guest checkout | Coder working |',
+  '| SHOP-32 | Link guest orders | blocked by SHOP-31 |',
+  '| SHOP-19 | Save the cart | CI failed |',
+  '| SHOP-24 | Discount codes | ready to accept |',
+].join('\n');
+
+const done = (tool: string, input: unknown, result: unknown): PdtCall => ({ tool: `mcp__pdt__${tool}`, input, status: 'done', output: JSON.stringify(result) });
+
+export const section = {
+  title: 'Conversation · PDT references and actions',
+  order: 76,
+  render: () => (
+    <Seeded>
+      <div className="flex max-w-3xl flex-col gap-6">
+        <Demo label="Markdown in a conversation · ticket pills (hover: card), PR pills, file links, SHAs, a status table">
+          <Markdown>{ANSWER}</Markdown>
+        </Demo>
+        <Demo label="ApprovalCard · a PDT tool says what it will create">
+          <ApprovalCard
+            title="Create this ticket?"
+            canAlways
+            preview={
+              <PdtProposal
+                tool="mcp__pdt__create_ticket"
+                input={{
+                  project: 'SHOP', title: 'Guest checkout: email-only orders', stage: 'todo', priority: 'high', labels: ['agentic'],
+                  description: 'Orders without an account: email at checkout, no password. Done when a guest can pay and gets a receipt.',
+                  reason: 'Guests drop off at sign-up.',
+                }}
+              />
+            }
+            onAnswer={(a) => void toast.info(`Answer: ${JSON.stringify(a)}`)}
+          />
+        </Demo>
+        <Demo label="PDT tool cards · created, changed, linked, message, comment, workflow run, watch, running, failed">
+          <div className="flex flex-col gap-3">
+            <CreateTicketsCard calls={[
+              done('create_ticket', { title: 'Guest checkout: email-only orders', stage: 'todo', labels: ['agentic'] }, { key: 'SHOP-31', stage: 'todo' }),
+              done('create_ticket', { title: 'Link guest orders when the guest signs up later', labels: ['agentic'] }, { key: 'SHOP-32', stage: 'draft' }),
+            ]} />
+            <PdtToolCard call={done('edit_ticket', { ticket: 'SHOP-19' }, { key: 'SHOP-19', changes: [{ field: 'stage', from: 'todo', to: 'in_progress' }, { field: 'priority', from: 'low', to: 'high' }, { field: 'description' }] })} />
+            <PdtToolCard call={done('link_tickets', { ticket: 'SHOP-32', kind: 'blockedBy', other: 'SHOP-31' }, { linked: true })} />
+            <PdtToolCard call={done('send_to_session', { session: 's', text: "Skip the e2e run locally (the sandbox has no Chrome); CI runs it. Commit and submit your outcome." }, { queued: true, to: 'Coder · SHOP-19' })} />
+            <PdtToolCard call={done('add_ticket_comment', { ticket: 'SHOP-19', body: 'The e2e run needs Chrome, which the sandbox lacks: **CI runs it**.' }, { commented: true, key: 'SHOP-19' })} />
+            <PdtToolCard call={done('workflow_run', { name: 'Cut a release', project: 'SHOP' }, { runId: 'r1', workflow: 'Cut a release' })} />
+            <PdtToolCard call={done('watch', { ticket: 'SHOP-31' }, { watching: [watch] })} />
+            <PdtToolCard call={{ tool: 'mcp__pdt__create_ticket', input: { title: 'Discount codes' }, status: 'running' }} />
+            <PdtToolCard call={{ tool: 'mcp__pdt__link_tickets', input: { ticket: 'SHOP-1', kind: 'blocks', other: 'SHOP-1' }, status: 'failed', output: 'a ticket cannot block itself' }} />
+          </div>
+        </Demo>
+      </div>
+    </Seeded>
+  ),
+};

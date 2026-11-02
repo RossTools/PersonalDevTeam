@@ -1,10 +1,15 @@
-import { createContext, memo, useContext, useMemo, type ComponentType, type ImgHTMLAttributes } from 'react';
+import { createContext, memo, useContext, useMemo, type ComponentProps, type ComponentType, type ImgHTMLAttributes, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import ReactMarkdown, { type Components, type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeSanitize from 'rehype-sanitize';
 import { Check } from 'lucide-react';
+import { Badge } from '@ui';
 import { cn } from '@ui/lib/utils';
+import { api } from '../api/client';
+import { fileHref, filePathOf, isSha, MarkdownRefsContext, prNumberOf, prUrl, statusTone, type MarkdownRefs } from './markdownRefs';
+import { PrPill, TicketPill } from './TicketPill';
 import { TicketKeysContext } from './ticketKeys';
 import { AttachmentImage, AttachmentLink, attachmentRef } from './AttachmentViews';
 
@@ -28,13 +33,40 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Turns ticket keys of the given projects in text into links (not inside links or code, which are not text nodes). */
 export function remarkTicketKeys(keys: readonly string[]) {
-  const re = new RegExp(`\\b(?:${keys.map(escapeRe).join('|')})-\\d+\\b`, 'g');
+  return remarkRefs(keys, null);
+}
+
+/**
+ * Ticket keys in text become links to the ticket (not inside links or code, which are not text nodes). In a
+ * conversation (`refs`, PDT-382) also: `#12` a link to the forge's PR, a commit SHA inline code (shown muted), and a
+ * file path in inline code a link to the file viewer (shown only if the file exists).
+ */
+export function remarkRefs(keys: readonly string[], refs: MarkdownRefs | null) {
+  const parts = [
+    keys.length ? `\\b(?:${keys.map(escapeRe).join('|')})-\\d+\\b` : null,
+    refs && prUrl(refs.forge, 1) ? '(?:\\bPR )?(?<![\\w&/#])#\\d+\\b' : null,
+    refs ? '\\b[0-9a-f]{7,40}\\b' : null,
+  ].filter(Boolean);
+  const re = parts.length ? new RegExp(parts.join('|'), 'g') : null;
+  const ref = (m: string): MdNode | null => {
+    // `#12`, or `PR #12` (the pill says "PR #12" either way).
+    if (m.includes('#')) {
+      const n = Number(m.slice(m.indexOf('#') + 1));
+      const url = prUrl(refs!.forge, n);
+      return url ? { type: 'link', url, children: [{ type: 'text', value: `#${n}` }] } : null;
+    }
+    if (refs && /^[0-9a-f]+$/.test(m)) return isSha(m) ? { type: 'inlineCode', value: m } : null;
+    return { type: 'link', url: `/tickets/${m}`, children: [{ type: 'text', value: m }] };
+  };
   const split = (value: string): MdNode[] => {
+    if (!re) return [{ type: 'text', value }];
     const out: MdNode[] = [];
     let at = 0;
     for (const m of value.matchAll(re)) {
+      const node = ref(m[0]);
+      if (!node) continue;
       if (m.index > at) out.push({ type: 'text', value: value.slice(at, m.index) });
-      out.push({ type: 'link', url: `/tickets/${m[0]}`, children: [{ type: 'text', value: m[0] }] });
+      out.push(node);
       at = m.index + m[0].length;
     }
     if (at < value.length) out.push({ type: 'text', value: value.slice(at) });
@@ -44,6 +76,8 @@ export function remarkTicketKeys(keys: readonly string[]) {
     if (!node.children || node.type === 'link' || node.type === 'linkReference') return;
     node.children = node.children.flatMap((c) => {
       if (c.type === 'text' && c.value) return split(c.value);
+      const path = refs?.sessionId && c.type === 'inlineCode' && c.value ? filePathOf(c.value) : null;
+      if (path) return [{ type: 'link', url: fileHref(refs!, path), children: [c] }];
       walk(c);
       return [c];
     });
@@ -63,18 +97,7 @@ const components: Components = {
   h5: ({ node: _n, ...p }) => <h5 {...p} className="mt-3 mb-1 text-xs font-semibold text-muted-foreground first:mt-0" />,
   h6: ({ node: _n, ...p }) => <h6 {...p} className="mt-3 mb-1 text-xs font-medium text-muted-foreground first:mt-0" />,
   p: ({ node: _n, ...p }) => <p {...p} className="my-2 first:mt-0 last:mb-0" />,
-  // A ticket's attached text file opens in a viewer (PDT-300).
-  a: ({ node: _n, href, ...p }) => attachmentRef(href) ? (
-    <AttachmentLink src={href!} name={typeof p.children === 'string' ? p.children : 'Attachment'}>{p.children}</AttachmentLink>
-  ) : (
-    <a
-      {...p}
-      href={href}
-      target={isExternal(href) ? '_blank' : undefined}
-      rel={isExternal(href) ? 'noreferrer' : undefined}
-      className="text-primary underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-    />
-  ),
+  a: ({ node: _n, ...p }) => <MdLink {...p} />,
   ul: ({ node: _n, className, ...p }) => (
     <ul {...p} className={cn('my-2 pl-5', className?.includes('contains-task-list') ? 'list-none pl-1' : 'list-disc')} />
   ),
@@ -93,20 +116,103 @@ const components: Components = {
       className="my-2 overflow-x-auto rounded-md border border-border bg-surface-2 p-2 font-mono text-xs leading-relaxed text-foreground [&>code]:bg-transparent [&>code]:p-0 [&>code]:text-xs"
     />
   ),
-  code: ({ node: _n, ...p }) => <code {...p} className="rounded-sm bg-muted px-1 py-px font-mono text-meta text-foreground" />,
-  table: ({ node: _n, ...p }) => (
-    <div className="my-2 overflow-x-auto">
-      <table {...p} className="border-collapse text-xs" />
-    </div>
-  ),
-  th: ({ node: _n, ...p }) => <th {...p} className="border border-border bg-muted px-2 py-1 text-left font-medium" />,
-  td: ({ node: _n, ...p }) => <td {...p} className="border border-border px-2 py-1 align-top" />,
+  code: ({ node: _n, ...p }) => <MdCode {...p} />,
+  table: ({ node: _n, ...p }) => <MdTable {...p} />,
+  th: ({ node: _n, ...p }) => <MdCell head {...p} />,
+  td: ({ node: _n, ...p }) => <MdCell {...p} />,
   del: ({ node: _n, ...p }) => <del {...p} className="text-muted-foreground" />,
   // A ticket's attached image opens full size (PDT-300).
   img: ({ node: _n, alt, ...p }) => typeof p.src === 'string' && attachmentRef(p.src)
     ? <AttachmentImage src={p.src} alt={alt ?? ''} />
     : <ResolvedImage {...p} alt={alt ?? ''} />,
 };
+
+const LINK = 'text-primary underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none';
+
+/** A ticket's path (`/tickets/PDT-12`) → its key. */
+const ticketOfHref = (href: string | undefined) => (href ? /^\/tickets\/([A-Za-z][A-Za-z0-9]*-\d+)$/.exec(href)?.[1] ?? null : null);
+
+/**
+ * A link: an attachment opens in its viewer (PDT-300); in a conversation a ticket key or a PR is a pill and a file
+ * path opens the file viewer (PDT-382); the rest are links (a new tab when they leave the app).
+ */
+function MdLink({ href, children, ...p }: ComponentProps<'a'>) {
+  const refs = useContext(MarkdownRefsContext);
+  if (attachmentRef(href)) {
+    return <AttachmentLink src={href!} name={typeof children === 'string' ? children : 'Attachment'}>{children}</AttachmentLink>;
+  }
+  if (refs) {
+    const key = ticketOfHref(href);
+    if (key && children === key) return <TicketPill ticketKey={key} />;
+    const pr = prNumberOf(refs.forge, href);
+    if (pr !== null && (children === `#${pr}` || children === href)) return <PrPill number={pr} href={href!} />;
+    if (href?.startsWith('/files/') && refs.sessionId) return <FileLink href={href} sessionId={refs.sessionId}>{children}</FileLink>;
+  }
+  return (
+    <a {...p} href={href} target={isExternal(href) ? '_blank' : undefined} rel={isExternal(href) ? 'noreferrer' : undefined} className={LINK}>
+      {children}
+    </a>
+  );
+}
+
+/** A file path an agent wrote, as a link to the file viewer once the session's folder has it (as written otherwise). */
+function FileLink({ href, sessionId, children }: { href: string; sessionId: string; children: ReactNode }) {
+  const path = decodeURIComponent(href.slice('/files/'.length).split('?')[0]);
+  const exists = useQuery({
+    queryKey: ['session-file', sessionId, path],
+    queryFn: async () => (await api.sessionFiles(sessionId, path)).includes(path),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  if (!exists.data) return <>{children}</>;
+  return (
+    <a href={href} title={`Open ${path}`} data-slot="file-link" className="underline decoration-border underline-offset-2 hover:decoration-primary focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&>code]:text-primary">
+      {children}
+    </a>
+  );
+}
+
+/** Inline code; in a conversation a commit SHA is muted mono (PDT-382). */
+function MdCode(p: ComponentProps<'code'>) {
+  const refs = useContext(MarkdownRefsContext);
+  return refs && typeof p.children === 'string' && isSha(p.children)
+    ? <code {...p} className="font-mono text-meta text-muted-foreground" />
+    : <code {...p} className="rounded-sm bg-muted px-1 py-px font-mono text-meta text-foreground" />;
+}
+
+/** A table; in a conversation framed as a card (PDT-382). */
+function MdTable(p: ComponentProps<'table'>) {
+  const refs = useContext(MarkdownRefsContext);
+  if (!refs) {
+    return (
+      <div className="my-2 overflow-x-auto">
+        <table {...p} className="border-collapse text-xs" />
+      </div>
+    );
+  }
+  return (
+    <div data-slot="table-card" className="my-2 overflow-x-auto rounded-lg border border-border bg-card">
+      <table {...p} className="w-full border-collapse text-xs [&_tr:last-child>td]:border-b-0" />
+    </div>
+  );
+}
+
+/** A table cell; in a conversation a known status word in one is a coloured chip ("CI failed", "ready to accept"). */
+function MdCell({ head, children, ...p }: ComponentProps<'td'> & { head?: boolean }) {
+  const refs = useContext(MarkdownRefsContext);
+  if (head) {
+    return refs
+      ? <th {...(p as ComponentProps<'th'>)} className="border-b border-border px-2.5 py-1.5 text-left font-medium text-muted-foreground">{children}</th>
+      : <th {...(p as ComponentProps<'th'>)} className="border border-border bg-muted px-2 py-1 text-left font-medium">{children}</th>;
+  }
+  if (!refs) return <td {...p} className="border border-border px-2 py-1 align-top">{children}</td>;
+  const tone = typeof children === 'string' ? statusTone(children) : null;
+  return (
+    <td {...p} className="border-b border-border px-2.5 py-1.5 align-top">
+      {tone ? <Badge tone={tone}>{children}</Badge> : children}
+    </td>
+  );
+}
 
 /** Where a relative image of the Markdown on show is served from (a local doc's images sit beside it, PDT-315). */
 export const MarkdownImageContext = createContext<((src: string) => string) | null>(null);
@@ -203,11 +309,12 @@ export interface MarkdownProps {
  */
 export const Markdown = memo(function Markdown({ children, breaks, variant = 'default', className }: MarkdownProps) {
   const keys = useContext(TicketKeysContext);
+  const refs = useContext(MarkdownRefsContext);
   const keyList = keys.join(' ');
   const remarkPlugins = useMemo(() => {
     const base = breaks ? withBreaks : plugins;
-    return keyList ? [...base, remarkTicketKeys(keyList.split(' '))] : base;
-  }, [breaks, keyList]);
+    return keyList || refs ? [...base, remarkRefs(keyList ? keyList.split(' ') : [], refs)] : base;
+  }, [breaks, keyList, refs]);
   return (
     <div
       data-slot="markdown"
