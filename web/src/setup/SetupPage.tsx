@@ -167,7 +167,7 @@ function Step({ id, state, open, onToggle, title, summary, tag, children }: Step
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <b className="font-semibold">{title}</b>
-          <span className="text-xs text-muted-foreground">{summary}</span>
+          <span className="text-xs text-muted-foreground wrap-anywhere">{summary}</span>
         </span>
         {tag && <Badge>{tag}</Badge>}
         <ChevronDown aria-hidden className={cn('size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', open && 'rotate-180')} />
@@ -201,8 +201,11 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
               const c = checks?.[r.id];
               return (
                 <tr key={r.id} className="border-t border-border first:border-t-0">
-                  <td className="py-1.5 pr-2 font-medium">{r.name}</td>
-                  <td className="max-w-0 truncate py-1.5 pr-2 font-mono text-xs text-muted-foreground" title={c?.path ?? undefined}>{c?.found ? c.path ?? '' : 'not found'}</td>
+                  <td className="py-1.5 pr-3 font-medium whitespace-nowrap">{r.name}</td>
+                  {/* `w-full max-w-0`: the path takes the room left over, and cuts in the middle when that isn't enough (PDT-465). */}
+                  <td className="w-full max-w-0 truncate py-1.5 pr-2 font-mono text-xs text-muted-foreground">
+                    {c?.found && c.path ? <MiddlePath path={c.path} /> : c?.found ? '' : 'not found'}
+                  </td>
                   <td className="py-1.5 text-right whitespace-nowrap">
                     {c?.found ? <span className="text-running">Found</span> : (
                       <span className="text-destructive">Missing · <Link href={r.install} external>How to install</Link></span>
@@ -223,6 +226,19 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
         <p className="text-xs text-muted-foreground">Install git and one agent, log in to it once in a terminal, then Check again.</p>
       )}
     </Step>
+  );
+}
+
+/** A path on one line, cut in the middle when it doesn't fit: the folders shrink, the last part stays. The full path is in the tooltip. */
+function MiddlePath({ path }: { path: string }) {
+  const cut = path.lastIndexOf('/', path.length - 2);
+  const head = cut > 0 ? path.slice(0, cut) : '';
+  const tail = cut > 0 ? path.slice(cut) : path;
+  return (
+    <span className="flex min-w-0" title={path}>
+      {head && <span className="truncate">{head}</span>}
+      <span className="shrink-0">{tail}</span>
+    </span>
   );
 }
 
