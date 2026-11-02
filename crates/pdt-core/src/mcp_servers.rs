@@ -325,6 +325,59 @@ pub struct AuthServer {
     pub code_challenge_methods_supported: Vec<String>,
 }
 
+/// An address PDT may sign in through (the browser opens it, or PDT sends a client secret or a code to it): `https:`,
+/// or `http:` on this computer (a loopback address). Anything else (`javascript:`, `data:`, plain http over the
+/// network, an address with a user name in it) is refused.
+pub fn endpoint_ok(url: &str) -> bool {
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    let Some((scheme, rest)) = url.split_once("://") else { return false };
+    let authority = rest.split(['/', '?', '#', '\\']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    match scheme.to_ascii_lowercase().as_str() {
+        "https" => true,
+        "http" => {
+            let host = match authority.strip_prefix('[') {
+                Some(v6) => v6.split(']').next().unwrap_or_default(),
+                None => authority.split(':').next().unwrap_or_default(),
+            };
+            let host = host.to_ascii_lowercase();
+            host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+        }
+        _ => false,
+    }
+}
+
+impl AuthServer {
+    /// Checks the metadata fetched for `issuer`: each endpoint is one PDT may sign in through ([`endpoint_ok`]), and
+    /// the issuer it names, when it names one, is the one asked (RFC 8414 §3.3).
+    pub fn check(&self, issuer: &str) -> Result<(), String> {
+        let named = self.issuer.as_deref().map(|i| i.trim_end_matches('/'));
+        if named.is_some_and(|n| n != issuer.trim_end_matches('/')) {
+            return Err(format!(
+                "the service's sign-in metadata names another issuer ({}, not {issuer})",
+                self.issuer.as_deref().unwrap_or_default()
+            ));
+        }
+        let endpoints = [
+            ("sign-in", Some(self.authorization_endpoint.as_str())),
+            ("token", Some(self.token_endpoint.as_str())),
+            ("registration", self.registration_endpoint.as_deref()),
+        ];
+        for (what, url) in endpoints {
+            if let Some(url) = url.filter(|u| !endpoint_ok(u)) {
+                return Err(format!(
+                    "the service's {what} address ({url}) isn't https (or http on this computer), so PDT won't use it"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// `application/x-www-form-urlencoded` / query encoding.
 pub fn form_encode(pairs: &[(&str, &str)]) -> String {
     fn enc(s: &str) -> String {
@@ -431,6 +484,54 @@ pub struct TokenResponse {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn only_https_or_loopback_http_endpoints_are_used() {
+        for ok in [
+            "https://auth.example/authorize",
+            "HTTPS://auth.example",
+            "http://127.0.0.1:8080/token",
+            "http://localhost/authorize?x=1",
+            "http://[::1]:9/token",
+        ] {
+            assert!(endpoint_ok(ok), "{ok}");
+        }
+        for bad in [
+            "javascript:fetch('/api/x')//",
+            "javascript://%0afetch('/api/x')",
+            "data:text/html,<script>1</script>",
+            "http://auth.example/authorize",
+            "http://127.0.0.1.evil.example/",
+            "https://user@auth.example/",
+            "http://localhost@evil.example/",
+            " https://auth.example",
+            "https:// auth.example",
+            "https:///path",
+            "file:///etc/passwd",
+            "",
+        ] {
+            assert!(!endpoint_ok(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn auth_server_metadata_must_name_its_issuer_and_safe_endpoints() {
+        let a = AuthServer {
+            issuer: Some("https://auth.example/".into()),
+            authorization_endpoint: "https://auth.example/authorize".into(),
+            token_endpoint: "https://auth.example/token".into(),
+            ..AuthServer::default()
+        };
+        assert!(a.check("https://auth.example").is_ok());
+        assert!(AuthServer { issuer: None, ..a.clone() }.check("https://auth.example").is_ok(), "older servers");
+        assert!(a.check("https://other.example").unwrap_err().contains("another issuer"));
+        let js = AuthServer { authorization_endpoint: "javascript:alert(1)//".into(), ..a.clone() };
+        assert!(js.check("https://auth.example").unwrap_err().contains("sign-in address"));
+        let plain = AuthServer { token_endpoint: "http://auth.example/token".into(), ..a.clone() };
+        assert!(plain.check("https://auth.example").unwrap_err().contains("token address"));
+        let reg = AuthServer { registration_endpoint: Some("data:x".into()), ..a };
+        assert!(reg.check("https://auth.example").unwrap_err().contains("registration address"));
+    }
 
     #[test]
     fn everyone_gets_a_server_by_default_and_targeting_narrows_it() {

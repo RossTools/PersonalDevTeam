@@ -179,6 +179,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   tool result; `pdt_core::secret::Redactor` replaces them wherever the store, pdt-mcp, conversations and the logs
   write.
 - **Tokens are never returned by the API or logged**, and follow a redirect only to the same host.
+- **An MCP server's sign-in addresses are https (or loopback http) before PDT uses them**: its authorization
+  server and every endpoint in that server's metadata pass `pdt_core::mcp_servers::endpoint_ok`, and the metadata's
+  `issuer` matches (`AuthServer::check`, in pdt-api `mcp_oauth.rs` `discover`), because the browser opens the sign-in
+  address in PDT's own page and PDT sends the token address a client secret. The UI also opens only http(s) addresses.
 - **A dev instance never reads stable's keychain entries**: keys outside the stable data folder are scoped by the data
   folder (pdt-api `secrets.rs`).
 - **On Linux the secret backend sticks to its data folder** (keychain or file); it never switches.

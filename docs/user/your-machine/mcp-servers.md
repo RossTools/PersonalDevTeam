@@ -44,6 +44,9 @@ token, so no agent has to sign in. If the service stops accepting it (you revoke
 says **Sign-in failed**, your Inbox gets **Sign in to … again**, and new sessions start without the server until you
 click **Sign in again**. **Sign out** forgets the sign-in.
 
+PDT only signs in through secure (https) addresses, or plain http on your own computer. If a server's sign-in uses
+anything else, **Sign in** says so and opens nothing.
+
 A session gets the token that's current when it starts. A session that outlives its token (rare: most services keep a
 token for hours) loses the server's tools until it restarts.
 

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, stubApi } from '../test-utils';
 import type { McpServerView } from '../api/gen/McpServerView';
-import { McpServersPage, audience, pairsOf, pairsValue } from './McpServersPage';
+import { McpServersPage, audience, pairsOf, pairsValue, signInUrlOk } from './McpServersPage';
 
 const access = { enabled: true, pm: true, tickets: true, personas: [], user: true, projects: [], offIn: [], tools: { default: 'ask' as const, overrides: {} } };
 
@@ -69,6 +69,23 @@ describe('MCP servers', () => {
     expect(screen.getByRole('button', { name: 'Sign in again' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('switch', { name: "Use only PDT's MCP servers" }));
     await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ mcpOnlyPdt: true }));
+  });
+
+  it("never sends the browser to a sign-in address that isn't a web address", async () => {
+    stubApi({
+      ...base,
+      'GET /api/mcp-servers': { servers: [slack], onlyPdt: false },
+      'POST /api/mcp-servers/c1/sign-in': { url: "javascript:fetch('/api/sessions')//" },
+    });
+    const tab = { opener: {}, location: { href: 'about:blank' }, close: vi.fn() };
+    vi.stubGlobal('open', vi.fn(() => tab));
+    renderWithQuery(<McpServersPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign in again' }));
+    expect(await screen.findByText(/isn't a web address/)).toBeInTheDocument();
+    expect(tab.close).toHaveBeenCalled();
+    expect(tab.location.href).toBe('about:blank');
+    expect(['https://a.example/authorize?x=1', 'http://127.0.0.1:9/authorize'].every(signInUrlOk)).toBe(true);
+    expect(['javascript:alert(1)', 'data:text/html,x', 'JavaScript:alert(1)', 'not a url'].some(signInUrlOk)).toBe(false);
   });
 
   it('keeps secrets as references, and sums up who gets a server', () => {
