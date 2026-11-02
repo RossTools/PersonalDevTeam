@@ -2,6 +2,7 @@ use crate::common;
 use crate::port_blocks;
 
 use axum::http::StatusCode;
+use common::wait::{still_after, wait_until};
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_tailscale::testing::RecordingTailscale;
@@ -96,7 +97,7 @@ async fn setup() -> Env {
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "init"]);
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let state = AppState::new(store, tmp.path().join("data"));
+    let state = common::app_state(store, tmp.path());
     let app = router(state.clone(), None);
     let (s, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
@@ -113,15 +114,15 @@ async fn start(env: &Env, body: Value) -> (StatusCode, Value) {
 }
 
 async fn wait_state(app: &axum::Router, id: &str, want: &[&str]) -> Value {
-    for _ in 0..600 {
+    wait_until(&format!("run {id} to be {want:?}"), async || {
         let (_, r) = call(app, "GET", &format!("/api/runs/{id}"), None).await;
-        if want.contains(&r["state"].as_str().unwrap_or("")) {
-            return r;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let (_, r) = call(app, "GET", &format!("/api/runs/{id}"), None).await;
-    panic!("run {id} never reached {want:?}: {r}");
+        if want.contains(&r["state"].as_str().unwrap_or("")) { Ok(r) } else { Err(r) }
+    })
+    .await
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
 }
 
 async fn http_get(port: u16) -> String {
@@ -402,7 +403,7 @@ async fn exit_with_a_mapped_web_run(env: &mut Env, fake: &Arc<RecordingTailscale
 
 /// The next pdtd on the same database and data folder, with its own recording Tailscale.
 fn next_pdtd(env: &Env, fake: &Arc<RecordingTailscale>) -> (AppState, axum::Router) {
-    let mut next = AppState::new(env.state.store.clone(), env._tmp.path().join("data"));
+    let mut next = common::app_state(env.state.store.clone(), env._tmp.path());
     next.tailscale = fake.clone();
     (next.clone(), router(next, None))
 }
@@ -565,19 +566,17 @@ async fn test_runs_are_not_restarted_when_remote_access_changes_the_host() {
     let (_, r) = start(&env, json!({"name": "webhost", "kind": "run"})).await;
     let host_run = r["id"].as_str().unwrap().to_string();
     let port = wait_state(&env.app, &host_run, &["ready"]).await["port"].as_u64().unwrap() as u16;
-    for _ in 0..300 {
-        if std::fs::read_to_string(&starts).is_ok_and(|t| t.ends_with('\n')) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    wait_until("the test run to start", async || std::fs::read_to_string(&starts).is_ok_and(|t| t.ends_with('\n')))
+        .await;
     let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
     let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     // The web run restarting with the new host shows the restarts have happened.
     wait_body(&env.app, &host_run, port, "box.t.ts.net").await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(std::fs::read_to_string(&starts).unwrap(), "127.0.0.1\n", "the test run started once");
+    still_after("the test run starting again", Duration::from_millis(500), async || {
+        std::fs::read_to_string(&starts).unwrap() != "127.0.0.1\n"
+    })
+    .await;
     let (_, t) = call(&env.app, "GET", &format!("/api/runs/{test_run}"), None).await;
     assert_eq!(t["state"], "running", "{t}");
     for id in [&host_run, &test_run] {
@@ -641,11 +640,16 @@ async fn a_quick_on_off_toggle_leaves_the_loopback_link() {
     let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
     let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
+    let off_at = now_ms();
     let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"remoteAccess": false}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    // Let the restarts settle, then the run is ready on loopback with the loopback host.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    wait_state(&env.app, &id, &["ready"]).await;
+    // A restart always starts the run after the off began (one before it is restarted again), so the run is ready
+    // again since then, on loopback with the loopback host. A `ready` from before the toggles is not enough.
+    wait_until("the run to be ready after the restarts", async || {
+        let (_, r) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
+        if r["state"] == "ready" && r["updatedAt"].as_i64().is_some_and(|t| t >= off_at) { Ok(r) } else { Err(r) }
+    })
+    .await;
     wait_body(&env.app, &id, port, "127.0.0.1").await;
     let (_, r) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
     assert_eq!(
@@ -1012,13 +1016,10 @@ fn output(state: &AppState, id: &str) -> String {
 }
 
 async fn wait_output(state: &AppState, id: &str, want: &str) {
-    for _ in 0..300 {
-        if state.ptys.attach(&format!("run:{id}:command")).is_ok() && output(state, id).contains(want) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("the output of {id} never showed {want:?}");
+    wait_until(&format!("the output of {id} to show {want:?}"), async || {
+        state.ptys.attach(&format!("run:{id}:command")).is_ok() && output(state, id).contains(want)
+    })
+    .await
 }
 
 /// PDT-32: a detached run keeps running when pdtd exits, and the next pdtd reattaches to it (its log in the Output
@@ -1041,7 +1042,7 @@ async fn a_detached_run_survives_pdtd_and_is_reattached() {
     assert!(pdt_agents::detached::alive(&process), "the command outlives pdtd");
 
     // The next pdtd, on the same database and data folder.
-    let next = AppState::new(env.state.store.clone(), env._tmp.path().join("data"));
+    let next = common::app_state(env.state.store.clone(), env._tmp.path());
     let app = router(next.clone(), None);
     assert_eq!(pdt_api::resume_runs(&next).await, 1);
     let r = wait_state(&app, &id, &["ready"]).await;

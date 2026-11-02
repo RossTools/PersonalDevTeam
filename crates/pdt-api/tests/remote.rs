@@ -27,7 +27,7 @@ async fn setup_with(
     adjust: impl FnOnce(&mut AppState),
 ) -> (axum::Router, AppState) {
     let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.listen_port = 7999;
     state.allowed_hosts = AllowedHosts::new(vec!["127.0.0.1:7999".into()]);
     state.tailscale = fake;
@@ -152,7 +152,7 @@ async fn turning_off_unserves_only_what_this_process_served() {
 async fn app_state_defaults_to_no_tailscale() {
     let tmp = tempfile::tempdir().unwrap();
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let state = AppState::new(store, tmp.path().join("data"));
+    let state = common::app_state(store, tmp.path());
     assert!(matches!(state.tailscale.status(), Err(TsError::NotInstalled)));
 }
 
@@ -179,7 +179,7 @@ async fn startup_apply_and_a_concurrent_change_end_consistent() {
     // pdtd's startup apply is in the middle of a slow `tailscale status` when the owner turns remote access off.
     let st = state.clone();
     let startup = tokio::spawn(async move { apply_remote_access(&st).await });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    common::wait::wait_until("the startup apply's `tailscale status`", async || fake.status_calls() == 1).await;
     let (s, v) = call(&app, "PUT", "/api/host/settings", Some(json!({"remoteAccess": false}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     startup.await.unwrap();
@@ -213,7 +213,7 @@ async fn the_stable_instance_claims_443_and_others_their_own_port() {
     // AppState::new defaults to the stable instance's port.
     let tmp = tempfile::tempdir().unwrap();
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    assert_eq!(AppState::new(store, tmp.path().join("data")).remote_https_port, 443);
+    assert_eq!(common::app_state(store, tmp.path()).remote_https_port, 443);
 }
 
 #[tokio::test]

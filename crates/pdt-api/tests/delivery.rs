@@ -5,7 +5,8 @@
 
 use crate::common;
 
-use common::call;
+use common::wait::wait_until;
+use common::{call, conversation};
 use pdt_api::{AppState, router};
 use pdt_store::{SessionMessage, Store};
 use serde_json::{Value, json};
@@ -26,7 +27,7 @@ async fn setup(tmp: &Path, claude: &str) -> Env {
     common::git(&repo, &["init", "-q", "-b", "main"]);
     common::git(&repo, &["commit", "--allow-empty", "-m", "init", "-q"]);
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = common::app_state(store, tmp);
     state.platform.claude_program = claude.to_string();
     state.platform.login_path = None;
     state.platform.claude_config_dir = Some(tmp.join("claude-config"));
@@ -50,24 +51,11 @@ async fn new_session(env: &Env, extra: Value) -> String {
 }
 
 async fn events(env: &Env, id: &str) -> Vec<Value> {
-    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?after=0"), None).await;
-    v.as_array().unwrap().clone()
+    conversation::events(&env.app, id).await
 }
 
 async fn wait_turns(env: &Env, id: &str, n: usize) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        let ended = events(env, id)
-            .await
-            .iter()
-            .filter(|e| e["event"]["kind"] == "turn" && e["event"]["phase"] == "ended")
-            .count();
-        if ended >= n {
-            return;
-        }
-        assert!(Instant::now() < deadline, "never saw {n} turns end: {:#?}", events(env, id).await);
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    conversation::wait_turns(&env.app, id, n).await;
 }
 
 /// PDT's own message for a session, as `session.send` or a nudge queues it.
@@ -97,18 +85,13 @@ async fn status(env: &Env, id: &str) -> String {
     env.state.store.get_session_message(id).await.unwrap().unwrap().status
 }
 
-/// Ticks the engine (which delivers) until the message's status is not `from` (up to 20 s); returns it.
+/// Ticks the engine (which delivers) until the message's status is not `from`; returns it.
 async fn tick_past(env: &Env, id: &str, from: &str) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until(&format!("the message to leave {from}"), async || {
         pdt_api::run_workflows(&env.state).await;
-        let s = status(env, id).await;
-        if s != from {
-            return s;
-        }
-        assert!(Instant::now() < deadline, "the message stayed {from}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        Some(status(env, id).await).filter(|s| s != from)
+    })
+    .await
 }
 
 async fn undelivered(env: &Env) -> Vec<Value> {
@@ -117,14 +100,7 @@ async fn undelivered(env: &Env) -> Vec<Value> {
 }
 
 async fn wait_undelivered(env: &Env) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Some(n) = undelivered(env).await.into_iter().next() {
-            return n;
-        }
-        assert!(Instant::now() < deadline, "no session.undelivered notification");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_until("a session.undelivered notification", async || undelivered(env).await.into_iter().next()).await
 }
 
 #[tokio::test]
@@ -196,7 +172,7 @@ async fn a_restart_reports_the_users_message_still_on_its_way() {
     // pdtd stops; the next one reports what it never delivered.
     env.state.store.mark_running_interrupted(1).await.unwrap();
     pdt_api::shutdown_conversations(&env.state).await;
-    let mut fresh = AppState::new(env.state.store.clone(), tmp.path().join("data"));
+    let mut fresh = common::app_state(env.state.store.clone(), tmp.path());
     fresh.platform = env.state.platform.clone();
     pdt_api::recover_conversations(&fresh).await;
     assert_eq!(status(&env, &sending[0].id).await, "untold");

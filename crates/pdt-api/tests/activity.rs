@@ -1,7 +1,8 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::call;
+use common::wait::{still_after, wait_until};
+use common::{call, conversation};
 use futures_util::SinkExt;
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
 use serde_json::{Value, json};
@@ -16,7 +17,7 @@ async fn setup(tmp: &Path) -> (axum::Router, pdt_api::AppState) {
         std::process::Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success()
     );
     let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let state = pdt_api::AppState::new(store.clone(), tmp.join("data"));
+    let state = common::app_state(store.clone(), tmp);
     let app = pdt_api::router(state.clone(), None);
     let (_, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
@@ -218,8 +219,12 @@ async fn codex_program_status_keeps_trust_and_empty_enter_idle() {
     wait_for_activity(&app, id, json!("idle")).await; // empty Enter is not a turn
     type_in(&mut ws, "a prompt\r").await;
     wait_for_activity(&app, id, json!("working")).await;
-    tokio::time::sleep(Duration::from_millis(600)).await;
-    assert_eq!(session(&app, id).await["activity"], "working", "explicit work stays known while output is quiet");
+    still_after(
+        "explicit work stays known while output is quiet: the activity leaving working",
+        Duration::from_millis(600),
+        async || session(&app, id).await["activity"] != "working",
+    )
+    .await;
     report(&app, id, json!({"source": "codex", "event": "agent-turn-complete"})).await;
     assert_eq!(session(&app, id).await["activity"], "working", "a delayed notify must not override live status");
     type_in(&mut ws, "\r").await;
@@ -230,13 +235,7 @@ async fn codex_program_status_keeps_trust_and_empty_enter_idle() {
 }
 
 async fn wait_for_activity(app: &axum::Router, id: &str, want: Value) {
-    for _ in 0..200 {
-        if session(app, id).await["activity"] == want {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("activity never became {want}: {}", session(app, id).await);
+    conversation::wait_session(app, id, "activity", want).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -274,19 +273,18 @@ async fn codex_activity_follows_its_approval_screen_and_input() {
         tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/api/sessions/{id}/pty")).await.unwrap();
     ws.send(Message::Binary(b"y\r".to_vec().into())).await.unwrap();
     wait_for_activity(&app, &id, json!("working")).await;
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-    assert_eq!(session(&app, &id).await["activity"], "working", "one prompt line in ordinary output is not the prompt");
+    still_after(
+        "one prompt line in ordinary output is not the prompt: the activity leaving working",
+        Duration::from_millis(1500),
+        async || session(&app, &id).await["activity"] != "working",
+    )
+    .await;
     ws.send(Message::Binary(b"\r".to_vec().into())).await.unwrap();
     wait_for_activity(&app, &id, json!("needs_you")).await;
 
     let (s, _) = call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
-    for _ in 0..100 {
-        if session(&app, &id).await["status"] != "running" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    wait_until("the session to end", async || session(&app, &id).await["status"] != "running").await;
     wait_for_activity(&app, &id, Value::Null).await;
     state.ptys.shutdown().await;
 }
@@ -372,8 +370,12 @@ async fn claude_with_working_hooks_stays_known_until_it_goes_quiet() {
     assert_eq!(session(&app, &id).await["activity"], "idle");
     // An empty Enter (or a slash command) prints but sends no hook: not a sign of broken hooks.
     type_in(&mut ws, "\r").await;
-    tokio::time::sleep(Duration::from_millis(1_200)).await;
-    assert_eq!(session(&app, &id).await["activity"], "idle", "an Enter without a hook keeps it idle");
+    still_after(
+        "an Enter without a hook keeps it idle: the activity leaving idle",
+        Duration::from_millis(1_200),
+        async || session(&app, &id).await["activity"] != "idle",
+    )
+    .await;
 
     // A permission prompt, answered with a keypress: working again, and it stays so while output flows.
     report(&app, &id, json!({"source": "claude", "event": "PermissionRequest"})).await;
@@ -382,8 +384,12 @@ async fn claude_with_working_hooks_stays_known_until_it_goes_quiet() {
     wait_for_activity(&app, &id, json!("working")).await;
     for _ in 0..3 {
         type_in(&mut ws, "\r").await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        assert_eq!(session(&app, &id).await["activity"], "working", "a long command that keeps printing");
+        still_after(
+            "a long command that keeps printing: the activity leaving working",
+            Duration::from_millis(500),
+            async || session(&app, &id).await["activity"] != "working",
+        )
+        .await;
     }
     // No output for longer than the quiet threshold while working: unknown.
     wait_for_activity(&app, &id, json!("unknown")).await;
@@ -401,8 +407,10 @@ async fn claude_interrupt_returns_to_idle_without_a_stop_hook() {
     report(&app, &id, json!({"source": "claude", "event": "UserPromptSubmit"})).await;
     // The fake echoes each line as output. Quoting the interruption message during ordinary work is not a stop.
     type_in(&mut ws, "Interrupted · What should Claude do instead?\r").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(session(&app, &id).await["activity"], "working");
+    still_after("the activity leaving working", Duration::from_millis(200), async || {
+        session(&app, &id).await["activity"] != "working"
+    })
+    .await;
     // Use a separate terminal for cancellation so a delayed echo of the quoted example cannot serve as its ack.
     call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     let id = create_claude(&app, &pid).await;
@@ -410,8 +418,10 @@ async fn claude_interrupt_returns_to_idle_without_a_stop_hook() {
     report(&app, &id, json!({"source": "claude", "event": "UserPromptSubmit"})).await;
     // Esc requests cancellation; a dialog can consume it, so wait for Claude's interruption acknowledgement.
     type_in(&mut ws, "\x1b").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(session(&app, &id).await["activity"], "working");
+    still_after("the activity leaving working", Duration::from_millis(200), async || {
+        session(&app, &id).await["activity"] != "working"
+    })
+    .await;
     type_in(&mut ws, "Interrupted · What should Claude do instead?\r").await;
     wait_for_activity(&app, &id, json!("idle")).await;
     // A tool finishing while cancellation settles must not leave the session stuck working again.
@@ -427,8 +437,12 @@ async fn claude_interrupt_returns_to_idle_without_a_stop_hook() {
     let mut ws = terminal(port, &id).await;
     report(&app, &id, json!({"source": "claude", "event": "PermissionRequest"})).await;
     type_in(&mut ws, "\x1b").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(session(&app, &id).await["activity"], "needs_you", "Esc alone can decline a permission");
+    still_after(
+        "Esc alone can decline a permission: the activity leaving needs_you",
+        Duration::from_millis(200),
+        async || session(&app, &id).await["activity"] != "needs_you",
+    )
+    .await;
     report(&app, &id, json!({"source": "claude", "event": "PostToolUse"})).await;
     assert_eq!(session(&app, &id).await["activity"], "working", "a declined permission can continue the turn");
     state.ptys.shutdown().await;
@@ -516,8 +530,12 @@ async fn devin_activity_follows_its_program_status() {
     wait_for_activity(&app, id, json!("idle")).await;
     type_in(&mut ws, "a prompt\r").await;
     wait_for_activity(&app, id, json!("working")).await;
-    tokio::time::sleep(Duration::from_millis(600)).await;
-    assert_eq!(session(&app, id).await["activity"], "working", "explicit work stays known while output is quiet");
+    still_after(
+        "explicit work stays known while output is quiet: the activity leaving working",
+        Duration::from_millis(600),
+        async || session(&app, id).await["activity"] != "working",
+    )
+    .await;
     type_in(&mut ws, "\r").await;
     wait_for_activity(&app, id, json!("needs_you")).await;
     type_in(&mut ws, "1\r").await;

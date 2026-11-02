@@ -4,10 +4,12 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::{still_after, wait_until};
 use common::workflows::{Env, create, runs, setup};
 use common::{call, call_as_ui};
 use pdt_core::workflow::api::LogEvent;
 use serde_json::{Value, json};
+use std::time::Duration;
 
 async fn events(env: &Env, kind: &str) -> Vec<LogEvent> {
     let f = pdt_store::EventFilter { kind: Some(kind.into()), limit: 1000, ..Default::default() };
@@ -236,14 +238,11 @@ async fn hook(env: &Env, session: &str, event: &str, extra: Value) {
 
 /// Waits for `n` events of `kind` (session events are logged off the request's task).
 async fn wait_for(env: &Env, kind: &str, n: usize) -> Vec<LogEvent> {
-    for _ in 0..200 {
+    wait_until(&format!("{n} {kind}"), async || {
         let e = events(env, kind).await;
-        if e.len() >= n {
-            return e;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    panic!("never {n} {kind}: {:?}", events(env, kind).await);
+        if e.len() >= n { Ok(e) } else { Err(e) }
+    })
+    .await
 }
 
 #[tokio::test]
@@ -256,9 +255,11 @@ async fn a_session_needing_the_user_and_ending_a_turn_fires_once_each() {
     let needs = wait_for(&env, "session.needs_you", 1).await;
     hook(&env, "c1", "Stop", json!({})).await;
     let ended = wait_for(&env, "session.turn_ended", 1).await;
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert_eq!(events(&env, "session.needs_you").await.len(), 1, "a second prompt while waiting is the same wait");
-    assert_eq!(events(&env, "session.turn_ended").await.len(), 1);
+    // A second prompt while waiting is the same wait.
+    still_after("a second session.needs_you or session.turn_ended", Duration::from_millis(100), async || {
+        events(&env, "session.needs_you").await.len() != 1 || events(&env, "session.turn_ended").await.len() != 1
+    })
+    .await;
     for e in [&needs[0], &ended[0]] {
         let p = &e.payload;
         assert_eq!(
@@ -277,8 +278,10 @@ async fn a_session_needing_the_user_and_ending_a_turn_fires_once_each() {
     }
     // Idle again with nothing going on: no turn ended.
     hook(&env, "c1", "Stop", json!({})).await;
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert_eq!(events(&env, "session.turn_ended").await.len(), 1);
+    still_after("a second session.turn_ended", Duration::from_millis(100), async || {
+        events(&env, "session.turn_ended").await.len() != 1
+    })
+    .await;
 }
 
 #[tokio::test]

@@ -46,7 +46,7 @@ async fn setup() -> Env {
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = common::app_state(store, tmp.path());
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     state.platform.claude_program = reading_agent(&bin).to_string_lossy().into_owned();
     state.typing_quiet = std::time::Duration::ZERO;
@@ -738,7 +738,7 @@ async fn a_run_resumes_in_a_new_daemon_after_a_restart() {
 
     // A second daemon on the same database (the first one is gone).
     let store = Store::open(&env._tmp.path().join("pdt.db")).await.unwrap();
-    let state = AppState::new(store, env._tmp.path().join("data"));
+    let state = common::app_state(store, env._tmp.path());
     let app = router(state.clone(), None);
     let (s, _) =
         call(&app, "POST", &format!("/api/workflow-runs/{id}/steps/{gate}/answer"), Some(json!({"choice": "go"})))
@@ -1150,7 +1150,7 @@ async fn untouched_pipelines_follow_the_newer_template_and_edited_ones_stay() {
     // pdtd starts again.
     let restart = || async {
         let store = Store::open(&env._tmp.path().join("pdt.db")).await.unwrap();
-        let state = AppState::new(store, env._tmp.path().join("data"));
+        let state = common::app_state(store, env._tmp.path());
         pdt_api::run_workflows(&state).await;
         router(state, None)
     };

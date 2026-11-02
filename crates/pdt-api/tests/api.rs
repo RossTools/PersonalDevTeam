@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use pdt_api::{AppState, router, with_host_guard};
+use pdt_api::{router, with_host_guard};
 use pdt_store::Store;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -9,7 +9,7 @@ use tower::ServiceExt;
 
 async fn app(tmp: &Path, web_dir: Option<std::path::PathBuf>) -> axum::Router {
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    router(AppState::new(store, tmp.join("data")), web_dir)
+    router(crate::common::app_state(store, tmp), web_dir)
 }
 
 async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, String) {
@@ -65,7 +65,7 @@ async fn health_reports_a_web_build_that_follows_index_html() {
 
 async fn health_of(tmp: &Path, instance: pdt_core::instance::InstanceInfo) -> Value {
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = crate::common::app_state(store, tmp);
     state.instance = instance;
     let (status, body) = call(&router(state, None), "GET", "/api/health", None).await;
     assert_eq!(status, StatusCode::OK);

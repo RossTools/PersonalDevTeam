@@ -1,3 +1,5 @@
+use crate::common::conversation;
+use crate::common::wait::{still_after, wait_until};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -40,7 +42,7 @@ async fn setup(tmp: &Path) -> (axum::Router, AppState, String, std::path::PathBu
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["commit", "--allow-empty", "-m", "init", "-q"]);
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.join("data"));
+    let mut state = crate::common::app_state(store, tmp);
     // Codex launches read `<codex_home>/config.toml` for the user's notify: never the real ~/.codex.
     state.platform.codex_home = Some(tmp.join("codex-home"));
     let app = router(state.clone(), None);
@@ -51,14 +53,7 @@ async fn setup(tmp: &Path) -> (axum::Router, AppState, String, std::path::PathBu
 }
 
 async fn wait_status(app: &axum::Router, id: &str, want: &str) -> Value {
-    for _ in 0..100 {
-        let (_, s) = call(app, "GET", &format!("/api/sessions/{id}"), None).await;
-        if s["status"] == want {
-            return s;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    panic!("session {id} never became {want}");
+    conversation::wait_session(app, id, "status", want).await
 }
 
 #[tokio::test]
@@ -159,10 +154,10 @@ async fn restart_right_after_kill_is_not_overwritten_by_old_exit() {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     assert!(restarted, "the killed process never exited");
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let (_, now) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
-    assert_eq!(now["status"], "running");
-    assert!(state.ptys.is_running(&id));
+    still_after("the old exit ending the restarted session", std::time::Duration::from_millis(500), async || {
+        conversation::session(&app, &id).await["status"] != "running" || !state.ptys.is_running(&id)
+    })
+    .await;
     state.ptys.shutdown().await;
 }
 
@@ -187,10 +182,10 @@ async fn concurrent_restarts_start_exactly_one_run() {
         assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT], "round {round}: {v1} {v2}");
         let loser = if s1 == StatusCode::CONFLICT { &v1 } else { &v2 };
         assert_eq!(loser["code"], "already_running", "round {round}");
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        let (_, now) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
-        assert_eq!(now["status"], "running", "round {round}");
-        assert!(state.ptys.is_running(&id), "round {round}");
+        still_after(&format!("round {round}: the session ending"), std::time::Duration::from_millis(200), async || {
+            conversation::session(&app, &id).await["status"] != "running" || !state.ptys.is_running(&id)
+        })
+        .await;
     }
     state.ptys.shutdown().await;
 }
@@ -354,16 +349,12 @@ fn raw_launches(dir: &Path, name: &str) -> Vec<String> {
 /// The fake agent's recorded launches, sorted, one trimmed entry each (empty for a launch without arguments).
 /// Waits for `want` of them.
 async fn launches(dir: &Path, name: &str, want: usize) -> Vec<String> {
-    let mut found = Vec::new();
-    for _ in 0..100 {
-        found = raw_launches(dir, name).iter().map(|l| without_hook_args(l)).collect();
-        if found.len() >= want {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    found.sort();
-    found
+    wait_until(&format!("{want} launches of {name}"), async || {
+        let mut found: Vec<String> = raw_launches(dir, name).iter().map(|l| without_hook_args(l)).collect();
+        found.sort();
+        if found.len() >= want { Ok(found) } else { Err(found) }
+    })
+    .await
 }
 
 /// A recorded launch without PDT's activity-hook and instructions arguments (tests/activity.rs and

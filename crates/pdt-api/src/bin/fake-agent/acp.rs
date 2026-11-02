@@ -41,6 +41,8 @@ static MODES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new
 static PARTIAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// `agent --no-leader stdio`: Grok's fields instead of Devin's.
 static GROK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Where saved histories go (`saved_marker`).
+static SAVED_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
 /// A Devin-shaped message in Grok's terms.
 fn grok(v: &mut Value) {
@@ -99,9 +101,20 @@ fn out(mut v: Value) {
 }
 
 /// A session's saved history: one `{"text", "atMs"}` line per prompt (tests add lines to stand in for turns taken in
-/// Devin's terminal). It exists once the session was prompted.
+/// Devin's terminal). It exists once the session was prompted. Kept inside the test's temp folder, which the test
+/// removes: next to the `--config` file PDT passes (the PDT session's data folder), else in the `.git` folder of the
+/// repository the session runs in (git never lists it), else (outside a repository) in the working directory.
 fn saved_marker(id: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("fake-acp-saved-{id}"))
+    let dir = SAVED_DIR.get().cloned().or_else(repo_git_dir).or_else(|| std::env::current_dir().ok());
+    let dir = dir.unwrap_or_else(std::env::temp_dir);
+    dir.join(format!("fake-acp-saved-{id}"))
+}
+
+/// The `.git` folder of the main checkout holding the working directory (a worktree's `.git` is a file: its main
+/// checkout's is further up).
+fn repo_git_dir() -> Option<std::path::PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    cwd.ancestors().map(|d| d.join(".git")).find(|g| g.is_dir())
 }
 
 fn now_ms() -> i64 {
@@ -386,6 +399,9 @@ pub fn serve(args: &[String]) {
     MODES.store(args.iter().any(|a| a == "--modes"), std::sync::atomic::Ordering::Relaxed);
     let partial = args.iter().any(|a| a == "--partial-modes");
     PARTIAL.store(partial, std::sync::atomic::Ordering::Relaxed);
+    if let Some(dir) = flag("--config").and_then(|f| std::path::Path::new(&f).parent().map(|d| d.to_path_buf())) {
+        let _ = SAVED_DIR.set(dir);
+    }
     let hook = flag("--config")
         .and_then(|f| std::fs::read_to_string(f).ok())
         .is_some_and(|t| t.contains("hook devin --instructions"));

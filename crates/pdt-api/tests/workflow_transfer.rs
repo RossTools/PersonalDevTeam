@@ -27,7 +27,7 @@ async fn instance(key: &str, alerts: &str) -> Instance {
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-q", "-m", "init"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let state = AppState::new(store, tmp.path().join("data"));
+    let state = common::app_state(store, tmp.path());
     let app = router(state.clone(), None);
     let body = json!({"name": format!("Project {key}"), "key": key, "repoPath": repo.to_string_lossy()});
     let (s, p) = call(&app, "POST", "/api/projects", Some(body)).await;
