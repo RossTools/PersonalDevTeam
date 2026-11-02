@@ -165,9 +165,11 @@ pub(crate) async fn get_settings(
 pub(crate) async fn put_settings(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
     payload: Result<Json<ProjectSettingsInput>, JsonRejection>,
 ) -> Result<Json<ProjectSettingsView>, ApiError> {
     let Json(input) = payload?;
+    let from_ui = crate::untrusted::from_ui(&st, &headers)?;
     st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
     let run_overrides = input.run_overrides.filter(|t| !t.trim().is_empty());
     if let Some(t) = &run_overrides {
@@ -256,7 +258,13 @@ pub(crate) async fn put_settings(
         policy,
         integrations,
     };
+    // The commands the user wrote in PDT's settings are theirs: approved (PDT-405). An API caller's are not.
+    let written = settings.run_overrides.as_deref().filter(|_| from_ui).and_then(crate::runconfig::overrides_only);
     st.store.put_project_settings(&id, &settings).await?;
+    if let Some(c) = written {
+        let approved: Vec<String> = pdt_core::command_trust::of_config(&c).into_iter().map(|c| c.fingerprint).collect();
+        st.store.trust_commands(&id, &approved, crate::routes::now_ms()).await?;
+    }
     Ok(Json(view(&st, &id).await?))
 }
 

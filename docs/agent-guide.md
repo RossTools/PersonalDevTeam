@@ -221,7 +221,7 @@ overrides, which keep the whole configuration out of the repository. `GET /api/g
 | Call | Does |
 |---|---|
 | `GET /api/projects/<id>/run-config?worktreeId=<id>` | the configuration: `file`, `overrides`, the merged `effective` (`runs`, `tests`, `areas`), or `error` |
-| `POST /api/projects/<id>/runs` | `{name, kind: "run" \| "test", worktreeId?}`: starts it (in the main checkout without `worktreeId`); the same run finished earlier in that checkout restarts (200) instead of adding one |
+| `POST /api/projects/<id>/runs` | `{name, kind: "run" \| "test", worktreeId?}`: starts it (in the main checkout without `worktreeId`); the same run finished earlier in that checkout restarts (200) instead of adding one. A command the user hasn't approved is `409 untrusted_commands`: you can't approve it; ask the user to start the run in PDT |
 | `GET /api/runs/<id>` | `state` (`setting_up`, `starting`, `ready`, `running`, `passed`, `failed`, `stopped`), `url`, `exitCode`, `error` |
 | `POST /api/runs/<id>/stop` · `/restart` | as named |
 

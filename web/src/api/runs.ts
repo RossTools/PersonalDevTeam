@@ -1,5 +1,6 @@
 import { enc, request } from './core';
 import type { NewRun } from './gen/NewRun';
+import type { ProjectCommands } from './gen/ProjectCommands';
 import type { Run } from './gen/Run';
 import type { RunConfigView } from './gen/RunConfigView';
 
@@ -18,4 +19,12 @@ export const runsApi = {
     request<RunConfigView>(
       `/api/projects/${enc(projectId)}/run-config${worktreeId ? `?worktreeId=${enc(worktreeId)}` : ''}`,
     ),
+  /** The commands of a checkout's run configuration, and which wait on the user's approval. */
+  projectCommands: (projectId: string, worktreeId: string | null) =>
+    request<ProjectCommands>(
+      `/api/projects/${enc(projectId)}/commands${worktreeId ? `?worktreeId=${enc(worktreeId)}` : ''}`,
+    ),
+  /** The user approves these commands (as the user: an agent can't). */
+  trustCommands: (projectId: string, fingerprints: string[]) =>
+    request<void>(`/api/projects/${enc(projectId)}/commands/trust`, { method: 'POST', body: JSON.stringify({ fingerprints }) }, { asUser: true }),
 };

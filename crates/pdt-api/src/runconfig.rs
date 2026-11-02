@@ -76,6 +76,11 @@ fn effective(file: Option<&str>, overrides: Option<&str>) -> Result<RunConfig, R
     merge(f, o)
 }
 
+/// What the overrides alone configure (entries the file has no part in); None when they are invalid alone.
+pub(crate) fn overrides_only(text: &str) -> Option<RunConfig> {
+    effective(None, Some(text)).ok()
+}
+
 /// The effective configuration for a run in `checkout`.
 pub(crate) async fn load_effective(st: &AppState, project_id: &str, checkout: &FsPath) -> Result<RunConfig, ApiError> {
     effective_for_file(st, project_id, read_file(checkout).await?.as_deref()).await

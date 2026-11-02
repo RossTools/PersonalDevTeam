@@ -5,7 +5,10 @@
 
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use pdt_core::brand::PROJECT_CONFIG_FILE;
+use pdt_core::command_trust;
 use pdt_core::merge_update::{self, ConflictNote, MergeUpdateHow, MergeUpdateStatus};
+use pdt_core::runconfig::RegenerateDef;
 use pdt_core::ticket::{Actor, EventKind, PipelineStage};
 use pdt_store::AttemptInfo;
 use schemars::JsonSchema;
@@ -174,17 +177,42 @@ fn skipped(reason: &str) -> Done {
     done("skipped", json!({"reason": reason}))
 }
 
+/// The regeneration rules of the base branch's committed configuration, never the worktree's (an agent can write that
+/// one; PDT-405): those whose command the user approved, and those that wait on their approval.
+async fn regenerate_rules(st: &AppState, info: &AttemptInfo) -> (Vec<RegenerateDef>, Vec<RegenerateDef>) {
+    let (repo, base) = (PathBuf::from(&info.repo_path), info.attempt.base_branch.clone());
+    let file = tokio::task::spawn_blocking(move || pdt_git::branch_file(&repo, &base, PROJECT_CONFIG_FILE))
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r.map_err(|e| e.to_string()));
+    let config = match file {
+        Ok(f) => crate::runconfig::effective_for_file(st, &info.project_id, f.as_deref())
+            .await
+            .map_err(|e| e.message().to_string()),
+        Err(e) => Err(e),
+    };
+    let rules = match config {
+        Ok(c) => c.regenerate,
+        Err(e) => {
+            tracing::warn!(ticket = %info.ticket_key, error = %e, "no regeneration rules: the configuration can't be read");
+            return (vec![], vec![]);
+        }
+    };
+    match crate::command_trust::trusted(st, &info.project_id, &info.repo_path).await {
+        Ok(trusted) => rules
+            .into_iter()
+            .partition(|r| trusted.contains(&command_trust::of_regenerate(&r.run, &r.paths).fingerprint)),
+        Err(e) => {
+            tracing::warn!(ticket = %info.ticket_key, error = %e.message(), "no regeneration rules: approvals can't be read");
+            (vec![], vec![])
+        }
+    }
+}
+
 /// What the update did, as the node's outcome.
 async fn update(st: &AppState, info: &AttemptInfo) -> Done {
     let Some(worktree) = info.worktree_path.as_deref().map(PathBuf::from).filter(|p| p.is_dir()) else {
         return skipped("the attempt has no worktree");
-    };
-    let rules = match crate::runconfig::load_effective(st, &info.project_id, &worktree).await {
-        Ok(c) => c.regenerate,
-        Err(e) => {
-            tracing::warn!(ticket = %info.ticket_key, error = %e.message(), "no regeneration rules: the configuration can't be read");
-            vec![]
-        }
     };
     let pr = crate::github::watched_pr(st, &info.attempt.id).filter(|p| p.state == pdt_core::pr::PrState::Open);
     let remote_pr = pr.as_ref().is_some_and(|p| !p.local);
@@ -203,6 +231,18 @@ async fn update(st: &AppState, info: &AttemptInfo) -> Done {
         Merged::Current => done("current", json!({"how": "current", "base": p.base_ref})),
         Merged::Clean => finish(&worktree, &p, "clean", &[]).await,
         Merged::Conflicts(ref files) => {
+            let (rules, waiting) = regenerate_rules(st, info).await;
+            // Rules for these files whose command the user hasn't approved: their files are the agent's, and the Inbox
+            // says the rule waits on the user.
+            let unapproved = merge_update::plan(files, &waiting).rules;
+            if !unapproved.is_empty() {
+                let commands: Vec<_> = unapproved
+                    .iter()
+                    .map(|&i| command_trust::of_regenerate(&waiting[i].run, &waiting[i].paths))
+                    .collect();
+                let what = format!("Regenerating files when {} is brought up to date", info.ticket_key);
+                crate::command_trust::notify(st, &info.project_id, &commands, &what).await;
+            }
             let plan = merge_update::plan(files, &rules);
             let wt = worktree.clone();
             let generated = plan.generated.clone();

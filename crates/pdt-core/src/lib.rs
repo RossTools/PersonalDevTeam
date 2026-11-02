@@ -7,6 +7,7 @@ pub mod agent_context;
 pub mod board;
 pub mod brand;
 pub mod bug_report;
+pub mod command_trust;
 pub mod conversation;
 pub mod document;
 pub mod document_ops;
