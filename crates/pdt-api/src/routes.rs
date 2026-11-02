@@ -235,6 +235,7 @@ impl AppState {
         let update_token_account = crate::secrets::update_token_account(&data_dir, None);
         let github_account = crate::secrets::github_login_account(&data_dir, None);
         let forge_logins_account = crate::secrets::forge_logins_account(&data_dir, None);
+        let redactor = store.redactor().clone();
         let local = std::sync::Arc::new(crate::documents::local::LocalProvider::new(
             store.clone(),
             data_dir.clone(),
@@ -253,7 +254,10 @@ impl AppState {
             resume_changed: std::sync::Arc::new(tokio::sync::watch::channel(0).0),
             shutdown: std::sync::Arc::new(tokio::sync::Notify::new()),
             data_dir,
-            secrets: std::sync::Arc::new(crate::secrets::MemorySecretStore::default()),
+            secrets: std::sync::Arc::new(crate::secrets::Redacting::new(
+                std::sync::Arc::new(crate::secrets::MemorySecretStore::default()),
+                redactor,
+            )),
             secret_store: crate::secrets::SecretStoreInfo {
                 backend: crate::secrets::SecretBackend::Memory,
                 path: None,

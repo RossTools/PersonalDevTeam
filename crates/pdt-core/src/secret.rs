@@ -1,4 +1,4 @@
-//! Secrets agents can use but never see (PDT-158). The values live in the OS keychain only; PDT keeps each secret's
+//! Secrets agents and workflows use by name, never pasted into the chat (PDT-158). The values live in the OS keychain only; PDT keeps each secret's
 //! name, description, who may use it and its uses. Agents and workflows name a secret (`secret:<name>` in an
 //! environment, `{{secret.<name>}}` in a template, `{"$secret": "<name>"}` in JSON) and PDT fills it in at the moment
 //! of the call. Every known value is replaced by `[secret:<name>]` ([`Redactor`]) in what PDT stores, shows or logs.
@@ -315,19 +315,33 @@ fn place_refs(config: &Value, resolved: Value, values: &HashMap<String, String>)
 
 /// Every known secret's value, to replace by its [`placeholder`] wherever text is stored, shown or logged. Shared
 /// (one per pdtd) by the store, the API and the log writer; pdt-api keeps it in step with the keychain.
+///
+/// Each value is matched as it is and in the forms a command most often turns it into ([`forms`]): written inside a
+/// JSON string, hex, URL-encoded and base64 (wherever it starts in the encoded text). It is a safety net, not a
+/// guarantee: a value split up, reversed or encoded some other way still gets through.
 #[derive(Default)]
 pub struct Redactor {
-    /// (value, what replaces it), longest value first, so a value holding another is replaced whole. Each value
-    /// is there as it is and as it is written inside a JSON string, when that differs.
+    /// (form, what replaces it), longest form first, so a form holding another is replaced whole.
     known: RwLock<Vec<(String, String)>>,
-    names: RwLock<HashMap<String, String>>,
+    /// Each key's (value, the name its placeholder shows).
+    names: RwLock<HashMap<String, (String, String)>>,
 }
 
 impl Redactor {
-    /// Knows `name`'s value (replacing an earlier one).
+    /// Knows `name`'s value (replacing an earlier one), shown as `[secret:<name>]`.
     pub fn set(&self, name: &str, value: &str) {
+        self.set_labelled(name, value, name);
+    }
+
+    /// Knows `key`'s value (replacing an earlier one), shown as `[secret:<label>]`: for secrets PDT keeps for itself
+    /// (a connection's, a login), whose keys mean nothing to the user.
+    pub fn set_labelled(&self, key: &str, value: &str, label: &str) {
+        let entry = (value.to_string(), label.to_string());
+        if self.names.read().unwrap_or_else(|e| e.into_inner()).get(key) == Some(&entry) {
+            return; // Known already (a poller reading the keychain again).
+        }
         let mut names = self.names.write().unwrap_or_else(|e| e.into_inner());
-        names.insert(name.to_string(), value.to_string());
+        names.insert(key.to_string(), entry);
         self.rebuild(&names);
     }
 
@@ -341,22 +355,18 @@ impl Redactor {
 
     /// The value of `name`, when known.
     pub fn value(&self, name: &str) -> Option<String> {
-        self.names.read().unwrap_or_else(|e| e.into_inner()).get(name).cloned()
+        self.names.read().unwrap_or_else(|e| e.into_inner()).get(name).map(|(v, _)| v.clone())
     }
 
-    fn rebuild(&self, names: &HashMap<String, String>) {
+    fn rebuild(&self, names: &HashMap<String, (String, String)>) {
         let mut known = vec![];
-        for (name, value) in names {
-            let p = placeholder(name);
-            known.push((value.clone(), p.clone()));
-            let escaped = serde_json::to_string(value).unwrap_or_default();
-            let escaped = escaped.trim_matches('"');
-            if escaped != value {
-                known.push((escaped.to_string(), p));
-            }
+        for (value, label) in names.values() {
+            let p = placeholder(label);
+            known.extend(forms(value).into_iter().map(|f| (f, p.clone())));
         }
-        known.retain(|(v, _)| v.chars().count() >= MIN_VALUE_LEN);
-        known.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+        known.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
+        // The same value known twice (a login PDT keeps and a secret holding it too) is replaced one way.
+        known.dedup_by(|a, b| a.0 == b.0);
         *self.known.write().unwrap_or_else(|e| e.into_inner()) = known;
     }
 
@@ -382,6 +392,35 @@ impl Redactor {
         self.text(s).into_owned()
     }
 
+    /// `s`, the start of a longer text cut short (`cut`), redacted: also without what it ends in that could be the
+    /// start of a value, so cutting never leaves part of one. Redact before cutting, else a value across the cut is
+    /// left half there.
+    pub fn string_cut(&self, s: &str, cut: bool) -> String {
+        let mut out = self.string(s);
+        if cut {
+            let keep = out.len() - self.partial_end(&out);
+            out.truncate(keep);
+        }
+        out
+    }
+
+    /// How many bytes at the end of `s` are the start of a known form (not all of it), the longest such.
+    fn partial_end(&self, s: &str) -> usize {
+        let known = self.known.read().unwrap_or_else(|e| e.into_inner());
+        let mut best = 0;
+        for (form, _) in known.iter() {
+            let first = form.as_bytes()[0];
+            let from = s.len().saturating_sub(form.len() - 1);
+            let found = (from..s.len())
+                .filter(|&i| s.as_bytes()[i] == first && s.is_char_boundary(i))
+                .find(|&i| form.starts_with(&s[i..]));
+            if let Some(i) = found {
+                best = best.max(s.len() - i);
+            }
+        }
+        best
+    }
+
     /// `v` with every string (and key) redacted.
     pub fn json(&self, v: &Value) -> Value {
         if self.is_empty() {
@@ -405,6 +444,65 @@ impl Redactor {
             Err(_) => t.clone(),
         }
     }
+}
+
+/// The forms a value is matched in: as it is; inside a JSON string; hex (either case); URL-encoded; and base64 (standard
+/// and URL-safe), whole with its padding and, for each of the three places it can start in a longer encoded text, the
+/// part only it decides (all but a byte or two at either end). Forms too short to be told apart from ordinary text
+/// are left out.
+fn forms(value: &str) -> Vec<String> {
+    let mut out = vec![value.to_string()];
+    let escaped = serde_json::to_string(value).unwrap_or_default();
+    out.push(escaped.trim_matches('"').to_string());
+    let hex: String = value.bytes().map(|b| format!("{b:02x}")).collect();
+    out.push(hex.to_uppercase());
+    out.push(hex);
+    out.push(url_encode(value));
+    let bytes = value.as_bytes();
+    for alphabet in [B64_STD, B64_URL] {
+        out.push(base64(bytes, alphabet, true));
+        for skip in 0..3.min(bytes.len()) {
+            let rest = &bytes[skip..];
+            let whole = rest.len() / 3 * 3;
+            if whole >= MIN_B64_BYTES {
+                out.push(base64(&rest[..whole], alphabet, false));
+            }
+        }
+    }
+    out.retain(|f| f.chars().count() >= MIN_VALUE_LEN);
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The fewest of a value's bytes a base64 form must stand for (8 characters), so it is no common word.
+const MIN_B64_BYTES: usize = 6;
+const B64_STD: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+fn base64(bytes: &[u8], alphabet: &[u8; 64], pad: bool) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | (b as u32) << (16 - 8 * i));
+        for i in 0..=chunk.len() {
+            out.push(alphabet[(n >> (18 - 6 * i) & 63) as usize] as char);
+        }
+        if pad {
+            out.extend(std::iter::repeat_n('=', 3 - chunk.len()));
+        }
+    }
+    out
+}
+
+/// Every byte but the unreserved ones (`A-Z a-z 0-9 - . _ ~`) as `%XX`.
+fn url_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -553,5 +651,59 @@ mod tests {
         let red = r.string(&text);
         assert_eq!(serde_json::from_str::<Value>(&red).unwrap(), json!({"out": "the [secret:Q] is"}));
         assert_eq!(r.json(&json!({"a": ["pa\"ss\\word"]})), json!({"a": ["[secret:Q]"]}));
+    }
+
+    #[test]
+    fn encodes_like_the_tools_do() {
+        // `printf %s … | base64`, `| xxd -p`, `| base64 -w0`.
+        assert_eq!(base64(b"hunter2-value", B64_STD, true), "aHVudGVyMi12YWx1ZQ==");
+        assert_eq!(base64(b"ab?", B64_STD, true), "YWI/");
+        assert_eq!(base64(b"ab?", B64_URL, true), "YWI_");
+        assert_eq!(base64(b"ab", B64_STD, false), "YWI");
+        assert_eq!(url_encode("a b/c~"), "a%20b%2Fc~");
+    }
+
+    #[test]
+    fn redacts_common_encodings() {
+        let r = Redactor::default();
+        r.set("T", "hunter2-value");
+        assert_eq!(r.string("x 68756e746572322d76616c7565 y"), "x [secret:T] y");
+        assert_eq!(r.string("68756E746572322D76616C7565"), "[secret:T]");
+        assert_eq!(r.string("aHVudGVyMi12YWx1ZQ=="), "[secret:T]");
+        r.set("U", "p@ss word/1");
+        assert_eq!(r.string("?pw=p%40ss%20word%2F1&x"), "?pw=[secret:U]&x");
+        // `echo "$T" | base64` (a newline after it), and the value anywhere in a longer encoded text: whatever is
+        // left beside the placeholder stands for a byte or two at most.
+        for text in ["hunter2-value\n", "a hunter2-value b", "ab hunter2-value", "abc:hunter2-value:abc"] {
+            let enc = base64(text.as_bytes(), B64_STD, true);
+            let red = r.string(&enc);
+            assert!(red.contains("[secret:T]"), "{text}: {red}");
+            assert!(red.replace("[secret:T]", "").len() <= enc.len() - 12, "{text}: {red}");
+        }
+    }
+
+    #[test]
+    fn short_values_have_no_short_base64_forms() {
+        assert!(forms("abcdef").iter().all(|f| f.len() >= MIN_VALUE_LEN));
+        assert!(!forms("abcdefg").iter().any(|f| f.len() < 8 && f != "abcdefg"));
+    }
+
+    #[test]
+    fn cutting_leaves_no_part_of_a_value() {
+        let r = Redactor::default();
+        r.set("T", "hunter2-value");
+        assert_eq!(r.string_cut("out: hunter2-value and hunt", true), "out: [secret:T] and ");
+        assert_eq!(r.string_cut("out: aHVudGVy", true), "out: ");
+        assert_eq!(r.string_cut("out: hunt", false), "out: hunt", "a whole text keeps its end");
+        assert_eq!(r.string_cut("nothing here", true), "nothing here");
+    }
+
+    #[test]
+    fn labels() {
+        let r = Redactor::default();
+        r.set_labelled("connection:1", "conn-secret-1", "connection");
+        assert_eq!(r.string("x conn-secret-1"), "x [secret:connection]");
+        r.set("A", "conn-secret-1");
+        assert_eq!(r.string("conn-secret-1"), "[secret:A]", "one value, one placeholder (the first by name)");
     }
 }

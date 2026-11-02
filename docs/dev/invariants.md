@@ -203,9 +203,17 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 
 ## Secrets and GitHub
 
-- **Agents and workflows use secrets but never see them.** Values never go in the database, a response, a log or a
-  tool result; `pdt_core::secret::Redactor` replaces them wherever the store, pdt-mcp, conversations and the logs
-  write.
+- **Agents and workflows use secrets by name; values never go in the chat.** Values never go in the database, a
+  response, a log or a tool result; `pdt_core::secret::Redactor` replaces them (and their hex, base64 and URL-encoded
+  forms) wherever the store, pdt-mcp, conversations and the logs write. It is a safety net, not a wall: a command run
+  with a secret can print it some other way, so the docs promise "never pasted into the chat", not "never seen".
+- **Every keychain value PDT reads or writes reaches the redactor.** `AppState::secrets` is wrapped in
+  `secrets::Redacting` (pdtd's `main.rs`, `AppState::new`); a value kept outside the keychain (Google's access tokens,
+  MCP sign-ins' refreshed tokens) is given to the redactor where it is made.
+- **Redact before cutting.** Output cut to a size is redacted first and then loses any end that could start a value
+  (`Redactor::string_cut`), so a cut never leaves part of one.
+- **A Codex terminal's secrets stay out of its shell commands**: each name `codex_tui_env` passes a secret in is in
+  the `shell_environment_policy.exclude` it gets (pdt-agents `mcp.rs`), after the user's own patterns.
 - **The secret tools are no way round the agent's sandbox.** `run_with_secrets` and `write_secret_file` run in pdtd, so
   they ask (unless the session asks before nothing), must name a secret, and stay in the session's folder, out of
   `.git` and off symlinks (pdt-api `vault.rs` `session_path`). Don't mark them non-asking or let the PM act for them.
