@@ -19,21 +19,29 @@
       code { color: #e7e8ec; font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
       button { font: inherit; padding: 0.5rem 1rem; border: 0; border-radius: 8px; background: #3561b8; color: #fff; cursor: pointer; }
       a { color: #8fb0f0; }
+      .warn { color: #f0c36a; }
     </style>
   </head>
   <body>
     <main>
       <noscript><p>This page needs JavaScript to send you back to PDT.</p></noscript>
+      <section id="starting" hidden>
+        <h1>Signing in to Google…</h1>
+        <p>Waiting for PDT. If nothing happens, close this window and start again from PDT: Settings → Plugins → Google.</p>
+      </section>
       <section id="ask" hidden>
         <h1>Return to PDT at <code id="where"></code>?</h1>
         <p>Google signed you in. Continue only if this is the PDT you started from: on this computer, your network or
           Tailscale.</p>
+        <p id="remote" class="warn" hidden><strong>This address isn’t on this computer.</strong> Whoever runs it gets access to the
+          Google Docs and Sheets you use with PDT. Continue only if it is your own machine and you just clicked Sign in
+          there.</p>
         <button id="go" type="button">Return to PDT</button>
       </section>
       <section id="refused" hidden>
         <h1>This sign-in can’t go back to PDT</h1>
-        <p>The link doesn’t come from a PDT sign-in, or names an address that isn’t a PDT. Start signing in again from
-          PDT: Settings → Plugins → Google.</p>
+        <p>It didn’t start from PDT in this browser, it expired, or it names an address that isn’t a PDT. Start
+          signing in again from PDT: Settings → Plugins → Google.</p>
       </section>
       <p><a href="/privacy/">Privacy</a></p>
     </main>

@@ -132,6 +132,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **Secrets are filled in only when a node runs**, only from the node's own config, never from text that arrived as
   data. Stored step inputs, outputs and errors are redacted. Errors from outbound HTTP go through `send_error`, which
   drops the URL (it can carry a secret).
+- **Outside text never reaches a shell as code.** A `command` step's `script` refuses `{{…}}` references (only a
+  template's `params` may stay); they go through `env`. `check` refuses them on save, and `NodeKind::check_at_run`
+  (pdt-api `workflow/catalog.rs`, called by the engine before it resolves a step's input) stops a workflow saved before
+  the rule. A rule that guards against injection belongs in `check_at_run` too, since stored documents aren't
+  revalidated.
 - **Event payloads are an API.** Users' workflows read them as `{{trigger.x}}`; renaming a field breaks them silently.
 - **A workflow never reacts to its own runs by default.** The events in pdt-core `events::OWN_RUN_EVENTS` (`run.*`,
   `inbox.*`, `session.needs_you`, `session.turn_ended`, `session.exited`, `agent.stalled`, `agent.loop_limit`,
@@ -231,6 +236,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **The Host guard and owner-only checks cover every route** (pdt-api `host_guard.rs`, `identity_guard.rs`): only
   loopback hosts and the allowed hosts; remote requests carry the owner's Tailscale identity. Hooks
   (`/api/hooks/*`) authenticate with their own secret instead. Don't add a route outside the guards.
+- **Every response carries the security headers** (pdt-api `security_headers.rs`, the router's outer layers): no
+  framing (`X-Frame-Options: DENY`, `frame-ancestors 'none'`), `nosniff`, no referrer, and for the web UI a CSP with
+  script only from PDT's own bundle. Keep the UI free of inline scripts and `eval`; a new kind of resource it loads
+  (a worker, another frame source) needs the policy widened there. A response with its own CSP keeps it.
 - **A run's link is set under `settings_lock`, together with registering its driver** (`run_manager::relaunch`,
   `runs::create`). Applying remote access holds the same lock while it relinks and restarts the running runs, so a
   run started meanwhile never keeps the other setting's link.

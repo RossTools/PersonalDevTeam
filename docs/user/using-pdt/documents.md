@@ -132,10 +132,15 @@ makes and the ones you pick: it never sees the rest of your Drive.
 ### Add a Google account
 
 1. Open **Settings › Plugins › Google** and turn it on.
-2. Under **Sign in**, click **Sign in with Google**. Google's page opens in a window of its own; pick your account and
-   allow access. Google sends you back through a page on pdt.dev that asks **Return to PDT at …?**: check it's the
-   address you opened PDT at and click **Return to PDT**. The window closes and the account shows, named after its
-   email.
+2. Under **Sign in**, click **Sign in with Google**. A window of its own opens on pdt.dev and goes on to Google's
+   page; pick your account and allow access. Google sends you back through pdt.dev, which asks **Return to PDT at
+   …?**: check it's the address you opened PDT at and click **Return to PDT**. The window closes and the account
+   shows, named after its email.
+
+pdt.dev sends you back only to the PDT that started the sign-in in the same browser, within 15 minutes. A Google
+sign-in link from anywhere else stops there. For an address that isn't on this computer, it also warns you that whoever
+runs that address gets access to your files, so continue only when it's your own machine. If your browser blocks the
+window, allow pop-ups for PDT and click **Sign in with Google** again.
 
 This works wherever you opened PDT: on this machine, from another device on your network, or over
 [Tailscale](../your-machine/remote-access.md). Sign in once for each Google account. **Sign out** takes PDT's access

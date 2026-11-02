@@ -25,7 +25,7 @@ async fn a_command_gets_json_on_stdin_and_gives_json_back() {
         &env,
         manual_then(json!({"id": "run", "kind": "command", "version": 1, "config": {
             "program": fake_command(), "args": ["echo", "{{trigger.word}}"],
-            "input": {"n": "{{trigger.n}}"}, "env": {"FAKE_ENV": "set"}}})),
+            "input": {"n": "{{trigger.n}}"}, "env": {"FAKE_ENV": "set", "WORD": "{{trigger.word}}"}}})),
     )
     .await;
     let r = run_now(&env, &wf, json!({"n": 3, "word": "hi"})).await;
@@ -118,12 +118,12 @@ async fn a_command_cwd_must_be_a_mode_or_a_full_path() {
 #[tokio::test]
 async fn a_command_runs_a_multi_line_script_in_its_shell() {
     let env = setup(vec![]).await;
-    let script = "read -r input\nword='{{trigger.word}}'\nprintf '{\"word\": \"%s\", \"stdin\": %s, \"env\": \"%s\"}' \
-                  \"$word\" \"$input\" \"$FAKE_ENV\"";
+    let script = "read -r input\nprintf '{\"word\": \"%s\", \"stdin\": %s, \"env\": \"%s\"}' \
+                  \"$WORD\" \"$input\" \"$FAKE_ENV\"";
     let wf = create(
         &env,
         manual_then(json!({"id": "run", "kind": "command", "version": 1, "config": {
-            "script": script, "shell": "sh", "input": {"n": "{{trigger.n}}"}, "env": {"FAKE_ENV": "set"}}})),
+            "script": script, "shell": "sh", "input": {"n": "{{trigger.n}}"}, "env": {"FAKE_ENV": "set", "WORD": "{{trigger.word}}"}}})),
     )
     .await;
     let r = run_now(&env, &wf, json!({"n": 3, "word": "hi"})).await;
@@ -161,6 +161,66 @@ async fn a_command_has_a_program_or_a_script_not_both() {
     assert!(problem(json!({"shell": "fish", "script": "echo"})).await.contains("fish"));
     let fine = problem(json!({"script": "echo hi", "shell": "bash"})).await;
     assert!(!fine.contains("script") && !fine.contains("program"), "{fine}");
+}
+
+/// PDT-412: outside text goes into a script through `env`, never pasted into the shell.
+#[tokio::test]
+async fn a_script_refuses_data_references() {
+    let env = setup(vec![]).await;
+    let app = &env.app;
+    let problem = |config: Value| {
+        let doc = manual_then(json!({"id": "run", "kind": "command", "version": 1, "config": config}));
+        async move {
+            let (s, v) = call(app, "POST", "/api/workflows/validate", Some(json!({"doc": doc}))).await;
+            assert_eq!(s, StatusCode::OK);
+            v.to_string()
+        }
+    };
+    for r in ["trigger.title", "steps.fetch.json.name", "state.baseline", "secret.token"] {
+        let got = problem(json!({"script": format!("echo {{{{{r}}}}}")})).await;
+        assert!(got.contains("pasted into the shell unquoted") && got.contains("env"), "{r}: {got}");
+    }
+    let got = problem(json!({"script": "echo {{ trigger.title }}"})).await;
+    assert!(got.contains("TITLE"), "suggests an env name: {got}");
+    for fine in [
+        json!({"script": "echo \"$TITLE\"", "env": {"TITLE": "{{trigger.title}}"}}),
+        json!({"program": "echo", "args": ["--", "{{trigger.title}}"]}),
+        json!({"script": "echo {{params.greeting}}"}),
+    ] {
+        let got = problem(fine.clone()).await;
+        assert!(!got.contains("unquoted"), "{fine}: {got}");
+    }
+}
+
+/// PDT-412: a workflow saved before the rule (its doc written straight to the store) stops at the step instead of
+/// pasting the trigger's text into the shell.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_stored_script_with_a_reference_fails_at_its_step() {
+    let env = setup(vec![]).await;
+    let wf = create(
+        &env,
+        manual_then(json!({"id": "run", "kind": "command", "version": 1,
+        "config": {"script": "echo fine", "parse": "text"}})),
+    )
+    .await;
+    let marker = std::env::temp_dir().join(format!("pdt-412-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    let bad = manual_then(json!({"id": "run", "kind": "command", "version": 1,
+        "config": {"script": "echo {{trigger.title}}", "parse": "text"}}));
+    let bad: pdt_core::workflow::doc::WorkflowDoc = serde_json::from_value(bad).unwrap();
+    env.state
+        .store
+        .save_workflow_version(&wf, &bad, pdt_core::workflow::api::Author::User, "", 2)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let r = run_now(&env, &wf, json!({"title": format!("$(touch {})", marker.display())})).await;
+    assert_eq!(r["status"], "failed", "{r}");
+    let e = step(&r, "run")["error"].as_str().unwrap_or_default().to_string();
+    assert!(e.contains("pasted into the shell unquoted"), "{r}");
+    assert!(!marker.exists(), "the title ran as code");
 }
 
 #[tokio::test]

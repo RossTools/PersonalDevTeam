@@ -59,8 +59,9 @@ pub struct CommandConfig {
     pub program: String,
     #[serde(default)]
     pub args: Vec<String>,
-    /// A script, run as `<shell> -c <script>` instead of `program`. `{{…}}` references are pasted in as plain text,
-    /// not quoted for the shell: put outside text in `env` and use `"$NAME"` in the script.
+    /// A script, run as `<shell> -c <script>` instead of `program`. It can't hold `{{…}}` references (only a
+    /// template's `{{params.*}}`): they would be pasted in unquoted, so a PR title could run code. Put them in `env` and
+    /// use `"$NAME"` (`$env:NAME` in pwsh) in the script.
     #[serde(default)]
     #[schemars(extend("x-format" = "code", "x-language" = "sh"))]
     #[ts(optional)]
@@ -154,11 +155,22 @@ impl NodeKind for Command {
             (None, true) => return Err("program is empty (set program or script)".into()),
             _ => {}
         }
+        if let Some(script) = &c.script {
+            script_refs_ok(script)?;
+        }
         let cwd = c.cwd.trim();
         if !matches!(cwd, "scratch" | "project" | "attempt") && !cwd.contains("{{") && !Path::new(cwd).is_absolute() {
             return Err(format!("cwd {cwd:?} is not scratch, project, attempt or a full path"));
         }
         Ok(())
+    }
+
+    /// A workflow saved before scripts refused references would otherwise still paste outside text into the shell.
+    fn check_at_run(&self, config: &Value) -> Result<(), String> {
+        match config.get("script").and_then(Value::as_str) {
+            Some(script) => script_refs_ok(script),
+            None => Ok(()),
+        }
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
@@ -179,6 +191,29 @@ impl NodeKind for Command {
             Ok(Outcome::next("out", out))
         })
     }
+}
+
+/// PDT-412: a script can't paste data references into the shell. Outside text (an issue title, a webhook body) would
+/// run as code; in `env` it is only ever a value. A template's parameters are filled in when it is installed, by the
+/// user, so they may stay.
+fn script_refs_ok(script: &str) -> Result<(), String> {
+    let bad: Vec<String> = pdt_core::workflow::refs::refs_in(&Value::String(script.to_string()))
+        .into_iter()
+        .filter(|r| r.split('.').next() != Some("params"))
+        .collect();
+    let Some(first) = bad.first() else { return Ok(()) };
+    let name = first
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .collect::<String>();
+    let name = if name.is_empty() || name.starts_with(|c: char| c.is_ascii_digit()) { "VALUE".into() } else { name };
+    Err(format!(
+        "script can't use {{{{{first}}}}}: it would be pasted into the shell unquoted. Put it in env \
+         (\"{name}\": \"{{{{{first}}}}}\") and use \"${name}\" in the script"
+    ))
 }
 
 async fn working_dir(cx: &StepCx<'_>, cwd: &str) -> Result<PathBuf, String> {

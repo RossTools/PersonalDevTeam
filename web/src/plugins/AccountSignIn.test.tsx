@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SignIn } from '../api/gen/SignIn';
@@ -74,5 +74,43 @@ describe('A plugin’s account sign-in', () => {
     expect(calls.find((c) => c.path === '/api/acme/accounts/c1/sign-in')?.body).toEqual({ origin: window.location.origin, agent: true });
     await userEvent.click(screen.getByRole('button', { name: 'Stop agents' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/acme/accounts/c2/agents')).toBe(true));
+  });
+
+  it('starts PDT’s own sign-in at the website’s page and hands it the consent page once it is listening', async () => {
+    const popup = { location: { href: '' }, close: vi.fn(), postMessage: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+    stubApi({
+      'GET /api/ui/token': { token: 'ui' },
+      'GET /api/acme/accounts': [],
+      'POST /api/acme/sign-in': { url: 'https://acme.example/consent?new=1', redirectUri: 'https://pdt.dev/oauth/acme', relay: 'https://pdt.dev/oauth/acme' },
+    });
+    renderWithQuery(<AccountSignIn signIn={signIn(true)} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign in with Acme' }));
+    await waitFor(() => expect(popup.location.href).toBe('https://pdt.dev/oauth/acme'));
+    const ready = (origin: string, source: unknown) =>
+      fireEvent(window, new MessageEvent('message', { data: { pdtRelay: 'ready' }, origin, source: source as Window }));
+    // Only the relay page, in the sign-in window, gets it.
+    ready('https://evil.example', popup);
+    ready('https://pdt.dev', window);
+    expect(popup.postMessage).not.toHaveBeenCalled();
+    ready('https://pdt.dev', popup);
+    expect(popup.postMessage).toHaveBeenCalledWith({ pdtRelayTo: 'https://acme.example/consent?new=1' }, 'https://pdt.dev');
+    ready('https://pdt.dev', popup);
+    expect(popup.postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks for pop-ups when PDT’s own sign-in can’t open its window', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign, origin: window.location.origin });
+    stubApi({
+      'GET /api/ui/token': { token: 'ui' },
+      'GET /api/acme/accounts': [],
+      'POST /api/acme/sign-in': { url: 'https://acme.example/consent?new=1', redirectUri: 'https://pdt.dev/oauth/acme', relay: 'https://pdt.dev/oauth/acme' },
+    });
+    renderWithQuery(<AccountSignIn signIn={signIn(true)} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign in with Acme' }));
+    expect(await screen.findByText(/Allow pop-ups for PDT/)).toBeInTheDocument();
+    expect(assign).not.toHaveBeenCalled();
   });
 });

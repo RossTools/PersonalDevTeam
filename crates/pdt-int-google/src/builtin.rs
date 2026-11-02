@@ -7,7 +7,9 @@
 //! Their only redirect URI is the website's `/oauth/google` page: Google can't send the browser back to wherever PDT
 //! is open (a loopback address, a Tailscale name). The page reads where to go from OAuth's `state`, which is
 //! `<nonce>.<base64url(origin)>` ([`state`]), forwards only to an address that looks like a PDT ([`pdt_origin`], the
-//! same rule as the page's `site/public/oauth/google.js`), and pdtd takes only the states it issued.
+//! same rule as the page's `site/public/oauth/google.js`), and pdtd takes only the states it issued. The browser
+//! starts at that page too (`AccountSignInStart::relay`), which takes the consent page only from the PDT the state
+//! names and forwards only states it started, so a Google link made with these clients elsewhere goes nowhere (PDT-410).
 
 use base64::Engine;
 use std::net::{Ipv4Addr, Ipv6Addr};

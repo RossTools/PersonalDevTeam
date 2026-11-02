@@ -8,8 +8,9 @@ export type CommandConfig = {
  */
 program: string, args: Array<string>, 
 /**
- * A script, run as `<shell> -c <script>` instead of `program`. `{{…}}` references are pasted in as plain text,
- * not quoted for the shell: put outside text in `env` and use `"$NAME"` in the script.
+ * A script, run as `<shell> -c <script>` instead of `program`. It can't hold `{{…}}` references (only a
+ * template's `{{params.*}}`): they would be pasted in unquoted, so a PR title could run code. Put them in `env` and
+ * use `"$NAME"` (`$env:NAME` in pwsh) in the script.
  */
 script?: string, 
 /**

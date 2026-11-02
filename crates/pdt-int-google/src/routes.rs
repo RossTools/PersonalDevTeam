@@ -102,7 +102,8 @@ fn begin(
     let built_in = connection.is_none_or(|c| shared.uses_built_in(c));
     let nonce = oauth::random(24);
     let (state, redirect) = if built_in {
-        // Google comes back to the website's page, which sends the browser on to `origin`.
+        // The browser starts at the website's page (`relay`), and Google comes back to it, which sends the browser on
+        // to `origin`.
         (builtin::state(&nonce, &builtin::pdt_origin(origin).map_err(bad)?), builtin::redirect_uri())
     } else {
         (nonce, redirect_uri(origin).map_err(bad)?)
@@ -123,7 +124,8 @@ fn begin(
             started_ms: now,
         },
     );
-    Ok(AccountSignInStart { url, redirect_uri: redirect })
+    let relay = built_in.then(|| redirect.clone());
+    Ok(AccountSignInStart { url, redirect_uri: redirect, relay })
 }
 
 /// `POST /api/google/sign-in`: where the browser goes to add an account, with PDT's own clients.

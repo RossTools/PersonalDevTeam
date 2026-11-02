@@ -11,4 +11,9 @@ url: string,
 /**
  * The address the service sends the browser back to (it must be one of the OAuth client's redirect URIs).
  */
-redirectUri: string, };
+redirectUri: string, 
+/**
+ * With PDT's own client, the website's page to open first: once it says it is ready, the window that opened it
+ * sends it `url` (`{pdtRelayTo: url}`), so it sends the answer back only to the PDT that started the sign-in.
+ */
+relay?: string, };
