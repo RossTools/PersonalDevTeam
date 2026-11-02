@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
-use pdt_core::host::{HostSettings, HostSettingsError, HostSettingsPatch};
+use pdt_core::host::{HostSettings, HostSettingsError, HostSettingsPatch, UpdatePolicy};
 use pdt_core::network::{NetworkError, NetworkSettings, network_path};
 use pdt_core::session::{AgentKind, Platform};
 use serde::Serialize;
@@ -301,7 +301,10 @@ pub(crate) async fn put_settings(
 ) -> Result<Json<HostSettingsView>, ApiError> {
     let Json(patch) = payload?;
     let guard = st.settings_lock.lock().await;
-    let next = st.store.get_host_settings().await?.apply(&patch)?;
+    let before = st.store.get_host_settings().await?;
+    let to_auto =
+        before.update_policy != UpdatePolicy::AutoWhenIdle && patch.update_policy == Some(UpdatePolicy::AutoWhenIdle);
+    let next = before.apply(&patch)?;
     let effective_owner = st.owner_from_env.clone().or(next.owner_login.clone());
     if next.remote_access && effective_owner.is_none() {
         return Err(ApiError::new(
@@ -316,6 +319,10 @@ pub(crate) async fn put_settings(
         crate::remote::apply_locked(&st).await;
     }
     drop(guard);
+    // The update already on offer installs when idle now too (PDT-369).
+    if to_auto {
+        crate::install_updates::wake(&st).await;
+    }
     // Get started's last step: the default agent was picked.
     if patch.default_agent.is_some() {
         crate::setup::confirm_default_agent(&st).await?;

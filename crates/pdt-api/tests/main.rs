@@ -34,6 +34,7 @@ mod github_triage;
 mod host;
 mod host_triggers;
 mod identity;
+mod install_updates;
 mod integrations;
 mod liveness;
 mod local_documents;

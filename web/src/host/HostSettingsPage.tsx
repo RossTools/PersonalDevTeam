@@ -25,6 +25,7 @@ import { AcpAgents } from './AcpAgents';
 import { agentsOff, AgentSwitch, offNote, switchBlocked } from './AgentSwitch';
 import { BugReportDialog } from './BugReportDialog';
 import { Storage } from './StorageSettings';
+import { InstallUpdates } from './InstallUpdates';
 import { StuckAgents } from './StuckAgents';
 import { documentKeys, useDocumentProviders } from '../documents/queries';
 
@@ -904,7 +905,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
   const me = whoami.data?.caller === 'tailnet' && whoami.data.login ? whoami.data.login : v.remote.tailscaleLogin;
   const nodes: Record<string, ReactNode> = {
     'Setup': <Setup />,
-    'Updates': <Updates v={v} />,
+    'Updates': <><Updates v={v} /><InstallUpdates policy={v.settings.updatePolicy} /></>,
     'Agents': <><Agents v={v} /><StuckAgents /><DefaultModels v={v} /><Programs v={v} /><AcpAgents v={v} /></>,
     'Network': <Network v={v} />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,

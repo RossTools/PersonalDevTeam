@@ -46,6 +46,30 @@ a day). Choose what it does in **Settings › This host › Updates › Install 
 
 If you install an update while agents are busy, PDT says what's busy and asks first. Sessions resume afterwards.
 
+### Installing updates by themselves
+
+With **Install automatically when idle**, the built-in **Install updates** workflow does the installing. Set it in
+**Settings › This host › Updates › Installing updates**:
+
+- **Only in a time window**: updates install by themselves only between two times, such as 02:00 to 06:00 (your
+  computer's time). Outside it, an update waits for the window.
+- **While agents work**: **Wait for them to finish** (the default), or install anyway after a few hours. With a time
+  window, only the time agents work inside it counts. Installing anyway stops what's running; sessions resume
+  afterwards.
+- **Stable releases only**: on the nightly channel, a nightly build doesn't install by itself. Install it from the
+  banner.
+- **Check PDT after installing** (on by default): a few minutes after PDT starts on the new version, it checks that it
+  runs that version and its background work keeps going.
+- **Tell me what changed**: a notification linking to the release notes once PDT runs the new version, and a post to
+  a chat channel such as Discord if you pick one.
+
+An update that fails to download or install, or a failed check after installing, goes to your Inbox with what went
+wrong. Switching to **Install automatically when idle** while an update waits installs that one too.
+
+To add steps of your own, click **Customize as a workflow →**. Once you change the workflow beyond these settings,
+Settings says **Updates follow your customized workflow** and offers **Open** and **Reset to default**. Turned off, no
+update installs by itself.
+
 Each update is checked against the release's checksums, and PDT copies its database before installing. If the new
 version doesn't start properly, PDT puts back the version you had (on Windows, with its entry in **Settings › Apps**)
 and the database copy, and a banner says **Update to v… failed (…) and was rolled back** with the reason. Nothing is lost, and PDT doesn't retry that version on its

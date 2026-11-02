@@ -46,6 +46,7 @@ pub const RUN_FINISHED: &str = "run.finished";
 pub const RELEASE_PUBLISHED: &str = "release.published";
 pub const UPDATE_AVAILABLE: &str = "update.available";
 pub const UPDATE_INSTALLED: &str = "update.installed";
+pub const UPDATE_FAILED: &str = "update.failed";
 pub const DISK_LOW: &str = "disk.low";
 pub const DISK_RECOVERED: &str = "disk.recovered";
 pub const CONNECTION_FAILED: &str = "connection.failed";
@@ -457,6 +458,14 @@ pub const EVENT_TYPES: &[EventType] = &[
         title: "PDT updated",
         description: "PDT started on a version it was just updated to (`automatic`: installed without the user asking).",
         schema: schema_of::<UpdateInstalled>,
+        outside: &[],
+    },
+    EventType {
+        id: UPDATE_FAILED,
+        title: "PDT update failed",
+        description: "PDT started again after an update that failed or was rolled back (`rolledBack`), on the version \
+                      it ran before; `message` says what went wrong.",
+        schema: schema_of::<UpdateFailed>,
         outside: &[],
     },
     EventType {
@@ -1441,6 +1450,24 @@ pub struct UpdateInstalled {
     /// Installed without the user asking (the automatic update when idle).
     pub automatic: bool,
     /// When it was installed (ms since the epoch).
+    #[ts(type = "number")]
+    pub at: i64,
+}
+
+/// `update.failed` (PDT-369): pdt-host could not install `version`, or rolled it back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UpdateFailed {
+    /// The version that failed, and the one running (again).
+    pub version: String,
+    pub from_version: String,
+    /// It installed but did not start, and the version before came back.
+    pub rolled_back: bool,
+    pub message: String,
+    /// The update log's path, when there is one.
+    pub log: Option<String>,
+    /// When it failed (ms since the epoch).
     #[ts(type = "number")]
     pub at: i64,
 }

@@ -129,6 +129,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **A stuck agent step is never left without anyone told.** A step handed to "When an agent is stuck" has no Inbox
   item until the workflow acts; `stuck::sweep` falls back to PDT's own handling when it is off, its run ends without
   acting, or no run starts in time. Code that ends or moves a step on takes its escalation (`take_escalation`).
+- **Only Install updates installs by itself.** The update loop checks and logs `update.available`; it never installs.
+  An automatic install goes through `host.install_update` with `automatic`, which keeps to the host's policy and never
+  retries a version pdt-host skipped. With the workflow off, nothing installs without the user.
 - **`_pdt.*` state keys are PDT's own.**
 - **Every manual start checks the Run now trigger's declared inputs.** Run now, `POST /api/workflows/{id}/run`, the
   PM's `workflow_run`, a `workflow.call` and a manual dry run all go through `ManualConfig::input` (pdt-api

@@ -26,6 +26,7 @@ mod host;
 mod host_guard;
 mod identity_guard;
 mod inbox;
+pub mod install_updates;
 mod integrations;
 mod issues;
 mod local_forge;

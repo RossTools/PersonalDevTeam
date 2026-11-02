@@ -24,6 +24,7 @@ These come with PDT. You can turn them off, edit them or copy them, but not dele
 | **Close finished parents** | Closes a parent when its last part closes (to **Won't do** if every part was **Won't do**), with a comment and a notification, unless it has an attempt or a running agent session of its own. Moving a part out of **Done** or **Won't do** moves its closed parent back to **In progress**. See [Parts and epics](../using-pdt/tickets-and-the-board.md#parts-and-epics). | On |
 | **When an agent is stuck** | Nudges an agent step that stops without an outcome, restarts it in a fresh session, then asks you in the Inbox; asks you at a loop limit; restarts a step that ran out of time once, then asks you. Set it in **Settings › This host › Agents**. See [When an agent is stuck](personas-and-approvals.md#when-an-agent-is-stuck). | On |
 | **Notification rules** | How far each kind of notification reaches you (off, a dot, the Inbox, a toast, a desktop notification), and quiet hours. You can turn on escalating what waits unanswered and posting questions, approvals and failed runs to a chat channel. Set it in **Settings › Notifications**. See [Notifications](../using-pdt/the-inbox.md#notifications). Turned off, every kind shows at its default level. | On |
+| **Install updates** | With updates set to install automatically when idle, waits until no agent is working, then installs the update and checks PDT once it restarts. You can set a time window, install anyway after a while, and be told what changed. A failed update or check goes to your Inbox. Set it in **Settings › This host › Updates**. See [Installing updates by themselves](../your-machine/updates.md#installing-updates-by-themselves). Turned off, updates install only when you say. | On |
 | **PM daily checkpoint** | Brings the PM's open conversations up to date once a day and has each write a journal checkpoint. See [Change when it's brought up to date](the-pm.md#change-when-its-brought-up-to-date). | On |
 
 Plugins add their own while they're on: Jira, say, adds **Import assigned Jira issues** and **Done moves the Jira
@@ -263,6 +264,8 @@ These ones react to releases, PDT itself and what it looks after:
 - **PDT update available**: a newer version of PDT is out on this computer's update channel, once per version.
 - **PDT updated**: PDT started on a version it just updated to, and says whether it updated by itself (when idle)
   or because you asked.
+- **PDT update failed**: an update failed, or the new version didn't start and PDT went back to the one before. It
+  carries both versions and what went wrong.
 - **Disk space low**: a disk PDT uses fell below the low-space level in Settings, or below the critical one. It
   carries the free space, the level, and how much cleaning finished tickets' build output would free. It fires
   when the level drops, not on every check.
@@ -294,6 +297,8 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
   the Inbox** and **Stop the step**.
 - **Decide**: **If** (yes or no), **Switch** (one exit per value), **Wait** (for a time, or an event with a time
   limit), **Ask the user** (a gate).
+- **Look after PDT**: **Wait until PDT is idle** (no agent working, inside a time window if you set one, or until a
+  time limit), **Install the update** and **Check PDT is healthy**.
 - **Tell people**: **Notify me**, **Put it in my Inbox**, a Discord post, a comment on a GitHub issue. **Notify me**
   can set how far it reaches you (from a dot to a desktop notification, or only the chat channel), post to a chat
   channel too, and do nothing once a given Inbox item is answered.

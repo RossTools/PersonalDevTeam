@@ -255,11 +255,16 @@ pub(crate) async fn patch(
 ) -> Result<Json<Workflow>, ApiError> {
     let p = body(payload)?;
     let w = load(&st, &id).await?;
+    let install_updates = w.builtin.as_deref() == Some(super::builtins::INSTALL_UPDATES);
     if let Some(enabled) = p.enabled {
         if enabled {
             checked(&st, &detail(&st, w).await?.doc)?;
         }
         st.store.set_workflow_enabled(&id, enabled, now_ms()).await?;
+        // Turned on with an update on offer: it installs that one too (PDT-369).
+        if enabled && install_updates {
+            crate::install_updates::wake(&st).await;
+        }
     }
     Ok(Json(load(&st, &id).await?))
 }
