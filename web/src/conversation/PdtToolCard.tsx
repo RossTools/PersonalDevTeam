@@ -265,6 +265,7 @@ export function WatchCard({ call }: { call: PdtCall }) {
     enabled: !!w.id && !!session,
   });
   const stop = useMutation({
+    meta: { errorShown: true },
     mutationFn: () => api.watches.remove(w.id!),
     onSettled: () => qc.invalidateQueries({ queryKey: ['watches'] }),
   });

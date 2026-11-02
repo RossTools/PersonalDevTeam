@@ -32,7 +32,7 @@ export function StuckAgents() {
     void qc.invalidateQueries({ queryKey: ['workflow', v.workflowId] });
   };
   const save = useMutation({ meta: { errorShown: true }, mutationFn: api.saveStuckAgents, onSuccess: done });
-  const reset = useMutation({ meta: { errorShown: true }, mutationFn: api.resetStuckAgents, onSuccess: done });
+  const reset = useMutation({ mutationFn: api.resetStuckAgents, onSuccess: done });
   const enable = useMutation({
     meta: { errorShown: true },
     mutationFn: ({ id, on }: { id: string; on: boolean }) => api.patchWorkflow(id, { enabled: on }),
