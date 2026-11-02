@@ -231,13 +231,14 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
 
 /** A path on one line, cut in the middle when it doesn't fit: the folders shrink, the last part stays. The full path is in the tooltip. */
 function MiddlePath({ path }: { path: string }) {
-  const cut = path.lastIndexOf('/', path.length - 2);
+  // Either separator: on Windows the checks return native paths (`C:\…\npm\claude.cmd`).
+  const cut = Math.max(path.lastIndexOf('/', path.length - 2), path.lastIndexOf('\\', path.length - 2));
   const head = cut > 0 ? path.slice(0, cut) : '';
   const tail = cut > 0 ? path.slice(cut) : path;
   return (
     <span className="flex min-w-0" title={path}>
       {head && <span className="truncate">{head}</span>}
-      <span className="shrink-0">{tail}</span>
+      <span className={head ? 'shrink-0' : 'truncate'}>{tail}</span>
     </span>
   );
 }

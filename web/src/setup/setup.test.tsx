@@ -81,6 +81,15 @@ describe('Get started', () => {
     expect(screen.queryByText(/You’re set up/)).not.toBeInTheDocument();
   });
 
+  it('cuts a Windows path in the middle too, keeping the program\'s name', async () => {
+    const win = 'C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd';
+    stub(view(), { 'GET /api/host/checks': { ...checks(), claude: tool(true, win) } });
+    renderWithQuery(<SetupPage {...props()} />);
+    const claude = await within(await step('Agents on this machine')).findByTitle(win);
+    expect(within(claude).getByText('\\claude.cmd')).toHaveClass('shrink-0');
+    expect(within(claude).getByText('C:\\Users\\me\\AppData\\Roaming\\npm')).toHaveClass('truncate');
+  });
+
   it('saves an agent path set by hand, then checks again', async () => {
     const calls = stub(view(), {
       'PUT /api/host/settings': { settings: {}, projectsDir: null, programs: [] },
