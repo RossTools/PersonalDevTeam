@@ -191,11 +191,12 @@ pub trait NodeKind: Send + Sync {
         &[]
     }
 
-    /// Whether an action's body runs under the engine lock (PDT-128): for a quick one whose wait the engine's own
-    /// passes end (the outbox's delivery), so it is waiting before they look. Other actions and agent steps run
-    /// outside it; flow, gate, wait and condition kinds always run under it.
-    fn in_engine_lock(&self) -> bool {
-        false
+    /// Whether the body runs under the engine lock (PDT-128), given the kind's category. Actions and agent steps run
+    /// outside it, unless a quick one's wait is ended by the engine's own passes (the outbox's delivery), so it is
+    /// waiting before they look. Flow, gate, wait and condition kinds run under it, unless one does slow work such as
+    /// git (`attempt.has_changes`, PDT-440): the run's own lock still keeps its ticket's runs one at a time.
+    fn in_engine_lock(&self, category: Category) -> bool {
+        !matches!(category, Category::Action | Category::Agent)
     }
 
     /// Whether running a node with this (resolved) `input` again after it was cut short (PDT stopped while it ran, or
