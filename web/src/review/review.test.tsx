@@ -13,6 +13,7 @@ import { MergeDialog } from './MergeDialog';
 import { ChangesButton } from './ChangesButton';
 import { OpenChangesContext } from './open';
 import { changesKey } from './queries';
+import { clearViewStates } from '../common/viewState';
 
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.unstubAllGlobals());
@@ -144,6 +145,8 @@ describe('ChangesView', () => {
     expect(within(login).getByTestId('file-body')).toBeInTheDocument();
     expect(within(login).getByRole('checkbox', { name: 'Viewed' })).toBeChecked();
     unmount();
+    // A new browser session: what the page remembered for this one (the chevron) is gone, Viewed stays.
+    clearViewStates();
 
     vi.unstubAllGlobals();
     stub();
@@ -368,6 +371,103 @@ describe('ChangesView', () => {
     expect(await screen.findByRole('button', { name: /Send feedback/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /Merge/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Approve/ })).not.toBeInTheDocument();
+  });
+
+  describe('left and opened again', () => {
+    /** Each section is `height` tall (jsdom lays nothing out). */
+    const heights = (height: number) =>
+      vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.dataset.path ? height : 0;
+      });
+    const scrollTo = async (top: number) => {
+      const page = screen.getByTestId('changes-page');
+      page.scrollTop = top;
+      fireEvent.scroll(page);
+      // The scroll-spy reads it on the next frame.
+      await act(() => new Promise((r) => requestAnimationFrame(() => r(null))));
+    };
+
+    it('shows the same file, Rendered, at the same scroll', async () => {
+      layout();
+      heights(1000);
+      stub();
+      const first = renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+      await userEvent.click(within(await findRegion('README.md')).getByRole('radio', { name: 'Rendered' }));
+      await userEvent.click(within(region('src/old.ts')).getByRole('button', { name: 'Whole file' }));
+      await userEvent.click(within(region('src/login.ts')).getByRole('button', { name: 'Collapse src/login.ts' }));
+      await scrollTo(2300);
+      first.unmount();
+
+      vi.unstubAllGlobals();
+      stub();
+      renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+      const tree = await findTree();
+      await waitFor(() => expect(screen.getByTestId('changes-page').scrollTop).toBe(2300));
+      expect(treeRow(tree, 'README.md')).toHaveAttribute('aria-selected', 'true');
+      expect(within(region('README.md')).getByRole('radio', { name: 'Rendered' })).toBeChecked();
+      expect(within(region('src/old.ts')).getByRole('button', { name: 'Changes only' })).toBeInTheDocument();
+      expect(within(region('src/login.ts')).queryByTestId('file-body')).not.toBeInTheDocument();
+    });
+
+    it('falls back to the top of the file when the place in it has gone (new commits since)', async () => {
+      layout();
+      const tall = heights(1000);
+      stub();
+      const first = renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+      await userEvent.click(within(await findRegion('README.md')).getByRole('radio', { name: 'Rendered' }));
+      await scrollTo(2600);
+      first.unmount();
+
+      // The file is shorter now.
+      tall.mockRestore();
+      heights(300);
+      vi.unstubAllGlobals();
+      const c = changes();
+      c.files[0] = { ...c.files[0]!, version: ':shorter' };
+      stub({}, c);
+      renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+      const tree = await findTree();
+      await waitFor(() => expect(treeRow(tree, 'README.md')).toHaveAttribute('aria-selected', 'true'));
+      await waitFor(() => expect(screen.getByTestId('changes-page').scrollTop).toBe(2000));
+      expect(within(region('README.md')).getByRole('radio', { name: 'Rendered' })).toBeChecked();
+    });
+
+    it('keeps a comment being written, with its text', async () => {
+      stub();
+      const first = renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+      const login = await findRegion('src/login.ts');
+      const editor = await waitFor(() => {
+        const el = login.querySelectorAll('.cm-editor');
+        if (el.length === 0) throw new Error('no editor yet');
+        return el[el.length - 1] as HTMLElement;
+      });
+      const view = EditorView.findFromDOM(editor)!;
+      const y = (n: number) => view.documentTop + view.lineBlockAt(view.state.doc.line(n).from).top + 1;
+      fireEvent.mouseDown(editor.querySelector('.cm-comment-gutter')!, { clientY: y(3) });
+      await userEvent.type(await within(login).findByRole('textbox', { name: 'Comment on line 3' }), 'Half a thought');
+      first.unmount();
+
+      vi.unstubAllGlobals();
+      stub();
+      renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+      expect(await within(await findRegion('src/login.ts')).findByRole('textbox', { name: 'Comment on line 3' })).toHaveValue('Half a thought');
+    });
+
+    it('follows a new link to a file rather than the place it was left at', async () => {
+      layout();
+      stub();
+      const first = renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+      await findTree();
+      await scrollTo(2000);
+      first.unmount();
+
+      window.history.replaceState(null, '', '/sessions/ws/tab?file=src%2Fold.ts');
+      vi.unstubAllGlobals();
+      stub();
+      renderWithQuery(<ChangesView worktreeId="w1" ticket={t1} />);
+      await findTree();
+      await waitFor(() => expect(screen.getByTestId('changes-page').scrollTop).toBe(1000));
+    });
   });
 });
 

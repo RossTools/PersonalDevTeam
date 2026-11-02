@@ -80,6 +80,7 @@ import { VIEWS, type ViewId } from './views';
 import { TicketKeysContext } from '../common/ticketKeys';
 import type { TicketPeekState } from '../tickets/TicketsView';
 import type { TicketsMode } from '../tickets/useBacklog';
+import { readViewState, tabScope, ViewScopeContext, writeViewState } from '../common/viewState';
 import { isDetail, isOldPath, parseLocation, routePath, upRoute, viewRoute, type Route, type SettingsPage } from './route';
 import { currentLocation, goBack, navigate, useAppLinks, useLocation } from './router';
 import { PhoneDrawer } from './PhoneDrawer';
@@ -116,6 +117,9 @@ function useAttentionTitle(attention: Attention) {
   useReloadOnNewBuild();
 }
 
+/** The view-state key of the path each view showed last. */
+const LAST_PATHS = 'app|lastPaths';
+
 export function AppShell() {
   // What is on screen comes from the path (PDT-111): selecting things navigates, and Back/Forward and reload restore
   // them. Where a path doesn't say (a workspace's last tab, Backlog or Board), the browser's stored choice does.
@@ -130,10 +134,14 @@ export function AppShell() {
   // While a phone's on-screen keyboard is up, the shell fits the part above it, so a composer stays in view.
   const keyboardBox = useKeyboardBox(phone);
   const view: ViewId = route.view === 'setup' ? 'sessions' : route.view ?? defaultView;
-  // The path each view showed last, so coming back to a view shows what it did (as when this was React state).
-  const lastPath = useRef<Partial<Record<ViewId, string>>>({});
+  // The path each view showed last, so coming back to a view shows what it did (Settings' page and section, a
+  // document); kept with the views' state, so it lasts the browser tab's session.
+  const lastPath = useRef<Partial<Record<ViewId, string>>>(readViewState(LAST_PATHS) ?? {});
   useEffect(() => {
-    if (route.view && route.view !== 'setup') lastPath.current[route.view] = loc;
+    if (route.view && route.view !== 'setup') {
+      lastPath.current[route.view] = loc;
+      writeViewState(LAST_PATHS, { ...lastPath.current });
+    }
   }, [route.view, loc]);
   useAppLinks();
   // An old path (the Integrations page, This host's GitHub section) shows its new page under the new path.
@@ -904,6 +912,7 @@ export function AppShell() {
             // Under the workspace's tab strip, this is the current tab's panel.
             {...(tabPanelOf ? { role: 'tabpanel', 'aria-labelledby': workspaceTabId(tabPanelOf) } : {})}
           >
+            <ViewScopeContext.Provider value={tabPanelOf ? tabScope(tabPanelOf) : `view:${view}`}>
             <ErrorBoundary resetKey={loc} onBack={() => go(viewRoute('inbox'))}>
             {setupShown ? (
               <SetupPage
@@ -1008,6 +1017,7 @@ export function AppShell() {
               <EmptyState>{ws.tab ? 'Loading…' : 'No tabs here. Press + to start an agent or a shell (Ctrl+] c).'}</EmptyState>
             )}
             </ErrorBoundary>
+            </ViewScopeContext.Provider>
           </div>
         )}
         {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}

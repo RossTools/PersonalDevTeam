@@ -205,6 +205,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.
 - **The UI re-renders every 2 s**: effects must be idempotent, and never focus from an inline ref callback.
+- **What a view shows when it is left comes back** (web `common/viewState.ts`): keep a view's choices (a file, a
+  toggle, a scroll, a draft) with `useViewState` / `useRememberedScroll`, not `useState`, under a name that includes
+  the ids of what it shows. The shell scopes them by workspace tab (or by view); a closed tab's are dropped.
 - **A failed mutation is reported once.** The app's QueryClient (web `common/queryClient.ts`) toasts a mutation's error
   unless it has its own `onError` or `meta: { errorShown: true }`. Give a `useMutation` that renders its error inline
   (or awaits `mutateAsync` in a save status) that meta, and a hook that returns its mutation's error the same, so the

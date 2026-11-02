@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
@@ -67,6 +67,22 @@ describe('ticket tab', () => {
     unmount();
     view();
     expect(await screen.findByRole('tab', { name: /Changes/ })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('comes back to the Overview where it was scrolled, also after another section', async () => {
+    stub();
+    const first = view();
+    const overview = await screen.findByRole('tabpanel', { name: 'Overview' });
+    overview.scrollTop = 420;
+    fireEvent.scroll(overview);
+    first.unmount();
+
+    view();
+    expect((await screen.findByRole('tabpanel', { name: 'Overview' })).scrollTop).toBe(420);
+    // Another section and back, without leaving the ticket.
+    await userEvent.click(screen.getByRole('tab', { name: 'Conversation' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Overview' }));
+    expect(screen.getByRole('tabpanel', { name: 'Overview' }).scrollTop).toBe(420);
   });
 
   it('shows the header, the Overview with description, activity, details and links, and the later tabs', async () => {

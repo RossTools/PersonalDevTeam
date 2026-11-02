@@ -12,6 +12,7 @@ import type { FileEntry } from '../api/gen/FileEntry';
 import type { Project } from '../api/gen/Project';
 import type { Session } from '../api/gen/Session';
 import { copyToClipboard } from '../common/clipboard';
+import { useRememberedScroll, useViewState } from '../common/viewState';
 import { MarkdownEditor } from '../common/LazyMarkdownEditor';
 import { isMarkdownPath, Markdown } from '../common/Markdown';
 import { PlacePicker, type Place } from '../common/PlacePicker';
@@ -306,7 +307,10 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
   const confirm = useConfirm();
   const ops = useFileOps(state, place);
   const agents = useAgentsAt(place);
-  const [markdownView, setMarkdownView] = useState<'rendered' | 'source'>('rendered');
+  // How the file was shown and where it was scrolled come back when it is left and opened again (PDT-379).
+  const remembered = `file:${place.projectId}:${place.worktreeId ?? ''}:${f.path}`;
+  const [markdownView, setMarkdownView] = useViewState<'rendered' | 'source'>(`${remembered}:view`, 'rendered');
+  const renderedScroll = useRememberedScroll(`${remembered}:rendered`);
   const [editView, setEditView] = useState<'edit' | 'preview'>('edit');
   const [edit, setEdit] = useState<Edit | null>(null);
   // Saving was refused: the file changed on disk. `disk` is what is there now (null: deleted), once fetched.
@@ -526,11 +530,11 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
           )}
         </>
       ) : markdown && markdownView === 'rendered' ? (
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div ref={renderedScroll.ref} onScroll={renderedScroll.onScroll} className="min-h-0 flex-1 overflow-auto">
           <Markdown className="mx-auto max-w-3xl p-4">{f.text}</Markdown>
         </div>
       ) : (
-        <div className="flex-1 min-h-0"><CodeViewer name={f.path} text={f.text} /></div>
+        <div className="flex-1 min-h-0"><CodeViewer name={f.path} text={f.text} remember={`${remembered}:code`} /></div>
       )}
     </div>
   );

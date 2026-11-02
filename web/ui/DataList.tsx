@@ -77,6 +77,10 @@ export interface DataListProps<T extends { id: string }> {
   loadingMore?: boolean;
   /** Shown inside the list when it has no rows (an `EmptyState`). */
   renderEmpty?: () => ReactNode;
+  /** Where the list starts scrolled to (a remembered position), applied once its rows are there. */
+  initialScrollTop?: number;
+  /** Hears the list's scroll position as it scrolls (to remember it). */
+  onScrollTopChange?: (top: number) => void;
   /** Give the list a height (it is its own scroll container), e.g. `flex-1 min-h-0`. */
   className?: string;
 }
@@ -124,10 +128,29 @@ export function DataList<T extends { id: string }>({
   onEndReached,
   loadingMore = false,
   renderEmpty,
+  initialScrollTop,
+  onScrollTopChange,
   className,
   'aria-label': ariaLabel,
 }: DataListProps<T>) {
   const menus = useRef(new Map<string, (p: MenuPoint) => void>()).current;
+  const box = useRef<HTMLDivElement>(null);
+  const hasRows = (sections ? sections.length : items?.length ?? 0) > 0;
+  const scrolled = useRef(false);
+  const onScrollTop = useRef(onScrollTopChange);
+  onScrollTop.current = onScrollTopChange;
+  // The grid is the scroll container: start it where it was, and report its scroll.
+  useEffect(() => {
+    const grid = box.current?.querySelector<HTMLElement>('[role="grid"]');
+    if (!grid) return;
+    if (!scrolled.current && hasRows) {
+      scrolled.current = true;
+      if (initialScrollTop) grid.scrollTop = initialScrollTop;
+    }
+    const on = () => onScrollTop.current?.(grid.scrollTop);
+    grid.addEventListener('scroll', on, { passive: true });
+    return () => grid.removeEventListener('scroll', on);
+  }, [hasRows]);
   const coarse = useCoarsePointer();
   const fixedHeight = rowHeight && coarse ? Math.max(rowHeight, TOUCH_ROW) : rowHeight;
   const [ownSelection, setOwnSelection] = useState<ReadonlySet<string>>(EMPTY);
@@ -237,6 +260,7 @@ export function DataList<T extends { id: string }>({
       <RowLongPress.Provider value={onLongPress}>
         <Banded.Provider value={banded}>
           <div
+            ref={box}
             className="contents"
             onPointerDownCapture={(e) => { shift.current = e.shiftKey; }}
             onKeyDownCapture={(e) => {

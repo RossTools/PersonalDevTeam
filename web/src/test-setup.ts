@@ -38,3 +38,10 @@ if (typeof window !== 'undefined') {
 afterEach(() => {
   if (typeof window !== 'undefined') window.history.replaceState(null, '', '/');
 });
+
+// What views remember when they're left (PDT-379) starts empty in every test.
+afterEach(async () => {
+  if (typeof window === 'undefined') return;
+  const { clearViewStates } = await import('./common/viewState');
+  clearViewStates();
+});

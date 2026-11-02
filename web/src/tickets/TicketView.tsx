@@ -10,6 +10,7 @@ import { StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { WatchButton } from '../common/Watch';
 import { runAction, useAction } from '../common/useAction';
+import { useRememberedScroll } from '../common/viewState';
 import { AttemptSection, MergedBanner } from './Attempt';
 import {
   abandonAttempt, canRefine, canStart, deleteTicket, moveToEntries, refineTicket, retryAutoStart, retryAutoStartEntry, startNextPart,
@@ -230,6 +231,8 @@ export function HubPanel({ ticket: t, tab }: { ticket: Ticket; tab: 'conversatio
 export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticketId: string; onDeleted?: () => void; mergedBanner?: boolean }) {
   const q = useTicket(ticketId);
   const [tab, setTab] = useSection(ticketId);
+  // The Overview's scroll comes back when the ticket is left and opened again (PDT-379).
+  const overview = useRememberedScroll(`ticket:${ticketId}:overview`);
   const diff = useDiffSize(q.data?.attempt?.state === 'active' ? q.data.attempt.worktreeId : null);
   useCheckMerge(q.data);
   useClearToStartToasts(q.data ? [q.data] : []);
@@ -251,7 +254,7 @@ export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticke
       {tab !== 'overview' ? (
         <HubPanel ticket={t} tab={tab} />
       ) : (
-        <div role="tabpanel" aria-labelledby="ticket-tab-overview" className="min-h-0 flex-1 overflow-auto">
+        <div ref={overview.ref} onScroll={overview.onScroll} role="tabpanel" aria-labelledby="ticket-tab-overview" className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[minmax(0,1fr)_18rem]">
             <div className="flex min-w-0 flex-col divide-y divide-border *:py-5 *:first:pt-0">
               <TicketDescription key={t.id} ticket={t} />
