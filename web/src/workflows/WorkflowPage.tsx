@@ -42,6 +42,8 @@ export type WorkflowTab = 'graph' | 'outline' | 'text' | 'runs' | 'versions';
 const STUCK_AGENTS = 'stuck-agents';
 /** The built-in whose inputs Settings → Notifications sets (PDT-368). */
 const NOTIFICATION_RULES = 'notification-rules';
+/** The built-in whose inputs Settings → Updates sets (PDT-369). */
+const INSTALL_UPDATES = 'install-updates';
 
 /** Issue codes for what the workflow names that is not on this host (an imported workflow's, PDT-155). */
 const SETUP_CODES = ['missing_connection', 'connection_kind', 'hook_secret', 'missing_persona', 'missing_project'];
@@ -260,6 +262,11 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
       {w.builtin === NOTIFICATION_RULES && (
         <Banner tone="neutral" actions={<Button size="sm" variant="ghost" onClick={() => navigate(routePath({ view: 'settings', page: { kind: 'notifications' } }))}>Open Settings</Button>}>
           Its levels, quiet hours, escalation and chat channel are set in Settings → Notifications. Changing more here makes it your own: Settings then only offers Reset to default.
+        </Banner>
+      )}
+      {w.builtin === INSTALL_UPDATES && (
+        <Banner tone="neutral" actions={<Button size="sm" variant="ghost" onClick={() => navigate(routePath({ view: 'settings', page: { kind: 'host', section: 'updates' } }))}>Open Settings</Button>}>
+          Its settings are in Settings → This host → Updates: the time window, waiting for agents and the check after installing. Changing more here makes it your own: Settings then only offers Reset to default.
         </Banner>
       )}
       {setup.length > 0 && (

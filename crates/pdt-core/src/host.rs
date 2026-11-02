@@ -30,6 +30,31 @@ pub enum UpdateChannel {
     Nightly,
 }
 
+/// When updates may install by themselves (PDT-369): between two local times, `from` after `to` wrapping midnight
+/// (02:00–06:00, or 23:00–05:00). Equal ends: any time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstallWindow {
+    pub from: u16,
+    pub to: u16,
+}
+
+impl InstallWindow {
+    pub fn parse(from: &str, to: &str) -> Result<Self, String> {
+        let at =
+            |s: &str| crate::notification::parse_clock(s).ok_or_else(|| format!("{s:?} is not a time of day (HH:MM)"));
+        Ok(Self { from: at(from)?, to: at(to)? })
+    }
+
+    /// Whether `minute` (since local midnight) is in it.
+    pub fn contains(self, minute: u16) -> bool {
+        match self.from.cmp(&self.to) {
+            std::cmp::Ordering::Less => (self.from..self.to).contains(&minute),
+            std::cmp::Ordering::Greater => minute >= self.from || minute < self.to,
+            std::cmp::Ordering::Equal => true,
+        }
+    }
+}
+
 /// Whether agent sessions get the host's API-key variables (spec §6 "Agent credentials").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -604,6 +629,18 @@ mod tests {
 
     fn patch() -> HostSettingsPatch {
         HostSettingsPatch::default()
+    }
+
+    #[test]
+    fn install_windows_wrap_midnight_and_equal_ends_are_any_time() {
+        let night = InstallWindow::parse("02:00", "06:00").unwrap();
+        assert!(night.contains(120) && night.contains(359));
+        assert!(!night.contains(360) && !night.contains(119) && !night.contains(23 * 60));
+        let late = InstallWindow::parse("23:00", "05:00").unwrap();
+        assert!(late.contains(23 * 60) && late.contains(0) && late.contains(299));
+        assert!(!late.contains(300) && !late.contains(12 * 60));
+        assert!(InstallWindow::parse("04:00", "04:00").unwrap().contains(17 * 60));
+        assert!(InstallWindow::parse("2am", "06:00").is_err());
     }
 
     #[test]

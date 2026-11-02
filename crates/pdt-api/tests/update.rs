@@ -581,6 +581,24 @@ async fn checks_never_overwrite_an_install_and_never_stick() {
     assert_eq!(call(&app, "GET", "/api/host/update", None).await.1["state"], "installing");
 }
 
+/// The workflow engine, ticking as pdtd's does (faster): Install updates installs what the checks find.
+fn engine(state: &pdt_api::AppState) -> tokio::task::JoinHandle<()> {
+    let st = state.clone();
+    tokio::spawn(async move {
+        loop {
+            pdt_api::run_workflows(&st).await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+}
+
+/// Install updates' runs.
+async fn install_runs(app: &axum::Router) -> Vec<Value> {
+    let (_, v) = call(app, "GET", "/api/install-updates", None).await;
+    let wf = v["workflowId"].as_str().unwrap().to_string();
+    call(app, "GET", &format!("/api/workflow-runs?workflow={wf}"), None).await.1.as_array().unwrap().clone()
+}
+
 async fn set_policy(app: &axum::Router, policy: &str) {
     let (s, v) = call(app, "PUT", "/api/host/settings", Some(json!({"updatePolicy": policy}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -604,12 +622,16 @@ async fn the_loop_only_notifies_under_the_notify_policy() {
     let (app, state, fake) = setup(tmp.path(), true).await;
     store_token(&state);
     set_policy(&app, "notify").await;
-    let task = tokio::spawn(pdt_api::run_update_loop(state.clone()));
+    let (task, workflows) = (tokio::spawn(pdt_api::run_update_loop(state.clone())), engine(&state));
     wait_status(&app, state_is("available")).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     task.abort();
+    workflows.abort();
     assert!(fake.hits.load(Ordering::SeqCst) >= 2, "it checks again every interval");
     assert!(!request_path(&data(tmp.path())).exists());
+    let runs = install_runs(&app).await;
+    assert_eq!(runs.len(), 1, "one per version: {runs:?}");
+    assert_eq!(runs[0]["status"], "quiet", "nothing waits while updates only notify: {runs:?}");
 }
 
 #[tokio::test]
@@ -619,9 +641,10 @@ async fn the_loop_installs_when_idle_under_auto_when_idle() {
     let (app, state, _) = setup(tmp.path(), true).await;
     store_token(&state);
     set_policy(&app, "auto_when_idle").await;
-    let task = tokio::spawn(pdt_api::run_update_loop(state.clone()));
+    let (task, workflows) = (tokio::spawn(pdt_api::run_update_loop(state.clone())), engine(&state));
     tokio::time::timeout(Duration::from_secs(5), state.shutdown.notified()).await.expect("pdtd asked to stop");
     task.abort();
+    workflows.abort();
     assert!(request_path(&data(tmp.path())).exists());
     assert_eq!(call(&app, "GET", "/api/host/update", None).await.1["state"], "installing");
     let req: pdt_core::handoff::UpdateRequest =
@@ -636,13 +659,16 @@ async fn the_loop_waits_for_a_busy_host_under_auto_when_idle() {
     store_token(&state);
     set_policy(&app, "auto_when_idle").await;
     add_busy_session(&app, &state, tmp.path()).await;
-    let task = tokio::spawn(pdt_api::run_update_loop(state.clone()));
+    let (task, workflows) = (tokio::spawn(pdt_api::run_update_loop(state.clone())), engine(&state));
     wait_status(&app, state_is("available")).await;
     while fake.hits.load(Ordering::SeqCst) < 3 {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     task.abort();
+    workflows.abort();
     assert!(!request_path(&data(tmp.path())).exists());
+    let runs = install_runs(&app).await;
+    assert_eq!((runs.len(), runs[0]["status"].as_str()), (1, Some("waiting")), "it waits for the agent: {runs:?}");
 }
 
 fn write_skip(tmp: &std::path::Path, version: &str) {
@@ -664,12 +690,13 @@ async fn the_loop_never_auto_installs_a_version_that_failed_even_after_a_dismiss
     write_skip(tmp.path(), "0.1.7");
     let (code, _) = call(&app, "POST", "/api/host/update/dismiss", None).await;
     assert_eq!(code, StatusCode::NO_CONTENT);
-    let task = tokio::spawn(pdt_api::run_update_loop(state.clone()));
+    let (task, workflows) = (tokio::spawn(pdt_api::run_update_loop(state.clone())), engine(&state));
     wait_status(&app, state_is("available")).await;
-    while fake.hits.load(Ordering::SeqCst) < 3 {
+    while fake.hits.load(Ordering::SeqCst) < 3 || install_runs(&app).await.iter().any(|r| r["status"] != "quiet") {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     task.abort();
+    workflows.abort();
     assert!(!request_path(&data(tmp.path())).exists(), "not installed automatically");
     assert!(pdt_core::handoff::skip_path(&data(tmp.path())).exists(), "dismiss keeps the skip");
     let (code, v) = call(&app, "POST", "/api/host/update/install", Some(json!({}))).await;
@@ -686,10 +713,33 @@ async fn the_loop_auto_installs_a_newer_version_than_the_one_that_failed() {
     store_token(&state);
     set_policy(&app, "auto_when_idle").await;
     write_skip(tmp.path(), "0.1.6");
-    let task = tokio::spawn(pdt_api::run_update_loop(state.clone()));
+    let (task, workflows) = (tokio::spawn(pdt_api::run_update_loop(state.clone())), engine(&state));
     tokio::time::timeout(Duration::from_secs(5), state.shutdown.notified()).await.expect("pdtd asked to stop");
     task.abort();
+    workflows.abort();
     assert!(request_path(&data(tmp.path())).exists());
+}
+
+/// PDT-369: an update announced while updates only notified installs once they are set to install when idle.
+#[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
+async fn setting_updates_to_install_when_idle_installs_the_one_on_offer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, _) = setup(tmp.path(), true).await;
+    store_token(&state);
+    set_policy(&app, "notify").await;
+    let (task, workflows) = (tokio::spawn(pdt_api::run_update_loop(state.clone())), engine(&state));
+    wait_status(&app, state_is("available")).await;
+    while install_runs(&app).await.iter().all(|r| r["status"] != "quiet") {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(!request_path(&data(tmp.path())).exists());
+    set_policy(&app, "auto_when_idle").await;
+    tokio::time::timeout(Duration::from_secs(5), state.shutdown.notified()).await.expect("pdtd asked to stop");
+    task.abort();
+    workflows.abort();
+    assert!(request_path(&data(tmp.path())).exists());
+    assert_eq!(install_runs(&app).await.len(), 2, "a run for the update on offer");
 }
 
 #[tokio::test]

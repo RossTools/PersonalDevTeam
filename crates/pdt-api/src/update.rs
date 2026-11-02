@@ -17,7 +17,7 @@ use pdt_core::release::{APPIMAGE_MARKER, HostOs, TokenState, Version, compare_ba
 use pdt_core::run::RunState;
 use pdt_core::session::SessionStatus;
 use pdt_core::workflow::api::NewLogEvent;
-use pdt_core::workflow::events::{self as ev, UpdateAvailable, UpdateInstalled};
+use pdt_core::workflow::events::{self as ev, UpdateAvailable, UpdateFailed, UpdateInstalled};
 use pdt_update::{Changes, GitHubClient, Release, UpdateError, fetch_verified};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -567,16 +567,33 @@ fn notes_url(svc: &UpdateService, tag: &str) -> String {
 }
 
 /// pdtd started on the version pdt-host just installed: `update.installed` (PDT-365), once per install (the event's key
-/// is the install's), with whether pdtd asked for it by itself (the request pdt-host took says).
+/// is the install's), with whether pdtd asked for it by itself (the request pdt-host took says). After an update that
+/// failed or was rolled back, on the version it ran before: `update.failed` (PDT-369), once per failure.
 pub async fn log_installed(st: &AppState) {
     let svc = &st.update;
-    let Some(r) = std::fs::read(result_path(&st.data_dir))
-        .ok()
-        .and_then(|b| serde_json::from_slice::<UpdateResult>(&b).ok())
-        .filter(|r| r.outcome == UpdateOutcome::Installed && r.to_version == svc.current)
+    let Some(r) =
+        std::fs::read(result_path(&st.data_dir)).ok().and_then(|b| serde_json::from_slice::<UpdateResult>(&b).ok())
     else {
         return;
     };
+    if r.outcome != UpdateOutcome::Installed {
+        if r.from_version == svc.current {
+            let key = format!("update:{}:failed:{}", r.to_version, r.at);
+            let payload = UpdateFailed {
+                version: r.to_version,
+                from_version: r.from_version,
+                rolled_back: r.outcome == UpdateOutcome::RolledBack,
+                message: r.message,
+                log: r.log,
+                at: r.at,
+            };
+            log_once(st, ev::UPDATE_FAILED, key, payload).await;
+        }
+        return;
+    }
+    if r.to_version != svc.current {
+        return;
+    }
     let taken = std::fs::read(taken_request_path(&st.data_dir))
         .ok()
         .and_then(|b| serde_json::from_slice::<UpdateRequest>(&b).ok())
@@ -593,6 +610,35 @@ pub async fn log_installed(st: &AppState) {
     };
     let key = format!("update:{}:installed:{}", r.to_version, r.at);
     log_once(st, ev::UPDATE_INSTALLED, key, payload).await;
+}
+
+/// The update on offer now, as `update.available` tells it (None while there is none).
+pub(crate) fn on_offer(svc: &UpdateService) -> Option<UpdateAvailable> {
+    let s = svc.snapshot();
+    let l = s.latest?;
+    Some(UpdateAvailable {
+        notes_url: notes_url(svc, &l.tag),
+        version: l.version,
+        current: svc.current.clone(),
+        tag: l.tag,
+        channel: channel_name(s.channel),
+        nightly: l.nightly,
+        notes: l.notes,
+        published_at: l.published_at,
+    })
+}
+
+/// The version this pdtd runs.
+pub(crate) fn current(svc: &UpdateService) -> &str {
+    &svc.current
+}
+
+/// Whether `version` is the one running, or older.
+pub(crate) fn installed(svc: &UpdateService, version: &str) -> bool {
+    match (parse_version(version), parse_version(&svc.current)) {
+        (Some(v), Some(c)) => !v.is_newer_than(&c),
+        _ => version == svc.current,
+    }
 }
 
 /// The host's update channel, from its settings.
@@ -913,7 +959,7 @@ async fn download_and_hand_off(
 
 /// pdt-host recorded a failed or rolled-back update to `version` (ruling B): it is never installed automatically
 /// again; a manual update may retry it. Read from disk each time, so dismissing the result does not lift it.
-fn skipped(data_dir: &Path, version: &str) -> bool {
+pub(crate) fn skipped(data_dir: &Path, version: &str) -> bool {
     std::fs::read(skip_path(data_dir))
         .ok()
         .and_then(|b| serde_json::from_slice::<UpdateSkip>(&b).ok())
@@ -930,8 +976,8 @@ async fn check_interval(st: &AppState) -> Duration {
     Duration::from_secs(u64::from(minutes) * 60)
 }
 
-/// Checks every `update_check_minutes` (unless the policy is manual), and installs when idle under auto-when-idle
-/// (spec §3.3). Runs only under pdt-host.
+/// Checks every `update_check_minutes` (unless the policy is manual). Runs only under pdt-host. What a check finds is
+/// `update.available`; the built-in Install updates workflow installs it under auto-when-idle (PDT-369).
 pub async fn run_update_loop(st: AppState) {
     if !st.update.enabled {
         return;
@@ -947,19 +993,7 @@ pub async fn run_update_loop(st: AppState) {
         let policy = refresh_settings(&st).await;
         if due && policy != UpdatePolicy::Manual {
             last_check = Some(tokio::time::Instant::now());
-            let (s, _) = check(&st).await;
-            let failed_before = s.latest.as_ref().is_some_and(|l| skipped(&st.data_dir, &l.version));
-            if failed_before {
-                tracing::info!("not installing automatically: the last attempt at this version failed");
-            }
-            if s.state == UpdateState::Available
-                && policy == UpdatePolicy::AutoWhenIdle
-                && !failed_before
-                && busy_reasons(&st).await.is_empty()
-                && let Err(e) = install(&st, false, true).await
-            {
-                tracing::warn!(error = e.message(), "automatic update did not start");
-            }
+            check(&st).await;
         }
         let wait = last_check.map_or(interval, |t| interval.saturating_sub(t.elapsed()));
         tokio::time::sleep(wait.min(st.update.settings_poll)).await;

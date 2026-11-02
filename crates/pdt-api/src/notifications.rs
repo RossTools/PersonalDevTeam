@@ -148,7 +148,7 @@ impl Rules {
 }
 
 /// Minutes since local midnight.
-fn minute_now() -> u16 {
+pub(crate) fn minute_now() -> u16 {
     let t = jiff::Zoned::now();
     u16::try_from(i32::from(t.hour()) * 60 + i32::from(t.minute())).unwrap_or(0)
 }

@@ -540,6 +540,10 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
                 let mut s = s.clone();
                 s.status = StepStatus::Pending;
                 s.wake_at = None;
+                // A step that looks again (`POLL`: waiting until PDT is idle) is the same attempt.
+                if s.wait.get(POLL).is_some() {
+                    s.attempts = s.attempts.saturating_sub(1);
+                }
                 st.store.put_step(&s).await.map_err(err)?;
             } else {
                 match s.wait.get("timeoutPort").and_then(|p| p.as_str()) {
@@ -838,6 +842,9 @@ async fn look_back(st: &AppState, run: &Run, step: &Step) -> R<Option<LogEvent>>
     }
     Ok(found)
 }
+
+/// A step's `wait` while it waits to look again (with `retry`): running it once more is not another attempt.
+pub(crate) const POLL: &str = "poll";
 
 /// A step's `wait` while it waits to be retried after a timeout: it was cut short (`StepCx::rerun`).
 const CUT_SHORT: &str = "cutShort";

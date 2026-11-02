@@ -8,6 +8,7 @@ mod comments_to_agent;
 mod cut_release;
 mod finish_merged;
 mod github_issue_done;
+pub(crate) mod install_updates;
 mod late_commits;
 mod missing_release;
 pub(crate) mod notification_rules;
@@ -50,6 +51,7 @@ pub const TICKET_PROPOSALS: &str = "ticket-proposals";
 pub const CLOSE_PARENTS: &str = "close-parents";
 pub const STUCK_AGENTS: &str = "stuck-agents";
 pub const NOTIFICATION_RULES: &str = "notification-rules";
+pub const INSTALL_UPDATES: &str = "install-updates";
 /// The Cut a release template (without `builtin:`); a built-in workflow until PDT-301 ([`RETIRED`]).
 pub const CUT_RELEASE: &str = "cut-release";
 
@@ -87,6 +89,7 @@ pub const BUILTINS: &[Builtin] = &[
         category: Category::Notifications,
         doc: notification_rules::notification_rules,
     },
+    Builtin { id: INSTALL_UPDATES, enabled: true, category: Category::Releases, doc: install_updates::install_updates },
 ];
 
 /// The GitHub plugin's built-ins ([`crate::integrations::Integration::builtin_workflows`]): left out while it is off
@@ -259,6 +262,7 @@ fn refill_of(id: &str) -> Option<Refill> {
     match id {
         STUCK_AGENTS => Some(|d| stuck_agents::filled(&stuck_agents::values_of(d))),
         NOTIFICATION_RULES => Some(|d| notification_rules::filled(&notification_rules::values_of(d))),
+        INSTALL_UPDATES => Some(|d| install_updates::filled(&install_updates::values_of(d))),
         _ => None,
     }
 }

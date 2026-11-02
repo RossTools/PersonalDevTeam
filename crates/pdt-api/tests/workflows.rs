@@ -106,7 +106,8 @@ async fn the_catalog_and_the_builtins_are_served() {
     assert!(builtins.contains(&("close-parents", true)), "{list}");
     assert!(builtins.contains(&("stuck-agents", true)), "{list}");
     assert!(builtins.contains(&("notification-rules", true)), "{list}");
-    assert_eq!(builtins.len(), 13, "no integration's built-ins until it is enabled: {list}");
+    assert!(builtins.contains(&("install-updates", true)), "{list}");
+    assert_eq!(builtins.len(), 14, "no integration's built-ins until it is enabled: {list}");
     // PDT's own development's are not built-ins (PDT-295): neither installed nor offered.
     assert!(builtins.contains(&("github-issue-done", true)) && !builtins.iter().any(|b| b.0 == "pdt-bug-triage"));
     let (_, templates) = call(&env.app, "GET", "/api/workflow-templates", None).await;

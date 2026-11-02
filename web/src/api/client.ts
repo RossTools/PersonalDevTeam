@@ -9,6 +9,7 @@ import { filesApi } from './files';
 import { forgesApi } from './forges';
 import { hostApi } from './host';
 import { inboxApi } from './inbox';
+import { installUpdatesApi } from './installUpdates';
 import { notificationRulesApi } from './notificationRules';
 import { personasApi } from './personas';
 import { pmApi } from './pm';
@@ -38,6 +39,7 @@ export const api = {
   ...hostApi,
   ...inboxApi,
   ...notificationRulesApi,
+  ...installUpdatesApi,
   ...personasApi,
   ...pmApi,
   ...projectsApi,

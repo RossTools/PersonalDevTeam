@@ -294,11 +294,25 @@ and `content`, so pdt-api never names the plugin. Settings → Notifications (`n
 inputs as stuck agents' are. `builtins::refill_of` lists the built-ins whose inputs Settings sets, which follow PDT's
 newer versions with their inputs kept.
 
+**Install updates** (`builtins/install_updates.rs`). The update loop (`update::run_update_loop`) only checks; what a
+check finds is `update.available`, and this built-in installs it: `host.wait_idle` → `host.install_update`
+(`nodes/host_update.rs`). The wait looks again every minute (a `retry` wait, keeping `since` in its output) until
+`update::busy_reasons` is empty, inside its window (pdt-core `InstallWindow`), or `maxWaitMs` is up (`timeout`, then
+an install with `force`). Given the update's version it ends by `skipped` once that version is installed or another is
+on offer, and while the host's policy isn't auto-when-idle, so under Notify only no run waits.
+`install_updates::wake` gives the update on offer a run when the policy turns to auto-when-idle or the workflow is
+turned on. `host.install_update` with `automatic` refuses a version pdt-host skipped (`update::skipped`), and finds
+its version installed when it runs again after the restart. `update.installed` leads to `host.check_health` (after
+`settleMs`: the running version and `Loops::health`) and an optional `notify`; failures and `update.failed` are
+`inbox.notice` items. Settings → Updates (`install_updates.rs`, `/api/install-updates`) reads and writes the inputs as
+stuck agents' are; the policy, channel and check interval stay host settings, since the checks use them.
+
 **Host and integration events** are logged where each thing is noticed, each once per occurrence (the event key, or a
 level remembered in a host value). `release.published`: `forge_releases.rs` in the 60 s poll, for the projects an
 enabled trigger covers (`sensor.releases.<project>` holds the tags seen; the first look only records).
 `update.available`: `update.rs` `check_now`, keyed by version. `update.installed`: `update::log_installed` at
 startup, from pdt-host's `result.json` and the request it took (`request.taken.json`, whose `automatic` pdtd set).
+`update.failed`: the same, for a result that failed or rolled back while pdtd runs the version it ran before.
 `disk.low` / `disk.recovered`: `storage::watch_disks` in the storage loop, by pdt-core `disk_news` over the levels in
 `sensor.disk_levels`. `connection.failed`: `connection_health::report` when a connection starts failing, and
 `forge_login::check` for each refused forge account (keyed by its refusal time). `todo.due`: the Notifier's todo pass,

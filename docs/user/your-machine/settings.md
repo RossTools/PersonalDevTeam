@@ -18,6 +18,9 @@ How PDT updates itself. See [Updates](updates.md#updates) for what each choice d
 
 - **Version**: the version you run, with **Check for updates**, and what the last check found.
 - **Install updates**: **Install automatically when idle**, **Notify only** or **Manual (no checks)**.
+- **Installing updates**: a time window, whether to wait for agents or install anyway after a while, stable releases
+  only, the check after installing and telling you what changed. These set the **Install updates** workflow. See
+  [Installing updates by themselves](updates.md#installing-updates-by-themselves).
 - **Update channel**: **Stable releases**, or **Nightly builds too**.
 - **Check for updates**: how often PDT looks.
 - **Release repository**: where updates come from. Leave it empty.
