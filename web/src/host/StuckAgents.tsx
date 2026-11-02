@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import type { StuckAgentsView } from '../api/gen/StuckAgentsView';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
 import { CustomizedNotice, openWorkflow } from '../common/BuiltinSettings';
+import { invalidateWorkflow } from '../workflows/invalidate';
 
 const KEY = ['stuck-agents'];
 
@@ -33,10 +34,7 @@ export function StuckAgents() {
   const enable = useMutation({
     meta: { errorShown: true },
     mutationFn: ({ id, on }: { id: string; on: boolean }) => api.patchWorkflow(id, { enabled: on }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: KEY });
-      void qc.invalidateQueries({ queryKey: ['workflows'] });
-    },
+    onSuccess: (_d, { id }) => invalidateWorkflow(qc, id),
   });
   const v = view.data;
   const put = (values: Record<string, unknown>) => save.mutateAsync(values);

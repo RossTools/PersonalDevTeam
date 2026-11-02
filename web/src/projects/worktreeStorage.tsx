@@ -8,6 +8,7 @@ import type { DiskLevel } from '../api/gen/DiskLevel';
 import type { TicketStage } from '../api/gen/TicketStage';
 import type { WorktreeSize } from '../api/gen/WorktreeSize';
 import { useAction } from '../common/useAction';
+import { invalidateWorktrees } from '../common/worktrees';
 
 /** `bytes` for people: "512 MB", "1.5 GB" (as the server's Inbox items say it). */
 export function formatBytes(bytes: number): string {
@@ -62,7 +63,7 @@ function useSettle() {
   const qc = useQueryClient();
   return () => {
     void qc.invalidateQueries({ queryKey: ['storage'] });
-    void qc.invalidateQueries({ queryKey: ['worktrees'] });
+    invalidateWorktrees(qc);
     void qc.invalidateQueries({ queryKey: ['sessions'] });
     void qc.invalidateQueries({ queryKey: ['workspaces'] });
   };

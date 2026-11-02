@@ -5,6 +5,7 @@ import type { InstallUpdatesView } from '../api/gen/InstallUpdatesView';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
 import { ChatChannelRow, CustomizedNotice, openWorkflow } from '../common/BuiltinSettings';
+import { invalidateWorkflow } from '../workflows/invalidate';
 
 const KEY = ['install-updates'];
 
@@ -34,10 +35,7 @@ export function InstallUpdates({ policy }: { policy: UpdatePolicy }) {
   const enable = useMutation({
     meta: { errorShown: true },
     mutationFn: (id: string) => api.patchWorkflow(id, { enabled: true }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: KEY });
-      void qc.invalidateQueries({ queryKey: ['workflows'] });
-    },
+    onSuccess: (_d, id) => invalidateWorkflow(qc, id),
   });
   const v = view.data;
   const auto = policy === 'auto_when_idle';

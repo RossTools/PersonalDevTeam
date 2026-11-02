@@ -167,6 +167,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   in a `format!`), never replace it with your own words. A route answers it with 503 `write_failed` and its message
   (`ApiError::write_failed`, also from `ApiError::internal` given its text), and the router's `note_write_failures`
   records it, so the Inbox says so whoever wrote; a `BEGIN` that can't start (`Store::write_tx`) is recorded too.
+- **An event is marked processed only after it was matched against everything.** `match_events` returns before
+  marking any event when it can't read the new events, the enabled workflows (`enabled_with_docs` gives `Err`) or the
+  steps waiting for events: an empty list from a failed read would drop the events for good. Never
+  `unwrap_or_default()` those reads. A workflow whose document is corrupt is left out with a warning instead, so one
+  bad row doesn't hold up every event.
 - **Conversation events are never skipped.** `conversations.rs` `append` applies an event to the runtime state as
   it comes (a message the agent took leaves `pending`, a turn's leftover streamed text goes), then stores it through
   the conversation's `unstored` queue: one that can't be written waits there with every event after it, is retried
