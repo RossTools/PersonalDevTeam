@@ -26,9 +26,12 @@ const DRAG_KIND = 'beside';
 
 export const besideKey = (sessionId: string) => ['documents', 'beside', sessionId] as const;
 
-/** The documents open beside a conversation, polled (an agent may open one at any time). */
-export function useDocumentsBeside(sessionId: string) {
-  return useQuery({ queryKey: besideKey(sessionId), queryFn: () => api.documentsBeside(sessionId), refetchInterval: POLL });
+/**
+ * The documents open beside a conversation, polled (an agent may open one at any time). Off (`enabled` false) for a
+ * terminal: only a conversation has documents beside it.
+ */
+export function useDocumentsBeside(sessionId: string, enabled = true) {
+  return useQuery({ queryKey: besideKey(sessionId), queryFn: () => api.documentsBeside(sessionId), refetchInterval: POLL, enabled });
 }
 
 interface PanelPrefs { width: number; collapsed: boolean }
@@ -161,10 +164,10 @@ function TabStrip({ data, tabs: act, trailing }: {
 }
 
 /** Picks a document PDT has to open beside a conversation. */
-export function useOpenBesidePicker(sessionId: string): { entry: MenuEntry; pick: () => void; dialog: ReactNode } {
+export function useOpenBesidePicker(sessionId: string, enabled = true): { entry: MenuEntry; pick: () => void; dialog: ReactNode } {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const beside = useDocumentsBeside(sessionId);
+  const beside = useDocumentsBeside(sessionId, enabled);
   const dialog = open ? (
     <LinkDocumentDialog
       title="Open a document beside the conversation"

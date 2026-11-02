@@ -239,7 +239,7 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
   };
 
   // Documents beside the conversation (PDT-317).
-  const besidePicker = useOpenBesidePicker(session.id);
+  const besidePicker = useOpenBesidePicker(session.id, conversation);
   // On a phone, Compose sits with the terminal's other actions (terminalEntries).
   const entries = (compose = true): MenuEntry[] => [
     // Devin and ACP agents cannot draft on the side without touching the conversation (the server says

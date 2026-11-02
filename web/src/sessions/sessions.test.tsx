@@ -80,6 +80,13 @@ describe('SessionView header', () => {
     expect(within(h).queryByRole('button', { name: 'Restart' })).not.toBeInTheDocument();
   });
 
+  it('never asks for the documents beside a terminal (only a conversation has them)', async () => {
+    const calls = stubApi({ 'GET /api/projects': [project], 'POST /api/sessions/s1/view': undefined });
+    renderWithQuery(<SessionView session={session({})} onRemoved={() => {}} />);
+    expect(await within(header()).findByText('PDT')).toBeInTheDocument();
+    expect(calls.some((c) => c.path === '/api/sessions/s1/documents')).toBe(false);
+  });
+
   it('shows the worktree branch as a chip with GitHub links', async () => {
     stubApi({
       'GET /api/projects': [{ ...project, forge: githubLinks('o/r'), kind: 'repo' }],

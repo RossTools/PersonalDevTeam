@@ -43,7 +43,8 @@ export function remarkTicketKeys(keys: readonly string[]) {
  */
 export function remarkRefs(keys: readonly string[], refs: MarkdownRefs | null) {
   const parts = [
-    keys.length ? `\\b(?:${keys.map(escapeRe).join('|')})-\\d+\\b` : null,
+    // Not inside a word or a branch name (`pdt-PDT-12-fix`).
+    keys.length ? `(?<![\\w-])(?:${keys.map(escapeRe).join('|')})-\\d+(?![\\w-])` : null,
     refs && prUrl(refs.forge, 1) ? '(?:\\bPR )?(?<![\\w&/#])#\\d+\\b' : null,
     refs ? '\\b[0-9a-f]{7,40}\\b' : null,
   ].filter(Boolean);
