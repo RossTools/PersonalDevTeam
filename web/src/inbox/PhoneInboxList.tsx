@@ -19,10 +19,12 @@ const big = 'h-12 pointer-coarse:h-12 min-w-0 flex-1';
  * `/inbox` on a phone: **Needs you** (its count) | **Updates** (a dot while any is unread). A row opens its item;
  * **Review all (n)** at the bottom opens the first and steps through them all. Updates can be cleared one by one or all.
  */
-export function PhoneInboxList({ items, updates, loading, onOpen, onReadAll, onClear, onClearAll, onSettings }: {
+export function PhoneInboxList({ items, updates, loading, failed, updatesFailed, onOpen, onReadAll, onClear, onClearAll, onSettings }: {
   items: InboxItem[];
   updates: Notification[];
   loading?: boolean;
+  failed?: boolean;
+  updatesFailed?: boolean;
   /** Opens an item, or an Update by its selection id. */
   onOpen: (id: string) => void;
   onReadAll: () => void;
@@ -58,7 +60,7 @@ export function PhoneInboxList({ items, updates, loading, onOpen, onReadAll, onC
       <div className="min-h-0 flex-1 overflow-auto px-1">
         {segment === 'needs' ? (
           <nav aria-label="Inbox items" className="flex flex-col gap-0.5 py-1">
-            <NeedsYouGroups items={items} selectedId={null} onSelect={onOpen} loading={loading} />
+            <NeedsYouGroups items={items} selectedId={null} onSelect={onOpen} loading={loading} failed={failed} />
           </nav>
         ) : (
           <section aria-label="Updates" className="flex flex-col gap-0.5 py-1">
@@ -68,7 +70,7 @@ export function PhoneInboxList({ items, updates, loading, onOpen, onReadAll, onC
               <Button size="sm" variant="ghost" disabled={updates.length === 0} onClick={onClearAll}>Clear all</Button>
               <Button size="sm" variant="ghost" onClick={onSettings}>Settings</Button>
             </div>
-            <UpdatesList updates={updates} selectedId={null} onSelect={onOpen} onClear={onClear} loading={loading} />
+            <UpdatesList updates={updates} selectedId={null} onSelect={onOpen} onClear={onClear} loading={loading} failed={updatesFailed} />
           </section>
         )}
       </div>

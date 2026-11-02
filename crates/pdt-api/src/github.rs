@@ -152,18 +152,31 @@ fn feedback_key(attempt_id: &str) -> String {
 /// A forge's (or a CI provider's, `ci:<provider>:<project>`) read failed: logged when that is news (the first failure,
 /// or a new reason).
 pub(crate) fn gh_failed(st: &AppState, what: &str, error: &str) {
-    let mut w = watch(st);
-    if w.errors.get(what).map(String::as_str) != Some(error) {
+    if newly_failed(st, what, error) {
         tracing::warn!(read = what, error, "could not read from the forge or CI");
-        w.errors.insert(what.to_string(), error.to_string());
     }
 }
 
 /// A GitHub read worked (logged when it had been failing).
 pub(crate) fn gh_worked(st: &AppState, what: &str) {
-    if watch(st).errors.remove(what).is_some() {
+    if failure_cleared(st, what) {
         tracing::info!(read = what, "reading from the forge or CI works again");
     }
+}
+
+/// Records that a repeated read `what` failed with `error`; true when that is news (the first failure, or a new reason).
+pub(crate) fn newly_failed(st: &AppState, what: &str, error: &str) -> bool {
+    let mut w = watch(st);
+    if w.errors.get(what).map(String::as_str) == Some(error) {
+        return false;
+    }
+    w.errors.insert(what.to_string(), error.to_string());
+    true
+}
+
+/// Forgets a repeated read's failure; true when it had been failing.
+pub(crate) fn failure_cleared(st: &AppState, what: &str) -> bool {
+    watch(st).errors.remove(what).is_some()
 }
 
 /// Whether an enabled workflow has a trigger of one of `kinds` (so a sensor has someone to tell).
@@ -200,6 +213,10 @@ pub(crate) fn feedback_events(
     let by_owner = |author: &str| viewer.is_some_and(|v| v.eq_ignore_ascii_case(author));
     let branch = &info.attempt.branch;
     let mut out = vec![];
+    // A bot's text is outside text (PDT-415), whatever its role on the repository: it can relay what an outsider wrote,
+    // so its notice fences it.
+    let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+    let relayed = |bot: bool| bot.then_some(&fence);
     for c in comments {
         let floor = if c.in_review { seen.review_comment } else { seen.comment };
         if c.id <= floor {
@@ -214,6 +231,7 @@ pub(crate) fn feedback_events(
             c.path.as_deref(),
             c.line,
             &c.url,
+            relayed(c.is_bot),
         );
         let e = ev::PrCommented {
             attempt: a.clone(),
@@ -233,7 +251,8 @@ pub(crate) fn feedback_events(
         out.push(NewLogEvent::new(ev::PR_COMMENTED, format!("{}:comment:{}", a.attempt_id, c.id), "pr_poller", e));
     }
     for r in reviews.iter().filter(|r| r.id > seen.review) {
-        let notice = pdt_core::pr::review_notice(pr.number, branch, r.id, &r.author, &r.state, &r.body, &r.url);
+        let fence = relayed(r.is_bot);
+        let notice = pdt_core::pr::review_notice(pr.number, branch, r.id, &r.author, &r.state, &r.body, &r.url, fence);
         let e = ev::PrReviewed {
             attempt: a.clone(),
             pr: pr.number,

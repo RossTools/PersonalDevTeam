@@ -193,6 +193,13 @@ async fn an_agent_asks_for_a_secret_and_uses_it_without_ever_seeing_it() {
     let said = say_allowed(&env, &s, &format!("mcp: run_with_secrets {call_text}")).await;
     assert!(said.contains("[secret:NPM_TOKEN]") && !said.contains(VALUE), "{said}");
     assert!(said.contains("\"exitCode\": 0"), "{said}");
+    // Encoded, it is replaced too.
+    if cfg!(unix) {
+        let call_text =
+            json!({"command": "printf %s \"$TOK\" | base64", "env": {"TOK": "secret:NPM_TOKEN"}}).to_string();
+        let said = say_allowed(&env, &s, &format!("mcp: run_with_secrets {call_text}")).await;
+        assert!(said.contains("[secret:NPM_TOKEN]") && !said.contains("bnBtX1pxOHdYMi12ZXJ5LXNlY3JldA"), "{said}");
+    }
     // Secrets go in env, never in the command line.
     let said = say_allowed(&env, &s, r#"mcp: run_with_secrets {"command": "echo {{secret.NPM_TOKEN}}"}"#).await;
     assert!(said.contains("failed") && said.contains("never in the command line"), "{said}");
@@ -222,7 +229,9 @@ async fn an_agent_asks_for_a_secret_and_uses_it_without_ever_seeing_it() {
     let sid = secret["id"].as_str().unwrap();
     let (_, uses) = call(&env.app, "GET", &format!("/api/secrets/{sid}/uses"), None).await;
     let how: Vec<&str> = uses.as_array().unwrap().iter().map(|u| u["how"].as_str().unwrap()).collect();
-    assert_eq!(how, ["write_secret_file", "run_with_secrets"], "{uses}");
+    let runs = if cfg!(unix) { 2 } else { 1 };
+    assert_eq!(how[0], "write_secret_file", "{uses}");
+    assert_eq!(how[1..], vec!["run_with_secrets"; runs], "{uses}");
     assert_eq!(uses[0]["sessionId"], json!(s));
     let (_, list) = call(&env.app, "GET", "/api/secrets", None).await;
     assert!(list[0]["lastUsedAt"].is_number() && list[0]["lastUsedBy"].is_string(), "{list}");
@@ -368,6 +377,18 @@ async fn secrets_are_kept_listed_replaced_and_deleted_from_settings() {
     assert_eq!(env.state.secrets.get(&format!("secret:{id}")).unwrap(), None, "gone from the keychain");
     let (_, list) = call(&env.app, "GET", "/api/secrets", None).await;
     assert_eq!(list, json!([]));
+}
+
+/// PDT-413: a connection's secret, kept by PDT rather than the user's secrets, is redacted like theirs.
+#[tokio::test]
+async fn a_connections_secret_is_redacted_too() {
+    let env = setup().await;
+    let (st, c) = call(&env.app, "POST", "/api/connections", Some(json!({"name": "hook", "kind": "http"}))).await;
+    assert_eq!(st, StatusCode::CREATED, "{c}");
+    let id = c["id"].as_str().unwrap();
+    let (st, _) = call(&env.app, "PUT", &format!("/api/connections/{id}/secret"), Some(json!({"secret": VALUE}))).await;
+    assert!(st.is_success());
+    assert_eq!(env.state.store.redactor().string(&format!("got {VALUE}")), "got [secret:connection]");
 }
 
 /// A local server that wants `Authorization: Bearer <VALUE>` and `?key=<VALUE>`, and echoes the token back.

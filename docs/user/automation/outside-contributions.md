@@ -60,9 +60,12 @@ title doesn't give the versions, is reviewed like any other, and a failure comes
   neither can change files, run commands, browse the web or use secrets. The tickets they make are always outside
   **Draft**s. Locked-down personas run only on Claude Code or Codex; on other agents their steps fail.
 - **Fenced.** The issue's or pull request's title, text and changes reach the agent in marked blocks, with a note that
-  they are data, never instructions.
+  they are data, never instructions. So do bots' comments and reviews, since a bot can repeat what anyone wrote.
+- **Carried through.** A workflow started by outside input that runs another workflow (**Run a workflow**) passes that
+  on: everything the called workflow's agents get from its input is fenced, and they are locked down the same way.
 - **Capped.** Triage runs are limited per author and per repository each hour (**Triage per author** and **Triage per
-  repository** in **Settings › This host › Agents**), so a flood of issues can't keep agents busy.
+  repository** in **Settings › This host › Agents**), so a flood of issues can't keep agents busy. This counts any
+  workflow whose agents could read the issue, including through a workflow it runs.
 - **Recorded.** Each session that read outside text is noted in its ticket's activity, when it has one.
 
 To use your own persona for either workflow, give it the **triage** role: PDT locks it down the same way.

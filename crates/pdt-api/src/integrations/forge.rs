@@ -201,6 +201,10 @@ pub struct ViewOutput {
     /// timeline in PDT shows them).
     #[serde(skip_serializing_if = "is_zero")]
     pub left_out: u32,
+    /// How to read the fenced blocks, when there are any: bots' comments and reviews came from outside PDT (a bot can
+    /// relay what anyone wrote).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outside_text: Option<String>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -220,8 +224,8 @@ impl Action for ChangeRequestView {
                 .open_world(),
             "View the pull request",
             "The session's pull request (or one by number or branch) on the project's forge: its state, whether it \
-             can merge, and every comment and review by the repository's collaborators (others' are left out: \
-             `leftOut` counts them). Review comments have an id to answer with `change_request_comment`'s \
+             can merge, and every comment and review by the repository's collaborators and bots (others' are left \
+             out: `leftOut` counts them; bots' text is fenced as outside input). Review comments have an id to answer with `change_request_comment`'s \
              `replyTo`.",
         )
     }
@@ -237,6 +241,36 @@ impl Action for ChangeRequestView {
             let n = pr.number;
             let comments = h.call(move |f, r| f.change_comments(r, n)).await?;
             let reviews = h.call(move |f, r| f.change_reviews(r, n)).await?;
+            let left_out = u32::try_from(
+                comments.iter().filter(|c| !(c.collaborator || c.is_bot)).count()
+                    + reviews.iter().filter(|r| !(r.collaborator || r.is_bot)).count(),
+            )
+            .unwrap_or(u32::MAX);
+            // A bot's text is outside text (PDT-415), whatever its role: it can relay what an outsider wrote.
+            let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+            let fenced = |bot: bool, body: String| if bot { fence.wrap(&body) } else { body };
+            let comments: Vec<CommentOut> = comments
+                .into_iter()
+                .filter(|c| c.collaborator || c.is_bot)
+                .map(|c| {
+                    let mut out = CommentOut::from(c);
+                    out.body = fenced(out.bot, out.body);
+                    out
+                })
+                .collect();
+            let reviews: Vec<ReviewOut> = reviews
+                .into_iter()
+                .filter(|r| r.collaborator || r.is_bot)
+                .map(|r| ReviewOut {
+                    id: r.id,
+                    author: r.author,
+                    state: r.state,
+                    body: fenced(r.is_bot, r.body),
+                    url: r.url,
+                })
+                .collect();
+            let mut bodies = comments.iter().map(|c| &c.body).chain(reviews.iter().map(|r| &r.body));
+            let outside_text = bodies.any(|b| fence.used_in(b)).then(|| fence.note());
             Ok(ViewOutput {
                 number: pr.number,
                 url: pr.url,
@@ -249,17 +283,10 @@ impl Action for ChangeRequestView {
                 behind: pr.behind,
                 auto_merge: pr.auto_merge,
                 in_merge_queue: pr.in_merge_queue,
-                left_out: u32::try_from(
-                    comments.iter().filter(|c| !(c.collaborator || c.is_bot)).count()
-                        + reviews.iter().filter(|r| !(r.collaborator || r.is_bot)).count(),
-                )
-                .unwrap_or(u32::MAX),
-                comments: comments.into_iter().filter(|c| c.collaborator || c.is_bot).map(CommentOut::from).collect(),
-                reviews: reviews
-                    .into_iter()
-                    .filter(|r| r.collaborator || r.is_bot)
-                    .map(|r| ReviewOut { id: r.id, author: r.author, state: r.state, body: r.body, url: r.url })
-                    .collect(),
+                left_out,
+                comments,
+                reviews,
+                outside_text,
             })
         })
     }
@@ -424,7 +451,8 @@ impl Action for ChangeRequestComment {
     fn tool(&self) -> ToolFace {
         tool(
             ToolDecl::new("change_request_comment", "Comment on a pull request or answer a review comment")
-                .open_world(),
+                .open_world()
+                .public(),
             "Comment on the pull request",
             "Adds a comment to the session's pull request (or one by number), or with `replyTo` answers a review \
              comment in its thread. It is posted as the user's GitHub login.",
@@ -496,7 +524,7 @@ impl Action for ChangeRequestOpen {
 
     fn tool(&self) -> ToolFace {
         tool(
-            ToolDecl::new("change_request_open", "Open a pull request for the session's branch").open_world(),
+            ToolDecl::new("change_request_open", "Open a pull request for the session's branch").open_world().public(),
             "Open a pull request",
             "Opens a pull request from the session's branch (push it first) into the ticket attempt's base branch, or \
              `base`, with a title and a Markdown body; `draft` opens it as a draft. A branch that already has an open \
@@ -934,7 +962,8 @@ pub struct IssueOutput {
     pub closed: bool,
     pub created_at: String,
     pub comments: Vec<CommentOut>,
-    /// How to read the fenced blocks: the issue's text and outsiders' comments came from outside PDT.
+    /// How to read the fenced blocks: the issue's title and text and outsiders' and bots' comments came from outside
+    /// PDT.
     pub outside_text: String,
 }
 
@@ -962,12 +991,13 @@ impl Action for IssueView {
             let n = i.number;
             let d = h.call(move |f, r| f.issue(r, n)).await?.ok_or(format!("there is no issue #{n}"))?;
             let comments = h.call(move |f, r| f.issue_comments(r, n)).await?;
-            // An issue is outside input (PDT-202): its text, and outsiders' comments, are fenced.
+            // An issue is outside input (PDT-202): its title and text, and outsiders' and bots' comments, are fenced.
             let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
             let comments: Vec<CommentOut> = comments
                 .into_iter()
                 .map(|c| {
-                    let inside = c.collaborator || c.is_bot;
+                    // A bot's text is outside text too (PDT-415): it can relay what an outsider wrote.
+                    let inside = c.collaborator && !c.is_bot;
                     let mut out = CommentOut::from(c);
                     if !inside {
                         out.body = fence.wrap(&out.body);
@@ -979,7 +1009,7 @@ impl Action for IssueView {
                 outside_text: fence.note(),
                 number: d.issue.number,
                 url: d.issue.url,
-                title: d.issue.title,
+                title: fence.wrap(&d.issue.title),
                 body: fence.wrap(&d.issue.body),
                 author: d.issue.author,
                 labels: d.issue.labels,
@@ -1010,7 +1040,7 @@ impl Action for IssueComment {
 
     fn tool(&self) -> ToolFace {
         tool(
-            ToolDecl::new("issue_comment", "Comment on an issue").open_world(),
+            ToolDecl::new("issue_comment", "Comment on an issue").open_world().public(),
             "Comment on an issue",
             "Adds a comment to an issue of the project's repository, posted as the user's forge login.",
         )

@@ -11,7 +11,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use pdt_core::session::Session;
 use pdt_core::ticket::{TicketSource, TicketSummary};
-use pdt_core::workflow::api::{LogEvent, NewLogEvent};
+use pdt_core::workflow::api::{LogEvent, NewLogEvent, Run};
 use pdt_core::workflow::events::{self as ev, TriageCap};
 use serde_json::Value;
 use std::time::{Duration, Instant};
@@ -177,8 +177,32 @@ pub(crate) async fn triaging(st: &AppState, s: &Session) -> bool {
     untrusted_run(st, &run).await
 }
 
-/// Whether a workflow run was started by outside input.
-pub(crate) async fn untrusted_run(st: &AppState, run: &pdt_core::workflow::api::Run) -> bool {
+/// How many sub-workflow levels [`origin`] climbs (calls nest no deeper in practice; a cycle stops here).
+const MAX_DEPTH: usize = 32;
+
+/// The run a sub-workflow's run was started for (PDT-415): its `workflow.call` chain's first run, whose trigger is
+/// what the input it was called with may hold. None for a run no step called (or whose caller is gone); the outermost
+/// run still there when one further up is gone.
+pub(crate) async fn origin(st: &AppState, run: &Run) -> Option<Run> {
+    let mut parent = run.parent_run_id.clone()?;
+    let mut last = None;
+    for _ in 0..MAX_DEPTH {
+        let Ok(Some(p)) = st.store.get_workflow_run(&parent).await else { break };
+        let next = p.parent_run_id.clone();
+        last = Some(p);
+        match next {
+            Some(n) => parent = n,
+            None => return last,
+        }
+    }
+    last
+}
+
+/// Whether a workflow run was started by outside input: its own trigger's, or for a sub-workflow's run its
+/// [`origin`]'s (PDT-415: the input it was called with can carry it).
+pub(crate) async fn untrusted_run(st: &AppState, run: &Run) -> bool {
+    let root = origin(st, run).await;
+    let run = root.as_ref().unwrap_or(run);
     let Some(event) = &run.trigger_event_id else { return false };
     matches!(st.store.get_log_event(event).await, Ok(Some(e)) if pdt_core::workflow::events::untrusted(&e.kind))
 }
@@ -216,6 +240,13 @@ pub(crate) fn trigger_source(reg: &crate::integrations::Registry, trigger: &Valu
         _ => url.clone().unwrap_or_else(|| kind.to_string()),
     };
     Some((source, url))
+}
+
+/// [`trigger_source`] of the trigger a run's outside text came from: its own, or its [`origin`]'s for a sub-workflow's
+/// run (PDT-415).
+pub(crate) async fn run_source(st: &AppState, run: &Run) -> Option<(String, Option<String>)> {
+    let root = origin(st, run).await;
+    trigger_source(&st.registry(), &root.as_ref().unwrap_or(run).trigger)
 }
 
 /// Where an external ticket came from (its first link to another tracker), when it is one.
@@ -260,8 +291,8 @@ pub(crate) async fn record_input(st: &AppState, e: pdt_core::workflow::events::O
 
 /// [`record_input`] for the sessions a workflow run's agent steps triaged its outside input in, onto the ticket the
 /// run made from it (`ticket.create`, `github.import`).
-pub(crate) async fn record_run_on_ticket(st: &AppState, run: &pdt_core::workflow::api::Run, ticket_id: &str) {
-    let Some((source, url)) = trigger_source(&st.registry(), &run.trigger) else { return };
+pub(crate) async fn record_run_on_ticket(st: &AppState, run: &Run, ticket_id: &str) {
+    let Some((source, url)) = run_source(st, run).await else { return };
     let mut seen = std::collections::HashSet::new();
     for a in st.store.agent_steps_of_run(&run.id).await.unwrap_or_default() {
         let Some(session) = a.session_id.filter(|s| seen.insert(s.clone())) else { continue };
@@ -289,10 +320,11 @@ pub(crate) async fn record_triage(st: &AppState, s: &Session, ticket_id: &str) {
         Some(id) => st.store.get_workflow_run(&id).await.ok().flatten(),
         None => None,
     };
-    let (source, url) = run
-        .as_ref()
-        .and_then(|r| trigger_source(&st.registry(), &r.trigger))
-        .unwrap_or_else(|| ("input from outside PDT".into(), None));
+    let source = match &run {
+        Some(r) => run_source(st, r).await,
+        None => None,
+    };
+    let (source, url) = source.unwrap_or_else(|| ("input from outside PDT".into(), None));
     let e = pdt_core::workflow::events::OutsideInput {
         project_id: Some(s.project_id.clone()),
         ticket_id: Some(ticket_id.to_string()),
@@ -440,10 +472,12 @@ pub(crate) async fn skip_triage(
 }
 
 /// Why a step of a run started by what an outsider wrote (a pull request comment or review by someone who isn't a
-/// collaborator on the repository, PDT-202) sends nothing into an agent session; None for other runs.
-pub(crate) fn outsider_refusal(ctx: &Value) -> Option<String> {
-    let t = ctx.get("trigger")?;
-    pdt_core::workflow::events::by_outsider(t).then(|| {
+/// collaborator on the repository, PDT-202) sends nothing into an agent session; None for other runs. A sub-workflow's
+/// run goes by its `origin`'s trigger too (PDT-415): the input it was called with may be what the outsider wrote.
+pub(crate) fn outsider_refusal(ctx: &Value, origin: Option<&Value>) -> Option<String> {
+    let by_outsider = pdt_core::workflow::events::by_outsider;
+    let t = origin.filter(|o| by_outsider(o)).or_else(|| ctx.get("trigger"))?;
+    by_outsider(t).then(|| {
         let who = t.get("author").and_then(Value::as_str).unwrap_or("someone");
         format!(
             "{who} isn't a collaborator on the repository, so what they wrote is shown in PDT and never sent into an \
@@ -496,8 +530,13 @@ mod tests {
     #[test]
     fn what_outsiders_wrote_is_refused() {
         let by = |outside: bool| json!({"trigger": {"type": "pr.commented", "author": "eve", "outside": outside}});
-        assert!(outsider_refusal(&by(true)).is_some_and(|r| r.starts_with("eve isn't a collaborator")));
-        assert_eq!(outsider_refusal(&by(false)), None);
-        assert_eq!(outsider_refusal(&json!({"trigger": {"type": "pr.commented"}})), None, "older events");
+        assert!(outsider_refusal(&by(true), None).is_some_and(|r| r.starts_with("eve isn't a collaborator")));
+        assert_eq!(outsider_refusal(&by(false), None), None);
+        assert_eq!(outsider_refusal(&json!({"trigger": {"type": "pr.commented"}}), None), None, "older events");
+        // A sub-workflow's run goes by the trigger of the run that called it.
+        let child = json!({"trigger": {"type": "manual", "text": "do it"}});
+        let origin = by(true)["trigger"].clone();
+        assert!(outsider_refusal(&child, Some(&origin)).is_some_and(|r| r.starts_with("eve isn't")));
+        assert_eq!(outsider_refusal(&child, Some(&by(false)["trigger"])), None);
     }
 }

@@ -1,6 +1,6 @@
 # Secrets
 
-Give agents and workflows the keys and tokens they need without them ever seeing the values.
+Give agents and workflows the keys and tokens they need without pasting them into the chat.
 
 An agent sometimes needs an API key, a token or a password: to publish a package, call a service, or log in while it
 tests. Pasted into the conversation, it would end up in the transcript, the logs and the model's context. A
@@ -29,11 +29,12 @@ never what it is. See [The Inbox](../using-pdt/the-inbox.md).
 
 ## How agents use them
 
-Agents never get the value. PDT gives them three tools instead:
+Agents never get the value in the chat. PDT gives them three tools instead:
 
 - **list secrets**: the names and descriptions of the secrets they may use;
 - **run with secrets**: runs a command with secrets in its environment (say, `NPM_TOKEN` set to the secret's value).
-  The command's output comes back with any secret value replaced by `[secret:NAME]`;
+  The command's output comes back with any secret value replaced by `[secret:NAME]`, also when the command printed
+  it in hex, base64 or URL-encoded;
 - **write a secret file**: writes a file from a template with the secrets filled in (a `.npmrc` or `.env`, say),
   readable only by you. The agent gets back where it wrote it and how big it is, not its content.
 
@@ -55,12 +56,27 @@ secrets this way; the agent uses its tools instead. See [Workflows](../automatio
 ## What's kept out
 
 PDT replaces every secret's value with `[secret:NAME]` everywhere it stores or shows text: conversations, ticket
-comments, workflow runs, the Inbox, notifications, its own logs, and bug reports' log excerpts.
+comments, workflow runs, the Inbox, notifications, its own logs, and bug reports' log excerpts. It looks for the value
+as it is and in hex, base64 and URL-encoded form. The keys PDT keeps for itself are replaced the same way: a
+connection's secret, a plugin's sign-in, your forge logins and the update token.
 
-PDT can't clean what it doesn't hold: the agent's own transcript files, a terminal session's scrollback, and what a
-command does with the value once it has it. A shell's last output is also kept in PDT's data folder, readable only by
-you, so it can be shown again after PDT restarts; it is deleted with the session. Agents are told never to print a
-secret; still, give an agent only the secrets its work needs.
+## What secrets don't protect against
+
+Secrets keep values out of the chat, PDT's records and its logs. They don't stop an agent that sets out to get one:
+
+- **A command can do anything with the value.** One that splits, reverses or re-encodes it some other way prints it
+  past the replacement, and one that sends it to a website sends it. You allow each **run with secrets** call (unless
+  the session runs with permissions bypassed): read the command before you allow it.
+- **A secret file is readable.** The agent can open a file **write a secret file** made with its own tools.
+- **Your MCP servers' secrets are in each session's launch settings**: a file in PDT's data folder only you can read,
+  for Claude Code; the environment of Codex in a terminal (kept out of the commands Codex runs). An agent that reads
+  that file sees them.
+- **PDT can't clean what it doesn't hold**: the agent's own transcript files, a terminal session's scrollback, and
+  what a command does with the value once it has it. A shell's last output is also kept in PDT's data folder, readable
+  only by you, so it can be shown again after PDT restarts; it is deleted with the session.
+
+Agents are told never to print a secret; still, give an agent only the secrets its work needs, and limit each secret
+to the projects and agents that use it.
 
 ## Who used a secret
 
@@ -78,3 +94,13 @@ Each secret shows when it was last used and by whom. **Uses** lists every use: w
 
 PDT's GitHub login and its update token are kept the same way. None of them is in PDT's database, so a copy of its
 data folder holds no secrets (except the Linux file above).
+
+What else on your machine can read them:
+
+- **macOS** asks before another app reads a keychain item PDT stored.
+- **Windows** doesn't ask: any program running as you can read Credential Manager entries.
+- **Linux**: any program running as you can read the Secret Service once it's unlocked, and the file in the data
+  folder.
+
+Agents run as you, so on Windows and Linux an agent's own shell could read them too. Keep agents in their sandbox
+(don't bypass permissions) on machines that hold secrets you care about.

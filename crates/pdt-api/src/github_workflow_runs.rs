@@ -129,7 +129,14 @@ pub async fn refresh_workflow_runs(st: &AppState) {
         if nodes.is_empty() {
             continue;
         }
-        let state = st.store.workflow_state(&wf.id).await.unwrap_or_default();
+        // Without its cursors a watch would read from scratch (reporting runs twice): it waits for the next poll.
+        let state = match st.store.workflow_state(&wf.id).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(workflow = %wf.id, error = %e, "could not read a workflow's watch cursors");
+                continue;
+            }
+        };
         for node in nodes {
             if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
                 return;

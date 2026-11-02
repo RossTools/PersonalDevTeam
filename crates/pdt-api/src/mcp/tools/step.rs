@@ -228,18 +228,20 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
         }
         _ => Value::Null,
     };
-    // An external ticket's description is what someone outside PDT wrote (an imported issue, PDT-202): fenced.
+    // An external ticket's title and description are what someone outside PDT wrote (an imported issue, PDT-202,
+    // PDT-415): fenced.
     let external = ticket.summary.source == TicketSource::External;
     let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
-    let outside = external.then(|| (fence.wrap(&ticket.description), fence.note()));
+    let outside = external.then(|| (fence.wrap(&ticket.summary.title), fence.wrap(&ticket.description), fence.note()));
     let attachments = attachments_of(st, id, external.then_some(&fence)).await?;
     let ticket_project = ticket.summary.project_id.clone();
     let mut v = serde_json::to_value(ticket).map_err(|e| e.to_string())?;
-    if let Some((description, note)) = outside {
+    if let Some((title, description, note)) = outside {
+        v["title"] = json!(title);
         v["description"] = json!(description);
         v["outsideText"] = json!(format!(
-            "{note} This ticket came from outside PDT, so its description (and any text file attached to it) is in \
-             such a block (the tags are not part of it)."
+            "{note} This ticket came from outside PDT, so its title and description (and any text file attached to \
+             it) are in such blocks (the tags are not part of them)."
         ));
     }
     if !attachments.is_empty() {

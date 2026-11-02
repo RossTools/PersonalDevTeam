@@ -641,6 +641,13 @@ async fn pr_comments_and_reviews_reach_the_agent_once_the_workflow_is_on() {
     let outside: Vec<bool> =
         logged.as_array().unwrap().iter().map(|e| e["payload"]["outside"].as_bool().unwrap()).collect();
     assert_eq!(outside.iter().filter(|o| **o).count(), 1, "only eve's: {logged}");
+    // A bot's text is outside text (PDT-415): its notice quotes it fenced; a collaborator's as it is.
+    let notice = |author: &str| {
+        let e = logged.as_array().unwrap().iter().find(|e| e["payload"]["author"] == author).unwrap();
+        e["payload"]["notice"]["text"].as_str().unwrap().to_string()
+    };
+    assert!(notice("ci[bot]").starts_with("Text between <untrusted id=\""), "{logged}");
+    assert!(notice("bob").starts_with("[PDT] bob left") && !notice("bob").contains("<untrusted"), "{logged}");
     // The agent's turn ended (its terminal is idle), so the messages can go to it.
     let (st, _) = call(
         &env.app,

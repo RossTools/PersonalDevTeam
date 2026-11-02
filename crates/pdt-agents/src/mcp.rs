@@ -39,6 +39,8 @@ pub struct McpServer {
     pub only_pdt: bool,
     /// The MCP servers in the user's own Codex config (`~/.codex/config.toml`), switched off with `only_pdt`.
     pub codex_user_servers: Vec<String>,
+    /// The user's own Codex `shell_environment_policy.exclude`, kept when a terminal adds its secrets' names to it.
+    pub codex_shell_exclude: Vec<String>,
 }
 
 /// One of the user's MCP servers, resolved for a launch: secrets and sign-ins filled in.
@@ -224,12 +226,27 @@ fn codex_approval(mode: ToolMode) -> &'static str {
     }
 }
 
-/// The environment variable a Codex terminal passes one secret header in.
+/// The environment variable a Codex terminal passes one secret header in. Like every name a terminal passes a secret
+/// in, it is kept from the agent's shell commands ([`codex_shell_exclude`]).
 pub fn codex_header_env(server: &str, header: &str) -> String {
     let clean = |s: &str| {
         s.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect::<String>()
     };
-    format!("PDT_MCP_{}_{}", clean(server), clean(header))
+    format!("PDT_MCP_SECRET_{}_{}", clean(server), clean(header))
+}
+
+/// A Codex terminal's `shell_environment_policy.exclude`: the user's own, and the names it passes secrets in
+/// ([`codex_tui_env`]), so the commands the agent runs never have them in their environment (Codex itself and the MCP
+/// servers it starts still do).
+fn codex_shell_exclude(m: &McpServer) -> Vec<String> {
+    let mut out = m.codex_shell_exclude.clone();
+    out.push("PDT_MCP_*".into());
+    for (k, _) in codex_tui_env(m) {
+        if !k.starts_with("PDT_MCP_") && !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    out
 }
 
 /// A server's Codex settings (`mcp_servers.<name>`). `tui`: a terminal's, whose secrets come from its environment
@@ -349,6 +366,7 @@ pub fn codex_tui_args(m: &McpServer) -> Vec<String> {
     )
     .chain(codex_switched_off(m).into_iter().flat_map(|n| ["-c".into(), format!("mcp_servers.{n}.enabled=false")]))
     .chain(codex_extra(m).iter().flat_map(|(k, v)| ["-c".into(), format!("{k}={v}")]))
+    .chain(["-c".into(), format!("shell_environment_policy.exclude={}", toml_inline(&json!(codex_shell_exclude(m))))])
     .collect()
 }
 
@@ -371,11 +389,22 @@ pub fn codex_tui_env(m: &McpServer) -> Vec<(String, String)> {
     env
 }
 
+fn codex_config(codex_home: &Path) -> Option<toml::Table> {
+    let text = std::fs::read_to_string(codex_home.join("config.toml")).ok()?;
+    toml::from_str::<toml::Table>(&text).ok()
+}
+
 /// The MCP server names in a Codex config file (`[mcp_servers.<name>]`).
 pub fn codex_config_servers(codex_home: &Path) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(codex_home.join("config.toml")) else { return vec![] };
-    let Ok(t) = toml::from_str::<toml::Table>(&text) else { return vec![] };
+    let Some(t) = codex_config(codex_home) else { return vec![] };
     t.get("mcp_servers").and_then(|v| v.as_table()).map(|m| m.keys().cloned().collect()).unwrap_or_default()
+}
+
+/// The `shell_environment_policy.exclude` patterns in a Codex config file.
+pub fn codex_config_shell_exclude(codex_home: &Path) -> Vec<String> {
+    let Some(t) = codex_config(codex_home) else { return vec![] };
+    let list = t.get("shell_environment_policy").and_then(|p| p.get("exclude")).and_then(|v| v.as_array());
+    list.map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default()
 }
 
 fn acp_pairs(list: &[(String, String)]) -> Value {
@@ -420,6 +449,7 @@ mod tests {
             extra: vec![],
             only_pdt: false,
             codex_user_servers: vec![],
+            codex_shell_exclude: vec![],
         }
     }
 
@@ -500,15 +530,39 @@ mod tests {
         let slack_arg = a.iter().find(|x| x.starts_with("mcp_servers.slack=")).unwrap();
         let t: toml::Table = toml::from_str(slack_arg).unwrap();
         let s = &t["mcp_servers"]["slack"];
-        assert_eq!(s["env_http_headers"]["Authorization"].as_str(), Some("PDT_MCP_SLACK_AUTHORIZATION"));
+        assert_eq!(s["env_http_headers"]["Authorization"].as_str(), Some("PDT_MCP_SECRET_SLACK_AUTHORIZATION"));
         assert_eq!(s["http_headers"]["X-Team"].as_str(), Some("T1"));
         let notes_arg = a.iter().find(|x| x.starts_with("mcp_servers.notes=")).unwrap();
         let t: toml::Table = toml::from_str(notes_arg).unwrap();
         assert_eq!(t["mcp_servers"]["notes"]["env_vars"].as_array().unwrap()[0].as_str(), Some("NOTES_KEY"));
         assert_eq!(t["mcp_servers"]["notes"]["env"]["LOG"].as_str(), Some("warn"));
         let env = codex_tui_env(&m);
-        assert!(env.contains(&("PDT_MCP_SLACK_AUTHORIZATION".into(), "Bearer xoxp-1".into())));
+        assert!(env.contains(&("PDT_MCP_SECRET_SLACK_AUTHORIZATION".into(), "Bearer xoxp-1".into())));
         assert!(env.contains(&("NOTES_KEY".into(), "k-123456".into())));
+    }
+
+    #[test]
+    fn a_codex_terminals_shell_commands_never_get_its_secrets() {
+        let m = McpServer { extra: extras(), codex_shell_exclude: vec!["AWS_*".into()], ..server(None) };
+        let a = codex_tui_args(&m);
+        let arg = a.iter().find(|x| x.starts_with("shell_environment_policy.exclude=")).unwrap();
+        let t: toml::Table = toml::from_str(arg).unwrap();
+        let list = t["shell_environment_policy"]["exclude"].as_array().unwrap();
+        let list: Vec<&str> = list.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(list, ["AWS_*", "PDT_MCP_*", "NOTES_KEY"], "the user's own, then every name holding a secret");
+        for (k, _) in codex_tui_env(&m) {
+            assert!(k.starts_with("PDT_MCP_") || list.contains(&k.as_str()), "{k}");
+        }
+    }
+
+    #[test]
+    fn reads_the_users_codex_shell_excludes() {
+        let home = std::env::temp_dir().join(format!("pdt-codex-excl-{}", std::process::id()));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("config.toml"), "[shell_environment_policy]\nexclude = [\"AWS_*\", \"X\"]\n").unwrap();
+        assert_eq!(codex_config_shell_exclude(&home), ["AWS_*", "X"]);
+        std::fs::remove_dir_all(&home).unwrap();
+        assert!(codex_config_shell_exclude(&home).is_empty());
     }
 
     #[test]
@@ -603,7 +657,7 @@ mod tests {
         assert_eq!((c["web_search"].as_str(), c["sandbox_mode"].as_str()), (Some("disabled"), Some("read-only")));
         assert!(c.get("sandbox_workspace_write.network_access").is_none(), "not the PM's network");
         let a = codex_tui_args(&m);
-        assert_eq!(a[6..], ["-c", "web_search=\"disabled\"", "-c", "sandbox_mode=\"read-only\""]);
+        assert_eq!(a[6..10], ["-c", "web_search=\"disabled\"", "-c", "sandbox_mode=\"read-only\""]);
     }
 
     #[test]
@@ -613,7 +667,8 @@ mod tests {
         assert_eq!(c["mcp_servers.pdt"]["url"], m.url);
         assert_eq!(c["mcp_servers.pdt"]["http_headers"]["Authorization"], "Bearer s1.ab");
         let a = codex_tui_args(&m);
-        assert_eq!(a.len(), 6);
+        assert_eq!(a.len(), 8);
+        assert_eq!(a[7], "shell_environment_policy.exclude=[\"PDT_MCP_*\"]", "its token stays out of shell commands");
         assert_eq!(c["mcp_servers.pdt"]["default_tools_approval_mode"], "approve");
         for kv in [&a[1], &a[3], &a[5]] {
             let t: toml::Table = toml::from_str(kv).unwrap();
@@ -629,7 +684,7 @@ mod tests {
         assert_eq!(c["web_search"], "live");
         assert_eq!(c["sandbox_workspace_write.network_access"], true);
         let a = codex_tui_args(&pm);
-        assert_eq!(a[6..], ["-c", "web_search=\"live\"", "-c", "sandbox_workspace_write.network_access=true"]);
+        assert_eq!(a[6..10], ["-c", "web_search=\"live\"", "-c", "sandbox_workspace_write.network_access=true"]);
         for kv in [&a[7], &a[9]] {
             toml::from_str::<toml::Table>(kv).unwrap();
         }

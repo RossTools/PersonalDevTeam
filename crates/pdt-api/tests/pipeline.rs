@@ -378,6 +378,23 @@ async fn a_session_on_an_external_ticket_gets_no_secrets_until_it_is_let_in() {
     let (session, said) = (said[0].as_str().unwrap().to_string(), said[1].as_str().unwrap().to_string());
     assert!(said.contains("failed") && said.contains("no secrets"), "{said}");
 
+    // What an outsider wrote, its title too, comes fenced (PDT-415).
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/sessions/{session}/messages"),
+        Some(json!({"text": "mcp: get_ticket {}"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let got = tick_until(&env, "get_ticket answered", || async {
+        agent_says(&env, &session).await.into_iter().find(|m| m.starts_with("mcp get_ticket")).map(Value::String)
+    })
+    .await;
+    let got = got.as_str().unwrap();
+    assert!(got.contains("\"title\": \"<untrusted id=\\\"") && got.contains("\\nFrom an issue\\n"), "{got}");
+    assert!(got.contains("its title and description"), "{got}");
+
     // Let in: the same call runs.
     common::call_as_ui(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "todo"}))).await;
     let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": run}))).await;

@@ -297,4 +297,31 @@ mod tests {
         assert!(store.delete_persona("p1").await.unwrap());
         assert!(store.list_persona_versions("p1").await.unwrap().is_empty(), "versions go with it");
     }
+
+    /// PDT-414: a list saved empty meant the default set; the migration that made empty mean none gave each one the
+    /// default set, so those personas kept their tools.
+    #[tokio::test]
+    async fn the_empty_tools_migration_gives_saved_empty_lists_the_default_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_project(dir.path()).await;
+        let empty = PersonaSetup { tools: vec![], ..persona("p1", "Coder").setup };
+        store
+            .insert_persona(&Persona { setup: empty.clone(), ..persona("p1", "Coder") }, PersonaAuthor::User, "")
+            .await
+            .unwrap();
+        store.set_persona_template("p1", &empty).await.unwrap();
+        store.insert_persona(&persona("p2", "Reviewer"), PersonaAuthor::User, "").await.unwrap();
+        sqlx::raw_sql(include_str!("../migrations/20261102173456_persona_empty_tools.sql"))
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        let defaults: Vec<String> = pdt_core::persona::DEFAULT_TOOLS.map(String::from).to_vec();
+        assert_eq!(store.get_persona("p1").await.unwrap().unwrap().setup.tools, defaults);
+        assert_eq!(store.persona_template("p1").await.unwrap().unwrap().tools, defaults);
+        assert_eq!(
+            store.get_persona("p2").await.unwrap().unwrap().setup.tools,
+            ["get_ticket"],
+            "a list kept as it was"
+        );
+    }
 }

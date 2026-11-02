@@ -11,6 +11,7 @@ import { runAction } from '../common/useAction';
 import { itemOf } from '../workspaces/model';
 import { AgentsSection, workspaceState } from '../workspaces/Sidebar';
 import type { WorkspacesApi } from '../workspaces/useWorkspaces';
+import { useConnected } from './connection';
 import { useBackCloses } from './router';
 import { ThemeSwitch } from './ThemeSwitch';
 import { VIEWS, type ViewId } from './views';
@@ -70,7 +71,7 @@ export function PhoneDrawer({ open, onOpenChange, view, onView, counts, dots, ws
     };
   };
 
-  const connected = !ws.workspacesError;
+  const connected = useConnected(ws.workspacesError);
   return (
     <Sheet side="left" title="Menu" hideTitle open={open} onOpenChange={(o) => (o ? onOpenChange(true) : close())} className="w-80 max-w-[85vw]">
       <div className="-mx-2 flex min-h-full flex-col">

@@ -275,6 +275,101 @@ async fn pdt_mcp_needs_the_session_token_and_lists_its_tools() {
     );
 }
 
+/// PDT-414: a public-posting tool (a forge comment) runs in the workflow step that expects it; the same call from a
+/// session outside a step asks in the Inbox first.
+#[tokio::test]
+async fn public_posting_tools_run_in_a_step_and_ask_outside_one() {
+    let gh = std::sync::Arc::new(pdt_forge::testing::FakeForge::default());
+    let fake = gh.clone();
+    let env = setup_with(move |st| {
+        st.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::testing::fake_github(&fake))]);
+    })
+    .await;
+    git(&env._tmp.path().join("repo"), &["remote", "add", "origin", "https://github.com/o/r.git"]);
+    let (s, p) = call(
+        &env.app,
+        "POST",
+        "/api/personas",
+        Some(json!({"name": "Commenter", "role": "coder", "agent": "claude", "instructions": "Comment.",
+                    "tools": ["get_ticket", "submit_outcome", "issue_comment"]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{p}");
+    let own = ticket(&env, "Mine").await;
+    let wf = create_workflow(
+        &env,
+        json!({
+            "name": "Comment",
+            "nodes": [
+                {"id": "go", "kind": "manual", "version": 1},
+                {"id": "review", "kind": "agent", "version": 1, "config": {"persona": "Commenter",
+                    "prompt": "Comment.", "outcomes": [{"id": "submitted"}]}},
+                {"id": "done", "kind": "end", "version": 1},
+            ],
+            "edges": [{"from": "go", "to": "review"}, {"from": "review", "port": "submitted", "to": "done"}],
+        }),
+    )
+    .await;
+    let run_id = run_now(&env, &wf, json!({"ticketId": own})).await;
+    let session = step_session(&env, &run_id).await;
+    let say = |session: String, text: &'static str| {
+        let env = &env;
+        async move {
+            let before = agent_says(env, &session).await.len();
+            let (s, v) =
+                call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
+            assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+            tick_until(env, "the agent's answer", || async {
+                agent_says(env, &session)
+                    .await
+                    .into_iter()
+                    .skip(before)
+                    .find(|m| m.starts_with("mcp "))
+                    .map(|m| json!(m))
+            })
+            .await
+            .as_str()
+            .unwrap()
+            .to_string()
+        }
+    };
+    let comment = r#"mcp: issue_comment {"number": 3, "body": "Looking"}"#;
+    let said = say(session.clone(), comment).await;
+    assert!(said.contains("issues/3#issuecomment-1"), "{said}");
+    // A persona version PDT can't find gives the session no tools, never the default set.
+    assert!(env.state.store.delete_persona(p["id"].as_str().unwrap()).await.unwrap());
+    let before = agent_says(&env, &session).await.len();
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": "mcp-list"}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let listed = tick_until(&env, "the tool list", || async {
+        agent_says(&env, &session)
+            .await
+            .into_iter()
+            .skip(before)
+            .find(|m| m.starts_with("mcp tools:"))
+            .map(|m| json!(m))
+    })
+    .await;
+    assert_eq!(listed, json!("mcp tools: "), "fails closed");
+
+    // A session the user started on a ticket, outside any step.
+    let other = ticket(&env, "Other").await;
+    let (s, started) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{other}/start"),
+        Some(json!({"agent": "claude", "sessionMode": "conversation", "permissionMode": "bypass"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{started}");
+    let plain = started["session"]["id"].as_str().unwrap().to_string();
+    let said = say(plain, comment).await;
+    assert!(said.contains("needs the user's yes") && said.contains("Inbox"), "{said}");
+    assert_eq!(gh.issue_comments.lock().unwrap().len(), 1, "nothing posted before the user's yes");
+    assert!(inbox(&env).await.iter().any(|i| i["kind"] == "confirm" && i["body"]["tool"] == "issue_comment"));
+}
+
 /// PDT-163: a Coder working on one ticket edits and comments on another; both name the Coder, its session and the
 /// ticket it works on, in the timeline and in `get_ticket`.
 #[tokio::test]
@@ -285,7 +380,7 @@ async fn an_agents_changes_to_another_ticket_name_its_persona_session_and_ticket
     let mut tools: Vec<&str> = pdt_core::persona::DEFAULT_TOOLS.to_vec();
     tools.push("edit_ticket");
     coder["tools"] = json!(tools);
-    // edit_ticket asks first; here nothing asks.
+    // edit_ticket asks first; Bypass never shows Claude's prompt, so PDT asks in its Inbox (PDT-414).
     coder["permissionMode"] = json!("bypass");
     let (s, v) = call(&env.app, "PUT", &format!("/api/personas/{}", coder["id"].as_str().unwrap()), Some(coder)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -314,8 +409,21 @@ async fn an_agents_changes_to_another_ticket_name_its_persona_session_and_ticket
             .to_string()
         }
     };
-    let said =
-        say(format!(r#"mcp: edit_ticket {{"ticket": "{other_key}", "title": "Renamed", "stage": "ready"}}"#)).await;
+    let edit = format!(r#"mcp: edit_ticket {{"ticket": "{other_key}", "title": "Renamed", "stage": "ready"}}"#);
+    let said = say(edit.clone()).await;
+    assert!(said.contains("needs the user's yes") && said.contains("Inbox"), "{said}");
+    let confirm = inbox(&env).await.into_iter().find(|i| i["kind"] == "confirm").expect("asked in the Inbox");
+    assert_eq!(confirm["body"]["tool"], "edit_ticket");
+    let (_, o) = call(&env.app, "GET", &format!("/api/tickets/{other}"), None).await;
+    assert_eq!(o["title"], "Other", "nothing before the user's yes");
+    let answer = format!("/api/inbox/{}/answer", confirm["id"].as_str().unwrap());
+    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "deny"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    // Where the project lets the PM act, it goes ahead, as another agent's would.
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let said = say(edit).await;
     assert!(said.contains("\"updated\": true"), "{said}");
     let said = say(format!(r#"mcp: add_ticket_comment {{"ticket": "{other_key}", "body": "Mine needs this."}}"#)).await;
     assert!(said.contains("\"commented\": true"), "{said}");
@@ -1512,6 +1620,10 @@ async fn gate_session(env: &Env, t: &str) -> String {
 #[tokio::test]
 async fn a_coder_edits_only_its_own_tickets_unless_it_names_another_by_key() {
     let env = setup().await;
+    // A Bypass session's asking tools run where the project lets the PM act; elsewhere they ask in the Inbox (PDT-414).
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
     // Its follow-ups go straight to the board (proposals: `ticket_proposals_wait_for_the_user`).
     let proposals = builtin_workflow(&env, "ticket-proposals").await;
     call(
@@ -1688,6 +1800,10 @@ async fn builtin_workflow(env: &Env, id: &str) -> Value {
 #[tokio::test]
 async fn ticket_proposals_wait_for_the_user() {
     let env = setup().await;
+    // A Bypass session's asking tools run where the project lets the PM act; elsewhere they ask in the Inbox (PDT-414).
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(builtin_workflow(&env, "ticket-proposals").await["enabled"], true, "on from the start");
     let (s, p) = call(
         &env.app,

@@ -114,12 +114,17 @@ async fn save(st: &AppState, conn: &Connection, t: &OAuthTokens) -> Result<(), S
     Ok(())
 }
 
-/// Forgets a connection's sign-in (Sign out, or the connection deleted).
-pub(crate) async fn forget(st: &AppState, id: &str) {
+/// Forgets a connection's sign-in (Sign out, or the connection deleted). Err: the keychain kept the tokens, so the
+/// connection is still signed in.
+pub(crate) async fn forget(st: &AppState, id: &str) -> Result<(), ApiError> {
     st.mcp.oauth.refreshing.lock().unwrap().remove(id);
     let (secrets, acct) = (st.secrets.clone(), account(id));
-    let _ = tokio::task::spawn_blocking(move || secrets.delete(&acct)).await;
+    tokio::task::spawn_blocking(move || secrets.delete(&acct))
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "keychain_failed", e.to_string()))?;
     st.mcp.oauth.tokens.lock().unwrap().insert(id.to_string(), None);
+    Ok(())
 }
 
 pub(crate) fn status_of(t: Option<&OAuthTokens>, now: i64) -> OAuthStatus {
@@ -434,7 +439,7 @@ pub(crate) async fn sign_in(
 /// `DELETE /api/mcp-servers/{id}/sign-in`: signs out (PDT forgets the tokens).
 pub(crate) async fn sign_out(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     st.store.get_connection(&id).await?.ok_or_else(|| ApiError::not_found("MCP server"))?;
-    forget(&st, &id).await;
+    forget(&st, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

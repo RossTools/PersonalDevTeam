@@ -32,12 +32,12 @@ import {
   AUTHOR_LABEL,
   DEFAULT_MODE,
   cleanSetup,
+  defaultTools,
   normalTools,
   orderTools,
   personaKeys,
   sameSetup,
   setupOf,
-  shownTools,
   sortPersonas,
   usePersonaTools,
   usePersonas,
@@ -70,7 +70,7 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
   // The persona's agent stays listed even if the host no longer offers it (an ACP agent removed since, or one switched
   // off in Settings → Agents).
   const agentOptions = agents.all.includes(value.agent) ? agents.all : [...agents.all, value.agent];
-  const checked = shownTools(value.tools);
+  const checked = value.tools;
   const toggle = (name: string, on: boolean) =>
     set({ tools: normalTools(orderTools(on ? [...checked, name] : checked.filter((t) => t !== name), known ?? [])) });
   // Tools the persona has that the server doesn't list stay checked (and saved) until unchecked.
@@ -118,7 +118,7 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
       <SettingsRow
         stacked
         label="Tools"
-        description="PDT's tools its sessions get. The first five are the default set (what a persona that picks none gets)."
+        description="PDT's tools its sessions get; a persona that picks none gets none. A new persona starts with the default set."
       >
         {known ? (
           <ul className="flex flex-col gap-1.5">
@@ -188,8 +188,12 @@ function NewPersonaForm({ onSelect }: { onSelect: (id: string) => void }) {
   const [role, setRole] = useState('');
   const [description, setDescription] = useState('');
   const [setup, setSetup] = useState<PersonaSetup>(BLANK);
+  // Its tools are the default set until the user picks (the server's list comes in after the first render).
+  const [picked, setPicked] = useState(false);
+  const known = usePersonaTools().data;
+  const shown = picked ? setup : { ...setup, tools: defaultTools(known ?? []) };
   const [create, creating] = useAction(async () => {
-    const p = await api.createPersona({ name: name.trim(), role: role.trim(), description, ...cleanSetup(setup) });
+    const p = await api.createPersona({ name: name.trim(), role: role.trim(), description, ...cleanSetup(shown) });
     await qc.invalidateQueries({ queryKey: personaKeys.all });
     onSelect(p.id);
   });
@@ -215,7 +219,13 @@ function NewPersonaForm({ onSelect }: { onSelect: (id: string) => void }) {
           label="Setup"
           footer={<Button type="submit" variant="primary" size="sm" disabled={!name.trim()} pending={creating}>Create persona</Button>}
         >
-          <SetupFields value={setup} onChange={setSetup} />
+          <SetupFields
+            value={shown}
+            onChange={(s) => {
+              if (s.tools !== shown.tools) setPicked(true);
+              setSetup(s);
+            }}
+          />
         </Section>
       </form>
     </Page>
@@ -450,7 +460,7 @@ function PersonaDetail({ persona, onSelect, others }: { persona: Persona; onSele
 function PersonaReadOnly({ persona }: { persona: Persona }) {
   const known = usePersonaTools().data;
   const agents = useAgents();
-  const tools = shownTools(persona.tools);
+  const tools = persona.tools;
   return (
     <Page
       title={persona.name}
@@ -468,7 +478,7 @@ function PersonaReadOnly({ persona }: { persona: Persona }) {
         <SettingsRow label="Model"><span className="font-mono break-all">{persona.model || "the agent's default"}</span></SettingsRow>
         <SettingsRow label="Permission mode">{persona.permissionMode ? PERMISSION_LABEL[persona.permissionMode] : 'Project or host default'}</SettingsRow>
         <SettingsRow stacked label="Tools">
-          {persona.tools.length === 0 && <p className="text-xs text-muted-foreground">PDT's default set:</p>}
+          {tools.length === 0 && <p className="text-xs text-muted-foreground">None.</p>}
           <ul aria-label="Tools" className="flex flex-col gap-1">
             {tools.map((name) => {
               const does = known?.find((t) => t.name === name)?.does;

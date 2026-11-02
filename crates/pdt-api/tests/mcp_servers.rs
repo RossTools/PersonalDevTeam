@@ -457,6 +457,36 @@ async fn a_sign_in_address_that_isnt_https_is_refused_before_the_browser_goes_th
     assert_eq!(f.lock().unwrap().registered, 0, "PDT didn't register with it");
 }
 
+/// A keychain that won't delete (locked, or a refused prompt).
+struct KeepingKeychain(pdt_api::secrets::MemorySecretStore);
+impl pdt_api::secrets::SecretStore for KeepingKeychain {
+    fn get(&self, name: &str) -> Result<Option<String>, pdt_api::secrets::SecretError> {
+        self.0.get(name)
+    }
+    fn set(&self, name: &str, value: &str) -> Result<(), pdt_api::secrets::SecretError> {
+        self.0.set(name, value)
+    }
+    fn delete(&self, _: &str) -> Result<(), pdt_api::secrets::SecretError> {
+        Err(pdt_api::secrets::SecretError("the keychain is locked".into()))
+    }
+}
+
+#[tokio::test]
+async fn signing_out_says_so_when_the_keychain_keeps_the_tokens() {
+    let env = setup().await;
+    let id = server(&env, "Slack", "https://slack.example/mcp", json!({"transport": "http", "oauth": {}})).await;
+    let mut state = env.state.clone();
+    state.secrets = Arc::new(KeepingKeychain(Default::default()));
+    let app = router(state, None);
+    let (s, v) = call(&app, "DELETE", &format!("/api/mcp-servers/{id}/sign-in"), None).await;
+    assert_eq!(s, StatusCode::BAD_GATEWAY, "{v}");
+    assert_eq!(v["code"], "keychain_failed", "{v}");
+    // Deleting the server stops there too: the connection stays, as its tokens do.
+    let (s, v) = call(&app, "DELETE", &format!("/api/connections/{id}"), None).await;
+    assert_eq!(s, StatusCode::BAD_GATEWAY, "{v}");
+    assert_eq!(view(&env, &id).await["connection"]["id"], id.as_str());
+}
+
 #[tokio::test]
 async fn a_server_for_one_project_or_turned_off_there_stays_out_of_other_sessions() {
     let env = setup().await;

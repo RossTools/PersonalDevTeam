@@ -11,9 +11,10 @@ import type { SignIn } from '../api/gen/SignIn';
 import type { SignInAccount } from '../api/gen/SignInAccount';
 import type { AccountSignInStart } from '../api/gen/AccountSignInStart';
 import { actionError } from '../common/useAction';
-import { ConnectionDialog } from '../connections/ConnectionDialog';
+import { ConnectionDialog, connectionsKey } from '../connections/ConnectionDialog';
 
-export const signInAccountsKey = (url: string) => ['sign-in', 'accounts', url] as const;
+// Under the connections' key, so saving or deleting a connection anywhere reads the accounts again (PDT-464).
+export const signInAccountsKey = (url: string) => [...connectionsKey, 'sign-in', url] as const;
 
 /** The accounts at `url` and their sign-in state; read again quickly while a sign-in is under way. */
 export function useSignInAccounts(url: string | null, waiting = false) {
