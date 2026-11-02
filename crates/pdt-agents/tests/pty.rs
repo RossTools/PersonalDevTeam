@@ -115,14 +115,13 @@ async fn kill_ends_the_process() {
     assert!(matches!(m.kill("a"), Err(PtyError::NotRunning(_))));
 }
 
-/// A run's server is a grandchild (`cmd.exe` → node, `sh` → node): killing the terminal must end it too, or it keeps
-/// its port (Review Focus 2).
-#[tokio::test]
-async fn kill_ends_the_whole_process_tree() {
-    // A claimed port, not a random free one: another test's socket could take that before node listens on it.
-    let port = port_blocks::claim(31000, 100, 1);
-    // node starts the server as its own child, like dev servers do. On Windows that child is detached from the
-    // console, so closing the pseudo console does not end it: only a tree kill does.
+/// Starts a session running `node server.js`, which starts the server (listening on `port`) as its own child, like dev
+/// servers do, and waits until it listens. On Windows that child is detached from the console, so closing the pseudo
+/// console does not end it.
+async fn start_grandchild_server(
+    m: &PtyManager,
+    port: u16,
+) -> (tempfile::TempDir, tokio::sync::oneshot::Receiver<i32>) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("server.js"),
@@ -135,7 +134,6 @@ async fn kill_ends_the_whole_process_tree() {
          }\n",
     )
     .unwrap();
-    let m = PtyManager::new();
     // The trailing echo keeps the shell from exec'ing node in its place.
     let mut s = oneshot_cmd("a", "node server.js & echo after", "node server.js; echo after");
     s.cwd = dir.path().to_path_buf();
@@ -146,13 +144,40 @@ async fn kill_ends_the_whole_process_tree() {
         assert!(tokio::time::Instant::now() < deadline, "the server never listened");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    m.kill("a").unwrap();
-    tokio::time::timeout(WAIT, exit).await.expect("exit after kill").unwrap();
+    (dir, exit)
+}
+
+async fn assert_port_freed(port: u16) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
         assert!(tokio::time::Instant::now() < deadline, "the grandchild server still holds port {port}");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// A run's server is a grandchild (`cmd.exe` → node, `sh` → node): killing the terminal must end it too, or it keeps
+/// its port (Review Focus 2).
+#[tokio::test]
+async fn kill_ends_the_whole_process_tree() {
+    // A claimed port, not a random free one: another test's socket could take that before node listens on it.
+    let port = port_blocks::claim(31000, 100, 1);
+    let m = PtyManager::new();
+    let (_dir, exit) = start_grandchild_server(&m, port).await;
+    m.kill("a").unwrap();
+    tokio::time::timeout(WAIT, exit).await.expect("exit after kill").unwrap();
+    assert_port_freed(port).await;
+}
+
+/// Windows: a session's tree is in a kill-on-close job held by the manager, so it ends with pdtd however pdtd ends,
+/// with no kill (PDT-351).
+#[cfg(windows)]
+#[tokio::test]
+async fn dropping_the_manager_ends_the_whole_process_tree() {
+    let port = port_blocks::claim(31000, 100, 1);
+    let m = PtyManager::new();
+    let (_dir, _exit) = start_grandchild_server(&m, port).await;
+    drop(m);
+    assert_port_freed(port).await;
 }
 
 #[tokio::test]
