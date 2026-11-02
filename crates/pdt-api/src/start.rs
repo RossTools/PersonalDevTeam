@@ -416,8 +416,6 @@ async fn part_started(st: &AppState, parent: &TicketParent) {
     }
 }
 
-/// Where Start's new branch begins: the project's `base`, or `origin/<base>` (fetched first) when that is ahead, so
-/// the branch and its `base_commit` start from the newest base (PDT-45). A failed fetch keeps the refs there are.
 /// The ticket's project, and the base branch with where to branch from it when Start will likely make a worktree
 /// (fetched first: [`newest_base`]). A guess made before the lock: Start fetches again under it if the guess missed.
 async fn fetch_before_start(
@@ -444,6 +442,8 @@ async fn fetch_before_start(
     Ok((project_id, Some((base, from))))
 }
 
+/// Where Start's new branch begins: the project's `base`, or `origin/<base>` (fetched first) when that is ahead, so
+/// the branch and its `base_commit` start from the newest base (PDT-45). A failed fetch keeps the refs there are.
 async fn newest_base(repo_path: &str, base: &str) -> String {
     let (repo, base) = (PathBuf::from(repo_path), base.to_string());
     let fallback = base.clone();
