@@ -72,7 +72,9 @@ pub(crate) async fn start_ticket(
     by: Starter,
 ) -> Result<StartResult, ApiError> {
     let st = st.clone();
-    let guard = st.ticket_start_lock.lock().await;
+    // The fetch goes before the lock (PDT-440): it may take seconds, and the lock is only for the checks and rows.
+    let (project_id, fetched) = fetch_before_start(&st, &id, &v).await?;
+    let guard = st.ticket_start_locks.lock(&project_id).await;
     let mut ticket = load_ticket(&st, &id).await?;
     // A parent is never started itself (PDT-38): `next` starts its next part instead.
     let mut id = id;
@@ -182,7 +184,10 @@ pub(crate) async fn start_ticket(
             let wt = match existing {
                 Some(w) => w,
                 None => {
-                    let from = newest_base(&project.repo_path, &base).await;
+                    let from = match fetched {
+                        Some((b, from)) if b == base => from,
+                        _ => newest_base(&project.repo_path, &base).await,
+                    };
                     crate::worktrees::make_worktree(&st, &project, &branch, &from, true).await?
                 }
             };
@@ -413,6 +418,32 @@ async fn part_started(st: &AppState, parent: &TicketParent) {
 
 /// Where Start's new branch begins: the project's `base`, or `origin/<base>` (fetched first) when that is ahead, so
 /// the branch and its `base_commit` start from the newest base (PDT-45). A failed fetch keeps the refs there are.
+/// The ticket's project, and the base branch with where to branch from it when Start will likely make a worktree
+/// (fetched first: [`newest_base`]). A guess made before the lock: Start fetches again under it if the guess missed.
+async fn fetch_before_start(
+    st: &AppState,
+    id: &str,
+    v: &ValidStart,
+) -> Result<(String, Option<(String, String)>), ApiError> {
+    let ticket = st.store.get_ticket(id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    // A part is always in its parent's project.
+    let project_id = ticket.summary.project_id.clone();
+    let Some(project) = st.store.get_project(&project_id).await? else { return Ok((project_id, None)) };
+    if project.is_personal() || v.from_session.is_some() || ticket.summary.stage.is_closed() {
+        return Ok((project_id, None));
+    }
+    // A parent starts its next part, on that part's branch: fetch for it anyway.
+    if ticket.part_list.is_empty() {
+        let branch = v.branch.clone().unwrap_or_else(|| ticket.default_branch.clone());
+        if st.store.list_worktrees(&project.id).await?.iter().any(|w| w.branch == branch) {
+            return Ok((project_id, None));
+        }
+    }
+    let base = v.base.clone().unwrap_or_else(|| project.base_branch.clone());
+    let from = newest_base(&project.repo_path, &base).await;
+    Ok((project_id, Some((base, from))))
+}
+
 async fn newest_base(repo_path: &str, base: &str) -> String {
     let (repo, base) = (PathBuf::from(repo_path), base.to_string());
     let fallback = base.clone();
