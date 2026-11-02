@@ -199,6 +199,8 @@ pub struct AppState {
     pub(crate) pm_resets: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Makes and clears notifications (PDT-108), and streams them.
     pub notifier: std::sync::Arc<crate::notifications::Notifier>,
+    /// What the Inbox and session sensors remember (PDT-364).
+    pub(crate) sensors: std::sync::Arc<crate::workflow::sensors::Sensors>,
     /// The background loops' last passes (PDT-127), for `/api/health` and `host.loop_stale`.
     pub loops: std::sync::Arc<crate::loops::Loops>,
     /// The longest one member of the 60 s poll may take (tests shorten it).
@@ -331,6 +333,7 @@ impl AppState {
             pm_reset_wait_ms: pdt_core::pm::RESET_WAIT_MS,
             pm_resets: Default::default(),
             notifier: Default::default(),
+            sensors: Default::default(),
             loops: Default::default(),
             poll_part_limit: crate::loops::POLL_PART_LIMIT,
             sensor_timeout: std::time::Duration::from_secs(30),

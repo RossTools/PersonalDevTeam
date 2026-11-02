@@ -527,7 +527,9 @@ fn start_pty(
             if let Err(e) = store.end_session(&id, SessionStatus::Finished, Some(code), now_ms()).await {
                 tracing::warn!(session = %id, error = %e, "failed to record session exit");
             }
-            crate::notifications::session_exited(&st2, &id, code).await;
+            let stopped = st2.notifier.take_expected_exit(&id);
+            crate::notifications::session_exited(&st2, &id, code, stopped).await;
+            crate::workflow::sensors::session_exited(&st2, &id, Some(code), stopped).await;
             // Remember which Codex conversation this was while its start time is still fresh.
             if codex_home.is_some() {
                 bind_codex_with(&store, codex_home.as_deref(), spacing, &id).await;

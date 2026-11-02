@@ -169,6 +169,7 @@ fn transition(t: &mut Tracker, sig: Signal) -> (Activity, Activity) {
 async fn persist(st: &AppState, id: &str, prev: Activity, now: Activity) -> Result<(), ApiError> {
     st.store.update_activity(id, Some(now), needs_attention(prev, now).then(now_ms)).await?;
     crate::notifications::kick(st);
+    crate::workflow::sensors::activity_changed(st, id, Some(prev), now);
     if now == Activity::Idle {
         // A terminal agent's turn ended: an agent step running in it may have stalled (Phase 7b spec §4.4).
         let (st2, id) = (st.clone(), id.to_string());

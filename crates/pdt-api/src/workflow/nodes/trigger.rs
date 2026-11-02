@@ -1,8 +1,12 @@
 //! Triggers: one kind per event type (its id is the type), and `manual` ("Run now").
 
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, ports, schema_of};
+use crate::workflow::catalog::{
+    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, in_scope, parse, ports, schema_of,
+};
+use pdt_core::workflow::api::{LogEvent, Workflow};
 use pdt_core::workflow::cond::Condition;
-use pdt_core::workflow::events::EventType;
+use pdt_core::workflow::doc::Node;
+use pdt_core::workflow::events::{EventType, OWN_RUN_EVENTS, from_own_run};
 use pdt_core::workflow::inputs::{InputField, RunConfirm, apply, check_fields};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -24,6 +28,24 @@ pub struct TriggerConfig {
     pub run_key: Option<String>,
 }
 
+/// The config of a trigger on an event a workflow's own runs can cause (`run.*`, `session.*`, `inbox.*`; PDT-364).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+#[ts(export)]
+pub struct OwnRunTriggerConfig {
+    /// Only these projects' events (a host-wide workflow); empty: every project.
+    pub projects: Vec<String>,
+    /// Only events for which every condition holds (`{{trigger.via}}` …).
+    #[serde(rename = "where")]
+    #[ts(rename = "where")]
+    pub conditions: Vec<Condition>,
+    /// The run's idempotency key: a second run with the same key is skipped. Default: the event.
+    pub run_key: Option<String>,
+    /// Also events this workflow's own runs caused (its run failing, its agent step's session, its Inbox item). Off by
+    /// default, so a workflow never reacts to itself.
+    pub include_own: bool,
+}
+
 /// The fields every trigger kind has, read leniently (a kind's own config adds more): what the engine checks.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -38,6 +60,13 @@ pub struct SharedTrigger {
 /// (`crate::integrations::Registry::node_kinds`).
 pub struct EventTrigger(pub &'static EventType);
 
+impl EventTrigger {
+    /// Its events can come from the workflow's own runs: it has `includeOwn`.
+    fn guarded(&self) -> bool {
+        OWN_RUN_EVENTS.contains(&self.0.id)
+    }
+}
+
 impl NodeKind for EventTrigger {
     fn spec(&self) -> KindSpec {
         KindSpec {
@@ -46,7 +75,11 @@ impl NodeKind for EventTrigger {
             category: Category::Trigger,
             title: self.0.title.into(),
             description: self.0.description.into(),
-            config_schema: schema_of::<TriggerConfig>(),
+            config_schema: if self.guarded() {
+                schema_of::<OwnRunTriggerConfig>()
+            } else {
+                schema_of::<TriggerConfig>()
+            },
             output_schema: serde_json::to_value((self.0.schema)()).unwrap_or(Value::Null),
             ports: ports(&[("out", "Then")]),
             dynamic_ports: false,
@@ -55,11 +88,23 @@ impl NodeKind for EventTrigger {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
+        if self.guarded() {
+            return parse::<OwnRunTriggerConfig>(config).map(|_| ());
+        }
         parse::<TriggerConfig>(config).map(|_| ())
     }
 
     fn event_type(&self) -> Option<&str> {
         Some(self.0.id)
+    }
+
+    /// In scope, and not from one of this workflow's own runs unless the trigger includes them (PDT-364).
+    fn accepts(&self, config: &Value, wf: &Workflow, _node: &Node, event: &LogEvent) -> bool {
+        if !in_scope(wf, event) {
+            return false;
+        }
+        let include_own = config.get("includeOwn").and_then(Value::as_bool) == Some(true);
+        include_own || !from_own_run(&event.kind, &event.payload, &wf.id)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, _input: Value) -> BoxFut<'a, Result<Outcome, String>> {

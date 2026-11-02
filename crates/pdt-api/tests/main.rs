@@ -67,6 +67,7 @@ mod update;
 mod watches;
 mod workflow_runs;
 mod workflow_transfer;
+mod workflow_triggers;
 mod workflows;
 mod workspaces;
 mod worktrees;

@@ -471,6 +471,7 @@ async fn finish_run(st: &AppState, run: &mut Run, status: RunStatus, output: Val
     if status == RunStatus::Failed {
         crate::notifications::run_failed(st, run, run.error.as_deref()).await;
     }
+    super::sensors::run_ended(st, run).await;
     super::agent::run_ended(st, run).await;
     if let Some(pid) = &run.parent_step_id
         && let Some(parent) = st.store.get_step(pid).await.map_err(err)?
