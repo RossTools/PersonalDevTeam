@@ -607,7 +607,7 @@ describe('UpdateBanner', () => {
     expect(within(notes).getByText('2 releases since v0.1.840')).toBeInTheDocument();
     const sections = within(notes).getAllByRole('region');
     expect(sections.map((r) => r.getAttribute('aria-label'))).toEqual(['v0.2.1', 'v0.2.0']);
-    expect(within(sections[0]).getByRole('heading', { name: 'Fixed' })).toBeInTheDocument();
+    expect(await within(sections[0]).findByRole('heading', { name: 'Fixed' })).toBeInTheDocument();
     expect(within(sections[0]).getByText('The banner lists every release.')).toBeInTheDocument();
     expect(within(sections[1]).getByText('No notes.')).toBeInTheDocument();
     // The release notes take the place of the commit list.
@@ -624,7 +624,7 @@ describe('UpdateBanner', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Release notes' }));
     const section = within(screen.getByRole('dialog', { name: 'Release notes' })).getByRole('region', { name: 'v0.2.1-nightly.20261030' });
     expect(within(section).getByText('Nightly')).toBeInTheDocument();
-    expect(within(section).getByText('Things.')).toBeInTheDocument();
+    expect(await within(section).findByText('Things.')).toBeInTheDocument();
   });
 
   it('lists every change since the installed version, linking tickets here and pull requests', async () => {

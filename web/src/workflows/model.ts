@@ -9,6 +9,9 @@ import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 
 export const ERROR_PORT = 'error';
 
+/** An edge's key in a run's taken set (`PathOverlay.taken`). */
+export const edgeKey = (from: string, port: string, to: string) => `${from} ${port} ${to}`;
+
 export type Catalog = KindSpec[];
 
 export function kindOf(catalog: Catalog, kind: string): KindSpec | undefined {

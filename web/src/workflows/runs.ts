@@ -5,7 +5,8 @@ import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import type { WorkflowStep } from '../api/gen/WorkflowStep';
 import type { WorkflowRunStatus } from '../api/gen/WorkflowRunStatus';
 import type { BadgeTone } from '@ui';
-import { edgeKey, type PathOverlay } from './GraphView';
+import type { PathOverlay } from './GraphView';
+import { edgeKey } from './model';
 
 interface PathStep { nodeId: string; status: FlowStatus; port: string | null }
 

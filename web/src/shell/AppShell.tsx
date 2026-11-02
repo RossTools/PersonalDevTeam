@@ -21,8 +21,6 @@ import { SetupPage } from '../setup/SetupPage';
 import { choiceFor, newSession, type Choice } from '../sessions/newSession';
 import { ProjectPage } from '../projects/ProjectPage';
 import { FileViewer, FolderList, FolderTree, useFolderView, type FolderViewState } from '../files/FolderView';
-import { RunView } from '../runs/RunView';
-import { SessionView } from '../sessions/SessionView';
 import { HostSettingsPage } from '../host/HostSettingsPage';
 import { sectionLabel } from '../common/SettingsScreens';
 import { HOST_SECTION_LABELS, PROJECT_SECTION_LABELS } from '../common/settingsSections';
@@ -53,7 +51,6 @@ import { InlineRename } from '../common/InlineRename';
 import { Sidebar } from '../workspaces/Sidebar';
 import { useWorkspaces } from '../workspaces/useWorkspaces';
 import { WorkspaceBar, workspaceTabId } from '../workspaces/WorkspaceBar';
-import { BottomPanel } from './BottomPanel';
 import { RightPanel, RightPanelContent, useRightPanelKey, useRightPanelOpen } from './RightPanel';
 import type { TodoFocus } from '../todos/TodoList';
 import { IconRail } from './IconRail';
@@ -88,8 +85,8 @@ import { PhoneDrawer } from './PhoneDrawer';
 import { invalidateWorktrees, worktreesQuery } from '../common/worktrees';
 import { PhoneTopBar, TopBarActionsContext, TopBarEditContext, type TopBarActions, type TopBarEdit } from './PhoneTopBar';
 import {
-  ChangesView, CreateIssueDialog, DocumentPage, InboxView, NewTicketDialog, NewWorkflowDialog, NoteScreen, PersonaPage, PhoneInboxItem, PmView,
-  ScreenSuspense, StartDialog, TicketView, TicketsView, WorkflowsView, WorkspaceMergedBanner,
+  BottomPanel, ChangesView, CreateIssueDialog, DocumentPage, InboxView, NewTicketDialog, NewWorkflowDialog, NoteScreen, PersonaPage, PhoneInboxItem,
+  PmView, RunView, ScreenSuspense, SessionView, StartDialog, TicketView, TicketsView, WorkflowsView, WorkspaceMergedBanner,
 } from './screens';
 
 const CHOICE: Record<Exclude<NewKind, AcpKind>, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
@@ -1004,22 +1001,22 @@ export function AppShell() {
             ) : ws.tab?.worktreeId ? (
               <ScreenSuspense><ChangesView key={ws.tab.worktreeId} worktreeId={ws.tab.worktreeId} /></ScreenSuspense>
             ) : current?.run ? (
-              <RunView
+              <ScreenSuspense><RunView
                 key={current.run.id}
                 run={current.run}
                 onRemoved={() => void ws.refresh()}
                 branchLink={branchLink}
                 {...(currentProject ? { forge: currentProject.forge ?? null, baseBranch: currentProject.baseBranch } : {})}
-              />
+              /></ScreenSuspense>
             ) : current?.session ? (
-              <SessionView
+              <ScreenSuspense><SessionView
                 key={current.session.id}
                 session={current.session}
                 onRemoved={() => void ws.refresh()}
                 branchLink={branchLink}
                 {...(currentProject ? { forge: currentProject.forge ?? null, baseBranch: currentProject.baseBranch, projectKey: currentProject.key } : {})}
                 {...(!current.worktreeId ? { branch: null } : worktreeBranch !== undefined ? { branch: worktreeBranch } : {})}
-              />
+              /></ScreenSuspense>
             ) : ws.projects.length === 0 ? (
               <EmptyState><Link onClick={() => go({ view: 'setup' })}>Add a project to get started.</Link></EmptyState>
             ) : (
@@ -1029,7 +1026,7 @@ export function AppShell() {
             </ViewScopeContext.Provider>
           </div>
         )}
-        {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}
+        {bottomOpen && <Suspense fallback={null}><BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} /></Suspense>}
       </main>
       {!phone && <RightPanel open={rightOpen} onOpenChange={setRightOpen} projectId={todoProjectId} projects={ws.projects} focusTodo={todoFocus} onTodoFocused={clearTodoFocus} focusAddSeq={todoAddSeq} />}
     </div>
