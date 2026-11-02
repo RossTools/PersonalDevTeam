@@ -5,6 +5,7 @@ import { Alert, Button, Dialog, EmptyState, IconButton, Link, MenuButton, Relati
 import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
 import { ProjectKey } from '../common/BranchChip';
+import { useRememberedScroll } from '../common/viewState';
 import { InlineRename } from '../common/InlineRename';
 import { cn } from '@ui/lib/utils';
 import { runAction } from '../common/useAction';
@@ -56,6 +57,8 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const [sheetHandle, setSheetHandle] = useState<SheetHandle | null>(null);
   const onSheet = useCallback((h: SheetHandle | null) => setSheetHandle(h), []);
   const content = useDocumentContent(id);
+  // Where it was scrolled comes back when it is left and opened again (PDT-379).
+  const scroll = useRememberedScroll(`document:${id}`);
   const d = doc.data;
   const provider = d ? providers.data?.providers.find((p) => p.id === d.provider) : undefined;
   const settle = () => invalidateDocuments(qc);
@@ -113,7 +116,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   });
   const unlinked = (projects.data ?? []).filter((p) => !d.projects.some((l) => l.id === p.id));
   return (
-    <div className="min-h-0 flex-1 overflow-auto">
+    <div ref={scroll.ref} onScroll={scroll.onScroll} className="min-h-0 flex-1 overflow-auto">
       <article aria-label={d.title} className={cn('mx-auto flex flex-col gap-4 p-4', d.kind === 'sheet' && provider?.capabilities.live ? 'max-w-none' : 'max-w-4xl')}>
         <header className="flex flex-col gap-1">
           <div className="flex min-w-0 items-center gap-2">

@@ -55,6 +55,13 @@ export interface FlowEdge {
 
 export type FlowSelection = { kind: 'node'; id: string } | { kind: 'edge'; edge: FlowEdge } | null;
 
+/** The graph's pan (`x`, `y`) and `zoom`. */
+export interface FlowViewport {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
 export interface FlowGraphProps {
   nodes: FlowNode[];
   edges: FlowEdge[];
@@ -68,6 +75,10 @@ export interface FlowGraphProps {
   onDelete?: (what: { nodes: string[]; edges: FlowEdge[] }) => void;
   /** No dragging, connecting or deleting (a run's path, a repo workflow). */
   readOnly?: boolean;
+  /** Where the graph opens (pan and zoom, a remembered one); without it the graph fits the view. */
+  viewport?: FlowViewport;
+  /** Hears the pan and zoom after the user moves the graph. */
+  onViewportChange?: (v: FlowViewport) => void;
   'aria-label'?: string;
   className?: string;
 }
@@ -127,7 +138,11 @@ const Card = memo(function Card({ data, selected }: NodeProps<Node<CardData>>) {
 
 const nodeTypes = { card: Card };
 
-function Graph({ nodes, edges, selection, onSelect, onMove, onConnect, onDelete, readOnly = false, className, ...aria }: FlowGraphProps) {
+function Graph({
+  nodes, edges, selection, onSelect, onMove, onConnect, onDelete, readOnly = false, viewport, onViewportChange, className, ...aria
+}: FlowGraphProps) {
+  // The viewport the graph opened with (later props don't move it: the user does).
+  const [opened] = useState(viewport);
   const selectedNode = selection?.kind === 'node' ? selection.id : null;
   const selectedEdge = selection?.kind === 'edge' ? edgeId(selection.edge) : null;
   const incoming = useMemo<Node<CardData>[]>(
@@ -186,8 +201,8 @@ function Graph({ nodes, edges, selection, onSelect, onMove, onConnect, onDelete,
       nodesConnectable={!readOnly}
       elementsSelectable
       deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
-      fitView
-      fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
+      {...(opened ? { defaultViewport: opened } : { fitView: true, fitViewOptions: { padding: 0.2, maxZoom: 1 } })}
+      onMoveEnd={(_, v) => onViewportChange?.({ x: v.x, y: v.y, zoom: v.zoom })}
       minZoom={0.2}
       proOptions={{ hideAttribution: true }}
     >

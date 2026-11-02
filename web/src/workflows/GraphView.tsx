@@ -3,9 +3,10 @@
 import { useMemo } from 'react';
 import { LayoutGrid, Plus } from 'lucide-react';
 import { Button } from '@ui';
-import { FlowGraph, type FlowEdge, type FlowNode, type FlowStatus } from '@ui/FlowGraph';
+import { FlowGraph, type FlowEdge, type FlowNode, type FlowStatus, type FlowViewport } from '@ui/FlowGraph';
 import type { WorkflowCheck } from '../api/gen/WorkflowCheck';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
+import { readViewState, useViewKey, writeViewState } from '../common/viewState';
 import { KindIcon, KindPicker } from './KindPicker';
 import {
   ERROR_PORT, addNode, connect, disconnect, drawnPorts, issuesOf, kindOf, layout, moveNode, newNode, nodeTitle, portsOf,
@@ -30,10 +31,13 @@ export interface GraphViewProps {
   onSelect: (id: string | null) => void;
   readOnly?: boolean;
   path?: PathOverlay;
+  /** Names where the pan and zoom are kept (the view-state store), so the graph opens where it was left. */
+  remember?: string;
   'aria-label'?: string;
 }
 
-export function GraphView({ doc, onChange, catalog, check: given, selected, onSelect, readOnly = false, path, ...aria }: GraphViewProps) {
+export function GraphView({ doc, onChange, catalog, check: given, selected, onSelect, readOnly = false, path, remember, ...aria }: GraphViewProps) {
+  const viewportKey = useViewKey(remember ?? '');
   // A graph shown without the builder's check (a run, a dry run, a template) checks its document itself, for the ports.
   const own = useCheck(doc, given === undefined).data;
   const check = given === undefined ? own : given;
@@ -104,6 +108,7 @@ export function GraphView({ doc, onChange, catalog, check: given, selected, onSe
         readOnly={!edit}
         selection={selected ? { kind: 'node', id: selected } : null}
         onSelect={(s) => onSelect(s?.kind === 'node' ? s.id : null)}
+        {...(remember ? { viewport: readViewState<FlowViewport>(viewportKey), onViewportChange: (v: FlowViewport) => writeViewState(viewportKey, v) } : {})}
         onMove={(id, p) => edit?.(moveNode(doc, id, p))}
         onConnect={(e) => edit?.(connect(doc, e))}
         onDelete={({ nodes: gone, edges: cut }) => {

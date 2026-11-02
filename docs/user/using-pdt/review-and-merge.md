@@ -20,6 +20,8 @@ scrolling page like GitHub's **Files changed**. Each file's sticky header has it
 - Generated files (lockfiles, paths marked `linguist-generated` in `.gitattributes`), very large diffs and binary
   files start collapsed: **Load diff** shows one.
 - Keys: **]** / **[** next and previous file, **v** mark viewed and move on, **c** comment on the picked lines.
+- Leave the page and come back, and it is as you left it: the same file and place in it, **Rendered** where you chose
+  it, collapsed files and a comment you were writing. When new commits changed the file, it opens at the file's top.
 - The address follows the file you pick, so a reload or copied link opens at that file. Add `&line=12` to point at a
   line (`&side=old` for a removed one).
 

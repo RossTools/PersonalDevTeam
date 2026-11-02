@@ -15,6 +15,7 @@ import { isActive, runDot } from '../runs/runState';
 import { hiddenStepSession, toDot } from '../sessions/status';
 import { sessionUnseen } from '../common/AgentState';
 import { useSameList } from '../common/useSameList';
+import { pruneTabViewStates } from '../common/viewState';
 import { findTab, itemOf, openTabBody, resolveCurrent, type CurrentChoice, type Item } from './model';
 
 const STORAGE_KEY = 'pdt.workspaces.current';
@@ -110,6 +111,10 @@ export function useWorkspaces(routed?: RoutedChoice) {
   const projectList: Project[] = useMemo(() => projects.data ?? [], [projects.data]);
   const workspacesQ = useQuery({ queryKey: ['workspaces'], queryFn: api.listWorkspaces, refetchInterval: 2000 });
   const workspaces: Workspace[] = useMemo(() => workspacesQ.data ?? [], [workspacesQ.data]);
+  // What a closed tab's views remembered goes with it (closed here or on another device).
+  useEffect(() => {
+    if (workspacesQ.data) pruneTabViewStates(workspacesQ.data.flatMap((w) => w.tabs.map((t) => t.id)));
+  }, [workspacesQ.data]);
   const sessionQs = useQueries({
     queries: projectList.map((p) => ({ queryKey: ['sessions', p.id], queryFn: () => api.listSessions(p.id), refetchInterval: 2000 })),
   });

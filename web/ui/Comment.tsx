@@ -18,6 +18,8 @@ export interface CommentComposerProps {
    */
   onSubmit: (text: string) => Promise<unknown> | void;
   onCancel?: () => void;
+  /** Hears the text as it is typed (to keep a draft somewhere). */
+  onChange?: (text: string) => void;
   autoFocus?: boolean;
   placeholder?: string;
   className?: string;
@@ -27,7 +29,7 @@ export interface CommentComposerProps {
  * A text area with submit (also Ctrl/⌘+Enter) and Cancel (also Escape). Blank text can't be submitted; a failed
  * submit keeps the text and shows why.
  */
-export function CommentComposer({ label, initial = '', action, onSubmit, onCancel, autoFocus, placeholder, className }: CommentComposerProps) {
+export function CommentComposer({ label, initial = '', action, onSubmit, onCancel, onChange, autoFocus, placeholder, className }: CommentComposerProps) {
   const [text, setText] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +44,7 @@ export function CommentComposer({ label, initial = '', action, onSubmit, onCance
     try {
       await onSubmit(text.trim());
       setText('');
+      onChange?.('');
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : 'Something went wrong');
     } finally {
@@ -58,7 +61,10 @@ export function CommentComposer({ label, initial = '', action, onSubmit, onCance
         placeholder={placeholder}
         rows={2}
         className="min-h-14 text-xs"
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          onChange?.(e.target.value);
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();

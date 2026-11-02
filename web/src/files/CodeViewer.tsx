@@ -2,15 +2,18 @@ import { useEffect, useRef } from 'react';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
+import { readViewState, useViewKey, writeViewState } from '../common/viewState';
 import { codeEditing, codeHighlight, codeTheme, languageFor } from './codeTheme';
 
 /**
  * Code with line numbers, highlighted by the file's name (languages load on demand). Read-only unless `onChange` is
  * given: then `text` is where editing starts (later changes to it are ignored; remount with a new `key` to start over)
- * and every edit reports the whole text.
+ * and every edit reports the whole text. `remember` names where its scroll is kept (the view-state store), so it opens
+ * where it was left.
  */
-export function CodeViewer({ name, text, onChange }: { name: string; text: string; onChange?: (text: string) => void }) {
+export function CodeViewer({ name, text, onChange, remember }: { name: string; text: string; onChange?: (text: string) => void; remember?: string }) {
   const host = useRef<HTMLDivElement>(null);
+  const scrollKey = useViewKey(remember ?? '');
   const changed = useRef(onChange);
   changed.current = onChange;
   const editable = !!onChange;
@@ -42,9 +45,18 @@ export function CodeViewer({ name, text, onChange }: { name: string; text: strin
       }),
     });
     let alive = true;
+    const scroller = view.scrollDOM;
+    const onScroll = () => writeViewState(scrollKey, scroller.scrollTop);
+    if (remember) {
+      const top = readViewState<number>(scrollKey);
+      // Once CodeMirror has measured its lines.
+      if (typeof top === 'number') requestAnimationFrame(() => { if (alive) scroller.scrollTop = top; });
+      scroller.addEventListener('scroll', onScroll, { passive: true });
+    }
     void languageFor(name).then((support) => { if (alive && support) view.dispatch({ effects: language.reconfigure(support) }); });
     return () => {
       alive = false;
+      scroller.removeEventListener('scroll', onScroll);
       view.destroy();
     };
     // While editing, `text` is only the starting point: the editor holds the text from then on.

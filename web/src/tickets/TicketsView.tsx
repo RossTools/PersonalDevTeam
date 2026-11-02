@@ -18,6 +18,7 @@ import { PriorityIcon, PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon
 import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { actionError, runAction } from '../common/useAction';
+import { readViewState, useViewKey, useViewState, writeViewState } from '../common/viewState';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import {
   canStart, deleteTicket, isBeforeWork, moveToEntries, retryAutoStartEntry, startNextPart, stopWaitingEntry, ticketMenu, useOpenTicket,
@@ -416,7 +417,10 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   const peekLoaded = useCallback((t: Ticket) => {
     if (peek && peek.ticket && peek.ticket !== t.key && (peek.ticket === t.id || peek.ticket.toUpperCase() === t.key)) peek.onChange(t.key, { replace: true });
   }, [peek]);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // The groups folded and the scroll come back when the Backlog is left and opened again (PDT-379).
+  const [collapsedIds, setCollapsedIds] = useViewState<string[]>(`backlog:collapsed:${filters.group}`, []);
+  const collapsed = useMemo(() => new Set(collapsedIds), [collapsedIds]);
+  const scrollKey = useViewKey(`backlog:scroll:${project?.id ?? 'all'}`);
   const { openMenu, menu } = useMenuAt();
   const rankable = canRank(project?.id ?? null, filters);
 
@@ -605,7 +609,9 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
               onMoveDown: (id) => { const n = neighbour(id, 1); if (n) moveRows([id], n.id, 'after'); },
             }
           : {})}
-        onToggleSection={(id) => setCollapsed((c) => { const n = new Set(c); if (n.has(id)) n.delete(id); else n.add(id); return n; })}
+        onToggleSection={(id) => setCollapsedIds((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]))}
+        initialScrollTop={readViewState<number>(scrollKey)}
+        onScrollTopChange={(top) => writeViewState(scrollKey, top)}
         {...(pages.hasNextPage ? { onEndReached: () => void pages.fetchNextPage() } : {})}
         loadingMore={pages.isFetchingNextPage}
         renderEmpty={empty}

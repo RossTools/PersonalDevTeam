@@ -14,6 +14,7 @@ import type { Project } from '../api/gen/Project';
 import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { runAction } from '../common/useAction';
+import { useViewState } from '../common/viewState';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { DryRunDialog } from './DryRunDialog';
@@ -124,7 +125,8 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
   };
   const setTab = (t: WorkflowTab) => show(t, t === 'runs' ? runId : null);
   const setRunId = (r: string | null) => show('runs', r);
-  const [selected, setSelected] = useState<string | null>(null);
+  // The selected node, and the graph's pan and zoom, come back when the workflow is left and opened again (PDT-379).
+  const [selected, setSelected] = useViewState<string | null>(`workflow:${w.id}:selected`, null);
   const [dryRun, setDryRun] = useState(false);
   const [note, setNote] = useState('');
   const [templating, setTemplating] = useState(false);
@@ -291,7 +293,7 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
         {builder && phone && <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelected(selected ?? '')}>Details</Button>}
       </div>
       <div className="flex min-h-0 flex-1">
-        {tab === 'graph' && <GraphView doc={draft.doc} onChange={edit} catalog={catalog} check={check} selected={selected || null} onSelect={setSelected} readOnly={readOnly} />}
+        {tab === 'graph' && <GraphView doc={draft.doc} onChange={edit} catalog={catalog} check={check} selected={selected || null} onSelect={setSelected} readOnly={readOnly} remember={`workflow:${w.id}:graph`} />}
         {tab === 'outline' && <OutlineView doc={draft.doc} onChange={edit} catalog={catalog} check={check} selected={selected || null} onSelect={setSelected} readOnly={readOnly} />}
         {tab === 'text' && <TextView doc={draft.doc} onChange={edit} readOnly={readOnly} />}
         {tab === 'runs' && <RunsView workflowId={w.id} catalog={catalog} runId={runId} onRunChange={setRunId} viewOnly={phone} />}

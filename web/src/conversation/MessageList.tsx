@@ -25,6 +25,7 @@ import type { MessageSource } from '../api/gen/MessageSource';
 import type { PdtMessage } from '../api/gen/PdtMessage';
 import type { PendingMessage } from '../api/gen/PendingMessage';
 import { Markdown } from '../common/Markdown';
+import { readViewState, useViewKey, writeViewState } from '../common/viewState';
 import { MarkdownRefsContext, type MarkdownRefs } from '../common/markdownRefs';
 import { blockItemIds, buildBlocks, currentTool, reuseBlocks, turnStartedAt, type Block, type RowNode } from './blocks';
 import type { Streams } from './model';
@@ -80,6 +81,11 @@ export interface MessageListProps {
   empty?: ReactNode;
   /** Where the conversation is: its ticket keys, PRs, file paths and SHAs show as pills and links (PDT-382). */
   refs?: MarkdownRefs | null;
+  /**
+   * Names where a scrolled-up position is kept (the view-state store): left and opened again, the list is back there
+   * instead of at the latest message.
+   */
+  remember?: string;
   className?: string;
 }
 
@@ -487,12 +493,17 @@ export function MessageList({
   imageUrl,
   empty,
   refs = null,
+  remember,
   className,
 }: MessageListProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
-  const stick = useRef(true);
-  const [atBottom, setAtBottom] = useState(true);
+  const scrollKey = useViewKey(remember ?? '');
+  // Scrolled up when it was left: back there once the rows are in (else the latest message, as always).
+  const [savedTop] = useState(() => (remember ? readViewState<number>(scrollKey) : undefined));
+  const restored = useRef(savedTop === undefined);
+  const stick = useRef(savedTop === undefined);
+  const [atBottom, setAtBottom] = useState(savedTop === undefined);
   const blocks = useBlocks(rows, turnRunning);
   const answer = useLatest(onAnswer);
   const continueLatest = useLatest(onContinue);
@@ -523,12 +534,19 @@ export function MessageList({
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (restored.current || !el || rows.length === 0 || savedTop === undefined) return;
+    restored.current = true;
+    el.scrollTop = savedTop;
+  }, [rows.length, savedTop]);
   const onScroll = () => {
     const el = scroller.current;
-    if (!el) return;
+    if (!el || !restored.current) return;
     const bottom = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
     stick.current = bottom;
     setAtBottom(bottom);
+    if (remember) writeViewState(scrollKey, bottom ? undefined : el.scrollTop);
   };
   // After every render (new rows, deltas): follow the bottom when pinned.
   useLayoutEffect(() => {

@@ -8,6 +8,7 @@ import type { CommentSide } from '../api/gen/CommentSide';
 import type { Ticket } from '../api/gen/Ticket';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { actionError, runAction } from '../common/useAction';
+import { readViewState, useViewKey, useViewState, writeViewState } from '../common/viewState';
 import { useLocation } from '../shell/router';
 import { PrBadge } from '../tickets/PullRequest';
 import { invalidateTickets, useTicket } from '../tickets/queries';
@@ -18,6 +19,7 @@ import { FileSection, type Mode } from './FileSection';
 import { MergeDialog } from './MergeDialog';
 import { invalidateReview, useChanges, useReviewComments } from './queries';
 import { ReviewBar } from './ReviewBar';
+import { changesState } from './state';
 import { useViewed } from './viewed';
 
 const MODE_KEY = 'pdt.review.mode';
@@ -62,6 +64,15 @@ const linkKey = (l: DeepLink | null) => (l ? `${l.file}\n${l.line ?? ''}\n${l.si
 /** How long a jump to a file keeps it at the top while the diffs around it are drawn (and change height). */
 const PIN_MS = 1500;
 
+/** Where the page was scrolled: the file at the top and how far into it. */
+interface ScrollAt {
+  file: string;
+  offset: number;
+}
+
+/** `offset` into a section, or its top when the file is now shorter than that (new commits since). */
+const within = (el: HTMLElement, offset: number) => (offset > 0 && offset < el.offsetHeight ? offset : 0);
+
 /**
  * A worktree's changes against its base branch (review spec §2), as one page like a GitHub pull request's "Files
  * changed" (PDT-303): the review bar, then every changed file in order, each under a sticky header, with comment
@@ -80,11 +91,20 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
   const [modePref, setModePref] = useState<Mode>(loadMode);
   const mode: Mode = narrow ? 'unified' : modePref;
   const [listHidden, setListHidden] = useState(loadListHidden);
-  const [current, setCurrent] = useState<string | null>(null);
-  const [composer, setComposer] = useState<(LineRange & { path: string }) | null>(null);
+  // What the page shows comes back when it is left and opened again: the file, the scroll, collapsed and loaded
+  // files, and a comment being written (with its text, kept by the composer).
+  const named = (what: string) => changesState(worktreeId, what);
+  const [current, setCurrent] = useViewState<string | null>(named('current'), null);
+  const [composer, setComposerRange] = useViewState<(LineRange & { path: string }) | null>(named('composer'), null);
+  const composerTextKey = useViewKey(named('composerText'));
+  const setComposer = (r: (LineRange & { path: string }) | null) => {
+    writeViewState(composerTextKey, undefined);
+    setComposerRange(r);
+  };
   // Collapsed by the chevron or Viewed, per file version (a file that changes opens again, as Viewed resets).
-  const [collapsedBy, setCollapsedBy] = useState<Record<string, boolean>>({});
-  const [loaded, setLoaded] = useState<Record<string, boolean>>({});
+  const [collapsedBy, setCollapsedBy] = useViewState<Record<string, boolean>>(named('collapsed'), {});
+  const [loaded, setLoaded] = useViewState<Record<string, boolean>>(named('loaded'), {});
+  const scrollKey = useViewKey(named('scroll'));
   const [reveal, setReveal] = useState<(DeepLink & { line: number }) | null>(null);
   const [sending, setSending] = useState(false);
   const [merging, setMerging] = useState(false);
@@ -97,7 +117,7 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const sections = useRef(new Map<string, HTMLElement>()).current;
-  const pin = useRef<{ path: string; until: number } | null>(null);
+  const pin = useRef<{ path: string; offset: number; until: number } | null>(null);
 
   const threads = useMemo(() => threadsOf(comments.data ?? []), [comments.data]);
   const threadCounts = useMemo(() => {
@@ -121,14 +141,17 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
     setCollapsed(f, on);
   };
 
-  /** Scrolls the page so `path`'s header is at the top; `hold` keeps it there while diffs above it are drawn. */
-  const goTo = (path: string, hold = true) => {
+  /**
+   * Scrolls the page so `path`'s header is at the top (or `offset` below it); `hold` keeps it there while diffs above
+   * it are drawn.
+   */
+  const goTo = (path: string, hold = true, offset = 0) => {
     setCurrent(path);
     const s = scroller.current;
     const el = sections.get(path);
     if (!s || !el) return;
-    s.scrollTop = el.offsetTop;
-    pin.current = hold ? { path, until: Date.now() + PIN_MS } : null;
+    s.scrollTop = el.offsetTop + within(el, offset);
+    pin.current = hold ? { path, offset, until: Date.now() + PIN_MS } : null;
   };
 
   // The diffs drawn around a file the page jumped to change its place: keep it at the top for a moment.
@@ -141,7 +164,7 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
       const target = p && sections.get(p.path);
       if (!p || !s || !target) return;
       if (Date.now() > p.until) pin.current = null;
-      else s.scrollTop = target.offsetTop;
+      else s.scrollTop = target.offsetTop + within(target, p.offset);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -157,13 +180,18 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
       if (!s) return;
       const top = s.scrollTop + 4;
       let at: string | null = null;
+      let atTop = 0;
       for (const f of filesRef.current) {
         const el = sections.get(f.path);
         if (!el) continue;
         if (el.offsetTop > top && at !== null) break;
         at = f.path;
+        atTop = el.offsetTop;
       }
-      if (at !== null) setCurrent(at);
+      if (at !== null) {
+        setCurrent(at);
+        writeViewState(scrollKey, { file: at, offset: Math.max(0, s.scrollTop - atTop) } satisfies ScrollAt);
+      }
     });
   };
   useEffect(() => () => {
@@ -173,18 +201,37 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
   // A link to a file (and line): open it and scroll there, once per link.
   const loc = useLocation();
   const link = deepLink(loc);
-  const handled = useRef('');
+  // Kept with the page's state: coming back to the page at the same address restores where it was, not the link.
+  const handledKey = useViewKey(named('link'));
+  const handled = useRef(readViewState<string>(handledKey) ?? '');
+  const followed = useRef(false);
+  const markHandled = (k: string) => {
+    handled.current = k;
+    writeViewState(handledKey, k);
+  };
   useEffect(() => {
     if (!link || handled.current === linkKey(link)) return;
     const f = files.find((x) => x.path === link.file);
     if (!f) return;
-    handled.current = linkKey(link);
+    markHandled(linkKey(link));
+    followed.current = true;
     setCollapsed(f, false);
     setLoaded((l) => ({ ...l, [f.path]: true }));
     setReveal(link.line !== null ? { ...link, line: link.line } : null);
     // After the file opens.
     requestAnimationFrame(() => goTo(f.path, link.line === null));
   }, [linkKey(link), files.length]);
+
+  // Back where the page was when it was left (a link not yet followed wins). The file stays even when the diff changed
+  // since; a place in it that is gone falls back to its top.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current || files.length === 0) return;
+    restored.current = true;
+    const at = readViewState<ScrollAt>(scrollKey);
+    if (!at || followed.current || (link && handled.current !== linkKey(link)) || !files.some((f) => f.path === at.file)) return;
+    requestAnimationFrame(() => goTo(at.file, true, at.offset));
+  }, [files.length]);
 
   /** Shows `path` and puts it in the address (`?file=`), so a reload or a copied link comes back to it. */
   const pick = (path: string) => {
@@ -193,7 +240,7 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
     u.searchParams.set('file', path);
     u.searchParams.delete('line');
     u.searchParams.delete('side');
-    handled.current = linkKey({ file: path, line: null, side: 'new' });
+    markHandled(linkKey({ file: path, line: null, side: 'new' }));
     window.history.replaceState(window.history.state, '', u.pathname + u.search + u.hash);
   };
 

@@ -12,10 +12,13 @@ import type { CommentSide } from '../api/gen/CommentSide';
 import type { ReviewComment } from '../api/gen/ReviewComment';
 import { isMarkdownPath, Markdown } from '../common/Markdown';
 import { actionError, runAction } from '../common/useAction';
+import { readViewState, useViewKey, useViewState, writeViewState } from '../common/viewState';
+
 import { anchorLabel, linesOf, relocate, type Thread } from './anchors';
 import type { DiffAnchor, LineRange } from './CodeDiff';
 import { estimatedHeight, hiddenReason, useNearViewport } from './lazy';
 import { invalidateReview, useFileSides } from './queries';
+import { changesState } from './state';
 
 // CodeMirror and its merge view load the first time a diff is shown.
 const CodeDiff = lazy(() => import('./CodeDiff').then((m) => ({ default: m.CodeDiff })));
@@ -70,8 +73,9 @@ export function FileSection(p: FileSectionProps) {
   const show = !collapsed && (hidden === null || (loaded && hidden !== 'binary'));
   const drawn = show && (near || focused || p.composer !== null);
   const markdown = isMarkdownPath(file.path) && !file.binary;
-  const [rendered, setRendered] = useState(false);
-  const [wholeFile, setWholeFile] = useState(false);
+  // Kept by path, so a file that changed since still shows as it was left.
+  const [rendered, setRendered] = useViewState(changesState(p.worktreeId, `rendered:${file.path}`), false);
+  const [wholeFile, setWholeFile] = useViewState(changesState(p.worktreeId, `wholeFile:${file.path}`), false);
 
   // The height it had when last drawn, to hold its place while it isn't.
   const height = useRef<number | null>(null);
@@ -157,6 +161,8 @@ function FileDiff({ worktreeId, file, threads, mode, phone, composer, onComposer
 }) {
   const qc = useQueryClient();
   const sides = useFileSides(worktreeId, file);
+  // The comment being written is kept as it is typed (ChangesView clears it when the composer closes or moves).
+  const draftKey = useViewKey(changesState(worktreeId, 'composerText'));
   const refresh = () => invalidateReview(qc, worktreeId);
   const act = (f: () => Promise<unknown>) => runAction(async () => { await f(); refresh(); });
   // For a typed comment, reply or edit: a failure rejects, so the composer keeps the text and shows why.
@@ -203,6 +209,8 @@ function FileDiff({ worktreeId, file, threads, mode, phone, composer, onComposer
     <CommentComposer
       label={composerLabel(r)}
       action="Comment"
+      initial={readViewState<string>(draftKey) ?? ''}
+      onChange={(text) => writeViewState(draftKey, text)}
       autoFocus
       placeholder={phone ? 'Leave a comment (Markdown).' : 'Leave a comment (Markdown). Ctrl+Enter to save.'}
       onSubmit={async (text) => {

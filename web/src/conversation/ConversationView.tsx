@@ -136,6 +136,7 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
         agent={agent}
         onContinue={continueTurn}
         refs={refs}
+        remember={`conversation:${session.id}`}
         empty={
           conv.ready ? (
             <EmptyState icon={<MessagesSquare />} className="mt-16 border-0">
