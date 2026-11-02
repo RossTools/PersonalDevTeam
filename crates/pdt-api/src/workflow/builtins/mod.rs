@@ -8,12 +8,13 @@ mod comments_to_agent;
 mod cut_release;
 mod finish_merged;
 mod github_issue_done;
+pub(crate) mod inputs;
 pub(crate) mod install_updates;
 mod late_commits;
 mod missing_release;
 pub(crate) mod notification_rules;
 mod pick_up_tickets;
-mod pm_daily_checkpoint;
+pub(crate) mod pm_daily_checkpoint;
 mod pr_feedback;
 mod pr_notices;
 pub(crate) mod stuck_agents;
@@ -263,6 +264,7 @@ fn refill_of(id: &str) -> Option<Refill> {
         STUCK_AGENTS => Some(|d| stuck_agents::filled(&stuck_agents::values_of(d))),
         NOTIFICATION_RULES => Some(|d| notification_rules::filled(&notification_rules::values_of(d))),
         INSTALL_UPDATES => Some(|d| install_updates::filled(&install_updates::values_of(d))),
+        PM_DAILY_CHECKPOINT => Some(|d| pm_daily_checkpoint::SETTINGS.refill(d)),
         _ => None,
     }
 }

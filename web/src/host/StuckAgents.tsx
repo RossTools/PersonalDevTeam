@@ -3,12 +3,9 @@ import { Alert, Button, Link, Section, Select, SettingsRow, Skeleton, Switch } f
 import { api } from '../api/client';
 import type { StuckAgentsView } from '../api/gen/StuckAgentsView';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
-import { routePath } from '../shell/route';
-import { navigate } from '../shell/router';
+import { CustomizedNotice, openWorkflow } from '../common/BuiltinSettings';
 
 const KEY = ['stuck-agents'];
-
-const openWorkflow = (id: string) => navigate(routePath({ view: 'workflows', target: { kind: 'workflow', id } }));
 
 const text = (v: unknown) => (typeof v === 'string' ? v : '');
 const num = (v: unknown) => (typeof v === 'number' ? v : 0);
@@ -62,17 +59,7 @@ export function StuckAgents() {
             )}
           </AutoSaveRow>
           {v.customized ? (
-            <Alert
-              tone="info"
-              action={
-                <span className="flex gap-1">
-                  <Button size="sm" variant="secondary" onClick={() => openWorkflow(v.workflowId)}>Open</Button>
-                  <Button size="sm" variant="secondary" pending={reset.isPending} onClick={() => reset.mutate()}>Reset to default</Button>
-                </span>
-              }
-            >
-              Stuck agents follow your customized workflow {v.name}.
-            </Alert>
+            <CustomizedNotice name={v.name} workflowId={v.workflowId} follows="Stuck agents follow" onReset={() => reset.mutate()} resetting={reset.isPending} />
           ) : (
             <Inputs v={v} put={put} />
           )}

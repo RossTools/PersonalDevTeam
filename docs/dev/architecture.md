@@ -217,7 +217,8 @@ the sign-in failed, which lists an `mcp_sign_in` Inbox item. Agents get the toke
 flagged `pm`) and a briefing built when the session starts (pdt-api `pm.rs`, pdt-core `pm.rs`). Close and Reset end
 one after its journal; a reset starts its successor (`pm_sessions.reset_from`) with the same settings, briefed from
 that journal. The daily update and checkpoint are not hard-coded: the built-in **PM daily checkpoint** workflow runs
-the `pm.update` and `pm.checkpoint` nodes (pdt-api `workflow/nodes/pm.rs`) on an hourly schedule; `pm.update` brings
+the `pm.update` and `pm.checkpoint` nodes (pdt-api `workflow/nodes/pm.rs`) on the schedule Settings → This host → PM
+sets (hourly by default); `pm.update` brings
 each running open conversation due (`pm_sessions.caught_up_at`, `pdt_core::pm::update_due`) up to date through the
 outbox. Journaling at Close, Reset and compaction stays in `pm.rs`. A conversation can be
 held elsewhere too (`pm_sessions.via`, the integration's id, which the web names by its plugin label): the Discord integration passes the user's DMs to one (pdt-int-discord `dm.rs`),
@@ -307,6 +308,18 @@ its version installed when it runs again after the restart. `update.installed` l
 `settleMs`: the running version and `Loops::health`) and an optional `notify`; failures and `update.failed` are
 `inbox.notice` items. Settings → Updates (`install_updates.rs`, `/api/install-updates`) reads and writes the inputs as
 stuck agents' are; the policy, channel and check interval stay host settings, since the checks use them.
+
+**Settings backed by a built-in's inputs.** A behaviour that became a built-in keeps its home in Settings. The shared
+pieces: `builtins/inputs.rs` (`InputsBuiltin`: the params, the template, an optional `finish` that writes what the
+inputs derive into the filled-in document and `read` that reads it back; `filled`, `values_of`, `customized`,
+`refill`), `builtin_settings.rs` (`router(path, &builtin)`: `GET`/`PUT <path>` and `POST <path>/reset`, which turns the
+workflow back on), and on the web `common/BuiltinSettings.tsx` (`BuiltinSettingsSection`: the controls, the customized
+or off notice with Open and Reset to default, the Customize as a workflow link; `ChatChannelRow`) and
+`workflows/BuiltinSettingsBanner.tsx` (the editor's banner, one line per built-in). The PM daily checkpoint
+(`pm_checkpoint.rs`, `/api/pm-checkpoint`, Settings → This host → PM) is built on them: its `finish` makes the schedule
+(`every: 1h` on every day, else a cron expression on the days, at the time or each hour) and `pm.update`'s `after`
+(`1d`, or `12h` at a set time). A new one is an `InputsBuiltin`, a route module with one `router` call, its line in
+`refill_of`, a section using `BuiltinSettingsSection`, and its line in `SETTINGS_HOMES`.
 
 **Host and integration events** are logged where each thing is noticed, each once per occurrence (the event key, or a
 level remembered in a host value). `release.published`: `forge_releases.rs` in the 60 s poll, for the projects an

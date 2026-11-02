@@ -65,17 +65,22 @@ a day with nothing new, it's asked only for the checkpoint.
 
 ### Change when it's brought up to date
 
-The built-in workflow **PM daily checkpoint** sends these (see [Workflows](workflows.md#the-built-in-workflows)). Out
-of the box it looks every hour and brings up to date each open conversation you've written to since its last update,
-a day or more ago. Open it in **Workflows** to change that:
+Set it in **Settings › This host › PM**, under **Daily checkpoint**:
 
-- **At a set time, or only on weekdays**: set **Every hour**'s schedule to a cron expression, `0 9 * * 1-5` for 9:00 on
-  weekdays, and lower **Send the daily updates**' **After** (to `12h`, say) so each day's run finds the conversations
-  due.
-- **Even when you haven't written**: turn off **Only in use**.
-- **Elsewhere too**: add a Discord post after **Updates sent**, with `{{steps.update.text}}` as its message.
-- **Not at all**: turn the workflow off. Conversations still write their journal when you close or reset them, and
-  when their history is condensed.
+- **At a set time**: send the updates once a day at a **Time** (this computer's time). Off, PDT looks every hour and
+  brings up to date each conversation whose last update was a day or more ago.
+- **Days**: the days updates go out, every day unless you pick fewer.
+- **Chat channel**: post the daily update to a chat service as well, such as a Discord webhook. It shows when a
+  plugin that posts to chat is on.
+
+These settings are the built-in workflow **PM daily checkpoint** (see
+[Workflows](workflows.md#the-built-in-workflows)). For more, use **Customize as a workflow →** and change it in
+**Workflows**: turn off **Only in use** to update conversations you haven't written to, say. Once you change it
+there beyond these settings, **Settings** says the daily checkpoint follows your customized workflow, with **Open**
+and **Reset to default**. The same shows when you turn the workflow off, and **Reset to default** turns it back on.
+
+Turned off, conversations still write their journal when you close or reset them, and when their history is
+condensed.
 
 ## When it asks first
 

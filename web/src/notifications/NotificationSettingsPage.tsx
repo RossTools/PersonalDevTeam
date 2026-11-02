@@ -7,9 +7,8 @@ import type { NotificationRulesInput } from '../api/gen/NotificationRulesInput';
 import type { NotificationRulesView } from '../api/gen/NotificationRulesView';
 import type { Show } from '../api/gen/Show';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
+import { CustomizedNotice, openWorkflow } from '../common/BuiltinSettings';
 import { connectionsKey } from '../connections/ConnectionDialog';
-import { routePath } from '../shell/route';
-import { navigate } from '../shell/router';
 import { desktopNotificationsOn, setDesktopNotifications, showDesktop } from './desktop';
 import { useNotificationRules, useNotificationRulesActions } from './queries';
 
@@ -27,7 +26,6 @@ const escalateChoices = [0.5, 1, 2, 4, 8, 24].map((h) => ({
   label: h < 1 ? '30 minutes' : h === 1 ? '1 hour' : `${h} hours`,
 }));
 
-const openWorkflow = (id: string) => navigate(routePath({ view: 'workflows', target: { kind: 'workflow', id } }));
 const text = (v: unknown) => (typeof v === 'string' ? v : '');
 
 type Put = (input: NotificationRulesInput) => Promise<NotificationRulesView>;
@@ -81,17 +79,7 @@ export function NotificationSettingsPage() {
               )}
             </AutoSaveRow>
             {v.customized ? (
-              <Alert
-                tone="info"
-                action={
-                  <span className="flex gap-1">
-                    <Button size="sm" variant="secondary" onClick={() => openWorkflow(v.workflowId)}>Open</Button>
-                    <Button size="sm" variant="secondary" pending={reset.isPending} onClick={() => reset.mutate()}>Reset to default</Button>
-                  </span>
-                }
-              >
-                Notifications follow your customized workflow {v.name}.
-              </Alert>
+              <CustomizedNotice name={v.name} workflowId={v.workflowId} follows="Notifications follow" onReset={() => reset.mutate()} resetting={reset.isPending} />
             ) : (
               <Rules v={v} put={put} />
             )}

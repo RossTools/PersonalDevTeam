@@ -586,6 +586,89 @@ async fn the_daily_checkpoint_runs_as_the_user_changed_it() {
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
 
+/// The PM daily checkpoint as Settings → This host → PM shows it (PDT-384).
+async fn checkpoint_settings(env: &Env) -> Value {
+    let (s, v) = call(&env.app, "GET", "/api/pm-checkpoint", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    v
+}
+
+fn node(doc: &Value, id: &str) -> Value {
+    doc["nodes"].as_array().unwrap().iter().find(|n| n["id"] == id).cloned().unwrap_or_else(|| panic!("no {id}"))
+}
+
+/// PDT-384: Settings sets the daily checkpoint's time, days and chat channel as the built-in's inputs; the workflow
+/// then runs at that time on those days, and sends an update half a day on.
+#[tokio::test]
+async fn settings_set_when_the_daily_checkpoint_runs() {
+    let env = setup().await;
+    let v = checkpoint_settings(&env).await;
+    assert_eq!((v["enabled"].as_bool(), v["customized"].as_bool()), (Some(true), Some(false)), "{v}");
+    assert_eq!(v["values"], v["defaults"]);
+    assert_eq!((v["values"]["atTime"].as_bool(), v["values"]["days"].as_array().map(Vec::len)), (Some(false), Some(7)));
+    let wf_id = v["workflowId"].as_str().unwrap().to_string();
+    let id = start_pm(&env, "hello").await;
+    wait_said(&env, &id, 1).await;
+
+    let body = json!({"values": {"atTime": true, "time": "07:45", "days": ["mon", "tue", "wed", "thu", "fri"]}});
+    let (s, v) = call(&env.app, "PUT", "/api/pm-checkpoint", Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((v["values"]["time"].as_str(), v["customized"].as_bool()), (Some("07:45"), Some(false)), "{v}");
+    let (_, versions) = call(&env.app, "GET", &format!("/api/workflows/{wf_id}/versions"), None).await;
+    assert_eq!(versions[0]["note"], "inputs changed in Settings", "{versions}");
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{wf_id}"), None).await;
+    assert_eq!(node(&w["doc"], "hourly")["config"], json!({"cron": "45 7 * * mon,tue,wed,thu,fri", "catchUp": true}));
+    assert_eq!(node(&w["doc"], "update")["config"]["after"], "12h", "{w}");
+
+    // At its time, half a day on (each hour waits a day): it goes out.
+    updated_ago(&env, &id, 13 * HOUR).await;
+    fire_daily(&env, &w, 20).await;
+    wait_said(&env, &id, 2).await;
+    assert_eq!(pdt_says(&env, &id).await.len(), 1);
+
+    // Back to each hour, on every day.
+    let body = json!({"values": {"atTime": false, "days": "mon,tue,wed,thu,fri,sat,sun"}});
+    let (s, v) = call(&env.app, "PUT", "/api/pm-checkpoint", Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{wf_id}"), None).await;
+    assert_eq!(node(&w["doc"], "hourly")["config"], json!({"every": "1h", "catchUp": true}));
+
+    for bad in [json!({"time": "7am"}), json!({"days": []}), json!({"days": ["someday"]}), json!({"nope": 1})] {
+        let (s, e) = call(&env.app, "PUT", "/api/pm-checkpoint", Some(json!({"values": bad}))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{bad}: {e}");
+    }
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// PDT-384: a daily checkpoint changed in the workflow editor, or turned off, is only named by Settings; Reset to
+/// default puts back the built-in, on.
+#[tokio::test]
+async fn a_customized_daily_checkpoint_is_reset_to_default() {
+    let env = setup().await;
+    let wf_id = checkpoint_settings(&env).await["workflowId"].as_str().unwrap().to_string();
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{wf_id}"), None).await;
+    let mut doc = w["doc"].clone();
+    let update = doc["nodes"].as_array_mut().unwrap().iter_mut().find(|n| n["id"] == "update").unwrap();
+    update["config"]["onlyInUse"] = json!(false);
+    let (s, w) = call(&env.app, "PUT", &format!("/api/workflows/{wf_id}"), Some(json!({"doc": doc}))).await;
+    assert_eq!(s, StatusCode::OK, "{w}");
+    assert_eq!(checkpoint_settings(&env).await["customized"], true);
+    let (s, e) = call(&env.app, "PUT", "/api/pm-checkpoint", Some(json!({"values": {"atTime": true}}))).await;
+    assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("customized")), "{e}");
+
+    let (s, _) = call(&env.app, "PATCH", &format!("/api/workflows/{wf_id}"), Some(json!({"enabled": false}))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(checkpoint_settings(&env).await["enabled"], false);
+
+    let (s, v) = call(&env.app, "POST", "/api/pm-checkpoint/reset", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((v["customized"].as_bool(), v["enabled"].as_bool()), (Some(false), Some(true)), "{v}");
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{wf_id}"), None).await;
+    assert_eq!(node(&w["doc"], "update")["config"]["onlyInUse"], true, "the default again");
+    let (_, versions) = call(&env.app, "GET", &format!("/api/workflows/{wf_id}/versions"), None).await;
+    assert_eq!(versions[0]["note"], "reset to default", "{versions}");
+}
+
 #[tokio::test]
 async fn notes_are_checked_and_edited() {
     let env = setup().await;
