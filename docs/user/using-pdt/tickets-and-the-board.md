@@ -90,9 +90,9 @@ its own.
 
 A parent is never started itself: **Start next part** starts its first unblocked open part. The parent moves to **In
 progress** with its first part, and can't be closed while a part is open. On the board each parent gets its own lane,
-with a stepper showing progress (a dot per part, or one bar for a parent with many parts; hover it for the counts).
-Each part's card shows its own pull request. A closed parent's lane stays as long as **Done** shows it. A part's agent also gets
-the parent's description and the list of other parts.
+with a stepper showing progress: a dot per part, or one bar when there are many parts or little room (hover it for
+the counts). Each part's card shows its own pull request. A closed parent's lane stays as long as **Done** shows it. A
+part's agent also gets the parent's description and the list of other parts.
 
 When the last open part reaches **Done** or **Won't do**, the parent closes too: to **Done**, or to **Won't do** if
 every part was **Won't do**. It gets an "All parts closed" comment and you get a notification. A parent that has work

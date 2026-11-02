@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
-import { PARTS_BAR_ABOVE, PartsStepper, type PartState, type PartsProgress } from './PartsStepper';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { dotsFit, PARTS_BAR_ABOVE, PartsStepper, type PartState, type PartsProgress } from './PartsStepper';
 
 const progressOf = (segments: PartState[]): PartsProgress => {
   const n = (s: PartState) => segments.filter((x) => x === s).length;
@@ -27,5 +27,22 @@ describe('PartsStepper', () => {
     const img = screen.getByRole('img', { name: '15 of 70 parts done, 2 in review, 4 in progress, 19 to do, 30 not started' });
     expect(img).toHaveAttribute('title', '15 of 70 parts done, 2 in review, 4 in progress, 19 to do, 30 not started');
     expect(screen.getByText('15/70')).toBeInTheDocument();
+  });
+
+  describe('when the dots have no room', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('needs 4 px a dot and 2 px between; an unmeasured width fits', () => {
+      expect(dotsFit(20, 118)).toBe(true);
+      expect(dotsFit(20, 117)).toBe(false);
+      expect(dotsFit(20, 0)).toBe(true);
+    });
+
+    it('draws the bar even for a small epic', () => {
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(48);
+      const { container } = render(<PartsStepper parts={many({ done: 4, todo: 16 })} showCount />);
+      expect(container.querySelector('[data-bar]')).not.toBeNull();
+      expect(container.querySelectorAll('[data-state]')).toHaveLength(2);
+    });
   });
 });

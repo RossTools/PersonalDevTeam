@@ -376,8 +376,9 @@ function ColumnStatus({ col, title, stage, showEmpty, doneDays }: { col: ColumnD
 
 /**
  * A parent's lane header: its key (opens the peek), title, stage, the parts' stepper and count, Start next part, its
- * menu, and the collapse toggle. The title gives way first (it truncates); the rest keep their width. No PR here: the
- * parts run side by side, and each card shows its own.
+ * menu, and the collapse toggle. The title gives way first (it truncates, down to about 12rem for the toggle, key and
+ * title); past that the stage, stepper, Start next part and menu wrap to a line of their own, on the right, so nothing
+ * runs past the edge. No PR here: the parts run side by side, and each card shows its own.
  */
 export function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
   lane: Lane;
@@ -401,22 +402,25 @@ export function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
       role="group"
       aria-label={`${parent.key} ${parent.title}`}
       data-peek
-      className={cn('flex min-w-0 items-center gap-2 px-1 pt-3', compact ? 'pb-1' : 'pb-1.5')}
+      className={cn('flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-3', compact ? 'pb-1' : 'pb-1.5')}
     >
-      <IconButton label={collapsed ? `Expand ${parent.key}` : `Collapse ${parent.key}`} size="sm" onClick={onToggle}>
-        {collapsed ? <ChevronRight aria-hidden /> : <ChevronDown aria-hidden />}
-      </IconButton>
-      <TicketKey ticketKey={parent.key} title={parent.title} onClick={() => onPeek(parent.id)} className="shrink-0" />
-      <h4 className={cn('min-w-8 truncate text-xs font-medium', compact ? 'flex-1' : 'flex-initial')} title={parent.title}>{parent.title}</h4>
-      {t && <span className="shrink-0 text-meta text-muted-foreground">{STAGE_LABEL[t.stage]}</span>}
-      {t?.parts && <PartsStepper parts={t.parts} showCount className={cn('shrink-0', compact ? 'w-20' : 'w-36')} />}
-      {!compact && <span className="flex-1" />}
-      {openStage && !compact && (
-        <Button variant="ghost" size="sm" className="shrink-0" onClick={() => void runAction(() => startNextPart(start, parent))}>
-          Start next part
-        </Button>
-      )}
-      <MenuButton label={`Actions for ${parent.key}`} size="sm" entries={entries} />
+      <div className="flex min-w-0 flex-1 basis-48 items-center gap-2">
+        <IconButton label={collapsed ? `Expand ${parent.key}` : `Collapse ${parent.key}`} size="sm" onClick={onToggle}>
+          {collapsed ? <ChevronRight aria-hidden /> : <ChevronDown aria-hidden />}
+        </IconButton>
+        <TicketKey ticketKey={parent.key} title={parent.title} onClick={() => onPeek(parent.id)} className="shrink-0" />
+        <h4 className="min-w-0 truncate text-xs font-medium" title={parent.title}>{parent.title}</h4>
+      </div>
+      <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-x-2 gap-y-1">
+        {t && <span className="shrink-0 text-meta text-muted-foreground">{STAGE_LABEL[t.stage]}</span>}
+        {t?.parts && <PartsStepper parts={t.parts} showCount className={cn('shrink-0', compact ? 'w-24' : 'w-40')} />}
+        {openStage && !compact && (
+          <Button variant="ghost" size="sm" className="shrink-0" onClick={() => void runAction(() => startNextPart(start, parent))}>
+            Start next part
+          </Button>
+        )}
+        <MenuButton label={`Actions for ${parent.key}`} size="sm" entries={entries} />
+      </div>
     </div>
   );
 }
