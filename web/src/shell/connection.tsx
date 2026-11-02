@@ -16,8 +16,14 @@ export function useConnected(pollError: unknown): boolean {
   return useOnline() && !pollError;
 }
 
+/** A query that has never loaded and has failed at least once: stays true across its refetches until data arrives. */
+export function failedSoFar(q: { data: unknown; errorUpdateCount: number }): boolean {
+  return q.data === undefined && q.errorUpdateCount > 0;
+}
+
 /** A failed strip above the main view while the host can't be reached; what is on screen may be out of date. */
 export function ConnectionBanner({ connected }: { connected: boolean }) {
   if (connected) return null;
-  return <Banner tone="failed">Can't reach the host. What you see may be out of date; PDT keeps trying.</Banner>;
+  // Short enough for a phone's width; the rest is in the tooltip.
+  return <Banner tone="failed" title="What you see may be out of date. PDT keeps trying.">Can't reach the host; PDT keeps trying.</Banner>;
 }

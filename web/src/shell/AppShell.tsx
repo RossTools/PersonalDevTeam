@@ -57,7 +57,7 @@ import { BottomPanel } from './BottomPanel';
 import { RightPanel, RightPanelContent, useRightPanelKey, useRightPanelOpen } from './RightPanel';
 import type { TodoFocus } from '../todos/TodoList';
 import { IconRail } from './IconRail';
-import { ConnectionBanner, useConnected } from './connection';
+import { ConnectionBanner, failedSoFar, useConnected } from './connection';
 import { InstanceBadge } from './InstanceBadge';
 import { InboxList } from '../inbox/InboxList';
 import { PhoneInboxList } from '../inbox/PhoneInboxList';
@@ -512,8 +512,9 @@ export function AppShell() {
   const updates = useUpdates();
   const connected = useConnected(ws.workspacesError);
   // Empty Inbox lists say they can't load, not that nothing waits, while their poll fails or the host is unreachable.
-  const inboxFailed = !connected || inbox.isError;
-  const updatesFailed = !connected || updates.isError;
+  // Not `isError`: with no data yet, each refetch puts the query back to pending, so that is true only between rounds.
+  const inboxFailed = !connected || failedSoFar(inbox);
+  const updatesFailed = !connected || failedSoFar(updates);
   const readAllUpdates = useReadAllUpdates();
   const clearUpdate = useClearUpdate();
   const clearAllUpdates = useClearAllUpdates();

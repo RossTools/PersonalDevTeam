@@ -46,7 +46,7 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
   const groups = grouped(items);
   return (
     <>
-      {groups.length === 0 && !loading && <EmptyLine failed={failed} what="the Inbox">Nothing waits on you.</EmptyLine>}
+      {groups.length === 0 && (failed || !loading) && <EmptyLine failed={failed} what="the Inbox">Nothing waits on you.</EmptyLine>}
       {groups.map((g) => (
         <section key={g.id} aria-label={g.title}>
           <h3 className={cn(heading, 'flex items-center gap-1.5')}>
@@ -94,7 +94,7 @@ export function UpdatesList({ updates, selectedId, onSelect, onClear, loading, f
   const update = selectedUpdate(selectedId);
   return (
     <>
-      {updates.length === 0 && !loading && <EmptyLine failed={failed} what="updates">No updates.</EmptyLine>}
+      {updates.length === 0 && (failed || !loading) && <EmptyLine failed={failed} what="updates">No updates.</EmptyLine>}
       {updates.length > 0 && (
         <List aria-label="Updates" onAction={(id) => onSelect(updateSelection(id))}>
           {updates.map((u) => (

@@ -30,8 +30,11 @@ its output.
 ## "Can't reach the host"
 
 A red strip above the page says **Can't reach the host** when your browser is offline or PDT stops answering. What is
-on screen may be out of date, and the Inbox says it **can't load** rather than that nothing waits. PDT keeps trying and
-the strip goes away once it answers; if it stays, see [PDT doesn't open](#pdt-doesnt-open).
+on screen may be out of date. PDT keeps trying and the strip goes away once it answers; if it stays, see
+[PDT doesn't open](#pdt-doesnt-open).
+
+When the Inbox can't load its items (with or without the strip), it says **Can't load the Inbox** rather than that
+nothing waits on you.
 
 ## The port is in use, or the field is locked
 

@@ -285,6 +285,25 @@ describe('Get started (PDT-230)', () => {
     expect(screen.queryByText(/Nothing waits on you/)).toBeNull();
   });
 
+  it("keeps saying the Inbox can't load while it refetches, when only the Inbox fails", async () => {
+    window.history.replaceState(null, '', '/inbox');
+    let inboxCalls = 0;
+    const calls = stubWorkspaces({
+      // The first round fails; the refetch after it hangs, so the query sits pending with no data.
+      'GET /api/inbox': () => (++inboxCalls === 1 ? new Reply(500, { code: 'internal', message: 'boom' }) : new Promise(() => {})),
+      'GET /api/notifications': () => new Reply(500, { code: 'internal', message: 'boom' }),
+    });
+    const { qc } = renderWithQuery(<AppShell />);
+    // The list column and the work area.
+    await waitFor(() => expect(screen.getAllByText(/Can't load the Inbox/)).toHaveLength(2));
+    expect(await screen.findByText("Can't load updates.")).toBeInTheDocument();
+    await act(() => { void qc.invalidateQueries({ queryKey: ['inbox'] }); });
+    await waitFor(() => expect(calls.filter((c) => c.path.startsWith('/api/inbox')).length).toBeGreaterThan(1));
+    expect(screen.getAllByText(/Can't load the Inbox/)).toHaveLength(2);
+    expect(screen.queryByText(/Nothing waits on you/)).toBeNull();
+    expect(screen.queryByText(/Can't reach the host/)).toBeNull();
+  });
+
   it('shows no connection banner while the host answers, and one while the browser is offline', async () => {
     stubWorkspaces();
     renderWithQuery(<AppShell />);
