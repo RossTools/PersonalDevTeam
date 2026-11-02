@@ -42,7 +42,7 @@ export function kindStyle(item: InboxItem): { icon: ComponentType<LucideProps>; 
 }
 
 const soft: Record<Tone, string> = {
-  accent: 'bg-accent text-primary',
+  accent: 'bg-accent text-link',
   running: 'bg-running-soft text-running',
   waiting: 'bg-waiting-soft text-waiting',
   failed: 'bg-failed-soft text-failed',

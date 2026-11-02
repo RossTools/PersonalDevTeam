@@ -36,6 +36,10 @@ describe('design system rules', () => {
     expect(offenders(/#[0-9a-fA-F]{3,8}\b(?![\w-])|\b(rgba?|hsla?)\(|\b(bg|text|border)-(black|white)\b/)).toEqual([]);
   });
 
+  it('colours accent text with text-link: text-primary is the fill colour, too light for text in dark mode', () => {
+    expect(offenders(/(?<![\w-])text-primary(?![\w-])/)).toEqual([]);
+  });
+
   it('uses theme sizes and layers, not arbitrary ones', () => {
     expect(offenders(/\btext-\[\d+px\]|\bz-\[/)).toEqual([]);
     // App layers come from --pdt-z-*; a small z-10 inside a primitive only stacks that component's own parts.

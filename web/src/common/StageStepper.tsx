@@ -54,7 +54,7 @@ export function StageStepper({ stage, compact = false, className }: StageStepper
                 'flex shrink-0 items-center justify-center rounded-full border [&>svg]:size-2.5',
                 compact ? 'size-3' : 'size-4',
                 past && 'border-primary bg-primary text-primary-foreground',
-                current && !past && !crossed && 'border-primary bg-accent text-primary ring-2 ring-ring',
+                current && !past && !crossed && 'border-primary bg-accent text-link ring-2 ring-ring',
                 current && crossed && 'border-muted-foreground bg-muted text-muted-foreground',
                 !past && !current && 'border-border bg-card',
               )}

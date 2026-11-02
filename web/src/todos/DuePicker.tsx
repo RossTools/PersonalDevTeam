@@ -38,8 +38,8 @@ const PICK_ICON: Record<QuickPick['id'], ReactNode> = {
   hour: <Clock aria-hidden className="text-running" />,
   today: <Sun aria-hidden className="text-waiting" />,
   tomorrow: <Sunrise aria-hidden className="text-waiting" />,
-  weekend: <Sofa aria-hidden className="text-primary" />,
-  week: <CircleArrowRight aria-hidden className="text-primary" />,
+  weekend: <Sofa aria-hidden className="text-link" />,
+  week: <CircleArrowRight aria-hidden className="text-link" />,
 };
 
 const SLOTS = [
@@ -336,7 +336,7 @@ function RepeatPanel({ day, current, onBack, onRepeat, onCustom }: {
   const [from, setFrom] = useState<RepeatFrom>(current?.from ?? 'due');
   const presets = repeatPresets(day);
   const isPreset = !!current && presets.some((p) => sameRule(p.rule, current.rule));
-  const tick = <Check aria-label="Chosen" className="size-3.5 text-primary" />;
+  const tick = <Check aria-label="Chosen" className="size-3.5 text-link" />;
   return (
     <div className="flex flex-col">
       <PanelHeading onBack={onBack}>Repeat</PanelHeading>

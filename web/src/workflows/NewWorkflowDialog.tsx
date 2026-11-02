@@ -65,11 +65,10 @@ function Card({ t, selected, onPick }: { t: GalleryTemplate; selected: boolean; 
       className={cn(
         'flex flex-col gap-1.5 rounded-lg border border-border bg-background p-3 text-left outline-none hover:border-muted-foreground focus-visible:ring-2 focus-visible:ring-ring',
         t.id === BLANK && 'border-dashed',
-        off && 'opacity-60',
         selected && 'border-primary ring-2 ring-accent',
       )}
     >
-      <span className="text-sm font-medium">{t.id === BLANK ? 'Start from scratch' : t.name}</span>
+      <span className={cn('text-sm font-medium', off && 'text-muted-foreground')}>{t.id === BLANK ? 'Start from scratch' : t.name}</span>
       {t.description && <span className="line-clamp-2 text-xs text-muted-foreground">{t.description}</span>}
       <span className="flex flex-wrap gap-1.5">
         <Badge>{triggerLabel(t)}</Badge>
