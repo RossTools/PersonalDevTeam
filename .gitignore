@@ -7,3 +7,11 @@ dist/
 *.db
 desktop/src-tauri/gen/
 desktop/src-tauri/binaries/
+# Secrets never belong in the repo (scripts/make-signing-cert.sh writes these to the folder it is given)
+.env
+.env.*
+*.p12
+*.pfx
+*.pem
+*.key
+pdt-signing.password
