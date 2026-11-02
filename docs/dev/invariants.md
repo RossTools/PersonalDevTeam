@@ -199,8 +199,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `the_web_ui_runs_the_same_ironcalc` checks).
 - **Guides served by pdtd link to each other by API path**, never by repository path (a test checks).
 - **The web doesn't test for an integration's id or name**: what a plugin adds to the UI comes from what it declares
-  (its connection kinds, project settings schema and label), so turning it off removes it. Add a declaration rather
-  than a check on `kind === '…'`. (The Google plugin's sign-in and file picker are still its own components.)
+  (its connection kinds, project settings schema, label, account sign-in, a document provider's picker, a forge's
+  name for a change request), so turning it off removes it. Add a declaration rather than a check on `kind === '…'`;
+  `git grep -i -E 'google|gitlab' web/src` finds only generated types, fixtures and tests (and Google's ACP agent, which is an agent, not a plugin).
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.
 - **The UI re-renders every 2 s**: effects must be idempotent, and never focus from an inline ref callback.

@@ -1,6 +1,7 @@
 //! The Google plugin's routes (PDT-316), under `/api/google`: its accounts and their sign-in state, signing in (the
 //! browser goes to Google's consent page and comes back to [`callback`]) and out, the agents' permission (PDT-360),
-//! and what Google's file picker needs in the browser (an access token, the API key and the project number). With
+//! and Google's file picker in the browser ([`picker_js`]) with what it needs (an access token, the API key and the
+//! project number). These are the plugin's sign-in ([`pdt_core::integration::SignIn`]) and picker routes. With
 //! PDT's own clients Google comes back through the website's page ([`crate::builtin`]), and signing in with no account
 //! adds one. Signing in and out, the agents' permission and the picker's token are for PDT's web app only (its UI
 //! token), never an agent's curl.
@@ -13,67 +14,14 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Html;
 use pdt_api::sdk::{ApiError, AppState, from_ui, now_ms};
+use pdt_core::integration::{AccountSignInInput, AccountSignInStart, SignInAccount};
 use pdt_core::workflow::api::Connection;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use ts_rs::TS;
 
-/// A Google account (connection) as Settings shows it.
-#[derive(Debug, Clone, Serialize, TS)]
+/// What Google's file picker needs, in the browser (`picker.js`).
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct GoogleAccount {
-    pub connection_id: String,
-    pub name: String,
-    pub signed_in: bool,
-    /// The account's email, once signed in.
-    pub email: Option<String>,
-    /// Has an OAuth client ID and secret (signing in needs both), its own or PDT's.
-    pub has_client: bool,
-    /// Signs in with PDT's own clients; else with its own.
-    pub built_in: bool,
-    /// Agents may use it: with PDT's own clients, once the user allowed them (a sign-in of their own); with its own
-    /// client, whenever it is signed in.
-    pub agents: bool,
-    /// Has the API key and project number Google's file picker needs.
-    pub picker: bool,
-}
-
-/// Whether this PDT has its own Google sign-in.
-#[derive(Debug, Clone, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct GoogleClient {
-    /// Built with PDT's own OAuth clients: Sign in with Google adds an account, with nothing to set up.
-    pub built_in: bool,
-}
-
-#[derive(Debug, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct GoogleSignInInput {
-    /// The address PDT is open at in the browser (`http://127.0.0.1:7420`): Google sends the browser back there.
-    pub origin: String,
-    /// Asks the account's consent for agents (PDT's agentic client) instead of signing it in.
-    #[serde(default)]
-    #[ts(optional)]
-    pub agent: Option<bool>,
-}
-
-#[derive(Debug, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct GoogleSignInStart {
-    /// Google's consent page, to open in a new window.
-    pub url: String,
-    /// The address Google sends the browser back to (it must be one of the OAuth client's redirect URIs).
-    pub redirect_uri: String,
-}
-
-/// What Google's file picker needs, in the browser.
-#[derive(Debug, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
 pub struct GooglePicker {
     pub access_token: String,
     pub api_key: String,
@@ -105,7 +53,7 @@ async fn connection(st: &AppState, id: &str) -> Result<pdt_core::workflow::api::
 pub async fn list(
     State(st): State<AppState>,
     shared: axum::Extension<Arc<Shared>>,
-) -> Result<Json<Vec<GoogleAccount>>, ApiError> {
+) -> Result<Json<Vec<SignInAccount>>, ApiError> {
     let mut out = vec![];
     for c in accounts::connections(&st).await? {
         let s = accounts::sign_in(&st, &c.id).await?;
@@ -115,7 +63,8 @@ pub async fn list(
             Some(b) if built_in => b.picker.is_some(),
             _ => config_str(&c, "apiKey").is_some() && config_str(&c, "appId").is_some(),
         };
-        out.push(GoogleAccount {
+        out.push(SignInAccount {
+            note: (!picker).then(|| "No file picker (needs an API key and project number)".to_string()),
             signed_in: s.is_some(),
             email: s.and_then(|s| s.email),
             has_client: built_in || (config_str(&c, "clientId").is_some() && c.has_secret),
@@ -127,11 +76,6 @@ pub async fn list(
         });
     }
     Ok(Json(out))
-}
-
-/// `GET /api/google/client`.
-pub async fn client(shared: axum::Extension<Arc<Shared>>) -> Json<GoogleClient> {
-    Json(GoogleClient { built_in: shared.built_in.is_some() })
 }
 
 /// The address Google sends the browser back to, from where PDT is open.
@@ -154,7 +98,7 @@ fn begin(
     origin: &str,
     agent: bool,
     hint: Option<&str>,
-) -> Result<GoogleSignInStart, ApiError> {
+) -> Result<AccountSignInStart, ApiError> {
     let built_in = connection.is_none_or(|c| shared.uses_built_in(c));
     let nonce = oauth::random(24);
     let (state, redirect) = if built_in {
@@ -179,7 +123,7 @@ fn begin(
             started_ms: now,
         },
     );
-    Ok(GoogleSignInStart { url, redirect_uri: redirect })
+    Ok(AccountSignInStart { url, redirect_uri: redirect })
 }
 
 /// `POST /api/google/sign-in`: where the browser goes to add an account, with PDT's own clients.
@@ -187,8 +131,8 @@ pub async fn start_new(
     State(st): State<AppState>,
     shared: axum::Extension<Arc<Shared>>,
     headers: HeaderMap,
-    Json(input): Json<GoogleSignInInput>,
-) -> Result<Json<GoogleSignInStart>, ApiError> {
+    Json(input): Json<AccountSignInInput>,
+) -> Result<Json<AccountSignInStart>, ApiError> {
     ui_only(&st, &headers)?;
     let Some(b) = &shared.built_in else {
         return Err(bad(
@@ -204,8 +148,8 @@ pub async fn start(
     shared: axum::Extension<Arc<Shared>>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    Json(input): Json<GoogleSignInInput>,
-) -> Result<Json<GoogleSignInStart>, ApiError> {
+    Json(input): Json<AccountSignInInput>,
+) -> Result<Json<AccountSignInStart>, ApiError> {
     ui_only(&st, &headers)?;
     let c = connection(&st, &id).await?;
     let agent = input.agent == Some(true);
@@ -241,7 +185,7 @@ fn page(ok: bool, message: &str) -> (StatusCode, Html<String>) {
         "<!doctype html><meta charset=utf-8><title>{title}</title>\
          <body style=\"font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;line-height:1.5\">\
          <h1 style=\"font-size:1.25rem\">{title}</h1><p>{esc}</p><p>You can close this window.</p>\
-         <script>try{{window.opener&&window.opener.postMessage({{pdtGoogle:{ok}}},location.origin)}}catch(e){{}}\
+         <script>try{{window.opener&&window.opener.postMessage({{pdtSignIn:{ok}}},location.origin)}}catch(e){{}}\
          {close}</script></body>",
         close = if ok { "setTimeout(function(){window.close()},1500)" } else { "" }
     );
@@ -410,6 +354,14 @@ pub async fn picker(
     .await
     .map_err(ApiError::internal)??;
     Ok(Json(GooglePicker { access_token: token, api_key, app_id, client_id }))
+}
+
+/// Google's file picker in the browser ([`pdt_api::sdk::documents::ProviderPicker`]).
+const PICKER_JS: &str = include_str!("picker.js");
+
+/// `GET /api/google/picker.js`: the module the import dialog runs to open Google's picker as an account.
+pub async fn picker_js() -> impl axum::response::IntoResponse {
+    ([(axum::http::header::CONTENT_TYPE, "text/javascript; charset=utf-8")], PICKER_JS)
 }
 
 #[cfg(test)]

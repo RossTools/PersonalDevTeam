@@ -141,6 +141,21 @@ impl Integration for Google {
         })
     }
 
+    fn sign_in(&self) -> Option<pdt_core::integration::SignIn> {
+        Some(pdt_core::integration::SignIn {
+            api: "/api/google".into(),
+            service: "Google".into(),
+            kind: KIND.into(),
+            built_in: self.shared.built_in.is_some(),
+            description: "Sign in with Google adds an account. PDT sees only the files it makes and those you pick, \
+                          and agents use an account only once you allow them."
+                .into(),
+            own_client: "Your organization blocks apps from outside it? Add an account with your own OAuth client \
+                         from Google Cloud."
+                .into(),
+        })
+    }
+
     fn document_providers(&self, st: &AppState) -> Vec<Arc<dyn DocumentProvider>> {
         vec![Arc::new(provider::GoogleDocs { st: st.clone(), shared: self.shared.clone() })]
     }
@@ -150,11 +165,11 @@ impl Integration for Google {
         Some(
             axum::Router::new()
                 .route("/google/accounts", get(routes::list))
-                .route("/google/client", get(routes::client))
                 .route("/google/sign-in", post(routes::start_new))
                 .route("/google/accounts/{id}/sign-in", post(routes::start).delete(routes::sign_out))
                 .route("/google/accounts/{id}/agents", axum::routing::delete(routes::forget_agents))
                 .route("/google/accounts/{id}/picker", get(routes::picker))
+                .route("/google/picker.js", get(routes::picker_js))
                 .route("/google/callback", get(routes::callback))
                 .layer(axum::Extension(self.shared.clone())),
         )

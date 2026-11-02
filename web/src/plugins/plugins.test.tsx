@@ -216,6 +216,30 @@ describe('plugins: a plugin’s page', () => {
     expect(await within(connections).findByText('ci')).toBeInTheDocument();
   });
 
+  it('a plugin that declares a sign-in shows it; with PDT’s own client it adds accounts instead of Add (PDT-378)', async () => {
+    const google = built.find((p) => p.id === 'google')!;
+    expect(google.signIn?.api).toBe('/api/google');
+    const signIn = { ...google.signIn!, builtIn: true };
+    stubApi({
+      'GET /api/integrations': catalog({ google: { signIn } }),
+      'GET /api/connections': [],
+      'GET /api/google/accounts': [],
+    });
+    const { unmount } = renderWithQuery(<PluginPage id="google" onBack={() => {}} />);
+    expect(await screen.findByRole('button', { name: 'Sign in with Google' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Connections' })).queryByRole('button', { name: 'Add' })).toBeNull();
+    unmount();
+    stubApi({
+      'GET /api/integrations': catalog({ google: { signIn: { ...signIn, builtIn: false } } }),
+      'GET /api/connections': [],
+      'GET /api/google/accounts': [],
+    });
+    renderWithQuery(<PluginPage id="google" onBack={() => {}} />);
+    expect(await screen.findByText('Add a connection for your Google account first.')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Connections' })).getByRole('button', { name: 'Add' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign in with Google' })).toBeNull();
+  });
+
   it('GitHub’s connection is its login', async () => {
     stubApi({ 'GET /api/integrations': catalog({ github: { status: 'needs_setup' } }), 'GET /api/connections': [] });
     renderWithQuery(<PluginPage id="github" onBack={() => {}} />);

@@ -7,7 +7,8 @@ import type { Document } from '../api/gen/Document';
 import type { DocumentKind } from '../api/gen/DocumentKind';
 import type { Project } from '../api/gen/Project';
 import { actionError } from '../common/useAction';
-import { pickFromDrive, useGoogleAccounts } from './google';
+import { useSignInAccounts } from '../plugins/AccountSignIn';
+import { pickFiles } from './picker';
 import { KIND_LABEL, invalidateDocuments, useDocumentProviders, useDocuments } from './queries';
 
 const KINDS: { value: DocumentKind; label: string }[] = [
@@ -161,9 +162,11 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
       setUploading(false);
     }
   };
-  const google = useGoogleAccounts(false, chosen === 'google');
-  const pickers = (google.data ?? []).filter((a) => a.signedIn && a.picker);
-  // Google's picker covers the page: the dialog steps aside while it is open.
+  // The provider's own file picker, for each signed-in account that opens it.
+  const picker = searchers.find((p) => p.id === chosen)?.picker ?? null;
+  const accounts = useSignInAccounts(picker?.accounts ?? null);
+  const pickers = (accounts.data ?? []).filter((a) => a.signedIn && a.picker);
+  // A provider's picker covers the page: the dialog steps aside while it is open.
   const [picking, setPicking] = useState(false);
   const items: CommandItem[] = (files.data ?? []).map((f) => ({
     id: f.reference,
@@ -187,13 +190,13 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
       setError(actionError(e));
     }
   };
-  const pickFromGoogle = async (connectionId: string) => {
+  const pickWith = async (module: string, provider: string, connectionId: string) => {
     setError(null);
     setPicking(true);
     try {
-      const picked = await pickFromDrive(connectionId);
+      const picked = await pickFiles(module, connectionId);
       let last: Document | null = null;
-      for (const f of picked) last = await importOne('google', `${connectionId}/${f.id}`);
+      for (const reference of picked) last = await importOne(provider, reference);
       invalidateDocuments(qc);
       if (last) onImported(last);
     } catch (e) {
@@ -216,17 +219,17 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
             onChange={setProvider}
           />
         )}
-        {chosen === 'google' && google.isSuccess && (pickers.length > 0 ? (
+        {picker && chosen && accounts.isSuccess && (pickers.length > 0 ? (
           <div className="flex flex-wrap items-center gap-2">
             {pickers.map((a) => (
-              <Button key={a.connectionId} size="sm" variant="primary" onClick={() => void pickFromGoogle(a.connectionId)}>
-                Pick from Google Drive{pickers.length > 1 ? ` (${a.email ?? a.name})` : ''}
+              <Button key={a.connectionId} size="sm" variant="primary" onClick={() => void pickWith(picker.module, chosen, a.connectionId)}>
+                {picker.label}{pickers.length > 1 ? ` (${a.email ?? a.name})` : ''}
               </Button>
             ))}
             <span className="text-xs text-muted-foreground">Or choose one PDT already has access to:</span>
           </div>
         ) : (
-          <Alert tone="info">To pick any file from your Drive, sign in to Google in Settings → Plugins → Google and give the account a picker API key and project number.</Alert>
+          <Alert tone="info">{picker.help}</Alert>
         ))}
         {providers.isSuccess && searchers.length === 0 ? (
           <Alert tone="info">No document provider here can look for files to import. Turn on a documents plugin in Settings → Plugins.</Alert>

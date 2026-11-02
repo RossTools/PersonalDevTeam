@@ -125,6 +125,17 @@ async fn sign_in_pick_read_and_edit_google_docs_and_sheets() {
     assert_eq!(s, 200);
     let google = v["providers"].as_array().unwrap().iter().find(|p| p["id"] == "google").unwrap().clone();
     assert_eq!(google["capabilities"]["embed"], true);
+    // Its picker is a module of its own, which the import dialog loads (PDT-378).
+    assert_eq!(google["picker"]["module"], "/api/google/picker.js");
+    assert_eq!(google["picker"]["accounts"], "/api/google/accounts");
+    let res = tower::ServiceExt::oneshot(
+        env.app.clone(),
+        axum::http::Request::get("/api/google/picker.js").body(axum::body::Body::empty()).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res.status(), 200);
+    assert!(res.headers()["content-type"].to_str().unwrap().starts_with("text/javascript"));
 
     sign_in(&env, &id).await;
     let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
@@ -354,8 +365,10 @@ fn exchange_body(env: &Env) -> String {
 #[tokio::test]
 async fn sign_in_with_pdts_own_clients_and_a_separate_permission_for_agents() {
     let env = env_with(Some(built_in())).await;
-    let (_, v) = call(&env.app, "GET", "/api/google/client", None).await;
-    assert_eq!(v, json!({"builtIn": true}));
+    // The plugin declares its sign-in, with PDT's own client (PDT-378).
+    let (_, v) = call(&env.app, "GET", "/api/integrations", None).await;
+    let google = v.as_array().unwrap().iter().find(|p| p["id"] == "google").unwrap();
+    assert_eq!((&google["signIn"]["api"], &google["signIn"]["builtIn"]), (&json!("/api/google"), &json!(true)));
 
     // Only the web app, and only from an address that looks like a PDT.
     let from = json!({"origin": "http://100.101.102.103:7420"});
@@ -549,8 +562,9 @@ async fn an_account_with_its_own_client_works_beside_pdts() {
 #[tokio::test]
 async fn without_pdts_clients_only_your_own() {
     let env = env().await;
-    let (_, v) = call(&env.app, "GET", "/api/google/client", None).await;
-    assert_eq!(v, json!({"builtIn": false}));
+    let (_, v) = call(&env.app, "GET", "/api/integrations", None).await;
+    let google = v.as_array().unwrap().iter().find(|p| p["id"] == "google").unwrap();
+    assert_eq!(google["signIn"]["builtIn"], false);
     let (s, v) =
         call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "http://127.0.0.1:7420"}))).await;
     assert_eq!(s, 400, "{v}");
