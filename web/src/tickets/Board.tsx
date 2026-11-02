@@ -258,6 +258,10 @@ interface CellEnv {
   sessions: Map<string, Session[]>;
   /** The rest keeps its identity from render to render, so a card re-renders only when its ticket or dot changes. */
   cards: CardEnv;
+  /** Every card on the board, by id (what a drop needs to know about the dragged ticket). */
+  byId: Map<string, TicketSummary>;
+  /** Opens the Start dialog. */
+  start: (t: TicketSummary) => void;
 }
 
 interface CardEnv {
@@ -322,6 +326,13 @@ function Cell({ label, stage, items, lane, env, height, children }: {
     if (!d || d.kind !== CARD_DRAG_KIND) return;
     e.preventDefault();
     if (!lane.has(d.id) || items.some((t) => t.id === d.id)) return;
+    // Into In progress (Code or any later stage) from before work: start it, as Start does. A plain move would mark
+    // it In progress with nobody on it (PDT-472); cancelling the dialog leaves it where it was.
+    const t = env.byId.get(d.id);
+    if (stage === 'in_progress' && t && canStart(t)) {
+      env.start(t);
+      return;
+    }
     // Back to To do from In progress asks before stopping its work.
     void runAction(() => moveTicket(qc, { id: d.id }, stage, confirm));
   };
@@ -485,7 +496,7 @@ export function ColumnChips({ ref, columns, counts, value, onChange }: {
 
 /**
  * To do / In progress / Done side by side, each its own paged, polled query; drag a card to another column of its lane
- * to move it (desktop). With parents on the board the rows are lanes and the board scrolls as a whole; the first lane's
+ * to move it (desktop); dragging one that can start into In progress (or a pipeline stage) opens the Start dialog. With parents on the board the rows are lanes and the board scrolls as a whole; the first lane's
  * columns stop at half the screen and scroll on their own, so the parents' lanes stay in reach. Phones show one
  * column at a time, picked from chips with counts or by a swipe sideways, its parts under a heading per parent; cards
  * move from their menu (Move to), never by drag.
@@ -528,7 +539,11 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
       });
     },
   }), [onPeek, phone]);
-  const env: CellEnv = { sessions: byTicket, cards: cardEnv };
+  const byId = useMemo(
+    () => new Map(lanes.flatMap((l) => [...l.items.todo, ...l.items.in_progress, ...l.items.done]).map((t) => [t.id, t])),
+    [lanes],
+  );
+  const env: CellEnv = { sessions: byTicket, cards: cardEnv, byId, start };
   const all = displayColumns(boardSplits([...items.in_progress, ...lanes.flatMap((l) => l.items.in_progress)]));
   // Phones: one column; In progress's id falls back to Code when it splits (and back).
   const current = all.find((c) => c.id === shown) ?? all.find((c) => c.stage === shown || c.id === 'in_progress') ?? all[0];

@@ -24,7 +24,8 @@ choice on this computer; the board across all projects shows two weeks.
 
 Move a ticket by dragging its card, with **Move to** in its menu (**⋯**), or with the stage stepper on its page.
 Moving a ticket that's being worked on back to **Draft**, **Ready** or **To do** stops its agent and ends the attempt
-(PDT asks first; the worktree stays).
+(PDT asks first; the worktree stays). Dragging a card from **To do** into **In progress** (or any stage of the
+**Pipeline**) starts it: the Start dialog opens, as **Start** does, and the card stays in **To do** if you cancel.
 
 With the **Pipeline** workflow, **In progress** splits into **Code**, **Review**, **QA**, **Accept** and **Merge**, and
 each card says who has it ("Reviewer · working", "Your turn"). See [Workflows](../automation/workflows.md).
