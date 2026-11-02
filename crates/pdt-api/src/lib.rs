@@ -35,6 +35,7 @@ mod mcp;
 mod mcp_client;
 mod mcp_oauth;
 mod mcp_servers;
+pub mod notification_rules;
 mod notifications;
 mod overlap;
 mod parts;

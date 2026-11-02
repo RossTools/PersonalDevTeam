@@ -118,7 +118,9 @@ Whether PDT found the programs it runs: git, the agents and Tailscale, with wher
 ## Notifications
 
 How each kind of news reaches you: off, a dot, the Inbox, a toast, or a desktop notification, and **Desktop
-notifications** for this device. See [The Inbox](../using-pdt/the-inbox.md#notifications).
+notifications** for this device. You can also escalate what waits unanswered, set quiet hours, and post questions,
+approvals and failed runs to a chat channel. These set the **Notification rules** workflow. See
+[The Inbox](../using-pdt/the-inbox.md#notifications).
 
 ## Plugins and All connections
 

@@ -123,6 +123,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   workflow unless the trigger sets `includeOwn`. A new event a run can cause about itself joins the list and carries
   `workflowId`. Runs started by `run.*` events count a `chain`, and one `MAX_RUN_CHAIN` deep logs no `run.*` event,
   so two workflows reporting each other's runs stop.
+- **Notifications never wait on a run.** The Notification rules' levels and quiet hours are read from its document as
+  each notification is made (`notifications::rules`); only escalation and chat posts run as workflow steps. With the
+  workflow off or every workflow off, every kind still notifies at its default level.
 - **A stuck agent step is never left without anyone told.** A step handed to "When an agent is stuck" has no Inbox
   item until the workflow acts; `stuck::sweep` falls back to PDT's own handling when it is off, its run ends without
   acting, or no run starts in time. Code that ends or moves a step on takes its escalation (`take_escalation`).
