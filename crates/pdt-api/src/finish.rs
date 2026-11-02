@@ -11,9 +11,10 @@ use axum::extract::{Path, State};
 use pdt_core::project::PullResult;
 use pdt_core::session::SessionStatus;
 use pdt_core::ticket::{Actor, AttemptState, TicketStage};
+use pdt_core::workflow::api::{Run, RunStatus, StepStatus};
 use pdt_store::AttemptInfo;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use ts_rs::TS;
 
@@ -80,6 +81,41 @@ pub struct By {
 impl By {
     pub(crate) fn data(&self) -> serde_json::Value {
         serde_json::json!({"workflowId": self.workflow_id, "workflowName": self.workflow_name, "runId": self.run_id})
+    }
+}
+
+/// One lock per ticket a finish is going on for (PDT-182): two finishes at once (the Pipeline's `merged → finish` and
+/// Finish merged tickets) take turns, so only the first moves the ticket to Done and cleans up and the second sees it
+/// finished already.
+#[derive(Default)]
+pub(crate) struct Finishes(std::sync::Mutex<HashMap<String, (TicketLock, usize)>>);
+
+type TicketLock = std::sync::Arc<tokio::sync::Mutex<()>>;
+
+/// A finish of a ticket, from before it waits for the ticket's lock until it ends; the last one removes the lock.
+struct Entered<'a> {
+    finishes: &'a Finishes,
+    ticket_id: &'a str,
+}
+
+impl Finishes {
+    fn enter<'a>(&'a self, ticket_id: &'a str) -> (Entered<'a>, TicketLock) {
+        let mut all = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let (lock, count) = all.entry(ticket_id.to_string()).or_default();
+        *count += 1;
+        (Entered { finishes: self, ticket_id }, lock.clone())
+    }
+}
+
+impl Drop for Entered<'_> {
+    fn drop(&mut self) {
+        let mut all = self.finishes.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, count)) = all.get_mut(self.ticket_id) {
+            *count -= 1;
+            if *count == 0 {
+                all.remove(self.ticket_id);
+            }
+        }
     }
 }
 
@@ -188,18 +224,27 @@ async fn move_to_done(st: &AppState, ticket_id: &str, by: Option<&By>) -> Result
     Ok(())
 }
 
-/// Cancels the ticket's runs still going, except `by`'s run and the runs that called it. Each cancel takes the
-/// engine lock: a `ticket.finish` step's body runs outside it (PDT-128).
+/// Cancels the ticket's runs still going, except `by`'s run and the runs that called it, and the runs about to
+/// finish the ticket themselves (PDT-182), which then find it finished already. Each cancel takes
+/// the engine lock: a `ticket.finish` step's body runs outside it (PDT-128).
 async fn cancel_runs(st: &AppState, ticket_id: &str, by: Option<&By>) {
     let filter = pdt_store::RunFilter { ticket_id: Some(ticket_id.to_string()), limit: 500, ..Default::default() };
     let runs = match st.store.list_workflow_runs(&filter).await {
         Ok(r) => r,
         Err(e) => return tracing::warn!(ticket = %ticket_id, error = %e, "could not list the ticket's workflow runs"),
     };
+    let mut finishing: Vec<String> = by.map(|b| b.run_id.clone()).into_iter().collect();
+    for run in runs.iter().filter(|r| r.status == RunStatus::Running) {
+        if heading_to_finish(st, run).await {
+            finishing.push(run.id.clone());
+        }
+    }
     let mut keep = HashSet::new();
-    let mut next = by.map(|b| b.run_id.clone());
-    while let Some(id) = next.filter(|id| keep.insert(id.clone())) {
-        next = st.store.get_workflow_run(&id).await.ok().flatten().and_then(|r| r.parent_run_id);
+    for run in finishing {
+        let mut next = Some(run);
+        while let Some(id) = next.filter(|id| keep.insert(id.clone())) {
+            next = st.store.get_workflow_run(&id).await.ok().flatten().and_then(|r| r.parent_run_id);
+        }
     }
     for run in runs.iter().filter(|r| !r.status.is_finished() && !keep.contains(&r.id)) {
         let why = "cancelled: the ticket was finished";
@@ -211,6 +256,19 @@ async fn cancel_runs(st: &AppState, ticket_id: &str, by: Option<&By>) {
             tracing::warn!(ticket = %ticket_id, run = %run.id, error = %e, "could not cancel the finished ticket's run");
         }
     }
+}
+
+/// Whether a run advancing (not waiting) is in a `ticket.finish` step, or has a step to run with an edge straight to
+/// one (Finish merged tickets' gate that answers itself, the Pipeline's merge). Only one step away: in the Pipeline
+/// nearly every step leads to its finish some time, and a run further back works on a Done ticket, so it is cancelled.
+async fn heading_to_finish(st: &AppState, run: &Run) -> bool {
+    let Ok((_, doc)) = crate::workflow::engine::load(st, run).await else { return false };
+    let Ok(steps) = st.store.list_steps(&run.id).await else { return false };
+    let finish = |id: &str| doc.node(id).is_some_and(|n| n.kind == "ticket.finish");
+    steps
+        .iter()
+        .filter(|s| matches!(s.status, StepStatus::Pending | StepStatus::Running))
+        .any(|s| finish(&s.node_id) || doc.edges.iter().any(|e| e.from == s.node_id && finish(&e.to)))
 }
 
 async fn pull(st: &AppState, project_id: &str, branch: Option<String>) -> Option<PullResult> {
@@ -225,9 +283,20 @@ async fn pull(st: &AppState, project_id: &str, branch: Option<String>) -> Option
     }
 }
 
-/// Finishes a ticket by its latest attempt (see the module docs). Problems after the checks are logged and reported
-/// in the result, not failed: the ticket is Done by then.
+/// Finishes a ticket by its latest attempt (see the module docs), after any other finish of it going on. Problems
+/// after the checks are logged and reported in the result, not failed: the ticket is Done by then.
 pub(crate) async fn finish_ticket(
+    st: &AppState,
+    ticket_id: &str,
+    req: &FinishRequest,
+    by: Option<&By>,
+) -> Result<FinishResult, ApiError> {
+    let (_entered, lock) = st.finishes.enter(ticket_id);
+    let _one_at_a_time = lock.lock().await;
+    finish_alone(st, ticket_id, req, by).await
+}
+
+async fn finish_alone(
     st: &AppState,
     ticket_id: &str,
     req: &FinishRequest,
@@ -252,8 +321,8 @@ pub(crate) async fn finish_ticket(
         return Ok(result);
     };
     // Finished already (a workflow's merge is finished by the workflow and by Finish merged tickets, PDT-181): nothing
-    // is left to clean up, so a finish that comes after another one's cleanup cancels no runs. (Two finishes at the
-    // same moment both get past this.)
+    // is left to clean up, so a finish that comes after another one's cleanup cancels no runs. Two finishes at the
+    // same moment take turns (`finish_ticket`), so the second sees the first's.
     if ticket.stage.is_closed() && info.attempt.state != AttemptState::Active && info.attempt.worktree_id.is_none() {
         return Ok(result);
     }
