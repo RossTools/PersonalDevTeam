@@ -215,14 +215,14 @@ mod tests {
     fn accounts_are_kept_per_forge_and_host() {
         let gitlab = ForgeKind::new("gitlab").unwrap();
         let mut s = AccountStore::default();
-        s.put(&ForgeKind::GITHUB, "github.com", acct("ross", "https://api.github.com"));
-        s.put(&ForgeKind::GITHUB, "GHE.example.com", acct("rwest", "https://ghe.example.com/api/v3"));
+        s.put(&ForgeKind::GITHUB, "github.com", acct("alex", "https://api.github.com"));
+        s.put(&ForgeKind::GITHUB, "GHE.example.com", acct("alexk", "https://ghe.example.com/api/v3"));
         s.put(&gitlab, "gitlab.com", acct("rw", "https://gitlab.com/api/v4"));
-        assert_eq!(s.get(&ForgeKind::GITHUB, "ghe.example.com").unwrap().login, "rwest", "hosts in any case");
-        assert_eq!(s.get(&ForgeKind::GITHUB, "github.com").unwrap().login, "ross");
+        assert_eq!(s.get(&ForgeKind::GITHUB, "ghe.example.com").unwrap().login, "alexk", "hosts in any case");
+        assert_eq!(s.get(&ForgeKind::GITHUB, "github.com").unwrap().login, "alex");
         assert!(s.get(&gitlab, "github.com").is_none());
         let hosts: Vec<_> = s.of_kind(&ForgeKind::GITHUB).map(|(h, a)| (h, a.login.as_str())).collect();
-        assert_eq!(hosts, [("ghe.example.com", "rwest"), ("github.com", "ross")]);
+        assert_eq!(hosts, [("ghe.example.com", "alexk"), ("github.com", "alex")]);
 
         s.put(&ForgeKind::GITHUB, "github.com", acct("other", "https://api.github.com"));
         assert_eq!(s.of_kind(&ForgeKind::GITHUB).count(), 2, "replaced, not added");
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn the_store_round_trips_and_reads_an_old_login() {
-        let old = r#"{"token":"t","apiUrl":"https://api.github.com","login":"ross"}"#;
+        let old = r#"{"token":"t","apiUrl":"https://api.github.com","login":"alex"}"#;
         let a: ForgeAccount = serde_json::from_str(old).unwrap();
         assert_eq!(a.signed_in_at, None, "a login from before PDT-252");
         let s = AccountStore::migrated(&ForgeKind::GITHUB, "github.com", a.clone());

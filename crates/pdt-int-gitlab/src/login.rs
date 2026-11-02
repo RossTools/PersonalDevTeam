@@ -287,12 +287,12 @@ mod tests {
     fn whoami_names_the_user_and_an_access_tokens_scopes() {
         let t = Recorded::new();
         let api = "https://gitlab.example.com/api/v4";
-        t.ok("GET", &format!("{api}/user"), r#"{"id":7,"username":"rwest","name":"Ross"}"#)
+        t.ok("GET", &format!("{api}/user"), r#"{"id":7,"username":"alexk","name":"Alex"}"#)
             .ok("GET", &format!("{api}/personal_access_tokens/self"), r#"{"id":1,"scopes":["api","read_repository"]}"#)
-            .ok("GET", &format!("{api}/user"), r#"{"id":7,"username":"rwest"}"#)
+            .ok("GET", &format!("{api}/user"), r#"{"id":7,"username":"alexk"}"#)
             .on("GET", &format!("{api}/user"), Response::new(401, r#"{"message":"401 Unauthorized"}"#));
         let w = whoami(&t, "https://gitlab.example.com", "glpat-x").unwrap();
-        assert_eq!((w.login.as_str(), w.scopes.clone()), ("rwest", vec!["api".to_string(), "read_repository".into()]));
+        assert_eq!((w.login.as_str(), w.scopes.clone()), ("alexk", vec!["api".to_string(), "read_repository".into()]));
         assert!(t.sent()[0].headers.contains(&("Authorization", "Bearer glpat-x".into())));
         assert!(whoami(&t, api, "glo_oauth").unwrap().scopes.is_empty(), "an OAuth token: no access token to read");
         assert!(whoami(&t, api, "bad").unwrap_err().contains("does not accept"));
