@@ -401,7 +401,7 @@ function LaneHeaders() {
 }
 
 const startTicket = (over: Partial<FullTicket> = {}): FullTicket => ({
-  ...card(47, { title: 'Start a ticket from the board' }), description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-47-start-a-ticket', sessions: [], overlaps: [], partList: [], createdBy: null, ...over,
+  ...card(47, { title: 'Start a ticket from the board' }), description: '', links: [], attempts: [], defaultBranch: 'pdt/PDT-47-start-a-ticket', sessions: [], overlaps: [], partList: [], webLinks: [], createdBy: null, ...over,
 });
 const START_STATES: { label: string; ticket: FullTicket }[] = [
   { label: 'Ready', ticket: startTicket() },

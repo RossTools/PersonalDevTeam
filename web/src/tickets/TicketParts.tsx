@@ -30,6 +30,7 @@ import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole 
 import { invalidateTickets, pagedPoll, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
 import { AreaChips, AreasEditor } from './Areas';
 import { ATTACH_ACCEPT, AttachButton, attachmentMarkdown, UploadList, useAttachmentUploads } from './attachments';
+import { IssueRows, LinkIssueDialog, useRefreshIssues, WebLinkRows } from './IssueLinks';
 import { LabelsEditor } from './LabelsEditor';
 import { TicketPicker } from './TicketPicker';
 
@@ -388,17 +389,25 @@ function LinkRow({ ticket, link }: { ticket: Ticket; link: LinkedTicket }) {
 /** Blocked by / Blocks / Related, each ticket with its key, title and stage; "Link ticket…" adds one. */
 export function TicketLinks({ ticket }: { ticket: Ticket }) {
   const [linking, setLinking] = useState(false);
+  const [linkingIssue, setLinkingIssue] = useState(false);
+  useRefreshIssues(ticket);
   const byRole = (r: LinkRole) => ticket.links.filter((l) => linkRole(l) === r);
+  const none = ticket.links.length === 0 && ticket.external.length === 0 && ticket.webLinks.length === 0;
   return (
     <OverviewSection
       title="Links"
       actions={
-        <Button variant="ghost" size="sm" compact onClick={() => setLinking(true)}>
-          <Link2 aria-hidden /> Link ticket…
-        </Button>
+        <span className="flex items-center">
+          <Button variant="ghost" size="sm" compact onClick={() => setLinking(true)}>
+            <Link2 aria-hidden /> Link ticket…
+          </Button>
+          <Button variant="ghost" size="sm" compact onClick={() => setLinkingIssue(true)}>
+            Link issue…
+          </Button>
+        </span>
       }
     >
-      {ticket.links.length === 0 && <p className="text-xs text-muted-foreground">No links.</p>}
+      {none && <p className="text-xs text-muted-foreground">No links.</p>}
       {ROLES.map((r) => {
         const list = byRole(r);
         if (list.length === 0) return null;
@@ -411,7 +420,10 @@ export function TicketLinks({ ticket }: { ticket: Ticket }) {
           </div>
         );
       })}
+      <IssueRows ticket={ticket} />
+      <WebLinkRows ticket={ticket} />
       {linking && <LinkTicketDialog ticket={ticket} onClose={() => setLinking(false)} />}
+      {linkingIssue && <LinkIssueDialog ticket={ticket} onClose={() => setLinkingIssue(false)} />}
     </OverviewSection>
   );
 }

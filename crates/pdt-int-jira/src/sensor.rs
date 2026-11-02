@@ -15,6 +15,7 @@ use crate::core::{
 use crate::core::{IssueNews, JIRA, JiraIssue, issue_key, news, parse_issue, poll_jql};
 use axum::http::StatusCode;
 use pdt_api::sdk::{ApiError, AppState, Imported, now_ms};
+use pdt_core::issue_link::LinkOrigin;
 use pdt_core::ticket::NewTicket;
 use pdt_core::workflow::api::{Connection, NewLogEvent};
 use pdt_store::StoredExternalLink;
@@ -233,13 +234,7 @@ pub(crate) async fn import_issue(
     let t = NewTicket { title, description: Some(description), ..Default::default() }
         .validate()
         .map_err(|e| failed(e.to_string()))?;
-    let link = StoredExternalLink {
-        ticket_id: String::new(),
-        system: JIRA.into(),
-        connection_id: c.conn.id.clone(),
-        key: issue.key.clone(),
-        url: issue.url.clone(),
-    };
+    let link = StoredExternalLink::new("", JIRA, &c.conn.id, &issue.key, &issue.url, LinkOrigin::Imported);
     let id = uuid::Uuid::now_v7().to_string();
     match st.store.create_linked_ticket(&id, project_id, &t, &link, pdt_core::ticket::Actor::System, now_ms()).await {
         Ok(Ok(t)) => Ok(Import::Imported(t.summary.id)),

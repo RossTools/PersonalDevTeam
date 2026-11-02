@@ -7,6 +7,7 @@
 mod actions;
 mod client;
 mod core;
+mod links;
 mod meta;
 mod sensor;
 
@@ -53,6 +54,32 @@ impl Integration for Jira {
         key: &'a str,
     ) -> BoxFut<'a, Result<Imported, ApiError>> {
         Box::pin(sensor::import_by_key(st, project_id, key))
+    }
+
+    fn find_issue<'a>(
+        &'a self,
+        st: &'a AppState,
+        project_id: &'a str,
+        given: &'a str,
+    ) -> BoxFut<'a, Option<Result<pdt_api::sdk::issues::FoundIssue, String>>> {
+        Box::pin(links::find(st, project_id, given))
+    }
+
+    fn read_issue<'a>(
+        &'a self,
+        st: &'a AppState,
+        link: &'a pdt_api::sdk::issues::StoredExternalLink,
+    ) -> BoxFut<'a, Option<Result<pdt_api::sdk::issues::IssueNow, String>>> {
+        Box::pin(async move { Some(links::read_link(st, link).await) })
+    }
+
+    fn issue_example(&self) -> Option<&'static str> {
+        Some("ABC-123, or the issue's address")
+    }
+
+    /// "Done moves the Jira issue".
+    fn closes_issues(&self) -> bool {
+        true
     }
 
     fn builtin_workflows(&self) -> Vec<Builtin> {

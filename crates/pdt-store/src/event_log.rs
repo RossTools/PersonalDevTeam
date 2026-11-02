@@ -201,10 +201,12 @@ pub(crate) async fn mirror_timeline(
     let null = serde_json::Value::Null;
     let data = data.unwrap_or(&null);
     let s = |k: &str| data.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    // The first issue of each other tracker it is linked to, by system (`github` also as `github_issue`).
+    // The first issue of each other tracker it is linked to, by system (`github` also as `github_issue`): those Done
+    // closes, so the trackers' Done built-ins leave an issue linked by hand alone unless the user asked (PDT-481).
     let external: std::collections::BTreeMap<String, String> = if kind == K::Moved {
         sqlx::query_as::<_, (String, String)>(
-            "SELECT system, MIN(key) FROM ticket_links_external WHERE ticket_id = ? GROUP BY system",
+            "SELECT system, MIN(key) FROM ticket_links_external WHERE ticket_id = ? AND close_on_done = 1 \
+             GROUP BY system",
         )
         .bind(ticket_id)
         .fetch_all(&mut *conn)

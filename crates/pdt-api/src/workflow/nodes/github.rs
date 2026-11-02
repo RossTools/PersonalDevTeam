@@ -6,6 +6,7 @@ use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use pdt_core::forge::ForgeKind;
 use pdt_core::github_issue::{CloseReason, GITHUB, issue_key, parse_issue, repo_id, valid_repo};
+use pdt_core::issue_link::LinkOrigin;
 use pdt_core::ticket::{AGENTIC_LABEL, Actor, NewTicket, Priority};
 use pdt_forge::{Forge, ForgeError, IssueDetail};
 use pdt_store::StoredExternalLink;
@@ -83,7 +84,7 @@ impl IssueTarget {
     async fn resolve(&self, st: &AppState) -> Result<Option<(String, u64)>, String> {
         if let Some(t) = nonblank(&self.ticket) {
             let id = crate::mcp::tools::resolve_ticket(st, t, None).await?;
-            let links = st.store.external_links(&id, GITHUB).await.map_err(|e| e.to_string())?;
+            let links = st.store.closing_links(&id, GITHUB).await.map_err(|e| e.to_string())?;
             // The URL keeps the repository's own spelling; the key is lower case.
             return Ok(links.iter().find_map(|l| parse_issue(&l.url, None).or_else(|| parse_issue(&l.key, None))));
         }
@@ -211,13 +212,7 @@ pub(crate) async fn import_issue(
             new.validate().map_err(|e| e.to_string())?
         }
     };
-    let link = StoredExternalLink {
-        ticket_id: String::new(),
-        system: GITHUB.into(),
-        connection_id: repo_id(repo),
-        key: key.clone(),
-        url: d.issue.url.clone(),
-    };
+    let link = StoredExternalLink::new("", GITHUB, repo_id(repo), &key, &d.issue.url, LinkOrigin::Imported);
     let id = uuid::Uuid::now_v7().to_string();
     match st.store.create_linked_ticket(&id, project_id, &valid, &link, Actor::System, now_ms()).await {
         Ok(Ok(t)) => Ok(Imported {

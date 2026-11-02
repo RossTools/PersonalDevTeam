@@ -2,6 +2,7 @@
 //! schemars), and each tool runs the function the matching route runs, so the API and the tools can't drift.
 
 mod inbox;
+mod issue_links;
 mod notes;
 mod overview;
 mod secrets;
@@ -95,6 +96,7 @@ pub(crate) fn defs() -> Vec<Tool> {
         notes::defs(),
         watches::defs(),
         tickets::defs(),
+        issue_links::defs(),
         sessions::defs(),
         inbox::defs(),
     ]
@@ -127,6 +129,8 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         watches::call(cx, name, a).await
     } else if listed(tickets::defs) {
         tickets::call(cx, name, a).await
+    } else if listed(issue_links::defs) {
+        issue_links::call(cx, name, a).await
     } else if listed(sessions::defs) {
         sessions::call(cx, name, a).await
     } else if listed(inbox::defs) {

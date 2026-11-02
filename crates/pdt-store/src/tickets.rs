@@ -3,6 +3,7 @@
 
 use crate::{Store, StoreError};
 use pdt_core::conversation::SessionMode;
+use pdt_core::issue_link::{IssueState, LinkOrigin, WebLink};
 use pdt_core::links::would_cycle;
 use pdt_core::overlap::Reported;
 use pdt_core::parts::{ParentFacts, TicketParent, ValidParts, open_parts, valid_parent};
@@ -314,12 +315,23 @@ async fn decorate(conn: &mut SqliteConnection, items: &mut [TicketSummary]) -> R
     let mut external: HashMap<String, Vec<ExternalLink>> = HashMap::new();
     for chunk in ids.chunks(500) {
         let mut qb = QueryBuilder::<Sqlite>::new(
-            "SELECT ticket_id, system, key, url FROM ticket_links_external WHERE ticket_id IN ",
+            "SELECT ticket_id, system, key, url, origin, close_on_done, title, state FROM ticket_links_external \
+             WHERE ticket_id IN ",
         );
         push_in(&mut qb, chunk);
         qb.push(" ORDER BY ticket_id, system, key");
         for r in qb.build().fetch_all(&mut *conn).await? {
-            let link = ExternalLink { system: r.try_get(1)?, key: r.try_get(2)?, url: r.try_get(3)? };
+            let origin: String = r.try_get(4)?;
+            let state: Option<String> = r.try_get(7)?;
+            let link = ExternalLink {
+                system: r.try_get(1)?,
+                key: r.try_get(2)?,
+                url: r.try_get(3)?,
+                origin: LinkOrigin::parse(&origin).ok_or_else(|| corrupt("link origin", &origin))?,
+                close_on_done: r.try_get(5)?,
+                title: r.try_get(6)?,
+                state: state.as_deref().and_then(IssueState::parse),
+            };
             external.entry(r.try_get(0)?).or_default().push(link);
         }
     }
@@ -782,6 +794,30 @@ async fn close_admit_items(
     Ok(())
 }
 
+/// Inserts a link to an issue as `link` says.
+async fn insert_link(conn: &mut SqliteConnection, link: &StoredExternalLink, now: i64) -> Result<(), StoreError> {
+    let checked = link.state.is_some().then_some(now);
+    sqlx::query(
+        "INSERT INTO ticket_links_external \
+         (ticket_id, system, connection_id, key, url, created_at, origin, close_on_done, title, state, checked_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&link.ticket_id)
+    .bind(&link.system)
+    .bind(&link.connection_id)
+    .bind(&link.key)
+    .bind(&link.url)
+    .bind(now)
+    .bind(link.origin.as_str())
+    .bind(link.close_on_done)
+    .bind(&link.title)
+    .bind(link.state.map(|s| s.as_str()))
+    .bind(checked)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 async fn touch(conn: &mut SqliteConnection, id: &str, now: i64) -> Result<(), StoreError> {
     sqlx::query("UPDATE tickets SET updated_at = ? WHERE id = ?").bind(now).bind(id).execute(&mut *conn).await?;
     Ok(())
@@ -1081,6 +1117,55 @@ pub struct StoredExternalLink {
     pub connection_id: String,
     pub key: String,
     pub url: String,
+    pub origin: LinkOrigin,
+    /// Done closes (or moves) the issue.
+    pub close_on_done: bool,
+    /// The issue's title and state, when they are known.
+    pub title: Option<String>,
+    pub state: Option<IssueState>,
+}
+
+impl StoredExternalLink {
+    /// A link made `origin`'s way, closing the issue on Done as such links do unless told otherwise.
+    pub fn new(
+        ticket_id: impl Into<String>,
+        system: impl Into<String>,
+        connection_id: impl Into<String>,
+        key: impl Into<String>,
+        url: impl Into<String>,
+        origin: LinkOrigin,
+    ) -> Self {
+        Self {
+            ticket_id: ticket_id.into(),
+            system: system.into(),
+            connection_id: connection_id.into(),
+            key: key.into(),
+            url: url.into(),
+            origin,
+            close_on_done: origin.closes_by_default(),
+            title: None,
+            state: None,
+        }
+    }
+}
+
+const STORED_LINK: &str = "SELECT ticket_id, system, connection_id, key, url, origin, close_on_done, title, state \
+                           FROM ticket_links_external";
+
+fn to_stored_link(r: &sqlx::sqlite::SqliteRow) -> Result<StoredExternalLink, StoreError> {
+    let origin: String = r.try_get(5)?;
+    let state: Option<String> = r.try_get(8)?;
+    Ok(StoredExternalLink {
+        ticket_id: r.try_get(0)?,
+        system: r.try_get(1)?,
+        connection_id: r.try_get(2)?,
+        key: r.try_get(3)?,
+        url: r.try_get(4)?,
+        origin: LinkOrigin::parse(&origin).ok_or_else(|| corrupt("link origin", &origin))?,
+        close_on_done: r.try_get(6)?,
+        title: r.try_get(7)?,
+        state: state.as_deref().and_then(IssueState::parse),
+    })
 }
 
 impl Store {
@@ -1110,25 +1195,22 @@ impl Store {
             return Ok(Err(other));
         }
         insert_ticket(&mut tx, id, project_id, t, &by.into(), Made::default(), now).await?;
-        sqlx::query(
-            "INSERT INTO ticket_links_external (ticket_id, system, connection_id, key, url, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(id)
-        .bind(&link.system)
-        .bind(&link.connection_id)
-        .bind(&link.key)
-        .bind(&link.url)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
+        // The ticket came from the issue: Done closes it, as an import's link always has.
+        let link = StoredExternalLink {
+            ticket_id: id.to_string(),
+            origin: LinkOrigin::Imported,
+            close_on_done: true,
+            ..link.clone()
+        };
+        insert_link(&mut tx, &link, now).await?;
         tx.commit().await?;
         Ok(Ok(self.get_ticket(id).await?.ok_or(TicketError::NotFound("ticket"))?))
     }
 
-    /// Links ticket `link.ticket_id` to an external issue it was filed as (PDT-221), on behalf of `by`. Its source is
-    /// unchanged: the issue came from the ticket, not from outside. `Ok(Err(id))` when a ticket already links that
-    /// issue (nothing changes); NotFound("ticket") when the ticket is gone.
+    /// Links ticket `link.ticket_id` to an external issue, on behalf of `by`: one it was filed as (PDT-221), or one
+    /// someone linked by hand (PDT-481), as `link.origin` says. Its source is unchanged: the issue came from the ticket,
+    /// or is only linked to it. `Ok(Err(id))` when a ticket already links that issue (nothing changes);
+    /// NotFound("ticket") when the ticket is gone.
     pub async fn link_external(
         &self,
         link: &StoredExternalLink,
@@ -1154,20 +1236,9 @@ impl Store {
         if let Some((other,)) = existing {
             return Ok(Err(other));
         }
-        sqlx::query(
-            "INSERT INTO ticket_links_external (ticket_id, system, connection_id, key, url, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&link.ticket_id)
-        .bind(&link.system)
-        .bind(&link.connection_id)
-        .bind(&link.key)
-        .bind(&link.url)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
+        insert_link(&mut tx, link, now).await?;
         touch(&mut tx, &link.ticket_id, now).await?;
-        let data = json!({"system": link.system, "key": link.key, "url": link.url});
+        let data = json!({"system": link.system, "key": link.key, "url": link.url, "origin": link.origin.as_str()});
         insert_event(&mut tx, &link.ticket_id, EventKind::Linked, by, None, Some(data), now).await?;
         tx.commit().await?;
         Ok(Ok(self.get_ticket(&link.ticket_id).await?.ok_or(TicketError::NotFound("ticket"))?))
@@ -1191,26 +1262,190 @@ impl Store {
         Ok(row.map(|(t,)| t))
     }
 
-    /// A ticket's links to issues of `system`.
-    pub async fn external_links(&self, ticket_id: &str, system: &str) -> Result<Vec<StoredExternalLink>, StoreError> {
-        let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
-            "SELECT ticket_id, system, connection_id, key, url FROM ticket_links_external \
-             WHERE ticket_id = ? AND system = ? ORDER BY key",
+    /// A ticket's links to issues of `system` that Done closes (or moves): what the trackers' Done built-ins and steps
+    /// act on. An issue linked by hand without "Close it when this ticket is done" is left alone (PDT-481).
+    pub async fn closing_links(&self, ticket_id: &str, system: &str) -> Result<Vec<StoredExternalLink>, StoreError> {
+        let sql = format!("{STORED_LINK} WHERE ticket_id = ? AND system = ? AND close_on_done = 1 ORDER BY key");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(ticket_id).bind(system).fetch_all(&self.pool).await?;
+        rows.iter().map(to_stored_link).collect()
+    }
+
+    /// Every link of a ticket to an issue, by system and key.
+    pub async fn issue_links(&self, ticket_id: &str) -> Result<Vec<StoredExternalLink>, StoreError> {
+        let sql = format!("{STORED_LINK} WHERE ticket_id = ? ORDER BY system, key");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(ticket_id).fetch_all(&self.pool).await?;
+        rows.iter().map(to_stored_link).collect()
+    }
+
+    /// A ticket's links that were last read before `before` (or never): the ones viewing it reads again.
+    pub async fn issue_links_to_read(
+        &self,
+        ticket_id: &str,
+        before: i64,
+    ) -> Result<Vec<StoredExternalLink>, StoreError> {
+        let sql = format!(
+            "{STORED_LINK} WHERE ticket_id = ? AND (checked_at IS NULL OR checked_at <= ?) ORDER BY system, key"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(ticket_id).bind(before).fetch_all(&self.pool).await?;
+        rows.iter().map(to_stored_link).collect()
+    }
+
+    /// Records what the tracker says of a linked issue now (its title and state). Not an edit of the ticket.
+    pub async fn issue_seen(
+        &self,
+        link: &StoredExternalLink,
+        title: &str,
+        state: IssueState,
+        now: i64,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.write_tx().await?;
+        sqlx::query(
+            "UPDATE ticket_links_external SET title = ?, state = ?, checked_at = ? \
+             WHERE system = ? AND connection_id = ? AND key = ?",
+        )
+        .bind(title)
+        .bind(state.as_str())
+        .bind(now)
+        .bind(&link.system)
+        .bind(&link.connection_id)
+        .bind(&link.key)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Marks a linked issue as read at `now` without news (the tracker couldn't be reached): it isn't tried again on
+    /// every view.
+    pub async fn issue_checked(&self, link: &StoredExternalLink, now: i64) -> Result<(), StoreError> {
+        let mut tx = self.write_tx().await?;
+        sqlx::query(
+            "UPDATE ticket_links_external SET checked_at = ? WHERE system = ? AND connection_id = ? AND key = ?",
+        )
+        .bind(now)
+        .bind(&link.system)
+        .bind(&link.connection_id)
+        .bind(&link.key)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Removes ticket `ticket_id`'s link to issue `key` of `system`, on behalf of `by` (an `unlinked` event).
+    /// NotFound("link") when it has no such link; NotFound("ticket") when the ticket is gone.
+    pub async fn unlink_external(
+        &self,
+        ticket_id: &str,
+        system: &str,
+        key: &str,
+        by: impl Into<By>,
+        now: i64,
+    ) -> TResult<Ticket> {
+        let mut tx = self.write_tx().await?;
+        let gone: Option<(String,)> = sqlx::query_as(
+            "DELETE FROM ticket_links_external WHERE ticket_id = ? AND system = ? AND key = ? RETURNING url",
         )
         .bind(ticket_id)
         .bind(system)
-        .fetch_all(&self.pool)
+        .bind(key)
+        .fetch_optional(&mut *tx)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|(ticket_id, system, connection_id, key, url)| StoredExternalLink {
-                ticket_id,
-                system,
-                connection_id,
-                key,
-                url,
-            })
-            .collect())
+        let Some((url,)) = gone else {
+            let exists: Option<(String,)> =
+                sqlx::query_as("SELECT id FROM tickets WHERE id = ?").bind(ticket_id).fetch_optional(&mut *tx).await?;
+            return Err(TicketError::NotFound(if exists.is_some() { "link" } else { "ticket" }));
+        };
+        touch(&mut tx, ticket_id, now).await?;
+        let data = json!({"system": system, "key": key, "url": url});
+        insert_event(&mut tx, ticket_id, EventKind::Unlinked, by, None, Some(data), now).await?;
+        tx.commit().await?;
+        self.get_ticket(ticket_id).await?.ok_or(TicketError::NotFound("ticket"))
+    }
+
+    /// Whether Done closes (or moves) the linked issue `key` of `system` (PDT-481: a manual link's toggle).
+    /// NotFound("link") when the ticket has no such link.
+    pub async fn set_close_on_done(
+        &self,
+        ticket_id: &str,
+        system: &str,
+        key: &str,
+        on: bool,
+        now: i64,
+    ) -> TResult<Ticket> {
+        let mut tx = self.write_tx().await?;
+        let r = sqlx::query(
+            "UPDATE ticket_links_external SET close_on_done = ? WHERE ticket_id = ? AND system = ? AND key = ?",
+        )
+        .bind(on)
+        .bind(ticket_id)
+        .bind(system)
+        .bind(key)
+        .execute(&mut *tx)
+        .await?;
+        if r.rows_affected() == 0 {
+            return Err(TicketError::NotFound("link"));
+        }
+        touch(&mut tx, ticket_id, now).await?;
+        tx.commit().await?;
+        self.get_ticket(ticket_id).await?.ok_or(TicketError::NotFound("ticket"))
+    }
+
+    /// Adds a plain link (an address and its label, checked by the caller) to a ticket, on behalf of `by`. Adding an
+    /// address it already has relabels it. NotFound("ticket") when the ticket is gone.
+    pub async fn add_web_link(
+        &self,
+        ticket_id: &str,
+        url: &str,
+        label: &str,
+        by: impl Into<By>,
+        now: i64,
+    ) -> TResult<Ticket> {
+        let mut tx = self.write_tx().await?;
+        let exists: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM tickets WHERE id = ?").bind(ticket_id).fetch_optional(&mut *tx).await?;
+        if exists.is_none() {
+            return Err(TicketError::NotFound("ticket"));
+        }
+        sqlx::query(
+            "INSERT INTO ticket_web_links (id, ticket_id, url, label, created_at) VALUES (?, ?, ?, ?, ?) \
+             ON CONFLICT (ticket_id, url) DO UPDATE SET label = excluded.label",
+        )
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(ticket_id)
+        .bind(url)
+        .bind(label)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        touch(&mut tx, ticket_id, now).await?;
+        let data = json!({"url": url, "label": label});
+        insert_event(&mut tx, ticket_id, EventKind::Linked, by, None, Some(data), now).await?;
+        tx.commit().await?;
+        self.get_ticket(ticket_id).await?.ok_or(TicketError::NotFound("ticket"))
+    }
+
+    /// Removes a ticket's plain link `link_id`, on behalf of `by`. NotFound("link") when it has no such link.
+    pub async fn remove_web_link(
+        &self,
+        ticket_id: &str,
+        link_id: &str,
+        by: impl Into<By>,
+        now: i64,
+    ) -> TResult<Ticket> {
+        let mut tx = self.write_tx().await?;
+        let gone: Option<(String, String)> =
+            sqlx::query_as("DELETE FROM ticket_web_links WHERE ticket_id = ? AND id = ? RETURNING url, label")
+                .bind(ticket_id)
+                .bind(link_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some((url, label)) = gone else { return Err(TicketError::NotFound("link")) };
+        touch(&mut tx, ticket_id, now).await?;
+        let data = json!({"url": url, "label": label});
+        insert_event(&mut tx, ticket_id, EventKind::Unlinked, by, None, Some(data), now).await?;
+        tx.commit().await?;
+        self.get_ticket(ticket_id).await?.ok_or(TicketError::NotFound("ticket"))
     }
 
     /// Adds a ticket with the project's next number, at the top of its stage (or where `before`/`after` say), with a
@@ -1442,6 +1677,15 @@ impl Store {
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id).fetch_all(&mut *conn).await?;
         let mut part_list = rows.iter().map(to_summary).collect::<Result<Vec<_>, _>>()?;
         decorate(&mut conn, &mut part_list).await?;
+        let web_links = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT id, url, label FROM ticket_web_links WHERE ticket_id = ? ORDER BY created_at, id",
+        )
+        .bind(id)
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .map(|(id, url, label)| WebLink { id, url, label })
+        .collect();
         Ok(Some(Ticket {
             summary: s,
             description,
@@ -1451,6 +1695,7 @@ impl Store {
             sessions,
             overlaps: vec![],
             part_list,
+            web_links,
         }))
     }
 
@@ -2816,18 +3061,21 @@ mod tests {
     async fn an_external_issue_links_to_one_ticket() {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
-        let link = StoredExternalLink {
-            ticket_id: String::new(),
-            system: "tracker".into(),
-            connection_id: "c".into(),
-            key: "ABC-1".into(),
-            url: "https://s/browse/ABC-1".into(),
-        };
+        // Whatever the caller says, an import's link is `imported` and Done closes its issue.
+        let link = StoredExternalLink::new("", "tracker", "c", "ABC-1", "https://s/browse/ABC-1", LinkOrigin::Manual);
         let t = store.create_linked_ticket("t1", "p", &new("Fix"), &link, Actor::System, 1).await.unwrap().unwrap();
         assert_eq!(t.summary.source, TicketSource::External, "what an issue says is outside input");
         assert_eq!(
             t.summary.external,
-            [ExternalLink { system: "tracker".into(), key: "ABC-1".into(), url: link.url.clone() }]
+            [ExternalLink {
+                system: "tracker".into(),
+                key: "ABC-1".into(),
+                url: link.url.clone(),
+                origin: LinkOrigin::Imported,
+                close_on_done: true,
+                title: None,
+                state: None,
+            }]
         );
         assert_eq!(
             store.create_linked_ticket("t2", "p", &new("Again"), &link, Actor::System, 2).await.unwrap(),
@@ -2836,7 +3084,7 @@ mod tests {
         assert!(store.get_ticket("t2").await.unwrap().is_none(), "nothing made the second time");
         assert_eq!(store.ticket_for_external("tracker", "c", "ABC-1").await.unwrap().as_deref(), Some("t1"));
         assert_eq!(store.ticket_for_external("tracker", "other", "ABC-1").await.unwrap(), None);
-        assert_eq!(store.external_links("t1", "tracker").await.unwrap()[0].connection_id, "c");
+        assert_eq!(store.closing_links("t1", "tracker").await.unwrap()[0].connection_id, "c");
         let page = store.query_tickets(&filter(in_project())).await.unwrap();
         assert_eq!(page.items[0].external[0].key, "ABC-1", "lists carry the link too");
         store.delete_ticket("t1").await.unwrap();
@@ -2848,18 +3096,27 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
         let t = add(&store, "t1", new("Fix")).await;
-        let link = StoredExternalLink {
-            ticket_id: t.summary.id.clone(),
-            system: "github".into(),
-            connection_id: "o/r".into(),
-            key: "o/r#5".into(),
-            url: "https://github.com/o/r/issues/5".into(),
-        };
+        let link = StoredExternalLink::new(
+            &t.summary.id,
+            "github",
+            "o/r",
+            "o/r#5",
+            "https://github.com/o/r/issues/5",
+            LinkOrigin::Created,
+        );
         let linked = store.link_external(&link, Actor::User, 9).await.unwrap().unwrap();
         assert_eq!(linked.summary.source, TicketSource::User, "filed from the ticket: not outside input");
         assert_eq!(
             linked.summary.external,
-            [ExternalLink { system: "github".into(), key: "o/r#5".into(), url: link.url.clone() }]
+            [ExternalLink {
+                system: "github".into(),
+                key: "o/r#5".into(),
+                url: link.url.clone(),
+                origin: LinkOrigin::Created,
+                close_on_done: true,
+                title: None,
+                state: None,
+            }]
         );
         assert_eq!(linked.summary.updated_at, 9);
         assert_eq!(events(&store, "t1").await, [EventKind::Created, EventKind::Linked]);
@@ -2872,6 +3129,78 @@ mod tests {
         );
         let gone = StoredExternalLink { ticket_id: "nope".into(), key: "o/r#6".into(), ..link };
         assert!(matches!(store.link_external(&gone, Actor::User, 10).await, Err(TicketError::NotFound("ticket"))));
+    }
+
+    #[tokio::test]
+    async fn an_issue_linked_by_hand_is_closed_on_done_only_when_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "t1", new("Fix")).await;
+        let mut link = StoredExternalLink::new(
+            "t1",
+            "github",
+            "o/r",
+            "o/r#7",
+            "https://github.com/o/r/issues/7",
+            LinkOrigin::Manual,
+        );
+        assert!(!link.close_on_done, "someone else's issue is never closed by surprise");
+        (link.title, link.state) = (Some("Crash".into()), Some(IssueState::Open));
+        let t = store.link_external(&link, Actor::User, 5).await.unwrap().unwrap();
+        let l = &t.summary.external[0];
+        assert_eq!((l.origin, l.close_on_done), (LinkOrigin::Manual, false));
+        assert_eq!((l.title.as_deref(), l.state), (Some("Crash"), Some(IssueState::Open)));
+        assert!(store.closing_links("t1", "github").await.unwrap().is_empty(), "Done leaves it alone");
+        assert_eq!(store.issue_links("t1").await.unwrap().len(), 1);
+        assert!(store.issue_links_to_read("t1", 4).await.unwrap().is_empty(), "read when it was linked");
+        assert_eq!(store.issue_links_to_read("t1", 5).await.unwrap().len(), 1);
+
+        let t = store.set_close_on_done("t1", "github", "o/r#7", true, 6).await.unwrap();
+        assert!(t.summary.external[0].close_on_done);
+        assert_eq!(store.closing_links("t1", "github").await.unwrap()[0].key, "o/r#7");
+        assert!(matches!(
+            store.set_close_on_done("t1", "github", "o/r#8", true, 6).await,
+            Err(TicketError::NotFound("link"))
+        ));
+
+        store.issue_seen(&link, "Crash on start", IssueState::Closed, 7).await.unwrap();
+        let t = store.get_ticket("t1").await.unwrap().unwrap();
+        assert_eq!(t.summary.external[0].title.as_deref(), Some("Crash on start"));
+        assert_eq!(t.summary.external[0].state, Some(IssueState::Closed));
+
+        let t = store.unlink_external("t1", "github", "o/r#7", Actor::User, 8).await.unwrap();
+        assert!(t.summary.external.is_empty());
+        assert_eq!(events(&store, "t1").await, [EventKind::Created, EventKind::Linked, EventKind::Unlinked]);
+        assert!(matches!(
+            store.unlink_external("t1", "github", "o/r#7", Actor::User, 9).await,
+            Err(TicketError::NotFound("link"))
+        ));
+        assert!(matches!(
+            store.unlink_external("nope", "github", "o/r#7", Actor::User, 9).await,
+            Err(TicketError::NotFound("ticket"))
+        ));
+    }
+
+    #[tokio::test]
+    async fn plain_links_are_kept_apart_from_issues() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        add(&store, "t1", new("Fix")).await;
+        store.add_web_link("t1", "https://figma.com/f/1", "Figma", Actor::User, 2).await.unwrap();
+        let t = store.add_web_link("t1", "https://docs.rs/x", "Docs", Actor::User, 3).await.unwrap();
+        assert_eq!(t.web_links.iter().map(|l| l.label.as_str()).collect::<Vec<_>>(), ["Figma", "Docs"]);
+        assert!(t.summary.external.is_empty());
+        let t = store.add_web_link("t1", "https://figma.com/f/1", "Design", Actor::User, 4).await.unwrap();
+        assert_eq!(t.web_links.len(), 2, "the same address is relabelled, not added twice");
+        assert_eq!(t.web_links[0].label, "Design");
+        let id = t.web_links[1].id.clone();
+        let t = store.remove_web_link("t1", &id, Actor::User, 5).await.unwrap();
+        assert_eq!(t.web_links.len(), 1);
+        assert!(matches!(store.remove_web_link("t1", &id, Actor::User, 6).await, Err(TicketError::NotFound("link"))));
+        assert!(matches!(
+            store.add_web_link("nope", "https://a.b", "A", Actor::User, 6).await,
+            Err(TicketError::NotFound("ticket"))
+        ));
     }
 
     #[tokio::test]

@@ -8,6 +8,7 @@ use crate::routes::now_ms;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use pdt_core::forge::ForgeKind;
 use pdt_core::github_issue::{GITHUB, issue_key, repo_id, valid_repo};
+use pdt_core::issue_link::LinkOrigin;
 use pdt_core::pr::{Mergeable, PrState};
 use pdt_core::ticket::{Actor, NewTicket};
 use pdt_forge::{Forge, ForgeError, ReviewVerdict};
@@ -215,13 +216,7 @@ impl NodeKind for PrTicket {
                 "" => format!("https://github.com/{repo}/pull/{number}"),
                 u => u.to_string(),
             };
-            let link = StoredExternalLink {
-                ticket_id: String::new(),
-                system: GITHUB.into(),
-                connection_id: repo_id(&repo),
-                key: key.clone(),
-                url,
-            };
+            let link = StoredExternalLink::new("", GITHUB, repo_id(&repo), &key, url, LinkOrigin::Imported);
             let id = uuid::Uuid::now_v7().to_string();
             match store.create_linked_ticket(&id, project, &valid, &link, Actor::System, now_ms()).await {
                 Ok(Ok(t)) => {

@@ -229,7 +229,10 @@ async fn bug_reports_are_triaged_into_tickets_duplicates_and_rejections() {
     assert_eq!((ticket["priority"].as_str(), ticket["labels"].clone()), (Some("high"), json!(["bug", "crash"])));
     assert_eq!((ticket["source"].as_str(), ticket["admitted"].as_bool()), (Some("external"), Some(false)));
     let key = format!("{}#2", RELEASE_REPO.to_ascii_lowercase());
-    assert_eq!(ticket["external"], json!([{"system": "github", "key": key, "url": issue(2, "", &[]).url}]));
+    assert_eq!(
+        ticket["external"],
+        json!([{"system": "github", "key": key, "url": issue(2, "", &[]).url, "origin": "imported", "closeOnDone": true}])
+    );
     let (id, tkey) = (ticket["id"].as_str().unwrap().to_string(), ticket["key"].as_str().unwrap().to_string());
     let comments = env.gh.comments_on(RELEASE_REPO, 2);
     assert!(comments.len() == 1 && comments[0].contains(&format!("tracked as {tkey}")), "{comments:?}");

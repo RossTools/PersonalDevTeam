@@ -25,6 +25,7 @@ pub mod inbox;
 pub mod inbox_decide;
 pub mod instance;
 pub mod integration;
+pub mod issue_link;
 pub mod links;
 pub mod liveness;
 pub mod local_network;

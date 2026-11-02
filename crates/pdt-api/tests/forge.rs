@@ -770,7 +770,8 @@ async fn the_user_files_a_ticket_as_a_github_issue_and_the_ticket_links_it() {
     let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{ticket}"), None).await;
     assert_eq!(
         t["external"],
-        json!([{"system": "github", "key": "o/r#500", "url": "https://github.com/o/r/issues/500"}])
+        json!([{"system": "github", "key": "o/r#500", "url": "https://github.com/o/r/issues/500", "origin": "created",
+                "closeOnDone": true, "title": "Board is slow", "state": "open"}])
     );
     assert_eq!(t["source"], "user", "filed from the ticket, it is still the user's own (not external)");
     let (_, ev) = call(&env.app, "GET", &format!("/api/tickets/{ticket}/events"), None).await;

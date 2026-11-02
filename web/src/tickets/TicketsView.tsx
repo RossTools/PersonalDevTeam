@@ -34,6 +34,7 @@ import { BoardViewMenu } from './BoardViewMenu';
 import { NewTicketFab, PhoneToolbar } from './PhoneTickets';
 import { PhoneTicket } from './PhoneTicket';
 import { useClearToStartToasts } from './clearToStart';
+import { ExternalKeys } from './ExternalKeys';
 import { TicketBadges } from './TicketBadges';
 import { ImportByKeyDialog, useIssueImports, type IssueImport } from './ImportByKeyDialog';
 import {
@@ -199,6 +200,7 @@ function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
     <>
       <TicketKey ticketKey={t.key} className="w-20 justify-start" />
       <span className={cn('min-w-0 flex-1 truncate', isClosed(t.stage) && 'text-muted-foreground line-through')}>{t.title}</span>
+      <ExternalKeys links={t.external} />
       {badges}
       <LabelChips labels={t.labels} className="hidden max-w-60 overflow-hidden lg:flex" />
       <Badge className="w-20 justify-center">{STAGE_LABEL[t.stage]}</Badge>

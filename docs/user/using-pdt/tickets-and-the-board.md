@@ -109,6 +109,27 @@ A ticket's **Links** section has:
 
 A ticket with an open blocker shows **Blocked**; starting it warns you, and auto-start skips it.
 
+### Issues in GitHub, GitLab and Jira
+
+To tie a ticket to an issue that is already in a tracker, click **Link issue…** in its **Links** section
+and paste the issue's address or key: `owner/name#12` (or `#12` for the project's own repository) on GitHub or
+GitLab, `ABC-123` on Jira. The tracker's plugin must be on, and PDT reads the issue through your sign-in or the
+project's connection, so private issues work too.
+
+A linked issue shows beside the ticket's key, on its board card and in the backlog, with the tracker's icon, and in
+**Links** › **Issues** with its title and whether it is open or closed. Opening the ticket reads them again when they
+are a few minutes old. **⋯** › **Unlink** removes the link; nothing changes in the tracker. An issue can be linked to
+one ticket at a time.
+
+Moving a ticket to **Done** closes the issues PDT filed from it or imported it from (Jira moves its issue to the
+project's done status). An issue you linked by hand is left as it is unless you tick **Close it when this ticket is
+done** under it. GitLab issues are never closed this way.
+
+An address no tracker recognizes (a design, some docs) can be added as a plain link instead: give it a label, or leave
+it empty to show the site's name. Plain links are listed under **Other links**.
+
+The PM links issues too, when you ask it: it asks before each one unless the project lets it act.
+
 Tickets that change the same code count too. If a project names its **areas** (folders that belong together), a ticket
 in the same area as one in progress shows an overlap, and its **Overlaps** section lists the shared areas and files
 both branches change. An overlap in an exclusive area (database migrations, say) is a conflict. See

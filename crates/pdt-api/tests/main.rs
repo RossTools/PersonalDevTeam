@@ -38,6 +38,7 @@ mod host_triggers;
 mod identity;
 mod install_updates;
 mod integrations;
+mod issue_links;
 mod liveness;
 mod local_documents;
 mod local_forge;
