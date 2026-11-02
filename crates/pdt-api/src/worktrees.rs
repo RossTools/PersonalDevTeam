@@ -1,4 +1,4 @@
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -15,7 +15,7 @@ fn mark_missing(mut w: Worktree) -> Worktree {
 }
 
 pub(crate) async fn list(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<Worktree>>, ApiError> {
-    st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    st.project(&id).await?;
     Ok(Json(st.store.list_worktrees(&id).await?.into_iter().map(mark_missing).collect()))
 }
 
@@ -37,7 +37,7 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<Worktree>), ApiError> {
     let Json(input) = payload?;
     let valid = input.validate()?;
-    let project = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(&id).await?;
     crate::projects::needs_repo(&project, "worktrees")?;
     let base = valid.base.unwrap_or_else(|| project.base_branch.clone());
     let wt = make_worktree(&st, &project, &valid.branch, &base, false).await?;
@@ -62,9 +62,8 @@ pub(crate) async fn make_worktree(
         pdt_git::ensure_excluded(&repo, &format!("/{WORKTREES_DIR}/"))?;
         if target.exists() {
             let head = adoptable(&repo, &target, &b).ok_or_else(|| {
-                ApiError::new(
-                    StatusCode::CONFLICT,
-                    "worktree_path_taken",
+                ApiError::conflict(
+                    codes::WORKTREE_PATH_TAKEN,
                     format!("the worktree folder {} is already in use (by another branch?)", target.display()),
                 )
             })?;
@@ -126,10 +125,6 @@ pub(crate) struct RemoveQuery {
     delete_branch: bool,
 }
 
-fn conflict(code: &'static str, msg: &str) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, code, msg.to_string())
-}
-
 /// Removes a worktree's folder (git worktree remove) and forgets it. A worktree whose folder is already gone is
 /// just forgotten.
 pub(crate) async fn remove(
@@ -146,13 +141,13 @@ pub(crate) async fn remove(
 /// `branch_not_deleted` when only the branch stayed.
 pub(crate) async fn remove_worktree(st: &AppState, id: &str, force: bool, delete_branch: bool) -> Result<(), ApiError> {
     let id = id.to_string();
-    let wt = st.store.get_worktree(&id).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
+    let wt = st.store.get_worktree(&id).await?.or_404("worktree")?;
     let attempts = st.store.list_active_attempts().await?;
     if let Some(a) = attempts.iter().find(|a| a.attempt.worktree_id.as_deref() == Some(id.as_str())) {
         let msg = format!("{} works in this worktree; finish the ticket or abandon its attempt first", a.ticket_key);
-        return Err(conflict("worktree_attempt", &msg));
+        return Err(ApiError::conflict(codes::WORKTREE_ATTEMPT, &msg));
     }
-    let project = st.store.get_project(&wt.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(&wt.project_id).await?;
     let sessions: Vec<_> = st
         .store
         .list_sessions(&project.id)
@@ -161,18 +156,18 @@ pub(crate) async fn remove_worktree(st: &AppState, id: &str, force: bool, delete
         .filter(|s| s.worktree_id.as_deref() == Some(&id))
         .collect();
     if sessions.iter().any(|s| st.ptys.is_running(&s.id)) {
-        return Err(conflict("worktree_busy", "stop this branch's sessions first"));
+        return Err(ApiError::conflict(codes::WORKTREE_BUSY, "stop this branch's sessions first"));
     }
     let active_run = st.store.list_active_runs().await?.into_iter().any(|r| r.worktree_id.as_deref() == Some(&id));
     if active_run {
-        return Err(conflict("worktree_busy", "stop this branch's runs first"));
+        return Err(ApiError::conflict(codes::WORKTREE_BUSY, "stop this branch's runs first"));
     }
     let (repo, path, branch) = (PathBuf::from(&project.repo_path), PathBuf::from(&wt.path), wt.branch.clone());
     let branch_error = tokio::task::spawn_blocking(move || -> Result<Option<String>, ApiError> {
         if path.is_dir() {
             if !force && pdt_git::is_dirty(&path)? {
-                return Err(conflict(
-                    "worktree_dirty",
+                return Err(ApiError::conflict(
+                    codes::WORKTREE_DIRTY,
                     "this worktree has uncommitted changes; remove it anyway to discard them",
                 ));
             }
@@ -191,9 +186,8 @@ pub(crate) async fn remove_worktree(st: &AppState, id: &str, force: bool, delete
     st.store.delete_worktree(&id).await?;
     match branch_error {
         None => Ok(()),
-        Some(msg) => Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "branch_not_deleted",
+        Some(msg) => Err(ApiError::conflict(
+            codes::BRANCH_NOT_DELETED,
             format!("the worktree was removed, but its branch was not deleted: {msg}"),
         )),
     }

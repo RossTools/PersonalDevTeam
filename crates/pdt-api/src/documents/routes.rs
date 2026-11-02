@@ -3,7 +3,7 @@
 
 use super::local::{self, DiffsApplied, DocEvent, LocalProvider};
 use super::{CommentInput, DocumentProvider, NewFile, ProviderError, provider, providers};
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -20,22 +20,18 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ts_rs::TS;
 
-fn invalid(m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m)
-}
-
 impl From<ProviderError> for ApiError {
     fn from(e: ProviderError) -> Self {
         match e {
-            ProviderError::Unsupported(m) => ApiError::new(StatusCode::BAD_REQUEST, "unsupported", m),
-            ProviderError::Invalid(m) => invalid(m),
+            ProviderError::Unsupported(m) => ApiError::bad_request(codes::UNSUPPORTED, m),
+            ProviderError::Invalid(m) => ApiError::invalid(m),
             ProviderError::NotFound => ApiError::new(
                 StatusCode::NOT_FOUND,
-                "document_missing",
+                codes::DOCUMENT_MISSING,
                 "the provider no longer has this document (deleted, or access was taken away)",
             ),
-            ProviderError::Busy(m) => ApiError::new(StatusCode::TOO_MANY_REQUESTS, "provider_busy", m),
-            ProviderError::Failed(m) => ApiError::new(StatusCode::BAD_GATEWAY, "provider_failed", m),
+            ProviderError::Busy(m) => ApiError::new(StatusCode::TOO_MANY_REQUESTS, codes::PROVIDER_BUSY, m),
+            ProviderError::Failed(m) => ApiError::upstream(codes::PROVIDER_FAILED, m),
         }
     }
 }
@@ -47,9 +43,8 @@ fn by_of(given: Option<Actor>) -> By {
 
 fn need(p: &Option<Arc<dyn DocumentProvider>>, id: &str) -> Result<Arc<dyn DocumentProvider>, ApiError> {
     p.clone().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "no_provider",
+        ApiError::bad_request(
+            codes::NO_PROVIDER,
             format!("{id} isn't a document provider this host has (is its plugin on?)"),
         )
     })
@@ -66,7 +61,7 @@ async fn project_id(st: &AppState, given: &str) -> Result<String, ApiError> {
         .into_iter()
         .find(|p| p.key.eq_ignore_ascii_case(given.trim()))
         .map(|p| p.id)
-        .ok_or_else(|| ApiError::not_found("project"))
+        .or_404("project")
 }
 
 /// A ticket's id from its id or key.
@@ -74,11 +69,11 @@ async fn ticket_id(st: &AppState, given: &str) -> Result<String, ApiError> {
     if st.store.get_ticket_summary(given).await?.is_some() {
         return Ok(given.to_string());
     }
-    st.store.ticket_id_by_key(given).await?.ok_or_else(|| ApiError::not_found("ticket"))
+    st.store.ticket_id_by_key(given).await?.or_404("ticket")
 }
 
 pub(crate) async fn document(st: &AppState, id: &str) -> Result<Document, ApiError> {
-    st.store.get_document(id).await?.ok_or_else(|| ApiError::not_found("document"))
+    st.store.get_document(id).await?.or_404("document")
 }
 
 /// The provider of a document PDT has.
@@ -242,26 +237,22 @@ async fn targets(
 
 /// Makes a document with the provider and records it, linked.
 pub(crate) async fn create_document(st: &AppState, new: NewDocument, by: &By) -> Result<Document, ApiError> {
-    let title = clean_title(&new.title).map_err(invalid)?;
+    let title = clean_title(&new.title).map_err(ApiError::invalid)?;
     let (project, ticket) = targets(st, new.project_id.as_deref(), new.ticket_id.as_deref()).await?;
     let id = match new.provider.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => p.to_string(),
-        None => default_provider(st, project.as_deref()).await?.ok_or_else(|| {
-            ApiError::new(StatusCode::BAD_REQUEST, "no_provider", "this host has no document provider yet")
-        })?,
+        None => default_provider(st, project.as_deref())
+            .await?
+            .ok_or_else(|| ApiError::bad_request(codes::NO_PROVIDER, "this host has no document provider yet"))?,
     };
     let p = need(&provider(st, &id), &id)?;
     let caps = p.capabilities();
     if !caps.create {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "unsupported",
-            format!("{} can't make documents", p.label()),
-        ));
+        return Err(ApiError::bad_request(codes::UNSUPPORTED, format!("{} can't make documents", p.label())));
     }
     if (new.kind == DocumentKind::Doc && !caps.docs) || (new.kind == DocumentKind::Sheet && !caps.sheets) {
         let what = if new.kind == DocumentKind::Doc { "text documents" } else { "spreadsheets" };
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "unsupported", format!("{} has no {what}", p.label())));
+        return Err(ApiError::bad_request(codes::UNSUPPORTED, format!("{} has no {what}", p.label())));
     }
     let file = p
         .create(NewFile {
@@ -360,7 +351,7 @@ pub(crate) async fn rename(
     payload: Result<Json<DocumentPatch>, JsonRejection>,
 ) -> Result<Json<Document>, ApiError> {
     let Json(patch) = payload?;
-    let title = clean_title(&patch.title).map_err(invalid)?;
+    let title = clean_title(&patch.title).map_err(ApiError::invalid)?;
     let d = document(&st, &id).await?;
     if let Some(p) = provider(&st, &d.provider)
         && p.capabilities().rename
@@ -389,9 +380,8 @@ pub(crate) async fn remove(
     if q.file {
         let p = provider_of(&st, &d)?;
         if !p.capabilities().delete {
-            return Err(ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "unsupported",
+            return Err(ApiError::bad_request(
+                codes::UNSUPPORTED,
                 format!("{} can't delete documents; remove it from PDT only", p.label()),
             ));
         }
@@ -421,7 +411,7 @@ pub(crate) async fn link_of(st: &AppState, l: &DocumentLinkInput) -> Result<Docu
     match (l.project_id.as_deref(), l.ticket_id.as_deref()) {
         (Some(p), None) => Ok(DocumentLink::Project(project_id(st, p).await?)),
         (None, Some(t)) => Ok(DocumentLink::Ticket(ticket_id(st, t).await?)),
-        _ => Err(invalid("give a projectId or a ticketId")),
+        _ => Err(ApiError::invalid("give a projectId or a ticketId")),
     }
 }
 
@@ -510,14 +500,10 @@ pub(crate) async fn apply_edits(
 ) -> Result<EditResult, ApiError> {
     let p = provider_of(st, d)?;
     if !p.capabilities().edit {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "unsupported",
-            format!("{} can't change documents", p.label()),
-        ));
+        return Err(ApiError::bad_request(codes::UNSUPPORTED, format!("{} can't change documents", p.label())));
     }
     if edits.is_empty() {
-        return Err(invalid("give at least one edit"));
+        return Err(ApiError::invalid("give at least one edit"));
     }
     let mut charts = Vec::new();
     for e in &mut edits {
@@ -545,9 +531,8 @@ pub(crate) async fn edit(
         let p = provider_of(&st, &d)?;
         let now = p.version(&d.provider_ref).await?;
         if now.as_deref().is_some_and(|v| v != base) {
-            return Err(ApiError::new(
-                StatusCode::CONFLICT,
-                "conflict",
+            return Err(ApiError::conflict(
+                codes::CONFLICT,
                 "the document changed since you opened it (someone else, or an agent, saved it)",
             ));
         }
@@ -559,7 +544,7 @@ pub(crate) async fn with_comments(st: &AppState, id: &str) -> Result<(Document, 
     let d = document(st, id).await?;
     let p = provider_of(st, &d)?;
     if !p.capabilities().comments {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "unsupported", format!("{} has no comments", p.label())));
+        return Err(ApiError::bad_request(codes::UNSUPPORTED, format!("{} has no comments", p.label())));
     }
     Ok((d, p))
 }
@@ -595,7 +580,7 @@ const MAX_COMMENT: usize = 20_000;
 fn comment_body(body: &str) -> Result<String, ApiError> {
     let body = body.trim();
     if body.is_empty() {
-        return Err(invalid("a comment needs some text"));
+        return Err(ApiError::invalid("a comment needs some text"));
     }
     Ok(body.chars().take(MAX_COMMENT).collect())
 }
@@ -621,7 +606,7 @@ pub(crate) async fn reply(
     payload: Result<Json<CommentReplyInput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<CommentReply>), ApiError> {
     let Json(r) = payload?;
-    let body = comment_body(&r.body).map_err(|_| invalid("a reply needs some text"))?;
+    let body = comment_body(&r.body).map_err(|_| ApiError::invalid("a reply needs some text"))?;
     let (d, p) = with_comments(&st, &id).await?;
     Ok((StatusCode::CREATED, Json(p.reply(&d.provider_ref, &comment, &body, author(r.by)).await?)))
 }
@@ -668,7 +653,7 @@ pub(crate) async fn create_design_doc(
     by: &By,
 ) -> Result<Document, ApiError> {
     let id = ticket_id(st, ticket).await?;
-    let t = st.store.get_ticket_summary(&id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    let t = st.store.get_ticket_summary(&id).await?.or_404("ticket")?;
     let (title, markdown) = design_doc(&t.key, &t.title);
     let new = NewDocument {
         title,
@@ -691,7 +676,7 @@ pub(crate) async fn design(
     let input: NewDesignDoc = if body.iter().all(u8::is_ascii_whitespace) {
         NewDesignDoc::default()
     } else {
-        serde_json::from_slice(&body).map_err(|e| invalid(e.to_string()))?
+        serde_json::from_slice(&body).map_err(|e| ApiError::invalid(e.to_string()))?
     };
     let d = create_design_doc(&st, &id, input.provider, &by_of(input.by)).await?;
     Ok((StatusCode::CREATED, Json(d)))
@@ -714,7 +699,7 @@ pub(crate) async fn put_settings(
 ) -> Result<Json<ProjectDocumentSettings>, ApiError> {
     let Json(s) = payload?;
     let id = project_id(&st, &id).await?;
-    let s = s.cleaned().map_err(invalid)?;
+    let s = s.cleaned().map_err(ApiError::invalid)?;
     st.store.put_project_document_settings(&id, &s).await?;
     Ok(Json(s))
 }
@@ -740,7 +725,7 @@ pub(crate) async fn for_agent(st: &AppState, ticket: &str) -> Result<Vec<serde_j
 async fn local_doc(st: &AppState, id: &str) -> Result<(Document, Arc<LocalProvider>), ApiError> {
     let d = document(st, id).await?;
     if d.provider != local::ID {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "unsupported", "only PDT's local documents can do this"));
+        return Err(ApiError::bad_request(codes::UNSUPPORTED, "only PDT's local documents can do this"));
     }
     Ok((d, st.local.clone()))
 }
@@ -786,10 +771,10 @@ pub(crate) async fn sheet_diffs(
     let (d, local) = local_doc(&st, &id).await?;
     let view = q.view.trim();
     if view.is_empty() || view == "pdt" || view.len() > 64 {
-        return Err(invalid("give the view's own id"));
+        return Err(ApiError::invalid("give the view's own id"));
     }
     let r = local.view_diffs(&d.provider_ref, view, q.seq, &body).map_err(|e| match e {
-        ProviderError::Invalid(m) => ApiError::new(StatusCode::CONFLICT, "sheet_conflict", m),
+        ProviderError::Invalid(m) => ApiError::conflict(codes::SHEET_CONFLICT, m),
         e => e.into(),
     })?;
     st.store.touch_document(&id, now_ms()).await?;
@@ -916,7 +901,7 @@ pub(crate) async fn export(
                     Some(n) => sheets.iter().find(|s| s.name == n),
                     None => sheets.first(),
                 }
-                .ok_or_else(|| invalid("there is no such sheet"))?;
+                .ok_or_else(|| ApiError::invalid("there is no such sheet"))?;
                 let mut csv = String::new();
                 for row in &s.rows {
                     let line: Vec<String> = row
@@ -938,7 +923,7 @@ pub(crate) async fn export(
                     mime: "text/csv; charset=utf-8",
                 }
             }
-            _ => return Err(invalid(format!("{} can't export this as {format}", p.label()))),
+            _ => return Err(ApiError::invalid(format!("{} can't export this as {format}", p.label()))),
         }
     };
     let disposition = format!(
@@ -987,10 +972,10 @@ pub(crate) async fn upload(
     body: axum::body::Bytes,
 ) -> Result<(StatusCode, Json<UploadedDocument>), ApiError> {
     if body.is_empty() {
-        return Err(invalid("the file is empty"));
+        return Err(ApiError::invalid("the file is empty"));
     }
     if provider(&st, local::ID).is_none() {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "no_provider", "this host has no local documents"));
+        return Err(ApiError::bad_request(codes::NO_PROVIDER, "this host has no local documents"));
     }
     let (project, ticket) = targets(&st, q.project_id.as_deref(), q.ticket_id.as_deref()).await?;
     let folder = folder(&st, project.as_deref()).await?;
@@ -1021,7 +1006,7 @@ pub(crate) async fn image(
 ) -> Result<(StatusCode, Json<SavedImage>), ApiError> {
     let (d, local) = local_doc(&st, &id).await?;
     if body.is_empty() {
-        return Err(invalid("the image is empty"));
+        return Err(ApiError::invalid("the image is empty"));
     }
     let path = local.save_image(&d.provider_ref, q.name.trim(), &body)?;
     Ok((StatusCode::CREATED, Json(SavedImage { path })))
@@ -1048,7 +1033,7 @@ pub(crate) async fn asset(
 async fn beside_session(st: &AppState, id: &str) -> Result<(), ApiError> {
     match st.store.get_session(id).await? {
         Some(s) if s.kind == pdt_core::session::SessionKind::AgentTui => Ok(()),
-        Some(_) => Err(invalid("only an agent or PM conversation has documents beside it")),
+        Some(_) => Err(ApiError::invalid("only an agent or PM conversation has documents beside it")),
         None => Err(ApiError::not_found("session")),
     }
 }

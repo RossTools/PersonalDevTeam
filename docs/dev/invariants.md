@@ -183,7 +183,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   retries, an event whose run could not start stay unprocessed, and a step's result that could not be written wait in
   `UnsavedResults` (the body is not run again). Keep the store error's text in a node's error (`e.to_string()`, or
   in a `format!`), never replace it with your own words. A route answers it with 503 `write_failed` and its message
-  (`ApiError::write_failed`, also from `ApiError::internal` given its text), and the router's `note_write_failures`
+  (`ApiError::write_failed`: from a `StoreError::Write`, a full disk or read-only volume in `ApiError::io`, or
+  `ApiError::from_text` given an engine error's text; `ApiError::internal` doesn't look at the text), and the router's `note_write_failures`
   records it, so the Inbox says so whoever wrote; a `BEGIN` that can't start (`Store::write_tx`) is recorded too.
 - **An event is marked processed only after it was matched against everything.** `match_events` returns before
   marking any event when it can't read the new events, the enabled workflows (`enabled_with_docs` gives `Err`) or the

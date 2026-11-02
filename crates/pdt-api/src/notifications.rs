@@ -11,7 +11,7 @@
 //! its default level. In quiet hours a toast or desktop notification is made at the Inbox level and remembered; the
 //! pass after they end makes one summary.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
 use crate::workflow::nodes::notification_levels::{KIND as LEVELS_KIND, Levels, LevelsConfig};
 use axum::Json;
@@ -643,9 +643,7 @@ pub(crate) async fn list(
 ) -> Result<Json<NotificationList>, ApiError> {
     let section = match q.section.as_deref() {
         None | Some("") => None,
-        Some(s) => Some(Section::parse(s).ok_or_else(|| {
-            ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "section is needs_you or updates")
-        })?),
+        Some(s) => Some(Section::parse(s).ok_or_else(|| ApiError::invalid("section is needs_you or updates"))?),
     };
     let f = pdt_store::NotificationFilter {
         section,
@@ -683,11 +681,7 @@ pub(crate) async fn read_all(
 pub(crate) async fn clear_one(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     if !st.store.dismiss_notification(&id, now_ms()).await? {
         return match st.store.get_notification(&id).await? {
-            Some(_) => Err(ApiError::new(
-                StatusCode::CONFLICT,
-                "needs_you",
-                "only Updates can be cleared; this one waits on you",
-            )),
+            Some(_) => Err(ApiError::conflict(codes::NEEDS_YOU, "only Updates can be cleared; this one waits on you")),
             None => Err(ApiError::not_found("notification")),
         };
     }

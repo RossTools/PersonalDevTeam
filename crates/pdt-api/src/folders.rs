@@ -2,7 +2,7 @@
 //! path on the host without typing it. Paths are in the host's own form (`C:\…` on Windows), whatever the browser's
 //! OS. Like every route it is owner-only (the identity guard); it reads only what the daemon's user can already read.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -85,10 +85,6 @@ pub struct NewFolder {
     pub name: String,
 }
 
-fn invalid(m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_folder", m)
-}
-
 fn home(st: &AppState) -> Option<String> {
     st.home_dir.as_ref().and_then(|h| host_path::normalize(&h.to_string_lossy(), STYLE))
 }
@@ -97,12 +93,11 @@ fn home(st: &AppState) -> Option<String> {
 fn resolve(input: &str, home: Option<&str>) -> Result<String, ApiError> {
     let input = if input.trim().is_empty() { "~" } else { input };
     host_path::expand(input, home, STYLE).ok_or_else(|| match input.trim().starts_with('~') && home.is_none() {
-        true => invalid("the home folder is not known; enter the full path"),
-        false => invalid(format!(
-            "{:?} is not a full path; start it with {} (or ~ for your home folder)",
-            input.trim(),
-            root_hint()
-        )),
+        true => ApiError::bad_request(codes::INVALID_FOLDER, "the home folder is not known; enter the full path"),
+        false => ApiError::bad_request(
+            codes::INVALID_FOLDER,
+            format!("{:?} is not a full path; start it with {} (or ~ for your home folder)", input.trim(), root_hint()),
+        ),
     })
 }
 
@@ -114,14 +109,12 @@ fn root_hint() -> &'static str {
 fn io_error(e: &std::io::Error, display: &str) -> ApiError {
     use std::io::ErrorKind::*;
     match e.kind() {
-        NotFound => ApiError::new(StatusCode::NOT_FOUND, "folder_missing", format!("{display} does not exist")),
-        NotADirectory => ApiError::new(StatusCode::BAD_REQUEST, "not_a_folder", format!("{display} is not a folder")),
-        PermissionDenied => ApiError::new(
-            StatusCode::FORBIDDEN,
-            "folder_unreadable",
-            format!("{display} cannot be read: permission denied"),
-        ),
-        _ => ApiError::new(StatusCode::BAD_REQUEST, "folder_unreadable", format!("{display} cannot be read: {e}")),
+        NotFound => ApiError::new(StatusCode::NOT_FOUND, codes::FOLDER_MISSING, format!("{display} does not exist")),
+        NotADirectory => ApiError::bad_request(codes::NOT_A_FOLDER, format!("{display} is not a folder")),
+        PermissionDenied => {
+            ApiError::forbidden(codes::PERMISSION_DENIED, format!("{display} cannot be read: permission denied"))
+        }
+        _ => ApiError::bad_request(codes::FOLDER_UNREADABLE, format!("{display} cannot be read: {e}")),
     }
 }
 
@@ -258,7 +251,8 @@ pub(crate) async fn create(
     let Json(input) = payload?;
     let home = home(&st);
     let parent = resolve(&input.parent, home.as_deref())?;
-    let name = host_path::folder_name(&input.name, STYLE).map_err(|e| invalid(e.to_string()))?;
+    let name = host_path::folder_name(&input.name, STYLE)
+        .map_err(|e| ApiError::bad_request(codes::INVALID_FOLDER, e.to_string()))?;
     let projects = st.store.list_projects().await?;
     let made = tokio::task::spawn_blocking(move || -> Result<FolderEntry, ApiError> {
         let parent_display = host_path::tilde(&parent, home.as_deref(), STYLE);
@@ -273,7 +267,7 @@ pub(crate) async fn create(
         let display = host_path::tilde(&path, home.as_deref(), STYLE);
         std::fs::create_dir(&path).map_err(|e| match e.kind() {
             std::io::ErrorKind::AlreadyExists => {
-                ApiError::new(StatusCode::CONFLICT, "folder_exists", format!("{display} already exists"))
+                ApiError::conflict(codes::FOLDER_EXISTS, format!("{display} already exists"))
             }
             _ => io_error(&e, &display),
         })?;

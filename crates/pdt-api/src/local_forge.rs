@@ -16,7 +16,7 @@
 //! the Inbox, and the change request waits for the next Merge. With `branches`, each ticket branch is pushed too as it
 //! moves. Git uses the user's own credentials; PDT stores none.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound};
 use crate::routes::{AppState, now_ms};
 use axum::extract::{Path, State};
 use axum::http::header;
@@ -843,12 +843,12 @@ pub async fn run_local_ci_watch(st: AppState) {
 
 /// `GET /api/local-ci/runs/{id}/log`: a local CI run's output so far, as text.
 pub(crate) async fn run_log(State(st): State<AppState>, Path(id): Path<i64>) -> Result<impl IntoResponse, ApiError> {
-    st.store.local_ci_run(id).await?.ok_or_else(|| ApiError::not_found("CI run"))?;
+    st.store.local_ci_run(id).await?.or_404("CI run")?;
     let path = log_path(&st.data_dir.join("local-ci"), id);
     let text = match tokio::fs::read(&path).await {
         Ok(b) => String::from_utf8_lossy(&b).into_owned(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(ApiError::internal(e)),
+        Err(e) => return Err(ApiError::from(e)),
     };
     Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text))
 }

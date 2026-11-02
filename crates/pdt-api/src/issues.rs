@@ -3,7 +3,7 @@
 //! drawer's "Create GitHub issue", the command palette's "New issue", the `github.create_issue` node and the
 //! `issue_create` tool all come here; the issue is opened as the forge's login (the user's).
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -70,15 +70,11 @@ pub struct FiledIssue {
     pub ticket_key: Option<String>,
 }
 
-fn bad(message: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", message)
-}
-
 fn forge_error(e: ForgeError) -> ApiError {
     match e {
-        ForgeError::Unavailable(m) => ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "forge_unavailable", m),
-        ForgeError::Failed(m) | ForgeError::NotReady(m) => ApiError::new(StatusCode::BAD_GATEWAY, "forge_error", m),
-        ForgeError::Unsupported(m) => ApiError::new(StatusCode::BAD_REQUEST, "unsupported", m),
+        ForgeError::Unavailable(m) => ApiError::unavailable(codes::FORGE_UNAVAILABLE, m),
+        ForgeError::Failed(m) | ForgeError::NotReady(m) => ApiError::upstream(codes::FORGE_ERROR, m),
+        ForgeError::Unsupported(m) => ApiError::bad_request(codes::UNSUPPORTED, m),
     }
 }
 
@@ -87,7 +83,7 @@ async fn info(
     st: &AppState,
     project_id: &str,
 ) -> Result<Option<(ProjectForgeInfo, crate::forge::ProjectForge)>, ApiError> {
-    let project = st.store.get_project(project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(project_id).await?;
     let Some(f) = crate::forge::project_forge(st, &project.id, &project.repo_path).await else { return Ok(None) };
     // Only GitHub's issues can be linked to tickets (`owner/name#12`).
     let issues = f.kind == ForgeKind::GITHUB && f.caps().issues;
@@ -113,9 +109,8 @@ pub async fn create(
     body: Result<Json<NewForgeIssue>, JsonRejection>,
 ) -> Result<(StatusCode, Json<FiledIssue>), ApiError> {
     if !crate::untrusted::from_ui(&st, &headers)? {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "not_the_ui",
+        return Err(ApiError::forbidden(
+            codes::NOT_THE_UI,
             "only the user files issues over the HTTP API (PDT's web app); an agent uses the issue_create tool",
         ));
     }
@@ -127,22 +122,21 @@ pub async fn create(
 pub(crate) async fn file(st: &AppState, project_id: &str, new: NewForgeIssue, by: By) -> Result<FiledIssue, ApiError> {
     let title = new.title.trim().to_string();
     if title.is_empty() {
-        return Err(bad("the issue has no title"));
+        return Err(ApiError::invalid("the issue has no title"));
     }
     if title.chars().count() > MAX_ISSUE_TITLE {
-        return Err(bad(format!("an issue title must be at most {MAX_ISSUE_TITLE} characters")));
+        return Err(ApiError::invalid(format!("an issue title must be at most {MAX_ISSUE_TITLE} characters")));
     }
     let labels: Vec<String> = new.labels.iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
     let ticket = match new.ticket_id.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
         Some(t) => {
-            let t = st.store.get_ticket(t).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+            let t = st.ticket(t).await?;
             if t.summary.project_id != project_id {
-                return Err(bad(format!("{} is not this project's ticket", t.summary.key)));
+                return Err(ApiError::invalid(format!("{} is not this project's ticket", t.summary.key)));
             }
             if let Some(l) = t.summary.external.iter().find(|l| l.system == GITHUB) {
-                return Err(ApiError::new(
-                    StatusCode::CONFLICT,
-                    "already_linked",
+                return Err(ApiError::conflict(
+                    codes::ALREADY_LINKED,
                     format!("{} is already linked to {}", t.summary.key, l.key),
                 ));
             }
@@ -151,10 +145,10 @@ pub(crate) async fn file(st: &AppState, project_id: &str, new: NewForgeIssue, by
         None => None,
     };
     let (i, f) = info(st, project_id).await?.ok_or_else(|| {
-        bad("this project has no forge: its .pdt/project.toml says `forge = \"none\"`, or its origin is on no forge PDT knows")
+        ApiError::invalid("this project has no forge: its .pdt/project.toml says `forge = \"none\"`, or its origin is on no forge PDT knows")
     })?;
     if !i.issues {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "unsupported", format!("{} has no issues", f.api.name())));
+        return Err(ApiError::bad_request(codes::UNSUPPORTED, format!("{} has no issues", f.api.name())));
     }
     let (api, repo) = (f.api.clone(), f.repo.clone());
     let title_filed = title.clone();
@@ -173,9 +167,8 @@ pub(crate) async fn file(st: &AppState, project_id: &str, new: NewForgeIssue, by
         match st.store.link_external(&link, by, now_ms()).await {
             Ok(Ok(_)) => ticket_key = Some(t.summary.key),
             Ok(Err(_)) | Err(_) => {
-                return Err(ApiError::new(
-                    StatusCode::CONFLICT,
-                    "link_failed",
+                return Err(ApiError::conflict(
+                    codes::LINK_FAILED,
                     format!("filed {} ({}), but could not link it to {}", key, issue.url, t.summary.key),
                 ));
             }

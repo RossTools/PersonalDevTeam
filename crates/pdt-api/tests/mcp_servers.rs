@@ -479,11 +479,11 @@ async fn signing_out_says_so_when_the_keychain_keeps_the_tokens() {
     state.secrets = Arc::new(KeepingKeychain(Default::default()));
     let app = router(state, None);
     let (s, v) = call(&app, "DELETE", &format!("/api/mcp-servers/{id}/sign-in"), None).await;
-    assert_eq!(s, StatusCode::BAD_GATEWAY, "{v}");
-    assert_eq!(v["code"], "keychain_failed", "{v}");
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{v}");
+    assert_eq!(v["code"], "keychain_unavailable", "{v}");
     // Deleting the server stops there too: the connection stays, as its tokens do.
     let (s, v) = call(&app, "DELETE", &format!("/api/connections/{id}"), None).await;
-    assert_eq!(s, StatusCode::BAD_GATEWAY, "{v}");
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{v}");
     assert_eq!(view(&env, &id).await["connection"]["id"], id.as_str());
 }
 

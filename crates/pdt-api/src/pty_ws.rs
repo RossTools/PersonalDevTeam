@@ -3,11 +3,10 @@
 //! means "you fell behind; reconnect". Client to server: binary frames carry input, text frames JSON control messages
 //! (`{"type":"resize","cols","rows"}`).
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::AppState;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 use pdt_agents::{Attachment, PtyEvent};
@@ -36,7 +35,7 @@ pub(crate) async fn connect(
     Query(params): Query<PtyParams>,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
-    st.store.get_session(&id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    st.session(&id).await?;
     upgrade(st, id, params.gzip_replay(), ws)
 }
 
@@ -47,9 +46,8 @@ pub(crate) fn upgrade(
     gzip: bool,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
-    let ws = ws.map_err(|_| {
-        ApiError::new(StatusCode::BAD_REQUEST, "websocket_required", "this endpoint needs a WebSocket upgrade")
-    })?;
+    let ws =
+        ws.map_err(|_| ApiError::bad_request(codes::WEBSOCKET_REQUIRED, "this endpoint needs a WebSocket upgrade"))?;
     let id = pty_id;
     // A session with no terminal (stopped, or interrupted by a daemon restart) still gets the upgrade, so the
     // browser can tell "not running" from "daemon unreachable" and stop retrying.

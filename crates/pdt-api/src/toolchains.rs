@@ -5,7 +5,7 @@
 //! Settings → Agents wins over it. Sign in starts the installed server and asks it to sign in (ACP `authenticate`):
 //! the server opens the browser and keeps the credentials itself; PDT never sees them.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -224,43 +224,32 @@ fn put_in_place(data_dir: &FsPath, release: &RegistryRelease, bytes: &[u8]) -> R
     installed(data_dir, &release.id).ok_or_else(|| "the installed program was not found".into())
 }
 
-fn bad_gateway(code: &'static str, message: String) -> ApiError {
-    ApiError::new(StatusCode::BAD_GATEWAY, code, message)
-}
-
 /// Installs (or updates to) the registry's newest build of `def`'s program; already the newest is a no-op.
 pub async fn install(st: &AppState, def: &AcpAgentDef) -> Result<Installed, ApiError> {
     let Some(registry_id) = def.installer.clone() else {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "not_installable",
-            format!("PDT doesn't install {}", def.label),
-        ));
+        return Err(ApiError::conflict(codes::NOT_INSTALLABLE, format!("PDT doesn't install {}", def.label)));
     };
     let _guard = st.toolchain_lock.lock().await;
-    let doc = st
-        .toolchains
-        .get(acp_registry::REGISTRY_URL, MAX_REGISTRY_BYTES)
-        .await
-        .map_err(|e| bad_gateway("registry_unavailable", format!("could not read the ACP registry: {e}")))?;
+    let doc = st.toolchains.get(acp_registry::REGISTRY_URL, MAX_REGISTRY_BYTES).await.map_err(|e| {
+        ApiError::upstream(codes::REGISTRY_UNAVAILABLE, format!("could not read the ACP registry: {e}"))
+    })?;
     let doc: serde_json::Value = serde_json::from_slice(&doc)
-        .map_err(|e| bad_gateway("registry_unavailable", format!("the ACP registry is not JSON: {e}")))?;
+        .map_err(|e| ApiError::upstream(codes::REGISTRY_UNAVAILABLE, format!("the ACP registry is not JSON: {e}")))?;
     let platform = acp_registry::platform_key().unwrap_or_else(|| std::env::consts::OS.into());
     let release = acp_registry::release(&doc, &registry_id, &platform)
-        .map_err(|e| ApiError::new(StatusCode::CONFLICT, "not_installable", e.to_string()))?;
+        .map_err(|e| ApiError::conflict(codes::NOT_INSTALLABLE, e.to_string()))?;
     let data_dir = st.data_dir.clone();
     if let Some(i) = installed(&data_dir, &registry_id).filter(|i| i.version == release.version) {
         return Ok(i);
     }
-    let bytes = st
-        .toolchains
-        .get(&release.archive, acp_registry::MAX_ARCHIVE_BYTES)
-        .await
-        .map_err(|e| bad_gateway("download_failed", format!("could not download {}: {e}", def.label)))?;
+    let bytes =
+        st.toolchains.get(&release.archive, acp_registry::MAX_ARCHIVE_BYTES).await.map_err(|e| {
+            ApiError::upstream(codes::DOWNLOAD_FAILED, format!("could not download {}: {e}", def.label))
+        })?;
     let sha = hex::encode(sha2::Sha256::digest(&bytes));
     if sha != release.sha256 {
-        return Err(bad_gateway(
-            "checksum_mismatch",
+        return Err(ApiError::upstream(
+            codes::CHECKSUM_MISMATCH,
             format!("the download of {} does not match the registry's sha256, so it was not installed", def.label),
         ));
     }
@@ -276,7 +265,7 @@ fn builtin_installable(id: &str) -> Result<AcpAgentDef, ApiError> {
     pdt_core::acp_agent::builtin_profiles()
         .into_iter()
         .find(|d| d.id == id && d.installer.is_some())
-        .ok_or_else(|| ApiError::not_found("installable ACP agent"))
+        .or_404("installable ACP agent")
 }
 
 /// `POST /api/host/acp-agents/{id}/install`: installs or updates the program; answers with Settings.
@@ -323,13 +312,12 @@ pub(crate) async fn post_sign_in(
 ) -> Result<Json<crate::host::HostSettingsView>, ApiError> {
     let def = builtin_installable(&id)?;
     let Some(method) = sign_in_method(def.flavor) else {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "no_sign_in", format!("{} has no sign-in", def.label)));
+        return Err(ApiError::bad_request(codes::NO_SIGN_IN, format!("{} has no sign-in", def.label)));
     };
     let s = st.store.get_host_settings().await?;
     let def = launch_def(&st.data_dir, st.home_dir.as_deref(), &s, def);
-    let program = crate::host::found(&def.command, st.platform.login_path.as_deref()).ok_or_else(|| {
-        ApiError::new(StatusCode::CONFLICT, "agent_not_found", format!("{} is not installed", def.label))
-    })?;
+    let program = crate::host::found(&def.command, st.platform.login_path.as_deref())
+        .ok_or_else(|| ApiError::conflict(codes::AGENT_NOT_FOUND, format!("{} is not installed", def.label)))?;
     let cwd = st.home_dir.clone().filter(|h| h.is_dir()).unwrap_or_else(std::env::temp_dir);
     let mut cmd = tokio::process::Command::new(&program);
     cmd.args(&def.args)
@@ -343,14 +331,10 @@ pub(crate) async fn post_sign_in(
     let outcome = tokio::time::timeout(SIGN_IN_TIMEOUT, authenticate(child, method)).await;
     match outcome {
         Ok(Ok(())) => Ok(Json(crate::host::view(&st).await?)),
-        Ok(Err(e)) => Err(ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            "sign_in_failed",
-            format!("{} could not sign in: {e}", def.label),
-        )),
+        Ok(Err(e)) => Err(ApiError::upstream(codes::SIGN_IN_FAILED, format!("{} could not sign in: {e}", def.label))),
         Err(_) => Err(ApiError::new(
             StatusCode::GATEWAY_TIMEOUT,
-            "sign_in_timeout",
+            codes::SIGN_IN_TIMEOUT,
             format!("{} was not signed in in time; try again", def.label),
         )),
     }

@@ -3,7 +3,6 @@ use crate::routes::AppState;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
 use pdt_core::host::{CredentialPolicy, effective_credentials};
 use pdt_core::integration::IntegrationSettings;
 use pdt_core::policy::{AutoStart, AutoStartOrder, MergeBy, ProjectPolicy, TriageApproval};
@@ -120,7 +119,7 @@ const MAX_RUNNING_ATTEMPTS: u32 = 100;
 const MAX_START_DELAY_SECONDS: u32 = 24 * 60 * 60;
 
 pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSettingsView, ApiError> {
-    st.store.get_project(project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    st.project(project_id).await?;
     let p = st.store.get_project_settings(project_id).await?;
     let host = st.store.get_host_settings().await?.agent_credentials;
     let reg = st.registry();
@@ -138,10 +137,6 @@ pub(crate) async fn view(st: &AppState, project_id: &str) -> Result<ProjectSetti
     })
 }
 
-fn invalid(m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m)
-}
-
 /// A connection name, checked to be a connection of `kind`; None for "" (unlink).
 async fn linked_connection(st: &AppState, name: &str, kind: &str) -> Result<Option<String>, ApiError> {
     let name = name.trim();
@@ -150,12 +145,12 @@ async fn linked_connection(st: &AppState, name: &str, kind: &str) -> Result<Opti
     }
     match st.store.connection_by_name(name).await? {
         Some(c) if c.kind == kind => Ok(Some(c.name)),
-        Some(c) => Err(invalid(format!("{} is a {} connection, not {kind}", c.name, c.kind))),
-        None => Err(invalid(format!("no connection is called {name}"))),
+        Some(c) => Err(ApiError::invalid(format!("{} is a {} connection, not {kind}", c.name, c.kind))),
+        None => Err(ApiError::invalid(format!("no connection is called {name}"))),
     }
 }
 
-/// The fingerprints of the commands the overrides alone configure (none when they are absent or invalid alone).
+/// The fingerprints of the commands the overrides alone configure (none when they are absent or ApiError::invalid alone).
 fn override_commands(text: Option<&str>) -> std::collections::HashSet<String> {
     text.and_then(crate::runconfig::overrides_only)
         .map(|c| pdt_core::command_trust::of_config(&c).into_iter().map(|c| c.fingerprint).collect())
@@ -177,7 +172,7 @@ pub(crate) async fn put_settings(
 ) -> Result<Json<ProjectSettingsView>, ApiError> {
     let Json(input) = payload?;
     let from_ui = crate::untrusted::from_ui(&st, &headers)?;
-    st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    st.project(&id).await?;
     let run_overrides = input.run_overrides.filter(|t| !t.trim().is_empty());
     if let Some(t) = &run_overrides {
         crate::runconfig::validate_overrides(t)?;
@@ -187,40 +182,37 @@ pub(crate) async fn put_settings(
     // save sends the stored overrides back) is no approval of them.
     let stored: std::collections::HashSet<String> = override_commands(current.run_overrides.as_deref());
     let agent_instructions = match input.agent_instructions.as_deref() {
-        Some(text) => pdt_core::agent_context::clean_project_instructions(Some(text))
-            .map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m))?,
+        Some(text) => pdt_core::agent_context::clean_project_instructions(Some(text)).map_err(ApiError::invalid)?,
         None => current.agent_instructions,
     };
     let agent_permission_mode = match input.agent_permission_mode.as_deref().map(str::trim) {
         None => current.agent_permission_mode,
         Some("") => None,
-        Some(m) => Some(pdt_core::conversation::PermissionMode::parse(m).ok_or_else(|| {
-            ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", format!("{m} is not a permission mode"))
-        })?),
+        Some(m) => Some(
+            pdt_core::conversation::PermissionMode::parse(m)
+                .ok_or_else(|| ApiError::invalid(format!("{m} is not a permission mode")))?,
+        ),
     };
     let max_running_attempts = match input.max_running_attempts {
         None => current.policy.max_running_attempts,
         Some(0) => None,
         Some(n) if n > MAX_RUNNING_ATTEMPTS => {
-            return Err(ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "invalid_input",
-                format!("the running-attempt cap is at most {MAX_RUNNING_ATTEMPTS} (0: no cap)"),
-            ));
+            return Err(ApiError::invalid(format!(
+                "the running-attempt cap is at most {MAX_RUNNING_ATTEMPTS} (0: no cap)"
+            )));
         }
         Some(n) => Some(n),
     };
     if input.start_delay_seconds.is_some_and(|d| d > MAX_START_DELAY_SECONDS) {
-        return Err(invalid(format!("the start delay is at most {MAX_START_DELAY_SECONDS} seconds")));
+        return Err(ApiError::invalid(format!("the start delay is at most {MAX_START_DELAY_SECONDS} seconds")));
     }
     let approval_exempt_labels = match &input.approval_exempt_labels {
         None => current.policy.approval_exempt_labels,
-        Some(l) => pdt_core::ticket::normalize_labels(l)
-            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()))?,
+        Some(l) => pdt_core::ticket::normalize_labels(l).map_err(|e| ApiError::invalid(e.to_string()))?,
     };
     let hot_areas = match &input.hot_areas {
         None => current.policy.hot_areas,
-        Some(a) => pdt_core::ticket::normalize_areas(a).map_err(|e| invalid(e.to_string()))?,
+        Some(a) => pdt_core::ticket::normalize_areas(a).map_err(|e| ApiError::invalid(e.to_string()))?,
     };
     let policy = ProjectPolicy {
         merge_by: input.merge_by.unwrap_or(current.policy.merge_by),
@@ -242,7 +234,7 @@ pub(crate) async fn put_settings(
     for (id, given) in input.integrations.unwrap_or_default() {
         let applied = match given {
             None => None,
-            Some(given) => reg.apply_project_settings(&id, &given, integrations.get(&id)).map_err(invalid)?,
+            Some(given) => reg.apply_project_settings(&id, &given, integrations.get(&id)).map_err(ApiError::invalid)?,
         };
         match applied {
             None => {

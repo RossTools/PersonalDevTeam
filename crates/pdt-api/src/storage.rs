@@ -4,7 +4,7 @@
 //! what to do about them (cleaning, pausing pickup) is the built-in Clean up storage's (PDT-370), whose inputs hold
 //! the thresholds.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -595,10 +595,10 @@ pub(crate) async fn refresh(State(st): State<AppState>) -> StatusCode {
 
 /// Cleans one worktree's build output: 409 `worktree_busy` while a session or run works in it.
 pub(crate) async fn clean_worktree(st: &AppState, id: &str) -> Result<CleanResult, ApiError> {
-    let wt = st.store.get_worktree(id).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
-    let project = st.store.get_project(&wt.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let wt = st.store.get_worktree(id).await?.or_404("worktree")?;
+    let project = st.project(&wt.project_id).await?;
     if let Some(why) = busy(st, &project.id, id).await? {
-        return Err(ApiError::new(StatusCode::CONFLICT, "worktree_busy", format!("{why}; stop it first")));
+        return Err(ApiError::conflict(codes::WORKTREE_BUSY, format!("{why}; stop it first")));
     }
     let patterns = build_output(st, &project).await.patterns();
     let path = PathBuf::from(&wt.path);
@@ -732,13 +732,9 @@ pub(crate) async fn put_settings(
     payload: Result<Json<StorageSettings>, JsonRejection>,
 ) -> Result<Json<StorageSettings>, ApiError> {
     let Json(s) = payload?;
-    st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    st.project(&id).await?;
     if [s.clean_after_days, s.remove_after_days, s.wont_do_after_days].iter().any(|d| *d > MAX_CLEANUP_DAYS) {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            format!("cleanup delays are at most {MAX_CLEANUP_DAYS} days (0: never)"),
-        ));
+        return Err(ApiError::invalid(format!("cleanup delays are at most {MAX_CLEANUP_DAYS} days (0: never)")));
     }
     st.store.put_project_storage(&id, &s).await?;
     Ok(Json(s))

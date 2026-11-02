@@ -35,6 +35,7 @@ mod issues;
 mod local_forge;
 mod local_network;
 mod log_err;
+mod lookup;
 pub mod loops;
 mod mcp;
 mod mcp_client;

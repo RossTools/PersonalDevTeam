@@ -1,4 +1,4 @@
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
@@ -511,7 +511,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::integrations::routes(&state))
         .fallback(|| async { ApiError::not_found("route") })
         .method_not_allowed_fallback(|| async {
-            ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", "method not allowed")
+            ApiError::new(StatusCode::METHOD_NOT_ALLOWED, codes::METHOD_NOT_ALLOWED, "method not allowed")
         })
         .with_state(state);
     let app = Router::new().nest("/api", api);

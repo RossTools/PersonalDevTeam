@@ -13,7 +13,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Html;
-use pdt_api::sdk::{ApiError, AppState, from_ui, now_ms};
+use pdt_api::sdk::{ApiError, AppState, OrNotFound, codes, from_ui, now_ms};
 use pdt_core::integration::{AccountSignInInput, AccountSignInStart, SignInAccount};
 use pdt_core::workflow::api::Connection;
 use serde::{Deserialize, Serialize};
@@ -34,19 +34,11 @@ fn ui_only(st: &AppState, h: &HeaderMap) -> Result<(), ApiError> {
     if from_ui(st, h)? {
         return Ok(());
     }
-    Err(ApiError::new(StatusCode::FORBIDDEN, "not_the_ui", "only PDT's web app signs in to Google or opens its picker"))
-}
-
-fn bad(m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m)
+    Err(ApiError::forbidden(codes::NOT_THE_UI, "only PDT's web app signs in to Google or opens its picker"))
 }
 
 async fn connection(st: &AppState, id: &str) -> Result<pdt_core::workflow::api::Connection, ApiError> {
-    st.store
-        .get_connection(id)
-        .await?
-        .filter(|c| c.kind == accounts::KIND)
-        .ok_or_else(|| ApiError::not_found("Google account"))
+    st.store.get_connection(id).await?.filter(|c| c.kind == accounts::KIND).or_404("Google account")
 }
 
 /// `GET /api/google/accounts`.
@@ -104,9 +96,9 @@ fn begin(
     let (state, redirect) = if built_in {
         // The browser starts at the website's page (`relay`), and Google comes back to it, which sends the browser on
         // to `origin`.
-        (builtin::state(&nonce, &builtin::pdt_origin(origin).map_err(bad)?), builtin::redirect_uri())
+        (builtin::state(&nonce, &builtin::pdt_origin(origin).map_err(ApiError::invalid)?), builtin::redirect_uri())
     } else {
-        (nonce, redirect_uri(origin).map_err(bad)?)
+        (nonce, redirect_uri(origin).map_err(ApiError::invalid)?)
     };
     let verifier = oauth::random(48);
     let url = oauth::auth_url(&client.id, &redirect, &state, &verifier, hint);
@@ -137,7 +129,7 @@ pub async fn start_new(
 ) -> Result<Json<AccountSignInStart>, ApiError> {
     ui_only(&st, &headers)?;
     let Some(b) = &shared.built_in else {
-        return Err(bad(
+        return Err(ApiError::invalid(
             "this PDT was built without its own Google sign-in: add an account with your own OAuth client",
         ));
     };
@@ -158,10 +150,10 @@ pub async fn start(
     let signed = accounts::sign_in(&st, &id).await?;
     if agent {
         if !shared.uses_built_in(&c) {
-            return Err(bad(format!("{} has its own OAuth client: agents use its sign-in", c.name)));
+            return Err(ApiError::invalid(format!("{} has its own OAuth client: agents use its sign-in", c.name)));
         }
         if signed.is_none() {
-            return Err(bad(format!("sign {} in first, then allow agents", c.name)));
+            return Err(ApiError::invalid(format!("sign {} in first, then allow agents", c.name)));
         }
     }
     let client = accounts::client(&st, &shared, &c, agent).await?;
@@ -310,7 +302,7 @@ pub async fn forget_agents(
 ) -> Result<StatusCode, ApiError> {
     ui_only(&st, &headers)?;
     connection(&st, &id).await?;
-    accounts::forget_agents(&st, &shared, &id).await.map_err(ApiError::internal)?;
+    accounts::forget_agents(&st, &shared, &id).await.map_err(ApiError::from_text)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -323,7 +315,7 @@ pub async fn sign_out(
 ) -> Result<StatusCode, ApiError> {
     ui_only(&st, &headers)?;
     connection(&st, &id).await?;
-    accounts::sign_out(&st, &shared, &id).await.map_err(ApiError::internal)?;
+    accounts::sign_out(&st, &shared, &id).await.map_err(ApiError::from_text)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -342,7 +334,7 @@ pub async fn picker(
         _ => own.0.zip(own.1),
     };
     let Some((api_key, app_id)) = picker else {
-        return Err(bad(format!(
+        return Err(ApiError::invalid(format!(
             "{} has no API key and project number for Google's file picker: add them to the connection",
             c.name
         )));
