@@ -20,6 +20,15 @@ describe('Markdown', () => {
     ]);
   });
 
+  it('leaves a ticket key inside a branch name as text', () => {
+    render(
+      <TicketKeysContext.Provider value={['PDT']}>
+        <Markdown>{'CI failed on pdt-PDT-22-order-email and PDT-9-fix; PDT-7 is next.'}</Markdown>
+      </TicketKeysContext.Provider>,
+    );
+    expect(screen.getAllByRole('link').map((a) => a.textContent)).toEqual(['PDT-7']);
+  });
+
   it('reads as a document with variant="document": roomier text, display-only task boxes', () => {
     const { container } = render(<Markdown variant="document">{'### Layout\n\n- [x] Ask Sam\n- [ ] Sketch it'}</Markdown>);
     expect(container.firstElementChild).toHaveAttribute('data-variant', 'document');
