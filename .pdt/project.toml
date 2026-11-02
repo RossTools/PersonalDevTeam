@@ -48,7 +48,7 @@ paths = ["web/ui/**"]
 [[area]]
 name  = "tickets"
 paths = ["crates/pdt-core/src/ticket.rs", "crates/pdt-core/src/start.rs", "crates/pdt-core/src/overlap.rs",
-         "crates/pdt-core/src/links.rs", "crates/pdt-core/src/rank.rs", "crates/pdt-store/src/tickets.rs",
+         "crates/pdt-core/src/links.rs", "crates/pdt-core/src/rank.rs", "crates/pdt-store/src/tickets/**",
          "crates/pdt-api/src/tickets.rs", "crates/pdt-api/src/start.rs", "crates/pdt-api/src/overlap.rs",
          "web/src/tickets/**"]
 
