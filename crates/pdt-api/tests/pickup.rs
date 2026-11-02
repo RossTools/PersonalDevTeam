@@ -608,7 +608,11 @@ async fn a_failed_start_shows_its_error_and_try_again_starts_it() {
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["pickupFailed"], Value::Null, "{v}");
     let step = run_start_step(&env, &wf).await;
-    assert_eq!(step["port"], "started", "{step}");
+    // The built-in "Pick up tickets" sweeps every minute: on a minute boundary its run starts the ticket first and
+    // this one finds it already started. Either way it is no longer passed over.
+    let started = step["port"] == "started"
+        || (step["port"] == "skipped" && step["output"]["skipped"][0]["reason"] == "already started");
+    assert!(started, "{step}");
     assert_eq!(stage(&env, &t).await, "in_progress");
     let (s, _) = call(&env.app, "POST", "/api/tickets/nope/retry-auto-start", None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
