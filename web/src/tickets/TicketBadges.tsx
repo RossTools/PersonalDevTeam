@@ -68,7 +68,7 @@ export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; cl
     source !== 'user' || t.proposed === true || refining || mergeBlocked || t.blockedBy > 0 || t.overlap !== 'none' || t.waiting || autoStartAt !== null || hold !== null || failed !== null;
   if (!any) return null;
   return (
-    <span className={cn('flex min-w-0 shrink items-center gap-1', className)}>
+    <span className={cn('flex max-w-full min-w-0 shrink items-center gap-1', className)}>
       <SourceBadge source={source} admitted={t.admitted ?? false} createdBy={t.createdBy ?? null} />
       {t.proposed && <Badge tone="waiting" title="A ticket proposal an agent made: it waits for your decision in the Inbox, and only you can move it on">Proposal</Badge>}
       {refining && <Badge title="The pipeline is refining it">Refining</Badge>}
@@ -86,8 +86,8 @@ export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; cl
       ))}
       {autoStartAt !== null && <AutoStartBadge at={autoStartAt} />}
       {hold !== null && (
-        <Badge tone="waiting" className="min-w-0" title={`Auto-start passed it over: ${hold}. It starts once that work is done.`}>
-          <Clock aria-hidden /> <span className="truncate">Waiting: {hold}</span>
+        <Badge tone="waiting" title={`Auto-start passed it over: ${hold}. It starts once that work is done.`}>
+          <Clock aria-hidden /> Waiting: {hold}
         </Badge>
       )}
       {failed !== null && (

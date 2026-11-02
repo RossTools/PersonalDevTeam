@@ -16,6 +16,7 @@ pub mod inbox_admit;
 pub mod inbox_notice;
 pub mod mcp_tool;
 pub mod merge;
+pub mod notification_levels;
 pub mod notify;
 pub mod outside_pr;
 pub mod parent;

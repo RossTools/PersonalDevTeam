@@ -42,7 +42,7 @@ describe('phone', () => {
     expect(within(bar).getByRole('button', { name: 'Menu' })).toHaveAttribute('aria-expanded', 'false');
     expect(within(bar).getByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
     // Compact on phones; the port is in the tooltip.
-    expect(await within(bar).findByText('DEV')).toHaveAttribute('title', 'Development instance on port 8512');
+    expect((await within(bar).findByText('DEV')).closest('[data-slot=badge]')).toHaveAttribute('title', 'Development instance on port 8512');
     await userEvent.click(within(bar).getByRole('button', { name: 'Search' }));
     expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');

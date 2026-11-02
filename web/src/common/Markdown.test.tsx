@@ -150,7 +150,7 @@ describe('Markdown in a conversation (refs)', () => {
     stubApi({});
     const { container } = inConversation('| Ticket | State |\n|---|---|\n| ALP-1 | CI failed |\n| ALP-2 | Guest checkout |');
     expect(container.querySelector('[data-slot=table-card]')).not.toBeNull();
-    expect(screen.getByText('CI failed')).toHaveAttribute('data-slot', 'badge');
-    expect(screen.getByText('Guest checkout')).not.toHaveAttribute('data-slot', 'badge');
+    expect(screen.getByText('CI failed').closest('[data-slot=badge]')).not.toBeNull();
+    expect(screen.getByText('Guest checkout').closest('[data-slot=badge]')).toBeNull();
   });
 });

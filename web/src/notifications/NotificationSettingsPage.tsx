@@ -1,9 +1,17 @@
 import { useState } from 'react';
-import { Alert, Button, Page, Section, Select, SettingsRow, Skeleton, Switch, toast } from '@ui';
+import { useQuery } from '@tanstack/react-query';
+import { Alert, Button, Link, Page, Section, Select, SettingsRow, Skeleton, Switch, toast } from '@ui';
+import { api } from '../api/client';
 import type { KindSetting } from '../api/gen/KindSetting';
+import type { NotificationRulesInput } from '../api/gen/NotificationRulesInput';
+import type { NotificationRulesView } from '../api/gen/NotificationRulesView';
 import type { Show } from '../api/gen/Show';
+import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
+import { connectionsKey } from '../connections/ConnectionDialog';
+import { routePath } from '../shell/route';
+import { navigate } from '../shell/router';
 import { desktopNotificationsOn, setDesktopNotifications, showDesktop } from './desktop';
-import { useNotificationSettings, useSetNotificationSettings } from './queries';
+import { useNotificationRules, useNotificationRulesActions } from './queries';
 
 export const SHOW_LABEL: Record<Show, string> = {
   off: 'Off',
@@ -13,64 +21,183 @@ export const SHOW_LABEL: Record<Show, string> = {
   desktop: 'Desktop notification',
 };
 
+const HOUR = 60 * 60 * 1000;
+const escalateChoices = [0.5, 1, 2, 4, 8, 24].map((h) => ({
+  value: String(h * HOUR),
+  label: h < 1 ? '30 minutes' : h === 1 ? '1 hour' : `${h} hours`,
+}));
+
+const openWorkflow = (id: string) => navigate(routePath({ view: 'workflows', target: { kind: 'workflow', id } }));
+const text = (v: unknown) => (typeof v === 'string' ? v : '');
+
+type Put = (input: NotificationRulesInput) => Promise<NotificationRulesView>;
+
 /**
- * Settings → Notifications (PDT-108 §7): this device's desktop notifications, and what each kind of notification
- * shows (a host setting: every device sees the same Inbox).
+ * Settings → Notifications (PDT-108 §7, PDT-368): this device's desktop notifications, and the Notification rules
+ * workflow's inputs: what each kind of notification shows (every device sees the same Inbox), escalation, quiet hours
+ * and a chat channel. A workflow changed beyond its inputs is only named here, with Open and Reset to default.
  */
 export function NotificationSettingsPage() {
-  const settings = useNotificationSettings();
-  const set = useSetNotificationSettings();
-  const kinds = settings.data;
-  const change = (c: Record<string, Show | null>) => set.mutate(c); // a failure toasts (the QueryClient's fallback)
-  const changed = (kinds ?? []).filter((k) => k.show !== k.defaultShow);
+  const rules = useNotificationRules();
+  const { save, reset, enable } = useNotificationRulesActions();
+  const v = rules.data;
+  const put: Put = (input) => save.mutateAsync(input);
+  const changed = (v?.kinds ?? []).filter((k) => k.show !== k.defaultShow);
+  const editable = !!v && !v.customized;
   return (
     <Page
       title="Notifications"
       description="Needs you counts in the Inbox's badge and the page title; Updates wait on nothing."
       actions={
-        <Button size="sm" variant="secondary" disabled={changed.length === 0} pending={set.isPending}
-          onClick={() => change(Object.fromEntries(changed.map((k) => [k.kind, null])))}>
+        <Button size="sm" variant="secondary" disabled={!editable || changed.length === 0} pending={save.isPending}
+          onClick={() => void put({ levels: Object.fromEntries(changed.map((k) => [k.kind, null])) })}>
           Reset to defaults
         </Button>
       }
     >
       <ThisDevice />
-      {!kinds ? (
-        settings.error ? (
-          <Alert tone="error">Notification settings could not be loaded: {settings.error.message}</Alert>
+      {!v ? (
+        rules.error ? (
+          <Alert tone="error">Notification settings could not be loaded: {rules.error.message}</Alert>
         ) : (
           <Skeleton label="Loading notification settings" className="h-40" />
         )
       ) : (
         <>
+          <Section
+            label="Rules"
+            description="Notifications follow the Notification rules workflow; these are its settings."
+            actions={<Link onClick={() => openWorkflow(v.workflowId)}>Customize as a workflow →</Link>}
+          >
+            <AutoSaveRow
+              label="Notification rules"
+              description={v.enabled
+                ? `Runs the workflow ${v.name}.`
+                : 'Off: every kind shows at PDT’s default level, without quiet hours, escalation or a chat channel.'}
+            >
+              {(track) => (
+                <Switch aria-label="Notification rules" checked={v.enabled}
+                  onChange={(on) => void track(enable.mutateAsync({ id: v.workflowId, on }))} />
+              )}
+            </AutoSaveRow>
+            {v.customized ? (
+              <Alert
+                tone="info"
+                action={
+                  <span className="flex gap-1">
+                    <Button size="sm" variant="secondary" onClick={() => openWorkflow(v.workflowId)}>Open</Button>
+                    <Button size="sm" variant="secondary" pending={reset.isPending} onClick={() => reset.mutate()}>Reset to default</Button>
+                  </span>
+                }
+              >
+                Notifications follow your customized workflow {v.name}.
+              </Alert>
+            ) : (
+              <Rules v={v} put={put} />
+            )}
+          </Section>
           <Kinds title="Needs you" description="Waits on you. Questions, gates and other steps never go below the Inbox, so they stay findable."
-            kinds={kinds.filter((k) => k.section === 'needs_you')} onChange={change} />
+            kinds={v.kinds.filter((k) => k.section === 'needs_you')} editable={editable} put={put} />
           <Kinds title="Updates" description="Worth knowing. Each level includes the ones before it."
-            kinds={kinds.filter((k) => k.section === 'updates')} onChange={change} />
+            kinds={v.kinds.filter((k) => k.section === 'updates')} editable={editable} put={put} />
         </>
       )}
     </Page>
   );
 }
 
-function Kinds({ title, description, kinds, onChange }: {
+/** Escalation, quiet hours and the chat channel. */
+function Rules({ v, put }: { v: NotificationRulesView; put: Put }) {
+  const value = (id: string) => v.values[id];
+  const set = (id: string, x: unknown) => put({ values: { [id]: x } });
+  const flag = (id: string, label: string, description: string) => (
+    <AutoSaveRow label={label} description={description}>
+      {(track) => <Switch aria-label={label} checked={value(id) === true} onChange={(on) => void track(set(id, on))} />}
+    </AutoSaveRow>
+  );
+  const after = String(value('escalateAfter'));
+  return (
+    <>
+      {flag('escalate', 'Escalate what waits', 'An Inbox item still unanswered after a while comes back as a desktop notification, and to the chat channel if one is set.')}
+      {value('escalate') === true && (
+        <AutoSaveRow label="Escalate after" description="How long an Inbox item waits unanswered first.">
+          {(track) => (
+            <Select<string> aria-label="Escalate after" className="w-40"
+              options={escalateChoices.some((c) => c.value === after) ? escalateChoices : [...escalateChoices, { value: after, label: `${Math.round(Number(after) / 60000)} minutes` }]}
+              value={after} onChange={(ms) => void track(set('escalateAfter', Number(ms)))} />
+          )}
+        </AutoSaveRow>
+      )}
+      {flag('quietHours', 'Quiet hours', 'No toasts or desktop notifications between two times. They wait in the Inbox, and one summary comes when quiet hours end.')}
+      {value('quietHours') === true && (
+        <SettingsRow label="Quiet from" description="From and until, as HH:MM in this computer’s time.">
+          <AutoSaveText aria-label="Quiet from" className="w-24" value={text(value('quietFrom'))} onSave={(t) => set('quietFrom', t.trim())} />
+          <span className="text-sm text-muted-foreground">until</span>
+          <AutoSaveText aria-label="Quiet until" className="w-24" value={text(value('quietTo'))} onSave={(t) => set('quietTo', t.trim())} />
+        </SettingsRow>
+      )}
+      {v.channels.length > 0 && <Chat v={v} put={put} />}
+    </>
+  );
+}
+
+/** The chat channel questions, approvals and failed runs post to: a connection of a kind a plugin posts to. */
+function Chat({ v, put }: { v: NotificationRulesView; put: Put }) {
+  const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
+  const kinds = new Set(v.channels.map((c) => c.connectionKind));
+  const label = (kind: string) => v.channels.find((c) => c.connectionKind === kind)?.label ?? kind;
+  const usable = (connections.data ?? []).filter((c) => kinds.has(c.kind));
+  const chat = text(v.values.chat);
+  const options = [
+    { value: '', label: 'None' },
+    ...usable.map((c) => ({ value: c.name, label: `${c.name} (${label(c.kind)})` })),
+    ...(chat && !usable.some((c) => c.name === chat) ? [{ value: chat, label: `${chat} (missing)` }] : []),
+  ];
+  const services = v.channels.map((c) => c.label).join(' or ');
+  const set = (id: string, x: unknown) => put({ values: { [id]: x } });
+  return (
+    <>
+      <AutoSaveRow label="Chat channel" description={`Post what waits on you and what fails to ${services}. Add a connection in Settings → Plugins.`}>
+        {(track) => (
+          <Select<string> aria-label="Chat channel" className="w-56" options={options} value={chat}
+            onChange={(name) => void track(set('chat', name))} />
+        )}
+      </AutoSaveRow>
+      {chat && ([
+        ['chatQuestions', 'Post questions', 'An agent asks you something.'],
+        ['chatApprovals', 'Post approvals', 'A conversation asks to use a tool, or asks you to confirm.'],
+        ['chatFailedRuns', 'Post failed runs', 'A workflow run fails.'],
+      ] as const).map(([id, l, d]) => (
+        <AutoSaveRow key={id} label={l} description={d}>
+          {(track) => <Switch aria-label={l} checked={v.values[id] === true} onChange={(on) => void track(set(id, on))} />}
+        </AutoSaveRow>
+      ))}
+    </>
+  );
+}
+
+function Kinds({ title, description, kinds, editable, put }: {
   title: string;
   description: string;
   kinds: KindSetting[];
-  onChange: (c: Record<string, Show | null>) => void;
+  editable: boolean;
+  put: Put;
 }) {
   return (
     <Section label={title} description={description}>
       {kinds.map((k) => (
-        <SettingsRow key={k.kind} label={k.label} description={k.show === k.defaultShow ? k.when : `${k.when} Default: ${SHOW_LABEL[k.defaultShow]}.`}>
-          <Select<Show>
-            aria-label={`${k.label}: show`}
-            className="w-52"
-            options={k.allowed.map((s) => ({ value: s, label: SHOW_LABEL[s] }))}
-            value={k.show}
-            onChange={(s) => onChange({ [k.kind]: s })}
-          />
-        </SettingsRow>
+        <AutoSaveRow key={k.kind} label={k.label} description={k.show === k.defaultShow ? k.when : `${k.when} Default: ${SHOW_LABEL[k.defaultShow]}.`}>
+          {(track) => (
+            <Select<Show>
+              aria-label={`${k.label}: show`}
+              className="w-52"
+              disabled={!editable}
+              options={k.allowed.map((s) => ({ value: s, label: SHOW_LABEL[s] }))}
+              value={k.show}
+              onChange={(s) => void track(put({ levels: { [k.kind]: s } }))}
+            />
+          )}
+        </AutoSaveRow>
       ))}
     </Section>
   );
