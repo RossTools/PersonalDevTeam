@@ -1,7 +1,8 @@
-// The website's screenshots of PDT (PDT-273, PDT-280): the board, a workspace, the backlog, a workflow, a ticket, a
-// branch's changes under review, a PM conversation, the Inbox, the Inbox on a phone, and Secrets, taken from a
-// throwaway pdtd seeded with the made-up "Acme Shop" project (`PDT_SEED=website`, crates/pdtd/src/seed/website.rs),
-// in the dark theme, and written as WebP to site/src/assets/screens/. Run it from the checkout after the builds:
+// The website's screenshots of PDT (PDT-273, PDT-280, PDT-383): the board, a workspace, the backlog, a workflow, a
+// ticket, a branch's changes under review, two PM conversations (one for the landing page's PM section), the Inbox, the
+// Inbox on a phone, and Secrets, taken from a throwaway pdtd seeded with the made-up "Acme Shop" project
+// (`PDT_SEED=website`, crates/pdtd/src/seed/website.rs), in the dark theme, and written as WebP to
+// site/src/assets/screens/. Run it from the checkout after the builds:
 //
 //   cargo build -p pdtd && pnpm --dir web build
 //   pnpm --dir web exec playwright-core install chromium   # once
@@ -115,7 +116,9 @@ async function stage() {
   const cartWs = workspaceOf(cart);
   const changesTab = cartWs.tabs.find((t) => t.worktreeId === step(cart.title, 'Reviewer').worktreeId);
   const guest = ticket('Guest checkout without an account');
-  const pm = (await api('/pm/sessions'))[0].session;
+  const pmSessions = (await api('/pm/sessions')).map((c) => c.session);
+  const pm = pmSessions.find((s) => s.title === 'What needs me today?');
+  const pmPlan = pmSessions.find((s) => s.title === 'Plan guest checkout');
   // Secrets for the Secrets page (the scratch daemon keeps them in memory): values nobody sees again.
   for (const [name, description] of [
     ['NPM_TOKEN', 'Publishes the shop\'s packages to npm.'],
@@ -128,7 +131,7 @@ async function stage() {
   const detail = await api(`/workflows/${workflow.id}`);
   // Issues show on the graph's nodes.
   if (detail.issues?.length) throw new Error(`the sample workflow has issues: ${JSON.stringify(detail.issues)}`);
-  return { project, searchWs, coderTab, cartWs, changesTab, guest, pm, workflow };
+  return { project, searchWs, coderTab, cartWs, changesTab, guest, pm, pmPlan, workflow };
 }
 
 async function shoot(page, name, clip) {
@@ -161,7 +164,7 @@ async function nodesClip(page) {
 
 let browser;
 try {
-  const { project, searchWs, coderTab, cartWs, changesTab, guest, pm, workflow } = await stage();
+  const { project, searchWs, coderTab, cartWs, changesTab, guest, pm, pmPlan, workflow } = await stage();
   mkdirSync(out, { recursive: true });
   browser = await chromium.launch();
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: SCALE, colorScheme: 'dark' });
@@ -224,6 +227,16 @@ try {
   await page.goto(`${base}/pm/${pm.id}`);
   await page.getByText('Three things wait on you').waitFor();
   await shoot(page, 'pm');
+
+  // The landing page's PM section: planning guest checkout, cropped to the conversation's messages, in a window tall
+  // enough to show them all and narrow enough to read beside the section's text.
+  await page.setViewportSize({ width: 1000, height: 1900 });
+  await page.goto(`${base}/pm/${pmPlan.id}`);
+  await page.getByText('Shall I add them?').waitFor();
+  const log = await page.getByRole('log', { name: 'Conversation' }).boundingBox();
+  const lastCard = await page.locator('[id^="request-"]').last().boundingBox();
+  await shoot(page, 'pm-chat', { x: log.x, y: log.y, width: log.width, height: lastCard.y + lastCard.height + 20 - log.y });
+  await page.setViewportSize({ width: VIEWPORT.width, height: 600 });
 
   await page.goto(`${base}/inbox`);
   await page.getByText('attach a PDF invoice').first().waitFor();

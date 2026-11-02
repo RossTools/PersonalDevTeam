@@ -52,7 +52,7 @@ org can open it).
 ## Screenshots
 
 The screenshots of PDT on the landing and Features pages (`src/assets/screens/`: the board, a workspace, the backlog, a
-workflow, a ticket, a branch's changes under review, a PM conversation, the Inbox, the Inbox on a phone, and Secrets)
+workflow, a ticket, a branch's changes under review, two PM conversations, the Inbox, the Inbox on a phone, and Secrets)
 are made by a script, never edited by hand. From the repository root (macOS or Linux), after the builds:
 
 ```sh

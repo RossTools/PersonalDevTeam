@@ -128,6 +128,15 @@ fn items() -> Vec<Item> {
             work: Some((PipelineStage::Qa, CiState::Passed)),
             ..item("Guest checkout without an account", InProgress, High, 3 * MINUTE)
         },
+        // A part the PM planned with guest checkout (its conversation, `seed_pm_plan`), made after it so its key is
+        // the next.
+        Item {
+            description: "Someone who ordered as a guest and later signs up with the same email sees those orders \
+                          under their account.",
+            labels: &["agentic", "checkout"],
+            parent: Some(0),
+            ..item("Link guest orders when the guest signs up", Ready, Medium, 3 * HOUR)
+        },
         Item {
             description: "A code field under the total; an invalid or expired code says why.",
             labels: &["checkout"],
@@ -262,6 +271,11 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
     store.add_link(&guest, &apple, LinkKind::Blocks, now - DAY).await?;
     let (shipping, _) = by_title("Shipping rates by region");
     store.add_link(&guest, &shipping, LinkKind::Blocks, now - DAY).await?;
+    // The PM made this link when it planned guest checkout (its conversation, `seed_pm_plan`).
+    let (link_orders, _) = by_title("Link guest orders when the guest signs up");
+    store.add_link(&guest, &link_orders, LinkKind::Blocks, now - 3 * HOUR).await?;
+    // A part goes to the top of its stage when made: rank it under Apple Pay, below the urgent fix.
+    store.move_ticket(&link_orders, None, Some(&apple), None).await?;
     let (rounding, _) = by_title("Fix price rounding in cart totals");
     store
         .add_comment(&rounding, "Seen by two customers this week; the receipt shows the right total.", now - HOUR)
@@ -878,8 +892,8 @@ async fn insert_events(
     Ok(())
 }
 
-/// A PM conversation (the PM screenshot): the user asks what needs them, and the PM reads the board and the Inbox and
-/// answers, naming the sample's tickets by key.
+/// The PM's conversations, in the host project (which lists no project): what needs the user today (the PM
+/// screenshot), and planning guest checkout (the landing page's PM section).
 async fn seed_pm(
     store: &Store,
     data_dir: &Path,
@@ -890,20 +904,19 @@ async fn seed_pm(
     std::fs::create_dir_all(&dir)?;
     let folder = dir.to_string_lossy().into_owned();
     let host = store.ensure_host_project(&uuid::Uuid::now_v7().to_string(), &folder, at - DAY).await?;
-    let key = |title: &str| by_title(title).1;
-    let session = Session {
+    let new_session = |title: &str, created_at: i64, ended_at: i64| Session {
         id: uuid::Uuid::now_v7().to_string(),
         project_id: host.id.clone(),
         worktree_id: None,
         kind: SessionKind::AgentTui,
         agent: Some(AgentKind::Claude),
         bypass_permissions: false,
-        title: "What needs me today?".into(),
-        cwd: folder,
+        title: title.into(),
+        cwd: folder.clone(),
         status: SessionStatus::Finished,
         exit_code: None,
-        created_at: at,
-        ended_at: Some(at + 2 * MINUTE),
+        created_at,
+        ended_at: Some(ended_at),
         external_session_id: None,
         fresh_started_at: None,
         activity: None,
@@ -918,9 +931,20 @@ async fn seed_pm(
         persona: None,
         background: vec![],
     };
+    // The planning conversation first, so the overview is the newest.
+    let plan = new_session("Plan guest checkout", at - 3 * HOUR, at);
+    store.insert_session(&plan).await?;
+    store.insert_pm_session(&plan.id, at - 3 * HOUR).await?;
+    seed_pm_plan(store, &plan.id, by_title, at).await?;
+    let session = new_session("What needs me today?", at, at + 2 * MINUTE);
     store.insert_session(&session).await?;
     store.insert_pm_session(&session.id, at).await?;
-    let tool = |id: &str, tool: &str, title: &str, input: serde_json::Value, output: &str| AgentEvent::ToolCall {
+    seed_pm_overview(store, &session.id, by_title, at).await
+}
+
+/// A finished PDT or file tool call, for the PM's conversations.
+fn pm_tool(id: &str, tool: &str, title: &str, input: serde_json::Value, output: &str) -> AgentEvent {
+    AgentEvent::ToolCall {
         id: id.into(),
         tool: tool.into(),
         title: title.into(),
@@ -930,7 +954,27 @@ async fn seed_pm(
         exit_code: None,
         diff: None,
         parent_id: None,
-    };
+    }
+}
+
+fn user_says(text: &str) -> AgentEvent {
+    AgentEvent::UserMessage { text: text.into(), images: vec![], source: MessageSource::Pdt, pdt: None }
+}
+
+fn turn(phase: TurnPhase, duration_ms: Option<i64>) -> AgentEvent {
+    let ended = phase == TurnPhase::Ended;
+    AgentEvent::Turn { phase, status: ended.then_some(TurnStatus::Completed), duration_ms, reason: None }
+}
+
+/// The user asks what needs them, and the PM reads the board and the Inbox and answers, naming the sample's tickets
+/// by key (the PM screenshot).
+async fn seed_pm_overview(
+    store: &Store,
+    session_id: &str,
+    by_title: &dyn Fn(&str) -> (String, String),
+    at: i64,
+) -> anyhow::Result<()> {
+    let key = |title: &str| by_title(title).1;
     let (discounts, email, guest, rounding, checkout) = (
         key("Apply discount codes at checkout"),
         key("Order confirmation email"),
@@ -949,29 +993,21 @@ async fn seed_pm(
          it is still in Ready. Shall I move it to To do so the Coder takes it next?"
     );
     let events: Vec<(&str, AgentEvent)> = vec![
-        ("turn:pm-1", AgentEvent::Turn { phase: TurnPhase::Started, status: None, duration_ms: None, reason: None }),
-        (
-            "u:pm-1",
-            AgentEvent::UserMessage {
-                text: "What needs me today?".into(),
-                images: vec![],
-                source: MessageSource::Pdt,
-                pdt: None,
-            },
-        ),
+        ("turn:pm-1", turn(TurnPhase::Started, None)),
+        ("u:pm-1", user_says("What needs me today?")),
         (
             "t:pm-overview",
-            tool(
+            pm_tool(
                 "pm-overview",
                 "mcp__pdt__get_overview",
                 "get_overview",
                 json!({}),
-                "Acme Shop: 6 in flight (Code 2, Review 1, QA 1, Accept 1, Merge 1), 3 to do, 5 ready, 6 draft; 2 open Inbox items",
+                "Acme Shop: 6 in flight (Code 2, Review 1, QA 1, Accept 1, Merge 1), 3 to do, 6 ready, 6 draft; 2 open Inbox items",
             ),
         ),
         (
             "t:pm-search",
-            tool(
+            pm_tool(
                 "pm-search",
                 "mcp__pdt__search_tickets",
                 "search_tickets",
@@ -983,17 +1019,128 @@ async fn seed_pm(
             "m:pm-answer",
             AgentEvent::AgentMessage { id: "pm-answer".into(), markdown: answer, phase: MessagePhase::Final },
         ),
+        ("turn-end:pm-1", turn(TurnPhase::Ended, Some(21_000))),
+    ];
+    insert_events(store, session_id, "pm-turn-1", at, &events).await
+}
+
+/// Planning guest checkout (the landing page's PM shot): the user asks for it, the PM reads the checkout code and
+/// makes two tickets, one blocked by the other. Hours later the user asks how it goes: the PM answers with a status
+/// table and asks to file two follow-ups QA found, which wait for the user's yes.
+async fn seed_pm_plan(
+    store: &Store,
+    session_id: &str,
+    by_title: &dyn Fn(&str) -> (String, String),
+    at: i64,
+) -> anyhow::Result<()> {
+    let key = |title: &str| by_title(title).1;
+    let (checkout, guest, link, discounts, email) = (
+        key("Checkout v2"),
+        key("Guest checkout without an account"),
+        key("Link guest orders when the guest signs up"),
+        key("Apply discount codes at checkout"),
+        key("Order confirmation email"),
+    );
+    let read = |id: &str, file: &str| pm_tool(id, "Read", file, json!({"file_path": file}), "");
+    let create = |id: &str, title: &str, stage: &str, key: &str| {
+        pm_tool(
+            id,
+            "mcp__pdt__create_ticket",
+            "create_ticket",
+            json!({"project": PROJECT_KEY, "title": title, "stage": stage, "labels": ["agentic", "checkout"],
+                   "parent": checkout}),
+            &json!({"key": key, "stage": stage}).to_string(),
+        )
+    };
+    let plan = vec![
+        ("turn:plan-1", turn(TurnPhase::Started, None)),
+        ("u:plan-1", user_says("Guests should be able to check out without an account. Can you plan it?")),
+        ("t:plan-index", read("plan-index", "src/checkout/index.js")),
+        ("t:plan-cart", read("plan-cart", "src/cart.js")),
+        ("t:plan-main", read("plan-main", "src/main.js")),
         (
-            "turn-end:pm-1",
-            AgentEvent::Turn {
-                phase: TurnPhase::Ended,
-                status: Some(TurnStatus::Completed),
-                duration_ms: Some(21_000),
-                reason: None,
+            "m:plan-split",
+            AgentEvent::AgentMessage {
+                id: "plan-split".into(),
+                markdown: "Checkout assumes a signed-in user in three places. I'd split it in two: guest checkout \
+                           first, then linking a guest's orders when they sign up."
+                    .into(),
+                phase: MessagePhase::Final,
             },
         ),
+        ("t:plan-guest", create("plan-guest", "Guest checkout without an account", "todo", &guest)),
+        ("t:plan-link", create("plan-link", "Link guest orders when the guest signs up", "ready", &link)),
+        (
+            "t:plan-blocks",
+            pm_tool(
+                "plan-blocks",
+                "mcp__pdt__link_tickets",
+                "link_tickets",
+                json!({"ticket": link, "kind": "blockedBy", "other": guest}),
+                &json!({"linked": true}).to_string(),
+            ),
+        ),
+        (
+            "m:plan-done",
+            AgentEvent::AgentMessage {
+                id: "plan-done".into(),
+                markdown: format!("Done. The Coder picks up {guest} next; {link} waits for it."),
+                phase: MessagePhase::Final,
+            },
+        ),
+        ("turn-end:plan-1", turn(TurnPhase::Ended, Some(48_000))),
     ];
-    insert_events(store, &session.id, "pm-turn-1", at, &events).await
+    insert_events(store, session_id, "plan-turn-1", at - 3 * HOUR, &plan).await?;
+
+    let table = format!(
+        "{guest} is in QA: QA is trying a guest order on the branch's dev server. {link} waits for it.\n\n\
+         | Ticket | What | State |\n\
+         | --- | --- | --- |\n\
+         | {guest} | Guest checkout | QA working |\n\
+         | {link} | Link guest orders | blocked by {guest} |\n\
+         | {discounts} | Discount codes | ready to accept |\n\
+         | {email} | Receipt email | CI failed |\n\n\
+         QA found two things worth their own tickets. Shall I add them?"
+    );
+    let propose = |id: &str, title: &str, description: &str| AgentEvent::Request {
+        id: id.into(),
+        request_kind: RequestKind::Approval,
+        tool: "mcp__pdt__create_ticket".into(),
+        title: "create_ticket".into(),
+        description: None,
+        input: json!({"project": PROJECT_KEY, "title": title, "description": description, "stage": "ready",
+                      "labels": ["checkout"]}),
+        tool_call_id: None,
+        can_always: true,
+        diff: None,
+        state: RequestState::Open,
+        answer: None,
+    };
+    let follow_up = vec![
+        ("turn:plan-2", turn(TurnPhase::Started, None)),
+        ("u:plan-2", user_says("How's guest checkout going?")),
+        (
+            "m:plan-status",
+            AgentEvent::AgentMessage { id: "plan-status".into(), markdown: table, phase: MessagePhase::Final },
+        ),
+        (
+            "r:plan-lookup",
+            propose(
+                "plan-lookup",
+                "Look up a guest order by email and order number",
+                "A guest has no account page, so the receipt links to a lookup form instead.",
+            ),
+        ),
+        (
+            "r:plan-limit",
+            propose(
+                "plan-limit",
+                "Limit guest orders per email address",
+                "Five guest orders an hour per address, so a stolen card can't be tried over and over.",
+            ),
+        ),
+    ];
+    insert_events(store, session_id, "plan-turn-2", at - 2 * MINUTE, &follow_up).await
 }
 
 /// The workflow the Workflows screenshot shows: each night, if packages are outdated, an `agentic` ticket for the
@@ -1173,7 +1320,7 @@ mod tests {
         for s in [TicketStage::Todo, TicketStage::Ready, TicketStage::Draft, TicketStage::Done] {
             assert!(tickets.items.iter().any(|t| t.stage == s), "a ticket in {s:?}");
         }
-        assert_eq!(tickets.items.iter().filter(|t| t.parent.is_some()).count(), 3, "Checkout v2 has three parts");
+        assert_eq!(tickets.items.iter().filter(|t| t.parent.is_some()).count(), 4, "Checkout v2 has four parts");
 
         // Every started ticket has an open change request whose CI ran on its branch's head.
         let active = store.list_active_attempts().await.unwrap();
@@ -1220,10 +1367,19 @@ mod tests {
         assert_eq!(comments.len(), 1);
         let text = std::fs::read_to_string(Path::new(&wt.path).join(&comments[0].path)).unwrap();
         assert_eq!(text.lines().nth(comments[0].line as usize - 1), Some(REVIEWED_LINE));
-        // A PM conversation in the host project, which lists no project.
+        // Two PM conversations in the host project, which lists no project; the planning one waits on two proposals.
         let pm = store.list_pm_sessions().await.unwrap();
-        assert_eq!(pm.len(), 1);
-        assert!(store.list_session_events(&pm[0].session_id, 0, 100).await.unwrap().len() > 3);
+        assert_eq!(pm.len(), 2);
+        let mut waiting = 0;
+        for c in &pm {
+            let events = store.list_session_events(&c.session_id, 0, 100).await.unwrap();
+            assert!(events.len() > 3);
+            waiting += events
+                .iter()
+                .filter(|e| matches!(e.event, AgentEvent::Request { state: RequestState::Open, .. }))
+                .count();
+        }
+        assert_eq!(waiting, 2);
         let workflows = store.list_workflows(None).await.unwrap();
         assert!(workflows.iter().any(|w| w.name == "Nightly dependency updates" && w.enabled));
         // A database with projects is left alone.
