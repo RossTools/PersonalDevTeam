@@ -63,7 +63,7 @@ import { InboxList } from '../inbox/InboxList';
 import { PhoneInboxList } from '../inbox/PhoneInboxList';
 import { PersonasList } from '../personas/PersonasList';
 import { PmList } from '../pm/PmList';
-import { pmUnread, shownConversation, usePm, type PmSelection } from '../pm/usePm';
+import { pmUnread, usePmSummary, type PmSelection } from '../pm/usePm';
 import { NotesList } from '../notes/NotesList';
 import { useNotesFilters } from '../notes/useNotes';
 import { DocumentsList, useDocumentsFilters } from '../documents/DocumentsList';
@@ -110,6 +110,9 @@ const SECRETS = 'secrets';
 const go = (r: Route, opts?: { replace?: boolean }) => navigate(routePath(r), opts);
 
 const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
+
+/** While a list loads: one empty list, so the views it is passed to see the same props. */
+const NONE: never[] = [];
 
 /** The page title's `(n)` (the Inbox's items) and the favicon's dot (the most important thing waiting, PDT-207), and
  * reloading on a new build. */
@@ -203,7 +206,8 @@ export function AppShell() {
   // The Personas view's persona (`new`: the create form).
   const personaId = route.view === 'personas' ? route.personaId : null;
   const setPersonaId = useCallback((personaId: string | null) => go({ view: 'personas', personaId }), []);
-  const pm = usePm();
+  // The PM's conversations as the shell needs them: a reply streaming in re-renders only the PM's own views.
+  const pm = usePmSummary();
   // The PM view's conversation (PDT-149): `current` is the newest open one (the list, on a phone).
   const pmSelection: PmSelection = route.view === 'pm' ? route.pm : 'current';
   const setPmSelection = useCallback((pm: PmSelection) => go({ view: 'pm', pm }), []);
@@ -228,7 +232,7 @@ export function AppShell() {
   const [docDialog, setDocDialog] = useState<'new' | 'import' | null>(null);
   const confirm = useConfirm();
   const inbox = useInbox();
-  const inboxItems = inbox.data?.items ?? [];
+  const inboxItems = inbox.data?.items ?? NONE;
   // The Inbox picks an item by itself when none is shown (or the one shown has gone): that replaces the path. On a
   // phone `/inbox` is the list, where a tap opens an item (a new entry).
   const inboxShown = !!inboxId && inboxItems.some((i) => i.id === inboxId);
@@ -276,11 +280,11 @@ export function AppShell() {
     if (stored.mode !== mode) stored.setMode(mode);
   }, [stored.mode, mode, stored.setMode]);
   const peekRef = ticketsRoute?.ticket ?? null;
-  const backlog = {
+  const backlog = useMemo(() => ({
     ...stored,
     mode,
     setMode: (m: TicketsMode) => go({ view: 'tickets', board: m === 'board', ticket: peekRef }),
-  };
+  }), [stored, mode, peekRef]);
   const peek: TicketPeekState = useMemo(() => ({
     ticket: peekRef,
     // On a phone the ticket is a detail screen, so closing it is ← (Back), not a new entry.
@@ -308,10 +312,10 @@ export function AppShell() {
       if (hit) openTicket(hit);
     });
   }, [openTicket]);
-  const pmSessions = pm.data?.sessions;
+  const pmConversations = pm.data?.conversations;
   const openSession = useCallback((s: { id: string; projectId: string }) => {
     // A PM conversation has no tab: the PM view shows it.
-    if (pmSessions?.some((x) => x.session.id === s.id)) {
+    if (pmConversations?.some((x) => x.id === s.id)) {
       setPmSelection(s.id);
       return;
     }
@@ -324,7 +328,7 @@ export function AppShell() {
         setView('sessions');
       }
     });
-  }, [ws.focusItem, ws.openIn, ws.workspace, pmSessions, setPmSelection, setView]);
+  }, [ws.focusItem, ws.openIn, ws.workspace, pmConversations, setPmSelection, setView]);
   // A new PM conversation starts beside the open ones (PDT-149): its first message starts it.
   const newPmSession = useCallback(() => {
     setSheetOpen(false);
@@ -498,18 +502,32 @@ export function AppShell() {
   }, [folder.file]);
 
   /** Settings for a project (by id), plugins, all connections, secrets, notifications, or this host (null). */
-  const showProjectSettings = (id: string | null) => {
-    const key = ws.projects.find((p) => p.id === id)?.key;
+  const projectList = ws.projects;
+  const showProjectSettings = useCallback((id: string | null) => {
+    const key = projectList.find((p) => p.id === id)?.key;
     go({
       view: 'settings',
       page: id === PLUGINS ? { kind: 'plugins', id: null } : id === CONNECTIONS ? { kind: 'connections' } : id === SECRETS ? { kind: 'secrets' } : id === NOTIFICATIONS ? { kind: 'notifications' }
         : key ? { kind: 'project', key, section: null } : { kind: 'host', section: null },
     });
     setSheetOpen(false);
-  };
+  }, [projectList]);
+  // Stable handlers for the memoized views below (PDT-454).
+  const closeSheet = useCallback(() => setSheetOpen(false), []);
+  const openChooser = useCallback(() => setChooserOpen(true), []);
+  const openOverview = useCallback(() => setOverviewOpen(true), []);
+  const toggleBottomMax = useCallback(() => setBottomMax((m) => !m), []);
+  const wsRefresh = ws.refresh;
+  const refreshWorkspaces = useCallback(() => void wsRefresh(), [wsRefresh]);
+  const toggleBottom = useMemo(() => (phone ? undefined : (
+    <IconButton label="Toggle terminal panel" aria-expanded={bottomOpen} onClick={() => setBottomOpen((o) => !o)}>
+      <PanelBottom aria-hidden />
+    </IconButton>
+  )), [phone, bottomOpen]);
 
   // Notifications (PDT-108): the Inbox's Updates, the stream's toasts and desktop notifications, and where a click goes.
   const updates = useUpdates();
+  const updateItems = updates.data?.items ?? NONE;
   const connected = useConnected(ws.workspacesError);
   // Empty Inbox lists say they can't load, not that nothing waits, while their poll fails or the host is unreachable.
   // Not `isError`: with no data yet, each refetch puts the query back to pending, so that is true only between rounds.
@@ -519,10 +537,13 @@ export function AppShell() {
   const clearUpdate = useClearUpdate();
   const clearAllUpdates = useClearAllUpdates();
   const unreadUpdates = (updates.data?.unreadUpdates ?? 0) > 0;
+  // The PM view's conversation (`current`: the newest open one).
+  const shownPmId = pmSelection === 'current' ? pm.data?.current : pmSelection;
+  const shownPm = shownPmId ? pmConversations?.find((c) => c.id === shownPmId) : undefined;
   // The PM's unread reply: no dot for the conversation on screen (on a phone `/pm` is the list).
   const pmShown = route.view !== 'pm' || (phone && pmSelection === 'current') ? null
-    : shownConversation(pm.data?.sessions, pm.data?.current?.id, pmSelection)?.session.id ?? null;
-  const pmDot = pmUnread(pm.data?.sessions, pmShown);
+    : shownPm?.id ?? null;
+  const pmDot = pmUnread(pmConversations, pmShown);
   useAttentionTitle(useAttention(ws.everyInfo, pmShown));
   const openTarget = useCallback((t: NotificationTarget) => {
     switch (t.kind) {
@@ -622,14 +643,14 @@ export function AppShell() {
         ws={ws}
         onRenameTab={setRenamingTabId}
         onProjectSettings={showProjectSettings}
-        onChoose={() => setSheetOpen(false)}
+        onChoose={closeSheet}
         touch={phone}
         adding={addingWorkspace}
         onAddingChange={setAddingWorkspace}
       />
     </>
   ) : view === 'inbox' ? (
-    <InboxList items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} loading={inbox.isLoading}
+    <InboxList items={inboxItems} updates={updateItems} selectedId={inboxId} loading={inbox.isLoading}
       failed={inboxFailed} updatesFailed={updatesFailed}
       onSelect={(id) => { setInboxId(id); setSheetOpen(false); }}
       onReadAll={() => readAllUpdates.mutate()} onClear={(id) => clearUpdate.mutate(id)} onClearAll={() => clearAllUpdates.mutate()}
@@ -731,7 +752,7 @@ export function AppShell() {
   : view === 'files' && detail && filesRoute?.path ? filesRoute.path.split('/').filter(Boolean).pop() ?? label
   : view === 'settings' && detail ? settingsTitle()
   : view === 'pm' && detail ? (pmSelection === 'earlier' ? 'Ended conversations' : pmSelection === 'new' ? 'New conversation'
-    : shownConversation(pm.data?.sessions, pm.data?.current?.id, pmSelection)?.title ?? label)
+    : shownPm?.title ?? label)
   : view === 'notes' && detail ? (noteId === 'new' ? 'New note' : 'Note')
   : view === 'documents' && detail ? 'Document'
   : label;
@@ -843,16 +864,12 @@ export function AppShell() {
             ws={ws}
             renamingTabId={renamingTabId}
             setRenamingTabId={setRenamingTabId}
-            onNewTab={() => setChooserOpen(true)}
-            {...(phone ? { onOverview: () => setOverviewOpen(true) } : {})}
+            onNewTab={openChooser}
+            {...(phone ? { onOverview: openOverview } : {})}
             plusRef={plusRef}
             hideName={phone}
             // On a phone the terminal panel is under ⋯.
-            trailing={phone ? undefined : (
-              <IconButton label="Toggle terminal panel" aria-expanded={bottomOpen} onClick={() => setBottomOpen((o) => !o)}>
-                <PanelBottom aria-hidden />
-              </IconButton>
-            )}
+            trailing={toggleBottom}
           />
         ) : null}
         {view === 'sessions' && !phoneList && !setupShown && mergedTicketId && (
@@ -933,7 +950,7 @@ export function AppShell() {
             ) : phone && view === 'sessions' && !phoneList && overviewOpen ? (
               <TabOverview ws={ws} onClose={() => setOverviewOpen(false)} onRename={setRenamingTabId} />
             ) : phoneList && view === 'inbox' ? (
-              <PhoneInboxList items={inboxItems} updates={updates.data?.items ?? []} loading={inbox.isLoading}
+              <PhoneInboxList items={inboxItems} updates={updateItems} loading={inbox.isLoading}
                 failed={inboxFailed} updatesFailed={updatesFailed}
                 onOpen={(id) => go({ view: 'inbox', itemId: id })}
                 onReadAll={() => readAllUpdates.mutate()} onClear={(id) => clearUpdate.mutate(id)} onClearAll={() => clearAllUpdates.mutate()}
@@ -948,10 +965,10 @@ export function AppShell() {
                 )}
               </div>
             ) : view === 'inbox' && phone && inboxId ? (
-              <ScreenSuspense><PhoneInboxItem items={inboxItems} updates={updates.data?.items ?? []}
+              <ScreenSuspense><PhoneInboxItem items={inboxItems} updates={updateItems}
                 itemId={inboxId} loading={inbox.isLoading} onMove={moveInbox} onList={() => goBack(routePath(viewRoute('inbox')))} onOpenTarget={openTarget} /></ScreenSuspense>
             ) : view === 'inbox' ? (
-              <ScreenSuspense><InboxView items={inboxItems} updates={updates.data?.items ?? []} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} failed={inboxFailed} /></ScreenSuspense>
+              <ScreenSuspense><InboxView items={inboxItems} updates={updateItems} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} failed={inboxFailed} /></ScreenSuspense>
             ) : view === 'pm' ? (
               <ScreenSuspense><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></ScreenSuspense>
             ) : view === 'notes' ? (
@@ -1000,14 +1017,14 @@ export function AppShell() {
               ) : settingsPage.kind === 'host' || settingsPage.kind === 'index' ? <HostSettingsPage drill={phone} section={section} onSection={showSection} />
                 : settingsPageScreen(settingsPage, settingsContext)
             ) : ws.tab?.ticketId ? (
-              <ScreenSuspense><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={() => void ws.refresh()} /></ScreenSuspense>
+              <ScreenSuspense><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={refreshWorkspaces} /></ScreenSuspense>
             ) : ws.tab?.worktreeId ? (
               <ScreenSuspense><ChangesView key={ws.tab.worktreeId} worktreeId={ws.tab.worktreeId} /></ScreenSuspense>
             ) : current?.run ? (
               <RunView
                 key={current.run.id}
                 run={current.run}
-                onRemoved={() => void ws.refresh()}
+                onRemoved={refreshWorkspaces}
                 branchLink={branchLink}
                 {...(currentProject ? { forge: currentProject.forge ?? null, baseBranch: currentProject.baseBranch } : {})}
               />
@@ -1015,7 +1032,7 @@ export function AppShell() {
               <SessionView
                 key={current.session.id}
                 session={current.session}
-                onRemoved={() => void ws.refresh()}
+                onRemoved={refreshWorkspaces}
                 branchLink={branchLink}
                 {...(currentProject ? { forge: currentProject.forge ?? null, baseBranch: currentProject.baseBranch, projectKey: currentProject.key } : {})}
                 {...(!current.worktreeId ? { branch: null } : worktreeBranch !== undefined ? { branch: worktreeBranch } : {})}
@@ -1029,7 +1046,7 @@ export function AppShell() {
             </ViewScopeContext.Provider>
           </div>
         )}
-        {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={() => setBottomMax((m) => !m)} />}
+        {bottomOpen && <BottomPanel project={bottomProject} maximized={bottomMax} onToggleMaximize={toggleBottomMax} />}
       </main>
       {!phone && <RightPanel open={rightOpen} onOpenChange={setRightOpen} projectId={todoProjectId} projects={ws.projects} focusTodo={todoFocus} onTodoFocused={clearTodoFocus} focusAddSeq={todoAddSeq} />}
     </div>

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
+import type { PmState } from '../api/gen/PmState';
 import type { RotateReason } from '../api/gen/RotateReason';
 import { runAction } from '../common/useAction';
 import { pluginsKey } from '../plugins/model';
@@ -10,6 +11,26 @@ import { pluginsKey } from '../plugins/model';
 /** The PM's conversations, polled with the rest of the UI (PDT-81). */
 export function usePm() {
   return useQuery({ queryKey: ['pm'], queryFn: api.pm, refetchInterval: 2000 });
+}
+
+/** A PM conversation as the shell reads it (the rail's dot, the phone's title): nothing that changes while it works. */
+export interface PmSummary {
+  id: string;
+  title: string;
+  /** [isUnread], the conversation on screen aside. */
+  unread: boolean;
+}
+
+export const pmSummary = (info: PmSessionInfo): PmSummary => ({ id: info.session.id, title: info.title, unread: isUnread(info, null) });
+
+const selectSummary = (pm: PmState) => ({ current: pm.current?.id ?? null, conversations: pm.sessions.map(pmSummary) });
+
+/**
+ * The PM's conversations for the shell, from the same poll: kept the same object while their ids, titles and unread
+ * marks are, so a turn running doesn't re-render the whole app (PDT-454).
+ */
+export function usePmSummary() {
+  return useQuery({ queryKey: ['pm'], queryFn: api.pm, refetchInterval: 2000, select: selectSummary });
 }
 
 export function useRefreshPm() {
@@ -71,8 +92,8 @@ export const isUnread = ({ session: s, open, rotation }: PmSessionInfo, shown: s
   open && rotation === 'none' && s.unseen && s.activity !== 'working' && s.id !== shown;
 
 /** Whether any PM conversation is unread: the rail's dot. */
-export const pmUnread = (sessions: PmSessionInfo[] | undefined, shown: string | null) =>
-  !!sessions?.some((s) => isUnread(s, shown));
+export const pmUnread = (conversations: PmSummary[] | undefined, shown: string | null) =>
+  !!conversations?.some((c) => c.unread && c.id !== shown);
 
 /** The conversation `selection` shows: `current` is the newest open one. */
 export function shownConversation(sessions: PmSessionInfo[] | undefined, current: string | null | undefined, selection: PmSelection) {

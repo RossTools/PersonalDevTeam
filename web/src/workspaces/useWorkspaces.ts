@@ -326,12 +326,20 @@ export function useWorkspaces(routed?: RoutedChoice) {
   const moveWorkspace = useCallback(async (id: string, position: number) => { await api.updateWorkspace(id, { position }); await refresh(); }, [refresh]);
   const deleteWorkspace = useCallback(async (id: string) => { await api.deleteWorkspace(id); await refresh(); }, [refresh]);
 
-  return {
+  const currentInfo = tab ? info(itemOf(tab)) : null;
+  const projectsLoaded = projects.isSuccess;
+  const workspacesError = workspacesQ.error;
+  // One object while nothing in it changed, so the shell's other polls (the Inbox, the PM, updates) don't re-render the
+  // views it is passed to (PDT-454).
+  return useMemo(() => ({
     createWorkspace, renameWorkspace, moveWorkspace, deleteWorkspace,
-    projects: projectList, projectsLoaded: projects.isSuccess, workspaces, workspacesError: workspacesQ.error, workspace, tab, info, allInfos, everyInfo, ticketInfos,
-    selectWorkspace, selectTab, focusItem, placementFor, closeTab, moveTab, openIn, refresh,
-    currentInfo: tab ? info(itemOf(tab)) : null,
-  };
+    projects: projectList, projectsLoaded, workspaces, workspacesError, workspace, tab, info, allInfos, everyInfo, ticketInfos,
+    selectWorkspace, selectTab, focusItem, placementFor, closeTab, moveTab, openIn, refresh, currentInfo,
+  }), [
+    createWorkspace, renameWorkspace, moveWorkspace, deleteWorkspace,
+    projectList, projectsLoaded, workspaces, workspacesError, workspace, tab, info, allInfos, everyInfo, ticketInfos,
+    selectWorkspace, selectTab, focusItem, placementFor, closeTab, moveTab, openIn, refresh, currentInfo,
+  ]);
 }
 
 export type WorkspacesApi = ReturnType<typeof useWorkspaces>;

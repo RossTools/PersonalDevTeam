@@ -286,6 +286,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.
 - **The UI re-renders every 2 s**: effects must be idempotent, and never focus from an inline ref callback.
+- **The shell re-renders only when a poll brings something new** (web `shell/AppShell.tsx`): the `useWorkspaces` and
+  `useBacklog` results are memoized, the views it passes them to (Sidebar, WorkspaceBar, SessionView, RunView,
+  BottomPanel) are `memo`, and its handlers are `useCallback`. Keep new props to those views stable, and read a fast-
+  changing query in the shell through a `select` that keeps only what it shows (`usePmSummary`).
 - **What a view shows when it is left comes back** (web `common/viewState.ts`): keep a view's choices (a file, a
   toggle, a scroll, a draft) with `useViewState` / `useRememberedScroll`, not `useState`, under a name that includes
   the ids of what it shows. The shell scopes them by workspace tab (or by view); a closed tab's are dropped.

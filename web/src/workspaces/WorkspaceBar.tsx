@@ -1,4 +1,4 @@
-import { useEffect, useRef, type DragEvent, type ReactNode, type Ref } from 'react';
+import { memo, useEffect, useRef, type DragEvent, type ReactNode, type Ref } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { FileDiff, LayoutGrid, Plus, Ticket, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
@@ -111,7 +111,7 @@ function TabButton({ ws, tab, info, selected, tabIndex, renaming, setRenaming, o
  * the name out (phones: the top bar shows it); `plusRef` is the "+" button, which the new-tab chooser anchors to;
  * `onOverview` adds ⧉, the tab overview (phones).
  */
-export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, onOverview, trailing, hideName = false, plusRef }: {
+export const WorkspaceBar = memo(function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, onOverview, trailing, hideName = false, plusRef }: {
   ws: WorkspacesApi;
   renamingTabId: string | null;
   setRenamingTabId: (id: string | null) => void;
@@ -186,4 +186,4 @@ export function WorkspaceBar({ ws, renamingTabId, setRenamingTabId, onNewTab, on
       {trailing}
     </div>
   );
-}
+});

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Maximize2, Minimize2, Plus } from 'lucide-react';
-import { useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { cn } from '@ui/lib/utils';
 import { EmptyState, IconButton, SegmentedControl } from '@ui';
 import { api } from '../api/client';
@@ -8,7 +8,7 @@ import type { Project } from '../api/gen/Project';
 import { useAction } from '../common/useAction';
 import { TerminalView } from '../terminal/TerminalView';
 
-export function BottomPanel({ project, maximized, onToggleMaximize }: {
+export const BottomPanel = memo(function BottomPanel({ project, maximized, onToggleMaximize }: {
   project: Project | null;
   maximized: boolean;
   onToggleMaximize: () => void;
@@ -20,7 +20,7 @@ export function BottomPanel({ project, maximized, onToggleMaximize }: {
     enabled: project !== null,
     refetchInterval: 2000,
   });
-  const shells = (sessions.data ?? []).filter((s) => s.kind === 'shell' && s.status === 'running');
+  const shells = useMemo(() => (sessions.data ?? []).filter((s) => s.kind === 'shell' && s.status === 'running'), [sessions.data]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const active = shells.find((s) => s.id === activeId) ?? shells[0] ?? null;
   const [create, creating] = useAction(async () => {
@@ -59,4 +59,4 @@ export function BottomPanel({ project, maximized, onToggleMaximize }: {
       )}
     </section>
   );
-}
+});
