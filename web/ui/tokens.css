@@ -14,7 +14,9 @@
   --pdt-accent: #2563eb;
   --pdt-on-accent: #ffffff;
   --pdt-accent-soft: #dfe8fd;
-  --pdt-ring: rgba(37, 99, 235, 0.25);
+  /* Keyboard focus (ring-ring, and the outline index.css gives every element): opaque, 3:1 or more on every surface
+     (WCAG 1.4.11), tested in tokens.test.ts. */
+  --pdt-ring: #2563eb;
   --pdt-running: #15803d;
   --pdt-waiting: #b45309;
   --pdt-failed: #dc2626;
@@ -103,7 +105,7 @@
     --pdt-accent: #3561b8;
     --pdt-on-accent: #eef2fb;
     --pdt-accent-soft: #171f33;
-    --pdt-ring: rgba(53, 97, 184, 0.35);
+    --pdt-ring: #5b8def;
     --pdt-running: #34d399;
     --pdt-waiting: #f59e0b;
     --pdt-failed: #f87171;
@@ -174,7 +176,7 @@
   --pdt-accent: #3561b8;
   --pdt-on-accent: #eef2fb;
   --pdt-accent-soft: #171f33;
-  --pdt-ring: rgba(53, 97, 184, 0.35);
+  --pdt-ring: #5b8def;
   --pdt-running: #34d399;
   --pdt-waiting: #f59e0b;
   --pdt-failed: #f87171;
