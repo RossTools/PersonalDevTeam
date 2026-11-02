@@ -47,7 +47,7 @@ impl Transport for Fake {
         let ok = |v: Value| Ok(Response::new(200, v.to_string()));
         let rest = route.strip_prefix(PROJECT);
         match (req.method, route, rest) {
-            ("GET", "user", _) => ok(json!({"id": 7, "username": "rwest"})),
+            ("GET", "user", _) => ok(json!({"id": 7, "username": "alexk"})),
             ("GET", "personal_access_tokens/self", _) => ok(json!({"scopes": ["api"]})),
             ("GET", _, Some("")) => ok(json!({"merge_method": "merge", "squash_option": "default_off",
                                              "merge_pipelines_enabled": false, "merge_trains_enabled": false})),
@@ -129,7 +129,7 @@ async fn a_self_hosted_project_gets_the_gitlab_forge_once_signed_in_and_runs_a_t
     let body = json!({"token": "glpat-x", "apiUrl": "https://gitlab.example.com"});
     let (s, t) = call(&env.app, "POST", "/api/forges/gitlab/login/test", Some(body.clone())).await;
     assert_eq!(s, StatusCode::OK, "{t}");
-    assert_eq!((t["login"].as_str(), t["host"].as_str()), (Some("rwest"), Some("gitlab.example.com")));
+    assert_eq!((t["login"].as_str(), t["host"].as_str()), (Some("alexk"), Some("gitlab.example.com")));
     assert_eq!(t["scopes"], json!(["api"]));
     let (s, v) = call(&env.app, "POST", "/api/forges/gitlab/login/token", Some(body)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
