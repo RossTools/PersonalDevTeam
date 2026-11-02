@@ -186,6 +186,20 @@ footer a:hover { color: var(--fg); }
   .split { grid-template-columns: 1fr; gap: 40px; }
 }
 
+/* The PM section: its points beside a conversation with the PM. The shot is taller than the text, which stays in view
+   beside it. */
+.pm-split { display: grid; grid-template-columns: 1fr 600px; gap: 56px; align-items: start; }
+.pm-text { position: sticky; top: 108px; }
+ul.pm-points { list-style: none; padding: 0; margin-top: 28px; display: grid; gap: 12px; color: var(--muted); font-size: 15px; }
+ul.pm-points b { color: var(--fg); font-weight: 600; }
+.pm-shot { border-radius: var(--radius); }
+@media (max-width: 1040px) { .pm-split { grid-template-columns: 1fr 1fr; gap: 48px; } }
+@media (max-width: 860px) {
+  .pm-split { grid-template-columns: 1fr; gap: 40px; }
+  .pm-text { position: static; }
+  .pm-shot { max-width: 600px; }
+}
+
 /* Landing feature cards link to their Features sections. */
 a.f { display: block; transition: background .12s; }
 a.f:hover { background: var(--surface); }
