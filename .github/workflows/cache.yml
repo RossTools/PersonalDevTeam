@@ -5,6 +5,7 @@ name: cache
 # build output and the cargo registry; its key changes with Cargo.lock, the manifests and the toolchain, so it only
 # rebuilds when they change, plus weekly (GitHub drops caches unused for 7 days).
 # Runners on Namespace (the PDT_<OS>_RUNNER variables) keep their own cache volume, so their OS is skipped here.
+# Nothing runs on a fork (`github.event.repository.fork`): its caches serve no one but would spend its owner's minutes.
 on:
   push:
     branches: [main]
@@ -39,7 +40,7 @@ env:
 jobs:
   # ci.yml's `lint (linux)`.
   lint-linux:
-    if: ${{ !startsWith(vars.PDT_LINUX_RUNNER, 'namespace-') }}
+    if: ${{ !github.event.repository.fork && !startsWith(vars.PDT_LINUX_RUNNER, 'namespace-') }}
     runs-on: ${{ vars.PDT_LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
@@ -50,7 +51,7 @@ jobs:
       - run: scripts/check.sh --only lint
 
   rust-linux:
-    if: ${{ !startsWith(vars.PDT_LINUX_RUNNER, 'namespace-') }}
+    if: ${{ !github.event.repository.fork && !startsWith(vars.PDT_LINUX_RUNNER, 'namespace-') }}
     uses: ./.github/workflows/rust.yml
     with:
       os: linux
@@ -58,7 +59,7 @@ jobs:
       warm: true
 
   rust-macos:
-    if: ${{ !startsWith(vars.PDT_MACOS_RUNNER, 'namespace-') }}
+    if: ${{ !github.event.repository.fork && !startsWith(vars.PDT_MACOS_RUNNER, 'namespace-') }}
     uses: ./.github/workflows/rust.yml
     with:
       os: macos
@@ -66,7 +67,7 @@ jobs:
       warm: true
 
   rust-windows:
-    if: ${{ !startsWith(vars.PDT_WINDOWS_RUNNER, 'namespace-') }}
+    if: ${{ !github.event.repository.fork && !startsWith(vars.PDT_WINDOWS_RUNNER, 'namespace-') }}
     uses: ./.github/workflows/rust.yml
     with:
       os: windows
@@ -75,6 +76,7 @@ jobs:
 
   # The Linux pnpm store (macOS's comes with rust-macos; Windows runs no web checks).
   pnpm-linux:
+    if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -88,7 +90,7 @@ jobs:
   # (release.yml's nightlies save them) count as kinds too: main's newest of each stays.
   prune:
     needs: [lint-linux, rust-linux, rust-macos, rust-windows, pnpm-linux]
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
+    if: ${{ !cancelled() && !github.event.repository.fork && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     # Job permissions replace the workflow's: the checkout needs contents too.
     permissions:

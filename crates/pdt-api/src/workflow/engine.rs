@@ -811,6 +811,9 @@ async fn claim<'a>(
             return fail_step(st, doc, run, step, e, true).await.map(ended);
         }
     };
+    if let Err(e) = kind.check_at_run(&config) {
+        return fail_step(st, doc, run, step, e, true).await.map(ended);
+    }
     let state = st.store.workflow_state(&wf.id).await.map_err(err)?;
     let ctx = context(wf, run, steps, state, false);
     let mut input = resolve_keeping(&config, &ctx, &["event", "secret"]);

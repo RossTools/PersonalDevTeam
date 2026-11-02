@@ -150,6 +150,12 @@ pub trait NodeKind: Send + Sync {
     /// Whether `config` (references allowed) fits the kind.
     fn check(&self, config: &Value) -> Result<(), String>;
 
+    /// What a step refuses to run with even when its workflow was saved before the rule existed: checked on the
+    /// unresolved config each time it runs (PDT-412: references in a command's script).
+    fn check_at_run(&self, _config: &Value) -> Result<(), String> {
+        Ok(())
+    }
+
     /// A config written for an older version, brought up to this one.
     fn migrate(&self, from: u32, config: Value) -> Result<Value, String> {
         let v = self.spec().version;

@@ -20,6 +20,9 @@ permissions:
 
 jobs:
   build:
+    # Not on a fork: it has no Pages site (configure-pages would fail), and contributors' pushes to their main deploy
+    # nothing. `deploy` needs this job, so it skips too.
+    if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # configure-pages looks the Pages site up, which the workflow's contents: read alone doesn't allow.

@@ -1,9 +1,15 @@
 # How we work on PDT
 
-PDT is built inside PDT: agent sessions run on the stable instance (port 7420), each change lives in its own worktree,
-and the user tests it in a dev instance of PDT started with **Run**. This page is the process: branches, checks, pull
-requests, CI, the merge queue, the changelog and releases. How the code works is in the developer guide
-([architecture.md](dev/architecture.md), [invariants.md](dev/invariants.md), [testing.md](dev/testing.md)).
+PDT is built inside PDT: the maintainer's agent sessions run on their stable instance (port 7420), each change lives
+in its own worktree, and the maintainer tests it in a dev instance of PDT started with **Run**. This page is the
+process: branches, checks, pull requests, CI, the merge queue, the changelog and releases. How the code works is in
+the developer guide ([architecture.md](dev/architecture.md), [invariants.md](dev/invariants.md),
+[testing.md](dev/testing.md)).
+
+**Contributing from outside** (no maintainer PDT, no `PDT` tickets): [CONTRIBUTING.md](../CONTRIBUTING.md) is your
+version of this page. The parts below that use the stable PDT on port 7420, its tickets, `gh pr merge`, labels,
+releases or the stable data folder are for maintainers; use a plain branch (or `git worktree add`) instead, and name
+your changelog fragment after your issue or PR (`GH-45.md`).
 
 ## The loop
 
@@ -30,7 +36,8 @@ Worktrees live at `.worktrees/<branch>` inside the repo (`/` in a branch name be
 `.git/info/exclude`. Ticket Start names branches `pdt-<KEY>-<n>-<slug>` (no `/`: some tools break on it); other
 branches are short and kebab-case.
 
-Create them **through the stable PDT**, so its sessions group under the branch and Run uses that checkout:
+Maintainers create them **through the stable PDT**, so its sessions group under the branch and Run uses that
+checkout (without a PDT, `git worktree add .worktrees/<branch> -b <branch> origin/main` or just a branch):
 
 ```sh
 git -C <repo> fetch origin && git -C <repo> merge --ff-only origin/main   # keep the main checkout clean
@@ -88,7 +95,9 @@ The board no longer jumps back to the top when a ticket moves.
   tooling). The text is one or two sentences (or a short list) on what changed for the user, with no tickets, crates
   or file names unless the user sees them.
 - `scripts/changelog.sh check` checks the fragments. CI's `changelog` job fails a PR without one unless it has the
-  `no-changelog` label (for PRs that only change docs, CI or tests; adding it re-runs CI).
+  `no-changelog` label (for PRs that only change docs, CI or tests; adding it re-runs CI) or says `[no-changelog]`
+  in its description. The description is read when a push or a label starts the run, so after writing it there, push
+  again (or re-run the job). It is for contributors from a fork, who can't set labels.
 - At release, `scripts/changelog.sh <version>` adds a `## <version> (<date>)` section to `CHANGELOG.md` (Breaking,
   Added, Changed, Fixed), prints the notes, and moves the fragments to `.changes/<version>/`.
   `scripts/changelog.sh notes <version>` prints a version's section (the release's notes); `preview` prints the
@@ -229,9 +238,27 @@ conflict), push, and merge again.
 - **Namespace** (its GitHub App is installed on the repo): each profile has a cache volume. Its Linux image has no
   `SHELL` and no zsh, so `setup` with `zsh: true` installs zsh for pdtd's terminal tests.
 - The bundles and the small `changes`, `changelog`, `site` and reporting jobs always run on GitHub's runners.
+- **A pull request from a fork** runs every check on GitHub's hosted runners whatever the variables say (the
+  `changes` job picks each OS's runner): untrusted code never spends Namespace minutes or writes to a cache volume
+  later runs restore. In the merge queue it runs on the configured runners, after a maintainer has reviewed and
+  queued it.
 - `.github/workflows/bench.yml` (by hand only) times the same work on a list of runners, to compare hosts.
 - The Mac mini's old self-hosted runner is retired; if it is still listed under Settings → Actions → Runners, remove
   it, and never make the repo public while it is registered.
+
+### Outside pull requests
+
+- **Approval**: Settings → Actions → General → "Approval for running fork pull request workflows from
+  contributors" must be **Require approval for all external contributors**, so no fork's PR runs CI until a
+  maintainer approves that run (GitHub's default asks only first-time contributors).
+- **Secrets**: no workflow uses `pull_request_target`, and every workflow's token is `contents: read` unless a job
+  widens it. Fork PRs get no secrets; the bundles, the only jobs that sign, run only for this repository's `release`
+  branch.
+- **Labels**: a contributor can't set `no-changelog`, `windows` or `macos`. They write `[no-changelog]` in the PR's
+  description instead (above, "Changelog"); a maintainer adds `windows` or `macos` when the change needs those
+  checks.
+- **On a contributor's fork**, `pages.yml` and `cache.yml` skip (`github.event.repository.fork`); `ci.yml` checks
+  their PRs here; `release.yml` stops with a message when `PDT_RELEASE_TOKEN` is missing.
 
 ## Dependabot
 
@@ -347,12 +374,15 @@ range with the branch's own data folder, and shows the link (also from the phone
 side; restart the run after pushing fixes. **Test rust** and **Test web** are the `[[test]]` entries.
 `.pdt/project.toml` is this repo's run configuration; its comments explain each setting.
 
-**By hand**, one at a time (pdtd refuses a data folder another pdtd holds):
+**By hand**, one at a time per data folder (pdtd refuses a data folder another pdtd holds):
 
 ```sh
 pnpm --dir web build
-PDT_PROFILE=dev PDT_WEB_DIR=$PWD/web/dist cargo run -p pdtd      # port 7421, data dir pdt-dev
+PDT_PROFILE=dev PDT_PORT=7421 PDT_DATA_DIR=/tmp/pdt-try PDT_WEB_DIR=$PWD/web/dist cargo run -p pdtd
 ```
+
+Without `PDT_PORT` and `PDT_DATA_DIR`, `PDT_PROFILE=dev` uses port 7421 and the `pdt-dev` data folder next to the
+installed PDT's; `PDT_SEED=demo` fills an empty one with demo data.
 
 For UI work, `pnpm --dir web dev` serves the UI with hot reload on 5173 and proxies `/api` to 7421. For an agent that
 needs to look at the app, see [testing.md](dev/testing.md#looking-at-the-app).
@@ -361,7 +391,7 @@ needs to look at the app, see [testing.md](dev/testing.md#looking-at-the-app).
 pdt-desktop`. To check the bundle, `scripts/release-stable.sh --build-only` (Windows: `-BuildOnly`); never without it,
 never run a built installer, never `pdt-host install`/`uninstall`.
 
-**Upgrade rehearsal** before a release with migrations or plugin changes: `scripts/rehearse-upgrade.sh` runs this
+**Upgrade rehearsal** (maintainers) before a release with migrations or plugin changes: `scripts/rehearse-upgrade.sh` runs this
 checkout's pdtd on port 7421 against a copy of the stable data folder (SQLite's online backup, plus `sessions/` and
 `pm/`) with `PDT_REHEARSAL=1`: it migrates, installs the built-in workflows and personas and serves the API, but
 resumes nothing, starts no loop, keeps secrets in memory and never acts on the copy's repos or connections. It
