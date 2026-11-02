@@ -262,15 +262,16 @@ async fn pm_info(env: &Env, id: &str) -> Value {
     v.as_array().unwrap().iter().find(|i| i["session"]["id"] == id).cloned().unwrap_or(Value::Null)
 }
 
-/// Closes a PM conversation and waits until it has ended (its journal turn over).
+/// Closes a PM conversation and waits until it has ended (its journal turn over, its agent stopped).
 async fn close_pm(env: &Env, id: &str) -> Value {
     let (s, v) = call(&env.app, "DELETE", &format!("/api/pm/sessions/{id}"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let info = pm_info(env, id).await;
-        // The row is marked done just before a stand-in journal is written.
-        if info["open"] == false && !info["journal"].is_null() {
+        // The row is marked done just before a stand-in journal is written; the session finishes once its agent has
+        // exited, which can come a moment later.
+        if info["open"] == false && !info["journal"].is_null() && info["session"]["status"] != "running" {
             return info;
         }
         assert!(Instant::now() < deadline, "the conversation never ended: {info}");
