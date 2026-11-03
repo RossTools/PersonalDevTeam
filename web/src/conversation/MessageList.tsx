@@ -36,7 +36,7 @@ const PDT_MESSAGE: Record<PdtMessage, string> = {
 };
 
 /** One of PDT's own messages to a PM conversation: a muted line that opens to the full text the PM got. */
-export function PdtMessageRow({ kind, text, when }: { kind: PdtMessage; text: string; when: ReactNode }) {
+function PdtMessageRow({ kind, text, when }: { kind: PdtMessage; text: string; when: ReactNode }) {
   return (
     <Disclosure title={<>{PDT_MESSAGE[kind]} · {when}</>} className="px-1 text-meta" panelClassName="border-l border-border pl-2 text-sm text-foreground">
       <Markdown>{text}</Markdown>

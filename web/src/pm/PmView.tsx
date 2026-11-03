@@ -17,7 +17,7 @@ import { useTopBarActions } from '../shell/PhoneTopBar';
 import { earlier, firstLine, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useRefreshPm, useShownRef, useViaLabel, type PmSelection } from './usePm';
 
 /** The start box's unsent text, kept like a conversation's (it has no session yet). */
-export const PM_START_DRAFT = 'pm-start';
+const PM_START_DRAFT = 'pm-start';
 
 /**
  * The PM view's work area (PDT-81, PDT-149): the conversation on show (an ended one read-only, with its journal), the

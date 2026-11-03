@@ -6,7 +6,7 @@ import { clampFontSize, FONT_SIZE } from './keyBar';
 const KEY = 'pdt.terminal.fontSize';
 const listeners = new Set<() => void>();
 
-export function terminalFontSize(): number {
+function terminalFontSize(): number {
   try {
     const v = localStorage.getItem(KEY);
     return v === null ? FONT_SIZE.default : clampFontSize(Number(v));

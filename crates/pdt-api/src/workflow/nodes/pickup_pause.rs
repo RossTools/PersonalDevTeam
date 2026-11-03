@@ -2,7 +2,7 @@
 //! it. `crate::pickup_pause` keeps the pause.
 
 use crate::pickup_pause;
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -45,7 +45,7 @@ impl NodeKind for PickupPauseKind {
         Box::pin(async move {
             let c: PickupPauseConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("out", json!({"would": format!("pause pickup: {}", c.reason)})));
+                return Ok(Outcome::would("out", format!("pause pickup: {}", c.reason)));
             }
             let p = pickup_pause::pause(cx.st, &c.reason, Some(&cx.workflow.id)).await?;
             Ok(Outcome::next("out", p))
@@ -80,14 +80,14 @@ impl NodeKind for PickupResumeKind {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<PickupResumeConfig>(config).map(|_| ())
+        parses::<PickupResumeConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: PickupResumeConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("resumed", json!({"would": "resume pickup"})));
+                return Ok(Outcome::would("resumed", "resume pickup"));
             }
             let by = (!c.any).then_some(cx.workflow.id.as_str());
             Ok(if pickup_pause::resume(cx.st, by).await? {

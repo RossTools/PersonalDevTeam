@@ -5,6 +5,7 @@ pub(crate) mod after_release;
 pub(crate) mod agent;
 pub(crate) mod builtins;
 pub(crate) mod catalog;
+pub(crate) mod doc_build;
 pub(crate) mod engine;
 pub(crate) mod nodes;
 pub(crate) mod outbox;

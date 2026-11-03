@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react';
-import { CommentComposer, CommentThread, type ThreadComment } from '@ui/Comment';
+import { Comment, CommentComposer, CommentThread, type ThreadComment } from '@ui/Comment';
+import { DiffStat } from '@ui/DiffViewer';
 import { SectionLabel } from '@ui/SectionLabel';
 import { SplitPane } from '@ui/SplitPane';
 import { toast } from '@ui/Toaster';
@@ -101,7 +102,14 @@ function render() {
         <Demo label="CommentThread · resolved (collapsed)">
           <CommentThread comments={thread} title="src/main.rs:2" resolved onResolve={() => {}} />
         </Demo>
+        <Demo label="Comment · sent, and a draft (Edit, Delete)">
+          <Comment author="Ross" time="10:42" body="Can this read the port from the config instead?" />
+          <Comment author="You" body="Rename this to `port`." draft onEdit={() => {}} onDelete={() => {}} />
+        </Demo>
       </div>
+      <Demo label="DiffStat">
+        <div className="flex gap-4 text-xs"><DiffStat added={42} removed={7} /><DiffStat added={0} removed={120} /></div>
+      </Demo>
     </div>
   );
 }

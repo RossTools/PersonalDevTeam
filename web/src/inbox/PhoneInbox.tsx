@@ -38,7 +38,7 @@ interface Decision {
  * The bottom bar: the decisions, the primary one on the right. More than three: the primary one and **More ▾**, a
  * bottom sheet with the rest as big rows.
  */
-export function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]; busy: boolean; onPick: (id: string) => void }) {
+function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]; busy: boolean; onPick: (id: string) => void }) {
   const [more, setMore] = useState(false);
   const ordered = [...decisions.filter((d) => !d.primary), ...decisions.filter((d) => d.primary)];
   const main = ordered.at(-1);

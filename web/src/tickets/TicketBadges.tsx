@@ -30,7 +30,7 @@ function AutoStartBadge({ at }: { at: number }) {
 }
 
 /** "Created by Coder · from PDT-345": the agent session that made a ticket and the ticket it was working on. */
-export function createdByText(by: AgentBy | null | undefined, fallback: string): string {
+function createdByText(by: AgentBy | null | undefined, fallback: string): string {
   const who = by?.persona ?? fallback;
   return `Created by ${who}${by?.fromTicket ? ` · from ${by.fromTicket}` : ''}`;
 }

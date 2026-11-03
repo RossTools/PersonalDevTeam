@@ -4,7 +4,7 @@
 //! itself once the ticket moves past Ready some other way (the store does that on every move).
 
 use crate::routes::{AppState, now_ms};
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, parses, spec};
 use pdt_core::inbox::{self, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
 use pdt_core::policy::TriageApproval;
 use pdt_core::ticket::{Actor, TicketStage};
@@ -37,10 +37,6 @@ fn skipped(reason: &str) -> Outcome {
     Outcome::next("skipped", json!({"quiet": true, "reason": reason}))
 }
 
-fn nonblank(s: &Option<String>) -> Option<&str> {
-    s.as_deref().map(str::trim).filter(|s| !s.is_empty())
-}
-
 impl NodeKind for InboxAdmit {
     fn spec(&self) -> KindSpec {
         spec::<InboxAdmitConfig, Value>(
@@ -59,7 +55,7 @@ impl NodeKind for InboxAdmit {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<InboxAdmitConfig>(config).map(|_| ())
+        parses::<InboxAdmitConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
@@ -68,7 +64,7 @@ impl NodeKind for InboxAdmit {
             let Some(given) = nonblank(&c.ticket) else { return Ok(skipped("no ticket to approve")) };
             // A dry run's stand-in for a ticket an earlier step would make (PDT-189).
             if cx.dry_run && pdt_core::workflow::dry::is_stand_in(given) {
-                return Ok(Outcome::next("added", json!({"would": format!("ask you to approve {given}")})));
+                return Ok(Outcome::would("added", format!("ask you to approve {given}")));
             }
             let id = crate::mcp::tools::resolve_ticket(cx.st, given, cx.run.project_id.as_deref()).await?;
             let store = &cx.st.store;
@@ -81,38 +77,22 @@ impl NodeKind for InboxAdmit {
                 return Ok(skipped("the ticket is already past Ready"));
             }
             if cx.dry_run {
-                return Ok(Outcome::next("added", json!({"would": format!("ask you to approve {}", t.key)})));
+                return Ok(Outcome::would("added", format!("ask you to approve {}", t.key)));
             }
-            let item = InboxItem {
-                id: uuid::Uuid::now_v7().to_string(),
-                kind: InboxKind::Admit,
-                group: InboxGroup::Admit,
-                status: InboxStatus::Open,
-                project_id: Some(t.project_id.clone()),
-                ticket_id: Some(id.clone()),
-                ticket_key: None,
-                ticket_title: None,
-                attempt_id: None,
-                session_id: None,
-                run_id: Some(cx.run.id.clone()),
+            let body = json!({
+                "summary": nonblank(&c.summary), "issue": nonblank(&c.issue),
+                "external": crate::untrusted::held_back(&t), "workflow": cx.workflow.name,
+            });
+            let item = cx
+                .inbox_item(InboxKind::Admit, InboxGroup::Admit, &t.title, body)
+                .project(t.project_id.clone())
+                .ticket(id.clone())
                 // Not the step's: the item outlives the run.
-                step_id: None,
-                persona_id: None,
-                persona_name: None,
-                change_request: None,
-                title: t.title.clone(),
-                body: json!({
-                    "summary": nonblank(&c.summary), "issue": nonblank(&c.issue),
-                    "external": crate::untrusted::held_back(&t), "workflow": cx.workflow.name,
-                }),
-                choices: vec![
+                .step(None)
+                .choices(vec![
                     InboxChoice::new(inbox::APPROVE, "Approve", true),
                     InboxChoice::new(inbox::REJECT, "Reject", false),
-                ],
-                resolution: Value::Null,
-                created_at: now_ms(),
-                resolved_at: None,
-            };
+                ]);
             match store.add_inbox_item_once(&item, &format!("admit:{id}")).await.map_err(crate::workflow::err)? {
                 Some(i) => {
                     crate::notifications::kick(cx.st);

@@ -5,7 +5,7 @@ import { Alert, Section, Skeleton, Switch } from '@ui';
 import { api } from '../api/client';
 import { AutoSaveRow } from '../common/AutoSave';
 
-export const START_AT_LOGIN_KEY = ['host-start-at-login'];
+const START_AT_LOGIN_KEY = ['host-start-at-login'];
 
 export function StartAtLogin() {
   const qc = useQueryClient();

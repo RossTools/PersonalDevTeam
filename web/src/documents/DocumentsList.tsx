@@ -46,7 +46,7 @@ export function useDocumentsFilters(): DocumentsFilters {
 }
 
 /** The filter the API takes. */
-export function filterOf(f: DocumentsFilters): DocumentFilter {
+function filterOf(f: DocumentsFilters): DocumentFilter {
   return {
     ...(f.project ? { project: f.project } : {}),
     ...(f.ticket ? { ticket: f.ticket } : {}),

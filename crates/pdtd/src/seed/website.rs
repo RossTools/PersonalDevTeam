@@ -9,7 +9,7 @@
 
 use anyhow::Context;
 use pdt_core::conversation::*;
-use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
+use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind};
 use pdt_core::integration::ToolTable;
 use pdt_core::persona::{BUILTIN_PERSONAS, Persona, PersonaAuthor};
 use pdt_core::pr::CiState;
@@ -325,29 +325,20 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
     let (_, accept_id, accept_key, accept_attempt, _) = attempt_of("Apply discount codes at checkout");
     let question = format!("{accept_key} passed review and QA. Accept it?");
     store
-        .open_inbox_item(&InboxItem {
-            id: id(),
-            kind: InboxKind::Gate,
-            group: InboxGroup::Accept,
-            status: InboxStatus::Open,
-            project_id: Some(project.id.clone()),
-            ticket_id: Some(accept_id.clone()),
-            ticket_key: None,
-            ticket_title: None,
-            attempt_id: Some(accept_attempt.clone()),
-            session_id: None,
-            run_id: None,
-            step_id: None,
-            persona_id: None,
-            persona_name: None,
-            change_request: None,
-            title: question.clone(),
-            body: json!({"question": question, "workflow": "Pipeline", "node": "Accept"}),
-            choices: vec![InboxChoice::new("accept", "Accept", true), InboxChoice::new("reject", "Send back", false)],
-            resolution: serde_json::Value::Null,
-            created_at: now - 20 * MINUTE,
-            resolved_at: None,
-        })
+        .open_inbox_item(
+            &InboxItem::new(
+                id(),
+                InboxKind::Gate,
+                InboxGroup::Accept,
+                &question,
+                json!({"question": question, "workflow": "Pipeline", "node": "Accept"}),
+                now - 20 * MINUTE,
+            )
+            .project(project.id.clone())
+            .ticket(accept_id.clone())
+            .attempt(accept_attempt.clone())
+            .choices(vec![InboxChoice::new("accept", "Accept", true), InboxChoice::new("reject", "Send back", false)]),
+        )
         .await?;
 
     // The built-in personas the Pipeline's steps run, installed as PDT installs them (their template is PDT's, so
@@ -541,29 +532,19 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
     let (_, email_id, _, email_attempt, _) = attempt_of("Order confirmation email");
     let ask = "Should the receipt attach a PDF invoice, or is the email's text enough?";
     store
-        .open_inbox_item(&InboxItem {
-            id: id(),
-            kind: InboxKind::Question,
-            group: InboxGroup::Question,
-            status: InboxStatus::Open,
-            project_id: Some(project.id.clone()),
-            ticket_id: Some(email_id.clone()),
-            ticket_key: None,
-            ticket_title: None,
-            attempt_id: Some(email_attempt.clone()),
-            session_id: None,
-            run_id: None,
-            step_id: None,
-            persona_id: None,
-            persona_name: None,
-            change_request: None,
-            title: ask.into(),
-            body: json!({"questions": [{"question": ask, "choices": ["Attach a PDF", "Text is enough"]}]}),
-            choices: vec![],
-            resolution: serde_json::Value::Null,
-            created_at: now - 10 * MINUTE,
-            resolved_at: None,
-        })
+        .open_inbox_item(
+            &InboxItem::new(
+                id(),
+                InboxKind::Question,
+                InboxGroup::Question,
+                ask,
+                json!({"questions": [{"question": ask, "choices": ["Attach a PDF", "Text is enough"]}]}),
+                now - 10 * MINUTE,
+            )
+            .project(project.id.clone())
+            .ticket(email_id.clone())
+            .attempt(email_attempt.clone()),
+        )
         .await?;
 
     seed_pm(store, data_dir, &by_title, now - 5 * MINUTE).await?;

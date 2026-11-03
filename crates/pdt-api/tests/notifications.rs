@@ -259,29 +259,8 @@ async fn an_open_inbox_item_notifies_until_it_is_answered() {
     use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
     let tmp = tempfile::tempdir().unwrap();
     let (app, st) = setup(tmp.path()).await;
-    let item = InboxItem {
-        id: "g1".into(),
-        kind: InboxKind::Gate,
-        group: InboxGroup::Accept,
-        status: InboxStatus::Open,
-        project_id: None,
-        ticket_id: None,
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: None,
-        session_id: None,
-        run_id: None,
-        step_id: None,
-        persona_id: None,
-        persona_name: None,
-        change_request: None,
-        title: "Accept the work?".into(),
-        body: json!({}),
-        choices: vec![InboxChoice::new("yes", "Accept", true)],
-        resolution: Value::Null,
-        created_at: 1,
-        resolved_at: None,
-    };
+    let item = InboxItem::new("g1", InboxKind::Gate, InboxGroup::Accept, "Accept the work?", json!({}), 1)
+        .choices(vec![InboxChoice::new("yes", "Accept", true)]);
     st.store.open_inbox_item(&item).await.unwrap();
     pdt_api::sync_notifications(&st).await;
     let rows = list(&app, "needs_you").await;

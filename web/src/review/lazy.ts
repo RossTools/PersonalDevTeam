@@ -2,7 +2,7 @@ import { useEffect, useState, type RefObject } from 'react';
 import type { ChangedFile } from '../api/gen/ChangedFile';
 
 /** A diff with more changed lines than this starts hidden behind "Load diff". */
-export const LARGE_DIFF_LINES = 1000;
+const LARGE_DIFF_LINES = 1000;
 
 /** Why a file's diff starts hidden behind "Load diff" (as on GitHub), or null to show it. */
 export function hiddenReason(f: ChangedFile): 'binary' | 'generated' | 'large' | null {

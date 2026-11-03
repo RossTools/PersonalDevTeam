@@ -18,7 +18,7 @@ export function useUpdates() {
   return useQuery({ queryKey: UPDATES, queryFn: () => api.notifications({ section: 'updates', limit: 100 }), refetchInterval: streamPoll });
 }
 
-export function useRefreshNotifications() {
+function useRefreshNotifications() {
   const qc = useQueryClient();
   return () => Promise.all([
     qc.invalidateQueries({ queryKey: ['notifications'] }),

@@ -23,7 +23,7 @@ import { cn } from '@ui/lib/utils';
 /** A node's state in a run: the ring around its card. */
 export type FlowStatus = 'running' | 'waiting' | 'failed' | 'succeeded' | 'skipped';
 
-export interface FlowPort {
+interface FlowPort {
   id: string;
   label: string;
 }

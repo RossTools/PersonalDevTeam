@@ -2,7 +2,7 @@
 //! a workflow may merge; what stops a merge (a conflict, a draft PR, no PR in a project that merges through them) and
 //! a policy refusal leave by `refused`, saying whether the attempt's agent can fix it (`fixable`, PDT-124).
 
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use pdt_core::policy::Merger;
 use pdt_core::review::{MergeOutcome, MergeRequest, MergeStyle};
 use pdt_core::workflow::tpl::Tpl;
@@ -90,14 +90,14 @@ impl NodeKind for Merge {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<MergeConfig>(config).map(|_| ())
+        parses::<MergeConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: MergeConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("queued", json!({"would": format!("merge attempt {}", c.attempt)})));
+                return Ok(Outcome::would("queued", format!("merge attempt {}", c.attempt)));
             }
             // Cut short after it merged (PDT-131): the attempt says so. A pull request already set to merge is `queued`
             // below as for any automated merge.

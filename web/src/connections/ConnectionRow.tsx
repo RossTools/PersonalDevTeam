@@ -8,7 +8,7 @@ import { hookUrl, summaryText, useConnectionKinds, type ConnectionKind } from '.
 import { POLL } from '../common/poll';
 
 /** An MCP server's tools: how many (their names on hover), or why listing them failed; List again asks it now. */
-export function McpToolsLine({ c }: { c: Connection }) {
+function McpToolsLine({ c }: { c: Connection }) {
   const qc = useQueryClient();
   const key = ['connection-tools', c.id];
   const tools = useQuery({ queryKey: key, queryFn: () => api.connectionTools(c.id), refetchInterval: POLL.slow });
@@ -28,7 +28,7 @@ export function McpToolsLine({ c }: { c: Connection }) {
 }
 
 /** How a connection is doing beyond OK or Failing, as its plugin tells it (a bot's DMs with the PM). */
-export function StatusLine({ c }: { c: Connection }) {
+function StatusLine({ c }: { c: Connection }) {
   const status = useQuery({ queryKey: ['connection-status', c.id], queryFn: () => api.connectionStatus(c.id), refetchInterval: POLL.steady });
   const s = status.data;
   if (status.isError) return <p role="status" className="w-full pl-2 text-xs text-muted-foreground">Status unknown: {status.error.message}</p>;

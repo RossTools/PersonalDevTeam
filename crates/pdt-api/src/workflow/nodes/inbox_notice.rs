@@ -1,9 +1,8 @@
 //! `inbox.notice` (PDT-139): a notice nobody could be told goes to the user's Inbox, once per attempt and notice key.
 //! The item closes by itself once its cause is gone (`crate::inbox::settle_notices`).
 
-use crate::routes::now_ms;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
-use pdt_core::inbox::{InboxGroup, InboxItem, InboxKind, InboxStatus};
+use pdt_core::inbox::{InboxGroup, InboxKind};
 use pdt_core::pr::NoticeKind;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -86,40 +85,24 @@ impl NodeKind for InboxNotice {
                 None => c.text.lines().next().unwrap_or_default().chars().take(120).collect(),
             });
             if cx.dry_run {
-                return Ok(Outcome::next("added", json!({"would": format!("put in the Inbox: {title}")})));
+                return Ok(Outcome::would("added", format!("put in the Inbox: {title}")));
             }
             let store = &cx.st.store;
             let info = match attempt {
                 Some(a) => Some(store.get_attempt(a).await.map_err(crate::workflow::err)?.ok_or("no such attempt")?),
                 None => None,
             };
-            let item = InboxItem {
-                id: uuid::Uuid::now_v7().to_string(),
-                kind: InboxKind::Notice,
-                group: InboxGroup::Notice,
-                status: InboxStatus::Open,
-                project_id: info.as_ref().map(|i| i.project_id.clone()).or_else(|| cx.run.project_id.clone()),
-                ticket_id: info.as_ref().map(|i| i.ticket_id.clone()).or_else(|| cx.run.ticket_id.clone()),
-                ticket_key: None,
-                ticket_title: None,
-                attempt_id: info.as_ref().map(|i| i.attempt.id.clone()),
-                session_id: None,
-                run_id: Some(cx.run.id.clone()),
+            let body = json!({
+                "notice": kind, "key": c.key, "text": c.text, "pr": pr, "url": notice.get("url"),
+                "workflow": cx.workflow.name,
+            });
+            let item = cx
+                .inbox_item(InboxKind::Notice, InboxGroup::Notice, title, body)
+                .project(info.as_ref().map(|i| i.project_id.clone()).or_else(|| cx.run.project_id.clone()))
+                .ticket(info.as_ref().map(|i| i.ticket_id.clone()).or_else(|| cx.run.ticket_id.clone()))
+                .attempt(info.as_ref().map(|i| i.attempt.id.clone()))
                 // Not the step's: the item outlives the run.
-                step_id: None,
-                persona_id: None,
-                persona_name: None,
-                change_request: None,
-                title,
-                body: json!({
-                    "notice": kind, "key": c.key, "text": c.text, "pr": pr, "url": notice.get("url"),
-                    "workflow": cx.workflow.name,
-                }),
-                choices: vec![],
-                resolution: Value::Null,
-                created_at: now_ms(),
-                resolved_at: None,
-            };
+                .step(None);
             let key = match &info {
                 Some(i) => format!("notice:{}:{}", i.attempt.id, c.key),
                 None => format!("notice:workflow:{}:{}", cx.workflow.id, c.key),

@@ -9,7 +9,7 @@ import { MenuButton } from '@ui/Menu';
 import { List, ListRow, type ListDropEvent } from '@ui/List';
 import { TreeView, type TreeChildren, type TreeNode } from '@ui/TreeView';
 import { ViewHeader } from '@ui/ViewHeader';
-import { Page, Section, SettingsRow } from '@ui/Page';
+import { Page, Section, SettingsRow, SettingsScreen } from '@ui/Page';
 import { SectionLabel } from '@ui/SectionLabel';
 
 function Demo({ label, children }: { label: string; children: ReactNode }) {
@@ -224,6 +224,20 @@ function SettingsSample() {
   );
 }
 
+function SettingsScreenSample() {
+  return (
+    <div className="flex h-72 flex-col rounded-md border border-border bg-background">
+      <SettingsScreen crumb="This host" lead="Storage">
+        <Section label="Storage" description="What PDT keeps on this machine, and what cleaning frees.">
+          <SettingsRow label="Clean up automatically" description="Ended sessions' logs older than 30 days.">
+            <Switch aria-label="Clean up automatically" checked onChange={() => {}} />
+          </SettingsRow>
+        </Section>
+      </SettingsScreen>
+    </div>
+  );
+}
+
 export const section = {
   title: 'Lists and layout',
   order: 40,
@@ -236,6 +250,7 @@ export const section = {
       </div>
       <Demo label="ViewHeader"><Headers /></Demo>
       <Demo label="Page · Section · SettingsRow"><SettingsSample /></Demo>
+      <Demo label="SettingsScreen · one section on a screen of its own (the section's heading is the title)"><SettingsScreenSample /></Demo>
     </div>
   ),
 };

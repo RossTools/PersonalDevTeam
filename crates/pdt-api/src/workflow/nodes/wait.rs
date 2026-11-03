@@ -119,7 +119,7 @@ impl NodeKind for Wait {
             let c: WaitConfig = parse(&input)?;
             if cx.dry_run {
                 let port = if c.event.is_some() { "event" } else { "done" };
-                return Ok(Outcome::next(port, json!({"would": "wait"})));
+                return Ok(Outcome::would(port, "wait"));
             }
             crate::workflow::nodes::set_stage(cx, c.pipeline_stage).await;
             let now = now_ms();

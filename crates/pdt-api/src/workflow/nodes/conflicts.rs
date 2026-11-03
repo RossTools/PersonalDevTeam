@@ -4,7 +4,7 @@
 //! and hands only real conflicts to an agent, with the files and hunks.
 
 use crate::routes::{AppState, now_ms};
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use crate::workflow::nodes::command;
 use pdt_core::brand::PROJECT_CONFIG_FILE;
 use pdt_core::command_trust;
@@ -59,7 +59,7 @@ impl NodeKind for DeferConflict {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<DeferConfig>(config).map(|_| ())
+        parses::<DeferConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
@@ -129,14 +129,14 @@ impl NodeKind for UpdateBase {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<UpdateConfig>(config).map(|_| ())
+        parses::<UpdateConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: UpdateConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("current", json!({"would": format!("update attempt {}", c.attempt)})));
+                return Ok(Outcome::would("current", format!("update attempt {}", c.attempt)));
             }
             let st = cx.st;
             let Some(info) = st.store.get_attempt(&c.attempt).await.map_err(crate::workflow::err)? else {

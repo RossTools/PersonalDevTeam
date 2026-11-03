@@ -90,6 +90,12 @@ impl Outcome {
     pub fn next(port: &str, output: impl Serialize) -> Self {
         Outcome::Next { port: port.into(), output: serde_json::to_value(output).unwrap_or(Value::Null) }
     }
+
+    /// A dry run's report: leave by `port`, saying what the step would have done (`{"would": what}`). The dry run
+    /// fills in the fields later steps read from the kind's output schema (PDT-189).
+    pub fn would(port: &str, what: impl Serialize) -> Self {
+        Outcome::next(port, serde_json::json!({ "would": what }))
+    }
 }
 
 /// What a running node can see and use.
@@ -104,7 +110,8 @@ pub struct StepCx<'a> {
     pub ctx: &'a Value,
     /// For a sub-workflow's run, the trigger of the run that called it first (PDT-415): what its input may carry.
     pub origin: Option<&'a Value>,
-    /// A dry run: report what would happen, change nothing.
+    /// A dry run: report what would happen, change nothing. A kind with side effects checks it in `run` and returns
+    /// [`Outcome::would`] before doing them; one without runs as usual.
     pub dry_run: bool,
     /// The step ran before and was cut short (PDT stopped while it ran, or it timed out): it may have done some or all
     /// of its work. `step.output` holds the progress it recorded ([`StepCx::save_progress`]).
@@ -126,6 +133,20 @@ impl StepCx<'_> {
             .await
             .map(|_| ())
             .map_err(crate::workflow::err)
+    }
+
+    /// A new Inbox item from this step: its run's project, the run and the step.
+    pub fn inbox_item(
+        &self,
+        kind: pdt_core::inbox::InboxKind,
+        group: pdt_core::inbox::InboxGroup,
+        title: impl Into<String>,
+        body: Value,
+    ) -> pdt_core::inbox::InboxItem {
+        crate::inbox::new_item(kind, group, title, body)
+            .project(self.run.project_id.clone())
+            .run(self.run.id.clone())
+            .step(self.step.id.clone())
     }
 
     /// The workflow and run, for records of what a workflow did (vision principle 5).
@@ -173,12 +194,8 @@ pub trait NodeKind: Send + Sync {
         in_scope(wf, event)
     }
 
+    /// Runs a step. In a dry run (`cx.dry_run`) it changes nothing: see [`StepCx::dry_run`].
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>>;
-
-    /// What the node would do, changing nothing. Kinds without side effects run as usual.
-    fn dry_run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
-        self.run(cx, input)
-    }
 
     /// How long one execution may take unless the node says.
     fn default_timeout_ms(&self) -> u64 {
@@ -256,6 +273,16 @@ pub fn in_scope(wf: &Workflow, event: &LogEvent) -> bool {
 pub fn parse<C: DeserializeOwned>(config: &Value) -> Result<C, String> {
     let v = if config.is_null() { Value::Object(Default::default()) } else { config.clone() };
     serde_json::from_value(v).map_err(crate::workflow::err)
+}
+
+/// Whether `config` reads as a `C`: a [`NodeKind::check`] for a kind whose config has no rules beyond its type.
+pub fn parses<C: DeserializeOwned>(config: &Value) -> Result<(), String> {
+    parse::<C>(config).map(|_| ())
+}
+
+/// A config's text field, trimmed, when it is given and not blank.
+pub fn nonblank(v: &Option<String>) -> Option<&str> {
+    v.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
 /// The JSON Schema of `T`.

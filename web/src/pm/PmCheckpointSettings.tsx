@@ -4,7 +4,7 @@ import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
 import { BuiltinSettingsSection, ChatChannelRow, type PutInputs } from '../common/BuiltinSettings';
 
-export const PM_CHECKPOINT_KEY = ['pm-checkpoint'];
+const PM_CHECKPOINT_KEY = ['pm-checkpoint'];
 
 const DAYS = [
   { id: 'mon', label: 'Mon' }, { id: 'tue', label: 'Tue' }, { id: 'wed', label: 'Wed' }, { id: 'thu', label: 'Thu' },

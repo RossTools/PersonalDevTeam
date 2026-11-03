@@ -11,13 +11,13 @@ import { QueryStatus } from '../common/QueryStatus';
 import { useConfirmDelete } from '../common/useConfirmDelete';
 import { useScopeOptions } from '../common/useScopeOptions';
 
-export const secretsKey = ['secrets'] as const;
+const secretsKey = ['secrets'] as const;
 
 const NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
 const MIN_VALUE = 6;
 
 /** Add a secret, or edit one (its description, who may use it, a new value). */
-export function SecretDialog({ secret, onClose }: { secret?: Secret; onClose: () => void }) {
+function SecretDialog({ secret, onClose }: { secret?: Secret; onClose: () => void }) {
   const qc = useQueryClient();
   const { projectOptions, personaOptions } = useScopeOptions({ host: 'The PM (personal workflows)' });
   const [name, setName] = useState(secret?.name ?? '');

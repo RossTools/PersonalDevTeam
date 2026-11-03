@@ -9,7 +9,9 @@ use super::tools::{brief, find, read};
 use super::{CommentInput, DocumentProvider};
 use crate::mcp::tools::api;
 use crate::routes::AppState;
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, ports, schema_of, spec};
+use crate::workflow::catalog::{
+    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, ports, schema_of, spec,
+};
 use pdt_core::document::{
     ChartKind, ChartSpec, Document, DocumentContent, DocumentEdit, DocumentKind, Sheet, cell_name, parse_cell,
     parse_range,
@@ -613,7 +615,7 @@ impl NodeKind for DocumentTrigger {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<DocumentTriggerConfig>(config).map(|_| ())
+        parses::<DocumentTriggerConfig>(config)
     }
 
     fn event_type(&self) -> Option<&str> {

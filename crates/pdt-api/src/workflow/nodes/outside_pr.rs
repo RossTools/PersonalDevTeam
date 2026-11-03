@@ -5,7 +5,7 @@
 //! as an issue ([`pdt_core::github_issue`]: they share numbers); linking is the dedupe.
 
 use crate::routes::now_ms;
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, spec};
 use pdt_core::forge::ForgeKind;
 use pdt_core::github_issue::{GITHUB, issue_key, repo_id, valid_repo};
 use pdt_core::issue_link::LinkOrigin;
@@ -33,10 +33,6 @@ async fn gh<T: Send + 'static>(
 
 fn templated(s: &str) -> bool {
     s.contains("{{")
-}
-
-fn nonblank(v: &Option<String>) -> Option<&str> {
-    v.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
 /// A pull request's repository and number as a config names them (`{{trigger.repo}}`, `{{trigger.number}}`).
@@ -286,7 +282,7 @@ impl NodeKind for PrMerge {
             let c: PrMergeConfig = parse(&input)?;
             let (repo, number) = c.pr().resolved()?;
             if cx.dry_run {
-                return Ok(Outcome::next("queued", json!({"would": format!("merge {repo}#{number}")})));
+                return Ok(Outcome::would("queued", format!("merge {repo}#{number}")));
             }
             let refused = |code: &str, reason: String| {
                 Ok(Outcome::next("refused", json!({"code": code, "reason": reason, "repo": repo, "number": number})))
@@ -408,10 +404,7 @@ impl NodeKind for PrReview {
             let verdict = verdict_of(&c.verdict)?;
             let body = nonblank(&c.body).or(nonblank(&c.fallback)).ok_or("the review has no text")?.to_string();
             if cx.dry_run {
-                return Ok(Outcome::next(
-                    "out",
-                    json!({"would": format!("review {repo}#{number} ({}): {body}", verdict.as_str())}),
-                ));
+                return Ok(Outcome::would("out", format!("review {repo}#{number} ({}): {body}", verdict.as_str())));
             }
             let (r, text) = (repo.clone(), body.clone());
             let url = gh(cx, move |f| f.review_change_request(&r, number, verdict, &text)).await?;
@@ -472,7 +465,7 @@ impl NodeKind for PrClose {
                 if let Some(t) = &comment {
                     would.push_str(&format!(", commenting: {t}"));
                 }
-                return Ok(Outcome::next("out", json!({"would": would})));
+                return Ok(Outcome::would("out", would));
             }
             let r = repo.clone();
             let open = gh(cx, move |f| f.change_request_number(&r, number)).await?.filter(|p| p.state == PrState::Open);

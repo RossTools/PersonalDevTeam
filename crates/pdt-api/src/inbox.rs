@@ -122,6 +122,11 @@ async fn change_request(
     }))
 }
 
+/// A new item with a fresh id, made now.
+pub(crate) fn new_item(kind: InboxKind, group: InboxGroup, title: impl Into<String>, body: Value) -> InboxItem {
+    InboxItem::new(uuid::Uuid::now_v7().to_string(), kind, group, title, body, now_ms())
+}
+
 /// Sessions waiting on a permission prompt or a question, as items: their live `session.needs_you` notifications
 /// (PDT-108), so viewing a session or turning the kind down takes it out. A conversation with an open approval is
 /// listed under Approvals instead (the Notifier makes no row for it).
@@ -140,29 +145,23 @@ async fn sessions_waiting(st: &AppState, project: Option<&str>) -> Result<Vec<In
         }
         let Some(sid) = n.session_id.clone() else { continue };
         let Some(s) = st.store.get_session(&sid).await? else { continue };
-        out.push(InboxItem {
-            id: format!("session:{sid}"),
-            kind: InboxKind::Session,
-            group: InboxGroup::Session,
-            status: InboxStatus::Open,
-            project_id: Some(s.project_id.clone()),
-            ticket_id: s.ticket.as_ref().map(|t| t.id.clone()),
-            ticket_key: None,
-            ticket_title: None,
-            attempt_id: s.attempt_id.clone(),
-            session_id: Some(sid),
-            run_id: None,
-            step_id: s.persona.as_ref().and_then(|p| p.step_id.clone()),
-            persona_id: s.persona.as_ref().map(|p| p.id.clone()),
-            persona_name: None,
-            change_request: None,
-            title: s.title.clone(),
-            body: json!({"sessionTitle": s.title, "agent": s.agent, "mode": s.mode, "notificationId": n.id}),
-            choices: vec![],
-            resolution: Value::Null,
-            created_at: n.created_at,
-            resolved_at: None,
-        });
+        let body = json!({"sessionTitle": s.title, "agent": s.agent, "mode": s.mode, "notificationId": n.id});
+        out.push(
+            InboxItem::new(
+                format!("session:{sid}"),
+                InboxKind::Session,
+                InboxGroup::Session,
+                &s.title,
+                body,
+                n.created_at,
+            )
+            .project(s.project_id.clone())
+            .ticket(s.ticket.as_ref().map(|t| t.id.clone()))
+            .attempt(s.attempt_id.clone())
+            .session(sid)
+            .step(s.persona.as_ref().and_then(|p| p.step_id.clone()))
+            .persona(s.persona.as_ref().map(|p| p.id.clone())),
+        );
     }
     Ok(out)
 }
@@ -216,29 +215,14 @@ let agents read CI logs. Connect {label} in Settings › Plugins › {label}.")}
     if let Some(h) = host {
         body["host"] = json!(h);
     }
-    Some(InboxItem {
-        id: host.map_or_else(|| format!("connect:{kind}"), |h| format!("connect:{kind}:{h}")),
-        kind: InboxKind::Connect,
-        group: InboxGroup::Notice,
-        status: InboxStatus::Open,
-        project_id: None,
-        ticket_id: None,
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: None,
-        session_id: None,
-        run_id: None,
-        step_id: None,
-        persona_id: None,
-        persona_name: None,
-        change_request: None,
+    Some(InboxItem::new(
+        host.map_or_else(|| format!("connect:{kind}"), |h| format!("connect:{kind}:{h}")),
+        InboxKind::Connect,
+        InboxGroup::Notice,
         title,
         body,
-        choices: vec![],
-        resolution: Value::Null,
-        created_at: rejected.unwrap_or_else(now_ms),
-        resolved_at: None,
-    })
+        rejected.unwrap_or_else(now_ms),
+    ))
 }
 
 /// Workflow versions agents proposed (PDT-320), one item per workflow: who proposed it, their note and what changed,
@@ -258,33 +242,24 @@ pub(crate) async fn proposals(st: &AppState, project: Option<&str>) -> Result<Ve
         };
         let summary = pdt_core::workflow::diff::diff(&current, &proposed, "", "").summary();
         let by = version.proposed_by.clone().unwrap_or_else(|| "An agent".into());
-        out.push(InboxItem {
-            id: inbox::proposal_id(&w.id, v),
-            kind: InboxKind::Proposal,
-            group: InboxGroup::Proposal,
-            status: InboxStatus::Open,
-            project_id: w.project_id.clone(),
-            ticket_id: None,
-            ticket_key: None,
-            ticket_title: None,
-            attempt_id: None,
-            session_id: None,
-            run_id: None,
-            step_id: None,
-            persona_id: None,
-            persona_name: None,
-            change_request: None,
-            title: format!("{by} proposed version {v} of {}", w.name),
-            body: json!({"workflowId": w.id, "workflow": w.name, "version": v, "current": w.version,
-                         "by": version.proposed_by, "note": version.note, "summary": summary, "enabled": w.enabled}),
-            choices: vec![
+        let title = format!("{by} proposed version {v} of {}", w.name);
+        let body = json!({"workflowId": w.id, "workflow": w.name, "version": v, "current": w.version,
+                          "by": version.proposed_by, "note": version.note, "summary": summary, "enabled": w.enabled});
+        out.push(
+            InboxItem::new(
+                inbox::proposal_id(&w.id, v),
+                InboxKind::Proposal,
+                InboxGroup::Proposal,
+                title,
+                body,
+                version.created_at,
+            )
+            .project(w.project_id.clone())
+            .choices(vec![
                 InboxChoice::new(inbox::DISCARD, "Discard", false),
                 InboxChoice::new(inbox::ACCEPT, "Accept", true),
-            ],
-            resolution: Value::Null,
-            created_at: version.created_at,
-            resolved_at: None,
-        });
+            ]),
+        );
     }
     Ok(out)
 }
@@ -339,34 +314,29 @@ pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Ve
                 choices.push(InboxChoice::new("allow_always", "Always allow in this session", false));
             }
             choices.push(InboxChoice::new("deny", "Deny", false));
-            out.push(InboxItem {
-                id: format!("approval:{sid}:{id}"),
-                kind: InboxKind::Approval,
-                group: InboxGroup::Approval,
-                status: InboxStatus::Open,
-                project_id: Some(s.project_id.clone()),
-                ticket_id: s
-                    .ticket
-                    .as_ref()
-                    .map(|t| t.id.clone())
-                    .or_else(|| step.as_ref().and_then(|a| a.ticket_id.clone())),
-                ticket_key: None,
-                ticket_title: None,
-                attempt_id: s.attempt_id.clone().or_else(|| step.as_ref().and_then(|a| a.attempt_id.clone())),
-                session_id: Some(sid.clone()),
-                run_id: step.as_ref().map(|a| a.run_id.clone()),
-                step_id: s.persona.as_ref().and_then(|p| p.step_id.clone()),
-                persona_id: s.persona.as_ref().map(|p| p.id.clone()),
-                persona_name: None,
-                change_request: None,
-                title: if title.is_empty() { tool.clone() } else { title.clone() },
-                body: json!({"requestId": id, "sessionTitle": s.title, "request": e.event, "tool": tool,
-                             "description": description, "input": input, "diff": diff}),
-                choices,
-                resolution: Value::Null,
-                created_at: e.ts,
-                resolved_at: None,
-            });
+            let body = json!({"requestId": id, "sessionTitle": s.title, "request": e.event, "tool": tool,
+                              "description": description, "input": input, "diff": diff});
+            let title = if title.is_empty() { tool } else { title };
+            out.push(
+                InboxItem::new(
+                    format!("approval:{sid}:{id}"),
+                    InboxKind::Approval,
+                    InboxGroup::Approval,
+                    title,
+                    body,
+                    e.ts,
+                )
+                .project(s.project_id.clone())
+                .ticket(
+                    s.ticket.as_ref().map(|t| t.id.clone()).or_else(|| step.as_ref().and_then(|a| a.ticket_id.clone())),
+                )
+                .attempt(s.attempt_id.clone().or_else(|| step.as_ref().and_then(|a| a.attempt_id.clone())))
+                .session(sid.clone())
+                .run(step.as_ref().map(|a| a.run_id.clone()))
+                .step(s.persona.as_ref().and_then(|p| p.step_id.clone()))
+                .persona(s.persona.as_ref().map(|p| p.id.clone()))
+                .choices(choices),
+            );
         }
     }
     Ok(out)

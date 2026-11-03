@@ -4,7 +4,7 @@
 
 use crate::routes::now_ms;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
-use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
+use pdt_core::inbox::{InboxChoice, InboxGroup, InboxKind};
 use pdt_core::workflow::cond::{Condition, all};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -152,10 +152,7 @@ impl NodeKind for Gate {
                 return Ok(Outcome::next(UNANSWERED, json!({"quiet": true})));
             }
             if cx.dry_run {
-                return Ok(Outcome::next(
-                    UNANSWERED,
-                    json!({"would": format!("ask: {} ({})", c.question, c.choices.join(", "))}),
-                ));
+                return Ok(Outcome::would(UNANSWERED, format!("ask: {} ({})", c.question, c.choices.join(", "))));
             }
             crate::workflow::nodes::set_stage(cx, c.pipeline_stage).await;
             let ticket = cx.run.ticket_id.clone().or_else(|| {
@@ -165,34 +162,15 @@ impl NodeKind for Gate {
                 GateInbox::Gate => InboxGroup::Gate,
                 GateInbox::Accept => InboxGroup::Accept,
             };
-            let item = InboxItem {
-                id: uuid::Uuid::now_v7().to_string(),
-                kind: InboxKind::Gate,
-                group,
-                status: InboxStatus::Open,
-                project_id: cx.run.project_id.clone(),
-                ticket_id: ticket.clone(),
-                ticket_key: None,
-                ticket_title: None,
-                attempt_id: cx.run.attempt_id.clone(),
-                session_id: None,
-                run_id: Some(cx.run.id.clone()),
-                step_id: Some(cx.step.id.clone()),
-                persona_id: None,
-                persona_name: None,
-                change_request: None,
-                title: pdt_core::inbox::gate_title(&cx.node.title, &c.question),
-                body: json!({"question": c.question, "workflow": cx.workflow.name, "node": cx.node_title()}),
-                choices: c
-                    .choices
-                    .iter()
-                    .enumerate()
-                    .map(|(i, x)| InboxChoice::new(x, choice_title(x), i == 0))
-                    .collect(),
-                resolution: Value::Null,
-                created_at: now_ms(),
-                resolved_at: None,
-            };
+            let title = pdt_core::inbox::gate_title(&cx.node.title, &c.question);
+            let body = json!({"question": c.question, "workflow": cx.workflow.name, "node": cx.node_title()});
+            let item = cx
+                .inbox_item(InboxKind::Gate, group, title, body)
+                .ticket(ticket.clone())
+                .attempt(cx.run.attempt_id.clone())
+                .choices(
+                    c.choices.iter().enumerate().map(|(i, x)| InboxChoice::new(x, choice_title(x), i == 0)).collect(),
+                );
             cx.st.store.open_inbox_item(&item).await.map_err(crate::workflow::err)?;
             let mut wait = json!({"answer": {"question": c.question, "choices": c.choices, "approve": c.approve,
                                              "ticket": ticket}});

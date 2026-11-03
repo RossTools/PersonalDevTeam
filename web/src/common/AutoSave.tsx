@@ -10,7 +10,7 @@ import { cn } from '@ui/lib/utils';
 export type SaveState = { kind: 'idle' } | { kind: 'saving' } | { kind: 'saved' } | { kind: 'error'; message: string };
 
 /** How long "Saved" shows. */
-export const SAVED_FOR_MS = 2000;
+const SAVED_FOR_MS = 2000;
 
 /** A control's save state, and `track` to follow a save (its promise) through it. */
 export function useSaveState(): [SaveState, <T>(p: Promise<T>) => Promise<T | undefined>] {

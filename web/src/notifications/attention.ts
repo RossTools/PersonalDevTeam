@@ -64,7 +64,7 @@ export function useAttention(items: ItemInfo[], pmShown: string | null): Attenti
 }
 
 /** The token each level's dot is drawn in: red when a session needs the user, amber for the Inbox, the accent for news. */
-export const DOT_TOKEN: Record<Exclude<AttentionLevel, 'none'>, string> = {
+const DOT_TOKEN: Record<Exclude<AttentionLevel, 'none'>, string> = {
   needs_you: '--pdt-failed',
   inbox: '--pdt-waiting',
   idle: '--pdt-accent',

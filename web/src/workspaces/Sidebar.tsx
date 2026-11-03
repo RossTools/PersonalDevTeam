@@ -2,7 +2,6 @@ import { memo, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import { useQueries } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { Badge, EmptyState, IconButton, List, ListHeading, ListRow, useMenuAt, type ListDropEvent } from '@ui';
-import { api } from '../api/client';
 import type { Workspace } from '../api/gen/Workspace';
 import { AgentDot, AgentLabel, itemState, rollup, UnseenDot } from '../common/AgentState';
 import { SessionKindIcon } from '../common/SessionKindIcon';
@@ -49,7 +48,7 @@ function reorderTo(list: Workspace[], movingId: string, target: ListDropEvent['t
  * An agent row's second line: its branch (nothing for the main checkout), then its workspace when that isn't the one
  * on screen ("no tab" when it has none). Null when there is nothing to say.
  */
-export function agentSecondary(branch: string | null, workspaceName: string | null, isCurrentWorkspace: boolean): string | null {
+function agentSecondary(branch: string | null, workspaceName: string | null, isCurrentWorkspace: boolean): string | null {
   const parts = [branch, workspaceName === null ? 'no tab' : isCurrentWorkspace ? null : workspaceName].filter((p): p is string => !!p);
   return parts.length > 0 ? parts.join(' · ') : null;
 }

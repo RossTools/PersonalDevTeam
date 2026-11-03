@@ -2,6 +2,7 @@
 //! agent steps and gates. Its parameters pick the personas, which stages a person does, where a refined ticket goes,
 //! whether a person accepts, and whether the run or a person merges; the project's policies stay the guard.
 
+use super::doc_build::{edge, node};
 use pdt_core::workflow::doc::WorkflowDoc;
 use pdt_core::workflow::template::TemplateParam;
 use serde_json::{Value, json};
@@ -97,21 +98,6 @@ pub fn params() -> Vec<TemplateParam> {
          "description": "How long the Code step may run before the pipeline stops there. Default: 8 hours."},
     ]))
     .expect("the pipeline's params")
-}
-
-fn node(id: &str, kind: &str, x: i32, y: i32, title: &str, config: Value) -> Value {
-    let mut n = json!({"id": id, "kind": kind, "version": 1, "position": {"x": x, "y": y}});
-    if !title.is_empty() {
-        n["title"] = json!(title);
-    }
-    if !config.is_null() {
-        n["config"] = config;
-    }
-    n
-}
-
-fn edge(from: &str, port: &str, to: &str) -> Value {
-    if port.is_empty() { json!({"from": from, "to": to}) } else { json!({"from": from, "port": port, "to": to}) }
 }
 
 /// This run's attempt merging (by anyone, anywhere).

@@ -82,13 +82,13 @@ export function dueLabel(t: Pick<Todo, 'done' | 'dueOn' | 'dueTime'>, now: Date)
 }
 
 /** `HH:MM` of a moment, as the API keeps times. */
-export function hhmm(d: Date): string {
+function hhmm(d: Date): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 /** The open list's groups, in this order; each keeps the manual order. */
 export type DueGroupId = 'overdue' | 'today' | 'tomorrow' | 'week' | 'later' | 'none';
-export const DUE_GROUPS: readonly { id: DueGroupId; label: string }[] = [
+const DUE_GROUPS: readonly { id: DueGroupId; label: string }[] = [
   { id: 'overdue', label: 'Overdue' },
   { id: 'today', label: 'Today' },
   { id: 'tomorrow', label: 'Tomorrow' },

@@ -4,7 +4,7 @@
 use crate::error::codes;
 use crate::routes::now_ms;
 use crate::update;
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use pdt_core::host::{InstallWindow, UpdatePolicy};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -143,7 +143,7 @@ impl NodeKind for WaitIdle {
         Box::pin(async move {
             let c: WaitIdleConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("idle", json!({"would": "wait until PDT is idle"})));
+                return Ok(Outcome::would("idle", "wait until PDT is idle"));
             }
             let now = now_ms();
             // When PDT was first found busy inside the window: only that time counts towards `maxWaitMs`.
@@ -243,7 +243,7 @@ impl NodeKind for InstallUpdate {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<InstallUpdateConfig>(config).map(|_| ())
+        parses::<InstallUpdateConfig>(config)
     }
 
     fn default_timeout_ms(&self) -> u64 {
@@ -272,7 +272,7 @@ impl NodeKind for InstallUpdate {
                 }
             }
             if cx.dry_run {
-                return Ok(Outcome::next("installing", json!({"would": format!("install v{}", offer.version)})));
+                return Ok(Outcome::would("installing", format!("install v{}", offer.version)));
             }
             match update::install(cx.st, c.force, c.automatic).await {
                 Ok(_) => Ok(Outcome::next("installing", json!({"version": offer.version}))),
@@ -320,14 +320,14 @@ impl NodeKind for CheckHealth {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<CheckHealthConfig>(config).map(|_| ())
+        parses::<CheckHealthConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: CheckHealthConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("healthy", json!({"would": "check PDT's health"})));
+                return Ok(Outcome::would("healthy", "check PDT's health"));
             }
             let now = now_ms();
             let since = since(cx, now);

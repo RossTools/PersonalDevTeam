@@ -8,7 +8,7 @@
 //! `repo` defaults to the run's project's GitHub repository.
 
 use crate::workflow::catalog::{
-    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, repo_missing, setup_error, spec,
+    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, repo_missing, setup_error, spec,
 };
 use pdt_core::forge::ForgeKind;
 use pdt_core::github_issue::valid_repo;
@@ -42,10 +42,6 @@ async fn gh<T: Send + 'static>(
 
 fn templated(s: &str) -> bool {
     s.contains("{{")
-}
-
-fn nonblank(v: &Option<String>) -> Option<&str> {
-    v.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
 /// A given `repo` must be owner/name (left alone while it is a template).
@@ -239,9 +235,9 @@ impl NodeKind for GithubWorkflowRun {
             let at = jiff::Timestamp::now().round(jiff::Unit::Second).unwrap_or_else(|_| jiff::Timestamp::now());
             let out = json!({"repo": repo, "workflow": workflow, "ref": git_ref, "inputs": inputs, "dispatchedAt": at.to_string()});
             if cx.dry_run {
-                return Ok(Outcome::next(
+                return Ok(Outcome::would(
                     "out",
-                    json!({"would": format!("run {workflow} on {repo} at {git_ref} with {}", json!(inputs))}),
+                    format!("run {workflow} on {repo} at {git_ref} with {}", json!(inputs)),
                 ));
             }
             let actions = ci.into_iter().find(|p| p.id() == pdt_core::pr::GITHUB_ACTIONS);
@@ -459,7 +455,7 @@ impl NodeKind for GithubChangeRequest {
                     None => ("merged", format!("read a pull request of {repo}")),
                 };
                 let port = c.dry_run_port.as_deref().unwrap_or(default);
-                return Ok(Outcome::next(port, json!({"would": would})));
+                return Ok(Outcome::would(port, would));
             }
             if c.ci {
                 let branch = nonblank(&c.branch).ok_or("ci needs branch")?.to_string();
@@ -652,7 +648,7 @@ impl NodeKind for GithubRelease {
                     (None, false) => "the latest release".into(),
                 };
                 let what = tag.as_ref().map_or(latest, |t| format!("release {t}"));
-                return Ok(Outcome::next("found", json!({"would": format!("read {what} of {repo}")})));
+                return Ok(Outcome::would("found", format!("read {what} of {repo}")));
             }
             let (r, t, pre) = (repo.clone(), tag.clone(), c.prereleases);
             let release: Option<Release> = gh(&forge, true, move |f| match (t, pattern, pre) {
@@ -792,10 +788,7 @@ impl NodeKind for GithubWorkflowLatest {
             let workflow = c.workflow.trim().to_string();
             let branch = nonblank(&c.branch).unwrap_or("main").to_string();
             if cx.dry_run {
-                return Ok(Outcome::next(
-                    "passed",
-                    json!({"would": format!("read the latest {workflow} run on {branch} of {repo}")}),
-                ));
+                return Ok(Outcome::would("passed", format!("read the latest {workflow} run on {branch} of {repo}")));
             }
             let actions = ci.into_iter().find(|p| p.id() == pdt_core::pr::GITHUB_ACTIONS);
             let actions = actions.ok_or_else(|| format!("{repo} has no GitHub Actions to read {workflow} from"))?;
@@ -1060,7 +1053,7 @@ impl NodeKind for GithubNightly {
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
-            use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
+            use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind};
             use pdt_core::release::{
                 ScheduledWatch, TagPattern, parse_day, parse_time_of_day, scheduled_watch, utc_day,
             };
@@ -1097,10 +1090,12 @@ impl NodeKind for GithubNightly {
                 runs_url: runs_url.clone(),
             };
             if cx.dry_run {
-                return Ok(Outcome::next(
+                return Ok(Outcome::would(
                     "unchanged",
-                    json!({"would": format!("look for {repo}'s release matching {pattern_text} for {day}, due at \
-                                             {due_text} UTC")}),
+                    format!(
+                        "look for {repo}'s release matching {pattern_text} for {day}, due at \
+                                             {due_text} UTC"
+                    ),
                 ));
             }
             let title = c.title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| MISSING_TITLE.into());
@@ -1168,29 +1163,14 @@ impl NodeKind for GithubNightly {
                      there (Run workflow). This item goes away by itself once a release for the day is published.",
                     iso_day(day)
                 );
+                let body = json!({"question": title, "text": text, "url": runs_url, "workflow": cx.workflow.name,
+                                  "node": cx.node_title()});
                 let item = InboxItem {
-                    id: uuid::Uuid::now_v7().to_string(),
-                    kind: InboxKind::Gate,
-                    group: InboxGroup::Gate,
-                    status: InboxStatus::Open,
-                    project_id: cx.run.project_id.clone(),
-                    ticket_id: None,
-                    ticket_key: None,
-                    ticket_title: None,
-                    attempt_id: None,
-                    session_id: None,
-                    run_id: Some(cx.run.id.clone()),
-                    step_id: Some(cx.step.id.clone()),
-                    persona_id: None,
-                    persona_name: None,
-                    change_request: None,
-                    title: title.clone(),
-                    body: json!({"question": title, "text": text, "url": runs_url, "workflow": cx.workflow.name,
-                                 "node": cx.node_title()}),
-                    choices: vec![InboxChoice::new(START, "Start it", true), InboxChoice::new(IGNORE, "Ignore", false)],
-                    resolution: Value::Null,
                     created_at: now,
-                    resolved_at: None,
+                    ..cx.inbox_item(InboxKind::Gate, InboxGroup::Gate, &title, body).choices(vec![
+                        InboxChoice::new(START, "Start it", true),
+                        InboxChoice::new(IGNORE, "Ignore", false),
+                    ])
                 };
                 // Once per workflow and day: a second run the same day (a catch-up) leaves it to the first. (The key
                 // keeps version 1's name, so an upgrade on the day adds no second item.)

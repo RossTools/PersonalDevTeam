@@ -5,7 +5,7 @@
 //! the item closes by itself once the ticket leaves Draft some other way (the store does that on every move).
 
 use crate::routes::{AppState, now_ms};
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, parses, spec};
 use pdt_core::inbox::{self, InboxAnswer, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
 use pdt_core::session::{SessionKind, SessionStatus};
 use pdt_core::ticket::{Actor, By, LinkKind, TicketPatch, TicketStage};
@@ -46,10 +46,6 @@ fn skipped(reason: &str) -> Outcome {
     Outcome::next("skipped", json!({"quiet": true, "reason": reason}))
 }
 
-fn nonblank(s: &Option<String>) -> Option<&str> {
-    s.as_deref().map(str::trim).filter(|s| !s.is_empty())
-}
-
 impl NodeKind for TicketProposal {
     fn spec(&self) -> KindSpec {
         spec::<TicketProposalConfig, Value>(
@@ -70,7 +66,7 @@ impl NodeKind for TicketProposal {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<TicketProposalConfig>(config).map(|_| ())
+        parses::<TicketProposalConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
@@ -78,7 +74,7 @@ impl NodeKind for TicketProposal {
             let c: TicketProposalConfig = parse(&input)?;
             let Some(given) = nonblank(&c.ticket) else { return Ok(skipped("no ticket to propose")) };
             if cx.dry_run && pdt_core::workflow::dry::is_stand_in(given) {
-                return Ok(Outcome::next("added", json!({"would": format!("propose {given} in your Inbox")})));
+                return Ok(Outcome::would("added", format!("propose {given} in your Inbox")));
             }
             let id = crate::mcp::tools::resolve_ticket(cx.st, given, cx.run.project_id.as_deref()).await?;
             let store = &cx.st.store;
@@ -87,10 +83,7 @@ impl NodeKind for TicketProposal {
                 return Ok(skipped("the ticket has left Draft"));
             }
             if cx.dry_run {
-                return Ok(Outcome::next(
-                    "added",
-                    json!({"would": format!("propose {} in your Inbox", t.summary.key)}),
-                ));
+                return Ok(Outcome::would("added", format!("propose {} in your Inbox", t.summary.key)));
             }
             let from_id = nonblank(&c.from_ticket).map(String::from);
             let from_key = match &from_id {
@@ -98,39 +91,24 @@ impl NodeKind for TicketProposal {
                 None => None,
             };
             let s = &t.summary;
-            let item = InboxItem {
-                id: uuid::Uuid::now_v7().to_string(),
-                kind: InboxKind::TicketProposal,
-                group: InboxGroup::TicketProposal,
-                status: InboxStatus::Open,
-                project_id: Some(s.project_id.clone()),
-                ticket_id: Some(id.clone()),
-                ticket_key: None,
-                ticket_title: None,
-                attempt_id: None,
-                session_id: nonblank(&c.session).map(String::from),
-                run_id: Some(cx.run.id.clone()),
+            let body = json!({
+                "description": t.description, "priority": s.priority, "labels": s.labels,
+                "reason": nonblank(&c.reason), "persona": nonblank(&c.persona),
+                "fromTicket": from_key, "fromTicketId": from_id, "workflow": cx.workflow.name,
+            });
+            let item = cx
+                .inbox_item(InboxKind::TicketProposal, InboxGroup::TicketProposal, &s.title, body)
+                .project(s.project_id.clone())
+                .ticket(id.clone())
+                .session(nonblank(&c.session).map(String::from))
                 // Not the step's: the item outlives the run.
-                step_id: None,
-                persona_id: None,
-                persona_name: None,
-                change_request: None,
-                title: s.title.clone(),
-                body: json!({
-                    "description": t.description, "priority": s.priority, "labels": s.labels,
-                    "reason": nonblank(&c.reason), "persona": nonblank(&c.persona),
-                    "fromTicket": from_key, "fromTicketId": from_id, "workflow": cx.workflow.name,
-                }),
-                choices: vec![
+                .step(None)
+                .choices(vec![
                     InboxChoice::new(inbox::ACCEPT_TODO, "Accept to Todo", true),
                     InboxChoice::new(inbox::ACCEPT_BACKLOG, "Accept to backlog", false),
                     InboxChoice::new(inbox::DUPLICATE, "Duplicate of…", false),
                     InboxChoice::new(inbox::REJECT, "Reject", false),
-                ],
-                resolution: Value::Null,
-                created_at: now_ms(),
-                resolved_at: None,
-            };
+                ]);
             match store
                 .add_inbox_item_once(&item, &format!("ticket-proposal:{id}"))
                 .await

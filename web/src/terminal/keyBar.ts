@@ -15,7 +15,7 @@ export const SEND_KEYS: { id: string; label: string; aria: string; seq: string }
 ];
 
 /** Ctrl+]: what the terminal sends for it (PDT's prefix pressed twice). */
-export const PREFIX_BYTE = '\x1d';
+const PREFIX_BYTE = '\x1d';
 
 /**
  * The byte Ctrl plus one character sends, as a terminal does (Ctrl+C is 0x03, Ctrl+[ is ESC, Ctrl+? is DEL), and
