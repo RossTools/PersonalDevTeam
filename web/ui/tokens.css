@@ -68,6 +68,8 @@
   --pdt-duration: 120ms;
   --pdt-ease: cubic-bezier(0.2, 0, 0, 1);
   --pdt-radius: 6px;
+  /* The page gutter: the side padding of a view's header and its content, so the two line up. Wider from sm. */
+  --pdt-gutter: 16px;
   --pdt-font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --pdt-font-mono: 'JetBrains Mono', ui-monospace, monospace;
   --pdt-term-black: #17181d;
@@ -240,4 +242,10 @@
   --pdt-term-bright-cyan: #67e8f9;
   --pdt-term-bright-white: #f5f6fa;
   color-scheme: dark;
+}
+
+@media (min-width: 40rem) {
+  :root {
+    --pdt-gutter: 24px;
+  }
 }

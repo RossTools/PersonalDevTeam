@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { Page, Section, SettingsRow } from './Page';
+import { Page, Section, SettingsRow, SettingsScreen } from './Page';
 
 describe('Page', () => {
   it('is an article named by its title, with a description, and scrolls', () => {
@@ -92,5 +92,16 @@ describe('SettingsRow', () => {
   it('stacked puts the label above a full-width control at every width', () => {
     render(<SettingsRow stacked label="Host overrides"><textarea aria-label="Host overrides" /></SettingsRow>);
     expect(screen.getByRole('group', { name: 'Host overrides' }).className).not.toContain('sm:flex-row');
+  });
+
+  it("gives a Page's title and a SettingsScreen's lead heading the same heading size", () => {
+    const { unmount } = render(<Page title="Notifications"><p>x</p></Page>);
+    expect(screen.getByRole('heading', { name: 'Notifications' }).className).toContain('text-heading');
+    unmount();
+    render(<SettingsScreen lead="Updates"><Section label="Updates"><p>x</p></Section></SettingsScreen>);
+    const lead = screen.getByRole('heading', { name: 'Updates' });
+    expect(lead.tagName).toBe('H2');
+    expect(lead.className).toContain('text-heading');
+    expect(lead.className).toContain('text-foreground');
   });
 });

@@ -126,7 +126,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
               <InlineRename label="Document title" initial={d.title} maxLength={200} size="md" className="flex-1"
                 onCommit={(t) => { setRenaming(false); rename(t); }} onCancel={() => setRenaming(false)} />
             ) : (
-              <h1 className="min-w-0 flex-1 truncate text-lg font-semibold tracking-tight" title={d.title}>{d.title}</h1>
+              <h1 className="min-w-0 flex-1 truncate text-heading font-semibold tracking-tight" title={d.title}>{d.title}</h1>
             )}
             {!phone && !renaming && (
               <>

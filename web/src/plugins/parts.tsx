@@ -18,7 +18,7 @@ export function PluginIcon({ p, size = 'md' }: { p: Plugin; size?: 'xs' | 'sm' |
       style={{ backgroundColor: p.icon.color }}
       className={cn(
         'grid shrink-0 place-items-center font-bold text-primary-foreground',
-        size === 'xs' ? 'size-4 rounded-sm text-2xs leading-none' : size === 'sm' ? 'size-6 rounded-md text-xs' : size === 'md' ? 'size-8 rounded-lg text-sm' : 'size-12 rounded-xl text-lg',
+        size === 'xs' ? 'size-4 rounded-sm text-2xs leading-none' : size === 'sm' ? 'size-6 rounded-md text-xs' : size === 'md' ? 'size-8 rounded-lg text-sm' : 'size-12 rounded-xl text-heading',
         // Not in this build: only the icon fades; the name and text keep their contrast and the badge says why.
         !p.built && 'opacity-50',
       )}

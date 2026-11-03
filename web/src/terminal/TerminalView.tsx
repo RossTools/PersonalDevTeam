@@ -384,7 +384,7 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
         )}
         {status === 'ended' && !dimmed && <p className="absolute right-2 top-1 text-xs text-muted-foreground">Session ended.</p>}
         {touchSelection && (
-          <div role="toolbar" aria-label="Selection" className="absolute left-1/2 top-2 flex -translate-x-1/2 gap-1 rounded-pdt border border-border bg-surface p-1 shadow-popover">
+          <div role="toolbar" aria-label="Selection" className="absolute left-1/2 top-2 flex -translate-x-1/2 gap-1 rounded-lg border border-border bg-surface p-1 shadow-popover">
             <Button size="sm" variant="primary" onClick={copyTouchSelection}>Copy</Button>
             <Button
               size="sm"
@@ -527,7 +527,7 @@ function touchGestures(el: HTMLElement, term: Terminal, onSelect: () => void, on
   };
 }
 
-const KEY_CLASS = 'min-h-control-touch min-w-control-touch shrink-0 rounded-pdt bg-surface-2 px-3 text-sm text-fg active:bg-accent';
+const KEY_CLASS = 'min-h-control-touch min-w-control-touch shrink-0 rounded-lg bg-surface-2 px-3 text-sm text-fg active:bg-accent';
 
 /**
  * Keys a phone's soft keyboard can't send, for driving agent prompts and menus: Esc Tab Ctrl ^C arrows ⌃] ⌨. Shown
