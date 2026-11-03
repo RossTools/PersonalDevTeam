@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
-import { Badge, Button, IconButton, List, ListHeading, ListRow, RelativeTime } from '@ui';
+import { Badge, Button, EmptyState, IconButton, List, ListHeading, ListRow, RelativeTime } from '@ui';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import { TicketKey } from '../common/TicketKey';
@@ -20,7 +20,7 @@ function context(i: InboxItem): string {
 function EmptyLine({ failed, what, children }: { failed?: boolean; what: string; children: string }) {
   return failed
     ? <p role="alert" className="px-3 py-2 text-xs text-failed">Can't load {what}.</p>
-    : <p className="px-3 py-2 text-xs text-muted-foreground">{children}</p>;
+    : <EmptyState size="inline" className="px-3 py-2">{children}</EmptyState>;
 }
 
 /**

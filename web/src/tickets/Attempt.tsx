@@ -2,8 +2,7 @@
 // ticket tab and the peek.
 import { useQueryClient } from '@tanstack/react-query';
 import { GitMerge } from 'lucide-react';
-import { cn } from '@ui/lib/utils';
-import { Badge, Banner, Button, useConfirm, type BadgeTone } from '@ui';
+import { Badge, Banner, Button, EmptyState, List, ListRow, useConfirm, type BadgeTone } from '@ui';
 import type { AttemptSession } from '../api/gen/AttemptSession';
 import type { AttemptState } from '../api/gen/AttemptState';
 import type { Session } from '../api/gen/Session';
@@ -66,7 +65,7 @@ export function AttemptSection({ ticket: t, compact = false }: { ticket: Ticket;
       {sessions.length > 0 ? (
         <SessionList ticket={t} sessions={sessions} />
       ) : (
-        <p className="text-xs text-muted-foreground">No sessions.</p>
+        <EmptyState size="inline">No sessions.</EmptyState>
       )}
     </OverviewSection>
   );
@@ -77,29 +76,25 @@ function SessionList({ ticket: t, sessions }: { ticket: Ticket; sessions: Attemp
   const openSession = useOpenSession();
   const all = useAllSessions();
   return (
-    <ul aria-label="Sessions" className="flex flex-col gap-0.5">
+    <List aria-label="Sessions" onAction={(id) => openSession({ id, projectId: t.projectId })}>
       {sessions.map((s) => {
         const live = all.find((x) => x.id === s.id);
         const state = sessionState(s, live);
+        const title = live?.title ?? s.title;
         return (
-          <li key={s.id}>
-            <button
-              type="button"
-              onClick={() => openSession({ id: s.id, projectId: t.projectId })}
-              className={cn(
-                'flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-0.5 text-left text-xs outline-none hover:bg-muted',
-                'focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-control-touch',
-              )}
-            >
-              <AgentDot state={state} />
-              <SessionKindIcon session={live ?? { kind: 'agent_tui', agent: s.agent }} />
-              <span className={cn('min-w-0 flex-1 truncate', live && sessionUnseen(live) && 'font-semibold')}>{live?.title ?? s.title}</span>
-              {state.label && <span className="shrink-0 text-meta text-muted-foreground">{state.label}</span>}
-            </button>
-          </li>
+          <ListRow
+            key={s.id}
+            id={s.id}
+            textValue={title}
+            title={title}
+            bold={!!live && sessionUnseen(live)}
+            className="px-1 py-0.5 text-xs"
+            leading={<span className="flex items-center gap-2"><AgentDot state={state} /><SessionKindIcon session={live ?? { kind: 'agent_tui', agent: s.agent }} /></span>}
+            trailing={state.label ? <span className="text-meta text-muted-foreground">{state.label}</span> : undefined}
+          />
         );
       })}
-    </ul>
+    </List>
   );
 }
 

@@ -68,7 +68,7 @@ describe('TicketTimeline', () => {
       </OpenSessionContext.Provider>,
     );
     expect(await screen.findByText('Edited title, description')).toBeInTheDocument();
-    const labels = screen.getAllByRole('button', { name: 'Coder · CB-34' });
+    const labels = screen.getAllByRole('link', { name: 'Coder · CB-34' });
     expect(labels).toHaveLength(2);
     await userEvent.click(labels[0]!);
     expect(onSession).toHaveBeenCalledWith({ id: 's9', projectId: 'p1' });
@@ -85,6 +85,6 @@ describe('TicketTimeline', () => {
       },
     });
     renderWithQuery(<TicketTimeline ticketId="t1" />);
-    expect(await screen.findByRole('button', { name: 'Coder · from PDT-345' })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Coder · from PDT-345' })).toBeInTheDocument();
   });
 });

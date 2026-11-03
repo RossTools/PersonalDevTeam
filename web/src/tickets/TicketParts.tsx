@@ -4,7 +4,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { ArrowRight, CircleCheck, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Alert, Badge, Button, Chip, Dialog, Disclosure, IconButton, MenuButton, SectionLabel, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm, type TimelineItem,
+  Alert, Badge, Button, Chip, Dialog, Disclosure, EmptyState, IconButton, Link, MenuButton, SectionLabel, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm, type TimelineItem,
 } from '@ui';
 import { api } from '../api/client';
 import type { AgentBy } from '../api/gen/AgentBy';
@@ -201,7 +201,7 @@ export function TicketDescription({ ticket, onDirtyChange }: {
             />
           ) : (
             <div className="min-h-40 rounded-md border border-border p-2">
-              {draft.trim() ? <Markdown breaks>{draft}</Markdown> : <p className="text-xs text-muted-foreground">Nothing to preview.</p>}
+              {draft.trim() ? <Markdown breaks>{draft}</Markdown> : <EmptyState size="inline">Nothing to preview.</EmptyState>}
             </div>
           )}
           {changedElsewhere && (
@@ -225,7 +225,7 @@ export function TicketDescription({ ticket, onDirtyChange }: {
       ) : ticket.description.trim() ? (
         <Markdown breaks>{ticket.description}</Markdown>
       ) : (
-        <p className="text-xs text-muted-foreground">No description.</p>
+        <EmptyState size="inline">No description.</EmptyState>
       )}
     </OverviewSection>
   );
@@ -398,7 +398,7 @@ export function TicketLinks({ ticket }: { ticket: Ticket }) {
         </span>
       }
     >
-      {none && <p className="text-xs text-muted-foreground">No links.</p>}
+      {none && <EmptyState size="inline">No links.</EmptyState>}
       {ROLES.map((r) => {
         const list = byRole(r);
         if (list.length === 0) return null;
@@ -497,14 +497,9 @@ function AgentLabel({ agent, name, made = false }: { agent: AgentBy; name: strin
   const projectId = agent.projectId;
   if (!projectId) return <>{text}</>;
   return (
-    <button
-      type="button"
-      title={`Open the ${name} session`}
-      onClick={() => openSession({ id: agent.sessionId, projectId })}
-      className="rounded-sm outline-none hover:text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-    >
+    <Link tone="quiet" title={`Open the ${name} session`} onClick={() => openSession({ id: agent.sessionId, projectId })}>
       {text}
-    </button>
+    </Link>
   );
 }
 

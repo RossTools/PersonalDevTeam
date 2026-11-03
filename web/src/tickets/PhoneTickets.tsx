@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Filter, Plus, Search } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Button, Checkbox, FilterBar, IconButton, SectionLabel, SegmentedControl, Select, Sheet, Switch } from '@ui';
+import { Button, Checkbox, EmptyState, FilterBar, IconButton, SectionLabel, SegmentedControl, Select, Sheet, Switch } from '@ui';
 import type { Priority } from '../api/gen/Priority';
 import type { TicketSort } from '../api/gen/TicketSort';
 import type { TicketStage } from '../api/gen/TicketStage';
@@ -46,7 +46,7 @@ function Checks<V extends string>({ title, options, selected, onChange }: {
   return (
     <fieldset className="flex flex-col gap-1">
       <SectionLabel as="legend" className="pb-1">{title}</SectionLabel>
-      {options.length === 0 && <p className="text-xs text-muted-foreground">None yet.</p>}
+      {options.length === 0 && <EmptyState size="inline">None yet.</EmptyState>}
       <div className="grid grid-cols-2 gap-x-3">
         {options.map((o) => (
           <Checkbox

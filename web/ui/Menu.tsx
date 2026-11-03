@@ -12,7 +12,7 @@ import {
   SubmenuTrigger,
   type MenuProps,
 } from 'react-aria-components';
-import { EllipsisIcon } from 'lucide-react';
+import { CheckIcon, EllipsisIcon } from 'lucide-react';
 import {
   DropdownMenuItem,
   DropdownMenuPopover,
@@ -26,7 +26,18 @@ import type { MenuPoint } from './List';
 
 /** One entry of a menu. Every menu in PDT (right-click, long press, "⋯") is a list of these. */
 export type MenuEntry =
-  | { label: string; onSelect: () => void; disabled?: boolean; danger?: boolean; shortcut?: string; icon?: ReactNode }
+  | {
+      label: string;
+      onSelect: () => void;
+      disabled?: boolean;
+      danger?: boolean;
+      shortcut?: string;
+      icon?: ReactNode;
+      /** Muted text at the item's end ("on Fri"). */
+      detail?: string;
+      /** The option in force, ticked (its detail gives way to the tick). */
+      checked?: boolean;
+    }
   | { heading: string }
   | { separator: true }
   | { submenu: string; entries: MenuEntry[]; disabled?: boolean; icon?: ReactNode }
@@ -38,11 +49,13 @@ type InputEntry = Extract<MenuEntry, { input: string }>;
 const LIST = 'max-h-[inherit] min-w-40 max-w-72 overflow-x-hidden overflow-y-auto outline-hidden';
 const ITEM = 'pointer-coarse:min-h-control-touch';
 
-function ItemBody({ icon, label, shortcut }: { icon?: ReactNode; label: string; shortcut?: string }) {
+function ItemBody({ icon, label, shortcut, detail, checked }: { icon?: ReactNode; label: string; shortcut?: string; detail?: string; checked?: boolean }) {
   return (
     <>
       {icon}
       <span className="min-w-0 flex-1 truncate">{label}</span>
+      {checked ? <CheckIcon aria-label="Chosen" className="ml-auto text-link" />
+        : detail && <span className="ml-auto shrink-0 text-xs text-muted-foreground">{detail}</span>}
       {shortcut && <Kbd className="ml-auto">{shortcut}</Kbd>}
     </>
   );
@@ -103,7 +116,7 @@ function renderEntries(entries: MenuEntry[], onInput: (e: InputEntry) => void): 
           onAction={e.onSelect}
           className={cn(ITEM, e.danger && 'text-destructive')}
         >
-          <ItemBody icon={e.icon} label={e.label} shortcut={e.shortcut} />
+          <ItemBody icon={e.icon} label={e.label} shortcut={e.shortcut} detail={e.detail} checked={e.checked} />
         </DropdownMenuItem>,
       );
     }
@@ -151,6 +164,26 @@ function MenuBody({ label, entries }: { label: string; entries: MenuEntry[] | ((
         {renderEntries(list, setInput)}
       </AriaMenu>
     </MenuContext.Provider>
+  );
+}
+
+export interface MenuListProps {
+  /** The same entries as a menu's; an `input` entry isn't shown in place. */
+  entries: MenuEntry[];
+  /** The list's accessible name ("Repeat"). */
+  label: string;
+  className?: string;
+}
+
+/**
+ * A menu shown in place rather than from a trigger (a panel of a popover, a sheet): the same entries, look and keys
+ * as `MenuButton`'s (Up/Down, Home/End, typeahead, Enter). Choosing an item doesn't close what it sits in.
+ */
+export function MenuList({ entries, label, className }: MenuListProps) {
+  return (
+    <AriaMenu aria-label={label} className={cn(LIST, 'max-w-none', className)}>
+      {renderEntries(entries.filter((e) => !('input' in e)), () => {})}
+    </AriaMenu>
   );
 }
 

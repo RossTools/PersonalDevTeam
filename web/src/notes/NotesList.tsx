@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Brain, Pin, Search, SquarePen } from 'lucide-react';
-import { Button, EmptyState, IconButton, Input, Kbd, ListHeading, SegmentedControl, Select, Skeleton } from '@ui';
+import { Button, EmptyState, IconButton, Input, Kbd, List, ListHeading, SegmentedControl, Select, Skeleton } from '@ui';
 import { ALL, HOST_WIDE, inScope, sectionsOf, type Whose } from './model';
 import { NoteItem } from './NoteItem';
 import { useProjects } from '../projects/queries';
@@ -121,13 +121,11 @@ export function NotesList({ filters, selectedId, onOpen, onNew, onWhose }: {
             {s.id === 'pinned' && <Pin aria-hidden className="size-3" />}
             {s.label}
           </ListHeading>
-          <ul className="flex flex-col gap-px px-1">
+          <List aria-label={s.label} onAction={onOpen} className="gap-px px-1">
             {s.notes.map((n) => (
-              <li key={n.id}>
-                <NoteItem note={n} projectKey={keyOf(n.projectId)} selected={n.id === selectedId} onOpen={onOpen} />
-              </li>
+              <NoteItem key={n.id} note={n} projectKey={keyOf(n.projectId)} current={n.id === selectedId} />
             ))}
-          </ul>
+          </List>
         </section>
       ))}
       {page.hasMore(notes.data?.length ?? 0) && (

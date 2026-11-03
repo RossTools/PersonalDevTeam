@@ -167,7 +167,7 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
             <Markdown>{value.instructions}</Markdown>
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">No instructions.</p>
+          <EmptyState size="inline">No instructions.</EmptyState>
         )}
       </SettingsRow>
     </>
@@ -378,7 +378,7 @@ function VersionDiff({ personaId, from, to }: { personaId: string; from: number;
       <LoadError what="The changes" error={diff.error} />
       {diff.data && (
         diff.data.changed.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No changes.</p>
+          <EmptyState size="inline">No changes.</EmptyState>
         ) : (
           <>
             <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
@@ -478,7 +478,7 @@ function PersonaReadOnly({ persona }: { persona: Persona }) {
         <SettingsRow label="Model"><span className="font-mono break-all">{persona.model || "the agent's default"}</span></SettingsRow>
         <SettingsRow label="Permission mode">{persona.permissionMode ? PERMISSION_LABEL[persona.permissionMode] : 'Project or host default'}</SettingsRow>
         <SettingsRow stacked label="Tools">
-          {tools.length === 0 && <p className="text-xs text-muted-foreground">None.</p>}
+          {tools.length === 0 && <EmptyState size="inline">None.</EmptyState>}
           <ul aria-label="Tools" className="flex flex-col gap-1">
             {tools.map((name) => {
               const does = known?.find((t) => t.name === name)?.does;
@@ -493,7 +493,7 @@ function PersonaReadOnly({ persona }: { persona: Persona }) {
         </SettingsRow>
         <SettingsRow stacked label="Instructions">
           {persona.instructions.trim() ? <Markdown className="min-w-0 break-words">{persona.instructions}</Markdown>
-            : <p className="text-xs text-muted-foreground">No instructions.</p>}
+            : <EmptyState size="inline">No instructions.</EmptyState>}
         </SettingsRow>
       </Section>
       <Versions key={persona.id} persona={persona} />

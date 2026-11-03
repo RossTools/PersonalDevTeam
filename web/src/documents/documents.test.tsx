@@ -55,7 +55,7 @@ describe('documents', () => {
       'GET /api/projects': [project],
     });
     renderWithQuery(<List />);
-    const list = await screen.findByRole('list', { name: 'Documents' });
+    const list = await screen.findByRole('grid', { name: 'Documents' });
     expect(within(list).getByText('Plan')).toBeInTheDocument();
     expect(within(list).getByText('Budget')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Kind/ }));
@@ -74,10 +74,10 @@ describe('documents', () => {
       'GET /api/projects': [project],
     });
     renderWithQuery(<List />);
-    const list = await screen.findByRole('list', { name: 'Documents' });
-    expect(within(list).getAllByRole('listitem')).toHaveLength(100);
+    const list = await screen.findByRole('grid', { name: 'Documents' });
+    expect(within(list).getAllByRole('row')).toHaveLength(100);
     await userEvent.click(screen.getByRole('button', { name: 'Show more' }));
-    await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(150));
+    await waitFor(() => expect(within(list).getAllByRole('row')).toHaveLength(150));
     expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
     expect(calls.some((c) => c.path.includes('limit=200'))).toBe(true);
   });

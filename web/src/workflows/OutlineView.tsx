@@ -2,7 +2,7 @@
 // rows, Enter opens a step's panel, each step's ⋯ menu adds, moves and removes.
 import { useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { CornerDownRight, Plus } from 'lucide-react';
-import { Button, MenuButton, Popover, SectionLabel, type MenuEntry } from '@ui';
+import { Button, EmptyState, MenuButton, Popover, SectionLabel, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { KindSpec } from '../api/gen/KindSpec';
 import type { WorkflowCheck } from '../api/gen/WorkflowCheck';
@@ -149,7 +149,7 @@ export function OutlineView({ doc, onChange, catalog, check, selected, onSelect,
           <ul className="flex flex-col gap-1">{tree.loose.map(item)}</ul>
         </section>
       )}
-      {doc.nodes.length === 0 && <p className="px-2 text-sm text-muted-foreground">No steps yet. Add a trigger to start.</p>}
+      {doc.nodes.length === 0 && <EmptyState size="inline" className="px-2">No steps yet. Add a trigger to start.</EmptyState>}
     </div>
   );
 }
