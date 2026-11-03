@@ -170,10 +170,6 @@ struct Follow {
     end: Mutex<Option<i32>>,
 }
 
-/// How long a process gets to act on SIGHUP before it is killed outright.
-#[cfg(unix)]
-const HANGUP_GRACE: Duration = Duration::from_millis(1500);
-
 impl Handle {
     fn exited(&self) -> bool {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).exited.is_some()
@@ -186,8 +182,9 @@ impl Handle {
     ///   the root if it is somehow still there. A run's `cmd.exe /c script.cmd` (or an npm shim) otherwise leaves its
     ///   server running, holding ports and files.
     /// - unix: SIGHUP to the child's process group, which a shell can sit on (macOS's /bin/sh handles it only once
-    ///   its read returns), so after `HANGUP_GRACE` the group (and the child) get SIGKILL. The group is killed even
-    ///   when the shell has already exited, since its children may still be in it.
+    ///   its read returns), so a group still there after `proc::KILL_GRACE` gets SIGKILL, and then so does the child
+    ///   if it has not exited. The group is signalled even when the shell has already exited, since its children may
+    ///   still be in it.
     ///
     /// A followed log has no process of its own: killing it does nothing.
     fn kill(self: &Arc<Self>) -> std::io::Result<()> {
@@ -200,17 +197,12 @@ impl Handle {
         }
         let result = p.killer.lock().unwrap_or_else(|e| e.into_inner()).kill();
         #[cfg(unix)]
-        if let Some(pid) = p.pid.and_then(|p| i32::try_from(p).ok()) {
+        if let Some(pid) = p.pid.and_then(crate::proc::pgid) {
             // The child is a session leader, so its pid is also its process group id.
-            unsafe {
-                libc::kill(-pid, libc::SIGHUP);
-            }
             let h = self.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(HANGUP_GRACE);
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                    if !h.exited() {
+            crate::proc::signal_group(pid, libc::SIGHUP, crate::proc::KILL_GRACE, move || {
+                if !h.exited() {
+                    unsafe {
                         libc::kill(pid, libc::SIGKILL);
                     }
                 }

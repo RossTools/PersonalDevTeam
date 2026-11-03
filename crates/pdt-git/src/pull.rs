@@ -97,7 +97,7 @@ mod tests {
         (upstream, clone)
     }
 
-    const T: Duration = Duration::from_secs(20);
+    const T: Duration = crate::REMOTE_TIMEOUT;
 
     #[test]
     fn the_checked_out_base_is_fast_forwarded_with_its_files() {

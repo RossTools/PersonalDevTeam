@@ -14,6 +14,9 @@ use std::time::{Duration, Instant};
 /// aborted and logged, and the rest of the poll runs.
 pub const POLL_PART_LIMIT: Duration = Duration::from_secs(120);
 
+/// How long a task that ended or panicked waits before it starts again (the update loop, an integration's service).
+pub const RESTART_AFTER: Duration = Duration::from_secs(60);
+
 /// How long the 60 s poll may go without a finished pass: its seven members may each run to [`POLL_PART_LIMIT`].
 pub const POLL_STALE_AFTER: Duration = Duration::from_secs(20 * 60);
 

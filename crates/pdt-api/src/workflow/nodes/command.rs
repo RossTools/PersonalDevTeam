@@ -14,8 +14,9 @@ use std::process::Stdio;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use ts_rs::TS;
 
-/// How much of stdout and stderr a step keeps.
-pub const OUTPUT_CAP: usize = 64 * 1024;
+use pdt_core::limits::OUTPUT_CAP;
+/// How much of stderr is read before its last `OUTPUT_CAP` bytes are kept (the end says why a command failed).
+const STDERR_READ: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -350,7 +351,7 @@ pub(crate) async fn run_command(c: &CommandConfig, dir: &Path, r: &Redactor) -> 
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let stderr = child.stderr.take().ok_or("no stderr")?;
     let (out, err, status) =
-        tokio::join!(read_capped(stdout, OUTPUT_CAP), read_capped(stderr, 1024 * 1024), child.wait());
+        tokio::join!(read_capped(stdout, OUTPUT_CAP), read_capped(stderr, STDERR_READ), child.wait());
     let status = status.map_err(crate::workflow::err)?;
     guard.0 = None;
     let stdout = r.string_cut(&String::from_utf8_lossy(&out.0), out.1);

@@ -147,6 +147,21 @@ pub trait AgentAdapter: Send + Sync {
 
 /// How long a side request may take.
 pub const DRAFT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+/// How long an agent process gets to start answering (ACP's `initialize` and opening its session, Codex's server to
+/// listen).
+pub(crate) const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long a request to a running agent may take (a control or settings request).
+pub(crate) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// How long a closing process gets after its stdin closes before it is killed, and again for the kill to land.
+pub(crate) const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Waits for a process whose stdin was just closed to exit; after `CLOSE_GRACE` `kill`s it and waits once more.
+pub(crate) async fn await_close(mut exited: tokio::sync::watch::Receiver<bool>, kill: impl FnOnce()) {
+    if tokio::time::timeout(CLOSE_GRACE, exited.wait_for(|e| *e)).await.is_err() {
+        kill();
+        let _ = tokio::time::timeout(CLOSE_GRACE, exited.wait_for(|e| *e)).await;
+    }
+}
 
 #[async_trait::async_trait]
 pub trait LiveConversation: Send + Sync {

@@ -8,6 +8,7 @@ use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, St
 use crate::workflow::nodes::command;
 use pdt_core::brand::PROJECT_CONFIG_FILE;
 use pdt_core::command_trust;
+use pdt_core::limits::OUTPUT_CAP;
 use pdt_core::merge_update::{self, ConflictNote, MergeUpdateHow, MergeUpdateStatus};
 use pdt_core::runconfig::RegenerateDef;
 use pdt_core::ticket::{Actor, EventKind, PipelineStage};
@@ -22,12 +23,8 @@ use ts_rs::TS;
 pub const DEFER_KIND: &str = "attempt.defer_conflict";
 pub const UPDATE_KIND: &str = "attempt.update_base";
 
-/// How long fetching the base and pushing the branch may take.
-const REMOTE_LIMIT: Duration = Duration::from_secs(120);
 /// How long one regeneration command may run.
 const REGENERATE_LIMIT: Duration = Duration::from_secs(30 * 60);
-/// How much of the end of a regenerate command's stdout and of its stderr is kept, for its failure.
-const OUTPUT_TAIL: usize = 64 * 1024;
 /// The most merged-since subjects the agent's message lists.
 const MAX_MERGED: usize = 30;
 
@@ -323,7 +320,7 @@ fn prepare(repo: &Path, worktree: &Path, base: &str, branch: &str, remote_pr: bo
     }
     let origin = pdt_git::remote_url(repo, "origin").is_some();
     let base_ref = if origin {
-        pdt_git::fetch(repo, "origin", base, REMOTE_LIMIT)
+        pdt_git::fetch(repo, "origin", base, pdt_git::BACKGROUND_REMOTE_TIMEOUT)
             .map_err(|e| format!("couldn't fetch {base}: {}", crate::workflow::err(e)))?;
         // A pull request merges into the remote's base; a local merge into the newer of the two.
         if remote_pr { format!("origin/{base}") } else { pdt_git::start_point(repo, base) }
@@ -350,7 +347,7 @@ async fn finish(worktree: &Path, p: &Prepared, how: &str, regenerated: &[String]
     if let Some(remote) = p.push.clone() {
         let (wt, refspec, before) = (worktree.to_path_buf(), format!("HEAD:refs/heads/{}", p.branch), p.before.clone());
         let result = tokio::task::spawn_blocking(move || {
-            match pdt_git::push(&wt, &remote, &[&refspec], REMOTE_LIMIT) {
+            match pdt_git::push(&wt, &remote, &[&refspec], pdt_git::BACKGROUND_REMOTE_TIMEOUT) {
                 Ok(pdt_git::PushOutcome::Pushed) => Ok(()),
                 Ok(pdt_git::PushOutcome::Rejected(why)) => Err(format!("the branch moved on the remote: {why}")),
                 Err(e) => Err(crate::workflow::err(e)),
@@ -429,7 +426,7 @@ async fn run_command(dir: &Path, command: &str, path: Option<&str>) -> Result<()
     let stderr = child.stderr.take().ok_or("no stderr")?;
     // Only the end is shown: what is kept of its output is bounded, however much it writes.
     let run = async {
-        tokio::join!(command::read_tail(stdout, OUTPUT_TAIL), command::read_tail(stderr, OUTPUT_TAIL), child.wait())
+        tokio::join!(command::read_tail(stdout, OUTPUT_CAP), command::read_tail(stderr, OUTPUT_CAP), child.wait())
     };
     let (stdout, stderr, status) = match tokio::time::timeout(REGENERATE_LIMIT, run).await {
         Err(_) => return Err(format!("stopped after {} minutes", REGENERATE_LIMIT.as_secs() / 60)),

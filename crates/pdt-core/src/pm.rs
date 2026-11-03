@@ -85,7 +85,7 @@ pub fn summary_line(last: &str) -> String {
     first_line(last, SUMMARY_CHARS)
 }
 
-const MAX_TITLE: usize = 200;
+const MAX_TITLE: usize = crate::limits::TITLE;
 const MAX_BODY: usize = 16 * 1024;
 const MAX_JOURNAL: usize = 8 * 1024;
 

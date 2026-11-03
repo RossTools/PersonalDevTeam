@@ -424,7 +424,7 @@ pub(crate) async fn clean_up_closed(st: &AppState, info: &AttemptInfo, now: bool
             let (repo, branch, to) = (PathBuf::from(&info.repo_path), info.attempt.branch.clone(), r.clone());
             let refspec = format!(":refs/heads/{branch}");
             let pushed = tokio::task::spawn_blocking(move || {
-                pdt_git::push(&repo, &to, &[refspec.as_str()], crate::start::FETCH_TIMEOUT)
+                pdt_git::push(&repo, &to, &[refspec.as_str()], pdt_git::REMOTE_TIMEOUT)
             })
             .await;
             match pushed {

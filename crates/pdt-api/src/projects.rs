@@ -302,9 +302,6 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// How long a pull's fetch may take.
-pub(crate) const PULL_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-
 /// Fast-forwards a branch (the base by default) to `origin`'s, in whichever checkout has it (PDT-56; "Move to Done
 /// and remove the worktree" calls it so the main checkout has the merged work). Never merges and never touches
 /// uncommitted work: anything else is reported in the outcome, not as an error.
@@ -334,7 +331,7 @@ pub(crate) async fn pull_branch(project: &pdt_core::project::Project, branch: St
             return Err(pdt_git::GitError::InvalidBranch(b));
         }
         pdt_git::check_branch_name(&repo, &b)?;
-        pdt_git::fast_forward(&repo, &b, PULL_FETCH_TIMEOUT)
+        pdt_git::fast_forward(&repo, &b, pdt_git::REMOTE_TIMEOUT)
     })
     .await
     .map_err(ApiError::internal)??;

@@ -11,6 +11,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::inbox::{InboxAnswer, InboxItem, InboxKind};
+use pdt_core::limits::OUTPUT_CAP;
 use pdt_core::secret::{self, NewSecret, Secret, SecretPatch, SecretUse, User};
 use pdt_core::session::Session;
 use schemars::JsonSchema;
@@ -437,8 +438,6 @@ fn inside(root: &std::path::Path, on_disk: &std::path::Path, path: &std::path::P
     Ok(())
 }
 
-/// How much of stdout and of stderr `run_with_secrets` gives back.
-const OUTPUT_CAP: usize = 64 * 1024;
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const MAX_TIMEOUT_SECS: u64 = 1800;
 

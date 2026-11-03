@@ -100,7 +100,7 @@ pub fn start_services(st: &AppState) {
                     if !matches!(ended, crate::loops::Ended::Panicked) {
                         tracing::warn!(service = svc.name, "an integration's service ended; starting it again");
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    tokio::time::sleep(crate::loops::RESTART_AFTER).await;
                 }
             });
         }

@@ -24,6 +24,9 @@ pub use post::{DiscordConfig, DiscordOutput, split_content};
 /// What a bot needs: View Channels, Manage Channels, Send Messages, Manage Webhooks.
 const BOT_PERMISSIONS: u64 = 1024 + 16 + 2048 + 536870912;
 
+/// How many times a request Discord rate-limits is tried (a webhook post, a bot request).
+const TRIES: u32 = 4;
+
 /// A Discord id: digits.
 const DIGITS: &str = r"^\d+$";
 

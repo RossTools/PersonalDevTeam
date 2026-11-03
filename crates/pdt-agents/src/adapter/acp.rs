@@ -4,7 +4,10 @@
 //! [`AcpProfile`] (Devin's: `super::devin`).
 
 use super::lines::{CappedLines, MAX_LINE};
-use super::{AdapterError, AdapterOutput, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing, SessionChange};
+use super::{
+    AdapterError, AdapterOutput, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing, REQUEST_TIMEOUT,
+    START_TIMEOUT, SessionChange,
+};
 use base64::Engine as _;
 use pdt_core::conversation::acp::{AcpExtensions, AcpMapper, AcpOut, prompt_blocks};
 use pdt_core::conversation::{AgentCapabilities, AgentEvent, Answer, Delivery, NoticeLevel, PermissionMode};
@@ -19,12 +22,6 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 /// How much of the agent's error output is kept to explain a crash.
 const STDERR_TAIL: usize = 4096;
-/// How long `initialize` and opening the session may take.
-const START_TIMEOUT: Duration = Duration::from_secs(60);
-/// How long a settings request may take.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-/// How long a closing process gets after its stdin closes before it is killed.
-const CLOSE_GRACE: Duration = Duration::from_secs(5);
 /// How long "Send now" waits for the cancelled turn to end before sending.
 const CANCEL_WAIT: Duration = Duration::from_secs(10);
 
@@ -627,22 +624,10 @@ impl<P: AcpProfile> AcpLive<P> {
     }
 
     fn kill(&self) {
-        let Some(pid) = self.shared.pid else { return };
-        #[cfg(unix)]
-        if let Ok(pid) = i32::try_from(pid) {
-            // The child leads its own process group: end its tools too.
-            unsafe {
-                libc::kill(-pid, libc::SIGTERM);
-            }
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(1500));
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
-            });
+        // The child leads its own process group: end its tools too.
+        if let Some(pid) = self.shared.pid {
+            crate::proc::terminate_group(pid, crate::proc::KILL_GRACE);
         }
-        #[cfg(windows)]
-        std::thread::spawn(move || crate::pty::kill_tree(pid));
     }
 }
 
@@ -756,11 +741,7 @@ impl<P: AcpProfile> LiveConversation for AcpLive<P> {
     async fn close(&self) {
         self.shared.closing.store(true, Ordering::SeqCst);
         self.shared.stdin.lock().unwrap_or_else(|e| e.into_inner()).take();
-        let mut exited = self.exited.clone();
-        if tokio::time::timeout(CLOSE_GRACE, exited.wait_for(|e| *e)).await.is_err() {
-            self.kill();
-            let _ = tokio::time::timeout(Duration::from_secs(5), exited.wait_for(|e| *e)).await;
-        }
+        super::await_close(self.exited.clone(), || self.kill()).await;
     }
 
     fn is_alive(&self) -> bool {

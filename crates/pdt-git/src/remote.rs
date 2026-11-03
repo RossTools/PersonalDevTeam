@@ -7,6 +7,13 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// How long a fetch may take when a failure just means using the local refs and someone waits on it (Start).
+pub const QUICK_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a fetch or push may take while someone waits on it (a pull, Stop deleting the remote branch).
+pub const REMOTE_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a fetch or push may take in background work (a workflow's conflict step, the local forge).
+pub const BACKGROUND_REMOTE_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// How a command against a remote ended.
 pub(crate) struct RemoteOutput {
     pub ok: bool,
@@ -135,7 +142,7 @@ mod tests {
     fn pushes_and_tells_a_rejected_push_from_a_failed_one() {
         let tmp = tempfile::tempdir().unwrap();
         let (remote, mine, theirs) = setup(tmp.path());
-        let t = Duration::from_secs(30);
+        let t = REMOTE_TIMEOUT;
         let b = commit(&mine, "b.txt");
         assert_eq!(push(&mine, "origin", &["refs/heads/main:refs/heads/main"], t).unwrap(), PushOutcome::Pushed);
         assert_eq!(git(&remote, &["rev-parse", "main"]), b);

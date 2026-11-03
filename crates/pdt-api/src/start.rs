@@ -21,12 +21,6 @@ use pdt_store::{AttemptInfo, StartedAttempt, TicketError};
 use serde_json::json;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::time::Duration;
-
-/// The longest a `git fetch` of a base branch may take.
-pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
-/// The longest Start waits for a fetch of the base branch.
-const START_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// `POST /api/tickets/{id}/start`.
 pub(crate) async fn start(
@@ -462,7 +456,7 @@ async fn newest_base(repo_path: &str, base: &str) -> String {
         if pdt_git::remote_url(&repo, "origin").is_none() {
             return base;
         }
-        if let Err(e) = pdt_git::fetch(&repo, "origin", &base, START_FETCH_TIMEOUT) {
+        if let Err(e) = pdt_git::fetch(&repo, "origin", &base, pdt_git::QUICK_FETCH_TIMEOUT) {
             tracing::info!(error = %e, "could not fetch the base branch before Start; using the local refs");
         }
         pdt_git::start_point(&repo, &base)
@@ -695,7 +689,7 @@ async fn is_merged(st: &AppState, info: &AttemptInfo, fetch: bool, news: bool) -
     let found = tokio::task::spawn_blocking(move || {
         if fetch
             && pdt_git::remote_url(&repo, "origin").is_some()
-            && let Err(e) = pdt_git::fetch(&repo, "origin", &base, FETCH_TIMEOUT)
+            && let Err(e) = pdt_git::fetch(&repo, "origin", &base, pdt_git::REMOTE_TIMEOUT)
         {
             tracing::info!(attempt = %attempt, error = %e, "could not fetch the base branch; checking the local refs");
         }

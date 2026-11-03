@@ -4,12 +4,12 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-pub const MAX_TITLE: usize = 200;
+pub const MAX_TITLE: usize = crate::limits::TITLE;
 pub const MAX_DESCRIPTION: usize = 100_000;
 pub const MAX_LABEL: usize = 30;
 pub const MAX_LABELS: usize = 20;
 pub const MAX_AREA: usize = 60;
-pub const MAX_COMMENT: usize = 20_000;
+pub const MAX_COMMENT: usize = crate::limits::COMMENT;
 pub const MAX_SLUG: usize = 40;
 /// Page sizes for the ticket list and the timeline.
 pub const DEFAULT_LIMIT: u32 = 100;
