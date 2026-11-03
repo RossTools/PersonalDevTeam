@@ -664,3 +664,83 @@ pub(crate) async fn fill_step(
     let values = values_for(st, &names, User::Workflow { project }, &usage).await?;
     Ok(secret::resolve_with_secrets(config, cx.ctx, &["event"], &values))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh folder under the temp dir, resolved (on macOS the temp dir is behind a symlink).
+    fn folder(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("pdt-vault-{name}-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::canonicalize(&dir).unwrap()
+    }
+
+    #[test]
+    fn a_written_file_replaces_what_was_there_and_is_owner_only() {
+        let dir = folder("write");
+        let path = dir.join("app.env");
+        write_private(&path, b"k=long-old-value\n").unwrap();
+        // An existing file someone made readable by all is cut to the new text and made owner-only.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        write_private(&path, b"k=v\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "k=v\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+            let new = dir.join("new.env");
+            write_private(&new, b"x").unwrap();
+            assert_eq!(std::fs::metadata(&new).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_never_written_through() {
+        let (dir, outside) = (folder("link"), folder("outside"));
+        let target = outside.join("target.env");
+        std::fs::write(&target, "untouched").unwrap();
+        std::os::unix::fs::symlink(&target, dir.join("file.env")).unwrap();
+        assert!(write_private(&dir.join("file.env"), b"k=v").is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "untouched");
+        // A dangling one neither: it would make the file it points at.
+        std::os::unix::fs::symlink(outside.join("new.env"), dir.join("dangling.env")).unwrap();
+        assert!(write_private(&dir.join("dangling.env"), b"k=v").is_err());
+        assert!(!outside.join("new.env").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&outside).unwrap();
+    }
+
+    #[test]
+    fn only_folders_inside_the_root_and_outside_git_pass() {
+        let root = folder("inside");
+        let sub = root.join("conf");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(root.join(".git").join("hooks")).unwrap();
+        std::fs::create_dir_all(root.join("web").join(".GIT")).unwrap();
+        assert!(inside(&root, &root, &root.join("a.env")).is_ok());
+        assert!(inside(&root, &sub, &sub.join("a.env")).is_ok());
+        let git = root.join(".git").join("hooks");
+        assert!(inside(&root, &git, &git.join("pre-commit")).unwrap_err().contains(".git"));
+        let upper = root.join("web").join(".GIT");
+        assert!(inside(&root, &upper, &upper.join("config")).unwrap_err().contains(".git"), "any case");
+        let other = folder("other");
+        assert!(inside(&root, &other, &other.join("a.env")).unwrap_err().contains("outside"));
+        assert!(inside(&root, &root.join("missing"), &root.join("missing").join("a")).is_err(), "not on disk");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&other, root.join("away")).unwrap();
+            let away = root.join("away");
+            assert!(inside(&root, &away, &away.join("a.env")).unwrap_err().contains("outside"));
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(&other).unwrap();
+    }
+}
