@@ -19,6 +19,20 @@ module: string,
  */
 accounts: string, 
 /**
- * What the dialog says when no account opens it.
+ * What the dialog says when no account opens it, and none is signed in.
  */
-help: string, };
+help: string, 
+/**
+ * What the dialog says when a signed-in account uses PDT's own sign-in (`builtIn`) and this build of PDT has no
+ * picker: nothing the user can set fixes it.
+ */
+unavailable: string | null, 
+/**
+ * What the dialog says, with a button that edits the account's connection, when a signed-in account with its own
+ * client lacks what the picker needs.
+ */
+setup: string | null, 
+/**
+ * Under an empty search: which files the provider's search can find without the picker.
+ */
+searchNote: string | null, };

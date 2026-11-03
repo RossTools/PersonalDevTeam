@@ -361,6 +361,51 @@ fn exchange_body(env: &Env) -> String {
     env.google.sent().into_iter().rfind(|r| r.url == TOKEN_URL).unwrap().body.unwrap()
 }
 
+/// A build with PDT's own clients but no picker key (a missing release secret): its accounts never ask for a key,
+/// while an account with its own client still can be given one (PDT-493).
+#[tokio::test]
+async fn a_build_without_the_picker_key_says_so_instead_of_asking_for_one() {
+    let b = BuiltIn::from_values([
+        Some("std-id"),
+        Some("std-secret"),
+        Some("agent-id"),
+        Some("agent-secret"),
+        None,
+        Some("42"),
+    ]);
+    let env = env_with(b).await;
+    let (s, c) =
+        call(&env.app, "POST", "/api/connections", Some(json!({"name": "Mine", "kind": "google", "config": {}}))).await;
+    assert_eq!(s, 201, "{c}");
+    let (s, c) = call(
+        &env.app,
+        "POST",
+        "/api/connections",
+        Some(json!({"name": "Org", "kind": "google", "config": {"clientId": "cid.apps.googleusercontent.com"}})),
+    )
+    .await;
+    assert_eq!(s, 201, "{c}");
+    let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
+    let of = |name: &str| v.as_array().unwrap().iter().find(|a| a["name"] == name).unwrap().clone();
+    let (mine, org) = (of("Mine"), of("Org"));
+    assert_eq!((&mine["builtIn"], &mine["picker"]), (&json!(true), &json!(false)));
+    assert_eq!(mine["note"], "No file picker in this build of PDT");
+    assert_eq!((&org["builtIn"], &org["picker"]), (&json!(false), &json!(false)));
+    assert_eq!(org["note"], "No file picker (needs an API key and project number)");
+
+    // The import dialog's texts for each: the help asks only to sign in, a built-in account hears the build has no
+    // picker, an own-client account how to add one, and the empty search what drive.file finds.
+    let (_, v) = call(&env.app, "GET", "/api/documents/providers", None).await;
+    let google = v["providers"].as_array().unwrap().iter().find(|p| p["id"] == "google").unwrap().clone();
+    let picker = &google["picker"];
+    let text = |k: &str| picker[k].as_str().unwrap().to_string();
+    assert!(!text("help").contains("API key"), "{picker}");
+    assert!(text("unavailable").contains("This build of PDT doesn't include Google's file picker"), "{picker}");
+    assert!(!text("unavailable").contains("API key"), "{picker}");
+    assert!(text("setup").contains("picker API key and project number"), "{picker}");
+    assert!(text("searchNote").contains("opened in PDT"), "{picker}");
+}
+
 /// With PDT's own clients: Sign in with Google adds the account (back through the website's page, from a Tailscale
 /// address), the picker gets PDT's key, agents need a permission of their own with the agentic client, never the
 /// user's token, and taking it away forgets only the agents' sign-in.

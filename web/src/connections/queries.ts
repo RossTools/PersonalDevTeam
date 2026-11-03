@@ -4,5 +4,5 @@ import { api } from '../api/client';
 
 export const connectionsKey = ['connections'] as const;
 
-/** Every connection (`GET /api/connections`). */
-export const useConnections = () => useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
+/** Every connection (`GET /api/connections`); read only while `enabled`. */
+export const useConnections = (enabled = true) => useQuery({ queryKey: connectionsKey, queryFn: api.listConnections, enabled });

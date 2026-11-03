@@ -300,8 +300,19 @@ pub struct ProviderPicker {
     pub module: String,
     /// The accounts' list ([`crate::integration::SignInAccount`]): those with `picker` open it.
     pub accounts: String,
-    /// What the dialog says when no account opens it.
+    /// What the dialog says when no account opens it, and none is signed in.
     pub help: String,
+    /// What the dialog says when a signed-in account uses PDT's own sign-in (`builtIn`) and this build of PDT has no
+    /// picker: nothing the user can set fixes it.
+    #[serde(default)]
+    pub unavailable: Option<String>,
+    /// What the dialog says, with a button that edits the account's connection, when a signed-in account with its own
+    /// client lacks what the picker needs.
+    #[serde(default)]
+    pub setup: Option<String>,
+    /// Under an empty search: which files the provider's search can find without the picker.
+    #[serde(default)]
+    pub search_note: Option<String>,
 }
 
 /// A file a provider holds, as its search (the import picker) or create gives it.
