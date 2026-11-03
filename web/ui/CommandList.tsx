@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, SyntheticEvent } from 'react';
 import { cn } from '@ui/lib/utils';
 import { useFilter, type AutocompleteProps } from 'react-aria-components';
 import {
@@ -17,6 +17,10 @@ export interface CommandItem {
   label: string;
   /** Secondary text after the label, muted (a tab's workspace). Also matched by the filter. */
   detail?: string;
+  /** A muted second line under the label ("Doc · edited 2h ago"). Not matched by the filter. */
+  description?: ReactNode;
+  /** At the row's end, before its shortcut: badges, a spinner, a link. Presses on it don't choose the row. */
+  trailing?: ReactNode;
   /** Items with the same group are listed together under it, groups in order of first appearance. */
   group?: string;
   /** Shown as a key hint ("⌘K", "Ctrl+] k"). */
@@ -43,6 +47,8 @@ export interface CommandListProps {
   autoFocus?: boolean;
   className?: string;
 }
+
+const stop = (e: SyntheticEvent) => e.stopPropagation();
 
 function groupItems(items: CommandItem[]) {
   const loose: CommandItem[] = [];
@@ -78,15 +84,24 @@ export function CommandList({
   const renderItem = (it: CommandItem) => (
     <CommandItemPrimitive key={it.id} id={it.id} value={it} textValue={it.label} isDisabled={it.disabled}>
       {it.icon}
-      <span className="min-w-0 flex-1 truncate">
-        {it.label}
-        {it.detail && (
-          <>
-            {' '}
-            <span className="ml-1 text-meta text-muted-foreground">{it.detail}</span>
-          </>
-        )}
+      <span className={cn('min-w-0 flex-1', it.description ? 'flex flex-col' : 'truncate')}>
+        <span className="truncate">
+          {it.label}
+          {it.detail && (
+            <>
+              {' '}
+              <span className="ml-1 text-meta text-muted-foreground">{it.detail}</span>
+            </>
+          )}
+        </span>
+        {it.description && <span className="truncate text-meta text-muted-foreground">{it.description}</span>}
       </span>
+      {it.trailing && (
+        // A link or button here acts on its own: its presses don't reach the row (which would choose it).
+        <span className="flex shrink-0 items-center gap-2" onPointerDown={stop} onPointerUp={stop} onMouseDown={stop} onClick={stop}>
+          {it.trailing}
+        </span>
+      )}
       {it.shortcut && (
         <CommandShortcut className="tracking-normal">
           <Kbd>{it.shortcut}</Kbd>

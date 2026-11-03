@@ -11,8 +11,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pdt_core::document::{
     ChartView, CommentReply, Document, DocumentComment, DocumentCommentInput, DocumentContent, DocumentEdit,
-    DocumentFilter, DocumentKind, ProjectDocumentSettings, ProviderFile, ProviderInfo, clean_title, design_doc,
-    documents_folder, effective_provider,
+    DocumentFilter, DocumentKind, FoundFile, ProjectDocumentSettings, ProviderFile, ProviderInfo, clean_title,
+    design_doc, documents_folder, effective_provider,
 };
 use pdt_core::ticket::{Actor, By};
 use pdt_store::{AddDocument, DocumentLink};
@@ -146,14 +146,24 @@ pub(crate) struct SearchQuery {
     kind: Option<DocumentKind>,
 }
 
-/// `GET /api/documents/providers/{id}/files?q=&kind=`: the provider's files to import (its picker).
+/// `GET /api/documents/providers/{id}/files?q=&kind=`: the provider's files to import (its picker), each with PDT's
+/// document for it and that document's tickets, when PDT has one.
 pub(crate) async fn search(
     State(st): State<AppState>,
     Path(id): Path<String>,
     Query(q): Query<SearchQuery>,
-) -> Result<Json<Vec<ProviderFile>>, ApiError> {
+) -> Result<Json<Vec<FoundFile>>, ApiError> {
     let p = need(&provider(&st, &id), &id)?;
-    Ok(Json(p.search(q.q.trim(), q.kind).await?))
+    let mut found = Vec::new();
+    for file in p.search(q.q.trim(), q.kind).await? {
+        let d = st.store.document_by_ref(&id, &file.reference).await?;
+        found.push(FoundFile {
+            file,
+            ticket_ids: d.as_ref().map(|d| d.tickets.iter().map(|t| t.id.clone()).collect()).unwrap_or_default(),
+            document_id: d.map(|d| d.id),
+        });
+    }
+    Ok(Json(found))
 }
 
 /// `GET /api/documents?project=&ticket=&kind=&provider=&q=`: the most recently changed first. `project` and

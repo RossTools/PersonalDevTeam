@@ -314,6 +314,7 @@ pub mod testing {
                 },
                 url: None,
                 version: Some(s.version.to_string()),
+                modified: None,
             }
         }
 
