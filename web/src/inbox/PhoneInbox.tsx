@@ -26,7 +26,6 @@ import { changesKey } from '../review/queries';
 const openChangeRequest = (item: InboxItem) => item.changeRequest && openExternal(item.changeRequest.url);
 
 /** The bottom bar's buttons: 48px, whatever the pointer. */
-const big = 'h-12 pointer-coarse:h-12 min-w-0 flex-1';
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** A decision in the bottom bar. */
@@ -48,7 +47,7 @@ export function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]
   const folded = ordered.length > 3 && main ? ordered.slice(0, -1) : [];
   const shown = folded.length > 0 && main ? [main] : ordered;
   const button = (d: Decision) => (
-    <Button key={d.id} variant={d.primary ? 'primary' : 'secondary'} className={big} pending={busy && d.primary}
+    <Button key={d.id} variant={d.primary ? 'primary' : 'secondary'} size="lg" className="min-w-0 flex-1" pending={busy && d.primary}
       disabled={busy || d.disabled} onClick={() => onPick(d.id)}>
       <span className="truncate">{d.title}</span>
     </Button>
@@ -57,7 +56,7 @@ export function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]
     <div role="group" aria-label="Decision" className="flex gap-2 border-t border-border bg-card px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       {folded.length > 0 && (
         <>
-          <Button variant="secondary" className={big} aria-haspopup="dialog" disabled={busy} onClick={() => setMore(true)}>
+          <Button variant="secondary" size="lg" className="min-w-0 flex-1" aria-haspopup="dialog" disabled={busy} onClick={() => setMore(true)}>
             More <ChevronDown aria-hidden />
           </Button>
           <Sheet side="bottom" title="More choices" open={more} onOpenChange={setMore}>
@@ -83,7 +82,7 @@ function Rows({ rows, selected, disabled, onPick, label }: {
       {rows.map((r) => (
         <Button key={r.id} variant="secondary" disabled={disabled || r.disabled}
           {...(selected !== undefined ? { 'aria-pressed': selected === r.id } : {})}
-          className={cn('h-12 w-full justify-start pointer-coarse:h-12', selected === r.id && 'border-primary bg-accent')}
+          size="lg" className={cn('w-full justify-start px-3', selected === r.id && 'border-primary bg-accent')}
           onClick={() => onPick(r.id)}>
           <span className="truncate">{r.title}</span>
         </Button>
@@ -173,7 +172,7 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
     if (loading) return <Skeleton lines={8} className="p-4" />;
     if (live.length > 0) return <Skeleton lines={8} className="p-4" />;
     return (
-      <EmptyState action={<Button variant="primary" className="h-12 px-6 pointer-coarse:h-12" onClick={onList}>Back to Inbox</Button>}>
+      <EmptyState action={<Button variant="primary" size="lg" className="px-6" onClick={onList}>Back to Inbox</Button>}>
         <span className="text-base font-medium text-foreground">All clear</span>
         <br />Nothing else waits on you.
       </EmptyState>
@@ -279,8 +278,8 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
       description={item.ticketTitle ?? item.title}
       footer={
         <>
-          <Button className="h-12 pointer-coarse:h-12" onClick={onCancel}>Cancel</Button>
-          <Button variant="primary" className="h-12 pointer-coarse:h-12" pending={busy} onClick={onConfirm}>{title}</Button>
+          <Button size="lg" onClick={onCancel}>Cancel</Button>
+          <Button variant="primary" size="lg" pending={busy} onClick={onConfirm}>{title}</Button>
         </>
       }
     >

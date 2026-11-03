@@ -10,7 +10,7 @@ export const cn = createCn({
   extend: {
     theme: {
       text: ['2xs', 'meta', 'title'],
-      spacing: ['control-sm', 'control-md', 'control-touch'],
+      spacing: ['control-sm', 'control-md', 'control-touch', 'control-lg'],
       shadow: ['popover', 'dialog', 'card'],
     },
   },

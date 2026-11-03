@@ -2,7 +2,7 @@
 // the theme switch, and Settings with the host's connection state. Opened from ☰ only.
 import { useState } from 'react';
 import { Plus, Settings } from 'lucide-react';
-import { Button, IconButton, Select, Sheet, StatusDot, TreeView, type ThemePref, type TreeChildren, type TreeNode } from '@ui';
+import { Button, IconButton, ListHeading, Select, Sheet, StatusDot, TreeView, type ThemePref, type TreeChildren, type TreeNode } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { Tab } from '../api/gen/Tab';
 import { AgentDot, AgentLabel, itemState, UnseenDot } from '../common/AgentState';
@@ -17,8 +17,7 @@ import { ThemeSwitch } from './ThemeSwitch';
 import { VIEWS, type ViewId } from './views';
 
 const ALL = 'all';
-const heading = 'flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
-const row = 'h-11 w-full justify-start gap-3 px-2.5 font-normal';
+const row = 'h-control-touch w-full justify-start gap-3 px-2.5 font-normal pointer-coarse:h-control-touch';
 
 type Node = TreeNode & { tab?: Tab };
 
@@ -101,12 +100,16 @@ export function PhoneDrawer({ open, onOpenChange, view, onView, counts, dots, ws
           })}
         </nav>
         <section aria-label="Workspaces" className="px-1">
-          <h2 className={heading}>
-            <span className="flex-1">Workspaces</span>
-            <IconButton label="New workspace" size="sm" noTooltip className="size-5" onClick={() => setAdding(true)}>
-              <Plus aria-hidden />
-            </IconButton>
-          </h2>
+          <ListHeading
+            className="px-2"
+            trailing={
+              <IconButton label="New workspace" size="sm" noTooltip className="size-5" onClick={() => setAdding(true)}>
+                <Plus aria-hidden />
+              </IconButton>
+            }
+          >
+            Workspaces
+          </ListHeading>
           {adding && (
             <div className="px-1 pb-1">
               <InlineRename

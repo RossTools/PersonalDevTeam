@@ -39,4 +39,14 @@ describe('Badge', () => {
     expect(screen.getByLabelText('many').className).toContain('rounded-full');
     expect(screen.getByLabelText('many').className).not.toContain('max-w-full');
   });
+
+  it('a solid small count is the accent fill at 16px', () => {
+    render(<Badge tone="solid" size="sm" count={3} aria-label="3 waiting" />);
+    const badge = screen.getByLabelText('3 waiting');
+    expect(badge.className).toContain('bg-primary');
+    expect(badge.className).toContain('text-primary-foreground');
+    expect(badge.className).toContain('h-4');
+    expect(badge.className).toContain('min-w-4');
+    expect(badge.className).not.toContain('min-w-5');
+  });
 });

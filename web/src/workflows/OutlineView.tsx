@@ -2,7 +2,7 @@
 // rows, Enter opens a step's panel, each step's ⋯ menu adds, moves and removes.
 import { useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { CornerDownRight, Plus } from 'lucide-react';
-import { Button, MenuButton, Popover, type MenuEntry } from '@ui';
+import { Button, MenuButton, Popover, SectionLabel, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { KindSpec } from '../api/gen/KindSpec';
 import type { WorkflowCheck } from '../api/gen/WorkflowCheck';
@@ -133,7 +133,7 @@ export function OutlineView({ doc, onChange, catalog, check, selected, onSelect,
 
   const branch = (b: OutlineBranch): ReactNode => (
     <li key={`${b.from}:${b.port}`} className="py-0.5">
-      <div className="flex items-center gap-2 px-2 pt-1 text-2xs font-medium tracking-wider text-muted-foreground uppercase">{b.label}</div>
+      <SectionLabel as="div" className="flex items-center gap-2 px-2 pt-1">{b.label}</SectionLabel>
       <ul className="flex flex-col">{b.items.map(item)}</ul>
       {edit && <AddStep catalog={catalog} onPick={(k) => insert(k, { node: b.from, port: b.port })} />}
     </li>
@@ -145,7 +145,7 @@ export function OutlineView({ doc, onChange, catalog, check, selected, onSelect,
       {edit && <AddStep catalog={catalog} triggers label="Add trigger" onPick={(k) => insert(k)} />}
       {tree.loose.length > 0 && (
         <section aria-label="Not connected" className="mt-4">
-          <h3 className="px-2 pb-1 text-2xs font-medium tracking-wider text-muted-foreground uppercase">Not connected</h3>
+          <SectionLabel className="px-2 pb-1">Not connected</SectionLabel>
           <ul className="flex flex-col gap-1">{tree.loose.map(item)}</ul>
         </section>
       )}

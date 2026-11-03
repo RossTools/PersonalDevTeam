@@ -102,6 +102,7 @@
   --spacing-control-sm: var(--pdt-control-sm);
   --spacing-control-md: var(--pdt-control-md);
   --spacing-control-touch: var(--pdt-control-touch);
+  --spacing-control-lg: var(--pdt-control-lg);
   --ease-pdt: var(--pdt-ease);
   --default-transition-duration: var(--pdt-duration);
   /* A calm pulse: the Background state dot (a session waiting on its background tasks). Tailwind's pulse keyframes. */

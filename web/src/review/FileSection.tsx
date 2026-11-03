@@ -2,8 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode, t
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
-  Alert, Badge, Button, Checkbox, CommentComposer, CommentThread, DiffStat, EmptyState, IconButton, SegmentedControl, Sheet, Skeleton,
-  relativeTime,
+  Alert, Badge, Button, Checkbox, CommentComposer, CommentThread, DiffStat, EmptyState, IconButton, relativeTime, SectionLabel, SegmentedControl, Sheet, Skeleton,
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
@@ -280,7 +279,7 @@ function FileDiff({ worktreeId, file, threads, mode, phone, composer, onComposer
 function RenderedSides({ oldText, newText, split }: { oldText: string | null; newText: string | null; split: boolean }) {
   const side = (label: string, text: string) => (
     <section aria-label={label} className="min-w-0 flex-1 p-4">
-      <h3 className="mb-2 text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</h3>
+      <SectionLabel className="mb-2">{label}</SectionLabel>
       <Markdown>{text}</Markdown>
     </section>
   );
