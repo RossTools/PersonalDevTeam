@@ -2,22 +2,27 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tansta
 import { toast } from '@ui';
 import { api } from '../api/client';
 import { actionError } from '../common/useAction';
-import { invalidateWorkflow } from '../workflows/invalidate';
+import { invalidateWorkflow } from '../workflows/queries';
 import type { NotificationList } from '../api/gen/NotificationList';
 import type { NotificationRulesView } from '../api/gen/NotificationRulesView';
+import { streamPoll } from '../common/poll';
+import { inboxKey } from '../inbox/useInbox';
 
 const UPDATES = ['notifications', 'updates'];
 
-/** The Inbox's Updates, newest first, polled with the rest of the UI; `unreadUpdates` is the rail's dot. */
+/**
+ * The Inbox's Updates, newest first; `unreadUpdates` is the rail's dot. The notification stream pushes them, so they
+ * poll slowly while it is connected (every 2 s while it isn't).
+ */
 export function useUpdates() {
-  return useQuery({ queryKey: UPDATES, queryFn: () => api.notifications({ section: 'updates', limit: 100 }), refetchInterval: 2000 });
+  return useQuery({ queryKey: UPDATES, queryFn: () => api.notifications({ section: 'updates', limit: 100 }), refetchInterval: streamPoll });
 }
 
 export function useRefreshNotifications() {
   const qc = useQueryClient();
   return () => Promise.all([
     qc.invalidateQueries({ queryKey: ['notifications'] }),
-    qc.invalidateQueries({ queryKey: ['inbox'] }),
+    qc.invalidateQueries({ queryKey: inboxKey }),
   ]);
 }
 

@@ -6,6 +6,7 @@ import type { BugReportFiled } from '../api/gen/BugReportFiled';
 import type { BugReportPreview } from '../api/gen/BugReportPreview';
 import { actionError } from '../common/useAction';
 import { OpenTicketContext } from '../tickets/actions';
+import { hostKeys } from './queries';
 
 /** Error codes whose fix is in Host settings (the token, or the bug reports setting). */
 const SETTINGS_CODES = ['no_token', 'token_rejected', 'token_no_issue_access', 'bug_reports_off', 'no_bug_project'];
@@ -32,7 +33,7 @@ export interface BugReportDialogProps {
  *  the GitHub issue form), optional diagnostics with their preview; then a link to what it filed. */
 export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProps) {
   const openTicket = useContext(OpenTicketContext);
-  const preview = useQuery({ queryKey: ['bug-report-preview'], queryFn: api.bugReportPreview });
+  const preview = useQuery({ queryKey: hostKeys.bugReportPreview, queryFn: api.bugReportPreview });
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [expected, setExpected] = useState('');

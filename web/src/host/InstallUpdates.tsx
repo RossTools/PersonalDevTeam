@@ -5,7 +5,7 @@ import type { InstallUpdatesView } from '../api/gen/InstallUpdatesView';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
 import { ChatChannelRow, CustomizedNotice, openWorkflow } from '../common/BuiltinSettings';
-import { invalidateWorkflow } from '../workflows/invalidate';
+import { invalidateWorkflow, workflowKeys } from '../workflows/queries';
 
 const KEY = ['install-updates'];
 
@@ -28,7 +28,7 @@ export function InstallUpdates({ policy }: { policy: UpdatePolicy }) {
   const view = useQuery({ queryKey: KEY, queryFn: api.installUpdates });
   const done = (v: InstallUpdatesView) => {
     qc.setQueryData(KEY, v);
-    void qc.invalidateQueries({ queryKey: ['workflow', v.workflowId] });
+    void qc.invalidateQueries({ queryKey: workflowKeys.one(v.workflowId) });
   };
   const save = useMutation({ meta: { errorShown: true }, mutationFn: api.saveInstallUpdates, onSuccess: done });
   const reset = useMutation({ meta: { errorShown: true }, mutationFn: api.resetInstallUpdates, onSuccess: done });

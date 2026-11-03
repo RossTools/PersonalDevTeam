@@ -1,7 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
 import type { AcpAgentView } from '../api/gen/AcpAgentView';
 import type { AgentKind } from '../api/gen/AgentKind';
+import { useHostSettings } from '../host/queries';
 
 /** The agents built into PDT, in the order the app lists them. */
 export const BUILTIN_AGENTS: AgentKind[] = ['claude', 'codex', 'devin'];
@@ -19,8 +18,6 @@ export function agentLabel(agent: AgentKind, acp: Pick<AcpAgentView, 'agent' | '
   if (!isAcp(agent)) return BUILTIN_LABEL[agent];
   return acp?.find((a) => a.agent === agent)?.label ?? agent.slice('acp:'.length);
 }
-
-const useHostSettings = () => useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings, staleTime: 60_000, retry: false });
 
 /** The host's ACP agents (from the host settings; none until they load). */
 export function useAcpAgents(): AcpAgentView[] {

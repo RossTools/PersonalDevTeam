@@ -8,6 +8,7 @@ import { NewWorkflowDialog } from './NewWorkflowDialog';
 import { TemplatePage } from './TemplatePage';
 import { WorkflowPage } from './WorkflowPage';
 import type { WorkflowTarget } from './WorkflowsList';
+import { workflowKeys } from './queries';
 
 export function WorkflowsView({ target, onOpen, projects, projectInView, creating, onCreate }: {
   target: WorkflowTarget;
@@ -19,7 +20,7 @@ export function WorkflowsView({ target, onOpen, projects, projectInView, creatin
   creating: { templateId?: string } | null;
   onCreate: (c: { templateId?: string } | null) => void;
 }) {
-  const catalog = useQuery({ queryKey: ['workflow-catalog'], queryFn: () => api.workflowCatalog(), staleTime: Infinity });
+  const catalog = useQuery({ queryKey: workflowKeys.catalog, queryFn: () => api.workflowCatalog(), staleTime: Infinity });
   const body = catalog.error ? <Alert tone="error" className="m-3">The node catalog could not be loaded: {catalog.error.message}</Alert>
     : !catalog.data ? <Skeleton lines={8} className="p-4" />
       : target?.kind === 'workflow' ? <WorkflowPage key={target.id} id={target.id} catalog={catalog.data} projects={projects} onOpen={onOpen} projectInView={projectInView}

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, FilePlus2, FileSpreadsheet, FileText, Link2, PanelRight, Unlink } from 'lucide-react';
 import { Button, IconButton, MenuButton } from '@ui';
 import { api } from '../api/client';
@@ -9,6 +9,7 @@ import { actionError, runAction, useAction } from '../common/useAction';
 import { besideEntries, useBesideTargets } from './BesidePanel';
 import { ImportDocumentDialog, LinkDocumentDialog, NewDocumentDialog } from './DocumentDialogs';
 import { invalidateDocuments, openDocument, providerLabel, useDocumentProviders, useDocuments } from './queries';
+import { useProjects } from '../projects/queries';
 
 export function KindIcon({ kind }: { kind: Document['kind'] }) {
   return kind === 'sheet'
@@ -58,7 +59,7 @@ function LinkedDocuments({ link, projectId, ticket, empty, wrap }: {
   wrap: (actions: ReactNode, body: ReactNode) => ReactNode;
 }) {
   const qc = useQueryClient();
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects }).data ?? [];
+  const projects = useProjects().data ?? [];
   const filter = ticket ? { ticket: ticket.id } : { project: projectId };
   const docs = useDocuments(filter);
   const providers = useDocumentProviders(projectId);

@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import type { ForgeAccountView } from '../api/gen/ForgeAccountView';
 import type { ForgeLoginView } from '../api/gen/ForgeLoginView';
 import type { ForgeTokenCheck } from '../api/gen/ForgeTokenCheck';
+import { POLL } from '../common/poll';
 
 /**
  * A forge's logins, on its plugin page (Settings › Plugins › GitHub; PDT-177, PDT-228, PDT-244): one account per host
@@ -18,7 +19,7 @@ export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
     queryKey: key,
     queryFn: () => api.forgeLogin(kind),
     // While a code waits to be entered, look often: PDT signs in as soon as the forge says so.
-    refetchInterval: (q) => (q.state.data?.pending ? 2000 : false),
+    refetchInterval: (q) => (q.state.data?.pending ? POLL.live : false),
   });
   const set = (v: ForgeLoginView) => qc.setQueryData(key, v);
   const [token, setToken] = useState('');

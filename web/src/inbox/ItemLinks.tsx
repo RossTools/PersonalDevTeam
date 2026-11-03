@@ -12,6 +12,7 @@ import { useStartRun } from '../runs/useStartRun';
 import { prHref } from '../tickets/PullRequest';
 import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
+import { changesKey } from '../review/queries';
 
 /** A link the item's kind adds to the row (Storage settings, the workflow's versions). */
 export interface ItemLink {
@@ -34,7 +35,7 @@ export function useItemAttempt(item: InboxItem) {
 
 /** The size of a worktree's changes: files, lines added and removed. */
 export function useChangeSize(worktreeId: string | null) {
-  const changes = useQuery({ queryKey: ['changes', worktreeId], queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
+  const changes = useQuery({ queryKey: changesKey(worktreeId ?? ''), queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
   const files = changes.data?.files ?? [];
   return {
     loading: changes.isLoading,

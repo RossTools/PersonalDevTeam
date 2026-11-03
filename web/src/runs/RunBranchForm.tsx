@@ -6,10 +6,11 @@ import type { Project } from '../api/gen/Project';
 import { branchOptions } from '../common/branchOptions';
 import { parseChoice, RunMenu, useRunChoices } from './RunMenu';
 import { useStartRun } from './useStartRun';
+import { projectKeys } from '../projects/queries';
 
 /** Runs any branch, local or on origin; the server creates its worktree when it has none. */
 export function RunBranchForm({ project, onSelectRun }: { project: Project; onSelectRun: (id: string) => void }) {
-  const branches = useQuery({ queryKey: ['branches', project.id], queryFn: () => api.listBranches(project.id) });
+  const branches = useQuery({ queryKey: projectKeys.branches(project.id), queryFn: () => api.listBranches(project.id) });
   const { choices } = useRunChoices(project.id, null);
   const [branch, setBranch] = useState('');
   const [what, setWhat] = useState('');

@@ -1,9 +1,7 @@
 import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { ChangedFile } from '../api/gen/ChangedFile';
-
-/** The list of changed files is re-read this often (it runs git). */
-const CHANGES_POLL = 5000;
+import { POLL } from '../common/poll';
 
 export const changesKey = (worktreeId: string) => ['changes', worktreeId] as const;
 export const commentsKey = (worktreeId: string) => ['review-comments', worktreeId] as const;
@@ -13,7 +11,8 @@ export function useChanges(worktreeId: string | null) {
     queryKey: changesKey(worktreeId ?? ''),
     queryFn: () => api.getChanges(worktreeId!),
     enabled: !!worktreeId,
-    refetchInterval: CHANGES_POLL,
+    // Each read runs git, so not every 2 s.
+    refetchInterval: POLL.steady,
   });
 }
 
@@ -36,7 +35,7 @@ export function useFileSides(worktreeId: string, file: ChangedFile | null) {
 }
 
 export function useReviewComments(worktreeId: string) {
-  return useQuery({ queryKey: commentsKey(worktreeId), queryFn: () => api.listReviewComments(worktreeId), refetchInterval: CHANGES_POLL });
+  return useQuery({ queryKey: commentsKey(worktreeId), queryFn: () => api.listReviewComments(worktreeId), refetchInterval: POLL.steady });
 }
 
 export function invalidateReview(qc: QueryClient, worktreeId: string) {

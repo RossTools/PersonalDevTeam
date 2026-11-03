@@ -3,7 +3,7 @@
 // here or left unmapped (nothing imports until each is), each workflow gets where it applies and, on a name clash, a
 // copy or a new version. Workflows import off; what is left to do shows after.
 import { useRef, useState, type DragEvent } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, Dialog, Field, Select, Textarea } from '@ui';
 import { api } from '../api/client';
 import type { ImportCheck } from '../api/gen/ImportCheck';
@@ -13,6 +13,9 @@ import type { ImportResult } from '../api/gen/ImportResult';
 import type { ImportTarget } from '../api/gen/ImportTarget';
 import type { Project } from '../api/gen/Project';
 import { useConnectionKinds } from '../connections/kinds';
+import { invalidateWorkflows } from './queries';
+import { useConnections } from '../connections/queries';
+import { usePersonas } from '../personas/model';
 
 /** The Select value for "leave it unmapped". */
 const UNMAPPED = '\u0000unmapped';
@@ -58,8 +61,8 @@ function Report({ check, answers, setAnswers, choices, setChoices, projects }: {
   check: ImportCheck; answers: Answers; setAnswers: (a: Answers) => void;
   choices: Choice[]; setChoices: (c: Choice[]) => void; projects: Project[];
 }) {
-  const connections = useQuery({ queryKey: ['connections'], queryFn: api.listConnections });
-  const personas = useQuery({ queryKey: ['personas'], queryFn: api.listPersonas });
+  const connections = useConnections();
+  const personas = usePersonas();
   const { kindLabel } = useConnectionKinds();
   const answer = (g: Group, name: string, v: string | null) => setAnswers({ ...answers, [g]: { ...answers[g], [name]: v } });
   const choose = (i: number, c: Partial<Choice>) => setChoices(choices.map((x, n) => (n === i ? { ...x, ...c } : x)));
@@ -163,7 +166,7 @@ export function ImportDialog({ projects, onClose, onImported }: {
       return api.importWorkflows({ text, mapping, targets: report!.workflows.map((w, i) => target(choices[i], whereOf(choices[i], w, report!, answers), w)) });
     },
     onSuccess: (r) => {
-      void qc.invalidateQueries({ queryKey: ['workflows'] });
+      invalidateWorkflows(qc);
       if (r.warnings.length) setResult(r);
       else { onClose(); if (r.workflows[0]) onImported(r.workflows[0].id); }
     },

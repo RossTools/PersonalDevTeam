@@ -6,6 +6,8 @@ import type { ReleaseChanges } from '../api/gen/ReleaseChanges';
 import type { ReleaseNotes } from '../api/gen/ReleaseNotes';
 import { Markdown } from '../common/LazyMarkdown';
 import { useOpenTicket } from '../tickets/actions';
+import { hostKeys } from './queries';
+import { POLL } from '../common/poll';
 
 // Banner buttons stay 24px on touch screens too: the strip is a fixed h-8 (a 44px button would be clipped, and growing
 // the strip would resize the terminal under it).
@@ -14,13 +16,13 @@ export function UpdateBanner() {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const status = useQuery({
-    queryKey: ['host-update'],
+    queryKey: hostKeys.update,
     queryFn: api.updateStatus,
     // While an update is underway, poll fast so the page reloads soon after the new version answers.
-    refetchInterval: (q) => (q.state.data && BUSY.includes(q.state.data.state) ? 2_000 : 60_000),
+    refetchInterval: (q) => (q.state.data && BUSY.includes(q.state.data.state) ? POLL.live : POLL.idle),
   });
   useReloadOnNewVersion(status.data?.current);
-  const refresh = () => qc.invalidateQueries({ queryKey: ['host-update'] });
+  const refresh = () => qc.invalidateQueries({ queryKey: hostKeys.update });
   const install = useMutation({
     meta: { errorShown: true },
     mutationFn: async () => {
@@ -36,7 +38,7 @@ export function UpdateBanner() {
       }
     },
     onSuccess: (next) => {
-      if (next) qc.setQueryData(['host-update'], next);
+      if (next) qc.setQueryData(hostKeys.update, next);
     },
     onSettled: refresh,
   });

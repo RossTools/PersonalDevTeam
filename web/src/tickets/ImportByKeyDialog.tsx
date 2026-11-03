@@ -8,6 +8,7 @@ import type { ImportByKey } from '../api/gen/ImportByKey';
 import type { ProjectSettingsView } from '../api/gen/ProjectSettingsView';
 import { useOpenTicket } from './actions';
 import { invalidateTickets } from './queries';
+import { projectKeys } from '../projects/queries';
 
 /** A plugin a project can import an issue from, by key. */
 export interface IssueImport extends ImportByKey {
@@ -16,7 +17,7 @@ export interface IssueImport extends ImportByKey {
 
 /** The imports a project's settings allow: each enabled plugin that declares one and the project is linked to. */
 export function useIssueImports(settings: ProjectSettingsView | undefined): IssueImport[] {
-  const schemas = useQuery({ queryKey: ['project-settings-schemas'], queryFn: api.projectSettingsSchemas, staleTime: Infinity, enabled: !!settings }).data ?? [];
+  const schemas = useQuery({ queryKey: projectKeys.settingsSchemas, queryFn: api.projectSettingsSchemas, staleTime: Infinity, enabled: !!settings }).data ?? [];
   return schemas.flatMap((s) => (s.import && settings?.integrations?.[s.integration] ? [{ ...s.import, integration: s.integration }] : []));
 }
 

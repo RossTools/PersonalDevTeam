@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../api/client';
 import { ALL, type Whose } from './model';
+import { POLL } from '../common/poll';
 
 /** The list's choices, kept by the shell so the list and a new note agree: whose, the scope and the search. */
 export interface NotesFilters {
@@ -25,7 +26,7 @@ export function useNotesList(whose: Whose, q: string) {
   return useQuery({
     queryKey: ['pm-notes', whose, q],
     queryFn: () => api.pmNotes({ q: q.trim() || undefined, kind: whose }),
-    refetchInterval: 2000,
+    refetchInterval: POLL.live,
   });
 }
 
@@ -38,10 +39,6 @@ export function useNote(id: string | null) {
       throw e;
     }),
     enabled: id !== null,
-    refetchInterval: 2000,
+    refetchInterval: POLL.live,
   });
-}
-
-export function useProjects() {
-  return useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
 }
