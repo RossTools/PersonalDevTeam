@@ -5,6 +5,9 @@ backlog and board of tickets, Claude Code, Codex, Devin and other agents working
 review and merge, and terminals that keep running when you close the browser. It runs as a small server on your
 machine, and the same web UI works from your phone or another computer over Tailscale.
 
+**[Website](https://pdt.dev)** · [Docs](https://pdt.dev/docs/) · [Features](https://pdt.dev/features/) ·
+[Plugins](https://pdt.dev/plugins/)
+
 ![The board: tickets moving through the pipeline](site/src/assets/screens/board.webp)
 
 - **Tickets and a pipeline.** Start a ticket and PDT makes its branch and worktree and puts an agent on it; workflows
@@ -30,7 +33,8 @@ ticket.
 
 ## Docs
 
-- [User docs](docs/user/getting-started/what-is-pdt.md), also published on the website (built from `site/`).
+- [User docs](https://pdt.dev/docs/) on the website, or [in this repository](docs/user/getting-started/what-is-pdt.md)
+  (the site is built from `site/`).
 - [Developer guide](docs/dev/architecture.md): how PDT is built, the invariants, testing.
 - [How we work](docs/SDLC.md): branches, checks, CI, releases.
 
