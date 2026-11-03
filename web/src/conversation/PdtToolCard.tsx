@@ -30,6 +30,8 @@ import {
   type CreatedTicket,
   type FieldChange,
 } from './pdtTools';
+import { workflowKeys } from '../workflows/queries';
+import { POLL } from '../common/poll';
 
 /** A PDT tool call as the card needs it (a `tool_call` event's fields). */
 export interface PdtCall {
@@ -219,10 +221,10 @@ export function WorkflowRunCard({ call }: { call: PdtCall }) {
   const w = workflowRun(call.input, call.output);
   const state = callState(call);
   const run = useQuery({
-    queryKey: ['workflow-run', w.runId],
+    queryKey: workflowKeys.run(w.runId ?? ''),
     queryFn: () => api.getWorkflowRun(w.runId!),
     enabled: !!w.runId,
-    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? 5_000 : false),
+    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? POLL.steady : false),
   });
   const r = run.data;
   const verb = call.status === 'done' ? 'Started' : call.status === 'running' ? 'Starting' : "Didn't start";

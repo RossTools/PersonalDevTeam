@@ -13,6 +13,8 @@ import { ExportDialog } from './ExportDialog';
 import { ImportDialog } from './ImportDialog';
 import { scopeLabel } from './scope';
 import type { WorkflowTab } from './WorkflowPage';
+import { workflowKeys } from './queries';
+import { POLL } from '../common/poll';
 
 /** What the Workflows view shows: a workflow (on a tab, a run of it), a template, or nothing yet. */
 export type WorkflowTarget = { kind: 'workflow'; id: string; tab?: WorkflowTab; runId?: string } | { kind: 'template'; id: string } | null;
@@ -33,7 +35,7 @@ export function groupWorkflows(list: Workflow[], projects: Project[]): { label: 
 export function WorkflowsList({ projects, current, onOpen, onNew }: {
   projects: Project[]; current: WorkflowTarget; onOpen: (t: WorkflowTarget) => void; onNew: () => void;
 }) {
-  const workflows = useQuery({ queryKey: ['workflows'], queryFn: () => api.listWorkflows(), refetchInterval: 5000 });
+  const workflows = useQuery({ queryKey: workflowKeys.all, queryFn: () => api.listWorkflows(), refetchInterval: POLL.steady });
   const groups = groupWorkflows(workflows.data ?? [], projects);
   const phone = useMediaQuery(PHONE_QUERY);
   const [moving, setMoving] = useState<'import' | 'export' | null>(null);

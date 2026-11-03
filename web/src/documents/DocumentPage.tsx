@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pencil, Plus, X } from 'lucide-react';
 import { Alert, Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
 import { api } from '../api/client';
@@ -18,6 +18,7 @@ import { openBesideEntry, useBesideTargets } from './BesidePanel';
 import { DocumentBody, type SheetHandle } from './DocumentBody';
 import { DocumentComments, headingsOf } from './DocumentComments';
 import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders } from './queries';
+import { useProjects } from '../projects/queries';
 
 /** Downloads a file pdtd serves. */
 function download(url: string) {
@@ -51,7 +52,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const openTicket = useOpenTicket();
   const doc = useDocument(id);
   const providers = useDocumentProviders();
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const projects = useProjects();
   const [renaming, setRenaming] = useState(false);
   const [linkingTicket, setLinkingTicket] = useState(false);
   const besideTargets = useBesideTargets(linkedTickets(doc.data));

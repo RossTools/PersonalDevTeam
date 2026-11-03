@@ -6,8 +6,7 @@ import type { DocumentKind } from '../api/gen/DocumentKind';
 import type { ProviderInfo } from '../api/gen/ProviderInfo';
 import { routePath } from '../shell/route';
 import { navigate } from '../shell/router';
-
-const POLL = 2000;
+import { POLL } from '../common/poll';
 
 export const documentKeys = {
   all: ['documents'] as const,
@@ -24,7 +23,7 @@ export const KIND_LABEL: Record<DocumentKind, string> = { doc: 'Doc', sheet: 'Sh
 
 /** The documents a filter lets through, the most recently changed first. */
 export function useDocuments(f: DocumentFilter, enabled = true) {
-  return useQuery({ queryKey: documentKeys.list(f), queryFn: () => api.documents(f), refetchInterval: POLL, enabled });
+  return useQuery({ queryKey: documentKeys.list(f), queryFn: () => api.documents(f), refetchInterval: POLL.live, enabled });
 }
 
 /** One document (null once it is gone). */
@@ -36,7 +35,7 @@ export function useDocument(id: string | null) {
       throw e;
     }),
     enabled: id !== null,
-    refetchInterval: POLL,
+    refetchInterval: POLL.live,
   });
 }
 
@@ -48,7 +47,7 @@ export function useDocumentContent(id: string) {
 /** A document's version now, every 15 s while `enabled` (cheaper than its content: an open page reads that again when
  * this changes). */
 export function useDocumentVersion(id: string, enabled: boolean) {
-  return useQuery({ queryKey: documentKeys.version(id), queryFn: () => api.documentVersion(id), refetchInterval: 15_000, retry: false, enabled });
+  return useQuery({ queryKey: documentKeys.version(id), queryFn: () => api.documentVersion(id), refetchInterval: POLL.paged, retry: false, enabled });
 }
 
 /** The providers this host has, and where new documents (in `project`) go. They change only with plugins. */
@@ -70,7 +69,7 @@ export function openDocument(id: string) {
 
 /** A document's comments (refetched when its event stream says they changed, and with the rest of the UI). */
 export function useDocumentComments(id: string, enabled: boolean) {
-  return useQuery({ queryKey: documentKeys.comments(id), queryFn: () => api.documentComments(id), enabled, refetchInterval: POLL, retry: false });
+  return useQuery({ queryKey: documentKeys.comments(id), queryFn: () => api.documentComments(id), enabled, refetchInterval: POLL.live, retry: false });
 }
 
 /** A local sheet's charts with their numbers (refetched after every change). */

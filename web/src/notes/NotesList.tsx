@@ -3,7 +3,8 @@ import { Brain, Pin, Search, SquarePen } from 'lucide-react';
 import { Alert, EmptyState, IconButton, Input, Kbd, SegmentedControl, Select, Skeleton } from '@ui';
 import { ALL, HOST_WIDE, inScope, sectionsOf, type Whose } from './model';
 import { NoteItem } from './NoteItem';
-import { useNotesList, useProjects, type NotesFilters } from './useNotes';
+import { useProjects } from '../projects/queries';
+import { useNotesList, type NotesFilters } from './useNotes';
 
 const WHOSE_OPTIONS = [
   { value: 'user' as const, label: 'Mine' },

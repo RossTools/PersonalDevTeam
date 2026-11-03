@@ -32,6 +32,7 @@ import { InstallUpdates } from './InstallUpdates';
 import { StuckAgents } from './StuckAgents';
 import { PmCheckpointSettings } from '../pm/PmCheckpointSettings';
 import { documentKeys, useDocumentProviders } from '../documents/queries';
+import { hostKeys, useHostSettings, setHostSettings, useHostChecks, useAgentCapabilities } from './queries';
 
 /** The stored token's state as a badge (never the token itself). */
 function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeTone; text: string } {
@@ -121,7 +122,7 @@ function useSaveSettings() {
   const m = useMutation({
     meta: { errorShown: true },
     mutationFn: (p: HostSettingsPatch) => api.saveHostSettings(p),
-    onSuccess: (v) => qc.setQueryData(['host-settings'], v),
+    onSuccess: (v) => setHostSettings(qc, v),
   });
   return { ...m, state, save: (p: HostSettingsPatch) => track(m.mutateAsync(p)), saveText: (p: HostSettingsPatch) => m.mutateAsync(p) };
 }
@@ -161,7 +162,7 @@ function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
     try {
       await api.refreshRemote();
     } finally {
-      void qc.invalidateQueries({ queryKey: ['host-settings'] });
+      void qc.invalidateQueries({ queryKey: hostKeys.settings });
     }
   });
   const [tone, text]: [BadgeTone, string] = v.remote.active
@@ -211,7 +212,7 @@ function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
 
 function Updates({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
-  const update = useQuery({ queryKey: ['host-update'], queryFn: api.updateStatus });
+  const update = useQuery({ queryKey: hostKeys.update, queryFn: api.updateStatus });
   const policy = useSaveSettings();
   const channel = useSaveSettings();
   const interval = useSaveSettings();
@@ -221,8 +222,8 @@ function Updates({ v }: { v: HostSettingsView }) {
     meta: { errorShown: true },
     mutationFn: (t: string) => api.saveToken(t),
     onSuccess: (u) => {
-      qc.setQueryData(['host-update'], u);
-      void qc.invalidateQueries({ queryKey: ['host-settings'] });
+      qc.setQueryData(hostKeys.update, u);
+      void qc.invalidateQueries({ queryKey: hostKeys.settings });
       setSecret('');
     },
   });
@@ -234,7 +235,7 @@ function Updates({ v }: { v: HostSettingsView }) {
   const [found, setFound] = useState<{ result: CheckResult; at: number | null } | null>(null);
   const [check, checking] = useAction(async () => {
     const { result, ...status } = await api.checkUpdate();
-    qc.setQueryData(['host-update'], status);
+    qc.setQueryData(hostKeys.update, status);
     return { result, at: status.lastCheckedAt };
   });
   const checkNow = async () => {
@@ -264,7 +265,7 @@ function Updates({ v }: { v: HostSettingsView }) {
       : 'Full releases only.';
   const saveRepo = async (r: string) => {
     await repoSave.saveText({ releaseRepo: r });
-    void qc.invalidateQueries({ queryKey: ['host-update'] });
+    void qc.invalidateQueries({ queryKey: hostKeys.update });
   };
   return (
     <Section label="Updates" description="New releases of PDT, from GitHub.">
@@ -461,7 +462,7 @@ function Agents({ v }: { v: HostSettingsView }) {
 /** One agent's default model: a pick from the models its conversations offer, or typed while it has listed none. */
 function DefaultModel({ agent, label, value }: { agent: AgentKind; label: string; value: string | null }) {
   const save = useSaveSettings();
-  const caps = useQuery({ queryKey: ['agent-capabilities', agent], queryFn: () => api.agentCapabilities(agent), staleTime: 60_000 });
+  const caps = useAgentCapabilities(agent);
   const models = caps.data?.models ?? [];
   const set = (model: string | null) => ({ agentModels: { [agent]: model ?? '' } });
   return (
@@ -547,7 +548,7 @@ function Programs({ v }: { v: HostSettingsView }) {
                 onSave={async (path) => {
                   await save.saveText({ [PROGRAM_FIELD[p.agent]]: path });
                   // The agents offered (and their logins) follow the new program.
-                  void qc.invalidateQueries({ queryKey: ['host-checks'] });
+                  void qc.invalidateQueries({ queryKey: hostKeys.checks });
                 }}
               />
             )}
@@ -582,7 +583,7 @@ async function reopenAt(origin: string) {
 function Network({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
   const n = v.network;
-  const save = (next: NetworkSettings) => api.saveNetwork(next).then((view) => qc.setQueryData(['host-settings'], view));
+  const save = (next: NetworkSettings) => api.saveNetwork(next).then((view) => setHostSettings(qc, view));
   const [restarting, setRestarting] = useState(false);
   const [restart, asking] = useAction(async () => {
     const port = n.portFromEnv ?? n.settings.port ?? n.defaultPort;
@@ -592,7 +593,7 @@ function Network({ v }: { v: HostSettingsView }) {
       await reopenAt(`${window.location.protocol}//${window.location.hostname}:${port}`);
     } else {
       // The same address: the page reconnects by itself once PDT answers again.
-      window.setTimeout(() => void qc.invalidateQueries({ queryKey: ['host-settings'] }), 5000);
+      window.setTimeout(() => void qc.invalidateQueries({ queryKey: hostKeys.settings }), 5000);
     }
   });
   const portText = n.settings.port === null ? '' : String(n.settings.port);
@@ -798,8 +799,8 @@ function Checks() {
   const qc = useQueryClient();
   const agents = useAgents();
   const off = useAgentsOff();
-  const checks = useQuery({ queryKey: ['host-checks'], queryFn: api.hostChecks });
-  const [refresh, refreshing] = useAction(async () => qc.setQueryData(['host-checks'], await api.refreshChecks()));
+  const checks = useHostChecks();
+  const [refresh, refreshing] = useAction(async () => qc.setQueryData(hostKeys.checks, await api.refreshChecks()));
   return (
     <Section
       label="Checks"
@@ -835,7 +836,7 @@ function Checks() {
 
 /** Get started (PDT-230): reopens the first-run checklist. */
 function Setup() {
-  const setup = useQuery({ queryKey: ['host-setup'], queryFn: api.hostSetup });
+  const setup = useQuery({ queryKey: hostKeys.setup, queryFn: api.hostSetup });
   const v = setup.data;
   const where = !v ? undefined
     : v.done === 4 ? 'Every step is done.'
@@ -860,7 +861,7 @@ const bugReportChoices: { value: BugReportSetting; label: string }[] = [
 function BugReports({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
   const save = useSaveSettings();
-  const preview = useQuery({ queryKey: ['bug-report-preview'], queryFn: api.bugReportPreview });
+  const preview = useQuery({ queryKey: hostKeys.bugReportPreview, queryFn: api.bugReportPreview });
   const [open, setOpen] = useState(false);
   const p = preview.data;
   const where = !p ? null
@@ -880,7 +881,7 @@ function BugReports({ v }: { v: HostSettingsView }) {
           className="w-48"
           options={bugReportChoices}
           value={v.settings.bugReports}
-          onChange={(b) => void save.save({ bugReports: b }).then(() => void qc.invalidateQueries({ queryKey: ['bug-report-preview'] }))}
+          onChange={(b) => void save.save({ bugReports: b }).then(() => void qc.invalidateQueries({ queryKey: hostKeys.bugReportPreview }))}
         />
       </SettingsRow>
       {open && <BugReportDialog onClose={() => setOpen(false)} onOpenSettings={() => setOpen(false)} />}
@@ -901,8 +902,8 @@ function DangerZone({ v }: { v: HostSettingsView }) {
     });
     if (!ok) return;
     await api.deleteToken();
-    void qc.invalidateQueries({ queryKey: ['host-settings'] });
-    void qc.invalidateQueries({ queryKey: ['host-update'] });
+    void qc.invalidateQueries({ queryKey: hostKeys.settings });
+    void qc.invalidateQueries({ queryKey: hostKeys.update });
   });
   return (
     <Section label="Danger zone" danger description="These always ask first.">
@@ -924,8 +925,8 @@ export interface HostSettingsPageProps {
 
 export function HostSettingsPage({ drill = false, section = null, onSection }: HostSettingsPageProps = {}) {
   const qc = useQueryClient();
-  const view = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
-  const whoami = useQuery({ queryKey: ['host-whoami'], queryFn: api.whoami });
+  const view = useHostSettings();
+  const whoami = useQuery({ queryKey: hostKeys.whoami, queryFn: api.whoami });
   const v = view.data;
   if (!v) {
     return (
@@ -933,7 +934,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
         {view.error ? (
           <Alert
             tone="error"
-            action={<Button size="sm" onClick={() => void qc.invalidateQueries({ queryKey: ['host-settings'] })}>Retry</Button>}
+            action={<Button size="sm" onClick={() => void qc.invalidateQueries({ queryKey: hostKeys.settings })}>Retry</Button>}
           >
             Host settings could not be loaded: {view.error.message}
           </Alert>

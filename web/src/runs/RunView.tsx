@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { memo, useState } from 'react';
 import { Alert, Button, Link, MenuButton, SegmentedControl, useConfirm, ViewHeader, type MenuEntry } from '@ui';
 import { api } from '../api/client';
@@ -14,6 +14,8 @@ import { runPtyUrl } from '../terminal/ptySocket';
 import { isActive, runLabel } from './runState';
 import { withStopConfirm } from './useStartRun';
 import type { ForgeLinks } from '../api/gen/ForgeLinks';
+import { useProjects } from '../projects/queries';
+import { invalidateRuns, runKeys } from './queries';
 
 type Step = 'setup' | 'command';
 
@@ -31,17 +33,12 @@ export const RunView = memo(function RunView({ run, onRemoved, branchLink, forge
   const qc = useQueryClient();
   const confirm = useConfirm();
   // The terminal's reattach check runs on every poll of the project's runs.
-  const polledAt = usePolledAt(['runs', run.projectId]);
-  const projects = useQuery({
-    queryKey: ['projects'],
-    queryFn: api.listProjects,
-    enabled: forge === undefined || baseBranch === undefined,
-    staleTime: 30_000,
-  });
+  const polledAt = usePolledAt(runKeys.project(run.projectId));
+  const projects = useProjects({ enabled: forge === undefined || baseBranch === undefined });
   const project = projects.data?.find((p) => p.id === run.projectId);
   const theForge = forge !== undefined ? forge : project?.forge ?? null;
   const theBase = baseBranch ?? project?.baseBranch;
-  const refresh = () => qc.invalidateQueries({ queryKey: ['runs', run.projectId] });
+  const refresh = () => invalidateRuns(qc, run.projectId);
   // The tab follows the run's state (Setup while setting up, else Output) unless the user picked one in this state.
   const [picked, setPicked] = useState<{ state: Run['state']; step: Step } | null>(null);
   const step: Step = picked?.state === run.state ? picked.step : run.state === 'setting_up' ? 'setup' : 'command';

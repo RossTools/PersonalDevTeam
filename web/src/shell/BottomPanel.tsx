@@ -7,6 +7,7 @@ import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import { useAction } from '../common/useAction';
 import { TerminalView } from '../terminal/TerminalView';
+import { invalidateSessions, sessionsQuery } from '../sessions/queries';
 
 export const BottomPanel = memo(function BottomPanel({ project, maximized, onToggleMaximize }: {
   project: Project | null;
@@ -15,10 +16,8 @@ export const BottomPanel = memo(function BottomPanel({ project, maximized, onTog
 }) {
   const qc = useQueryClient();
   const sessions = useQuery({
-    queryKey: ['sessions', project?.id ?? null],
-    queryFn: () => api.listSessions(project!.id),
+    ...sessionsQuery(project?.id ?? ''),
     enabled: project !== null,
-    refetchInterval: 2000,
   });
   const shells = useMemo(() => (sessions.data ?? []).filter((s) => s.kind === 'shell' && s.status === 'running'), [sessions.data]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -26,7 +25,7 @@ export const BottomPanel = memo(function BottomPanel({ project, maximized, onTog
   const [create, creating] = useAction(async () => {
     const s = await api.createSession({ projectId: project!.id, kind: 'shell', cols: 120, rows: 12 });
     setActiveId(s.id);
-    void qc.invalidateQueries({ queryKey: ['sessions', project!.id] });
+    void invalidateSessions(qc, project!.id);
   });
 
   return (

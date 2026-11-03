@@ -16,8 +16,10 @@ import { STAGE_LABEL } from '../common/StageStepper';
 import { runAction } from '../common/useAction';
 import { invalidateWorktrees } from '../common/worktrees';
 import { isClosed, nextPart, STAGES } from './model';
-import { invalidateTickets } from './queries';
+import { invalidateTickets, ticketKeys } from './queries';
 import { plural } from '../common/text';
+import { projectKeys } from '../projects/queries';
+import { invalidateWorkspaces } from '../workspaces/queries';
 
 /** Enough of a ticket to act on it (a backlog row or a full ticket). */
 export interface TicketRef {
@@ -119,10 +121,10 @@ export async function moveTicket(
 
 export async function patchTicket(qc: QueryClient, id: string, patch: TicketPatch) {
   const t = await api.updateTicket(id, patch);
-  qc.setQueryData(['ticket', id], t);
+  qc.setQueryData(ticketKeys.one(id), t);
   invalidateTickets(qc, [id]);
   // A ticket tab's title follows the ticket.
-  void qc.invalidateQueries({ queryKey: ['workspaces'] });
+  void invalidateWorkspaces(qc);
   return t;
 }
 
@@ -164,9 +166,9 @@ export async function deleteTicket(confirm: Confirm, qc: QueryClient, t: Pick<Ti
   });
   if (!ok) return false;
   await api.deleteTicket(t.id);
-  qc.removeQueries({ queryKey: ['ticket', t.id] });
+  qc.removeQueries({ queryKey: ticketKeys.one(t.id) });
   invalidateTickets(qc);
-  void qc.invalidateQueries({ queryKey: ['workspaces'] });
+  void invalidateWorkspaces(qc);
   return true;
 }
 
@@ -244,7 +246,7 @@ export function canRefine(t: Pick<TicketRef, 'stage' | 'pipelineStage'>): boolea
 /** Asks the project's pipeline to refine the ticket (its Refiner, or the user when that stage is manual). */
 export async function refineTicket(qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>) {
   const fresh = await api.refineTicket(t.id);
-  qc.setQueryData(['ticket', t.id], fresh);
+  qc.setQueryData(ticketKeys.one(t.id), fresh);
   invalidateTickets(qc, [t.id]);
   toast.success(`${t.key} is being refined.`);
 }
@@ -262,7 +264,7 @@ export async function abandonAttempt(confirm: Confirm, qc: QueryClient, t: Pick<
   });
   if (!ok) return;
   const fresh = await api.abandonAttempt(attempt.id);
-  qc.setQueryData(['ticket', t.id], fresh);
+  qc.setQueryData(ticketKeys.one(t.id), fresh);
   invalidateTickets(qc, [t.id]);
 }
 
@@ -276,7 +278,7 @@ export async function cleanUpAttempt(confirm: Confirm, qc: QueryClient, t: Pick<
   });
   if (!ok) return;
   const fresh = await api.cleanUpAttempt(attempt.id);
-  qc.setQueryData(['ticket', t.id], fresh);
+  qc.setQueryData(ticketKeys.one(t.id), fresh);
   invalidateTickets(qc, [t.id]);
 }
 
@@ -340,9 +342,7 @@ export async function finishMerged(confirm: Confirm, qc: QueryClient, t: Ticket,
   }
   invalidateTickets(qc, [t.id]);
   invalidateWorktrees(qc, t.projectId);
-  void qc.invalidateQueries({ queryKey: ['sessions'] });
-  void qc.invalidateQueries({ queryKey: ['workspaces'] });
-  void qc.invalidateQueries({ queryKey: ['branches', t.projectId] });
+  void qc.invalidateQueries({ queryKey: projectKeys.branches(t.projectId) });
   if (r.branchNote) toast.info(r.branchNote);
   const removed = [r.worktreeRemoved && 'worktree', r.workspaceRemoved && 'workspace'].filter(Boolean);
   const message =

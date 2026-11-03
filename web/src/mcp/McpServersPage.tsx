@@ -13,6 +13,10 @@ import type { OAuthSettings } from '../api/gen/OAuthSettings';
 import type { ToolMode } from '../api/gen/ToolMode';
 import { isWebUrl } from '../common/webUrl';
 import { plural } from '../common/text';
+import { useProjects } from '../projects/queries';
+import { hostKeys } from '../host/queries';
+import { usePersonas } from '../personas/model';
+import { connectionsKey } from '../connections/queries';
 
 export const mcpServersKey = ['mcp-servers'] as const;
 
@@ -112,8 +116,8 @@ export function McpServerDialog({ server, onClose }: { server?: McpServerView; o
   const c = server?.connection;
   const config = c?.config ?? {};
   const secrets = useQuery({ queryKey: ['secrets'], queryFn: api.listSecrets });
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
-  const personas = useQuery({ queryKey: ['personas'], queryFn: api.listPersonas });
+  const projects = useProjects();
+  const personas = usePersonas();
   const [name, setName] = useState(c?.name ?? '');
   const [transport, setTransport] = useState<string>(server?.transport ?? 'stdio');
   const [command, setCommand] = useState(stringOr(config.command));
@@ -141,7 +145,7 @@ export function McpServerDialog({ server, onClose }: { server?: McpServerView; o
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: mcpServersKey });
-      void qc.invalidateQueries({ queryKey: ['connections'] });
+      void qc.invalidateQueries({ queryKey: connectionsKey });
       onClose();
     },
   });
@@ -364,7 +368,7 @@ export function McpServersPage() {
     mutationFn: (on: boolean) => api.saveHostSettings({ mcpOnlyPdt: on }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: mcpServersKey });
-      void qc.invalidateQueries({ queryKey: ['host-settings'] });
+      void qc.invalidateQueries({ queryKey: hostKeys.settings });
     },
   });
   const ask = async (s: McpServerView) => {

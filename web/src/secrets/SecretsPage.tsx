@@ -7,6 +7,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, Checkbox, Dialog, Field, Input, Page, RelativeTime, Section, Skeleton, Textarea, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { Secret } from '../api/gen/Secret';
+import { useProjects } from '../projects/queries';
+import { usePersonas } from '../personas/model';
 
 export const secretsKey = ['secrets'] as const;
 
@@ -36,8 +38,8 @@ function Picks({ label, any, options, value, onChange }: {
 /** Add a secret, or edit one (its description, who may use it, a new value). */
 export function SecretDialog({ secret, onClose }: { secret?: Secret; onClose: () => void }) {
   const qc = useQueryClient();
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
-  const personas = useQuery({ queryKey: ['personas'], queryFn: api.listPersonas });
+  const projects = useProjects();
+  const personas = usePersonas();
   const [name, setName] = useState(secret?.name ?? '');
   const [description, setDescription] = useState(secret?.description ?? '');
   const [value, setValue] = useState('');
@@ -159,8 +161,8 @@ export function SecretsPage() {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const list = useQuery({ queryKey: secretsKey, queryFn: api.listSecrets });
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
-  const personas = useQuery({ queryKey: ['personas'], queryFn: api.listPersonas });
+  const projects = useProjects();
+  const personas = usePersonas();
   const [editing, setEditing] = useState<{ secret?: Secret } | null>(null);
   const remove = useMutation({
     meta: { errorShown: true },

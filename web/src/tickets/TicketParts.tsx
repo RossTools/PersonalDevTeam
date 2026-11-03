@@ -28,12 +28,13 @@ import { moveTicket, patchTicket, useOpenSession, useOpenTicket } from './action
 import { ParentField } from './PartsSection';
 import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole, type TrackerLabel } from './model';
 import { usePluginList } from './ExternalKeys';
-import { invalidateTickets, pagedPoll, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
+import { invalidateTickets, ticketKeys, useLabels, useProjectAreas } from './queries';
 import { AreaChips, AreasEditor } from './Areas';
 import { ATTACH_ACCEPT, AttachButton, attachmentMarkdown, UploadList, useAttachmentUploads } from './attachments';
 import { IssueRows, LinkIssueDialog, useRefreshIssues, WebLinkRows } from './IssueLinks';
 import { LabelsEditor } from './LabelsEditor';
 import { TicketPicker } from './TicketPicker';
+import { POLL, pagedPoll } from '../common/poll';
 
 const sectionHeading = 'text-2xs font-medium tracking-wider text-muted-foreground uppercase';
 
@@ -599,7 +600,7 @@ export function TicketTimeline({ ticketId, recent, composer = false }: { ticketI
   const short = useQuery({
     queryKey: [...ticketKeys.events(ticketId), 'recent', recent],
     queryFn: () => api.ticketEvents(ticketId, { newestFirst: true, limit: recent }),
-    refetchInterval: POLL,
+    refetchInterval: POLL.live,
     enabled: recent !== undefined,
   });
   const newestFirst = recent === undefined ? full.data?.pages.flatMap((p) => p.items) ?? [] : short.data?.items ?? [];

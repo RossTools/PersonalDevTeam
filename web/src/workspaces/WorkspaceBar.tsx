@@ -14,6 +14,7 @@ import { tabMenu } from './menus';
 import { SessionTicketChip } from './SessionTicketChip';
 import { itemOf } from './model';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
+import { invalidateSessions, sessionKeys } from '../sessions/queries';
 
 const coarsePointer = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
@@ -48,8 +49,8 @@ function TabButton({ ws, tab, info, selected, tabIndex, renaming, setRenaming, o
       try {
         await api.renameSession(tab.sessionId!, t);
       } finally {
-        if (info) void qc.invalidateQueries({ queryKey: ['sessions', info.projectId] });
-        void qc.invalidateQueries({ queryKey: ['session', tab.sessionId] });
+        if (info) void invalidateSessions(qc, info.projectId);
+        void qc.invalidateQueries({ queryKey: sessionKeys.one(tab.sessionId!) });
       }
     });
   return (

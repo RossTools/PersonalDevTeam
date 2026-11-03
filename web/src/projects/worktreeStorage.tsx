@@ -11,6 +11,7 @@ import type { WorktreeSize } from '../api/gen/WorktreeSize';
 import { useAction } from '../common/useAction';
 import { invalidateWorktrees } from '../common/worktrees';
 import { formatBytes, plural } from '../common/text';
+import { POLL } from '../common/poll';
 
 /** "3.2 GB, 2.9 GB of it build output", or why there is no size yet. */
 export function sizeText(size: WorktreeSize | null, missing = false): string {
@@ -42,7 +43,7 @@ export function DiskBadge({ level }: { level: DiskLevel }) {
 
 /** Every project's storage (or one project's), refreshed while it is on screen. */
 export function useStorage(project?: string) {
-  return useQuery({ queryKey: ['storage', project ?? null], queryFn: () => api.storage(project), refetchInterval: 5000 });
+  return useQuery({ queryKey: ['storage', project ?? null], queryFn: () => api.storage(project), refetchInterval: POLL.steady });
 }
 
 function useSettle() {
@@ -50,8 +51,6 @@ function useSettle() {
   return () => {
     void qc.invalidateQueries({ queryKey: ['storage'] });
     invalidateWorktrees(qc);
-    void qc.invalidateQueries({ queryKey: ['sessions'] });
-    void qc.invalidateQueries({ queryKey: ['workspaces'] });
   };
 }
 

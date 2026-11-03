@@ -26,7 +26,8 @@ Set the owner on the machine itself: until there is one, PDT turns every remote 
 - **From the internet**: nobody. PDT doesn't use Funnel and opens no port.
 
 Runs started from PDT (a dev server, say) get an HTTPS address on the tailnet too, so their links work from your
-phone. A run's address goes away when the run ends, when it comes back on another port after PDT restarts, and when
+phone. Only the owner gets through to them, as with PDT itself: PDT checks each request before passing it on to
+the run, WebSockets included, and the run sees the request as Tailscale sent it. A run's address goes away when the run ends, when it comes back on another port after PDT restarts, and when
 you turn remote access off, including addresses PDT made before it last restarted. See
 [Run configuration](../automation/run-configuration.md).
 

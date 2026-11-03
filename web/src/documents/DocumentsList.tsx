@@ -1,9 +1,7 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { FileDown, Search, SquarePen, X } from 'lucide-react';
 import { Alert, Button, Dialog, EmptyState, IconButton, Input, RelativeTime, Select, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
-import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
 import type { DocumentFilter } from '../api/gen/DocumentFilter';
 import type { DocumentKind } from '../api/gen/DocumentKind';
@@ -12,6 +10,7 @@ import { TicketKey } from '../common/TicketKey';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { KindIcon } from './LinkedDocuments';
 import { providerLabel, useDocumentProviders, useDocuments } from './queries';
+import { useProjects } from '../projects/queries';
 
 const ANY = '';
 /** "Any" in a filter's Select (an empty value would read as none chosen). */
@@ -94,7 +93,7 @@ export function DocumentsList({ filters, selectedId, onOpen, onNew, onImport }: 
 }) {
   const docs = useDocuments(filterOf(filters));
   const providers = useDocumentProviders();
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const projects = useProjects();
   const list = docs.data ?? [];
   const filtered = Object.keys(filterOf(filters)).length > 0;
   const none = providers.isSuccess && providers.data.providers.length === 0;

@@ -21,6 +21,7 @@ import { acpChoices, agentOf, byDefault, choiceText, newSession, type Choice } f
 import { TicketPicker } from '../tickets/TicketPicker';
 import { findTab } from './model';
 import type { WorkspacesApi } from './useWorkspaces';
+import { invalidateSessions } from '../sessions/queries';
 
 const KEYS: Record<string, Choice> = { c: 'Claude', t: 'Claude (terminal)', x: 'Codex', o: 'Codex (terminal)', d: 'Devin', e: 'Devin (terminal)', s: 'Shell' };
 const AGENTS: Choice[] = ['Claude', 'Claude (terminal)', 'Codex', 'Codex (terminal)', 'Devin', 'Devin (terminal)', 'Shell'];
@@ -106,7 +107,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
     meta: { errorShown: true },
     mutationFn: (choice: Choice) => api.createSession({ ...newSession(place!.projectId, place!.worktreeId, choice, { bypass, permissionMode }), ...(placement ? { tab: placement } : {}) }),
     onSuccess: async (s) => {
-      void qc.invalidateQueries({ queryKey: ['sessions', s.projectId] });
+      void invalidateSessions(qc, s.projectId);
       await done({ kind: 'session', id: s.id }, s.projectId);
     },
   });

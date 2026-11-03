@@ -3,11 +3,12 @@ import { Select } from '@ui';
 import { api } from '../api/client';
 import type { NewRun } from '../api/gen/NewRun';
 import type { RunKind } from '../api/gen/RunKind';
+import { runKeys } from './queries';
 
 /** The runs and tests the effective configuration of one place offers, and any error in that configuration. */
 export function useRunChoices(projectId: string, worktreeId: string | null) {
   const config = useQuery({
-    queryKey: ['run-config', projectId, worktreeId],
+    queryKey: runKeys.config(projectId, worktreeId),
     queryFn: () => api.runConfig(projectId, worktreeId),
   });
   const eff = config.data?.effective;

@@ -44,7 +44,9 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   (`pdtd hook …`, which posts to the pdtd that launched them) and call PDT through pdt-mcp.
 - **Remote access** is `tailscale serve` in front of pdtd (pdt-api `remote.rs`, `crates/pdt-tailscale`); requests from
   the tailnet must carry the owner's Tailscale identity. pdtd only removes mappings its instance made; it keeps their
-  ports in the store (host value `remote.served`), since `serve --bg` mappings outlive the process.
+  ports in the store (host value `remote.served`), since `serve --bg` mappings outlive the process. A web run's port
+  is mapped to an owner-checking proxy of pdtd's on a free loopback port (`remote_proxy.rs`), never to the run, and
+  the proxy stops when the mapping goes; after a restart the mapping leads nowhere until the resumed run maps it again.
 
 **Instances.** A profile picks the defaults: `stable` (port 7420, data folder `<local data dir>/pdt`) and `dev` (7421,
 `pdt-dev`; debug builds default to it). `PDT_PORT` and `PDT_DATA_DIR` override them, and a lock file stops two pdtd
@@ -583,6 +585,16 @@ own file, and the central list takes at most one line, so tickets built side by 
 | A background loop | pdt-api `background.rs` (`start_background`) | |
 | A lazy screen or dialog | Its feature folder | One line in `web/src/shell/screens.tsx`, and the place in `AppShell.tsx` that shows it |
 | A Settings page of its own | Its feature folder | Its kind in `web/src/shell/route.ts` and `SettingsNav`, and one entry in `web/src/shell/settingsPages.tsx` |
+
+**Web queries.** Each area keeps its query keys, shared queries and invalidation in one module: `<area>/queries.ts`
+(`projectKeys`/`useProjects`, `sessionKeys`/`sessionsQuery`, `runKeys`/`runsQuery`, `workspaceKeys`, `hostKeys`/
+`useHostSettings`, `workflowKeys`, `ticketKeys`, `documentKeys`, …; worktrees in `common/worktrees.ts`). Screens use
+those hooks and keys rather than a literal key and an inline `useQuery`, so every copy of a query shares one key and
+one set of options. A write calls the area's `invalidate…` helper, which also marks stale what depends on it
+(`invalidateProjects` the workspaces, `invalidateWorktrees` the sessions and workspaces, `savedWorkflow` the list,
+the versions and the Settings sections that show a built-in). Poll intervals are the tiers in `common/poll.ts`
+(`POLL.live` 2 s for what's on screen, `steady`, `slow`, `paged`, `idle`); what the notification stream pushes polls
+with `streamPoll`, slowly while the stream is connected.
 
 A new top-level view (Inbox, Notes and the like) still means editing `AppShell.tsx`, because its state lives in the
 shell. `AppShell`'s tests are split by area (`AppShell.<area>.test.tsx`), with shared fixtures in

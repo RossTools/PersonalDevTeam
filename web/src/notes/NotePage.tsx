@@ -14,7 +14,7 @@ import { useRefreshPm } from '../pm/usePm';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { NewTicketDialog } from '../shell/screens';
 import { ALL, HOST_WIDE, ticketDescription, titleFor, TITLE_MAX, wordCount, type Whose } from './model';
-import { useProjects } from './useNotes';
+import { useProjects } from '../projects/queries';
 import { useNoteDraft, type SaveState } from './useNoteDraft';
 import { plural } from '../common/text';
 

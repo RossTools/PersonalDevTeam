@@ -46,6 +46,8 @@ import type { BacklogState } from './useBacklog';
 import { TicketAttachments } from './attachments';
 import { TicketDocuments } from './TicketDocuments';
 import { plural } from '../common/text';
+import { projectKeys } from '../projects/queries';
+import { invalidateWorkspaces } from '../workspaces/queries';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Filter chips
@@ -384,7 +386,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   const project = projects.find((p) => p.id === projectId) ?? null;
   // A project linked to a plugin that imports issues can import one by its key.
   const settings = useQuery({
-    queryKey: ['project-settings', project?.id],
+    queryKey: projectKeys.settings(project?.id ?? ''),
     queryFn: () => api.projectSettings(project!.id),
     enabled: !!project && project.kind !== 'personal',
   });
@@ -501,7 +503,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
       await api.bulkTickets({ ids: selectedIds, action: 'delete' });
       clearSelection();
       invalidateTickets(qc);
-      void qc.invalidateQueries({ queryKey: ['workspaces'] });
+      void invalidateWorkspaces(qc);
     });
   const labelEntries = (): MenuEntry[] => {
     const onSelected = [...new Set(selected.flatMap((t) => t.labels))].sort();
