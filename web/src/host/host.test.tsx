@@ -321,6 +321,22 @@ describe('HostSettingsPage', () => {
     expect(last).toHaveValue('8300');
   });
 
+  it('says what a run is and links to how runs are set up', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+      'GET /api/health': { status: 'ok', name: 'PDT', website: 'https://example.dev', version: '0.1.0', profile: 'dev', port: 0, dev: true, webBuild: null, loops: [] },
+    });
+    renderWithQuery(<HostSettingsPage section="runs" />);
+    const runs = await screen.findByRole('region', { name: 'Runs' });
+    expect(runs).toHaveTextContent(/Commands PDT runs from a ticket's branch/);
+    expect(runs).not.toHaveTextContent(/dev instance/i);
+    expect(await within(runs).findByRole('link', { name: /How runs are set up/ })).toHaveAttribute('href', 'https://example.dev/docs/automation/run-configuration');
+  });
+
   it("sets an agent's default model from its models, or typed while it lists none", async () => {
     const calls = stubApi({
       'GET /api/host/settings': settingsView({ settings: { ...settingsView().settings, agentModels: { codex: 'gpt-5' } } }),
