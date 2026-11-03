@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Badge, Button, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, useThemePref, type BadgeTone, type Status, type ThemePref } from '@ui';
+import { Alert, Badge, Button, Disclosure, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, useThemePref, type BadgeTone, type Status, type ThemePref } from '@ui';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { BugReportSetting } from '../api/gen/BugReportSetting';
@@ -327,33 +327,30 @@ function Updates({ v }: { v: HostSettingsView }) {
           </>
         )}
       </SettingsRow>
-      <details open={advanced} onToggle={(e) => setAdvanced(e.currentTarget.open)} className="text-sm">
-        <summary className="cursor-pointer text-muted-foreground">Advanced</summary>
-        <div className="mt-2 flex flex-col gap-2">
-          {v.tokenError && (
-            <Alert tone="error" title="Token: cannot be read.">
-              <p>{v.tokenError}</p>
-              <p className="text-muted-foreground">
-                A token stored by an older build makes macOS ask before this one may read it. Look for a keychain prompt
-                on this Mac and choose Always Allow. If there is none, delete the <code>update-token</code> item in Keychain
-                Access, restart the daemon from the tray, and save the token again here.
-              </p>
-            </Alert>
-          )}
-          <form onSubmit={submit(() => { if (secret.trim()) token.mutate(secret.trim()); })} className="flex flex-col gap-2">
-            <SettingsRow
-              label={<span className="flex items-center gap-2">GitHub token {!v.tokenError && <Badge tone={badge.tone}>{badge.text}</Badge>}</span>}
-              description={u?.token.state === 'expired' ? 'GitHub rejected it, so updates go on without it. Paste a new one, or remove it under Danger zone.'
-                : v.tokenPresent ? 'Only needed for a private repository or a fork. Kept in the OS keychain; paste a new one to replace it.'
-                  : 'Only needed for a private repository or a fork. Kept in the OS keychain.'}
-            >
-              <Input ref={tokenInput} aria-label="GitHub token" type="password" autoComplete="off" className="w-56" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
-              <Button type="submit" size="sm" variant="primary" disabled={!secret.trim()} pending={token.isPending}>Save token</Button>
-            </SettingsRow>
-            {tokenError}
-          </form>
-        </div>
-      </details>
+      <Disclosure title="Advanced" open={advanced} onOpenChange={setAdvanced} className="text-sm" panelClassName="mt-2 flex flex-col gap-2 text-foreground">
+        {v.tokenError && (
+          <Alert tone="error" title="Token: cannot be read.">
+            <p>{v.tokenError}</p>
+            <p className="text-muted-foreground">
+              A token stored by an older build makes macOS ask before this one may read it. Look for a keychain prompt
+              on this Mac and choose Always Allow. If there is none, delete the <code>update-token</code> item in Keychain
+              Access, restart the daemon from the tray, and save the token again here.
+            </p>
+          </Alert>
+        )}
+        <form onSubmit={submit(() => { if (secret.trim()) token.mutate(secret.trim()); })} className="flex flex-col gap-2">
+          <SettingsRow
+            label={<span className="flex items-center gap-2">GitHub token {!v.tokenError && <Badge tone={badge.tone}>{badge.text}</Badge>}</span>}
+            description={u?.token.state === 'expired' ? 'GitHub rejected it, so updates go on without it. Paste a new one, or remove it under Danger zone.'
+              : v.tokenPresent ? 'Only needed for a private repository or a fork. Kept in the OS keychain; paste a new one to replace it.'
+                : 'Only needed for a private repository or a fork. Kept in the OS keychain.'}
+          >
+            <Input ref={tokenInput} aria-label="GitHub token" type="password" autoComplete="off" className="w-56" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
+            <Button type="submit" size="sm" variant="primary" disabled={!secret.trim()} pending={token.isPending}>Save token</Button>
+          </SettingsRow>
+          {tokenError}
+        </form>
+      </Disclosure>
     </Section>
   );
 }

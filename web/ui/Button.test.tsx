@@ -32,6 +32,14 @@ describe('Button', () => {
     expect(screen.getByRole('button', { name: 'Sm' }).className).toContain('h-control-sm');
   });
 
+  it('lg is 48px on every pointer', () => {
+    render(<Button size="lg">Start</Button>);
+    const lg = screen.getByRole('button', { name: 'Start' });
+    expect(lg.className).toContain('h-control-lg');
+    expect(lg.className).toContain('pointer-coarse:h-control-lg');
+    expect(lg.className).not.toContain('pointer-coarse:h-control-touch');
+  });
+
   it('shows title as a tooltip on keyboard focus', async () => {
     render(<Button title="Opens the log">Log</Button>);
     await userEvent.tab();

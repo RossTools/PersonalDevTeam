@@ -1,11 +1,10 @@
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
-import { Alert, IconButton, List, ListRow, RelativeTime, Skeleton, Spinner, useMenuAt } from '@ui';
+import { Alert, IconButton, List, ListHeading, ListRow, RelativeTime, Skeleton, Spinner, useMenuAt } from '@ui';
 import { InlineRename } from '../common/InlineRename';
 import { RowField } from '../common/RowField';
 import { earlier, firstLine, isUnread, openConversations, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useShownRef, useViaLabel, type PmSelection } from './usePm';
 
-const heading = 'flex items-center px-3 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
 /** Ended conversations the list shows; the rest are under "All ended conversations". */
 const RECENT_ENDED = 5;
 
@@ -36,12 +35,15 @@ export function PmList({ selection, onSelect, onNew }: {
   });
   return (
     <div className="flex flex-col gap-0.5 py-1">
-      <h2 className={heading}>
-        <span className="flex-1">Project manager</span>
-        <IconButton label="New conversation" size="sm" noTooltip className="size-5" onClick={onNew}>
-          <Plus aria-hidden />
-        </IconButton>
-      </h2>
+      <ListHeading
+        trailing={
+          <IconButton label="New conversation" size="sm" noTooltip className="size-5" onClick={onNew}>
+            <Plus aria-hidden />
+          </IconButton>
+        }
+      >
+        Project manager
+      </ListHeading>
       {pm.isPending && <Skeleton lines={3} label="Loading the PM" />}
       {pm.isError && <Alert tone="error">The PM could not be loaded: {pm.error.message}</Alert>}
       <List aria-label="PM conversations" onAction={(id) => onSelect(String(id))}>
@@ -84,7 +86,7 @@ export function PmList({ selection, onSelect, onNew }: {
       </List>
       {ended.length > 0 && (
         <>
-          <h3 className={heading}>Ended</h3>
+          <ListHeading as="h3">Ended</ListHeading>
           <List aria-label="Ended PM conversations" onAction={(id) => onSelect(String(id))}>
             {ended.slice(0, RECENT_ENDED).map((s) => (
               <ListRow

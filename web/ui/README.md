@@ -30,7 +30,8 @@
   `z-(--pdt-z-sticky)` (sticky headers inside a scrolling pane), `z-(--pdt-z-popover)`, `z-(--pdt-z-dialog)`, `z-(--pdt-z-menu)`, `z-(--pdt-z-toast)`. A test (`src/lint.test.ts`)
   enforces this outside `tokens.css`.
 - Sizes: controls are `h-control-sm` (24px) or `h-control-md` (28px, the default); on touch screens
-  `pointer-coarse:h-control-touch` (44px) / `pointer-coarse:min-w-control-touch` for icon buttons. Corners
+  `pointer-coarse:h-control-touch` (44px) / `pointer-coarse:min-w-control-touch` for icon buttons. `h-control-lg`
+  (48px) is the large touch button (`Button size="lg"`). Corners
   `rounded-md` (follows `--radius`, 6px).
 - Dimming: disabled controls use `opacity-50`, and nothing else is dimmed with opacity. A state such as cleared, skipped
   or not built shows as muted text, a dashed edge or a badge, so its text keeps 4.5:1 (tokens.test.ts checks the token pairs).
@@ -49,8 +50,17 @@
   returns focus to what opened it; Up/Down/Home/End in lists and menus; long press = right-click on touch.
   Features build overlays from `Dialog`, `Sheet`, `Popover`, `Menu`, `Select` and `Tooltip`, never a hand-made
   `role="dialog|menu|listbox|tooltip"` (a test fails on one); a `Sheet` can open from a `Dialog`.
-  A hand-built `role="tablist"` takes `onKeyDown={tabListKeyDown}` and gives its tabs `tabIndexOf(…)` (Left/Right/Home/End,
-  one Tab stop); what a tab shows is a `role="tabpanel"` labelled by the tab's id.
+  A page's sections are `Tabs` with a `TabPanel` per tab (put the panels straight inside `Tabs`: what sits between
+  renders twice, once to collect the tabs). Only editor-style tabs that are dragged, renamed or closed (a workspace's
+  tabs, the documents beside a page) are a hand-built `role="tablist"`: `onKeyDown={tabListKeyDown}`, tabs with
+  `tabIndexOf(…)` (Left/Right/Home/End, one Tab stop), and a `role="tabpanel"` labelled by the tab's id.
+- **Use the piece that exists.** Something folded away is a `Disclosure` (`inline`: a muted line such as "Show the
+  comments"; `row`: a folding section or nav group), never `<details>` or a hand-made chevron button. A card to pick is
+  a `ChoiceCard` (`selection="current"` for the card of what's on screen), one of a few options in a form a
+  `ChoiceCardGroup`. The small uppercase label over a group is a `SectionLabel`, a side list's group heading a
+  `ListHeading` (its ＋ button in `trailing`). A count is a `Badge count` (`tone="solid"` for what waits on the user,
+  `size="sm"` on an icon or in a chip). A phone screen's big bottom buttons are `Button size="lg"` (48px,
+  `h-control-lg`); a touch-sized control written by hand is `h-control-touch`/`size-control-touch`, never `h-11`.
 - **Touch.** Long press opens the same menu as right-click (`MenuTrigger trigger="contextMenu"`). Drag data is
   `text/plain` with a `pdt:<kind>:<id>` value (Android Chrome drops custom types); draggable rows carry a
   `<Button slot="drag">` handle. Sheets open from a button, never an edge swipe. Never make a long-press target natively `draggable` on touch

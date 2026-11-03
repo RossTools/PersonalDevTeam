@@ -214,7 +214,7 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {phone ? (
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3">
+        <div className="flex h-control-touch shrink-0 items-center gap-2 border-b border-border px-3">
           {status}
           <span className="ml-auto">{toggle}</span>
         </div>

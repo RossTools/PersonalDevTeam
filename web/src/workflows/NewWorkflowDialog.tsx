@@ -3,8 +3,7 @@
 // enabled. PDT's built-in workflows sit in their own collapsed group at the end, to add one back (or copy it).
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { Alert, Badge, Button, Dialog, Field, Input, Link, Select, Sheet, Skeleton, Switch, Textarea } from '@ui';
+import { Alert, Badge, Button, ChoiceCard, Dialog, Disclosure, Field, Input, Link, SectionLabel, Select, Sheet, Skeleton, Switch, Textarea } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { ConnectionPicker } from '../connections/ConnectionPicker';
@@ -51,33 +50,27 @@ export function ParamsForm({ params, values, onChange }: { params: TemplateParam
 
 const startValues = (params: TemplateParam[]) => Object.fromEntries(params.map((p) => [p.id, initial(p)]));
 
-const groupHeading = 'mt-4 mb-2 flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-muted-foreground first:mt-0';
-
 /** How many steps the preview lists before "and N more". */
 const STEPS_SHOWN = 8;
 
 function Card({ t, selected, onPick }: { t: GalleryTemplate; selected: boolean; onPick: () => void }) {
   const off = pluginOff(t);
   return (
-    <button
-      type="button"
-      aria-pressed={selected}
+    <ChoiceCard
+      selected={selected}
       onClick={onPick}
-      className={cn(
-        'flex flex-col gap-1.5 rounded-lg border border-border bg-background p-3 text-left outline-none hover:border-muted-foreground focus-visible:ring-2 focus-visible:ring-ring',
-        t.id === BLANK && 'border-dashed',
-        selected && 'border-primary ring-2 ring-accent',
-      )}
+      dashed={t.id === BLANK}
+      title={<span className={cn(off && 'text-muted-foreground')}>{t.id === BLANK ? 'Start from scratch' : t.name}</span>}
+      description={t.description}
+      className="gap-1.5"
     >
-      <span className={cn('text-sm font-medium', off && 'text-muted-foreground')}>{t.id === BLANK ? 'Start from scratch' : t.name}</span>
-      {t.description && <span className="line-clamp-2 text-xs text-muted-foreground">{t.description}</span>}
       <span className="flex flex-wrap gap-1.5">
         <Badge>{triggerLabel(t)}</Badge>
         {t.plugin && <Badge tone={off ? 'waiting' : 'accent'}>{off ? `${t.plugin.label} is off` : t.plugin.label}</Badge>}
         {t.builtinWorkflow && (t.added ? <Badge tone="running">Added</Badge> : <Badge tone="waiting">Not added</Badge>)}
         {!t.builtin && <Badge>Yours</Badge>}
       </span>
-    </button>
+    </ChoiceCard>
   );
 }
 
@@ -218,22 +211,29 @@ export function NewWorkflowDialog({ projects, templateId, onClose, onCreated, on
           {g.blank && <div className="mb-2"><Grid items={[g.blank]} picked={picked} onPick={pick} /></div>}
           {g.groups.map((grp) => (
             <section key={grp.id} aria-label={grp.label}>
-              <h3 className={groupHeading}>{grp.label}</h3>
+              <SectionLabel className="mt-4 mb-2 first:mt-0">{grp.label}</SectionLabel>
               <Grid items={grp.items} picked={picked} onPick={pick} />
             </section>
           ))}
           {g.builtins.length > 0 && (
             <section aria-label="Built-in">
-              {filter === 'builtin' ? <h3 className={groupHeading}>Built-in</h3> : (
-                <h3 className={groupHeading}>
-                  <button type="button" aria-expanded={showBuiltins} className="flex items-center gap-1.5 uppercase outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setBuiltinsOpen(!showBuiltins)}>
-                    {showBuiltins ? <ChevronDown aria-hidden className="size-3" /> : <ChevronRight aria-hidden className="size-3" />}
-                    Built-in · {g.builtins.length}
-                  </button>
-                  <span className="normal-case tracking-normal">— PDT's own workflows, to add back one you deleted</span>
-                </h3>
+              {filter === 'builtin' ? (
+                <>
+                  <SectionLabel className="mt-4 mb-2 first:mt-0">Built-in</SectionLabel>
+                  <Grid items={g.builtins} picked={picked} onPick={pick} />
+                </>
+              ) : (
+                <Disclosure
+                  title={<SectionLabel as="span">Built-in · {g.builtins.length}</SectionLabel>}
+                  trailing={<span className="text-2xs text-muted-foreground">— PDT's own workflows, to add back one you deleted</span>}
+                  open={showBuiltins}
+                  onOpenChange={setBuiltinsOpen}
+                  className="mt-4 first:mt-0"
+                  panelClassName="mt-2"
+                >
+                  <Grid items={g.builtins} picked={picked} onPick={pick} />
+                </Disclosure>
               )}
-              {showBuiltins && <Grid items={g.builtins} picked={picked} onPick={pick} />}
             </section>
           )}
           {g.groups.length === 0 && !g.blank && g.builtins.length === 0 && <p className="py-5 text-sm text-muted-foreground">No templates here match.</p>}

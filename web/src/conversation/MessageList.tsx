@@ -1,23 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowDown } from 'lucide-react';
 import {
-  Alert,
-  ApprovalCard,
-  Button,
-  Dialog,
-  DiffStat,
-  ImageThumb,
-  DiffViewer,
-  diffStats,
-  MessageBubble,
-  parseDiff,
-  Spinner,
-  ToolCallRow,
-  ToolOutput,
-  RelativeTime,
-  clockTime,
-  formatDuration,
-  type ApprovalAnswer,
+  Alert, ApprovalCard, Button, clockTime, Dialog, DiffStat, diffStats, DiffViewer, Disclosure, formatDuration, ImageThumb, MessageBubble, parseDiff, RelativeTime, SectionLabel, Spinner, ToolCallRow, ToolOutput, type ApprovalAnswer,
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { AgentEvent } from '../api/gen/AgentEvent';
@@ -54,14 +38,9 @@ const PDT_MESSAGE: Record<PdtMessage, string> = {
 /** One of PDT's own messages to a PM conversation: a muted line that opens to the full text the PM got. */
 export function PdtMessageRow({ kind, text, when }: { kind: PdtMessage; text: string; when: ReactNode }) {
   return (
-    <details className="px-1 text-meta text-muted-foreground">
-      <summary className="cursor-pointer select-none">
-        {PDT_MESSAGE[kind]} · {when}
-      </summary>
-      <div className="mt-1 border-l border-border pl-2 text-sm text-foreground">
-        <Markdown>{text}</Markdown>
-      </div>
-    </details>
+    <Disclosure title={<>{PDT_MESSAGE[kind]} · {when}</>} className="px-1 text-meta" panelClassName="border-l border-border pl-2 text-sm text-foreground">
+      <Markdown>{text}</Markdown>
+    </Disclosure>
   );
 }
 
@@ -343,10 +322,9 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
     }
     case 'reasoning':
       return ev.summary.trim() ? (
-        <details className="px-1 text-xs text-muted-foreground">
-          <summary className="cursor-pointer select-none">Thinking</summary>
-          <div className="mt-1 border-l border-border pl-2 whitespace-pre-wrap">{ev.summary}</div>
-        </details>
+        <Disclosure title="Thinking" className="px-1" panelClassName="border-l border-border pl-2 whitespace-pre-wrap">
+          {ev.summary}
+        </Disclosure>
       ) : (
         <div className="px-1 text-xs text-muted-foreground">Thought</div>
       );
@@ -372,16 +350,15 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
     case 'plan':
       return (
         <section aria-label="Plan" className="rounded-lg border border-border bg-card p-3">
-          <div className="mb-1 text-2xs font-medium tracking-wide text-muted-foreground uppercase">Plan</div>
+          <SectionLabel as="div" className="mb-1">Plan</SectionLabel>
           <Markdown>{ev.markdown}</Markdown>
         </section>
       );
     case 'unknown':
       return (
-        <details className="px-1 text-xs text-muted-foreground">
-          <summary className="cursor-pointer select-none">Unrecognised event</summary>
-          <ToolOutput className="mt-1">{JSON.stringify(ev.raw, null, 2) ?? ''}</ToolOutput>
-        </details>
+        <Disclosure title="Unrecognised event" className="px-1">
+          <ToolOutput>{JSON.stringify(ev.raw, null, 2) ?? ''}</ToolOutput>
+        </Disclosure>
       );
     case 'usage':
     case 'turn_diff':

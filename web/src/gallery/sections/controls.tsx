@@ -178,6 +178,12 @@ function render() {
           <Trash2 /> Remove worktree
         </Button>
       </Row>
+      <Row label="Button · lg (48px on every pointer: a phone screen's main actions)">
+        <div className="flex w-full max-w-sm gap-2">
+          <Button size="lg" className="min-w-0 flex-1">Comment…</Button>
+          <Button size="lg" variant="primary" className="min-w-0 flex-1">Start</Button>
+        </div>
+      </Row>
       <Row label="IconButton (label = name + tooltip)">
         <IconButton label="Close tab">
           <X />

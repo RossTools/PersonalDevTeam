@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, Minus } from 'lucide-react';
 import { useId, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Badge, Button, Input, Link, Select, Skeleton } from '@ui';
+import { Alert, Badge, Button, ChoiceCardGroup, Input, Link, Select, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
@@ -379,22 +379,16 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
     : 'Which agent works on tickets by default. You can change it per persona later.';
   return (
     <Step {...step} title="Pick a default agent" summary={summary}>
-      <div role="radiogroup" aria-label="Default agent" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        {AGENTS.filter((a) => !off.includes(a.id)).map((a) => {
+      <ChoiceCardGroup
+        aria-label="Default agent"
+        size="sm"
+        value={agent}
+        onChange={(a) => setPicked(a)}
+        options={AGENTS.filter((a) => !off.includes(a.id)).map((a) => {
           const there = !checks || checks[a.id].found;
-          return (
-            <button key={a.id} type="button" role="radio" aria-checked={agent === a.id} disabled={!there} onClick={() => setPicked(a.id)}
-              className={cn(
-                'flex flex-col rounded-lg border border-border bg-background p-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                agent === a.id && 'border-primary ring-2 ring-accent',
-                !there && 'cursor-not-allowed opacity-50',
-              )}>
-              <b className="font-semibold">{a.name}</b>
-              <span className="text-xs text-muted-foreground">{there ? 'Found' : 'Not installed'}</span>
-            </button>
-          );
+          return { value: a.id, title: a.name, description: there ? 'Found' : 'Not installed', disabled: !there };
         })}
-      </div>
+      />
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="primary" pending={save.isPending} disabled={checks !== undefined && !checkOf(checks, agent)?.found} onClick={() => save.mutate()}>
           Use {agentName(agent, acp)}

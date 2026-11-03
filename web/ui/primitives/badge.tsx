@@ -12,15 +12,21 @@ const badgeVariants = cva(
         waiting: "bg-waiting-soft text-waiting",
         failed: "bg-failed-soft text-failed",
         outline: "border-border text-foreground [a]:hover:bg-muted",
+        solid: "bg-primary text-primary-foreground",
       },
       shape: {
         label: "",
         count: "min-w-5 rounded-full px-1 tabular-nums",
       },
+      size: {
+        md: "",
+        sm: "h-4 min-w-4 px-1 text-2xs leading-4",
+      },
     },
     defaultVariants: {
       variant: "neutral",
       shape: "label",
+      size: "md",
     },
   }
 )
@@ -29,6 +35,7 @@ function Badge({
   className,
   variant = "neutral",
   shape = "label",
+  size = "md",
   render,
   ...props
 }: React.ComponentProps<"span"> &
@@ -39,7 +46,7 @@ function Badge({
     const renderProps = {
       "data-slot": "badge",
       "data-variant": variant,
-      className: cn(badgeVariants({ variant, shape }), className),
+      className: cn(badgeVariants({ variant, shape, size }), className),
       ...props,
     }
 
@@ -50,7 +57,7 @@ function Badge({
     <span
       data-slot="badge"
       data-variant={variant}
-      className={cn(badgeVariants({ variant, shape }), className)}
+      className={cn(badgeVariants({ variant, shape, size }), className)}
       {...props}
     />
   )

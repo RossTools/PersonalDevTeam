@@ -1,5 +1,5 @@
 import { Plus } from 'lucide-react';
-import { Alert, Badge, EmptyState, IconButton, List, ListRow, Skeleton } from '@ui';
+import { Alert, Badge, EmptyState, IconButton, List, ListHeading, ListRow, Skeleton } from '@ui';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { useAgents } from '../common/agents';
 import { agentLine, sortPersonas, usePersonas } from './model';
@@ -16,14 +16,15 @@ export function PersonasList({ selectedId, onSelect }: { selectedId: string | nu
   const phone = useMediaQuery(PHONE_QUERY);
   return (
     <div className="flex flex-col gap-0.5 py-1">
-      <h2 className="flex items-center px-3 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">
-        <span className="flex-1">Personas</span>
-        {!phone && (
+      <ListHeading
+        trailing={!phone && (
           <IconButton label="New persona" size="sm" noTooltip className="size-5" onClick={() => onSelect('new')}>
             <Plus aria-hidden />
           </IconButton>
         )}
-      </h2>
+      >
+        Personas
+      </ListHeading>
       {personas.isPending && <Skeleton lines={4} label="Loading personas" />}
       {personas.isError && <Alert tone="error">Personas could not be loaded: {personas.error.message}</Alert>}
       {personas.isSuccess && (

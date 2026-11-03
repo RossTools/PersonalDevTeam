@@ -4,8 +4,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { ArrowRight, CircleCheck, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Alert, Badge, Button, Chip, Dialog, IconButton, MenuButton, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm,
-  type TimelineItem,
+  Alert, Badge, Button, Chip, Dialog, Disclosure, IconButton, MenuButton, SectionLabel, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm, type TimelineItem,
 } from '@ui';
 import { api } from '../api/client';
 import type { AgentBy } from '../api/gen/AgentBy';
@@ -36,8 +35,6 @@ import { LabelsEditor } from './LabelsEditor';
 import { TicketPicker } from './TicketPicker';
 import { POLL, pagedPoll } from '../common/poll';
 
-const sectionHeading = 'text-2xs font-medium tracking-wider text-muted-foreground uppercase';
-
 /** True inside a folding section that already names the block (the phone's ticket screen): its own heading hides. */
 export const FoldedSectionContext = createContext(false);
 
@@ -48,7 +45,7 @@ export function OverviewSection({ title, actions, children, className }: { title
     <section aria-label={title} className={cn('flex flex-col gap-2', className)}>
       {folded && !actions ? <h3 className="sr-only">{title}</h3> : (
         <div className="flex min-h-6 items-center gap-2">
-          <h3 className={cn(sectionHeading, 'flex-1', folded && 'sr-only')}>{title}</h3>
+          <SectionLabel className={cn('flex-1', folded && 'sr-only')}>{title}</SectionLabel>
           {folded && <span className="flex-1" />}
           {actions}
         </div>
@@ -562,10 +559,9 @@ function toItem(e: TicketEvent, trackerLabel: TrackerLabel): TimelineItem {
     ...(e.kind === 'outside_input' && e.body
       ? {
           body: (
-            <details>
-              <summary className="cursor-pointer text-xs text-muted-foreground select-none">Show what they wrote</summary>
-              <div className="mt-1"><Markdown>{e.body}</Markdown></div>
-            </details>
+            <Disclosure title="Show what they wrote" panelClassName="text-sm text-foreground">
+              <Markdown>{e.body}</Markdown>
+            </Disclosure>
           ),
         }
       : {}),
@@ -573,10 +569,9 @@ function toItem(e: TicketEvent, trackerLabel: TrackerLabel): TimelineItem {
     ...(e.kind === 'feedback' && e.body
       ? {
           body: (
-            <details>
-              <summary className="cursor-pointer text-xs text-muted-foreground select-none">Show the comments</summary>
-              <div className="mt-1"><Markdown>{e.body}</Markdown></div>
-            </details>
+            <Disclosure title="Show the comments" panelClassName="text-sm text-foreground">
+              <Markdown>{e.body}</Markdown>
+            </Disclosure>
           ),
         }
       : {}),

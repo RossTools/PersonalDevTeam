@@ -7,7 +7,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, GitBranch } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Button, ContextMenu, dragData, IconButton, MenuButton, parseDragData, Skeleton, useConfirm, type MenuEntry,
+  Badge, Button, ContextMenu, dragData, IconButton, MenuButton, parseDragData, Skeleton, useConfirm, type MenuEntry,
 } from '@ui';
 import type { Session } from '../api/gen/Session';
 import type { TicketQuery } from '../api/gen/TicketQuery';
@@ -486,7 +486,7 @@ export function ColumnChips({ ref, columns, counts, value, onChange }: {
             onClick={() => onChange(c.id)}
           >
             {c.title}
-            {n !== undefined && <span className={cn('tabular-nums', !on && 'text-muted-foreground')}>{n}</span>}
+            {n !== undefined && <Badge count={n} max={999} size="sm" />}
           </Button>
         );
       })}
