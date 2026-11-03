@@ -12,6 +12,7 @@ import {
 } from './model';
 import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch } from './parts';
 import { usePlugins } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 interface ItemProps {
   p: Plugin;
@@ -84,7 +85,7 @@ export function PluginsPage({ onOpen, phone = false }: PluginsPageProps) {
       className="max-w-5xl"
       description="What this PDT works with. Turn one on and it adds its connections, workflow steps, templates and PM tools. Turning one off keeps its settings, connections and workflows for later."
     >
-      {list.error && <Alert tone="error">Plugins could not be loaded: {list.error.message}</Alert>}
+      <LoadError what="Plugins" error={list.error} />
       {list.isLoading && <Skeleton label="Loading plugins" className="h-24" />}
       {list.data && (
         <div className="flex flex-col gap-3">

@@ -7,7 +7,7 @@ import type { ChangedFile } from '../api/gen/ChangedFile';
 import type { CommentSide } from '../api/gen/CommentSide';
 import type { Ticket } from '../api/gen/Ticket';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
-import { actionError, runAction } from '../common/useAction';
+import { actionError, runAction, useAction } from '../common/useAction';
 import { readViewState, useViewKey, useViewState, writeViewState } from '../common/viewState';
 import { useLocation } from '../shell/router';
 import { PrBadge } from '../tickets/PullRequest';
@@ -107,7 +107,6 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
   const [loaded, setLoaded] = useViewState<Record<string, boolean>>(named('loaded'), {});
   const scrollKey = useViewKey(named('scroll'));
   const [reveal, setReveal] = useState<(DeepLink & { line: number }) | null>(null);
-  const [sending, setSending] = useState(false);
   const [merging, setMerging] = useState(false);
   const { isViewed, setViewed } = useViewed(worktreeId);
 
@@ -262,19 +261,12 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
     e.preventDefault();
   };
 
-  const sendFeedback = async () => {
-    setSending(true);
-    try {
-      const r = await api.sendFeedback(worktreeId);
-      toast.success(`Sent ${plural(r.sent, 'comment')} to the agent.`);
-      invalidateReview(qc, worktreeId);
-      if (t) invalidateTickets(qc, [t.id]);
-    } catch (e) {
-      toast.error(actionError(e));
-    } finally {
-      setSending(false);
-    }
-  };
+  const [sendFeedback, sending] = useAction(async () => {
+    const r = await api.sendFeedback(worktreeId);
+    toast.success(`Sent ${plural(r.sent, 'comment')} to the agent.`);
+    invalidateReview(qc, worktreeId);
+    if (t) invalidateTickets(qc, [t.id]);
+  });
   const approve = () =>
     void runAction(async () => {
       const id = changes.data?.attemptId;

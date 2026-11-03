@@ -2,7 +2,6 @@ import { useId, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { UserRound } from 'lucide-react';
 import {
-  Alert,
   Badge,
   Button,
   Checkbox,
@@ -43,6 +42,7 @@ import {
   usePersonas,
   type ModeChoice,
 } from './model';
+import { LoadError } from '../common/QueryStatus';
 
 const MAX_NAME = 60;
 
@@ -345,7 +345,7 @@ function Versions({ persona }: { persona: Persona }) {
   return (
     <Section label="Versions" description="Newest first. Tick two to see what changed between them.">
       {versions.isPending && <Skeleton lines={3} label="Loading versions" />}
-      {versions.isError && <Alert tone="error">Versions could not be loaded: {versions.error.message}</Alert>}
+      <LoadError what="Versions" error={versions.error} />
       {list.length > 0 && (
         <ul data-flush aria-label="Versions" className="flex flex-col divide-y divide-border">
           {list.map((v) => <VersionRow key={v.version} v={v} current={v.version === persona.version} picked={picks.includes(v.version)} onPick={(on) => toggle(v.version, on)} />)}
@@ -375,7 +375,7 @@ function VersionDiff({ personaId, from, to }: { personaId: string; from: number;
     <div aria-label={`Changes from version ${from} to ${to}`} role="region" className="flex flex-col gap-2">
       <p className="text-xs font-medium text-foreground">Version {from} → {to}</p>
       {diff.isPending && <Skeleton lines={3} label="Loading the changes" />}
-      {diff.isError && <Alert tone="error">The changes could not be loaded: {diff.error.message}</Alert>}
+      <LoadError what="The changes" error={diff.error} />
       {diff.data && (
         diff.data.changed.length === 0 ? (
           <p className="text-xs text-muted-foreground">No changes.</p>

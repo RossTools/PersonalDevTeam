@@ -5,8 +5,7 @@ import { KEY_HELP } from './keys';
 export function KeyHelp({ onClose, onReportBug }: { onClose: () => void; onReportBug?: () => void }) {
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       title="Keyboard shortcuts"
       description={<>Press <Kbd keys={['Ctrl', ']']} /> then one key.</>}
       size="sm"

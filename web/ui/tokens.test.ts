@@ -29,7 +29,7 @@ describe('tokens.css', () => {
   it('gives every themed light token a dark value', () => {
     const light = block(':root {');
     const dark = block(":root[data-theme='dark']");
-    const themeless = /^--pdt-(z-|control-|duration|ease|radius|font-)/;
+    const themeless = /^--pdt-(z-|control-|duration|ease|radius|gutter|font-)/;
     const missing = [...light.keys()].filter((k) => !themeless.test(k) && !dark.has(k));
     expect(missing).toEqual([]);
   });

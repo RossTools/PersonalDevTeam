@@ -490,8 +490,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
       )}
       {conflict?.diff && edit && conflict.disk !== undefined && (
         <Dialog
-          open
-          onOpenChange={(o) => { if (!o) setConflict({ ...conflict, diff: false }); }}
+          onClose={() => setConflict({ ...conflict, diff: false })}
           size="xl"
           title={`${name}: on disk → yours`}
           description={conflict.disk === null ? 'The file was deleted on disk. Overwrite makes it again with your text.' : 'Removed lines are on disk now; added lines are your changes.'}

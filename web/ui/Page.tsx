@@ -18,10 +18,10 @@ export function Page({ title, description, actions, children, className }: PageP
   const id = useId();
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <article aria-labelledby={id} className={cn('flex max-w-3xl flex-col gap-8 p-4 text-sm sm:p-6', className)}>
+      <article aria-labelledby={id} className={cn('flex max-w-3xl flex-col gap-8 p-gutter text-sm', className)}>
         <header className="flex flex-wrap items-start gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <h2 id={id} className="text-base font-semibold">{title}</h2>
+            <h2 id={id} className="text-heading font-semibold">{title}</h2>
             {description != null && <p className="text-xs text-muted-foreground">{description}</p>}
           </div>
           {actions != null && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
@@ -54,7 +54,7 @@ export interface SettingsScreenProps {
 export function SettingsScreen({ crumb, lead, notice, children, className }: SettingsScreenProps) {
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <article aria-label={lead} className={cn('flex max-w-3xl flex-col gap-6 p-4 text-sm sm:p-6', className)}>
+      <article aria-label={lead} className={cn('flex max-w-3xl flex-col gap-6 p-gutter text-sm', className)}>
         {crumb != null && <nav aria-label="Breadcrumb" className="-mb-5 text-xs text-muted-foreground">{crumb}</nav>}
         {notice}
         <ScreenLead.Provider value={lead}>{children}</ScreenLead.Provider>
@@ -101,7 +101,7 @@ export function Section({ label, description, actions, notice, footer, dirty, da
     <section aria-labelledby={id} className={cn('flex flex-col', lead ? 'gap-4' : 'gap-2', className)}>
       <div className="flex flex-wrap items-end gap-x-4 gap-y-2 px-0.5">
         <div className={cn('flex min-w-0 flex-1 flex-col', lead ? 'gap-1' : 'gap-0.5')}>
-          <Heading id={id} className={cn(lead ? 'text-lg font-semibold' : 'text-sm font-semibold', danger ? 'text-destructive' : 'text-foreground')}>
+          <Heading id={id} className={cn(lead ? 'text-heading font-semibold' : 'text-sm font-semibold', danger ? 'text-destructive' : 'text-foreground')}>
             {label}
           </Heading>
           {description != null && <p className={cn(lead ? 'text-sm' : 'text-xs', 'text-muted-foreground')}>{description}</p>}

@@ -97,7 +97,7 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
           title={renaming ? renameField : info.title}
           titleTooltip={info.title}
           leading={<BriefcaseBusiness aria-hidden className="size-4 text-muted-foreground" />}
-          meta={<span className="text-meta">{meta}</span>}
+          meta={meta}
           actions={(
             <>
               <Button variant="ghost" size="sm" onClick={besidePicker.pick}><FileStack aria-hidden /> Open beside…</Button>

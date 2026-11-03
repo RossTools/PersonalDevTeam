@@ -98,7 +98,6 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
   const patch = useMutation({
     mutationFn: (p: SessionPatch) => api.updateSession(session.id, p),
     onSuccess: () => void refreshSessions(),
-    onError: (err) => toast.error(actionError(err)),
   });
   const shownModel = patch.isPending && patch.variables.model !== undefined ? patch.variables.model : session.model;
   const shownMode =

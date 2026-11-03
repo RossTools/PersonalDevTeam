@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Redo2, Undo2 } from 'lucide-react';
 import {
-  Alert, Badge, Banner, Button, Dialog, Field, IconButton, Input, MenuButton, SegmentedControl, Sheet, Skeleton, StatusDot, Textarea,
+  Alert, Badge, Banner, Button, Dialog, DialogActions, Field, IconButton, Input, MenuButton, SegmentedControl, Sheet, Skeleton, StatusDot, Textarea,
   ViewHeader, toast, useConfirm, type MenuEntry,
 } from '@ui';
 import { api } from '../api/client';
@@ -38,6 +38,7 @@ import { VersionsView } from './VersionsView';
 import { BuiltinSettingsBanner } from './BuiltinSettingsBanner';
 import { invalidateWorkflows, savedWorkflow, workflowKeys } from './queries';
 import { POLL } from '../common/poll';
+import { LoadError } from '../common/QueryStatus';
 
 export type WorkflowTab = 'graph' | 'outline' | 'text' | 'runs' | 'versions';
 
@@ -77,9 +78,9 @@ function SaveAsTemplateDialog({ w, doc, onClose, onSaved }: { w: WorkflowDetail;
     onSuccess: (t) => onSaved(t.id),
   });
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }} title="Save as template" dismissable={false}
+    <Dialog onClose={onClose} title="Save as template" dismissable={false}
       description="A copy of this workflow you can start new ones from. Add parameters on the template's page."
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!name.trim()} pending={save.isPending} onClick={() => save.mutate()}>Save template</Button></>}>
+      footer={<DialogActions onCancel={onClose} action="Save template" disabled={!name.trim()} pending={save.isPending} onAction={() => save.mutate()} />}>
       <div className="flex flex-col gap-3">
         <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
         <Field label="Description"><Textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
@@ -111,7 +112,7 @@ export interface WorkflowPageView {
 export function WorkflowPage({ id, catalog, projects, onOpen, view, projectInView }: WorkflowPageProps) {
   // Polled, so a proposal or a save made elsewhere shows (the draft is never replaced while it has changes).
   const w = useQuery({ queryKey: workflowKeys.one(id), queryFn: () => api.getWorkflow(id), refetchInterval: POLL.steady });
-  if (w.error) return <Alert tone="error" className="m-3">The workflow could not be loaded: {w.error.message}</Alert>;
+  if (w.error) return <LoadError what="The workflow" error={w.error} className="m-3" />;
   if (!w.data) return <Skeleton lines={8} className="p-4" />;
   return <Loaded w={w.data} catalog={catalog} projects={projects} onOpen={onOpen} view={view} projectInView={projectInView} />;
 }

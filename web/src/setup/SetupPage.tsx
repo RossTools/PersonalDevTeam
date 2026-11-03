@@ -16,6 +16,7 @@ import { checkOf } from '../common/useAgentAvailability';
 import { useProjects } from '../projects/queries';
 import { hostKeys, useHostSettings, setHostSettings, useHostChecks } from '../host/queries';
 import { POLL } from '../common/poll';
+import { QueryStatus } from '../common/QueryStatus';
 
 export type StepId = 'agents' | 'github' | 'project' | 'defaultAgent';
 
@@ -72,7 +73,7 @@ export function SetupPage(props: SetupPageProps) {
   if (!v) {
     return (
       <Shell>
-        {setup.error ? <Alert tone="error">Get started could not be loaded: {setup.error.message}</Alert> : <Skeleton lines={6} label="Loading Get started" />}
+        <QueryStatus query={setup} what="Get started" lines={6}>{() => null}</QueryStatus>
       </Shell>
     );
   }
@@ -88,7 +89,7 @@ export function SetupPage(props: SetupPageProps) {
     <Shell>
       <div className="flex flex-col gap-1">
         <Logo />
-        <h2 className="text-xl font-semibold">Get started</h2>
+        <h2 className="text-heading font-semibold">Get started</h2>
         <p className="text-muted-foreground">A few things PDT needs before agents can work on your code. Do them in any order. Each one ticks itself off.</p>
       </div>
       <Progress done={v.done} />
@@ -129,7 +130,7 @@ function Shell({ children }: { children: ReactNode }) {
 /** The pdt wordmark, underlined in the accent colour like the app icon. */
 function Logo() {
   return (
-    <div aria-hidden className="relative mb-2 inline-block w-fit font-mono text-3xl font-extrabold tracking-tighter">
+    <div aria-hidden className="relative mb-2 inline-block w-fit font-mono text-title font-extrabold tracking-tighter">
       pdt
       <span className="absolute right-0 bottom-0.5 left-[0.62em] h-[3px] bg-primary" />
     </div>

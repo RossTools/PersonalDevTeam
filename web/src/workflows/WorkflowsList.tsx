@@ -15,6 +15,7 @@ import { scopeLabel } from './scope';
 import type { WorkflowTab } from './WorkflowPage';
 import { workflowKeys } from './queries';
 import { POLL } from '../common/poll';
+import { LoadError } from '../common/QueryStatus';
 
 /** What the Workflows view shows: a workflow (on a tab, a run of it), a template, or nothing yet. */
 export type WorkflowTarget = { kind: 'workflow'; id: string; tab?: WorkflowTab; runId?: string } | { kind: 'template'; id: string } | null;
@@ -50,7 +51,7 @@ export function WorkflowsList({ projects, current, onOpen, onNew }: {
       )}
       {moving === 'import' && <ImportDialog projects={projects} onClose={() => setMoving(null)} onImported={(id) => onOpen({ kind: 'workflow', id })} />}
       {moving === 'export' && <ExportDialog workflows={groups.flatMap((g) => g.items)} onClose={() => setMoving(null)} />}
-      {workflows.error && <p className="px-3 text-sm text-destructive">Workflows could not be loaded: {workflows.error.message}</p>}
+      <LoadError what="Workflows" error={workflows.error} className="mx-3" />
       {groups.map((g) => (
         <section key={g.label} aria-label={g.label}>
           <ListHeading>{g.label}</ListHeading>

@@ -17,6 +17,7 @@ import { GraphView } from './GraphView';
 import type { Catalog } from './model';
 import { TextView } from './TextView';
 import { workflowKeys } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 const TYPES: { value: ParamType; label: string }[] = [
   { value: 'string', label: 'Text' }, { value: 'text', label: 'Long text' }, { value: 'number', label: 'Number' },
@@ -64,7 +65,7 @@ function ParamsTable({ params, onChange, readOnly }: { params: TemplateParam[]; 
 
 export function TemplatePage({ id, catalog, onUse, onDeleted }: { id: string; catalog: Catalog; onUse: (templateId: string) => void; onDeleted: () => void }) {
   const t = useQuery({ queryKey: workflowKeys.template(id), queryFn: () => api.getWorkflowTemplate(id) });
-  if (t.error) return <Alert tone="error" className="m-3">The template could not be loaded: {t.error.message}</Alert>;
+  if (t.error) return <LoadError what="The template" error={t.error} className="m-3" />;
   if (!t.data) return <Skeleton lines={8} className="p-4" />;
   return <Loaded key={`${t.data.id}:${t.data.updatedAt}`} t={t.data} catalog={catalog} onUse={onUse} onDeleted={onDeleted} />;
 }

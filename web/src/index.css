@@ -73,7 +73,6 @@
   --color-idle: var(--pdt-idle);
   /* The Claude mark's colour (SessionKindIcon); for that logo only. */
   --color-claude: var(--pdt-brand-claude);
-  --radius-pdt: var(--pdt-radius);
   --font-sans: var(--pdt-font-sans);
   --font-mono: var(--pdt-font-mono);
   --font-heading: var(--pdt-font-sans);
@@ -96,13 +95,17 @@
   --shadow-card: var(--pdt-shadow-card);
   --text-2xs: 10px;
   --text-meta: 11px;
-  /* A document's title (a note's, PDT-143): the one size above text-base. */
+  /* A page's or document's title (settings pages, documents, todos, PDT-457). */
+  --text-heading: 18px;
+  --text-heading--line-height: 1.4;
+  /* A note's title (PDT-143), and the setup page's logo: the largest size. */
   --text-title: 30px;
   --text-title--line-height: 1.2;
   --spacing-control-sm: var(--pdt-control-sm);
   --spacing-control-md: var(--pdt-control-md);
   --spacing-control-touch: var(--pdt-control-touch);
   --spacing-control-lg: var(--pdt-control-lg);
+  --spacing-gutter: var(--pdt-gutter);
   --ease-pdt: var(--pdt-ease);
   --default-transition-duration: var(--pdt-duration);
   /* A calm pulse: the Background state dot (a session waiting on its background tasks). Tailwind's pulse keyframes. */

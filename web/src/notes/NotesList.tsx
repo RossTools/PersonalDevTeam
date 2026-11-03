@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { Brain, Pin, Search, SquarePen } from 'lucide-react';
-import { Alert, EmptyState, IconButton, Input, Kbd, ListHeading, SegmentedControl, Select, Skeleton } from '@ui';
+import { EmptyState, IconButton, Input, Kbd, ListHeading, SegmentedControl, Select, Skeleton } from '@ui';
 import { ALL, HOST_WIDE, inScope, sectionsOf, type Whose } from './model';
 import { NoteItem } from './NoteItem';
 import { useProjects } from '../projects/queries';
 import { useNotesList, type NotesFilters } from './useNotes';
+import { LoadError } from '../common/QueryStatus';
 
 const WHOSE_OPTIONS = [
   { value: 'user' as const, label: 'Mine' },
@@ -99,7 +100,7 @@ export function NotesList({ filters, selectedId, onOpen, onNew, onWhose }: {
         </p>
       )}
       {notes.isPending && <Skeleton lines={4} label="Loading notes" className="m-3" />}
-      {notes.isError && <Alert tone="error" className="m-2">Notes could not be loaded: {notes.error.message}</Alert>}
+      <LoadError what="Notes" error={notes.error} className="m-2" />
       {notes.isSuccess && shown.length === 0 && (
         <EmptyState className="mt-6 border-0">
           {filtered

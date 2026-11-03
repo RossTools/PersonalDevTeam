@@ -10,6 +10,7 @@ import {
   AUTH_MODES, fieldShown, fieldText, fieldValid, fieldsConfig, hookUrl, kindOf, linkUrl, randomSecret, useConnectionKinds, whenHolds, type ConnectionKind,
 } from './kinds';
 import { connectionsKey } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -38,9 +39,9 @@ export function ConnectionDialog(props: DialogProps) {
   if (kinds.data) return <ConnectionForm {...props} kinds={kinds.data} />;
   if (!kinds.error) return null;
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) props.onClose(); }} title={props.connection ? `Edit ${props.connection.name}` : 'New connection'}
+    <Dialog onClose={props.onClose} title={props.connection ? `Edit ${props.connection.name}` : 'New connection'}
       footer={<Button variant="secondary" onClick={props.onClose}>Cancel</Button>}>
-      <Alert tone="error">The kinds of connection could not be loaded: {kinds.error.message}</Alert>
+      <LoadError what="The kinds of connection" error={kinds.error} onRetry={() => void kinds.refetch()} />
     </Dialog>
   );
 }
@@ -105,8 +106,7 @@ function ConnectionForm({ connection, kind: fixedKind, onClose, onSaved, descrip
   const setField = (key: string, v: string) => setSettings((s) => ({ ...s, [key]: v }));
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
+      onClose={onClose}
       dismissable={false}
       title={connection ? `Edit ${connection.name}` : k ? `Add ${k.label}` : 'New connection'}
       description={description ?? "A service workflows use by name. Its secret is kept in this machine's keychain."}

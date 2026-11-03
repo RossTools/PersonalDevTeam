@@ -180,7 +180,7 @@ export function ImportDialog({ projects, onClose, onImported }: {
 
   if (result) {
     return (
-      <Dialog open onOpenChange={(o) => { if (!o) onClose(); }} title="Imported" description="The new workflows are off: dry run them, then turn them on."
+      <Dialog onClose={onClose} title="Imported" description="The new workflows are off: dry run them, then turn them on."
         footer={<Button variant="primary" onClick={() => { onClose(); if (result.workflows[0]) onImported(result.workflows[0].id); }}>Open</Button>}>
         <div className="flex flex-col gap-2">
           <ul className="text-sm">{result.workflows.map((w) => <li key={w.id}>{w.name}</li>)}</ul>
@@ -190,7 +190,7 @@ export function ImportDialog({ projects, onClose, onImported }: {
     );
   }
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }} dismissable={false} size="lg" title="Import workflows"
+    <Dialog onClose={onClose} dismissable={false} size="lg" title="Import workflows"
       description="Paste an export from another PDT, or a workflow document from a workflow's Text view."
       footer={
         <>

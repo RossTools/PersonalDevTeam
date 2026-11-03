@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Checkbox, Dialog, Field, Input, SegmentedControl, Select, Textarea, toast, useConfirm } from '@ui';
+import { Alert, Checkbox, Dialog, DialogActions, Field, Input, SegmentedControl, Select, Textarea, toast, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { Priority } from '../api/gen/Priority';
 import type { Project } from '../api/gen/Project';
@@ -9,7 +9,7 @@ import type { TicketStage } from '../api/gen/TicketStage';
 import { Markdown } from '../common/Markdown';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
-import { actionError } from '../common/useAction';
+import { actionError, useFormAction } from '../common/useAction';
 import { AreasEditor } from './Areas';
 import { LabelsEditor } from './LabelsEditor';
 import { OPEN_STAGES } from './model';
@@ -45,8 +45,6 @@ export function NewTicketDialog({
   const [priority, setPriority] = useState<Priority>('none');
   const [labels, setLabels] = useState<string[]>([]);
   const [areas, setAreas] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const known = useLabels(projectId);
@@ -75,50 +73,39 @@ export function NewTicketDialog({
     onClose();
   };
 
-  const submit = async () => {
-    if (!ready || pending) return;
-    setPending(true);
-    setError(null);
-    try {
-      const t = await api.createTicket(projectId!, {
-        title: title.trim(),
-        ...(description.trim() ? { description } : {}),
-        stage,
-        priority,
-        ...(labels.length > 0 ? { labels } : {}),
-        ...(areas.length > 0 ? { areas } : {}),
-      });
-      invalidateTickets(qc);
-      if (then && follow) {
-        try {
-          await then.run(t);
-        } catch (e) {
-          // The ticket exists; only the follow-up failed.
-          toast.error(`${t.key} was created, but: ${actionError(e)}`);
-        }
+  const create = useFormAction(async () => {
+    const t = await api.createTicket(projectId!, {
+      title: title.trim(),
+      ...(description.trim() ? { description } : {}),
+      stage,
+      priority,
+      ...(labels.length > 0 ? { labels } : {}),
+      ...(areas.length > 0 ? { areas } : {}),
+    });
+    invalidateTickets(qc);
+    if (then && follow) {
+      try {
+        await then.run(t);
+      } catch (e) {
+        // The ticket exists; only the follow-up failed.
+        toast.error(`${t.key} was created, but: ${actionError(e)}`);
       }
-      onCreated?.(t);
-      onClose();
-    } catch (e) {
-      setError(actionError(e));
-      requestAnimationFrame(() => errorRef.current?.focus());
-    } finally {
-      setPending(false);
     }
+    onCreated?.(t);
+    onClose();
+    return true;
+  });
+  const submit = async () => {
+    if (!ready) return;
+    if (!(await create.run())) requestAnimationFrame(() => errorRef.current?.focus());
   };
 
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) void requestClose(); }}
+      onClose={() => void requestClose()}
       title={heading}
       size="lg"
-      footer={
-        <>
-          <Button variant="secondary" onClick={() => void requestClose()}>Cancel</Button>
-          <Button type="submit" form="new-ticket" variant="primary" pending={pending} disabled={!ready}>Create ticket</Button>
-        </>
-      }
+      footer={<DialogActions onCancel={() => void requestClose()} action="Create ticket" form="new-ticket" pending={create.pending} disabled={!ready} />}
     >
       {/* Three blocks divided by rules: what it is, the description, then its details. */}
       <form id="new-ticket" className="flex flex-col divide-y divide-border *:py-4 *:first:pt-0 *:last:pb-0" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
@@ -186,7 +173,7 @@ export function NewTicketDialog({
             {then.hint && <p className="pl-6 text-meta text-muted-foreground">{then.hint}</p>}
           </div>
         )}
-        {error && <div ref={errorRef} tabIndex={-1} className="outline-none"><Alert tone="error">{error}</Alert></div>}
+        {create.error && <div ref={errorRef} tabIndex={-1} className="outline-none"><Alert tone="error">{create.error}</Alert></div>}
       </form>
     </Dialog>
   );

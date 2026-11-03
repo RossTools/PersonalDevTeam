@@ -76,7 +76,7 @@ export function HubTabs({ ticket: t, value, onChange, diff, overview }: {
     ? { ...h, label: <>{h.label}<DiffStat added={diff.added} removed={diff.removed} className="ml-1.5 text-2xs" /></> }
     : h);
   return (
-    <Tabs aria-label="Ticket sections" tabs={tabs} value={value} onChange={onChange}>
+    <Tabs aria-label="Ticket sections" tabs={tabs} value={value} onChange={onChange} listClassName="px-gutter">
       {overview}
       <TabPanel id="conversation"><TicketConversation ticket={t} /></TabPanel>
       <TabPanel id="changes"><TicketChanges ticket={t} /></TabPanel>
@@ -99,6 +99,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
   return (
     <>
     <ViewHeader
+      gutter
       leading={
         <span className="flex items-center gap-1">
           {ticket.parent && <ParentChip parent={ticket.parent} projectId={ticket.projectId} className="hidden sm:inline-flex" />}
@@ -215,7 +216,7 @@ export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticke
         diff={diff}
         overview={
           <TabPanel id="overview" ref={overview.ref} onScroll={overview.onScroll} className="block overflow-auto">
-            <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[minmax(0,1fr)_18rem]">
+            <div className="mx-auto grid max-w-6xl gap-6 p-gutter md:grid-cols-[minmax(0,1fr)_18rem]">
               <div className="flex min-w-0 flex-col divide-y divide-border *:py-5 *:first:pt-0">
                 <TicketDescription key={t.id} ticket={t} />
                 <PartsSection ticket={t} />

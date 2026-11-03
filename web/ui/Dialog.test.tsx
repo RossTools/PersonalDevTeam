@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { Dialog } from './Dialog';
+import { Dialog, DialogActions } from './Dialog';
 import { Button } from './Button';
 
 function Controlled() {
@@ -88,5 +88,43 @@ describe('Dialog', () => {
     render(<Dialog open title="New workflow" headerActions={<input aria-label="Search" />}>body</Dialog>);
     const d = await screen.findByRole('dialog', { name: 'New workflow' });
     expect(within(d).getByRole('textbox', { name: 'Search' })).toBeInTheDocument();
+  });
+
+  it('with onClose, is open and calls onClose when it closes', async () => {
+    const closed: string[] = [];
+    render(<Dialog onClose={() => closed.push('x')} title="Rename">body</Dialog>);
+    await screen.findByRole('dialog', { name: 'Rename' });
+    await userEvent.keyboard('{Escape}');
+    expect(closed).toEqual(['x']);
+  });
+
+  it('DialogActions: Cancel, then the named action', async () => {
+    const calls: string[] = [];
+    render(
+      <Dialog
+        onClose={() => calls.push('close')}
+        title="New document"
+        footer={<DialogActions onCancel={() => calls.push('cancel')} action="Create" onAction={() => calls.push('create')} />}
+      >
+        body
+      </Dialog>,
+    );
+    const d = await screen.findByRole('dialog');
+    const buttons = within(d).getAllByRole('button').map((b) => b.textContent);
+    expect(buttons.indexOf('Cancel')).toBe(buttons.indexOf('Create') - 1);
+    await userEvent.click(within(d).getByRole('button', { name: 'Create' }));
+    await userEvent.click(within(d).getByRole('button', { name: 'Cancel' }));
+    expect(calls).toEqual(['create', 'cancel']);
+  });
+
+  it('DialogActions with a form submits it', async () => {
+    const submitted: string[] = [];
+    render(
+      <Dialog open title="Rename" footer={<DialogActions onCancel={() => {}} action="Rename" form="rename" danger />}>
+        <form id="rename" onSubmit={(e) => { e.preventDefault(); submitted.push('yes'); }} />
+      </Dialog>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Rename' }));
+    expect(submitted).toEqual(['yes']);
   });
 });

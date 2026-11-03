@@ -1,7 +1,7 @@
 // The Workflows view's work area: a workflow's page, one of the user's templates' page (from Save
 // as template or the gallery's Edit this template), or a start.
 import { useQuery } from '@tanstack/react-query';
-import { Alert, Button, EmptyState, Skeleton } from '@ui';
+import { Button, EmptyState, Skeleton } from '@ui';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import { NewWorkflowDialog } from './NewWorkflowDialog';
@@ -9,6 +9,7 @@ import { TemplatePage } from './TemplatePage';
 import { WorkflowPage } from './WorkflowPage';
 import type { WorkflowTarget } from './WorkflowsList';
 import { workflowKeys } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 export function WorkflowsView({ target, onOpen, projects, projectInView, creating, onCreate }: {
   target: WorkflowTarget;
@@ -21,7 +22,7 @@ export function WorkflowsView({ target, onOpen, projects, projectInView, creatin
   onCreate: (c: { templateId?: string } | null) => void;
 }) {
   const catalog = useQuery({ queryKey: workflowKeys.catalog, queryFn: () => api.workflowCatalog(), staleTime: Infinity });
-  const body = catalog.error ? <Alert tone="error" className="m-3">The node catalog could not be loaded: {catalog.error.message}</Alert>
+  const body = catalog.error ? <LoadError what="The node catalog" error={catalog.error} className="m-3" />
     : !catalog.data ? <Skeleton lines={8} className="p-4" />
       : target?.kind === 'workflow' ? <WorkflowPage key={target.id} id={target.id} catalog={catalog.data} projects={projects} onOpen={onOpen} projectInView={projectInView}
           view={{ tab: target.tab, runId: target.runId ?? null, onChange: (tab, runId) => onOpen({ kind: 'workflow', id: target.id, tab, ...(runId ? { runId } : {}) }) }} />
