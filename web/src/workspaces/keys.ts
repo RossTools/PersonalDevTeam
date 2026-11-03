@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 /** The prefix: Ctrl+] (unbound in zsh/readline, Claude Code and Codex; browsers leave it alone). */
-export function isPrefix(e: KeyboardEvent): boolean {
+function isPrefix(e: KeyboardEvent): boolean {
   return e.ctrlKey && !e.altKey && !e.metaKey && (e.key === ']' || e.code === 'BracketRight');
 }
 

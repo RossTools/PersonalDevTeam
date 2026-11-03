@@ -16,7 +16,7 @@ export const CI_TONE: Record<CiState, BadgeTone> = {
 };
 
 /** The failed jobs of a CI result, for titles and the details line. */
-export function failedJobs(ci: CiStatus | null): string[] {
+function failedJobs(ci: CiStatus | null): string[] {
   return ci ? ci.runs.flatMap((r) => r.failedJobs) : [];
 }
 
@@ -40,7 +40,7 @@ const isMerged = (pr: PullRequestStatus, attemptMerged: boolean) =>
   pr.state === 'merged' || (attemptMerged && pr.state === 'open');
 
 /** Where the attempt is with its base's conflicts (fixed once, at merge time), as a badge. */
-export function mergeUpdateBadge(m: MergeUpdateStatus, base: string): { label: string; tone: BadgeTone; title: string } {
+function mergeUpdateBadge(m: MergeUpdateStatus, base: string): { label: string; tone: BadgeTone; title: string } {
   switch (m) {
     case 'deferred':
       return { label: `Conflicts with ${base} (deferred)`, tone: 'neutral', title: 'Resolved at merge time: the agent isn’t interrupted now' };
@@ -75,7 +75,7 @@ export function prSummary(
 }
 
 /** When the PR was last read and, when reading it fails now, why (the rest is that older look). For a tooltip. */
-export function prFreshness(pr: PullRequestStatus): string {
+function prFreshness(pr: PullRequestStatus): string {
   const checked = `checked ${relativeTime(pr.checkedAt)}`;
   return pr.error ? `Not updated: ${pr.error} (last ${checked})` : `Last ${checked}`;
 }

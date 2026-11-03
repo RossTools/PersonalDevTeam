@@ -22,7 +22,7 @@ const SheetEditor = lazy(() => import('./SheetEditor'));
 export type SheetHandle = { selection: () => CommentAnchor | null; show: (a: CommentAnchor) => void; sheet: () => string };
 
 /** How long a change stays lit. */
-export const HIGHLIGHT_MS = 2500;
+const HIGHLIGHT_MS = 2500;
 
 const letter = (i: number): string => (i < 26 ? String.fromCharCode(65 + i) : letter(Math.floor(i / 26) - 1) + letter(i % 26));
 

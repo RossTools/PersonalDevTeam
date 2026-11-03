@@ -15,7 +15,7 @@ import { SaveFilterDialog } from './TicketsList';
 import type { BacklogState, TicketsMode } from './useBacklog';
 
 /** How many filters are set (the ⚲ count): search, grouping and sorting don't count. */
-export function filterCount(f: BacklogFilters): number {
+function filterCount(f: BacklogFilters): number {
   return [f.stages.length > 0, f.priorities.length > 0, f.labels.length > 0, f.showClosed, f.blocked !== null, f.conflicts !== null]
     .filter(Boolean).length;
 }
@@ -72,7 +72,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** The backlog's filters in a bottom sheet: stage, priority, label, blocked, overlap, closed, grouping, sorting. */
-export function FilterSheet({ backlog, labels, open, onOpenChange }: {
+function FilterSheet({ backlog, labels, open, onOpenChange }: {
   backlog: BacklogState;
   /** Every label in the scope. */
   labels: string[];

@@ -21,7 +21,7 @@ import { invalidateSessions, sessionKeys } from '../sessions/queries';
 import { useHostSettings, useAgentCapabilities } from '../host/queries';
 
 /** What Continue sends after an interrupted turn. */
-export const CONTINUE_PROMPT = 'Continue where you left off.';
+const CONTINUE_PROMPT = 'Continue where you left off.';
 
 const thousands = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
@@ -33,14 +33,14 @@ function contextReadout(usage: ReturnType<typeof latestUsage>): string | null {
 }
 
 /** "Running in the background: Wait for CI": what the agent left running, which reports back in a turn of its own. */
-export function backgroundLine(tasks: { description: string }[]): string | null {
+function backgroundLine(tasks: { description: string }[]): string | null {
   if (tasks.length === 0) return null;
   const names = tasks.map((t) => t.description || 'a task').join(', ');
   return tasks.length === 1 ? `Running in the background: ${names}` : `${tasks.length} running in the background: ${names}`;
 }
 
 /** Background tasks a restart of PDT stopped: the agent hears of them with the next message (PDT-311). */
-export function stoppedLine(tasks: { description: string }[]): string | null {
+function stoppedLine(tasks: { description: string }[]): string | null {
   if (tasks.length === 0) return null;
   const names = tasks.map((t) => t.description || 'a task').join(', ');
   return `Background tasks stopped by the restart: ${names}. The agent is told with your next message.`;

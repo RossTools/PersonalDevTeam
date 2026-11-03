@@ -84,7 +84,7 @@ export function HubTabs({ ticket: t, value, onChange, diff, overview }: {
   );
 }
 
-export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?: () => void }) {
+function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const start = useStartTicket();
@@ -155,7 +155,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
 }
 
 /** Auto-start passes the ticket over because its start failed: the error, and Try again. */
-export function AutoStartFailedBanner({ ticket: t }: { ticket: Ticket }) {
+function AutoStartFailedBanner({ ticket: t }: { ticket: Ticket }) {
   const qc = useQueryClient();
   const [retry, pending] = useAction(() => retryAutoStart(qc, t));
   if (!t.pickupFailed) return null;

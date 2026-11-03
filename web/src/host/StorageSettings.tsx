@@ -22,7 +22,7 @@ function gb(text: string): number {
   return Number(text);
 }
 
-export const STORAGE_CLEANUP_KEY = ['storage-cleanup'];
+const STORAGE_CLEANUP_KEY = ['storage-cleanup'];
 
 /** Settings › Storage › Cleanup: the built-in Clean up storage's inputs. */
 function Cleanup() {

@@ -8,13 +8,13 @@ import { runKeys } from './queries';
 type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
 
 /** A command as it runs: its setup, then the command with its environment. */
-export function commandText(c: ConfigCommand): string {
+function commandText(c: ConfigCommand): string {
   const env = Object.entries(c.env).map(([k, v]) => `${k}=${v} `).join('');
   return c.setup ? `${c.setup}\n${env}${c.command}` : `${env}${c.command}`;
 }
 
 /** The commands, each in a card saying what uses it. */
-export function CommandCards({ commands }: { commands: ConfigCommand[] }) {
+function CommandCards({ commands }: { commands: ConfigCommand[] }) {
   return (
     <div className="flex flex-col gap-2">
       {commands.map((c) => (
@@ -25,7 +25,7 @@ export function CommandCards({ commands }: { commands: ConfigCommand[] }) {
 }
 
 /** The commands an `untrusted_commands` error carries, or null for any other error. */
-export function untrustedCommands(e: unknown): { projectId: string; commands: ConfigCommand[] } | null {
+function untrustedCommands(e: unknown): { projectId: string; commands: ConfigCommand[] } | null {
   if (!(e instanceof ApiError) || e.code !== 'untrusted_commands') return null;
   const d = e.data as { projectId?: string; commands?: ConfigCommand[] } | undefined;
   return d?.projectId && d.commands?.length ? { projectId: d.projectId, commands: d.commands } : null;

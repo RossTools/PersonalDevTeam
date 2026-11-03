@@ -20,10 +20,10 @@ export type AgentStateInput =
   }
   | { kind: 'run'; status: RunState; unseen?: boolean };
 
-export type AgentDotKind = 'running' | 'waiting' | 'failed' | 'idle' | 'ended' | 'background';
-export type AgentLabelText = 'Working' | 'Needs you' | 'Background' | 'Done' | 'Idle' | 'Ended' | 'Interrupted' | 'Failed';
+type AgentDotKind = 'running' | 'waiting' | 'failed' | 'idle' | 'ended' | 'background';
+type AgentLabelText = 'Working' | 'Needs you' | 'Background' | 'Done' | 'Idle' | 'Ended' | 'Interrupted' | 'Failed';
 /** The text colour of the label: state colours only for state. */
-export type AgentTone = 'running' | 'waiting' | 'failed' | 'muted';
+type AgentTone = 'running' | 'waiting' | 'failed' | 'muted';
 
 export interface AgentStateValue {
   dot: AgentDotKind;
@@ -122,7 +122,7 @@ export function UnseenDot({ className }: { className?: string }) {
 }
 
 /** The hover of a state: a Background one lists its tasks. */
-export function stateTitle(s: AgentStateValue): string | undefined {
+function stateTitle(s: AgentStateValue): string | undefined {
   return s.tasks?.length ? `Background: ${s.tasks.join(', ')}` : undefined;
 }
 

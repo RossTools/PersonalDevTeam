@@ -14,7 +14,7 @@ import { StepList } from './StepList';
 type Schema = Record<string, unknown>;
 
 /** An example payload from a trigger's output schema: every required field with a placeholder. */
-export function samplePayload(schema: Schema, root: Schema = schema, depth = 0): unknown {
+function samplePayload(schema: Schema, root: Schema = schema, depth = 0): unknown {
   const s = deref(schema, root);
   if (Array.isArray(s.allOf)) return Object.assign({}, ...(s.allOf as Schema[]).map((x) => samplePayload(x, root, depth) as object));
   const variants = (s.anyOf ?? s.oneOf) as Schema[] | undefined;

@@ -26,7 +26,7 @@ import { useProjects } from '../projects/queries';
 
 
 /** The tickets that block this one and aren't Done or Won't do. */
-export const openBlockers = (t: Pick<Ticket, 'links'>) => t.links.filter((l) => linkRole(l) === 'blockedBy' && !isClosed(l.stage));
+const openBlockers = (t: Pick<Ticket, 'links'>) => t.links.filter((l) => linkRole(l) === 'blockedBy' && !isClosed(l.stage));
 
 export interface StartDialogProps {
   ticketId: string;

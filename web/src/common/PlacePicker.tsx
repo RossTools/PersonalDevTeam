@@ -4,7 +4,6 @@ import { Check, ChevronDown, FolderGit2, GitBranch } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { CommandList, type CommandItem } from '@ui/CommandList';
 import { Popover } from '@ui/Popover';
-import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import { worktreesQuery } from './worktrees';
 

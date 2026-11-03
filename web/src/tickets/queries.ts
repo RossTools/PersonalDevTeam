@@ -50,7 +50,7 @@ export function useTicketPages(q: TicketQuery, enabled = true) {
 }
 
 /** A ticket key (`PDT-12`), as a path names a ticket by (an id otherwise). */
-export const isTicketKey = (ref: string) => /^[A-Za-z][A-Za-z0-9]*-\d+$/.test(ref);
+const isTicketKey = (ref: string) => /^[A-Za-z][A-Za-z0-9]*-\d+$/.test(ref);
 
 /** The ticket a key names (`PDT-12`, any case), or null when no ticket has it. */
 export async function ticketByKey(key: string): Promise<Ticket | null> {

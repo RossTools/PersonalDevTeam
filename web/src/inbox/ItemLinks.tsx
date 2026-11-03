@@ -23,7 +23,7 @@ export interface ItemLink {
 }
 
 /** The ticket attempt an item is about (its own, else the ticket's active one) and the attempt's agent session. */
-export function useItemAttempt(item: InboxItem) {
+function useItemAttempt(item: InboxItem) {
   const ticket = useTicket(item.ticketId);
   const t = ticket.data;
   const attempt = t?.attempts.find((x) => x.id === item.attemptId) ?? t?.attempts.find((x) => x.state === 'active') ?? null;
@@ -34,7 +34,7 @@ export function useItemAttempt(item: InboxItem) {
 }
 
 /** The size of a worktree's changes: files, lines added and removed. */
-export function useChangeSize(worktreeId: string | null) {
+function useChangeSize(worktreeId: string | null) {
   const changes = useQuery({ queryKey: changesKey(worktreeId ?? ''), queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
   const files = changes.data?.files ?? [];
   return {

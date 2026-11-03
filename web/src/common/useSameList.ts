@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 
 /** The same items, in the same order, by reference. */
-export function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
+function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
   return a.length === b.length && a.every((x, i) => x === b[i]);
 }
 

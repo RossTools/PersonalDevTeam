@@ -8,12 +8,12 @@ import { shortTool } from './tools';
 type Request = Extract<AgentEvent, { kind: 'request' }>;
 
 /** The conversation's open requests, oldest first. */
-export function openRequests(rows: ConversationEvent[]): Request[] {
+function openRequests(rows: ConversationEvent[]): Request[] {
   return rows.flatMap((r) => (r.event.kind === 'request' && r.event.state === 'open' ? [r.event] : []));
 }
 
 /** "wants create_ticket", "has a question": what the request asks for, after the ⚠. */
-export function requestLine(ev: Request): string {
+function requestLine(ev: Request): string {
   switch (ev.requestKind) {
     case 'question':
       return 'has a question';

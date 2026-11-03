@@ -20,7 +20,7 @@ function CodeEditor(props: ComponentProps<typeof LazyCodeEditor>) {
 const fileFor = (language: string) => `field.${language || 'txt'}`;
 
 /** Edits a copy of `value` in a large dialog: Done hands it back, Cancel drops it. */
-export function ExpandButton({ label, value, onDone, readOnly, editor }: {
+function ExpandButton({ label, value, onDone, readOnly, editor }: {
   label: string;
   value: string;
   onDone: (text: string) => void;

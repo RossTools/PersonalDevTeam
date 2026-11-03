@@ -219,7 +219,7 @@ export function upRoute(r: Route): Route {
 }
 
 /** The folder a file or folder is in, as a folder path (`a/b.md` → `a/`); null at the checkout's top. */
-export function parentFolder(path: string | null): string | null {
+function parentFolder(path: string | null): string | null {
   const parts = (path ?? '').split('/').filter(Boolean);
   return parts.length > 1 ? `${parts.slice(0, -1).join('/')}/` : null;
 }

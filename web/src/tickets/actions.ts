@@ -132,7 +132,7 @@ export async function setWaiting(qc: QueryClient, t: Pick<TicketRef, 'id' | 'key
 }
 
 /** "Stop waiting", for menus of a waiting ticket. */
-export const stopWaitingEntry = (qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>): MenuEntry => ({
+const stopWaitingEntry = (qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>): MenuEntry => ({
   label: 'Stop waiting',
   onSelect: () => void runAction(() => setWaiting(qc, t, false)),
 });
@@ -145,7 +145,7 @@ export async function retryAutoStart(qc: QueryClient, t: Pick<TicketRef, 'id' | 
 }
 
 /** "Try auto-start again", for menus of a ticket auto-start passes over after a failed start. */
-export const retryAutoStartEntry = (qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>): MenuEntry => ({
+const retryAutoStartEntry = (qc: QueryClient, t: Pick<TicketRef, 'id' | 'key'>): MenuEntry => ({
   label: 'Try auto-start again',
   onSelect: () => void runAction(() => retryAutoStart(qc, t)),
 });
@@ -153,7 +153,7 @@ export const retryAutoStartEntry = (qc: QueryClient, t: Pick<TicketRef, 'id' | '
 type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
 
 /** Asks, then deletes the ticket (its tab goes with it). Resolves true when it was deleted. */
-export async function deleteTicket(confirm: Confirm, qc: QueryClient, t: Pick<TicketRef, 'id' | 'key' | 'title'>): Promise<boolean> {
+async function deleteTicket(confirm: Confirm, qc: QueryClient, t: Pick<TicketRef, 'id' | 'key' | 'title'>): Promise<boolean> {
   const { ok } = await confirm({
     title: `Delete ${t.key}?`,
     body: `“${t.title}”, its comments and its links are deleted. This can't be undone.`,
@@ -172,14 +172,14 @@ export async function deleteTicket(confirm: Confirm, qc: QueryClient, t: Pick<Ti
  * "Move to ›": every stage but the ticket's own (with `confirm`, closing a parent offers to close its parts, and
  * moving one at work back asks before stopping it).
  */
-export function moveToEntries(qc: QueryClient, t: TicketRef & { attempt?: Pick<AttemptSummary, 'state' | 'branch'> | null }, confirm?: Confirm): MenuEntry[] {
+function moveToEntries(qc: QueryClient, t: TicketRef & { attempt?: Pick<AttemptSummary, 'state' | 'branch'> | null }, confirm?: Confirm): MenuEntry[] {
   return STAGES.filter((s) => s !== t.stage).map((s) => ({
     label: STAGE_LABEL[s],
     onSelect: () => void runAction(() => moveTicket(qc, t, s, confirm)),
   }));
 }
 
-export function priorityEntries(qc: QueryClient, t: TicketRef): MenuEntry[] {
+function priorityEntries(qc: QueryClient, t: TicketRef): MenuEntry[] {
   return PRIORITIES.map((p) => ({
     label: PRIORITY_LABEL[p],
     disabled: p === t.priority,

@@ -16,7 +16,7 @@ function typingInto(target: EventTarget | null): boolean {
  * Focuses `ref` when `/` is pressed outside a text field or terminal (no modifiers). Idempotent; off when `enabled`
  * is false (e.g. while the view is hidden).
  */
-export function useSlashToFocus(ref: RefObject<HTMLInputElement | null>, enabled = true) {
+function useSlashToFocus(ref: RefObject<HTMLInputElement | null>, enabled = true) {
   useEffect(() => {
     if (!enabled) return;
     const onKey = (e: KeyboardEvent) => {

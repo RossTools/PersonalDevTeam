@@ -18,7 +18,7 @@ export function kindOf(catalog: Catalog, kind: string): KindSpec | undefined {
   return catalog.find((k) => k.id === kind);
 }
 
-export function isTrigger(catalog: Catalog, node: Node): boolean {
+function isTrigger(catalog: Catalog, node: Node): boolean {
   return kindOf(catalog, node.kind)?.category === 'trigger';
 }
 
@@ -34,7 +34,7 @@ export function drawnPorts(doc: WorkflowDoc, node: Node, catalog: Catalog, check
   return hasErrorPath(doc, node.id) ? [...ports, { id: ERROR_PORT, title: 'On error' }] : ports;
 }
 
-export function hasErrorPath(doc: WorkflowDoc, id: string): boolean {
+function hasErrorPath(doc: WorkflowDoc, id: string): boolean {
   return doc.edges.some((e) => e.from === id && e.port === ERROR_PORT);
 }
 
@@ -239,8 +239,8 @@ export function moveInChain(doc: WorkflowDoc, catalog: Catalog, id: string, dir:
   return { ...doc, nodes, edges };
 }
 
-export const COLUMN = 300;
-export const ROW = 150;
+const COLUMN = 300;
+const ROW = 150;
 
 /** Positions for nodes that have none: a column per step from the triggers, a row per node in it. */
 export function layout(doc: WorkflowDoc, catalog: Catalog): Map<string, { x: number; y: number }> {

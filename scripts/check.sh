@@ -12,7 +12,7 @@
 #              scripts' own tests
 #   site       the user docs check (pnpm --filter site check-docs), the website's tests and build
 #   lint       version, cargo fmt --check, clippy (and pdtd without its integration features)
-#   web        web typecheck, tests, build
+#   web        web typecheck, unused exports and files (knip), tests, build
 #   test       cargo test (pdtd also without its integration features), then the generated files are committed
 #
 # CI runs tests with cargo nextest and splits the groups across jobs; this runs plain `cargo test`. It stops at the
@@ -75,6 +75,7 @@ check_lint() {
 
 check_web() {
   step pnpm --dir web typecheck
+  step pnpm --dir web knip
   step pnpm --dir web test
   step pnpm --dir web build
 }

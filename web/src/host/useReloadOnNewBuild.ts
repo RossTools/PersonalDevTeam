@@ -5,7 +5,7 @@ import { hostKeys } from './queries';
 import { POLL } from '../common/poll';
 
 /** How often /api/health is asked for the web build; a restarted dev instance is picked up within this. */
-export const WEB_BUILD_POLL_MS = POLL.steady;
+const WEB_BUILD_POLL_MS = POLL.steady;
 
 const reloadPage = () => location.reload();
 

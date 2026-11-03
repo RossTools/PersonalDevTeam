@@ -4,7 +4,7 @@ import type { ChangedFile } from '../api/gen/ChangedFile';
 import { POLL } from '../common/poll';
 
 export const changesKey = (worktreeId: string) => ['changes', worktreeId] as const;
-export const commentsKey = (worktreeId: string) => ['review-comments', worktreeId] as const;
+const commentsKey = (worktreeId: string) => ['review-comments', worktreeId] as const;
 
 export function useChanges(worktreeId: string | null) {
   return useQuery({

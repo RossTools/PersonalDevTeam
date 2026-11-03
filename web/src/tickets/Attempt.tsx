@@ -20,7 +20,7 @@ import { OverviewSection } from './TicketParts';
 const STATE_LABEL: Record<AttemptState, string> = { active: 'Active', merged: 'Merged', abandoned: 'Abandoned' };
 const STATE_TONE: Record<AttemptState, BadgeTone> = { active: 'running', merged: 'accent', abandoned: 'neutral' };
 
-export function AttemptBadge({ state }: { state: AttemptState }) {
+function AttemptBadge({ state }: { state: AttemptState }) {
   return <Badge tone={STATE_TONE[state]}>{STATE_LABEL[state]}</Badge>;
 }
 
@@ -107,7 +107,7 @@ function SessionList({ ticket: t, sessions }: { ticket: Ticket; sessions: Attemp
  * True when the latest attempt is merged and the ticket is still open, or Done with the worktree still there (kept,
  * or a finish cut short, PDT-97): offer to finish it.
  */
-export const showMerged = (t: Pick<Ticket, 'stage' | 'attempt'>) =>
+const showMerged = (t: Pick<Ticket, 'stage' | 'attempt'>) =>
   t.attempt?.state === 'merged' && (!isClosed(t.stage) || (t.stage === 'done' && t.attempt.worktreeId !== null));
 
 /** "Merged into main." with the one-click finish: Done, then the worktree removed (only the latter once Done). */

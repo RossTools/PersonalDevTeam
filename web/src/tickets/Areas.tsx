@@ -5,13 +5,13 @@ import type { AreaDef } from '../api/gen/AreaDef';
 import { LabelsEditor } from './LabelsEditor';
 import { useProjectAreas } from './queries';
 
-export const UNKNOWN_AREA_TITLE = 'Not in .pdt/project.toml — ignored for overlap';
+const UNKNOWN_AREA_TITLE = 'Not in .pdt/project.toml — ignored for overlap';
 
 /**
  * One area. With the project's configuration loaded (`config`), an area it doesn't declare is struck through, and an
  * exclusive one carries a lock.
  */
-export function AreaChip({ name, config }: { name: string; config?: AreaDef[] }) {
+function AreaChip({ name, config }: { name: string; config?: AreaDef[] }) {
   const def = config?.find((a) => a.name === name);
   const unknown = config !== undefined && !def;
   const title = unknown

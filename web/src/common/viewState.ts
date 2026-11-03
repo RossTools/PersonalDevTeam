@@ -65,7 +65,7 @@ function storedKeys(): string[] {
 }
 
 /** Drops every entry whose scope `drop` picks (a closed tab's). */
-export function forgetViewStates(drop: (scope: string) => boolean) {
+function forgetViewStates(drop: (scope: string) => boolean) {
   for (const key of new Set([...mem.keys(), ...storedKeys()])) {
     if (key.includes(SEP) && drop(scopeOf(key))) writeViewState(key, undefined);
   }
