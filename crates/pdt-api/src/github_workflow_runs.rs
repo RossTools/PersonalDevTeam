@@ -172,7 +172,7 @@ async fn look(
         let actions = of.actions("read workflow runs from")?;
         let (r, w, b, a) =
             (of.repo.clone(), c.workflow.trim().to_string(), nonblank(&c.branch).map(String::from), actions.clone());
-        let runs = tokio::task::spawn_blocking(move || a.workflow_runs(&r, &w, b.as_deref()))
+        let runs = tokio::task::spawn_blocking(move || a.workflow_runs(&r, &w, b.as_deref(), true))
             .await
             .map_err(|e| format!("the GitHub task failed: {e}"))?
             .map_err(|e| format!("GitHub: {e}"))?;

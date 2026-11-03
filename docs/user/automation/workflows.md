@@ -439,6 +439,12 @@ major), which you confirm. Or ask the [PM](the-pm.md) ("cut a minor release") an
 release is published you get a notification and an Inbox item with its link. Your workflow and GitHub do the merging
 and tagging, not PDT.
 
+While it waits for the release, it watches the run of your release workflow that makes it (the one the release pull
+request's merge started, or the one it started itself). If that run fails, you get a notification and an Inbox item
+with its failed jobs and a link, within a few minutes; if it is cancelled, an Inbox item says so. Re-run the failed
+jobs on GitHub, or fix the problem and cut again: Cut a release keeps waiting, and still tells you when the release is
+published.
+
 ### After a release
 
 **After a release** (under **Releases**) announces each new release of a project in a chat channel and bumps its
