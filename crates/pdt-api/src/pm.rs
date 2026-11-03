@@ -313,7 +313,8 @@ async fn wait_for_journal(st: &AppState, s: &Session) {
 }
 
 /// The fresh conversation that carries on from `old` (PDT-308): its title, agent, model, permission mode, persona,
-/// folder and `via`, listed where it was, with a briefing that leads with its journal.
+/// folder and `via`, listed where it was, with a briefing that leads with its journal. The persona is at its current
+/// version, not the one `old` started on, so the fresh one gets the tools and instructions saved since (PDT-500).
 async fn reset_session(st: &AppState, old: &Session, row: &PmSessionRow, listed_at: i64) -> Result<Session, ApiError> {
     let project = host_project(st).await?;
     let id = uuid::Uuid::now_v7().to_string();
@@ -342,7 +343,7 @@ async fn reset_session(st: &AppState, old: &Session, row: &PmSessionRow, listed_
         attempt_id: None,
         ticket: None,
         tab: None,
-        persona: old.persona.clone(),
+        persona: Some(session_persona(&p)),
         cwd: Some(old.cwd.clone()),
         id: Some(id),
     };
@@ -354,6 +355,11 @@ async fn reset_session(st: &AppState, old: &Session, row: &PmSessionRow, listed_
         st.store.set_pm_via(&s.id, row.via.as_deref()).await?;
     }
     Ok(s)
+}
+
+/// The PM persona `p` at its current version, for a session starting on it.
+fn session_persona(p: &pdt_core::persona::Persona) -> SessionPersona {
+    SessionPersona { id: p.id.clone(), name: p.name.clone(), version: p.version, step_id: None }
 }
 
 /// The user wrote to a PM conversation: one still called [`pm::NEW_TITLE`] is named after the message.
@@ -393,7 +399,7 @@ async fn new_session(
         attempt_id: None,
         ticket: None,
         tab: None,
-        persona: Some(SessionPersona { id: p.id.clone(), name: p.name.clone(), version: p.version, step_id: None }),
+        persona: Some(session_persona(&p)),
         cwd: Some(work_folder(st, &project.repo_path).await?),
         id: None,
     };
