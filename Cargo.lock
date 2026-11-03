@@ -3992,6 +3992,7 @@ dependencies = [
  "pdt-forge",
  "pdt-git",
  "pdt-github",
+ "pdt-host",
  "pdt-int-arr",
  "pdt-int-buildkite",
  "pdt-int-discord",

@@ -20,7 +20,7 @@ reports**). It can attach the end of the log, with tokens and your machine's nam
 ## PDT doesn't open
 
 1. Open `http://127.0.0.1:7420` (or your own port, if you changed it).
-2. If nothing answers, use **Restart daemon** in the tray menu, or quit the tray and open the app again.
+2. If nothing answers, use **Restart daemon** in the tray menu, or choose **Stop PDT and quit** in the tray and open the app again.
 3. Still nothing: read the end of `pdtd-launch.log` and `pdt-host.log`. The usual reasons are that the port is taken
    (below), or another copy of PDT already uses the data folder (**is in use by another pdtd**).
 
