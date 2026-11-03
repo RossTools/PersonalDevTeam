@@ -27,13 +27,13 @@ describe("PDT's own messages to a PM conversation (PDT-211)", () => {
     expect(screen.getByText('What is in flight?')).toBeInTheDocument();
     const line = screen.getByText('PDT brought this conversation up to date · 1d ago');
     expect(screen.getByText('PDT asked for a journal checkpoint · just now')).toBeInTheDocument();
-    const details = line.closest('details')!;
-    expect(details.open).toBe(false);
+    const trigger = screen.getByRole('button', { name: 'PDT brought this conversation up to date · 1d ago' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
     // Not a user bubble labelled as news about a pull request.
     expect(screen.queryByText(/news about the pull request/)).not.toBeInTheDocument();
     await userEvent.click(line);
-    expect(details.open).toBe(true);
-    expect(details).toHaveTextContent('PDT-208 Phone Inbox: PR #208 merged');
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(/PDT-208 Phone Inbox: PR #208 merged/)).toBeVisible();
   });
 
   it('collapse while queued too', () => {

@@ -1,8 +1,7 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Play } from 'lucide-react';
-import { cn } from '@ui/lib/utils';
-import { Banner, Button, DiffStat, EmptyState, MenuButton, Skeleton, tabListKeyDown, useConfirm, ViewHeader } from '@ui';
+import { Banner, Button, DiffStat, EmptyState, MenuButton, Skeleton, TabPanel, Tabs, useConfirm, ViewHeader } from '@ui';
 import type { Ticket } from '../api/gen/Ticket';
 import { BranchChip } from '../common/BranchChip';
 import { PriorityIcon } from '../common/PriorityIcon';
@@ -37,7 +36,7 @@ import {
 
 export type HubTab = 'overview' | 'conversation' | 'changes';
 
-const HUB_TABS: { id: HubTab; label: string; arrives?: string }[] = [
+const HUB_TABS: { id: HubTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'conversation', label: 'Conversation' },
   { id: 'changes', label: 'Changes' },
@@ -66,38 +65,26 @@ export function useSection(ticketId: string): [HubTab, (t: HubTab) => void] {
   return [tab, set];
 }
 
-/** Overview · Conversation · Changes (with the branch's diff size). */
-export function HubTabs({ value, onChange, diff }: {
+/**
+ * Overview · Conversation · Changes (with the branch's diff size), and what each shows: `overview` is the page's own
+ * `<TabPanel id="overview">`.
+ */
+export function HubTabs({ ticket: t, value, onChange, diff, overview }: {
+  ticket: Ticket;
   value: HubTab;
   onChange: (t: HubTab) => void;
   diff?: { added: number; removed: number; files: number } | null;
+  overview: ReactNode;
 }) {
+  const tabs = HUB_TABS.map((h) => h.id === 'changes' && diff && diff.files > 0
+    ? { ...h, label: <>{h.label}<DiffStat added={diff.added} removed={diff.removed} className="ml-1.5 text-2xs" /></> }
+    : h);
   return (
-    <div role="tablist" aria-label="Ticket sections" onKeyDown={tabListKeyDown} className="flex shrink-0 items-center gap-1 border-b border-border px-3">
-      {HUB_TABS.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          role="tab"
-          id={`ticket-tab-${t.id}`}
-          aria-selected={t.id === value}
-          tabIndex={t.id === value ? 0 : -1}
-          onClick={() => !t.arrives && onChange(t.id)}
-          aria-disabled={t.arrives ? true : undefined}
-          disabled={!!t.arrives}
-          title={t.arrives ? `Arrives in ${t.arrives}` : undefined}
-          className={cn(
-            '-mb-px border-b-2 px-2 py-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-control-touch',
-            t.id === value ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground',
-            t.arrives && 'cursor-not-allowed opacity-50',
-          )}
-        >
-          {t.label}
-          {t.arrives && <span className="ml-1 text-2xs">({t.arrives})</span>}
-          {t.id === 'changes' && diff && diff.files > 0 && <DiffStat added={diff.added} removed={diff.removed} className="ml-1.5 text-2xs" />}
-        </button>
-      ))}
-    </div>
+    <Tabs aria-label="Ticket sections" tabs={tabs} value={value} onChange={onChange}>
+      {overview}
+      <TabPanel id="conversation"><TicketConversation ticket={t} /></TabPanel>
+      <TabPanel id="changes"><TicketChanges ticket={t} /></TabPanel>
+    </Tabs>
   );
 }
 
@@ -205,23 +192,12 @@ export function AutoStartFailedBanner({ ticket: t }: { ticket: Ticket }) {
   );
 }
 
-/** The Conversation (the ticket's agent sessions) or the Changes (its attempt's diff and review). */
-export function HubPanel({ ticket: t, tab }: { ticket: Ticket; tab: 'conversation' | 'changes' }) {
-  if (tab === 'conversation') {
-    return (
-      <div role="tabpanel" aria-labelledby="ticket-tab-conversation" className="flex min-h-0 flex-1 flex-col">
-        <TicketConversation ticket={t} />
-      </div>
-    );
-  }
-  return (
-    <div role="tabpanel" aria-labelledby="ticket-tab-changes" className="flex min-h-0 flex-1 flex-col">
-      {t.attempt?.worktreeId ? (
-        <ChangesView key={t.attempt.worktreeId} worktreeId={t.attempt.worktreeId} ticket={t} />
-      ) : (
-        <EmptyState>{t.attempt ? 'The worktree of this attempt is gone.' : 'Start the ticket to see its changes here.'}</EmptyState>
-      )}
-    </div>
+/** The Changes: the attempt's diff and review. */
+function TicketChanges({ ticket: t }: { ticket: Ticket }) {
+  return t.attempt?.worktreeId ? (
+    <ChangesView key={t.attempt.worktreeId} worktreeId={t.attempt.worktreeId} ticket={t} />
+  ) : (
+    <EmptyState>{t.attempt ? 'The worktree of this attempt is gone.' : 'Start the ticket to see its changes here.'}</EmptyState>
   );
 }
 
@@ -250,29 +226,32 @@ export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticke
       <TicketHeader ticket={t} onDeleted={onDeleted} />
       {mergedBanner && <MergedBanner ticket={t} />}
       <AutoStartFailedBanner ticket={t} />
-      <HubTabs value={tab} onChange={setTab} diff={diff} />
-      {tab !== 'overview' ? (
-        <HubPanel ticket={t} tab={tab} />
-      ) : (
-        <div ref={overview.ref} onScroll={overview.onScroll} role="tabpanel" aria-labelledby="ticket-tab-overview" className="min-h-0 flex-1 overflow-auto">
-          <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[minmax(0,1fr)_18rem]">
-            <div className="flex min-w-0 flex-col divide-y divide-border *:py-5 *:first:pt-0">
-              <TicketDescription key={t.id} ticket={t} />
-              <PartsSection ticket={t} />
-              <TicketTimeline ticketId={t.id} composer />
+      <HubTabs
+        ticket={t}
+        value={tab}
+        onChange={setTab}
+        diff={diff}
+        overview={
+          <TabPanel id="overview" ref={overview.ref} onScroll={overview.onScroll} className="block overflow-auto">
+            <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[minmax(0,1fr)_18rem]">
+              <div className="flex min-w-0 flex-col divide-y divide-border *:py-5 *:first:pt-0">
+                <TicketDescription key={t.id} ticket={t} />
+                <PartsSection ticket={t} />
+                <TicketTimeline ticketId={t.id} composer />
+              </div>
+              <aside aria-label="Ticket details" className="flex min-w-0 flex-col self-start rounded-md border border-border bg-card px-3 divide-y divide-border *:py-3">
+                <TicketDetails ticket={t} />
+                <TicketWatchers ticketId={t.id} />
+                <AttemptSection ticket={t} />
+                <TicketOverlaps ticket={t} />
+                <TicketLinks ticket={t} />
+                <TicketDocuments ticket={t} />
+                <TicketAttachments ticketId={t.id} />
+              </aside>
             </div>
-            <aside aria-label="Ticket details" className="flex min-w-0 flex-col self-start rounded-md border border-border bg-card px-3 divide-y divide-border *:py-3">
-              <TicketDetails ticket={t} />
-              <TicketWatchers ticketId={t.id} />
-              <AttemptSection ticket={t} />
-              <TicketOverlaps ticket={t} />
-              <TicketLinks ticket={t} />
-              <TicketDocuments ticket={t} />
-              <TicketAttachments ticketId={t.id} />
-            </aside>
-          </div>
-        </div>
-      )}
+          </TabPanel>
+        }
+      />
     </div>
   );
 }

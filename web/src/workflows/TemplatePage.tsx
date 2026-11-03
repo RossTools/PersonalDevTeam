@@ -4,8 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import {
-  Alert, Badge, Button, Checkbox, Field, IconButton, Input, MenuButton, SegmentedControl, Select, Skeleton, Textarea, ViewHeader,
-  toast, useConfirm,
+  Alert, Badge, Button, Checkbox, Field, IconButton, Input, MenuButton, SectionLabel, SegmentedControl, Select, Skeleton, Textarea, toast, useConfirm, ViewHeader,
 } from '@ui';
 import { api } from '../api/client';
 import type { ParamType } from '../api/gen/ParamType';
@@ -121,7 +120,7 @@ function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog
               <Field label="Description"><Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
             </>
           )}
-          <h3 className="text-2xs font-medium tracking-wider text-muted-foreground uppercase">Parameters</h3>
+          <SectionLabel>Parameters</SectionLabel>
           <ParamsTable params={params} onChange={setParams} readOnly={readOnly} />
           {save.error && <Alert tone="error">{save.error.message}</Alert>}
           {!readOnly && (

@@ -2,7 +2,7 @@
 // login), what it adds (workflow steps, agent and PM tools, templates, project settings) and how to set it up.
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Chip, EmptyState, Link, Page, Section, Skeleton, useConfirm } from '@ui';
+import { Alert, Button, Chip, EmptyState, Link, Page, Section, SectionLabel, Skeleton, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import { ConnectionDialog } from '../connections/ConnectionDialog';
@@ -22,7 +22,7 @@ function Tags({ items, empty = 'None' }: { items: string[]; empty?: string }) {
 function Part({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</h4>
+      <SectionLabel as="h4">{label}</SectionLabel>
       {children}
     </div>
   );

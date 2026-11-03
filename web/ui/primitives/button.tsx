@@ -8,7 +8,7 @@ import {
   type LinkProps as LinkPrimitiveProps,
 } from "react-aria-components"
 
-// Graphite density: md = 28px (h-control-md), sm = 24px (h-control-sm), 44px on coarse pointers. shadcn's variant and
+// Graphite density: md = 28px (h-control-md), sm = 24px (h-control-sm), 44px on coarse pointers; lg = 48px everywhere (h-control-lg, a phone screen's main actions). shadcn's variant and
 // size names stay (other primitives use them); the public Button (web/ui/Button.tsx) maps PDT's names onto them.
 const buttonVariants = cva(
   "group/button relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-transparent text-sm font-medium whitespace-nowrap transition-colors outline-none select-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-pending:cursor-wait aria-invalid:border-destructive motion-reduce:transition-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
@@ -32,11 +32,11 @@ const buttonVariants = cva(
         compact: "h-control-sm gap-1 px-2 text-xs",
         "icon-compact": "size-control-sm",
         sm: "h-control-sm gap-1 px-2 text-xs pointer-coarse:h-control-touch pointer-coarse:px-3",
-        lg: "h-9 px-3 pointer-coarse:h-control-touch",
+        lg: "h-control-lg gap-2 px-4 pointer-coarse:h-control-lg pointer-coarse:px-4",
         icon: "size-control-md pointer-coarse:size-control-touch [&_svg:not([class*='size-'])]:size-4",
         "icon-xs": "size-control-sm pointer-coarse:size-control-touch",
         "icon-sm": "size-control-sm pointer-coarse:size-control-touch",
-        "icon-lg": "size-9 pointer-coarse:size-control-touch [&_svg:not([class*='size-'])]:size-4",
+        "icon-lg": "size-control-lg pointer-coarse:size-control-lg [&_svg:not([class*='size-'])]:size-5",
       },
     },
     defaultVariants: {
