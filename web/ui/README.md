@@ -28,13 +28,18 @@
 - No raw colours (hex, rgb, `bg-black/…`, `ring-white`, Tailwind's palette such as `bg-red-500`), no Tailwind shadow
   scale (`shadow-sm`…`shadow-2xl`), no arbitrary type sizes (`text-[13px]`, `text-[0.8rem]`), no `z-[…]`; hover fills
   are `hover:bg-accent`. Type sizes: `text-2xs` (10px
-  labels), `text-meta` (11px secondary lines), `text-xs` (12), `text-sm` (14), `text-base` (16), and `text-title` (30px, a document's title: a note's); features don't add `text-lg` and up. Layers:
+  labels), `text-meta` (11px secondary lines), `text-xs` (12), `text-sm` (14), `text-base` (16), `text-heading` (18px, a page's or document's title: settings pages, documents, todos), and
+  `text-title` (30px, a note's title). Never `text-lg`, `text-xl` or larger. Layers:
   `z-(--pdt-z-sticky)` (sticky headers inside a scrolling pane), `z-(--pdt-z-popover)`, `z-(--pdt-z-dialog)`, `z-(--pdt-z-menu)`, `z-(--pdt-z-toast)`. A test (`src/lint.test.ts`)
   enforces this outside `tokens.css`.
 - Sizes: controls are `h-control-sm` (24px) or `h-control-md` (28px, the default); on touch screens
   `pointer-coarse:h-control-touch` (44px) / `pointer-coarse:min-w-control-touch` for icon buttons. `h-control-lg`
-  (48px) is the large touch button (`Button size="lg"`). Corners
-  `rounded-md` (follows `--radius`, 6px).
+  (48px) is the large touch button (`Button size="lg"`). Corners follow `--radius`
+  (6px): `rounded-md` (0.8 × radius, about 5px: controls), `rounded-lg` (the radius: cards, toolbars).
+- Gutters: page-like content (settings pages, the Inbox, a conversation, a ticket) pads its sides with `px-gutter` /
+  `p-gutter` (16px, 24px from `sm`). A view whose content sits on the gutter gives its `ViewHeader` `gutter` (and its
+  tab bar `px-gutter`) so header and content line up; terminals, lists and boards keep the header's tight 12px. Reading content is `max-w-3xl`: left-aligned on pages, settings and the Inbox, centred
+  in a conversation; a ticket is `max-w-6xl`, centred.
 - Dimming: disabled controls use `opacity-50`, and nothing else is dimmed with opacity. A state such as cleared, skipped
   or not built shows as muted text, a dashed edge or a badge, so its text keeps 4.5:1 (tokens.test.ts checks the token pairs).
 - Dark mode: `dark:` follows our theme rule; usually no `dark:` is needed because the tokens switch.

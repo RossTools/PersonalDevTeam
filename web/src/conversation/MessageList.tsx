@@ -551,7 +551,7 @@ export function MessageList({
     <ListCtx.Provider value={ctx}>
     <div className={cn('relative flex min-h-0 flex-1 flex-col', className)}>
       <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto" role="log" aria-label="Conversation" aria-live="off">
-        <div ref={content} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
+        <div ref={content} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-gutter py-4">
           {nothing && empty}
           {blocks.map((b) => (
             <div key={b.key} className={ROW}>

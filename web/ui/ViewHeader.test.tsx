@@ -36,4 +36,13 @@ describe('ViewHeader', () => {
     expect(within(header).queryByRole('button')).toBeNull();
     expect(header.className).toMatch(/bg-card$/);
   });
+
+  it("pads tight by default, and with the page gutter when the view's content uses it", () => {
+    const { rerender } = render(<ViewHeader title="Run" />);
+    expect(screen.getByRole('banner').className).toContain('px-3');
+    rerender(<ViewHeader title="Ticket" gutter />);
+    const header = screen.getByRole('banner');
+    expect(header.className).toContain('px-gutter');
+    expect(header.className).not.toContain('px-3');
+  });
 });

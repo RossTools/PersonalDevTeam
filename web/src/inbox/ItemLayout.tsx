@@ -82,8 +82,8 @@ export function ItemLayout({ item, spec, note, onNote }: { item: InboxItem; spec
   const hasBar = spec.actions.length > 0 || !!spec.note;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ItemHeader item={item} spec={spec} className="px-4 pt-4 pb-3 md:px-7" />
-      <div className="min-h-0 flex-1 overflow-auto px-4 py-5 md:px-7">
+      <ItemHeader item={item} spec={spec} className="px-gutter pt-4 pb-3" />
+      <div className="min-h-0 flex-1 overflow-auto px-gutter py-5">
         <div className="flex max-w-3xl flex-col gap-4">
           <section aria-label={spec.region} className="flex flex-col gap-4">
             {spec.why && <Why>{spec.why}</Why>}

@@ -16,7 +16,7 @@ export function ActionBar({ note, children, hint, end, below, className, 'aria-l
   'aria-label'?: string;
 }) {
   return (
-    <div role="group" aria-label={ariaLabel} className={cn('shrink-0 border-t border-border bg-card px-4 py-3 md:px-7', className)}>
+    <div role="group" aria-label={ariaLabel} className={cn('shrink-0 border-t border-border bg-card px-gutter py-3', className)}>
       <div className="flex max-w-3xl flex-col gap-2.5">
         {note}
         <div className="flex flex-wrap items-center gap-2">
