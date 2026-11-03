@@ -571,7 +571,8 @@ fn inbox_section(inbox: &[BriefInbox], out: &mut String) {
     if proposals > 0 {
         out.push_str(&format!(
             "{proposals} ticket proposal{} wait{} for the user's decision. When they ask you to sort them, propose \
-             the decisions with `inbox_decide` (one call for many); the user confirms them in the Inbox.\n\n",
+             the decisions with `inbox_decide` (one call for many); the user confirms them in this conversation \
+             (also in their Inbox).\n\n",
             if proposals == 1 { "" } else { "s" },
             if proposals == 1 { "s" } else { "" },
         ));
@@ -1027,9 +1028,9 @@ pub fn instructions(ctx: &PmContext) -> String {
     }
     if !in_inbox.is_empty() {
         out.push_str(&format!(
-            "- These always wait for the user in {SHORT_NAME}'s Inbox, whatever the project lets you do: {in_inbox}. \
-             The call returns at once with nothing changed; the user confirms it there (unticking rows they don't \
-             want) and {SHORT_NAME} sends you the result.\n"
+            "- These always wait for the user's yes, whatever the project lets you do: {in_inbox}. The user sees \
+             the call as a table in this conversation (also in their Inbox), unticks the rows they don't want and \
+             confirms; the call waits for their answer and returns what it did.\n"
         ));
     }
     let role = match ctx.step {

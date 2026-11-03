@@ -6,6 +6,7 @@ import type { AttemptSummary } from '../../api/gen/AttemptSummary';
 import { Markdown } from '../../common/Markdown';
 import { MarkdownRefsContext, type MarkdownRefs } from '../../common/markdownRefs';
 import { TicketKeysContext } from '../../common/ticketKeys';
+import { DecideCard } from '../../conversation/DecideCard';
 import { CreateTicketsCard, PdtToolCard, TicketPills, type PdtCall } from '../../conversation/PdtToolCard';
 import { ToolCallRow } from '@ui/ToolCallRow';
 import { PdtProposal } from '../../conversation/PdtProposal';
@@ -102,6 +103,18 @@ export const section = {
               />
             }
             onAnswer={(a) => void toast.info(`Answer: ${JSON.stringify(a)}`)}
+          />
+        </Demo>
+        <Demo label="ApprovalCard · the PM's decisions as rows to untick">
+          <DecideCard
+            id="gallery-decide"
+            keyboard={false}
+            rows={[
+              { itemId: 'i1', ticketId: 't1', ticketKey: 'SHOP-41', ticketTitle: 'Flaky checkout test', decision: 'accept_todo', agentic: true, priority: 'high' },
+              { itemId: 'i2', ticketId: 't2', ticketKey: 'SHOP-42', ticketTitle: 'Same flaky test', decision: 'duplicate', agentic: false, duplicateOf: 'SHOP-41' },
+              { itemId: 'i3', ticketId: 't3', ticketKey: 'SHOP-43', ticketTitle: 'Rename everything', decision: 'reject', agentic: false, note: 'Not worth the churn.' },
+            ]}
+            onAnswer={async (a, kept) => void toast.info(`Answer: ${JSON.stringify(a)}${kept ? `, rows ${kept.join(', ')}` : ''}`)}
           />
         </Demo>
         <Demo label="PDT tool cards · created, changed, linked, message, comment, workflow run, watch, running, failed">

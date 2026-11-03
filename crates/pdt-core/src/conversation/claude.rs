@@ -438,6 +438,7 @@ impl ClaudeMapper {
                 tool_call_id: r.tool_use_id.clone(),
                 can_always: r.kind == RequestKind::Approval && !session_rules(&r.suggestions).is_empty(),
                 diff: self.tool_diff(&r.tool, &r.input, None).map(|d| d.render()),
+                rows: None,
                 state,
                 answer,
             },

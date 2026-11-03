@@ -506,6 +506,7 @@ async fn recovery_closes_a_turn_left_running_by_a_crash() {
         tool_call_id: None,
         can_always: false,
         diff: None,
+        rows: None,
         state: RequestState::Open,
         answer: None,
     };

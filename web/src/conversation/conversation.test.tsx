@@ -489,6 +489,32 @@ describe('ConversationView', () => {
     expect(await screen.findByText('That request was already answered or has expired.')).toBeInTheDocument();
   });
 
+  it('asks the PM’s decisions as a rows card: Allow sends the rows left ticked, none ticked can’t be allowed, Deny sends none (PDT-502)', async () => {
+    const calls = stubApi({ 'GET /api/agents/claude/capabilities': caps, 'POST /api/sessions/s1/requests/pdt-ask-1': undefined });
+    renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
+    const row = (n: number, decision: 'accept_todo' | 'duplicate' | 'reject') =>
+      ({ itemId: `i${n}`, ticketId: `t${n}`, ticketKey: `PDT-${n}`, ticketTitle: `Proposal ${n}`, decision, agentic: false });
+    act(() => {
+      server().open();
+      server().send({ type: 'event', event: ev(1, { kind: 'request', id: 'pdt-ask-1', requestKind: 'approval', tool: 'mcp__pdt__inbox_decide',
+        title: 'Decide Inbox items', input: { items: [] }, canAlways: false, state: 'open',
+        rows: [row(1, 'accept_todo'), row(2, 'duplicate'), row(3, 'reject')] }) });
+      server().send({ type: 'state', state: idle });
+      server().send({ type: 'ready' });
+    });
+    const card = screen.getByRole('region', { name: 'Make these 3 decisions?' });
+    expect(within(card).getByRole('table', { name: 'Decisions' })).toHaveTextContent('PDT-2 Proposal 2');
+    await userEvent.click(within(card).getByRole('checkbox', { name: 'Keep PDT-2' }));
+    await userEvent.click(within(card).getByRole('button', { name: 'Allow 2 of 3' }));
+    const answers = () => calls.filter((c) => c.path === '/api/sessions/s1/requests/pdt-ask-1').map((c) => c.body);
+    await waitFor(() => expect(answers()).toContainEqual({ answer: { type: 'approve', always: false }, rows: [0, 2] }));
+    for (const k of ['PDT-1', 'PDT-3']) await userEvent.click(within(card).getByRole('checkbox', { name: `Keep ${k}` }));
+    expect(within(card).getByRole('button', { name: 'Allow 0 of 3' })).toBeDisabled();
+    await userEvent.click(within(card).getByRole('button', { name: 'Deny' }));
+    await userEvent.click(within(card).getByRole('button', { name: 'Deny' }));
+    await waitFor(() => expect(answers()).toContainEqual({ answer: { type: 'deny' } }));
+  });
+
   it('pins a bar over the composer while a request is open; Review jumps to its card', async () => {
     stubApi({ 'GET /api/agents/claude/capabilities': caps });
     renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);

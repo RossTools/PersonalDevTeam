@@ -292,6 +292,7 @@ impl CodexMapper {
                         file_diff(r.input.get("changes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]))
                     })
                     .flatten(),
+                rows: None,
                 state,
                 answer,
             },

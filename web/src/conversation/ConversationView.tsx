@@ -110,9 +110,9 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
     // A parked or ended session comes back to life; the list shows it sooner.
     if (session.status !== 'running') void refreshSessions();
   };
-  const answer = async (requestId: string, a: ApprovalAnswer) => {
+  const answer = async (requestId: string, a: ApprovalAnswer, rows?: number[]) => {
     try {
-      await api.answerRequest(session.id, requestId, a);
+      await api.answerRequest(session.id, requestId, a, rows);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'request_closed') toast.info('That request was already answered or has expired.');
       else toast.error(actionError(err));

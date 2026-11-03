@@ -302,7 +302,8 @@ pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Ve
         // A persona's session works on its step's ticket.
         let step = st.store.active_agent_step(&sid).await?;
         for e in st.store.session_events_of_kind(&sid, "request").await? {
-            let AgentEvent::Request { id, tool, title, description, input, diff, state, can_always, .. } = &e.event
+            let AgentEvent::Request { id, tool, title, description, input, diff, rows, state, can_always, .. } =
+                &e.event
             else {
                 continue;
             };
@@ -314,8 +315,12 @@ pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Ve
                 choices.push(InboxChoice::new("allow_always", "Always allow in this session", false));
             }
             choices.push(InboxChoice::new("deny", "Deny", false));
-            let body = json!({"requestId": id, "sessionTitle": s.title, "request": e.event, "tool": tool,
-                              "description": description, "input": input, "diff": diff});
+            let mut body = json!({"requestId": id, "sessionTitle": s.title, "request": e.event, "tool": tool,
+                                  "description": description, "input": input, "diff": diff});
+            // A batch call's card (PDT-502): the same rows to untick here.
+            if let Some(rows) = rows {
+                body["rows"] = json!(rows);
+            }
             let title = if title.is_empty() { tool } else { title };
             out.push(
                 InboxItem::new(

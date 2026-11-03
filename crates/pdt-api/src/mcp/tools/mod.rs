@@ -177,8 +177,8 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
             return Ok(());
         }
         use crate::conversations::Asked;
-        match crate::conversations::ask_inline(cx.st, cx.session, tool, cx.input, !each_time).await {
-            Some(Asked::Allowed) => return Ok(()),
+        match crate::conversations::ask_inline(cx.st, cx.session, tool, cx.input, !each_time, None).await {
+            Some(Asked::Allowed(_)) => return Ok(()),
             Some(Asked::Denied(why)) => {
                 let why = why.map(|w| format!(" They said: {w}")).unwrap_or_default();
                 return Err(format!("The user denied this {tool} call, so PDT didn't make it.{why}"));

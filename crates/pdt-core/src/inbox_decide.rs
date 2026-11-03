@@ -1,5 +1,6 @@
 //! The PM's `inbox_decide` (PDT-475): it proposes decisions on Inbox items (ticket proposals for now), many in one call,
-//! and the user confirms them in one Inbox item that lists every row, unticking the ones they don't want. Pure rules:
+//! and the user confirms them in one table that lists every row (a card in the PM's conversation, also in the Inbox;
+//! an Inbox item from a terminal), unticking the ones they don't want. Pure rules:
 //! the call's shape, the rows the confirmation shows, and each row as the answer a click in the Inbox would give.
 //! pdt-api finds the items, asks the user and applies the rows they kept.
 

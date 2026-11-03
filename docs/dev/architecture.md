@@ -437,11 +437,14 @@ the workflow never put in the Inbox (turned off, its conditions edited, its run 
 (a `relates` link, Won't do) or Reject (Won't do), then tells the proposing session while it runs, else comments on
 the ticket it came from.
 The PM's `inbox_decide` (pdt-api `mcp/tools/inbox.rs`, rules in pdt-core `inbox_decide.rs`) proposes decisions on
-many of them at once: it puts one `confirm` item in the Inbox whose `body.rows` the web shows as a table
-(`web/src/inbox/DecideRows.tsx`) and waits on it (`workflow::agent::confirm_wait`); the Allow sends the ticked rows
-(`InboxAnswer.rows`), `workflow::agent::answer_confirm` hands them to the waiting call, which narrows itself to them and
-goes on (a call no longer waiting is run again from the Allow), and each row is applied by `ticket_proposal::decide` as the user's, with the PM
-as `proposedBy` on the events and the item's resolution.
+many of them at once. In the PM's conversation it asks with one of PDT's own cards (`conversations::held::ask` with
+`rows`: the `Request` event carries them, and the Inbox's approval item has them as `body.rows`); the web shows them as a
+table (`web/src/common/DecideRows.tsx`, in `conversation/DecideCard.tsx` and the Inbox), and the Allow sends the ticked
+rows (`AnswerRequest.rows`) to the waiting call, answered from either place. From a terminal it puts one `confirm` item
+in the Inbox with `body.rows` and waits on it (`workflow::agent::confirm_wait`); the Allow sends the ticked rows
+(`InboxAnswer.rows`), `workflow::agent::answer_confirm` hands them to the waiting call (a call no longer waiting is run
+again from the Allow). Either way the call narrows itself to the kept rows and goes on, and each row is applied by
+`ticket_proposal::decide` as the user's, with the PM as `proposedBy` on the events.
 
 **Secrets.** Values live in the OS keychain (or, on Linux without a Secret Service, a file only the user can read) and
 in memory; agents and workflows refer to them by name (`run_with_secrets`, `write_secret_file`, `{{secret.x}}` in a

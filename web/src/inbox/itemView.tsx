@@ -5,6 +5,7 @@ import {
   AgentMessage, answerText, ApprovalCard, Callout, Checkbox, CodeCard, DiffViewer, EmptyState, Facts, Field, Input, NO_ANSWER, otherInputId, PassList, QuestionCard, Select, Textarea, type ApprovalAnswer, type QuestionAnswer,
 } from '@ui';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
+import type { DecideRow } from '../api/gen/DecideRow';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Priority } from '../api/gen/Priority';
 import { Markdown } from '../common/Markdown';
@@ -22,7 +23,7 @@ import {
   inboxTargets, longTitle, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerApproval } from './approval';
-import { DecideRows } from './DecideRows';
+import { allowRowsTitle, DecideRows, useKeptRows } from '../common/DecideRows';
 import { nonBlank } from '../common/guards';
 import { capitalize, formatBytes } from '../common/text';
 
@@ -119,8 +120,9 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   const [duplicating, setDuplicating] = useState(false);
   const [agentic, setAgentic] = useState(false);
   const [draft, setDraft] = useState(() => ({ title: item.title, description: proposed.description, priority: proposed.priority, labels: proposed.labels }));
-  // A batch call's rows the user unticked (PDT-475).
-  const [unticked, setUnticked] = useState<ReadonlySet<number>>(() => new Set());
+  // A batch call's rows (PDT-475): an Inbox confirmation's, or the PM conversation's card's (PDT-502).
+  const rows = decideRowsOf(item);
+  const ticked = useKeptRows(rows?.length ?? 0);
   const openTicket = useOpenTicket();
   const openSession = useOpenSession();
   const targets = inboxTargets(item);
@@ -129,6 +131,22 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   const dismissAction: ItemAction[] = dismissable(item) ? [{ id: 'dismiss', title: 'Dismiss', kbd: 'e', end: true, run: dismiss }] : [];
   const workflow = nonBlank(item.body.workflow);
   const persona = item.personaName ?? 'The agent';
+
+  // The PM's batch of decisions, from an Inbox confirmation or its conversation's card: untick rows, then Allow or Deny.
+  const decideSpec = (rows: DecideRow[], allow: (kept: number[]) => void, deny: () => void, pending: boolean, session?: string | null) => {
+    const { kept, isKept, toggle } = ticked;
+    return {
+      region: 'Agent call',
+      why: `${session ?? item.personaName ?? 'The PM'} proposes ${rows.length === 1 ? 'a decision' : `${rows.length} decisions`} on your Inbox. Untick any you don't want; Allow applies the rest as your own decisions, Deny changes nothing.`,
+      content: <DecideRows rows={rows} kept={isKept} onToggle={toggle} disabled={pending} />,
+      actions: [
+        { id: 'allow', title: allowRowsTitle(kept.length, rows.length), short: 'Allow', primary: true,
+          pending, disabled: pending || kept.length === 0, run: () => allow(kept) },
+        { id: 'deny', title: 'Deny', end: true, disabled: pending, run: deny },
+      ],
+      hint: `${kept.length} of ${rows.length} ticked`,
+    };
+  };
 
   const spec = ((): Omit<ItemSpec, 'enter'> & { enter?: boolean } => {
     switch (item.kind) {
@@ -220,12 +238,16 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
               onAnswer={(a) => answerApproval(item, a, onApproved)} />,
           };
         }
-        const send = (a: ApprovalAnswer) => {
+        const send = (a: ApprovalAnswer, kept?: number[]) => {
           setApproving(true);
-          void answerApproval(item, a, onApproved).finally(() => setApproving(false));
+          void answerApproval(item, a, onApproved, kept).finally(() => setApproving(false));
         };
         const allow = () => send({ type: 'approve', always: false });
         const deny = () => send({ type: 'deny', ...(note.trim() ? { message: note.trim() } : {}) });
+        if (rows) {
+          // The PM's decisions, asked on its conversation's card (PDT-502): the same table, answered there too.
+          return decideSpec(rows, (kept) => send({ type: 'approve', always: false }, kept), () => send({ type: 'deny' }), approving);
+        }
         const where = [tool, nonBlank(item.body.sessionTitle)].filter(Boolean).join(' · ');
         return {
           region: 'Approval', why, enter: false,
@@ -459,26 +481,9 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
       }
       case 'confirm': {
         const { tool, agent, session, input } = confirmOf(item);
-        const rows = decideRowsOf(item);
         if (rows) {
           // The PM's decisions (PDT-475): Allow applies the rows left ticked, as if each was clicked here.
-          const kept = rows.map((_, n) => n).filter((n) => !unticked.has(n));
-          const toggle = (n: number, on: boolean) => setUnticked((u) => {
-            const next = new Set(u);
-            if (on) next.delete(n); else next.add(n);
-            return next;
-          });
-          return {
-            region: 'Agent call',
-            why: `${session ?? 'The PM'} proposes ${rows.length === 1 ? 'a decision' : `${rows.length} decisions`} on your Inbox. Untick any you don't want; Allow applies the rest as your own decisions, Deny changes nothing.`,
-            content: <DecideRows rows={rows} kept={(n) => !unticked.has(n)} onToggle={toggle} disabled={busy} />,
-            actions: [
-              { id: 'allow', title: kept.length === rows.length ? 'Allow' : `Allow ${kept.length} of ${rows.length}`, short: 'Allow', primary: true,
-                pending: busy, disabled: busy || kept.length === 0, run: () => void answer({ choice: 'allow', rows: kept }) },
-              { id: 'deny', title: 'Deny', end: true, disabled: busy, run: () => plain('deny') },
-            ],
-            hint: `${kept.length} of ${rows.length} ticked`,
-          };
+          return decideSpec(rows, (kept) => void answer({ choice: 'allow', rows: kept }), () => plain('deny'), busy, session);
         }
         return {
           region: 'Agent call',

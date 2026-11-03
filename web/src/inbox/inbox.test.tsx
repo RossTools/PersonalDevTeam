@@ -504,6 +504,25 @@ describe('inbox', () => {
     await waitFor(() => expect(answers()).toContainEqual({ choice: 'deny' }));
   });
 
+  it('mirrors the PM conversation’s rows card: the same table, answered in its session with the rows kept (PDT-502)', async () => {
+    const row = (n: number, decision: string) => ({ itemId: `i${n}`, ticketId: `t${n}`, ticketKey: `PDT-${n}`, ticketTitle: `Proposal ${n}`, decision, agentic: false });
+    const card = item('approval:sess:pdt-ask-1', {
+      kind: 'approval', group: 'approval', sessionId: 'sess', personaName: 'PM', runId: null, stepId: null, title: 'Decide Inbox items',
+      body: { requestId: 'pdt-ask-1', tool: 'mcp__pdt__inbox_decide', input: { items: [] }, rows: [row(1, 'accept_todo'), row(2, 'reject')] },
+      choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+    });
+    const calls = stubApi({ 'POST /api/sessions/sess/requests/pdt-ask-1': undefined, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[card]} selectedId={card.id} onSelect={() => {}} />);
+    expect(screen.getByRole('table', { name: 'Decisions' })).toHaveTextContent('PDT-2 Proposal 2');
+    expect(screen.getByRole('region', { name: 'Agent call' })).toHaveTextContent('PM proposes 2 decisions');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Keep PDT-1' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Allow 1 of 2' }));
+    const answers = () => calls.filter((c) => c.path === '/api/sessions/sess/requests/pdt-ask-1').map((c) => c.body);
+    await waitFor(() => expect(answers()).toContainEqual({ answer: { type: 'approve', always: false }, rows: [1] }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    await waitFor(() => expect(answers()).toContainEqual({ answer: { type: 'deny' } }));
+  });
+
   it('asks to connect GitHub: Enter opens GitHub’s plugin page, and it is not dismissed', async () => {
     const connect = item('connect:github', {
       kind: 'connect', group: 'notice', projectId: null, ticketId: null, runId: null, stepId: null, title: 'Connect GitHub',

@@ -317,6 +317,11 @@ pub enum AgentEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         diff: Option<String>,
+        /// A batch call's rows the user unticks before allowing it (one of PDT's own requests: the PM's
+        /// `inbox_decide`). Older pdtd versions ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        rows: Option<Vec<crate::inbox_decide::DecideRow>>,
         state: RequestState,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
@@ -582,6 +587,10 @@ pub struct SendMessage {
 #[ts(export)]
 pub struct AnswerRequest {
     pub answer: Answer,
+    /// An Approve of a request with rows: the rows the user kept (0-based; every row when absent).
+    #[serde(default)]
+    #[ts(optional)]
+    pub rows: Option<Vec<u32>>,
 }
 
 /// One model the agent offers.

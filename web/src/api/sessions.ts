@@ -49,11 +49,12 @@ export const sessionsApi = {
   /** Sends a message to a conversation (reopening it when parked or ended); it is pending until the agent takes it. */
   sendMessage: (id: string, m: SendMessage) =>
     request<PendingMessage>(`/api/sessions/${enc(id)}/messages`, { method: 'POST', body: JSON.stringify(m) }),
-  /** Answers an open request; 409 `request_closed` when it was answered elsewhere or expired. */
-  answerRequest: (id: string, requestId: string, answer: Answer) =>
+  /** Answers an open request; 409 `request_closed` when it was answered elsewhere or expired. `rows`: the rows an
+   * Allow of a request with rows keeps. */
+  answerRequest: (id: string, requestId: string, answer: Answer, rows?: number[]) =>
     request<void>(`/api/sessions/${enc(id)}/requests/${enc(requestId)}`, {
       method: 'POST',
-      body: JSON.stringify({ answer } satisfies AnswerRequest),
+      body: JSON.stringify({ answer, ...(rows ? { rows } : {}) } satisfies AnswerRequest),
     }, { asUser: true }),
   interruptSession: (id: string) => request<void>(`/api/sessions/${enc(id)}/interrupt`, { method: 'POST' }),
   /** Codex conversations: opens the agent's own TUI on the same thread, live (PTY at the session's pty socket). */
