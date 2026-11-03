@@ -17,6 +17,7 @@ pub static SETTINGS: InputsBuiltin = InputsBuiltin {
     template: checkpoint_template,
     finish: Some(finish),
     read: Some(read),
+    extra: None,
 };
 
 /// The days, as the `days` input and cron name them, Monday first.

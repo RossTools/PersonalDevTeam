@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { InstallUpdatesView } from '../api/gen/InstallUpdatesView';
+import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import { renderWithQuery, stubApi } from '../test-utils';
 import { InstallUpdates } from './InstallUpdates';
 
@@ -15,7 +15,7 @@ const defaults = {
   announce: false, chat: '',
 };
 
-const view = (over: Partial<InstallUpdatesView> = {}, values: Record<string, unknown> = {}): InstallUpdatesView => ({
+const view = (over: Partial<BuiltinSettingsView> = {}, values: Record<string, unknown> = {}): BuiltinSettingsView => ({
   workflowId: 'w1', name: 'Install updates', enabled: true, customized: false, params: [],
   values: { ...defaults, ...values }, defaults, channels: [], ...over,
 });
