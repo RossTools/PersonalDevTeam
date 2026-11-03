@@ -3,7 +3,7 @@
 
 use super::catalog::{KindSpec, PortSpec};
 use super::engine::{self, DryEvent, DryRun};
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -21,14 +21,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
-pub(crate) fn conflict(code: &'static str, message: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, code, message)
-}
-
-pub(crate) fn invalid(message: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", message)
-}
-
 pub(crate) fn body<T: Default>(payload: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
     match payload {
         Ok(Json(v)) => Ok(v),
@@ -43,13 +35,13 @@ pub(crate) fn checked(st: &AppState, doc: &WorkflowDoc) -> Result<Vec<Issue>, Ap
     if !is_valid(&issues) {
         let errors: Vec<&str> =
             issues.iter().filter(|i| i.severity == Severity::Error).map(|i| i.message.as_str()).collect();
-        return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "workflow_invalid", errors.join("; ")));
+        return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, codes::WORKFLOW_INVALID, errors.join("; ")));
     }
     Ok(issues)
 }
 
 pub(crate) async fn load(st: &AppState, id: &str) -> Result<Workflow, ApiError> {
-    st.store.get_workflow(id).await?.ok_or_else(|| ApiError::not_found("workflow"))
+    st.store.get_workflow(id).await?.or_404("workflow")
 }
 
 /// A document's issues, with warnings about its MCP tool nodes from their servers' cached tools.
@@ -67,7 +59,7 @@ pub(crate) async fn doc_issues(st: &AppState, doc: &WorkflowDoc) -> Vec<Issue> {
 }
 
 pub(crate) async fn detail(st: &AppState, w: Workflow) -> Result<WorkflowDetail, ApiError> {
-    let doc = st.store.workflow_doc(&w.id, w.version).await?.ok_or_else(|| ApiError::not_found("workflow version"))?;
+    let doc = st.store.workflow_doc(&w.id, w.version).await?.or_404("workflow version")?;
     let issues = doc_issues(st, &doc).await;
     let needs_project = w.project_id.is_none() && super::catalog::doc_needs_project(st.registry().catalog(), &doc);
     Ok(WorkflowDetail { workflow: w, doc, issues, needs_project })
@@ -109,7 +101,7 @@ pub(crate) async fn create(
     payload: Result<Json<NewWorkflow>, JsonRejection>,
 ) -> Result<(StatusCode, Json<WorkflowDetail>), ApiError> {
     let n = body(payload)?;
-    let doc = n.doc.ok_or_else(|| invalid("doc is required"))?;
+    let doc = n.doc.ok_or_else(|| ApiError::invalid("doc is required"))?;
     let w = create_workflow(&st, &doc, n.scope, n.project_id, n.enabled, &n.note, Author::User).await?;
     Ok((StatusCode::CREATED, Json(w)))
 }
@@ -130,11 +122,11 @@ pub(crate) async fn create_workflow(
     let scope = scope.unwrap_or(if project_id.is_some() { Scope::Project } else { Scope::Host });
     let project_id = match scope {
         Scope::Project => {
-            let id = project_id.ok_or_else(|| invalid("a project workflow needs projectId"))?;
-            st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+            let id = project_id.ok_or_else(|| ApiError::invalid("a project workflow needs projectId"))?;
+            st.project(&id).await?;
             Some(id)
         }
-        _ if project_id.is_some() => return Err(invalid("only a project workflow has a projectId")),
+        _ if project_id.is_some() => return Err(ApiError::invalid("only a project workflow has a projectId")),
         _ => None,
     };
     let now = now_ms();
@@ -189,11 +181,11 @@ pub(crate) async fn save(
     payload: Result<Json<SaveWorkflow>, JsonRejection>,
 ) -> Result<Json<WorkflowDetail>, ApiError> {
     let s = body(payload)?;
-    let doc = s.doc.ok_or_else(|| invalid("doc is required"))?;
+    let doc = s.doc.ok_or_else(|| ApiError::invalid("doc is required"))?;
     let w = load(&st, &id).await?;
     if w.source == Source::Repo {
-        return Err(conflict(
-            "workflow_in_repo",
+        return Err(ApiError::conflict(
+            codes::WORKFLOW_IN_REPO,
             format!("{} lives in the repo ({}): edit the file", w.name, w.repo_file.unwrap_or_default()),
         ));
     }
@@ -210,10 +202,10 @@ async fn proposal(st: &AppState, id: &str, v: u32) -> Result<WorkflowDoc, ApiErr
     load(st, id).await?;
     match st.store.workflow_version_status(id, v).await? {
         None => Err(ApiError::not_found("workflow version")),
-        Some(VersionStatus::Proposed) => {
-            st.store.workflow_doc(id, v).await?.ok_or_else(|| ApiError::not_found("workflow version"))
+        Some(VersionStatus::Proposed) => st.store.workflow_doc(id, v).await?.or_404("workflow version"),
+        Some(_) => {
+            Err(ApiError::conflict(codes::NOT_PROPOSED, format!("version {v} is not a proposal waiting for review")))
         }
-        Some(_) => Err(conflict("not_proposed", format!("version {v} is not a proposal waiting for review"))),
     }
 }
 
@@ -225,7 +217,10 @@ pub(crate) async fn accept(
     let doc = proposal(&st, &id, v).await?;
     checked(&st, &doc)?;
     if !st.store.accept_workflow_version(&id, v, now_ms()).await? {
-        return Err(conflict("not_proposed", format!("version {v} is not a proposal waiting for review")));
+        return Err(ApiError::conflict(
+            codes::NOT_PROPOSED,
+            format!("version {v} is not a proposal waiting for review"),
+        ));
     }
     Ok(Json(detail(&st, load(&st, &id).await?).await?))
 }
@@ -272,12 +267,15 @@ pub(crate) async fn patch(
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let w = load(&st, &id).await?;
     if w.builtin.is_some() {
-        return Err(conflict("builtin_workflow", format!("{} is built in: disable it instead", w.name)));
+        return Err(ApiError::conflict(codes::BUILTIN_WORKFLOW, format!("{} is built in: disable it instead", w.name)));
     }
     if w.source == Source::Repo {
-        return Err(conflict("workflow_in_repo", format!("{} lives in the repo: remove its file", w.name)));
+        return Err(ApiError::conflict(
+            codes::WORKFLOW_IN_REPO,
+            format!("{} lives in the repo: remove its file", w.name),
+        ));
     }
-    engine::delete_workflow(&st, &id).await.map_err(ApiError::internal)?;
+    engine::delete_workflow(&st, &id).await.map_err(ApiError::from_text)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -294,13 +292,8 @@ pub(crate) async fn version(
     Path((id, v)): Path<(String, u32)>,
 ) -> Result<Json<WorkflowVersion>, ApiError> {
     load(&st, &id).await?;
-    let mut meta = st
-        .store
-        .list_workflow_versions(&id)
-        .await?
-        .into_iter()
-        .find(|x| x.version == v)
-        .ok_or_else(|| ApiError::not_found("workflow version"))?;
+    let mut meta =
+        st.store.list_workflow_versions(&id).await?.into_iter().find(|x| x.version == v).or_404("workflow version")?;
     meta.doc = st.store.workflow_doc(&id, v).await?;
     Ok(Json(meta))
 }
@@ -320,8 +313,8 @@ pub(crate) async fn version_diff(
     let w = load(&st, &id).await?;
     let to = q.to.unwrap_or(w.version);
     let from = q.from.unwrap_or(to.saturating_sub(1).max(1));
-    let a = st.store.workflow_doc(&id, from).await?.ok_or_else(|| ApiError::not_found("workflow version"))?;
-    let b = st.store.workflow_doc(&id, to).await?.ok_or_else(|| ApiError::not_found("workflow version"))?;
+    let a = st.store.workflow_doc(&id, from).await?.or_404("workflow version")?;
+    let b = st.store.workflow_doc(&id, to).await?.or_404("workflow version")?;
     Ok(Json(diff(&a, &b, &format!("v{from}"), &format!("v{to}"))))
 }
 
@@ -356,7 +349,9 @@ pub(crate) async fn run_now(
 ) -> Result<Json<Started>, ApiError> {
     let r = body(payload)?;
     let w = load(&st, &id).await?;
-    let run_id = engine::start_manual(&st, &w, r.input, r.run_key).await.map_err(|e| conflict("cannot_run", e))?;
+    let run_id = engine::start_manual(&st, &w, r.input, r.run_key)
+        .await
+        .map_err(|e| ApiError::conflict(codes::CANNOT_RUN, e))?;
     Ok(Json(Started { run_id }))
 }
 
@@ -382,7 +377,7 @@ pub(crate) async fn check_doc(
     State(st): State<AppState>,
     payload: Result<Json<ValidateRequest>, JsonRejection>,
 ) -> Result<Json<WorkflowCheck>, ApiError> {
-    let doc = body(payload)?.doc.ok_or_else(|| invalid("doc is required"))?;
+    let doc = body(payload)?.doc.ok_or_else(|| ApiError::invalid("doc is required"))?;
     let ports = doc.nodes.iter().filter_map(|n| Some((n.id.clone(), st.registry().catalog().node_ports(n)?))).collect();
     Ok(Json(WorkflowCheck { issues: doc_issues(&st, &doc).await, ports }))
 }
@@ -391,7 +386,7 @@ pub(crate) async fn validate_doc(
     State(st): State<AppState>,
     payload: Result<Json<ValidateRequest>, JsonRejection>,
 ) -> Result<Json<Vec<Issue>>, ApiError> {
-    let doc = body(payload)?.doc.ok_or_else(|| invalid("doc is required"))?;
+    let doc = body(payload)?.doc.ok_or_else(|| ApiError::invalid("doc is required"))?;
     Ok(Json(doc_issues(&st, &doc).await))
 }
 
@@ -447,16 +442,16 @@ pub(crate) async fn dry_run(
             let d = detail(&st, load(&st, &id).await?).await?;
             (d.workflow, d.doc)
         }
-        (None, None) => return Err(invalid("give doc or workflowId")),
+        (None, None) => return Err(ApiError::invalid("give doc or workflowId")),
     };
     let event = match (r.event, r.event_id) {
         (Some(e), _) => e,
         (None, Some(id)) => {
-            let e = st.store.get_log_event(&id).await?.ok_or_else(|| ApiError::not_found("event"))?;
+            let e = st.store.get_log_event(&id).await?.or_404("event")?;
             let payload = engine::trigger_value(&st, &e);
             DryEvent { kind: e.kind, payload }
         }
-        (None, None) => return Err(invalid("give event or eventId")),
+        (None, None) => return Err(ApiError::invalid("give event or eventId")),
     };
     let issues = validate_with_tools(&st, &doc);
     if !is_valid(&issues) {
@@ -479,7 +474,7 @@ pub(crate) async fn list_runs(
     Query(q): Query<RunsQuery>,
 ) -> Result<Json<Vec<Run>>, ApiError> {
     let status = match q.status.as_deref() {
-        Some(s) => Some(RunStatus::parse(s).ok_or_else(|| invalid(format!("no run status is called {s}")))?),
+        Some(s) => Some(RunStatus::parse(s).ok_or_else(|| ApiError::invalid(format!("no run status is called {s}")))?),
         None => None,
     };
     let f = pdt_store::RunFilter { workflow_id: q.workflow, ticket_id: q.ticket, status, limit: q.limit.unwrap_or(50) };
@@ -487,7 +482,7 @@ pub(crate) async fn list_runs(
 }
 
 async fn run_detail(st: &AppState, id: &str) -> Result<RunDetail, ApiError> {
-    let run = st.store.get_workflow_run(id).await?.ok_or_else(|| ApiError::not_found("workflow run"))?;
+    let run = st.store.get_workflow_run(id).await?.or_404("workflow run")?;
     let steps = st.store.list_steps(id).await?;
     let resume_from = pdt_core::workflow::agent::resumable_step(&steps)
         .filter(|_| run.parent_step_id.is_none() || !run.status.is_finished())
@@ -501,7 +496,7 @@ pub(crate) async fn get_run(State(st): State<AppState>, Path(id): Path<String>) 
 
 pub(crate) async fn retry_run(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<RunDetail>, ApiError> {
     run_detail(&st, &id).await?;
-    engine::retry_run(&st, &id).await.map_err(|e| conflict("cannot_retry", e))?;
+    engine::retry_run(&st, &id).await.map_err(|e| ApiError::conflict(codes::CANNOT_RETRY, e))?;
     Ok(Json(run_detail(&st, &id).await?))
 }
 
@@ -511,7 +506,7 @@ pub(crate) async fn resume_run(
     Path(id): Path<String>,
 ) -> Result<Json<RunDetail>, ApiError> {
     run_detail(&st, &id).await?;
-    engine::resume_run(&st, &id, None).await.map_err(|e| conflict("cannot_resume", e))?;
+    engine::resume_run(&st, &id, None).await.map_err(|e| ApiError::conflict(codes::CANNOT_RESUME, e))?;
     Ok(Json(run_detail(&st, &id).await?))
 }
 
@@ -520,7 +515,7 @@ pub(crate) async fn cancel_run(
     Path(id): Path<String>,
 ) -> Result<Json<RunDetail>, ApiError> {
     run_detail(&st, &id).await?;
-    engine::cancel_run(&st, &id).await.map_err(|e| conflict("cannot_cancel", e))?;
+    engine::cancel_run(&st, &id).await.map_err(|e| ApiError::conflict(codes::CANNOT_CANCEL, e))?;
     Ok(Json(run_detail(&st, &id).await?))
 }
 
@@ -544,7 +539,9 @@ pub(crate) async fn answer(
     run_detail(&st, &id).await?;
     // The gate's Inbox item, for `inbox.answered` (PDT-364; once per item, whichever way it was answered).
     let items = st.store.open_items_for_step(&step).await?;
-    engine::answer(&st, &id, &step, &a.choice, a.text.as_deref()).await.map_err(|e| conflict("cannot_answer", e))?;
+    engine::answer(&st, &id, &step, &a.choice, a.text.as_deref())
+        .await
+        .map_err(|e| ApiError::conflict(codes::CANNOT_ANSWER, e))?;
     for item in &items {
         crate::workflow::sensors::inbox_answered(&st, item, Some(&a.choice), a.text.as_deref(), "user").await;
     }
@@ -581,7 +578,7 @@ pub(crate) async fn list_events(
 }
 
 pub(crate) async fn get_event(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<LogEvent>, ApiError> {
-    Ok(Json(st.store.get_log_event(&id).await?.ok_or_else(|| ApiError::not_found("event"))?))
+    Ok(Json(st.store.get_log_event(&id).await?.or_404("event")?))
 }
 
 // ---- connections ----
@@ -604,7 +601,7 @@ pub struct ConnectionInput {
 fn valid_name(name: &str) -> Result<String, ApiError> {
     let n = name.trim();
     if n.is_empty() || n.len() > 80 {
-        return Err(invalid("a connection needs a name of at most 80 characters"));
+        return Err(ApiError::invalid("a connection needs a name of at most 80 characters"));
     }
     Ok(n.to_string())
 }
@@ -621,9 +618,9 @@ fn check_config(st: &AppState, kind: &str, config: &Value) -> Result<(), ApiErro
         } else {
             format!("which this {} was built without", pdt_core::brand::SHORT_NAME)
         };
-        return Err(invalid(format!("{kind} connections are part of the {} integration, {why}", i.label)));
+        return Err(ApiError::invalid(format!("{kind} connections are part of the {} integration, {why}", i.label)));
     }
-    reg.check_connection_config(kind, config).map_err(invalid)
+    reg.check_connection_config(kind, config).map_err(ApiError::invalid)
 }
 
 pub(crate) async fn list_connections(State(st): State<AppState>) -> Result<Json<Vec<Connection>>, ApiError> {
@@ -638,7 +635,7 @@ pub async fn create_connection(
     let now = now_ms();
     let config = c.config.unwrap_or(Value::Object(Default::default()));
     if !config.is_object() {
-        return Err(invalid("config must be an object"));
+        return Err(ApiError::invalid("config must be an object"));
     }
     let kind = c.kind.unwrap_or_else(|| "http".into()).trim().to_string();
     check_config(&st, &kind, &config)?;
@@ -656,7 +653,7 @@ pub async fn create_connection(
     };
     st.store.insert_connection(&conn).await.map_err(|e| match e {
         pdt_store::StoreError::Conflict(_) => {
-            conflict("connection_exists", format!("a connection is already called {}", conn.name))
+            ApiError::conflict(codes::CONNECTION_EXISTS, format!("a connection is already called {}", conn.name))
         }
         other => other.into(),
     })?;
@@ -667,7 +664,7 @@ pub async fn create_connection(
 }
 
 async fn load_connection(st: &AppState, id: &str) -> Result<Connection, ApiError> {
-    st.store.get_connection(id).await?.ok_or_else(|| ApiError::not_found("connection"))
+    st.store.get_connection(id).await?.or_404("connection")
 }
 
 pub(crate) async fn get_connection(
@@ -696,7 +693,7 @@ pub(crate) async fn patch_connection(
     }
     if let Some(cfg) = p.config {
         if !cfg.is_object() {
-            return Err(invalid("config must be an object"));
+            return Err(ApiError::invalid("config must be an object"));
         }
         c.config = cfg;
     }
@@ -704,7 +701,7 @@ pub(crate) async fn patch_connection(
     c.updated_at = now_ms();
     st.store.update_connection(&c).await.map_err(|e| match e {
         pdt_store::StoreError::Conflict(_) => {
-            conflict("connection_exists", format!("a connection is already called {}", c.name))
+            ApiError::conflict(codes::CONNECTION_EXISTS, format!("a connection is already called {}", c.name))
         }
         other => other.into(),
     })?;
@@ -731,7 +728,7 @@ pub(crate) async fn delete_connection(
     tokio::task::spawn_blocking(move || secrets.delete(&account))
         .await
         .map_err(ApiError::internal)?
-        .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "keychain_failed", e.to_string()))?;
+        .map_err(ApiError::keychain)?;
     if c.kind == crate::mcp_client::MCP {
         crate::mcp_oauth::forget(&st, &id).await?;
     }
@@ -756,7 +753,7 @@ pub async fn put_secret(
 ) -> Result<Json<Connection>, ApiError> {
     let s = body(payload)?;
     if s.secret.is_empty() {
-        return Err(invalid("the secret is empty"));
+        return Err(ApiError::invalid("the secret is empty"));
     }
     let mut c = load_connection(&st, &id).await?;
     let secrets = st.secrets.clone();
@@ -764,7 +761,7 @@ pub async fn put_secret(
     tokio::task::spawn_blocking(move || secrets.set(&account, &s.secret))
         .await
         .map_err(ApiError::internal)?
-        .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "keychain_failed", e.to_string()))?;
+        .map_err(ApiError::keychain)?;
     c.has_secret = true;
     c.updated_at = now_ms();
     st.store.update_connection(&c).await?;
@@ -784,7 +781,7 @@ pub(crate) async fn delete_secret(
     tokio::task::spawn_blocking(move || secrets.delete(&account))
         .await
         .map_err(ApiError::internal)?
-        .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "keychain_failed", e.to_string()))?;
+        .map_err(ApiError::keychain)?;
     c.has_secret = false;
     c.updated_at = now_ms();
     st.store.update_connection(&c).await?;
@@ -815,7 +812,10 @@ pub(crate) async fn refresh_connection_tools(
 async fn mcp_connection(st: &AppState, id: &str) -> Result<Connection, ApiError> {
     let c = load_connection(st, id).await?;
     if c.kind != crate::mcp_client::MCP {
-        return Err(conflict("not_mcp", format!("{} is a {} connection, not an MCP server", c.name, c.kind)));
+        return Err(ApiError::conflict(
+            codes::NOT_MCP,
+            format!("{} is a {} connection, not an MCP server", c.name, c.kind),
+        ));
     }
     Ok(c)
 }

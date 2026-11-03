@@ -1,8 +1,7 @@
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
 use pdt_core::brand::PROJECT_CONFIG_FILE;
 use pdt_core::project::Project;
 use pdt_core::runconfig::{RunConfig, RunConfigError, Source, merge, parse};
@@ -12,7 +11,7 @@ use ts_rs::TS;
 
 impl From<RunConfigError> for ApiError {
     fn from(e: RunConfigError) -> Self {
-        ApiError::new(StatusCode::BAD_REQUEST, "invalid_run_config", e.to_string())
+        ApiError::bad_request(codes::INVALID_RUN_CONFIG, e.to_string())
     }
 }
 
@@ -43,9 +42,12 @@ pub(crate) async fn checkout_dir(
 ) -> Result<(PathBuf, String), ApiError> {
     match worktree_id {
         Some(wid) => {
-            let wt = st.store.get_worktree(wid).await?.filter(|w| w.project_id == project.id).ok_or_else(|| {
-                ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "worktree does not belong to this project")
-            })?;
+            let wt = st
+                .store
+                .get_worktree(wid)
+                .await?
+                .filter(|w| w.project_id == project.id)
+                .ok_or_else(|| ApiError::invalid("worktree does not belong to this project"))?;
             Ok((PathBuf::from(wt.path), wt.branch))
         }
         None => {
@@ -66,7 +68,7 @@ async fn read_file(checkout: &FsPath) -> Result<Option<String>, ApiError> {
     match read {
         Ok(t) => Ok(Some(t)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(ApiError::internal(e)),
+        Err(e) => Err(ApiError::from(e)),
     }
 }
 
@@ -101,9 +103,8 @@ pub(crate) async fn effective_for_file(
 pub(crate) fn validate_overrides(text: &str) -> Result<(), ApiError> {
     let o = parse(text, Source::Overrides)?;
     if let Some(s) = o.ignored.first() {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_run_config",
+        return Err(ApiError::bad_request(
+            codes::INVALID_RUN_CONFIG,
             format!("{} is not valid: unknown section `{s}` (expected run, test or area)", Source::Overrides),
         ));
     }
@@ -115,7 +116,7 @@ pub(crate) async fn get_config(
     Path(id): Path<String>,
     Query(w): Query<Where>,
 ) -> Result<Json<RunConfigView>, ApiError> {
-    let project = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(&id).await?;
     let (dir, _) = checkout_dir(&st, &project, w.worktree_id.as_deref()).await?;
     let file = read_file(&dir).await?;
     let overrides = st.store.get_project_settings(&id).await?.run_overrides;

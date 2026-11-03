@@ -1,8 +1,8 @@
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use pdt_core::identity::{Caller, IdentityHeaders, check, classify, decode_header_value};
@@ -30,7 +30,7 @@ pub(crate) async fn guard(State(st): State<AppState>, req: Request, next: Next) 
         Ok(()) => next.run(req).await,
         Err(denied) => {
             tracing::warn!(reason = %denied, path = %req.uri().path(), "refused a remote request");
-            ApiError::new(StatusCode::FORBIDDEN, "forbidden_identity", denied.to_string()).into_response()
+            ApiError::forbidden(codes::FORBIDDEN_IDENTITY, denied.to_string()).into_response()
         }
     }
 }

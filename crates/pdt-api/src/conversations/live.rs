@@ -175,7 +175,7 @@ pub(super) async fn ensure_live(
     let config_file = match session.agent {
         Some(AgentKind::Devin) => {
             crate::sessions::devin_config(st, &session.id, instructions.as_ref().map(|i| i.file.as_path()))
-                .map_err(|e| ApiError::internal(format!("writing the session's Devin config: {e}")))?
+                .map_err(|e| ApiError::io("writing the session's Devin config", e))?
         }
         _ => None,
     };

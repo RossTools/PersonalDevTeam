@@ -9,7 +9,7 @@
 //! bearer header ([`access_token`]); a sign-in that can't be refreshed (revoked, expired) is an Inbox item until the
 //! user signs in again.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -122,7 +122,7 @@ pub(crate) async fn forget(st: &AppState, id: &str) -> Result<(), ApiError> {
     tokio::task::spawn_blocking(move || secrets.delete(&acct))
         .await
         .map_err(ApiError::internal)?
-        .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "keychain_failed", e.to_string()))?;
+        .map_err(ApiError::keychain)?;
     st.mcp.oauth.tokens.lock().unwrap().insert(id.to_string(), None);
     Ok(())
 }
@@ -350,17 +350,13 @@ pub struct SignInStart {
     pub url: String,
 }
 
-fn bad(m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m)
-}
-
 fn origin_of(given: Option<&str>, port: u16) -> Result<String, ApiError> {
     let fallback = format!("http://127.0.0.1:{port}");
     let o = given.map(|o| o.trim().trim_end_matches('/')).filter(|o| !o.is_empty()).unwrap_or(&fallback);
     let ok =
         (o.starts_with("http://") || o.starts_with("https://")) && !o[o.find("://").unwrap_or(0) + 3..].contains('/');
     if !ok {
-        return Err(bad("origin must be an http(s) address with no path"));
+        return Err(ApiError::invalid("origin must be an http(s) address with no path"));
     }
     Ok(o.to_string())
 }
@@ -371,16 +367,16 @@ pub(crate) async fn sign_in(
     Path(id): Path<String>,
     body: Option<Json<SignInRequest>>,
 ) -> Result<Json<SignInStart>, ApiError> {
-    let conn = st.store.get_connection(&id).await?.ok_or_else(|| ApiError::not_found("MCP server"))?;
-    let settings =
-        ms::oauth_of(&conn.config).ok_or_else(|| bad(format!("{} doesn't sign in with OAuth", conn.name)))?;
+    let conn = st.store.get_connection(&id).await?.or_404("MCP server")?;
+    let settings = ms::oauth_of(&conn.config)
+        .ok_or_else(|| ApiError::invalid(format!("{} doesn't sign in with OAuth", conn.name)))?;
     if !matches!(crate::mcp_client::transport(&conn), "http" | "sse") {
-        return Err(bad("only a remote server signs in"));
+        return Err(ApiError::invalid("only a remote server signs in"));
     }
     let origin = origin_of(body.as_ref().and_then(|b| b.origin.as_deref()), st.listen_port)?;
     let redirect_uri = format!("{origin}{CALLBACK}");
     let server_url = conn.url.trim().to_string();
-    let failed = |m: String| ApiError::new(StatusCode::BAD_GATEWAY, "sign_in_failed", m);
+    let failed = |m: String| ApiError::upstream(codes::SIGN_IN_FAILED, m);
     let (auth, scopes) = discover(&server_url).await.map_err(failed)?;
     let (client_id, client_secret) = match settings.client_id.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
         Some(c) => {
@@ -392,7 +388,9 @@ pub(crate) async fn sign_in(
                         session_id: None,
                         run_id: None,
                     };
-                    let v = crate::vault::values_for_user(&st, &[name.to_string()], &usage).await.map_err(bad)?;
+                    let v = crate::vault::values_for_user(&st, &[name.to_string()], &usage)
+                        .await
+                        .map_err(ApiError::invalid)?;
                     v.get(name).cloned()
                 }
                 None => None,
@@ -438,7 +436,7 @@ pub(crate) async fn sign_in(
 
 /// `DELETE /api/mcp-servers/{id}/sign-in`: signs out (PDT forgets the tokens).
 pub(crate) async fn sign_out(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    st.store.get_connection(&id).await?.ok_or_else(|| ApiError::not_found("MCP server"))?;
+    st.store.get_connection(&id).await?.or_404("MCP server")?;
     forget(&st, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
