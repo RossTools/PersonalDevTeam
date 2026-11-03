@@ -80,7 +80,7 @@ describe('phone', () => {
     renderWithQuery(<AppShell />);
     const bar = () => screen.getByRole('banner', { name: 'Top bar' });
     expect(within(bar()).getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
-    await userEvent.click(await screen.findByRole('button', { name: /Dark mode/ }));
+    await userEvent.click(await screen.findByRole('row', { name: /Dark mode/ }));
     expect(here()).toBe('/notes/n1');
     expect(await screen.findByRole('heading', { name: 'Dark mode', level: 1 })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Make a ticket' })).not.toBeInTheDocument();

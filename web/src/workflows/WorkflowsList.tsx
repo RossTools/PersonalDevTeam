@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
-import { Badge, Button, List, ListHeading, ListRow, StatusDot } from '@ui';
+import { Badge, Button, EmptyState, List, ListHeading, ListRow, StatusDot } from '@ui';
 import { api } from '../api/client';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import type { Project } from '../api/gen/Project';
@@ -76,7 +76,7 @@ export function WorkflowsList({ projects, current, onOpen, onNew }: {
           </List>
         </section>
       ))}
-      {workflows.isSuccess && groups.length === 0 && <p className="px-3 text-sm text-muted-foreground">No workflows yet.</p>}
+      {workflows.isSuccess && groups.length === 0 && <EmptyState size="inline" className="px-3">No workflows yet.</EmptyState>}
     </nav>
   );
 }

@@ -3,6 +3,7 @@ import type { PmNote } from '../../api/gen/PmNote';
 import { Markdown } from '../../common/Markdown';
 import { MarkdownEditor } from '../../common/MarkdownEditor';
 import { NoteItem } from '../../notes/NoteItem';
+import { List } from '@ui/List';
 import { SectionLabel } from '@ui/SectionLabel';
 
 function Demo({ label, children }: { label: string; children: ReactNode }) {
@@ -84,11 +85,11 @@ function NoteList() {
   const [selected, setSelected] = useState('a');
   return (
     <div className="w-80 rounded-md border border-border bg-background py-1">
-      <ul className="flex flex-col gap-px px-1">
+      <List aria-label="Notes" onAction={setSelected} className="gap-px px-1">
         {NOTES.map(({ note: n, projectKey }) => (
-          <li key={n.id}><NoteItem note={n} projectKey={projectKey} selected={n.id === selected} onOpen={setSelected} /></li>
+          <NoteItem key={n.id} note={n} projectKey={projectKey} current={n.id === selected} />
         ))}
-      </ul>
+      </List>
     </div>
   );
 }

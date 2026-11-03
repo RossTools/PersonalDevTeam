@@ -168,11 +168,13 @@ export interface ListRowProps
   textValue?: string;
   /** A second, quieter line (where it is, branch…), aligned under the title. */
   secondary?: ReactNode;
+  /** More under the secondary line, wrapping instead of cut (a two-line preview, a meta line). */
+  details?: ReactNode;
   /** Before the title: a status dot, an icon. */
   leading?: ReactNode;
   /** After the title: a state label, a count, a key. */
   trailing?: ReactNode;
-  /** The row on screen (the open workspace, the focused tab): the soft accent fill. */
+  /** The row on screen (the open workspace, the focused tab): the soft accent fill and a bar on its left edge. */
   current?: boolean;
   /** Unseen: the title in semibold. */
   bold?: boolean;
@@ -188,6 +190,7 @@ export function ListRow({
   title,
   textValue,
   secondary,
+  details,
   leading,
   trailing,
   current = false,
@@ -199,6 +202,8 @@ export function ListRow({
 }: ListRowProps) {
   const text = textValue ?? (typeof title === 'string' ? title : undefined);
   const menuProps = useRowMenu(id, onMenu);
+  // The secondary line and the details sit under the title, past the drag handle and the leading slot.
+  const underTitle = (allowsDragging?: boolean) => `${(allowsDragging ? 1 : 0) + (leading != null ? 1 : 0) + 1} / -1`;
   return (
     <GridListItem
       {...rest}
@@ -214,10 +219,11 @@ export function ListRow({
           .join(' '),
       })}
       className={cn(
-        'group/row grid cursor-default items-center gap-x-2 rounded-md px-2 py-1 text-sm text-foreground outline-none select-none',
+        'group/row relative grid cursor-default items-center gap-x-2 overflow-hidden rounded-md px-2 py-1 text-sm text-foreground outline-none select-none',
         'transition-colors duration-(--pdt-duration) motion-reduce:transition-none',
         'pointer-coarse:min-h-control-touch',
         'data-hovered:bg-muted data-selected:bg-accent data-current:bg-accent',
+        'data-current:before:absolute data-current:before:inset-y-0 data-current:before:left-0 data-current:before:w-0.5 data-current:before:bg-primary',
         'data-focus-visible:ring-2 data-focus-visible:ring-ring data-focus-visible:ring-inset',
         'data-disabled:opacity-50 data-dragging:opacity-50 data-drop-target:bg-accent data-drop-target:ring-1 data-drop-target:ring-primary',
         className,
@@ -245,9 +251,18 @@ export function ListRow({
             <span
               data-slot="list-secondary"
               className="truncate text-meta text-muted-foreground"
-              style={{ gridColumn: `${(allowsDragging ? 1 : 0) + (leading != null ? 1 : 0) + 1} / -1` }}
+              style={{ gridColumn: underTitle(allowsDragging) }}
             >
               {secondary}
+            </span>
+          )}
+          {details != null && (
+            <span
+              data-slot="list-details"
+              className="flex min-w-0 flex-col gap-0.5 text-xs text-muted-foreground"
+              style={{ gridColumn: underTitle(allowsDragging) }}
+            >
+              {details}
             </span>
           )}
         </>

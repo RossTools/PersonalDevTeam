@@ -7,7 +7,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, GitBranch } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Badge, Button, ContextMenu, dragData, IconButton, MenuButton, parseDragData, Skeleton, useConfirm, type MenuEntry,
+  Badge, Button, ContextMenu, dragData, EmptyState, IconButton, MenuButton, parseDragData, Skeleton, useConfirm, type MenuEntry,
 } from '@ui';
 import type { Session } from '../api/gen/Session';
 import type { TicketQuery } from '../api/gen/TicketQuery';
@@ -568,7 +568,7 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
     ownsStatus(c) ? (
       <ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty={showEmpty} doneDays={doneDays} />
     ) : showEmpty && cards(cols.in_progress.items, c).length === 0 ? (
-      <p className="p-2 text-xs text-muted-foreground">No tickets.</p>
+      <EmptyState size="inline" className="p-2">No tickets.</EmptyState>
     ) : null;
 
   // Phones: a swipe sideways shows the next or previous column.
@@ -659,7 +659,7 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
               <div key={lane.id} className="flex flex-col">
                 <LaneHeader lane={lane} collapsed={shut} onToggle={() => toggle(lane.id!)} onPeek={onPeek} compact={false} />
                 {!shut && (laneEmpty(lane) ? (
-                  <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-muted-foreground">No parts on the board yet.</p>
+                  <EmptyState size="inline" className="rounded-md bg-surface-2 px-3 py-2">No parts on the board yet.</EmptyState>
                 ) : (
                   <div className="flex gap-3">
                     {columns.map((c) => (

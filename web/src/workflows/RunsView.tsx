@@ -4,7 +4,7 @@
 // opening to its input and output, with nothing to act on.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, EmptyState, RelativeTime, Skeleton, formatDuration } from '@ui';
+import { Alert, Badge, Button, EmptyState, List, ListRow, RelativeTime, Skeleton, formatDuration } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { WatchButton, Watchers } from '../common/Watch';
@@ -153,23 +153,23 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
       <nav aria-label="Runs" className={cn('shrink-0 overflow-auto border-b border-border md:max-h-none md:w-72 md:border-r md:border-b-0', viewOnly ? 'min-h-0 flex-1' : 'max-h-56')}>
         <LoadError what="Runs" error={runs.error} className="m-2" />
         {runs.isSuccess && list.length === 0 && <EmptyState>No runs yet. Dry run it, or enable it and wait for its trigger.</EmptyState>}
-        <ul className="flex flex-col p-1">
+        <List aria-label="Runs" onAction={onRunChange} className="p-1">
           {list.map((r) => {
             const s = RUN_STATUS[r.status];
             return (
-              <li key={r.id}>
-                <button type="button" aria-current={r.id === current ? 'true' : undefined} onClick={() => onRunChange(r.id)}
-                  className={cn('flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-accent pointer-coarse:min-h-control-touch', r.id === current && 'bg-accent')}>
-                  <span className="flex items-center gap-2 text-sm">
-                    <Badge tone={s.tone}>{s.text}</Badge>
-                    <span className="min-w-0 truncate">{triggerOf(r)}</span>
-                  </span>
-                  <span className="text-meta text-muted-foreground"><RelativeTime time={r.startedAt} /> · v{r.version}</span>
-                </button>
-              </li>
+              <ListRow
+                key={r.id}
+                id={r.id}
+                textValue={triggerOf(r)}
+                current={r.id === current}
+                className="py-1.5"
+                leading={<Badge tone={s.tone}>{s.text}</Badge>}
+                title={triggerOf(r)}
+                secondary={<><RelativeTime time={r.startedAt} /> · v{r.version}</>}
+              />
             );
           })}
-        </ul>
+        </List>
       </nav>
       {viewOnly ? null : current ? <RunDetail key={current} id={current} workflowId={workflowId} catalog={catalog} viewOnly={false} /> : <div className="flex-1" />}
     </div>

@@ -34,4 +34,11 @@ describe('Link', () => {
     await userEvent.keyboard('{Enter}');
     expect(onClick).toHaveBeenCalledTimes(3);
   });
+
+  it('quiet tone keeps the text colour until hovered', () => {
+    render(<Link tone="quiet" onClick={() => {}}>PDT-4</Link>);
+    const a = screen.getByRole('link', { name: 'PDT-4' });
+    expect(a.className).toContain('hover:text-link');
+    expect(a.className).not.toMatch(/(^| )text-link/);
+  });
 });

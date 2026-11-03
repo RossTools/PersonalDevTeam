@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, File, Folder, MessageSquare } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { DiffStat, TreeView, type TreeChildren, type TreeNode } from '@ui';
+import { DiffStat, EmptyState, TreeView, type TreeChildren, type TreeNode } from '@ui';
 import type { ChangedFile } from '../api/gen/ChangedFile';
 import type { ChangeStatus } from '../api/gen/ChangeStatus';
 import { GIT_STATUS_TONE } from '../common/gitStatus';
@@ -120,7 +120,7 @@ export function FileList({ files, selected, onSelect, comments, viewed, classNam
       onExpandedChange={(open) => setClosed(new Set(dirIds.filter((id) => !open.has(id))))}
       selectedKey={selected}
       onAction={(n) => n.file && onSelect(n.file.path)}
-      renderEmpty={() => <p className="p-3 text-xs text-muted-foreground">No changes yet.</p>}
+      renderEmpty={() => <EmptyState size="inline" className="p-3">No changes yet.</EmptyState>}
       className={className}
     />
     </div>

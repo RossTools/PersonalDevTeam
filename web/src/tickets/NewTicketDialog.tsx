@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Alert, Checkbox, Dialog, DialogActions, Field, Input, SegmentedControl, Select, Textarea, toast, useConfirm } from '@ui';
+import { Alert, Checkbox, Dialog, DialogActions, EmptyState, Field, Input, SegmentedControl, Select, Textarea, toast, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { Priority } from '../api/gen/Priority';
 import type { Project } from '../api/gen/Project';
@@ -145,7 +145,7 @@ export function NewTicketDialog({
             />
           ) : (
             <div className="min-h-28 rounded-md border border-border p-2">
-              {description.trim() ? <Markdown breaks>{description}</Markdown> : <p className="text-xs text-muted-foreground">Nothing to preview.</p>}
+              {description.trim() ? <Markdown breaks>{description}</Markdown> : <EmptyState size="inline">Nothing to preview.</EmptyState>}
             </div>
           )}
         </div>

@@ -76,7 +76,7 @@ function MultiChip<V extends string>({ label, options, selected, onChange, none 
       }
     >
       <div className="flex max-h-72 flex-col gap-0.5 overflow-auto p-1">
-        {options.length === 0 && <p className="p-1 text-xs text-muted-foreground">None yet.</p>}
+        {options.length === 0 && <EmptyState size="inline" className="p-1">None yet.</EmptyState>}
         {options.map((o) => (
           <Checkbox
             key={o.value}

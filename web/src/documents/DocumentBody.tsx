@@ -5,7 +5,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { BarChart3 } from 'lucide-react';
-import { Alert, SegmentedControl, Skeleton } from '@ui';
+import { Alert, EmptyState, SegmentedControl, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { CommentAnchor } from '../api/gen/CommentAnchor';
 import type { DocumentContent } from '../api/gen/DocumentContent';
@@ -141,7 +141,7 @@ function Content({ content, changed }: { content: DocumentContent; changed: Set<
           onChange={(v) => setSheet(Number(v))}
         />
       )}
-      {shown ? <SheetTable sheet={shown} changed={changed} /> : <p className="text-xs text-muted-foreground">No sheets.</p>}
+      {shown ? <SheetTable sheet={shown} changed={changed} /> : <EmptyState size="inline">No sheets.</EmptyState>}
     </div>
   );
 }

@@ -20,4 +20,14 @@ describe('EmptyState', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Could not load.');
     expect(container.querySelector('[data-slot="empty-icon"]')).toBeNull();
   });
+
+  it('inline: one muted line with its action', () => {
+    const { container } = render(
+      <EmptyState size="inline" action={<button>Add one</button>}>None yet.</EmptyState>,
+    );
+    const p = container.querySelector('p[data-slot="empty"]')!;
+    expect(p).toHaveTextContent('None yet.');
+    expect(p.className).toContain('text-muted-foreground');
+    expect(screen.getByRole('button', { name: 'Add one' })).toBeInTheDocument();
+  });
 });
