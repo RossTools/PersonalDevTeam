@@ -553,6 +553,47 @@ async fn a_branch_that_only_caught_up_with_main_is_not_merged() {
     env.state.ptys.shutdown().await;
 }
 
+/// PDT-440: Start fetches the base before it takes its lock, and the lock is per project: a slow fetch in one
+/// project holds up no other project's Start.
+#[tokio::test]
+async fn a_slow_fetch_in_one_project_holds_up_no_other_start() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let upstream = tmp.path().join("upstream");
+    git(tmp.path(), &["clone", "-q", "--bare", &env.repo.to_string_lossy(), &upstream.to_string_lossy()]);
+    git(&env.repo, &["remote", "add", "origin", &upstream.to_string_lossy()]);
+    // Fetching from it takes 3 s (Start gives a fetch up to 10).
+    git(&env.repo, &["config", "remote.origin.uploadpack", "sleep 3; git-upload-pack"]);
+    let other = tmp.path().join("other repo");
+    std::fs::create_dir_all(&other).unwrap();
+    git(&other, &["init", "-q", "-b", "main"]);
+    git(&other, &["commit", "-q", "--allow-empty", "-m", "init"]);
+    let body = json!({"name": "Other", "repoPath": other.to_string_lossy()});
+    let (s, p) = call(&env.app, "POST", "/api/projects", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{p}");
+    let path = format!("/api/projects/{}/tickets", p["id"].as_str().unwrap());
+    let (s, t) = call_as_ui(&env.app, "POST", &path, Some(json!({"title": "Quick", "stage": "ready"}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    let quick = t["id"].as_str().unwrap().to_string();
+    let slow = ticket(&env, json!({"title": "Slow", "stage": "ready"})).await;
+
+    let no_session = json!({"agent": "claude", "noSession": true});
+    let began = std::time::Instant::now();
+    let slow_start = {
+        let (app, body) = (env.app.clone(), no_session.clone());
+        tokio::spawn(async move { call(&app, "POST", &format!("/api/tickets/{slow}/start"), Some(body)).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let (s, v) = start(&env, &quick, no_session).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    assert!(began.elapsed() < std::time::Duration::from_secs(2), "the other project's Start didn't wait for the fetch");
+    assert!(!slow_start.is_finished(), "the slow Start is still fetching");
+    let (s, v) = slow_start.await.unwrap();
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    assert!(began.elapsed() >= std::time::Duration::from_secs(3), "it fetched");
+    env.state.ptys.shutdown().await;
+}
+
 #[tokio::test]
 async fn closing_a_ticket_ends_its_attempt() {
     let tmp = tempfile::tempdir().unwrap();

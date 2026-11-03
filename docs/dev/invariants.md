@@ -146,8 +146,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   node's `version`; the engine and validation bring an older config up to date as they read it (`NodeKind::migrate`
   in pdt-api `workflow/catalog.rs`; e.g. `github.nightly` 1 → 2 in `workflow/nodes/release.rs`), so a user's
   workflows run unchanged after an update. Never rewrite their documents for it.
-- **Never hold `engine_lock` across a slow node body.** Node bodies run outside it; a result is written only if the
-  step is still `running` with the same attempt.
+- **Never hold `engine_lock` across a slow node body.** Action and agent bodies run outside it; a flow, gate, wait or
+  condition kind that does slow work (git, like `attempt.has_changes`) opts out with `NodeKind::in_engine_lock`. A
+  result is written only if the step is still `running` with the same attempt.
+- **Never hold a global lock across git or the network.** Ticket Start fetches the base before it takes its
+  project's start lock (`AppState::ticket_start_locks`), which covers only the checks, the worktree and the rows.
 - **Secrets are filled in only when a node runs**, only from the node's own config, never from text that arrived as
   data. Stored step inputs, outputs and errors are redacted. Errors from outbound HTTP go through `send_error`, which
   drops the URL (it can carry a secret).
@@ -292,6 +295,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.
 - **The UI re-renders every 2 s**: effects must be idempotent, and never focus from an inline ref callback.
+- **The shell re-renders only when a poll brings something new** (web `shell/AppShell.tsx`): the `useWorkspaces` and
+  `useBacklog` results are memoized, the views it passes them to (Sidebar, WorkspaceBar, SessionView, RunView,
+  BottomPanel) are `memo`, and its handlers are `useCallback`. Keep new props to those views stable, and read a fast-
+  changing query in the shell through a `select` that keeps only what it shows (`usePmSummary`).
 - **What a view shows when it is left comes back** (web `common/viewState.ts`): keep a view's choices (a file, a
   toggle, a scroll, a draft) with `useViewState` / `useRememberedScroll`, not `useState`, under a name that includes
   the ids of what it shows. The shell scopes them by workspace tab (or by view); a closed tab's are dropped.
