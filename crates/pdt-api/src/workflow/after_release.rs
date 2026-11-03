@@ -33,11 +33,7 @@ pub fn params() -> Vec<TemplateParam> {
 }
 
 fn node(id: &str, kind: &str, x: i32, title: &str, config: Value) -> Value {
-    let mut n = json!({"id": id, "kind": kind, "version": 1, "position": {"x": x, "y": 0}, "title": title});
-    if !config.is_null() {
-        n["config"] = config;
-    }
-    n
+    super::doc_build::node(id, kind, x, 0, title, config)
 }
 
 /// The document with the announcement, the cask bump, both or neither.

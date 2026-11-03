@@ -74,7 +74,7 @@ impl NodeKind for McpToolKind {
             };
             if cx.dry_run {
                 let what = format!("call {} on {} with {}", c.tool, c.server, Value::Object(arguments));
-                return Ok(Outcome::next("out", json!({"would": what})));
+                return Ok(Outcome::would("out", what));
             }
             // Answer (or give up) a moment before the step's own limit, so the error says which server stalled.
             let limit = cx.node.timeout_ms.unwrap_or_else(|| self.default_timeout_ms());

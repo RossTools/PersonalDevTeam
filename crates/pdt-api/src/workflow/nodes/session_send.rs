@@ -129,7 +129,7 @@ impl NodeKind for SessionSend {
                     (Some(a), _) => format!("the agent session of attempt {a}"),
                     _ => String::new(),
                 };
-                return Ok(Outcome::next("sent", json!({"would": format!("tell {to}: {}", c.text)})));
+                return Ok(Outcome::would("sent", format!("tell {to}: {}", c.text)));
             }
             let timeline = match c.timeline {
                 TimelineRecord::None => Value::Null,

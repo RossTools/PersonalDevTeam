@@ -6,7 +6,7 @@ use crate::error::ApiError;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
@@ -245,7 +245,7 @@ impl NodeKind for Archive {
             let path = dir.join(format!("{date}.md"));
             if cx.dry_run {
                 let what = format!("archive {:?} ({} items) to {}", c.title, items.len(), path.display());
-                return Ok(Outcome::next("out", json!({"would": what})));
+                return Ok(Outcome::would("out", what));
             }
             let _guard = write_lock().lock().await;
             tokio::fs::create_dir_all(&dir)
@@ -346,6 +346,7 @@ impl NodeKind for Read {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn names_and_dates_stay_in_the_folder() {

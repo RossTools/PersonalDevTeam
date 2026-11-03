@@ -7,7 +7,7 @@ use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, St
 use pdt_core::secret::Redactor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -185,7 +185,7 @@ impl NodeKind for Command {
                         format!("run {} in {}", line.collect::<Vec<_>>().join(" "), c.cwd)
                     }
                 };
-                return Ok(Outcome::next("out", json!({"would": would})));
+                return Ok(Outcome::would("out", would));
             }
             let dir = working_dir(cx, &c.cwd).await?;
             let out = run_command(&c, &dir, cx.st.store.redactor()).await?;

@@ -152,10 +152,7 @@ impl NodeKind for Gate {
                 return Ok(Outcome::next(UNANSWERED, json!({"quiet": true})));
             }
             if cx.dry_run {
-                return Ok(Outcome::next(
-                    UNANSWERED,
-                    json!({"would": format!("ask: {} ({})", c.question, c.choices.join(", "))}),
-                ));
+                return Ok(Outcome::would(UNANSWERED, format!("ask: {} ({})", c.question, c.choices.join(", "))));
             }
             crate::workflow::nodes::set_stage(cx, c.pipeline_stage).await;
             let ticket = cx.run.ticket_id.clone().or_else(|| {

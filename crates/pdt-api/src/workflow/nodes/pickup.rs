@@ -6,7 +6,7 @@
 use crate::error::codes;
 use crate::routes::AppState;
 use crate::start::Starter;
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use pdt_core::pickup::{
     ActiveTicket, CandidateFilter, ChooseRules, DEFAULT_LIMIT, OverlapOverride, OverlapPolicy, OverlapRule,
     PickupOrder, PickupProject, PickupTicket, choose,
@@ -129,7 +129,7 @@ impl NodeKind for Candidates {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<CandidatesConfig>(config).map(|_| ())
+        parses::<CandidatesConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
@@ -287,7 +287,7 @@ impl NodeKind for Choose {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<ChooseConfig>(config).map(|_| ())
+        parses::<ChooseConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
@@ -488,7 +488,7 @@ impl NodeKind for Start {
             let tickets = c.tickets()?;
             let per_project = c.per_project.unwrap_or(1).max(1);
             if cx.dry_run {
-                return Ok(Outcome::next("started", json!({"would": dry_run(cx.st, &tickets, per_project).await})));
+                return Ok(Outcome::would("started", dry_run(cx.st, &tickets, per_project).await));
             }
             // Pickup paused (a disk almost full, PDT-370): nothing new starts until it resumes.
             if let Some(p) = crate::pickup_pause::paused(cx.st).await {

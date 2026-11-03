@@ -3,7 +3,7 @@
 //! is on it, but the first run's fix step is by the time the second run gets here (runs advance one at a time).
 //! `attempt.has_changes`: whether the attempt has anything to merge (PDT-354).
 
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use pdt_core::workflow::tpl::Tpl;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ impl NodeKind for AgentWorking {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<AgentWorkingConfig>(config).map(|_| ())
+        parses::<AgentWorkingConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
@@ -106,7 +106,7 @@ impl NodeKind for HasChanges {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<HasChangesConfig>(config).map(|_| ())
+        parses::<HasChangesConfig>(config)
     }
 
     /// It runs git in the attempt's repository, which may be slow: other runs and the engine's tick don't wait for it.
@@ -118,7 +118,7 @@ impl NodeKind for HasChanges {
         Box::pin(async move {
             let c: HasChangesConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("yes", json!({"would": format!("look for changes on {}", c.attempt)})));
+                return Ok(Outcome::would("yes", format!("look for changes on {}", c.attempt)));
             }
             let changes = has_changes(cx, &c.attempt).await?;
             Ok(Outcome::next(if changes { "yes" } else { "no" }, json!({"changes": changes})))

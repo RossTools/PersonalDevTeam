@@ -11,7 +11,7 @@
 
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{
-    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, in_scope, parse, ports, schema_of,
+    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, in_scope, parse, parses, ports, schema_of,
 };
 use pdt_core::forge::ForgeKind;
 use pdt_core::outside_pr::{AuthorKind, dependabot_update};
@@ -88,7 +88,7 @@ impl NodeKind for PullRequestTrigger {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<PullTriggerConfig>(config).map(|_| ())
+        parses::<PullTriggerConfig>(config)
     }
 
     fn event_type(&self) -> Option<&str> {

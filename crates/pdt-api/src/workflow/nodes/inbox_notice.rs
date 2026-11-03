@@ -86,7 +86,7 @@ impl NodeKind for InboxNotice {
                 None => c.text.lines().next().unwrap_or_default().chars().take(120).collect(),
             });
             if cx.dry_run {
-                return Ok(Outcome::next("added", json!({"would": format!("put in the Inbox: {title}")})));
+                return Ok(Outcome::would("added", format!("put in the Inbox: {title}")));
             }
             let store = &cx.st.store;
             let info = match attempt {
