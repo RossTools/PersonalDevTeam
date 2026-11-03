@@ -109,15 +109,15 @@ impl NodeKind for SessionSend {
             let store = &cx.st.store;
             let ticket_id = match (&attempt, cx.run.ticket_id.clone()) {
                 (_, Some(t)) => Some(t),
-                (Some(a), None) => store.get_attempt(a).await.map_err(|e| e.to_string())?.map(|i| i.ticket_id),
+                (Some(a), None) => store.get_attempt(a).await.map_err(crate::workflow::err)?.map(|i| i.ticket_id),
                 _ => None,
             };
             let dedupe = c.dedupe.filter(|d| !d.trim().is_empty());
             if let (Some(a), Some(d)) = (&attempt, &dedupe) {
-                let mut sent = store.session_message_sent(a, d).await.map_err(|e| e.to_string())?;
+                let mut sent = store.session_message_sent(a, d).await.map_err(crate::workflow::err)?;
                 // Notices told before the event log existed are on the timeline.
                 if !sent && let Some(t) = &ticket_id {
-                    sent = store.pr_notice_keys(t, a).await.map_err(|e| e.to_string())?.contains(d);
+                    sent = store.pr_notice_keys(t, a).await.map_err(crate::workflow::err)?.contains(d);
                 }
                 if sent {
                     return Ok(Outcome::next("skipped", json!({"quiet": true, "reason": "already sent"})));
@@ -160,7 +160,7 @@ impl NodeKind for SessionSend {
                 pending_id: None,
                 reopens: c.reopen,
             };
-            let m = store.queue_session_message(&m).await.map_err(|e| e.to_string())?;
+            let m = store.queue_session_message(&m).await.map_err(crate::workflow::err)?;
             // Still waiting, or on its way to a conversation (told once the agent echoes it): wait for it.
             if m.status != "waiting" && m.status != "sending" {
                 // A re-run step whose message was already delivered.

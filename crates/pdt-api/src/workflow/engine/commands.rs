@@ -235,7 +235,7 @@ pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &
         && let Some(run) = st.store.get_workflow_run(run_id).await.map_err(err)?
         && let Some(ticket) = run.ticket_id.as_deref().or(gate_ticket.as_deref())
     {
-        let body = pdt_core::ticket::valid_comment(note).map_err(|e| e.to_string())?;
+        let body = pdt_core::ticket::valid_comment(note).map_err(crate::workflow::err)?;
         let data = json!({"workflowId": run.workflow_id, "workflowName": run.workflow_name, "runId": run.id,
                           "choice": choice});
         st.store

@@ -194,9 +194,11 @@ impl NodeKind for PrTicket {
                 stage: t.stage,
                 closed: t.stage.is_closed(),
             };
-            let linked = store.ticket_for_external(GITHUB, &repo_id(&repo), &key).await.map_err(|e| e.to_string())?;
+            let linked =
+                store.ticket_for_external(GITHUB, &repo_id(&repo), &key).await.map_err(crate::workflow::err)?;
             if let Some(id) = linked {
-                let t = store.get_ticket_summary(&id).await.map_err(|e| e.to_string())?.ok_or("the ticket is gone")?;
+                let t =
+                    store.get_ticket_summary(&id).await.map_err(crate::workflow::err)?.ok_or("the ticket is gone")?;
                 return Ok(Outcome::next("exists", output(&t)));
             }
             if !c.create {
@@ -211,7 +213,7 @@ impl NodeKind for PrTicket {
                 t => t.chars().take(pdt_core::ticket::MAX_TITLE).collect(),
             };
             let new = NewTicket { title, description: Some(pr_description(&c, &key)), ..Default::default() };
-            let valid = new.validate().map_err(|e| e.to_string())?;
+            let valid = new.validate().map_err(crate::workflow::err)?;
             let url = match c.url.trim() {
                 "" => format!("https://github.com/{repo}/pull/{number}"),
                 u => u.to_string(),
@@ -224,7 +226,7 @@ impl NodeKind for PrTicket {
                     Ok(Outcome::next("created", output(&t.summary)))
                 }
                 Ok(Err(other)) => {
-                    let t = store.get_ticket_summary(&other).await.map_err(|e| e.to_string())?.ok_or("gone")?;
+                    let t = store.get_ticket_summary(&other).await.map_err(crate::workflow::err)?.ok_or("gone")?;
                     Ok(Outcome::next("exists", output(&t)))
                 }
                 Err(e) => Err(e.to_string()),

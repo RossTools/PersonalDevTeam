@@ -82,7 +82,7 @@ impl NodeKind for TicketProposal {
             }
             let id = crate::mcp::tools::resolve_ticket(cx.st, given, cx.run.project_id.as_deref()).await?;
             let store = &cx.st.store;
-            let t = store.get_ticket(&id).await.map_err(|e| e.to_string())?.ok_or("no such ticket")?;
+            let t = store.get_ticket(&id).await.map_err(crate::workflow::err)?.ok_or("no such ticket")?;
             if t.summary.stage != TicketStage::Draft {
                 return Ok(skipped("the ticket has left Draft"));
             }
@@ -94,7 +94,7 @@ impl NodeKind for TicketProposal {
             }
             let from_id = nonblank(&c.from_ticket).map(String::from);
             let from_key = match &from_id {
-                Some(f) => store.get_ticket_summary(f).await.map_err(|e| e.to_string())?.map(|s| s.key),
+                Some(f) => store.get_ticket_summary(f).await.map_err(crate::workflow::err)?.map(|s| s.key),
                 None => None,
             };
             let s = &t.summary;
@@ -131,7 +131,11 @@ impl NodeKind for TicketProposal {
                 created_at: now_ms(),
                 resolved_at: None,
             };
-            match store.add_inbox_item_once(&item, &format!("ticket-proposal:{id}")).await.map_err(|e| e.to_string())? {
+            match store
+                .add_inbox_item_once(&item, &format!("ticket-proposal:{id}"))
+                .await
+                .map_err(crate::workflow::err)?
+            {
                 Some(i) => {
                     crate::notifications::kick(cx.st);
                     Ok(Outcome::next("added", json!({"itemId": i.id})))
@@ -166,7 +170,7 @@ pub(crate) async fn decide(st: &AppState, item: &InboxItem, a: &InboxAnswer, by:
     }
     let store = &st.store;
     let id = item.ticket_id.as_deref().ok_or("the item has no ticket")?;
-    let t = store.get_ticket_summary(id).await.map_err(|e| e.to_string())?.ok_or("the ticket is gone")?;
+    let t = store.get_ticket_summary(id).await.map_err(crate::workflow::err)?.ok_or("the ticket is gone")?;
     let p = a.proposal.clone().unwrap_or_default();
     let note = a.text.as_deref().map(str::trim).filter(|n| !n.is_empty());
     let mut duplicate_of = None;
@@ -179,7 +183,8 @@ pub(crate) async fn decide(st: &AppState, item: &InboxItem, a: &InboxAnswer, by:
             if other == id {
                 return Err("a ticket can't be a duplicate of itself".into());
             }
-            let key = store.get_ticket_summary(&other).await.map_err(|e| e.to_string())?.ok_or("no such ticket")?.key;
+            let key =
+                store.get_ticket_summary(&other).await.map_err(crate::workflow::err)?.ok_or("no such ticket")?.key;
             duplicate_of = Some(other);
             Decision::Duplicate { of: key }
         }
@@ -198,7 +203,7 @@ pub(crate) async fn decide(st: &AppState, item: &InboxItem, a: &InboxAnswer, by:
                 ..Default::default()
             }
             .validate()
-            .map_err(|e| e.to_string())?,
+            .map_err(crate::workflow::err)?,
         ),
         _ => None,
     };
@@ -206,7 +211,11 @@ pub(crate) async fn decide(st: &AppState, item: &InboxItem, a: &InboxAnswer, by:
     if let Some(p) = &by.proposed_by {
         resolution["proposedBy"] = json!(p);
     }
-    if !store.end_inbox_item(&item.id, InboxStatus::Resolved, &resolution, now_ms()).await.map_err(|e| e.to_string())? {
+    if !store
+        .end_inbox_item(&item.id, InboxStatus::Resolved, &resolution, now_ms())
+        .await
+        .map_err(crate::workflow::err)?
+    {
         return Err("this item was already answered".into());
     }
     let to = decision.stage();
@@ -214,7 +223,7 @@ pub(crate) async fn decide(st: &AppState, item: &InboxItem, a: &InboxAnswer, by:
         Some(patch) => store.patch_ticket_by(id, &patch, &by, now_ms()).await,
         None => {
             if let Some(other) = &duplicate_of {
-                store.add_link(id, other, LinkKind::Relates, now_ms()).await.map_err(|e| e.to_string())?;
+                store.add_link(id, other, LinkKind::Relates, now_ms()).await.map_err(crate::workflow::err)?;
             }
             let since = now_ms();
             let moved = store.move_ticket_by(id, to, &by, Some(&json!({"via": "inbox"})), since).await;
@@ -226,7 +235,7 @@ pub(crate) async fn decide(st: &AppState, item: &InboxItem, a: &InboxAnswer, by:
             moved
         }
     };
-    let ticket = ticket.map_err(|e| e.to_string())?.ok_or("the ticket is gone")?;
+    let ticket = ticket.map_err(crate::workflow::err)?.ok_or("the ticket is gone")?;
     tell(st, item, &proposal::decision_text(&t.key, &ticket.summary.title, &decision, note)).await;
     Ok(json!({"stage": to, "key": t.key}))
 }

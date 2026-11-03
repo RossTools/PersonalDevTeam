@@ -69,7 +69,7 @@ impl Default for Http {
 #[async_trait::async_trait]
 impl ToolchainSource for Http {
     async fn get(&self, url: &str, limit: u64) -> Result<Vec<u8>, String> {
-        let mut res = self.0.get(url).send().await.map_err(|e| e.to_string())?;
+        let mut res = self.0.get(url).send().await.map_err(|e| e.without_url().to_string())?;
         if !res.status().is_success() {
             return Err(format!("{url} answered {}", res.status()));
         }
@@ -77,7 +77,7 @@ impl ToolchainSource for Http {
             return Err(format!("{url} is larger than PDT downloads"));
         }
         let mut body = Vec::new();
-        while let Some(chunk) = res.chunk().await.map_err(|e| e.to_string())? {
+        while let Some(chunk) = res.chunk().await.map_err(|e| e.without_url().to_string())? {
             body.extend_from_slice(&chunk);
             if body.len() as u64 > limit {
                 return Err(format!("{url} is larger than PDT downloads"));
@@ -256,7 +256,7 @@ pub async fn install(st: &AppState, def: &AcpAgentDef) -> Result<Installed, ApiE
     let installed = tokio::task::spawn_blocking(move || put_in_place(&data_dir, &release, &bytes))
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?
-        .map_err(|e| ApiError::internal(format!("could not install {}: {e}", def.label)))?;
+        .map_err(|e| ApiError::internal_as(&format!("could not install {} (PDT's log says why)", def.label), e))?;
     tracing::info!(agent = %def.id, version = %installed.version, "installed an ACP agent's program");
     Ok(installed)
 }

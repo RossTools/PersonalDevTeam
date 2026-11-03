@@ -504,7 +504,7 @@ impl NodeKind for GithubChangeRequest {
                 let status = tokio::task::spawn_blocking(move || {
                     let mut all = vec![];
                     for p in &ci {
-                        all.extend(CiStatus::of(&p.runs(&r, &b, Some(&sha)).map_err(|e| e.to_string())?, &sha));
+                        all.extend(CiStatus::of(&p.runs(&r, &b, Some(&sha)).map_err(|forge| forge.to_string())?, &sha));
                     }
                     Ok::<_, String>(CiStatus::combine(all))
                 })
@@ -1098,7 +1098,7 @@ impl NodeKind for GithubNightly {
                 return Ok(quiet("expired"));
             }
             let store = &cx.st.store;
-            let open = store.open_items_for_step(&cx.step.id).await.map_err(|e| e.to_string())?;
+            let open = store.open_items_for_step(&cx.step.id).await.map_err(crate::workflow::err)?;
             if open.is_empty() {
                 let changed = match (&read.base, read.ahead) {
                     _ if !c.only_if_changed => String::new(),
@@ -1142,7 +1142,7 @@ impl NodeKind for GithubNightly {
                 // Once per workflow and day: a second run the same day (a catch-up) leaves it to the first. (The key
                 // keeps version 1's name, so an upgrade on the day adds no second item.)
                 let key = format!("nightly-missing:{}:{day}", cx.workflow.id);
-                match store.add_inbox_item_once(&item, &key).await.map_err(|e| e.to_string())? {
+                match store.add_inbox_item_once(&item, &key).await.map_err(crate::workflow::err)? {
                     Some(_) => crate::notifications::kick(cx.st),
                     None => return Ok(quiet("already")),
                 }

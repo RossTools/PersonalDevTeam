@@ -64,13 +64,13 @@ impl NodeKind for CloseParent {
             }
             let store = &cx.st.store;
             let id = crate::mcp::tools::resolve_ticket(cx.st, &c.ticket, cx.run.project_id.as_deref()).await?;
-            let part = store.get_ticket_summary(&id).await.map_err(|e| e.to_string())?.ok_or("no such ticket")?;
+            let part = store.get_ticket_summary(&id).await.map_err(crate::workflow::err)?.ok_or("no such ticket")?;
             let Some(parent_ref) = part.parent else { return Ok(skipped("the ticket is not a part")) };
-            let Some(parent) = store.get_ticket(&parent_ref.id).await.map_err(|e| e.to_string())? else {
+            let Some(parent) = store.get_ticket(&parent_ref.id).await.map_err(crate::workflow::err)? else {
                 return Ok(skipped("the parent is gone"));
             };
             let parts: Vec<TicketStage> = parent.part_list.iter().map(|p| p.stage).collect();
-            let busy = store.active_attempt(&parent_ref.id).await.map_err(|e| e.to_string())?.is_some()
+            let busy = store.active_attempt(&parent_ref.id).await.map_err(crate::workflow::err)?.is_some()
                 || parent.sessions.iter().any(|s| s.status == SessionStatus::Running);
             let follow = parent_follow(parent.summary.stage, &parts, busy);
             let out = |stage: TicketStage| {
@@ -97,7 +97,7 @@ impl NodeKind for CloseParent {
             let moved = store
                 .move_ticket_by(&parent_ref.id, to, Actor::System, Some(&data), since)
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(crate::workflow::err)?
                 .ok_or("the parent is gone")?;
             if to.is_closed() {
                 crate::start::close_attempt(cx.st, &parent_ref.id, to, since, Actor::System, Some(&cx.run.id))

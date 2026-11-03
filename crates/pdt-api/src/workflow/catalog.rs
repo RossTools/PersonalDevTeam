@@ -125,7 +125,7 @@ impl StepCx<'_> {
             .set_step_progress(&self.step.id, self.step.attempts, progress)
             .await
             .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(crate::workflow::err)
     }
 
     /// The workflow and run, for records of what a workflow did (vision principle 5).
@@ -255,7 +255,7 @@ pub fn in_scope(wf: &Workflow, event: &LogEvent) -> bool {
 /// A config of type `C`, or why not.
 pub fn parse<C: DeserializeOwned>(config: &Value) -> Result<C, String> {
     let v = if config.is_null() { Value::Object(Default::default()) } else { config.clone() };
-    serde_json::from_value(v).map_err(|e| e.to_string())
+    serde_json::from_value(v).map_err(crate::workflow::err)
 }
 
 /// The JSON Schema of `T`.
