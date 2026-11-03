@@ -70,6 +70,11 @@ A setting marked **env** is set by an environment variable PDT was started with 
 which wins over the setting, so you can't change it here. See
 [Troubleshooting](../troubleshooting/troubleshooting.md#the-port-is-in-use-or-the-field-is-locked).
 
+### Startup
+
+**Start PDT at login**: whether PDT's background service starts when you log in (on by default). Turning it off
+leaves PDT running until you stop it or log out. See [Starting at login](updates.md#starting-at-login).
+
 ### Remote access
 
 **Serve on the tailnet**, its **Status** and address, and the **Owner**. See

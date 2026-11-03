@@ -104,7 +104,8 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
     let update_item = MenuItem::with_id(app, "update", "Checking for updates…", false, None::<&str>)?;
     let restart_item = MenuItem::with_id(app, "restart", "Restart daemon", false, None::<&str>)?;
     let version_item = MenuItem::with_id(app, "version", "Version …", false, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", api::QUIT_TRAY, true, None::<&str>)?;
+    let stop = MenuItem::with_id(app, "stop", api::STOP_AND_QUIT, true, None::<&str>)?;
     let placement_item = MenuItem::with_id(app, "placement", "", true, None::<&str>)?;
     let login = daemon::tray_login(profile);
     let login_item = CheckMenuItem::with_id(app, "login", "Start at login", login.is_some(), false, None::<&str>)?;
@@ -118,6 +119,7 @@ fn setup(app: &mut tauri::App, profile: Profile) -> Result<(), Box<dyn std::erro
             &version_item,
             &PredefinedMenuItem::separator(app)?,
             &quit,
+            &stop,
         ],
     )?;
     if login.is_some() {
@@ -235,8 +237,40 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         "login" => login_clicked(app),
         // Only the tray exits: pdt-host keeps pdtd running.
         "quit" => app.exit(0),
+        "stop" => stop_clicked(app),
         _ => {}
     }
+}
+
+/// "Stop PDT and quit" (PDT-489): asks first when something would be interrupted, then stops pdt-host and pdtd until
+/// the next login (`pdt-host stop`) and exits the tray.
+fn stop_clicked(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let tray = app.state::<Tray>();
+        // A pdtd that doesn't answer has nothing to interrupt.
+        let busy = match api::call(tray.port(), "GET", "/api/host/busy", None) {
+            Ok((200, v)) => api::busy_reasons(&v),
+            _ => Vec::new(),
+        };
+        if let Some(question) = api::stop_question(&busy)
+            && !ask(&app, &question, "Stop PDT")
+        {
+            return;
+        }
+        if !tray.begin() {
+            return;
+        }
+        let _ = tray.restart_item.set_enabled(false);
+        match daemon::stop_pdt(tray.profile) {
+            Ok(()) => app.exit(0),
+            Err(e) => {
+                error_dialog(&app, format!("Could not stop {PRODUCT_NAME}: {e}")).show(|_| {});
+                let _ = tray.restart_item.set_enabled(true);
+                tray.end();
+            }
+        }
+    });
 }
 
 /// "Start at login": the item has already toggled itself; make the registration follow, or put it back.

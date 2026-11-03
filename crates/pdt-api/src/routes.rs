@@ -59,6 +59,9 @@ pub struct AppState {
     /// The Tailscale CLI. `new` installs [`pdt_tailscale::Unavailable`], which runs nothing; only pdtd's production
     /// wiring installs the real CLI, so tests can never touch the machine's Tailscale (it serves the stable instance).
     pub tailscale: std::sync::Arc<dyn pdt_tailscale::TailscaleApi>,
+    /// pdt-host's login item (Settings → This host). `new` installs [`crate::host_service::Unavailable`], which
+    /// changes nothing; only pdtd's production wiring installs the real one.
+    pub start_at_login: std::sync::Arc<dyn crate::host_service::StartAtLogin>,
     /// The forge plugins (PDT-241), which `crate::forge::project_forge` asks for a project's forge (a plugin counts
     /// while the integration that declares its kind is enabled, [`crate::Integration::forge_kind`]). `new` has GitHub
     /// with no network ([`pdt_github::GithubApi::offline`]); only pdtd's production wiring installs one that reaches
@@ -272,6 +275,9 @@ impl AppState {
             host_env: Default::default(),
             allowed_hosts: Default::default(),
             tailscale: std::sync::Arc::new(pdt_tailscale::Unavailable),
+            start_at_login: std::sync::Arc::new(crate::host_service::Unavailable(
+                "PDT wasn't started by its host supervisor".into(),
+            )),
             forges: pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_github::plugin::GithubPlugin::new(
                 std::sync::Arc::new(pdt_github::GithubApi::offline()),
             ))]),
@@ -468,6 +474,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::guides::router())
         .merge(crate::hooks::router())
         .merge(crate::host::router())
+        .merge(crate::host_service::router())
         .merge(crate::identity_guard::router())
         .merge(crate::inbox::router())
         .merge(crate::issues::router())

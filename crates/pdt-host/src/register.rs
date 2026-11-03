@@ -124,7 +124,7 @@ pub fn run_key_command(program: &Path, install_dir: &Path) -> String {
     format!("\"{}\" run --install-dir \"{dir}\"", program.display())
 }
 
-const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+pub(crate) const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
 /// The systemd unit runs pdt-host with this variable set to `systemd`: after an update that changes pdt-host it then
 /// just exits and systemd starts the new one, as launchd does on macOS.
@@ -171,7 +171,7 @@ WantedBy=default.target
     )
 }
 
-fn systemctl<I, S>(args: I) -> Command
+pub(crate) fn systemctl<I, S>(args: I) -> Command
 where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
@@ -288,7 +288,7 @@ pub fn running_program(data_dir: &Path) -> Option<PathBuf> {
     (!text.is_empty()).then(|| PathBuf::from(text))
 }
 
-fn launchd_domain(runner: &mut dyn Runner) -> Result<String, String> {
+pub(crate) fn launchd_domain(runner: &mut dyn Runner) -> Result<String, String> {
     let mut id = Command::new("id");
     id.arg("-u");
     let uid = runner.stdout(id)?.trim().to_string();
@@ -298,7 +298,7 @@ fn launchd_domain(runner: &mut dyn Runner) -> Result<String, String> {
     Ok(format!("gui/{uid}"))
 }
 
-fn launchctl<I, S>(args: I) -> Command
+pub(crate) fn launchctl<I, S>(args: I) -> Command
 where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
@@ -327,6 +327,9 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
     }
     let program = registered_program(target.os, cfg);
     let running = host_running(&cfg.data_dir);
+    // Settings → This host turned starting at login off: pdt-host is started, but not registered (an update's
+    // installer runs `install` again on Windows).
+    let wanted = crate::login::wanted(&cfg.data_dir);
     match target.os {
         Os::Mac => {
             if !program.is_file() {
@@ -336,6 +339,10 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
             // pdt-host could never install an update (PDT-51).
             if let Some(reason) = crate::placement::bundle_problem(&cfg.install_dir) {
                 return Err(format!("not starting this copy at login: {reason}"));
+            }
+            if !wanted {
+                // The tray starts pdt-host itself when the app opens.
+                return Ok(());
             }
             let home = target.home.ok_or("no home folder")?;
             let plist = launch_agent_path(home);
@@ -366,12 +373,14 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
                         .map_err(|e| format!("copying {} to {}: {e}", target.exe.display(), program.display()))?;
                 }
             }
-            let mut reg = Command::new("reg");
-            reg.args(["add", RUN_KEY, "/v", HOST_AUTOSTART_NAME, "/t", "REG_SZ", "/d"])
-                .arg(run_key_command(&program, &cfg.install_dir))
-                .arg("/f");
-            if !runner.status(reg)? {
-                return Err("reg add failed".into());
+            if wanted {
+                let mut reg = Command::new("reg");
+                reg.args(["add", RUN_KEY, "/v", HOST_AUTOSTART_NAME, "/t", "REG_SZ", "/d"])
+                    .arg(run_key_command(&program, &cfg.install_dir))
+                    .arg("/f");
+                if !runner.status(reg)? {
+                    return Err("reg add failed".into());
+                }
             }
             if !running {
                 let mut cmd = Command::new(&program);
@@ -405,6 +414,13 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
                     return Err("the running pdt-host did not stop".into());
                 }
             }
+            if !wanted {
+                // Started for now, not enabled for the next login.
+                if (!running || target.replace) && !runner.status(systemctl(["start", HOST_SYSTEMD_UNIT]))? {
+                    return Err(format!("systemctl --user start {HOST_SYSTEMD_UNIT} failed"));
+                }
+                return Ok(());
+            }
             // A pdt-host that runs already (the service's, or one the tray started) keeps running: the service is
             // only enabled, for the next boot or login.
             let enable = if running && !target.replace {
@@ -423,7 +439,7 @@ pub fn install_with(cfg: &HostConfig, target: &Target, runner: &mut dyn Runner) 
 
 /// Stops the pdt-host holding the data folder's lock (one launchd did not run, e.g. started by the tray) and waits up
 /// to `stop_timeout` for the lock to be free: whether it is.
-fn stop_running_host(cfg: &HostConfig, os: Os, runner: &mut dyn Runner) -> bool {
+pub(crate) fn stop_running_host(cfg: &HostConfig, os: Os, runner: &mut dyn Runner) -> bool {
     let free = |within: Duration| {
         let deadline = Instant::now() + within;
         loop {
@@ -525,6 +541,8 @@ pub fn uninstall_with(cfg: &HostConfig, os: Os, dirs: Dirs, runner: &mut dyn Run
         }
         Os::Other => {}
     }
+    // A later install registers again, whatever Settings said before.
+    let _ = std::fs::remove_file(crate::login::off_marker(&cfg.data_dir));
     // The tray's own login item goes too (PDT-148); it would only start an app that is gone.
     if let Err(e) = crate::tray_login::unregister(os, home, runner) {
         eprintln!("could not remove the tray's login item: {e}");
@@ -548,7 +566,7 @@ fn stop_host(cfg: &HostConfig, os: Os, runner: &mut dyn Runner) {
 }
 
 /// Asks `cfg`'s pdtd to stop and waits (up to `stop_timeout`) until its port and its data folder lock are free.
-fn stop_pdtd(cfg: &HostConfig) {
+pub(crate) fn stop_pdtd(cfg: &HostConfig) {
     if !matches!(probe(cfg.port), Probe::Ours { .. }) {
         return;
     }
@@ -561,7 +579,7 @@ fn stop_pdtd(cfg: &HostConfig) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::VecDeque;
 
@@ -619,11 +637,11 @@ mod tests {
 
     /// Records every command instead of running it.
     #[derive(Default)]
-    struct Recorder {
-        ran: Vec<String>,
-        spawned: Vec<Command>,
+    pub(crate) struct Recorder {
+        pub(crate) ran: Vec<String>,
+        pub(crate) spawned: Vec<Command>,
         /// Results for `status`, in order (default: success).
-        statuses: VecDeque<bool>,
+        pub(crate) statuses: VecDeque<bool>,
     }
 
     fn line(cmd: &Command) -> String {
@@ -654,21 +672,21 @@ mod tests {
         std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
     }
 
-    struct Setup {
+    pub(crate) struct Setup {
         _tmp: tempfile::TempDir,
-        cfg: HostConfig,
-        exe: PathBuf,
-        home: PathBuf,
-        config: PathBuf,
+        pub(crate) cfg: HostConfig,
+        pub(crate) exe: PathBuf,
+        pub(crate) home: PathBuf,
+        pub(crate) config: PathBuf,
     }
 
     impl Setup {
-        fn dirs(&self) -> Dirs<'_> {
+        pub(crate) fn dirs(&self) -> Dirs<'_> {
             Dirs { home: Some(&self.home), config: Some(&self.config) }
         }
     }
 
-    fn setup() -> Setup {
+    pub(crate) fn setup() -> Setup {
         let tmp = tempfile::tempdir().unwrap();
         let exe = tmp.path().join("app").join("pdt-host-built");
         std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
@@ -687,7 +705,7 @@ mod tests {
         Setup { _tmp: tmp, cfg, exe, home, config }
     }
 
-    fn target(s: &Setup, os: Os) -> Target<'_> {
+    pub(crate) fn target(s: &Setup, os: Os) -> Target<'_> {
         Target { os, exe: &s.exe, home: Some(&s.home), config: Some(&s.config), replace: false }
     }
 
@@ -724,7 +742,7 @@ mod tests {
     }
 
     /// Holds the data folder's pdt-host lock, as a running pdt-host does.
-    fn hold_lock(cfg: &HostConfig) -> std::fs::File {
+    pub(crate) fn hold_lock(cfg: &HostConfig) -> std::fs::File {
         std::fs::create_dir_all(&cfg.data_dir).unwrap();
         let f = std::fs::File::options()
             .create(true)
@@ -1109,7 +1127,7 @@ mod tests {
     }
 
     /// Answers health as ours, records each request line, and accepts a shutdown.
-    fn fake_pdtd() -> (u16, std::sync::mpsc::Receiver<String>) {
+    pub(crate) fn fake_pdtd() -> (u16, std::sync::mpsc::Receiver<String>) {
         use std::io::{Read, Write};
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();

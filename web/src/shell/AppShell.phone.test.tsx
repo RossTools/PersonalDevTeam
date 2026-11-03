@@ -349,7 +349,7 @@ describe('phone', () => {
     const main = screen.getByRole('main');
     const sections = await within(main).findByRole('grid', { name: 'Sections' });
     expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual([
-      'Updates', 'Agents', 'PM', 'Network', 'Remote access', 'Runs', 'Storage', 'Projects folder', 'Documents', 'Appearance', 'Bug reports', 'Checks', 'Setup', 'Danger zone',
+      'Updates', 'Agents', 'PM', 'Network', 'Startup', 'Remote access', 'Runs', 'Storage', 'Projects folder', 'Documents', 'Appearance', 'Bug reports', 'Checks', 'Setup', 'Danger zone',
     ]);
     await userEvent.click(within(sections).getByRole('row', { name: /Runs/ }));
     expect(here()).toBe('/settings/host/runs');
