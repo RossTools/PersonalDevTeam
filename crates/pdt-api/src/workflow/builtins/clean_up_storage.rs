@@ -19,6 +19,7 @@ pub static SETTINGS: InputsBuiltin = InputsBuiltin {
     template: storage_template,
     finish: Some(finish),
     read: None,
+    extra: None,
 };
 
 /// The most a threshold can be, in GB.

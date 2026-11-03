@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { StuckAgentsView } from '../api/gen/StuckAgentsView';
+import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import { renderWithQuery, stubApi } from '../test-utils';
 import { StuckAgents } from './StuckAgents';
 
@@ -15,9 +15,9 @@ const defaults = {
   onLoopLimit: 'ask', timeoutRestarts: 1,
 };
 
-const view = (over: Partial<StuckAgentsView> = {}, values: Record<string, unknown> = {}): StuckAgentsView => ({
+const view = (over: Partial<BuiltinSettingsView> = {}, values: Record<string, unknown> = {}): BuiltinSettingsView => ({
   workflowId: 'w1', name: 'When an agent is stuck', enabled: true, customized: false, params: [],
-  values: { ...defaults, ...values }, defaults, ...over,
+  values: { ...defaults, ...values }, defaults, channels: [], ...over,
 });
 
 describe('Settings → Agents → When an agent is stuck (PDT-367)', () => {

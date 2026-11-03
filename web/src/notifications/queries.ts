@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tansta
 import { toast } from '@ui';
 import { api } from '../api/client';
 import { actionError } from '../common/useAction';
-import { invalidateWorkflow } from '../workflows/queries';
+import { invalidateWorkflow, workflowKeys } from '../workflows/queries';
 import type { NotificationList } from '../api/gen/NotificationList';
 import type { NotificationRulesView } from '../api/gen/NotificationRulesView';
 import { streamPoll } from '../common/poll';
@@ -101,7 +101,7 @@ export function useNotificationRulesActions() {
   const qc = useQueryClient();
   const done = (v: NotificationRulesView) => {
     qc.setQueryData(RULES, v);
-    void qc.invalidateQueries({ queryKey: ['workflow', v.workflowId] });
+    void qc.invalidateQueries({ queryKey: workflowKeys.one(v.workflowId) });
   };
   const save = useMutation({ meta: { errorShown: true }, mutationFn: api.saveNotificationRules, onSuccess: done });
   const reset = useMutation({ mutationFn: api.resetNotificationRules, onSuccess: done });
