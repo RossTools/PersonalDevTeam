@@ -252,29 +252,14 @@ async fn notification_rules_post_questions_and_failed_runs_to_discord() {
     .await;
     let r = run_now(&env, &fails, json!({})).await;
     assert_eq!(r["status"], "failed", "{r}");
-    let item = pdt_core::inbox::InboxItem {
-        id: "q1".into(),
-        kind: pdt_core::inbox::InboxKind::Question,
-        group: pdt_core::inbox::InboxGroup::Question,
-        status: pdt_core::inbox::InboxStatus::Open,
-        project_id: None,
-        ticket_id: None,
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: None,
-        session_id: None,
-        run_id: None,
-        step_id: None,
-        persona_id: None,
-        persona_name: None,
-        change_request: None,
-        title: "Which database?".into(),
-        body: json!({}),
-        choices: vec![],
-        resolution: Value::Null,
-        created_at: pdt_api::sdk::now_ms(),
-        resolved_at: None,
-    };
+    let item = pdt_core::inbox::InboxItem::new(
+        "q1",
+        pdt_core::inbox::InboxKind::Question,
+        pdt_core::inbox::InboxGroup::Question,
+        "Which database?",
+        json!({}),
+        pdt_api::sdk::now_ms(),
+    );
     env.state.store.open_inbox_item(&item).await.unwrap();
     pdt_api::sync_notifications(&env.state).await;
     for _ in 0..6 {
