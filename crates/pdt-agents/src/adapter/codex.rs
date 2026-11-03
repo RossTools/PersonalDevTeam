@@ -4,7 +4,7 @@
 
 use super::{
     AdapterError, AdapterOutput, AgentAdapter, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing,
-    SessionChange,
+    REQUEST_TIMEOUT, START_TIMEOUT, SessionChange,
 };
 use futures_util::{SinkExt, StreamExt};
 use pdt_core::conversation::codex::{CodexMapper, CodexOut, SideTurn, codex_policy, sandbox_policy};
@@ -22,10 +22,6 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
-/// How long a request to the server may take.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-/// How long a new server gets to start listening.
-const START_TIMEOUT: Duration = Duration::from_secs(30);
 /// The env var the TUI reads the token from (`--remote-auth-token-env`).
 pub const TOKEN_ENV: &str = "PDT_CODEX_TOKEN";
 
@@ -90,21 +86,10 @@ impl Conn {
     }
 
     fn kill(&self) {
-        let Some(pid) = self.pid else { return };
-        #[cfg(unix)]
-        if let Ok(pid) = i32::try_from(pid) {
-            unsafe {
-                libc::kill(-pid, libc::SIGTERM);
-            }
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(1500));
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
-            });
+        // The child leads its own process group: end its tools too.
+        if let Some(pid) = self.pid {
+            crate::proc::terminate_group(pid, crate::proc::KILL_GRACE);
         }
-        #[cfg(windows)]
-        std::thread::spawn(move || crate::pty::kill_tree(pid));
     }
 }
 

@@ -14,9 +14,6 @@ pub const DISCORD_WEBHOOK: &str = "discord_webhook";
 /// Discord's limit on one message's content.
 pub const MAX_CONTENT: usize = 2000;
 
-/// How many times a rate-limited post is tried.
-const TRIES: u32 = 4;
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
@@ -136,7 +133,7 @@ async fn post(url: &str, thread: Option<&str>, body: &Value) -> Result<String, S
     if let Some(t) = thread {
         query.push(("thread_id", t.to_string()));
     }
-    for _ in 0..TRIES {
+    for _ in 0..crate::TRIES {
         let resp = client()
             .post(url)
             .query(&query)

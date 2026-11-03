@@ -575,7 +575,7 @@ fn author(by: Option<Actor>) -> (Actor, String) {
 }
 
 /// The longest comment kept (characters).
-const MAX_COMMENT: usize = 20_000;
+const MAX_COMMENT: usize = pdt_core::limits::COMMENT;
 
 fn comment_body(body: &str) -> Result<String, ApiError> {
     let body = body.trim();

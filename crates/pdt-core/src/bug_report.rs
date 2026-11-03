@@ -48,7 +48,7 @@ pub const TICKET_LABEL: &str = "bug";
 pub const LOG_LINES: usize = 50;
 /// How long a report's nonce is remembered: the same nonce again within it gets the first report back.
 pub const NONCE_TTL_MS: i64 = 60_000;
-const MAX_TITLE: usize = 200;
+const MAX_TITLE: usize = crate::limits::TITLE;
 const MAX_DESCRIPTION: usize = 20_000;
 
 /// The sections of a report's body, in order: the same labels as the bug form on GitHub

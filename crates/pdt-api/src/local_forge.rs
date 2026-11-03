@@ -39,9 +39,6 @@ use std::time::Duration;
 /// The longest one CI run may take before it is stopped and fails.
 const CI_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
 
-/// The longest a push to (or a fetch from) the remote may take.
-const REMOTE_LIMIT: Duration = Duration::from_secs(2 * 60);
-
 /// How many times a change request's refused push is recovered before PDT asks the user instead.
 const MAX_RECOVERIES: u32 = 3;
 
@@ -265,7 +262,7 @@ impl LocalForge {
         let Some(push) = self.push.clone().filter(|p| p.branches) else { return };
         let (repo, spec) = (self.repo.clone(), format!("+refs/heads/{branch}:refs/heads/{branch}"));
         self.rt.spawn_blocking(move || {
-            if let Err(e) = pdt_git::push(&repo, &push.remote, &[&spec], REMOTE_LIMIT) {
+            if let Err(e) = pdt_git::push(&repo, &push.remote, &[&spec], pdt_git::BACKGROUND_REMOTE_TIMEOUT) {
                 tracing::warn!(remote = %push.remote, %spec, error = %e, "could not push a ticket branch");
             }
         });
@@ -294,9 +291,11 @@ impl LocalForge {
         };
         let base = &change.base_branch;
         let (repo, remote, spec) = (self.repo.clone(), push.remote.clone(), format!("{commit}:refs/heads/{base}"));
-        let pushed = tokio::task::spawn_blocking(move || pdt_git::push(&repo, &remote, &[&spec], REMOTE_LIMIT))
-            .await
-            .map_err(failed)?;
+        let pushed = tokio::task::spawn_blocking(move || {
+            pdt_git::push(&repo, &remote, &[&spec], pdt_git::BACKGROUND_REMOTE_TIMEOUT)
+        })
+        .await
+        .map_err(failed)?;
         match pushed {
             Ok(pdt_git::PushOutcome::Pushed) => {}
             Ok(pdt_git::PushOutcome::Rejected(why)) => {
@@ -516,7 +515,8 @@ fn short(sha: &str) -> &str {
 /// local base has commits the remote lacks) or the local base can't move.
 fn catch_up(repo: &std::path::Path, remote: &str, base: &str) -> Result<String, String> {
     let tracking = format!("refs/remotes/{remote}/{base}");
-    pdt_git::fetch(repo, remote, &format!("+refs/heads/{base}:{tracking}"), REMOTE_LIMIT).map_err(|e| e.to_string())?;
+    pdt_git::fetch(repo, remote, &format!("+refs/heads/{base}:{tracking}"), pdt_git::BACKGROUND_REMOTE_TIMEOUT)
+        .map_err(|e| e.to_string())?;
     let tip = pdt_git::rev_parse(repo, &tracking).ok_or_else(|| format!("`{remote}` has no `{base}`"))?;
     let old = pdt_git::rev_parse(repo, &format!("refs/heads/{base}")).ok_or_else(|| format!("no local `{base}`"))?;
     if old == tip || pdt_git::is_ancestor(repo, &tip, &old) {

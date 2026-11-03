@@ -16,16 +16,11 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot, watch};
 
 /// How much of the agent's error output is kept to explain a crash.
 const STDERR_TAIL: usize = 4096;
-/// How long a control request may take.
-const CONTROL_TIMEOUT: Duration = Duration::from_secs(15);
-/// How long a closing process gets after its stdin closes before it is killed.
-const CLOSE_GRACE: Duration = Duration::from_secs(5);
 
 /// The `claude -p` arguments for a session. Never `--bare` (it would stop using the plan login), never PDT's hook
 /// settings (activity comes from the protocol).
@@ -245,7 +240,7 @@ impl Shared {
             self.replies.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
             return Err(e);
         }
-        match tokio::time::timeout(CONTROL_TIMEOUT, rx).await {
+        match tokio::time::timeout(super::REQUEST_TIMEOUT, rx).await {
             Ok(Ok(Ok(v))) => Ok(v),
             Ok(Ok(Err(e))) => Err(AdapterError::Refused(e)),
             Ok(Err(_)) => Err(AdapterError::NotRunning),
@@ -432,22 +427,10 @@ impl ClaudeLive {
     }
 
     fn kill(&self) {
-        let Some(pid) = self.shared.pid else { return };
-        #[cfg(unix)]
-        if let Ok(pid) = i32::try_from(pid) {
-            // The child leads its own process group: end its tools too.
-            unsafe {
-                libc::kill(-pid, libc::SIGTERM);
-            }
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(1500));
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
-            });
+        // The child leads its own process group: end its tools too.
+        if let Some(pid) = self.shared.pid {
+            crate::proc::terminate_group(pid, crate::proc::KILL_GRACE);
         }
-        #[cfg(windows)]
-        std::thread::spawn(move || crate::pty::kill_tree(pid));
     }
 }
 
@@ -507,11 +490,7 @@ impl LiveConversation for ClaudeLive {
     async fn close(&self) {
         self.shared.closing.store(true, Ordering::SeqCst);
         self.shared.stdin.lock().unwrap_or_else(|e| e.into_inner()).take();
-        let mut exited = self.exited.clone();
-        if tokio::time::timeout(CLOSE_GRACE, exited.wait_for(|e| *e)).await.is_err() {
-            self.kill();
-            let _ = tokio::time::timeout(Duration::from_secs(5), exited.wait_for(|e| *e)).await;
-        }
+        super::await_close(self.exited.clone(), || self.kill()).await;
     }
 
     fn is_alive(&self) -> bool {

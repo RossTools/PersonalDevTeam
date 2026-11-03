@@ -21,9 +21,6 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use ts_rs::TS;
 
-/// How many times a rate-limited request is tried.
-const TRIES: u32 = 4;
-
 /// A bot on one server.
 pub(crate) struct Bot {
     base: String,
@@ -71,7 +68,7 @@ impl Bot {
         file: Option<(&str, &str)>,
     ) -> Result<Value, String> {
         let url = format!("{}{path}", self.base);
-        for _ in 0..TRIES {
+        for _ in 0..crate::TRIES {
             let mut req =
                 client().request(method.clone(), &url).header("Authorization", format!("Bot {}", self.token)).header(
                     "User-Agent",

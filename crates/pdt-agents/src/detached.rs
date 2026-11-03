@@ -22,9 +22,6 @@ use tokio::sync::oneshot;
 
 /// How often a watcher checks whether the processes are still alive.
 const WATCH_EVERY: Duration = Duration::from_millis(500);
-/// How long the processes get to act on SIGTERM before they are killed (unix).
-#[cfg(unix)]
-const TERM_GRACE: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone)]
 pub struct DetachedSpec {
@@ -123,11 +120,11 @@ pub fn watch(process: String, mut main: Option<std::process::Child>) -> oneshot:
 
 #[cfg(unix)]
 mod sys {
-    use super::{DetachedSpec, TERM_GRACE};
+    use super::DetachedSpec;
     use std::os::unix::process::CommandExt;
 
     fn pgid(process: &str) -> Option<libc::pid_t> {
-        process.strip_prefix("pgid:")?.parse().ok().filter(|p: &libc::pid_t| *p > 1)
+        process.strip_prefix("pgid:")?.parse().ok().and_then(crate::proc::pgid)
     }
 
     pub(super) fn spawn(
@@ -151,22 +148,9 @@ mod sys {
     }
 
     pub(super) fn terminate(process: &str) {
-        let Some(g) = pgid(process) else { return };
-        if unsafe { libc::kill(-g, libc::SIGTERM) } != 0 {
-            return;
+        if let Some(g) = pgid(process) {
+            crate::proc::signal_group(g, libc::SIGTERM, crate::proc::KILL_GRACE, || {});
         }
-        std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + TERM_GRACE;
-            while std::time::Instant::now() < deadline {
-                if unsafe { libc::kill(-g, 0) } != 0 {
-                    return;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            unsafe {
-                libc::kill(-g, libc::SIGKILL);
-            }
-        });
     }
 
     pub(super) struct Tracker(String);

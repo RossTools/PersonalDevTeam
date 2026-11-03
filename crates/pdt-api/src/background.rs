@@ -5,6 +5,14 @@ use crate::AppState;
 use crate::loops::{Start, run_every};
 use std::time::Duration;
 
+/// How often each active attempt's changed files and overlaps are read again.
+const OVERLAPS_EVERY: Duration = Duration::from_secs(30);
+/// How often the workflow engine ticks.
+const ENGINE_EVERY: Duration = Duration::from_secs(2);
+/// How many times, and how far apart, an agent check that did not finish at startup runs again.
+const STARTUP_CHECK_RETRIES: usize = 3;
+const STARTUP_CHECK_AGAIN_AFTER: Duration = Duration::from_secs(30);
+
 /// Starts them (pdtd, once).
 pub fn start_background(state: &AppState) {
     // The forge logins, every 5 minutes (PDT-252).
@@ -16,12 +24,12 @@ pub fn start_background(state: &AppState) {
         |st| async move { crate::forge_login::check(&st).await },
     ));
     // Each active attempt's changed files and the overlaps they make, every 30 s.
-    tokio::spawn(run_every(state.clone(), "overlaps", Duration::from_secs(30), Start::Now, |st| async move {
+    tokio::spawn(run_every(state.clone(), "overlaps", OVERLAPS_EVERY, Start::Now, |st| async move {
         crate::refresh_overlaps(&st).await
     }));
     // The workflow engine: new events start runs, runs go on, messages wait for their agent session to be
     // idle. Built-in workflows (PR notices, finishing merged tickets) are installed on the first tick.
-    tokio::spawn(run_every(state.clone(), "engine", Duration::from_secs(2), Start::Now, |st| async move {
+    tokio::spawn(run_every(state.clone(), "engine", ENGINE_EVERY, Start::Now, |st| async move {
         crate::run_workflows(&st).await
     }));
     // Time-based activity signals (no output while working, a Claude hook that never came).
@@ -45,7 +53,6 @@ pub fn start_background(state: &AppState) {
     // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as.
     {
         let st = state.clone();
-        const STARTUP_CHECK_RETRIES: usize = 3;
         tokio::spawn(async move {
             let mut c = crate::run_host_checks(&st).await;
             // An agent's check that did not finish (a slow first launch while sessions restart) runs again, so the
@@ -54,7 +61,7 @@ pub fn start_background(state: &AppState) {
                 if !c.agents_inconclusive() || st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
                     break;
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                tokio::time::sleep(STARTUP_CHECK_AGAIN_AFTER).await;
                 c = crate::run_host_checks(&st).await;
             }
             for (name, check) in [("claude", &c.claude), ("codex", &c.codex), ("devin", &c.devin)] {
@@ -79,7 +86,7 @@ pub fn start_background(state: &AppState) {
                 == crate::loops::Ended::Panicked
                 && !st.shutting_down.load(std::sync::atomic::Ordering::SeqCst)
             {
-                tokio::time::sleep(Duration::from_secs(60)).await;
+                tokio::time::sleep(crate::loops::RESTART_AFTER).await;
             }
         });
     }

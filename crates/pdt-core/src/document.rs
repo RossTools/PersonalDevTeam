@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// The longest title kept (in characters).
-pub const MAX_TITLE: usize = 200;
+pub const MAX_TITLE: usize = crate::limits::TITLE;
 
 /// A text document or a spreadsheet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS, schemars::JsonSchema)]
