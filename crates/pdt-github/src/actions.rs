@@ -110,12 +110,17 @@ impl CiProvider for GithubActions {
             Err(e) => Err(e.into()),
         }
     }
-    fn workflow_runs(&self, repo: &str, workflow: &str, branch: Option<&str>) -> Result<Vec<WorkflowRun>, ForgeError> {
+    fn workflow_runs(
+        &self,
+        repo: &str,
+        workflow: &str,
+        branch: Option<&str>,
+        completed: bool,
+    ) -> Result<Vec<WorkflowRun>, ForgeError> {
         let id = self.workflow_id(repo, workflow)?;
-        let mut path = format!(
-            "repos/{repo}/actions/workflows/{}/runs?status=completed&per_page={WORKFLOW_RUN_LIMIT}",
-            encode(&id)
-        );
+        let status = if completed { "status=completed&" } else { "" };
+        let mut path =
+            format!("repos/{repo}/actions/workflows/{}/runs?{status}per_page={WORKFLOW_RUN_LIMIT}", encode(&id));
         if let Some(b) = branch.map(str::trim).filter(|b| !b.is_empty()) {
             path.push_str(&format!("&branch={}", encode(b)));
         }

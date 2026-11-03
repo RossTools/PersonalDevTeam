@@ -78,13 +78,15 @@ pub trait CiProvider: Send + Sync {
     fn queue_runs(&self, _repo: &str) -> Result<Vec<CiRun>, ForgeError> {
         unsupported(self.label(), "merge queue")
     }
-    /// The recent completed runs of one workflow (its file name, `release.yml`, or its name), on `branch` or any,
-    /// however they were started, newest first (PDT-292).
+    /// The recent runs of one workflow (its file name, `release.yml`, or its name), on `branch` or any, however they
+    /// were started, newest first (PDT-292): only the completed ones with `completed`, else queued and running ones
+    /// too (PDT-488).
     fn workflow_runs(
         &self,
         _repo: &str,
         _workflow: &str,
         _branch: Option<&str>,
+        _completed: bool,
     ) -> Result<Vec<WorkflowRun>, ForgeError> {
         unsupported(self.label(), "workflow runs to read")
     }
@@ -319,6 +321,7 @@ pub mod testing {
             repo: &str,
             workflow: &str,
             branch: Option<&str>,
+            completed: bool,
         ) -> Result<Vec<WorkflowRun>, ForgeError> {
             self.call(format!("workflow runs {repo} {workflow}"));
             if let Some(e) = self.error.lock().unwrap().clone() {
@@ -330,7 +333,7 @@ pub mod testing {
                 .unwrap()
                 .iter()
                 .filter(|r| r.is_of(workflow) && branch.is_none_or(|b| r.run.branch == b))
-                .filter(|r| !matches!(r.run.state, CiState::Queued | CiState::Running))
+                .filter(|r| !completed || !matches!(r.run.state, CiState::Queued | CiState::Running))
                 .cloned()
                 .collect();
             out.sort_by(|a, b| b.run.created_at.cmp(&a.run.created_at));
