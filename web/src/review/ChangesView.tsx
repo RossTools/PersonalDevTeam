@@ -74,7 +74,7 @@ interface ScrollAt {
 const within = (el: HTMLElement, offset: number) => (offset > 0 && offset < el.offsetHeight ? offset : 0);
 
 /**
- * A worktree's changes against its base branch (review spec §2), as one page like a GitHub pull request's "Files
+ * A worktree's changes against its base branch, as one page like a GitHub pull request's "Files
  * changed" (PDT-303): the review bar, then every changed file in order, each under a sticky header, with comment
  * threads inline. The file list beside it is a navigator: a click scrolls to the file, and the file in view is
  * highlighted as the page scrolls. `ticket` is given in the ticket tab; a changes tab reads the attempt's own. On a

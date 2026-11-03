@@ -28,7 +28,7 @@ export interface TicketRef {
   priority: Priority;
   /** Start chose "Wait until clear". */
   waiting?: boolean;
-  /** Where a pipeline workflow has it (Phase 7c). */
+  /** Where a pipeline workflow has it. */
   pipelineStage?: PipelineStage | null;
   /** Auto-start passes it over: its start failed with this error. */
   pickupFailed?: string | null;

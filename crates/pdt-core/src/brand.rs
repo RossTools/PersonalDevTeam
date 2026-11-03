@@ -11,7 +11,7 @@ pub const SHORT_NAME: &str = "PDT";
 pub const DAEMON_BIN: &str = "pdtd";
 pub const STABLE_PORT: u16 = 7420;
 pub const DEV_PORT: u16 = 7421;
-/// The supervisor that runs on each host: starts pdtd, installs updates, rolls back (remote-host spec §3.1).
+/// The supervisor that runs on each host: starts pdtd, installs updates, rolls back.
 pub const HOST_BIN: &str = "pdt-host";
 /// launchd label of the per-user LaunchAgent that runs pdt-host (macOS).
 pub const HOST_LABEL: &str = "dev.personaldevteam.host";
@@ -39,7 +39,7 @@ pub const KEYCHAIN_SERVICE: &str = "dev.personaldevteam";
 pub const GITHUB_OAUTH_CLIENT_ID: &str = "Ov23litfc05CvYvo8kR5";
 /// The project's website (`site/`). Google's sign-in comes back through its `/oauth/google` page (PDT-360).
 pub const WEBSITE: &str = "https://pdt.dev";
-/// The optional run configuration file inside a project's repository (remote-host spec §4.1).
+/// The optional run configuration file inside a project's repository.
 pub const PROJECT_CONFIG_FILE: &str = ".pdt/project.toml";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, ts_rs::TS)]

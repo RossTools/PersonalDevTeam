@@ -1,4 +1,4 @@
-//! The files pdtd and pdt-host use to hand an update over (remote-host spec §3.4). Pure: types and paths only.
+//! The files pdtd and pdt-host use to hand an update over. Pure: types and paths only.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

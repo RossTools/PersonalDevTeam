@@ -1,4 +1,4 @@
-// Versions (Phase 7d spec §6.2): every version with who wrote it, a diff against the current one, Restore, and Accept or
+// Versions: every version with who wrote it, a diff against the current one, Restore, and Accept or
 // Discard for a version an agent proposed. The version's header (with its buttons) stays in view above its diff, which
 // wraps rather than widening the pane (PDT-320).
 import { useState } from 'react';

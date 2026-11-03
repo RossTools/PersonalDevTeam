@@ -22,7 +22,7 @@ pub struct ToolDecl {
     pub open_world: bool,
     /// It deletes something (MCP's `destructiveHint`).
     pub destructive: bool,
-    /// The PM persona has it (PDT-81 spec §4).
+    /// The PM persona has it.
     pub pm: bool,
     /// It always asks in PDT's Inbox (PDT-475), for every agent and whatever the project's policy: never Claude's
     /// permission prompt (so it is in `--allowedTools`), and never answered for the user. Implies [`ToolDecl::asks`].

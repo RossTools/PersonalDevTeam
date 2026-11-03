@@ -1,4 +1,4 @@
-//! The Files view (workspaces spec §6.5, editing PDT-157): a checkout's files as git sees them (`.gitignore`
+//! The Files view (editing PDT-157): a checkout's files as git sees them (`.gitignore`
 //! honoured), a file's text, and saving, creating, renaming and deleting files. Paths never leave the checkout,
 //! symlinks included, and `.git` is off limits. Every read and write goes through a handle on the checkout
 //! ([`checkout_dir`]), so a folder swapped for a symlink after the checks still can't lead out. A save names the hash of the text it started from, so a file that

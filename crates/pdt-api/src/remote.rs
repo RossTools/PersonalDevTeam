@@ -1,4 +1,4 @@
-//! Remote access (spec §2): `tailscale serve` maps https://<machine>.<tailnet>.ts.net/ to pdtd, and the tailnet name
+//! Remote access: `tailscale serve` maps https://<machine>.<tailnet>.ts.net/ to pdtd, and the tailnet name
 //! joins the Host/Origin allowlist. The setting is the truth; this makes reality match it and reports what happened.
 //!
 //! The machine's Tailscale is shared with every other instance on it (the stable one serves 443 there), so this

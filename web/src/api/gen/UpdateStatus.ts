@@ -3,6 +3,7 @@ import type { ReleaseRepo } from "./ReleaseRepo";
 import type { ReleaseSummary } from "./ReleaseSummary";
 import type { TokenState } from "./TokenState";
 import type { UpdateChannel } from "./UpdateChannel";
+import type { UpdateNotice } from "./UpdateNotice";
 import type { UpdatePolicy } from "./UpdatePolicy";
 import type { UpdateResult } from "./UpdateResult";
 import type { UpdateState } from "./UpdateState";
@@ -20,7 +21,7 @@ channel: UpdateChannel, state: UpdateState, disabledReason: string | null, polic
  * Something the last check wants the user to know that did not stop it: the saved token was rejected and
  * ignored, or GitHub's rate limit was used up (PDT-484).
  */
-notice: string | null, 
+notice: UpdateNotice | null, 
 /**
  * When the rate limit resets: the hourly check waits for it (Unix ms).
  */

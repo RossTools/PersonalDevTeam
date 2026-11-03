@@ -1,4 +1,4 @@
-//! Update checks and installs (remote-host spec §3.3–3.4). pdtd checks hourly (unless the policy is manual) and on
+//! Update checks and installs. pdtd checks hourly (unless the policy is manual) and on
 //! request, downloads and verifies a release, writes `update/request.json` and shuts down; pdt-host installs it.
 
 use crate::error::{ApiError, codes};
@@ -156,13 +156,44 @@ pub struct UpdateStatus {
     pub error: Option<String>,
     /// Something the last check wants the user to know that did not stop it: the saved token was rejected and
     /// ignored, or GitHub's rate limit was used up (PDT-484).
-    pub notice: Option<String>,
+    pub notice: Option<UpdateNotice>,
     /// When the rate limit resets: the hourly check waits for it (Unix ms).
     #[ts(type = "number | null")]
     pub retry_at: Option<i64>,
     pub token: TokenState,
     pub last_result: Option<UpdateResult>,
     pub release_repo: ReleaseRepo,
+}
+
+/// What kind of notice the last check left (PDT-484).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum UpdateNoticeKind {
+    /// GitHub rejected the saved token; the check went on without it.
+    TokenIgnored,
+    /// GitHub's rate limit is used up; the next check waits for it to reset (`retryAt`, when GitHub said).
+    RateLimited,
+}
+
+/// Something a check wants the user to know that did not stop it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UpdateNotice {
+    pub kind: UpdateNoticeKind,
+    /// In words for the user.
+    pub message: String,
+}
+
+impl UpdateNotice {
+    fn new(kind: UpdateNoticeKind) -> Self {
+        let message = match kind {
+            UpdateNoticeKind::TokenIgnored => TOKEN_IGNORED,
+            UpdateNoticeKind::RateLimited => RATE_LIMITED,
+        };
+        Self { kind, message: message.to_string() }
+    }
 }
 
 /// What a check found (PDT-223): the answer to "Check for updates", so the button never seems to do nothing.
@@ -526,7 +557,7 @@ async fn check_now(st: &AppState) -> (UpdateStatus, CheckResult) {
         // An install that started while GitHub was answering keeps its state and release.
         let busy = in_progress(s.state);
         s.retry_at = None;
-        s.notice = rejected.then(|| TOKEN_IGNORED.to_string());
+        s.notice = rejected.then(|| UpdateNotice::new(UpdateNoticeKind::TokenIgnored));
         if rejected {
             s.token = TokenState::Expired;
         }
@@ -548,7 +579,7 @@ async fn check_now(st: &AppState) -> (UpdateStatus, CheckResult) {
             // A soft "try later" (PDT-484): not an error, and the hourly check waits for the reset.
             Err(UpdateError::RateLimited { reset_at }) => {
                 s.retry_at = reset_at;
-                s.notice = Some(RATE_LIMITED.to_string());
+                s.notice = Some(UpdateNotice::new(UpdateNoticeKind::RateLimited));
                 s.error = None;
                 if !busy {
                     s.state = resting(&s);
@@ -815,7 +846,7 @@ fn set_found(
     s.state = resting(s);
 }
 
-/// What makes the host busy (spec §3.3): agents working, of unknown activity or waiting on background tasks, runs
+/// What makes the host busy: agents working, of unknown activity or waiting on background tasks, runs
 /// setting up. A store error counts as busy, so an automatic update never starts on a guess.
 pub async fn busy_reasons(st: &AppState) -> Vec<String> {
     let mut out = Vec::new();
@@ -975,7 +1006,7 @@ async fn download_and_hand_off(
             tracing::warn!("GitHub rejected the saved update token; downloading without it");
             svc.edit(|s| {
                 s.token = TokenState::Expired;
-                s.notice = Some(TOKEN_IGNORED.to_string());
+                s.notice = Some(UpdateNotice::new(UpdateNoticeKind::TokenIgnored));
             });
             fetch_verified(&svc.client, None, &release, this_host(), &dir).await
         }
@@ -1159,7 +1190,7 @@ pub(crate) async fn delete_token(State(st): State<AppState>) -> Result<StatusCod
     // Updates go on without it: what a check found stays on offer.
     svc.edit(|s| {
         s.token = TokenState::Missing;
-        if s.notice.as_deref() == Some(TOKEN_IGNORED) {
+        if s.notice.as_ref().is_some_and(|n| n.kind == UpdateNoticeKind::TokenIgnored) {
             s.notice = None;
         }
     });

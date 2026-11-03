@@ -1,4 +1,4 @@
-//! Phase 7c end to end: the Pipeline template drives a ticket from Refine to Done with `fake-agent` personas
+//! The Pipeline end to end: the Pipeline template drives a ticket from Refine to Done with `fake-agent` personas
 //! submitting outcomes through pdt-mcp; project policies, auto-start, manual stages, Board stages and the host's cap
 //! on agents running a turn.
 

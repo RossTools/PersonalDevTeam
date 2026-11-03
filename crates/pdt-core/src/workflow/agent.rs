@@ -1,4 +1,4 @@
-//! Agent steps (Phase 7b spec §4): the outcomes a step declares, and the texts PDT sends a persona's session (the
+//! Agent steps: the outcomes a step declares, and the texts PDT sends a persona's session (the
 //! first message, nudges). The node itself is pdt-api's `workflow/nodes/agent.rs`.
 
 use crate::brand::SHORT_NAME;
@@ -37,7 +37,7 @@ pub enum AgentStepState {
     Stalled,
     /// It has its outcome (or the step ended otherwise).
     Done,
-    /// A manual step (Phase 7c): no session; the user does the work and picks the outcome in the Inbox.
+    /// A manual step: no session; the user does the work and picks the outcome in the Inbox.
     Manual,
 }
 
@@ -71,7 +71,7 @@ pub struct OutcomeComment {
     pub body: String,
 }
 
-/// An agent step's session binding (Phase 7b spec §4.2): which session runs it and what it may answer.
+/// An agent step's session binding: which session runs it and what it may answer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -402,7 +402,7 @@ pub fn not_handed_in(changed: &[String], ahead: u32, upstream: Option<&str>, unp
     ))
 }
 
-/// The section a step's session gets in its instructions (spec §4.2).
+/// The section a step's session gets in its instructions.
 pub fn step_section(persona: &str, instructions: &str, outcomes: &[OutcomeSpec]) -> String {
     let mut out = format!(
         "\n# Your role: {persona}\n\n\

@@ -1,4 +1,4 @@
-// The workflow document as the builder edits it (Phase 7d spec §3): pure functions over a WorkflowDoc, shared by the
+// The workflow document as the builder edits it: pure functions over a WorkflowDoc, shared by the
 // graph, outline and text views. Every edit returns a new document.
 import type { Edge } from '../api/gen/Edge';
 import type { KindSpec } from '../api/gen/KindSpec';

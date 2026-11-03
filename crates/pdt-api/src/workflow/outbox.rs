@@ -1,11 +1,11 @@
-//! Delivers `session.send` messages (Phase 7a spec §5.2) with the rule PR notices always had: a terminal must be idle
+//! Delivers `session.send` messages with the rule PR notices always had: a terminal must be idle
 //! with nobody typing for 20 s; a conversation idle with no open request, no queued message, no rate limit and its
 //! terminal closed (a parked one reopens to take it). All of a session's waiting messages go in one message. A
 //! message whose attempt has no running agent session is recorded as not told; what the user sent to a conversation
 //! (an Inbox answer, a nudge) reopens it even when it is stopped or interrupted, and so does a message that `reopens`
 //! (an agent step's next pass, the user's ticket comment: PDT-144), which may also reopen its attempt's newest
 //! conversation that was not stopped. Delivering resumes the step. PDT's own
-//! messages wait while the host's cap on agents running a turn is reached (Phase 7c §6.2); the user's never do.
+//! messages wait while the host's cap on agents running a turn is reached; the user's never do.
 //!
 //! Honest delivery (PDT-129): a message typed into a terminal is told once the keys went in and the terminal is still
 //! there; one handed to a conversation is `sending` until the agent echoes it, and every other conversation message
@@ -125,7 +125,7 @@ pub(crate) async fn deliver(st: &AppState) {
     let deadline = i64::try_from(st.outbox_deadline.as_millis()).unwrap_or(i64::MAX);
     // Sessions that no longer wait on anything are forgotten.
     st.outbox_stuck.lock().unwrap_or_else(|e| e.into_inner()).retain(|sid, _| batches.contains_key(sid));
-    // The host's cap on agents running a turn holds PDT's own messages, never what the user sent (Phase 7c §6.2).
+    // The host's cap on agents running a turn holds PDT's own messages, never what the user sent.
     let mut free: Option<usize> = None;
     for (sid, (session, list)) in batches {
         let conversation = session.mode == SessionMode::Conversation;

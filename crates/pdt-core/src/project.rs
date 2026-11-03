@@ -19,7 +19,7 @@ pub struct Project {
     /// git and the forge plugins in use, never stored.
     #[serde(default)]
     pub forge: Option<crate::forge::ForgeLinks>,
-    /// `personal`: no repository; `repo_path` is a plain folder and tickets run in scratch folders (Phase 7b §7).
+    /// `personal`: no repository; `repo_path` is a plain folder and tickets run in scratch folders.
     #[serde(default)]
     pub kind: ProjectKind,
 }

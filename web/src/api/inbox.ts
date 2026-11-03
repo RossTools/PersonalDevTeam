@@ -7,7 +7,7 @@ import type { ReadAll } from './gen/ReadAll';
 
 /** The inbox (what waits on the user) and notifications. */
 export const inboxApi = {
-  /** What waits on the user: questions, approvals, stalled steps, loop limits, gates (Phase 7b). */
+  /** What waits on the user: questions, approvals, stalled steps, loop limits, gates. */
   inbox: (project?: string) => request<InboxList>(`/api/inbox${queryString({ project })}`),
   answerInbox: (id: string, a: InboxAnswer) =>
     // As the user's: a triaged ticket's Approve lets an external ticket in (PDT-225).

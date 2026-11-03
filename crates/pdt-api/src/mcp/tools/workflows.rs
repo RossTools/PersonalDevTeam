@@ -204,7 +204,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         "workflow_save" => {
             let a: WorkflowSave = args(a)?;
             let d = match a.id {
-                // An agent's change to a workflow is a proposal the user reviews (Phase 7d spec §6.2).
+                // An agent's change to a workflow is a proposal the user reviews.
                 Some(id) => {
                     let by =
                         cx.session.persona.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| cx.session.title.clone());

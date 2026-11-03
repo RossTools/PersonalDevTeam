@@ -1,4 +1,4 @@
-//! Who may use this host (spec §2, decision 1). `tailscale serve` adds `Tailscale-User-Login` for untagged tailnet
+//! Who may use this host. `tailscale serve` adds `Tailscale-User-Login` for untagged tailnet
 //! users and always adds `X-Forwarded-For`/`X-Forwarded-Host`; pdtd listens only on loopback, so a request with none
 //! of these came from this machine.
 

@@ -280,15 +280,12 @@ async fn a_rejected_token_is_ignored_and_the_check_goes_on_without_it() {
     let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
     assert_eq!(v["result"], json!({"kind": "available", "version": "0.1.7"}), "{v}");
     assert_eq!(v["token"]["state"], "expired", "still reported, so it can be fixed: {v}");
-    assert_eq!(v["notice"], pdt_api::update::TOKEN_IGNORED, "{v}");
+    assert_eq!(v["notice"], json!({"kind": "tokenIgnored", "message": pdt_api::update::TOKEN_IGNORED}), "{v}");
     assert_eq!(v["error"], Value::Null, "{v}");
     assert_eq!(*fake.auths.lock().unwrap(), [Some("Bearer revoked".to_string()), None]);
     // The next check does not try the rejected token again.
     let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
-    assert_eq!(
-        (v["result"]["kind"].as_str(), v["notice"].as_str()),
-        (Some("available"), Some(pdt_api::update::TOKEN_IGNORED))
-    );
+    assert_eq!((v["result"]["kind"].as_str(), v["notice"]["kind"].as_str()), (Some("available"), Some("tokenIgnored")));
     assert_eq!(fake.auths.lock().unwrap().len(), 3);
     assert_eq!(fake.auths.lock().unwrap()[2], None);
     // Removing it ends the notice and keeps the update on offer.
@@ -309,7 +306,7 @@ async fn a_used_up_rate_limit_is_a_try_later_not_an_error() {
     assert_eq!(v["result"]["reason"], "rateLimited", "{v}");
     assert_eq!((v["state"].as_str(), &v["error"]), (Some("idle"), &Value::Null), "{v}");
     assert_eq!(v["retryAt"], 4_102_444_800_000_i64, "from x-ratelimit-reset: {v}");
-    assert_eq!(v["notice"], pdt_api::update::RATE_LIMITED);
+    assert_eq!(v["notice"], json!({"kind": "rateLimited", "message": pdt_api::update::RATE_LIMITED}));
     fake.rate_limited.store(false, Ordering::SeqCst);
     let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
     assert_eq!(
@@ -401,10 +398,7 @@ async fn a_token_revoked_before_the_download_is_ignored_with_a_notice() {
     state.secrets.set(&state.update_token_account, "revoked").unwrap();
     let (s, v) = call(&app, "POST", "/api/host/update/install", Some(json!({"force": true}))).await;
     assert_eq!((s, v["state"].as_str()), (StatusCode::OK, Some("installing")), "{v}");
-    assert_eq!(
-        (v["token"]["state"].as_str(), v["notice"].as_str()),
-        (Some("expired"), Some(pdt_api::update::TOKEN_IGNORED))
-    );
+    assert_eq!((v["token"]["state"].as_str(), v["notice"]["kind"].as_str()), (Some("expired"), Some("tokenIgnored")));
     assert!(request_path(&data(tmp.path())).exists());
 }
 

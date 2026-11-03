@@ -45,7 +45,7 @@ sessionPermissionMode: PermissionMode,
 updateCheckMinutes: number, 
 /**
  * The most agents running a turn at once before PDT's own work (agent steps, workflow messages) waits for a
- * slot; 0: no cap. What the user does is never held (Phase 7c spec §6.2).
+ * slot; 0: no cap. What the user does is never held.
  */
 maxAgentTurns: number, 
 /**

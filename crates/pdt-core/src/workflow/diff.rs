@@ -1,4 +1,4 @@
-//! The difference between two versions of a workflow (Phase 7a spec §3.3): which nodes and edges changed, and a
+//! The difference between two versions of a workflow: which nodes and edges changed, and a
 //! unified diff of the two documents as pretty JSON.
 
 use super::doc::{Edge, WorkflowDoc};

@@ -1,4 +1,4 @@
-//! Planned and actual overlap between tickets (tickets spec §7). A ticket's overlap is measured against the other
+//! Planned and actual overlap between tickets. A ticket's overlap is measured against the other
 //! tickets of its project that have an active attempt: shared configured areas (planned) and, when both are active,
 //! shared changed files (actual). A shared exclusive area, or a shared file inside one, is a conflict. Pure.
 

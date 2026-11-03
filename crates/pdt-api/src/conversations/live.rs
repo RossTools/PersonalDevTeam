@@ -242,7 +242,7 @@ async fn pump(
                 let _ = c.tx.send(ConversationServerMessage::Delta { item_id, field, text });
             }
             AdapterOutput::Info(info) => {
-                // The plan login is the only billing PDT uses unless the project opts into API keys (spec §14).
+                // The plan login is the only billing PDT uses unless the project opts into API keys.
                 let billing_ok = creds != CredentialPolicy::Subscription
                     || info.api_key_source.as_deref().is_none_or(|s| s == "none");
                 if !billing_ok {
@@ -442,7 +442,7 @@ pub(super) async fn append(
 
 /// What an event sets off once it is stored (never when it can't be: its session was removed).
 enum FollowUp {
-    /// An agent step's session ended a turn: did it submit an outcome (Phase 7b spec §4.4)? A PM session's may be due
+    /// An agent step's session ended a turn: did it submit an outcome? A PM session's may be due
     /// its daily update (PDT-167), or end once the user closed it.
     TurnEnded,
     /// One of PDT's asking tools in a project that lets the PM act is answered for the user (PDT-81).

@@ -6,7 +6,7 @@ import type { Run } from '../api/gen/Run';
 
 type Row = [string, AgentStateInput, Omit<AgentStateValue, 'unseen'> & { unseen?: boolean }];
 
-// Spec §6.5, one row per situation (plus the cases the table implies: unknown activity, runs).
+// One row per situation (plus the cases the table implies: unknown activity, runs).
 const rows: Row[] = [
   ['agent working', { kind: 'agent_tui', status: 'running', activity: 'working' }, { dot: 'running', pulse: true, label: 'Working', tone: 'running' }],
   ['agent needs you', { kind: 'agent_tui', status: 'running', activity: 'needs_you' }, { dot: 'waiting', pulse: false, label: 'Needs you', tone: 'waiting' }],
@@ -29,7 +29,7 @@ const rows: Row[] = [
   ['run stopped', { kind: 'run', status: 'stopped' }, { dot: 'ended', pulse: false, label: 'Ended', tone: 'muted' }],
 ];
 
-describe('agentState (spec §6.5)', () => {
+describe('agentState', () => {
   it.each(rows)('%s', (_name, input, expected) => {
     expect(agentState(input)).toEqual({ unseen: false, ...expected });
   });

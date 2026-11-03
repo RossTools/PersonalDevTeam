@@ -1,4 +1,4 @@
-//! Jira Cloud (Phase 7e spec §6, PDT-85): issues as REST v3 returns them, Atlassian Document Format (ADF) to and from
+//! Jira Cloud (PDT-85): issues as REST v3 returns them, Atlassian Document Format (ADF) to and from
 //! text, and what is news about an issue since a poll. Pure: [`crate::sensor`] calls Jira and logs the events.
 
 use pdt_core::workflow::events::{EventType, schema_of};

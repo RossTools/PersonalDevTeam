@@ -1,4 +1,4 @@
-// New workflow (Phase 7d spec §5; the gallery, PDT-229): templates by category with search, a preview of the picked
+// New workflow (the gallery, PDT-229): templates by category with search, a preview of the picked
 // one (trigger → steps), its params, a name and where it applies. It starts off, so it can be tried before it is
 // enabled. PDT's built-in workflows sit in their own collapsed group at the end, to add one back (or copy it).
 import { useState } from 'react';

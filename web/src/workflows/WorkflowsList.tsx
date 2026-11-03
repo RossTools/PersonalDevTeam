@@ -1,4 +1,4 @@
-// The Workflows view's list column (Phase 7d spec §2): New workflow, Import and Export (PDT-155), and the workflows by
+// The Workflows view's list column: New workflow, Import and Export (PDT-155), and the workflows by
 // where they apply; templates are in the New workflow gallery (PDT-229). On a phone there is no New workflow or Import
 // (workflows are view-only there, PDT-120).
 import { useState } from 'react';

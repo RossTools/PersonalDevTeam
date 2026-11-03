@@ -1,4 +1,4 @@
-//! Buildkite CI (Phase 7e spec §6.4, PDT-85) as a CI provider (PDT-242). A project names a `buildkite` connection and
+//! Buildkite CI (PDT-85) as a CI provider (PDT-242). A project names a `buildkite` connection and
 //! its pipelines in its host settings; then [`BuildkiteCi`] is one of its CI providers, which the PR poller reads every
 //! 60 s on each active attempt's head (its PR's head, else the pushed branch, else the local one, as Buildkite builds
 //! branches): rolled up with the PR's other CI for the badge (or `attempt.ci` without a PR), and logged as

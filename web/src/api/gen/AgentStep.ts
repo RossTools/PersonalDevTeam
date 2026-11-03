@@ -4,7 +4,7 @@ import type { OutcomeComment } from "./OutcomeComment";
 import type { OutcomeSpec } from "./OutcomeSpec";
 
 /**
- * An agent step's session binding (Phase 7b spec §4.2): which session runs it and what it may answer.
+ * An agent step's session binding: which session runs it and what it may answer.
  */
 export type AgentStep = { stepId: string, runId: string, nodeId: string, sessionId: string | null, personaId: string | null, personaName: string, personaVersion: number, projectId: string | null, ticketId: string | null, attemptId: string | null, outcomes: Array<OutcomeSpec>, state: AgentStepState, 
 /**

@@ -1,4 +1,4 @@
-//! Workflow templates (Phase 7d spec §5): a document with parameters. The document uses `{{params.<id>}}`;
+//! Workflow templates: a document with parameters. The document uses `{{params.<id>}}`;
 //! instantiating fills them in (a string that is exactly one reference takes the value with its type) and leaves every
 //! other reference alone.
 

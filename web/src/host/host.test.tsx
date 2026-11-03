@@ -516,7 +516,7 @@ describe('HostSettingsPage', () => {
   it('says a rejected token was ignored, and points at the token field', async () => {
     stubApi({
       'GET /api/host/settings': settingsView({ tokenPresent: true }),
-      'GET /api/host/update': update({ lastCheckedAt: 5, token: { state: 'expired' }, notice: 'the saved GitHub token was rejected and ignored: replace or remove it' }),
+      'GET /api/host/update': update({ lastCheckedAt: 5, token: { state: 'expired' }, notice: { kind: 'tokenIgnored', message: 'the saved GitHub token was rejected and ignored: replace or remove it' } }),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
       'GET /api/connections': [],
@@ -533,6 +533,21 @@ describe('HostSettingsPage', () => {
     expect(within(updates).getByText('Advanced').closest('details')).toHaveAttribute('open');
   });
 
+  it('says a rate limit without a reset time is a try-later, with no token link', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update({ lastCheckedAt: 5, retryAt: null, notice: { kind: 'rateLimited', message: "GitHub's limit on update checks is used up for now" } }),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+    });
+    renderWithQuery(<HostSettingsPage />);
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    expect(await within(updates).findByText(/PDT checks again once it resets\./)).toBeInTheDocument();
+    expect(within(updates).queryByText(/\(after /)).toBeNull();
+    expect(within(updates).queryByRole('link', { name: /token/ })).toBeNull();
+  });
+
   it('says a used-up rate limit is a try-later, not an error', async () => {
     stubApi({
       'GET /api/host/settings': settingsView(),
@@ -541,7 +556,7 @@ describe('HostSettingsPage', () => {
       'GET /api/host/whoami': local,
       'GET /api/connections': [],
       'POST /api/host/update/check': {
-        ...update({ lastCheckedAt: 5, retryAt: 4102444800000, notice: "GitHub's limit on update checks is used up for now" }),
+        ...update({ lastCheckedAt: 5, retryAt: 4102444800000, notice: { kind: 'rateLimited', message: "GitHub's limit on update checks is used up for now" } }),
         result: { kind: 'cannotCheck', reason: 'rateLimited', message: "GitHub's limit on update checks is used up for now" },
       },
     });

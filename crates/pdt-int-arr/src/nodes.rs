@@ -1,4 +1,4 @@
-//! Radarr and Sonarr (Phase 7e spec §7.1): `radarr.search`, `radarr.add`, `radarr.queue` and the same three for
+//! Radarr and Sonarr: `radarr.search`, `radarr.add`, `radarr.queue` and the same three for
 //! Sonarr. The two speak the same v3 API (films by TMDB id, series by TVDB id), so one module serves both. A
 //! connection of kind `radarr` or `sonarr`: `url` the app's address (`http://nas:7878`), the secret its API key (sent
 //! as `X-Api-Key`), `config.qualityProfile` and `config.rootFolder` the defaults for adds.

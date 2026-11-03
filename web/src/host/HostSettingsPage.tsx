@@ -11,6 +11,7 @@ import type { HostSettingsView } from '../api/gen/HostSettingsView';
 import type { SessionMode } from '../api/gen/SessionMode';
 import type { TokenState } from '../api/gen/TokenState';
 import type { UpdateChannel } from '../api/gen/UpdateChannel';
+import type { UpdateNotice } from '../api/gen/UpdateNotice';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import type { NetworkSettings } from '../api/gen/NetworkSettings';
 import { AutoSaveText, SaveStatus, useSaveState } from '../common/AutoSave';
@@ -59,11 +60,11 @@ function CheckFound({ r, retryAt, fixToken }: { r: CheckResult; retryAt: number 
 }
 
 /** What the last check wants the user to know without having failed: a rejected token, a rate limit. */
-function CheckNotice({ notice, retryAt, rateLimited, fixToken }: { notice: string; retryAt: number | null; rateLimited: boolean; fixToken: () => void }) {
-  if (rateLimited) return <>GitHub's limit on checks is used up for now; PDT checks again once it resets{resetNote(retryAt)}.</>;
+function CheckNotice({ notice, retryAt, fixToken }: { notice: UpdateNotice; retryAt: number | null; fixToken: () => void }) {
+  if (notice.kind === 'rateLimited') return <>GitHub's limit on checks is used up for now; PDT checks again once it resets{resetNote(retryAt)}.</>;
   return (
     <span className="text-waiting">
-      {notice[0].toUpperCase() + notice.slice(1)}. <Link onClick={fixToken}>Replace the token</Link>
+      {notice.message[0].toUpperCase() + notice.message.slice(1)}. <Link onClick={fixToken}>Replace the token</Link>
     </span>
   );
 }
@@ -271,7 +272,7 @@ function Updates({ v }: { v: HostSettingsView }) {
           updatesOff ? `Updates are off: ${u.disabledReason ?? 'updates apply to the installed app'}.`
             : shownFound ? <span role="status"><CheckFound r={shownFound} retryAt={u?.retryAt} fixToken={fixToken} /> {shownFound.kind !== 'cannotCheck' && checked}</span>
               : u?.error ? <span className="text-destructive">{u.error}</span>
-              : u?.notice ? <span><CheckNotice notice={u.notice} retryAt={u.retryAt} rateLimited={u.retryAt !== null} fixToken={fixToken} /> {checked}</span>
+              : u?.notice ? <span><CheckNotice notice={u.notice} retryAt={u.retryAt} fixToken={fixToken} /> {checked}</span>
               : checked
         }
       >

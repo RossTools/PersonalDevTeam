@@ -8,7 +8,7 @@ use pdt_core::conversation::{BackgroundTask, ConversationEvent};
 use pdt_core::session::Session;
 use tokio::sync::broadcast;
 
-/// Whether PDT may send a message of its own now (a PR notice, spec §14): no turn running, nothing asked or queued,
+/// Whether PDT may send a message of its own now (a PR notice): no turn running, nothing asked or queued,
 /// no rate limit hit, its terminal not open beside it, and nothing happening for `notice_quiet`. A conversation not
 /// loaded since pdtd started is idle.
 pub(crate) fn ready_for_notice(st: &AppState, id: &str) -> bool {
@@ -52,7 +52,7 @@ pub(crate) fn busy_with(st: &AppState, id: &str) -> Option<Busy> {
     }
 }
 
-/// The conversations running a turn, or with a message on its way to one (the host's cap counts them, Phase 7c §6.2).
+/// The conversations running a turn, or with a message on its way to one (the host's cap counts them).
 pub(crate) fn busy_ids(st: &AppState) -> Vec<String> {
     let map = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner());
     map.iter()

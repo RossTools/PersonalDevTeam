@@ -1,4 +1,4 @@
-//! Personas (Phase 7b spec §3): versioned agent setups that agent steps run. A persona has a name and a role; each
+//! Personas: versioned agent setups that agent steps run. A persona has a name and a role; each
 //! version records the agent, model, instructions, permission mode and the pdt-mcp tools it may use. Pure: pdt-store
 //! keeps them, pdt-api installs the built-ins and runs them.
 
@@ -8,7 +8,7 @@ use crate::session::AgentKind;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// The pdt-mcp tools a session gets when it runs no persona (spec §2.2). The secret tools (PDT-158) are here so any
+/// The pdt-mcp tools a session gets when it runs no persona. The secret tools (PDT-158) are here so any
 /// agent can use the secrets the user lets it; each secret says which projects and personas may. The forge tools
 /// (PDT-177) read the session's pull request, CI and issues and comment on them, open its pull request and ask for its
 /// merge again after a merge queue drop (PDT-185), instead of a forge's CLI; `issue_create` (PDT-221) files an issue,
@@ -96,7 +96,7 @@ pub struct PersonaSetup {
     /// Markdown, added to the session's instructions.
     #[serde(default)]
     pub instructions: String,
-    /// None: the project's override, else the host default (spec §3).
+    /// None: the project's override, else the host default.
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
     /// pdt-mcp tools; empty means none (PDT-414: a list never falls back to the default set).
@@ -343,7 +343,7 @@ pub fn follow_template(
     (setup, kept)
 }
 
-/// The permission mode a persona's session runs with (spec §3): the project's override, else the persona's, else
+/// The permission mode a persona's session runs with: the project's override, else the persona's, else
 /// the host default.
 pub fn effective_permission_mode(
     project: Option<PermissionMode>,

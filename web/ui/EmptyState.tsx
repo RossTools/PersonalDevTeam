@@ -3,8 +3,8 @@ import { cn } from '@ui/lib/utils';
 import { Empty, EmptyContent, EmptyDescription, EmptyMedia } from './primitives/empty';
 
 /**
- * An empty list or page: an icon, one sentence and the next step as `action` (spec §6.4). Also the page-load error
- * (the message plus a Retry action, §6.3).
+ * An empty list or page: an icon, one sentence and the next step as `action`. Also the page-load error
+ * (the message plus a Retry action).
  */
 export function EmptyState({
   icon,

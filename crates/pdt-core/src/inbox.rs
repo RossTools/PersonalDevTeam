@@ -1,4 +1,4 @@
-//! The Inbox (Phase 7b spec §6): what waits on the user. Questions from agents (`ask_user`), human gates, stalled
+//! The Inbox: what waits on the user. Questions from agents (`ask_user`), human gates, stalled
 //! and timed-out agent steps and loop limits are stored items; approvals (agents' open permission requests) are
 //! listed from the conversations. Pure types and rules; pdt-store keeps items, pdt-api makes and answers them.
 
@@ -21,7 +21,7 @@ pub enum InboxKind {
     LoopLimit,
     /// An agent's open permission request (not stored).
     Approval,
-    /// A manual step (Phase 7c): the user does the stage's work and picks its outcome.
+    /// A manual step: the user does the stage's work and picks its outcome.
     Manual,
     /// An agent step that took its `timeout` port (PDT-123): Resume or Stop.
     TimedOut,

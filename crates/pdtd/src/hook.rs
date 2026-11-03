@@ -1,4 +1,4 @@
-//! `pdtd hook …` (remote-host spec §5.1, decision 11): reports an agent hook event to the pdtd that owns the session
+//! `pdtd hook …`: reports an agent hook event to the pdtd that owns the session
 //! (`PDT_SESSION_ID`, `PDT_HOOK_PORT`). It writes nothing to stdout (Claude adds UserPromptSubmit stdout to the
 //! conversation) except, for Devin's `SessionStart`, the session's instructions as context, and always exits 0,
 //! quickly, whatever happens.

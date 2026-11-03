@@ -1,7 +1,7 @@
 //! Pull requests and CI of ticket attempts (PDT-25). pdtd reads each active attempt's PR from its project's forge
 //! (PDT-176: `crate::forge`; GitHub through its API) every 60 s
 //! (and when a ticket is opened), keeps what it saw in memory for ticket responses (`attempt.pr`), and logs what is
-//! news as events (Phase 7a): `ci.run_failed`, `ci.run_passed`, `pr.conflict`, `pr.queue_left`, `pr.merged` and
+//! news as events: `ci.run_failed`, `ci.run_passed`, `pr.conflict`, `pr.queue_left`, `pr.merged` and
 //! `pr.behind`, each once (its key). Workflows react to them; the built-in "PR notices" tells the agent. While an
 //! enabled workflow listens for them and the forge has reviews, it also reads an open PR's comments and reviews (Phase
 //! 7e): `pr.commented`,

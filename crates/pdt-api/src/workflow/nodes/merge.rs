@@ -1,4 +1,4 @@
-//! `attempt.merge`: the Merge command as an automated merger (Phase 7c spec §5). The project's policy decides whether
+//! `attempt.merge`: the Merge command as an automated merger. The project's policy decides whether
 //! a workflow may merge; what stops a merge (a conflict, a draft PR, no PR in a project that merges through them) and
 //! a policy refusal leave by `refused`, saying whether the attempt's agent can fix it (`fixable`, PDT-124).
 

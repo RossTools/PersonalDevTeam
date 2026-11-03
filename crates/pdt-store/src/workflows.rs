@@ -1,5 +1,4 @@
-//! Workflows, their versions, runs and steps, per-workflow state, the session outbox and connections (Phase 7a spec
-//! §3–§5, §7).
+//! Workflows, their versions, runs and steps, per-workflow state, the session outbox and connections.
 
 use crate::{Store, StoreError};
 use pdt_core::secret::Redactor;
@@ -294,7 +293,7 @@ impl Store {
         Ok(Some(u32::try_from(next).unwrap_or(0)))
     }
 
-    /// Saves a proposal (Phase 7d spec §6.2): a new version that doesn't become current until accepted. An older
+    /// Saves a proposal: a new version that doesn't become current until accepted. An older
     /// pending proposal is discarded. Returns the version, or None for an unknown workflow.
     pub async fn propose_workflow_version(
         &self,
@@ -781,7 +780,7 @@ impl Store {
         rows.iter().map(|r| Ok((r.try_get("wf")?, to_step(r)?))).collect()
     }
 
-    /// Steps waiting for a slot under the host's cap on agents running a turn (Phase 7c §6.2), oldest first, with
+    /// Steps waiting for a slot under the host's cap on agents running a turn, oldest first, with
     /// their runs' tickets.
     pub async fn steps_waiting_for_slot(&self) -> Result<Vec<(Option<String>, Step)>, StoreError> {
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(

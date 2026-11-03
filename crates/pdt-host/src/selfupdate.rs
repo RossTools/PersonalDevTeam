@@ -1,4 +1,4 @@
-//! Spec §3.4 step 6: when a release changes pdt-host itself, it restarts last. On Windows it first replaces its own copy
+//! When a release changes pdt-host itself, it restarts last. On Windows it first replaces its own copy
 //! in the data folder; on macOS it runs from the bundle, which the update has already swapped.
 
 use sha2::Digest;

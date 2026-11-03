@@ -37,7 +37,7 @@ export interface PriorityIconProps {
 
 /**
  * A priority as an icon (bars for low → high, a dash for none). Urgent is the one that asks for attention, so it
- * takes the `waiting` state colour; the rest stay neutral (colour means state, spec §3).
+ * takes the `waiting` state colour; the rest stay neutral (colour means state).
  */
 export function PriorityIcon({ priority, showLabel = false, className }: PriorityIconProps) {
   const level = LEVEL[priority];

@@ -1,4 +1,4 @@
-// The outline view (Phase 7d spec §3.2): the document as ordered steps with a branch per port. Up/Down move between
+// The outline view: the document as ordered steps with a branch per port. Up/Down move between
 // rows, Enter opens a step's panel, each step's ⋯ menu adds, moves and removes.
 import { useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { CornerDownRight, Plus } from 'lucide-react';

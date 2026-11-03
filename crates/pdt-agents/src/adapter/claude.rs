@@ -1,4 +1,4 @@
-//! Claude Code through `claude -p` stream-json: one process per live conversation (spec §3.2). The frame mapping is
+//! Claude Code through `claude -p` stream-json: one process per live conversation. The frame mapping is
 //! pdt-core's `ClaudeMapper`; this module owns the process, its pipes and control-request replies.
 
 #[cfg(test)]
