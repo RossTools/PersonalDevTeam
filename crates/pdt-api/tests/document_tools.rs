@@ -88,6 +88,11 @@ async fn the_pm_makes_a_sheet_with_formulas_and_a_chart_and_opens_it_beside_the_
     let (_, before) = call(&env.app, "GET", &format!("/api/documents/{sheet}"), None).await;
     let done = tool(&env, &id, "sheet_edit", edits).await;
     assert_eq!(done["version"], "2", "{done}");
+    assert_eq!(
+        (done["kind"].as_str(), done["id"].as_str()),
+        (Some("sheet"), Some(sheet.as_str())),
+        "its brief: {done}"
+    );
     let chart = done["charts"][0].as_str().unwrap_or_else(|| panic!("{done}")).to_string();
     let (_, after) = call(&env.app, "GET", &format!("/api/documents/{sheet}"), None).await;
     assert!(after["updatedAt"].as_i64() >= before["updatedAt"].as_i64(), "the open views see it changed");
@@ -149,6 +154,7 @@ async fn agents_read_and_edit_docs_and_answer_their_comments() {
     let done = allowed(&env, &id, "doc_edit", edits).await;
     let diff = done["diff"].as_str().unwrap_or_else(|| panic!("{done}"));
     assert!(diff.contains("-Old.") && diff.contains("+New.") && diff.contains("+| B | y |"), "{diff}");
+    assert_eq!((done["title"].as_str(), done["kind"].as_str()), (Some("Spec"), Some("doc")), "its brief: {done}");
     let (_, r) = call(&env.app, "GET", &format!("/api/documents/{doc}/content"), None).await;
     assert!(r["content"]["markdown"].as_str().unwrap().contains("## Scope\n\nNew.\n"), "{r}");
     let bad = json!({"document": doc, "edits": [{"op": "replace_section", "heading": "Goal", "markdown": "x"}]});

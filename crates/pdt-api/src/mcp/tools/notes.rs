@@ -164,15 +164,20 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                     crate::pm::add_note(st, n).await.map_err(api)?
                 }
             };
-            Ok(json!({"saved": true, "id": n.id, "pinned": n.pinned}))
+            let project = note_project(st, n.project_id.as_deref()).await;
+            Ok(json!({"saved": true, "id": n.id, "title": n.title, "project": project, "pinned": n.pinned}))
         }
         "delete_note" => {
             let a: DeleteNote = args(a)?;
             pm_may_write(st, &a.id).await?;
+            // What it was, for the conversation's card.
+            let note = st.store.get_note(&a.id).await.map_err(store)?;
             if !st.store.delete_note(&a.id).await.map_err(store)? {
                 return Err(format!("there is no note {}", a.id));
             }
-            Ok(json!({"deleted": true}))
+            let project = note_project(st, note.as_ref().and_then(|n| n.project_id.as_deref())).await;
+            Ok(json!({"deleted": true, "title": note.as_ref().map(|n| &n.title), "project": project,
+                      "pinned": note.as_ref().map(|n| n.pinned)}))
         }
         "write_journal" => {
             let a: WriteJournal = args(a)?;
@@ -200,6 +205,11 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         }
         other => Err(format!("no tool is called {other}")),
     }
+}
+
+/// A note's project key, for the conversation's card (None: host-wide, or not found: the note is saved either way).
+async fn note_project(st: &AppState, project_id: Option<&str>) -> Option<String> {
+    st.store.get_project(project_id?).await.ok().flatten().map(|p| p.key)
 }
 
 /// Refuses a PM tool's change to one of the user's own notes (PDT-126); a missing note is left to the tool.

@@ -72,8 +72,10 @@ has it, its branch and its pull request with CI; click it to open the ticket. Pu
 pull request, file paths of the project open in the file viewer, and status words in tables (**CI failed**, **ready
 to accept**) are coloured. What an agent does through PDT shows as a card rather than a folded line: the tickets it
 created, what it changed on a ticket (from → to), links, messages to other sessions, comments, workflow runs it
-started, and watches, with **Stop watching**. When one of these waits for your yes, its card shows what would be
-created or changed.
+started, watches (with **Stop watching**), work it stopped on a ticket, issues it opened or linked, bugs it reported,
+documents it created, edited or linked (with **Open beside**), and notes it saved or deleted. When one of these waits
+for your yes, its card shows what would be created or changed. Calls that only read tickets stay folded, and their line
+names the tickets they read as pills.
 
 ## Models and permission modes
 

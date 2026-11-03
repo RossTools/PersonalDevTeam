@@ -13,6 +13,10 @@ repo: string, number: number,
  */
 issue: string, url: string, 
 /**
+ * Its title, as filed.
+ */
+title: string, 
+/**
  * The ticket that links it, when it was filed from one.
  */
 ticketKey: string | null, };

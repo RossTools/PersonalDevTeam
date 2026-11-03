@@ -30,6 +30,11 @@ export interface ToolCallRowProps {
   status?: ToolCallStatus;
   /** Right-aligned details: a duration, an exit code, "+12 −3". */
   meta?: ReactNode;
+  /**
+   * Links after the verb and subject (ticket pills). They sit outside the row's button (a link can't be in one),
+   * which then holds the chevron and the verb.
+   */
+  tags?: ReactNode;
   /** Shown when the row is expanded (input, output); the row is a button only when there is something to show. */
   details?: ReactNode;
   /** Nested rows (sub-agent calls), shown when expanded, indented under this one. */
@@ -42,23 +47,27 @@ export interface ToolCallRowProps {
  * One line per tool call in a conversation ("Run `cargo test`  ✓ 12 s"), expanding to its input and output. Also
  * the collapsed summary of several calls (no `status`, children are the calls).
  */
-export function ToolCallRow({ verb, subject, status, meta, details, children, defaultOpen = false, className }: ToolCallRowProps) {
+export function ToolCallRow({ verb, subject, status, meta, details, tags, children, defaultOpen = false, className }: ToolCallRowProps) {
   const [open, setOpen] = useState(defaultOpen);
   const id = useId();
   const expandable = !!details || !!children;
-  const line = (
+  const head = (
     <>
       {expandable ? (
         <ChevronRight aria-hidden className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', open && 'rotate-90')} />
       ) : (
         <span aria-hidden className="size-3.5 shrink-0" />
       )}
-      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+      <span className={cn('flex min-w-0 items-baseline gap-1.5', !tags && 'flex-1')}>
         <span className="shrink-0 text-muted-foreground">{verb}</span>{' '}
         {subject && (
           <code className="min-w-0 truncate rounded-sm bg-muted/60 px-1 py-px font-mono text-meta text-muted-foreground group-hover:text-foreground">{subject}</code>
         )}
       </span>
+    </>
+  );
+  const tail = (
+    <>
       {meta && ' '}
       {meta && <span className="shrink-0 text-meta text-muted-foreground tabular-nums">{meta}</span>}
       {status && <ToolStatusIcon status={status} />}
@@ -66,21 +75,35 @@ export function ToolCallRow({ verb, subject, status, meta, details, children, de
   );
   // Quiet next to the conversation's text (PDT-75): muted until hovered; only a failure is coloured.
   const rowClass = 'group flex w-full min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-xs';
+  const toggle = expandable && (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-controls={id}
+      onClick={() => setOpen((o) => !o)}
+      className={cn(
+        'outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        tags ? 'flex min-w-0 shrink-0 items-center gap-1.5 rounded-sm text-left pointer-coarse:min-h-control-touch' : cn(rowClass, 'hover:bg-accent pointer-coarse:min-h-control-touch'),
+      )}
+    >
+      {head}
+      {!tags && tail}
+    </button>
+  );
+  // With tags, the row is a line holding the toggle, the tags and the status; without, the toggle is the row.
+  const line = tags ? (
+    <div className={cn(rowClass, expandable && 'hover:bg-accent')}>
+      {toggle || head}
+      <span className="flex min-w-0 flex-wrap items-center gap-1">{tags}</span>
+      <span className="flex-1" />
+      {tail}
+    </div>
+  ) : (
+    toggle || <div className={rowClass}>{head}{tail}</div>
+  );
   return (
     <div className={cn('flex flex-col', className)} data-status={status}>
-      {expandable ? (
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={id}
-          onClick={() => setOpen((o) => !o)}
-          className={cn(rowClass, 'outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-control-touch')}
-        >
-          {line}
-        </button>
-      ) : (
-        <div className={rowClass}>{line}</div>
-      )}
+      {line}
       {open && expandable && (
         <div id={id} className="flex flex-col gap-1.5 pt-1 pb-1.5 pl-5">
           {details}

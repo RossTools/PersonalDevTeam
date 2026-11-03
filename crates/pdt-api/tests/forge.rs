@@ -799,7 +799,7 @@ async fn the_user_files_a_ticket_as_a_github_issue_and_the_ticket_links_it() {
     assert_eq!(
         v,
         json!({"repo": "o/r", "number": 500, "issue": "o/r#500", "url": "https://github.com/o/r/issues/500",
-               "ticketKey": key})
+               "title": "Board is slow", "ticketKey": key})
     );
     let made = gh.created_issues.lock().unwrap().clone();
     assert_eq!(made[0].0, "o/r");
@@ -877,6 +877,7 @@ async fn an_agent_files_its_ticket_as_an_issue_with_issue_create() {
     let said =
         say_approved(&env, &s, &format!("mcp: issue_create {{\"ticket\": \"{key}\", \"labels\": [\"ci\"]}}")).await;
     assert!(said.contains("\"issue\": \"o/r#500\"") && said.contains(&key), "{said}");
+    assert!(said.contains("\"title\": \"Fix CI\""), "{said}");
     let made = gh.created_issues.lock().unwrap().clone();
     assert_eq!(
         (made[0].1.title.as_str(), made[0].1.labels.clone()),

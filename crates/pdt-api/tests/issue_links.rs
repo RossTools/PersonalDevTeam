@@ -255,6 +255,7 @@ async fn the_pm_links_and_unlinks_issues_with_the_users_yes() {
     let said =
         allowed(&env, &id, "link_issue", json!({"ticket": "PX-1", "issue": "https://github.com/o/r/issues/1"})).await;
     assert!(said.starts_with("mcp link_issue:") && said.contains("Crash on start"), "{said}");
+    assert_eq!(answer(&said)["issue"]["title"], "Crash on start", "the one linked: {said}");
     let said = allowed(
         &env,
         &id,
@@ -269,6 +270,7 @@ async fn the_pm_links_and_unlinks_issues_with_the_users_yes() {
 
     let said = allowed(&env, &id, "unlink_issue", json!({"ticket": "PX-1", "issue": "o/r#1"})).await;
     assert_eq!(answer(&said)["ticket"]["issues"], json!([]), "{said}");
+    assert_eq!(answer(&said)["issue"]["key"], "o/r#1", "the one removed: {said}");
 
     // create_ticket links what it is given as it makes the ticket.
     let said = allowed(
