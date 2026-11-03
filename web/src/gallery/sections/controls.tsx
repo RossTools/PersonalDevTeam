@@ -8,6 +8,7 @@ import { Select } from '@ui/Select';
 import { SuggestInput } from '@ui/SuggestInput';
 import { Field } from '@ui/Field';
 import { Checkbox } from '@ui/Checkbox';
+import { CheckboxPicks } from '@ui/CheckboxPicks';
 import { Switch } from '@ui/Switch';
 import { SegmentedControl } from '@ui/SegmentedControl';
 import { Kbd } from '@ui/Kbd';
@@ -63,8 +64,16 @@ function FormDemo() {
   const [del, setDel] = useState(false);
   const [source, setSource] = useState('folder');
   const [theme, setTheme] = useState('system');
+  const [picked, setPicked] = useState<string[]>(['pdt']);
   return (
     <div className="grid max-w-xl gap-4">
+      <CheckboxPicks
+        label="Projects"
+        hint="Every project when none is ticked."
+        options={[{ id: 'pdt', name: 'Personal Dev Team' }, { id: 'site', name: 'Website' }, { id: 'notes', name: 'Notes' }]}
+        value={picked}
+        onChange={setPicked}
+      />
       <SegmentedControl
         aria-label="Source"
         options={[

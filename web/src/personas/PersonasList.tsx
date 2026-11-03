@@ -1,8 +1,9 @@
 import { Plus } from 'lucide-react';
-import { Alert, Badge, EmptyState, IconButton, List, ListHeading, ListRow, Skeleton } from '@ui';
+import { Badge, EmptyState, IconButton, List, ListHeading, ListRow, Skeleton } from '@ui';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { useAgents } from '../common/agents';
 import { agentLine, sortPersonas, usePersonas } from './model';
+import { LoadError } from '../common/QueryStatus';
 
 /**
  * The list column of the Personas view: a heading with New persona, then every persona (name; role,
@@ -26,7 +27,7 @@ export function PersonasList({ selectedId, onSelect }: { selectedId: string | nu
         Personas
       </ListHeading>
       {personas.isPending && <Skeleton lines={4} label="Loading personas" />}
-      {personas.isError && <Alert tone="error">Personas could not be loaded: {personas.error.message}</Alert>}
+      <LoadError what="Personas" error={personas.error} />
       {personas.isSuccess && (
         <List
           aria-label="Personas"

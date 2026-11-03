@@ -140,8 +140,7 @@ export function LinkIssueDialog({ ticket, onClose }: { ticket: Ticket; onClose: 
   const reset = () => { linkIt.reset(); addPlain.reset(); };
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
+      onClose={onClose}
       title={`Link an issue to ${ticket.key}`}
       description="Paste the issue's address or its key. Done leaves it as it is unless you turn on closing it."
       footer={

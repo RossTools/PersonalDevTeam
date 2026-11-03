@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { FileDown, Search, SquarePen, X } from 'lucide-react';
-import { Alert, Button, Dialog, EmptyState, IconButton, Input, RelativeTime, Select, Skeleton } from '@ui';
+import { Button, Dialog, EmptyState, IconButton, Input, RelativeTime, Select, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { Document } from '../api/gen/Document';
 import type { DocumentFilter } from '../api/gen/DocumentFilter';
@@ -11,6 +11,7 @@ import { TicketPicker } from '../tickets/TicketPicker';
 import { KindIcon } from './LinkedDocuments';
 import { providerLabel, useDocumentProviders, useDocuments } from './queries';
 import { useProjects } from '../projects/queries';
+import { LoadError } from '../common/QueryStatus';
 
 const ANY = '';
 /** "Any" in a filter's Select (an empty value would read as none chosen). */
@@ -159,7 +160,7 @@ export function DocumentsList({ filters, selectedId, onOpen, onNew, onImport }: 
         )}
       </div>
       {pickingTicket && (
-        <Dialog open onOpenChange={(o) => !o && setPickingTicket(false)} title="Documents linked to a ticket" size="md">
+        <Dialog onClose={() => setPickingTicket(false)} title="Documents linked to a ticket" size="md">
           <TicketPicker
             projectId={filters.project || null}
             label="Ticket"
@@ -169,7 +170,7 @@ export function DocumentsList({ filters, selectedId, onOpen, onNew, onImport }: 
         </Dialog>
       )}
       {docs.isPending && <Skeleton lines={4} label="Loading documents" className="m-3" />}
-      {docs.isError && <Alert tone="error" className="m-2">Documents could not be loaded: {docs.error.message}</Alert>}
+      <LoadError what="Documents" error={docs.error} className="m-2" />
       {docs.isSuccess && list.length === 0 && (
         <EmptyState className="mt-6 border-0">
           {filtered ? 'No document matches.'

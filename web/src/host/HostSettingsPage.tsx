@@ -33,6 +33,7 @@ import { StuckAgents } from './StuckAgents';
 import { PmCheckpointSettings } from '../pm/PmCheckpointSettings';
 import { documentKeys, useDocumentProviders } from '../documents/queries';
 import { hostKeys, useHostSettings, setHostSettings, useHostChecks, useAgentCapabilities } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 /** The stored token's state as a badge (never the token itself). */
 function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeTone; text: string } {
@@ -929,12 +930,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
     return (
       <Page title="This host">
         {view.error ? (
-          <Alert
-            tone="error"
-            action={<Button size="sm" onClick={() => void qc.invalidateQueries({ queryKey: hostKeys.settings })}>Retry</Button>}
-          >
-            Host settings could not be loaded: {view.error.message}
-          </Alert>
+          <LoadError what="Host settings" error={view.error} onRetry={() => void qc.invalidateQueries({ queryKey: hostKeys.settings })} />
         ) : (
           <Skeleton label="Loading host settings" className="h-40" />
         )}

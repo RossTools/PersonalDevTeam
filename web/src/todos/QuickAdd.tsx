@@ -7,6 +7,7 @@ import { cn } from '@ui/lib/utils';
 import { Dialog, MenuButton } from '@ui';
 import type { NewTodo } from '../api/gen/NewTodo';
 import type { Project } from '../api/gen/Project';
+import { useAction } from '../common/useAction';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { dayText, DuePicker, type DuePanel, type DueValue } from './DuePicker';
 import { addDays, localDay, repeatText } from './model';
@@ -37,7 +38,6 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
   const [linking, setLinking] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [focused, setFocused] = useState(false);
-  const [pending, setPending] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
@@ -67,9 +67,7 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
     setProject(null);
     setTicket(null);
   };
-  const add = async () => {
-    if (!text.trim() || pending) return;
-    setPending(true);
+  const [submit, pending] = useAction(async () => {
     const dueOn = due.dueOn ?? (due.recurrence ? localDay(now) : null);
     const made = await onAdd({
       title: parsed.title,
@@ -79,9 +77,11 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
       ...(dueOn && due.dueTime ? { dueTime: due.dueTime } : {}),
       ...(due.recurrence ? { recurrence: due.recurrence } : {}),
     });
-    setPending(false);
     if (made) reset();
     input.current?.focus();
+  });
+  const add = async () => {
+    if (text.trim() && !pending) await submit();
   };
   const openPicker = (panel: DuePanel, from: Element | null) => {
     anchor.current = from;
@@ -244,7 +244,7 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
         />
       )}
       {linking && (
-        <Dialog open onOpenChange={(o) => !o && setLinking(false)} title="Link to a ticket" description={parsed.title || 'New todo'}>
+        <Dialog onClose={() => setLinking(false)} title="Link to a ticket" description={parsed.title || 'New todo'}>
           <TicketPicker
             projectId={null}
             label="Ticket to link"

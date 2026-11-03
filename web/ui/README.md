@@ -68,7 +68,14 @@
   `<Button slot="drag">` handle. Sheets open from a button, never an edge swipe. Never make a long-press target natively `draggable` on touch
   screens (Android turns the long press into a drag): drag from a handle, or only with a fine pointer.
 - **Pending and errors.** Actions show `pending` on their control; forms show errors with `Alert`/`Field`; everything
-  else toasts (`toast.error(message)`).
+  else toasts (`toast.error(message)`). In features (web/src/common): a button's action is `useAction` (pending, toasts
+  its failure), a form's or dialog's is `useFormAction` (pending, `error` for its `Alert`, ignores a double submit). A
+  query's loading and failure are `QueryStatus` (Skeleton, then "X could not be loaded: …", `retry` for a Retry
+  button), or `LoadError` alone beside data shown another way.
+- **Dialogs.** One mounted only while it shows passes `onClose` (no `open`/`onOpenChange`). Its footer is
+  `DialogActions`: a `secondary` Cancel, then the action named for what it does (`danger` when it destroys, `form`
+  to submit a form by id). Picking some of a list (projects, personas) is `CheckboxPicks`; removing an item from a
+  settings list is `useConfirmDelete` (web/src/common), which confirms, deletes and invalidates.
 - **Times.** `lib/time.ts` (exported from `@ui`) is the one home for time formats: `relativeTime`, `shortAge`,
   `shortDate`, `absoluteTime` (tooltips), `clockTime` and `formatDuration`. In render, show a relative time with
   `<RelativeTime>` (it ticks every minute; `short` for a list row's "2h"), never `relativeTime()`, whose text goes stale.

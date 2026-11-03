@@ -2,7 +2,7 @@
 // asks which workflows go in (all of them, to start with).
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Alert, Button, Checkbox, Dialog, Skeleton, Textarea } from '@ui';
+import { Alert, Button, Checkbox, Dialog, DialogActions, Skeleton, Textarea } from '@ui';
 import type { Workflow } from '../api/gen/Workflow';
 import { copyToClipboard } from '../common/clipboard';
 import { downloadText, exportFileName, exportText, fetchExport } from './transfer';
@@ -36,12 +36,14 @@ export function ExportDialog({ ids, workflows, onClose }: {
   const [shown, setShown] = useState<string[] | null>(ids ?? null);
   const description = 'Paste it into Import on another PDT, or save it as a file. Secrets, runs and state stay here.';
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }} title="Export workflows" description={description} size="lg"
+    <Dialog onClose={onClose} title="Export workflows" description={description} size="lg"
       footer={shown ? <Button variant="secondary" onClick={onClose}>Close</Button> : (
-        <>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={picked.length === 0} onClick={() => setShown((workflows ?? []).filter((w) => picked.includes(w.id)).map((w) => w.id))}>Export {picked.length}</Button>
-        </>
+        <DialogActions
+          onCancel={onClose}
+          action={`Export ${picked.length}`}
+          disabled={picked.length === 0}
+          onAction={() => setShown((workflows ?? []).filter((w) => picked.includes(w.id)).map((w) => w.id))}
+        />
       )}>
       {shown ? <ExportText ids={shown} /> : (
         <fieldset className="flex flex-col gap-1.5">

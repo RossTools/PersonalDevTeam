@@ -58,3 +58,49 @@ export function useAction<A extends unknown[], R>(
   }, []);
   return [run, count > 0];
 }
+
+export interface FormAction<A extends unknown[], R> {
+  /** Clears the error and calls the action; resolves to its result, or undefined when it failed or one was already running. */
+  run: (...args: A) => Promise<R | undefined>;
+  pending: boolean;
+  /** The last failure's message, for an `Alert` in the form; null after a success or a new `run`. */
+  error: string | null;
+  setError: (message: string | null) => void;
+}
+
+/**
+ * For a form or dialog that shows its error inline instead of toasting (web/ui README, "Pending and errors"):
+ * `const save = useFormAction(fn)`, then `save.run(...args)`, `pending={save.pending}`,
+ * `{save.error && <Alert tone="error">{save.error}</Alert>}`. A `run` while one is pending does nothing, so a double
+ * submit (Enter, then a click) calls the action once.
+ */
+export function useFormAction<A extends unknown[], R>(fn: (...args: A) => Promise<R> | R): FormAction<A, R> {
+  const fnRef = useRef(fn);
+  useEffect(() => {
+    fnRef.current = fn;
+  });
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const busy = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const run = useCallback(async (...args: A) => {
+    if (busy.current) return undefined;
+    busy.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      return await fnRef.current(...args);
+    } catch (err) {
+      if (mounted.current) setError(actionError(err));
+      return undefined;
+    } finally {
+      busy.current = false;
+      if (mounted.current) setPending(false);
+    }
+  }, []);
+  return { run, pending, error, setError };
+}

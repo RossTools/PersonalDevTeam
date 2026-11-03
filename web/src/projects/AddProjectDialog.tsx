@@ -8,7 +8,7 @@ import { AddProjectForm, type AddProjectMode } from './AddProjectForm';
  */
 export function AddProjectDialog({ onClose, onAdded, mode }: { onClose: () => void; onAdded: (p: Project) => void; mode?: AddProjectMode }) {
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }} title="Add project">
+    <Dialog onClose={onClose} title="Add project">
       <AddProjectForm autoFocus initialMode={mode} onAdded={(p) => { onAdded(p); onClose(); }} />
     </Dialog>
   );

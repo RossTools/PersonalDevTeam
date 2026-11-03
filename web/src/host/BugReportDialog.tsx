@@ -1,6 +1,6 @@
 import { useContext, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Alert, Button, Checkbox, Dialog, Field, Input, Link, Skeleton, Textarea } from '@ui';
+import { Alert, Button, Checkbox, Dialog, DialogActions, Field, Input, Link, Skeleton, Textarea } from '@ui';
 import { ApiError, api } from '../api/client';
 import type { BugReportFiled } from '../api/gen/BugReportFiled';
 import type { BugReportPreview } from '../api/gen/BugReportPreview';
@@ -64,7 +64,7 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
 
   if (filed) {
     return (
-      <Dialog open onOpenChange={(o) => !o && onClose()} title="Bug reported" size="md" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
+      <Dialog onClose={onClose} title="Bug reported" size="md" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
         {filed.kind === 'issue' ? (
           <p className="text-sm">
             Thanks. It is issue <Link external href={filed.url}>#{filed.number}</Link> on GitHub.
@@ -81,19 +81,19 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
 
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       dismissable={![title, description, expected, steps].some((t) => t.trim())}
       title="Report a bug"
       description="A bug in PDT itself. The version, and the OS with the diagnostics, are added for you."
       size="lg"
       footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="bug-report" variant="primary" pending={pending} disabled={!ready}>
-            {p?.route === 'local' ? 'File ticket' : 'Send report'}
-          </Button>
-        </>
+        <DialogActions
+          onCancel={onClose}
+          action={p?.route === 'local' ? 'File ticket' : 'Send report'}
+          form="bug-report"
+          pending={pending}
+          disabled={!ready}
+        />
       }
     >
       <form id="bug-report" className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void send(); }}>

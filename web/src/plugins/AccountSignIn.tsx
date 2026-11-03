@@ -14,6 +14,7 @@ import { actionError } from '../common/useAction';
 import { ConnectionDialog } from '../connections/ConnectionDialog';
 import { connectionsKey } from '../connections/queries';
 import { POLL } from '../common/poll';
+import { LoadError } from '../common/QueryStatus';
 
 // Under the connections' key, so saving or deleting a connection anywhere reads the accounts again (PDT-464).
 export const signInAccountsKey = (url: string) => [...connectionsKey, 'sign-in', url] as const;
@@ -104,7 +105,7 @@ export function AccountSignIn({ signIn: s }: { signIn: SignIn }) {
       actions={builtIn && <Button size="sm" variant="primary" onClick={() => void consent(() => api.signInAdd(s.api, origin))}>Sign in with {s.service}</Button>}
     >
       {accounts.isPending ? <Skeleton label={`Loading ${s.service} accounts`} className="h-8" />
-        : accounts.isError ? <Alert tone="error">{s.service} accounts could not be loaded: {accounts.error.message}</Alert>
+        : accounts.isError ? <LoadError what={`${s.service} accounts`} error={accounts.error} />
           : accounts.data.length === 0 ? <p className="text-sm text-muted-foreground">{builtIn ? `No ${s.service} account yet.` : `Add a connection for your ${s.service} account first.`}</p>
             : accounts.data.map((a: SignInAccount) => (
               <div key={a.connectionId} className="flex flex-wrap items-center gap-2 py-1">

@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Section, Select, SettingsRow } from '@ui';
+import { Section, Select, SettingsRow } from '@ui';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import type { ProjectDocumentSettings } from '../api/gen/ProjectDocumentSettings';
@@ -8,6 +8,7 @@ import { SaveStatus, useSaveState } from '../common/AutoSave';
 import { FolderField } from '../common/FolderField';
 import { ProjectDocumentsBody } from './LinkedDocuments';
 import { documentKeys, useDocumentProviders } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 /** "Follow the host" in a provider picker. */
 const HOST = 'host';
@@ -42,7 +43,7 @@ export function ProjectDocuments({ project }: { project: Project }) {
       projectId={project.id}
       wrap={(actions, body) => (
         <Section label="Documents" description="Docs and sheets linked to this project, and where its new ones go." actions={actions}>
-          {settings.isError && <Alert tone="error">Document settings could not be loaded: {settings.error.message}</Alert>}
+          <LoadError what="Document settings" error={settings.error} />
           <SettingsRow label="Default provider" htmlFor={providerId} description="New documents in this project go here.">
             <SaveStatus state={state} />
             <Select
