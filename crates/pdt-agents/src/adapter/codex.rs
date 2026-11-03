@@ -803,4 +803,69 @@ mod tests {
         }
         assert_eq!(random_token().len(), 64);
     }
+
+    #[test]
+    fn models_fall_back_to_their_id_and_codex_offers_every_mode() {
+        let v = json!({"data": [{"model": "gpt-mini"}, {"id": "gpt-6", "displayName": "GPT-6", "description": "Best"},
+                                {"displayName": "no id"}]});
+        let c = capabilities_from_models(&v);
+        let models: Vec<(&str, &str, Option<&str>)> =
+            c.models.iter().map(|m| (m.value.as_str(), m.display_name.as_str(), m.description.as_deref())).collect();
+        assert_eq!(models, [("gpt-mini", "gpt-mini", None), ("gpt-6", "GPT-6", Some("Best"))]);
+        assert!(c.conversation);
+        assert_eq!(c.permission_modes, PermissionMode::ALL.to_vec());
+        assert_eq!(c.commands.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["compact", "review"]);
+        assert!(capabilities_from_models(&json!({})).models.is_empty());
+    }
+
+    #[test]
+    fn a_message_goes_as_its_text_and_its_images_by_path() {
+        let img = |p: &str| super::super::ImageFile { path: PathBuf::from(p), media_type: "image/png".into() };
+        let msg = Outgoing { text: "see".into(), images: vec![img("/d/a.png"), img("/d/b.png")] };
+        assert_eq!(
+            input(&msg),
+            json!([{"type": "text", "text": "see"}, {"type": "localImage", "path": "/d/a.png"},
+                   {"type": "localImage", "path": "/d/b.png"}])
+        );
+        assert_ne!(free_port().unwrap(), 0);
+    }
+
+    fn config(program: &str, dir: &std::path::Path) -> CodexServerConfig {
+        CodexServerConfig {
+            program: program.into(),
+            search_path: Some(dir.to_string_lossy().into_owned()),
+            dir: dir.join("codex"),
+            env: vec![],
+            env_remove: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn a_server_that_cannot_start_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = CodexServer::new(config("pdt-no-such-codex", dir.path()));
+        assert!(server.capabilities().is_none());
+        assert!(server.endpoint().await.is_none());
+        let e = server.ensure().await.err().unwrap();
+        assert!(matches!(&e, AdapterError::ProgramNotFound(p) if p == "pdt-no-such-codex"), "{e:?}");
+        // The token is written before the program is looked for, and only PDT can read it.
+        assert_eq!(std::fs::read_to_string(dir.path().join("codex").join("token")).unwrap().len(), 64);
+        server.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_server_that_exits_at_once_reports_its_error_output() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("fake-codex");
+        std::fs::write(&program, "#!/bin/sh\necho \"no app-server here\" >&2\nsleep 0.5\nexit 3\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let server = CodexServer::new(config(&program.to_string_lossy(), dir.path()));
+        let e = server.ensure().await.err().unwrap();
+        let AdapterError::Spawn(m) = &e else { panic!("{e:?}") };
+        assert!(m.starts_with("codex app-server exited"), "{m}");
+        assert!(m.contains("no app-server here"), "{m}");
+        assert!(server.endpoint().await.is_none());
+    }
 }

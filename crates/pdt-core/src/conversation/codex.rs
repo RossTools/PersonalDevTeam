@@ -1143,4 +1143,218 @@ mod tests {
         assert_eq!(sandbox_policy("workspace-write", true), json!({"type": "workspaceWrite", "networkAccess": true}));
         assert_eq!(sandbox_policy("danger-full-access", true), json!({"type": "dangerFullAccess"}));
     }
+
+    /// A turn that uses each kind of tool Codex has, asks for more permissions, hits its usage limit and fails.
+    const TOOLS: &str = include_str!("../../tests/fixtures/codex/tools.jsonl");
+
+    #[test]
+    fn a_recorded_turn_with_every_kind_of_tool_maps_to_events() {
+        let mut m = CodexMapper::new();
+        m.note_sent();
+        let mut out = Vec::new();
+        for l in TOOLS.lines() {
+            let v: Value = serde_json::from_str(l).unwrap();
+            let method = v["method"].as_str().unwrap();
+            if let Some(id) = v.get("id") {
+                let asked = m.on_server_request(id.clone(), method, &v["params"]);
+                out.extend(asked);
+                let a = m.answer("p1", &Answer::Approve { always: true }).unwrap();
+                assert_eq!(
+                    a.result,
+                    json!({"permissions": {"network": {"enabled": true}}, "scope": "session"}),
+                    "the permissions asked for, for the rest of the session"
+                );
+                out.extend(a.events);
+            } else {
+                out.extend(m.on_notification(method, &v["params"]));
+            }
+        }
+        let ev = events(&out);
+        let kinds: Vec<&str> = ev.iter().map(|(_, e)| e.kind()).collect();
+        assert_eq!(
+            kinds,
+            [
+                "turn",
+                "user_message",
+                "reasoning",
+                "plan",
+                "tool_call",
+                "tool_call",
+                "tool_call",
+                "tool_call",
+                "tool_call",
+                "tool_call",
+                "tool_call",
+                "request",
+                "request",
+                "tool_call",
+                "compaction",
+                "turn_diff",
+                "notice",
+                "notice",
+                "notice",
+                "usage",
+                "notice",
+                "error",
+                "error",
+                "turn"
+            ],
+            "{ev:#?}"
+        );
+        let find = |key: &str| ev.iter().rev().find(|(k, _)| k.as_deref() == Some(key)).map(|(_, e)| e).unwrap();
+        assert!(matches!(find("i:u1"), AgentEvent::UserMessage { text, images, source: MessageSource::Pdt, .. }
+            if text == "Look around" && images.len() == 1));
+        assert!(
+            matches!(find("i:r1"), AgentEvent::Reasoning { summary } if summary == "**Plan**\n\nSearch, then read.")
+        );
+        assert!(matches!(find("plan:t1"), AgentEvent::Plan { markdown }
+            if markdown == "Two steps\n\n- [x] Search the web\n- [ ] Read the file"));
+        let AgentEvent::ToolCall { tool, title, status, .. } = find("i:w1") else { panic!() };
+        assert_eq!((tool.as_str(), title.as_str(), *status), ("WebSearch", "rust similar crate", ToolStatus::Done));
+        let AgentEvent::ToolCall { tool, title, input, output, status, .. } = find("i:m1") else { panic!() };
+        assert_eq!((tool.as_str(), title.as_str(), *status), ("mcp:pdt/get_ticket", "get_ticket", ToolStatus::Done));
+        assert_eq!(input, &json!({"ticket": "PDT-1"}));
+        assert!(output.as_deref().is_some_and(|o| o.contains("\"ok\"")), "{output:?}");
+        // A failed MCP call shows its error.
+        let AgentEvent::ToolCall { output, status, .. } = find("i:m2") else { panic!() };
+        assert_eq!((output.as_deref(), *status), (Some("not in a workflow step"), ToolStatus::Failed));
+        // A command is shown without the login shell Codex runs it in; its output streams, then arrives whole.
+        let AgentEvent::ToolCall { title, input, output, exit_code, status, .. } = find("i:c1") else { panic!() };
+        assert_eq!((title.as_str(), input["command"].as_str()), ("cargo test", Some("cargo test")));
+        assert_eq!(
+            (output.as_deref(), *exit_code, *status),
+            (Some("running 3 tests\ntest result: FAILED"), Some(101), ToolStatus::Failed)
+        );
+        let deltas: Vec<&CodexOut> = out.iter().filter(|o| matches!(o, CodexOut::Delta { .. })).collect();
+        assert_eq!(
+            deltas,
+            [&CodexOut::Delta { item_id: "i:c1".into(), field: DeltaField::Output, text: "running 3 tests\n".into() }]
+        );
+        let AgentEvent::Request { tool, title, state, can_always, .. } = find("r:p1") else { panic!() };
+        assert_eq!(
+            (tool.as_str(), title.as_str(), *state, *can_always),
+            ("Permissions", "Reach crates.io", RequestState::Answered, true)
+        );
+        let AgentEvent::ToolCall { tool, title, .. } = find("i:v1") else { panic!() };
+        assert_eq!((tool.as_str(), title.as_str()), ("Read", "/tmp/shot.png"));
+        assert!(matches!(find("diff:t1"), AgentEvent::TurnDiff { diff } if diff.contains("+b")));
+        let notices: Vec<(NoticeLevel, &str, Option<i64>)> = ev
+            .iter()
+            .filter_map(|(_, e)| match e {
+                AgentEvent::Notice { level, text, until } => Some((*level, text.as_str(), *until)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            notices,
+            [
+                (NoticeLevel::Info, "Codex switched this turn to gpt-small", None),
+                (NoticeLevel::Warning, "Your config has an unknown key", None),
+                (NoticeLevel::Warning, "stream disconnected, retrying", None),
+                (
+                    NoticeLevel::Warning,
+                    "Codex's usage limit is reached. Nothing is sent to it until you send again.",
+                    Some(1_792_400_000_000)
+                ),
+            ]
+        );
+        let AgentEvent::Usage { rate_limits, .. } = find("usage") else { panic!() };
+        let windows: Vec<(&str, f64)> = rate_limits.iter().map(|w| (w.name.as_str(), w.utilization)).collect();
+        assert_eq!(windows, [("60_minutes", 0.4), ("five_hour", 1.0)]);
+        assert!(matches!(&ev[21].1, AgentEvent::Error { text, retryable: false } if text == "usage limit reached"));
+        assert!(
+            matches!(find("turn-end:t1"), AgentEvent::Turn { status: Some(TurnStatus::Failed), duration_ms: Some(4200), reason: Some(r), .. }
+            if r == "usage limit reached")
+        );
+        assert_eq!(m.turn(), None);
+    }
+
+    #[test]
+    fn requests_name_their_command_and_expire_when_the_server_goes() {
+        let mut m = CodexMapper::new();
+        m.on_notification("turn/started", &json!({"turn": {"id": "t1"}}));
+        // A request with no item is keyed by its rpc id; a command's parsed actions name it.
+        let p = json!({"command": "/bin/zsh -lc 'ls && pwd'", "commandActions": [{"command": "ls"}, {"command": "pwd"}],
+                       "reason": "List files"});
+        let ev = events(&m.on_server_request(json!(9), "item/commandExecution/requestApproval", &p));
+        let (key, AgentEvent::Request { id, title, description, tool_call_id, can_always, input, .. }) = &ev[0] else {
+            panic!()
+        };
+        assert_eq!(key.as_deref(), Some("r:req-9"));
+        assert_eq!((id.as_str(), title.as_str(), description.as_deref()), ("req-9", "ls && pwd", Some("List files")));
+        assert_eq!((tool_call_id.as_deref(), *can_always), (Some("req-9"), true));
+        assert_eq!(input["command"], "ls && pwd");
+        assert_eq!(
+            m.answer("req-9", &Answer::Approve { always: true }).unwrap().result,
+            json!({"decision": "acceptForSession"})
+        );
+        // Denied more permissions: none granted, and the note goes to the agent next.
+        m.on_server_request(
+            json!(10),
+            "item/permissions/requestApproval",
+            &json!({"itemId": "p", "permissions": {"x": 1}}),
+        );
+        let a = m.answer("p", &Answer::Deny { message: Some(" ".into()) }).unwrap();
+        assert_eq!((a.result, a.follow_up), (json!({"permissions": {}}), None));
+        m.on_server_request(
+            json!(11),
+            "item/permissions/requestApproval",
+            &json!({"itemId": "p2", "permissions": {"y": 2}}),
+        );
+        let a = m.answer("p2", &Answer::Approve { always: false }).unwrap();
+        assert_eq!(a.result, json!({"permissions": {"y": 2}, "scope": "turn"}));
+        // A declined question answers nothing.
+        m.on_server_request(json!(12), "item/tool/requestUserInput", &json!({"itemId": "q", "questions": []}));
+        assert_eq!(m.answer("q", &Answer::Deny { message: None }).unwrap().result, json!({"answers": {}}));
+        // Resolved after PDT interrupted: the request expired rather than being answered elsewhere.
+        m.on_server_request(json!(13), "item/fileChange/requestApproval", &json!({"itemId": "f"}));
+        m.note_interrupt();
+        let ev = events(&m.on_notification("serverRequest/resolved", &json!({"requestId": 13})));
+        assert!(matches!(&ev[0].1, AgentEvent::Request { state: RequestState::Expired, .. }));
+        // The server going away expires what is open and ends the turn.
+        m.on_server_request(json!(14), "item/fileChange/requestApproval", &json!({"itemId": "g"}));
+        let ev = events(&m.on_exit("Codex stopped"));
+        assert!(matches!(&ev[0].1, AgentEvent::Request { state: RequestState::Expired, .. }));
+        assert!(
+            matches!(&ev[1].1, AgentEvent::Turn { status: Some(TurnStatus::Interrupted), reason: Some(r), .. } if r == "Codex stopped")
+        );
+        assert!(m.on_exit("again").is_empty());
+        // A message PDT failed to send is not counted as its own.
+        m.note_sent();
+        m.note_unsent();
+        m.note_unsent();
+        let user = json!({"item": {"type": "userMessage", "id": "u", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}});
+        let ev = events(&m.on_notification("item/completed", &user));
+        assert!(
+            matches!(&ev[0].1, AgentEvent::UserMessage { text, source: MessageSource::Terminal, .. } if text == "a\nb")
+        );
+    }
+
+    #[test]
+    fn tool_items_of_other_kinds_keep_their_name_from_when_they_started() {
+        let mut m = CodexMapper::new();
+        let started = json!({"item": {"type": "dynamicToolCall", "id": "d", "tool": "lookup", "arguments": {"q": 1}}});
+        let ev = events(&m.on_notification("item/started", &started));
+        assert!(matches!(&ev[0].1, AgentEvent::ToolCall { tool, status: ToolStatus::Running, .. } if tool == "lookup"));
+        let sub = json!({"item": {"type": "subAgentActivity", "id": "s"}});
+        assert!(
+            matches!(&events(&m.on_notification("item/completed", &sub))[0].1, AgentEvent::ToolCall { tool, .. } if tool == "subAgentActivity")
+        );
+        // Items PDT does not show, and partial messages, are not events.
+        for item in [
+            json!({"type": "hookPrompt", "id": "h"}),
+            json!({"type": "agentMessage", "id": "a", "text": "partial"}),
+            json!({"type": "somethingNew", "id": "n"}),
+            json!({"type": "agentMessage"}),
+        ] {
+            assert!(m.on_notification("item/started", &json!({"item": item})).is_empty(), "{item}");
+        }
+        assert!(m.on_notification("item/agentMessage/delta", &json!({"itemId": "a", "delta": ""})).is_empty());
+        let long = "x".repeat(250);
+        let p = json!({"command": format!("echo {long}")});
+        let ev = events(&m.on_server_request(json!(1), "item/commandExecution/requestApproval", &p));
+        let AgentEvent::Request { title, .. } = &ev[0].1 else { panic!() };
+        assert_eq!(title.chars().count(), 201, "200 characters and an ellipsis");
+        assert!(title.ends_with('…'));
+    }
 }

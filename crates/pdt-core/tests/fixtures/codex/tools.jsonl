@@ -1,0 +1,25 @@
+{"method":"turn/started","params":{"threadId":"th1","turn":{"id":"t1","items":[],"status":"inProgress"}}}
+{"method":"item/completed","params":{"threadId":"th1","turnId":"t1","item":{"type":"userMessage","id":"u1","content":[{"type":"text","text":"Look around"},{"type":"localImage","path":"/tmp/shot.png"}]}}}
+{"method":"item/completed","params":{"threadId":"th1","turnId":"t1","item":{"type":"reasoning","id":"r0","summary":[],"content":[]}}}
+{"method":"item/completed","params":{"threadId":"th1","turnId":"t1","item":{"type":"reasoning","id":"r1","summary":["**Plan**","Search, then read."],"content":[]}}}
+{"method":"turn/plan/updated","params":{"threadId":"th1","turnId":"t1","explanation":"Two steps","plan":[{"step":"Search the web","status":"completed"},{"step":"Read the file","status":"inProgress"}]}}
+{"method":"item/started","params":{"threadId":"th1","turnId":"t1","item":{"type":"webSearch","id":"w1","query":"rust similar crate"}}}
+{"method":"item/completed","params":{"threadId":"th1","turnId":"t1","item":{"type":"webSearch","id":"w1","query":"rust similar crate"}}}
+{"method":"item/started","params":{"threadId":"th1","turnId":"t1","item":{"type":"mcpToolCall","id":"m1","server":"pdt","tool":"get_ticket","status":"inProgress","arguments":{"ticket":"PDT-1"},"result":null,"error":null}}}
+{"method":"item/completed","params":{"threadId":"th1","turnId":"t1","item":{"type":"mcpToolCall","id":"m1","server":"pdt","tool":"get_ticket","status":"completed","arguments":{"ticket":"PDT-1"},"result":{"content":[{"type":"text","text":"ok"}]},"error":null}}}
+{"method":"item/completed","params":{"threadId":"th1","turnId":"t1","item":{"type":"mcpToolCall","id":"m2","server":"pdt","tool":"submit_outcome","status":"failed","arguments":{},"result":null,"error":"not in a workflow step"}}}
+{"method":"item/started","params":{"threadId":"th1","turnId":"t1","item":{"type":"commandExecution","id":"c1","command":"/bin/bash -lc 'cargo test'","cwd":"/work/repo","commandActions":[],"status":"inProgress"}}}
+{"method":"item/commandExecution/outputDelta","params":{"threadId":"th1","turnId":"t1","itemId":"c1","delta":"running 3 tests\n"}}
+{"method":"item/commandExecution/outputDelta","params":{"threadId":"th1","turnId":"t1","itemId":"c1","delta":""}}
+{"method":"item/completed","params":{"threadId":"th1","turnId":"t1","item":{"type":"commandExecution","id":"c1","command":"/bin/bash -lc 'cargo test'","cwd":"/work/repo","commandActions":[],"status":"failed","aggregatedOutput":"running 3 tests\ntest result: FAILED","exitCode":101}}}
+{"id":5,"method":"item/permissions/requestApproval","params":{"threadId":"th1","turnId":"t1","itemId":"p1","reason":"Reach crates.io","permissions":{"network":{"enabled":true}},"cwd":"/work/repo"}}
+{"method":"item/completed","params":{"threadId":"th1","turnId":"t1","item":{"type":"imageView","id":"v1","path":"/tmp/shot.png"}}}
+{"method":"item/completed","params":{"threadId":"th1","turnId":"t1","item":{"type":"contextCompaction","id":"cc1"}}}
+{"method":"turn/diff/updated","params":{"threadId":"th1","turnId":"t1","diff":"--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-a\n+b\n"}}
+{"method":"model/rerouted","params":{"threadId":"th1","turnId":"t1","fromModel":"gpt-big","toModel":"gpt-small","reason":"highRiskCyberActivity"}}
+{"method":"warning","params":{"threadId":"th1","message":"Your config has an unknown key"}}
+{"method":"warning","params":{"threadId":"th1","message":""}}
+{"method":"error","params":{"threadId":"th1","turnId":"t1","error":{"message":"stream disconnected, retrying"},"willRetry":true}}
+{"method":"account/rateLimits/updated","params":{"rateLimits":{"primary":{"usedPercent":100.0,"windowDurationMins":300,"resetsAt":1792400000},"secondary":{"usedPercent":40.0,"windowDurationMins":60,"resetsAt":1792500000},"rateLimitReachedType":"primary"}}}
+{"method":"error","params":{"threadId":"th1","turnId":"t1","error":{"message":"usage limit reached"},"willRetry":false}}
+{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"t1","status":"failed","error":{"message":"usage limit reached"},"durationMs":4200}}}
