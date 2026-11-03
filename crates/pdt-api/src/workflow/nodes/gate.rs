@@ -193,7 +193,7 @@ impl NodeKind for Gate {
                 created_at: now_ms(),
                 resolved_at: None,
             };
-            cx.st.store.open_inbox_item(&item).await.map_err(|e| e.to_string())?;
+            cx.st.store.open_inbox_item(&item).await.map_err(crate::workflow::err)?;
             let mut wait = json!({"answer": {"question": c.question, "choices": c.choices, "approve": c.approve,
                                              "ticket": ticket}});
             if let Some(e) = c.event {

@@ -207,7 +207,10 @@ pub(crate) async fn clone(
     let target = dest.clone();
     tokio::task::spawn_blocking(move || pdt_git::clone(&url, &target)).await.map_err(ApiError::internal)?.map_err(
         |e| match e {
-            pdt_git::GitError::Command(m) => ApiError::upstream(codes::CLONE_FAILED, format!("git clone failed: {m}")),
+            pdt_git::GitError::Command(m) => {
+                tracing::warn!(error = %m, "git clone failed");
+                ApiError::upstream(codes::CLONE_FAILED, format!("git clone failed: {}", crate::error::short_text(&m)))
+            }
             other => other.into(),
         },
     )?;

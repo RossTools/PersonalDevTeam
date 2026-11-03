@@ -734,7 +734,7 @@ pub(crate) async fn merge_attempt(
     let outcome = tokio::task::spawn_blocking(move || pdt_git::merge_local(&repo, &branch, &base, &message, squash))
         .await
         .map_err(ApiError::internal)?
-        .map_err(|e| ApiError::conflict(codes::MERGE_FAILED, e.to_string()))?;
+        .map_err(|e| ApiError::conflict(codes::MERGE_FAILED, ApiError::from(e).to_string()))?;
     let commit = match outcome {
         pdt_git::MergeOutcome::Merged { commit } => commit,
         pdt_git::MergeOutcome::Conflict { .. } => return Ok(Err(Refusal::blocked(MergeProblem::Conflict, true))),

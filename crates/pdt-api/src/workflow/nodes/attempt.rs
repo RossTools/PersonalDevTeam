@@ -50,7 +50,7 @@ impl NodeKind for AgentWorking {
         Box::pin(async move {
             let c: AgentWorkingConfig = parse(&input)?;
             let busy = c.known.is_some_and(|k| k.or(false))
-                || cx.st.store.attempt_agent_busy(&c.attempt, &cx.run.id).await.map_err(|e| e.to_string())?;
+                || cx.st.store.attempt_agent_busy(&c.attempt, &cx.run.id).await.map_err(crate::workflow::err)?;
             Ok(Outcome::next(if busy { "yes" } else { "no" }, json!({"working": busy})))
         })
     }
@@ -71,7 +71,7 @@ pub struct HasChanges;
 /// Whether the attempt has something to merge: a pull request, commits of its own (now, or ever seen), or
 /// uncommitted changes in its worktree. Anything it can't read counts as changes, so nothing is thrown away.
 async fn has_changes(cx: &StepCx<'_>, attempt: &str) -> Result<bool, String> {
-    let info = cx.st.store.get_attempt(attempt).await.map_err(|e| e.to_string())?.ok_or("no such attempt")?;
+    let info = cx.st.store.get_attempt(attempt).await.map_err(crate::workflow::err)?.ok_or("no such attempt")?;
     if info.own_commits || crate::github::watched_pr(cx.st, attempt).is_some() {
         return Ok(true);
     }
@@ -87,7 +87,7 @@ async fn has_changes(cx: &StepCx<'_>, attempt: &str) -> Result<bool, String> {
         dirty || pdt_git::rev_parse(&repo, &format!("refs/heads/{branch}")).is_none_or(own)
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::workflow::err)
 }
 
 impl NodeKind for HasChanges {

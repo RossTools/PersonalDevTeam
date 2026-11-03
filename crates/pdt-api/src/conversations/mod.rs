@@ -252,7 +252,10 @@ fn adapter_error(e: AdapterError) -> ApiError {
             ApiError::bad_request(codes::WRONG_ANSWER, "that answer does not fit this request")
         }
         AdapterError::NotRunning => ApiError::conflict(codes::AGENT_NOT_RUNNING, "the agent is not running"),
-        e => ApiError::upstream(codes::AGENT_ERROR, e.to_string()),
+        e => {
+            tracing::warn!(error = %e, "an agent call failed");
+            ApiError::upstream(codes::AGENT_ERROR, crate::error::short_text(&e.to_string()))
+        }
     }
 }
 
