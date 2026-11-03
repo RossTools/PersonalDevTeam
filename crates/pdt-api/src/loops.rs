@@ -237,9 +237,16 @@ mod tests {
         let log = Captured::default();
         let w = log.clone();
         let subscriber = tracing_subscriber::fmt().with_writer(move || w.clone()).with_ansi(false).finish();
+        // Callsite interest is cached process-wide (PDT-505). While only one dispatcher is registered, tracing works
+        // out a callsite's interest from the default of whichever thread reaches it first, so a test on another thread
+        // that first hits `contain`'s `error!` with no subscriber caches "never" and the panic line is dropped. A
+        // second dispatcher, alive for the whole test, makes every thread ask all of them, this test's one included.
+        let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
         // The test's runtime is single-threaded, so the passes' tasks log through this subscriber too.
         let _guard = tracing::subscriber::set_default(subscriber);
         let (st, _tmp) = state().await;
+        // And one registered before the two dispatchers were.
+        tracing::callsite::rebuild_interest_cache();
         let passes = Arc::new(AtomicUsize::new(0));
         let counter = passes.clone();
         let looping = tokio::spawn(run_every(st.clone(), "test", Duration::from_millis(10), Start::Now, move |_| {
