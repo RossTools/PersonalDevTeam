@@ -15,7 +15,7 @@ const modes = [
 
 /**
  * Adds a project from a folder on this host, by cloning a repository URL into the Projects folder, or as a Personal
- * project with no repository (PDT makes its folder; spec 7b §7).
+ * project with no repository (PDT makes its folder).
  */
 export function AddProjectForm({ onAdded, autoFocus = false, initialMode = 'path' }: { onAdded?: (p: Project) => void; autoFocus?: boolean; initialMode?: Mode }) {
   const qc = useQueryClient();
@@ -39,7 +39,7 @@ export function AddProjectForm({ onAdded, autoFocus = false, initialMode = 'path
   const add = useMutation({ meta: { errorShown: true }, mutationFn: api.createProject, onSuccess: done });
   const clone = useMutation({ meta: { errorShown: true }, mutationFn: api.cloneProject, onSuccess: done });
   const m = mode === 'clone' ? clone : add;
-  // A submit error moves focus to its Alert (spec §6.3).
+  // A submit error moves focus to its Alert.
   useEffect(() => {
     if (m.isError) document.getElementById(errorId)?.focus();
   }, [m.isError, m.error, errorId]);

@@ -1,4 +1,4 @@
-//! Buildkite CI (Phase 7e-2, PDT-85) through the API: a started ticket's builds become its CI (with or without a
+//! Buildkite CI (PDT-85) through the API: a started ticket's builds become its CI (with or without a
 //! pull request) as a CI provider the PR poller reads (PDT-242), `ci.*` events with `provider: buildkite` once per
 //! build state, its failed jobs' logs for `ci_failed_logs`, and the retry and trigger actions.
 //! Buildkite is a fake local server; GitHub is `FakeForge`.

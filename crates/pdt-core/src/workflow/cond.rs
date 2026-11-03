@@ -1,4 +1,4 @@
-//! Conditions (Phase 7a spec §3.2): trigger filters, `condition` and `switch`. Data, not an expression language.
+//! Conditions: trigger filters, `condition` and `switch`. Data, not an expression language.
 
 use super::refs::resolve;
 use schemars::JsonSchema;

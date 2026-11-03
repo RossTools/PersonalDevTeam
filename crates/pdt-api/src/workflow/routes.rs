@@ -1,4 +1,4 @@
-//! The workflow API (Phase 7a spec §9): the catalog, documents and versions, validation and dry runs, runs, the event
+//! The workflow API: the catalog, documents and versions, validation and dry runs, runs, the event
 //! log and connections.
 
 use super::catalog::{KindSpec, PortSpec};
@@ -164,7 +164,7 @@ pub struct SaveWorkflow {
     pub doc: Option<WorkflowDoc>,
     #[serde(default)]
     pub note: String,
-    /// Propose the version instead (an agent's change): it waits for the user to accept it (Phase 7d spec §6.2).
+    /// Propose the version instead (an agent's change): it waits for the user to accept it.
     #[serde(default)]
     pub propose: bool,
     /// Who proposes it (PDT-320): set by `workflow_save` from the agent's session, never by a request.

@@ -22,7 +22,7 @@ export type AgentStateInput =
 
 export type AgentDotKind = 'running' | 'waiting' | 'failed' | 'idle' | 'ended' | 'background';
 export type AgentLabelText = 'Working' | 'Needs you' | 'Background' | 'Done' | 'Idle' | 'Ended' | 'Interrupted' | 'Failed';
-/** The text colour of the label: state colours only for state (spec §3). */
+/** The text colour of the label: state colours only for state. */
 export type AgentTone = 'running' | 'waiting' | 'failed' | 'muted';
 
 export interface AgentStateValue {
@@ -53,7 +53,7 @@ export const sessionUnseen = (s: Pick<Session, 'status' | 'activity' | 'backgrou
 const taskText = (t: BackgroundTask) => t.description.trim() || 'a background task';
 
 /**
- * The one mapping from an item's kind, status, activity and unseen flag to its dot, label and tone (spec §6.5).
+ * The one mapping from an item's kind, status, activity and unseen flag to its dot, label and tone.
  *
  * Sessions: an ended or interrupted one is a hollow dot whatever its activity; a running agent follows its activity
  * (working → green pulsing "Working", needs you → amber "Needs you", idle with background tasks running → a slowly

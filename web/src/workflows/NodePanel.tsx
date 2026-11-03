@@ -1,4 +1,4 @@
-// The side panel for one node (Phase 7d spec §3.4): its id and title, the config form from its kind's schema, the
+// The side panel for one node: its id and title, the config form from its kind's schema, the
 // settings every node has, where its errors go, and its issues.
 import { useEffect, useState } from 'react';
 import { Trash2, X } from 'lucide-react';

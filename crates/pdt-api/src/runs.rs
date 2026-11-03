@@ -1,4 +1,4 @@
-//! Run routes (spec §4.2). The lifecycle itself lives in `run_manager`.
+//! Run routes. The lifecycle itself lives in `run_manager`.
 
 use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};

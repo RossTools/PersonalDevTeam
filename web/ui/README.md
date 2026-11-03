@@ -92,8 +92,8 @@ so a page reads the same everywhere and nothing destructive sits next to somethi
   `ghost` is for toolbars, and `Link` is only for navigating somewhere (a URL, another page), never for an action.
   Section-wide actions that change nothing (Check for updates, Run checks again) go in the section's `actions`.
 - **Destructive actions live in the Danger zone.** Page-wide removals (remove the project, remove the token) go in
-  a `Section danger` at the bottom of the page, as `danger` buttons whose label ends in "…" and that confirm
-  (spec §6.2); removing a project also asks for its name to be typed (`typeToConfirm`). The one exception is a per-item removal inside a list (a worktree): a secondary button with a trash
+  a `Section danger` at the bottom of the page, as `danger` buttons whose label ends in "…" and that confirm;
+  removing a project also asks for its name to be typed (`typeToConfirm`). The one exception is a per-item removal inside a list (a worktree): a secondary button with a trash
   icon, still "…" and confirmed. Never put a destructive button beside a routine one.
 
 ## Tests

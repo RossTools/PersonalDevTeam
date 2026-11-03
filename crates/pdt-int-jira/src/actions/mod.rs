@@ -1,4 +1,4 @@
-//! Jira's actions (Phase 7e spec §6.3, PDT-85; PDT-172 actions, PDT-258 on-premise Jira and the rest): each one a
+//! Jira's actions (PDT-85, PDT-172 actions, PDT-258 on-premise Jira and the rest): each one a
 //! workflow node kind (`jira.search`, …) and a pdt-mcp tool (`jira_search`, …) from one definition, so the PM and
 //! workflows do the same things the same way. Reading asks for nothing; what changes Jira (or makes a ticket) asks
 //! unless the connection lets the PM act (`config.pmActs`). Fields go by id, by a name the connection maps

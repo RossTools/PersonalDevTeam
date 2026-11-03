@@ -1,4 +1,4 @@
-//! Secrets (the update token, the forge logins) live only in the OS keychain / credential manager (spec §3.2). Never logged, never
+//! Secrets (the update token, the forge logins) live only in the OS keychain / credential manager. Never logged, never
 //! returned by the API, never written to the database. The one exception is Linux without a Secret Service (a headless
 //! machine, PDT-197): there they go to a file in the data folder only the user can read ([`FileSecretStore`]), and
 //! Settings → Secrets says so. macOS and Windows never fall back.
@@ -83,7 +83,7 @@ impl SecretStore for MemorySecretStore {
     }
 }
 
-/// Windows Credential Manager / macOS login keychain, through `keyring` (v1 API, verified fact 7).
+/// Windows Credential Manager / macOS login keychain, through `keyring` (v1 API).
 pub struct KeyringStore {
     service: String,
 }

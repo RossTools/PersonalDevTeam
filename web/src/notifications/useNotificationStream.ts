@@ -15,7 +15,7 @@ export interface OnScreen {
 }
 
 /**
- * Follows `GET /api/notifications/stream` (Server-Sent Events, PDT-108 §5.3): every row refreshes the Inbox, and a new
+ * Follows `GET /api/notifications/stream` (Server-Sent Events, PDT-108): every row refreshes the Inbox, and a new
  * one shows as a toast or, while the page is hidden, a desktop notification, as its Show and this device allow
  * (`presentation`). A cleared row closes its desktop notification. EventSource reconnects by itself and sends
  * `Last-Event-ID`, so a dropped connection gets what it missed. `open` opens a row's target.

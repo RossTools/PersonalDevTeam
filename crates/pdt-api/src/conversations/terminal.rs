@@ -16,7 +16,7 @@ use pdt_store::NewEvent;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-// ---- the live shared terminal (Codex, spec §8.1) ----
+// ---- the live shared terminal (Codex) ----
 
 #[derive(serde::Deserialize)]
 pub(crate) struct TerminalSizeBody {
@@ -116,7 +116,7 @@ pub(crate) async fn close_terminal(State(st): State<AppState>, Path(id): Path<St
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ---- Claude: one at a time, conversation or terminal (spec §8.2) ----
+// ---- Claude: one at a time, conversation or terminal ----
 
 /// How long the TUI gets to leave after `/exit` before it is killed.
 const TUI_EXIT_GRACE: Duration = Duration::from_secs(5);
@@ -227,7 +227,7 @@ async fn to_terminal(
 }
 
 /// Terminal → conversation: asks the TUI to `/exit` (killing it after a grace period), imports the turns it took
-/// (spec §8.3; all of them for a session that was always a terminal) and makes the session a conversation again. The
+/// (all of them for a session that was always a terminal) and makes the session a conversation again. The
 /// next message resumes it headless.
 async fn to_conversation(st: &AppState, session: &Session) -> Result<(), ApiError> {
     let id = session.id.as_str();
@@ -300,7 +300,7 @@ pub(super) async fn import_anchor(st: &AppState, id: &str) -> Result<Option<Opti
 
 type Imported = (Option<String>, Option<String>, AgentEvent);
 
-/// The turns the TUI took in the session's current Claude conversation (spec §8.3), after `after` (see
+/// The turns the TUI took in the session's current Claude conversation, after `after` (see
 /// `import_anchor`); a warning instead when the transcript no longer has that entry.
 async fn terminal_turns(st: &AppState, session: &Session, after: Option<Option<String>>) -> Vec<Imported> {
     let Some(after) = after else { return Vec::new() };

@@ -1,4 +1,4 @@
-# PDT's own run configuration (remote-host spec §4.3): a dev instance of PDT on its own port and data folder, reachable
+# PDT's own run configuration: a dev instance of PDT on its own port and data folder, reachable
 # at the run's link.
 #
 # - PDT sets PDT_OWNER_LOGIN itself when the host has an owner, so the dev instance admits the host's owner. It is not

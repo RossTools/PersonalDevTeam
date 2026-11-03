@@ -340,7 +340,7 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirt
       title={title}
       hideTitle
       open={shown}
-      // The backlog stays usable beside the peek (UX spec §8.1). A click on the page closes it, except on a backlog
+      // The backlog stays usable beside the peek. A click on the page closes it, except on a backlog
       // row or a board card or lane, which shows that ticket instead.
       modal={false}
       keepOpenOn={(el) => el.closest('[role="row"][data-key], [data-peek]') !== null}

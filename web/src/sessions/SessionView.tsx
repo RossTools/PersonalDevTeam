@@ -128,12 +128,12 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
   // Conversations have no terminal: sending a message reopens them, so no Compose, Restart or ended bar.
   const conversation = session.mode === 'conversation';
   const restartLabel = session.status === 'interrupted' ? 'Resume' : 'Restart';
-  // A scratch chat (a conversation with no ticket) can become a ticket (spec §10).
+  // A scratch chat (a conversation with no ticket) can become a ticket.
   const [makingTicket, setMakingTicket] = useState(false);
   const openChanges = useOpenChanges();
   const scratch = conversation && isAgent && !session.attemptId;
 
-  // Codex conversations: the agent's own TUI can be open beside the conversation, live on the same thread (spec §8.1).
+  // Codex conversations: the agent's own TUI can be open beside the conversation, live on the same thread.
   const switchable = conversation && session.agent === 'codex' && conv !== null;
   const terminalOpen = conv?.state?.terminalOpen ?? false;
   // Codex can only resume a thread after its first turn.
@@ -167,7 +167,7 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
     else setView('conversation');
   };
 
-  // Claude and Devin: the session is either the conversation or the agent's own TUI, one at a time (spec §8.2; Devin
+  // Claude and Devin: the session is either the conversation or the agent's own TUI, one at a time (Devin
   // locks a session to one process).
   const oneAtATime = isAgent && (session.agent === 'claude' || session.agent === 'devin');
   const agentName = KIND_LABEL[session.agent === 'devin' ? 'devin' : 'claude'];
@@ -205,7 +205,7 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
     }
   };
 
-  // Stopping is reversible (Restart resumes), so it asks only when it would cut off an agent mid-turn (spec §6.2).
+  // Stopping is reversible (Restart resumes), so it asks only when it would cut off an agent mid-turn.
   const askStop = async () => {
     if (session.activity === 'working') {
       const { ok } = await confirm({

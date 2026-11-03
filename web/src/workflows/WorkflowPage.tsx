@@ -1,4 +1,4 @@
-// One workflow (Phase 7d spec §2): the header (Enabled, Dry run, Run now, ⋯), the draft bar, and the Graph, Outline,
+// One workflow: the header (Enabled, Dry run, Run now, ⋯), the draft bar, and the Graph, Outline,
 // Text, Runs and Versions views. The three builder views edit one draft; Save makes a version. On a phone it is
 // view-only (PDT-120): Outline first, nothing that edits, and Enable/Disable under the top bar's ⋯; an agent's proposal
 // can still be accepted or discarded there (PDT-320).

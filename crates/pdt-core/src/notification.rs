@@ -67,7 +67,7 @@ impl Section {
     }
 }
 
-/// Every kind of notification (PDT-108 §2.2).
+/// Every kind of notification (PDT-108).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub enum NotificationKind {

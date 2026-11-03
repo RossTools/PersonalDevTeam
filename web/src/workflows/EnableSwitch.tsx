@@ -1,4 +1,4 @@
-// The Enabled switch (Phase 7d spec §4): turning a workflow on is consent to what it does, so it says what that is
+// The Enabled switch: turning a workflow on is consent to what it does, so it says what that is
 // (its triggers and actions) and offers a dry run first. Turning it off is immediate.
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';

@@ -6,7 +6,7 @@ use super::{Conv, ConvState, acp_agent, adapter_error, adapter_for, login_path_e
 use crate::error::ApiError;
 use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
-use pdt_agents::adapter::{AdapterOutput, LiveConversation, OpenSpec};
+use pdt_agents::adapter::{AdapterOutput, EventStream, LiveConversation, OpenSpec};
 use pdt_core::activity::{Activity, needs_attention};
 use pdt_core::conversation::{
     AgentEvent, ConversationServerMessage, DeltaField, PendingMessage, RequestState, SessionMode, TurnPhase,
@@ -196,7 +196,8 @@ pub(super) async fn ensure_live(
         import_after,
         mcp: crate::mcp::server_for(st, &row).await,
     };
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    // Bounded: a store that lags pauses reading the agent's output (PDT-441).
+    let (tx, rx) = pdt_agents::adapter::event_channel(pdt_agents::adapter::EVENT_QUEUE);
     let live: Arc<dyn LiveConversation> = Arc::from(adapter.open(spec, tx).await.map_err(adapter_error)?);
     if import_after.is_some() {
         st.store.switch_session_mode(&session.id, SessionMode::Conversation, None).await?;
@@ -224,7 +225,7 @@ pub(super) async fn ensure_live(
 async fn pump(
     st: AppState,
     c: Arc<Conv>,
-    mut rx: tokio::sync::mpsc::UnboundedReceiver<AdapterOutput>,
+    mut rx: EventStream,
     generation: u64,
     creds: CredentialPolicy,
     agent: AgentKind,
@@ -242,7 +243,7 @@ async fn pump(
                 let _ = c.tx.send(ConversationServerMessage::Delta { item_id, field, text });
             }
             AdapterOutput::Info(info) => {
-                // The plan login is the only billing PDT uses unless the project opts into API keys (spec §14).
+                // The plan login is the only billing PDT uses unless the project opts into API keys.
                 let billing_ok = creds != CredentialPolicy::Subscription
                     || info.api_key_source.as_deref().is_none_or(|s| s == "none");
                 if !billing_ok {
@@ -429,6 +430,7 @@ pub(super) async fn append(
         ts,
         item_id: item_id.map(String::from),
         turn_id: turn_id.map(String::from),
+        bytes: Unstored::size(&event, raw),
         event,
         raw: raw.map(String::from),
         then,
@@ -442,7 +444,7 @@ pub(super) async fn append(
 
 /// What an event sets off once it is stored (never when it can't be: its session was removed).
 enum FollowUp {
-    /// An agent step's session ended a turn: did it submit an outcome (Phase 7b spec §4.4)? A PM session's may be due
+    /// An agent step's session ended a turn: did it submit an outcome? A PM session's may be due
     /// its daily update (PDT-167), or end once the user closed it.
     TurnEnded,
     /// One of PDT's asking tools in a project that lets the PM act is answered for the user (PDT-81).
@@ -535,12 +537,22 @@ pub(super) struct Unstored {
     turn_id: Option<String>,
     event: AgentEvent,
     raw: Option<String>,
+    /// About how much memory it holds: its event and raw line.
+    bytes: usize,
     /// What it sets off once stored.
     then: Vec<FollowUp>,
 }
 
-/// At most this many events wait for a write in one conversation; past it the oldest is given up (and logged).
+impl Unstored {
+    fn size(event: &AgentEvent, raw: Option<&str>) -> usize {
+        serde_json::to_vec(event).map_or(0, |v| v.len()) + raw.map_or(0, str::len)
+    }
+}
+
+/// At most this many events, and about this many bytes of them, wait for a write in one conversation; past either the
+/// oldest is given up (and logged).
 const MAX_UNSTORED: usize = 10_000;
+const MAX_UNSTORED_BYTES: usize = 64 * 1024 * 1024;
 
 /// Stores an event after those still waiting for a write, in the order they came (PDT-331), and sends each one stored
 /// to the viewers. One that can't be stored yet (a full disk) waits in memory, with the ones after it, and is retried
@@ -551,6 +563,7 @@ async fn store_in_order(st: &AppState, c: &Arc<Conv>, e: Unstored) {
     if let Some(w) = waiting {
         w.ts = e.ts;
         w.event = e.event;
+        w.bytes = e.bytes;
         if e.turn_id.is_some() {
             w.turn_id = e.turn_id;
         }
@@ -561,9 +574,7 @@ async fn store_in_order(st: &AppState, c: &Arc<Conv>, e: Unstored) {
     } else {
         q.push_back(e);
     }
-    if q.len() > MAX_UNSTORED
-        && let Some(lost) = q.pop_front()
-    {
+    for lost in give_up_past(&mut q, MAX_UNSTORED, MAX_UNSTORED_BYTES) {
         tracing::error!(session = %c.id, kind = lost.event.kind(), "gave up on a conversation event PDT could not store");
     }
     // While a retry waits and writes still fail, this one waits with the rest instead of failing again.
@@ -575,6 +586,21 @@ async fn store_in_order(st: &AppState, c: &Arc<Conv>, e: Unstored) {
         let (st, c) = (st.clone(), c.clone());
         tokio::spawn(async move { retry_unstored(&st, &c).await });
     }
+}
+
+/// Takes the oldest waiting events off while more than `max` wait or they hold more than `max_bytes` (never the
+/// newest).
+fn give_up_past(q: &mut std::collections::VecDeque<Unstored>, max: usize, max_bytes: usize) -> Vec<Unstored> {
+    let mut bytes: usize = q.iter().map(|w| w.bytes).sum();
+    let mut lost = vec![];
+    while q.len() > 1
+        && (q.len() > max || bytes > max_bytes)
+        && let Some(e) = q.pop_front()
+    {
+        bytes -= e.bytes;
+        lost.push(e);
+    }
+    lost
 }
 
 /// Stores the waiting events in order, sending each to the viewers, until one fails to write: whether all were.
@@ -681,5 +707,48 @@ async fn import_history(st: &AppState, c: &Arc<Conv>, turns: &[serde_json::Value
         if let pdt_core::conversation::codex::CodexOut::Event { item_id, turn_id, event } = out {
             append(st, c, item_id.as_deref(), turn_id.as_deref(), event, None).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn waiting(text: &str, raw: Option<&str>) -> Unstored {
+        let event = AgentEvent::Error { text: text.into(), retryable: false };
+        Unstored {
+            ts: 0,
+            item_id: None,
+            turn_id: None,
+            bytes: Unstored::size(&event, raw),
+            event,
+            raw: raw.map(String::from),
+            then: vec![],
+        }
+    }
+
+    fn texts(q: &std::collections::VecDeque<Unstored>) -> Vec<String> {
+        q.iter()
+            .map(|w| match &w.event {
+                AgentEvent::Error { text, .. } => text.clone(),
+                _ => unreachable!(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn waiting_events_are_bounded_by_count_and_by_bytes() {
+        let mut q: std::collections::VecDeque<_> = ["a", "b", "c"].iter().map(|t| waiting(t, None)).collect();
+        assert_eq!(give_up_past(&mut q, 2, usize::MAX).len(), 1);
+        assert_eq!(texts(&q), ["b", "c"], "the oldest goes first");
+
+        let big = "x".repeat(10_000);
+        let mut q: std::collections::VecDeque<_> =
+            ["a", "b", "c"].iter().map(|t| waiting(t, Some(big.as_str()))).collect();
+        assert_eq!(give_up_past(&mut q, 100, 25_000).len(), 1, "two of them fit");
+        assert_eq!(texts(&q), ["b", "c"]);
+
+        let mut q: std::collections::VecDeque<_> = [waiting("huge", Some(big.as_str()))].into();
+        assert!(give_up_past(&mut q, 100, 10).is_empty(), "the newest is kept, however large");
     }
 }

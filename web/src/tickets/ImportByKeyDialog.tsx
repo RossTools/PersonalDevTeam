@@ -1,4 +1,4 @@
-// Import one issue by its key (Phase 7e), for each plugin a project is linked to that can: assigned to you or not, as a
+// Import one issue by its key, for each plugin a project is linked to that can: assigned to you or not, as a
 // Draft ticket linked to it. An issue a ticket already links is not imported again: that ticket opens instead.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';

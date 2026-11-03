@@ -21,7 +21,7 @@ pub struct HostConfig {
     /// (PDT-231).
     pub port_setting: bool,
     pub dev: bool,
-    /// How long a (new) pdtd gets to answer /api/health (spec §3.4: 60 s).
+    /// How long a (new) pdtd gets to answer /api/health (60 s).
     pub health_timeout: Duration,
     /// How long a new version must keep running once it has answered its health check: one that crashes within
     /// this time counts as failed and is rolled back.

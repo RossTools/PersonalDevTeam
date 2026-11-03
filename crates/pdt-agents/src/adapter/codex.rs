@@ -1,4 +1,4 @@
-//! Codex through `codex app-server` (spec §3.2, plan 5b): one server per pdtd on a loopback WebSocket with a
+//! Codex through `codex app-server`: one server per pdtd on a loopback WebSocket with a
 //! capability token (the real TUI can attach to it with `--remote`), one client connection multiplexing every thread,
 //! and a `CodexLive` per conversation. The frame mapping is pdt-core's `CodexMapper`.
 
@@ -417,14 +417,18 @@ impl CodexServer {
                                     }
                                 }
                             } else {
-                                for r in targets {
+                                for r in &targets {
                                     let outs = r
                                         .mapper
                                         .lock()
                                         .unwrap_or_else(|e| e.into_inner())
                                         .on_notification(method, &params);
-                                    emit(&r, outs, Some(&text), &conn);
+                                    emit(r, outs, Some(&text), &conn);
                                 }
+                            }
+                            // A conversation whose store lags pauses reading (every conversation on this server).
+                            for r in &targets {
+                                r.sink.ready().await;
                             }
                         }
                         _ => {}

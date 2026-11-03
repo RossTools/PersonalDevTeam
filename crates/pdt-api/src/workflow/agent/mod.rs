@@ -1,4 +1,4 @@
-//! Agent steps (Phase 7b spec §4–§5): starting a persona's session for an `agent` node, the outcome it submits through
+//! Agent steps: starting a persona's session for an `agent` node, the outcome it submits through
 //! pdt-mcp, its questions, turns that end without an outcome (nudges, stalls, max turns), loop limits, and the user
 //! taking a step over from the Inbox, and steps that timed out: the Inbox, Resume and a late outcome (PDT-123).
 
@@ -166,7 +166,7 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
             _ => return Ok(wait(&a)),
         }
     }
-    // Loop limit (spec §5.2): earlier passes of this node in the run.
+    // Loop limit: earlier passes of this node in the run.
     let passes = st.store.agent_steps_of_node(&cx.run.id, &cx.node.id).await.map_err(err)?;
     let allowed = cx.step.wait.get("loopAllowed").and_then(Value::as_bool) == Some(true);
     let limit = c.loop_limit();
@@ -211,7 +211,7 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         (Owner::Agent, SessionChoice::Own) => reusable_session(st, cx, None).await,
         _ => None,
     };
-    // A new session runs a turn at once: under the host's cap it waits for a slot (Phase 7c §6.2). A reused one gets
+    // A new session runs a turn at once: under the host's cap it waits for a slot. A reused one gets
     // its message through the outbox, which keeps to the cap itself.
     let admitted = cx.step.wait.get("admitted").and_then(Value::as_bool) == Some(true);
     // Steps of different runs start side by side (PDT-128): one at a time here, so two can't both take the last slot.
@@ -437,7 +437,7 @@ async fn why_back(st: &AppState, cx: &StepCx<'_>) -> Option<String> {
     })
 }
 
-/// A manual step's Inbox item: the step's task, and one choice per outcome (Phase 7c §3.4).
+/// A manual step's Inbox item: the step's task, and one choice per outcome.
 async fn manual_item(cx: &StepCx<'_>, c: &AgentConfig, a: &AgentStep) -> R<()> {
     let choices = c
         .outcomes
@@ -523,7 +523,7 @@ pub(crate) struct StepAt<'a> {
     pub workflow_name: &'a str,
 }
 
-/// A new conversation for the persona (spec §4.2), its first message the step's.
+/// A new conversation for the persona, its first message the step's.
 pub(crate) async fn new_session(
     st: &AppState,
     cx: StepAt<'_>,
@@ -970,7 +970,7 @@ async fn handed_in(st: &AppState, a: &AgentStep, outcome: &str) -> R<()> {
 }
 
 /// A session's turn ended (a conversation's `Turn` end, a terminal going idle): a working step with no outcome is
-/// nudged, then stalled; at `maxTurns` it times out (spec §4.4). A conversation still running background tasks it
+/// nudged, then stalled; at `maxTurns` it times out. A conversation still running background tasks it
 /// started waits on them instead (PDT-142): Claude takes each one up when it finishes, in a turn of its own.
 pub(crate) async fn turn_ended(st: &AppState, session_id: &str) {
     let run = session_run(st, session_id).await;

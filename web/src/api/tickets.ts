@@ -100,7 +100,7 @@ export const ticketsApi = {
   checkMerge: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/check-merge`, { method: 'POST' }),
   /** Auto-start forgets the ticket's failed start, and its next run tries it again. */
   retryAutoStart: (id: string) => request<Ticket>(`/api/tickets/${enc(id)}/retry-auto-start`, { method: 'POST' }),
-  /** Asks the project's pipeline to refine a Draft or Ready ticket (Phase 7c). */
+  /** Asks the project's pipeline to refine a Draft or Ready ticket. */
   refineTicket: (id: string) =>
     request<Ticket>(`/api/tickets/${enc(id)}/refine`, { method: 'POST', body: JSON.stringify({ by: 'user' }) }),
   /** `ticket.finish`: Done, then everything Start made goes (or `blocked` says what stops it, changing nothing). */

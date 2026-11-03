@@ -23,7 +23,7 @@ function opts(o: ToastOptions | undefined, defaultDuration?: number) {
   };
 }
 
-/** Results and errors of background actions (spec §6.3): `toast.error(e.message, { action: { label, onClick } })`. */
+/** Results and errors of background actions: `toast.error(e.message, { action: { label, onClick } })`. */
 export const toast = {
   success: (message: ReactNode, o?: ToastOptions) => sonner.success(message, opts(o)),
   error: (message: ReactNode, o?: ToastOptions) => sonner.error(message, opts(o, 8000)),

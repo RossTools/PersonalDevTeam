@@ -1,4 +1,4 @@
-//! What the conversation composer offers beyond text (structured agents spec §5, §7): `@` file suggestions and image
+//! What the conversation composer offers beyond text: `@` file suggestions and image
 //! attachments. Pure.
 
 /// The largest image a message may carry (10 MB).

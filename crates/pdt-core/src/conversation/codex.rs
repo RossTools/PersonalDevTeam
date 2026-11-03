@@ -44,7 +44,7 @@ pub struct CodexAnswer {
     pub follow_up: Option<String>,
 }
 
-/// Codex's approval policy and sandbox for a PDT permission mode (spec §6.1). Plan has no stable Codex equivalent,
+/// Codex's approval policy and sandbox for a PDT permission mode. Plan has no stable Codex equivalent,
 /// so it runs read-only and asks.
 pub fn codex_policy(mode: PermissionMode) -> (&'static str, &'static str) {
     match mode {
@@ -822,7 +822,7 @@ pub fn history_events(turns: &[Value], known_turns: &std::collections::HashSet<S
     out
 }
 
-/// The Codex commands PDT runs (Codex has no generic "run a slash command"; spec §7.2).
+/// The Codex commands PDT runs (Codex has no generic "run a slash command").
 pub fn commands() -> Vec<super::AgentCommandInfo> {
     vec![
         super::AgentCommandInfo {

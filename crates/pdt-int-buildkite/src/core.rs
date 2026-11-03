@@ -1,4 +1,4 @@
-//! Buildkite CI (Phase 7e spec §6.4, PDT-85): builds as the REST API returns them, as provider-neutral CI runs
+//! Buildkite CI (PDT-85): builds as the REST API returns them, as provider-neutral CI runs
 //! ([`CiRun`]) and jobs ([`CiJob`]). Pure: [`crate::ci::BuildkiteCi`] reads Buildkite.
 
 use pdt_core::pr::{CiJob, CiRun, CiState};

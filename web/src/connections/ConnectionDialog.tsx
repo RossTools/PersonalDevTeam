@@ -1,4 +1,4 @@
-// Add or edit a connection (Phase 7e): its name, kind, address and secret. The secret goes to the OS keychain and is
+// Add or edit a connection: its name, kind, address and secret. The secret goes to the OS keychain and is
 // never shown again; leaving it empty when editing keeps the one there is.
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';

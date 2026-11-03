@@ -1,4 +1,4 @@
-//! Incoming webhooks (Phase 7e spec §2.5): `POST /api/hooks/<name>`, where `<name>` is a `webhook` connection whose
+//! Incoming webhooks: `POST /api/hooks/<name>`, where `<name>` is a `webhook` connection whose
 //! secret authenticates the sender (a bearer token or GitHub's `X-Hub-Signature-256`). Records a `webhook.received`
 //! event; workflows run on the engine's next tick. The identity guard lets these through (the senders are machines on
 //! the tailnet with no user identity), never over Funnel; the secret is what lets them in.

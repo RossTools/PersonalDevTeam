@@ -30,7 +30,7 @@ export function Alert({
   action?: ReactNode;
   id?: string;
   className?: string;
-  /** -1 lets a form move focus to its error (spec §6.3). */
+  /** -1 lets a form move focus to its error. */
   tabIndex?: number;
 }) {
   return (

@@ -1,4 +1,4 @@
-// The ticket tab's Conversation section (structured agents spec §10, UX spec §8.2): the ticket's agent sessions, newest
+// The ticket tab's Conversation section: the ticket's agent sessions, newest
 // first, in a switcher above the chosen one's conversation. The session keeps its own tab too.
 import { useState } from 'react';
 import { Play } from 'lucide-react';

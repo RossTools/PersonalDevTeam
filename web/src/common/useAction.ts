@@ -30,7 +30,7 @@ export async function runAction<R>(fn: () => Promise<R> | R, opts?: ActionOption
 
 /**
  * `const [run, pending] = useAction(fn, { success })`: `run(...args)` calls `fn`, `pending` is true until it settles,
- * a rejection toasts its message (spec §6.3) and `run` resolves to undefined instead of throwing.
+ * a rejection toasts its message and `run` resolves to undefined instead of throwing.
  */
 export function useAction<A extends unknown[], R>(
   fn: (...args: A) => Promise<R> | R,

@@ -1,4 +1,4 @@
-//! The workflow templates that post to Discord (Phase 7e spec §5).
+//! The workflow templates that post to Discord.
 
 use pdt_api::sdk::templates::{builtin, doc, params};
 use pdt_core::workflow::template::{Category, Template};
@@ -10,7 +10,7 @@ fn discord_param() -> Value {
         "required": true, "description": "Where it posts: a Discord webhook connection (Settings → Plugins)."})
 }
 
-/// The templates that post to Discord (Phase 7e spec §5; PDT-226 kept only the development one).
+/// The templates that post to Discord (PDT-226 kept only the development one).
 pub(crate) fn all() -> Vec<Template> {
     vec![builtin(
         "github-issues-discord",

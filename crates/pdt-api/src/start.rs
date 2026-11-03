@@ -1,4 +1,4 @@
-//! Ticket Start, attempts and merge detection (tickets spec §5, §6): Start makes the branch, worktree, attempt and an
+//! Ticket Start, attempts and merge detection: Start makes the branch, worktree, attempt and an
 //! agent session whose first prompt is the ticket (unless `noSession`), and opens the ticket and the session as tabs; an attempt ends when
 //! its branch is merged into the base (checked every 60 s and on demand), when it is abandoned, or when the ticket is
 //! closed.
@@ -125,7 +125,7 @@ pub(crate) async fn start_ticket(
     // own overlap rule, the one choose applied (PDT-381): only a ApiError::conflict refuses it.
     let overlaps: Vec<_> =
         pdt_core::start::refusing_overlaps(&ticket.overlaps, v.pickup_checked).into_iter().cloned().collect();
-    // The project's cap on running attempts (Phase 7c §4).
+    // The project's cap on running attempts.
     let policy = st.store.get_project_settings(&ticket.summary.project_id).await?.policy;
     let active = st.store.count_active_attempts(&ticket.summary.project_id).await?;
     // A workflow's start that checked its own cap (PDT-327) may go over the project's: the step's cap is the one.
@@ -154,7 +154,7 @@ pub(crate) async fn start_ticket(
     if v.base.is_some() && !project.is_personal() {
         known_base(&project.repo_path, &base).await?;
     }
-    // A Personal project has no repository: the ticket runs in its folder, with no branch or worktree (Phase 7b §7).
+    // A Personal project has no repository: the ticket runs in its folder, with no branch or worktree.
     let personal = match project.is_personal() {
         true if v.from_session.is_some() => {
             return Err(ApiError::conflict(
@@ -753,7 +753,7 @@ pub async fn check_merges(st: &AppState) {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
-        // A Personal project's ticket has no branch to merge (Phase 7b §7).
+        // A Personal project's ticket has no branch to merge.
         if info.attempt.branch.is_empty() {
             continue;
         }

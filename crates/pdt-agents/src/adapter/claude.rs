@@ -1,8 +1,9 @@
-//! Claude Code through `claude -p` stream-json: one process per live conversation (spec §3.2). The frame mapping is
+//! Claude Code through `claude -p` stream-json: one process per live conversation. The frame mapping is
 //! pdt-core's `ClaudeMapper`; this module owns the process, its pipes and control-request replies.
 
 #[cfg(test)]
 use super::SessionInstructions;
+use super::lines::{CappedLines, MAX_LINE};
 use super::{
     AdapterError, AdapterOutput, AgentAdapter, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing,
     SessionChange,
@@ -16,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot, watch};
 
 /// How much of the agent's error output is kept to explain a crash.
@@ -394,10 +395,11 @@ impl ClaudeLive {
         {
             let shared = shared.clone();
             tokio::spawn(async move {
-                let mut lines = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
+                let mut lines = CappedLines::new(BufReader::new(stdout), MAX_LINE);
+                while let Some(line) = lines.next_line().await {
                     let outs = shared.mapper.lock().unwrap_or_else(|e| e.into_inner()).on_line(&line);
                     shared.emit(outs, Some(&line));
+                    shared.sink.ready().await;
                 }
                 let code = child.wait().await.ok().and_then(|s| s.code());
                 let _ = err_task.await;

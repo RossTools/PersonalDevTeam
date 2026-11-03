@@ -448,6 +448,7 @@ impl From<PtyError> for ApiError {
             PtyError::AlreadyExists(_) => Self::conflict(codes::ALREADY_RUNNING, e.to_string()),
             PtyError::ShuttingDown => Self::unavailable(codes::SHUTTING_DOWN, "the daemon is shutting down"),
             PtyError::Io(_) => Self::internal(e),
+            PtyError::InputFull(_) => Self::conflict(codes::CONFLICT, e.to_string()),
         }
     }
 }

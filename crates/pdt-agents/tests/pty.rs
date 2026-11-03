@@ -275,3 +275,16 @@ async fn a_restarted_terminal_shows_its_earlier_output_first() {
     assert!(!out.contains("before-restart"), "{out:?}");
     other.shutdown().await;
 }
+
+/// A process that never reads its input can't make PDT hold any amount of it.
+#[cfg(unix)]
+#[tokio::test]
+async fn input_a_process_never_reads_is_bounded() {
+    let m = PtyManager::new();
+    let exit = m.spawn(oneshot_cmd("a", "", "sleep 30")).unwrap();
+    let chunk = vec![b'x'; 1024 * 1024];
+    let full = (0..32).map(|_| m.write("a", &chunk)).find(Result::is_err);
+    assert!(matches!(full, Some(Err(PtyError::InputFull(_)))), "{full:?}");
+    m.kill("a").unwrap();
+    tokio::time::timeout(WAIT, exit).await.expect("exit after kill").unwrap();
+}

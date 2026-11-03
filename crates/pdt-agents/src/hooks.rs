@@ -1,4 +1,4 @@
-//! Per-session agent hook configuration (remote-host spec §5.1, decisions 11–12). The user's own settings are never
+//! Per-session agent hook configuration. The user's own settings are never
 //! touched: Claude gets `--settings <file>`, Codex gets `-c notify=[…]`, Devin gets `--config <file>` (a copy of the
 //! user's Devin config with PDT's hook added, since `--config` replaces the user's file).
 

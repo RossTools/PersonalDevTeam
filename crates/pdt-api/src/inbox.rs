@@ -1,4 +1,4 @@
-//! The Inbox API (Phase 7b spec §6): what waits on the user. Stored items (questions, gates, stalled steps, loop
+//! The Inbox API: what waits on the user. Stored items (questions, gates, stalled steps, loop
 //! limits) plus the open permission requests of live conversations (approvals), most urgent first.
 
 use crate::error::{ApiError, OrNotFound, codes};

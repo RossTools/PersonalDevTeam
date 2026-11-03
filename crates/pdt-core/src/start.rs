@@ -1,4 +1,4 @@
-//! Starting work on a ticket (tickets spec §5): the attempt's default branch, the agent's first prompt, and the
+//! Starting work on a ticket: the attempt's default branch, the agent's first prompt, and the
 //! Start request.
 
 use crate::brand::{SHORT_NAME, SLUG};

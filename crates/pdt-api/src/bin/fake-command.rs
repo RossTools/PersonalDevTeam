@@ -1,4 +1,4 @@
-//! A stand-in program for the workflow `command` action's tests (Phase 7e), the same on every OS.
+//! A stand-in program for the workflow `command` action's tests, the same on every OS.
 //!
 //! - `echo [args…]`: prints `{"got": <stdin JSON>, "args": [...], "cwd": "<dir>", "env": $FAKE_ENV}`
 //! - `message <text>`: prints `{"message": "<text>"}`

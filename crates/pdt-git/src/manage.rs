@@ -1,4 +1,4 @@
-//! Cloning, worktree management and reading a checkout's files (workspaces spec §6). Blocking, like the rest.
+//! Cloning, worktree management and reading a checkout's files. Blocking, like the rest.
 
 use crate::{GitError, git_with_env, native_separators};
 use std::path::{Path, PathBuf};

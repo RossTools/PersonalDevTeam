@@ -26,7 +26,7 @@ mergeViaPr: boolean,
  */
 agentPermissionMode: PermissionMode | null, 
 /**
- * Who may merge, approvals, the running-attempt cap and auto-start (Phase 7c).
+ * Who may merge, approvals, the running-attempt cap and auto-start.
  */
 policy: ProjectPolicy, 
 /**

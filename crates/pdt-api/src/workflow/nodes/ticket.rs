@@ -1,4 +1,4 @@
-//! Ticket actions: `ticket.finish` (the domain command, Phase 7a spec §5.1), `ticket.move`, `ticket.comment`,
+//! Ticket actions: `ticket.finish` (the domain command), `ticket.move`, `ticket.comment`,
 //! `ticket.create`.
 
 use crate::finish::{FinishOutcome, FinishRequest};

@@ -32,17 +32,17 @@ type ProjectSettingsRow = (
 /// A project's settings on this host (overrides of the repo's run configuration, credential policy).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ProjectSettings {
-    /// TOML in the `.pdt/project.toml` schema, merged over the repo's file (spec §4.1).
+    /// TOML in the `.pdt/project.toml` schema, merged over the repo's file.
     pub run_overrides: Option<String>,
     /// None means "use the host's policy".
     pub agent_credentials: Option<CredentialPolicy>,
     /// Instructions given to every agent session in the project (on top of the repo's CLAUDE.md / AGENTS.md).
     pub agent_instructions: Option<String>,
-    /// Merge… only through the attempt's pull request (review spec §2.7): never a local merge.
+    /// Merge… only through the attempt's pull request: never a local merge.
     pub merge_via_pr: bool,
-    /// The permission mode every persona's session in the project runs with, over the persona's own (Phase 7b §3).
+    /// The permission mode every persona's session in the project runs with, over the persona's own.
     pub agent_permission_mode: Option<pdt_core::conversation::PermissionMode>,
-    /// Who may merge, approvals, the running-attempt cap and auto-start (Phase 7c §4).
+    /// Who may merge, approvals, the running-attempt cap and auto-start.
     pub policy: ProjectPolicy,
     /// Its settings for each integration it is linked to, by the integration's id (PDT-174): `connection` and the
     /// fields the integration's project settings declare.

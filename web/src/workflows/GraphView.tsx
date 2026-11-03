@@ -1,4 +1,4 @@
-// The graph view (Phase 7d spec §3.1): the document as nodes and edges in FlowGraph. Adding, connecting, moving and
+// The graph view: the document as nodes and edges in FlowGraph. Adding, connecting, moving and
 // deleting edit the draft; a run's path can be laid over it.
 import { useMemo } from 'react';
 import { LayoutGrid, Plus } from 'lucide-react';

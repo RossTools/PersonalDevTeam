@@ -1,4 +1,4 @@
-// The text view's formats (Phase 7d spec §3.3): the document as JSON or TOML. TOML has no null, so null values are
+// The text view's formats: the document as JSON or TOML. TOML has no null, so null values are
 // left out, which the document format reads the same.
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';

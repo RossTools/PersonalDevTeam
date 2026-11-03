@@ -1,6 +1,6 @@
-//! Scheduling (Phase 7c spec §6): the pickup watch that feeds auto-start's workflow ("Pick up tickets", PDT-327), the
+//! Scheduling: the pickup watch that feeds auto-start's workflow ("Pick up tickets", PDT-327), the
 //! host's cap on agents running a turn (slots for PDT's own work), and who owns a ticket's workflow step now (the
-//! Board's cards, §7).
+//! Board's cards).
 
 use crate::routes::AppState;
 use pdt_core::inbox::InboxKind;
@@ -218,7 +218,7 @@ pub async fn run_pickup_watch(st: AppState) {
     .await
 }
 
-/// Who owns each ticket's current workflow step, by ticket id (Phase 7c spec §7): a persona's session at work, a
+/// Who owns each ticket's current workflow step, by ticket id: a persona's session at work, a
 /// question or stall waiting on the user, a manual step or gate (theirs), or a step waiting for a slot.
 pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent> {
     let rank = |s: TicketAgentState| match s {

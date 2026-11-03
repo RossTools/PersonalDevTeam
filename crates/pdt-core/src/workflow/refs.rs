@@ -1,4 +1,4 @@
-//! Data references in node configs (Phase 7a spec §3.2): `{{trigger.pr}}`, `{{steps.finish.outcome}}`,
+//! Data references in node configs: `{{trigger.pr}}`, `{{steps.finish.outcome}}`,
 //! `{{state.baseline}}`. A string that is exactly one reference takes the value with its JSON type; any other string is
 //! interpolated as text (a missing value as nothing).
 

@@ -78,7 +78,7 @@ function TabButton({ ws, tab, info, selected, tabIndex, renaming, setRenaming, o
             id={workspaceTabId(tab.id)}
             aria-selected={selected}
             tabIndex={tabIndex}
-            // Touch screens move tabs from the long-press menu (workspaces spec §4.6): a natively draggable element turns
+            // Touch screens move tabs from the long-press menu: a natively draggable element turns
             // Android's long press into a drag, so the menu would never open.
             draggable={!coarsePointer()}
             onDragStart={(e) => dragTab(e, tab.id)}

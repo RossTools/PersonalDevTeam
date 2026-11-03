@@ -1,4 +1,4 @@
-//! Thin wrapper over the `tailscale` CLI (verified fact 5). Blocking; call from `spawn_blocking` in async code.
+//! Thin wrapper over the `tailscale` CLI. Blocking; call from `spawn_blocking` in async code.
 
 use std::io::Read;
 use std::path::PathBuf;
