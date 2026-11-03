@@ -51,6 +51,7 @@ export * from './DataList';
 export * from './FilterBar';
 export * from './BulkActionBar';
 export * from './Timeline';
+export * from './lib/time';
 export * from './TreeView';
 export * from './FolderPicker';
 export * from './ViewHeader';

@@ -6,6 +6,7 @@ import type { Document } from '../api/gen/Document';
 import type { DocumentFilter } from '../api/gen/DocumentFilter';
 import type { DocumentKind } from '../api/gen/DocumentKind';
 import { ProjectKey } from '../common/BranchChip';
+import { TicketKey } from '../common/TicketKey';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { KindIcon } from './LinkedDocuments';
 import { providerLabel, useDocumentProviders, useDocuments } from './queries';
@@ -69,7 +70,7 @@ function DocumentItem({ doc, provider, selected, onOpen }: { doc: Document; prov
       </span>
       <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-meta text-muted-foreground">
         {doc.projects.map((p) => <ProjectKey key={p.id} projectKey={p.key} />)}
-        {doc.tickets.slice(0, 3).map((t) => <span key={t.id} className="font-mono">{t.key}</span>)}
+        {doc.tickets.slice(0, 3).map((t) => <TicketKey key={t.id} ticketKey={t.key} />)}
         <span>{provider}</span>
         <span aria-hidden>·</span>
         <RelativeTime time={doc.updatedAt} />

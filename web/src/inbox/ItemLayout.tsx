@@ -2,7 +2,7 @@
 // why it waits, its content, and the action bar fixed at the bottom.
 import { Fragment, type ReactNode } from 'react';
 import { Info } from 'lucide-react';
-import { ActionBar, Avatar, Button, Kbd, Textarea, relativeTime } from '@ui';
+import { ActionBar, Avatar, Button, Kbd, RelativeTime, Textarea } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { InboxItem } from '../api/gen/InboxItem';
 import { TicketKey } from '../common/TicketKey';
@@ -23,7 +23,7 @@ export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: I
     item.personaName ? (
       <span key="p" className="flex items-center gap-1.5"><Avatar name={item.personaName} size="sm" />{item.personaName}</span>
     ) : typeof item.body.workflow === 'string' ? <span key="w">{item.body.workflow}</span> : null,
-    <span key="a">{relativeTime(item.createdAt)}</span>,
+    <RelativeTime key="a" time={item.createdAt} />,
   ].filter(Boolean);
   return (
     <header className={cn('flex flex-col gap-1.5 border-b border-border', className)}>

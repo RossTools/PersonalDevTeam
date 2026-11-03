@@ -6,22 +6,12 @@ import { Eraser, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { DiskLevel } from '../api/gen/DiskLevel';
 import type { TicketStage } from '../api/gen/TicketStage';
+import { STAGE_LABEL } from '../common/StageStepper';
 import type { WorktreeSize } from '../api/gen/WorktreeSize';
 import { useAction } from '../common/useAction';
 import { invalidateWorktrees } from '../common/worktrees';
+import { formatBytes, plural } from '../common/text';
 import { POLL } from '../common/poll';
-
-/** `bytes` for people: "512 MB", "1.5 GB" (as the server's Inbox items say it). */
-export function formatBytes(bytes: number): string {
-  const units = ['bytes', 'KB', 'MB', 'GB', 'TB'];
-  let v = bytes;
-  let unit = 0;
-  while (v >= 1024 && unit < units.length - 1) {
-    v /= 1024;
-    unit += 1;
-  }
-  return unit === 0 || v >= 10 ? `${Math.round(v)} ${units[unit]}` : `${v.toFixed(1)} ${units[unit]}`;
-}
 
 /** "3.2 GB, 2.9 GB of it build output", or why there is no size yet. */
 export function sizeText(size: WorktreeSize | null, missing = false): string {
@@ -35,15 +25,11 @@ export function atRisk(size: WorktreeSize | null): string | null {
   if (!size) return null;
   const parts = [
     size.uncommitted ? 'uncommitted changes' : null,
-    size.unpushed > 0 ? `${size.unpushed} commit${size.unpushed === 1 ? '' : 's'} its remote doesn't have` : null,
+    size.unpushed > 0 ? `${plural(size.unpushed, 'commit')} its remote doesn't have` : null,
     size.neverPushed ? 'a branch that was never pushed' : null,
   ].filter(Boolean);
   return parts.length ? `It has ${parts.join(' and ')}.` : null;
 }
-
-const STAGE_LABEL: Record<TicketStage, string> = {
-  draft: 'Draft', ready: 'Ready', todo: 'To do', in_progress: 'In progress', done: 'Done', wont_do: "Won't do",
-};
 
 export function StageBadge({ stage }: { stage: TicketStage }) {
   const tone: BadgeTone = stage === 'in_progress' ? 'running' : 'neutral';
@@ -142,7 +128,7 @@ export function useCleanFinished() {
   return useAction(async () => {
     try {
       const r = await api.cleanFinished();
-      toast.success(r.cleaned ? `Cleaned ${r.cleaned} worktree${r.cleaned === 1 ? '' : 's'}, freed ${formatBytes(r.freed)}` : 'No finished ticket’s worktree had build output');
+      toast.success(r.cleaned ? `Cleaned ${plural(r.cleaned, 'worktree')}, freed ${formatBytes(r.freed)}` : 'No finished ticket’s worktree had build output');
       if (r.skipped.length) toast.info(`Skipped: ${r.skipped.join('; ')}`);
     } finally {
       settle();

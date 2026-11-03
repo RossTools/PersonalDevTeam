@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import type { StorageView } from '../api/gen/StorageView';
-import { atRisk, formatBytes, sizeText } from '../projects/worktreeStorage';
+import { atRisk, sizeText } from '../projects/worktreeStorage';
 import { renderWithQuery, stubApi } from '../test-utils';
 import { BuiltinSettingsBanner } from '../workflows/BuiltinSettingsBanner';
 import { Storage } from './StorageSettings';
@@ -41,9 +41,6 @@ const view = (over: Partial<StorageView> = {}): StorageView => ({
 
 describe('worktree sizes', () => {
   it('says sizes and what would be lost for people', () => {
-    expect(formatBytes(512)).toBe('512 bytes');
-    expect(formatBytes(1.5 * GB)).toBe('1.5 GB');
-    expect(formatBytes(23 * GB)).toBe('23 GB');
     expect(sizeText(size())).toBe('4.0 GB, 3.0 GB of it build output');
     expect(sizeText(null)).toBe('Not measured yet');
     expect(atRisk(size())).toBeNull();

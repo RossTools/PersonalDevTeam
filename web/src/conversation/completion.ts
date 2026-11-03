@@ -1,6 +1,6 @@
 import type { AgentCommandInfo } from '../api/gen/AgentCommandInfo';
 import type { RateLimitWindow } from '../api/gen/RateLimitWindow';
-import type { Suggestion } from '@ui';
+import { clockTime, type Suggestion } from '@ui';
 
 /** What the word at the caret asks to complete: a `/command` (only as the message's first word) or an `@file`. */
 export interface Completion {
@@ -69,19 +69,13 @@ export interface LimitWarning {
   reached: boolean;
 }
 
-const at = (ms: number, now: number) => {
-  const d = new Date(ms);
-  const sameDay = new Date(now).toDateString() === d.toDateString();
-  return d.toLocaleString(undefined, sameDay ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-};
-
 /** The rate-limit window closest to its limit, once it is at 80 % or more. */
 export function limitWarning(windows: RateLimitWindow[], now: number): LimitWarning | null {
   const live = windows.filter((w) => w.resetsAt == null || w.resetsAt > now);
   const worst = live.reduce<RateLimitWindow | null>((a, w) => (!a || w.utilization > a.utilization ? w : a), null);
   if (!worst || worst.utilization < 0.8) return null;
   const label = windowLabel(worst.name);
-  const reset = worst.resetsAt != null ? at(worst.resetsAt, now) : null;
+  const reset = worst.resetsAt != null ? clockTime(worst.resetsAt, { weekday: true, now }) : null;
   if (worst.utilization >= 1) {
     return { text: reset ? `Rate limited until ${reset} (${label} limit)` : `Rate limited (${label} limit)`, reached: true };
   }

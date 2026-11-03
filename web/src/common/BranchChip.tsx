@@ -4,6 +4,7 @@ import { Chip } from '@ui/Chip';
 import { MenuButton, type MenuEntry } from '@ui/Menu';
 import type { ForgeLinks } from '../api/gen/ForgeLinks';
 import { branchUrl, compareUrl } from '../projects/forgeLinks';
+import { copyToClipboard } from './clipboard';
 import { openExternal as open } from './open';
 
 export interface BranchChipProps {
@@ -35,7 +36,7 @@ export function BranchChip({ branch, forge, base, onReview, className }: BranchC
     ...(onReview ? [{ label: 'Review changes', onSelect: onReview }] : []),
     ...(tree ? [{ label: `Open on ${forge!.name}`, onSelect: () => open(tree) }] : []),
     ...(compare ? [{ label: 'Open PR', onSelect: () => open(compare) }] : []),
-    { label: 'Copy branch name', onSelect: () => void navigator.clipboard?.writeText(branch).catch(() => {}) },
+    { label: 'Copy branch name', onSelect: () => void copyToClipboard(branch, 'Branch name copied') },
   ];
   return (
     <MenuButton label={`Branch ${branch}`} entries={entries} placement="bottom start">

@@ -4,7 +4,7 @@
 // Service, PDT-197) a file in the data folder.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, Checkbox, Dialog, Field, Input, Page, Section, Skeleton, Textarea, relativeTime, useConfirm } from '@ui';
+import { Alert, Badge, Button, Checkbox, Dialog, Field, Input, Page, RelativeTime, Section, Skeleton, Textarea, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { Secret } from '../api/gen/Secret';
 import { useProjects } from '../projects/queries';
@@ -101,7 +101,7 @@ function Uses({ id }: { id: string }) {
   return (
     <ul aria-label="Uses" className="flex w-full flex-col gap-0.5 pl-2 text-xs text-muted-foreground">
       {list.map((u) => (
-        <li key={u.id}>{relativeTime(u.at)} · {u.by} · <code>{u.how}</code></li>
+        <li key={u.id}><RelativeTime time={u.at} /> · {u.by} · <code>{u.how}</code></li>
       ))}
     </ul>
   );
@@ -124,7 +124,7 @@ function Row({ s, names, onEdit, onDelete }: {
       <span className="min-w-0 truncate text-xs text-muted-foreground">{who}</span>
       <span className="flex-1" />
       <span className="text-xs text-muted-foreground">
-        {s.lastUsedAt !== null ? `Used ${relativeTime(s.lastUsedAt)}${s.lastUsedBy ? ` by ${s.lastUsedBy}` : ''}` : <Badge>Not used yet</Badge>}
+        {s.lastUsedAt !== null ? <>Used <RelativeTime time={s.lastUsedAt} />{s.lastUsedBy && ` by ${s.lastUsedBy}`}</> : <Badge>Not used yet</Badge>}
       </span>
       <Button size="sm" variant="ghost" onClick={() => setOpen((o) => !o)}>{open ? 'Hide uses' : 'Uses'}</Button>
       <Button size="sm" variant="secondary" onClick={onEdit}>Edit</Button>

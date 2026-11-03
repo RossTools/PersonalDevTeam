@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Bot, Cog, User } from 'lucide-react';
 import { cn } from './lib/utils';
+import { absoluteTime, relativeTime, shortAge } from './lib/time';
 
 export interface TimelineItem {
   id: string;
@@ -19,25 +20,6 @@ export interface TimelineItem {
 }
 
 const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
-
-/** "just now", "5m ago", "2h ago", "3d ago", then a date ("12 Mar", or "12 Mar 2025" in another year). */
-export function relativeTime(time: number, now: number = Date.now()): string {
-  const d = Math.max(0, now - time);
-  if (d < MINUTE) return 'just now';
-  if (d < HOUR) return `${Math.floor(d / MINUTE)}m ago`;
-  if (d < DAY) return `${Math.floor(d / HOUR)}h ago`;
-  if (d < 7 * DAY) return `${Math.floor(d / DAY)}d ago`;
-  const date = new Date(time);
-  const sameYear = date.getFullYear() === new Date(now).getFullYear();
-  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) });
-}
-
-/** The full local date and time, for tooltips. */
-export function absoluteTime(time: number): string {
-  return new Date(time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
 
 /** The current time, refreshed every minute, so relative times stay right on a page left open. */
 function useNow(): number {
@@ -49,12 +31,15 @@ function useNow(): number {
   return now;
 }
 
-/** A time shown relatively ("2h ago") with the absolute time in its tooltip. */
-export function RelativeTime({ time, now, className }: { time: number; now?: number; className?: string }) {
+/**
+ * A time shown relatively ("2h ago", or with `short` a list row's "2h") with the absolute time in its tooltip. It
+ * ticks every minute, so use it in render rather than `relativeTime()`.
+ */
+export function RelativeTime({ time, now, short = false, className }: { time: number; now?: number; short?: boolean; className?: string }) {
   const live = useNow();
   return (
     <time dateTime={new Date(time).toISOString()} title={absoluteTime(time)} className={cn('tabular-nums', className)}>
-      {relativeTime(time, now ?? live)}
+      {(short ? shortAge : relativeTime)(time, now ?? live)}
     </time>
   );
 }
