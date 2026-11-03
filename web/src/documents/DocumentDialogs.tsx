@@ -3,10 +3,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Upload } from 'lucide-react';
 import { Alert, Button, CommandList, Dialog, Field, Input, SegmentedControl, Select, toast, type CommandItem } from '@ui';
 import { api } from '../api/client';
+import type { Connection } from '../api/gen/Connection';
 import type { Document } from '../api/gen/Document';
 import type { DocumentKind } from '../api/gen/DocumentKind';
 import type { Project } from '../api/gen/Project';
+import type { ProviderPicker } from '../api/gen/ProviderPicker';
+import type { SignInAccount } from '../api/gen/SignInAccount';
 import { actionError } from '../common/useAction';
+import { ConnectionDialog, connectionsKey } from '../connections/ConnectionDialog';
 import { useSignInAccounts } from '../plugins/AccountSignIn';
 import { pickFiles } from './picker';
 import { KIND_LABEL, invalidateDocuments, useDocumentProviders, useDocuments } from './queries';
@@ -166,6 +170,11 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   const picker = searchers.find((p) => p.id === chosen)?.picker ?? null;
   const accounts = useSignInAccounts(picker?.accounts ?? null);
   const pickers = (accounts.data ?? []).filter((a) => a.signedIn && a.picker);
+  // What an empty search can't find (Google's drive.file: only files PDT made or opened), and where those are.
+  const searchNote = picker?.searchNote;
+  const noFiles = searchNote
+    ? `No files found. ${searchNote}${pickers.length > 0 ? ` Use ${picker.label} to open others.` : ''}`
+    : 'No files found';
   // A provider's picker covers the page: the dialog steps aside while it is open.
   const [picking, setPicking] = useState(false);
   const items: CommandItem[] = (files.data ?? []).map((f) => ({
@@ -229,7 +238,7 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
             <span className="text-xs text-muted-foreground">Or choose one PDT already has access to:</span>
           </div>
         ) : (
-          <Alert tone="info">{picker.help}</Alert>
+          <PickerHelp picker={picker} accounts={accounts.data} />
         ))}
         {providers.isSuccess && searchers.length === 0 ? (
           <Alert tone="info">No document provider here can look for files to import. Turn on a documents plugin in Settings → Plugins.</Alert>
@@ -241,7 +250,7 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
             query={query}
             onQueryChange={setQuery}
             autoFocus
-            emptyText={files.isFetching ? 'Searching…' : files.isError ? actionError(files.error) : 'No files found'}
+            emptyText={files.isFetching ? 'Searching…' : files.isError ? actionError(files.error) : noFiles}
             onAction={(id) => void pick(String(id))}
             className="max-h-[50dvh]"
           />
@@ -269,6 +278,38 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
         )}
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * Why no account opens the provider's picker, and what to do about it: sign in; nothing, for an account with PDT's own
+ * sign-in in a build without a picker; or give an account with its own client what the picker needs, in its
+ * connection, edited from here.
+ */
+function PickerHelp({ picker, accounts }: { picker: ProviderPicker; accounts: SignInAccount[] }) {
+  const without = accounts.filter((a) => a.signedIn && !a.picker);
+  const own = picker.setup ? without.filter((a) => !a.builtIn) : [];
+  const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections, enabled: own.length > 0 });
+  const [editing, setEditing] = useState<Connection | null>(null);
+  const builtIn = without.some((a) => a.builtIn);
+  if (!builtIn && own.length === 0) return <Alert tone="info">{picker.help}</Alert>;
+  return (
+    <>
+      {builtIn && <Alert tone="info">{picker.unavailable ?? picker.help}</Alert>}
+      {own.map((a) => {
+        const c = connections.data?.find((x) => x.id === a.connectionId);
+        return (
+          <Alert
+            key={a.connectionId}
+            tone="info"
+            action={c && <Button size="sm" variant="secondary" onClick={() => setEditing(c)}>Add to {a.name}</Button>}
+          >
+            {own.length > 1 ? `${a.name}: ${picker.setup}` : picker.setup}
+          </Alert>
+        );
+      })}
+      {editing && <ConnectionDialog connection={editing} onClose={() => setEditing(null)} />}
+    </>
   );
 }
 

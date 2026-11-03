@@ -55,8 +55,14 @@ pub async fn list(
             Some(b) if built_in => b.picker.is_some(),
             _ => config_str(&c, "apiKey").is_some() && config_str(&c, "appId").is_some(),
         };
+        // An account with PDT's own client can't be given a key: this build lacks one (PDT-493).
+        let note = match (picker, built_in) {
+            (true, _) => None,
+            (false, true) => Some("No file picker in this build of PDT"),
+            (false, false) => Some("No file picker (needs an API key and project number)"),
+        };
         out.push(SignInAccount {
-            note: (!picker).then(|| "No file picker (needs an API key and project number)".to_string()),
+            note: note.map(str::to_string),
             signed_in: s.is_some(),
             email: s.and_then(|s| s.email),
             has_client: built_in || (config_str(&c, "clientId").is_some() && c.has_secret),

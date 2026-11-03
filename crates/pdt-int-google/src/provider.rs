@@ -77,9 +77,19 @@ impl DocumentProvider for GoogleDocs {
             label: "Pick from Google Drive".into(),
             module: "/api/google/picker.js".into(),
             accounts: "/api/google/accounts".into(),
-            help: "To pick any file from your Drive, sign in to Google in Settings → Plugins → Google and give the \
-                   account a picker API key and project number."
-                .into(),
+            help: "To pick any file from your Drive, sign in to Google in Settings → Plugins → Google.".into(),
+            unavailable: Some(
+                "This build of PDT doesn't include Google's file picker. You can still search the files PDT can \
+                 open below."
+                    .into(),
+            ),
+            setup: Some(
+                "To pick any file from your Drive, give the account the picker API key and project number of its \
+                 Google Cloud project."
+                    .into(),
+            ),
+            // drive.file (oauth::SCOPES): Drive lists only the files PDT made or was given through the picker.
+            search_note: Some("Only files PDT made, or that you opened in PDT, appear here.".into()),
         })
     }
     fn capabilities(&self) -> ProviderCapabilities {
