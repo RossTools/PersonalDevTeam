@@ -11,6 +11,7 @@ import { Timeline, RelativeTime, type TimelineItem } from '@ui/Timeline';
 import { Markdown } from '../../common/Markdown';
 import { StageStepper, STAGE_LABEL, type TicketStage } from '../../common/StageStepper';
 import { PartsStepper, type PartState, type PartsProgress } from '../../common/PartsStepper';
+import { SectionLabel } from '@ui/SectionLabel';
 
 const progressOf = (segments: PartState[]): PartsProgress => {
   const n = (s: PartState) => segments.filter((x) => x === s).length;
@@ -32,7 +33,7 @@ import { PrDetails } from '../../tickets/PullRequest';
 function Demo({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
+      <SectionLabel as="div">{label}</SectionLabel>
       {children}
     </div>
   );
