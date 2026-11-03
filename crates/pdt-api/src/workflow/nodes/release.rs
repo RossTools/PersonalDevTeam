@@ -1053,7 +1053,7 @@ impl NodeKind for GithubNightly {
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
-            use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
+            use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind};
             use pdt_core::release::{
                 ScheduledWatch, TagPattern, parse_day, parse_time_of_day, scheduled_watch, utc_day,
             };
@@ -1163,29 +1163,14 @@ impl NodeKind for GithubNightly {
                      there (Run workflow). This item goes away by itself once a release for the day is published.",
                     iso_day(day)
                 );
+                let body = json!({"question": title, "text": text, "url": runs_url, "workflow": cx.workflow.name,
+                                  "node": cx.node_title()});
                 let item = InboxItem {
-                    id: uuid::Uuid::now_v7().to_string(),
-                    kind: InboxKind::Gate,
-                    group: InboxGroup::Gate,
-                    status: InboxStatus::Open,
-                    project_id: cx.run.project_id.clone(),
-                    ticket_id: None,
-                    ticket_key: None,
-                    ticket_title: None,
-                    attempt_id: None,
-                    session_id: None,
-                    run_id: Some(cx.run.id.clone()),
-                    step_id: Some(cx.step.id.clone()),
-                    persona_id: None,
-                    persona_name: None,
-                    change_request: None,
-                    title: title.clone(),
-                    body: json!({"question": title, "text": text, "url": runs_url, "workflow": cx.workflow.name,
-                                 "node": cx.node_title()}),
-                    choices: vec![InboxChoice::new(START, "Start it", true), InboxChoice::new(IGNORE, "Ignore", false)],
-                    resolution: Value::Null,
                     created_at: now,
-                    resolved_at: None,
+                    ..cx.inbox_item(InboxKind::Gate, InboxGroup::Gate, &title, body).choices(vec![
+                        InboxChoice::new(START, "Start it", true),
+                        InboxChoice::new(IGNORE, "Ignore", false),
+                    ])
                 };
                 // Once per workflow and day: a second run the same day (a catch-up) leaves it to the first. (The key
                 // keeps version 1's name, so an upgrade on the day adds no second item.)

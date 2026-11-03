@@ -306,3 +306,101 @@ async fn the_watch_waits_for_its_interval() {
     look(&env.state, &wf).await;
     assert_eq!(items(&env).await.len(), 1);
 }
+
+// ---- the nodes on their own (PDT-446) ----
+
+/// A project workflow of one `node` after a manual trigger, run once: the run as the API gives it.
+async fn run_node(env: &Env, node: Value) -> Value {
+    let doc = json!({"name": "One node", "nodes": [{"id": "go", "kind": "manual", "version": 1}, node],
+                     "edges": [{"from": "go", "to": "it"}]});
+    let (s, w) =
+        call(&env.app, "POST", "/api/workflows", Some(json!({"doc": doc, "projectId": env.project, "enabled": true})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    let wf = w["id"].as_str().unwrap();
+    let (s, r) = call(&env.app, "POST", &format!("/api/workflows/{wf}/run"), Some(json!({"input": {}}))).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    for _ in 0..3 {
+        pdt_api::run_workflows(&env.state).await;
+    }
+    call(&env.app, "GET", &format!("/api/workflow-runs/{}", r["runId"].as_str().unwrap()), None).await.1
+}
+
+fn node_step(run: &Value) -> &Value {
+    run["steps"].as_array().unwrap().iter().rev().find(|s| s["nodeId"] == "it").unwrap_or_else(|| panic!("{run}"))
+}
+
+fn watch_node(config: Value) -> Value {
+    json!({"id": "it", "kind": "github.workflow.watch", "version": 1, "config": config})
+}
+
+/// The watch leaves quietly, with no Inbox item, for a run that isn't there or was cancelled; waits (no item) while
+/// the run goes or while only the attempt already re-run has failed; and stops looking after `watchFor`.
+#[tokio::test]
+async fn the_watch_reports_only_a_failed_attempt_it_has_not_seen() {
+    let env = setup().await;
+    let r = run_node(&env, watch_node(json!({"runId": 900}))).await;
+    assert_eq!((node_step(&r)["port"].as_str(), &node_step(&r)["output"]["quiet"]), (Some("none"), &json!(true)));
+
+    env.gh.ci.put_workflow_run(run(&env, "901", 1, "schedule", CiState::Cancelled, "2026-10-30T08:40:00Z"));
+    let r = run_node(&env, watch_node(json!({"runId": "901"}))).await;
+    assert_eq!(node_step(&r)["port"], "cancelled", "{r}");
+
+    env.gh.ci.put_workflow_run(run(&env, "902", 2, "schedule", CiState::Passed, "2026-10-30T08:40:00Z"));
+    let r = run_node(&env, watch_node(json!({"runId": "902"}))).await;
+    assert_eq!(
+        (node_step(&r)["port"].as_str(), node_step(&r)["output"]["attempt"].as_u64()),
+        (Some("passed"), Some(2))
+    );
+
+    // Attempt 1 is the one re-run (`after`): its failure is old news; the watch waits for attempt 2.
+    env.gh.ci.put_workflow_run(run(&env, "903", 1, "schedule", CiState::Failed, "2026-10-30T08:40:00Z"));
+    let r = run_node(&env, watch_node(json!({"runId": "903", "after": 1, "title": "Release broke"}))).await;
+    assert_eq!(node_step(&r)["status"], "waiting", "{r}");
+    assert!(items(&env).await.is_empty());
+    let rid = r["id"].as_str().unwrap().to_string();
+    env.gh.ci.put_workflow_run(run(&env, "903", 2, "schedule", CiState::Failed, "2026-10-30T09:40:00Z"));
+    time_passes(&env, &rid).await;
+    let found = items(&env).await;
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!((found[0]["title"].as_str(), found[0]["body"]["attempt"].as_u64()), (Some("Release broke"), Some(2)));
+
+    // A run still going: it waits, until `watchFor` has passed with nothing to report.
+    env.gh.ci.put_workflow_run(run(&env, "904", 1, "schedule", CiState::Running, "2026-10-30T08:40:00Z"));
+    let r = run_node(&env, watch_node(json!({"runId": "904", "watchFor": "1h"}))).await;
+    assert_eq!(node_step(&r)["status"], "waiting", "{r}");
+    let rid = r["id"].as_str().unwrap().to_string();
+    let mut step = env.state.store.list_steps(&rid).await.unwrap().into_iter().find(|s| s.node_id == "it").unwrap();
+    step.output["since"] = json!(1);
+    env.state.store.put_step(&step).await.unwrap();
+    time_passes(&env, &rid).await;
+    let (_, r) = call(&env.app, "GET", &format!("/api/workflow-runs/{rid}"), None).await;
+    assert_eq!(node_step(&r)["port"], "expired", "{r}");
+    assert_eq!(items(&env).await.len(), 1, "only 903's");
+}
+
+/// The re-run node re-runs the failed jobs, or every job with `allJobs`, and says `none` for a run that isn't there.
+#[tokio::test]
+async fn the_rerun_node_re_runs_failed_or_all_jobs() {
+    let env = setup().await;
+    env.gh.ci.put_workflow_run(run(&env, "910", 3, "schedule", CiState::Failed, "2026-10-30T08:40:00Z"));
+    let rerun = |config: Value| json!({"id": "it", "kind": "github.workflow.rerun", "version": 1, "config": config});
+    let r = run_node(&env, rerun(json!({"runId": "910"}))).await;
+    let step = node_step(&r);
+    assert_eq!(step["port"], "out", "{r}");
+    assert_eq!((step["output"]["runId"].as_str(), step["output"]["attempt"].as_u64()), (Some("910"), Some(3)));
+    assert_eq!(step["output"]["url"], "https://ci.example/github_actions/runs/910");
+    let r = run_node(&env, rerun(json!({"runId": 910, "allJobs": true}))).await;
+    assert_eq!(node_step(&r)["port"], "out", "{r}");
+    assert_eq!(*env.gh.ci.retried.lock().unwrap(), [("910".to_string(), true), ("910".to_string(), false)]);
+
+    let r = run_node(&env, rerun(json!({"runId": "911"}))).await;
+    assert_eq!(node_step(&r)["port"], "none", "{r}");
+    assert_eq!(env.gh.ci.retried.lock().unwrap().len(), 2, "nothing re-run");
+
+    // A forge that can't re-run fails the step (its error port), and re-runs nothing.
+    env.gh.ci.capabilities.lock().unwrap().retry = false;
+    let r = run_node(&env, rerun(json!({"runId": "910"}))).await;
+    assert_eq!(node_step(&r)["status"], "failed", "{r}");
+    assert_eq!(env.gh.ci.retried.lock().unwrap().len(), 2);
+}

@@ -79,36 +79,20 @@ impl NodeKind for InboxAdmit {
             if cx.dry_run {
                 return Ok(Outcome::would("added", format!("ask you to approve {}", t.key)));
             }
-            let item = InboxItem {
-                id: uuid::Uuid::now_v7().to_string(),
-                kind: InboxKind::Admit,
-                group: InboxGroup::Admit,
-                status: InboxStatus::Open,
-                project_id: Some(t.project_id.clone()),
-                ticket_id: Some(id.clone()),
-                ticket_key: None,
-                ticket_title: None,
-                attempt_id: None,
-                session_id: None,
-                run_id: Some(cx.run.id.clone()),
+            let body = json!({
+                "summary": nonblank(&c.summary), "issue": nonblank(&c.issue),
+                "external": crate::untrusted::held_back(&t), "workflow": cx.workflow.name,
+            });
+            let item = cx
+                .inbox_item(InboxKind::Admit, InboxGroup::Admit, &t.title, body)
+                .project(t.project_id.clone())
+                .ticket(id.clone())
                 // Not the step's: the item outlives the run.
-                step_id: None,
-                persona_id: None,
-                persona_name: None,
-                change_request: None,
-                title: t.title.clone(),
-                body: json!({
-                    "summary": nonblank(&c.summary), "issue": nonblank(&c.issue),
-                    "external": crate::untrusted::held_back(&t), "workflow": cx.workflow.name,
-                }),
-                choices: vec![
+                .step(None)
+                .choices(vec![
                     InboxChoice::new(inbox::APPROVE, "Approve", true),
                     InboxChoice::new(inbox::REJECT, "Reject", false),
-                ],
-                resolution: Value::Null,
-                created_at: now_ms(),
-                resolved_at: None,
-            };
+                ]);
             match store.add_inbox_item_once(&item, &format!("admit:{id}")).await.map_err(crate::workflow::err)? {
                 Some(i) => {
                     crate::notifications::kick(cx.st);

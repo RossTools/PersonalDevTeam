@@ -23,7 +23,7 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::forge::ForgeNotes;
-use pdt_core::inbox::{InboxGroup, InboxItem, InboxKind, InboxStatus};
+use pdt_core::inbox::{InboxGroup, InboxKind};
 use pdt_core::pr::{CiJob, CiRun, CiState, LOCAL_CI, Mergeable, PrState};
 use pdt_core::runconfig::PushDef;
 use pdt_core::ticket::Actor;
@@ -431,29 +431,12 @@ impl LocalForge {
         if let Err(e) = self.store.set_local_change_auto_merge(change.id, false).await {
             tracing::warn!(ticket = %attempt.ticket_key, error = %e, "could not stop a local merge");
         }
-        let item = InboxItem {
-            id: uuid::Uuid::now_v7().to_string(),
-            kind: InboxKind::Notice,
-            group: InboxGroup::Notice,
-            status: InboxStatus::Open,
-            project_id: Some(attempt.project_id.clone()),
-            ticket_id: Some(attempt.ticket_id.clone()),
-            ticket_key: None,
-            ticket_title: None,
-            attempt_id: Some(attempt.attempt.id.clone()),
-            session_id: None,
-            run_id: None,
-            step_id: None,
-            persona_id: None,
-            persona_name: None,
-            change_request: None,
-            title: format!("{title}: change request #{}", change.number),
-            body: serde_json::json!({"notice": null, "key": key, "text": text}),
-            choices: vec![],
-            resolution: serde_json::Value::Null,
-            created_at: now_ms(),
-            resolved_at: None,
-        };
+        let title = format!("{title}: change request #{}", change.number);
+        let body = serde_json::json!({"notice": null, "key": key, "text": text});
+        let item = crate::inbox::new_item(InboxKind::Notice, InboxGroup::Notice, title, body)
+            .project(attempt.project_id.clone())
+            .ticket(attempt.ticket_id.clone())
+            .attempt(attempt.attempt.id.clone());
         let dedupe = format!("local-push:{}:{}:{key}", attempt.attempt.id, change.head_sha);
         match self.store.add_inbox_item_once(&item, &dedupe).await {
             Ok(_) => crate::notifications::kick(&self.st),

@@ -408,29 +408,14 @@ pub fn storage_item(disk_full: bool, free: Option<u64>, since: i64) -> InboxItem
          every few seconds; this goes away once saving works."
             .to_string()
     };
-    InboxItem {
-        id: STORAGE_ID.into(),
-        kind: InboxKind::Storage,
-        group: InboxGroup::Notice,
-        status: InboxStatus::Open,
-        project_id: None,
-        ticket_id: None,
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: None,
-        session_id: None,
-        run_id: None,
-        step_id: None,
-        persona_id: None,
-        persona_name: None,
-        change_request: None,
-        title: title.into(),
-        body: serde_json::json!({"text": text, "diskFull": disk_full, "freeBytes": free}),
-        choices: vec![],
-        resolution: Value::Null,
-        created_at: since,
-        resolved_at: None,
-    }
+    InboxItem::new(
+        STORAGE_ID,
+        InboxKind::Storage,
+        InboxGroup::Notice,
+        title,
+        serde_json::json!({"text": text, "diskFull": disk_full, "freeBytes": free}),
+        since,
+    )
 }
 
 /// The id of the item that says a disk is running low ([`low_disk_item`]); a critically low one has its own, so
@@ -460,29 +445,14 @@ pub fn low_disk_item(free: u64, folders: &[String], critical: bool, paused: bool
     if critical && paused {
         text.push_str(" Until there is more space, auto-start starts no new tickets; agents already running carry on.");
     }
-    InboxItem {
-        id: if critical { CRITICAL_DISK_ID } else { LOW_DISK_ID }.into(),
-        kind: InboxKind::LowDisk,
-        group: InboxGroup::Notice,
-        status: InboxStatus::Open,
-        project_id: None,
-        ticket_id: None,
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: None,
-        session_id: None,
-        run_id: None,
-        step_id: None,
-        persona_id: None,
-        persona_name: None,
-        change_request: None,
+    InboxItem::new(
+        if critical { CRITICAL_DISK_ID } else { LOW_DISK_ID },
+        InboxKind::LowDisk,
+        InboxGroup::Notice,
         title,
-        body: serde_json::json!({"text": text, "freeBytes": free, "folders": folders, "critical": critical}),
-        choices: vec![],
-        resolution: Value::Null,
-        created_at: since,
-        resolved_at: None,
-    }
+        serde_json::json!({"text": text, "freeBytes": free, "folders": folders, "critical": critical}),
+        since,
+    )
 }
 
 /// A workflow proposal's item id (PDT-320): one per workflow and proposed version.
@@ -535,6 +505,75 @@ pub struct InboxItem {
     pub created_at: i64,
     #[ts(type = "number | null")]
     pub resolved_at: Option<i64>,
+}
+
+impl InboxItem {
+    /// An open item about nothing yet: say what it is about with [`project`](Self::project),
+    /// [`ticket`](Self::ticket) and the rest, and what it offers with [`choices`](Self::choices).
+    pub fn new(
+        id: impl Into<String>,
+        kind: InboxKind,
+        group: InboxGroup,
+        title: impl Into<String>,
+        body: Value,
+        created_at: i64,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            kind,
+            group,
+            status: InboxStatus::Open,
+            project_id: None,
+            ticket_id: None,
+            ticket_key: None,
+            ticket_title: None,
+            attempt_id: None,
+            session_id: None,
+            run_id: None,
+            step_id: None,
+            persona_id: None,
+            persona_name: None,
+            change_request: None,
+            title: title.into(),
+            body,
+            choices: vec![],
+            resolution: Value::Null,
+            created_at,
+            resolved_at: None,
+        }
+    }
+    pub fn project(mut self, id: impl Into<Option<String>>) -> Self {
+        self.project_id = id.into();
+        self
+    }
+    pub fn ticket(mut self, id: impl Into<Option<String>>) -> Self {
+        self.ticket_id = id.into();
+        self
+    }
+    pub fn attempt(mut self, id: impl Into<Option<String>>) -> Self {
+        self.attempt_id = id.into();
+        self
+    }
+    pub fn session(mut self, id: impl Into<Option<String>>) -> Self {
+        self.session_id = id.into();
+        self
+    }
+    pub fn run(mut self, id: impl Into<Option<String>>) -> Self {
+        self.run_id = id.into();
+        self
+    }
+    pub fn step(mut self, id: impl Into<Option<String>>) -> Self {
+        self.step_id = id.into();
+        self
+    }
+    pub fn persona(mut self, id: impl Into<Option<String>>) -> Self {
+        self.persona_id = id.into();
+        self
+    }
+    pub fn choices(mut self, choices: Vec<InboxChoice>) -> Self {
+        self.choices = choices;
+        self
+    }
 }
 
 /// A change request's page on its forge, for the Inbox's Open pull request button.
@@ -730,29 +769,42 @@ mod tests {
     use super::*;
 
     fn item(id: &str, group: InboxGroup, at: i64) -> InboxItem {
-        InboxItem {
-            id: id.into(),
-            kind: InboxKind::Gate,
-            group,
-            status: InboxStatus::Open,
-            project_id: None,
-            ticket_id: None,
-            ticket_key: None,
-            ticket_title: None,
-            attempt_id: None,
-            session_id: None,
-            run_id: None,
-            step_id: None,
-            persona_id: None,
-            persona_name: None,
-            change_request: None,
-            title: String::new(),
-            body: Value::Null,
-            choices: vec![],
-            resolution: Value::Null,
-            created_at: at,
-            resolved_at: None,
-        }
+        InboxItem::new(id, InboxKind::Gate, group, "", Value::Null, at)
+    }
+
+    #[test]
+    fn a_new_item_is_open_about_nothing_until_told() {
+        let bare =
+            InboxItem::new("i", InboxKind::Notice, InboxGroup::Notice, "Hi", serde_json::json!({"text": "t"}), 5);
+        assert_eq!(
+            (bare.id.as_str(), bare.status, bare.title.as_str(), bare.created_at),
+            ("i", InboxStatus::Open, "Hi", 5)
+        );
+        assert_eq!(bare.body["text"], "t");
+        assert_eq!(bare.resolution, Value::Null);
+        assert!(
+            bare.project_id.is_none() && bare.ticket_id.is_none() && bare.run_id.is_none() && bare.choices.is_empty()
+        );
+
+        let about = bare
+            .project("p".to_string())
+            .ticket(Some("t".to_string()))
+            .attempt(None)
+            .session("s".to_string())
+            .run("r".to_string())
+            .step("st".to_string())
+            .persona("pe".to_string())
+            .choices(vec![InboxChoice::new(STOP, "Stop", true)]);
+        assert_eq!(about.project_id.as_deref(), Some("p"));
+        assert_eq!(about.ticket_id.as_deref(), Some("t"));
+        assert_eq!(about.attempt_id, None);
+        assert_eq!(about.session_id.as_deref(), Some("s"));
+        assert_eq!(about.run_id.as_deref(), Some("r"));
+        assert_eq!(about.step_id.as_deref(), Some("st"));
+        assert_eq!(about.persona_id.as_deref(), Some("pe"));
+        assert_eq!(about.choices, vec![InboxChoice::new(STOP, "Stop", true)]);
+        // Filled in by the API, never by whoever makes the item.
+        assert!(about.ticket_key.is_none() && about.persona_name.is_none() && about.change_request.is_none());
     }
 
     #[test]

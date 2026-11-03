@@ -400,30 +400,13 @@ pub(crate) async fn timed_out_item(st: &AppState, step: &Step, run: &pdt_core::w
         _ => None,
     };
     let why = stop_reason(step);
-    let item = InboxItem {
-        id: uuid::Uuid::now_v7().to_string(),
-        kind: InboxKind::TimedOut,
-        group: InboxGroup::Stalled,
-        status: InboxStatus::Open,
-        project_id: a.project_id.clone().or_else(|| run.project_id.clone()),
-        ticket_id: a.ticket_id.clone(),
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: a.attempt_id.clone(),
-        session_id,
-        run_id: Some(a.run_id.clone()),
-        step_id: Some(a.step_id.clone()),
-        persona_id: a.persona_id.clone(),
-        persona_name: None,
-        change_request: None,
-        title: format!("{} timed out at {}", a.persona_name, step.node_id),
-        body: json!({"why": why, "node": step.node_id, "workflow": run.workflow_name, "outcomes": a.outcomes,
-                     "turns": a.turns}),
-        choices: vec![InboxChoice::new(inbox::RESUME, "Resume", true), InboxChoice::new(inbox::STOP, "Stop", false)],
-        resolution: Value::Null,
-        created_at: now_ms(),
-        resolved_at: None,
-    };
+    let title = format!("{} timed out at {}", a.persona_name, step.node_id);
+    let body = json!({"why": why, "node": step.node_id, "workflow": run.workflow_name, "outcomes": a.outcomes,
+                      "turns": a.turns});
+    let item = step_item(&a, InboxKind::TimedOut, InboxGroup::Stalled, title, body)
+        .project(a.project_id.clone().or_else(|| run.project_id.clone()))
+        .session(session_id)
+        .choices(vec![InboxChoice::new(inbox::RESUME, "Resume", true), InboxChoice::new(inbox::STOP, "Stop", false)]);
     if let Err(e) = st.store.open_inbox_item(&item).await {
         tracing::warn!(step = %step.id, error = %e, "could not put a timed-out step in the Inbox");
     }
@@ -439,6 +422,17 @@ async fn why_back(st: &AppState, cx: &StepCx<'_>) -> Option<String> {
     })
 }
 
+/// A new Inbox item about an agent step: its project, ticket, attempt, run, step and persona.
+fn step_item(a: &AgentStep, kind: InboxKind, group: InboxGroup, title: String, body: Value) -> InboxItem {
+    crate::inbox::new_item(kind, group, title, body)
+        .project(a.project_id.clone())
+        .ticket(a.ticket_id.clone())
+        .attempt(a.attempt_id.clone())
+        .run(a.run_id.clone())
+        .step(a.step_id.clone())
+        .persona(a.persona_id.clone())
+}
+
 /// A manual step's Inbox item: the step's task, and one choice per outcome.
 async fn manual_item(cx: &StepCx<'_>, c: &AgentConfig, a: &AgentStep) -> R<()> {
     let choices = c
@@ -447,30 +441,10 @@ async fn manual_item(cx: &StepCx<'_>, c: &AgentConfig, a: &AgentStep) -> R<()> {
         .enumerate()
         .map(|(i, o)| InboxChoice::new(inbox::outcome_choice(&o.id), &o.id, i == 0))
         .collect();
-    let item = InboxItem {
-        id: uuid::Uuid::now_v7().to_string(),
-        kind: InboxKind::Manual,
-        group: InboxGroup::Gate,
-        status: InboxStatus::Open,
-        project_id: a.project_id.clone(),
-        ticket_id: a.ticket_id.clone(),
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: a.attempt_id.clone(),
-        session_id: None,
-        run_id: Some(a.run_id.clone()),
-        step_id: Some(a.step_id.clone()),
-        persona_id: a.persona_id.clone(),
-        persona_name: None,
-        change_request: None,
-        title: format!("Your turn: {}", cx.node_title()),
-        body: json!({"prompt": c.prompt, "outcomes": c.outcomes, "node": cx.node.id, "persona": a.persona_name,
-                     "workflow": cx.workflow.name}),
-        choices,
-        resolution: Value::Null,
-        created_at: now_ms(),
-        resolved_at: None,
-    };
+    let body = json!({"prompt": c.prompt, "outcomes": c.outcomes, "node": cx.node.id, "persona": a.persona_name,
+                      "workflow": cx.workflow.name});
+    let item = step_item(a, InboxKind::Manual, InboxGroup::Gate, format!("Your turn: {}", cx.node_title()), body)
+        .choices(choices);
     cx.st.store.open_inbox_item(&item).await.map_err(err)?;
     Ok(())
 }
@@ -685,29 +659,16 @@ pub(crate) async fn loop_limit_item(
         .iter()
         .map(|a| json!({"persona": a.persona_name, "outcome": a.outcome, "summary": a.summary, "at": a.updated_at}))
         .collect();
-    let item = InboxItem {
-        id: uuid::Uuid::now_v7().to_string(),
-        kind: InboxKind::LoopLimit,
-        group: InboxGroup::LoopLimit,
-        status: InboxStatus::Open,
-        project_id: first.and_then(|a| a.project_id.clone()).or_else(|| run.project_id.clone()),
-        ticket_id: first.and_then(|a| a.ticket_id.clone()).or_else(|| run.ticket_id.clone()),
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: first.and_then(|a| a.attempt_id.clone()).or_else(|| run.attempt_id.clone()),
-        session_id: None,
-        run_id: Some(run.id.clone()),
-        step_id: Some(step_id.to_string()),
-        persona_id: first.and_then(|a| a.persona_id.clone()),
-        persona_name: None,
-        change_request: None,
-        title: format!("{node_title} has run {} times in this run", passes.len()),
-        body: json!({"passes": history, "outcomes": c.outcomes, "limit": c.loop_limit(), "node": node_id}),
-        choices,
-        resolution: Value::Null,
-        created_at: now_ms(),
-        resolved_at: None,
-    };
+    let title = format!("{node_title} has run {} times in this run", passes.len());
+    let body = json!({"passes": history, "outcomes": c.outcomes, "limit": c.loop_limit(), "node": node_id});
+    let item = crate::inbox::new_item(InboxKind::LoopLimit, InboxGroup::LoopLimit, title, body)
+        .project(first.and_then(|a| a.project_id.clone()).or_else(|| run.project_id.clone()))
+        .ticket(first.and_then(|a| a.ticket_id.clone()).or_else(|| run.ticket_id.clone()))
+        .attempt(first.and_then(|a| a.attempt_id.clone()).or_else(|| run.attempt_id.clone()))
+        .run(run.id.clone())
+        .step(step_id.to_string())
+        .persona(first.and_then(|a| a.persona_id.clone()))
+        .choices(choices);
     st.store.open_inbox_item(&item).await.map_err(err)?;
     Ok(())
 }
@@ -1081,29 +1042,11 @@ pub(crate) async fn stall_item(st: &AppState, mut a: AgentStep, why: &str, undel
             .iter()
             .map(|o| InboxChoice::new(inbox::outcome_choice(&o.id), format!("Take over: {}", o.id), false)),
     );
-    let item = InboxItem {
-        id: uuid::Uuid::now_v7().to_string(),
-        kind: InboxKind::Stalled,
-        group: InboxGroup::Stalled,
-        status: InboxStatus::Open,
-        project_id: a.project_id.clone(),
-        ticket_id: a.ticket_id.clone(),
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: a.attempt_id.clone(),
-        session_id,
-        run_id: Some(a.run_id.clone()),
-        step_id: Some(a.step_id.clone()),
-        persona_id: a.persona_id.clone(),
-        persona_name: None,
-        change_request: None,
-        title: format!("{} stalled", a.persona_name),
-        body: json!({"why": why, "outcomes": a.outcomes, "turns": a.turns, "nudges": a.nudges, "message": undelivered}),
-        choices,
-        resolution: Value::Null,
-        created_at: now_ms(),
-        resolved_at: None,
-    };
+    let body =
+        json!({"why": why, "outcomes": a.outcomes, "turns": a.turns, "nudges": a.nudges, "message": undelivered});
+    let item = step_item(&a, InboxKind::Stalled, InboxGroup::Stalled, format!("{} stalled", a.persona_name), body)
+        .session(session_id)
+        .choices(choices);
     if let Err(e) = st.store.open_inbox_item(&item).await {
         tracing::warn!(step = %a.step_id, error = %e, "could not put a stalled step in the Inbox");
     }

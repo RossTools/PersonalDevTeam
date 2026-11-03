@@ -150,34 +150,22 @@ pub(crate) async fn ask(st: &AppState, s: &Session, kind: InboxKind, title: Stri
         }
     }
     let ticket_id = crate::mcp::tools::session_ticket(st, s).await;
-    let item = InboxItem {
-        id: uuid::Uuid::now_v7().to_string(),
-        kind,
-        group: if kind == InboxKind::Confirm { InboxGroup::Approval } else { InboxGroup::Question },
-        status: InboxStatus::Open,
-        project_id: Some(s.project_id.clone()),
-        ticket_id,
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: s.attempt_id.clone().or_else(|| binding.as_ref().and_then(|a| a.attempt_id.clone())),
-        session_id: Some(s.id.clone()),
-        run_id: binding.as_ref().map(|a| a.run_id.clone()),
-        step_id: binding.as_ref().map(|a| a.step_id.clone()),
-        persona_id: s.persona.as_ref().map(|p| p.id.clone()),
-        persona_name: None,
-        change_request: None,
-        title,
-        body,
-        choices: match kind {
-            InboxKind::Confirm => {
-                vec![InboxChoice::new(inbox::ALLOW, "Allow", true), InboxChoice::new(inbox::DENY, "Deny", false)]
-            }
-            _ => vec![],
-        },
-        resolution: Value::Null,
-        created_at: now_ms(),
-        resolved_at: None,
+    let group = if kind == InboxKind::Confirm { InboxGroup::Approval } else { InboxGroup::Question };
+    let choices = match kind {
+        InboxKind::Confirm => {
+            vec![InboxChoice::new(inbox::ALLOW, "Allow", true), InboxChoice::new(inbox::DENY, "Deny", false)]
+        }
+        _ => vec![],
     };
+    let item = crate::inbox::new_item(kind, group, title, body)
+        .project(s.project_id.clone())
+        .ticket(ticket_id)
+        .attempt(s.attempt_id.clone().or_else(|| binding.as_ref().and_then(|a| a.attempt_id.clone())))
+        .session(s.id.clone())
+        .run(binding.as_ref().map(|a| a.run_id.clone()))
+        .step(binding.as_ref().map(|a| a.step_id.clone()))
+        .persona(s.persona.as_ref().map(|p| p.id.clone()))
+        .choices(choices);
     let item = st.store.open_inbox_item(&item).await.map_err(err)?;
     if let Some(mut a) = binding {
         a.state = AgentStepState::Asking;
