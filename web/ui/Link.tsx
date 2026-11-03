@@ -11,11 +11,14 @@ export interface LinkProps extends AriaAttributes {
   /** Called on press; with no `href` the link is an in-app action. */
   onClick?: (e: PressEvent) => void;
   title?: string;
+  /** `link` (default): accent-coloured text. `quiet`: the surrounding text's colour, accent and underlined on hover (a
+   *  name or key in a line of other text that opens what it names). */
+  tone?: 'link' | 'quiet';
   className?: string;
 }
 
-/** Text link: internal (href or onClick) or `external`. */
-export function Link({ children, href, external = false, onClick, className, ...rest }: LinkProps) {
+/** Text link: internal (href or onClick) or `external`. Anything that navigates (opens a page, a ticket, a session) is one. */
+export function Link({ children, href, external = false, onClick, tone = 'link', className, ...rest }: LinkProps) {
   return (
     <LinkPrimitive
       {...rest}
@@ -23,7 +26,8 @@ export function Link({ children, href, external = false, onClick, className, ...
       onPress={onClick}
       {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
       className={cn(
-        'inline-flex items-center gap-0.5 rounded-sm text-link underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring data-disabled:opacity-50 cursor-pointer',
+        'inline-flex items-center gap-0.5 rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring data-disabled:opacity-50 cursor-pointer',
+        tone === 'link' ? 'text-link' : 'hover:text-link',
         className,
       )}
     >

@@ -237,7 +237,7 @@ describe('runs view', () => {
     expect(await within(detail).findByText('no session')).toBeInTheDocument();
     await userEvent.click(within(detail).getByRole('button', { name: 'Retry from the failed step' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path.endsWith('/retry'))).toBe(true));
-    await userEvent.click(within(screen.getByRole('navigation', { name: 'Runs' })).getAllByRole('button')[1]);
+    await userEvent.click(within(screen.getByRole('navigation', { name: 'Runs' })).getAllByRole('row')[1]);
     rerender(<RunsView workflowId="w1" catalog={CATALOG} runId={runId} onRunChange={() => {}} />);
     expect(await screen.findByText('Go on?')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'yes' }));
@@ -255,7 +255,7 @@ describe('runs view', () => {
     const onRunChange = vi.fn();
     const { rerender } = renderWithQuery(<RunsView workflowId="w1" catalog={CATALOG} runId={null} onRunChange={onRunChange} viewOnly />);
     const list = await screen.findByRole('navigation', { name: 'Runs' });
-    await userEvent.click(await within(list).findByRole('button', { name: /ci\.run_failed/ }));
+    await userEvent.click(await within(list).findByRole('row', { name: /ci\.run_failed/ }));
     expect(onRunChange).toHaveBeenCalledWith('r1');
     expect(screen.queryByRole('region', { name: 'Run' })).not.toBeInTheDocument();
     rerender(<RunsView workflowId="w1" catalog={CATALOG} runId="r1" onRunChange={onRunChange} viewOnly />);

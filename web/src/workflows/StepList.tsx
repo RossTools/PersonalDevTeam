@@ -1,8 +1,6 @@
 // A run's steps in order: status, the port taken, attempts, error, and the input and output as JSON.
-import { useState, type ReactNode } from 'react';
-import { ChevronRight } from 'lucide-react';
-import { Badge, Disclosure, type BadgeTone } from '@ui';
-import { cn } from '@ui/lib/utils';
+import type { ReactNode } from 'react';
+import { Badge, Disclosure, EmptyState, type BadgeTone } from '@ui';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { nodeTitle, type Catalog } from './model';
 
@@ -43,53 +41,53 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
 }
 
 /**
- * `expandable` (phones, PDT-120): each step is a row to tap, which shows its input and output under it; otherwise
- * they are folded (a `Disclosure` each) in every step.
+ * `expandable` (phones, PDT-120): each step is a card to tap (a `Disclosure` card), which shows its input and output
+ * under its error and actions; otherwise they are folded (a `Disclosure` each) in every step.
  */
 export function StepList({ steps, doc, catalog, expandable = false }: { steps: StepRow[]; doc: WorkflowDoc; catalog: Catalog; expandable?: boolean }) {
-  const [open, setOpen] = useState<Set<string>>(new Set());
-  if (!steps.length) return <p className="text-sm text-muted-foreground">No steps ran.</p>;
+  if (!steps.length) return <EmptyState size="inline">No steps ran.</EmptyState>;
   return (
     <ol aria-label="Steps" className="flex flex-col gap-2">
       {steps.map((s, i) => {
         const node = doc.nodes.find((n) => n.id === s.nodeId);
         const would = s.output && typeof s.output === 'object' && 'would' in s.output ? String((s.output as { would: unknown }).would) : null;
-        const shown = open.has(s.key);
         const head = (
-          <>
-              <span className="text-meta text-muted-foreground tabular-nums">{i + 1}</span>
-              <span className="font-medium">{node ? nodeTitle(node, catalog) : s.nodeId}</span>
-              <span className="font-mono text-meta text-muted-foreground">{s.nodeId} · {s.kind}</span>
-              <Badge tone={s.status.tone}>{s.status.text}</Badge>
-              {s.port && <span className="text-meta text-muted-foreground">→ {s.port}</span>}
-              {s.attempts !== undefined && s.attempts > 1 && <span className="text-meta text-muted-foreground">{s.attempts} attempts</span>}
-          </>
+          <span className="flex flex-wrap items-center gap-2 font-normal">
+            <span className="text-meta text-muted-foreground tabular-nums">{i + 1}</span>
+            <span className="font-medium">{node ? nodeTitle(node, catalog) : s.nodeId}</span>
+            <span className="font-mono text-meta text-muted-foreground">{s.nodeId} · {s.kind}</span>
+            <Badge tone={s.status.tone}>{s.status.text}</Badge>
+            {s.port && <span className="text-meta text-muted-foreground">→ {s.port}</span>}
+            {s.attempts !== undefined && s.attempts > 1 && <span className="text-meta text-muted-foreground">{s.attempts} attempts</span>}
+          </span>
         );
-        return (
-          <li key={s.key} className="flex flex-col gap-1 rounded-md border border-border p-2">
-            {expandable ? (
-              <button type="button" aria-expanded={shown}
-                onClick={() => setOpen((o) => { const n = new Set(o); if (n.has(s.key)) n.delete(s.key); else n.add(s.key); return n; })}
-                className="-m-1 flex min-h-control-touch flex-wrap items-center gap-2 rounded-md p-1 text-left text-sm hover:bg-accent">
-                <ChevronRight aria-hidden className={cn('size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', shown && 'rotate-90')} />
-                {head}
-              </button>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2 text-sm">{head}</div>
-            )}
+        const notes = (would || s.error || s.actions) && (
+          <>
             {would && <p className="text-sm">Would {would}</p>}
             {s.error && <p className="text-sm break-words text-destructive">{s.error}</p>}
             {s.actions}
-            {expandable ? shown && (
-              <>
+          </>
+        );
+        return (
+          <li key={s.key}>
+            {expandable ? (
+              <Disclosure
+                variant="card"
+                title={head}
+                triggerClassName="px-2 py-2"
+                panelClassName="flex flex-col gap-1 px-2 pb-2"
+                visible={notes && <div className="flex flex-col gap-1 px-2 pb-2">{notes}</div>}
+              >
                 <JsonBlock label="Input" value={s.input} />
                 <JsonBlock label="Output" value={s.output} />
-              </>
+              </Disclosure>
             ) : (
-              <>
+              <div className="flex flex-col gap-1 rounded-md border border-border p-2">
+                <div className="text-sm">{head}</div>
+                {notes}
                 <Json label="Input" value={s.input} />
                 <Json label="Output" value={s.output} />
-              </>
+              </div>
             )}
           </li>
         );

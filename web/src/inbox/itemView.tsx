@@ -2,8 +2,7 @@
 // kind's style, the note box and the actions. The desktop and the phone lay the same spec out their own way.
 import { Fragment, useState, type ReactNode } from 'react';
 import {
-  AgentMessage, ApprovalCard, Callout, Checkbox, CodeCard, DiffViewer, Facts, Field, Input, NO_ANSWER, PassList, QuestionCard,
-  Select, Textarea, answerText, otherInputId, type ApprovalAnswer, type QuestionAnswer,
+  AgentMessage, answerText, ApprovalCard, Callout, Checkbox, CodeCard, DiffViewer, EmptyState, Facts, Field, Input, NO_ANSWER, otherInputId, PassList, QuestionCard, Select, Textarea, type ApprovalAnswer, type QuestionAnswer,
 } from '@ui';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -428,7 +427,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
                 </div>
               ) : (
                 <div aria-label="Proposed ticket" className="flex flex-col gap-2">
-                  {proposed.description.trim() ? <Markdown>{proposed.description}</Markdown> : <p className="text-sm text-muted-foreground">No description.</p>}
+                  {proposed.description.trim() ? <Markdown>{proposed.description}</Markdown> : <EmptyState size="inline">No description.</EmptyState>}
                   {(proposed.priority !== 'none' || proposed.labels.length > 0) && (
                     <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                       {proposed.priority !== 'none' && <span>{PRIORITY_LABEL[proposed.priority]} priority</span>}

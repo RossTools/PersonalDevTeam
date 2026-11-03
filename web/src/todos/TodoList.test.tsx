@@ -99,7 +99,7 @@ describe('TodoList', () => {
     const openTicket = show();
     await screen.findByText('Todo a');
     const b = within(open()).getByRole('listitem', { name: 'Todo b' });
-    await userEvent.click(within(b).getByRole('button', { name: 'PX-7' }));
+    await userEvent.click(within(b).getByRole('link', { name: 'PX-7' }));
     expect(openTicket).toHaveBeenCalledWith({ id: 't1', projectId: 'p1' });
     const c = within(open()).getByRole('listitem', { name: 'Todo c' });
     expect(within(c).getByText('PX')).toBeInTheDocument();
@@ -415,15 +415,21 @@ describe('TodoList with due dates', () => {
       await userEvent.click(within(dialog).getByRole('button', { name: 'Repeat' }));
       expect(within(picker()).getByRole('heading', { name: 'Repeat' })).toBeInTheDocument();
       // Built from today (a Friday, the 23rd).
-      expect(within(picker()).getByRole('button', { name: /^Every week(?!day)/ })).toHaveTextContent('on Fri');
-      await userEvent.click(within(picker()).getByRole('button', { name: /^Every month/ }));
+      const repeat = within(picker()).getByRole('menu', { name: 'Repeat' });
+      expect(within(repeat).getByRole('menuitem', { name: /^Doesn’t repeat/ })).toHaveTextContent('Doesn’t repeat');
+      expect(within(repeat).getByRole('menuitem', { name: /^Every week(?!day)/ })).toHaveTextContent('on Fri');
+      // Arrow keys move through the options.
+      within(repeat).getAllByRole('menuitem')[0].focus();
+      await userEvent.keyboard('{ArrowDown}');
+      expect(within(repeat).getAllByRole('menuitem')[1]).toHaveFocus();
+      await userEvent.click(within(picker()).getByRole('menuitem', { name: /^Every month/ }));
       await waitFor(() => expect(sent('PATCH', '/api/todos/none')).toEqual([
         { recurrence: { rule: { every: 'month', day: 23 }, from: 'due' }, dueOn: '2026-10-23' },
       ]));
-      await userEvent.click(within(picker()).getByRole('button', { name: /^Doesn’t repeat/ }));
+      await userEvent.click(within(picker()).getByRole('menuitem', { name: /^Doesn’t repeat/ }));
       await waitFor(() => expect(sent('PATCH', '/api/todos/none')).toHaveLength(2));
       expect(sent('PATCH', '/api/todos/none')[1]).toEqual({ recurrence: null });
-      await userEvent.click(within(picker()).getByRole('button', { name: 'Custom…' }));
+      await userEvent.click(within(picker()).getByRole('menuitem', { name: 'Custom…' }));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Due date/ })).toBeNull());
       dialog = await screen.findByRole('dialog', { name: 'Repeat' });
       expect(within(dialog).getByRole('button', { name: 'Save' })).toBeInTheDocument();

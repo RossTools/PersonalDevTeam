@@ -92,7 +92,6 @@ describe('design system rules', () => {
       'src/plugins/AllConnectionsPage.tsx',
       'src/plugins/PluginsPage.tsx',
       'src/shell/RightPanel.tsx',
-      'src/tickets/Attempt.tsx',
       'src/tickets/TicketConversation.tsx',
       'src/todos/DuePicker.tsx',
       'src/todos/TodoRow.tsx',

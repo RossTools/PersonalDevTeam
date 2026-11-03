@@ -1,6 +1,6 @@
 import { Lock } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Chip } from '@ui';
+import { Chip, EmptyState } from '@ui';
 import type { AreaDef } from '../api/gen/AreaDef';
 import { LabelsEditor } from './LabelsEditor';
 import { useProjectAreas } from './queries';
@@ -67,7 +67,7 @@ export function AreasEditor({ projectId, areas, onChange, disabled }: {
           <span className="line-clamp-2">Areas config: {q.data.error}</span>
         </p>
       ) : q.data && q.data.areas.length === 0 ? (
-        <p className="text-meta text-muted-foreground">No areas in .pdt/project.toml yet.</p>
+        <EmptyState size="inline">No areas in .pdt/project.toml yet.</EmptyState>
       ) : null}
     </div>
   );
