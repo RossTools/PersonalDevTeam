@@ -1,7 +1,7 @@
 // One connection on its plugin's page (PDT-228): its name and details, Edit and Delete, why it is failing, and an MCP
 // server's tools. Secrets stay in the OS keychain.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, relativeTime } from '@ui';
+import { Badge, Button, RelativeTime } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import { hookUrl, summaryText, useConnectionKinds, type ConnectionKind } from './kinds';
@@ -65,7 +65,7 @@ export function ConnectionRow({ c, onEdit, onDelete }: { c: Connection; onEdit: 
       <Button size="sm" variant="secondary" onClick={onDelete}>Delete</Button>
       {c.lastError && (
         <p role="status" className="w-full pl-2 text-xs text-destructive">
-          Failing{c.lastErrorAt !== null ? ` since ${relativeTime(c.lastErrorAt)}` : ''}: {c.lastError}
+          Failing{c.lastErrorAt !== null && <> since <RelativeTime time={c.lastErrorAt} /></>}: {c.lastError}
         </p>
       )}
       {c.kind === 'mcp' && <McpToolsLine c={c} />}

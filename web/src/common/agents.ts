@@ -12,7 +12,8 @@ export type AcpKind = `acp:${string}`;
 
 export const isAcp = (agent: string | null | undefined): agent is AcpKind => !!agent?.startsWith('acp:');
 
-const BUILTIN_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex', devin: 'Devin' };
+/** The built-in agents' names. */
+export const BUILTIN_LABEL: Record<BuiltinAgent, string> = { claude: 'Claude', codex: 'Codex', devin: 'Devin' };
 
 /** Pure: an agent's name: a built-in's, else the ACP agent's label from `acp`, else its id. */
 export function agentLabel(agent: AgentKind, acp: Pick<AcpAgentView, 'agent' | 'label'>[] | undefined): string {

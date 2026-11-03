@@ -10,7 +10,7 @@ import type { StorageSettings } from '../api/gen/StorageSettings';
 import type { WontDoCleanup } from '../api/gen/WontDoCleanup';
 import type { WorktreeStorage } from '../api/gen/WorktreeStorage';
 import { TicketKey } from '../common/TicketKey';
-import { CleanButton, formatBytes, sizeText, StageBadge, useRemoveWorktree, useStorage } from './worktreeStorage';
+import { CleanButton, sizeText, StageBadge, useRemoveWorktree, useStorage } from './worktreeStorage';
 import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { branchOptions } from '../common/branchOptions';
 import { useAction } from '../common/useAction';
@@ -20,6 +20,7 @@ import { repoUrl } from './forgeLinks';
 import { invalidateWorktrees, worktreesQuery } from '../common/worktrees';
 import { useOpenChanges } from '../review/open';
 import { ProjectDocuments } from '../documents/DocumentSettings';
+import { formatBytes } from '../common/text';
 
 /**
  * Name, key and base branch, each saved as it changes (PDT-231): text on blur or Enter, the branch at once. Folder and

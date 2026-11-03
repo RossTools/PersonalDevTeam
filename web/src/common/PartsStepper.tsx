@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { cn } from '@ui/lib/utils';
 import type { PartState } from '../api/gen/PartState';
 import type { PartsProgress } from '../api/gen/PartsProgress';
+import { plural } from './text';
 
 export type { PartState, PartsProgress };
 
@@ -31,7 +32,7 @@ export function partsSummary(p: PartsProgress): string {
   )
     .filter(([, n]) => n > 0)
     .map(([what, n]) => `${n} ${what}`);
-  return [`${p.done} of ${p.total} part${p.total === 1 ? '' : 's'} done`, ...rest].join(', ');
+  return [`${p.done} of ${plural(p.total, 'part')} done`, ...rest].join(', ');
 }
 
 export interface PartsStepperProps {

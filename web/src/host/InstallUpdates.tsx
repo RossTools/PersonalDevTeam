@@ -6,6 +6,7 @@ import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
 import { ChatChannelRow, CustomizedNotice, openWorkflow, type PutInputs } from '../common/BuiltinSettings';
 import { invalidateWorkflow } from '../workflows/invalidate';
+import { plural } from '../common/text';
 
 const KEY = ['install-updates'];
 
@@ -14,7 +15,7 @@ const text = (v: unknown) => (typeof v === 'string' ? v : '');
 const HOUR = 60 * 60 * 1000;
 const anywayChoices = [
   { value: '0', label: 'Wait for them to finish' },
-  ...[1, 2, 4, 8, 24].map((h) => ({ value: String(h * HOUR), label: `Install anyway after ${h} hour${h === 1 ? '' : 's'}` })),
+  ...[1, 2, 4, 8, 24].map((h) => ({ value: String(h * HOUR), label: `Install anyway after ${plural(h, 'hour')}` })),
 ];
 
 /**

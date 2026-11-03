@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
   Alert, Badge, Button, Checkbox, CommentComposer, CommentThread, DiffStat, EmptyState, IconButton, SegmentedControl, Sheet, Skeleton,
-  relativeTime,
+  RelativeTime,
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
@@ -190,7 +190,7 @@ function FileDiff({ worktreeId, file, threads, mode, phone, composer, onComposer
       comments={[th.root, ...th.replies].map((cm: ReviewComment) => ({
         id: cm.id,
         author: cm.author === 'user' ? 'You' : cm.author,
-        time: relativeTime(cm.createdAt),
+        time: <RelativeTime time={cm.createdAt} />,
         body: cm.body,
         draft: cm.sentAt === null,
       }))}

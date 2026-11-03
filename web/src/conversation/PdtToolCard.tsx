@@ -14,6 +14,7 @@ import { PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { TicketPill } from '../common/TicketPill';
 import { actionError } from '../common/useAction';
+import { RUN_STATUS } from '../workflows/runs';
 import {
   createdTicket,
   LINK_TEXT,
@@ -213,13 +214,6 @@ export function CommentCard({ call }: { call: PdtCall }) {
   );
 }
 
-const RUN_TONE: Record<WorkflowRunStatus, BadgeTone> = {
-  running: 'running', waiting: 'waiting', succeeded: 'running', quiet: 'neutral', failed: 'failed', cancelled: 'neutral',
-};
-const RUN_LABEL: Record<WorkflowRunStatus, string> = {
-  running: 'Running', waiting: 'Waiting', succeeded: 'Succeeded', quiet: 'Nothing to do', failed: 'Failed', cancelled: 'Cancelled',
-};
-
 /** `workflow_run`: the run, with its status (followed while it runs). */
 export function WorkflowRunCard({ call }: { call: PdtCall }) {
   const w = workflowRun(call.input, call.output);
@@ -237,7 +231,7 @@ export function WorkflowRunCard({ call }: { call: PdtCall }) {
       icon={<Play />}
       label={`${verb} ${w.workflow}`}
       heading={<>{verb} <span className="font-medium text-foreground">{r?.workflowName ?? w.workflow}</span></>}
-      aside={state?.aside ?? (r ? <Badge tone={RUN_TONE[r.status]}>{RUN_LABEL[r.status]}</Badge> : null)}
+      aside={state?.aside ?? (r ? <Badge tone={RUN_STATUS[r.status].tone}>{RUN_STATUS[r.status].text}</Badge> : null)}
     >
       {r && (
         <div className="flex items-center gap-2 py-2 text-xs">

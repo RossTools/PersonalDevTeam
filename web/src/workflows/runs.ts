@@ -44,10 +44,3 @@ export const RUN_STATUS: Record<WorkflowRunStatus, { tone: BadgeTone; text: stri
   cancelled: { tone: 'neutral', text: 'Cancelled' },
 };
 
-export function duration(ms: number): string {
-  if (ms < 1000) return `${ms} ms`;
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s} s`;
-  const m = Math.round(s / 60);
-  return m < 60 ? `${m} min` : `${Math.round(m / 60)} h`;
-}

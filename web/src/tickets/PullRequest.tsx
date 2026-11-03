@@ -2,7 +2,7 @@
 // one-badge summary and the ticket's PR details.
 import { GitPullRequest, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Badge, Link, relativeTime, type BadgeTone } from '@ui';
+import { Badge, Link, RelativeTime, relativeTime, type BadgeTone } from '@ui';
 import type { CiState } from '../api/gen/CiState';
 import type { CiStatus } from '../api/gen/CiStatus';
 import type { MergeUpdateStatus } from '../api/gen/MergeUpdateStatus';
@@ -74,10 +74,16 @@ export function prSummary(
   return { label: pr.autoMerge ? 'Auto-merge' : pr.mergeHeld ? 'Set to merge' : 'Open', tone: 'neutral' };
 }
 
-/** When the PR was last read and, when reading it fails now, why (the rest is that older look). */
+/** When the PR was last read and, when reading it fails now, why (the rest is that older look). For a tooltip. */
 export function prFreshness(pr: PullRequestStatus): string {
   const checked = `checked ${relativeTime(pr.checkedAt)}`;
   return pr.error ? `Not updated: ${pr.error} (last ${checked})` : `Last ${checked}`;
+}
+
+/** `prFreshness` in render, with a time that ticks. */
+function PrFreshness({ pr }: { pr: PullRequestStatus }) {
+  const checked = <>checked <RelativeTime time={pr.checkedAt} /></>;
+  return pr.error ? <>Not updated: {pr.error} (last {checked})</> : <>Last {checked}</>;
 }
 
 /** `#12 · CI failed`, for a board card (inside its button, so not a link). A warning sign when it can't be read now. */
@@ -145,7 +151,7 @@ export function PrDetails({ pr, attemptMerged = false, queueName = 'merge queue'
           {queueJobs.length > 0 && <> ({queueJobs.join(', ')})</>} · <Link href={pr.queueCi.url} external>Run</Link>
         </p>
       )}
-      <p className={cn('text-meta', pr.error ? 'text-destructive' : 'text-muted-foreground')}>{prFreshness(pr)}</p>
+      <p className={cn('text-meta', pr.error ? 'text-destructive' : 'text-muted-foreground')}><PrFreshness pr={pr} /></p>
     </div>
   );
 }

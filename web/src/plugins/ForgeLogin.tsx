@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
-import { Alert, Badge, Button, Input, Link, Section, SettingsRow, Skeleton, useConfirm } from '@ui';
+import { Alert, Badge, Button, Input, Link, Section, SettingsRow, Skeleton, absoluteTime, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { ForgeAccountView } from '../api/gen/ForgeAccountView';
 import type { ForgeLoginView } from '../api/gen/ForgeLoginView';
@@ -156,7 +156,7 @@ export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
 /** When an account's token expires (PDT-260), if it does: one PDT renews, or one to replace in time. */
 function expiry(a: { expiresAt: number | null; renews: boolean }): string {
   if (a.expiresAt == null) return '';
-  const at = new Date(a.expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  const at = absoluteTime(a.expiresAt);
   return a.renews
     ? ` Its token expires ${at}; PDT renews it before then.`
     : ` Its token expires ${at}: connect again before then.`;

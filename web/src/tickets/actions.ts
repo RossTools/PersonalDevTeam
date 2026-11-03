@@ -17,6 +17,7 @@ import { runAction } from '../common/useAction';
 import { invalidateWorktrees } from '../common/worktrees';
 import { isClosed, nextPart, STAGES } from './model';
 import { invalidateTickets } from './queries';
+import { plural } from '../common/text';
 
 /** Enough of a ticket to act on it (a backlog row or a full ticket). */
 export interface TicketRef {
@@ -278,8 +279,6 @@ export async function cleanUpAttempt(confirm: Confirm, qc: QueryClient, t: Pick<
   qc.setQueryData(['ticket', t.id], fresh);
   invalidateTickets(qc, [t.id]);
 }
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** The base branch's pull, for the toast: a sentence to add to the success, or a problem to show on its own. */
 function pullNote(r: PullResult | null): { done?: string; problem?: string } {

@@ -106,3 +106,12 @@ export function githubLinks(repo: string): ForgeLinks {
   const repoUrl = `https://github.com/${repo}`;
   return { kind: 'github', name: 'GitHub', repo, repoUrl, branchUrl: `${repoUrl}/tree/{branch}`, compareUrl: `${repoUrl}/compare/{base}...{branch}?expand=1` };
 }
+
+/**
+ * A text matcher for text split across elements (a sentence with a `<RelativeTime>` in it): matches the innermost
+ * element whose whole text is `text`.
+ */
+export const fullText = (text: string | RegExp) => (_: string, el: Element | null) => {
+  const has = (e: Element) => (typeof text === 'string' ? e.textContent === text : text.test(e.textContent ?? ''));
+  return !!el && has(el) && ![...el.children].some(has);
+};

@@ -5,8 +5,7 @@ import { Badge } from '@ui';
 import { api } from '../api/client';
 import { ChangeRow, Key, priorityLabel, stageLabel } from './PdtToolCard';
 import { createdTicket, LINK_TEXT, pdtTool, sentMessage, ticketEdit, ticketLink } from './pdtTools';
-
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+import { isRecord } from '../common/guards';
 
 /** A description's first paragraph, cut to a couple of lines. */
 export function shortText(markdown: string, max = 220): string {

@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderWithQuery, stubApi } from '../test-utils';
+import { fullText, renderWithQuery, stubApi } from '../test-utils';
 import type { Secret } from '../api/gen/Secret';
 import { SecretsPage } from './SecretsPage';
 
@@ -31,7 +31,7 @@ describe('secrets', () => {
     expect(await screen.findByText('Secrets: system keyring')).toBeInTheDocument();
     expect(await screen.findByText('Shop · every agent')).toBeInTheDocument();
     expect(screen.getByText('Every project · every agent')).toBeInTheDocument();
-    expect(screen.getByText(/Used 1m ago by Coder · PDT-9/)).toBeInTheDocument();
+    expect(screen.getByText(fullText(/^Used 1m ago by Coder · PDT-9$/))).toBeInTheDocument();
     expect(screen.getByText('Not used yet')).toBeInTheDocument();
     await userEvent.click(screen.getAllByRole('button', { name: 'Uses' })[0]);
     const uses = await screen.findByRole('list', { name: 'Uses' });

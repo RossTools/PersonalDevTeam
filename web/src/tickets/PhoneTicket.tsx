@@ -36,6 +36,7 @@ import { TicketAttachments, useTicketAttachments } from './attachments';
 import { TicketDocuments } from './TicketDocuments';
 import { useDocuments } from '../documents/queries';
 import { HubPanel, HubTabs, useSection } from './TicketView';
+import { plural } from '../common/text';
 
 /** The bottom bar's buttons: 48px, whatever the pointer. */
 const big = 'h-12 pointer-coarse:h-12 min-w-0 flex-1';
@@ -285,7 +286,7 @@ function detailsSummary(t: Ticket): string {
 
 function attemptSummary(t: Ticket): string {
   const a = t.attempt;
-  if (!a) return `${t.sessions.length} session${t.sessions.length === 1 ? '' : 's'}`;
+  if (!a) return plural(t.sessions.length, 'session');
   const ci = a.pr?.ci ?? a.ci;
   return [
     a.branch,
@@ -297,6 +298,6 @@ function attemptSummary(t: Ticket): string {
 
 function overlapSummary(t: Ticket): string {
   const conflicts = t.overlaps.filter((o) => o.level === 'conflict').length;
-  return [conflicts > 0 ? `${conflicts} conflict${conflicts === 1 ? '' : 's'}` : null, t.overlaps.map((o) => o.key).join(', ')]
+  return [conflicts > 0 ? plural(conflicts, 'conflict') : null, t.overlaps.map((o) => o.key).join(', ')]
     .filter(Boolean).join(' · ');
 }
