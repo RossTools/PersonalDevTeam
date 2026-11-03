@@ -3,8 +3,8 @@
 // the stage's primary action, everything else is under the top bar's ⋯.
 import { useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Pencil } from 'lucide-react';
-import { Alert, Button, IconButton, Sheet, Textarea, useConfirm, type MenuEntry } from '@ui';
+import { Pencil } from 'lucide-react';
+import { Alert, Button, Disclosure, IconButton, Sheet, TabPanel, Textarea, useConfirm, type MenuEntry } from '@ui';
 import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Ticket } from '../api/gen/Ticket';
@@ -35,10 +35,9 @@ import { CommentComposer, FoldedSectionContext, OverviewSection, TicketDetails, 
 import { TicketAttachments, useTicketAttachments } from './attachments';
 import { TicketDocuments } from './TicketDocuments';
 import { useDocuments } from '../documents/queries';
-import { HubPanel, HubTabs, useSection } from './TicketView';
+import { HubTabs, useSection } from './TicketView';
 
 /** The bottom bar's buttons: 48px, whatever the pointer. */
-const big = 'h-12 pointer-coarse:h-12 min-w-0 flex-1';
 
 /** What the bottom bar offers beside Comment…, by stage. */
 export type PhoneTicketAction = 'refine' | 'start' | 'open' | 'accept';
@@ -134,13 +133,13 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
   const action = (a: PhoneTicketAction) => {
     switch (a) {
       case 'refine':
-        return <Button key={a} variant={actions.includes('start') ? 'secondary' : 'primary'} className={big} onClick={() => void runAction(() => refineTicket(qc, t))}>Refine</Button>;
+        return <Button key={a} variant={actions.includes('start') ? 'secondary' : 'primary'} size="lg" className="min-w-0 flex-1" onClick={() => void runAction(() => refineTicket(qc, t))}>Refine</Button>;
       case 'start':
-        return <Button key={a} variant="primary" className={big} onClick={() => start(t)}>Start</Button>;
+        return <Button key={a} variant="primary" size="lg" className="min-w-0 flex-1" onClick={() => start(t)}>Start</Button>;
       case 'open':
-        return <Button key={a} variant="primary" className={big} onClick={openWork}>Open work</Button>;
+        return <Button key={a} variant="primary" size="lg" className="min-w-0 flex-1" onClick={openWork}>Open work</Button>;
       case 'accept':
-        return <Button key={a} variant="primary" className={big} aria-haspopup="dialog" onClick={() => setAccepting(true)}>Accept…</Button>;
+        return <Button key={a} variant="primary" size="lg" className="min-w-0 flex-1" aria-haspopup="dialog" onClick={() => setAccepting(true)}>Accept…</Button>;
     }
   };
   const primaryChoice = accept?.choices.find((c) => c.primary)?.id ?? null;
@@ -174,57 +173,60 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
         {t.parts && <PartsStepper parts={t.parts} showCount className="w-40" />}
       </header>
       <MergedBanner ticket={t} className="border-y" />
-      <HubTabs value={tab} onChange={setTab} diff={diff} />
-      {tab !== 'overview' ? (
-        <HubPanel ticket={t} tab={tab} />
-      ) : (
-        <div role="tabpanel" aria-labelledby="ticket-tab-overview" className="min-h-0 flex-1 overflow-y-auto">
-          <div className="flex flex-col divide-y divide-border border-b border-border">
-            <Fold title="Details" summary={detailsSummary(t)}><TicketDetails ticket={t} /></Fold>
-            {(attempt || t.sessions.length > 0) && (
-              <Fold title={attempt ? 'Attempt' : 'Sessions'} summary={attemptSummary(t)}><AttemptSection ticket={t} compact /></Fold>
-            )}
-            <Fold title="Links" summary={t.links.length === 0 ? 'None' : `${t.links.length}`}><TicketLinks ticket={t} /></Fold>
-            <Fold title="Documents" summary={documents.length === 0 ? 'None' : `${documents.length}`}><TicketDocuments ticket={t} /></Fold>
-            <Fold title="Attachments" summary={attachments.length === 0 ? 'None' : `${attachments.length}`}><TicketAttachments ticketId={t.id} /></Fold>
-            {t.overlaps.length > 0 && <Fold title="Overlaps" summary={overlapSummary(t)}><TicketOverlaps ticket={t} /></Fold>}
-            {watches && watches.length > 0 && (
-              <Fold title="Watching" summary={`${watches.length}`}><Watchers of={{ ticket: t.id }} /></Fold>
-            )}
-          </div>
-          <div className="flex flex-col divide-y divide-border px-4 *:py-4">
-            <OverviewSection
-              title="Description"
-              actions={editing?.field !== 'description' && (
-                <IconButton label="Edit description" noTooltip className="size-11" onClick={() => edit('description')}><Pencil aria-hidden /></IconButton>
+      <HubTabs
+        ticket={t}
+        value={tab}
+        onChange={setTab}
+        diff={diff}
+        overview={
+          <TabPanel id="overview" className="block overflow-y-auto">
+            <div className="flex flex-col divide-y divide-border border-b border-border">
+              <Fold title="Details" summary={detailsSummary(t)}><TicketDetails ticket={t} /></Fold>
+              {(attempt || t.sessions.length > 0) && (
+                <Fold title={attempt ? 'Attempt' : 'Sessions'} summary={attemptSummary(t)}><AttemptSection ticket={t} compact /></Fold>
               )}
-            >
-              {editing?.field === 'description' ? (
-                <>
-                  <Textarea
-                    aria-label="Description"
-                    autoFocus
-                    rows={10}
-                    value={editing.draft}
-                    placeholder="Markdown: what and why, acceptance criteria…"
-                    onChange={(e) => setEditing({ field: 'description', draft: e.target.value })}
-                    className="min-h-48"
-                  />
-                  {error && <Alert tone="error">{error}</Alert>}
-                </>
-              ) : t.description.trim() ? (
-                <Markdown breaks>{t.description}</Markdown>
-              ) : (
-                <p className="text-xs text-muted-foreground">No description.</p>
+              <Fold title="Links" summary={t.links.length === 0 ? 'None' : `${t.links.length}`}><TicketLinks ticket={t} /></Fold>
+              <Fold title="Documents" summary={documents.length === 0 ? 'None' : `${documents.length}`}><TicketDocuments ticket={t} /></Fold>
+              <Fold title="Attachments" summary={attachments.length === 0 ? 'None' : `${attachments.length}`}><TicketAttachments ticketId={t.id} /></Fold>
+              {t.overlaps.length > 0 && <Fold title="Overlaps" summary={overlapSummary(t)}><TicketOverlaps ticket={t} /></Fold>}
+              {watches && watches.length > 0 && (
+                <Fold title="Watching" summary={`${watches.length}`}><Watchers of={{ ticket: t.id }} /></Fold>
               )}
-            </OverviewSection>
-            <PartsSection ticket={t} />
-            <TicketTimeline ticketId={t.id} />
-          </div>
-        </div>
-      )}
+            </div>
+            <div className="flex flex-col divide-y divide-border px-4 *:py-4">
+              <OverviewSection
+                title="Description"
+                actions={editing?.field !== 'description' && (
+                  <IconButton label="Edit description" noTooltip className="size-control-touch" onClick={() => edit('description')}><Pencil aria-hidden /></IconButton>
+                )}
+              >
+                {editing?.field === 'description' ? (
+                  <>
+                    <Textarea
+                      aria-label="Description"
+                      autoFocus
+                      rows={10}
+                      value={editing.draft}
+                      placeholder="Markdown: what and why, acceptance criteria…"
+                      onChange={(e) => setEditing({ field: 'description', draft: e.target.value })}
+                      className="min-h-48"
+                    />
+                    {error && <Alert tone="error">{error}</Alert>}
+                  </>
+                ) : t.description.trim() ? (
+                  <Markdown breaks>{t.description}</Markdown>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No description.</p>
+                )}
+              </OverviewSection>
+              <PartsSection ticket={t} />
+              <TicketTimeline ticketId={t.id} />
+            </div>
+          </TabPanel>
+        }
+      />
       <div role="group" aria-label="Ticket actions" className="flex shrink-0 gap-2 border-t border-border bg-card px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        <Button variant="secondary" className={big} aria-haspopup="dialog" onClick={() => setCommenting(true)}>Comment…</Button>
+        <Button variant="secondary" size="lg" className="min-w-0 flex-1" aria-haspopup="dialog" onClick={() => setCommenting(true)}>Comment…</Button>
         {actions.map(action)}
       </div>
       <Sheet side="bottom" title="Comment" open={commenting} onOpenChange={setCommenting}>
@@ -257,25 +259,16 @@ function StateLine({ ticket: t }: { ticket: Ticket }) {
 
 /** A folding block with its one-line summary; closed at first. */
 function Fold({ title, summary, children }: { title: string; summary: string; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
   return (
-    <div>
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className="flex min-h-12 w-full min-w-0 items-center gap-2 px-4 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-      >
-        {open ? <ChevronDown aria-hidden className="size-4 shrink-0 text-muted-foreground" /> : <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />}
-        <span className="shrink-0 font-medium">{title}</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{summary}</span>
-      </button>
-      {open && (
-        <div className="px-4 pb-3">
-          <FoldedSectionContext.Provider value>{children}</FoldedSectionContext.Provider>
-        </div>
-      )}
-    </div>
+    <Disclosure
+      variant="row"
+      title={title}
+      summary={summary}
+      triggerClassName="min-h-control-lg rounded-none px-4 hover:bg-transparent focus-visible:ring-inset pointer-coarse:min-h-control-lg"
+      panelClassName="px-4 pb-3"
+    >
+      <FoldedSectionContext.Provider value>{children}</FoldedSectionContext.Provider>
+    </Disclosure>
   );
 }
 

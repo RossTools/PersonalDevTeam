@@ -1,9 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { HostChecks } from '../api/gen/HostChecks';
 import type { ToolCheck } from '../api/gen/ToolCheck';
 import { isAcp, useAgentsOff } from './agents';
+import { useHostChecks } from '../host/queries';
 
 export { BUILTIN_AGENTS as AGENT_KINDS } from './agents';
 
@@ -34,7 +33,7 @@ export const NOT_LOGGED_IN = 'not logged in';
  * is offered.
  */
 export function useAgentAvailability() {
-  const checks = useQuery({ queryKey: ['host-checks'], queryFn: api.hostChecks, staleTime: 60_000, retry: false });
+  const checks = useHostChecks();
   const off = useAgentsOff();
   const of = (agent: AgentKind) => availabilityOf(checks.data, agent, off);
   return {

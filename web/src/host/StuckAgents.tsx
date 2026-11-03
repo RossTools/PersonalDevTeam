@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
 import { CustomizedNotice, openWorkflow, type PutInputs } from '../common/BuiltinSettings';
-import { invalidateWorkflow } from '../workflows/invalidate';
+import { invalidateWorkflow, workflowKeys } from '../workflows/queries';
 
 const KEY = ['stuck-agents'];
 
@@ -27,7 +27,7 @@ export function StuckAgents() {
   const view = useQuery({ queryKey: KEY, queryFn: api.stuckAgents.get });
   const done = (v: BuiltinSettingsView) => {
     qc.setQueryData(KEY, v);
-    void qc.invalidateQueries({ queryKey: ['workflow', v.workflowId] });
+    void qc.invalidateQueries({ queryKey: workflowKeys.one(v.workflowId) });
   };
   const save = useMutation({ meta: { errorShown: true }, mutationFn: api.stuckAgents.save, onSuccess: done });
   const reset = useMutation({ mutationFn: api.stuckAgents.reset, onSuccess: done });

@@ -1,16 +1,18 @@
 // A plugin's page (PDT-228): its status and switch, a banner when it needs the user, its connections (GitHub's is the
 // login), what it adds (workflow steps, agent and PM tools, templates, project settings) and how to set it up.
 import { useState, type ReactNode } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Chip, EmptyState, Link, Page, Section, Skeleton, useConfirm } from '@ui';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Alert, Button, Chip, EmptyState, Link, Page, Section, SectionLabel, Skeleton, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
-import { ConnectionDialog, connectionsKey } from '../connections/ConnectionDialog';
+import { ConnectionDialog } from '../connections/ConnectionDialog';
+import { connectionsKey, useConnections } from '../connections/queries';
 import { ConnectionRow } from '../connections/ConnectionRow';
 import { AccountSignIn } from './AccountSignIn';
 import { ForgeLogin } from './ForgeLogin';
 import { CATEGORY_LABEL, connectionsOf, pluginsKey, stuckOn, type Plugin } from './model';
-import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch, usePlugins } from './parts';
+import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch } from './parts';
+import { usePlugins } from './queries';
 
 function Tags({ items, empty = 'None' }: { items: string[]; empty?: string }) {
   if (!items.length) return <span className="text-xs text-muted-foreground">{empty}</span>;
@@ -20,7 +22,7 @@ function Tags({ items, empty = 'None' }: { items: string[]; empty?: string }) {
 function Part({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</h4>
+      <SectionLabel as="h4">{label}</SectionLabel>
       {children}
     </div>
   );
@@ -56,7 +58,7 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const plugins = usePlugins();
-  const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
+  const connections = useConnections();
   const sw = usePluginSwitch(plugins.data ?? []);
   const [editing, setEditing] = useState<{ connection?: Connection; kind?: string } | null>(null);
   const check = useMutation({ meta: { errorShown: true }, mutationFn: () => api.checkIntegration(id), onSuccess: (next) => {

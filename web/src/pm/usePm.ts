@@ -6,11 +6,12 @@ import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import type { PmState } from '../api/gen/PmState';
 import type { RotateReason } from '../api/gen/RotateReason';
 import { runAction } from '../common/useAction';
-import { pluginsKey } from '../plugins/model';
+import { usePlugins } from '../plugins/queries';
+import { POLL } from '../common/poll';
 
 /** The PM's conversations, polled with the rest of the UI (PDT-81). */
 export function usePm() {
-  return useQuery({ queryKey: ['pm'], queryFn: api.pm, refetchInterval: 2000 });
+  return useQuery({ queryKey: ['pm'], queryFn: api.pm, refetchInterval: POLL.live });
 }
 
 /** A PM conversation as the shell reads it (the rail's dot, the phone's title): nothing that changes while it works. */
@@ -30,7 +31,7 @@ const selectSummary = (pm: PmState) => ({ current: pm.current?.id ?? null, conve
  * marks are, so a turn running doesn't re-render the whole app (PDT-454).
  */
 export function usePmSummary() {
-  return useQuery({ queryKey: ['pm'], queryFn: api.pm, refetchInterval: 2000, select: selectSummary });
+  return useQuery({ queryKey: ['pm'], queryFn: api.pm, refetchInterval: POLL.live, select: selectSummary });
 }
 
 export function useRefreshPm() {
@@ -78,7 +79,7 @@ export const resetting = (info: PmSessionInfo) => info.open && info.rotation !==
 /** Where a conversation is held besides PDT, for its list row and header (PDT-304: a chat plugin's DMs): `via` is the
  * plugin's id, named as Settings → Plugins names it. */
 export function useViaLabel() {
-  const plugins = useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations, staleTime: 60_000 });
+  const plugins = usePlugins();
   return (info: PmSessionInfo) => (info.via ? `via ${plugins.data?.find((p) => p.id === info.via)?.label ?? info.via}` : null);
 }
 export const firstLine = (text: string | null) => (text ?? '').split('\n').find((l) => l.trim())?.replace(/^#+\s*/, '') ?? '';

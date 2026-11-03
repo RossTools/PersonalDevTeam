@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pencil, Plus, X } from 'lucide-react';
-import { Alert, Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
+import { Alert, Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, SectionLabel, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
 import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
 import { ProjectKey } from '../common/BranchChip';
@@ -17,6 +17,7 @@ import { openBesideEntry, useBesideTargets } from './BesidePanel';
 import { DocumentBody, type SheetHandle } from './DocumentBody';
 import { DocumentComments, headingsOf } from './DocumentComments';
 import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders } from './queries';
+import { useProjects } from '../projects/queries';
 
 /** Downloads a file pdtd serves. */
 function download(url: string) {
@@ -37,8 +38,6 @@ function addedBy(d: Document): string {
   return d.agent?.persona ?? 'an agent';
 }
 
-const linkHeading = 'text-2xs font-semibold tracking-wider text-muted-foreground uppercase';
-
 /**
  * One document (PDT-314): its title (rename in place), kind, provider and who added it; where it opens; its links to
  * projects and tickets (add and remove); and its content as the provider reads it. Removing it from PDT keeps the
@@ -50,7 +49,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const openTicket = useOpenTicket();
   const doc = useDocument(id);
   const providers = useDocumentProviders();
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const projects = useProjects();
   const [renaming, setRenaming] = useState(false);
   const [linkingTicket, setLinkingTicket] = useState(false);
   const besideTargets = useBesideTargets(linkedTickets(doc.data));
@@ -151,7 +150,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
 
         <section aria-label="Links" className="flex flex-col gap-2 rounded-md border border-border bg-card p-3">
           <div className="flex flex-wrap items-center gap-1.5">
-            <h2 className={linkHeading}>Projects</h2>
+            <SectionLabel as="h2">Projects</SectionLabel>
             {d.projects.length === 0 && <span className="text-xs text-muted-foreground">None</span>}
             {d.projects.map((p) => (
               <span key={p.id} className="inline-flex items-center gap-1 rounded-sm bg-accent py-0.5 pr-0.5 pl-1.5 text-xs">
@@ -176,7 +175,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
             )}
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            <h2 className={linkHeading}>Tickets</h2>
+            <SectionLabel as="h2">Tickets</SectionLabel>
             {d.tickets.length === 0 && <span className="text-xs text-muted-foreground">None</span>}
             {d.tickets.map((t) => (
               <span key={t.id} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-sm bg-accent py-0.5 pr-0.5 pl-1.5 text-xs">

@@ -27,6 +27,8 @@ import { worktreesQuery } from '../common/worktrees';
 import { useOpenChanges } from '../review/open';
 import { ChangesButton } from '../review/ChangesButton';
 import { DocumentsBesideLayout, useOpenBesidePicker } from '../documents/BesidePanel';
+import { useProjects } from '../projects/queries';
+import { invalidateSessions, sessionKeys } from './queries';
 
 export interface SessionViewProps {
   session: Session;
@@ -89,14 +91,14 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
 }) {
   useViewTracking(session.id, session.unseen ? session.attentionAt ?? 0 : null);
   // The terminal's reattach check runs on every poll of the project's sessions (they hold this session).
-  const polledAt = usePolledAt(['sessions', session.projectId]);
+  const polledAt = usePolledAt(sessionKeys.project(session.projectId));
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [composing, setComposing] = useState(false);
 
   // Shared with the workspaces' cached queries, so these are usually free.
   const needProject = forge === undefined || baseBranch === undefined || (projectKey === undefined && !session.worktreeId);
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects, enabled: needProject, staleTime: 30_000 });
+  const projects = useProjects({ enabled: needProject });
   const worktrees = useQuery({
     ...worktreesQuery(session.projectId),
     enabled: !!session.worktreeId && branch === undefined,
@@ -111,7 +113,7 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
   const forgeLink = branchLink
     ?? (theForge ? (theBranch ? branchUrl(theForge, theBranch) : !session.worktreeId ? repoUrl(theForge) : null) : null);
 
-  const refresh = () => qc.invalidateQueries({ queryKey: ['sessions', session.projectId] });
+  const refresh = () => invalidateSessions(qc, session.projectId);
   const [kill, killing] = useAction(async () => { await api.killSession(session.id); void refresh(); });
   const [restart, restarting] = useAction(async () => { await api.restartSession(session.id, INITIAL_SIZE); void refresh(); });
   const [remove, removing] = useAction(async () => {

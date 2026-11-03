@@ -4,8 +4,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { ArrowRight, CircleCheck, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Alert, Badge, Button, Chip, Dialog, IconButton, MenuButton, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm,
-  type TimelineItem,
+  Alert, Badge, Button, Chip, Dialog, Disclosure, IconButton, MenuButton, SectionLabel, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm, type TimelineItem,
 } from '@ui';
 import { api } from '../api/client';
 import type { AgentBy } from '../api/gen/AgentBy';
@@ -28,14 +27,13 @@ import { moveTicket, patchTicket, useOpenSession, useOpenTicket } from './action
 import { ParentField } from './PartsSection';
 import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole, type TrackerLabel } from './model';
 import { usePluginList } from './ExternalKeys';
-import { invalidateTickets, pagedPoll, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
+import { invalidateTickets, ticketKeys, useLabels, useProjectAreas } from './queries';
 import { AreaChips, AreasEditor } from './Areas';
 import { ATTACH_ACCEPT, AttachButton, attachmentMarkdown, UploadList, useAttachmentUploads } from './attachments';
 import { IssueRows, LinkIssueDialog, useRefreshIssues, WebLinkRows } from './IssueLinks';
 import { LabelsEditor } from './LabelsEditor';
 import { TicketPicker } from './TicketPicker';
-
-const sectionHeading = 'text-2xs font-medium tracking-wider text-muted-foreground uppercase';
+import { POLL, pagedPoll } from '../common/poll';
 
 /** True inside a folding section that already names the block (the phone's ticket screen): its own heading hides. */
 export const FoldedSectionContext = createContext(false);
@@ -47,7 +45,7 @@ export function OverviewSection({ title, actions, children, className }: { title
     <section aria-label={title} className={cn('flex flex-col gap-2', className)}>
       {folded && !actions ? <h3 className="sr-only">{title}</h3> : (
         <div className="flex min-h-6 items-center gap-2">
-          <h3 className={cn(sectionHeading, 'flex-1', folded && 'sr-only')}>{title}</h3>
+          <SectionLabel className={cn('flex-1', folded && 'sr-only')}>{title}</SectionLabel>
           {folded && <span className="flex-1" />}
           {actions}
         </div>
@@ -561,10 +559,9 @@ function toItem(e: TicketEvent, trackerLabel: TrackerLabel): TimelineItem {
     ...(e.kind === 'outside_input' && e.body
       ? {
           body: (
-            <details>
-              <summary className="cursor-pointer text-xs text-muted-foreground select-none">Show what they wrote</summary>
-              <div className="mt-1"><Markdown>{e.body}</Markdown></div>
-            </details>
+            <Disclosure title="Show what they wrote" panelClassName="text-sm text-foreground">
+              <Markdown>{e.body}</Markdown>
+            </Disclosure>
           ),
         }
       : {}),
@@ -572,10 +569,9 @@ function toItem(e: TicketEvent, trackerLabel: TrackerLabel): TimelineItem {
     ...(e.kind === 'feedback' && e.body
       ? {
           body: (
-            <details>
-              <summary className="cursor-pointer text-xs text-muted-foreground select-none">Show the comments</summary>
-              <div className="mt-1"><Markdown>{e.body}</Markdown></div>
-            </details>
+            <Disclosure title="Show the comments" panelClassName="text-sm text-foreground">
+              <Markdown>{e.body}</Markdown>
+            </Disclosure>
           ),
         }
       : {}),
@@ -599,7 +595,7 @@ export function TicketTimeline({ ticketId, recent, composer = false }: { ticketI
   const short = useQuery({
     queryKey: [...ticketKeys.events(ticketId), 'recent', recent],
     queryFn: () => api.ticketEvents(ticketId, { newestFirst: true, limit: recent }),
-    refetchInterval: POLL,
+    refetchInterval: POLL.live,
     enabled: recent !== undefined,
   });
   const newestFirst = recent === undefined ? full.data?.pages.flatMap((p) => p.items) ?? [] : short.data?.items ?? [];

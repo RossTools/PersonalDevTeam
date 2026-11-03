@@ -1,12 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Button, IconButton, type ThemePref } from '@ui';
+import { Badge, Button, IconButton, type ThemePref } from '@ui';
 import { ThemeSwitch } from './ThemeSwitch';
 import { VIEWS, type ViewId } from './views';
 
-const item = 'size-9 pointer-coarse:size-11';
-const wide = 'h-9 w-full justify-start gap-2 px-2.5 font-normal pointer-coarse:h-11';
+const item = 'size-9 pointer-coarse:size-control-touch';
+const wide = 'h-9 w-full justify-start gap-2 px-2.5 font-normal pointer-coarse:h-control-touch';
 
 /** Whether the desktop rail shows each view's name, in this browser (localStorage; any failure reads as collapsed). */
 export const RAIL_EXPANDED_KEY = 'pdt.rail.expanded';
@@ -55,7 +55,6 @@ export function IconRail({ active, onSelect, top, counts, dots, theme }: {
     const n = counts?.[id] ?? 0;
     const dot = n === 0 && !!dots?.[id];
     const name = n > 0 ? `${label} (${n})` : dot ? `${label} (${dotName ?? 'new'})` : label;
-    const shown = n > 99 ? '99+' : n;
     const current = active === id ? 'page' : undefined;
     const tone = active === id ? 'bg-accent text-foreground' : 'text-muted-foreground';
     if (expanded) {
@@ -63,11 +62,7 @@ export function IconRail({ active, onSelect, top, counts, dots, theme }: {
         <Button key={id} variant="ghost" aria-label={name} aria-current={current} onClick={() => onSelect(id)} className={cn(wide, tone)}>
           <Icon aria-hidden />
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-          {n > 0 && (
-            <span aria-hidden className="min-w-4 rounded-full bg-primary px-1 text-center text-2xs leading-4 font-medium text-primary-foreground tabular-nums">
-              {shown}
-            </span>
-          )}
+          {n > 0 && <Badge aria-hidden tone="solid" size="sm" count={n} />}
           {dot && <span aria-hidden className="size-2 rounded-full bg-primary" />}
         </Button>
       );
@@ -82,11 +77,7 @@ export function IconRail({ active, onSelect, top, counts, dots, theme }: {
         className={cn('relative', item, tone)}
       >
         <Icon aria-hidden />
-        {n > 0 && (
-          <span aria-hidden className="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-primary px-1 text-2xs leading-4 font-medium text-primary-foreground tabular-nums">
-            {shown}
-          </span>
-        )}
+        {n > 0 && <Badge aria-hidden tone="solid" size="sm" count={n} className="absolute -top-0.5 -right-0.5" />}
         {dot && <span aria-hidden className="absolute top-1 right-1 size-2 rounded-full bg-primary" />}
       </IconButton>
     );

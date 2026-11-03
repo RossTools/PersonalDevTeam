@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, Minus } from 'lucide-react';
 import { useId, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Badge, Button, Input, Link, Select, Skeleton } from '@ui';
+import { Alert, Badge, Button, ChoiceCardGroup, Input, Link, Select, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
@@ -13,6 +13,9 @@ import { useAction } from '../common/useAction';
 import type { AcpAgentView } from '../api/gen/AcpAgentView';
 import { agentLabel, isAcp, useAcpAgents, useAgentsOff, type BuiltinAgent } from '../common/agents';
 import { checkOf } from '../common/useAgentAvailability';
+import { useProjects } from '../projects/queries';
+import { hostKeys, useHostSettings, setHostSettings, useHostChecks } from '../host/queries';
+import { POLL } from '../common/poll';
 
 export type StepId = 'agents' | 'github' | 'project' | 'defaultAgent';
 
@@ -54,14 +57,14 @@ export interface SetupPageProps {
 export function SetupPage(props: SetupPageProps) {
   const qc = useQueryClient();
   // Polls, so steps done elsewhere (GitHub on a phone, a project added from the sidebar) tick off here.
-  const setup = useQuery({ queryKey: ['host-setup'], queryFn: api.hostSetup, refetchInterval: 2000 });
-  const checks = useQuery({ queryKey: ['host-checks'], queryFn: api.hostChecks });
+  const setup = useQuery({ queryKey: hostKeys.setup, queryFn: api.hostSetup, refetchInterval: POLL.live });
+  const checks = useHostChecks();
   const [open, setOpen] = useState<StepId | null | undefined>(undefined);
   const dismiss = useMutation({
     meta: { errorShown: true },
     mutationFn: () => api.saveHostSetup({ dismissed: true }),
     onSuccess: (v) => {
-      qc.setQueryData(['host-setup'], v);
+      qc.setQueryData(hostKeys.setup, v);
       props.onDismissed();
     },
   });
@@ -181,8 +184,8 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
   const qc = useQueryClient();
   const [byHand, setByHand] = useState(false);
   const [check, checking] = useAction(async () => {
-    qc.setQueryData(['host-checks'], await api.refreshChecks());
-    await qc.invalidateQueries({ queryKey: ['host-setup'] });
+    qc.setQueryData(hostKeys.checks, await api.refreshChecks());
+    await qc.invalidateQueries({ queryKey: hostKeys.setup });
   });
   const off = useAgentsOff();
   const found = foundAgents(checks, off);
@@ -246,7 +249,7 @@ function MiddlePath({ path }: { path: string }) {
 /** Saves an agent's program path in the host settings: for one installed where PDT doesn't look. */
 function ProgramPathForm({ onSaved }: { onSaved: () => void }) {
   const qc = useQueryClient();
-  const host = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
+  const host = useHostSettings();
   const stored = (a: BuiltinAgent) => host.data?.settings[PROGRAM[a]] ?? '';
   const [agent, setAgent] = useState<BuiltinAgent>('claude');
   const [path, setPath] = useState<string | null>(null);
@@ -255,7 +258,7 @@ function ProgramPathForm({ onSaved }: { onSaved: () => void }) {
     meta: { errorShown: true },
     mutationFn: () => api.saveHostSettings({ [PROGRAM[agent]]: shown }),
     onSuccess: (s) => {
-      qc.setQueryData(['host-settings'], s);
+      setHostSettings(qc, s);
       onSaved();
     },
   });
@@ -286,7 +289,7 @@ function GithubStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
   const login = useQuery({
     queryKey: ['forge-login', 'github'],
     queryFn: () => api.forgeLogin('github'),
-    refetchInterval: (q) => (q.state.data?.pending ? 2000 : false),
+    refetchInterval: (q) => (q.state.data?.pending ? POLL.live : false),
   });
   const device = useMutation({
     meta: { errorShown: true },
@@ -297,7 +300,7 @@ function GithubStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
     meta: { errorShown: true },
     mutationFn: () => api.saveHostSetup({ githubSkipped: true }),
     onSuccess: (v) => {
-      qc.setQueryData(['host-setup'], v);
+      qc.setQueryData(hostKeys.setup, v);
       onDone();
     },
   });
@@ -336,8 +339,8 @@ function GithubStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
 }
 
 function ProjectStep({ onAddProject, onHostSettings, ...step }: StepProps & SetupPageProps) {
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
-  const host = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
+  const projects = useProjects();
+  const host = useHostSettings();
   const github = useQuery({ queryKey: ['forge-login', 'github'], queryFn: () => api.forgeLogin('github') });
   const first = projects.data?.[0];
   const summary = first ? `${first.name}${first.repoPath ? ` · ${first.repoPath}` : ''}` : 'A folder with a git repo. PDT makes a worktree for each ticket.';
@@ -368,30 +371,24 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
     meta: { errorShown: true },
     mutationFn: () => api.saveHostSettings({ defaultAgent: agent }),
     onSuccess: (s) => {
-      qc.setQueryData(['host-settings'], s);
-      void qc.invalidateQueries({ queryKey: ['host-setup'] });
+      setHostSettings(qc, s);
+      void qc.invalidateQueries({ queryKey: hostKeys.setup });
     },
   });
   const summary = step.state === 'done' ? `${agentName(v.defaultAgent, acp)} works on tickets unless a persona says otherwise.`
     : 'Which agent works on tickets by default. You can change it per persona later.';
   return (
     <Step {...step} title="Pick a default agent" summary={summary}>
-      <div role="radiogroup" aria-label="Default agent" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        {AGENTS.filter((a) => !off.includes(a.id)).map((a) => {
+      <ChoiceCardGroup
+        aria-label="Default agent"
+        size="sm"
+        value={agent}
+        onChange={(a) => setPicked(a)}
+        options={AGENTS.filter((a) => !off.includes(a.id)).map((a) => {
           const there = !checks || checks[a.id].found;
-          return (
-            <button key={a.id} type="button" role="radio" aria-checked={agent === a.id} disabled={!there} onClick={() => setPicked(a.id)}
-              className={cn(
-                'flex flex-col rounded-lg border border-border bg-background p-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                agent === a.id && 'border-primary ring-2 ring-accent',
-                !there && 'cursor-not-allowed opacity-50',
-              )}>
-              <b className="font-semibold">{a.name}</b>
-              <span className="text-xs text-muted-foreground">{there ? 'Found' : 'Not installed'}</span>
-            </button>
-          );
+          return { value: a.id, title: a.name, description: there ? 'Found' : 'Not installed', disabled: !there };
         })}
-      </div>
+      />
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="primary" pending={save.isPending} disabled={checks !== undefined && !checkOf(checks, agent)?.found} onClick={() => save.mutate()}>
           Use {agentName(agent, acp)}

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageSquarePlus } from 'lucide-react';
-import { Alert, Button, CommentComposer, CommentThread, RelativeTime, Select, Skeleton } from '@ui';
+import { Alert, Button, CommentComposer, CommentThread, RelativeTime, SectionLabel, Select, Skeleton } from '@ui';
 import { api } from '../api/client';
 import type { CommentAnchor } from '../api/gen/CommentAnchor';
 import { Markdown } from '../common/Markdown';
@@ -75,7 +75,7 @@ export function DocumentComments({ id, headings, selection, onShow }: DocumentCo
   return (
     <section aria-label="Comments" className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <h2 className="text-2xs font-semibold tracking-wider text-muted-foreground uppercase">Comments{open > 0 && ` · ${open}`}</h2>
+        <SectionLabel as="h2">Comments{open > 0 && ` · ${open}`}</SectionLabel>
         {!adding && <Button variant="ghost" size="sm" compact className="ml-auto" onClick={start}><MessageSquarePlus aria-hidden /> Comment</Button>}
       </div>
       {adding && (

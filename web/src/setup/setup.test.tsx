@@ -162,7 +162,7 @@ describe('Get started', () => {
     const def = await step('Pick a default agent');
     const group = within(def).getByRole('radiogroup', { name: 'Default agent' });
     expect(await within(group).findByRole('radio', { name: /Devin/ })).toBeDisabled();
-    expect(within(group).getByRole('radio', { name: /Claude Code/ })).toHaveAttribute('aria-checked', 'true');
+    expect(within(group).getByRole('radio', { name: /Claude Code/ })).toBeChecked();
     await userEvent.click(within(group).getByRole('radio', { name: /Codex/ }));
     await userEvent.click(within(def).getByRole('button', { name: 'Use Codex' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'PUT' && c.path === '/api/host/settings')?.body).toEqual({ defaultAgent: 'codex' }));

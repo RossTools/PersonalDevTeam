@@ -4,11 +4,11 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Badge, Input, Page, Skeleton } from '@ui';
 import { api } from '../api/client';
-import { connectionsKey } from '../connections/ConnectionDialog';
+import { useConnections } from '../connections/queries';
 import { connectionDetails } from '../connections/ConnectionRow';
 import { useConnectionKinds } from '../connections/kinds';
 import { pluginOf } from './model';
-import { usePlugins } from './parts';
+import { usePlugins } from './queries';
 
 interface Line {
   id: string;
@@ -22,7 +22,7 @@ interface Line {
 export function AllConnectionsPage({ onOpen }: { onOpen: (pluginId: string) => void }) {
   const plugins = usePlugins();
   const { kindOf } = useConnectionKinds();
-  const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
+  const connections = useConnections();
   const github = useQuery({ queryKey: ['forge-login', 'github'], queryFn: () => api.forgeLogin('github') });
   const [q, setQ] = useState('');
   const ps = plugins.data ?? [];

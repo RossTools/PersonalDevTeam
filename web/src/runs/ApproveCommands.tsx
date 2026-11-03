@@ -3,6 +3,7 @@ import { Alert, Badge, Button, CodeCard, Skeleton, type ConfirmOptions, type Con
 import { api, ApiError } from '../api/client';
 import { useAction } from '../common/useAction';
 import type { ConfigCommand } from '../api/gen/ConfigCommand';
+import { runKeys } from './queries';
 
 type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
 
@@ -62,10 +63,10 @@ export async function withApproval<T>(confirm: Confirm, attempt: () => Promise<T
  * first, each with Approve. */
 export function ConfigCommands({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: ['project-commands', projectId], queryFn: () => api.projectCommands(projectId, null) });
+  const list = useQuery({ queryKey: runKeys.commands(projectId), queryFn: () => api.projectCommands(projectId, null) });
   const [approve, approving] = useAction(async (fingerprints: string[]) => {
     await api.trustCommands(projectId, fingerprints);
-    await qc.invalidateQueries({ queryKey: ['project-commands', projectId] });
+    await qc.invalidateQueries({ queryKey: runKeys.commands(projectId) });
   }, { success: 'Approved' });
   if (list.isPending) return <Skeleton lines={2} label="Loading the commands" />;
   if (list.isError) return <Alert tone="error">{list.error.message}</Alert>;

@@ -7,6 +7,7 @@ import type { AcpAgentView } from '../api/gen/AcpAgentView';
 import type { EnvVar } from '../api/gen/EnvVar';
 import type { HostSettingsView } from '../api/gen/HostSettingsView';
 import { AgentSwitch, offNote, switchBlocked } from './AgentSwitch';
+import { hostKeys, setHostSettings } from './queries';
 
 /** Pure: an id for a new agent from its label ("Open Code" → `open-code`), not one of `taken`. */
 export function idFor(label: string, taken: string[]): string {
@@ -50,9 +51,9 @@ export function AcpAgents({ v }: { v: HostSettingsView }) {
     meta: { errorShown: true },
     mutationFn: (acpAgents: AcpAgentConfig[]) => api.saveHostSettings({ acpAgents }),
     onSuccess: (view) => {
-      qc.setQueryData(['host-settings'], view);
+      setHostSettings(qc, view);
       // Whether each one is found.
-      void qc.invalidateQueries({ queryKey: ['host-checks'] });
+      void qc.invalidateQueries({ queryKey: hostKeys.checks });
     },
   });
   const remove = async (a: AcpAgentView) => {
@@ -135,8 +136,8 @@ function InstalledNote({ a }: { a: AcpAgentView }) {
 function InstallerActions({ a, onPath }: { a: AcpAgentView; onPath: () => void }) {
   const qc = useQueryClient();
   const done = (view: HostSettingsView) => {
-    qc.setQueryData(['host-settings'], view);
-    void qc.invalidateQueries({ queryKey: ['host-checks'] });
+    setHostSettings(qc, view);
+    void qc.invalidateQueries({ queryKey: hostKeys.checks });
   };
   const install = useMutation({ meta: { errorShown: true }, mutationFn: () => api.installAcpAgent(a.id), onSuccess: done });
   const signIn = useMutation({ meta: { errorShown: true }, mutationFn: () => api.signInAcpAgent(a.id), onSuccess: done });
@@ -170,8 +171,8 @@ function ProgramDialog({ a, onClose }: { a: AcpAgentView; onClose: () => void })
     meta: { errorShown: true },
     mutationFn: () => api.saveHostSettings({ acpPrograms: { [a.id]: path.trim() } }),
     onSuccess: (view) => {
-      qc.setQueryData(['host-settings'], view);
-      void qc.invalidateQueries({ queryKey: ['host-checks'] });
+      setHostSettings(qc, view);
+      void qc.invalidateQueries({ queryKey: hostKeys.checks });
       onClose();
     },
   });

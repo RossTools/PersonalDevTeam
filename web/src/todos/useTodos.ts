@@ -4,13 +4,13 @@ import type { NewTodo } from '../api/gen/NewTodo';
 import type { Todo } from '../api/gen/Todo';
 import type { TodoPatch } from '../api/gen/TodoPatch';
 import { runAction } from '../common/useAction';
-import { POLL } from '../tickets/queries';
+import { POLL } from '../common/poll';
 
 export const TODOS_KEY = ['todos'] as const;
 
 /** Every todo (the list filters on the client), polled like the rest of the UI. */
 export function useTodos() {
-  return useQuery({ queryKey: TODOS_KEY, queryFn: () => api.todos.list(), refetchInterval: POLL });
+  return useQuery({ queryKey: TODOS_KEY, queryFn: () => api.todos.list(), refetchInterval: POLL.live });
 }
 
 /** How many todos are still open (the collapsed panel's count). */

@@ -1,7 +1,6 @@
 // The Inbox's list on a phone (PDT-117): Needs you | Updates, and Review all in the thumb's reach.
 import { useState } from 'react';
-import { Button, SegmentedControl } from '@ui';
-import { cn } from '@ui/lib/utils';
+import { Button, ListHeading, SegmentedControl } from '@ui';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import { NeedsYouGroups, UpdatesList } from './InboxList';
@@ -11,9 +10,7 @@ type Segment = 'needs' | 'updates';
 // The segment shown last, so coming back from an item (or an update) shows the same one.
 let lastSegment: Segment = 'needs';
 
-const heading = 'px-3 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
 /** The bottom bar's buttons: 48px, whatever the pointer. */
-const big = 'h-12 pointer-coarse:h-12 min-w-0 flex-1';
 
 /**
  * `/inbox` on a phone: **Needs you** (its count) | **Updates** (a dot while any is unread). A row opens its item;
@@ -65,7 +62,7 @@ export function PhoneInboxList({ items, updates, loading, failed, updatesFailed,
         ) : (
           <section aria-label="Updates" className="flex flex-col gap-0.5 py-1">
             <div className="flex items-center gap-1 pr-2">
-              <h2 className={cn(heading, 'flex-1')}>Updates</h2>
+              <ListHeading className="flex-1">Updates</ListHeading>
               <Button size="sm" variant="ghost" disabled={!unread} onClick={onReadAll}>Mark all read</Button>
               <Button size="sm" variant="ghost" disabled={updates.length === 0} onClick={onClearAll}>Clear all</Button>
               <Button size="sm" variant="ghost" onClick={onSettings}>Settings</Button>
@@ -76,7 +73,7 @@ export function PhoneInboxList({ items, updates, loading, failed, updatesFailed,
       </div>
       {segment === 'needs' && first && (
         <div className="border-t border-border bg-card px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-          <Button variant="primary" className={cn(big, 'w-full')} onClick={() => onOpen(first)}>Review all ({items.length})</Button>
+          <Button variant="primary" size="lg" className="w-full" onClick={() => onOpen(first)}>Review all ({items.length})</Button>
         </div>
       )}
     </div>

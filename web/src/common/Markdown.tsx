@@ -12,6 +12,7 @@ import { fileHref, filePathOf, isSha, MarkdownRefsContext, prNumberOf, prUrl, st
 import { PrPill, TicketPill } from './TicketPill';
 import { TicketKeysContext } from './ticketKeys';
 import { AttachmentImage, AttachmentLink, attachmentRef } from './AttachmentViews';
+import { sessionKeys } from '../sessions/queries';
 
 interface MdNode {
   type: string;
@@ -155,7 +156,7 @@ function MdLink({ href, children, ...p }: ComponentProps<'a'>) {
 function FileLink({ href, sessionId, children }: { href: string; sessionId: string; children: ReactNode }) {
   const path = decodeURIComponent(href.slice('/files/'.length).split('?')[0]);
   const exists = useQuery({
-    queryKey: ['session-file', sessionId, path],
+    queryKey: sessionKeys.file(sessionId, path),
     queryFn: async () => (await api.sessionFiles(sessionId, path)).includes(path),
     staleTime: 5 * 60_000,
     retry: false,

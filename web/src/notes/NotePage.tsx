@@ -14,7 +14,7 @@ import { useRefreshPm } from '../pm/usePm';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { NewTicketDialog } from '../shell/screens';
 import { ALL, HOST_WIDE, shortDate, ticketDescription, titleFor, TITLE_MAX, wordCount, type Whose } from './model';
-import { useProjects } from './useNotes';
+import { useProjects } from '../projects/queries';
 import { useNoteDraft, type SaveState } from './useNoteDraft';
 
 type Mode = 'write' | 'read';
@@ -213,7 +213,7 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {phone ? (
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3">
+        <div className="flex h-control-touch shrink-0 items-center gap-2 border-b border-border px-3">
           {status}
           <span className="ml-auto">{toggle}</span>
         </div>

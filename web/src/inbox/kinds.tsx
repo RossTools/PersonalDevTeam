@@ -10,7 +10,7 @@ import type { InboxItem } from '../api/gen/InboxItem';
 import type { InboxKind } from '../api/gen/InboxKind';
 import { itemLabel } from './model';
 
-type Tone = Exclude<BadgeTone, 'neutral'>;
+type Tone = Exclude<BadgeTone, 'neutral' | 'solid'>;
 
 const KINDS: Record<InboxKind, { icon: ComponentType<LucideProps>; tone: Tone }> = {
   question: { icon: CircleHelp, tone: 'accent' },

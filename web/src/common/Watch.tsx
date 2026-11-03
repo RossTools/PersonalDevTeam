@@ -8,6 +8,7 @@ import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { WatchInfo } from '../api/gen/WatchInfo';
 import { runAction } from './useAction';
+import { POLL } from './poll';
 
 /** A watched target: a ticket's id or a workflow run's. */
 export type WatchOf = { ticket: string } | { run: string };
@@ -16,7 +17,7 @@ const watchesKey = (of: WatchOf) => ['watches', of] as const;
 
 export function useWatches(of: WatchOf) {
   // Polled with the rest of the UI: a PM's watch can start or end at any time.
-  return useQuery({ queryKey: watchesKey(of), queryFn: () => api.watches.list(of), refetchInterval: 2000 });
+  return useQuery({ queryKey: watchesKey(of), queryFn: () => api.watches.list(of), refetchInterval: POLL.live });
 }
 
 /** The user's own watch among a target's (a PM's has a session). */

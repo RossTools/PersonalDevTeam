@@ -1,16 +1,13 @@
 // What the catalog and a plugin's page share (PDT-228): the icon, the status, the switch, and turning a plugin on,
 // which asks for a connection straight away when it needs one and has none.
 import { useState, type ReactNode } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Badge, Switch } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { ConnectionDialog } from '../connections/ConnectionDialog';
 import { useConnectionKinds } from '../connections/kinds';
 import { STATUS_LABEL, STATUS_TONE, enabledWith, offWith, pluginsKey, stuckOn, type Plugin } from './model';
-
-/** Every plugin (`GET /api/integrations`). */
-export const usePlugins = () => useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations });
 
 /** A plugin's letters on its own colour (the brand's, from the plugin: not a theme colour). */
 export function PluginIcon({ p, size = 'md' }: { p: Plugin; size?: 'xs' | 'sm' | 'md' | 'lg' }) {

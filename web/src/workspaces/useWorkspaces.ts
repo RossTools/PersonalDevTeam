@@ -18,6 +18,12 @@ import { useSameList } from '../common/useSameList';
 import { pruneTabViewStates } from '../common/viewState';
 import { worktreesQuery } from '../common/worktrees';
 import { findTab, itemOf, openTabBody, resolveCurrent, type CurrentChoice, type Item } from './model';
+import { useProjects } from '../projects/queries';
+import { invalidateWorkspaces, workspaceKeys, workspacesQuery } from './queries';
+import { invalidateSessions, sessionsQuery } from '../sessions/queries';
+import { invalidateRuns, runsQuery } from '../runs/queries';
+import { ticketKeys } from '../tickets/queries';
+import { POLL } from '../common/poll';
 
 const STORAGE_KEY = 'pdt.workspaces.current';
 
@@ -98,14 +104,11 @@ export interface RoutedChoice {
   onChoose: (workspaceId: string, tabId: string | null, opts: { replace: boolean }) => void;
 }
 
-/** How often a ticket tab's title is refreshed (the open ticket's own view polls every 2 s). */
-const TICKET_TAB_POLL = 5000;
-
 /**
- * A ticket tab's poll: none while another view (the ticket's own, `useTicket`, every 2 s) watches the same ticket, so
+ * A ticket tab's poll: its title every 5 s, none while another view (the ticket's own, `useTicket`, every 2 s) watches the same ticket, so
  * it isn't fetched twice (PDT-451). The count is read again when [`useTicketWatchers`] re-renders.
  */
-export const ticketTabPoll = (q: Query) => (q.getObserversCount() > 1 ? false : TICKET_TAB_POLL);
+export const ticketTabPoll = (q: Query) => (q.getObserversCount() > 1 ? false : POLL.steady);
 
 /**
  * Re-renders when a view starts or stops watching one of `ids` (the tabs' tickets), so their polls ([`ticketTabPoll`])
@@ -114,12 +117,12 @@ export const ticketTabPoll = (q: Query) => (q.getObserversCount() > 1 ? false : 
 function useTicketWatchers(qc: QueryClient, ids: string[]) {
   const subscribe = useCallback(
     (changed: () => void) => qc.getQueryCache().subscribe((e) => {
-      if ((e.type === 'observerAdded' || e.type === 'observerRemoved') && e.query.queryKey[0] === 'ticket') changed();
+      if ((e.type === 'observerAdded' || e.type === 'observerRemoved') && e.query.queryKey[0] === ticketKeys.one('')[0]) changed();
     }),
     [qc],
   );
   const watched = () =>
-    ids.filter((id) => (qc.getQueryCache().find({ queryKey: ['ticket', id], exact: true })?.getObserversCount() ?? 0) > 1).join(',');
+    ids.filter((id) => (qc.getQueryCache().find({ queryKey: ticketKeys.one(id), exact: true })?.getObserversCount() ?? 0) > 1).join(',');
   useSyncExternalStore(subscribe, watched);
 }
 
@@ -130,20 +133,16 @@ function useTicketWatchers(qc: QueryClient, ids: string[]) {
 export function useWorkspaces(routed?: RoutedChoice) {
   const qc = useQueryClient();
   const confirm = useConfirm();
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const projects = useProjects();
   const projectList: Project[] = useMemo(() => projects.data ?? [], [projects.data]);
-  const workspacesQ = useQuery({ queryKey: ['workspaces'], queryFn: api.listWorkspaces, refetchInterval: 2000 });
+  const workspacesQ = useQuery(workspacesQuery);
   const workspaces: Workspace[] = useMemo(() => workspacesQ.data ?? [], [workspacesQ.data]);
   // What a closed tab's views remembered goes with it (closed here or on another device).
   useEffect(() => {
     if (workspacesQ.data) pruneTabViewStates(workspacesQ.data.flatMap((w) => w.tabs.map((t) => t.id)));
   }, [workspacesQ.data]);
-  const sessionQs = useQueries({
-    queries: projectList.map((p) => ({ queryKey: ['sessions', p.id], queryFn: () => api.listSessions(p.id), refetchInterval: 2000 })),
-  });
-  const runQs = useQueries({
-    queries: projectList.map((p) => ({ queryKey: ['runs', p.id], queryFn: () => api.listRuns(p.id), refetchInterval: 2000 })),
-  });
+  const sessionQs = useQueries({ queries: projectList.map((p) => sessionsQuery(p.id)) });
+  const runQs = useQueries({ queries: projectList.map((p) => runsQuery(p.id)) });
 
   // Query data keeps its identity while polls bring nothing new, so these change only when something did (reading
   // `dataUpdatedAt` would make every consumer re-render on every poll, PDT-136).
@@ -155,14 +154,14 @@ export function useWorkspaces(routed?: RoutedChoice) {
     for (const d of runData) for (const r of d ?? []) m.set(`run:${r.id}`, runInfo(r));
     return m;
   }, [sessionData, runData]);
-  // Ticket tabs: one query per ticket on a tab (shared with the ticket's own view, ['ticket', id]).
+  // Ticket tabs: one query per ticket on a tab (shared with the ticket's own view, `ticketKeys.one`).
   const ticketIds = useMemo(
     () => [...new Set(workspaces.flatMap((w) => w.tabs.flatMap((t) => (t.ticketId ? [t.ticketId] : []))))].sort(),
     [workspaces],
   );
   useTicketWatchers(qc, ticketIds);
   const ticketQs = useQueries({
-    queries: ticketIds.map((id) => ({ queryKey: ['ticket', id], queryFn: () => api.getTicket(id), refetchInterval: ticketTabPoll })),
+    queries: ticketIds.map((id) => ({ queryKey: ticketKeys.one(id), queryFn: () => api.getTicket(id), refetchInterval: ticketTabPoll })),
   });
   const ticketData = useSameList(ticketQs.map((q) => q.data));
   const ticketInfos = useMemo(() => ticketData.flatMap((t) => (t ? [ticketInfo(t)] : [])), [ticketData]);
@@ -224,15 +223,15 @@ export function useWorkspaces(routed?: RoutedChoice) {
     setChoice((c) => ({ workspaceId: t.workspaceId, tabs: { ...c.tabs, [t.workspaceId]: t.id } }));
     onChoose.current?.(t.workspaceId, t.id, { replace: false });
   }, [setChoice]);
-  const refresh = useCallback(() => qc.invalidateQueries({ queryKey: ['workspaces'] }), [qc]);
+  const refresh = useCallback(() => invalidateWorkspaces(qc), [qc]);
 
   /** Shows an item: its tab wherever it is, else a new tab in its project's workspace. False when it has no home. */
   const focusItem = useCallback(
     async (item: Item, projectId: string): Promise<boolean> => {
-      const cached = qc.getQueryData<Workspace[]>(['workspaces']) ?? [];
+      const cached = qc.getQueryData<Workspace[]>(workspaceKeys.all) ?? [];
       let found = findTab(cached, item);
       if (!found) {
-        const fresh = await qc.fetchQuery({ queryKey: ['workspaces'], queryFn: api.listWorkspaces, staleTime: 0 });
+        const fresh = await qc.fetchQuery({ ...workspacesQuery, staleTime: 0 });
         found = findTab(fresh, item);
         if (!found) {
           const home = fresh.find((w) => w.projectId === projectId);
@@ -286,8 +285,8 @@ export function useWorkspaces(routed?: RoutedChoice) {
         onChoose.current?.(w.id, neighbour?.id ?? null, { replace: true });
       }
       await refresh();
-      if (t.sessionId) void qc.invalidateQueries({ queryKey: ['sessions'] });
-      if (t.runId) void qc.invalidateQueries({ queryKey: ['runs'] });
+      if (t.sessionId) void invalidateSessions(qc);
+      if (t.runId) void invalidateRuns(qc);
     },
     [info, confirm, workspaces, tab, setChoice, refresh, qc],
   );

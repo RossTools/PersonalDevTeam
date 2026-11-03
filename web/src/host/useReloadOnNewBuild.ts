@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { hostKeys } from './queries';
+import { POLL } from '../common/poll';
 
 /** How often /api/health is asked for the web build; a restarted dev instance is picked up within this. */
-export const WEB_BUILD_POLL_MS = 5_000;
+export const WEB_BUILD_POLL_MS = POLL.steady;
 
 const reloadPage = () => location.reload();
 
@@ -15,7 +17,7 @@ const reloadPage = () => location.reload();
  */
 export function useReloadOnNewBuild(reload: () => void = reloadPage) {
   // Shares the ['health'] query with useInstance, so the page asks once at load and this observer keeps it fresh.
-  const health = useQuery({ queryKey: ['health'], queryFn: api.health, refetchInterval: WEB_BUILD_POLL_MS });
+  const health = useQuery({ queryKey: hostKeys.health, queryFn: api.health, refetchInterval: WEB_BUILD_POLL_MS });
   const build = health.data?.webBuild;
   const loaded = useRef<string | null | undefined>(undefined);
   // Every poll checks again (dataUpdatedAt changes even when the answer does not), so a held-back reload happens soon

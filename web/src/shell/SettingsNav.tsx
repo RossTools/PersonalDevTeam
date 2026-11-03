@@ -1,14 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Plus, Search } from 'lucide-react';
-import { Badge, IconButton, Input } from '@ui';
+import { Plus, Search } from 'lucide-react';
+import { Badge, Disclosure, IconButton, Input, ListHeading } from '@ui';
 import { cn } from '@ui/lib/utils';
-import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import { ProjectKey } from '../common/BranchChip';
 import { HOST_PAGES, HOST_SECTIONS, projectSections, sectionMatches, shownSection, type SectionInfo } from '../common/settingsSections';
-import { pluginsKey } from '../plugins/model';
 import { sectionSlug, type SettingsPage } from './route';
+import { useHostSettings } from '../host/queries';
+import { usePlugins } from '../plugins/queries';
 
 const HOST = 'host';
 
@@ -32,10 +31,10 @@ export function SettingsNav({ projects, page, phone, onGo, onAddProject, heading
   const [query, setQuery] = useState('');
   const searching = query.trim() !== '';
   // Settings → Network saved but not applied yet: a "restart" badge until PDT restarts.
-  const host = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
+  const host = useHostSettings();
   const restart = host.data?.network?.restartNeeded ?? false;
   // The plugins' names find the Plugins pages.
-  const plugins = useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations, enabled: searching }).data ?? [];
+  const plugins = usePlugins({ enabled: searching }).data ?? [];
   const more = (s: { label: string }) => (s.label === 'Plugins' ? plugins.map((p) => p.label) : []);
   const currentGroup = page.kind === 'project' ? page.key : page.kind === 'host' || page.kind === 'index' ? HOST : null;
   const [open, setOpen] = useState<Set<string>>(() => new Set(currentGroup ? [currentGroup] : []));
@@ -99,12 +98,17 @@ export function SettingsNav({ projects, page, phone, onGo, onAddProject, heading
       {pagesShown.map((p) => (
         <Item key={p.id} top current={page.kind === p.id} onPress={() => onGo(pageFor(p.id))}>{p.label}</Item>
       ))}
-      <h3 className="flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase">
-        <span className="flex-1">Projects</span>
-        <IconButton label="Add project" size="sm" noTooltip className="size-5" onClick={onAddProject}>
-          <Plus aria-hidden />
-        </IconButton>
-      </h3>
+      <ListHeading
+        as="h3"
+        className="px-2"
+        trailing={
+          <IconButton label="Add project" size="sm" noTooltip className="size-5" onClick={onAddProject}>
+            <Plus aria-hidden />
+          </IconButton>
+        }
+      >
+        Projects
+      </ListHeading>
       {projectsShown.map(({ p, all, shown }) => {
         const here = page.kind === 'project' && page.key === p.key;
         const slug = here ? currentSlug(all, page.section) : null;
@@ -139,21 +143,19 @@ function Group({ label, trailing, expanded, onToggle, children }: {
   onToggle: () => void;
   children: ReactNode;
 }) {
-  const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
-    <div className="flex flex-col gap-0.5">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={onToggle}
-        className="flex min-h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-sm font-semibold hover:bg-accent pointer-coarse:min-h-11"
-      >
-        <Chevron aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        {trailing}
-      </button>
-      {expanded && <div role="group" aria-label={label} className="flex flex-col gap-0.5">{children}</div>}
-    </div>
+    <Disclosure
+      variant="row"
+      title={label}
+      trailing={trailing}
+      open={expanded}
+      onOpenChange={onToggle}
+      aria-label={label}
+      triggerClassName="font-semibold hover:bg-accent"
+      panelClassName="flex flex-col gap-0.5 pt-0.5"
+    >
+      {children}
+    </Disclosure>
   );
 }
 

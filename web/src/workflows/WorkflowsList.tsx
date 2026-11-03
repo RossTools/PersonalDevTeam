@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
-import { Badge, Button, List, ListRow, StatusDot } from '@ui';
+import { Badge, Button, List, ListHeading, ListRow, StatusDot } from '@ui';
 import { api } from '../api/client';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import type { Project } from '../api/gen/Project';
@@ -13,11 +13,11 @@ import { ExportDialog } from './ExportDialog';
 import { ImportDialog } from './ImportDialog';
 import { scopeLabel } from './scope';
 import type { WorkflowTab } from './WorkflowPage';
+import { workflowKeys } from './queries';
+import { POLL } from '../common/poll';
 
 /** What the Workflows view shows: a workflow (on a tab, a run of it), a template, or nothing yet. */
 export type WorkflowTarget = { kind: 'workflow'; id: string; tab?: WorkflowTab; runId?: string } | { kind: 'template'; id: string } | null;
-
-const heading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
 
 /** Groups in order: this host, personal, then each project by name. */
 export function groupWorkflows(list: Workflow[], projects: Project[]): { label: string; items: Workflow[] }[] {
@@ -33,7 +33,7 @@ export function groupWorkflows(list: Workflow[], projects: Project[]): { label: 
 export function WorkflowsList({ projects, current, onOpen, onNew }: {
   projects: Project[]; current: WorkflowTarget; onOpen: (t: WorkflowTarget) => void; onNew: () => void;
 }) {
-  const workflows = useQuery({ queryKey: ['workflows'], queryFn: () => api.listWorkflows(), refetchInterval: 5000 });
+  const workflows = useQuery({ queryKey: workflowKeys.all, queryFn: () => api.listWorkflows(), refetchInterval: POLL.steady });
   const groups = groupWorkflows(workflows.data ?? [], projects);
   const phone = useMediaQuery(PHONE_QUERY);
   const [moving, setMoving] = useState<'import' | 'export' | null>(null);
@@ -53,7 +53,7 @@ export function WorkflowsList({ projects, current, onOpen, onNew }: {
       {workflows.error && <p className="px-3 text-sm text-destructive">Workflows could not be loaded: {workflows.error.message}</p>}
       {groups.map((g) => (
         <section key={g.label} aria-label={g.label}>
-          <h2 className={heading}>{g.label}</h2>
+          <ListHeading>{g.label}</ListHeading>
           <List aria-label={`Workflows: ${g.label}`} onAction={(id) => onOpen({ kind: 'workflow', id })}>
             {g.items.map((w) => (
               <ListRow
