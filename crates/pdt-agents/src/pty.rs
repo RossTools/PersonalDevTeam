@@ -348,7 +348,11 @@ impl PtyManager {
                             && let Some(rest) = strip_cursor_query(chunk)
                         {
                             if let Some(p) = &h.proc {
-                                let _ = p.input.send(CURSOR_REPLY.to_vec());
+                                // Counted like any input: the writer takes every write it makes off `queued`.
+                                p.queued.fetch_add(CURSOR_REPLY.len(), std::sync::atomic::Ordering::SeqCst);
+                                if p.input.send(CURSOR_REPLY.to_vec()).is_err() {
+                                    p.queued.fetch_sub(CURSOR_REPLY.len(), std::sync::atomic::Ordering::SeqCst);
+                                }
                             }
                             chunk = rest;
                         }

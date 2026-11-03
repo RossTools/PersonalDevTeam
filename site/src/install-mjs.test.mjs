@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { detectOs, installCommand } from './install.mjs';
+import { siteUrl } from './site-url.mjs';
 
 test('the command for each system, from the site it is served by', () => {
   assert.equal(installCommand('mac', 'https://pdt.dev/'), 'curl -fsSL https://pdt.dev/install.sh | sh');
@@ -18,4 +19,9 @@ test('the visitor\'s system', () => {
   assert.equal(detectOs(undefined, 'Mozilla/5.0 (Linux; Android 14; Pixel 8)'), 'mac');
   assert.equal(detectOs(undefined, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'), 'mac');
   assert.equal(detectOs('', ''), 'mac');
+});
+
+test('the command from the built site is https, even when Pages hands the build an http:// origin', () => {
+  const root = new URL('/', siteUrl({ SITE_URL: 'http://pdt.dev' })).href;
+  assert.equal(installCommand('mac', root), 'curl -fsSL https://pdt.dev/install.sh | sh');
 });

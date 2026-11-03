@@ -35,7 +35,7 @@ jobs:
           # The whole history and the tags: the landing page counts tickets, merged PRs and releases from them.
           fetch-depth: 0
       - uses: ./.github/actions/pnpm
-      # The URL Pages serves the site at (a private site's own domain, or the custom domain in site/public/CNAME).
+      # The URL Pages serves the site at (its custom domain or github.io address; the site makes an http:// one https://).
       - id: pages
         uses: actions/configure-pages@v6
       - run: pnpm install --frozen-lockfile --filter site...
