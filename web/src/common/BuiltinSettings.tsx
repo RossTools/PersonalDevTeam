@@ -1,21 +1,18 @@
 import type { ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Link, Section, Select, Skeleton } from '@ui';
-import { api } from '../api/client';
 import type { BuiltinSettingsApi } from '../api/builtinSettings';
 import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import type { NotificationChannel } from '../api/gen/NotificationChannel';
-import { connectionsKey } from '../connections/ConnectionDialog';
-import { routePath } from '../shell/route';
-import { navigate } from '../shell/router';
+import { useConnections } from '../connections/queries';
 import { AutoSaveRow } from './AutoSave';
+import { openWorkflow } from './open';
+import { invalidateWorkflow } from '../workflows/queries';
 
 // Settings is the home of a behaviour PDT runs as a built-in workflow (PDT-384): plain controls that read and write
 // the workflow's inputs, a "Customize as a workflow →" link, and, once the workflow is changed beyond its inputs or
 // turned off, a notice naming it with Open and Reset to default. The workflow editor's side is
 // workflows/BuiltinSettingsBanner.tsx.
-
-export const openWorkflow = (id: string) => navigate(routePath({ view: 'workflows', target: { kind: 'workflow', id } }));
 
 /** Saves some inputs; the view after it. */
 export type PutInputs = (values: Record<string, unknown>) => Promise<BuiltinSettingsView>;
@@ -65,8 +62,7 @@ export function BuiltinSettingsSection({ calls, queryKey, label, description, fo
   const view = useQuery({ queryKey, queryFn: calls.get });
   const done = (v: BuiltinSettingsView) => {
     qc.setQueryData(queryKey, v);
-    void qc.invalidateQueries({ queryKey: ['workflow', v.workflowId] });
-    void qc.invalidateQueries({ queryKey: ['workflows'] });
+    invalidateWorkflow(qc, v.workflowId);
   };
   const save = useMutation({ meta: { errorShown: true }, mutationFn: calls.save, onSuccess: done });
   const reset = useMutation({ meta: { errorShown: true }, mutationFn: calls.reset, onSuccess: done });
@@ -97,7 +93,7 @@ export function ChatChannelRow({ v, id, put, what }: {
   /** What is posted: "Post it", "Post the daily update". */
   what: string;
 }) {
-  const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
+  const connections = useConnections();
   const kinds = new Set(v.channels.map((c) => c.connectionKind));
   const label = (kind: string) => v.channels.find((c) => c.connectionKind === kind)?.label ?? kind;
   const usable = (connections.data ?? []).filter((c) => kinds.has(c.kind));

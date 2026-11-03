@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Redo2, Undo2 } from 'lucide-react';
 import {
-  Alert, Badge, Banner, Button, Dialog, Field, IconButton, Input, MenuButton, SegmentedControl, Sheet, Skeleton, StatusDot, Textarea,
+  Alert, Badge, Banner, Button, Dialog, DialogActions, Field, IconButton, Input, MenuButton, SegmentedControl, Sheet, Skeleton, StatusDot, Textarea,
   ViewHeader, toast, useConfirm, type MenuEntry,
 } from '@ui';
 import { api } from '../api/client';
@@ -36,7 +36,9 @@ import { useCheck, useDraft } from './useDraft';
 import { useProposal } from './useProposal';
 import { VersionsView } from './VersionsView';
 import { BuiltinSettingsBanner } from './BuiltinSettingsBanner';
-import { invalidateWorkflowViews } from './invalidate';
+import { invalidateWorkflows, savedWorkflow, workflowKeys } from './queries';
+import { POLL } from '../common/poll';
+import { LoadError } from '../common/QueryStatus';
 
 export type WorkflowTab = 'graph' | 'outline' | 'text' | 'runs' | 'versions';
 
@@ -76,9 +78,9 @@ function SaveAsTemplateDialog({ w, doc, onClose, onSaved }: { w: WorkflowDetail;
     onSuccess: (t) => onSaved(t.id),
   });
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }} title="Save as template" dismissable={false}
+    <Dialog onClose={onClose} title="Save as template" dismissable={false}
       description="A copy of this workflow you can start new ones from. Add parameters on the template's page."
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!name.trim()} pending={save.isPending} onClick={() => save.mutate()}>Save template</Button></>}>
+      footer={<DialogActions onCancel={onClose} action="Save template" disabled={!name.trim()} pending={save.isPending} onAction={() => save.mutate()} />}>
       <div className="flex flex-col gap-3">
         <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
         <Field label="Description"><Textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
@@ -109,8 +111,8 @@ export interface WorkflowPageView {
 
 export function WorkflowPage({ id, catalog, projects, onOpen, view, projectInView }: WorkflowPageProps) {
   // Polled, so a proposal or a save made elsewhere shows (the draft is never replaced while it has changes).
-  const w = useQuery({ queryKey: ['workflow', id], queryFn: () => api.getWorkflow(id), refetchInterval: 5000 });
-  if (w.error) return <Alert tone="error" className="m-3">The workflow could not be loaded: {w.error.message}</Alert>;
+  const w = useQuery({ queryKey: workflowKeys.one(id), queryFn: () => api.getWorkflow(id), refetchInterval: POLL.steady });
+  if (w.error) return <LoadError what="The workflow" error={w.error} className="m-3" />;
   if (!w.data) return <Skeleton lines={8} className="p-4" />;
   return <Loaded w={w.data} catalog={catalog} projects={projects} onOpen={onOpen} view={view} projectInView={projectInView} />;
 }
@@ -159,12 +161,8 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
     if (selected && !draft.doc.nodes.some((n) => n.id === selected)) setSelected(null);
   }, [draft.doc, selected]);
 
-  const saved = (d: WorkflowDetail) => {
-    qc.setQueryData(['workflow', d.id], d);
-    // Settings shows a built-in as customized once it is saved here.
-    invalidateWorkflowViews(qc);
-    void qc.invalidateQueries({ queryKey: ['workflow-versions', d.id] });
-  };
+  // Settings shows a built-in as customized once it is saved here.
+  const saved = (d: WorkflowDetail) => savedWorkflow(qc, d);
   const save = useMutation({
     meta: { errorShown: true },
     mutationFn: () => api.saveWorkflow(w.id, { doc: draft.doc, note: note.trim(), propose: false }),
@@ -174,7 +172,7 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
     mutationFn: (input: RunValues) => api.runWorkflow(w.id, input),
     onSuccess: (r) => {
       setAsking(false);
-      void qc.invalidateQueries({ queryKey: ['workflow-runs'] });
+      void qc.invalidateQueries({ queryKey: workflowKeys.allRuns });
       if (r.runId) setRunId(r.runId); else toast.info('A run with that key already ran');
     },
     // The form shows its own error.
@@ -196,7 +194,7 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
         const copy = await api.createWorkflow({
           doc: { ...draft.doc, name: `${draft.doc.name} copy` }, scope: w.scope, projectId: w.projectId, enabled: false, note: `copied from ${w.name}`,
         });
-        void qc.invalidateQueries({ queryKey: ['workflows'] });
+        invalidateWorkflows(qc);
         onOpen({ kind: 'workflow', id: copy.id });
       }),
     },
@@ -207,7 +205,7 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
           const { ok } = await confirm({ title: `Delete ${w.name}?`, body: 'Its versions and runs go with it.', action: 'Delete workflow', danger: true });
           if (!ok) return;
           await api.deleteWorkflow(w.id);
-          void qc.invalidateQueries({ queryKey: ['workflows'] });
+          invalidateWorkflows(qc);
           onOpen(null);
         }),
       },
@@ -319,7 +317,7 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
           onRun={(input) => runNow.mutate(input)} onClose={() => setAsking(false)} />
       )}
       {exporting && <ExportDialog ids={[w.id]} onClose={() => setExporting(false)} />}
-      {templating && <SaveAsTemplateDialog w={w} doc={draft.doc} onClose={() => setTemplating(false)} onSaved={(tid) => { setTemplating(false); void qc.invalidateQueries({ queryKey: ['workflow-templates'] }); onOpen({ kind: 'template', id: tid }); }} />}
+      {templating && <SaveAsTemplateDialog w={w} doc={draft.doc} onClose={() => setTemplating(false)} onSaved={(tid) => { setTemplating(false); void qc.invalidateQueries({ queryKey: workflowKeys.templates }); onOpen({ kind: 'template', id: tid }); }} />}
     </div>
   );
 }

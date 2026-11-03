@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Badge, Button, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, useThemePref, type BadgeTone, type Status, type ThemePref } from '@ui';
+import { Alert, Badge, Button, Disclosure, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, useThemePref, type BadgeTone, type Status, type ThemePref } from '@ui';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { BugReportSetting } from '../api/gen/BugReportSetting';
@@ -25,12 +25,15 @@ import { useInstance } from '../shell/useInstance';
 import { useAgents, useAgentsOff } from '../common/agents';
 import { AcpAgents } from './AcpAgents';
 import { agentsOff, AgentSwitch, offNote, switchBlocked } from './AgentSwitch';
+import { StartAtLogin } from './StartAtLogin';
 import { BugReportDialog } from './BugReportDialog';
 import { Storage } from './StorageSettings';
 import { InstallUpdates } from './InstallUpdates';
 import { StuckAgents } from './StuckAgents';
 import { PmCheckpointSettings } from '../pm/PmCheckpointSettings';
 import { documentKeys, useDocumentProviders } from '../documents/queries';
+import { hostKeys, useHostSettings, setHostSettings, useHostChecks, useAgentCapabilities } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 /** The stored token's state as a badge (never the token itself). */
 function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeTone; text: string } {
@@ -120,7 +123,7 @@ function useSaveSettings() {
   const m = useMutation({
     meta: { errorShown: true },
     mutationFn: (p: HostSettingsPatch) => api.saveHostSettings(p),
-    onSuccess: (v) => qc.setQueryData(['host-settings'], v),
+    onSuccess: (v) => setHostSettings(qc, v),
   });
   return { ...m, state, save: (p: HostSettingsPatch) => track(m.mutateAsync(p)), saveText: (p: HostSettingsPatch) => m.mutateAsync(p) };
 }
@@ -160,7 +163,7 @@ function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
     try {
       await api.refreshRemote();
     } finally {
-      void qc.invalidateQueries({ queryKey: ['host-settings'] });
+      void qc.invalidateQueries({ queryKey: hostKeys.settings });
     }
   });
   const [tone, text]: [BadgeTone, string] = v.remote.active
@@ -210,7 +213,7 @@ function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
 
 function Updates({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
-  const update = useQuery({ queryKey: ['host-update'], queryFn: api.updateStatus });
+  const update = useQuery({ queryKey: hostKeys.update, queryFn: api.updateStatus });
   const policy = useSaveSettings();
   const channel = useSaveSettings();
   const interval = useSaveSettings();
@@ -220,8 +223,8 @@ function Updates({ v }: { v: HostSettingsView }) {
     meta: { errorShown: true },
     mutationFn: (t: string) => api.saveToken(t),
     onSuccess: (u) => {
-      qc.setQueryData(['host-update'], u);
-      void qc.invalidateQueries({ queryKey: ['host-settings'] });
+      qc.setQueryData(hostKeys.update, u);
+      void qc.invalidateQueries({ queryKey: hostKeys.settings });
       setSecret('');
     },
   });
@@ -233,7 +236,7 @@ function Updates({ v }: { v: HostSettingsView }) {
   const [found, setFound] = useState<{ result: CheckResult; at: number | null } | null>(null);
   const [check, checking] = useAction(async () => {
     const { result, ...status } = await api.checkUpdate();
-    qc.setQueryData(['host-update'], status);
+    qc.setQueryData(hostKeys.update, status);
     return { result, at: status.lastCheckedAt };
   });
   const checkNow = async () => {
@@ -263,7 +266,7 @@ function Updates({ v }: { v: HostSettingsView }) {
       : 'Full releases only.';
   const saveRepo = async (r: string) => {
     await repoSave.saveText({ releaseRepo: r });
-    void qc.invalidateQueries({ queryKey: ['host-update'] });
+    void qc.invalidateQueries({ queryKey: hostKeys.update });
   };
   return (
     <Section label="Updates" description="New releases of PDT, from GitHub.">
@@ -325,33 +328,30 @@ function Updates({ v }: { v: HostSettingsView }) {
           </>
         )}
       </SettingsRow>
-      <details open={advanced} onToggle={(e) => setAdvanced(e.currentTarget.open)} className="text-sm">
-        <summary className="cursor-pointer text-muted-foreground">Advanced</summary>
-        <div className="mt-2 flex flex-col gap-2">
-          {v.tokenError && (
-            <Alert tone="error" title="Token: cannot be read.">
-              <p>{v.tokenError}</p>
-              <p className="text-muted-foreground">
-                A token stored by an older build makes macOS ask before this one may read it. Look for a keychain prompt
-                on this Mac and choose Always Allow. If there is none, delete the <code>update-token</code> item in Keychain
-                Access, restart the daemon from the tray, and save the token again here.
-              </p>
-            </Alert>
-          )}
-          <form onSubmit={submit(() => { if (secret.trim()) token.mutate(secret.trim()); })} className="flex flex-col gap-2">
-            <SettingsRow
-              label={<span className="flex items-center gap-2">GitHub token {!v.tokenError && <Badge tone={badge.tone}>{badge.text}</Badge>}</span>}
-              description={u?.token.state === 'expired' ? 'GitHub rejected it, so updates go on without it. Paste a new one, or remove it under Danger zone.'
-                : v.tokenPresent ? 'Only needed for a private repository or a fork. Kept in the OS keychain; paste a new one to replace it.'
-                  : 'Only needed for a private repository or a fork. Kept in the OS keychain.'}
-            >
-              <Input ref={tokenInput} aria-label="GitHub token" type="password" autoComplete="off" className="w-56" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
-              <Button type="submit" size="sm" variant="primary" disabled={!secret.trim()} pending={token.isPending}>Save token</Button>
-            </SettingsRow>
-            {tokenError}
-          </form>
-        </div>
-      </details>
+      <Disclosure title="Advanced" open={advanced} onOpenChange={setAdvanced} className="text-sm" panelClassName="mt-2 flex flex-col gap-2 text-foreground">
+        {v.tokenError && (
+          <Alert tone="error" title="Token: cannot be read.">
+            <p>{v.tokenError}</p>
+            <p className="text-muted-foreground">
+              A token stored by an older build makes macOS ask before this one may read it. Look for a keychain prompt
+              on this Mac and choose Always Allow. If there is none, delete the <code>update-token</code> item in Keychain
+              Access, restart the daemon from the tray, and save the token again here.
+            </p>
+          </Alert>
+        )}
+        <form onSubmit={submit(() => { if (secret.trim()) token.mutate(secret.trim()); })} className="flex flex-col gap-2">
+          <SettingsRow
+            label={<span className="flex items-center gap-2">GitHub token {!v.tokenError && <Badge tone={badge.tone}>{badge.text}</Badge>}</span>}
+            description={u?.token.state === 'expired' ? 'GitHub rejected it, so updates go on without it. Paste a new one, or remove it under Danger zone.'
+              : v.tokenPresent ? 'Only needed for a private repository or a fork. Kept in the OS keychain; paste a new one to replace it.'
+                : 'Only needed for a private repository or a fork. Kept in the OS keychain.'}
+          >
+            <Input ref={tokenInput} aria-label="GitHub token" type="password" autoComplete="off" className="w-56" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
+            <Button type="submit" size="sm" variant="primary" disabled={!secret.trim()} pending={token.isPending}>Save token</Button>
+          </SettingsRow>
+          {tokenError}
+        </form>
+      </Disclosure>
     </Section>
   );
 }
@@ -460,7 +460,7 @@ function Agents({ v }: { v: HostSettingsView }) {
 /** One agent's default model: a pick from the models its conversations offer, or typed while it has listed none. */
 function DefaultModel({ agent, label, value }: { agent: AgentKind; label: string; value: string | null }) {
   const save = useSaveSettings();
-  const caps = useQuery({ queryKey: ['agent-capabilities', agent], queryFn: () => api.agentCapabilities(agent), staleTime: 60_000 });
+  const caps = useAgentCapabilities(agent);
   const models = caps.data?.models ?? [];
   const set = (model: string | null) => ({ agentModels: { [agent]: model ?? '' } });
   return (
@@ -546,7 +546,7 @@ function Programs({ v }: { v: HostSettingsView }) {
                 onSave={async (path) => {
                   await save.saveText({ [PROGRAM_FIELD[p.agent]]: path });
                   // The agents offered (and their logins) follow the new program.
-                  void qc.invalidateQueries({ queryKey: ['host-checks'] });
+                  void qc.invalidateQueries({ queryKey: hostKeys.checks });
                 }}
               />
             )}
@@ -581,7 +581,7 @@ async function reopenAt(origin: string) {
 function Network({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
   const n = v.network;
-  const save = (next: NetworkSettings) => api.saveNetwork(next).then((view) => qc.setQueryData(['host-settings'], view));
+  const save = (next: NetworkSettings) => api.saveNetwork(next).then((view) => setHostSettings(qc, view));
   const [restarting, setRestarting] = useState(false);
   const [restart, asking] = useAction(async () => {
     const port = n.portFromEnv ?? n.settings.port ?? n.defaultPort;
@@ -591,7 +591,7 @@ function Network({ v }: { v: HostSettingsView }) {
       await reopenAt(`${window.location.protocol}//${window.location.hostname}:${port}`);
     } else {
       // The same address: the page reconnects by itself once PDT answers again.
-      window.setTimeout(() => void qc.invalidateQueries({ queryKey: ['host-settings'] }), 5000);
+      window.setTimeout(() => void qc.invalidateQueries({ queryKey: hostKeys.settings }), 5000);
     }
   });
   const portText = n.settings.port === null ? '' : String(n.settings.port);
@@ -797,8 +797,8 @@ function Checks() {
   const qc = useQueryClient();
   const agents = useAgents();
   const off = useAgentsOff();
-  const checks = useQuery({ queryKey: ['host-checks'], queryFn: api.hostChecks });
-  const [refresh, refreshing] = useAction(async () => qc.setQueryData(['host-checks'], await api.refreshChecks()));
+  const checks = useHostChecks();
+  const [refresh, refreshing] = useAction(async () => qc.setQueryData(hostKeys.checks, await api.refreshChecks()));
   return (
     <Section
       label="Checks"
@@ -834,7 +834,7 @@ function Checks() {
 
 /** Get started (PDT-230): reopens the first-run checklist. */
 function Setup() {
-  const setup = useQuery({ queryKey: ['host-setup'], queryFn: api.hostSetup });
+  const setup = useQuery({ queryKey: hostKeys.setup, queryFn: api.hostSetup });
   const v = setup.data;
   const where = !v ? undefined
     : v.done === 4 ? 'Every step is done.'
@@ -859,7 +859,7 @@ const bugReportChoices: { value: BugReportSetting; label: string }[] = [
 function BugReports({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
   const save = useSaveSettings();
-  const preview = useQuery({ queryKey: ['bug-report-preview'], queryFn: api.bugReportPreview });
+  const preview = useQuery({ queryKey: hostKeys.bugReportPreview, queryFn: api.bugReportPreview });
   const [open, setOpen] = useState(false);
   const p = preview.data;
   const where = !p ? null
@@ -879,7 +879,7 @@ function BugReports({ v }: { v: HostSettingsView }) {
           className="w-48"
           options={bugReportChoices}
           value={v.settings.bugReports}
-          onChange={(b) => void save.save({ bugReports: b }).then(() => void qc.invalidateQueries({ queryKey: ['bug-report-preview'] }))}
+          onChange={(b) => void save.save({ bugReports: b }).then(() => void qc.invalidateQueries({ queryKey: hostKeys.bugReportPreview }))}
         />
       </SettingsRow>
       {open && <BugReportDialog onClose={() => setOpen(false)} onOpenSettings={() => setOpen(false)} />}
@@ -900,8 +900,8 @@ function DangerZone({ v }: { v: HostSettingsView }) {
     });
     if (!ok) return;
     await api.deleteToken();
-    void qc.invalidateQueries({ queryKey: ['host-settings'] });
-    void qc.invalidateQueries({ queryKey: ['host-update'] });
+    void qc.invalidateQueries({ queryKey: hostKeys.settings });
+    void qc.invalidateQueries({ queryKey: hostKeys.update });
   });
   return (
     <Section label="Danger zone" danger description="These always ask first.">
@@ -923,19 +923,14 @@ export interface HostSettingsPageProps {
 
 export function HostSettingsPage({ drill = false, section = null, onSection }: HostSettingsPageProps = {}) {
   const qc = useQueryClient();
-  const view = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
-  const whoami = useQuery({ queryKey: ['host-whoami'], queryFn: api.whoami });
+  const view = useHostSettings();
+  const whoami = useQuery({ queryKey: hostKeys.whoami, queryFn: api.whoami });
   const v = view.data;
   if (!v) {
     return (
       <Page title="This host">
         {view.error ? (
-          <Alert
-            tone="error"
-            action={<Button size="sm" onClick={() => void qc.invalidateQueries({ queryKey: ['host-settings'] })}>Retry</Button>}
-          >
-            Host settings could not be loaded: {view.error.message}
-          </Alert>
+          <LoadError what="Host settings" error={view.error} onRetry={() => void qc.invalidateQueries({ queryKey: hostKeys.settings })} />
         ) : (
           <Skeleton label="Loading host settings" className="h-40" />
         )}
@@ -950,6 +945,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
     'Agents': <><Agents v={v} /><StuckAgents /><DefaultModels v={v} /><Programs v={v} /><AcpAgents v={v} /></>,
     'PM': <PmCheckpointSettings />,
     'Network': <Network v={v} />,
+    'Startup': <StartAtLogin />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,
     'Runs': <Runs v={v} />,
     'Storage': <Storage />,

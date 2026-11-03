@@ -5,15 +5,9 @@ import { useSameList } from '../common/useSameList';
 import type { Session } from '../api/gen/Session';
 import type { Ticket } from '../api/gen/Ticket';
 import type { TicketQuery } from '../api/gen/TicketQuery';
-
-/** How often what's on screen refetches (like sessions). */
-export const POLL = 2000;
-
-/**
- * A paged query's poll: TanStack refetches every loaded page, so past two pages (a long scroll back) it polls every
- * 15 s, so that a 1,000-row list isn't ten requests every 2 s.
- */
-export const pagedPoll = (query: { state: { data?: { pages: unknown[] } } }) => ((query.state.data?.pages.length ?? 0) > 2 ? 15_000 : POLL);
+import { useProjects } from '../projects/queries';
+import { sessionsQuery } from '../sessions/queries';
+import { POLL, pagedPoll } from '../common/poll';
 
 export const ticketKeys = {
   /** Every list of tickets (backlog pages, counts, pickers). */
@@ -97,7 +91,7 @@ export function useTicket(id: string | null) {
     queryKey: ticketKeys.one(id ?? ''),
     queryFn: () => api.getTicket(id!),
     enabled: !!id,
-    refetchInterval: POLL,
+    refetchInterval: POLL.live,
   });
 }
 
@@ -127,7 +121,7 @@ export function useProjectAreas(projectId: string | null) {
     queryFn: () => api.getProjectAreas(projectId!),
     enabled: !!projectId,
     staleTime: 30_000,
-    refetchInterval: 60_000,
+    refetchInterval: POLL.idle,
   });
 }
 
@@ -144,10 +138,8 @@ export function useTicketSearch(q: TicketQuery, enabled = true) {
 
 /** Every project's sessions (the same queries the workspaces poll), for the attempt and board activity dots. */
 export function useAllSessions(): Session[] {
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
-  const qs = useQueries({
-    queries: (projects.data ?? []).map((p) => ({ queryKey: ['sessions', p.id], queryFn: () => api.listSessions(p.id), refetchInterval: POLL })),
-  });
+  const projects = useProjects();
+  const qs = useQueries({ queries: (projects.data ?? []).map((p) => sessionsQuery(p.id)) });
   // The result arrays are new on every render; their data keeps its identity until a poll brings something new.
   // (Reading `dataUpdatedAt` here would re-render every caller on every poll.)
   const data = useSameList(qs.map((q) => q.data));

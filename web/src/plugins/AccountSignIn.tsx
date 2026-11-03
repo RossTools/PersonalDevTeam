@@ -5,13 +5,16 @@
 // account with the user's own OAuth client is under Advanced.
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, Section, Skeleton } from '@ui';
+import { Alert, Badge, Button, Disclosure, Section, Skeleton } from '@ui';
 import { api } from '../api/client';
 import type { SignIn } from '../api/gen/SignIn';
 import type { SignInAccount } from '../api/gen/SignInAccount';
 import type { AccountSignInStart } from '../api/gen/AccountSignInStart';
 import { actionError } from '../common/useAction';
-import { ConnectionDialog, connectionsKey } from '../connections/ConnectionDialog';
+import { ConnectionDialog } from '../connections/ConnectionDialog';
+import { connectionsKey } from '../connections/queries';
+import { POLL } from '../common/poll';
+import { LoadError } from '../common/QueryStatus';
 
 // Under the connections' key, so saving or deleting a connection anywhere reads the accounts again (PDT-464).
 export const signInAccountsKey = (url: string) => [...connectionsKey, 'sign-in', url] as const;
@@ -21,7 +24,7 @@ export function useSignInAccounts(url: string | null, waiting = false) {
   return useQuery({
     queryKey: signInAccountsKey(url ?? ''),
     queryFn: () => api.signInAccounts(url!),
-    refetchInterval: waiting ? 2000 : false,
+    refetchInterval: waiting ? POLL.live : false,
     enabled: url !== null,
   });
 }
@@ -102,7 +105,7 @@ export function AccountSignIn({ signIn: s }: { signIn: SignIn }) {
       actions={builtIn && <Button size="sm" variant="primary" onClick={() => void consent(() => api.signInAdd(s.api, origin))}>Sign in with {s.service}</Button>}
     >
       {accounts.isPending ? <Skeleton label={`Loading ${s.service} accounts`} className="h-8" />
-        : accounts.isError ? <Alert tone="error">{s.service} accounts could not be loaded: {accounts.error.message}</Alert>
+        : accounts.isError ? <LoadError what={`${s.service} accounts`} error={accounts.error} />
           : accounts.data.length === 0 ? <p className="text-sm text-muted-foreground">{builtIn ? `No ${s.service} account yet.` : `Add a connection for your ${s.service} account first.`}</p>
             : accounts.data.map((a: SignInAccount) => (
               <div key={a.connectionId} className="flex flex-wrap items-center gap-2 py-1">
@@ -126,13 +129,10 @@ export function AccountSignIn({ signIn: s }: { signIn: SignIn }) {
       {waiting && <p role="status" className="text-xs text-muted-foreground">Finish signing in in the {s.service} window.</p>}
       {error && <Alert tone="error">{error}</Alert>}
       {builtIn && (
-        <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer">Advanced</summary>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="min-w-0 flex-1">{s.ownClient} {redirectNote}</span>
-            <Button size="sm" variant="secondary" onClick={() => setOwnClient(true)}>Use your own OAuth client</Button>
-          </div>
-        </details>
+        <Disclosure title="Advanced" panelClassName="mt-2 flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1">{s.ownClient} {redirectNote}</span>
+          <Button size="sm" variant="secondary" onClick={() => setOwnClient(true)}>Use your own OAuth client</Button>
+        </Disclosure>
       )}
       {ownClient && <ConnectionDialog kind={s.kind} onClose={() => { setOwnClient(false); refresh(); }} />}
     </Section>

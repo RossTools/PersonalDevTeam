@@ -18,8 +18,8 @@ describe('TicketTimeline', () => {
     });
     renderWithQuery(<TicketTimeline ticketId="t1" />);
     expect(await screen.findByText('Sent 1 review comment to the agent')).toBeInTheDocument();
-    const show = screen.getByText('Show the comments');
-    expect(show.closest('details')).not.toHaveAttribute('open');
+    const show = screen.getByRole('button', { name: 'Show the comments' });
+    expect(show).toHaveAttribute('aria-expanded', 'false');
     await userEvent.click(show);
     expect(screen.getByText('Make it TWO.')).toBeVisible();
     expect(screen.getByText('a.txt:2')).toBeInTheDocument();

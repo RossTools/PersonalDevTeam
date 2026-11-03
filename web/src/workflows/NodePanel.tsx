@@ -2,7 +2,7 @@
 // settings every node has, where its errors go, and its issues.
 import { useEffect, useState } from 'react';
 import { Trash2, X } from 'lucide-react';
-import { Alert, Button, Field, IconButton, Input, Select } from '@ui';
+import { Alert, Button, Field, IconButton, Input, SectionLabel, Select } from '@ui';
 import type { Node } from '../api/gen/Node';
 import type { WorkflowCheck } from '../api/gen/WorkflowCheck';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
@@ -78,7 +78,7 @@ export function NodePanel({ doc, node, catalog, check, onChange, onSelect, onClo
         </Field>
         {kind && (
           <>
-            <h4 className="pt-1 text-2xs font-medium tracking-wider text-muted-foreground uppercase">Settings</h4>
+            <SectionLabel as="h4" className="pt-1">Settings</SectionLabel>
             <SchemaForm
               schema={configSchemaOf(catalog, node) ?? kind.configSchema}
               value={(node.config ?? {}) as Record<string, unknown>}
@@ -90,7 +90,7 @@ export function NodePanel({ doc, node, catalog, check, onChange, onSelect, onClo
         )}
         {!isTrigger && (
           <>
-            <h4 className="pt-1 text-2xs font-medium tracking-wider text-muted-foreground uppercase">When it fails</h4>
+            <SectionLabel as="h4" className="pt-1">When it fails</SectionLabel>
             <div className="grid grid-cols-2 gap-2">
               <NumberField label="Retries" readOnly={readOnly} value={node.retry?.max ?? null}
                 onChange={(v) => set((n) => ({ ...n, retry: v ? { max: v, backoffMs: n.retry?.backoffMs ?? 5000 } : null }))} />

@@ -1,16 +1,20 @@
 // A plugin's page (PDT-228): its status and switch, a banner when it needs the user, its connections (GitHub's is the
 // login), what it adds (workflow steps, agent and PM tools, templates, project settings) and how to set it up.
 import { useState, type ReactNode } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Chip, EmptyState, Link, Page, Section, Skeleton, useConfirm } from '@ui';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Alert, Button, Chip, EmptyState, Link, Page, Section, SectionLabel } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
-import { ConnectionDialog, connectionsKey } from '../connections/ConnectionDialog';
+import { ConnectionDialog } from '../connections/ConnectionDialog';
+import { connectionsKey, useConnections } from '../connections/queries';
 import { ConnectionRow } from '../connections/ConnectionRow';
+import { QueryStatus } from '../common/QueryStatus';
+import { useConfirmDelete } from '../common/useConfirmDelete';
 import { AccountSignIn } from './AccountSignIn';
 import { ForgeLogin } from './ForgeLogin';
 import { CATEGORY_LABEL, connectionsOf, pluginsKey, stuckOn, type Plugin } from './model';
-import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch, usePlugins } from './parts';
+import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch } from './parts';
+import { usePlugins } from './queries';
 
 function Tags({ items, empty = 'None' }: { items: string[]; empty?: string }) {
   if (!items.length) return <span className="text-xs text-muted-foreground">{empty}</span>;
@@ -20,7 +24,7 @@ function Tags({ items, empty = 'None' }: { items: string[]; empty?: string }) {
 function Part({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</h4>
+      <SectionLabel as="h4">{label}</SectionLabel>
       {children}
     </div>
   );
@@ -54,28 +58,28 @@ export interface PluginPageProps {
 
 export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
   const qc = useQueryClient();
-  const confirm = useConfirm();
   const plugins = usePlugins();
-  const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
+  const connections = useConnections();
   const sw = usePluginSwitch(plugins.data ?? []);
   const [editing, setEditing] = useState<{ connection?: Connection; kind?: string } | null>(null);
   const check = useMutation({ meta: { errorShown: true }, mutationFn: () => api.checkIntegration(id), onSuccess: (next) => {
     qc.setQueryData(pluginsKey, next);
     void qc.invalidateQueries({ queryKey: connectionsKey });
   } });
-  const remove = useMutation({
-    meta: { errorShown: true },
-    mutationFn: (c: Connection) => api.deleteConnection(c.id),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: connectionsKey });
-      void qc.invalidateQueries({ queryKey: pluginsKey });
-    },
+  const remove = useConfirmDelete({
+    remove: (c: Connection) => api.deleteConnection(c.id),
+    invalidate: [connectionsKey, pluginsKey],
+    confirm: (c) => ({
+      title: `Delete ${c.name}?`,
+      body: 'Workflows that use it fail until you add one with the same name. Its secret is removed from the keychain.',
+      action: 'Delete connection',
+    }),
   });
   const back = phone ? null : <Link onClick={onBack} className="text-xs font-normal text-muted-foreground">‹ Plugins</Link>;
   if (!plugins.data) {
     return (
       <Page title="Plugin">
-        {plugins.error ? <Alert tone="error">Plugins could not be loaded: {plugins.error.message}</Alert> : <Skeleton label="Loading the plugin" className="h-40" />}
+        <QueryStatus query={plugins} what="Plugins" skeleton="h-40">{() => null}</QueryStatus>
       </Page>
     );
   }
@@ -83,15 +87,6 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
   if (!p) return <EmptyState className="mt-16 border-0" action={<Button size="sm" onClick={onBack}>All plugins</Button>}>No plugin is called {id}.</EmptyState>;
 
   const mine = connectionsOf(p, connections.data ?? []);
-  const ask = async (c: Connection) => {
-    const { ok } = await confirm({
-      title: `Delete ${c.name}?`,
-      body: 'Workflows that use it fail until you add one with the same name. Its secret is removed from the keychain.',
-      action: 'Delete connection',
-      danger: true,
-    });
-    if (ok) remove.mutate(c);
-  };
   const failing = (connections.data ?? []).find((c) => c.id === p.errorConnection);
   const addFirst = () => setEditing({ kind: p.connectionKinds[0]?.id });
 
@@ -138,13 +133,13 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
             </Button>
           ))}
         >
-          {connections.isLoading ? <Skeleton label="Loading connections" className="h-8" />
-            : mine.length ? mine.map((c) => <ConnectionRow key={c.id} c={c} onEdit={() => setEditing({ connection: c })} onDelete={() => void ask(c)} />)
-              : <p className="text-sm text-muted-foreground">None yet.</p>}
+          <QueryStatus query={connections} what="Connections" skeleton="h-8">{() => (mine.length
+            ? mine.map((c) => <ConnectionRow key={c.id} c={c} onEdit={() => setEditing({ connection: c })} onDelete={() => void remove.ask(c)} />)
+            : <p className="text-sm text-muted-foreground">None yet.</p>)}
+          </QueryStatus>
         </Section>
       )}
       {p.signIn && p.enabled && p.built && <AccountSignIn signIn={p.signIn} />}
-      {connections.error && <Alert tone="error">Connections could not be loaded: {connections.error.message}</Alert>}
       {remove.error && <Alert tone="error">{remove.error.message}</Alert>}
 
       {p.built && (

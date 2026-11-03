@@ -5,6 +5,7 @@ import type { InboxKind } from '../api/gen/InboxKind';
 import type { InboxSection } from '../api/gen/InboxSection';
 import type { Priority } from '../api/gen/Priority';
 import { routePath } from '../shell/route';
+import { nonBlank } from '../common/guards';
 
 /** Where each group is listed (PDT-361): a few sections, as the API sorts them. */
 export const SECTION_OF: Record<InboxGroup, InboxSection> = {
@@ -139,6 +140,15 @@ export function resends(item: InboxItem): boolean {
   return item.kind === 'stalled' && item.choices.some((c) => c.id === 'resend');
 }
 
+/** What an item opens: its ticket and its session, each with the project they open in (null when it has none). */
+export function inboxTargets(item: InboxItem): { ticket: { id: string; projectId: string } | null; session: { id: string; projectId: string } | null } {
+  const projectId = item.projectId;
+  return {
+    ticket: item.ticketId && projectId ? { id: item.ticketId, projectId } : null,
+    session: item.sessionId && projectId ? { id: item.sessionId, projectId } : null,
+  };
+}
+
 /** Whether `e` dismisses it (questions and stalled steps, whose step keeps waiting; unheard notices). */
 export function dismissable(item: InboxItem): boolean {
   return item.kind === 'question' || item.kind === 'secret' || item.kind === 'stalled' || item.kind === 'notice';
@@ -218,15 +228,14 @@ export interface TicketProposal {
 
 export function ticketProposalOf(item: InboxItem): TicketProposal {
   const b = item.body;
-  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null);
   return {
     description: typeof b.description === 'string' ? b.description : '',
     priority: (typeof b.priority === 'string' ? b.priority : 'none') as Priority,
     labels: Array.isArray(b.labels) ? b.labels.filter((l): l is string => typeof l === 'string') : [],
-    reason: str(b.reason),
-    persona: str(b.persona),
-    fromTicket: str(b.fromTicket),
-    fromTicketId: str(b.fromTicketId),
+    reason: nonBlank(b.reason),
+    persona: nonBlank(b.persona),
+    fromTicket: nonBlank(b.fromTicket),
+    fromTicketId: nonBlank(b.fromTicketId),
   };
 }
 

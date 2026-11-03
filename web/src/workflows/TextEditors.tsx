@@ -2,7 +2,7 @@
 // each with an Expand button that opens the same editor in a dialog over most of the screen.
 import { lazy, Suspense, useState, type ComponentProps, type ReactNode } from 'react';
 import { Maximize2 } from 'lucide-react';
-import { Button, Dialog, IconButton, Skeleton } from '@ui';
+import { Button, Dialog, DialogActions, IconButton, Skeleton } from '@ui';
 import { MarkdownEditor } from '../common/LazyMarkdownEditor';
 
 // CodeMirror loads with the first editor shown, not with the workflow builder.
@@ -34,15 +34,12 @@ export function ExpandButton({ label, value, onDone, readOnly, editor }: {
       <IconButton label={`Expand ${label}`} size="sm" onClick={() => setDraft(value)}><Maximize2 aria-hidden /></IconButton>
       <Dialog
         open={draft !== null}
-        onOpenChange={(open) => { if (!open) close(); }}
+        onClose={close}
         title={label}
         size="full"
         dismissable={false}
         footer={readOnly ? <Button onClick={close}>Close</Button> : (
-          <>
-            <Button variant="secondary" onClick={close}>Cancel</Button>
-            <Button onClick={() => { onDone(draft ?? ''); close(); }}>Done</Button>
-          </>
+          <DialogActions onCancel={close} action="Done" onAction={() => { onDone(draft ?? ''); close(); }} />
         )}
       >
         {draft !== null && (

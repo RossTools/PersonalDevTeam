@@ -1,22 +1,11 @@
 import { X } from 'lucide-react';
-import { Button, IconButton, List, ListRow, relativeTime } from '@ui';
+import { Badge, Button, IconButton, List, ListHeading, ListRow, RelativeTime } from '@ui';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import { TicketKey } from '../common/TicketKey';
-import { cn } from '@ui/lib/utils';
 import { grouped, KIND_LABEL, selectedUpdate, updateSelection } from './model';
 import { KindIcon } from './kinds';
 
-const heading = 'px-3 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
-
-/** An age in a list row's corner: "now", "10m", "3h", "2d". */
-export function shortAge(at: number, now: number = Date.now()): string {
-  const m = Math.floor(Math.max(0, now - at) / 60_000);
-  if (m < 1) return 'now';
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
-}
 
 /** What a row says under its title: who asks (or which workflow) and the ticket's title. */
 function context(i: InboxItem): string {
@@ -49,9 +38,9 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
       {groups.length === 0 && (failed || !loading) && <EmptyLine failed={failed} what="the Inbox">Nothing waits on you.</EmptyLine>}
       {groups.map((g) => (
         <section key={g.id} aria-label={g.title}>
-          <h3 className={cn(heading, 'flex items-center gap-1.5')}>
-            {g.title} <span className="rounded-full bg-surface-2 px-1.5 tabular-nums">{g.items.length}</span>
-          </h3>
+          <ListHeading as="h3">
+            {g.title} <Badge count={g.items.length} size="sm" />
+          </ListHeading>
           <List aria-label={g.title} onAction={onSelect}>
             {g.items.map((i) => (
               <ListRow
@@ -62,7 +51,7 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
                 current={i.id === selectedId}
                 className="items-start py-1.5 data-current:shadow-[inset_2px_0_0_var(--pdt-accent)]"
                 leading={<KindIcon item={i} className="mt-0.5" />}
-                trailing={<span className="text-meta text-muted-foreground tabular-nums" title={relativeTime(i.createdAt)}>{shortAge(i.createdAt)}</span>}
+                trailing={<RelativeTime short time={i.createdAt} className="text-meta text-muted-foreground" />}
                 secondary={
                   <span className="flex min-w-0 items-center gap-1.5">
                     {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
@@ -106,7 +95,7 @@ export function UpdatesList({ updates, selectedId, onSelect, onClear, loading, f
               current={u.id === update}
               bold={u.readAt === null && u.clearedAt === null}
               className={u.clearedAt !== null ? 'text-muted-foreground' : undefined}
-              secondary={[u.body, relativeTime(u.createdAt)].filter(Boolean).join(' · ')}
+              secondary={<>{u.body && `${u.body} · `}<RelativeTime time={u.createdAt} /></>}
               trailing={onClear && (
                 <IconButton label="Clear" size="sm" onClick={() => onClear(u.id)}
                   className="text-muted-foreground opacity-0 group-data-hovered/row:opacity-100 group-data-focus-visible/row:opacity-100 data-focus-visible:opacity-100 pointer-coarse:opacity-100">
@@ -141,11 +130,11 @@ export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll
   const unread = updates.some((u) => u.readAt === null && u.clearedAt === null);
   return (
     <nav aria-label="Inbox items" className="flex flex-col gap-0.5 py-1">
-      <h2 className={heading}>Needs you</h2>
+      <ListHeading>Needs you</ListHeading>
       <NeedsYouGroups items={items} selectedId={selectedId} onSelect={onSelect} loading={loading} failed={failed} />
       <section aria-label="Updates">
         <div className="flex items-center gap-1 pt-1 pr-2">
-          <h2 className={cn(heading, 'flex-1')}>Updates</h2>
+          <ListHeading className="flex-1">Updates</ListHeading>
           {onReadAll && <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" disabled={!unread} onClick={onReadAll}>Mark all read</Button>}
           {onClearAll && <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" disabled={updates.length === 0} onClick={onClearAll}>Clear all</Button>}
           {onSettings && <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" onClick={onSettings}>Settings</Button>}

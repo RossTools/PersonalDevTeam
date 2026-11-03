@@ -2,10 +2,11 @@
 // (pre-filled with its title and description; the ticket then links the issue) or new (the palette's "New issue").
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Dialog, Field, Input, Textarea, toast } from '@ui';
+import { Alert, Dialog, DialogActions, Field, Input, Textarea, toast } from '@ui';
 import { api } from '../api/client';
 import type { Ticket } from '../api/gen/Ticket';
 import { invalidateTickets } from './queries';
+import { openExternal } from '../common/open';
 
 /** GitHub's longest issue title (crates/pdt-api/src/issues.rs). */
 const MAX_TITLE = 256;
@@ -28,7 +29,7 @@ export function CreateIssueDialog({ projectId, repo, ticket, onClose }: {
       if (ticket) invalidateTickets(qc, [ticket.id]);
       toast.success(`Filed ${r.repo}#${r.number}`, {
         ...(r.ticketKey ? { description: `${r.ticketKey} links it.` } : {}),
-        action: { label: 'Open', onClick: () => window.open(r.url, '_blank', 'noopener') },
+        action: { label: 'Open', onClick: () => openExternal(r.url) },
       });
       onClose();
     },
@@ -37,12 +38,11 @@ export function CreateIssueDialog({ projectId, repo, ticket, onClose }: {
   const send = () => { if (ready && !run.isPending) run.mutate(); };
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
+      onClose={onClose}
       title={ticket ? `Create GitHub issue from ${ticket.key}` : 'New GitHub issue'}
       description={`Opens an issue in ${repo} as your GitHub login.${ticket ? ` ${ticket.key} links it.` : ''}`}
       size="lg"
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!ready} pending={run.isPending} onClick={send}>Create issue</Button></>}
+      footer={<DialogActions onCancel={onClose} action="Create issue" disabled={!ready} pending={run.isPending} onAction={send} />}
     >
       <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); send(); }}>
         <Field label="Title">

@@ -4,8 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import {
-  Alert, Badge, Button, Checkbox, Field, IconButton, Input, MenuButton, SegmentedControl, Select, Skeleton, Textarea, ViewHeader,
-  toast, useConfirm,
+  Alert, Badge, Button, Checkbox, Field, IconButton, Input, MenuButton, SectionLabel, SegmentedControl, Select, Skeleton, Textarea, toast, useConfirm, ViewHeader,
 } from '@ui';
 import { api } from '../api/client';
 import type { ParamType } from '../api/gen/ParamType';
@@ -17,6 +16,8 @@ import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { GraphView } from './GraphView';
 import type { Catalog } from './model';
 import { TextView } from './TextView';
+import { workflowKeys } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 const TYPES: { value: ParamType; label: string }[] = [
   { value: 'string', label: 'Text' }, { value: 'text', label: 'Long text' }, { value: 'number', label: 'Number' },
@@ -63,8 +64,8 @@ function ParamsTable({ params, onChange, readOnly }: { params: TemplateParam[]; 
 }
 
 export function TemplatePage({ id, catalog, onUse, onDeleted }: { id: string; catalog: Catalog; onUse: (templateId: string) => void; onDeleted: () => void }) {
-  const t = useQuery({ queryKey: ['workflow-template', id], queryFn: () => api.getWorkflowTemplate(id) });
-  if (t.error) return <Alert tone="error" className="m-3">The template could not be loaded: {t.error.message}</Alert>;
+  const t = useQuery({ queryKey: workflowKeys.template(id), queryFn: () => api.getWorkflowTemplate(id) });
+  if (t.error) return <LoadError what="The template" error={t.error} className="m-3" />;
   if (!t.data) return <Skeleton lines={8} className="p-4" />;
   return <Loaded key={`${t.data.id}:${t.data.updatedAt}`} t={t.data} catalog={catalog} onUse={onUse} onDeleted={onDeleted} />;
 }
@@ -84,8 +85,8 @@ function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog
     meta: { errorShown: true },
     mutationFn: () => api.saveWorkflowTemplate(t.id, { name, description, params, doc }),
     onSuccess: (saved) => {
-      qc.setQueryData(['workflow-template', t.id], saved);
-      void qc.invalidateQueries({ queryKey: ['workflow-templates'] });
+      qc.setQueryData(workflowKeys.template(t.id), saved);
+      void qc.invalidateQueries({ queryKey: workflowKeys.templates });
       toast.success('Template saved');
     },
   });
@@ -103,7 +104,7 @@ function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog
                   const { ok } = await confirm({ title: `Delete the template ${t.name}?`, body: 'Workflows made from it stay.', action: 'Delete template', danger: true });
                   if (!ok) return;
                   await api.deleteWorkflowTemplate(t.id);
-                  void qc.invalidateQueries({ queryKey: ['workflow-templates'] });
+                  void qc.invalidateQueries({ queryKey: workflowKeys.templates });
                   onDeleted();
                 }),
               }]} />
@@ -120,7 +121,7 @@ function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog
               <Field label="Description"><Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
             </>
           )}
-          <h3 className="text-2xs font-medium tracking-wider text-muted-foreground uppercase">Parameters</h3>
+          <SectionLabel>Parameters</SectionLabel>
           <ParamsTable params={params} onChange={setParams} readOnly={readOnly} />
           {save.error && <Alert tone="error">{save.error.message}</Alert>}
           {!readOnly && (

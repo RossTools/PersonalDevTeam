@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
-import { Alert, Badge, Button, EmptyState, Link, Section, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
+import { Badge, Button, EmptyState, Link, Section, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
 import { AutoSaveText, SaveStatus, useSaveState } from '../common/AutoSave';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
@@ -10,7 +10,7 @@ import type { StorageSettings } from '../api/gen/StorageSettings';
 import type { WontDoCleanup } from '../api/gen/WontDoCleanup';
 import type { WorktreeStorage } from '../api/gen/WorktreeStorage';
 import { TicketKey } from '../common/TicketKey';
-import { CleanButton, formatBytes, sizeText, StageBadge, useRemoveWorktree, useStorage } from './worktreeStorage';
+import { CleanButton, sizeText, StageBadge, useRemoveWorktree, useStorage } from './worktreeStorage';
 import { BranchChip, ProjectKey } from '../common/BranchChip';
 import { branchOptions } from '../common/branchOptions';
 import { useAction } from '../common/useAction';
@@ -18,8 +18,11 @@ import { useProjectSettingsSections } from '../runs/ProjectSettingsPanel';
 import { SettingsScreens, type SettingsSection } from '../common/SettingsScreens';
 import { repoUrl } from './forgeLinks';
 import { invalidateWorktrees, worktreesQuery } from '../common/worktrees';
-import { useOpenChanges } from '../review/open';
+import { useOpenChanges } from '../common/open';
 import { ProjectDocuments } from '../documents/DocumentSettings';
+import { formatBytes } from '../common/text';
+import { invalidateProjects, projectKeys } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 /**
  * Name, key and base branch, each saved as it changes (PDT-231): text on blur or Enter, the branch at once. Folder and
@@ -28,13 +31,12 @@ import { ProjectDocuments } from '../documents/DocumentSettings';
 function General({ project, onKeyChange }: { project: Project; onKeyChange?: (key: string) => void }) {
   const personal = project.kind === 'personal';
   const qc = useQueryClient();
-  const branches = useQuery({ queryKey: ['branches', project.id], queryFn: () => api.listBranches(project.id), enabled: !personal });
+  const branches = useQuery({ queryKey: projectKeys.branches(project.id), queryFn: () => api.listBranches(project.id), enabled: !personal });
   const baseOptions = branchOptions(branches.data ?? [], project.baseBranch);
   const [baseState, trackBase] = useSaveState();
   const save = async (p: { name?: string; key?: string; baseBranch?: string }) => {
     const saved = await api.updateProject(project.id, p);
-    await qc.invalidateQueries({ queryKey: ['projects'] });
-    void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    await invalidateProjects(qc);
     // The page's path names the project by its key.
     if (saved.key !== project.key) onKeyChange?.(saved.key);
     return saved;
@@ -66,7 +68,7 @@ function General({ project, onKeyChange }: { project: Project; onKeyChange?: (ke
             onChange={(baseBranch) => void trackBase(save({ baseBranch }))} />
         </SettingsRow>
       )}
-      {branches.isError && <Alert tone="error">Branches could not be loaded: {branches.error.message}</Alert>}
+      <LoadError what="Branches" error={branches.error} />
       {personal ? (
         <SettingsRow label="Folder" description="Personal project (no repository): each ticket works in its own folder here.">
           <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
@@ -180,7 +182,7 @@ function Worktrees({ project }: { project: Project }) {
   return (
     <Section label="Worktrees" description={description}>
       {list.isPending && <Skeleton lines={3} label="Loading worktrees" />}
-      {list.isError && <Alert tone="error">Worktrees could not be loaded: {list.error.message}</Alert>}
+      <LoadError what="Worktrees" error={list.error} />
       {list.data?.length === 0 && <EmptyState>No worktrees. Running a branch makes one.</EmptyState>}
       {!!list.data?.length && (
         <ul data-flush className="flex flex-col divide-y divide-border">
@@ -205,8 +207,7 @@ function RemoveProject({ project, onRemoved }: { project: Project; onRemoved: ()
     });
     if (!ok) return;
     await api.deleteProject(project.id);
-    void qc.invalidateQueries({ queryKey: ['projects'] });
-    void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    void invalidateProjects(qc);
     onRemoved();
   });
   return (

@@ -5,6 +5,7 @@ mod lock;
 mod logging;
 mod seed;
 mod shutdown;
+mod start_at_login;
 
 use anyhow::Context;
 use pdt_api::loops::{Start, run_every};
@@ -166,6 +167,9 @@ async fn run() -> anyhow::Result<()> {
         Some(bin) => std::sync::Arc::new(pdt_tailscale::TailscaleCli::new(bin.clone())),
         None => std::sync::Arc::new(pdt_tailscale::TailscaleCli::detect(state.platform.login_path.as_deref())),
     };
+    // pdt-host's login item is changed only here (Settings → This host).
+    state.start_at_login =
+        std::sync::Arc::new(start_at_login::HostLogin::new(cfg.profile, cfg.supervised, cfg.data_dir.clone()));
     // Installs for the ACP profiles reach the network only here (PDT-239).
     state.toolchains = std::sync::Arc::new(pdt_api::toolchains::Http::new());
     // The machine's real free space: `AppState::new` reads none, so tests never see this disk (PDT-324).

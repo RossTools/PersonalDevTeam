@@ -63,6 +63,8 @@
   --pdt-control-sm: 24px;
   --pdt-control-md: 28px;
   --pdt-control-touch: 44px;
+  /* The large touch button: a phone screen's main actions (Start, Accept…, Review all). */
+  --pdt-control-lg: 48px;
   --pdt-duration: 120ms;
   --pdt-ease: cubic-bezier(0.2, 0, 0, 1);
   --pdt-radius: 6px;

@@ -8,6 +8,7 @@ import { Button, Field, IconButton, Input, MenuButton, Select, Switch, Textarea 
 import { deref } from './model';
 import { CodeField, MarkdownField } from './TextEditors';
 import { ConnectionPicker } from '../connections/ConnectionPicker';
+import { capitalize } from '../common/text';
 
 type Schema = Record<string, unknown>;
 type Value = unknown;
@@ -15,7 +16,7 @@ type Value = unknown;
 /** `runKey` → "Run key". */
 export function humanize(key: string): string {
   const words = key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_.]/g, ' ').toLowerCase();
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  return capitalize(words);
 }
 
 const isRef = (v: Value) => typeof v === 'string' && /\{\{.*\}\}/.test(v);

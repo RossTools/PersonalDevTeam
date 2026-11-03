@@ -1,16 +1,16 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Alert, Button, Link, Page, Section, Select, SettingsRow, Skeleton, Switch, toast } from '@ui';
-import { api } from '../api/client';
+import { Button, Link, Page, Section, Select, SettingsRow, Switch, toast } from '@ui';
 import type { KindSetting } from '../api/gen/KindSetting';
 import type { NotificationRulesInput } from '../api/gen/NotificationRulesInput';
 import type { NotificationRulesView } from '../api/gen/NotificationRulesView';
 import type { Show } from '../api/gen/Show';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
-import { CustomizedNotice, openWorkflow } from '../common/BuiltinSettings';
-import { connectionsKey } from '../connections/ConnectionDialog';
+import { CustomizedNotice } from '../common/BuiltinSettings';
+import { openWorkflow } from '../common/open';
+import { useConnections } from '../connections/queries';
 import { desktopNotificationsOn, setDesktopNotifications, showDesktop } from './desktop';
 import { useNotificationRules, useNotificationRulesActions } from './queries';
+import { QueryStatus } from '../common/QueryStatus';
 
 export const SHOW_LABEL: Record<Show, string> = {
   off: 'Off',
@@ -55,11 +55,7 @@ export function NotificationSettingsPage() {
     >
       <ThisDevice />
       {!v ? (
-        rules.error ? (
-          <Alert tone="error">Notification settings could not be loaded: {rules.error.message}</Alert>
-        ) : (
-          <Skeleton label="Loading notification settings" className="h-40" />
-        )
+        <QueryStatus query={rules} what="Notification settings" skeleton="h-40">{() => null}</QueryStatus>
       ) : (
         <>
           <Section
@@ -131,7 +127,7 @@ function Rules({ v, put }: { v: NotificationRulesView; put: Put }) {
 
 /** The chat channel questions, approvals and failed runs post to: a connection of a kind a plugin posts to. */
 function Chat({ v, put }: { v: NotificationRulesView; put: Put }) {
-  const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
+  const connections = useConnections();
   const kinds = new Set(v.channels.map((c) => c.connectionKind));
   const label = (kind: string) => v.channels.find((c) => c.connectionKind === kind)?.label ?? kind;
   const usable = (connections.data ?? []).filter((c) => kinds.has(c.kind));

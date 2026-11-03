@@ -5,19 +5,20 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CalendarDays, ChevronDown, ChevronRight, CircleAlert, CircleArrowRight, Inbox, Sun, Sunrise } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Alert, Button, Checkbox, Dialog, EmptyState, Field, Input, MenuButton, SegmentedControl, Select, Skeleton } from '@ui';
+import { Button, Checkbox, Dialog, DialogActions, EmptyState, Field, Input, MenuButton, SegmentedControl, Select, Skeleton } from '@ui';
 import type { Project } from '../api/gen/Project';
 import type { Recurrence } from '../api/gen/Recurrence';
 import type { RepeatFrom } from '../api/gen/RepeatFrom';
 import type { RepeatRule } from '../api/gen/RepeatRule';
 import type { Todo } from '../api/gen/Todo';
-import { useOpenTicket } from '../tickets/actions';
+import { useOpenTicket } from '../common/open';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { defaultRecurrence, grouped, localDay, moveToToday, positionFor, repeatText, shown, weekdayOf, WEEKDAYS, type DueGroupId, type TodoFilter } from './model';
 import { QuickAdd } from './QuickAdd';
 import { TodoRow } from './TodoRow';
 import { TodoView } from './TodoView';
 import { useTodoActions, useTodos } from './useTodos';
+import { LoadError } from '../common/QueryStatus';
 
 export const TODO_FILTER_KEY = 'pdt.todos.filter';
 /** How long a todo opened from a notification keeps its ring. */
@@ -272,7 +273,7 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
         </div>
         <div className="flex min-h-0 flex-1 flex-col overflow-auto px-1.5 pb-3">
           {todos.isPending && <Skeleton lines={4} label="Loading todos" />}
-          {todos.isError && <Alert tone="error">Todos could not be loaded: {todos.error.message}</Alert>}
+          <LoadError what="Todos" error={todos.error} />
           {todos.isSuccess && open.length === 0 && done.length === 0 && (
             <EmptyState>{active === 'project' ? `No todos for ${project?.key ?? 'this project'} yet.` : 'Nothing to do yet.'}</EmptyState>
           )}
@@ -322,7 +323,7 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
         </>
       )}
       {linking && (
-        <Dialog open onOpenChange={(o) => !o && setLinking(null)} title="Link to a ticket" description={linking.title}>
+        <Dialog onClose={() => setLinking(null)} title="Link to a ticket" description={linking.title}>
           <TicketPicker
             projectId={null}
             label="Ticket to link"
@@ -349,8 +350,7 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
       )}
       {deleting && (
         <Dialog
-          open
-          onOpenChange={(o) => !o && setDeleting(null)}
+          onClose={() => setDeleting(null)}
           title="Delete a repeating todo"
           description={`${deleting.title} repeats ${deleting.recurrence ? repeatText(deleting.recurrence).toLowerCase() : ''}.`}
           size="sm"
@@ -403,17 +403,11 @@ export function RepeatDialog({ title, initial, dueOn: givenDueOn, now, onSave, o
   };
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       title="Repeat"
       description={title}
       size="sm"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button disabled={!valid} onClick={save}>Save</Button>
-        </>
-      }
+      footer={<DialogActions onCancel={onClose} action="Save" disabled={!valid} onAction={save} />}
     >
       <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); save(); }}>
         <Field label="Repeats">

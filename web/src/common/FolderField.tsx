@@ -1,10 +1,11 @@
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FolderOpen } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
-import { Button, Dialog, FolderPicker, Input, type FolderPickerSelection } from '@ui';
+import { Button, Dialog, DialogActions, FolderPicker, Input, type FolderPickerSelection } from '@ui';
 import { api } from '../api/client';
 import type { FolderListing } from '../api/gen/FolderListing';
 import { PHONE_QUERY, useMediaQuery } from './useMediaQuery';
+import { hostKeys } from '../host/queries';
 
 export interface FolderFieldProps {
   value: string;
@@ -92,7 +93,7 @@ function FolderDialog({
   const [hidden, setHidden] = useState(false);
   const [selection, setSelection] = useState<FolderPickerSelection | null>(null);
   const q = useQuery({
-    queryKey: ['host-folders', target.path, target.nearest, hidden],
+    queryKey: [...hostKeys.folders, target.path, target.nearest, hidden],
     queryFn: () => api.listFolders({ path: target.path, hidden, nearest: target.nearest }),
     placeholderData: keepPreviousData,
     retry: false,
@@ -104,23 +105,15 @@ function FolderDialog({
   const onBrowse = useCallback((path: string) => setTarget({ path, nearest: false }), []);
   const create = async (name: string) => {
     const f = await api.createFolder({ parent: listing?.path ?? '', name });
-    void qc.invalidateQueries({ queryKey: ['host-folders'] });
+    void qc.invalidateQueries({ queryKey: hostKeys.folders });
     return f;
   };
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
+      onClose={onClose}
       title={title}
       size="lg"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={!selection} onClick={() => selection && onChoose(selection)}>
-            Choose
-          </Button>
-        </>
-      }
+      footer={<DialogActions onCancel={onClose} action="Choose" disabled={!selection} onAction={() => selection && onChoose(selection)} />}
     >
       <FolderPicker
         listing={listing}

@@ -14,6 +14,7 @@ import { PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { TicketPill } from '../common/TicketPill';
 import { actionError } from '../common/useAction';
+import { RUN_STATUS } from '../workflows/runs';
 import {
   createdTicket,
   LINK_TEXT,
@@ -29,6 +30,8 @@ import {
   type CreatedTicket,
   type FieldChange,
 } from './pdtTools';
+import { workflowKeys } from '../workflows/queries';
+import { POLL } from '../common/poll';
 
 /** A PDT tool call as the card needs it (a `tool_call` event's fields). */
 export interface PdtCall {
@@ -213,22 +216,15 @@ export function CommentCard({ call }: { call: PdtCall }) {
   );
 }
 
-const RUN_TONE: Record<WorkflowRunStatus, BadgeTone> = {
-  running: 'running', waiting: 'waiting', succeeded: 'running', quiet: 'neutral', failed: 'failed', cancelled: 'neutral',
-};
-const RUN_LABEL: Record<WorkflowRunStatus, string> = {
-  running: 'Running', waiting: 'Waiting', succeeded: 'Succeeded', quiet: 'Nothing to do', failed: 'Failed', cancelled: 'Cancelled',
-};
-
 /** `workflow_run`: the run, with its status (followed while it runs). */
 export function WorkflowRunCard({ call }: { call: PdtCall }) {
   const w = workflowRun(call.input, call.output);
   const state = callState(call);
   const run = useQuery({
-    queryKey: ['workflow-run', w.runId],
+    queryKey: workflowKeys.run(w.runId ?? ''),
     queryFn: () => api.getWorkflowRun(w.runId!),
     enabled: !!w.runId,
-    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? 5_000 : false),
+    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? POLL.steady : false),
   });
   const r = run.data;
   const verb = call.status === 'done' ? 'Started' : call.status === 'running' ? 'Starting' : "Didn't start";
@@ -237,7 +233,7 @@ export function WorkflowRunCard({ call }: { call: PdtCall }) {
       icon={<Play />}
       label={`${verb} ${w.workflow}`}
       heading={<>{verb} <span className="font-medium text-foreground">{r?.workflowName ?? w.workflow}</span></>}
-      aside={state?.aside ?? (r ? <Badge tone={RUN_TONE[r.status]}>{RUN_LABEL[r.status]}</Badge> : null)}
+      aside={state?.aside ?? (r ? <Badge tone={RUN_STATUS[r.status].tone}>{RUN_STATUS[r.status].text}</Badge> : null)}
     >
       {r && (
         <div className="flex items-center gap-2 py-2 text-xs">

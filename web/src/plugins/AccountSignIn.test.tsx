@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SignIn } from '../api/gen/SignIn';
 import { renderWithQuery, stubApi } from '../test-utils';
-import { connectionsKey } from '../connections/ConnectionDialog';
+import { connectionsKey } from '../connections/queries';
 import { AccountSignIn, redirectUri } from './AccountSignIn';
 
 afterEach(() => {
@@ -65,7 +65,7 @@ describe('A plugin’s account sign-in', () => {
     expect(await screen.findByText('Agents allowed')).toBeInTheDocument();
     expect(screen.getByText('Sign in with Acme adds an account.')).toBeInTheDocument();
     // Nothing to set up: no redirect URI to add, except under Advanced.
-    expect(screen.getByText('Advanced')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     expect(screen.getByText(/Blocked\? Use your own client\./)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Sign in with Acme' }));
     await waitFor(() => expect(popup.location.href).toBe('https://acme.example/consent?new=1'));

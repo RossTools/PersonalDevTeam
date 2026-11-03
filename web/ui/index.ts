@@ -11,9 +11,13 @@ export * from './Select';
 export * from './SuggestInput';
 export * from './Field';
 export * from './Checkbox';
+export * from './CheckboxPicks';
 export * from './Calendar';
 export * from './Switch';
 export * from './SegmentedControl';
+export * from './Tabs';
+export * from './ChoiceCard';
+export * from './Disclosure';
 export * from './Kbd';
 export * from './Link';
 export * from './Spinner';
@@ -42,11 +46,13 @@ export * from './Sheet';
 export * from './CommandList';
 
 // Lists and layout
+export * from './SectionLabel';
 export * from './List';
 export * from './DataList';
 export * from './FilterBar';
 export * from './BulkActionBar';
 export * from './Timeline';
+export * from './lib/time';
 export * from './TreeView';
 export * from './FolderPicker';
 export * from './ViewHeader';

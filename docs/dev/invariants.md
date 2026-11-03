@@ -275,6 +275,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **The Host guard and owner-only checks cover every route** (pdt-api `host_guard.rs`, `identity_guard.rs`): only
   loopback hosts and the allowed hosts; remote requests carry the owner's Tailscale identity. Hooks
   (`/api/hooks/*`) authenticate with their own secret instead. Don't add a route outside the guards.
+- **A browser can't change anything from another page.** The host guard refuses an `Origin` that isn't an allowed
+  host, and a change (not GET, HEAD or OPTIONS) whose `Sec-Fetch-Site` is there but isn't `same-origin` or `none`. A
+  route that reads its body as raw bytes and parses JSON from it reads it through `host_guard::optional_json`, which
+  wants `application/json` for a non-empty body (as axum's `Json` does), so a form or `text/plain` post, which needs
+  no preflight, can't carry it.
+- **Nothing is served on the tailnet without the owner check.** `tailscale serve` maps only pdtd's own port and
+  web runs' owner-checking proxies (pdt-api `remote_proxy.rs`); never map a port straight to a run or another process.
 - **Every response carries the security headers** (pdt-api `security_headers.rs`, the router's outer layers): no
   framing (`X-Frame-Options: DENY`, `frame-ancestors 'none'`), `nosniff`, no referrer, and for the web UI a CSP with
   script only from PDT's own bundle. Keep the UI free of inline scripts and `eval`; a new kind of resource it loads

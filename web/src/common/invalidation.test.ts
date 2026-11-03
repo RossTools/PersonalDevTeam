@@ -2,7 +2,11 @@
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 import { invalidateTickets, ticketKeys } from '../tickets/queries';
-import { invalidateWorkflow } from '../workflows/invalidate';
+import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
+import { invalidateProjects, projectKeys } from '../projects/queries';
+import { sessionKeys } from '../sessions/queries';
+import { invalidateWorkflow, savedWorkflow, workflowKeys } from '../workflows/queries';
+import { workspaceKeys } from '../workspaces/queries';
 import { ticketTabPoll } from '../workspaces/useWorkspaces';
 import { invalidateWorktrees, worktreeKeys } from './worktrees';
 
@@ -26,6 +30,25 @@ describe('invalidation', () => {
     const qc = cached(...keys);
     invalidateWorkflow(qc, 'w1');
     expect(keys.map((k) => stale(qc, k))).toEqual([true, true, true, true, true, false]);
+  });
+
+  it('saving a workflow keeps the saved one and refreshes the list, its versions and the built-in sections', () => {
+    const qc = cached(workflowKeys.all, workflowKeys.versions('w1'), ['stuck-agents'], workflowKeys.versions('w2'));
+    savedWorkflow(qc, { id: 'w1', version: 3 } as WorkflowDetail);
+    expect(qc.getQueryData(workflowKeys.one('w1'))).toEqual({ id: 'w1', version: 3 });
+    expect([workflowKeys.all, workflowKeys.versions('w1'), ['stuck-agents'], workflowKeys.versions('w2')].map((k) => stale(qc, k))).toEqual([true, true, true, false]);
+  });
+
+  it('a project write refreshes the projects and the workspaces', () => {
+    const qc = cached(projectKeys.all, workspaceKeys.all);
+    void invalidateProjects(qc);
+    expect([stale(qc, projectKeys.all), stale(qc, workspaceKeys.all)]).toEqual([true, true]);
+  });
+
+  it('a worktree write refreshes the sessions and workspaces in it', () => {
+    const qc = cached(sessionKeys.project('p1'), workspaceKeys.all);
+    invalidateWorktrees(qc, 'p1');
+    expect([stale(qc, sessionKeys.project('p1')), stale(qc, workspaceKeys.all)]).toEqual([true, true]);
   });
 
   it("a worktree write refreshes the project's list, or every list", () => {

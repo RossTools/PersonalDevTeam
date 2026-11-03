@@ -4,7 +4,7 @@
 // workflows call the same ones.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, Checkbox, Dialog, Field, Input, Page, Section, SegmentedControl, Select, Skeleton, Switch, Textarea, relativeTime, useConfirm } from '@ui';
+import { Alert, Badge, Button, Checkbox, CheckboxPicks, Dialog, DialogActions, Field, Input, Page, Section, SegmentedControl, Select, Switch, Textarea, absoluteTime } from '@ui';
 import { api } from '../api/client';
 import type { AgentAccess } from '../api/gen/AgentAccess';
 import type { McpProbe } from '../api/gen/McpProbe';
@@ -12,6 +12,12 @@ import type { McpServerView } from '../api/gen/McpServerView';
 import type { OAuthSettings } from '../api/gen/OAuthSettings';
 import type { ToolMode } from '../api/gen/ToolMode';
 import { isWebUrl } from '../common/webUrl';
+import { plural } from '../common/text';
+import { hostKeys } from '../host/queries';
+import { QueryStatus } from '../common/QueryStatus';
+import { useConfirmDelete } from '../common/useConfirmDelete';
+import { useScopeOptions } from '../common/useScopeOptions';
+import { connectionsKey } from '../connections/queries';
 
 export const mcpServersKey = ['mcp-servers'] as const;
 
@@ -83,26 +89,8 @@ function Pairs({ label, hint, pairs, secrets, onChange }: {
   );
 }
 
-/** Checkboxes for a list of ids; none ticked means all. */
-function Picks({ label, hint, options, value, onChange }: {
-  label: string;
-  hint: string;
-  options: { id: string; name: string }[];
-  value: string[];
-  onChange: (v: string[]) => void;
-}) {
-  const toggle = (id: string, on: boolean) => onChange(on ? [...value, id] : value.filter((x) => x !== id));
-  if (!options.length) return null;
-  return (
-    <Field label={label} hint={hint}>
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
-        {options.map((o) => <Checkbox key={o.id} checked={value.includes(o.id)} onChange={(on) => toggle(o.id, on)}>{o.name}</Checkbox>)}
-      </div>
-    </Field>
-  );
-}
-
-const str = (v: unknown) => (typeof v === 'string' ? v : '');
+/** `v` when it's a string, else ''. */
+const stringOr = (v: unknown) => (typeof v === 'string' ? v : '');
 
 /** Add a server, or edit one. */
 export function McpServerDialog({ server, onClose }: { server?: McpServerView; onClose: () => void }) {
@@ -110,13 +98,12 @@ export function McpServerDialog({ server, onClose }: { server?: McpServerView; o
   const c = server?.connection;
   const config = c?.config ?? {};
   const secrets = useQuery({ queryKey: ['secrets'], queryFn: api.listSecrets });
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
-  const personas = useQuery({ queryKey: ['personas'], queryFn: api.listPersonas });
+  const { projectOptions, personaOptions } = useScopeOptions();
   const [name, setName] = useState(c?.name ?? '');
   const [transport, setTransport] = useState<string>(server?.transport ?? 'stdio');
-  const [command, setCommand] = useState(str(config.command));
+  const [command, setCommand] = useState(stringOr(config.command));
   const [args, setArgs] = useState(Array.isArray(config.args) ? (config.args as string[]).join('\n') : '');
-  const [cwd, setCwd] = useState(str(config.cwd));
+  const [cwd, setCwd] = useState(stringOr(config.cwd));
   const [env, setEnv] = useState<Pair[]>(pairsOf(config.env));
   const [url, setUrl] = useState(c?.url ?? '');
   const [headers, setHeaders] = useState<Pair[]>(pairsOf(config.headers));
@@ -139,23 +126,20 @@ export function McpServerDialog({ server, onClose }: { server?: McpServerView; o
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: mcpServersKey });
-      void qc.invalidateQueries({ queryKey: ['connections'] });
+      void qc.invalidateQueries({ queryKey: connectionsKey });
       onClose();
     },
   });
   const secretNames = (secrets.data ?? []).map((s) => s.name);
   const ok = name.trim() !== '' && (remote ? /^https?:\/\/\S+$/.test(url.trim()) : command.trim() !== '');
   const set = (p: Partial<AgentAccess>) => setAccess((a) => ({ ...a, ...p }));
-  const projectOptions = (projects.data ?? []).filter((p) => p.kind !== 'host').map((p) => ({ id: p.id, name: p.name }));
-  const personaOptions = (personas.data ?? []).filter((p) => !p.archived).map((p) => ({ id: p.id, name: p.name }));
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
+      onClose={onClose}
       dismissable={false}
       title={c ? `Edit ${c.name}` : 'Add MCP server'}
       description="Every agent session it is for gets it, beside PDT's own tools. Secrets are filled in only in each session's launch settings."
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!ok} pending={save.isPending} onClick={() => save.mutate()}>Save</Button></>}
+      footer={<DialogActions onCancel={onClose} action="Save" disabled={!ok} pending={save.isPending} onAction={() => save.mutate()} />}
     >
       <div className="flex flex-col gap-3">
         <Field label="Name" hint="Agents see it under a short form of this name (Slack: mcp__slack__search).">
@@ -213,9 +197,9 @@ export function McpServerDialog({ server, onClose }: { server?: McpServerView; o
             <Checkbox checked={access.user} disabled={!access.enabled} onChange={(v) => set({ user: v })}>Sessions you start</Checkbox>
           </div>
         </Field>
-        <Picks label="Only these personas" hint="Workflow steps of every persona when none is ticked." options={personaOptions} value={access.personas} onChange={(personas) => set({ personas })} />
-        <Picks label="Only these projects" hint="Every project when none is ticked." options={projectOptions} value={access.projects} onChange={(projects) => set({ projects })} />
-        <Picks label="Turned off in" hint="Projects whose sessions don't get it." options={projectOptions} value={access.offIn} onChange={(offIn) => set({ offIn })} />
+        <CheckboxPicks label="Only these personas" hint="Workflow steps of every persona when none is ticked." options={personaOptions} value={access.personas} onChange={(personas) => set({ personas })} />
+        <CheckboxPicks label="Only these projects" hint="Every project when none is ticked." options={projectOptions} value={access.projects} onChange={(projects) => set({ projects })} />
+        <CheckboxPicks label="Turned off in" hint="Projects whose sessions don't get it." options={projectOptions} value={access.offIn} onChange={(offIn) => set({ offIn })} />
         <Field label="Its tools" hint="Allow runs without asking, Ask uses the agent's own prompt, Block makes a tool unavailable where the agent can. Set single tools after Test.">
           <SegmentedControl aria-label="Its tools" options={MODES} value={access.tools.default} onChange={(d) => set({ tools: { ...access.tools, default: d } })} />
         </Field>
@@ -271,7 +255,7 @@ function Probe({ server, probe }: { server: McpServerView; probe: McpProbe }) {
 export function audience(a: AgentAccess): string {
   if (!a.enabled) return 'Workflows only';
   const who = [a.pm && 'the PM', a.tickets && 'ticket agents', a.user && 'your sessions'].filter(Boolean);
-  const where = a.projects.length ? ` in ${a.projects.length} project${a.projects.length === 1 ? '' : 's'}` : '';
+  const where = a.projects.length ? ` in ${plural(a.projects.length, 'project')}` : '';
   return who.length ? `For ${who.join(', ')}${where}` : 'No agents';
 }
 
@@ -306,7 +290,7 @@ function SignIn({ server }: { server: McpServerView }) {
   if (!o) return null;
   const status = !o.signedIn ? <Badge tone="waiting">Not signed in</Badge>
     : o.problem ? <Badge tone="failed">Sign-in failed: {o.problem}</Badge>
-    : <span className="text-xs text-muted-foreground">Signed in{o.account ? ` as ${o.account}` : ''}{o.expiresAt ? ` · renews ${relativeTime(o.expiresAt)}` : ''}</span>;
+    : <span className="text-xs text-muted-foreground">Signed in{o.account ? ` as ${o.account}` : ''}{o.expiresAt ? ` · renews ${absoluteTime(o.expiresAt)}` : ''}</span>;
   const error = signIn.error ?? signOut.error;
   return (
     <div className="flex w-full flex-wrap items-center gap-2 pl-2">
@@ -349,41 +333,32 @@ function Row({ server, onEdit, onDelete }: { server: McpServerView; onEdit: () =
 
 export function McpServersPage() {
   const qc = useQueryClient();
-  const confirm = useConfirm();
   const list = useQuery({ queryKey: mcpServersKey, queryFn: api.mcpServers });
   const [editing, setEditing] = useState<{ server?: McpServerView } | null>(null);
-  const remove = useMutation({
-    meta: { errorShown: true },
-    mutationFn: (s: McpServerView) => api.deleteConnection(s.connection.id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: mcpServersKey }),
+  const remove = useConfirmDelete({
+    remove: (s: McpServerView) => api.deleteConnection(s.connection.id),
+    invalidate: [mcpServersKey],
+    confirm: (s) => ({
+      title: `Delete ${s.connection.name}?`,
+      body: 'New agent sessions start without it, and workflows that call its tools fail. Its sign-in is forgotten.',
+      action: 'Delete server',
+    }),
   });
   const onlyPdt = useMutation({
     meta: { errorShown: true },
     mutationFn: (on: boolean) => api.saveHostSettings({ mcpOnlyPdt: on }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: mcpServersKey });
-      void qc.invalidateQueries({ queryKey: ['host-settings'] });
+      void qc.invalidateQueries({ queryKey: hostKeys.settings });
     },
   });
-  const ask = async (s: McpServerView) => {
-    const { ok } = await confirm({
-      title: `Delete ${s.connection.name}?`,
-      body: 'New agent sessions start without it, and workflows that call its tools fail. Its sign-in is forgotten.',
-      action: 'Delete server',
-      danger: true,
-    });
-    if (ok) remove.mutate(s);
-  };
-  const servers = list.data?.servers ?? [];
   const error = remove.error ?? onlyPdt.error;
   return (
     <Page
       title="MCP servers"
       description="Add an MCP server once and every agent gets it: Claude Code, Codex and the other agents, in conversations and terminals. Remote servers that sign in with OAuth sign in here, once."
     >
-      {list.error && <Alert tone="error">MCP servers could not be loaded: {list.error.message}</Alert>}
-      {list.isLoading && <Skeleton label="Loading MCP servers" className="h-24" />}
-      {!list.isLoading && (
+      <QueryStatus query={list} what="MCP servers" skeleton="h-24">{({ servers, onlyPdt: onlyPdtOn }) => (
         <>
           <Section
             label="Servers"
@@ -391,7 +366,7 @@ export function McpServersPage() {
             actions={<Button size="sm" onClick={() => setEditing({})}>Add server</Button>}
           >
             {servers.length
-              ? servers.map((s) => <Row key={s.connection.id} server={s} onEdit={() => setEditing({ server: s })} onDelete={() => void ask(s)} />)
+              ? servers.map((s) => <Row key={s.connection.id} server={s} onEdit={() => setEditing({ server: s })} onDelete={() => void remove.ask(s)} />)
               : <p className="text-sm text-muted-foreground">None yet.</p>}
           </Section>
           <Section label="Agents' own MCP servers" description="The MCP servers you added to each agent yourself keep loading beside these, unless you turn this on.">
@@ -400,11 +375,11 @@ export function McpServersPage() {
               label="Use only PDT's MCP servers"
               hint="Claude Code and Codex ignore the servers in their own settings. Other agents can't be told to, so theirs still load."
             >
-              <Switch checked={list.data?.onlyPdt ?? false} disabled={onlyPdt.isPending} onChange={(on) => onlyPdt.mutate(on)} />
+              <Switch checked={onlyPdtOn} disabled={onlyPdt.isPending} onChange={(on) => onlyPdt.mutate(on)} />
             </Field>
           </Section>
         </>
-      )}
+      )}</QueryStatus>
       {error && <Alert tone="error">{error.message}</Alert>}
       {editing && <McpServerDialog server={editing.server} onClose={() => setEditing(null)} />}
     </Page>

@@ -2,7 +2,7 @@
 // side request (it forks the conversation and changes nothing), then the new-ticket form opens with them. "Start from
 // this chat" (a chat in its own worktree) makes the chat the ticket's attempt; nothing is sent to the agent.
 import { Suspense, useEffect, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Dialog, Spinner } from '@ui';
 import { api } from '../api/client';
 import type { Session } from '../api/gen/Session';
@@ -13,6 +13,7 @@ import { actionError } from '../common/useAction';
 import { NewTicketDialog } from '../shell/screens';
 import { invalidateTickets } from './queries';
 import { invalidateWorktrees } from '../common/worktrees';
+import { useProjects } from '../projects/queries';
 
 export interface MakeTicketDialogProps {
   session: Session;
@@ -26,7 +27,7 @@ type Phase = { step: 'drafting' } | { step: 'failed'; error: string } | { step: 
 
 export function MakeTicketDialog({ session, canStartHere, onClose, onCreated }: MakeTicketDialogProps) {
   const qc = useQueryClient();
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const projects = useProjects();
   const [phase, setPhase] = useState<Phase>({ step: 'drafting' });
   const [attempt, setAttempt] = useState(0);
   const agents = useAgents();
@@ -50,8 +51,6 @@ export function MakeTicketDialog({ session, canStartHere, onClose, onCreated }: 
       await api.startTicket(t.id, { agent: session.agent ?? 'claude', fromSession: session.id, mode: 'force' });
       invalidateTickets(qc);
       invalidateWorktrees(qc, t.projectId);
-      void qc.invalidateQueries({ queryKey: ['sessions'] });
-      void qc.invalidateQueries({ queryKey: ['workspaces'] });
     };
     return (
       <Suspense fallback={null}><NewTicketDialog
@@ -73,8 +72,7 @@ export function MakeTicketDialog({ session, canStartHere, onClose, onCreated }: 
 
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       title="Make ticket"
       description={`${agentName} drafts a title and description from this chat. The chat itself is left as it is.`}
       size="md"

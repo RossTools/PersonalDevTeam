@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BriefcaseBusiness, FileStack } from 'lucide-react';
-import { Button, EmptyState, List, ListRow, PromptBox, Skeleton, ViewHeader, relativeTime } from '@ui';
+import { Button, EmptyState, List, ListRow, PromptBox, RelativeTime, Skeleton, ViewHeader, absoluteTime } from '@ui';
 import { api } from '../api/client';
 import type { Session } from '../api/gen/Session';
 import { useAction } from '../common/useAction';
@@ -71,12 +71,12 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
     { label: 'Reset…', onSelect: () => reset(info), disabled: !canClose },
     { label: 'Close…', onSelect: () => close(info), disabled: !canClose },
   ] : null);
-  const meta = [
-    `Started ${relativeTime(s.createdAt)}`,
+  const rest = [
     ended ? `ended: ${info.reason ? REASON_LABEL[info.reason] : 'ended'}` : null,
     s.persona ? `${s.persona.name} v${s.persona.version}` : null,
     viaLabel(info),
   ].filter(Boolean).join(' · ');
+  const meta = <>Started <RelativeTime time={s.createdAt} />{rest ? ` · ${rest}` : ''}</>;
   const renameField = (
     <InlineRename
       label="Conversation name"
@@ -112,7 +112,7 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
       {previous && (
         <div className="border-b border-border px-2 py-1">
           <Button variant="ghost" size="sm" onClick={() => onSelect(previous.session.id)}>
-            Previous conversation (reset {new Date(previous.lastActivity).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })})
+            Previous conversation (reset {absoluteTime(previous.lastActivity)})
           </Button>
         </div>
       )}
@@ -184,7 +184,7 @@ function EarlierSessions({ onSelect, phone }: { onSelect: (s: PmSelection) => vo
                 title={s.title}
                 secondary={
                   <span className="flex flex-col">
-                    <span>{new Date(s.session.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                    <span>{absoluteTime(s.session.createdAt)}</span>
                     <span>Ended: {s.reason ? REASON_LABEL[s.reason] : 'ended'}</span>
                     {firstLine(s.journal) && <span className="truncate">{firstLine(s.journal)}</span>}
                   </span>

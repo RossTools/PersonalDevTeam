@@ -4,8 +4,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { ArrowRight, CircleCheck, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Alert, Badge, Button, Chip, Dialog, IconButton, MenuButton, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm,
-  type TimelineItem,
+  Alert, Badge, Button, Chip, Dialog, Disclosure, IconButton, MenuButton, SectionLabel, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm, type TimelineItem,
 } from '@ui';
 import { api } from '../api/client';
 import type { AgentBy } from '../api/gen/AgentBy';
@@ -23,19 +22,18 @@ import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { useWatches, Watchers } from '../common/Watch';
-import { actionError, useAction } from '../common/useAction';
+import { actionError, useAction, useFormAction } from '../common/useAction';
 import { moveTicket, patchTicket, useOpenSession, useOpenTicket } from './actions';
 import { ParentField } from './PartsSection';
 import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole, type TrackerLabel } from './model';
 import { usePluginList } from './ExternalKeys';
-import { invalidateTickets, pagedPoll, POLL, ticketKeys, useLabels, useProjectAreas } from './queries';
+import { invalidateTickets, ticketKeys, useLabels, useProjectAreas } from './queries';
 import { AreaChips, AreasEditor } from './Areas';
 import { ATTACH_ACCEPT, AttachButton, attachmentMarkdown, UploadList, useAttachmentUploads } from './attachments';
 import { IssueRows, LinkIssueDialog, useRefreshIssues, WebLinkRows } from './IssueLinks';
 import { LabelsEditor } from './LabelsEditor';
 import { TicketPicker } from './TicketPicker';
-
-const sectionHeading = 'text-2xs font-medium tracking-wider text-muted-foreground uppercase';
+import { POLL, pagedPoll } from '../common/poll';
 
 /** True inside a folding section that already names the block (the phone's ticket screen): its own heading hides. */
 export const FoldedSectionContext = createContext(false);
@@ -47,7 +45,7 @@ export function OverviewSection({ title, actions, children, className }: { title
     <section aria-label={title} className={cn('flex flex-col gap-2', className)}>
       {folded && !actions ? <h3 className="sr-only">{title}</h3> : (
         <div className="flex min-h-6 items-center gap-2">
-          <h3 className={cn(sectionHeading, 'flex-1', folded && 'sr-only')}>{title}</h3>
+          <SectionLabel className={cn('flex-1', folded && 'sr-only')}>{title}</SectionLabel>
           {folded && <span className="flex-1" />}
           {actions}
         </div>
@@ -123,8 +121,6 @@ export function TicketDescription({ ticket, onDirtyChange }: {
   // What is typed, and the description it was started from.
   const [edit, setEdit] = useState<{ draft: string; base: string } | null>(null);
   const [mode, setMode] = useState<'write' | 'preview'>('write');
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
   const editing = edit !== null;
   const draft = edit?.draft ?? '';
   const dirty = editing && edit.draft !== edit.base;
@@ -140,9 +136,13 @@ export function TicketDescription({ ticket, onDirtyChange }: {
     setEdit({ draft: ticket.description, base: ticket.description });
     setMode('write');
   };
+  const saving = useFormAction(async (description: string) => {
+    await patchTicket(qc, ticket.id, { description });
+    setEdit(null);
+  });
   const close = () => {
     setEdit(null);
-    setError(null);
+    saving.setError(null);
   };
   // Nothing typed yet: follow the description as it changes.
   const live = ticket.description;
@@ -154,17 +154,7 @@ export function TicketDescription({ ticket, onDirtyChange }: {
   }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const save = async () => {
-    if (!dirty) return;
-    setPending(true);
-    setError(null);
-    try {
-      await patchTicket(qc, ticket.id, { description: draft });
-      setEdit(null);
-    } catch (e) {
-      setError(actionError(e));
-    } finally {
-      setPending(false);
-    }
+    if (dirty) await saving.run(draft);
   };
   return (
     <OverviewSection
@@ -223,13 +213,13 @@ export function TicketDescription({ ticket, onDirtyChange }: {
               version drops your edit.
             </Alert>
           )}
-          {error && <Alert tone="error">{error}</Alert>}
+          {saving.error && <Alert tone="error">{saving.error}</Alert>}
           <UploadList uploads={uploads} onDismiss={dismiss} />
           <div className="flex items-center justify-end gap-2">
             <span className="mr-auto text-meta text-muted-foreground pointer-coarse:hidden">Markdown. ⌘/Ctrl+Enter saves.</span>
             <AttachButton onFiles={(f) => void attach(f)} />
             <Button variant="ghost" onClick={close}>Cancel</Button>
-            <Button type="submit" variant="primary" pending={pending} disabled={!dirty}>Save</Button>
+            <Button type="submit" variant="primary" pending={saving.pending} disabled={!dirty}>Save</Button>
           </div>
         </form>
       ) : ticket.description.trim() ? (
@@ -433,25 +423,14 @@ export function TicketLinks({ ticket }: { ticket: Ticket }) {
 export function LinkTicketDialog({ ticket, onClose }: { ticket: Ticket; onClose: () => void }) {
   const qc = useQueryClient();
   const [role, setRole] = useState<LinkRole>('blockedBy');
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const link = async (otherId: string) => {
-    if (pending) return;
-    setPending(true);
-    setError(null);
-    try {
-      const c = linkCall(ticket.id, otherId, role);
-      await api.linkTicket(c.from, { to: c.to, kind: c.kind });
-      invalidateTickets(qc, [ticket.id, otherId]);
-      onClose();
-    } catch (e) {
-      setError(actionError(e));
-    } finally {
-      setPending(false);
-    }
-  };
+  const { run: link, error } = useFormAction(async (otherId: string) => {
+    const c = linkCall(ticket.id, otherId, role);
+    await api.linkTicket(c.from, { to: c.to, kind: c.kind });
+    invalidateTickets(qc, [ticket.id, otherId]);
+    onClose();
+  });
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()} title={`Link ${ticket.key} to…`} size="md">
+    <Dialog onClose={onClose} title={`Link ${ticket.key} to…`} size="md">
       <div className="flex flex-col gap-2">
         <SegmentedControl
           aria-label="Link kind"
@@ -561,10 +540,9 @@ function toItem(e: TicketEvent, trackerLabel: TrackerLabel): TimelineItem {
     ...(e.kind === 'outside_input' && e.body
       ? {
           body: (
-            <details>
-              <summary className="cursor-pointer text-xs text-muted-foreground select-none">Show what they wrote</summary>
-              <div className="mt-1"><Markdown>{e.body}</Markdown></div>
-            </details>
+            <Disclosure title="Show what they wrote" panelClassName="text-sm text-foreground">
+              <Markdown>{e.body}</Markdown>
+            </Disclosure>
           ),
         }
       : {}),
@@ -572,10 +550,9 @@ function toItem(e: TicketEvent, trackerLabel: TrackerLabel): TimelineItem {
     ...(e.kind === 'feedback' && e.body
       ? {
           body: (
-            <details>
-              <summary className="cursor-pointer text-xs text-muted-foreground select-none">Show the comments</summary>
-              <div className="mt-1"><Markdown>{e.body}</Markdown></div>
-            </details>
+            <Disclosure title="Show the comments" panelClassName="text-sm text-foreground">
+              <Markdown>{e.body}</Markdown>
+            </Disclosure>
           ),
         }
       : {}),
@@ -599,7 +576,7 @@ export function TicketTimeline({ ticketId, recent, composer = false }: { ticketI
   const short = useQuery({
     queryKey: [...ticketKeys.events(ticketId), 'recent', recent],
     queryFn: () => api.ticketEvents(ticketId, { newestFirst: true, limit: recent }),
-    refetchInterval: POLL,
+    refetchInterval: POLL.live,
     enabled: recent !== undefined,
   });
   const newestFirst = recent === undefined ? full.data?.pages.flatMap((p) => p.items) ?? [] : short.data?.items ?? [];

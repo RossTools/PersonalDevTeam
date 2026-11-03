@@ -17,9 +17,10 @@ import { MarkdownEditor } from '../common/LazyMarkdownEditor';
 import { Markdown } from '../common/LazyMarkdown';
 import { isMarkdownPath } from '../common/markdownPath';
 import { PlacePicker, type Place } from '../common/PlacePicker';
+import { GIT_STATUS_TONE } from '../common/gitStatus';
 import { useNavigationGuard, whenAllowed } from '../shell/router';
-import { POLL } from '../tickets/queries';
 import { CodeViewer } from './LazyCodeViewer';
+import { sessionsQuery } from '../sessions/queries';
 
 // The conflict diff is CodeMirror's merge view: loaded only when it is shown.
 const CodeDiff = lazy(() => import('../review/CodeDiff').then((m) => ({ default: m.CodeDiff })));
@@ -79,7 +80,7 @@ export function useFolderView(projects: Project[], initial: Place | null, held?:
 
 export type FolderViewState = ReturnType<typeof useFolderView>;
 
-const STATUS_TONE: Record<string, string> = { M: 'text-waiting', A: 'text-running', '??': 'text-running', D: 'text-failed', R: 'text-waiting' };
+const STATUS_TONE: Record<string, string> = { ...GIT_STATUS_TONE, '??': GIT_STATUS_TONE.A };
 const statusLetter = (status: string) => (status === '??' ? 'U' : status.slice(0, 1));
 const statusTone = (status: string) => STATUS_TONE[status] ?? STATUS_TONE[status.slice(0, 1)] ?? 'text-muted-foreground';
 
@@ -297,7 +298,7 @@ const editOf = (f: FileContent, n = 0): Edit | null => (f.text === null ? null :
 
 /** Agent sessions working in the checkout (they may change the file too). */
 function useAgentsAt(place: Place): Session[] {
-  const sessions = useQuery({ queryKey: ['sessions', place.projectId], queryFn: () => api.listSessions(place.projectId), refetchInterval: POLL });
+  const sessions = useQuery(sessionsQuery(place.projectId));
   return (sessions.data ?? []).filter(
     (s) => s.kind === 'agent_tui' && s.status === 'running' && s.activity === 'working' && s.worktreeId === place.worktreeId,
   );
@@ -489,8 +490,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
       )}
       {conflict?.diff && edit && conflict.disk !== undefined && (
         <Dialog
-          open
-          onOpenChange={(o) => { if (!o) setConflict({ ...conflict, diff: false }); }}
+          onClose={() => setConflict({ ...conflict, diff: false })}
           size="xl"
           title={`${name}: on disk → yours`}
           description={conflict.disk === null ? 'The file was deleted on disk. Overwrite makes it again with your text.' : 'Removed lines are on disk now; added lines are your changes.'}

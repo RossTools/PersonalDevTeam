@@ -10,7 +10,7 @@ use axum::Json;
 use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::conversation::SessionMode;
 use pdt_core::forge::ForgeKind;
@@ -559,14 +559,11 @@ impl Refusal {
 pub(crate) async fn merge(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<MergeResult>, ApiError> {
     // The body is optional: empty means a merge commit.
-    let input: MergeRequest = if body.iter().all(u8::is_ascii_whitespace) {
-        MergeRequest::default()
-    } else {
-        serde_json::from_slice(&body).map_err(|e| ApiError::invalid(e.to_string()))?
-    };
+    let input: MergeRequest = crate::host_guard::optional_json(&headers, &body)?;
     let merger = match input.by.as_deref() {
         Some("user") => Merger::User,
         None | Some("agent") => Merger::Automated,

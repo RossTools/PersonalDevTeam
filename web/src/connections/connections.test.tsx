@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderWithQuery, Reply, stubApi } from '../test-utils';
+import { fullText, renderWithQuery, Reply, stubApi } from '../test-utils';
 import type { Connection } from '../api/gen/Connection';
 import { ParamsForm } from '../workflows/NewWorkflowDialog';
 import { plugins } from '../api/gen/plugins';
@@ -34,7 +34,7 @@ describe('connections', () => {
     const failing = { ...conn('work', 'jira'), lastError: 'Jira answered 401', lastErrorAt: Date.now() - 5 * 60_000 };
     stub({ 'GET /api/connections': [failing, conn('ci', 'jira')] });
     renderWithQuery(page('jira'));
-    expect(await screen.findByText('Failing since 5m ago: Jira answered 401')).toBeTruthy();
+    expect(await screen.findByText(fullText('Failing since 5m ago: Jira answered 401'))).toBeTruthy();
     expect(screen.getAllByText(/^Failing since/)).toHaveLength(1);
   });
 

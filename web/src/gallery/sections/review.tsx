@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { CommentComposer, CommentThread, type ThreadComment } from '@ui/Comment';
+import { SectionLabel } from '@ui/SectionLabel';
 import { SplitPane } from '@ui/SplitPane';
 import { toast } from '@ui/Toaster';
 import { Markdown } from '../../common/Markdown';
@@ -13,7 +14,7 @@ const CodeDiff = lazy(() => import('../../review/CodeDiff').then((m) => ({ defau
 function Demo({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
+      <SectionLabel as="div">{label}</SectionLabel>
       {children}
     </div>
   );

@@ -2,7 +2,7 @@ import { Children, type HTMLAttributes, type ReactNode } from 'react';
 import { cn } from '@ui/lib/utils';
 import { Badge as BadgePrimitive } from './primitives/badge';
 
-export type BadgeTone = 'neutral' | 'running' | 'waiting' | 'failed' | 'accent';
+export type BadgeTone = 'neutral' | 'running' | 'waiting' | 'failed' | 'accent' | 'solid';
 
 /** Each run of text in a label in a span that truncates with an ellipsis, so a long badge never widens its container. */
 function truncatingText(children: ReactNode): ReactNode[] {
@@ -28,13 +28,16 @@ function truncatingText(children: ReactNode): ReactNode[] {
 
 /**
  * A small label. Neutral by default; a tone only when it shows state (colour means state).
- * `count` renders a round number badge (capped at `max`, 99 by default) instead of `children`.
+ * `count` renders a round number badge (capped at `max`, 99 by default) instead of `children`. `tone="solid"` is the
+ * accent-filled count of things waiting on the user (the rail's Needs you); `size="sm"` (16px) sits on an icon or in a
+ * nav row.
  * A label is never wider than its container: its text truncates, so give a long one a `title` with the full text.
  */
 export function Badge({
   tone = 'neutral',
   count,
   max = 99,
+  size = 'md',
   children,
   className,
   ...rest
@@ -42,11 +45,12 @@ export function Badge({
   tone?: BadgeTone;
   count?: number;
   max?: number;
+  size?: 'sm' | 'md';
   children?: ReactNode;
 }) {
   const isCount = count !== undefined;
   return (
-    <BadgePrimitive variant={tone} shape={isCount ? 'count' : 'label'} className={cn(!isCount && 'max-w-full min-w-0 justify-start', className)} {...rest}>
+    <BadgePrimitive variant={tone} shape={isCount ? 'count' : 'label'} size={size} className={cn(!isCount && 'max-w-full min-w-0 justify-start', className)} {...rest}>
       {isCount ? (count > max ? `${max}+` : count) : truncatingText(children)}
     </BadgePrimitive>
   );

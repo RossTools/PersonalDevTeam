@@ -38,8 +38,8 @@ export class ErrorBoundary extends Component<
         className={this.props.className}
         action={
           <div className="flex gap-2">
-            <Button className="h-12 px-6 pointer-coarse:h-12" onClick={back}>Back to Inbox</Button>
-            <Button variant="primary" className="h-12 px-6 pointer-coarse:h-12" onClick={() => window.location.reload()}>Reload</Button>
+            <Button size="lg" className="px-6" onClick={back}>Back to Inbox</Button>
+            <Button variant="primary" size="lg" className="px-6" onClick={() => window.location.reload()}>Reload</Button>
           </div>
         }
       >

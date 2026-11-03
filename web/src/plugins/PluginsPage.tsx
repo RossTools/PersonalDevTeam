@@ -4,13 +4,15 @@
 // checks); its connections, project settings and workflows are kept for when it is on again.
 import { useState } from 'react';
 import { LayoutGrid, List as ListIcon } from 'lucide-react';
-import { Alert, Button, Input, Page, SegmentedControl, Skeleton } from '@ui';
+import { Alert, Badge, Button, Input, Page, SectionLabel, SegmentedControl, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import {
   CATEGORIES, CATEGORY_LABEL, NO_FILTER, categoryCounts, filterPlugins, groupPlugins, loadLayout, needsAttention, storeLayout,
   type Plugin, type PluginFilter, type PluginLayout, type PluginTab,
 } from './model';
-import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch, usePlugins } from './parts';
+import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch } from './parts';
+import { usePlugins } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 interface ItemProps {
   p: Plugin;
@@ -83,7 +85,7 @@ export function PluginsPage({ onOpen, phone = false }: PluginsPageProps) {
       className="max-w-5xl"
       description="What this PDT works with. Turn one on and it adds its connections, workflow steps, templates and PM tools. Turning one off keeps its settings, connections and workflows for later."
     >
-      {list.error && <Alert tone="error">Plugins could not be loaded: {list.error.message}</Alert>}
+      <LoadError what="Plugins" error={list.error} />
       {list.isLoading && <Skeleton label="Loading plugins" className="h-24" />}
       {list.data && (
         <div className="flex flex-col gap-3">
@@ -116,14 +118,14 @@ export function PluginsPage({ onOpen, phone = false }: PluginsPageProps) {
               <Button key={c ?? 'all'} size="sm" variant={filter.category === c ? 'primary' : 'secondary'} aria-pressed={filter.category === c}
                 onClick={() => set({ category: c })}>
                 {c ? CATEGORY_LABEL[c] : 'All'}{' '}
-                <span className="font-normal tabular-nums">{counts[c ?? 'all']}</span>
+                <Badge count={counts[c ?? 'all']} size="sm" />
               </Button>
             ))}
           </div>
           {shown.length === 0 && <p className="text-sm text-muted-foreground">No plugins match.</p>}
           {groupPlugins(shown).map(([c, ps]) => (
             <section key={c} aria-label={CATEGORY_LABEL[c]} className="flex flex-col gap-2">
-              <h3 className="mt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{CATEGORY_LABEL[c]}</h3>
+              <SectionLabel className="mt-2">{CATEGORY_LABEL[c]}</SectionLabel>
               {asList
                 ? <div className="flex flex-col divide-y divide-border overflow-clip rounded-lg border border-border bg-card">{ps.map(item)}</div>
                 : <div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-2.5">{ps.map(item)}</div>}

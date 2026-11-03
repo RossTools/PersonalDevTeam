@@ -1,5 +1,5 @@
 import { useCallback, useMemo, type ReactNode } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { MessagesSquare } from 'lucide-react';
 import { EmptyState, toast, type ApprovalAnswer } from '@ui';
 import { cn } from '@ui/lib/utils';
@@ -16,6 +16,9 @@ import { useAgents } from '../common/agents';
 import { MessageList } from './MessageList';
 import { PinnedApprovalBar } from './PinnedApprovalBar';
 import { useConversation, type ConversationData } from './useConversation';
+import { useProjects } from '../projects/queries';
+import { invalidateSessions, sessionKeys } from '../sessions/queries';
+import { useHostSettings, useAgentCapabilities } from '../host/queries';
 
 /** What Continue sends after an interrupted turn. */
 export const CONTINUE_PROMPT = 'Continue where you left off.';
@@ -76,9 +79,9 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
   const turnRunning = state?.turnRunning ?? false;
   const agent = session.agent ?? 'claude';
   const agentName = useAgents().label(agent);
-  const caps = useQuery({ queryKey: ['agent-capabilities', agent], queryFn: () => api.agentCapabilities(agent), staleTime: 60_000 });
-  const hostSettings = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings, staleTime: 60_000, retry: false });
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects, staleTime: 60_000 });
+  const caps = useAgentCapabilities(agent);
+  const hostSettings = useHostSettings();
+  const projects = useProjects();
   const project = projects.data?.find((p) => p.id === session.projectId) ?? null;
   // Ticket keys, PRs, the checkout's file paths and SHAs show as pills and links (PDT-382).
   const refs = useMemo<MarkdownRefs>(() => ({
@@ -89,13 +92,12 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
   }), [project, session.id, session.worktreeId]);
 
   const refreshSessions = () => Promise.all([
-    qc.invalidateQueries({ queryKey: ['sessions', session.projectId] }),
-    qc.invalidateQueries({ queryKey: ['session', session.id] }),
+    invalidateSessions(qc, session.projectId),
+    qc.invalidateQueries({ queryKey: sessionKeys.one(session.id) }),
   ]);
   const patch = useMutation({
     mutationFn: (p: SessionPatch) => api.updateSession(session.id, p),
     onSuccess: () => void refreshSessions(),
-    onError: (err) => toast.error(actionError(err)),
   });
   const shownModel = patch.isPending && patch.variables.model !== undefined ? patch.variables.model : session.model;
   const shownMode =

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Upload } from 'lucide-react';
-import { Alert, Button, CommandList, Dialog, Field, Input, SegmentedControl, Select, toast, type CommandItem } from '@ui';
+import { Alert, Button, CommandList, Dialog, DialogActions, Field, Input, SegmentedControl, Select, toast, type CommandItem } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import type { Document } from '../api/gen/Document';
@@ -9,8 +9,9 @@ import type { DocumentKind } from '../api/gen/DocumentKind';
 import type { Project } from '../api/gen/Project';
 import type { ProviderPicker } from '../api/gen/ProviderPicker';
 import type { SignInAccount } from '../api/gen/SignInAccount';
-import { actionError } from '../common/useAction';
-import { ConnectionDialog, connectionsKey } from '../connections/ConnectionDialog';
+import { actionError, useFormAction } from '../common/useAction';
+import { ConnectionDialog } from '../connections/ConnectionDialog';
+import { useConnections } from '../connections/queries';
 import { useSignInAccounts } from '../plugins/AccountSignIn';
 import { pickFiles } from './picker';
 import { KIND_LABEL, invalidateDocuments, useDocumentProviders, useDocuments } from './queries';
@@ -50,43 +51,28 @@ export function NewDocumentDialog({ projects, projectId = null, ticket, onClose,
   const [project, setProject] = useState<string>(ticket?.projectId ?? projectId ?? NO_PROJECT);
   const providers = useDocumentProviders(project || null);
   const [provider, setProvider] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
   const makers = (providers.data?.providers ?? []).filter((p) => p.capabilities.create && (kind === 'doc' ? p.capabilities.docs : p.capabilities.sheets));
   const chosen = provider && makers.some((p) => p.id === provider) ? provider
     : makers.find((p) => p.id === providers.data?.default)?.id ?? makers[0]?.id ?? null;
-  const create = async () => {
-    if (pending || !title.trim() || !chosen) return;
-    setPending(true);
-    setError(null);
-    try {
-      const d = await api.createDocument({
-        title,
-        kind,
-        provider: chosen,
-        ...(ticket ? { ticketId: ticket.id } : project ? { projectId: project } : {}),
-      });
-      invalidateDocuments(qc);
-      onCreated(d);
-    } catch (e) {
-      setError(actionError(e));
-    } finally {
-      setPending(false);
-    }
-  };
+  const save = useFormAction(async () => {
+    if (!title.trim() || !chosen) return;
+    const d = await api.createDocument({
+      title,
+      kind,
+      provider: chosen,
+      ...(ticket ? { ticketId: ticket.id } : project ? { projectId: project } : {}),
+    });
+    invalidateDocuments(qc);
+    onCreated(d);
+  });
+  const create = save.run;
   const none = providers.isSuccess && makers.length === 0;
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       title={ticket ? `New document for ${ticket.key}` : 'New document'}
       size="sm"
-      footer={(
-        <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" pending={pending} disabled={!title.trim() || !chosen} onClick={() => void create()}>Create</Button>
-        </>
-      )}
+      footer={<DialogActions onCancel={onClose} action="Create" pending={save.pending} disabled={!title.trim() || !chosen} onAction={() => void create()} />}
     >
       <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void create(); }}>
         <Field label="Title">
@@ -118,7 +104,7 @@ export function NewDocumentDialog({ projects, projectId = null, ticket, onClose,
             No document provider here makes {kind === 'doc' ? 'docs' : 'sheets'}. Turn on a documents plugin in Settings → Plugins.
           </Alert>
         )}
-        {error && <Alert tone="error">{error}</Alert>}
+        {save.error && <Alert tone="error">{save.error}</Alert>}
       </form>
     </Dialog>
   );
@@ -146,12 +132,12 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
     queryFn: () => api.providerFiles(chosen!, q),
     enabled: chosen !== null,
   });
-  const [error, setError] = useState<string | null>(null);
+  // Uploading, importing a found file and the provider's picker share one error line.
+  const act = useFormAction((work: () => Promise<void>) => work());
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const hasLocal = (providers.data?.providers ?? []).some((p) => p.id === 'local');
-  const upload = async (file: File) => {
-    setError(null);
+  const upload = (file: File) => act.run(async () => {
     setUploading(true);
     try {
       const r = await api.uploadDocument(file, ticket ? { ticketId: ticket.id } : { projectId });
@@ -160,12 +146,10 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
         toast.info(`“${r.document.title}” is imported without its ${r.dropped.join(', ')}: PDT's sheets don't keep those.`);
       }
       onImported(r.document);
-    } catch (e) {
-      setError(actionError(e));
     } finally {
       setUploading(false);
     }
-  };
+  });
   // The provider's own file picker, for each signed-in account that opens it.
   const picker = searchers.find((p) => p.id === chosen)?.picker ?? null;
   const accounts = useSignInAccounts(picker?.accounts ?? null);
@@ -188,19 +172,13 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
     reference,
     ...(ticket ? { ticketId: ticket.id } : projectId ? { projectId } : {}),
   });
-  const pick = async (reference: string) => {
+  const pick = (reference: string) => act.run(async () => {
     if (!chosen) return;
-    setError(null);
-    try {
-      const d = await importOne(chosen, reference);
-      invalidateDocuments(qc);
-      onImported(d);
-    } catch (e) {
-      setError(actionError(e));
-    }
-  };
-  const pickWith = async (module: string, provider: string, connectionId: string) => {
-    setError(null);
+    const d = await importOne(chosen, reference);
+    invalidateDocuments(qc);
+    onImported(d);
+  });
+  const pickWith = (module: string, provider: string, connectionId: string) => act.run(async () => {
     setPicking(true);
     try {
       const picked = await pickFiles(module, connectionId);
@@ -208,15 +186,13 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
       for (const reference of picked) last = await importOne(provider, reference);
       invalidateDocuments(qc);
       if (last) onImported(last);
-    } catch (e) {
-      setError(actionError(e));
     } finally {
       setPicking(false);
     }
-  };
+  });
   if (picking) return null;
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()} title={ticket ? `Import a document to ${ticket.key}` : 'Import a document'} size="md">
+    <Dialog onClose={onClose} title={ticket ? `Import a document to ${ticket.key}` : 'Import a document'} size="md">
       <div className="flex flex-col gap-2">
         {searchers.length > 1 && (
           <Select
@@ -255,7 +231,7 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
             className="max-h-[50dvh]"
           />
         )}
-        {error && <Alert tone="error">{error}</Alert>}
+        {act.error && <Alert tone="error">{act.error}</Alert>}
         {hasLocal && (
           <div className="flex items-center gap-2 border-t border-border pt-2">
             <Button variant="secondary" size="sm" disabled={uploading} onClick={() => fileInput.current?.click()}>
@@ -289,7 +265,7 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
 function PickerHelp({ picker, accounts }: { picker: ProviderPicker; accounts: SignInAccount[] }) {
   const without = accounts.filter((a) => a.signedIn && !a.picker);
   const own = picker.setup ? without.filter((a) => !a.builtIn) : [];
-  const connections = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections, enabled: own.length > 0 });
+  const connections = useConnections(own.length > 0);
   const [editing, setEditing] = useState<Connection | null>(null);
   const builtIn = without.some((a) => a.builtIn);
   if (!builtIn && own.length === 0) return <Alert tone="info">{picker.help}</Alert>;
@@ -328,7 +304,7 @@ export function LinkDocumentDialog({ title, exclude, onPick, onClose }: {
   const list = (docs.data ?? []).filter((d) => !exclude.includes(d.id));
   const items: CommandItem[] = list.map((d) => ({ id: d.id, label: d.title, detail: KIND_LABEL[d.kind], keywords: query ? [query] : [] }));
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()} title={title} size="md">
+    <Dialog onClose={onClose} title={title} size="md">
       <div className="flex flex-col gap-2">
         <CommandList
           label="Documents"

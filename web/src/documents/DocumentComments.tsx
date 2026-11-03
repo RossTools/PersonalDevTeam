@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageSquarePlus } from 'lucide-react';
-import { Alert, Button, CommentComposer, CommentThread, RelativeTime, Select, Skeleton } from '@ui';
+import { Button, CommentComposer, CommentThread, RelativeTime, SectionLabel, Select, Skeleton } from '@ui';
 import { api } from '../api/client';
 import type { CommentAnchor } from '../api/gen/CommentAnchor';
 import { Markdown } from '../common/Markdown';
-import { actionError } from '../common/useAction';
 import { documentKeys, useDocumentComments } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 /** A doc's headings (`#` lines outside code fences), for comments on them. */
 export function headingsOf(markdown: string): string[] {
@@ -75,7 +75,7 @@ export function DocumentComments({ id, headings, selection, onShow }: DocumentCo
   return (
     <section aria-label="Comments" className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <h2 className="text-2xs font-semibold tracking-wider text-muted-foreground uppercase">Comments{open > 0 && ` · ${open}`}</h2>
+        <SectionLabel as="h2">Comments{open > 0 && ` · ${open}`}</SectionLabel>
         {!adding && <Button variant="ghost" size="sm" compact className="ml-auto" onClick={start}><MessageSquarePlus aria-hidden /> Comment</Button>}
       </div>
       {adding && (
@@ -110,7 +110,7 @@ export function DocumentComments({ id, headings, selection, onShow }: DocumentCo
         </div>
       )}
       {comments.isPending && <Skeleton lines={2} label="Loading comments" />}
-      {comments.isError && <Alert tone="error">The comments could not be loaded: {actionError(comments.error)}</Alert>}
+      <LoadError what="The comments" error={comments.error} />
       {comments.data?.length === 0 && !adding && <p className="text-xs text-muted-foreground">No comments yet.</p>}
       {comments.data?.map((c) => (
         <CommentThread

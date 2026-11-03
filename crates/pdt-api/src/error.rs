@@ -156,6 +156,8 @@ pub mod codes {
     pub const SIGN_IN_TIMEOUT: &str = "sign_in_timeout";
     pub const SPAWN_FAILED: &str = "spawn_failed";
     pub const STALE_UI_TOKEN: &str = "stale_ui_token";
+    pub const START_AT_LOGIN_FAILED: &str = "start_at_login_failed";
+    pub const START_AT_LOGIN_UNAVAILABLE: &str = "start_at_login_unavailable";
     pub const START_BLOCKED: &str = "start_blocked";
     pub const SWITCH_UNSUPPORTED: &str = "switch_unsupported";
     pub const TERMINAL_UNSUPPORTED: &str = "terminal_unsupported";

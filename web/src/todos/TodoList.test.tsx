@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
 import type { Todo } from '../api/gen/Todo';
-import { OpenTicketContext } from '../tickets/actions';
+import { OpenTicketContext } from '../common/open';
 import { editorText, renderWithQuery, setEditorText, stubApi, type Call } from '../test-utils';
 import { AUTOSAVE_MS } from '../notes/useNoteDraft';
 import { TodoList, type TodoFocus } from './TodoList';

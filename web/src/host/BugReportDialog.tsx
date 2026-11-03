@@ -1,11 +1,12 @@
 import { useContext, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Alert, Button, Checkbox, Dialog, Field, Input, Link, Skeleton, Textarea } from '@ui';
+import { Alert, Button, Checkbox, Dialog, DialogActions, Field, Input, Link, Skeleton, Textarea } from '@ui';
 import { ApiError, api } from '../api/client';
 import type { BugReportFiled } from '../api/gen/BugReportFiled';
 import type { BugReportPreview } from '../api/gen/BugReportPreview';
 import { actionError } from '../common/useAction';
-import { OpenTicketContext } from '../tickets/actions';
+import { OpenTicketContext } from '../common/open';
+import { hostKeys } from './queries';
 
 /** Error codes whose fix is in Host settings (the token, or the bug reports setting). */
 const SETTINGS_CODES = ['no_token', 'token_rejected', 'token_no_issue_access', 'bug_reports_off', 'no_bug_project'];
@@ -32,7 +33,7 @@ export interface BugReportDialogProps {
  *  the GitHub issue form), optional diagnostics with their preview; then a link to what it filed. */
 export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProps) {
   const openTicket = useContext(OpenTicketContext);
-  const preview = useQuery({ queryKey: ['bug-report-preview'], queryFn: api.bugReportPreview });
+  const preview = useQuery({ queryKey: hostKeys.bugReportPreview, queryFn: api.bugReportPreview });
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [expected, setExpected] = useState('');
@@ -63,7 +64,7 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
 
   if (filed) {
     return (
-      <Dialog open onOpenChange={(o) => !o && onClose()} title="Bug reported" size="md" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
+      <Dialog onClose={onClose} title="Bug reported" size="md" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
         {filed.kind === 'issue' ? (
           <p className="text-sm">
             Thanks. It is issue <Link external href={filed.url}>#{filed.number}</Link> on GitHub.
@@ -80,19 +81,19 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
 
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       dismissable={![title, description, expected, steps].some((t) => t.trim())}
       title="Report a bug"
       description="A bug in PDT itself. The version, and the OS with the diagnostics, are added for you."
       size="lg"
       footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="bug-report" variant="primary" pending={pending} disabled={!ready}>
-            {p?.route === 'local' ? 'File ticket' : 'Send report'}
-          </Button>
-        </>
+        <DialogActions
+          onCancel={onClose}
+          action={p?.route === 'local' ? 'File ticket' : 'Send report'}
+          form="bug-report"
+          pending={pending}
+          disabled={!ready}
+        />
       }
     >
       <form id="bug-report" className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void send(); }}>

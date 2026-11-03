@@ -4,7 +4,7 @@ import { useState, type DragEvent, type KeyboardEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { GripVertical, Play, Plus, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Alert, Badge, Button, Checkbox, Dialog, dragData, IconButton, Input, parseDragData, toast } from '@ui';
+import { Alert, Badge, Button, Checkbox, Dialog, DialogActions, dragData, IconButton, Input, parseDragData, toast } from '@ui';
 import { api } from '../api/client';
 import type { Ticket } from '../api/gen/Ticket';
 import type { TicketParent } from '../api/gen/TicketParent';
@@ -19,6 +19,7 @@ import { invalidateTickets } from './queries';
 import { PrBadge } from './PullRequest';
 import { OverviewSection } from './TicketParts';
 import { TicketPicker } from './TicketPicker';
+import { plural } from '../common/text';
 
 const PART_DRAG_KIND = 'part';
 
@@ -195,7 +196,7 @@ export function MakePartsDialog({ ticket, onClose }: { ticket: Pick<Ticket, 'id'
     try {
       await api.createParts(ticket.id, { parts: titles.map((title) => ({ title })), blockedByPrevious: chain });
       invalidateTickets(qc, [ticket.id]);
-      toast.success(`${ticket.key} has ${titles.length} new part${titles.length === 1 ? '' : 's'}.`);
+      toast.success(`${ticket.key} has ${plural(titles.length, 'new part')}.`);
       onClose();
     } catch (e) {
       setError(actionError(e));
@@ -205,19 +206,19 @@ export function MakePartsDialog({ ticket, onClose }: { ticket: Pick<Ticket, 'id'
   };
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       title={`Make ${ticket.key} into parts`}
       description="Each part is a ticket with its own branch and PR."
       size="md"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" pending={pending} disabled={titles.length === 0} onClick={() => void submit()}>
-            {titles.length <= 1 ? 'Make part' : `Make ${titles.length} parts`}
-          </Button>
-        </>
-      }
+      footer={(
+        <DialogActions
+          onCancel={onClose}
+          action={titles.length <= 1 ? 'Make part' : `Make ${titles.length} parts`}
+          pending={pending}
+          disabled={titles.length === 0}
+          onAction={() => void submit()}
+        />
+      )}
     >
       <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         <ol aria-label="Parts to make" className="flex flex-col gap-1.5">
@@ -273,7 +274,7 @@ export function ParentField({ ticket }: { ticket: Ticket }) {
       </Button>
       {ticket.parent && <Button variant="ghost" size="sm" compact onClick={() => void set('')}>Detach</Button>}
       {picking && (
-        <Dialog open onOpenChange={(o) => !o && setPicking(false)} title={`Make ${ticket.key} a part of…`} size="md">
+        <Dialog onClose={() => setPicking(false)} title={`Make ${ticket.key} a part of…`} size="md">
           <div className="flex flex-col gap-2">
             <TicketPicker
               projectId={ticket.projectId}

@@ -21,8 +21,7 @@ import { actionError, runAction } from '../common/useAction';
 import { readViewState, useViewKey, useViewState, writeViewState } from '../common/viewState';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import {
-  canStart, deleteTicket, isBeforeWork, moveToEntries, retryAutoStartEntry, startNextPart, stopWaitingEntry, ticketMenu, useOpenTicket,
-  useStartTicket,
+  canStart, isBeforeWork, startNextPart, ticketMenu, useOpenTicket, useStartTicket,
 } from './actions';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
 import { PartsStepper } from '../common/PartsStepper';
@@ -45,6 +44,9 @@ import { LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverla
 import type { BacklogState } from './useBacklog';
 import { TicketAttachments } from './attachments';
 import { TicketDocuments } from './TicketDocuments';
+import { plural } from '../common/text';
+import { projectKeys } from '../projects/queries';
+import { invalidateWorkspaces } from '../workspaces/queries';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Filter chips
@@ -282,14 +284,11 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirt
       <MenuButton
         label="Ticket actions"
         placement="top end"
-        entries={() => [
-          ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
-          ...(t.pickupFailed ? [retryAutoStartEntry(qc, t)] : []),
-          { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
-          ...(canMakeParts(t) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
-          { separator: true },
-          { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onDeleted(); }) },
-        ]}
+        entries={() => ticketMenu({
+          qc, confirm, ticket: t,
+          ...(canMakeParts(t) ? { onMakeParts: () => setMaking(true) } : {}),
+          onDeleted,
+        })}
       />
       {canStart(t) && <Button onClick={() => start(t)}>Start</Button>}
       {t.parts && !isClosed(t.stage) && <Button onClick={() => void runAction(() => startNextPart(start, t))}>Start next part</Button>}
@@ -383,7 +382,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   const project = projects.find((p) => p.id === projectId) ?? null;
   // A project linked to a plugin that imports issues can import one by its key.
   const settings = useQuery({
-    queryKey: ['project-settings', project?.id],
+    queryKey: projectKeys.settings(project?.id ?? ''),
     queryFn: () => api.projectSettings(project!.id),
     enabled: !!project && project.kind !== 'personal',
   });
@@ -476,7 +475,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
       if (working.length > 0) {
         const n = working.length;
         const { ok } = await confirm({
-          title: `Stop the work on ${n} ticket${n === 1 ? '' : 's'}?`,
+          title: `Stop the work on ${plural(n, 'ticket')}?`,
           body: `${working.slice(0, 5).map((t) => t.key).join(', ')}${n > 5 ? '…' : ''} ${n === 1 ? 'has an attempt' : 'have attempts'} in progress. Moving ${n === 1 ? 'it' : 'them'} cancels ${n === 1 ? 'its workflow run' : 'their workflow runs'}, stops ${n === 1 ? 'its' : 'their'} sessions and abandons the ${n === 1 ? 'attempt' : 'attempts'}. Worktrees, branches and sessions are kept.`,
           action: 'Stop and move',
           danger: true,
@@ -491,7 +490,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     void runAction(async () => {
       const n = selectedIds.length;
       const { ok } = await confirm({
-        title: `Delete ${n} ticket${n === 1 ? '' : 's'}?`,
+        title: `Delete ${plural(n, 'ticket')}?`,
         body: `${selected.slice(0, 5).map((t) => t.key).join(', ')}${n > 5 ? '…' : ''} and their comments and links are deleted. This can't be undone.`,
         action: n === 1 ? 'Delete ticket' : 'Delete tickets',
         danger: true,
@@ -500,7 +499,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
       await api.bulkTickets({ ids: selectedIds, action: 'delete' });
       clearSelection();
       invalidateTickets(qc);
-      void qc.invalidateQueries({ queryKey: ['workspaces'] });
+      void invalidateWorkspaces(qc);
     });
   const labelEntries = (): MenuEntry[] => {
     const onSelected = [...new Set(selected.flatMap((t) => t.labels))].sort();
@@ -687,7 +686,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
             />
             <span className="truncate max-sm:hidden">
               {scopeName}
-              {mode === 'backlog' && total !== undefined && ` · ${total} ticket${total === 1 ? '' : 's'}`}
+              {mode === 'backlog' && total !== undefined && ` · ${plural(total, 'ticket')}`}
             </span>
           </>
         }

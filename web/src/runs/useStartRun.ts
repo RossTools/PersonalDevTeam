@@ -5,6 +5,7 @@ import type { NewRun } from '../api/gen/NewRun';
 import type { Run } from '../api/gen/Run';
 import { invalidateWorktrees } from '../common/worktrees';
 import { withApproval } from './ApproveCommands';
+import { invalidateRuns } from './queries';
 
 type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
 
@@ -38,7 +39,7 @@ export function useStartRun(projectId: string, onStarted: (runId: string) => voi
     mutationFn: (r: NewRun): Promise<Run | null> =>
       withStopConfirm(confirm, (stopRunId) => api.startRun(projectId, stopRunId ? { ...r, stopRunId } : r)),
     onSuccess: (run) => {
-      void qc.invalidateQueries({ queryKey: ['runs', projectId] });
+      void invalidateRuns(qc, projectId);
       invalidateWorktrees(qc, projectId);
       if (run) onStarted(run.id);
     },

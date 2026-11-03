@@ -5,8 +5,8 @@ import { Badge } from '@ui';
 import { api } from '../api/client';
 import { ChangeRow, Key, priorityLabel, stageLabel } from './PdtToolCard';
 import { createdTicket, LINK_TEXT, pdtTool, sentMessage, ticketEdit, ticketLink } from './pdtTools';
-
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+import { isRecord } from '../common/guards';
+import { sessionKeys } from '../sessions/queries';
 
 /** A description's first paragraph, cut to a couple of lines. */
 export function shortText(markdown: string, max = 220): string {
@@ -41,7 +41,7 @@ function NewTicket({ input }: { input: unknown }) {
 }
 
 function SessionName({ id }: { id: string | null }) {
-  const s = useQuery({ queryKey: ['session', id], queryFn: () => api.getSession(id!), enabled: !!id, staleTime: 60_000, retry: false });
+  const s = useQuery({ queryKey: sessionKeys.one(id ?? ''), queryFn: () => api.getSession(id!), enabled: !!id, staleTime: 60_000, retry: false });
   return <span className="font-medium">{s.data?.title ?? 'a session'}</span>;
 }
 

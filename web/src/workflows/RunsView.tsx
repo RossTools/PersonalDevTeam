@@ -4,18 +4,21 @@
 // opening to its input and output, with nothing to act on.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, EmptyState, RelativeTime, Skeleton } from '@ui';
+import { Alert, Badge, Button, EmptyState, RelativeTime, Skeleton, formatDuration } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { WatchButton, Watchers } from '../common/Watch';
-import { useOpenSession } from '../tickets/actions';
+import { useOpenSession } from '../common/open';
 import type { WorkflowRun } from '../api/gen/WorkflowRun';
 import type { WorkflowRunDetail } from '../api/gen/WorkflowRunDetail';
 import type { WorkflowStep } from '../api/gen/WorkflowStep';
 import { GraphView } from './GraphView';
 import type { Catalog } from './model';
-import { RUN_STATUS, duration, pathOf, runSteps } from './runs';
+import { RUN_STATUS, pathOf, runSteps } from './runs';
 import { StepList, type StepRow } from './StepList';
+import { workflowKeys } from './queries';
+import { POLL } from '../common/poll';
+import { LoadError } from '../common/QueryStatus';
 
 const STEP_STATUS: Record<WorkflowStep['status'], StepRow['status']> = {
   pending: { tone: 'neutral', text: 'Pending' },
@@ -47,20 +50,20 @@ function stepSession(s: WorkflowStep): string | null {
 function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflowId: string; catalog: Catalog; viewOnly: boolean }) {
   const qc = useQueryClient();
   const run = useQuery({
-    queryKey: ['workflow-run', id],
+    queryKey: workflowKeys.run(id),
     queryFn: () => api.getWorkflowRun(id),
-    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? 2000 : false),
+    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? POLL.live : false),
   });
   const version = run.data?.version;
   const doc = useQuery({
-    queryKey: ['workflow-version', workflowId, version],
+    queryKey: workflowKeys.version(workflowId, version ?? 0),
     queryFn: () => api.workflowVersion(workflowId, version!),
     enabled: version !== undefined,
     staleTime: Infinity,
   });
   const done = (d: WorkflowRunDetail) => {
-    qc.setQueryData(['workflow-run', id], d);
-    void qc.invalidateQueries({ queryKey: ['workflow-runs'] });
+    qc.setQueryData(workflowKeys.run(id), d);
+    void qc.invalidateQueries({ queryKey: workflowKeys.allRuns });
   };
   const retry = useMutation({ meta: { errorShown: true }, mutationFn: () => api.retryWorkflowRun(id), onSuccess: done });
   const resume = useMutation({ meta: { errorShown: true }, mutationFn: () => api.resumeWorkflowRun(id), onSuccess: done });
@@ -69,7 +72,7 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
   const openSession = useOpenSession();
   const open = useMutation({ meta: { errorShown: true }, mutationFn: (id: string) => api.getSession(id), onSuccess: (s) => openSession(s) });
   const [selected, setSelected] = useState<string | null>(null);
-  if (run.error) return <Alert tone="error">The run could not be loaded: {run.error.message}</Alert>;
+  if (run.error) return <LoadError what="The run" error={run.error} />;
   if (!run.data) return <Skeleton lines={6} className="p-3" />;
   const r = run.data;
   const status = RUN_STATUS[r.status];
@@ -82,7 +85,7 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
         <Badge tone={status.tone}>{status.text}</Badge>
         <span className="font-medium">{triggerOf(r)}</span>
         <span className="text-meta text-muted-foreground">
-          version {r.version} · started <RelativeTime time={r.startedAt} />{r.endedAt ? ` · took ${duration(r.endedAt - r.startedAt)}` : ''}
+          version {r.version} · started <RelativeTime time={r.startedAt} />{r.endedAt ? ` · took ${formatDuration(r.endedAt - r.startedAt)}` : ''}
         </span>
         <span className={cn('flex gap-1', viewOnly && 'ml-auto')}><WatchButton of={{ run: r.id }} /></span>
         {!viewOnly && <span className="ml-auto flex gap-1">
@@ -141,14 +144,14 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
   /** Phones: the list, or the run picked (no graph, nothing to act on). */
   viewOnly?: boolean;
 }) {
-  const runs = useQuery({ queryKey: ['workflow-runs', workflowId], queryFn: () => api.listWorkflowRuns({ workflow: workflowId, limit: 100 }), refetchInterval: 2000 });
+  const runs = useQuery({ queryKey: workflowKeys.runs(workflowId), queryFn: () => api.listWorkflowRuns({ workflow: workflowId, limit: 100 }), refetchInterval: POLL.live });
   const list = runs.data ?? [];
   const current = viewOnly ? runId : runId ?? list[0]?.id ?? null;
   if (viewOnly && current) return <RunDetail key={current} id={current} workflowId={workflowId} catalog={catalog} viewOnly />;
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <nav aria-label="Runs" className={cn('shrink-0 overflow-auto border-b border-border md:max-h-none md:w-72 md:border-r md:border-b-0', viewOnly ? 'min-h-0 flex-1' : 'max-h-56')}>
-        {runs.error && <Alert tone="error" className="m-2">Runs could not be loaded: {runs.error.message}</Alert>}
+        <LoadError what="Runs" error={runs.error} className="m-2" />
         {runs.isSuccess && list.length === 0 && <EmptyState>No runs yet. Dry run it, or enable it and wait for its trigger.</EmptyState>}
         <ul className="flex flex-col p-1">
           {list.map((r) => {

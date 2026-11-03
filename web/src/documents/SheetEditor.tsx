@@ -431,7 +431,7 @@ function ChartDialog({ model, onClose, onAdd }: { model: Model; onClose: () => v
     onClose();
   };
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()} title="Chart the selection" size="sm">
+    <Dialog onClose={onClose} title="Chart the selection" size="sm">
       {ok ? (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-muted-foreground">

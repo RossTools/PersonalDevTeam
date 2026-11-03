@@ -7,7 +7,7 @@ import type { ChangedFile } from '../api/gen/ChangedFile';
 import type { CommentSide } from '../api/gen/CommentSide';
 import type { Ticket } from '../api/gen/Ticket';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
-import { actionError, runAction } from '../common/useAction';
+import { actionError, runAction, useAction } from '../common/useAction';
 import { readViewState, useViewKey, useViewState, writeViewState } from '../common/viewState';
 import { useLocation } from '../shell/router';
 import { PrBadge } from '../tickets/PullRequest';
@@ -21,6 +21,7 @@ import { invalidateReview, useChanges, useReviewComments } from './queries';
 import { ReviewBar } from './ReviewBar';
 import { changesState } from './state';
 import { useViewed } from './viewed';
+import { plural } from '../common/text';
 
 const MODE_KEY = 'pdt.review.mode';
 const LIST_KEY = 'pdt.review.fileList';
@@ -106,7 +107,6 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
   const [loaded, setLoaded] = useViewState<Record<string, boolean>>(named('loaded'), {});
   const scrollKey = useViewKey(named('scroll'));
   const [reveal, setReveal] = useState<(DeepLink & { line: number }) | null>(null);
-  const [sending, setSending] = useState(false);
   const [merging, setMerging] = useState(false);
   const { isViewed, setViewed } = useViewed(worktreeId);
 
@@ -261,19 +261,12 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
     e.preventDefault();
   };
 
-  const sendFeedback = async () => {
-    setSending(true);
-    try {
-      const r = await api.sendFeedback(worktreeId);
-      toast.success(`Sent ${r.sent} comment${r.sent === 1 ? '' : 's'} to the agent.`);
-      invalidateReview(qc, worktreeId);
-      if (t) invalidateTickets(qc, [t.id]);
-    } catch (e) {
-      toast.error(actionError(e));
-    } finally {
-      setSending(false);
-    }
-  };
+  const [sendFeedback, sending] = useAction(async () => {
+    const r = await api.sendFeedback(worktreeId);
+    toast.success(`Sent ${plural(r.sent, 'comment')} to the agent.`);
+    invalidateReview(qc, worktreeId);
+    if (t) invalidateTickets(qc, [t.id]);
+  });
   const approve = () =>
     void runAction(async () => {
       const id = changes.data?.attemptId;
@@ -306,7 +299,7 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
         </IconButton>
       )}
       <span className="min-w-0 truncate" title={`${c.branch} against ${c.base} (from ${c.mergeBase.slice(0, 8)})`}>
-        {files.length} file{files.length === 1 ? '' : 's'} vs <span className="font-mono">{c.base}</span>
+        {plural(files.length, 'file')} vs <span className="font-mono">{c.base}</span>
       </span>
       {files.length > 0 && <span className="shrink-0">· {viewedCount} / {files.length} viewed</span>}
       <span className="ml-auto flex shrink-0 items-center gap-2">

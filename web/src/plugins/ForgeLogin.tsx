@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
-import { Alert, Badge, Button, Input, Link, Section, SettingsRow, Skeleton, useConfirm } from '@ui';
+import { Alert, Badge, Button, Input, Link, Section, SettingsRow, Skeleton, absoluteTime, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { ForgeAccountView } from '../api/gen/ForgeAccountView';
 import type { ForgeLoginView } from '../api/gen/ForgeLoginView';
 import type { ForgeTokenCheck } from '../api/gen/ForgeTokenCheck';
+import { POLL } from '../common/poll';
 
 /**
  * A forge's logins, on its plugin page (Settings › Plugins › GitHub; PDT-177, PDT-228, PDT-244): one account per host
@@ -18,7 +19,7 @@ export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
     queryKey: key,
     queryFn: () => api.forgeLogin(kind),
     // While a code waits to be entered, look often: PDT signs in as soon as the forge says so.
-    refetchInterval: (q) => (q.state.data?.pending ? 2000 : false),
+    refetchInterval: (q) => (q.state.data?.pending ? POLL.live : false),
   });
   const set = (v: ForgeLoginView) => qc.setQueryData(key, v);
   const [token, setToken] = useState('');
@@ -156,7 +157,7 @@ export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
 /** When an account's token expires (PDT-260), if it does: one PDT renews, or one to replace in time. */
 function expiry(a: { expiresAt: number | null; renews: boolean }): string {
   if (a.expiresAt == null) return '';
-  const at = new Date(a.expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  const at = absoluteTime(a.expiresAt);
   return a.renews
     ? ` Its token expires ${at}; PDT renews it before then.`
     : ` Its token expires ${at}: connect again before then.`;

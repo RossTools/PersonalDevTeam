@@ -13,7 +13,9 @@ import { BuiltinSettingsSection, type PutInputs } from '../common/BuiltinSetting
 import { BranchChip } from '../common/BranchChip';
 import { useAction } from '../common/useAction';
 import { TicketKey } from '../common/TicketKey';
-import { CleanButton, DiskBadge, formatBytes, RemoveButton, sizeText, StageBadge, useCleanFinished, useStorage } from '../projects/worktreeStorage';
+import { CleanButton, DiskBadge, RemoveButton, sizeText, StageBadge, useCleanFinished, useStorage } from '../projects/worktreeStorage';
+import { formatBytes, plural } from '../common/text';
+import { LoadError } from '../common/QueryStatus';
 
 function gb(text: string): number {
   if (!/^\d+$/.test(text)) throw new Error('a whole number of GB (0 turns it off)');
@@ -103,7 +105,7 @@ function ProjectWorktrees({ p }: { p: ProjectStorage }) {
   const measured = p.worktrees.filter((w) => w.size).length;
   const description = p.worktrees.length === 0
     ? 'No worktrees.'
-    : `${p.worktrees.length} worktree${p.worktrees.length === 1 ? '' : 's'}: ${formatBytes(p.total)}${p.build ? `, ${formatBytes(p.build)} of it build output` : ''}${measured < p.worktrees.length ? ' (still measuring some)' : ''}.`;
+    : `${plural(p.worktrees.length, 'worktree')}: ${formatBytes(p.total)}${p.build ? `, ${formatBytes(p.build)} of it build output` : ''}${measured < p.worktrees.length ? ' (still measuring some)' : ''}.`;
   return (
     <Section label={p.name} description={description}>
       <SettingsRow
@@ -143,7 +145,7 @@ export function Storage() {
         notice={s?.pickupPause ? <PausedBanner reason={s.pickupPause.reason} /> : undefined}
       >
         {storage.isPending && <Skeleton lines={2} label="Loading storage" />}
-        {storage.isError && <Alert tone="error">Storage could not be loaded: {storage.error.message}</Alert>}
+        <LoadError what="Storage" error={storage.error} />
         {s?.disks.map((d) => (
           <SettingsRow key={d.folders.join('\n')} label={<span className="flex items-center gap-2">Disk <DiskBadge level={d.level} /></span>}
             description={<span className="font-mono">{d.folders.join(', ')}</span>}>

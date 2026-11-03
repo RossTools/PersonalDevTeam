@@ -30,8 +30,13 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   database aside, swaps the install, health-checks the new pdtd and rolls back (database included; on Windows also the
   installer's registry keys, `nsis_registry.rs`) when it fails. It
   is registered to start at login: a LaunchAgent on macOS, an HKCU Run value on Windows, a systemd user unit on Linux.
+  `pdt-host stop` (`stop.rs`) stops pdt-host first (launchd bootout, `systemctl --user stop`, or killing the lock
+  holder) and then asks pdtd to shut down, leaving the registration. Settings → This host → Startup turns the
+  registration off and on (`login.rs`, through pdt-api's `StartAtLogin`, which only pdtd wires to the real one); off
+  leaves a `host-login-off` marker in the data folder that `install` and the tray's first-launch registration honour.
 - **The tray app** (`desktop/src-tauri`, Tauri v2) is optional and has no window of its own: it starts pdt-host when
-  pdtd doesn't answer, opens the UI in the browser and can restart the daemon. Quitting it leaves PDT running.
+  pdtd doesn't answer, opens the UI in the browser and can restart the daemon. "Quit tray" leaves PDT running;
+  "Stop PDT and quit" asks first when `/api/host/busy` lists something, then runs `pdt-host stop`.
 - **The web UI** (`web/`, React + Vite) talks only to pdtd's `/api`: JSON over HTTP, polled every 2 s, plus
   WebSockets for terminals and conversation events and an SSE stream for notifications. It reloads itself when pdtd
   reports a new build.
@@ -39,7 +44,9 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   (`pdtd hook …`, which posts to the pdtd that launched them) and call PDT through pdt-mcp.
 - **Remote access** is `tailscale serve` in front of pdtd (pdt-api `remote.rs`, `crates/pdt-tailscale`); requests from
   the tailnet must carry the owner's Tailscale identity. pdtd only removes mappings its instance made; it keeps their
-  ports in the store (host value `remote.served`), since `serve --bg` mappings outlive the process.
+  ports in the store (host value `remote.served`), since `serve --bg` mappings outlive the process. A web run's port
+  is mapped to an owner-checking proxy of pdtd's on a free loopback port (`remote_proxy.rs`), never to the run, and
+  the proxy stops when the mapping goes; after a restart the mapping leads nowhere until the resumed run maps it again.
 
 **Instances.** A profile picks the defaults: `stable` (port 7420, data folder `<local data dir>/pdt`) and `dev` (7421,
 `pdt-dev`; debug builds default to it). `PDT_PORT` and `PDT_DATA_DIR` override them, and a lock file stops two pdtd
@@ -302,8 +309,9 @@ step restarts in place (a new session bound to the same step); a timed-out one i
 whose `wait` says `fresh`. `stuck::sweep` (in the agent sweep) gives a step PDT's own handling (one nudge, then the
 Inbox) when the workflow is off, its run for the step ended without acting, or none started within
 `START_GRACE_MS`. The workflow's inputs are template params: Settings → Agents reads them back from its document
-(`templates::unfill`) and saves a version noted `stuck_agents::SETTINGS_NOTE`, which still follows PDT's newer
-versions; any other edit makes it the user's (`stuck_agents::customized`).
+(`templates::unfill`) and saves a version noted `inputs::SETTINGS_NOTE`, which still follows PDT's newer versions; any
+other edit makes it the user's (`InputsBuiltin::customized`). Its reset leaves the workflow on or off, since Settings
+has a switch for that.
 
 **Notification rules** (`builtins/notification_rules.rs`). Each kind's level and quiet hours live in the built-in's
 `notification.levels` nodes (`nodes/notification_levels.rs`: a trigger kind with no event type and no ports, so it
@@ -319,7 +327,8 @@ off no run starts. Escalation waits for `inbox.answered` up to `escalateAfter`, 
 integration that declares a `NotificationChannel` for the connection's kind and runs its node kind with `connection`
 and `content`, so pdt-api never names the plugin. Settings → Notifications (`notification_rules.rs`,
 `/api/notification-rules`; the old `PATCH /api/notifications/settings` sets the same levels) reads and writes the
-inputs as stuck agents' are. `builtins::refill_of` lists the built-ins whose inputs Settings sets, which follow PDT's
+inputs as stuck agents' are; the levels are an `extra` input (a map no param type holds), and its view, which lists
+them by kind, is its own. `builtins::WITH_INPUTS` lists the built-ins whose inputs Settings sets, which follow PDT's
 newer versions with their inputs kept.
 
 **Install updates** (`builtins/install_updates.rs`). The update loop (`update::run_update_loop`) only checks; what a
@@ -334,7 +343,7 @@ turned on. `host.install_update` with `automatic` refuses a version pdt-host ski
 its version installed when it runs again after the restart. `update.installed` leads to `host.check_health` (after
 `settleMs`: the running version and `Loops::health`) and an optional `notify`; failures and `update.failed` are
 `inbox.notice` items. Settings → Updates (`install_updates.rs`, `/api/install-updates`) reads and writes the inputs as
-stuck agents' are; the policy, channel and check interval stay host settings, since the checks use them.
+stuck agents' are (its `finish` checks the wait; its reset turns the workflow on and calls `wake`); the policy, channel and check interval stay host settings, since the checks use them.
 
 **Clean up storage** (`builtins/clean_up_storage.rs`). Hourly, `storage.clean` (`which: due`: `auto_cleanup`) then
 `storage.measure`; `disk.low` and `disk.recovered` go to `storage.measure` too (`nodes/storage.rs`). Critical leads to
@@ -346,15 +355,16 @@ for the storage loop, the Storage view and the Inbox) and `pausePickup` / `clean
 
 **Settings backed by a built-in's inputs.** A behaviour that became a built-in keeps its home in Settings. The shared
 pieces: `builtins/inputs.rs` (`InputsBuiltin`: the params, the template, an optional `finish` that writes what the
-inputs derive into the filled-in document and `read` that reads it back; `filled`, `values_of`, `customized`,
-`refill`), `builtin_settings.rs` (`router(path, &builtin)`: `GET`/`PUT <path>` and `POST <path>/reset`, which turns the
-workflow back on), and on the web `common/BuiltinSettings.tsx` (`BuiltinSettingsSection`: the controls, the customized
+inputs derive into the filled-in document and `read` that reads it back, `extra` inputs that are no param; `filled`,
+`values_of`, `customized`, `refill`), `builtin_settings.rs` (`router(path, &builtin)`: `GET`/`PUT <path>` and
+`POST <path>/reset`, which turns the workflow back on; `router_with` and a `Reset` for a reset that leaves it off or
+does more; `change` and `reset` for a route module with a view of its own), and on the web `common/BuiltinSettings.tsx` (`BuiltinSettingsSection`: the controls, the customized
 or off notice with Open and Reset to default, the Customize as a workflow link; `ChatChannelRow`) and
 `workflows/BuiltinSettingsBanner.tsx` (the editor's banner, one line per built-in). The PM daily checkpoint
 (`pm_checkpoint.rs`, `/api/pm-checkpoint`, Settings → This host → PM) is built on them: its `finish` makes the schedule
 (`every: 1h` on every day, else a cron expression on the days, at the time or each hour) and `pm.update`'s `after`
 (`1d`, or `12h` at a set time). A new one is an `InputsBuiltin`, a route module with one `router` call, its line in
-`refill_of`, a section using `BuiltinSettingsSection`, and its line in `SETTINGS_HOMES`.
+`WITH_INPUTS`, a section using `BuiltinSettingsSection`, and its line in `SETTINGS_HOMES`.
 
 **Host and integration events** are logged where each thing is noticed, each once per occurrence (the event key, or a
 level remembered in a host value). `release.published`: `forge_releases.rs` in the 60 s poll, for the projects an
@@ -575,6 +585,23 @@ own file, and the central list takes at most one line, so tickets built side by 
 | A background loop | pdt-api `background.rs` (`start_background`) | |
 | A lazy screen or dialog | Its feature folder | One line in `web/src/shell/screens.tsx`, and the place in `AppShell.tsx` that shows it |
 | A Settings page of its own | Its feature folder | Its kind in `web/src/shell/route.ts` and `SettingsNav`, and one entry in `web/src/shell/settingsPages.tsx` |
+
+**Web queries.** Each area keeps its query keys, shared queries and invalidation in one module: `<area>/queries.ts`
+(`projectKeys`/`useProjects`, `sessionKeys`/`sessionsQuery`, `runKeys`/`runsQuery`, `workspaceKeys`, `hostKeys`/
+`useHostSettings`, `workflowKeys`, `ticketKeys`, `documentKeys`, …; worktrees in `common/worktrees.ts`). Screens use
+those hooks and keys rather than a literal key and an inline `useQuery`, so every copy of a query shares one key and
+one set of options. A write calls the area's `invalidate…` helper, which also marks stale what depends on it
+(`invalidateProjects` the workspaces, `invalidateWorktrees` the sessions and workspaces, `savedWorkflow` the list,
+the versions and the Settings sections that show a built-in). Poll intervals are the tiers in `common/poll.ts`
+(`POLL.live` 2 s for what's on screen, `steady`, `slow`, `paged`, `idle`); what the notification stream pushes polls
+with `streamPoll`, slowly while the stream is connected.
+
+**Web menus and opening things.** A ticket's menu, wherever it shows (backlog row, board card, peek, tab, phone top
+bar), comes from `ticketMenu` in `tickets/actions.ts`; a screen passes the options it can offer (Watch, Start next
+part, Merge…, Create issue…, Abandon…, rank) and a new ticket action is added there once. Opening a ticket, session,
+changes tab, workflow, Settings page or plugin goes through `common/open.ts` (the contexts AppShell provides and plain
+navigations), and a URL outside PDT through its `openExternal` (`noopener,noreferrer`), not `window.open`. What an
+Inbox item opens is `inboxTargets` in `inbox/model.ts`.
 
 A new top-level view (Inbox, Notes and the like) still means editing `AppShell.tsx`, because its state lives in the
 shell. `AppShell`'s tests are split by area (`AppShell.<area>.test.tsx`), with shared fixtures in

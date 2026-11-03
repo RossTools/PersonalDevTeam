@@ -9,13 +9,14 @@ import { Alert } from '@ui/Alert';
 import { Banner } from '@ui/Banner';
 import { EmptyState } from '@ui/EmptyState';
 import { Toaster, toast } from '@ui/Toaster';
-import { Dialog } from '@ui/Dialog';
+import { Dialog, DialogActions } from '@ui/Dialog';
 import { ConfirmProvider, useConfirm } from '@ui/Confirm';
+import { SectionLabel } from '@ui/SectionLabel';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
+      <SectionLabel as="div">{label}</SectionLabel>
       <div className="flex flex-wrap items-center gap-3">{children}</div>
     </div>
   );
@@ -33,12 +34,7 @@ function DialogDemo() {
         onOpenChange={setOpen}
         title="Add project"
         description="A git repository on this machine, or a URL to clone."
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={() => setOpen(false)}>Add project</Button>
-          </>
-        }
+        footer={<DialogActions onCancel={() => setOpen(false)} action="Add project" onAction={() => setOpen(false)} />}
       >
         <p className="text-sm text-muted-foreground">The body: a form, a list, anything. Escape, the backdrop or × closes it.</p>
       </Dialog>
@@ -103,6 +99,9 @@ function render() {
           <Badge tone="accent">New</Badge>
           <Badge count={3} aria-label="3 unread" />
           <Badge tone="waiting" count={12} aria-label="12 waiting" />
+          <Badge tone="solid" count={4} aria-label="4 need you" />
+          <Badge tone="solid" size="sm" count={120} aria-label="120 need you" />
+          <Badge size="sm" count={7} aria-label="7 in the column" />
           <Badge tone="accent" count={250} aria-label="250 new" />
         </Row>
 

@@ -5,13 +5,14 @@ import { Button, Kbd, toast } from '@ui';
 import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import { actionError } from '../common/useAction';
-import { useOpenSession, useOpenTicket } from '../tickets/actions';
-import { useOpenChanges } from '../review/open';
+import { useOpenSession, useOpenTicket, useOpenChanges, openExternal } from '../common/open';
+import { inboxTargets } from './model';
 import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
 import { prHref } from '../tickets/PullRequest';
 import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
+import { changesKey } from '../review/queries';
 
 /** A link the item's kind adds to the row (Storage settings, the workflow's versions). */
 export interface ItemLink {
@@ -34,7 +35,7 @@ export function useItemAttempt(item: InboxItem) {
 
 /** The size of a worktree's changes: files, lines added and removed. */
 export function useChangeSize(worktreeId: string | null) {
-  const changes = useQuery({ queryKey: ['changes', worktreeId], queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
+  const changes = useQuery({ queryKey: changesKey(worktreeId ?? ''), queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
   const files = changes.data?.files ?? [];
   return {
     loading: changes.isLoading,
@@ -73,20 +74,21 @@ export function ItemLinks({ item, extra = [] }: { item: InboxItem; extra?: ItemL
     if (!worktreeId) return;
     start.mutate({ worktreeId, ...parseChoice(choice), ...(tab ? { tab } : {}) }, { onError: (err) => toast.error(actionError(err)) });
   };
-  const ownSession = item.sessionId && item.projectId && item.kind !== 'session';
+  const targets = inboxTargets(item);
+  const ownSession = item.kind !== 'session' ? targets.session : null;
   const persona = item.personaName ? `${item.personaName} session` : 'Session';
   const cr = item.changeRequest;
-  const any = (item.ticketId && item.projectId) || ownSession || coder || worktreeId || cr || pr || extra.length > 0;
+  const any = targets.ticket || ownSession || coder || worktreeId || cr || pr || extra.length > 0;
   if (!any) return null;
   return (
     <div role="group" aria-label="Links" className="flex flex-wrap items-center gap-1">
-      {item.ticketId && item.projectId && (
-        <LinkButton aria-label="Open ticket" onClick={() => openTicket({ id: item.ticketId!, projectId: item.projectId! })}>
+      {targets.ticket && (
+        <LinkButton aria-label="Open ticket" onClick={() => openTicket(targets.ticket!)}>
           Ticket <Kbd>o</Kbd>
         </LinkButton>
       )}
       {ownSession ? (
-        <LinkButton aria-label="Open session" onClick={() => openSession({ id: item.sessionId!, projectId: item.projectId! })}>{persona}</LinkButton>
+        <LinkButton aria-label="Open session" onClick={() => openSession(ownSession)}>{persona}</LinkButton>
       ) : coder && item.ticketId && (
         <LinkButton aria-label="Open coder session" title={coder.title}
           onClick={() => tabs.openNear({ kind: 'session', id: coder.id }, projectId, item.ticketId!)}>
@@ -104,13 +106,13 @@ export function ItemLinks({ item, extra = [] }: { item: InboxItem; extra?: ItemL
         </LinkButton>
       )}
       {cr && (
-        <LinkButton aria-label={`Open ${cr.name}`} onClick={() => window.open(cr.url, '_blank', 'noopener')}>
+        <LinkButton aria-label={`Open ${cr.name}`} onClick={() => openExternal(cr.url)}>
           {cr.name.charAt(0).toUpperCase() + cr.name.slice(1)}
         </LinkButton>
       )}
       {pr && pr.url && (
         <LinkButton aria-label={pr.local ? 'Open CI log' : 'Open PR'} title={`#${pr.number} ${pr.title}`}
-          onClick={() => window.open(prHref(pr, pr.url), '_blank', 'noopener')}>
+          onClick={() => openExternal(prHref(pr, pr.url))}>
           {pr.local ? 'CI log' : `PR #${pr.number}`}
         </LinkButton>
       )}

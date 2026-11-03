@@ -1,7 +1,7 @@
 // A run's steps in order: status, the port taken, attempts, error, and the input and output as JSON.
 import { useState, type ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
-import { Badge, type BadgeTone } from '@ui';
+import { Badge, Disclosure, type BadgeTone } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { nodeTitle, type Catalog } from './model';
@@ -25,10 +25,9 @@ const empty = (value: unknown) => value === null || value === undefined || (type
 function Json({ label, value }: { label: string; value: unknown }) {
   if (empty(value)) return null;
   return (
-    <details className="text-meta">
-      <summary className="cursor-pointer text-muted-foreground">{label}</summary>
-      <pre className="mt-1 max-h-60 overflow-auto rounded-md bg-muted p-2 font-mono whitespace-pre-wrap">{JSON.stringify(value, null, 2)}</pre>
-    </details>
+    <Disclosure title={label} className="text-meta">
+      <pre className="max-h-60 overflow-auto rounded-md bg-muted p-2 font-mono whitespace-pre-wrap text-foreground">{JSON.stringify(value, null, 2)}</pre>
+    </Disclosure>
   );
 }
 
@@ -45,7 +44,7 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
 
 /**
  * `expandable` (phones, PDT-120): each step is a row to tap, which shows its input and output under it; otherwise
- * they are folded `<details>` in every step.
+ * they are folded (a `Disclosure` each) in every step.
  */
 export function StepList({ steps, doc, catalog, expandable = false }: { steps: StepRow[]; doc: WorkflowDoc; catalog: Catalog; expandable?: boolean }) {
   const [open, setOpen] = useState<Set<string>>(new Set());

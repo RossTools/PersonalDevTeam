@@ -6,7 +6,7 @@ import type { DocumentRead } from '../api/gen/DocumentRead';
 import type { DocumentsBeside } from '../api/gen/DocumentsBeside';
 import type { DocumentProvidersView } from '../api/gen/DocumentProvidersView';
 import { renderWithQuery, stubApi } from '../test-utils';
-import { OpenSessionContext } from '../tickets/actions';
+import { OpenSessionContext } from '../common/open';
 import { TicketDocuments } from '../tickets/TicketDocuments';
 import { ticket } from '../tickets/fixtures';
 import { DocumentsBesideLayout, besideKey } from './BesidePanel';

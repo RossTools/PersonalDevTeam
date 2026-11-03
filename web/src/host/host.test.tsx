@@ -116,7 +116,7 @@ describe('HostSettingsPage', () => {
     renderWithQuery(<HostSettingsPage />);
     const updates = await screen.findByRole('region', { name: 'Updates' });
     // Folded away: only a private repository or a fork needs one.
-    expect(within(updates).getByText('Advanced').closest('details')).not.toHaveAttribute('open');
+    expect(within(updates).getByRole('button', { name: 'Advanced' })).toHaveAttribute('aria-expanded', 'false');
     await userEvent.click(within(updates).getByText('Advanced'));
     expect(within(updates).getByText(/Only needed for a private repository or a fork/)).toBeInTheDocument();
     const field = screen.getByLabelText('GitHub token');
@@ -543,10 +543,10 @@ describe('HostSettingsPage', () => {
     expect(within(updates).getByText('Rejected, ignored')).toBeInTheDocument();
     // Open while a token is stored; folded here, the link opens it again.
     await userEvent.click(within(updates).getByText('Advanced'));
-    expect(within(updates).getByText('Advanced').closest('details')).not.toHaveAttribute('open');
+    expect(within(updates).getByRole('button', { name: 'Advanced' })).toHaveAttribute('aria-expanded', 'false');
     await userEvent.click(within(updates).getByRole('link', { name: 'Replace the token' }));
     await waitFor(() => expect(screen.getByLabelText('GitHub token')).toHaveFocus());
-    expect(within(updates).getByText('Advanced').closest('details')).toHaveAttribute('open');
+    expect(within(updates).getByRole('button', { name: 'Advanced' })).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('says a rate limit without a reset time is a try-later, with no token link', async () => {

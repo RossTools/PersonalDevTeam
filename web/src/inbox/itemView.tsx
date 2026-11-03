@@ -15,15 +15,17 @@ import { LabelChips } from '../tickets/TicketParts';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { navigate } from '../shell/router';
-import { useOpenSession, useOpenTicket } from '../tickets/actions';
-import { formatBytes, STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
+import { useOpenSession, useOpenTicket } from '../common/open';
+import { STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
 import type { ItemLink } from './ItemLinks';
 import {
   confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
-  longTitle, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
+  inboxTargets, longTitle, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerApproval } from './approval';
 import { DecideRows } from './DecideRows';
+import { nonBlank } from '../common/guards';
+import { capitalize, formatBytes } from '../common/text';
 
 /** One of an item's actions. */
 export interface ItemAction {
@@ -65,8 +67,6 @@ export interface ItemSpec {
   enter: boolean;
 }
 
-const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
 
 /** Choices that stop, refuse or set aside go to the right, away from the primary one. */
 function endChoice(id: string, title: string): boolean {
@@ -78,7 +78,7 @@ function choiceActions(item: InboxItem, pick: (id: string) => void, busy: boolea
   return item.choices.map((c) => ({
     id: c.id,
     title: c.title,
-    short: capital(c.title),
+    short: capitalize(c.title),
     primary: c.primary,
     end: !c.primary && endChoice(c.id, c.title),
     pending: busy && c.primary,
@@ -124,10 +124,11 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   const [unticked, setUnticked] = useState<ReadonlySet<number>>(() => new Set());
   const openTicket = useOpenTicket();
   const openSession = useOpenSession();
+  const targets = inboxTargets(item);
   const withNote = (choice: string) => void answer({ choice, ...(note.trim() ? { text: note } : {}) });
   const plain = (choice: string) => void answer({ choice });
   const dismissAction: ItemAction[] = dismissable(item) ? [{ id: 'dismiss', title: 'Dismiss', kbd: 'e', end: true, run: dismiss }] : [];
-  const workflow = str(item.body.workflow);
+  const workflow = nonBlank(item.body.workflow);
   const persona = item.personaName ?? 'The agent';
 
   const spec = ((): Omit<ItemSpec, 'enter'> & { enter?: boolean } => {
@@ -181,8 +182,8 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         };
       }
       case 'secret': {
-        const name = str(item.body.name) ?? 'secret';
-        const purpose = str(item.body.purpose);
+        const name = nonBlank(item.body.name) ?? 'secret';
+        const purpose = nonBlank(item.body.purpose);
         const ok = secret.length >= 6;
         const send = () => {
           if (!ok || busy) return;
@@ -192,7 +193,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
           region: 'Secret request',
           why: (
             <>
-              {str(item.body.sessionTitle) ?? 'An agent'} asks for the secret <code>{name}</code>{purpose ? `: ${purpose}` : '.'} It is
+              {nonBlank(item.body.sessionTitle) ?? 'An agent'} asks for the secret <code>{name}</code>{purpose ? `: ${purpose}` : '.'} It is
               kept in this machine&apos;s keychain; the agent uses it by name and never gets it in the chat. Never paste it into the chat.
             </>
           ),
@@ -207,11 +208,11 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         };
       }
       case 'approval': {
-        const tool = str(item.body.tool) ?? 'tool';
-        const diff = str(item.body.diff);
-        const description = str(item.body.description);
+        const tool = nonBlank(item.body.tool) ?? 'tool';
+        const diff = nonBlank(item.body.diff);
+        const description = nonBlank(item.body.description);
         const questions = requestQuestions(item.body.input);
-        const why = `${item.personaName ?? str(item.body.sessionTitle) ?? 'The agent'}'s permission mode asks before this. It waits here until you decide.`;
+        const why = `${item.personaName ?? nonBlank(item.body.sessionTitle) ?? 'The agent'}'s permission mode asks before this. It waits here until you decide.`;
         if (questions.length > 0) {
           // The agent's own questions (AskUserQuestion): the card asks them and sends the answers.
           return {
@@ -226,7 +227,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         };
         const allow = () => send({ type: 'approve', always: false });
         const deny = () => send({ type: 'deny', ...(note.trim() ? { message: note.trim() } : {}) });
-        const where = [tool, str(item.body.sessionTitle)].filter(Boolean).join(' · ');
+        const where = [tool, nonBlank(item.body.sessionTitle)].filter(Boolean).join(' · ');
         return {
           region: 'Approval', why, enter: false,
           content: (
@@ -252,21 +253,21 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         };
       }
       case 'session': {
-        const open = () => item.sessionId && item.projectId && openSession({ id: item.sessionId, projectId: item.projectId });
+        const open = () => { if (targets.session) openSession(targets.session); };
         return {
           region: 'Session waiting',
-          why: `${str(item.body.sessionTitle) ?? 'This session'} waits on a permission prompt or a question. Answer it in the session; looking at it takes it out of the Inbox.`,
+          why: `${nonBlank(item.body.sessionTitle) ?? 'This session'} waits on a permission prompt or a question. Answer it in the session; looking at it takes it out of the Inbox.`,
           content: null,
-          actions: [{ id: 'open', title: 'Open session', primary: true, disabled: !item.sessionId, run: () => void open() }],
+          actions: [{ id: 'open', title: 'Open session', primary: true, disabled: !targets.session, run: open }],
         };
       }
       case 'stalled': {
         const outcomes = item.choices.filter((c) => c.id.startsWith('outcome:')).map((c) => ({ id: c.id, title: c.id.slice('outcome:'.length) }));
-        const message = str(item.body.message);
+        const message = nonBlank(item.body.message);
         const nudge: ItemAction = { id: 'nudge', title: 'Nudge', primary: !resends(item), pending: busy && !resends(item), disabled: busy, run: () => withNote('nudge') };
         return {
           region: 'Stalled step',
-          why: `${str(item.body.why) ?? 'The step stopped without an outcome.'} Nudge it to carry on, or take it over and pick the outcome yourself.`,
+          why: `${nonBlank(item.body.why) ?? 'The step stopped without an outcome.'} Nudge it to carry on, or take it over and pick the outcome yourself.`,
           content: message && (
             <AgentMessage name="PDT" label="The message it never got">
               <Markdown>{message}</Markdown>
@@ -289,7 +290,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
       case 'timed_out':
         return {
           region: 'Timed out',
-          why: `${str(item.body.node) ? `Step ${item.body.node as string}` : 'The step'}${workflow ? ` of workflow ${workflow}` : ''} ended without an outcome: ${str(item.body.why) ?? 'it ran out of time'}. Resume runs it again on the same ticket and attempt${item.sessionId ? ', in the same session' : ''}; Stop leaves it stopped.`,
+          why: `${nonBlank(item.body.node) ? `Step ${item.body.node as string}` : 'The step'}${workflow ? ` of workflow ${workflow}` : ''} ended without an outcome: ${nonBlank(item.body.why) ?? 'it ran out of time'}. Resume runs it again on the same ticket and attempt${item.sessionId ? ', in the same session' : ''}; Stop leaves it stopped.`,
           content: null,
           note: { label: 'Note (optional)', placeholder: 'A note for the agent with Resume (optional)' },
           actions: choiceActions(item, (c) => (c === 'resume' ? withNote(c) : plain(c)), busy),
@@ -309,12 +310,12 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         };
       }
       case 'manual': {
-        const prompt = str(item.body.prompt);
+        const prompt = nonBlank(item.body.prompt);
         return {
           region: 'Your turn',
           why: `This stage is yours${workflow ? ` in workflow ${workflow}` : ''}: do it, then pick how it ended.`,
           content: prompt && (
-            <AgentMessage name={str(item.body.persona) ?? workflow ?? 'Workflow'} label="What the stage asks">
+            <AgentMessage name={nonBlank(item.body.persona) ?? workflow ?? 'Workflow'} label="What the stage asks">
               <Markdown>{prompt}</Markdown>
             </AgentMessage>
           ),
@@ -369,8 +370,8 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
             : `${workflow ?? 'A workflow'} wants you to know. Act on it if you disagree, then dismiss it.`,
           content: <Callout tone="error"><Markdown>{noticeText(item)}</Markdown></Callout>,
           actions: [
-            ...(item.ticketId && item.projectId
-              ? [{ id: 'ticket', title: 'Open ticket', primary: true, run: () => openTicket({ id: item.ticketId!, projectId: item.projectId! }) }]
+            ...(targets.ticket
+              ? [{ id: 'ticket', title: 'Open ticket', primary: true, run: () => openTicket(targets.ticket!) }]
               : []),
             ...dismissAction,
           ],
@@ -490,7 +491,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
       }
       case 'gate': {
         const question = gateQuestion(item);
-        const text = str(item.body.text);
+        const text = nonBlank(item.body.text);
         const from = workflow ?? 'Workflow';
         return {
           region: 'Gate',

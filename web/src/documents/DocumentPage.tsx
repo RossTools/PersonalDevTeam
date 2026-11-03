@@ -1,15 +1,16 @@
 import { useCallback, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pencil, Plus, X } from 'lucide-react';
-import { Alert, Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
+import { Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, SectionLabel, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
 import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
 import { ProjectKey } from '../common/BranchChip';
+import { TicketKey } from '../common/TicketKey';
 import { useRememberedScroll } from '../common/viewState';
 import { InlineRename } from '../common/InlineRename';
 import { cn } from '@ui/lib/utils';
 import { runAction } from '../common/useAction';
-import { useOpenTicket } from '../tickets/actions';
+import { useOpenTicket } from '../common/open';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { KindIcon } from './LinkedDocuments';
@@ -17,6 +18,8 @@ import { openBesideEntry, useBesideTargets } from './BesidePanel';
 import { DocumentBody, type SheetHandle } from './DocumentBody';
 import { DocumentComments, headingsOf } from './DocumentComments';
 import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders } from './queries';
+import { useProjects } from '../projects/queries';
+import { LoadError } from '../common/QueryStatus';
 
 /** Downloads a file pdtd serves. */
 function download(url: string) {
@@ -37,8 +40,6 @@ function addedBy(d: Document): string {
   return d.agent?.persona ?? 'an agent';
 }
 
-const linkHeading = 'text-2xs font-semibold tracking-wider text-muted-foreground uppercase';
-
 /**
  * One document (PDT-314): its title (rename in place), kind, provider and who added it; where it opens; its links to
  * projects and tickets (add and remove); and its content as the provider reads it. Removing it from PDT keeps the
@@ -50,7 +51,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const openTicket = useOpenTicket();
   const doc = useDocument(id);
   const providers = useDocumentProviders();
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const projects = useProjects();
   const [renaming, setRenaming] = useState(false);
   const [linkingTicket, setLinkingTicket] = useState(false);
   const besideTargets = useBesideTargets(linkedTickets(doc.data));
@@ -103,7 +104,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   useTopBarActions(phone && d ? entries : null);
 
   if (doc.isPending) return <Skeleton lines={8} className="p-4" />;
-  if (doc.isError) return <Alert tone="error" className="m-4">The document could not be loaded: {doc.error.message}</Alert>;
+  if (doc.error) return <LoadError what="The document" error={doc.error} className="m-4" />;
   if (!d) return <EmptyState className="mt-16 border-0">This document is gone.</EmptyState>;
 
   const unlinkProject = (projectId: string) => void runAction(async () => {
@@ -151,7 +152,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
 
         <section aria-label="Links" className="flex flex-col gap-2 rounded-md border border-border bg-card p-3">
           <div className="flex flex-wrap items-center gap-1.5">
-            <h2 className={linkHeading}>Projects</h2>
+            <SectionLabel as="h2">Projects</SectionLabel>
             {d.projects.length === 0 && <span className="text-xs text-muted-foreground">None</span>}
             {d.projects.map((p) => (
               <span key={p.id} className="inline-flex items-center gap-1 rounded-sm bg-accent py-0.5 pr-0.5 pl-1.5 text-xs">
@@ -176,12 +177,12 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
             )}
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            <h2 className={linkHeading}>Tickets</h2>
+            <SectionLabel as="h2">Tickets</SectionLabel>
             {d.tickets.length === 0 && <span className="text-xs text-muted-foreground">None</span>}
             {d.tickets.map((t) => (
               <span key={t.id} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-sm bg-accent py-0.5 pr-0.5 pl-1.5 text-xs">
                 <button type="button" className="min-w-0 truncate hover:underline" onClick={() => openTicket({ id: t.id, projectId: t.projectId })} title={t.title}>
-                  <span className="font-mono">{t.key}</span> {t.title}
+                  <TicketKey ticketKey={t.key} /> {t.title}
                 </button>
                 <IconButton label={`Unlink ${t.key}`} size="sm" variant="ghost" className="size-5" onClick={() => unlinkTicket(t.id)}><X aria-hidden /></IconButton>
               </span>
@@ -204,7 +205,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
         )}
       </article>
       {linkingTicket && (
-        <Dialog open onOpenChange={(o) => !o && setLinkingTicket(false)} title={`Link “${d.title}” to a ticket`} size="md">
+        <Dialog onClose={() => setLinkingTicket(false)} title={`Link “${d.title}” to a ticket`} size="md">
           <TicketPicker
             projectId={d.projects.length === 1 ? d.projects[0]!.id : null}
             exclude={d.tickets.map((t) => t.id)}

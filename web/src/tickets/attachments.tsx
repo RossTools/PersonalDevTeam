@@ -6,7 +6,7 @@ import { api } from '../api/client';
 import type { TicketAttachment } from '../api/gen/TicketAttachment';
 import { AttachmentImage, AttachmentLink } from '../common/AttachmentViews';
 import { actionError, runAction } from '../common/useAction';
-import { POLL } from './queries';
+import { POLL } from '../common/poll';
 import { OverviewSection } from './TicketParts';
 
 /** What the file pickers offer: the images and text files a ticket takes (pdtd decides by the bytes). */
@@ -18,7 +18,7 @@ export function useTicketAttachments(ticketId: string) {
   return useQuery({
     queryKey: attachmentKeys.of(ticketId),
     queryFn: () => api.ticketAttachments(ticketId),
-    refetchInterval: POLL,
+    refetchInterval: POLL.live,
   });
 }
 

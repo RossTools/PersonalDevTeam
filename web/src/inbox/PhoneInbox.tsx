@@ -12,22 +12,19 @@ import type { Notification } from '../api/gen/Notification';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useTopBarActions } from '../shell/PhoneTopBar';
-import { useOpenSession, useOpenTicket } from '../tickets/actions';
+import { useOpenSession, useOpenTicket, useOpenChanges, openExternal } from '../common/open';
 import { PrDetails } from '../tickets/PullRequest';
 import { useProjectForge, useTicket } from '../tickets/queries';
-import { useOpenChanges } from '../review/open';
 import { UpdateView } from './InboxView';
-import { after, changeRequestLabel, dismissable, merges, selectedUpdate, step } from './model';
+import { after, changeRequestLabel, dismissable, inboxTargets, merges, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
 import { useItemView } from './itemView';
 import { ItemHeader, Why } from './ItemLayout';
+import { capitalize, plural } from '../common/text';
+import { changesKey } from '../review/queries';
 
 /** Opens the pull request a gate is about on its forge, in a new tab. */
-const openChangeRequest = (item: InboxItem) => item.changeRequest && window.open(item.changeRequest.url, '_blank', 'noopener');
-
-/** The bottom bar's buttons: 48px, whatever the pointer. */
-const big = 'h-12 pointer-coarse:h-12 min-w-0 flex-1';
-const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const openChangeRequest = (item: InboxItem) => item.changeRequest && openExternal(item.changeRequest.url);
 
 /** A decision in the bottom bar. */
 interface Decision {
@@ -48,7 +45,7 @@ export function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]
   const folded = ordered.length > 3 && main ? ordered.slice(0, -1) : [];
   const shown = folded.length > 0 && main ? [main] : ordered;
   const button = (d: Decision) => (
-    <Button key={d.id} variant={d.primary ? 'primary' : 'secondary'} className={big} pending={busy && d.primary}
+    <Button key={d.id} variant={d.primary ? 'primary' : 'secondary'} size="lg" className="min-w-0 flex-1" pending={busy && d.primary}
       disabled={busy || d.disabled} onClick={() => onPick(d.id)}>
       <span className="truncate">{d.title}</span>
     </Button>
@@ -57,7 +54,7 @@ export function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]
     <div role="group" aria-label="Decision" className="flex gap-2 border-t border-border bg-card px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       {folded.length > 0 && (
         <>
-          <Button variant="secondary" className={big} aria-haspopup="dialog" disabled={busy} onClick={() => setMore(true)}>
+          <Button variant="secondary" size="lg" className="min-w-0 flex-1" aria-haspopup="dialog" disabled={busy} onClick={() => setMore(true)}>
             More <ChevronDown aria-hidden />
           </Button>
           <Sheet side="bottom" title="More choices" open={more} onOpenChange={setMore}>
@@ -83,7 +80,7 @@ function Rows({ rows, selected, disabled, onPick, label }: {
       {rows.map((r) => (
         <Button key={r.id} variant="secondary" disabled={disabled || r.disabled}
           {...(selected !== undefined ? { 'aria-pressed': selected === r.id } : {})}
-          className={cn('h-12 w-full justify-start pointer-coarse:h-12', selected === r.id && 'border-primary bg-accent')}
+          size="lg" className={cn('w-full justify-start px-3', selected === r.id && 'border-primary bg-accent')}
           onClick={() => onPick(r.id)}>
           <span className="truncate">{r.title}</span>
         </Button>
@@ -127,12 +124,15 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
   };
   const openTicket = useOpenTicket();
   const openSession = useOpenSession();
-  useTopBarActions(item ? () => [
-    ...(item.sessionId && item.projectId ? [{ label: 'Open session', onSelect: () => openSession({ id: item.sessionId!, projectId: item.projectId! }) }] : []),
-    ...(item.ticketId && item.projectId ? [{ label: 'Open ticket', onSelect: () => openTicket({ id: item.ticketId!, projectId: item.projectId! }) }] : []),
+  useTopBarActions(item ? () => {
+    const { ticket, session } = inboxTargets(item);
+    return [
+    ...(session ? [{ label: 'Open session', onSelect: () => openSession(session) }] : []),
+    ...(ticket ? [{ label: 'Open ticket', onSelect: () => openTicket(ticket) }] : []),
     ...(item.changeRequest ? [{ label: changeRequestLabel(item)!, onSelect: () => openChangeRequest(item) }] : []),
     ...(dismissable(item) ? [{ label: 'Dismiss', onSelect: () => void dismiss() }] : []),
-  ] : null);
+    ];
+  } : null);
 
   // Opening an item reads its notifications.
   const readId = item && !item.id.startsWith('session:') ? item.id : null;
@@ -170,7 +170,7 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
     if (loading) return <Skeleton lines={8} className="p-4" />;
     if (live.length > 0) return <Skeleton lines={8} className="p-4" />;
     return (
-      <EmptyState action={<Button variant="primary" className="h-12 px-6 pointer-coarse:h-12" onClick={onList}>Back to Inbox</Button>}>
+      <EmptyState action={<Button variant="primary" size="lg" className="px-6" onClick={onList}>Back to Inbox</Button>}>
         <span className="text-base font-medium text-foreground">All clear</span>
         <br />Nothing else waits on you.
       </EmptyState>
@@ -261,23 +261,22 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
   const t = ticket.data;
   const attempt = t?.attempts.find((x) => x.id === item.attemptId) ?? t?.attempts.find((x) => x.state === 'active');
   const worktreeId = attempt?.worktreeId ?? null;
-  const changes = useQuery({ queryKey: ['changes', worktreeId], queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
+  const changes = useQuery({ queryKey: changesKey(worktreeId ?? ''), queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
   const files = changes.data?.files ?? [];
   const added = files.reduce((n, f) => n + f.added, 0);
   const removed = files.reduce((n, f) => n + f.removed, 0);
-  const title = capital(item.choices.find((c) => c.id === choice)?.title ?? choice);
+  const title = capitalize(item.choices.find((c) => c.id === choice)?.title ?? choice);
   const ci = attempt?.pr?.ci ?? attempt?.ci ?? null;
   const queueName = useProjectForge(attempt?.pr ? t?.projectId ?? null : null).data?.queueName ?? undefined;
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onCancel()}
+      onClose={onCancel}
       title={`${title} ${item.ticketKey ?? 'this'}?`}
       description={item.ticketTitle ?? item.title}
       footer={
         <>
-          <Button className="h-12 pointer-coarse:h-12" onClick={onCancel}>Cancel</Button>
-          <Button variant="primary" className="h-12 pointer-coarse:h-12" pending={busy} onClick={onConfirm}>{title}</Button>
+          <Button size="lg" onClick={onCancel}>Cancel</Button>
+          <Button variant="primary" size="lg" pending={busy} onClick={onConfirm}>{title}</Button>
         </>
       }
     >
@@ -294,7 +293,7 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
         {worktreeId && (
           <div className="flex flex-wrap items-center gap-2">
             <span aria-label="Diff size">
-              {changes.isLoading ? 'Counting the changes…' : `${files.length} ${files.length === 1 ? 'file' : 'files'}, +${added} −${removed}`}
+              {changes.isLoading ? 'Counting the changes…' : `${plural(files.length, 'file')}, +${added} −${removed}`}
             </span>
             <Button variant="ghost" size="sm" onClick={() => { onCancel(); openChanges({ id: worktreeId, projectId: item.projectId ?? '' }, { ticketId: item.ticketId ?? undefined }); }}>
               View changes

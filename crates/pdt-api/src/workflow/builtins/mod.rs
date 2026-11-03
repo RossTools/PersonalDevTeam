@@ -248,10 +248,10 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
             let mut untouched = st.store.current_version_author(&w.id).await? == Some(Author::Builtin);
             // One whose inputs the user changed in Settings follows newer versions with them (PDT-367).
             let mut template = template;
-            if let Some(refill) = refill_of(b.id) {
+            if let Some(settings) = refill_of(b.id) {
                 untouched = untouched || inputs_only(st, &w).await?;
                 if let Some(c) = &current
-                    && let Ok(d) = refill(c)
+                    && let Ok(d) = settings.refill(c)
                 {
                     template = d;
                 }
@@ -265,25 +265,23 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
     Ok(())
 }
 
-/// A built-in's newer version of a document, filled in with the document's inputs.
-type Refill = fn(&WorkflowDoc) -> Result<WorkflowDoc, String>;
+/// The built-ins Settings sets the inputs of.
+const WITH_INPUTS: [&inputs::InputsBuiltin; 5] = [
+    &stuck_agents::SETTINGS,
+    &notification_rules::SETTINGS,
+    &install_updates::SETTINGS,
+    &pm_daily_checkpoint::SETTINGS,
+    &clean_up_storage::SETTINGS,
+];
 
-/// The built-ins Settings sets the inputs of, with their [`Refill`].
-fn refill_of(id: &str) -> Option<Refill> {
-    match id {
-        STUCK_AGENTS => Some(|d| stuck_agents::filled(&stuck_agents::values_of(d))),
-        NOTIFICATION_RULES => Some(|d| notification_rules::filled(&notification_rules::values_of(d))),
-        INSTALL_UPDATES => Some(|d| install_updates::filled(&install_updates::values_of(d))),
-        PM_DAILY_CHECKPOINT => Some(|d| pm_daily_checkpoint::SETTINGS.refill(d)),
-        CLEAN_UP_STORAGE => Some(|d| clean_up_storage::SETTINGS.refill(d)),
-        _ => None,
-    }
+fn refill_of(id: &str) -> Option<&'static inputs::InputsBuiltin> {
+    WITH_INPUTS.into_iter().find(|b| b.id == id)
 }
 
 /// Whether a workflow's current version was saved from Settings: only its inputs changed (PDT-367).
 pub(crate) async fn inputs_only(st: &AppState, w: &Workflow) -> Result<bool, pdt_store::StoreError> {
     let versions = st.store.list_workflow_versions(&w.id).await?;
-    Ok(versions.iter().any(|v| v.version == w.version && v.note == stuck_agents::SETTINGS_NOTE))
+    Ok(versions.iter().any(|v| v.version == w.version && v.note == inputs::SETTINGS_NOTE))
 }
 
 #[cfg(test)]

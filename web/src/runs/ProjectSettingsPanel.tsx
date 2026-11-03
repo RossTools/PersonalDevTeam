@@ -7,7 +7,7 @@ import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { agentOf, byDefault, choiceFor, newSession } from '../sessions/newSession';
-import { useOpenSession } from '../tickets/actions';
+import { useOpenSession } from '../common/open';
 import { AreasEditor } from '../tickets/Areas';
 import { ConfigCommands } from './ApproveCommands';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
@@ -27,6 +27,10 @@ import { ConnectionPicker } from '../connections/ConnectionPicker';
 import { fieldShown, fieldText } from '../connections/kinds';
 import type { ProjectSettingsSchema } from '../api/gen/ProjectSettingsSchema';
 import type { SettingsSection } from '../common/SettingsScreens';
+import { projectKeys } from '../projects/queries';
+import { invalidateSessions } from '../sessions/queries';
+import { runKeys } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 /** The Select's value for "no override: use the host setting" (its empty value would show the placeholder). */
 const HOST = 'host';
@@ -55,9 +59,9 @@ function useSaveProjectSettings(project: Project, current: ProjectSettingsView |
       });
     },
     onSuccess: (v) => {
-      qc.setQueryData(['project-settings', project.id], v);
-      void qc.invalidateQueries({ queryKey: ['run-config', project.id] });
-      void qc.invalidateQueries({ queryKey: ['project-commands', project.id] });
+      qc.setQueryData(projectKeys.settings(project.id), v);
+      void qc.invalidateQueries({ queryKey: runKeys.configs(project.id) });
+      void qc.invalidateQueries({ queryKey: runKeys.commands(project.id) });
     },
   });
 }
@@ -81,9 +85,9 @@ export function ProjectSettingsPanel({ project }: { project: Project }) {
 /** The panel's sections one by one (a phone shows each on a screen of its own), and a load error to show above them. */
 export function useProjectSettingsSections(project: Project): { notice: ReactNode; sections: SettingsSection[] } {
   const qc = useQueryClient();
-  const settings = useQuery({ queryKey: ['project-settings', project.id], queryFn: () => api.projectSettings(project.id) });
+  const settings = useQuery({ queryKey: projectKeys.settings(project.id), queryFn: () => api.projectSettings(project.id) });
   // The integrations a project links to; they change only with PDT.
-  const schemas = useQuery({ queryKey: ['project-settings-schemas'], queryFn: api.projectSettingsSchemas, staleTime: Infinity }).data ?? [];
+  const schemas = useQuery({ queryKey: projectKeys.settingsSchemas, queryFn: api.projectSettingsSchemas, staleTime: Infinity }).data ?? [];
   const openSession = useOpenSession();
   const agents = useAgentAvailability();
   const defaults = useAgentDefaults();
@@ -96,7 +100,7 @@ export function useProjectSettingsSections(project: Project): { notice: ReactNod
       const initialPrompt = await api.guide(guide);
       const choice = choiceFor(agentOf(agent)!, defaults.mode);
       const s = await api.createSession({ ...newSession(project.id, null, choice), initialPrompt });
-      void qc.invalidateQueries({ queryKey: ['sessions', project.id] });
+      void invalidateSessions(qc, project.id);
       openSession(s);
     });
   // The agents this host has (all until the checks load), the default first, a logged-out one saying so.
@@ -114,7 +118,7 @@ export function useProjectSettingsSections(project: Project): { notice: ReactNod
     !personal && { label: 'Plugins', node: <Integrations project={project} settings={settings.data} schemas={schemas} /> },
   ];
   return {
-    notice: settings.isError ? <Alert tone="error">Project settings could not be loaded: {settings.error.message}</Alert> : null,
+    notice: settings.isError ? <LoadError what="Project settings" error={settings.error} /> : null,
     sections: sections.filter((x): x is SettingsSection => x !== false),
   };
 }
@@ -122,7 +126,7 @@ export function useProjectSettingsSections(project: Project): { notice: ReactNod
 type Entries = () => { label: string; onSelect: () => void }[];
 
 function RunConfiguration({ project, settings, setUpEntries }: { project: Project; settings: ProjectSettingsView | undefined; setUpEntries: Entries }) {
-  const config = useQuery({ queryKey: ['run-config', project.id, null], queryFn: () => api.runConfig(project.id, null) });
+  const config = useQuery({ queryKey: runKeys.config(project.id, null), queryFn: () => api.runConfig(project.id, null) });
   const ignored = ignoredNote(config.data?.effective?.ignored);
   const stored = settings?.runOverrides ?? '';
   const [overrides, setOverrides] = useState('');

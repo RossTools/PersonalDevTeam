@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { Button, EmptyState, ViewHeader, relativeTime } from '@ui';
+import { Button, EmptyState, RelativeTime, ViewHeader } from '@ui';
 import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
-import { useOpenTicket } from '../tickets/actions';
+import { useOpenTicket } from '../common/open';
 import { after, selectedUpdate, step } from './model';
 import { useClearUpdate, useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
@@ -116,8 +116,10 @@ export function UpdateView({ update, onOpenTarget, onCleared }: {
     if (unread) mutate(update.id);
   }, [unread, update.id, mutate]);
   const open = update.target.kind !== 'none' && onOpenTarget ? () => onOpenTarget(update.target) : null;
-  const meta = [update.severity === 'error' ? 'Error' : update.severity === 'warning' ? 'Warning' : null,
-    relativeTime(update.createdAt), update.clearedAt !== null ? 'resolved' : null].filter(Boolean).join(' · ');
+  const severity = update.severity === 'error' ? 'Error' : update.severity === 'warning' ? 'Warning' : null;
+  const meta = <>
+    {severity && `${severity} · `}<RelativeTime time={update.createdAt} />{update.clearedAt !== null && ' · resolved'}
+  </>;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ViewHeader

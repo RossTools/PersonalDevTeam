@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Checkbox, Dialog, Field, Input, SegmentedControl, Select, Skeleton, Switch } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
@@ -11,7 +11,7 @@ import type { StartTicket } from '../api/gen/StartTicket';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Ticket } from '../api/gen/Ticket';
 import { TicketKey } from '../common/TicketKey';
-import { actionError } from '../common/useAction';
+import { useFormAction } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
 import { useAgentAvailability } from '../common/useAgentAvailability';
 import { isAcp, useAgents } from '../common/agents';
@@ -22,6 +22,7 @@ import { setWaiting } from './actions';
 import { AreaChips } from './Areas';
 import { useProjectAreas, useTicket } from './queries';
 import { SharedFiles } from './TicketParts';
+import { useProjects } from '../projects/queries';
 
 
 /** The tickets that block this one and aren't Done or Won't do. */
@@ -44,7 +45,7 @@ export interface StartDialogProps {
 export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDialogProps) {
   const q = useTicket(ticketId);
   const qc = useQueryClient();
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const projects = useProjects();
   const t = q.data;
   const areaConfig = useProjectAreas(t?.projectId ?? null);
   const config = areaConfig.data && !areaConfig.data.error ? areaConfig.data.areas : undefined;
@@ -73,10 +74,12 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const [pickedPermission, setPermission] = useState<PermissionMode | null>(null);
   const permissionMode = pickedPermission ?? defaults.ticketPermissionMode;
   const [newWorkspace, setNewWorkspace] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   // The server answered start_blocked: its message, and Start becomes Start anyway.
   const [serverBlocked, setServerBlocked] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  // Wait, Stop waiting and Start share one pending state and one error line.
+  const act = useFormAction((work: () => Promise<unknown>) => work());
+  const { pending, error } = act;
+  const failed = () => requestAnimationFrame(() => errorRef.current?.focus());
   const errorRef = useRef<HTMLDivElement>(null);
 
   const blockers = t ? openBlockers(t) : [];
@@ -90,31 +93,17 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const startable = !!t && !active && !closed;
 
   const wait = async () => {
-    if (!t || !startable || pending) return;
-    setPending(true);
-    setError(null);
-    try {
+    if (!t || !startable) return;
+    const ok = await act.run(async () => {
       await setWaiting(qc, t, true);
       onClose();
-    } catch (e) {
-      setError(actionError(e));
-      requestAnimationFrame(() => errorRef.current?.focus());
-    } finally {
-      setPending(false);
-    }
+      return true;
+    });
+    if (!ok) failed();
   };
 
   const stopWaiting = async () => {
-    if (!t || pending) return;
-    setPending(true);
-    setError(null);
-    try {
-      await setWaiting(qc, t, false);
-    } catch (e) {
-      setError(actionError(e));
-    } finally {
-      setPending(false);
-    }
+    if (t) await act.run(() => setWaiting(qc, t, false));
   };
 
   // Enter does the primary action: Wait when something is in the way (and it isn't waiting already), else Start.
@@ -122,9 +111,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const primary = () => void (offerWait ? wait() : submit());
 
   const submit = async () => {
-    if (!t || !startable || pending) return;
-    setPending(true);
-    setError(null);
+    if (!t || !startable) return;
     const mode: StartMode = force ? 'force' : 'check';
     const body: StartTicket = {
       agent,
@@ -136,26 +123,22 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
       mode,
       ...INITIAL_SIZE,
     };
-    try {
-      const r = await api.startTicket(t.id, body);
-      onStarted(r);
-      onClose();
-    } catch (e) {
-      if (e instanceof ApiError && e.code === 'start_blocked') {
+    const ok = await act.run(async () => {
+      try {
+        onStarted(await api.startTicket(t.id, body));
+        onClose();
+      } catch (e) {
+        if (!(e instanceof ApiError && e.code === 'start_blocked')) throw e;
         setServerBlocked(e.message);
-      } else {
-        setError(actionError(e));
-        requestAnimationFrame(() => errorRef.current?.focus());
       }
-    } finally {
-      setPending(false);
-    }
+      return true;
+    });
+    if (!ok) failed();
   };
 
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       title={t ? `Start ${t.key}` : 'Start ticket'}
       description={t?.title}
       size="md"

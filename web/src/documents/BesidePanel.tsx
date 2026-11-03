@@ -13,15 +13,15 @@ import { runAction } from '../common/useAction';
 import { usePm } from '../pm/usePm';
 import { routePath } from '../shell/route';
 import { navigate } from '../shell/router';
-import { useOpenSession } from '../tickets/actions';
+import { useOpenSession } from '../common/open';
 import { LinkDocumentDialog } from './DocumentDialogs';
 import { KindIcon } from './LinkedDocuments';
 import { openDocument, providerLabel, useDocument, useDocumentProviders } from './queries';
+import { POLL } from '../common/poll';
 
 // The document's editors and the Markdown libraries load when a document is first shown beside a conversation.
 const DocumentBody = lazy(() => import('./DocumentBody').then((m) => ({ default: m.DocumentBody })));
 
-const POLL = 2000;
 export const BESIDE_WIDTH = { default: 440, min: 280, max: 960 };
 const STEP = 16;
 const DRAG_KIND = 'beside';
@@ -33,7 +33,7 @@ export const besideKey = (sessionId: string) => ['documents', 'beside', sessionI
  * terminal: only a conversation has documents beside it.
  */
 export function useDocumentsBeside(sessionId: string, enabled = true) {
-  return useQuery({ queryKey: besideKey(sessionId), queryFn: () => api.documentsBeside(sessionId), refetchInterval: POLL, enabled });
+  return useQuery({ queryKey: besideKey(sessionId), queryFn: () => api.documentsBeside(sessionId), refetchInterval: POLL.live, enabled });
 }
 
 interface PanelPrefs { width: number; collapsed: boolean }

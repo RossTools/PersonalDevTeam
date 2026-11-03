@@ -3,20 +3,20 @@
 // enabled. PDT's built-in workflows sit in their own collapsed group at the end, to add one back (or copy it).
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { Alert, Badge, Button, Dialog, Field, Input, Link, Select, Sheet, Skeleton, Switch, Textarea } from '@ui';
+import { Alert, Badge, Button, ChoiceCard, Dialog, Disclosure, Field, Input, Link, SectionLabel, Select, Sheet, Skeleton, Switch, Textarea } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { ConnectionPicker } from '../connections/ConnectionPicker';
 import { DurationInput } from './DurationInput';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
-import { navigate } from '../shell/router';
-import { routePath } from '../shell/route';
 import type { GalleryTemplate } from '../api/gen/GalleryTemplate';
 import type { Project } from '../api/gen/Project';
 import type { Scope } from '../api/gen/Scope';
 import type { TemplateParam } from '../api/gen/TemplateParam';
 import { BLANK, gallery, pluginOff, triggerLabel, type GalleryFilter } from './gallery';
+import { invalidateWorkflows, workflowKeys } from './queries';
+import { LoadError } from '../common/QueryStatus';
+import { openPlugin } from '../common/open';
 
 /** The value a param starts with in the form. */
 function initial(p: TemplateParam): unknown {
@@ -50,33 +50,27 @@ export function ParamsForm({ params, values, onChange }: { params: TemplateParam
 
 const startValues = (params: TemplateParam[]) => Object.fromEntries(params.map((p) => [p.id, initial(p)]));
 
-const groupHeading = 'mt-4 mb-2 flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-muted-foreground first:mt-0';
-
 /** How many steps the preview lists before "and N more". */
 const STEPS_SHOWN = 8;
 
 function Card({ t, selected, onPick }: { t: GalleryTemplate; selected: boolean; onPick: () => void }) {
   const off = pluginOff(t);
   return (
-    <button
-      type="button"
-      aria-pressed={selected}
+    <ChoiceCard
+      selected={selected}
       onClick={onPick}
-      className={cn(
-        'flex flex-col gap-1.5 rounded-lg border border-border bg-background p-3 text-left outline-none hover:border-muted-foreground focus-visible:ring-2 focus-visible:ring-ring',
-        t.id === BLANK && 'border-dashed',
-        selected && 'border-primary ring-2 ring-accent',
-      )}
+      dashed={t.id === BLANK}
+      title={<span className={cn(off && 'text-muted-foreground')}>{t.id === BLANK ? 'Start from scratch' : t.name}</span>}
+      description={t.description}
+      className="gap-1.5"
     >
-      <span className={cn('text-sm font-medium', off && 'text-muted-foreground')}>{t.id === BLANK ? 'Start from scratch' : t.name}</span>
-      {t.description && <span className="line-clamp-2 text-xs text-muted-foreground">{t.description}</span>}
       <span className="flex flex-wrap gap-1.5">
         <Badge>{triggerLabel(t)}</Badge>
         {t.plugin && <Badge tone={off ? 'waiting' : 'accent'}>{off ? `${t.plugin.label} is off` : t.plugin.label}</Badge>}
         {t.builtinWorkflow && (t.added ? <Badge tone="running">Added</Badge> : <Badge tone="waiting">Not added</Badge>)}
         {!t.builtin && <Badge>Yours</Badge>}
       </span>
-    </button>
+    </ChoiceCard>
   );
 }
 
@@ -108,12 +102,12 @@ function Preview({ t, projects, onClose, onCreated, onEditTemplate }: {
       });
     },
     onSuccess: (w) => {
-      void qc.invalidateQueries({ queryKey: ['workflows'] });
-      void qc.invalidateQueries({ queryKey: ['workflow-templates'] });
+      invalidateWorkflows(qc);
+      void qc.invalidateQueries({ queryKey: workflowKeys.templates });
       onCreated(w.id);
     },
   });
-  const openPlugin = (id: string) => { onClose(); navigate(routePath({ view: 'settings', page: { kind: 'plugins', id } })); };
+  const toPlugin = (id: string) => { onClose(); openPlugin(id); };
   const steps = t.steps.slice(0, STEPS_SHOWN);
   const node = 'rounded-md border border-border bg-background px-2.5 py-1.5 text-xs';
   const arrow = <div aria-hidden className="ml-4 h-3.5 border-l border-border" />;
@@ -126,7 +120,7 @@ function Preview({ t, projects, onClose, onCreated, onEditTemplate }: {
       </div>
       {off && plugin && (
         <Alert tone="warning">
-          Needs the {plugin.label} plugin. <Link onClick={() => openPlugin(plugin.id)}>Turn on {plugin.label}</Link> in Settings → Plugins to use it.
+          Needs the {plugin.label} plugin. <Link onClick={() => toPlugin(plugin.id)}>Turn on {plugin.label}</Link> in Settings → Plugins to use it.
         </Alert>
       )}
       {t.builtinWorkflow && t.added && <Alert tone="info">Already in your workflows. This adds a second copy.</Alert>}
@@ -172,7 +166,7 @@ export function NewWorkflowDialog({ projects, templateId, onClose, onCreated, on
   /** Opens one of the user's own templates' page (its params and document). */
   onEditTemplate?: (id: string) => void;
 }) {
-  const templates = useQuery({ queryKey: ['workflow-templates'], queryFn: () => api.listWorkflowTemplates() });
+  const templates = useQuery({ queryKey: workflowKeys.templates, queryFn: () => api.listWorkflowTemplates() });
   const phone = useMediaQuery(PHONE_QUERY);
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<GalleryFilter>('all');
@@ -208,7 +202,7 @@ export function NewWorkflowDialog({ projects, templateId, onClose, onCreated, on
     </nav>
   );
 
-  const body = templates.error ? <Alert tone="error">The templates could not be loaded: {templates.error.message}</Alert>
+  const body = templates.error ? <LoadError what="The templates" error={templates.error} />
     : !templates.data ? <Skeleton lines={6} />
       : g.empty ? (
         <p className="py-5 text-sm text-muted-foreground">No templates match. <Link onClick={startFromScratch}>Start from scratch</Link></p>
@@ -217,22 +211,29 @@ export function NewWorkflowDialog({ projects, templateId, onClose, onCreated, on
           {g.blank && <div className="mb-2"><Grid items={[g.blank]} picked={picked} onPick={pick} /></div>}
           {g.groups.map((grp) => (
             <section key={grp.id} aria-label={grp.label}>
-              <h3 className={groupHeading}>{grp.label}</h3>
+              <SectionLabel className="mt-4 mb-2 first:mt-0">{grp.label}</SectionLabel>
               <Grid items={grp.items} picked={picked} onPick={pick} />
             </section>
           ))}
           {g.builtins.length > 0 && (
             <section aria-label="Built-in">
-              {filter === 'builtin' ? <h3 className={groupHeading}>Built-in</h3> : (
-                <h3 className={groupHeading}>
-                  <button type="button" aria-expanded={showBuiltins} className="flex items-center gap-1.5 uppercase outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setBuiltinsOpen(!showBuiltins)}>
-                    {showBuiltins ? <ChevronDown aria-hidden className="size-3" /> : <ChevronRight aria-hidden className="size-3" />}
-                    Built-in · {g.builtins.length}
-                  </button>
-                  <span className="normal-case tracking-normal">— PDT's own workflows, to add back one you deleted</span>
-                </h3>
+              {filter === 'builtin' ? (
+                <>
+                  <SectionLabel className="mt-4 mb-2 first:mt-0">Built-in</SectionLabel>
+                  <Grid items={g.builtins} picked={picked} onPick={pick} />
+                </>
+              ) : (
+                <Disclosure
+                  title={<SectionLabel as="span">Built-in · {g.builtins.length}</SectionLabel>}
+                  trailing={<span className="text-2xs text-muted-foreground">— PDT's own workflows, to add back one you deleted</span>}
+                  open={showBuiltins}
+                  onOpenChange={setBuiltinsOpen}
+                  className="mt-4 first:mt-0"
+                  panelClassName="mt-2"
+                >
+                  <Grid items={g.builtins} picked={picked} onPick={pick} />
+                </Disclosure>
               )}
-              {showBuiltins && <Grid items={g.builtins} picked={picked} onPick={pick} />}
             </section>
           )}
           {g.groups.length === 0 && !g.blank && g.builtins.length === 0 && <p className="py-5 text-sm text-muted-foreground">No templates here match.</p>}
@@ -244,8 +245,7 @@ export function NewWorkflowDialog({ projects, templateId, onClose, onCreated, on
   );
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
+      onClose={onClose}
       dismissable={false}
       size="gallery"
       title="New workflow"

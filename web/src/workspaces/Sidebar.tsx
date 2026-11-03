@@ -1,7 +1,7 @@
 import { memo, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
-import { Badge, EmptyState, IconButton, List, ListRow, useMenuAt, type ListDropEvent } from '@ui';
+import { Badge, EmptyState, IconButton, List, ListHeading, ListRow, useMenuAt, type ListDropEvent } from '@ui';
 import { api } from '../api/client';
 import type { Workspace } from '../api/gen/Workspace';
 import { AgentDot, AgentLabel, itemState, rollup, UnseenDot } from '../common/AgentState';
@@ -14,7 +14,7 @@ import { agentMenu, workspaceMenu } from './menus';
 import { findTab, isTicketWorkspace, itemOf, positionInAll } from './model';
 import { TicketKey } from '../common/TicketKey';
 import { PrBadge } from '../tickets/PullRequest';
-import { useOpenTicket } from '../tickets/actions';
+import { useOpenTicket } from '../common/open';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 import { SessionTicketChip } from './SessionTicketChip';
 import { startedByStep } from '../sessions/status';
@@ -24,8 +24,6 @@ import { worktreesQuery } from '../common/worktrees';
 import { useSameList } from '../common/useSameList';
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
-
-const heading = 'flex items-center px-2 pt-3 pb-1 text-2xs tracking-wider text-muted-foreground uppercase';
 
 /** A workspace's rolled-up state: its most urgent item ("Done" when an idle agent is unseen). */
 export function workspaceState(ws: WorkspacesApi, w: Workspace) {
@@ -120,12 +118,16 @@ export const Sidebar = memo(function Sidebar({ ws, onRenameTab, onProjectSetting
   return (
     <div className="flex flex-col">
       <section aria-label="Workspaces">
-        <h2 className={heading}>
-          <span className="flex-1">Workspaces</span>
-          <IconButton label="New workspace" size="sm" noTooltip className="size-5" onClick={() => setAdding(true)}>
-            <Plus aria-hidden />
-          </IconButton>
-        </h2>
+        <ListHeading
+          className="px-2"
+          trailing={
+            <IconButton label="New workspace" size="sm" noTooltip className="size-5" onClick={() => setAdding(true)}>
+              <Plus aria-hidden />
+            </IconButton>
+          }
+        >
+          Workspaces
+        </ListHeading>
         <div onDoubleClick={onWorkspaceDoubleClick}>
           <List
             id="workspace-list"
@@ -171,7 +173,7 @@ export const Sidebar = memo(function Sidebar({ ws, onRenameTab, onProjectSetting
       </section>
       {tickets.length > 0 && (
         <section aria-label="Ticket workspaces">
-          <h2 className={heading}>Tickets</h2>
+          <ListHeading className="px-2">Tickets</ListHeading>
           <div onDoubleClick={onWorkspaceDoubleClick}>
             <List
               id="ticket-workspace-list"
@@ -251,7 +253,7 @@ export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
   return (
     <>
       <section aria-label="Agents">
-        <h2 className={heading}>Agents</h2>
+        <ListHeading className="px-2">Agents</ListHeading>
         <List
           aria-label="Agents"
           onAction={(id) => {
