@@ -50,7 +50,7 @@ working one shows a spinner.
   conversations**.
 - **Reset…** when the topic carries on but the conversation has grown long or muddled: the PM writes its journal
   entry, and a fresh conversation takes its place with the same name, agent, model and permission mode, starting from
-  that entry. **Previous conversation** at its top opens the old history, read-only.
+  that entry. It runs the PM persona as it is now, with any tools and instructions changed since. **Previous conversation** at its top opens the old history, read-only.
 
 A conversation never ends on its own. When it gets long, the agent condenses its history, writing a journal
 checkpoint first so nothing important is lost.
