@@ -237,6 +237,39 @@ async fn a_dry_run_shows_the_script() {
 
 // ---- HTTP ----
 
+/// An integration's service call: its auth, its service's error message, a hint on 401 and a 404 as none.
+#[tokio::test]
+async fn a_service_call_takes_its_auth_error_message_and_404() {
+    use pdt_api::sdk::http::{CallAuth, CallOpts, call_json_with};
+    let (url, seen) = fake_server(|path, _| match path {
+        "/ok?x=1" => (200, json!({"a": 1})),
+        "/denied" => (401, json!({"errorMessages": ["no entry"]})),
+        "/plain" => (500, json!("boom")),
+        _ => (404, json!({})),
+    })
+    .await;
+    let opts = CallOpts {
+        timeout: Some(std::time::Duration::from_secs(5)),
+        auth: CallAuth::Basic { user: "me", password: "pw" },
+        error_msg: Some(|v| v["errorMessages"][0].as_str().map(String::from)),
+        unauthorized_hint: Some(" (check the token)"),
+        not_found_ok: true,
+        ..CallOpts::new("Svc")
+    };
+    let get = |path: &'static str, query: Vec<(&'static str, String)>| {
+        let (opts, url) = (&opts, url.clone());
+        async move { call_json_with(opts, reqwest::Method::GET, &url, path, &[], &query, None).await }
+    };
+    assert_eq!(get("/ok", vec![("x", "1".into())]).await, Ok(Some(json!({"a": 1}))));
+    assert_eq!(seen.all()[0].3.as_deref(), Some("Basic bWU6cHc="));
+    assert_eq!(get("/denied", vec![]).await, Err("Svc answered 401 to GET /denied: no entry (check the token)".into()));
+    assert_eq!(get("/plain", vec![]).await, Err("Svc answered 500 to GET /plain: \"boom\"".into()));
+    assert_eq!(get("/gone", vec![]).await, Ok(None));
+    let strict = CallOpts::new("Svc");
+    let r = call_json_with(&strict, reqwest::Method::GET, &url, "/gone", &[], &[], None).await;
+    assert!(r.unwrap_err().starts_with("Svc answered 404"));
+}
+
 #[tokio::test]
 async fn an_http_request_uses_its_connection_and_checks_the_status() {
     let (url, seen) = fake_server(|path, _| {

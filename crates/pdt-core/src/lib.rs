@@ -34,6 +34,7 @@ pub mod mcp_servers;
 pub mod merge_update;
 pub mod network;
 pub mod notification;
+pub mod outbound;
 pub mod outside_pr;
 pub mod overlap;
 pub mod parts;
