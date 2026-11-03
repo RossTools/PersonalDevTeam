@@ -16,4 +16,8 @@ ticket?: string, kind?: DocumentKind, provider?: string,
 /**
  * Words in the title (case-insensitive).
  */
-q?: string, };
+q?: string, 
+/**
+ * At most this many (the most recently changed); every one when left out.
+ */
+limit?: number, };

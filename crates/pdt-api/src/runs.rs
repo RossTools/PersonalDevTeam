@@ -44,9 +44,17 @@ pub(crate) async fn definition_for(st: &AppState, run: &Run) -> Result<RunDef, S
     list.into_iter().find(|d| d.name == run.name).ok_or_else(|| format!("the configuration has no \"{}\"", run.name))
 }
 
-pub(crate) async fn list(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<Run>>, ApiError> {
+/// `GET /api/projects/{id}/runs?ended=` (`ended` as for sessions, [`crate::sessions::RecentQuery`]).
+pub(crate) async fn list(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<crate::sessions::RecentQuery>,
+) -> Result<Json<Vec<Run>>, ApiError> {
     st.project(&id).await?;
-    Ok(Json(st.store.list_runs(&id).await?))
+    Ok(Json(match q.ended {
+        Some(n) => st.store.list_recent_runs(&id, n).await?,
+        None => st.store.list_runs(&id).await?,
+    }))
 }
 
 pub(crate) async fn list_active(State(st): State<AppState>) -> Result<Json<Vec<Run>>, ApiError> {

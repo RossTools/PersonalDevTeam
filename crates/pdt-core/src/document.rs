@@ -150,6 +150,10 @@ pub struct DocumentFilter {
     #[serde(default)]
     #[ts(optional)]
     pub q: Option<String>,
+    /// At most this many (the most recently changed); every one when left out.
+    #[serde(default)]
+    #[ts(optional)]
+    pub limit: Option<u32>,
 }
 
 /// A title as it is kept: trimmed, control characters gone, at most [`MAX_TITLE`] characters. Blank is refused.

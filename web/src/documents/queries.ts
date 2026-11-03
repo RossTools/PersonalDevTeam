@@ -1,5 +1,5 @@
 // Documents (PDT-314): their queries, polled with the rest of the UI, and what invalidates them.
-import { useQuery, type QueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, type QueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../api/client';
 import type { DocumentFilter } from '../api/gen/DocumentFilter';
 import type { DocumentKind } from '../api/gen/DocumentKind';
@@ -21,9 +21,15 @@ export const documentKeys = {
 
 export const KIND_LABEL: Record<DocumentKind, string> = { doc: 'Doc', sheet: 'Sheet' };
 
-/** The documents a filter lets through, the most recently changed first. */
+/** The documents a filter lets through, the most recently changed first (the last answer shows while the next loads). */
 export function useDocuments(f: DocumentFilter, enabled = true) {
-  return useQuery({ queryKey: documentKeys.list(f), queryFn: () => api.documents(f), refetchInterval: POLL.live, enabled });
+  return useQuery({
+    queryKey: documentKeys.list(f),
+    queryFn: () => api.documents(f),
+    refetchInterval: POLL.live,
+    enabled,
+    placeholderData: keepPreviousData,
+  });
 }
 
 /** One document (null once it is gone). */

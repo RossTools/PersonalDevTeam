@@ -133,6 +133,25 @@ impl Store {
         rows.iter().map(to_session).collect()
     }
 
+    /// A project's sessions for a list that stays small however many have ended: every running one, every one a tab
+    /// holds, and the `ended` most recently ended others; oldest first.
+    pub async fn list_recent_sessions(&self, project_id: &str, ended: i64) -> Result<Vec<Session>, StoreError> {
+        let sql = format!(
+            "{SELECT} WHERE s.project_id = ? AND (s.status = 'running' \
+             OR s.id IN (SELECT session_id FROM workspace_tabs WHERE session_id IS NOT NULL) \
+             OR s.id IN (SELECT id FROM sessions WHERE project_id = ? AND status <> 'running' \
+             ORDER BY COALESCE(ended_at, created_at) DESC, id DESC LIMIT ?)) \
+             ORDER BY s.created_at, s.id"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(project_id)
+            .bind(project_id)
+            .bind(ended.max(0))
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter().map(to_session).collect()
+    }
+
     /// An attempt's sessions, oldest first.
     pub async fn list_attempt_sessions(&self, attempt_id: &str) -> Result<Vec<Session>, StoreError> {
         let sql = format!("{SELECT} WHERE s.attempt_id = ? ORDER BY s.created_at, s.id");
@@ -512,6 +531,35 @@ pub(crate) mod tests {
         assert_eq!(ids, ["a", "b"]);
         assert_eq!(store.get_session("a").await.unwrap(), Some(session("a", 10)));
         assert_eq!(store.get_session("zz").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn recent_sessions_keep_running_tabbed_and_latest_ended() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        for (id, at) in [("old", 1), ("tabbed", 2), ("mid", 3), ("live", 4), ("new", 5)] {
+            store.insert_session(&session(id, at)).await.unwrap();
+        }
+        // Ended in another order than made: "old" ended last.
+        for (id, at) in [("tabbed", 10), ("mid", 11), ("new", 12), ("old", 13)] {
+            store.end_session(id, SessionStatus::Finished, Some(0), at).await.unwrap();
+        }
+        let ws = pdt_core::workspace::Workspace {
+            id: "w".into(),
+            name: "W".into(),
+            project_id: None,
+            position: 0,
+            created_at: 1,
+            tabs: vec![],
+            ticket: None,
+        };
+        store.insert_workspace(&ws).await.unwrap();
+        store.open_tab("t", "w", &pdt_core::workspace::TabItem::Session("tabbed".into()), None, 1).await.unwrap();
+        let ids = |v: Vec<Session>| v.into_iter().map(|s| s.id).collect::<Vec<_>>();
+        assert_eq!(ids(store.list_recent_sessions("p", 2).await.unwrap()), ["old", "tabbed", "live", "new"]);
+        assert_eq!(ids(store.list_recent_sessions("p", 0).await.unwrap()), ["tabbed", "live"]);
+        assert_eq!(ids(store.list_recent_sessions("p", 10).await.unwrap()).len(), 5);
+        assert!(store.list_recent_sessions("other", 10).await.unwrap().is_empty());
     }
 
     #[tokio::test]

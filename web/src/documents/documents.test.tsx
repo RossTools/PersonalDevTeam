@@ -66,6 +66,22 @@ describe('documents', () => {
     expect(await screen.findByText('No document matches.')).toBeInTheDocument();
   });
 
+  it('the list loads 100 documents at a time, Show more the next', async () => {
+    const many = Array.from({ length: 150 }, (_, i) => doc(`d${i}`, `Doc ${i}`));
+    const calls = stubApi({
+      'GET /api/documents': (c) => many.slice(0, Number(new URLSearchParams(c.path.split('?')[1]).get('limit'))),
+      'GET /api/documents/providers': providers,
+      'GET /api/projects': [project],
+    });
+    renderWithQuery(<List />);
+    const list = await screen.findByRole('list', { name: 'Documents' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(100);
+    await userEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(150));
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
+    expect(calls.some((c) => c.path.includes('limit=200'))).toBe(true);
+  });
+
   it('New document makes one in the default provider, linked to the project', async () => {
     const calls = stubApi({
       'GET /api/documents/providers': providers,

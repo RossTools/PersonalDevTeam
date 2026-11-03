@@ -243,7 +243,7 @@ impl Action for DocumentsList {
                 Some(t) => Some(crate::mcp::tools::resolve_ticket(st, t, None).await?),
                 None => None,
             };
-            let f = DocumentFilter { project, ticket, kind: i.kind, provider: None, q: i.q };
+            let f = DocumentFilter { project, ticket, kind: i.kind, provider: None, q: i.q, limit: None };
             let list = st.store.list_documents(&f).await.map_err(|e| e.to_string())?;
             Ok(json!({"documents": list.iter().map(brief).collect::<Vec<_>>()}))
         })

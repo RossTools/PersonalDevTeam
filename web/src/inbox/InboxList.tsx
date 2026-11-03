@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { X } from 'lucide-react';
 import { Badge, Button, IconButton, List, ListHeading, ListRow, RelativeTime } from '@ui';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -6,6 +7,8 @@ import { TicketKey } from '../common/TicketKey';
 import { grouped, KIND_LABEL, selectedUpdate, updateSelection } from './model';
 import { KindIcon } from './kinds';
 
+/** Rows a Needs-you section shows before its Show all. */
+const GROUP_ROWS = 50;
 
 /** What a row says under its title: who asks (or which workflow) and the ticket's title. */
 function context(i: InboxItem): string {
@@ -33,36 +36,47 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
   failed?: boolean;
 }) {
   const groups = grouped(items);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   return (
     <>
       {groups.length === 0 && (failed || !loading) && <EmptyLine failed={failed} what="the Inbox">Nothing waits on you.</EmptyLine>}
-      {groups.map((g) => (
-        <section key={g.id} aria-label={g.title}>
-          <ListHeading as="h3">
-            {g.title} <Badge count={g.items.length} size="sm" />
-          </ListHeading>
-          <List aria-label={g.title} onAction={onSelect}>
-            {g.items.map((i) => (
-              <ListRow
-                key={i.id}
-                id={i.id}
-                title={i.title}
-                textValue={i.title}
-                current={i.id === selectedId}
-                className="items-start py-1.5 data-current:shadow-[inset_2px_0_0_var(--pdt-accent)]"
-                leading={<KindIcon item={i} className="mt-0.5" />}
-                trailing={<RelativeTime short time={i.createdAt} className="text-meta text-muted-foreground" />}
-                secondary={
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
-                    <span className="truncate">{context(i)}</span>
-                  </span>
-                }
-              />
-            ))}
-          </List>
-        </section>
-      ))}
+      {groups.map((g) => {
+        // A long section shows its first rows (and the selected one's, wherever it is) until Show all.
+        const all = expanded.has(g.id) || g.items.slice(GROUP_ROWS).some((i) => i.id === selectedId);
+        const rows = all ? g.items : g.items.slice(0, GROUP_ROWS);
+        return (
+          <section key={g.id} aria-label={g.title}>
+            <ListHeading as="h3">
+              {g.title} <Badge count={g.items.length} size="sm" />
+            </ListHeading>
+            <List aria-label={g.title} onAction={onSelect}>
+              {rows.map((i) => (
+                <ListRow
+                  key={i.id}
+                  id={i.id}
+                  title={i.title}
+                  textValue={i.title}
+                  current={i.id === selectedId}
+                  className="items-start py-1.5 data-current:shadow-[inset_2px_0_0_var(--pdt-accent)]"
+                  leading={<KindIcon item={i} className="mt-0.5" />}
+                  trailing={<RelativeTime short time={i.createdAt} className="text-meta text-muted-foreground" />}
+                  secondary={
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
+                      <span className="truncate">{context(i)}</span>
+                    </span>
+                  }
+                />
+              ))}
+            </List>
+            {rows.length < g.items.length && (
+              <Button variant="ghost" size="sm" className="mx-2 mt-1" onClick={() => setExpanded((s) => new Set(s).add(g.id))}>
+                Show all {g.items.length}
+              </Button>
+            )}
+          </section>
+        );
+      })}
     </>
   );
 }
