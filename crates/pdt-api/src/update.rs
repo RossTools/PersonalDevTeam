@@ -1,4 +1,4 @@
-//! Update checks and installs (remote-host spec §3.3–3.4). pdtd checks hourly (unless the policy is manual) and on
+//! Update checks and installs. pdtd checks hourly (unless the policy is manual) and on
 //! request, downloads and verifies a release, writes `update/request.json` and shuts down; pdt-host installs it.
 
 use crate::error::{ApiError, codes};
@@ -773,7 +773,7 @@ fn set_found(
     s.state = resting(s);
 }
 
-/// What makes the host busy (spec §3.3): agents working, of unknown activity or waiting on background tasks, runs
+/// What makes the host busy: agents working, of unknown activity or waiting on background tasks, runs
 /// setting up. A store error counts as busy, so an automatic update never starts on a guess.
 pub async fn busy_reasons(st: &AppState) -> Vec<String> {
     let mut out = Vec::new();

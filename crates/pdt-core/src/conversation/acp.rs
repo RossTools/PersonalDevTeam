@@ -44,7 +44,7 @@ pub enum AcpOut {
         id: Value,
         message: String,
     },
-    /// Answer an agent request now with a result (PDT's own tools need no approval, Phase 7b).
+    /// Answer an agent request now with a result (PDT's own tools need no approval).
     Respond {
         id: Value,
         result: Value,

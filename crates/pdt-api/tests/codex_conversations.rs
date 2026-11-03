@@ -1,4 +1,4 @@
-//! Codex conversations end to end, with `fake-agent app-server` standing in for `codex app-server` (plan 5b).
+//! Codex conversations end to end, with `fake-agent app-server` standing in for `codex app-server`.
 
 use crate::common;
 

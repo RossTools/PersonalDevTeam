@@ -1,4 +1,4 @@
-//! Run instances (remote-host spec §4.2). Pure types and rules; pdt-api drives the processes.
+//! Run instances. Pure types and rules; pdt-api drives the processes.
 
 use crate::host::PortRange;
 use serde::{Deserialize, Serialize};
@@ -162,7 +162,7 @@ pub fn pty_id(run_id: &str, step: RunStep) -> String {
     format!("run:{run_id}:{}", step.as_str())
 }
 
-/// Kept per project, branch and run name (spec §4.2 "Data"): `<data>/runs/<project>/<branch>-<hash>/<name>`. The
+/// Kept per project, branch and run name: `<data>/runs/<project>/<branch>-<hash>/<name>`. The
 /// hash of the full branch name keeps branches that flatten to the same folder (`feature/x`, `feature-x`) apart.
 /// Each part is made a single plain folder name, whatever the input (names are also validated with the run
 /// configuration).

@@ -1,4 +1,4 @@
-//! Conversation event log (structured agents spec §4.2).
+//! Conversation event log.
 
 use crate::{Store, StoreError};
 use pdt_core::conversation::{AgentEvent, ConversationEvent, MAX_RAW, cap_text};

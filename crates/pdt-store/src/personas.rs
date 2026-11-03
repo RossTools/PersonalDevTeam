@@ -1,4 +1,4 @@
-//! Personas and their versions (Phase 7b spec §3). Every save is a new version; a persona row points at its current
+//! Personas and their versions. Every save is a new version; a persona row points at its current
 //! one.
 
 use crate::{Store, StoreError};

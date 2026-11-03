@@ -1,4 +1,4 @@
-//! Review comments (Phase 6, review spec §3): line comments on a worktree's changes, deleted with the worktree.
+//! Review comments: line comments on a worktree's changes, deleted with the worktree.
 
 use crate::{Store, StoreError};
 use pdt_core::review::{CommentSide, ReviewComment};

@@ -12,7 +12,7 @@ import type { TurnPhase } from "./TurnPhase";
 import type { TurnStatus } from "./TurnStatus";
 
 /**
- * A normalized conversation event (spec §4.1).
+ * A normalized conversation event.
  */
 export type AgentEvent = { "kind": "user_message", text: string, images: Array<string>, source: MessageSource, 
 /**

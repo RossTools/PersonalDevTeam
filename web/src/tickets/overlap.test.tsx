@@ -1,4 +1,4 @@
-// Phase 4c in the web UI: areas, overlap badges and the Overlaps section, waiting and clear to start, Start's Wait,
+// Overlap in the web UI: areas, overlap badges and the Overlaps section, waiting and clear to start, Start's Wait,
 // and the overlap filters.
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

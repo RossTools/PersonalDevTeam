@@ -1,4 +1,4 @@
-//! The workflow API's records (Phase 7a spec §9): workflows, versions, runs, steps, logged events, connections.
+//! The workflow API's records: workflows, versions, runs, steps, logged events, connections.
 
 use super::doc::WorkflowDoc;
 use super::validate::Issue;
@@ -59,7 +59,7 @@ pub enum Author {
 }
 str_enum!(Author { User => "user", Builtin => "builtin", Repo => "repo", Agent => "agent" });
 
-/// Where a version stands (Phase 7d spec §6.2).
+/// Where a version stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -320,7 +320,7 @@ impl NewLogEvent {
     }
 }
 
-/// A named external service (Phase 7a spec §7). Its secret is in the OS keychain, never here.
+/// A named external service. Its secret is in the OS keychain, never here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

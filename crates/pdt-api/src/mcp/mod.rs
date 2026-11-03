@@ -1,4 +1,4 @@
-//! pdt-mcp (Phase 7b spec §2): PDT's MCP server at `POST /api/mcp`, Streamable HTTP answered with JSON. Each agent
+//! pdt-mcp: PDT's MCP server at `POST /api/mcp`, Streamable HTTP answered with JSON. Each agent
 //! session gets its own bearer token (`<session id>.<HMAC of it under the host key>`), so a tool call knows its
 //! session, and through it the project, ticket and agent step. The tools (`tools/`, one module per group) run the
 //! API's own handlers.
@@ -128,7 +128,7 @@ pub(crate) async fn locked_down(st: &AppState, s: &Session) -> bool {
 }
 
 /// Whether a session can be given pdt-mcp: every agent conversation, and Claude and Codex terminals (Devin keeps MCP
-/// servers in a file of its own, spec §2.3).
+/// servers in a file of its own).
 pub(crate) fn offered(s: &Session) -> bool {
     s.kind == SessionKind::AgentTui && (s.mode == SessionMode::Conversation || s.agent != Some(AgentKind::Devin))
 }

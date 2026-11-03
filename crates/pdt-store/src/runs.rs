@@ -1,4 +1,4 @@
-//! Run instances (remote-host spec §4.2).
+//! Run instances.
 
 use crate::{Store, StoreError};
 use pdt_core::run::{Run, RunKind, RunState};

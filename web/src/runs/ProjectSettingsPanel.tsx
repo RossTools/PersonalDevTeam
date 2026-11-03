@@ -87,7 +87,7 @@ export function useProjectSettingsSections(project: Project): { notice: ReactNod
   const openSession = useOpenSession();
   const agents = useAgentAvailability();
   const defaults = useAgentDefaults();
-  // A Personal project has no repository: no runs, tests or merging (spec 7b §7).
+  // A Personal project has no repository: no runs, tests or merging.
   const personal = project.kind === 'personal';
   // An agent session in the main checkout, in the host's default view, whose first message is one of PDT's set-up
   // prompts.
@@ -220,7 +220,7 @@ function Instructions({ project, settings, writeEntries }: { project: Project; s
   );
 }
 
-/** The agent settings: selects, so each saves at once (spec §6.1). */
+/** The agent settings: selects, so each saves at once. */
 function Agents({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
   return (
     <Section label="Agents">
@@ -257,7 +257,7 @@ function Credentials({ project, settings }: { project: Project; settings: Projec
 const NO_MODE = 'none';
 type StepModeChoice = PermissionMode | typeof NO_MODE;
 
-/** The permission mode of every persona's session (workflow agent steps) here, over the persona's own (spec 7b §3). */
+/** The permission mode of every persona's session (workflow agent steps) here, over the persona's own. */
 function StepPermissionMode({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
   const save = useSaveProjectSettings(project, settings);
   const value: StepModeChoice = settings?.agentPermissionMode ?? NO_MODE;
@@ -280,7 +280,7 @@ function StepPermissionMode({ project, settings }: { project: Project; settings:
   );
 }
 
-/** Merge through pull requests (review spec §2.7): a switch, so it saves at once. */
+/** Merge through pull requests: a switch, so it saves at once. */
 function Merging({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
   const save = useSaveProjectSettings(project, settings);
   return (
@@ -337,7 +337,7 @@ const NO_CAP = 'none';
 const CAPS = [1, 2, 3, 4, 5, 6, 8, 10];
 
 /**
- * The project's policies (Phase 7c): who may merge, whether an automated merge needs a person's approval or green CI
+ * The project's policies: who may merge, whether an automated merge needs a person's approval or green CI
  * (PDT-151), the cap on
  * running tickets, auto-start and its quiet period, and whether the PM asks before acting (PDT-81). Merge and Start enforce them, whatever
  * a workflow says. Each saves at once.

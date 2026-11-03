@@ -1,4 +1,4 @@
-//! Notifications (PDT-108 §3.1): one live row per cause (`dedupe_key`), `seq` bumped on every change for the stream.
+//! Notifications (PDT-108): one live row per cause (`dedupe_key`), `seq` bumped on every change for the stream.
 
 use crate::{Store, StoreError};
 use pdt_core::notification::{Change, NewNotification, Notification, NotificationKind, Section, Severity, Show};

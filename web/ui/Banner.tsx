@@ -15,7 +15,7 @@ const defaultRole: Partial<Record<BannerTone, AriaRole>> = { running: 'status', 
 
 /**
  * A host-wide notice: one line of fixed height (h-8) that never wraps. It sits above the terminal, so any change in
- * its height would resize the PTY (spec §3.4); long text truncates (pass `title` for the full text). Anything that
+ * its height would resize the PTY; long text truncates (pass `title` for the full text). Anything that
  * needs more room floats over the page from inside `actions` (e.g. a popover). The banner is a size container, so
  * `actions` can switch to shorter labels with `@sm:` etc. when the banner is narrow (a long button would be clipped).
  */

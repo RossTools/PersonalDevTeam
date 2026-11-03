@@ -1,4 +1,4 @@
-//! The event log (Phase 7a spec §2): typed, keyed events, deduplicated by key, read by the workflow engine.
+//! The event log: typed, keyed events, deduplicated by key, read by the workflow engine.
 
 use crate::{Store, StoreError};
 use pdt_core::workflow::api::{LogEvent, NewLogEvent};
@@ -153,7 +153,7 @@ impl Store {
     }
 }
 
-/// Mirrors a ticket timeline event into the log, in the same transaction (Phase 7a spec §2.1): `created`, `moved`,
+/// Mirrors a ticket timeline event into the log, in the same transaction: `created`, `moved`,
 /// `unblocked`, `comment`, `started`, `merged`, `abandoned`, `overlap` (found or cleared) and `outcome` become
 /// `ticket.*`, `attempt.*` and `agent.*` events.
 /// Other kinds aren't domain events workflows react to.

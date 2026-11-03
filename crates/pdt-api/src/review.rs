@@ -1,4 +1,4 @@
-//! Review (Phase 6): a worktree's changes and the two sides of a
+//! Review: a worktree's changes and the two sides of a
 //! file, line comments, Send feedback into the coder session, Approve, and Merge (a local merge, or auto-merge of the
 //! attempt's pull request on the project's forge).
 

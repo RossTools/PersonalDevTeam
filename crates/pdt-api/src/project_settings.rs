@@ -27,7 +27,7 @@ pub struct ProjectSettingsView {
     /// The permission mode of every persona's session here, over the persona's own (null: the persona's, else the
     /// host default).
     pub agent_permission_mode: Option<pdt_core::conversation::PermissionMode>,
-    /// Who may merge, approvals, the running-attempt cap and auto-start (Phase 7c).
+    /// Who may merge, approvals, the running-attempt cap and auto-start.
     pub policy: ProjectPolicy,
     /// Its settings for each enabled integration it is linked to, by the integration's id (PDT-174): `connection` and
     /// the fields `GET /api/integrations/project-settings` declares. A turned-off integration's are kept but not shown

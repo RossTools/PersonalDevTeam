@@ -24,7 +24,7 @@ const JOURNAL_WHAT: &str = "what you and the user are working on, what was decid
                             (under a `Still open` heading). It replaces this conversation's earlier entry, so write \
                             the whole picture; later PM conversations start from it";
 
-/// What PDT sends a PM conversation the user closed (spec §5.3).
+/// What PDT sends a PM conversation the user closed.
 pub fn journal_request() -> String {
     format!(
         "[{SHORT_NAME}] The user closed this PM conversation, so it is ending. Write its journal entry with \
@@ -40,7 +40,7 @@ pub fn reset_request() -> String {
     )
 }
 
-/// What PDT sends a PM conversation whose context the agent just compacted (spec §5.3): a checkpoint, and it carries on.
+/// What PDT sends a PM conversation whose context the agent just compacted: a checkpoint, and it carries on.
 pub fn checkpoint_request() -> String {
     format!(
         "[{SHORT_NAME}] Your context was just compacted. Write a journal checkpoint with `write_journal`: \
@@ -342,7 +342,7 @@ pub struct PmSessionPatch {
     pub title: Option<String>,
 }
 
-/// What an asking tool's call acts on, so the project's policy can be found (PDT-81 spec §4).
+/// What an asking tool's call acts on, so the project's policy can be found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AskTarget {
     /// A project id or key.
@@ -629,7 +629,7 @@ pub struct BriefConversationJournal {
     pub body: String,
 }
 
-/// Whether a PM conversation is due its daily update (spec §5.3, PDT-372): `after` (the PM daily checkpoint
+/// Whether a PM conversation is due its daily update (PDT-372): `after` (the PM daily checkpoint
 /// workflow's, a day by default) has passed since it was last brought up to date, give or take [`UPDATE_SLACK_MS`].
 /// pdt-api also wants the user to have written to it since, unless the workflow says otherwise.
 pub fn update_due(caught_up_at: i64, now: i64, after: i64) -> bool {
@@ -800,7 +800,7 @@ pub fn still_open(body: &str) -> Option<String> {
     Some(text)
 }
 
-/// The daily update a PM conversation in use gets in place of ending (spec §5.3, PDT-211): what happened to tickets
+/// The daily update a PM conversation in use gets in place of ending (PDT-211): what happened to tickets
 /// since its briefing or last update, the Inbox, what the other conversations' new journal entries leave open, and a
 /// request for a journal checkpoint. None when nothing relevant happened (no ticket events, an empty Inbox, no new
 /// journal entries): the PM daily checkpoint workflow asks only for a checkpoint then ([`checkpoint_due`]).

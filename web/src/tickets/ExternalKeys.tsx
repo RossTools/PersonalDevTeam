@@ -1,4 +1,4 @@
-// The issues in other trackers a ticket is linked to (Phase 7e: the issue it was imported from; PDT-154: the forge
+// The issues in other trackers a ticket is linked to (the issue it was imported from; PDT-154: the forge
 // issue a bug report came in as; PDT-481: issues linked by hand), beside its key, with the tracker's icon and the
 // issue's state. Each tracker is a plugin, named as Settings → Plugins names it.
 import { useQuery } from '@tanstack/react-query';

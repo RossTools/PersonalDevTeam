@@ -1,4 +1,4 @@
-//! The built-in Pipeline template (Phase 7c spec §3): Draft → Refine → Ready → Code → Review → QA → Accept → Done as
+//! The built-in Pipeline template: Draft → Refine → Ready → Code → Review → QA → Accept → Done as
 //! agent steps and gates. Its parameters pick the personas, which stages a person does, where a refined ticket goes,
 //! whether a person accepts, and whether the run or a person merges; the project's policies stay the guard.
 

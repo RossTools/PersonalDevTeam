@@ -219,7 +219,7 @@ pub(crate) async fn answer_request(
     Ok(())
 }
 
-/// `POST /api/sessions/{id}/ticket-draft`: Make ticket's draft (spec §10). A hidden one-turn side request forks the
+/// `POST /api/sessions/{id}/ticket-draft`: Make ticket's draft. A hidden one-turn side request forks the
 /// saved conversation (Claude: `--fork-session --no-session-persistence`; Codex: an ephemeral `thread/fork`), asks
 /// for a title and description with no tools, and saves nothing; the conversation and its process are untouched.
 /// Only the user's click sends it, and nothing retries.

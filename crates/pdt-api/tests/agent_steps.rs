@@ -1,4 +1,4 @@
-//! Phase 7b end to end: pdt-mcp, personas, agent steps, the Inbox and Personal projects, with `fake-agent` standing
+//! Agent steps end to end: pdt-mcp, personas, agent steps, the Inbox and Personal projects, with `fake-agent` standing
 //! in for Claude (it calls pdt-mcp tools when a message says `mcp: <tool> <json>`). pdtd's API is served on a local
 //! port so the agent can reach `/api/mcp`.
 

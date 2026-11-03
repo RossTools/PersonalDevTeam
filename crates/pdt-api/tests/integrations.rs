@@ -1,4 +1,4 @@
-//! Phase 7e's triggers and actions through the API: schedules, webhooks, GitHub issues, `command`, `http.request`,
+//! The integrations' triggers and actions through the API: schedules, webhooks, GitHub issues, `command`, `http.request`,
 //! `notify`, the brief archive and MCP tools. External services are local fake servers and `FakeForge`. (Each
 //! integration's actions are tested in its own crate, `crates/pdt-int-<id>`.)
 

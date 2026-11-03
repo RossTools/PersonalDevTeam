@@ -1,4 +1,4 @@
-//! pdt-host: keeps pdtd running on a host, installs updates pdtd hands it, rolls back a bad one (remote-host spec §3).
+//! pdt-host: keeps pdtd running on a host, installs updates pdtd hands it, rolls back a bad one.
 //! Deliberately small and synchronous, so it rarely needs to change itself.
 
 pub mod config;

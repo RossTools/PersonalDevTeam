@@ -1,4 +1,4 @@
-//! Tickets (tickets spec §3, §4): numbering, ranks, the backlog query (filters, full-text search, keyset paging),
+//! Tickets: numbering, ranks, the backlog query (filters, full-text search, keyset paging),
 //! edits with their timeline events, bulk actions, links and comments.
 
 use crate::{Store, StoreError};

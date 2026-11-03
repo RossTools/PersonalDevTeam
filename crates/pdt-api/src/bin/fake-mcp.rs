@@ -1,4 +1,4 @@
-//! A stand-in MCP server (stdio, newline-delimited JSON-RPC) for the `mcp.tool` action's tests (Phase 7e-3), the same
+//! A stand-in MCP server (stdio, newline-delimited JSON-RPC) for the `mcp.tool` action's tests, the same
 //! on every OS. It speaks protocol version 2025-06-18, as most servers in the wild do. Its tools:
 //!
 //! - `echo {text, times?}`: the text, `times` times, as text content

@@ -1,4 +1,4 @@
-//! Ticket links (tickets spec §7): `blocks` links must not form a cycle, and a ticket is blocked while a ticket that
+//! Ticket links: `blocks` links must not form a cycle, and a ticket is blocked while a ticket that
 //! blocks it is still open.
 
 use std::collections::{HashMap, HashSet, VecDeque};

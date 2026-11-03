@@ -1,4 +1,4 @@
-//! Review (Phase 6, review spec §2): what a worktree's branch changed, file by file, the two sides of a file, and
+//! Review: what a worktree's branch changed, file by file, the two sides of a file, and
 //! merging the branch into its base locally. Everything but [`merge_local`] is read-only.
 
 use crate::{GitError, git_bytes, git_with_env, is_ancestor, is_dirty, list_worktrees, merge_base, rev_parse};

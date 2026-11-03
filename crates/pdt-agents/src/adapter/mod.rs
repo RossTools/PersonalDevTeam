@@ -1,4 +1,4 @@
-//! Structured agent adapters (structured agents spec §3.1): each owns an agent's process and protocol framing and turns
+//! Structured agent adapters: each owns an agent's process and protocol framing and turns
 //! it into normalized events. They know nothing about HTTP or the store.
 
 pub mod acp;
@@ -83,7 +83,7 @@ pub struct OpenSpec {
     /// Devin: the session was used in Devin's own terminal since PDT last logged it; the turns it took there after
     /// this time (ms; 0 = all of them) are imported from `session/load`'s replay.
     pub import_after: Option<i64>,
-    /// pdt-mcp for this session (Phase 7b), when it gets PDT's tools.
+    /// pdt-mcp for this session, when it gets PDT's tools.
     pub mcp: Option<crate::mcp::McpServer>,
 }
 
@@ -132,7 +132,7 @@ pub trait AgentAdapter: Send + Sync {
     fn agent(&self) -> AgentKind;
     /// Starts or resumes the agent's conversation for a session; outputs arrive on `sink`.
     async fn open(&self, spec: OpenSpec, sink: EventSink) -> Result<Box<dyn LiveConversation>, AdapterError>;
-    /// A hidden one-turn side request (Make ticket, spec §10): forks the saved conversation, asks `prompt` with no
+    /// A hidden one-turn side request (Make ticket): forks the saved conversation, asks `prompt` with no
     /// tools, saves nothing and returns the answer, shaped by the JSON Schema `schema` (an object, or text holding
     /// one). The conversation itself is untouched. `spec.resume` and `spec.permission_mode` don't apply.
     async fn draft(

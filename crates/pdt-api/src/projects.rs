@@ -1,4 +1,4 @@
-//! Project routes: list, add (by path or by cloning), rename/re-key, remove (workspaces spec §6.1–§6.3).
+//! Project routes: list, add (by path or by cloning), rename/re-key, remove.
 
 use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
@@ -119,7 +119,7 @@ pub(crate) async fn create(
     Ok((StatusCode::CREATED, Json(p)))
 }
 
-/// A Personal project (Phase 7b spec §7): no repository, its folder `<data dir>/personal/<id>`.
+/// A Personal project: no repository, its folder `<data dir>/personal/<id>`.
 async fn add_personal(st: &AppState, name: String, key: Option<String>) -> Result<Project, ApiError> {
     if let Some(k) = &key
         && st.store.project_keys().await?.iter().any(|t| t == k)

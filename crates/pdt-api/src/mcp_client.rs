@@ -1,4 +1,4 @@
-//! PDT as an MCP client (Phase 7e spec §7.2): MCP servers configured as connections of kind `mcp`, whose tools
+//! PDT as an MCP client: MCP servers configured as connections of kind `mcp`, whose tools
 //! workflows call (`mcp.tool`) and the catalog lists. One live client per server, started on first use and dropped
 //! after 5 minutes idle (never during a call); each server's tool list cached in memory, listed when pdtd starts and
 //! when its connection is saved, and again every 10 minutes while its client is live (an unused server is not started

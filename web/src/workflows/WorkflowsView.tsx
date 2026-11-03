@@ -1,4 +1,4 @@
-// The Workflows view's work area (Phase 7d spec §2): a workflow's page, one of the user's templates' page (from Save
+// The Workflows view's work area: a workflow's page, one of the user's templates' page (from Save
 // as template or the gallery's Edit this template), or a start.
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, EmptyState, Skeleton } from '@ui';

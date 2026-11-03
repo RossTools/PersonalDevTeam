@@ -212,7 +212,7 @@ pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &
     if !choices.iter().any(|c| c == choice) {
         return Err(format!("{choice} is not one of {}", choices.join(", ")));
     }
-    // A choice that approves records the user's approval of the run's attempt (Phase 7c §5).
+    // A choice that approves records the user's approval of the run's attempt.
     if step.wait.pointer("/answer/approve").and_then(Value::as_str) == Some(choice)
         && let Some(run) = st.store.get_workflow_run(run_id).await.map_err(err)?
         && let Some(attempt) = run.attempt_id.as_deref()

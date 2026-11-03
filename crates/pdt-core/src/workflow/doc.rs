@@ -1,4 +1,4 @@
-//! A workflow document (Phase 7a spec §3.1): nodes, edges, settings and layout. Stored as JSON, one version per save.
+//! A workflow document: nodes, edges, settings and layout. Stored as JSON, one version per save.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

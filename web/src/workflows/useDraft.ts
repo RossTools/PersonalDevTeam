@@ -1,4 +1,4 @@
-// The builder's draft (Phase 7d spec §2, §3): one document the three views edit, with undo, the server's check of it,
+// The builder's draft: one document the three views edit, with undo, the server's check of it,
 // and what happened to the saved version meanwhile. Polling never replaces a dirty draft.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';

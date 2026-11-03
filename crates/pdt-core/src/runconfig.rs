@@ -1,4 +1,4 @@
-//! Run configurations (remote-host spec §4.1): the repo's optional `.pdt/project.toml`, merged field by field with
+//! Run configurations: the repo's optional `.pdt/project.toml`, merged field by field with
 //! the host's overrides (same schema, matched by `name`). Pure.
 
 use crate::brand::PROJECT_CONFIG_FILE;
@@ -108,7 +108,7 @@ pub struct CiDef {
     pub command: String,
 }
 
-/// An `[[area]]` as written (tickets spec §3): a named part of the project, for overlap detection.
+/// An `[[area]]` as written: a named part of the project, for overlap detection.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AreaFile {
@@ -451,7 +451,7 @@ fn ci_provider_ids(list: Vec<String>) -> Result<Vec<String>, RunConfigError> {
     Ok(out)
 }
 
-/// The values PDT provides to a run (spec §4.2 "Variables PDT sets").
+/// The values PDT provides to a run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunVars {
     pub port: Option<u16>,

@@ -15,7 +15,7 @@ model: string | null,
  */
 instructions: string, 
 /**
- * None: the project's override, else the host default (spec §3).
+ * None: the project's override, else the host default.
  */
 permissionMode: PermissionMode | null, 
 /**

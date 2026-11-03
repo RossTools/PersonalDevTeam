@@ -33,7 +33,7 @@ export const workflowsApi = {
   workflowCatalog: () => request<KindSpec[]>('/api/workflows/catalog'),
   getWorkflow: (id: string) => request<WorkflowDetail>(`/api/workflows/${enc(id)}`),
   createWorkflow: (w: NewWorkflow) => request<WorkflowDetail>('/api/workflows', { method: 'POST', body: JSON.stringify(w) }),
-  /** A new version; with `propose`, a proposal waiting for review (Phase 7d). */
+  /** A new version; with `propose`, a proposal waiting for review. */
   saveWorkflow: (id: string, s: SaveWorkflow) =>
     request<WorkflowDetail>(`/api/workflows/${enc(id)}`, { method: 'PUT', body: JSON.stringify(s) }),
   deleteWorkflow: (id: string) => request<void>(`/api/workflows/${enc(id)}`, { method: 'DELETE' }),

@@ -1,4 +1,4 @@
-//! Workspaces and their tabs (workspaces spec §2, §5). Positions are kept as 0..n within each list and rewritten in
+//! Workspaces and their tabs. Positions are kept as 0..n within each list and rewritten in
 //! one transaction whenever the order changes.
 
 use crate::{Store, StoreError};

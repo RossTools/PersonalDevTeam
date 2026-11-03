@@ -18,7 +18,7 @@ export interface SwitchProps {
   className?: string;
 }
 
-/** An on/off setting that applies at once (spec §6.1); `onChange(checked)`. */
+/** An on/off setting that applies at once; `onChange(checked)`. */
 export function Switch({
   label,
   children,

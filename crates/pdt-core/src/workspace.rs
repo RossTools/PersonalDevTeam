@@ -1,4 +1,4 @@
-//! Workspaces and tabs (workspaces spec §2, §5). A workspace is an ordered strip of tabs; each tab shows one
+//! Workspaces and tabs. A workspace is an ordered strip of tabs; each tab shows one
 //! session, run or ticket, and each of those has at most one tab.
 
 use serde::{Deserialize, Serialize};
@@ -53,7 +53,7 @@ pub struct Tab {
     pub session_id: Option<String>,
     pub run_id: Option<String>,
     pub ticket_id: Option<String>,
-    /// A changes tab: the worktree's review (Phase 6).
+    /// A changes tab: the worktree's review.
     pub worktree_id: Option<String>,
     pub position: u32,
 }

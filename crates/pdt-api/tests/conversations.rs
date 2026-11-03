@@ -1,4 +1,4 @@
-//! Conversation sessions end to end, with `fake-agent` standing in for `claude -p` (structured agents spec §12).
+//! Conversation sessions end to end, with `fake-agent` standing in for `claude -p`.
 
 use crate::common;
 

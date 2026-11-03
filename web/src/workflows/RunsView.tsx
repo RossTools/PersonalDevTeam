@@ -1,4 +1,4 @@
-// The runs view (Phase 7d spec §4): every run of the workflow with its trigger and status; a run shows its path on the
+// The runs view: every run of the workflow with its trigger and status; a run shows its path on the
 // graph of the version it ran, its steps, and Retry, Resume (an agent step that timed out or stopped), Cancel and a
 // waiting gate's choices. View-only (phones, PDT-120): the list is its own screen, and a run is its steps, each
 // opening to its input and output, with nothing to act on.

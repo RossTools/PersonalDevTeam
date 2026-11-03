@@ -1,4 +1,4 @@
-//! Fractional ranks (tickets spec §3): base-62 digit strings read as fractions in (0, 1). Lexicographic order of keys
+//! Fractional ranks: base-62 digit strings read as fractions in (0, 1). Lexicographic order of keys
 //! is their order, so moving an item rewrites only its own key. A key never ends in `0` (the smallest digit), which
 //! keeps every key unique per value and leaves room below any key.
 //!

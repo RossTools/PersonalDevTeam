@@ -1,4 +1,4 @@
-//! The workflow engine through the API (Phase 7a): catalog, documents and versions, runs (waits, gates, retries, error
+//! The workflow engine through the API: catalog, documents and versions, runs (waits, gates, retries, error
 //! paths, sub-workflows, run keys, state), dry runs, the event log, connections, and ticket comments to the agent.
 
 use crate::common;

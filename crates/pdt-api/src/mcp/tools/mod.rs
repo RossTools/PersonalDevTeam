@@ -1,4 +1,4 @@
-//! pdt-mcp's tools (Phase 7b spec §2.2). Inputs are the API's request types where one exists (their JSON Schema from
+//! pdt-mcp's tools. Inputs are the API's request types where one exists (their JSON Schema from
 //! schemars), and each tool runs the function the matching route runs, so the API and the tools can't drift.
 
 mod inbox;
@@ -142,7 +142,7 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
 
 /// An asking tool from an agent that can't ask the user per call (Codex, Devin: PDT's tools run without asking
 /// there) runs where the project lets the PM act; elsewhere PDT asks in its Inbox (PDT-256): the call waits there, and
-/// the user's Allow runs it and tells the agent the result. Claude asks through its permission prompt (spec §4), unless
+/// the user's Allow runs it and tells the agent the result. Claude asks through its permission prompt, unless
 /// it runs in Bypass, which never shows that prompt (PDT-414): then it is one that can't ask. A public-posting tool
 /// asks in the Inbox outside a workflow step, which expects it (PDT-414).
 pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) -> Result<(), String> {

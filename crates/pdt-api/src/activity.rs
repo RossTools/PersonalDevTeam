@@ -1,4 +1,4 @@
-//! Agent activity (remote-host spec §5): hook reports from `pdtd hook`, terminal input and output heuristics, and
+//! Agent activity: hook reports from `pdtd hook`, terminal input and output heuristics, and
 //! the unseen flag. Only agent sessions are tracked; shells and run terminals never are.
 
 use crate::error::{ApiError, codes};
@@ -171,7 +171,7 @@ async fn persist(st: &AppState, id: &str, prev: Activity, now: Activity) -> Resu
     crate::notifications::kick(st);
     crate::workflow::sensors::activity_changed(st, id, Some(prev), now);
     if now == Activity::Idle {
-        // A terminal agent's turn ended: an agent step running in it may have stalled (Phase 7b spec §4.4).
+        // A terminal agent's turn ended: an agent step running in it may have stalled.
         let (st2, id) = (st.clone(), id.to_string());
         tokio::spawn(async move { crate::workflow::agent::turn_ended(&st2, &id).await });
     }
@@ -341,7 +341,7 @@ pub(crate) fn activity_of(st: &AppState, id: &str) -> Option<Activity> {
     st.activity.lock().unwrap_or_else(|e| e.into_inner()).get(id).map(|t| t.activity)
 }
 
-/// The agent terminals this daemon tracks whose activity is `working` (the host's cap counts them, Phase 7c §6.2).
+/// The agent terminals this daemon tracks whose activity is `working` (the host's cap counts them).
 pub(crate) fn working_ids(st: &AppState) -> Vec<String> {
     let map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
     map.iter().filter(|(_, t)| t.activity == Activity::Working).map(|(id, _)| id.clone()).collect()
