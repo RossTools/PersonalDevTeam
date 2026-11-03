@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FolderOpen } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
-import { Button, Dialog, FolderPicker, Input, type FolderPickerSelection } from '@ui';
+import { Button, Dialog, DialogActions, FolderPicker, Input, type FolderPickerSelection } from '@ui';
 import { api } from '../api/client';
 import type { FolderListing } from '../api/gen/FolderListing';
 import { PHONE_QUERY, useMediaQuery } from './useMediaQuery';
@@ -110,18 +110,10 @@ function FolderDialog({
   };
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
+      onClose={onClose}
       title={title}
       size="lg"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={!selection} onClick={() => selection && onChoose(selection)}>
-            Choose
-          </Button>
-        </>
-      }
+      footer={<DialogActions onCancel={onClose} action="Choose" disabled={!selection} onAction={() => selection && onChoose(selection)} />}
     >
       <FolderPicker
         listing={listing}

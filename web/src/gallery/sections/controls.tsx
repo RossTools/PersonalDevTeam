@@ -8,6 +8,7 @@ import { Select } from '@ui/Select';
 import { SuggestInput } from '@ui/SuggestInput';
 import { Field } from '@ui/Field';
 import { Checkbox } from '@ui/Checkbox';
+import { CheckboxPicks } from '@ui/CheckboxPicks';
 import { Switch } from '@ui/Switch';
 import { SegmentedControl } from '@ui/SegmentedControl';
 import { Kbd } from '@ui/Kbd';
@@ -15,11 +16,12 @@ import { Link } from '@ui/Link';
 import { Spinner } from '@ui/Spinner';
 import { Skeleton } from '@ui/Skeleton';
 import { Tooltip } from '@ui/Tooltip';
+import { SectionLabel } from '@ui/SectionLabel';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
+      <SectionLabel as="div">{label}</SectionLabel>
       <div className="flex flex-wrap items-center gap-3">{children}</div>
     </div>
   );
@@ -62,8 +64,16 @@ function FormDemo() {
   const [del, setDel] = useState(false);
   const [source, setSource] = useState('folder');
   const [theme, setTheme] = useState('system');
+  const [picked, setPicked] = useState<string[]>(['pdt']);
   return (
     <div className="grid max-w-xl gap-4">
+      <CheckboxPicks
+        label="Projects"
+        hint="Every project when none is ticked."
+        options={[{ id: 'pdt', name: 'Personal Dev Team' }, { id: 'site', name: 'Website' }, { id: 'notes', name: 'Notes' }]}
+        value={picked}
+        onChange={setPicked}
+      />
       <SegmentedControl
         aria-label="Source"
         options={[

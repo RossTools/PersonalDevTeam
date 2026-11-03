@@ -5,7 +5,7 @@ import { Alert } from '@ui/Alert';
 import { Button } from '@ui/Button';
 import { IconButton } from '@ui/IconButton';
 import { Textarea } from '@ui/Textarea';
-import { actionError } from './useAction';
+import { useFormAction } from './useAction';
 import { insertAtCaret } from './insertText';
 
 export interface ComposerProps {
@@ -66,25 +66,14 @@ export function Composer({
     const snippets = await onFiles(files);
     if (snippets.length) setText((t) => insertAtCaret(t, box.current, snippets.join('\n')));
   };
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const sending = useRef(false);
+  const { run, pending, error } = useFormAction(async (message: string) => {
+    await onSend(message);
+    setText('');
+  });
   const empty = !text.trim();
 
   const send = async () => {
-    if (empty || disabled || sending.current) return;
-    sending.current = true;
-    setPending(true);
-    setError(null);
-    try {
-      await onSend(text);
-      setText('');
-    } catch (err) {
-      setError(actionError(err));
-    } finally {
-      sending.current = false;
-      setPending(false);
-    }
+    if (!empty && !disabled) await run(text);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {

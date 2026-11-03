@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pencil, Plus, X } from 'lucide-react';
-import { Alert, Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, SectionLabel, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
+import { Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, SectionLabel, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
 import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
 import { ProjectKey } from '../common/BranchChip';
@@ -19,6 +19,7 @@ import { DocumentBody, type SheetHandle } from './DocumentBody';
 import { DocumentComments, headingsOf } from './DocumentComments';
 import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders } from './queries';
 import { useProjects } from '../projects/queries';
+import { LoadError } from '../common/QueryStatus';
 
 /** Downloads a file pdtd serves. */
 function download(url: string) {
@@ -103,7 +104,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   useTopBarActions(phone && d ? entries : null);
 
   if (doc.isPending) return <Skeleton lines={8} className="p-4" />;
-  if (doc.isError) return <Alert tone="error" className="m-4">The document could not be loaded: {doc.error.message}</Alert>;
+  if (doc.error) return <LoadError what="The document" error={doc.error} className="m-4" />;
   if (!d) return <EmptyState className="mt-16 border-0">This document is gone.</EmptyState>;
 
   const unlinkProject = (projectId: string) => void runAction(async () => {
@@ -204,7 +205,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
         )}
       </article>
       {linkingTicket && (
-        <Dialog open onOpenChange={(o) => !o && setLinkingTicket(false)} title={`Link “${d.title}” to a ticket`} size="md">
+        <Dialog onClose={() => setLinkingTicket(false)} title={`Link “${d.title}” to a ticket`} size="md">
           <TicketPicker
             projectId={d.projects.length === 1 ? d.projects[0]!.id : null}
             exclude={d.tickets.map((t) => t.id)}

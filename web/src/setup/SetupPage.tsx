@@ -16,6 +16,7 @@ import { checkOf } from '../common/useAgentAvailability';
 import { useProjects } from '../projects/queries';
 import { hostKeys, useHostSettings, setHostSettings, useHostChecks } from '../host/queries';
 import { POLL } from '../common/poll';
+import { QueryStatus } from '../common/QueryStatus';
 
 export type StepId = 'agents' | 'github' | 'project' | 'defaultAgent';
 
@@ -72,7 +73,7 @@ export function SetupPage(props: SetupPageProps) {
   if (!v) {
     return (
       <Shell>
-        {setup.error ? <Alert tone="error">Get started could not be loaded: {setup.error.message}</Alert> : <Skeleton lines={6} label="Loading Get started" />}
+        <QueryStatus query={setup} what="Get started" lines={6}>{() => null}</QueryStatus>
       </Shell>
     );
   }

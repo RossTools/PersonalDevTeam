@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { MergePreview } from '../api/gen/MergePreview';
 import type { MergeStyle } from '../api/gen/MergeStyle';
 import type { Ticket } from '../api/gen/Ticket';
-import { actionError } from '../common/useAction';
+import { actionError, useAction } from '../common/useAction';
 import { finishMerged, patchTicket } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
 import { invalidateWorktrees } from '../common/worktrees';
@@ -97,26 +97,16 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
   const [finishOnMerge, setFinishOnMerge] = useState(true);
   const [deleteBranch, setDeleteBranch] = useState(false);
   const [style, setStyle] = useState<MergeStyle>(() => loadStyle(ticket.projectId));
-  const [busy, setBusy] = useState(false);
-  const [sending, setSending] = useState(false);
   const p = preview.data;
 
-  const ask = async () => {
-    setSending(true);
-    try {
-      await api.askAgentToFixMerge(attemptId);
-      toast.success(p?.problem === 'no_pr' ? 'Asked the agent to open a pull request.' : 'Asked the agent to resolve the conflicts.');
-      onClose();
-    } catch (e) {
-      toast.error(actionError(e));
-    } finally {
-      setSending(false);
-    }
-  };
+  const [ask, sending] = useAction(async () => {
+    await api.askAgentToFixMerge(attemptId);
+    toast.success(p?.problem === 'no_pr' ? 'Asked the agent to open a pull request.' : 'Asked the agent to resolve the conflicts.');
+    onClose();
+  });
 
-  const merge = async () => {
+  const [merge, busy] = useAction(async () => {
     if (!p) return;
-    setBusy(true);
     try {
       const viaForge = p.method === 'forge';
       if (!viaForge) saveStyle(ticket.projectId, style);
@@ -149,23 +139,20 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
         toast.success(`${style === 'squash' ? 'Squashed' : 'Merged'} ${p.branch} into ${p.base}; ${ticket.key} moved to Done.`);
       }
     } catch (e) {
-      toast.error(actionError(e));
       void preview.refetch();
-    } finally {
-      setBusy(false);
+      throw e;
     }
-  };
+  });
 
   const viaForge = p?.method === 'forge';
   const queueName = p?.pr?.queueName ?? 'merge queue';
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
+      onClose={onClose}
       title={p?.pr ? `Merge ${p.pr.local ? 'change request' : 'pull request'} #${p.pr.number}` : `Merge ${ticket.key}`}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
           {p && !p.problem && (
             <Button variant="primary" pending={busy} onClick={() => void merge()}>
               {viaForge

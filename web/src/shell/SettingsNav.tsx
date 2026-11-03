@@ -173,7 +173,7 @@ function Item({ current = false, top = false, badge, onPress, children }: {
       aria-current={current ? 'page' : undefined}
       onClick={onPress}
       className={cn(
-        'flex min-h-7 w-full items-center gap-2 rounded-md pr-2 text-left text-sm hover:bg-accent pointer-coarse:min-h-11',
+        'flex min-h-7 w-full items-center gap-2 rounded-md pr-2 text-left text-sm hover:bg-accent pointer-coarse:min-h-control-touch',
         top ? 'pl-2 font-semibold' : 'pl-7',
         current && 'bg-accent font-medium',
       )}

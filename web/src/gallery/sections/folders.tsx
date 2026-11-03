@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { FolderPicker, type FolderPickerFolder, type FolderPickerListing } from '@ui/FolderPicker';
+import { SectionLabel } from '@ui/SectionLabel';
 
 // A fake host for the picker: a macOS home folder and a Windows one, so both path forms can be seen.
 function host(sep: string, homeRoot: string, places: { name: string; path: string }[]): Record<string, FolderPickerListing> {
@@ -36,7 +37,7 @@ function Demo({ label, fs, start }: { label: string; fs: Record<string, FolderPi
   const listing = raw && { ...raw, folders: raw.folders.filter((f) => hidden || !f.hidden) };
   return (
     <div className="flex max-w-xl flex-col gap-1.5">
-      <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
+      <SectionLabel as="div">{label}</SectionLabel>
       <FolderPicker
         listing={listing ?? fs[start]}
         error={listing ? null : `${path} does not exist (in this demo only ~ and ~/work do)`}

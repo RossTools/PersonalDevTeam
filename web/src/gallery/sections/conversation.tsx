@@ -12,11 +12,12 @@ import { toast } from '@ui/Toaster';
 import { Markdown } from '../../common/Markdown';
 import type { ConversationEvent } from '../../api/gen/ConversationEvent';
 import { MessageList } from '../../conversation/MessageList';
+import { SectionLabel } from '@ui/SectionLabel';
 
 function Demo({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
+      <SectionLabel as="div">{label}</SectionLabel>
       {children}
     </div>
   );

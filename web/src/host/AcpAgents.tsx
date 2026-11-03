@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Alert, Badge, Button, Dialog, Field, Input, Section, SettingsRow, Textarea, useConfirm } from '@ui';
+import { Alert, Badge, Button, Dialog, DialogActions, Field, Input, Section, SettingsRow, Textarea, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { AcpAgentConfig } from '../api/gen/AcpAgentConfig';
 import type { AcpAgentView } from '../api/gen/AcpAgentView';
@@ -178,11 +178,10 @@ function ProgramDialog({ a, onClose }: { a: AcpAgentView; onClose: () => void })
   });
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       title={`${a.label}'s program`}
       description="Leave it blank to run the one PDT installs."
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" pending={save.isPending} onClick={() => save.mutate()}>Save</Button></>}
+      footer={<DialogActions onCancel={onClose} action="Save" pending={save.isPending} onAction={() => save.mutate()} />}
     >
       <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
         <Field label="Path" hint="A full path, or one starting with ~.">
@@ -218,11 +217,10 @@ function AcpAgentDialog({ agent, taken, pending, error, onClose, onSave }: {
   };
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       title={agent ? `Edit ${agent.label}` : 'Add ACP agent'}
       description="PDT starts the command in the session's folder and talks ACP over its stdin and stdout. Its modes come from the agent; when it has none, PDT keeps the session's permission mode itself."
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!ready} pending={pending} onClick={save}>{agent ? 'Save' : 'Add agent'}</Button></>}
+      footer={<DialogActions onCancel={onClose} action={agent ? 'Save' : 'Add agent'} disabled={!ready} pending={pending} onAction={save} />}
     >
       <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); save(); }}>
         <Field label="Name">
