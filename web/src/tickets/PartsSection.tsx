@@ -19,6 +19,7 @@ import { invalidateTickets } from './queries';
 import { PrBadge } from './PullRequest';
 import { OverviewSection } from './TicketParts';
 import { TicketPicker } from './TicketPicker';
+import { plural } from '../common/text';
 
 const PART_DRAG_KIND = 'part';
 
@@ -195,7 +196,7 @@ export function MakePartsDialog({ ticket, onClose }: { ticket: Pick<Ticket, 'id'
     try {
       await api.createParts(ticket.id, { parts: titles.map((title) => ({ title })), blockedByPrevious: chain });
       invalidateTickets(qc, [ticket.id]);
-      toast.success(`${ticket.key} has ${titles.length} new part${titles.length === 1 ? '' : 's'}.`);
+      toast.success(`${ticket.key} has ${plural(titles.length, 'new part')}.`);
       onClose();
     } catch (e) {
       setError(actionError(e));

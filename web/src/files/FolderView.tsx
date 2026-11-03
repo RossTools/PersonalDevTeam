@@ -17,6 +17,7 @@ import { MarkdownEditor } from '../common/LazyMarkdownEditor';
 import { Markdown } from '../common/LazyMarkdown';
 import { isMarkdownPath } from '../common/markdownPath';
 import { PlacePicker, type Place } from '../common/PlacePicker';
+import { GIT_STATUS_TONE } from '../common/gitStatus';
 import { useNavigationGuard, whenAllowed } from '../shell/router';
 import { CodeViewer } from './LazyCodeViewer';
 import { sessionsQuery } from '../sessions/queries';
@@ -79,7 +80,7 @@ export function useFolderView(projects: Project[], initial: Place | null, held?:
 
 export type FolderViewState = ReturnType<typeof useFolderView>;
 
-const STATUS_TONE: Record<string, string> = { M: 'text-waiting', A: 'text-running', '??': 'text-running', D: 'text-failed', R: 'text-waiting' };
+const STATUS_TONE: Record<string, string> = { ...GIT_STATUS_TONE, '??': GIT_STATUS_TONE.A };
 const statusLetter = (status: string) => (status === '??' ? 'U' : status.slice(0, 1));
 const statusTone = (status: string) => STATUS_TONE[status] ?? STATUS_TONE[status.slice(0, 1)] ?? 'text-muted-foreground';
 

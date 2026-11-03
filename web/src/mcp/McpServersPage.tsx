@@ -4,7 +4,7 @@
 // workflows call the same ones.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, Checkbox, CheckboxPicks, Dialog, DialogActions, Field, Input, Page, Section, SegmentedControl, Select, Switch, Textarea, relativeTime } from '@ui';
+import { Alert, Badge, Button, Checkbox, CheckboxPicks, Dialog, DialogActions, Field, Input, Page, Section, SegmentedControl, Select, Switch, Textarea, absoluteTime } from '@ui';
 import { api } from '../api/client';
 import type { AgentAccess } from '../api/gen/AgentAccess';
 import type { McpProbe } from '../api/gen/McpProbe';
@@ -12,6 +12,7 @@ import type { McpServerView } from '../api/gen/McpServerView';
 import type { OAuthSettings } from '../api/gen/OAuthSettings';
 import type { ToolMode } from '../api/gen/ToolMode';
 import { isWebUrl } from '../common/webUrl';
+import { plural } from '../common/text';
 import { hostKeys } from '../host/queries';
 import { QueryStatus } from '../common/QueryStatus';
 import { useConfirmDelete } from '../common/useConfirmDelete';
@@ -88,7 +89,8 @@ function Pairs({ label, hint, pairs, secrets, onChange }: {
   );
 }
 
-const str = (v: unknown) => (typeof v === 'string' ? v : '');
+/** `v` when it's a string, else ''. */
+const stringOr = (v: unknown) => (typeof v === 'string' ? v : '');
 
 /** Add a server, or edit one. */
 export function McpServerDialog({ server, onClose }: { server?: McpServerView; onClose: () => void }) {
@@ -99,9 +101,9 @@ export function McpServerDialog({ server, onClose }: { server?: McpServerView; o
   const { projectOptions, personaOptions } = useScopeOptions();
   const [name, setName] = useState(c?.name ?? '');
   const [transport, setTransport] = useState<string>(server?.transport ?? 'stdio');
-  const [command, setCommand] = useState(str(config.command));
+  const [command, setCommand] = useState(stringOr(config.command));
   const [args, setArgs] = useState(Array.isArray(config.args) ? (config.args as string[]).join('\n') : '');
-  const [cwd, setCwd] = useState(str(config.cwd));
+  const [cwd, setCwd] = useState(stringOr(config.cwd));
   const [env, setEnv] = useState<Pair[]>(pairsOf(config.env));
   const [url, setUrl] = useState(c?.url ?? '');
   const [headers, setHeaders] = useState<Pair[]>(pairsOf(config.headers));
@@ -253,7 +255,7 @@ function Probe({ server, probe }: { server: McpServerView; probe: McpProbe }) {
 export function audience(a: AgentAccess): string {
   if (!a.enabled) return 'Workflows only';
   const who = [a.pm && 'the PM', a.tickets && 'ticket agents', a.user && 'your sessions'].filter(Boolean);
-  const where = a.projects.length ? ` in ${a.projects.length} project${a.projects.length === 1 ? '' : 's'}` : '';
+  const where = a.projects.length ? ` in ${plural(a.projects.length, 'project')}` : '';
   return who.length ? `For ${who.join(', ')}${where}` : 'No agents';
 }
 
@@ -288,7 +290,7 @@ function SignIn({ server }: { server: McpServerView }) {
   if (!o) return null;
   const status = !o.signedIn ? <Badge tone="waiting">Not signed in</Badge>
     : o.problem ? <Badge tone="failed">Sign-in failed: {o.problem}</Badge>
-    : <span className="text-xs text-muted-foreground">Signed in{o.account ? ` as ${o.account}` : ''}{o.expiresAt ? ` · renews ${relativeTime(o.expiresAt)}` : ''}</span>;
+    : <span className="text-xs text-muted-foreground">Signed in{o.account ? ` as ${o.account}` : ''}{o.expiresAt ? ` · renews ${absoluteTime(o.expiresAt)}` : ''}</span>;
   const error = signIn.error ?? signOut.error;
   return (
     <div className="flex w-full flex-wrap items-center gap-2 pl-2">

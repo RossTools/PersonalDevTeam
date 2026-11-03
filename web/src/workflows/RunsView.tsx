@@ -4,7 +4,7 @@
 // opening to its input and output, with nothing to act on.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, EmptyState, RelativeTime, Skeleton } from '@ui';
+import { Alert, Badge, Button, EmptyState, RelativeTime, Skeleton, formatDuration } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { WatchButton, Watchers } from '../common/Watch';
@@ -14,7 +14,7 @@ import type { WorkflowRunDetail } from '../api/gen/WorkflowRunDetail';
 import type { WorkflowStep } from '../api/gen/WorkflowStep';
 import { GraphView } from './GraphView';
 import type { Catalog } from './model';
-import { RUN_STATUS, duration, pathOf, runSteps } from './runs';
+import { RUN_STATUS, pathOf, runSteps } from './runs';
 import { StepList, type StepRow } from './StepList';
 import { workflowKeys } from './queries';
 import { POLL } from '../common/poll';
@@ -85,7 +85,7 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
         <Badge tone={status.tone}>{status.text}</Badge>
         <span className="font-medium">{triggerOf(r)}</span>
         <span className="text-meta text-muted-foreground">
-          version {r.version} · started <RelativeTime time={r.startedAt} />{r.endedAt ? ` · took ${duration(r.endedAt - r.startedAt)}` : ''}
+          version {r.version} · started <RelativeTime time={r.startedAt} />{r.endedAt ? ` · took ${formatDuration(r.endedAt - r.startedAt)}` : ''}
         </span>
         <span className={cn('flex gap-1', viewOnly && 'ml-auto')}><WatchButton of={{ run: r.id }} /></span>
         {!viewOnly && <span className="ml-auto flex gap-1">

@@ -9,8 +9,7 @@ import { actionError, useAction } from '../common/useAction';
 import { finishMerged, patchTicket } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
 import { invalidateWorktrees } from '../common/worktrees';
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+import { plural } from '../common/text';
 
 const styleKey = (projectId: string) => `pdt.review.mergeStyle.${projectId}`;
 

@@ -5,6 +5,7 @@ import { Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime,
 import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
 import { ProjectKey } from '../common/BranchChip';
+import { TicketKey } from '../common/TicketKey';
 import { useRememberedScroll } from '../common/viewState';
 import { InlineRename } from '../common/InlineRename';
 import { cn } from '@ui/lib/utils';
@@ -181,7 +182,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
             {d.tickets.map((t) => (
               <span key={t.id} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-sm bg-accent py-0.5 pr-0.5 pl-1.5 text-xs">
                 <button type="button" className="min-w-0 truncate hover:underline" onClick={() => openTicket({ id: t.id, projectId: t.projectId })} title={t.title}>
-                  <span className="font-mono">{t.key}</span> {t.title}
+                  <TicketKey ticketKey={t.key} /> {t.title}
                 </button>
                 <IconButton label={`Unlink ${t.key}`} size="sm" variant="ghost" className="size-5" onClick={() => unlinkTicket(t.id)}><X aria-hidden /></IconButton>
               </span>

@@ -2,7 +2,7 @@ import type { ComponentType, SVGProps } from 'react';
 import { Bot, Plug, SquareTerminal } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import type { Session } from '../api/gen/Session';
-import { agentLabel, isAcp, useAcpAgents } from './agents';
+import { BUILTIN_LABEL, agentLabel, isAcp, useAcpAgents } from './agents';
 
 /** `acp`: any ACP agent (PDT-234). */
 export type SessionKindName = 'claude' | 'codex' | 'devin' | 'acp' | 'shell';
@@ -38,7 +38,7 @@ export function CodexLogo(props: IconProps) {
  * icon set entry, so it gets a generic one; ACP agents share a plug.
  */
 export const KIND_ICON: Record<SessionKindName, ComponentType<IconProps>> = { claude: ClaudeLogo, codex: CodexLogo, devin: Bot, acp: Plug, shell: SquareTerminal };
-export const KIND_LABEL: Record<SessionKindName, string> = { claude: 'Claude', codex: 'Codex', devin: 'Devin', acp: 'ACP agent', shell: 'Shell' };
+export const KIND_LABEL: Record<SessionKindName, string> = { ...BUILTIN_LABEL, acp: 'ACP agent', shell: 'Shell' };
 
 type KindOf = Pick<Session, 'kind' | 'agent'>;
 

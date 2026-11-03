@@ -1,24 +1,10 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { Timeline, relativeTime, absoluteTime, type TimelineItem } from './Timeline';
+import { RelativeTime, Timeline, type TimelineItem } from './Timeline';
+import { absoluteTime } from './lib/time';
 
 const NOW = new Date(2026, 9, 17, 12, 0).getTime();
 const H = 3_600_000;
-
-describe('relativeTime', () => {
-  it('steps from just now to minutes, hours, days and dates', () => {
-    expect(relativeTime(NOW - 10_000, NOW)).toBe('just now');
-    expect(relativeTime(NOW - 5 * 60_000, NOW)).toBe('5m ago');
-    expect(relativeTime(NOW - 2 * H, NOW)).toBe('2h ago');
-    expect(relativeTime(NOW - 3 * 24 * H, NOW)).toBe('3d ago');
-    expect(relativeTime(NOW - 30 * 24 * H, NOW)).not.toContain('ago');
-    expect(relativeTime(new Date(2024, 0, 5).getTime(), NOW)).toContain('2024');
-  });
-
-  it('treats future times as just now', () => {
-    expect(relativeTime(NOW + H, NOW)).toBe('just now');
-  });
-});
 
 describe('Timeline', () => {
   const items: TimelineItem[] = [
@@ -53,5 +39,13 @@ describe('Timeline', () => {
     render(<Timeline items={[]} empty="Nothing happened yet." />);
     expect(screen.getByText('Nothing happened yet.')).toBeInTheDocument();
     expect(screen.queryByRole('list')).toBeNull();
+  });
+});
+
+describe('RelativeTime', () => {
+  it('shows a short age with short, the absolute time in its tooltip', () => {
+    render(<RelativeTime time={NOW - 3 * H} now={NOW} short />);
+    const time = screen.getByText('3h');
+    expect(time).toHaveAttribute('title', absoluteTime(NOW - 3 * H));
   });
 });

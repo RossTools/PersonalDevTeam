@@ -1,19 +1,11 @@
 import { X } from 'lucide-react';
-import { Badge, Button, IconButton, List, ListHeading, ListRow, relativeTime } from '@ui';
+import { Badge, Button, IconButton, List, ListHeading, ListRow, RelativeTime } from '@ui';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import { TicketKey } from '../common/TicketKey';
 import { grouped, KIND_LABEL, selectedUpdate, updateSelection } from './model';
 import { KindIcon } from './kinds';
 
-/** An age in a list row's corner: "now", "10m", "3h", "2d". */
-export function shortAge(at: number, now: number = Date.now()): string {
-  const m = Math.floor(Math.max(0, now - at) / 60_000);
-  if (m < 1) return 'now';
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
-}
 
 /** What a row says under its title: who asks (or which workflow) and the ticket's title. */
 function context(i: InboxItem): string {
@@ -59,7 +51,7 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
                 current={i.id === selectedId}
                 className="items-start py-1.5 data-current:shadow-[inset_2px_0_0_var(--pdt-accent)]"
                 leading={<KindIcon item={i} className="mt-0.5" />}
-                trailing={<span className="text-meta text-muted-foreground tabular-nums" title={relativeTime(i.createdAt)}>{shortAge(i.createdAt)}</span>}
+                trailing={<RelativeTime short time={i.createdAt} className="text-meta text-muted-foreground" />}
                 secondary={
                   <span className="flex min-w-0 items-center gap-1.5">
                     {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
@@ -103,7 +95,7 @@ export function UpdatesList({ updates, selectedId, onSelect, onClear, loading, f
               current={u.id === update}
               bold={u.readAt === null && u.clearedAt === null}
               className={u.clearedAt !== null ? 'text-muted-foreground' : undefined}
-              secondary={[u.body, relativeTime(u.createdAt)].filter(Boolean).join(' · ')}
+              secondary={<>{u.body && `${u.body} · `}<RelativeTime time={u.createdAt} /></>}
               trailing={onClear && (
                 <IconButton label="Clear" size="sm" onClick={() => onClear(u.id)}
                   className="text-muted-foreground opacity-0 group-data-hovered/row:opacity-100 group-data-focus-visible/row:opacity-100 data-focus-visible:opacity-100 pointer-coarse:opacity-100">

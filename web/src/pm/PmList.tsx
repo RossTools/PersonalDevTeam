@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
-import { IconButton, List, ListHeading, ListRow, relativeTime, Skeleton, Spinner, useMenuAt } from '@ui';
+import { IconButton, List, ListHeading, ListRow, RelativeTime, Skeleton, Spinner, useMenuAt } from '@ui';
 import { InlineRename } from '../common/InlineRename';
 import { RowField } from '../common/RowField';
 import { earlier, firstLine, isUnread, openConversations, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useShownRef, useViaLabel, type PmSelection } from './usePm';
@@ -68,9 +68,11 @@ export function PmList({ selection, onSelect, onNew }: {
             bold={unread}
             trailing={unread ? <span role="img" aria-label="New reply" className="size-2 rounded-full bg-primary" />
               : info.session.activity === 'working' ? <Spinner decorative className="size-3 text-muted-foreground" /> : undefined}
-            secondary={[resetting(info) ? 'Resetting…' : info.rotation === 'journal' ? 'Writing its journal…'
-              : info.session.activity === 'working' ? 'Working…' : relativeTime(info.lastActivity), viaLabel(info)]
-              .filter(Boolean).join(' · ')}
+            secondary={<>
+              {resetting(info) ? 'Resetting…' : info.rotation === 'journal' ? 'Writing its journal…'
+                : info.session.activity === 'working' ? 'Working…' : <RelativeTime time={info.lastActivity} />}
+              {viaLabel(info) && ` · ${viaLabel(info)}`}
+            </>}
             onMenu={(at) => openMenu(at, `Conversation ${info.title}`, [
               { label: 'Rename', onSelect: () => setRenaming(info.session.id) },
               { label: 'Reset…', onSelect: () => reset(info), disabled: info.rotation !== 'none' },
