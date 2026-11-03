@@ -72,8 +72,7 @@ export function MakeTicketDialog({ session, canStartHere, onClose, onCreated }: 
 
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       title="Make ticket"
       description={`${agentName} drafts a title and description from this chat. The chat itself is left as it is.`}
       size="md"

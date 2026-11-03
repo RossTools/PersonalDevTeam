@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
-import { Button, Dialog, Field, IconButton, Input, List, ListHeading, ListRow, useMenuAt } from '@ui';
+import { Dialog, DialogActions, Field, IconButton, Input, List, ListHeading, ListRow, useMenuAt } from '@ui';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import { ProjectKey } from '../common/BranchChip';
@@ -26,17 +26,11 @@ export function SaveFilterDialog({ onSave, onClose }: { onSave: (name: string) =
   const [name, setName] = useState('');
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
+      onClose={onClose}
       title="Save filter"
       description="Saves the project and filters on screen, in this browser."
       size="sm"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="save-filter" variant="primary" disabled={!name.trim()}>Save</Button>
-        </>
-      }
+      footer={<DialogActions onCancel={onClose} action="Save" form="save-filter" disabled={!name.trim()} />}
     >
       <form id="save-filter" onSubmit={(e) => { e.preventDefault(); if (name.trim()) { onSave(name.trim()); onClose(); } }}>
         <Field label="Name">

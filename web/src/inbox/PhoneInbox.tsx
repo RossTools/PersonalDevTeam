@@ -270,8 +270,7 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
   const queueName = useProjectForge(attempt?.pr ? t?.projectId ?? null : null).data?.queueName ?? undefined;
   return (
     <Dialog
-      open
-      onOpenChange={(o) => !o && onCancel()}
+      onClose={onCancel}
       title={`${title} ${item.ticketKey ?? 'this'}?`}
       description={item.ticketTitle ?? item.title}
       footer={

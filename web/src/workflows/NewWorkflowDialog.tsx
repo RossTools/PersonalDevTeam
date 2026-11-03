@@ -17,6 +17,7 @@ import type { Scope } from '../api/gen/Scope';
 import type { TemplateParam } from '../api/gen/TemplateParam';
 import { BLANK, gallery, pluginOff, triggerLabel, type GalleryFilter } from './gallery';
 import { invalidateWorkflows, workflowKeys } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 /** The value a param starts with in the form. */
 function initial(p: TemplateParam): unknown {
@@ -202,7 +203,7 @@ export function NewWorkflowDialog({ projects, templateId, onClose, onCreated, on
     </nav>
   );
 
-  const body = templates.error ? <Alert tone="error">The templates could not be loaded: {templates.error.message}</Alert>
+  const body = templates.error ? <LoadError what="The templates" error={templates.error} />
     : !templates.data ? <Skeleton lines={6} />
       : g.empty ? (
         <p className="py-5 text-sm text-muted-foreground">No templates match. <Link onClick={startFromScratch}>Start from scratch</Link></p>
@@ -245,8 +246,7 @@ export function NewWorkflowDialog({ projects, templateId, onClose, onCreated, on
   );
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
+      onClose={onClose}
       dismissable={false}
       size="gallery"
       title="New workflow"

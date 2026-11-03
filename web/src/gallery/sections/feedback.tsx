@@ -9,7 +9,7 @@ import { Alert } from '@ui/Alert';
 import { Banner } from '@ui/Banner';
 import { EmptyState } from '@ui/EmptyState';
 import { Toaster, toast } from '@ui/Toaster';
-import { Dialog } from '@ui/Dialog';
+import { Dialog, DialogActions } from '@ui/Dialog';
 import { ConfirmProvider, useConfirm } from '@ui/Confirm';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
@@ -33,12 +33,7 @@ function DialogDemo() {
         onOpenChange={setOpen}
         title="Add project"
         description="A git repository on this machine, or a URL to clone."
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={() => setOpen(false)}>Add project</Button>
-          </>
-        }
+        footer={<DialogActions onCancel={() => setOpen(false)} action="Add project" onAction={() => setOpen(false)} />}
       >
         <p className="text-sm text-muted-foreground">The body: a form, a list, anything. Escape, the backdrop or × closes it.</p>
       </Dialog>

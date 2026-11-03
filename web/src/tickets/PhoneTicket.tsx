@@ -14,7 +14,7 @@ import { useWatches, watchEntry, Watchers } from '../common/Watch';
 import { PartsStepper } from '../common/PartsStepper';
 import { PRIORITY_LABEL, PriorityIcon } from '../common/PriorityIcon';
 import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
-import { actionError, runAction } from '../common/useAction';
+import { runAction, useFormAction } from '../common/useAction';
 import { MergeConfirm } from '../inbox/PhoneInbox';
 import { useAnswer } from '../inbox/useAnswer';
 import { useInbox } from '../inbox/useInbox';
@@ -81,30 +81,23 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
   const [making, setMaking] = useState(false);
   const [merging, setMerging] = useState(false);
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const saving = useFormAction(async (e: Editing) => {
+    await patchTicket(qc, t.id, e.field === 'title' ? { title: e.draft.trim() } : { description: e.draft });
+    setEditing(null);
+  });
+  const { error, setError } = saving;
   const attempt = t.attempt;
 
   const current = editing ? (editing.field === 'title' ? t.title : t.description) : '';
   const canSave = !!editing && editing.draft !== current && (editing.field !== 'title' || editing.draft.trim() !== '');
   const save = async () => {
-    if (!editing || !canSave) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await patchTicket(qc, t.id, editing.field === 'title' ? { title: editing.draft.trim() } : { description: editing.draft });
-      setEditing(null);
-    } catch (e) {
-      setError(actionError(e));
-    } finally {
-      setSaving(false);
-    }
+    if (editing && canSave) await saving.run(editing);
   };
   const edit = (field: Editing['field']) => {
     setError(null);
     setEditing({ field, draft: field === 'title' ? t.title : t.description });
   };
-  useTopBarEdit(editing ? { canSave, saving, onSave: () => void save(), onCancel: () => { setEditing(null); setError(null); } } : null);
+  useTopBarEdit(editing ? { canSave, saving: saving.pending, onSave: () => void save(), onCancel: () => { setEditing(null); setError(null); } } : null);
 
   const watches = useWatches({ ticket: t.id }).data;
   useTopBarActions((): MenuEntry[] => [

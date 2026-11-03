@@ -4,42 +4,22 @@
 // Service, PDT-197) a file in the data folder.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, Checkbox, Dialog, Field, Input, Page, Section, Skeleton, Textarea, relativeTime, useConfirm } from '@ui';
+import { Alert, Badge, Button, CheckboxPicks, Dialog, DialogActions, Field, Input, Page, Section, Skeleton, Textarea, relativeTime } from '@ui';
 import { api } from '../api/client';
 import type { Secret } from '../api/gen/Secret';
-import { useProjects } from '../projects/queries';
-import { usePersonas } from '../personas/model';
+import { QueryStatus } from '../common/QueryStatus';
+import { useConfirmDelete } from '../common/useConfirmDelete';
+import { useScopeOptions } from '../common/useScopeOptions';
 
 export const secretsKey = ['secrets'] as const;
 
 const NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
 const MIN_VALUE = 6;
 
-/** Checkboxes for a list of ids; none ticked means any. */
-function Picks({ label, any, options, value, onChange }: {
-  label: string;
-  any: string;
-  options: { id: string; name: string }[];
-  value: string[];
-  onChange: (v: string[]) => void;
-}) {
-  const toggle = (id: string, on: boolean) => onChange(on ? [...value, id] : value.filter((x) => x !== id));
-  return (
-    <Field label={label} hint={`${any} when none is ticked.`}>
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
-        {options.map((o) => (
-          <Checkbox key={o.id} checked={value.includes(o.id)} onChange={(on) => toggle(o.id, on)}>{o.name}</Checkbox>
-        ))}
-      </div>
-    </Field>
-  );
-}
-
 /** Add a secret, or edit one (its description, who may use it, a new value). */
 export function SecretDialog({ secret, onClose }: { secret?: Secret; onClose: () => void }) {
   const qc = useQueryClient();
-  const projects = useProjects();
-  const personas = usePersonas();
+  const { projectOptions, personaOptions } = useScopeOptions({ host: 'The PM (personal workflows)' });
   const [name, setName] = useState(secret?.name ?? '');
   const [description, setDescription] = useState(secret?.description ?? '');
   const [value, setValue] = useState('');
@@ -57,16 +37,13 @@ export function SecretDialog({ secret, onClose }: { secret?: Secret; onClose: ()
   });
   const nameOk = !!secret || NAME.test(name.trim());
   const valueOk = value === '' ? !!secret : value.length >= MIN_VALUE;
-  const projectOptions = (projects.data ?? []).map((p) => ({ id: p.id, name: p.kind === 'host' ? 'The PM (personal workflows)' : p.name }));
-  const personaOptions = (personas.data ?? []).filter((p) => !p.archived).map((p) => ({ id: p.id, name: p.name }));
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
+      onClose={onClose}
       dismissable={false}
       title={secret ? `Edit ${secret.name}` : 'New secret'}
       description="Agents and workflows use it by name; its value is kept in this machine's keychain and never shown in the chat, or to you, again."
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!nameOk || !valueOk} pending={save.isPending} onClick={() => save.mutate()}>Save</Button></>}
+      footer={<DialogActions onCancel={onClose} action="Save" disabled={!nameOk || !valueOk} pending={save.isPending} onAction={() => save.mutate()} />}
     >
       <div className="flex flex-col gap-3">
         {!secret && (
@@ -83,8 +60,8 @@ export function SecretDialog({ secret, onClose }: { secret?: Secret; onClose: ()
         >
           <Input aria-label="Value" type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} />
         </Field>
-        <Picks label="Projects" any="Every project" options={projectOptions} value={projectIds} onChange={setProjectIds} />
-        <Picks label="Agents" any="Every agent" options={personaOptions} value={personaIds} onChange={setPersonaIds} />
+        <CheckboxPicks label="Projects" hint="Every project when none is ticked." options={projectOptions} value={projectIds} onChange={setProjectIds} />
+        <CheckboxPicks label="Agents" hint="Every agent when none is ticked." options={personaOptions} value={personaIds} onChange={setPersonaIds} />
         {save.error && <Alert tone="error">{save.error.message}</Alert>}
       </div>
     </Dialog>
@@ -158,50 +135,39 @@ function StoreNote() {
 }
 
 export function SecretsPage() {
-  const qc = useQueryClient();
-  const confirm = useConfirm();
   const list = useQuery({ queryKey: secretsKey, queryFn: api.listSecrets });
-  const projects = useProjects();
-  const personas = usePersonas();
+  const { projects, personas } = useScopeOptions();
   const [editing, setEditing] = useState<{ secret?: Secret } | null>(null);
-  const remove = useMutation({
-    meta: { errorShown: true },
-    mutationFn: (s: Secret) => api.deleteSecret(s.id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: secretsKey }),
-  });
-  const ask = async (s: Secret) => {
-    const { ok } = await confirm({
+  const remove = useConfirmDelete({
+    remove: (s: Secret) => api.deleteSecret(s.id),
+    invalidate: [secretsKey],
+    confirm: (s) => ({
       title: `Delete ${s.name}?`,
       body: 'Agents and workflows that use it fail until you add one with the same name. Its value is removed from the keychain, and its uses are forgotten.',
       action: 'Delete secret',
-      danger: true,
-    });
-    if (ok) remove.mutate(s);
-  };
+    }),
+  });
   const names = new Map<string, string>([
-    ...(projects.data ?? []).map((p) => [p.id, p.kind === 'host' ? 'The PM' : p.name] as [string, string]),
-    ...(personas.data ?? []).map((p) => [p.id, p.name] as [string, string]),
+    ...projects.map((p) => [p.id, p.kind === 'host' ? 'The PM' : p.name] as [string, string]),
+    ...personas.map((p) => [p.id, p.name] as [string, string]),
   ]);
-  const items = list.data ?? [];
   return (
     <Page
       title="Secrets"
       description="API keys, tokens and passwords agents and workflows use by name, never pasted into the chat. Values are kept in this machine's keychain and replaced by [secret:NAME] wherever PDT stores, shows or logs them."
     >
       <StoreNote />
-      {list.error && <Alert tone="error">Secrets could not be loaded: {list.error.message}</Alert>}
-      {list.isLoading && <Skeleton label="Loading secrets" className="h-24" />}
-      {!list.isLoading && (
+      <QueryStatus query={list} what="Secrets" skeleton="h-24">{(items) => (
         <Section
           label="Secrets"
           description="Agents use them with run_with_secrets and write_secret_file, workflows with {{secret.NAME}}; an agent that needs one asks for it in your Inbox."
           actions={<Button size="sm" onClick={() => setEditing({})}>Add secret</Button>}
         >
           {items.length
-            ? items.map((s) => <Row key={s.id} s={s} names={names} onEdit={() => setEditing({ secret: s })} onDelete={() => void ask(s)} />)
+            ? items.map((s) => <Row key={s.id} s={s} names={names} onEdit={() => setEditing({ secret: s })} onDelete={() => void remove.ask(s)} />)
             : <p className="text-sm text-muted-foreground">None yet.</p>}
         </Section>
-      )}
+      )}</QueryStatus>
       {remove.error && <Alert tone="error">{remove.error.message}</Alert>}
       {editing && <SecretDialog secret={editing.secret} onClose={() => setEditing(null)} />}
     </Page>

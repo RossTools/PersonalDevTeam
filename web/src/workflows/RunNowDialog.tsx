@@ -63,7 +63,7 @@ export function RunNowDialog({ name, form, projects, project: inView, pending, e
     </>
   );
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }} title={`Run ${name}`} footer={footer} dismissable={false}>
+    <Dialog onClose={onClose} title={`Run ${name}`} footer={footer} dismissable={false}>
       <div className="flex flex-col gap-3">
         {asking === null && projects && (
           <Field label={<>Project<span className="text-muted-foreground"> *</span></>} hint="Its steps work on the project it runs in.">

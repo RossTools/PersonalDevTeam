@@ -22,7 +22,7 @@ import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { useWatches, Watchers } from '../common/Watch';
-import { actionError, useAction } from '../common/useAction';
+import { actionError, useAction, useFormAction } from '../common/useAction';
 import { moveTicket, patchTicket, useOpenSession, useOpenTicket } from './actions';
 import { ParentField } from './PartsSection';
 import { eventTitle, LINK_ROLE_LABEL, linkCall, linkRole, STAGES, type LinkRole, type TrackerLabel } from './model';
@@ -121,8 +121,6 @@ export function TicketDescription({ ticket, onDirtyChange }: {
   // What is typed, and the description it was started from.
   const [edit, setEdit] = useState<{ draft: string; base: string } | null>(null);
   const [mode, setMode] = useState<'write' | 'preview'>('write');
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
   const editing = edit !== null;
   const draft = edit?.draft ?? '';
   const dirty = editing && edit.draft !== edit.base;
@@ -138,9 +136,13 @@ export function TicketDescription({ ticket, onDirtyChange }: {
     setEdit({ draft: ticket.description, base: ticket.description });
     setMode('write');
   };
+  const saving = useFormAction(async (description: string) => {
+    await patchTicket(qc, ticket.id, { description });
+    setEdit(null);
+  });
   const close = () => {
     setEdit(null);
-    setError(null);
+    saving.setError(null);
   };
   // Nothing typed yet: follow the description as it changes.
   const live = ticket.description;
@@ -152,17 +154,7 @@ export function TicketDescription({ ticket, onDirtyChange }: {
   }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const save = async () => {
-    if (!dirty) return;
-    setPending(true);
-    setError(null);
-    try {
-      await patchTicket(qc, ticket.id, { description: draft });
-      setEdit(null);
-    } catch (e) {
-      setError(actionError(e));
-    } finally {
-      setPending(false);
-    }
+    if (dirty) await saving.run(draft);
   };
   return (
     <OverviewSection
@@ -221,13 +213,13 @@ export function TicketDescription({ ticket, onDirtyChange }: {
               version drops your edit.
             </Alert>
           )}
-          {error && <Alert tone="error">{error}</Alert>}
+          {saving.error && <Alert tone="error">{saving.error}</Alert>}
           <UploadList uploads={uploads} onDismiss={dismiss} />
           <div className="flex items-center justify-end gap-2">
             <span className="mr-auto text-meta text-muted-foreground pointer-coarse:hidden">Markdown. ⌘/Ctrl+Enter saves.</span>
             <AttachButton onFiles={(f) => void attach(f)} />
             <Button variant="ghost" onClick={close}>Cancel</Button>
-            <Button type="submit" variant="primary" pending={pending} disabled={!dirty}>Save</Button>
+            <Button type="submit" variant="primary" pending={saving.pending} disabled={!dirty}>Save</Button>
           </div>
         </form>
       ) : ticket.description.trim() ? (
@@ -431,25 +423,14 @@ export function TicketLinks({ ticket }: { ticket: Ticket }) {
 export function LinkTicketDialog({ ticket, onClose }: { ticket: Ticket; onClose: () => void }) {
   const qc = useQueryClient();
   const [role, setRole] = useState<LinkRole>('blockedBy');
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const link = async (otherId: string) => {
-    if (pending) return;
-    setPending(true);
-    setError(null);
-    try {
-      const c = linkCall(ticket.id, otherId, role);
-      await api.linkTicket(c.from, { to: c.to, kind: c.kind });
-      invalidateTickets(qc, [ticket.id, otherId]);
-      onClose();
-    } catch (e) {
-      setError(actionError(e));
-    } finally {
-      setPending(false);
-    }
-  };
+  const { run: link, error } = useFormAction(async (otherId: string) => {
+    const c = linkCall(ticket.id, otherId, role);
+    await api.linkTicket(c.from, { to: c.to, kind: c.kind });
+    invalidateTickets(qc, [ticket.id, otherId]);
+    onClose();
+  });
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()} title={`Link ${ticket.key} to…`} size="md">
+    <Dialog onClose={onClose} title={`Link ${ticket.key} to…`} size="md">
       <div className="flex flex-col gap-2">
         <SegmentedControl
           aria-label="Link kind"

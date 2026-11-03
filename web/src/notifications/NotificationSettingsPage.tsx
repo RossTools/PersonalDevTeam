@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Button, Link, Page, Section, Select, SettingsRow, Skeleton, Switch, toast } from '@ui';
+import { Button, Link, Page, Section, Select, SettingsRow, Switch, toast } from '@ui';
 import type { KindSetting } from '../api/gen/KindSetting';
 import type { NotificationRulesInput } from '../api/gen/NotificationRulesInput';
 import type { NotificationRulesView } from '../api/gen/NotificationRulesView';
@@ -9,6 +9,7 @@ import { CustomizedNotice, openWorkflow } from '../common/BuiltinSettings';
 import { useConnections } from '../connections/queries';
 import { desktopNotificationsOn, setDesktopNotifications, showDesktop } from './desktop';
 import { useNotificationRules, useNotificationRulesActions } from './queries';
+import { QueryStatus } from '../common/QueryStatus';
 
 export const SHOW_LABEL: Record<Show, string> = {
   off: 'Off',
@@ -53,11 +54,7 @@ export function NotificationSettingsPage() {
     >
       <ThisDevice />
       {!v ? (
-        rules.error ? (
-          <Alert tone="error">Notification settings could not be loaded: {rules.error.message}</Alert>
-        ) : (
-          <Skeleton label="Loading notification settings" className="h-40" />
-        )
+        <QueryStatus query={rules} what="Notification settings" skeleton="h-40">{() => null}</QueryStatus>
       ) : (
         <>
           <Section

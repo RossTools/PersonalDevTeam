@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
-import { Alert, Badge, Button, EmptyState, Link, Section, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
+import { Badge, Button, EmptyState, Link, Section, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
 import { AutoSaveText, SaveStatus, useSaveState } from '../common/AutoSave';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
@@ -21,6 +21,7 @@ import { invalidateWorktrees, worktreesQuery } from '../common/worktrees';
 import { useOpenChanges } from '../review/open';
 import { ProjectDocuments } from '../documents/DocumentSettings';
 import { invalidateProjects, projectKeys } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 /**
  * Name, key and base branch, each saved as it changes (PDT-231): text on blur or Enter, the branch at once. Folder and
@@ -66,7 +67,7 @@ function General({ project, onKeyChange }: { project: Project; onKeyChange?: (ke
             onChange={(baseBranch) => void trackBase(save({ baseBranch }))} />
         </SettingsRow>
       )}
-      {branches.isError && <Alert tone="error">Branches could not be loaded: {branches.error.message}</Alert>}
+      <LoadError what="Branches" error={branches.error} />
       {personal ? (
         <SettingsRow label="Folder" description="Personal project (no repository): each ticket works in its own folder here.">
           <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={project.repoPath}>{project.repoPath}</span>
@@ -180,7 +181,7 @@ function Worktrees({ project }: { project: Project }) {
   return (
     <Section label="Worktrees" description={description}>
       {list.isPending && <Skeleton lines={3} label="Loading worktrees" />}
-      {list.isError && <Alert tone="error">Worktrees could not be loaded: {list.error.message}</Alert>}
+      <LoadError what="Worktrees" error={list.error} />
       {list.data?.length === 0 && <EmptyState>No worktrees. Running a branch makes one.</EmptyState>}
       {!!list.data?.length && (
         <ul data-flush className="flex flex-col divide-y divide-border">

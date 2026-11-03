@@ -2,7 +2,7 @@
 // Draft ticket linked to it. An issue a ticket already links is not imported again: that ticket opens instead.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Dialog, Field, Input } from '@ui';
+import { Alert, Dialog, DialogActions, Field, Input } from '@ui';
 import { api } from '../api/client';
 import type { ImportByKey } from '../api/gen/ImportByKey';
 import type { ProjectSettingsView } from '../api/gen/ProjectSettingsView';
@@ -37,11 +37,10 @@ export function ImportByKeyDialog({ projectId, source, onClose }: { projectId: s
   const ready = key.trim() !== '';
   return (
     <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
+      onClose={onClose}
       title={source.title}
       description={source.description}
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!ready} pending={run.isPending} onClick={() => run.mutate()}>Import</Button></>}
+      footer={<DialogActions onCancel={onClose} action="Import" disabled={!ready} pending={run.isPending} onAction={() => run.mutate()} />}
     >
       <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); if (ready && !run.isPending) run.mutate(); }}>
         <Field label="Issue key">

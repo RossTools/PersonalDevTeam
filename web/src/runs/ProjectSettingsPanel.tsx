@@ -30,6 +30,7 @@ import type { SettingsSection } from '../common/SettingsScreens';
 import { projectKeys } from '../projects/queries';
 import { invalidateSessions } from '../sessions/queries';
 import { runKeys } from './queries';
+import { LoadError } from '../common/QueryStatus';
 
 /** The Select's value for "no override: use the host setting" (its empty value would show the placeholder). */
 const HOST = 'host';
@@ -117,7 +118,7 @@ export function useProjectSettingsSections(project: Project): { notice: ReactNod
     !personal && { label: 'Plugins', node: <Integrations project={project} settings={settings.data} schemas={schemas} /> },
   ];
   return {
-    notice: settings.isError ? <Alert tone="error">Project settings could not be loaded: {settings.error.message}</Alert> : null,
+    notice: settings.isError ? <LoadError what="Project settings" error={settings.error} /> : null,
     sections: sections.filter((x): x is SettingsSection => x !== false),
   };
 }

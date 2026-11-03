@@ -66,7 +66,14 @@
   `<Button slot="drag">` handle. Sheets open from a button, never an edge swipe. Never make a long-press target natively `draggable` on touch
   screens (Android turns the long press into a drag): drag from a handle, or only with a fine pointer.
 - **Pending and errors.** Actions show `pending` on their control; forms show errors with `Alert`/`Field`; everything
-  else toasts (`toast.error(message)`).
+  else toasts (`toast.error(message)`). In features (web/src/common): a button's action is `useAction` (pending, toasts
+  its failure), a form's or dialog's is `useFormAction` (pending, `error` for its `Alert`, ignores a double submit). A
+  query's loading and failure are `QueryStatus` (Skeleton, then "X could not be loaded: …", `retry` for a Retry
+  button), or `LoadError` alone beside data shown another way.
+- **Dialogs.** One mounted only while it shows passes `onClose` (no `open`/`onOpenChange`). Its footer is
+  `DialogActions`: a `secondary` Cancel, then the action named for what it does (`danger` when it destroys, `form`
+  to submit a form by id). Picking some of a list (projects, personas) is `CheckboxPicks`; removing an item from a
+  settings list is `useConfirmDelete` (web/src/common), which confirms, deletes and invalidates.
 - **Dates.** `Calendar` (a month to pick a day from: Monday first, ‹ › to page, arrows move, Enter picks) takes and
   gives plain `YYYY-MM-DD` strings; `min` makes earlier days unpickable (except the chosen one), today is amber with a
   dot, the chosen day `bg-primary`. Its primitive (`primitives/calendar.tsx`) is written by hand on React Aria's

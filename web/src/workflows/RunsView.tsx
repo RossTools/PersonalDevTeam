@@ -18,6 +18,7 @@ import { RUN_STATUS, duration, pathOf, runSteps } from './runs';
 import { StepList, type StepRow } from './StepList';
 import { workflowKeys } from './queries';
 import { POLL } from '../common/poll';
+import { LoadError } from '../common/QueryStatus';
 
 const STEP_STATUS: Record<WorkflowStep['status'], StepRow['status']> = {
   pending: { tone: 'neutral', text: 'Pending' },
@@ -71,7 +72,7 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
   const openSession = useOpenSession();
   const open = useMutation({ meta: { errorShown: true }, mutationFn: (id: string) => api.getSession(id), onSuccess: (s) => openSession(s) });
   const [selected, setSelected] = useState<string | null>(null);
-  if (run.error) return <Alert tone="error">The run could not be loaded: {run.error.message}</Alert>;
+  if (run.error) return <LoadError what="The run" error={run.error} />;
   if (!run.data) return <Skeleton lines={6} className="p-3" />;
   const r = run.data;
   const status = RUN_STATUS[r.status];
@@ -150,7 +151,7 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <nav aria-label="Runs" className={cn('shrink-0 overflow-auto border-b border-border md:max-h-none md:w-72 md:border-r md:border-b-0', viewOnly ? 'min-h-0 flex-1' : 'max-h-56')}>
-        {runs.error && <Alert tone="error" className="m-2">Runs could not be loaded: {runs.error.message}</Alert>}
+        <LoadError what="Runs" error={runs.error} className="m-2" />
         {runs.isSuccess && list.length === 0 && <EmptyState>No runs yet. Dry run it, or enable it and wait for its trigger.</EmptyState>}
         <ul className="flex flex-col p-1">
           {list.map((r) => {

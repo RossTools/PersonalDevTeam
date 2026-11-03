@@ -11,6 +11,7 @@ export * from './Select';
 export * from './SuggestInput';
 export * from './Field';
 export * from './Checkbox';
+export * from './CheckboxPicks';
 export * from './Calendar';
 export * from './Switch';
 export * from './SegmentedControl';

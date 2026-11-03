@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
-import { Alert, IconButton, List, ListHeading, ListRow, relativeTime, Skeleton, Spinner, useMenuAt } from '@ui';
+import { IconButton, List, ListHeading, ListRow, relativeTime, Skeleton, Spinner, useMenuAt } from '@ui';
 import { InlineRename } from '../common/InlineRename';
 import { RowField } from '../common/RowField';
 import { earlier, firstLine, isUnread, openConversations, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useShownRef, useViaLabel, type PmSelection } from './usePm';
+import { LoadError } from '../common/QueryStatus';
 
 /** Ended conversations the list shows; the rest are under "All ended conversations". */
 const RECENT_ENDED = 5;
@@ -45,7 +46,7 @@ export function PmList({ selection, onSelect, onNew }: {
         Project manager
       </ListHeading>
       {pm.isPending && <Skeleton lines={3} label="Loading the PM" />}
-      {pm.isError && <Alert tone="error">The PM could not be loaded: {pm.error.message}</Alert>}
+      <LoadError what="The PM" error={pm.error} />
       <List aria-label="PM conversations" onAction={(id) => onSelect(String(id))}>
         {open.map((info) => {
           const unread = isUnread(info, shown);

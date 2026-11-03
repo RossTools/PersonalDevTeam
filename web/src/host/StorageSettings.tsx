@@ -14,6 +14,7 @@ import { BranchChip } from '../common/BranchChip';
 import { useAction } from '../common/useAction';
 import { TicketKey } from '../common/TicketKey';
 import { CleanButton, DiskBadge, formatBytes, RemoveButton, sizeText, StageBadge, useCleanFinished, useStorage } from '../projects/worktreeStorage';
+import { LoadError } from '../common/QueryStatus';
 
 function gb(text: string): number {
   if (!/^\d+$/.test(text)) throw new Error('a whole number of GB (0 turns it off)');
@@ -143,7 +144,7 @@ export function Storage() {
         notice={s?.pickupPause ? <PausedBanner reason={s.pickupPause.reason} /> : undefined}
       >
         {storage.isPending && <Skeleton lines={2} label="Loading storage" />}
-        {storage.isError && <Alert tone="error">Storage could not be loaded: {storage.error.message}</Alert>}
+        <LoadError what="Storage" error={storage.error} />
         {s?.disks.map((d) => (
           <SettingsRow key={d.folders.join('\n')} label={<span className="flex items-center gap-2">Disk <DiskBadge level={d.level} /></span>}
             description={<span className="font-mono">{d.folders.join(', ')}</span>}>

@@ -1,9 +1,9 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Toaster, toast } from '@ui/Toaster';
 import { ApiError } from '../api/client';
-import { actionError, runAction, useAction } from './useAction';
+import { actionError, runAction, useAction, useFormAction } from './useAction';
 
 beforeAll(() => {
   Element.prototype.setPointerCapture ??= () => {};
@@ -40,6 +40,41 @@ describe('useAction', () => {
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
     expect(await screen.findByText('Closed')).toBeInTheDocument();
     expect(fn).toHaveBeenCalledOnce();
+  });
+});
+
+function SaveForm({ fn }: { fn: () => Promise<unknown> }) {
+  const save = useFormAction(fn);
+  return (
+    <>
+      <button type="button" onClick={() => { void save.run(); void save.run(); }}>{save.pending ? 'Saving' : 'Save'}</button>
+      {save.error && <p role="alert">{save.error}</p>}
+    </>
+  );
+}
+
+describe('useFormAction', () => {
+  it('shows the error inline, without a toast, and clears it on the next run', async () => {
+    let fail = true;
+    const fn = vi.fn(async () => { if (fail) throw new ApiError(400, 'bad', 'Title is required'); });
+    render(<><Toaster /><SaveForm fn={fn} /></>);
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Title is required');
+    expect(document.querySelector('[data-sonner-toast]')).toBeNull();
+    fail = false;
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('is pending until the action settles and ignores a second run meanwhile', async () => {
+    let resolve!: () => void;
+    const fn = vi.fn(() => new Promise<void>((r) => { resolve = r; }));
+    render(<SaveForm fn={fn} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByRole('button', { name: 'Saving' })).toBeInTheDocument();
+    expect(fn).toHaveBeenCalledOnce();
+    await act(async () => { resolve(); });
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
   });
 });
 

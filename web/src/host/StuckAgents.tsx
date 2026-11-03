@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Link, Section, Select, SettingsRow, Skeleton, Switch } from '@ui';
+import { Alert, Link, Section, Select, SettingsRow, Skeleton, Switch } from '@ui';
 import { api } from '../api/client';
 import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
