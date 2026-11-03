@@ -1,6 +1,7 @@
 //! The Files view (workspaces spec §6.5, editing PDT-157): a checkout's files as git sees them (`.gitignore`
 //! honoured), a file's text, and saving, creating, renaming and deleting files. Paths never leave the checkout,
-//! symlinks included, and `.git` is off limits. A save names the hash of the text it started from, so a file that
+//! symlinks included, and `.git` is off limits. Every read and write goes through a handle on the checkout
+//! ([`checkout_dir`]), so a folder swapped for a symlink after the checks still can't lead out. A save names the hash of the text it started from, so a file that
 //! changed on disk since is never overwritten silently.
 
 use crate::error::ApiError;
@@ -8,6 +9,7 @@ use crate::routes::AppState;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path as FsPath, PathBuf};
@@ -105,10 +107,21 @@ pub(crate) fn clean_path(raw: &str) -> Result<String, ApiError> {
             s => parts.push(s),
         }
     }
-    if parts.first().is_some_and(|s| s.eq_ignore_ascii_case(".git")) {
+    if parts.first().is_some_and(|s| is_git_name(s)) {
         return Err(outside());
     }
     Ok(parts.join("/"))
+}
+
+/// Whether a path segment names a `.git` folder on some file system: any case, with trailing dots and spaces (Windows
+/// drops them, so `.git.` is `.git` there), or as its Windows short name (`GIT~1`).
+fn is_git_name(seg: &str) -> bool {
+    let seg = seg.trim_end_matches(['.', ' ']);
+    if seg.eq_ignore_ascii_case(".git") {
+        return true;
+    }
+    let lower = seg.to_ascii_lowercase();
+    lower.strip_prefix("git~").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// A path to write, as `clean_path` takes it but with no `.git` anywhere in it (a submodule's or a nested repo's),
@@ -118,8 +131,7 @@ fn clean_write_path(raw: &str) -> Result<String, ApiError> {
     if rel.is_empty() {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "name a file"));
     }
-    // Windows drops trailing dots and spaces from names, so `.git.` is `.git` there.
-    if rel.split('/').any(|seg| seg.trim_end_matches(['.', ' ']).eq_ignore_ascii_case(".git")) {
+    if rel.split('/').any(is_git_name) {
         return Err(outside());
     }
     Ok(rel)
@@ -132,9 +144,9 @@ fn hash_of(bytes: &[u8]) -> String {
 
 /// The entries directly in a plain folder (a Personal project's), as `entries` takes them: a folder as `<dir>/.`.
 /// Blocking.
-fn plain_files(full: &FsPath, rel: &str) -> Vec<String> {
+fn plain_files(dir: &Dir, rel: &str) -> Vec<String> {
     let prefix = if rel.is_empty() { String::new() } else { format!("{rel}/") };
-    let Ok(read) = std::fs::read_dir(full) else { return vec![] };
+    let Ok(read) = dir.read_dir(at(rel)) else { return vec![] };
     let mut out: Vec<String> = read
         .flatten()
         .filter_map(|e| {
@@ -190,13 +202,33 @@ fn writable(checkout: &FsPath, rel: &str) -> Result<PathBuf, ApiError> {
     Ok(full)
 }
 
+/// The checkout as a directory handle. Files are read and written through it (cap-std resolves each step of a path
+/// beneath the handle), so a path can't leave the checkout even when a folder is swapped for a symlink between
+/// [`contained`] / [`writable`] and the operation. Blocking.
+pub(crate) fn checkout_dir(checkout: &FsPath) -> Result<Dir, ApiError> {
+    Dir::open_ambient_dir(checkout, cap_std::ambient_authority()).map_err(|_| ApiError::not_found("checkout"))
+}
+
+/// An error from an operation through [`checkout_dir`]: cap-std refuses a path that leads out as `PermissionDenied`.
+pub(crate) fn io_err(e: std::io::Error) -> ApiError {
+    match e.kind() {
+        std::io::ErrorKind::PermissionDenied => outside(),
+        _ => ApiError::internal(e),
+    }
+}
+
+/// `rel` as a [`Dir`] takes it: the checkout itself is `.`.
+fn at(rel: &str) -> &str {
+    if rel.is_empty() { "." } else { rel }
+}
+
 fn file_changed() -> ApiError {
     ApiError::new(StatusCode::CONFLICT, "file_changed", "the file changed on disk since it was opened")
 }
 
 /// The file as the view shows it. Blocking.
-fn read_file(checkout: &FsPath, full: &FsPath, rel: String, personal: bool) -> Result<FileContent, ApiError> {
-    let meta = std::fs::metadata(full).ok().filter(|m| m.is_file()).ok_or_else(|| ApiError::not_found("file"))?;
+fn read_file(checkout: &FsPath, dir: &Dir, rel: String, personal: bool) -> Result<FileContent, ApiError> {
+    let meta = dir.metadata(&rel).ok().filter(|m| m.is_file()).ok_or_else(|| ApiError::not_found("file"))?;
     let status = if personal {
         None
     } else {
@@ -208,7 +240,7 @@ fn read_file(checkout: &FsPath, full: &FsPath, rel: String, personal: bool) -> R
     if size > MAX_FILE_BYTES {
         return Ok(FileContent { path: rel, size, status, text: None, binary: false, too_large: true, hash: None });
     }
-    let bytes = std::fs::read(full).map_err(ApiError::internal)?;
+    let bytes = dir.read(&rel).map_err(io_err)?;
     let hash = Some(hash_of(&bytes));
     let binary = bytes.iter().take(8000).any(|b| *b == 0);
     let text = if binary { None } else { String::from_utf8(bytes).ok() };
@@ -251,9 +283,9 @@ pub(crate) async fn list(
 ) -> Result<Json<Vec<FileEntry>>, ApiError> {
     let (checkout, rel, personal) = resolve(&st, &id, &q).await?;
     let list = tokio::task::spawn_blocking(move || -> Result<Vec<FileEntry>, ApiError> {
-        let full = contained(&checkout, &rel)?;
+        contained(&checkout, &rel)?;
         if personal {
-            return Ok(entries(&rel, &plain_files(&full, &rel), &[]));
+            return Ok(entries(&rel, &plain_files(&checkout_dir(&checkout)?, &rel), &[]));
         }
         let files = pdt_git::list_files(&checkout, &rel)?;
         let status = pdt_git::status(&checkout, &rel)?;
@@ -274,8 +306,8 @@ pub(crate) async fn content(
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "name a file"));
     }
     let file = tokio::task::spawn_blocking(move || -> Result<FileContent, ApiError> {
-        let full = contained(&checkout, &rel)?;
-        read_file(&checkout, &full, rel, personal)
+        contained(&checkout, &rel)?;
+        read_file(&checkout, &checkout_dir(&checkout)?, rel, personal)
     })
     .await
     .map_err(ApiError::internal)??;
@@ -297,10 +329,11 @@ pub(crate) async fn save(
         return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "files over 1 MB can't be edited here"));
     }
     let file = tokio::task::spawn_blocking(move || -> Result<FileContent, ApiError> {
-        let full = writable(&checkout, &rel)?;
-        match std::fs::symlink_metadata(&full) {
+        writable(&checkout, &rel)?;
+        let dir = checkout_dir(&checkout)?;
+        match dir.symlink_metadata(&rel) {
             Ok(_) => {
-                let meta = std::fs::metadata(&full).map_err(ApiError::internal)?;
+                let meta = dir.metadata(&rel).map_err(io_err)?;
                 if meta.is_dir() {
                     return Err(ApiError::new(StatusCode::CONFLICT, "file_exists", "a folder has that name"));
                 }
@@ -310,7 +343,7 @@ pub(crate) async fn save(
                 if meta.len() > MAX_FILE_BYTES {
                     return Err(not_editable());
                 }
-                let bytes = std::fs::read(&full).map_err(ApiError::internal)?;
+                let bytes = dir.read(&rel).map_err(io_err)?;
                 if bytes.iter().take(8000).any(|b| *b == 0) || std::str::from_utf8(&bytes).is_err() {
                     return Err(not_editable());
                 }
@@ -320,13 +353,13 @@ pub(crate) async fn save(
             }
             Err(_) if b.base_hash.is_some() => return Err(file_changed()),
             Err(_) => {
-                if let Some(parent) = full.parent() {
-                    std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
+                if let Some((parent, _)) = rel.rsplit_once('/') {
+                    dir.create_dir_all(parent).map_err(io_err)?;
                 }
             }
         }
-        std::fs::write(&full, b.text.as_bytes()).map_err(ApiError::internal)?;
-        read_file(&checkout, &full, rel, personal)
+        dir.write(&rel, b.text.as_bytes()).map_err(io_err)?;
+        read_file(&checkout, &dir, rel, personal)
     })
     .await
     .map_err(ApiError::internal)??;
@@ -348,21 +381,22 @@ pub(crate) async fn rename(
     let q = FilesQuery { worktree_id: b.worktree_id, path: from.clone() };
     let (checkout, from, _) = resolve(&st, &id, &q).await?;
     tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
-        let src = writable(&checkout, &from)?;
-        let dst = writable(&checkout, &to)?;
-        if std::fs::symlink_metadata(&src).is_err() {
+        writable(&checkout, &from)?;
+        writable(&checkout, &to)?;
+        let dir = checkout_dir(&checkout)?;
+        if dir.symlink_metadata(&from).is_err() {
             return Err(ApiError::not_found("file"));
         }
-        if std::fs::symlink_metadata(&dst).is_ok() {
+        if dir.symlink_metadata(&to).is_ok() {
             return Err(ApiError::new(StatusCode::CONFLICT, "file_exists", "something already has that name"));
         }
         if to.starts_with(&format!("{from}/")) {
             return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "a folder can't move into itself"));
         }
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent).map_err(ApiError::internal)?;
+        if let Some((parent, _)) = to.rsplit_once('/') {
+            dir.create_dir_all(parent).map_err(io_err)?;
         }
-        std::fs::rename(&src, &dst).map_err(ApiError::internal)
+        dir.rename(&from, &dir, &to).map_err(io_err)
     })
     .await
     .map_err(ApiError::internal)??;
@@ -378,12 +412,13 @@ pub(crate) async fn delete(
     clean_write_path(&q.path)?;
     let (checkout, rel, _) = resolve(&st, &id, &q).await?;
     tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
-        let full = writable(&checkout, &rel)?;
-        let meta = std::fs::symlink_metadata(&full).map_err(|_| ApiError::not_found("file"))?;
+        writable(&checkout, &rel)?;
+        let dir = checkout_dir(&checkout)?;
+        let meta = dir.symlink_metadata(&rel).map_err(|_| ApiError::not_found("file"))?;
         if meta.is_dir() {
             return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "only files can be deleted here"));
         }
-        std::fs::remove_file(&full).map_err(ApiError::internal)
+        dir.remove_file(&rel).map_err(io_err)
     })
     .await
     .map_err(ApiError::internal)??;
@@ -458,19 +493,56 @@ mod tests {
         assert_eq!(clean_path("/src//main.rs").unwrap(), "src/main.rs");
         assert_eq!(clean_path("src\\lib\\x.rs").unwrap(), "src/lib/x.rs");
         assert_eq!(clean_path("./a/./b").unwrap(), "a/b");
-        for bad in ["..", "a/../../b", "C:\\Windows", "c:/x", ".git/config", ".GIT", "a\0b"] {
+        for bad in [
+            "..",
+            "a/../../b",
+            "C:\\Windows",
+            "c:/x",
+            ".git/config",
+            ".GIT",
+            "a\0b",
+            ".git./config",
+            ".git ",
+            "GIT~1/HEAD",
+        ] {
             assert!(clean_path(bad).is_err(), "{bad}");
         }
         assert_eq!(clean_path("docs/.git-notes").unwrap(), "docs/.git-notes");
+        assert_eq!(clean_path("git~notes/x").unwrap(), "git~notes/x");
     }
 
     #[test]
     fn written_paths_never_reach_any_git_folder() {
         assert_eq!(clean_write_path("src/new.rs").unwrap(), "src/new.rs");
         assert_eq!(clean_write_path("docs/.gitignore").unwrap(), "docs/.gitignore");
-        for bad in ["", "/", ".git/HEAD", "sub/.git/config", "sub/.GIT", "x/.git./y", "x/.git /y", "../x"] {
+        for bad in
+            ["", "/", ".git/HEAD", "sub/.git/config", "sub/.GIT", "x/.git./y", "x/.git /y", "../x", "sub/GIT~12/x"]
+        {
             assert!(clean_write_path(bad).is_err(), "{bad}");
         }
+    }
+
+    /// The handle refuses a path that leads out by itself, so a folder swapped for a symlink after
+    /// [`writable`] checked it still can't take a write outside.
+    #[cfg(unix)]
+    #[test]
+    fn the_checkout_handle_never_follows_a_link_out() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (checkout, outside_dir) = (tmp.path().join("checkout"), tmp.path().join("outside"));
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::create_dir_all(&outside_dir).unwrap();
+        std::fs::write(outside_dir.join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(&outside_dir, checkout.join("swapped")).unwrap();
+        let dir = checkout_dir(&checkout).unwrap();
+        let e = dir.write("swapped/new.txt", "x").map_err(io_err).unwrap_err();
+        assert_eq!(e.code(), "path_outside");
+        assert!(dir.read("swapped/secret.txt").is_err());
+        assert!(dir.remove_file("swapped/secret.txt").is_err());
+        assert!(dir.rename("swapped/secret.txt", &dir, "mine.txt").is_err());
+        assert!(!outside_dir.join("new.txt").exists());
+        assert_eq!(std::fs::read_to_string(outside_dir.join("secret.txt")).unwrap(), "secret");
+        dir.write("inside.txt", "ok").unwrap();
+        assert_eq!(std::fs::read_to_string(checkout.join("inside.txt")).unwrap(), "ok");
     }
 
     #[test]

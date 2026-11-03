@@ -164,10 +164,11 @@ pub(crate) async fn file(
     let sides = tokio::task::spawn_blocking(move || -> Result<FileSides, ApiError> {
         let mb = pdt_git::review_base(&checkout, &base, &fallback);
         let old = pdt_git::file_at(&checkout, &mb, &old_rel)?;
-        let full = crate::files::contained(&checkout, &rel)?;
-        let (new, new_huge) = match std::fs::metadata(&full) {
+        crate::files::contained(&checkout, &rel)?;
+        let dir = crate::files::checkout_dir(&checkout)?;
+        let (new, new_huge) = match dir.metadata(&rel) {
             Ok(m) if m.is_file() && m.len() > MAX_SIDE_BYTES as u64 => (None, true),
-            Ok(m) if m.is_file() => (Some(std::fs::read(&full).map_err(ApiError::internal)?), false),
+            Ok(m) if m.is_file() => (Some(dir.read(&rel).map_err(crate::files::io_err)?), false),
             _ => (None, false),
         };
         let (old, old_bin, old_big) = side_text(old);

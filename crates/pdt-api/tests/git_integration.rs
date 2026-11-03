@@ -443,6 +443,11 @@ async fn the_files_view_never_writes_outside_the_checkout_or_into_git() {
     }
     let (s, _) = call(&env.app, "DELETE", &format!("{base}/content?path=.git/HEAD"), None).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
+    // Nor read from it, however the name is spelt (Windows drops trailing dots and spaces).
+    for bad in [".git/HEAD", ".GIT/HEAD", ".git./HEAD", ".git%20/HEAD"] {
+        let (s, _) = call(&env.app, "GET", &format!("{base}/content?path={bad}"), None).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "read {bad}");
+    }
     assert!(!env.tmp.path().join("escape.txt").exists());
     assert!(env.repo.join(".git").join("HEAD").is_file());
 
