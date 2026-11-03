@@ -45,8 +45,9 @@ for what they cover, and the API for the rest. Which tools a session has depends
 Tools that act beyond this session (`create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `link_issue`,
 `unlink_issue`, `stop_ticket`, `send_to_session`, `workflow_run`, `workflow_import`, `issue_create`, and the document writes `doc_edit`, `sheet_edit`,
 `document_create`, `document_link`, `comment_reply`, `comment_resolve`) wait for the person's yes (except, where the
-project lets the PM act, those on its tickets, sessions and documents). In Claude that is its permission prompt; other agents
-get an answer saying the call waits in the Inbox: end your turn, and PDT sends the result once the person allows it.
+project lets the PM act, those on its tickets, sessions and documents). In Claude that is its permission prompt. Elsewhere,
+in a conversation, the call waits while PDT asks the person in it, then runs or tells you they said no. In a terminal
+you get an answer saying the call waits in the Inbox: end your turn, and PDT sends the result once the person allows it.
 
 **Secrets.** Never ask the person to paste a secret into the chat, and never print, log or commit one. `list_secrets`
 gives the names this session may use; `request_secret` `{name, purpose}` asks the person to type one into PDT's Inbox

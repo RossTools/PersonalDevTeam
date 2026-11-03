@@ -141,10 +141,13 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
 }
 
 /// An asking tool from an agent that can't ask the user per call (Codex, Devin: PDT's tools run without asking
-/// there) runs where the project lets the PM act; elsewhere PDT asks in its Inbox (PDT-256): the call waits there, and
-/// the user's Allow runs it and tells the agent the result. Claude asks through its permission prompt, unless
-/// it runs in Bypass, which never shows that prompt (PDT-414): then it is one that can't ask. A public-posting tool
-/// asks in the Inbox outside a workflow step, which expects it (PDT-414).
+/// there) runs where the project lets the PM act; elsewhere PDT asks the user (PDT-256). Claude asks through its
+/// permission prompt, unless it runs in Bypass, which never shows that prompt (PDT-414): then it is one that can't ask.
+/// A public-posting tool asks outside a workflow step, which expects it (PDT-414).
+///
+/// In a conversation PDT asks in the conversation itself, with an approval card that is also in the Inbox, and the call
+/// waits for the answer (PDT-490). Elsewhere (a terminal), and for a tool that asks in the Inbox (PDT-475), the call
+/// waits in the Inbox: the user's Allow runs it and tells the agent the result.
 pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) -> Result<(), String> {
     use pdt_core::session::AgentKind;
     let reg = cx.st.registry();
@@ -152,21 +155,37 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
     if cx.confirmed {
         return Ok(());
     }
+    let in_inbox = table.asks_in_inbox(tool);
     if !table.asks(tool) {
         let in_step = cx.st.store.active_agent_step(&cx.session.id).await.ok().flatten().is_some();
         if !table.public(tool) || in_step {
             return Ok(());
         }
-    } else {
+    } else if !in_inbox {
         // One that asks in PDT's Inbox (PDT-475) asks there for every agent, whatever the project lets the PM do.
-        let in_inbox = table.asks_in_inbox(tool);
         let claude_prompts =
             cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude && !cx.session.asks_nothing();
-        if !in_inbox && claude_prompts {
+        if claude_prompts || crate::pm::acts_without_asking(cx.st, target).await {
             return Ok(());
         }
-        if !in_inbox && crate::pm::acts_without_asking(cx.st, target).await {
+    }
+    if !in_inbox {
+        // Letting an external ticket in takes the user's yes to this very call (PDT-201): never "always".
+        let each_time = crate::untrusted::needs_the_user(cx.st, cx.session, tool, cx.input).await;
+        if !each_time && crate::conversations::allowed_always(cx.st, &cx.session.id, tool) {
             return Ok(());
+        }
+        use crate::conversations::Asked;
+        match crate::conversations::ask_inline(cx.st, cx.session, tool, cx.input, !each_time).await {
+            Some(Asked::Allowed) => return Ok(()),
+            Some(Asked::Denied(why)) => {
+                let why = why.map(|w| format!(" They said: {w}")).unwrap_or_default();
+                return Err(format!("The user denied this {tool} call, so PDT didn't make it.{why}"));
+            }
+            Some(Asked::Ended) => {
+                return Err(format!("{tool} was not run: the turn ended before the user answered."));
+            }
+            None => {}
         }
     }
     let item = crate::workflow::agent::ask_confirm(cx.st, cx.session, tool, cx.input).await?;

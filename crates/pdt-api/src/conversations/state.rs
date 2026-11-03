@@ -108,7 +108,7 @@ pub async fn answer_as_user(
     answer: &pdt_core::conversation::Answer,
 ) -> Result<(), ApiError> {
     let session = conversation_session(st, session_id).await?;
-    answer_request(st, &session, request_id, answer).await?;
+    answer_request(st, &session, request_id, answer, true).await?;
     let approved = matches!(answer, pdt_core::conversation::Answer::Approve { .. });
     st.grants.answered(&session.id, request_id, approved);
     Ok(())
