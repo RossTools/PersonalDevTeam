@@ -1,7 +1,7 @@
 //! The Inbox side of agent steps: the questions and asking-tool calls a session puts to the user, and the answers to
 //! those, stalled, loop-limit, manual and timed-out items.
 
-use super::{R, USER, err, finish_with, prompt_key, queue_message, session_run, waiting_step};
+use super::{Confirmed, R, USER, err, finish_with, prompt_key, queue_message, session_run, waiting_step};
 use crate::routes::{AppState, now_ms};
 use pdt_core::conversation::SessionMode;
 use pdt_core::inbox::{self, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus, Question};
@@ -89,6 +89,13 @@ pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str
         _ => json!({"choice": choice}),
     };
     end_item(st, item, resolution).await?;
+    // The call still waits on the item (PDT-492): it goes on in the agent's turn with the answer.
+    let waited = if allowed { Confirmed::Allowed(kept.map(<[u32]>::to_vec)) } else { Confirmed::Denied };
+    if super::confirm_wait::answer(st, &item.id, waited) {
+        let _locked = crate::workflow::engine::lock_run(st, item.run_id.as_deref()).await;
+        working_again(st, item).await?;
+        return Ok(json!({"allowed": allowed, "waited": true}));
+    }
     let (text, out) = if allowed {
         let cx = crate::mcp::tools::Cx { st, session: &s, input: &input, confirmed: true };
         let r = st.store.redactor();
@@ -351,6 +358,11 @@ pub(crate) async fn reply(st: &AppState, item: &InboxItem, text: &str, resolutio
 /// Sends the asking session `text` about its ended item; its step works again. The caller holds the run's lock.
 async fn tell(st: &AppState, item: &InboxItem, s: &Session, text: &str) -> R<()> {
     queue_message(st, s, text, None, item.ticket_id.clone(), USER).await?;
+    working_again(st, item).await
+}
+
+/// The step that asked with `item` works again, now it is answered. The caller holds the run's lock.
+async fn working_again(st: &AppState, item: &InboxItem) -> R<()> {
     if let Some(step) = &item.step_id
         && let Ok(Some(mut a)) = st.store.get_agent_step(step).await
         && a.state == AgentStepState::Asking

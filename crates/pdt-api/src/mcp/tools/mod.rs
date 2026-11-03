@@ -18,6 +18,7 @@ pub(crate) use step::{SubmitOutcome, add_review_comment};
 use crate::error::ApiError;
 use crate::integrations::Tool;
 use crate::routes::{AppState, now_ms};
+use crate::workflow::agent::Confirmed;
 use crate::workflow::catalog::Category;
 use axum::Json;
 use axum::extract::State;
@@ -146,8 +147,8 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
 /// A public-posting tool asks outside a workflow step, which expects it (PDT-414).
 ///
 /// In a conversation PDT asks in the conversation itself, with an approval card that is also in the Inbox, and the call
-/// waits for the answer (PDT-490). Elsewhere (a terminal), and for a tool that asks in the Inbox (PDT-475), the call
-/// waits in the Inbox: the user's Allow runs it and tells the agent the result.
+/// waits for the answer (PDT-490). Elsewhere (a terminal), and for a tool that asks in the Inbox (PDT-475), it asks with
+/// an Inbox item, and the call waits on that instead (PDT-492): the agent never ends its turn to wait.
 pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::AskTarget) -> Result<(), String> {
     use pdt_core::session::AgentKind;
     let reg = cx.st.registry();
@@ -189,12 +190,17 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
         }
     }
     let item = crate::workflow::agent::ask_confirm(cx.st, cx.session, tool, cx.input).await?;
-    Err(format!(
-        "{tool} needs the user's yes, so PDT put this call in its Inbox for them to Allow or Deny (item {}). Don't call \
-         it again: if they allow it, PDT runs it as you gave it and sends you a message with the result; if they deny \
-         it, you hear that instead. End your turn now.",
-        item.id
-    ))
+    crate::notifications::kick(cx.st);
+    let waited = crate::workflow::agent::wait_confirm(cx.st, &item).await;
+    crate::notifications::kick(cx.st);
+    match waited {
+        Confirmed::Allowed(_) => {
+            crate::workflow::agent::grant(cx.st, &cx.session.id, &item.id, tool, cx.input);
+            Ok(())
+        }
+        Confirmed::Denied => Err(format!("The user denied this {tool} call in the Inbox, so PDT didn't make it.")),
+        Confirmed::Ended => Err(format!("{tool} was not run: its Inbox item closed before the user answered.")),
+    }
 }
 
 /// A ticket's id from its id or key (`ABC-12`; a bare number is in `project`).

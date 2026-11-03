@@ -184,8 +184,8 @@ pub const CLAUDE_READ_TOOLS: &str = "Read,Grep,Glob";
 /// A locked-down session's Codex settings: no web search, and a read-only sandbox.
 pub const CODEX_LOCKED_CONFIG: [(&str, &str); 2] = [("web_search", "\"disabled\""), ("sandbox_mode", "\"read-only\"")];
 
-/// How long a Codex conversation waits for one of PDT's tools (`tool_timeout_sec`; Codex's own is a minute): an asking
-/// tool's call waits there for the user's answer in the conversation (PDT-490).
+/// How long Codex waits for one of PDT's tools (`tool_timeout_sec`; Codex's own is a minute): an asking tool's call
+/// waits for the user's answer, in a conversation (PDT-490) or a terminal's Inbox item (PDT-492).
 pub const CODEX_PDT_TOOL_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
 /// A Codex app-server thread's `config` overrides. PDT's tools run without asking (as Claude's `--allowedTools`):
@@ -360,6 +360,8 @@ pub fn codex_tui_args(m: &McpServer) -> Vec<String> {
         format!("mcp_servers.{SERVER_NAME}.bearer_token_env_var={}", crate::hooks::toml_string(TOKEN_ENV)),
         "-c".into(),
         format!("mcp_servers.{SERVER_NAME}.default_tools_approval_mode=\"approve\""),
+        "-c".into(),
+        format!("mcp_servers.{SERVER_NAME}.tool_timeout_sec={CODEX_PDT_TOOL_TIMEOUT_SECS}"),
     ]
     .into_iter()
     .chain(
@@ -661,7 +663,7 @@ mod tests {
         assert_eq!((c["web_search"].as_str(), c["sandbox_mode"].as_str()), (Some("disabled"), Some("read-only")));
         assert!(c.get("sandbox_workspace_write.network_access").is_none(), "not the PM's network");
         let a = codex_tui_args(&m);
-        assert_eq!(a[6..10], ["-c", "web_search=\"disabled\"", "-c", "sandbox_mode=\"read-only\""]);
+        assert_eq!(a[8..12], ["-c", "web_search=\"disabled\"", "-c", "sandbox_mode=\"read-only\""]);
     }
 
     #[test]
@@ -671,11 +673,12 @@ mod tests {
         assert_eq!(c["mcp_servers.pdt"]["url"], m.url);
         assert_eq!(c["mcp_servers.pdt"]["http_headers"]["Authorization"], "Bearer s1.ab");
         let a = codex_tui_args(&m);
-        assert_eq!(a.len(), 8);
-        assert_eq!(a[7], "shell_environment_policy.exclude=[\"PDT_MCP_*\"]", "its token stays out of shell commands");
+        assert_eq!(a.len(), 10);
+        assert_eq!(a[7], format!("mcp_servers.pdt.tool_timeout_sec={CODEX_PDT_TOOL_TIMEOUT_SECS}"));
+        assert_eq!(a[9], "shell_environment_policy.exclude=[\"PDT_MCP_*\"]", "its token stays out of shell commands");
         assert_eq!(c["mcp_servers.pdt"]["default_tools_approval_mode"], "approve");
         assert_eq!(c["mcp_servers.pdt"]["tool_timeout_sec"], CODEX_PDT_TOOL_TIMEOUT_SECS);
-        for kv in [&a[1], &a[3], &a[5]] {
+        for kv in [&a[1], &a[3], &a[5], &a[7]] {
             let t: toml::Table = toml::from_str(kv).unwrap();
             assert!(t.contains_key("mcp_servers"), "{kv}");
         }
@@ -689,8 +692,8 @@ mod tests {
         assert_eq!(c["web_search"], "live");
         assert_eq!(c["sandbox_workspace_write.network_access"], true);
         let a = codex_tui_args(&pm);
-        assert_eq!(a[6..10], ["-c", "web_search=\"live\"", "-c", "sandbox_workspace_write.network_access=true"]);
-        for kv in [&a[7], &a[9]] {
+        assert_eq!(a[8..12], ["-c", "web_search=\"live\"", "-c", "sandbox_workspace_write.network_access=true"]);
+        for kv in [&a[9], &a[11]] {
             toml::from_str::<toml::Table>(kv).unwrap();
         }
     }

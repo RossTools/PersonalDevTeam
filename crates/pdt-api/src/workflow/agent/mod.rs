@@ -19,9 +19,11 @@ use pdt_core::workspace::TabPlacement;
 use pdt_store::SessionMessage;
 use serde_json::{Value, json};
 
+mod confirm_wait;
 mod inbox_items;
 mod recovery;
 
+pub(crate) use confirm_wait::{ConfirmWaits, Confirmed, grant, wait as wait_confirm};
 pub(crate) use inbox_items::{answer_confirm, answer_item, ask, ask_confirm, ask_confirm_rows, ask_user, asker, reply};
 use recovery::late_outcome;
 pub(crate) use recovery::sweep;
