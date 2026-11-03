@@ -2,11 +2,21 @@
 //! are off until turned on: escalating an Inbox item left unanswered, and posting questions, approvals and failed runs
 //! to a chat service. Its inputs (template params, and the levels) are what Settings → Notifications shows.
 
+use super::inputs::InputsBuiltin;
 use super::*;
 use crate::workflow::nodes::notification_levels::LevelsConfig;
-use crate::workflow::templates::{params, unfill};
-use pdt_core::workflow::template::{TemplateParam, fill, param_values};
+use crate::workflow::templates::params;
+use pdt_core::workflow::template::TemplateParam;
 use serde_json::{Map, Value};
+
+pub static SETTINGS: InputsBuiltin = InputsBuiltin {
+    id: NOTIFICATION_RULES,
+    params: rules_params,
+    template: rules_template,
+    finish: Some(finish),
+    read: None,
+    extra: Some(extra),
+};
 
 /// The input that holds the levels: kinds whose level differs from PDT's default. It is no template param (its value
 /// is a map), so it is checked by the levels node.
@@ -103,23 +113,18 @@ pub fn rules_template() -> WorkflowDoc {
     }))
 }
 
-/// The inputs' defaults (no level changed).
-pub fn defaults() -> Map<String, Value> {
-    let mut v = param_values(&rules_params(), &Map::new()).expect("the notification rules' defaults");
+/// The levels, no level changed.
+fn extra() -> Map<String, Value> {
+    let mut v = Map::new();
     v.insert(LEVELS.into(), json!({}));
     v
 }
 
-/// The workflow filled in with `values` (checked; missing ones take their defaults).
-pub fn filled(values: &Map<String, Value>) -> Result<WorkflowDoc, String> {
-    let mut given = values.clone();
-    let levels = given.remove(LEVELS).filter(|l| !l.is_null()).unwrap_or_else(|| json!({}));
-    if !levels.is_object() {
+/// Checks the levels: a map of kinds to levels the Show levels step takes.
+fn finish(d: WorkflowDoc, v: &Map<String, Value>) -> Result<WorkflowDoc, String> {
+    if !v.get(LEVELS).is_some_and(Value::is_object) {
         return Err("levels is a map of kinds to levels".into());
     }
-    let mut v = param_values(&rules_params(), &given)?;
-    v.insert(LEVELS.into(), levels);
-    let d = fill(&rules_template(), &v)?;
     let node = d.node(LEVELS_NODE).ok_or("the levels are missing")?;
     serde_json::from_value::<LevelsConfig>(node.config.clone()).map_err(crate::workflow::err)?.levels()?;
     Ok(d)
@@ -127,30 +132,7 @@ pub fn filled(values: &Map<String, Value>) -> Result<WorkflowDoc, String> {
 
 /// The built-in as PDT ships it.
 pub(super) fn notification_rules() -> WorkflowDoc {
-    filled(&Map::new()).expect("the notification rules fill in")
-}
-
-/// The inputs a document was filled in with: each one read back from it, else its default.
-pub fn values_of(doc: &WorkflowDoc) -> Map<String, Value> {
-    let mut out = defaults();
-    for (k, v) in unfill(&rules_template(), doc) {
-        if out.contains_key(&k) {
-            out.insert(k, v);
-        }
-    }
-    out
-}
-
-/// Whether a document is the workflow filled in with some inputs (its name and description aside): else the user
-/// changed it beyond its inputs.
-pub fn customized(doc: &WorkflowDoc) -> bool {
-    match filled(&values_of(doc)) {
-        Ok(mut d) => {
-            (d.name, d.description) = (doc.name.clone(), doc.description.clone());
-            d != *doc
-        }
-        Err(_) => true,
-    }
+    SETTINGS.shipped()
 }
 
 /// The built-in as first installed: the levels the user had set in Settings before they were the workflow's.
@@ -158,7 +140,7 @@ pub(super) fn migrated(old_levels: &Value) -> WorkflowDoc {
     let levels = pdt_core::notification::NotificationSettings::from_json(old_levels).to_json();
     let mut v = Map::new();
     v.insert(LEVELS.into(), levels);
-    filled(&v).unwrap_or_else(|_| notification_rules())
+    SETTINGS.filled(&v).unwrap_or_else(|_| notification_rules())
 }
 
 #[cfg(test)]
@@ -179,8 +161,8 @@ mod tests {
         assert_eq!(d.node("waiting").unwrap().config["where"][0]["left"], false, "no escalation");
         assert_eq!(d.node("answered").unwrap().config["timeoutMs"], ESCALATE_AFTER_MS);
         assert_eq!(d.node("question").unwrap().config["where"][0]["left"], "", "no chat channel");
-        assert!(!customized(&d));
-        assert_eq!(values_of(&d), defaults());
+        assert!(!SETTINGS.customized(&d));
+        assert_eq!(SETTINGS.values_of(&d), SETTINGS.defaults());
     }
 
     /// Changed inputs land in the document and read back; an edit beyond them is a customization.
@@ -188,22 +170,22 @@ mod tests {
     fn inputs_fill_in_and_read_back() {
         let given = json!({"levels": {"pr.merged": "toast"}, "escalate": true, "escalateAfter": "30m",
                            "quietHours": true, "quietFrom": "23:00", "chat": "team", "chatApprovals": false});
-        let d = filled(given.as_object().unwrap()).unwrap();
+        let d = SETTINGS.filled(given.as_object().unwrap()).unwrap();
         let levels = &d.node(LEVELS_NODE).unwrap().config;
         assert_eq!(levels["levels"], json!({"pr.merged": "toast"}));
         assert_eq!(levels["quietHours"], json!({"on": true, "from": "23:00", "to": "07:00"}));
         assert_eq!(d.node("answered").unwrap().config["timeoutMs"], 30 * 60 * 1000);
         assert_eq!(d.node("escalate").unwrap().config["chat"], "team");
         assert_eq!(d.node("approval").unwrap().config["where"][1]["left"], false);
-        let v = values_of(&d);
+        let v = SETTINGS.values_of(&d);
         assert_eq!((v["escalate"].clone(), v["chat"].clone()), (json!(true), json!("team")));
         assert_eq!(v["levels"], json!({"pr.merged": "toast"}));
-        assert!(!customized(&d));
+        assert!(!SETTINGS.customized(&d));
         let mut edited = d.clone();
         edited.nodes.retain(|n| n.id != "post_failed");
-        assert!(customized(&edited));
+        assert!(SETTINGS.customized(&edited));
         for bad in [json!({"quietFrom": "late"}), json!({"levels": {"inbox.question": "off"}}), json!({"levels": 3})] {
-            assert!(filled(bad.as_object().unwrap()).is_err(), "{bad}");
+            assert!(SETTINGS.filled(bad.as_object().unwrap()).is_err(), "{bad}");
         }
     }
 
@@ -215,7 +197,7 @@ mod tests {
             d.node(LEVELS_NODE).unwrap().config["levels"],
             json!({"pr.merged": "desktop", "inbox.gate": "inbox"})
         );
-        assert!(!customized(&d));
+        assert!(!SETTINGS.customized(&d));
         assert_eq!(migrated(&Value::Null), notification_rules());
     }
 }

@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Link, Section, Select, SettingsRow, Skeleton, Switch } from '@ui';
 import { api } from '../api/client';
-import type { StuckAgentsView } from '../api/gen/StuckAgentsView';
+import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
-import { CustomizedNotice, openWorkflow } from '../common/BuiltinSettings';
+import { CustomizedNotice, openWorkflow, type PutInputs } from '../common/BuiltinSettings';
 import { invalidateWorkflow } from '../workflows/invalidate';
 
 const KEY = ['stuck-agents'];
@@ -24,13 +24,13 @@ const loopChoices = [{ value: 'ask', label: 'Ask me' }, { value: 'stop', label: 
  */
 export function StuckAgents() {
   const qc = useQueryClient();
-  const view = useQuery({ queryKey: KEY, queryFn: api.stuckAgents });
-  const done = (v: StuckAgentsView) => {
+  const view = useQuery({ queryKey: KEY, queryFn: api.stuckAgents.get });
+  const done = (v: BuiltinSettingsView) => {
     qc.setQueryData(KEY, v);
     void qc.invalidateQueries({ queryKey: ['workflow', v.workflowId] });
   };
-  const save = useMutation({ meta: { errorShown: true }, mutationFn: api.saveStuckAgents, onSuccess: done });
-  const reset = useMutation({ mutationFn: api.resetStuckAgents, onSuccess: done });
+  const save = useMutation({ meta: { errorShown: true }, mutationFn: api.stuckAgents.save, onSuccess: done });
+  const reset = useMutation({ mutationFn: api.stuckAgents.reset, onSuccess: done });
   const enable = useMutation({
     meta: { errorShown: true },
     mutationFn: ({ id, on }: { id: string; on: boolean }) => api.patchWorkflow(id, { enabled: on }),
@@ -67,7 +67,7 @@ export function StuckAgents() {
   );
 }
 
-function Inputs({ v, put }: { v: StuckAgentsView; put: (values: Record<string, unknown>) => Promise<StuckAgentsView> }) {
+function Inputs({ v, put }: { v: BuiltinSettingsView; put: PutInputs }) {
   const value = (id: string) => v.values[id];
   const message = (id: string, label: string, description: string) => (
     <SettingsRow label={label} description={description} stacked>

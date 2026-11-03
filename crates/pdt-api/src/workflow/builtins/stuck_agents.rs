@@ -1,13 +1,19 @@
 //! When an agent is stuck (PDT-367): what happens to an agent step that stalls, reaches its loop limit or times out.
 //! Its inputs (template params) are what Settings → Agents shows; the workflow they fill in is the built-in.
 
+use super::inputs::InputsBuiltin;
 use super::*;
-use crate::workflow::templates::{params, unfill};
-use pdt_core::workflow::template::{TemplateParam, fill, param_values};
-use serde_json::{Map, Value};
+use crate::workflow::templates::params;
+use pdt_core::workflow::template::TemplateParam;
 
-/// The note on a version saved from Settings: only its inputs changed, so it still follows PDT's newer versions.
-pub const SETTINGS_NOTE: &str = "inputs changed in Settings";
+pub static SETTINGS: InputsBuiltin = InputsBuiltin {
+    id: STUCK_AGENTS,
+    params: stuck_params,
+    template: stuck_template,
+    finish: None,
+    read: None,
+    extra: None,
+};
 
 pub const FIRST_NUDGE: &str =
     "You stopped without an outcome. Finish with submit_outcome, or ask_user if you're blocked.";
@@ -110,42 +116,9 @@ pub fn stuck_template() -> WorkflowDoc {
     }))
 }
 
-/// The inputs' defaults.
-pub fn defaults() -> Map<String, Value> {
-    param_values(&stuck_params(), &Map::new()).expect("the stuck workflow's defaults")
-}
-
-/// The workflow filled in with `values` (checked against the inputs; missing ones take their defaults).
-pub fn filled(values: &Map<String, Value>) -> Result<WorkflowDoc, String> {
-    fill(&stuck_template(), &param_values(&stuck_params(), values)?)
-}
-
 /// The built-in as PDT ships it.
 pub(super) fn stuck_agents() -> WorkflowDoc {
-    filled(&Map::new()).expect("the stuck workflow fills in")
-}
-
-/// The inputs a document was filled in with: each one read back from it, else its default.
-pub fn values_of(doc: &WorkflowDoc) -> Map<String, Value> {
-    let mut out = defaults();
-    for (k, v) in unfill(&stuck_template(), doc) {
-        if out.contains_key(&k) {
-            out.insert(k, v);
-        }
-    }
-    out
-}
-
-/// Whether a document is the workflow filled in with some inputs (its name and description aside): else the user
-/// changed it beyond its inputs.
-pub fn customized(doc: &WorkflowDoc) -> bool {
-    match filled(&values_of(doc)) {
-        Ok(mut d) => {
-            (d.name, d.description) = (doc.name.clone(), doc.description.clone());
-            d != *doc
-        }
-        Err(_) => true,
-    }
+    SETTINGS.shipped()
 }
 
 #[cfg(test)]
@@ -164,8 +137,8 @@ mod tests {
         assert_eq!(d.node("nudges_left").unwrap().config["conditions"][0]["right"], 2);
         assert_eq!(d.node("can_restart").unwrap().config["conditions"][0]["left"], true);
         assert!(d.node("nudge_again").unwrap().config["message"].as_str().unwrap().contains("{{trigger.goal}}"));
-        assert!(!customized(&d));
-        assert_eq!(values_of(&d), defaults());
+        assert!(!SETTINGS.customized(&d));
+        assert_eq!(SETTINGS.values_of(&d), SETTINGS.defaults());
     }
 
     /// Changed inputs land in the document and read back; an edit beyond them is a customization.
@@ -173,23 +146,23 @@ mod tests {
     fn inputs_fill_in_and_read_back() {
         let given = json!({"nudges": 1, "firstNudge": "Hurry up.", "restart": false, "onLoopLimit": "stop",
                            "timeoutRestarts": 0});
-        let d = filled(given.as_object().unwrap()).unwrap();
+        let d = SETTINGS.filled(given.as_object().unwrap()).unwrap();
         assert_eq!(d.node("nudge").unwrap().config["message"], "Hurry up.");
         assert_eq!(d.node("nudges_left").unwrap().config["conditions"][0]["right"], 1);
         assert_eq!(d.node("stop_at_limit").unwrap().config["conditions"][0]["left"], "stop");
         assert_eq!(d.node("restarts_left").unwrap().config["conditions"][0]["right"], 0);
-        let v = values_of(&d);
+        let v = SETTINGS.values_of(&d);
         assert_eq!(
             (v["nudges"].clone(), v["restart"].clone(), v["laterNudge"].clone()),
             (json!(1), json!(false), json!(LATER_NUDGE))
         );
-        assert!(!customized(&d));
+        assert!(!SETTINGS.customized(&d));
         let mut edited = d.clone();
         edited.nodes.retain(|n| n.id != "nudge_again");
-        assert!(customized(&edited));
+        assert!(SETTINGS.customized(&edited));
         let mut renamed = d.clone();
         renamed.name = "Stuck agents".into();
-        assert!(!customized(&renamed), "a new name is not a customization");
-        assert!(filled(json!({"onLoopLimit": "maybe"}).as_object().unwrap()).is_err());
+        assert!(!SETTINGS.customized(&renamed), "a new name is not a customization");
+        assert!(SETTINGS.filled(json!({"onLoopLimit": "maybe"}).as_object().unwrap()).is_err());
     }
 }

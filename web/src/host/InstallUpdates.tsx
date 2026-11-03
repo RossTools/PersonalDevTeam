@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Link, Section, Select, SettingsRow, Skeleton, Switch } from '@ui';
 import { api } from '../api/client';
-import type { InstallUpdatesView } from '../api/gen/InstallUpdatesView';
+import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
-import { ChatChannelRow, CustomizedNotice, openWorkflow } from '../common/BuiltinSettings';
+import { ChatChannelRow, CustomizedNotice, openWorkflow, type PutInputs } from '../common/BuiltinSettings';
 import { invalidateWorkflow } from '../workflows/invalidate';
 
 const KEY = ['install-updates'];
@@ -17,21 +17,19 @@ const anywayChoices = [
   ...[1, 2, 4, 8, 24].map((h) => ({ value: String(h * HOUR), label: `Install anyway after ${h} hour${h === 1 ? '' : 's'}` })),
 ];
 
-type Put = (values: Record<string, unknown>) => Promise<InstallUpdatesView>;
-
 /**
  * Settings → Updates → Installing updates (PDT-369): the built-in Install updates workflow's inputs. A workflow
  * changed beyond them in the editor, or turned off, is only named here, with Open and Reset to default (or Turn on).
  */
 export function InstallUpdates({ policy }: { policy: UpdatePolicy }) {
   const qc = useQueryClient();
-  const view = useQuery({ queryKey: KEY, queryFn: api.installUpdates });
-  const done = (v: InstallUpdatesView) => {
+  const view = useQuery({ queryKey: KEY, queryFn: api.installUpdates.get });
+  const done = (v: BuiltinSettingsView) => {
     qc.setQueryData(KEY, v);
     void qc.invalidateQueries({ queryKey: ['workflow', v.workflowId] });
   };
-  const save = useMutation({ meta: { errorShown: true }, mutationFn: api.saveInstallUpdates, onSuccess: done });
-  const reset = useMutation({ meta: { errorShown: true }, mutationFn: api.resetInstallUpdates, onSuccess: done });
+  const save = useMutation({ meta: { errorShown: true }, mutationFn: api.installUpdates.save, onSuccess: done });
+  const reset = useMutation({ meta: { errorShown: true }, mutationFn: api.installUpdates.reset, onSuccess: done });
   const enable = useMutation({
     meta: { errorShown: true },
     mutationFn: (id: string) => api.patchWorkflow(id, { enabled: true }),
@@ -70,7 +68,7 @@ export function InstallUpdates({ policy }: { policy: UpdatePolicy }) {
   );
 }
 
-function Inputs({ v, put, auto }: { v: InstallUpdatesView; put: Put; auto: boolean }) {
+function Inputs({ v, put, auto }: { v: BuiltinSettingsView; put: PutInputs; auto: boolean }) {
   const value = (id: string) => v.values[id];
   const flag = (id: string, label: string, description: string, disabled = false) => (
     <AutoSaveRow label={label} description={description}>

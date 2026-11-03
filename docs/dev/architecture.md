@@ -307,8 +307,9 @@ step restarts in place (a new session bound to the same step); a timed-out one i
 whose `wait` says `fresh`. `stuck::sweep` (in the agent sweep) gives a step PDT's own handling (one nudge, then the
 Inbox) when the workflow is off, its run for the step ended without acting, or none started within
 `START_GRACE_MS`. The workflow's inputs are template params: Settings → Agents reads them back from its document
-(`templates::unfill`) and saves a version noted `stuck_agents::SETTINGS_NOTE`, which still follows PDT's newer
-versions; any other edit makes it the user's (`stuck_agents::customized`).
+(`templates::unfill`) and saves a version noted `inputs::SETTINGS_NOTE`, which still follows PDT's newer versions; any
+other edit makes it the user's (`InputsBuiltin::customized`). Its reset leaves the workflow on or off, since Settings
+has a switch for that.
 
 **Notification rules** (`builtins/notification_rules.rs`). Each kind's level and quiet hours live in the built-in's
 `notification.levels` nodes (`nodes/notification_levels.rs`: a trigger kind with no event type and no ports, so it
@@ -324,7 +325,8 @@ off no run starts. Escalation waits for `inbox.answered` up to `escalateAfter`, 
 integration that declares a `NotificationChannel` for the connection's kind and runs its node kind with `connection`
 and `content`, so pdt-api never names the plugin. Settings → Notifications (`notification_rules.rs`,
 `/api/notification-rules`; the old `PATCH /api/notifications/settings` sets the same levels) reads and writes the
-inputs as stuck agents' are. `builtins::refill_of` lists the built-ins whose inputs Settings sets, which follow PDT's
+inputs as stuck agents' are; the levels are an `extra` input (a map no param type holds), and its view, which lists
+them by kind, is its own. `builtins::WITH_INPUTS` lists the built-ins whose inputs Settings sets, which follow PDT's
 newer versions with their inputs kept.
 
 **Install updates** (`builtins/install_updates.rs`). The update loop (`update::run_update_loop`) only checks; what a
@@ -339,7 +341,7 @@ turned on. `host.install_update` with `automatic` refuses a version pdt-host ski
 its version installed when it runs again after the restart. `update.installed` leads to `host.check_health` (after
 `settleMs`: the running version and `Loops::health`) and an optional `notify`; failures and `update.failed` are
 `inbox.notice` items. Settings → Updates (`install_updates.rs`, `/api/install-updates`) reads and writes the inputs as
-stuck agents' are; the policy, channel and check interval stay host settings, since the checks use them.
+stuck agents' are (its `finish` checks the wait; its reset turns the workflow on and calls `wake`); the policy, channel and check interval stay host settings, since the checks use them.
 
 **Clean up storage** (`builtins/clean_up_storage.rs`). Hourly, `storage.clean` (`which: due`: `auto_cleanup`) then
 `storage.measure`; `disk.low` and `disk.recovered` go to `storage.measure` too (`nodes/storage.rs`). Critical leads to
@@ -351,15 +353,16 @@ for the storage loop, the Storage view and the Inbox) and `pausePickup` / `clean
 
 **Settings backed by a built-in's inputs.** A behaviour that became a built-in keeps its home in Settings. The shared
 pieces: `builtins/inputs.rs` (`InputsBuiltin`: the params, the template, an optional `finish` that writes what the
-inputs derive into the filled-in document and `read` that reads it back; `filled`, `values_of`, `customized`,
-`refill`), `builtin_settings.rs` (`router(path, &builtin)`: `GET`/`PUT <path>` and `POST <path>/reset`, which turns the
-workflow back on), and on the web `common/BuiltinSettings.tsx` (`BuiltinSettingsSection`: the controls, the customized
+inputs derive into the filled-in document and `read` that reads it back, `extra` inputs that are no param; `filled`,
+`values_of`, `customized`, `refill`), `builtin_settings.rs` (`router(path, &builtin)`: `GET`/`PUT <path>` and
+`POST <path>/reset`, which turns the workflow back on; `router_with` and a `Reset` for a reset that leaves it off or
+does more; `change` and `reset` for a route module with a view of its own), and on the web `common/BuiltinSettings.tsx` (`BuiltinSettingsSection`: the controls, the customized
 or off notice with Open and Reset to default, the Customize as a workflow link; `ChatChannelRow`) and
 `workflows/BuiltinSettingsBanner.tsx` (the editor's banner, one line per built-in). The PM daily checkpoint
 (`pm_checkpoint.rs`, `/api/pm-checkpoint`, Settings → This host → PM) is built on them: its `finish` makes the schedule
 (`every: 1h` on every day, else a cron expression on the days, at the time or each hour) and `pm.update`'s `after`
 (`1d`, or `12h` at a set time). A new one is an `InputsBuiltin`, a route module with one `router` call, its line in
-`refill_of`, a section using `BuiltinSettingsSection`, and its line in `SETTINGS_HOMES`.
+`WITH_INPUTS`, a section using `BuiltinSettingsSection`, and its line in `SETTINGS_HOMES`.
 
 **Host and integration events** are logged where each thing is noticed, each once per occurrence (the event key, or a
 level remembered in a host value). `release.published`: `forge_releases.rs` in the 60 s poll, for the projects an

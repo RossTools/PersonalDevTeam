@@ -8,10 +8,15 @@ use crate::workflow::templates::unfill;
 use pdt_core::workflow::template::{TemplateParam, fill, param_values};
 use serde_json::{Map, Value};
 
+/// The note on a version saved from Settings: only its inputs changed, so it still follows PDT's newer versions.
+pub const SETTINGS_NOTE: &str = "inputs changed in Settings";
+
 /// See [`InputsBuiltin::finish`].
 pub type Finish = fn(WorkflowDoc, &Map<String, Value>) -> Result<WorkflowDoc, String>;
 /// See [`InputsBuiltin::read`].
 pub type Read = fn(&WorkflowDoc, &mut Map<String, Value>);
+/// See [`InputsBuiltin::extra`].
+pub type Extra = fn() -> Map<String, Value>;
 
 pub struct InputsBuiltin {
     /// Its built-in id ([`BUILTINS`]).
@@ -24,17 +29,30 @@ pub struct InputsBuiltin {
     pub finish: Option<Finish>,
     /// Reads back what `finish` wrote into a document (into the inputs read so far).
     pub read: Option<Read>,
+    /// Inputs that are no template param (a map, which no param type holds), with their defaults: filled in and read
+    /// back like the params, checked by `finish`.
+    pub extra: Option<Extra>,
 }
 
 impl InputsBuiltin {
     /// The inputs' defaults.
     pub fn defaults(&self) -> Map<String, Value> {
-        param_values(&(self.params)(), &Map::new()).expect("a built-in's defaults are valid")
+        let mut v = param_values(&(self.params)(), &Map::new()).expect("a built-in's defaults are valid");
+        v.extend(self.extra.map(|e| e()).unwrap_or_default());
+        v
     }
 
     /// The workflow filled in with `values` (checked; missing ones take their defaults).
     pub fn filled(&self, values: &Map<String, Value>) -> Result<WorkflowDoc, String> {
-        let v = param_values(&(self.params)(), values)?;
+        let mut given = values.clone();
+        let mut extra = self.extra.map(|e| e()).unwrap_or_default();
+        for (k, default) in extra.iter_mut() {
+            if let Some(v) = given.remove(k).filter(|v| !v.is_null()) {
+                *default = v;
+            }
+        }
+        let mut v = param_values(&(self.params)(), &given)?;
+        v.extend(extra);
         let d = fill(&(self.template)(), &v)?;
         match self.finish {
             Some(finish) => finish(d, &v),
