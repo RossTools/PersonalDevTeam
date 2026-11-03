@@ -32,6 +32,7 @@ pub mod install_updates;
 mod integrations;
 mod issue_links;
 mod issues;
+mod keyed_locks;
 mod local_forge;
 mod local_network;
 mod log_err;

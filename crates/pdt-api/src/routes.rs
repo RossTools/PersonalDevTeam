@@ -115,9 +115,10 @@ pub struct AppState {
     /// Serializes run starts (limit check, port choice, worktree and row creation), so concurrent starts can neither
     /// exceed the run limit nor pick the same port.
     pub(crate) run_start_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
-    /// Serializes ticket Starts up to the attempt row (checks, worktree, attempt), so two Starts of one ticket can't
-    /// both make a worktree.
-    pub(crate) ticket_start_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Serializes a project's ticket Starts up to the attempt row (checks, worktree, attempt), so two Starts of one
+    /// ticket can't both make a worktree and the project's cap holds. Keyed by project: one project's Start never
+    /// waits for another's (PDT-440).
+    pub(crate) ticket_start_locks: std::sync::Arc<crate::keyed_locks::KeyedLocks>,
     /// The finishes going on, per ticket: they run one at a time and spare each other's workflow runs (PDT-182).
     pub(crate) finishes: std::sync::Arc<crate::finish::Finishes>,
     /// Each active attempt's changed files, refreshed by `refresh_overlaps` (actual overlap, tickets spec §7).
@@ -154,7 +155,7 @@ pub struct AppState {
     pub(crate) engine_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// One lock per run, held while the engine advances it (node bodies included) and by the commands that act on
     /// one of its steps, so they never see a step half-run. Taken before `engine_lock`.
-    pub(crate) run_locks: std::sync::Arc<crate::workflow::engine::RunLocks>,
+    pub(crate) run_locks: std::sync::Arc<crate::keyed_locks::KeyedLocks>,
     /// Steps' results the engine could not write (PDT-323), written once writes work.
     pub(crate) unsaved_results: std::sync::Arc<crate::workflow::engine::UnsavedResults>,
     /// Agent steps start one at a time (the host's running cap), though runs advance side by side.
@@ -293,7 +294,7 @@ impl AppState {
             run_controls: Default::default(),
             run_stops: Default::default(),
             run_start_lock: Default::default(),
-            ticket_start_lock: Default::default(),
+            ticket_start_locks: Default::default(),
             finishes: Default::default(),
             changed_files: Default::default(),
             run_stop_wait: std::time::Duration::from_secs(20),

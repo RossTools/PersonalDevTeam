@@ -30,27 +30,6 @@ pub use dry_run::{DryEvent, DryRun};
 /// How many runs advance at once.
 pub(crate) const CONCURRENT_RUNS: usize = 16;
 
-/// One lock per run (`AppState::run_locks`), shared by the runs of one ticket (`lock_key`). An entry nobody holds
-/// or waits for is dropped on the next lookup.
-#[derive(Default)]
-pub(crate) struct RunLocks(std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>);
-
-impl RunLocks {
-    fn get(&self, run_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-        let mut m = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        m.retain(|_, l| Arc::strong_count(l) > 1);
-        m.entry(run_id.to_string()).or_default().clone()
-    }
-
-    pub(crate) async fn lock(&self, run_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
-        self.get(run_id).lock_owned().await
-    }
-
-    fn try_lock(&self, run_id: &str) -> Option<tokio::sync::OwnedMutexGuard<()>> {
-        self.get(run_id).try_lock_owned().ok()
-    }
-}
-
 /// What a step's body came to when writing it failed (PDT-323): a full disk. The step stays running in the store; the
 /// next time its run advances, this is written instead of running the body again (which may have done its work).
 #[derive(Default)]
@@ -845,9 +824,7 @@ async fn claim<'a>(
     }
     st.store.put_step(&step).await.map_err(err)?;
     let limit = std::time::Duration::from_millis(node.timeout_ms.unwrap_or_else(|| kind.default_timeout_ms()));
-    let outside =
-        matches!(reg.catalog().spec(&node.kind).map(|s| s.category), Some(Category::Action | Category::Agent));
-    let locked = !outside || kind.in_engine_lock();
+    let locked = reg.catalog().spec(&node.kind).is_none_or(|s| kind.in_engine_lock(s.category));
     Ok(Claim::Run(Box::new(Job { step, node, kind, config, input, ctx, origin, limit, locked, rerun })))
 }
 
