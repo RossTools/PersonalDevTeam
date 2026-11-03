@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AttemptSummary } from '../api/gen/AttemptSummary';
 import type { CiStatus } from '../api/gen/CiStatus';
 import type { PullRequestStatus } from '../api/gen/PullRequestStatus';
-import { renderWithQuery, stubApi } from '../test-utils';
+import { fullText, renderWithQuery, stubApi } from '../test-utils';
 import { BoardCard } from './Board';
 import { event, project, summary, ticket } from './fixtures';
 import { eventTitle } from './model';
@@ -114,9 +114,9 @@ describe('pull request status', () => {
   it('says when the PR was last read, and why it is stale when reading it fails', () => {
     const now = Date.now();
     const { rerender } = render(<PrDetails pr={pr({ checkedAt: now - 3 * 60_000 })} />);
-    expect(screen.getByText('Last checked 3m ago')).toBeInTheDocument();
+    expect(screen.getByText(fullText('Last checked 3m ago'))).toBeInTheDocument();
     rerender(<PrDetails pr={pr({ checkedAt: now - 3 * 60_000, error: 'gh failed: HTTP 401' })} />);
-    expect(screen.getByText('Not updated: gh failed: HTTP 401 (last checked 3m ago)')).toHaveClass('text-destructive');
+    expect(screen.getByText(fullText('Not updated: gh failed: HTTP 401 (last checked 3m ago)'))).toHaveClass('text-destructive');
     render(
       <ul>
         <BoardCard ticket={summary(1, { stage: 'in_progress', attempt: attempt(pr({ ci: { ...passed, state: 'running' }, error: 'gh failed' })) })}

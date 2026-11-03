@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowDown } from 'lucide-react';
 import {
-  Alert, ApprovalCard, Button, Dialog, DiffStat, diffStats, DiffViewer, Disclosure, ImageThumb, MessageBubble, parseDiff, relativeTime, SectionLabel, Spinner, ToolCallRow, ToolOutput, type ApprovalAnswer,
+  Alert, ApprovalCard, Button, clockTime, Dialog, DiffStat, diffStats, DiffViewer, Disclosure, formatDuration, ImageThumb, MessageBubble, parseDiff, RelativeTime, SectionLabel, Spinner, ToolCallRow, ToolOutput, type ApprovalAnswer,
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { AgentEvent } from '../api/gen/AgentEvent';
@@ -18,7 +18,7 @@ import type { Streams } from './model';
 import { CreateTicketsCard, PdtToolCard, type PdtCall } from './PdtToolCard';
 import { PdtProposal } from './PdtProposal';
 import { isCardTool, pdtApprovalTitle } from './pdtTools';
-import { approvalTitle, clock, duration, inputText, planOf, questionsOf, summarizeTools, toolVerb } from './tools';
+import { approvalTitle, clock, inputText, planOf, questionsOf, summarizeTools, toolVerb } from './tools';
 
 type Ev<K extends AgentEvent['kind']> = Extract<AgentEvent, { kind: K }>;
 
@@ -36,9 +36,9 @@ const PDT_MESSAGE: Record<PdtMessage, string> = {
 };
 
 /** One of PDT's own messages to a PM conversation: a muted line that opens to the full text the PM got. */
-export function PdtMessageRow({ kind, text, when }: { kind: PdtMessage; text: string; when: string }) {
+export function PdtMessageRow({ kind, text, when }: { kind: PdtMessage; text: string; when: ReactNode }) {
   return (
-    <Disclosure title={`${PDT_MESSAGE[kind]} · ${when}`} className="px-1 text-meta" panelClassName="border-l border-border pl-2 text-sm text-foreground">
+    <Disclosure title={<>{PDT_MESSAGE[kind]} · {when}</>} className="px-1 text-meta" panelClassName="border-l border-border pl-2 text-sm text-foreground">
       <Markdown>{text}</Markdown>
     </Disclosure>
   );
@@ -276,7 +276,7 @@ function ContinueButton({ onContinue }: { onContinue: () => Promise<unknown> }) 
 function TurnFooter({ ev, row }: { ev: Ev<'turn'>; row: ConversationEvent }) {
   const { turnDiffs, continueTurn, onContinue } = useContext(ListCtx);
   const diff = row.turnId ? turnDiffs.get(row.turnId) : undefined;
-  const took = ev.durationMs != null ? duration(ev.durationMs) : null;
+  const took = ev.durationMs != null ? formatDuration(ev.durationMs) : null;
   const text =
     ev.status === 'interrupted'
       ? `Interrupted${took ? ` after ${took}` : ''}`
@@ -297,8 +297,6 @@ function TurnFooter({ ev, row }: { ev: Ev<'turn'>; row: ConversationEvent }) {
   );
 }
 
-const timeOf = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-
 function NodeView({ node, streams, keyboard = false, onAnswer }: {
   node: RowNode;
   streams: Streams;
@@ -309,7 +307,7 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
   const ev = r.event;
   switch (ev.kind) {
     case 'user_message':
-      if (ev.pdt) return <PdtMessageRow kind={ev.pdt} text={ev.text} when={relativeTime(r.ts)} />;
+      if (ev.pdt) return <PdtMessageRow kind={ev.pdt} text={ev.text} when={<RelativeTime time={r.ts} />} />;
       return (
         <MessageBubble meta={SOURCE_META[ev.source]} images={ev.images.length ? <Images images={ev.images} /> : undefined}>
           {ev.text || undefined}
@@ -340,7 +338,7 @@ function NodeView({ node, streams, keyboard = false, onAnswer }: {
       return (
         <p className={cn('text-center text-meta text-muted-foreground', ev.level === 'warning' && 'text-waiting')}>
           {ev.text}
-          {ev.until ? ` · until ${timeOf(ev.until)}` : ''}
+          {ev.until ? ` · until ${clockTime(ev.until)}` : ''}
         </p>
       );
     case 'error':

@@ -1,4 +1,6 @@
 import type { ApprovalQuestion } from '@ui';
+import { plural } from '../common/text';
+import { isRecord } from '../common/guards';
 
 /** The verb a tool call row starts with ("Run `cargo test`"), by the agent's tool name. */
 export function toolVerb(tool: string): string {
@@ -60,8 +62,6 @@ function category(tool: string): Category {
   }
 }
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-
 /** A tool's own name: `mcp__pdt__search_tickets` → `search_tickets`. */
 export function shortTool(tool: string): string {
   return /^mcp__.+?__(.+)$/.exec(tool)?.[1] ?? tool;
@@ -73,7 +73,7 @@ export function shortTool(tool: string): string {
  */
 export function summarizeTools(calls: { tool: string; title: string }[]): string {
   if (calls.length > 0 && calls.every((c) => c.tool === calls[0].tool) && category(calls[0].tool) === 'other') {
-    return `${shortTool(calls[0].tool)} · ${plural(calls.length, 'call', 'calls')}`;
+    return `${shortTool(calls[0].tool)} · ${plural(calls.length, 'call')}`;
   }
   const counts: Record<Category, number> = { command: 0, edit: 0, read: 0, search: 0, web: 0, agent: 0, other: 0 };
   const files: Partial<Record<Category, Set<string>>> = {};
@@ -86,13 +86,13 @@ export function summarizeTools(calls: { tool: string; title: string }[]): string
   counts.edit += files.edit?.size ?? 0;
   counts.read += files.read?.size ?? 0;
   const parts = [
-    counts.command && `ran ${plural(counts.command, 'command', 'commands')}`,
-    counts.edit && `edited ${plural(counts.edit, 'file', 'files')}`,
-    counts.read && `read ${plural(counts.read, 'file', 'files')}`,
-    counts.search && `searched ${plural(counts.search, 'time', 'times')}`,
-    counts.web && `looked up ${plural(counts.web, 'page', 'pages')}`,
-    counts.agent && `ran ${plural(counts.agent, 'agent', 'agents')}`,
-    counts.other && `used ${plural(counts.other, 'tool', 'tools')}`,
+    counts.command && `ran ${plural(counts.command, 'command')}`,
+    counts.edit && `edited ${plural(counts.edit, 'file')}`,
+    counts.read && `read ${plural(counts.read, 'file')}`,
+    counts.search && `searched ${plural(counts.search, 'time')}`,
+    counts.web && `looked up ${plural(counts.web, 'page')}`,
+    counts.agent && `ran ${plural(counts.agent, 'agent')}`,
+    counts.other && `used ${plural(counts.other, 'tool')}`,
   ].filter(Boolean) as string[];
   const text = parts.join(', ');
   return text ? text[0].toUpperCase() + text.slice(1) : 'No tools';
@@ -117,8 +117,6 @@ export function approvalTitle(tool: string): string {
       return `Use ${toolVerb(tool)}?`;
   }
 }
-
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Claude's AskUserQuestion input → the card's questions (unknown shapes give none). */
 export function questionsOf(input: unknown): ApprovalQuestion[] {
@@ -166,11 +164,3 @@ export function clock(ms: number): string {
   return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
 }
 
-/** "850 ms", "12 s", "3 min 4 s". */
-export function duration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s} s`;
-  const m = Math.floor(s / 60);
-  return s % 60 ? `${m} min ${s % 60} s` : `${m} min`;
-}

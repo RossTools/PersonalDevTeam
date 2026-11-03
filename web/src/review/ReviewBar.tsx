@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Check, GitMerge, Send } from 'lucide-react';
 import { Badge, Button } from '@ui';
+import { plural } from '../common/text';
 
 export interface ReviewBarProps {
   drafts: number;
@@ -21,7 +22,7 @@ export function ReviewBar({ drafts, onSend, sending, attemptActive, approved, on
     <div role="toolbar" aria-label="Review" className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-1">
       {leading}
       <span className="ml-auto hidden text-xs text-muted-foreground sm:inline" aria-live="polite">
-        {drafts === 0 ? 'No draft comments' : `${drafts} draft comment${drafts === 1 ? '' : 's'}`}
+        {drafts === 0 ? 'No draft comments' : plural(drafts, 'draft comment')}
       </span>
       <Button variant="primary" size="sm" disabled={drafts === 0} pending={sending} onClick={onSend} className="ml-auto sm:ml-0">
         <Send aria-hidden /> Send feedback

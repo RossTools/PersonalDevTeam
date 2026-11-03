@@ -4,11 +4,10 @@ import { cn } from '@ui/lib/utils';
 import { DiffStat, TreeView, type TreeChildren, type TreeNode } from '@ui';
 import type { ChangedFile } from '../api/gen/ChangedFile';
 import type { ChangeStatus } from '../api/gen/ChangeStatus';
+import { GIT_STATUS_TONE } from '../common/gitStatus';
+import { plural } from '../common/text';
 
-const LETTER: Record<ChangeStatus, string> = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R' };
-const LETTER_TONE: Record<ChangeStatus, string> = {
-  added: 'text-running', modified: 'text-waiting', deleted: 'text-failed', renamed: 'text-link',
-};
+const LETTER: Record<ChangeStatus, keyof typeof GIT_STATUS_TONE> = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R' };
 
 interface Node extends TreeNode {
   file?: ChangedFile;
@@ -33,14 +32,14 @@ function FileMarks({ file: f, comments: n, seen }: { file: ChangedFile; comments
   return (
     <span className="flex items-center gap-1.5 text-meta">
       {n > 0 && (
-        <span className="flex items-center gap-0.5 text-muted-foreground" title={`${n} comment thread${n === 1 ? '' : 's'}`}>
+        <span className="flex items-center gap-0.5 text-muted-foreground" title={plural(n, 'comment thread')}>
           <MessageSquare aria-hidden className="size-3" />
           {n}
         </span>
       )}
       {seen && <Check aria-label="Viewed" className="size-3 text-muted-foreground" />}
       {!f.binary && <DiffStat added={f.added} removed={f.removed} />}
-      <span className={cn('w-3 text-center font-mono font-semibold', LETTER_TONE[f.status])} title={f.status}>
+      <span className={cn('w-3 text-center font-mono font-semibold', GIT_STATUS_TONE[LETTER[f.status]])} title={f.status}>
         {LETTER[f.status]}
       </span>
     </span>
