@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, stubApi } from '../test-utils';
 import { Markdown } from './Markdown';
@@ -80,6 +81,16 @@ describe('Markdown', () => {
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noreferrer');
     expect(screen.getByRole('link', { name: 'https://example.com/auto' })).toHaveAttribute('target', '_blank');
+  });
+
+  it('loads an image from another site only on a click, and never with a referrer', async () => {
+    const { container } = render(<Markdown>{'![chart](https://tracker.example/pixel.png) and ![](diagram.png)'}</Markdown>);
+    expect(container.querySelector('img[src^="https:"]')).toBeNull();
+    expect(container.querySelector('img[src="diagram.png"]')).not.toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Load image “chart” from tracker.example' }));
+    const img = container.querySelector('img[src="https://tracker.example/pixel.png"]');
+    expect(img).toHaveAttribute('referrerpolicy', 'no-referrer');
+    expect(img).toHaveAttribute('alt', 'chart');
   });
 
   it('never renders raw HTML or javascript: links', () => {

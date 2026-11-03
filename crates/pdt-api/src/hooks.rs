@@ -23,9 +23,56 @@ pub const MAX_BODY: usize = 1024 * 1024;
 /// The path prefix the identity guard lets through.
 pub const HOOKS_PREFIX: &str = "/api/hooks/";
 
-/// Equal, in time that depends only on the lengths.
+/// Equal, in time that depends on neither value: it compares their SHA-256 digests, so not even the secret's length
+/// shows (PDT-421).
 fn same(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    use sha2::Digest;
+    let (a, b) = (Sha256::digest(a), Sha256::digest(b));
+    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// How many refused requests one hook name takes in a window before it refuses every request until the window ends.
+const MAX_FAILURES: u32 = 10;
+const FAILURE_WINDOW_MS: i64 = 60_000;
+/// The most hook names it remembers: names are the caller's to choose, so the map can't grow without end.
+const MAX_TRACKED: usize = 1024;
+
+/// Refused webhook requests per hook name (named or not, so the limit says nothing about which names exist): each
+/// name's window start and count. Slows guessing a secret (PDT-421).
+#[derive(Default)]
+pub(crate) struct HookFailures(std::sync::Mutex<std::collections::HashMap<String, (i64, u32)>>);
+
+impl HookFailures {
+    /// Whether `name` has used up its refusals for this window.
+    fn limited(&self, name: &str, now: i64) -> bool {
+        let map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        map.get(name).is_some_and(|&(start, n)| now - start < FAILURE_WINDOW_MS && n >= MAX_FAILURES)
+    }
+
+    fn failed(&self, name: &str, now: i64) {
+        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if map.len() >= MAX_TRACKED && !map.contains_key(name) {
+            map.retain(|_, (start, _)| now - *start < FAILURE_WINDOW_MS);
+            if map.len() >= MAX_TRACKED {
+                map.clear();
+            }
+        }
+        let e = map.entry(name.to_string()).or_insert((now, 0));
+        if now - e.0 >= FAILURE_WINDOW_MS {
+            *e = (now, 0);
+        }
+        e.1 += 1;
+    }
+}
+
+/// Every refusal looks the same, whatever the reason (no such hook, no secret yet, the wrong secret), so a caller
+/// can't learn which hooks exist. The log says which it was.
+fn refused() -> ApiError {
+    ApiError::new(
+        StatusCode::UNAUTHORIZED,
+        codes::BAD_SIGNATURE,
+        "send the hook's secret as Authorization: Bearer <secret> or an X-Hub-Signature-256",
+    )
 }
 
 /// Whether the request carries `secret`: `Authorization: Bearer <secret>`, or `X-Hub-Signature-256: sha256=<hex HMAC
@@ -79,26 +126,33 @@ pub(crate) async fn receive(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    let hook = st.store.connection_by_name(&name).await?.filter(|c| c.kind == WEBHOOK_CONNECTION);
-    let Some(hook) = hook else { return Err(ApiError::not_found("webhook")) };
-    let secret = crate::workflow::routes::connection_with_secret(&st, &hook.name)
-        .await
-        .map_err(ApiError::keychain)?
-        .1
-        .filter(|s| !s.is_empty());
-    let Some(secret) = secret else {
-        return Err(ApiError::conflict(
-            codes::WEBHOOK_NO_SECRET,
-            format!("the webhook {name} has no secret yet: set one on its connection"),
-        ));
-    };
-    if !authentic(&headers, &body, &secret) {
-        tracing::warn!(hook = %name, "refused a webhook request without its secret");
+    if st.hook_failures.limited(&name, now_ms()) {
+        tracing::warn!(hook = %name, "refused a webhook request: too many without the secret");
         return Err(ApiError::new(
-            StatusCode::UNAUTHORIZED,
-            codes::BAD_SIGNATURE,
-            "send the hook's secret as Authorization: Bearer <secret> or an X-Hub-Signature-256",
+            StatusCode::TOO_MANY_REQUESTS,
+            codes::TOO_MANY_FAILURES,
+            "too many requests without the hook's secret: try again in a minute",
         ));
+    }
+    let hook = st.store.connection_by_name(&name).await?.filter(|c| c.kind == WEBHOOK_CONNECTION);
+    let secret = match &hook {
+        Some(hook) => crate::workflow::routes::connection_with_secret(&st, &hook.name)
+            .await
+            .map_err(ApiError::keychain)?
+            .1
+            .filter(|s| !s.is_empty()),
+        None => None,
+    };
+    let why = match &secret {
+        None if hook.is_none() => Some("there is no webhook connection by that name"),
+        None => Some("the webhook has no secret yet: set one on its connection"),
+        Some(secret) if !authentic(&headers, &body, secret) => Some("it doesn't carry the hook's secret"),
+        Some(_) => None,
+    };
+    if let Some(why) = why {
+        tracing::warn!(hook = %name, "refused a webhook request: {why}");
+        st.hook_failures.failed(&name, now_ms());
+        return Err(refused());
     }
     let body = serde_json::from_slice::<Value>(&body)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).into_owned()));
@@ -149,6 +203,24 @@ mod tests {
         assert!(authentic(&h, b"Hello, World!", "It's a Secret to Everybody"));
         assert!(!authentic(&h, b"Hello, World?", "It's a Secret to Everybody"));
         assert!(!authentic(&headers(&[("x-hub-signature-256", "sha256=zz")]), b"x", "s"));
+    }
+
+    #[test]
+    fn a_name_refused_too_often_is_refused_for_the_rest_of_the_window() {
+        let f = HookFailures::default();
+        for _ in 0..MAX_FAILURES {
+            assert!(!f.limited("deploys", 1_000));
+            f.failed("deploys", 1_000);
+        }
+        assert!(f.limited("deploys", 1_000));
+        assert!(!f.limited("other", 1_000), "per name");
+        assert!(!f.limited("deploys", 1_000 + FAILURE_WINDOW_MS), "a new window");
+        f.failed("deploys", 1_000 + FAILURE_WINDOW_MS);
+        assert!(!f.limited("deploys", 1_000 + FAILURE_WINDOW_MS), "it starts counting again");
+        for i in 0..MAX_TRACKED + 5 {
+            f.failed(&format!("h{i}"), 2_000);
+        }
+        assert!(f.0.lock().unwrap().len() <= MAX_TRACKED);
     }
 
     #[test]

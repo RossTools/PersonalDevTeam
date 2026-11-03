@@ -114,6 +114,8 @@ own before running it.
 
 - **Shift+Enter** adds a new line instead of sending (in Claude Code, Codex and most shells).
 - Selecting text copies it; **Cmd+click** (Mac) or **Ctrl+click** opens a link.
+- When a program in the terminal copies something to your clipboard (Claude Code does when you copy), a toast
+  shows the start of what it copied.
 - **Compose** (session menu) writes a long or multi-line prompt and sends it in one go.
 - **Ctrl+]** then a key: **c** new tab, **n** / **p** next and previous tab, **1**–**9** tab by number, **a** next
   session that needs you, **k** command palette, **?** all shortcuts. **Ctrl+]** twice sends it to the program. On a

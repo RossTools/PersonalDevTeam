@@ -170,6 +170,7 @@ pub mod codes {
     pub const TOKEN_REJECTED: &str = "token_rejected";
     pub const TOO_LARGE: &str = "too_large";
     pub const TOO_MANY_ATTACHMENTS: &str = "too_many_attachments";
+    pub const TOO_MANY_FAILURES: &str = "too_many_failures";
     pub const TOO_MANY_RUNS: &str = "too_many_runs";
     pub const TRACKER_ERROR: &str = "tracker_error";
     pub const TURN_RUNNING: &str = "turn_running";
@@ -188,7 +189,6 @@ pub mod codes {
     pub const UPDATES_DISABLED: &str = "updates_disabled";
     pub const UPDATE_FAILED: &str = "update_failed";
     pub const UPDATE_IN_PROGRESS: &str = "update_in_progress";
-    pub const WEBHOOK_NO_SECRET: &str = "webhook_no_secret";
     pub const WEBSOCKET_REQUIRED: &str = "websocket_required";
     pub const WORKFLOW_EXISTS: &str = "workflow_exists";
     pub const WORKFLOW_INVALID: &str = "workflow_invalid";
