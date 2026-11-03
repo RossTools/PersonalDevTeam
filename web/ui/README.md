@@ -25,8 +25,10 @@
   - status (state only, never decoration): `running`, `waiting`, `failed`, `idle`, and fills `running-soft`,
     `waiting-soft`, `failed-soft`; diff: `diff-add`, `diff-del`, `diff-add-strong`, `diff-del-strong`;
   - overlays: `bg-backdrop`; shadows `shadow-popover`, `shadow-dialog`, `shadow-card` (cards on the page; none in dark).
-- No raw colours (hex, rgb, `bg-black/…`, `bg-white`), no `text-[…px]`, no `z-[…]`. Type sizes: `text-2xs` (10px
-  labels), `text-meta` (11px secondary lines), `text-xs` (12), `text-sm` (14), `text-base` (16), and `text-title` (30px, a document's title: a note's). Layers:
+- No raw colours (hex, rgb, `bg-black/…`, `ring-white`, Tailwind's palette such as `bg-red-500`), no Tailwind shadow
+  scale (`shadow-sm`…`shadow-2xl`), no arbitrary type sizes (`text-[13px]`, `text-[0.8rem]`), no `z-[…]`; hover fills
+  are `hover:bg-accent`. Type sizes: `text-2xs` (10px
+  labels), `text-meta` (11px secondary lines), `text-xs` (12), `text-sm` (14), `text-base` (16), and `text-title` (30px, a document's title: a note's); features don't add `text-lg` and up. Layers:
   `z-(--pdt-z-sticky)` (sticky headers inside a scrolling pane), `z-(--pdt-z-popover)`, `z-(--pdt-z-dialog)`, `z-(--pdt-z-menu)`, `z-(--pdt-z-toast)`. A test (`src/lint.test.ts`)
   enforces this outside `tokens.css`.
 - Sizes: controls are `h-control-sm` (24px) or `h-control-md` (28px, the default); on touch screens

@@ -527,7 +527,7 @@ function touchGestures(el: HTMLElement, term: Terminal, onSelect: () => void, on
   };
 }
 
-const KEY_CLASS = 'min-h-11 min-w-11 shrink-0 rounded-pdt bg-surface-2 px-3 text-sm text-fg active:bg-accent';
+const KEY_CLASS = 'min-h-control-touch min-w-control-touch shrink-0 rounded-pdt bg-surface-2 px-3 text-sm text-fg active:bg-accent';
 
 /**
  * Keys a phone's soft keyboard can't send, for driving agent prompts and menus: Esc Tab Ctrl ^C arrows ⌃] ⌨. Shown

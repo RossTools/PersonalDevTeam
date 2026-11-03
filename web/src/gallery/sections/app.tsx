@@ -13,11 +13,12 @@ import { InlineRename } from '../../common/InlineRename';
 import { PlacePicker, type Place } from '../../common/PlacePicker';
 import { useAction } from '../../common/useAction';
 import { badgedSvg, type AttentionLevel } from '../../notifications/attention';
+import { SectionLabel } from '@ui/SectionLabel';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
+      <SectionLabel as="div">{label}</SectionLabel>
       <div className="flex flex-wrap items-center gap-3">{children}</div>
     </div>
   );

@@ -10,11 +10,12 @@ import { CreateTicketsCard, PdtToolCard, type PdtCall } from '../../conversation
 import { PdtProposal } from '../../conversation/PdtProposal';
 import { ticketKeys } from '../../tickets/queries';
 import { ticket } from '../../tickets/fixtures';
+import { SectionLabel } from '@ui/SectionLabel';
 
 function Demo({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">{label}</div>
+      <SectionLabel as="div">{label}</SectionLabel>
       {children}
     </div>
   );
