@@ -250,7 +250,7 @@ pub fn diff_files(worktree: &Path, merge_base: &str) -> Result<Vec<DiffEntry>, G
 }
 
 fn short(oid: &str) -> &str {
-    &oid[..oid.len().min(12)]
+    oid.get(..12).unwrap_or(oid)
 }
 
 /// The file at `path` in commit `rev`, or None when that commit has no such file.

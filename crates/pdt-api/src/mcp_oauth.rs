@@ -92,14 +92,14 @@ fn redact(st: &AppState, name: &str, t: &OAuthTokens) {
 
 /// A connection's tokens: known already, else from the secret store (and known from then on).
 pub(crate) async fn tokens(st: &AppState, conn: &Connection) -> Result<Option<OAuthTokens>, String> {
-    if let Some(t) = st.mcp.oauth.tokens.lock().unwrap().get(&conn.id) {
+    if let Some(t) = st.mcp.oauth.tokens.lock().unwrap_or_else(|e| e.into_inner()).get(&conn.id) {
         return Ok(t.clone());
     }
     let t = keychain_get(st, &conn.id).await?;
     if let Some(t) = &t {
         redact(st, &conn.name, t);
     }
-    st.mcp.oauth.tokens.lock().unwrap().insert(conn.id.clone(), t.clone());
+    st.mcp.oauth.tokens.lock().unwrap_or_else(|e| e.into_inner()).insert(conn.id.clone(), t.clone());
     Ok(t)
 }
 
@@ -110,20 +110,20 @@ async fn save(st: &AppState, conn: &Connection, t: &OAuthTokens) -> Result<(), S
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
     redact(st, &conn.name, t);
-    st.mcp.oauth.tokens.lock().unwrap().insert(conn.id.clone(), Some(t.clone()));
+    st.mcp.oauth.tokens.lock().unwrap_or_else(|e| e.into_inner()).insert(conn.id.clone(), Some(t.clone()));
     Ok(())
 }
 
 /// Forgets a connection's sign-in (Sign out, or the connection deleted). Err: the keychain kept the tokens, so the
 /// connection is still signed in.
 pub(crate) async fn forget(st: &AppState, id: &str) -> Result<(), ApiError> {
-    st.mcp.oauth.refreshing.lock().unwrap().remove(id);
+    st.mcp.oauth.refreshing.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     let (secrets, acct) = (st.secrets.clone(), account(id));
     tokio::task::spawn_blocking(move || secrets.delete(&acct))
         .await
         .map_err(ApiError::internal)?
         .map_err(ApiError::keychain)?;
-    st.mcp.oauth.tokens.lock().unwrap().insert(id.to_string(), None);
+    st.mcp.oauth.tokens.lock().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), None);
     Ok(())
 }
 
@@ -169,7 +169,8 @@ pub(crate) async fn access_token(st: &AppState, conn: &Connection) -> Result<Str
 /// Refreshes a connection's tokens now. A refusal (revoked, expired) marks the sign-in failed; a failure to reach the
 /// service doesn't.
 pub(crate) async fn refresh(st: &AppState, conn: &Connection) -> Result<OAuthTokens, String> {
-    let gate = st.mcp.oauth.refreshing.lock().unwrap().entry(conn.id.clone()).or_default().clone();
+    let gate =
+        st.mcp.oauth.refreshing.lock().unwrap_or_else(|e| e.into_inner()).entry(conn.id.clone()).or_default().clone();
     let _one = gate.lock().await;
     let t = tokens(st, conn).await?.ok_or("not signed in")?;
     if !t.due(now_ms()) && t.failed.is_none() {
@@ -416,7 +417,7 @@ pub(crate) async fn sign_in(
         resource: &server_url,
     });
     let now = now_ms();
-    let mut pending = st.mcp.oauth.pending.lock().unwrap();
+    let mut pending = st.mcp.oauth.pending.lock().unwrap_or_else(|e| e.into_inner());
     pending.retain(|_, p| now - p.at < PENDING_MS);
     pending.insert(
         state,
@@ -486,7 +487,15 @@ pub(crate) async fn callback(State(st): State<AppState>, Query(q): Query<Callbac
     let (Some(code), Some(state)) = (q.code, q.state) else {
         return page(false, "This page needs the service's code and state. Sign in from Settings → MCP servers.");
     };
-    let Some(p) = st.mcp.oauth.pending.lock().unwrap().remove(&state).filter(|p| now_ms() - p.at < PENDING_MS) else {
+    let Some(p) = st
+        .mcp
+        .oauth
+        .pending
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&state)
+        .filter(|p| now_ms() - p.at < PENDING_MS)
+    else {
         return page(false, "This sign-in is unknown or too old. Sign in again from Settings → MCP servers.");
     };
     let Ok(Some(conn)) = st.store.get_connection(&p.connection_id).await else {
@@ -572,7 +581,7 @@ pub(crate) async fn upkeep(st: &AppState) {
 /// from the sign-ins PDT has read (it reads them as it starts, in [`upkeep`]).
 pub(crate) async fn inbox_items(st: &AppState) -> Vec<InboxItem> {
     let now = now_ms();
-    let known = st.mcp.oauth.tokens.lock().unwrap().clone();
+    let known = st.mcp.oauth.tokens.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let mut out = vec![];
     for c in crate::agent_mcp::servers(st).await.into_iter().filter(|c| ms::oauth_of(&c.config).is_some()) {
         let Some(Some(t)) = known.get(&c.id) else { continue };
