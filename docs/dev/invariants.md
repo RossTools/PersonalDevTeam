@@ -112,6 +112,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **PDT's git never takes optional locks** (`GIT_OPTIONAL_LOCKS=0` on every git pdt-git runs). A read such as
   `git status` would otherwise refresh the index under `index.lock`, failing a git command the agent runs in the same
   worktree at that moment (the background size measuring reads worktrees agents work in).
+- **PDT's git never runs the repository's own programs or reads a value as an option.** Every git pdt-git runs has
+  `core.fsmonitor=false` (a repository's `core.fsmonitor` is a command `git status` runs), PDT's own commits
+  (`PDT_COMMIT_CONFIG`) run no hooks, and a branch, base or commit from a request or a forge goes after
+  `--end-of-options`. Bases are checked before they are stored: a project's base names a branch of its repository
+  (pdt-api `projects::valid_base`), a Start's base a commit, and a forge's head SHA is used only when it is a full
+  commit id (`is_commit_id`).
 - **Finish never discards uncommitted changes** unless asked (`discardChanges`), and runs in its own task so it
   completes when the agent that called it is stopped.
 - **Workflows hear of a Start only once its session exists** (`announce_start`).

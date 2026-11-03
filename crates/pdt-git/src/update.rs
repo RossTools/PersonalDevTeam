@@ -35,7 +35,17 @@ pub fn merge_base_in(worktree: &Path, base: &str) -> Result<BaseMerge, GitError>
     if is_ancestor(worktree, base, "HEAD") {
         return Ok(BaseMerge::Current);
     }
-    let args = ["-c", "rerere.enabled=true", "-c", "rerere.autoUpdate=true", "merge", "--no-ff", "--no-edit", base];
+    let args = [
+        "-c",
+        "rerere.enabled=true",
+        "-c",
+        "rerere.autoUpdate=true",
+        "merge",
+        "--no-ff",
+        "--no-edit",
+        "--end-of-options",
+        base,
+    ];
     let failed = match git_with_env(worktree, &args, &[])? {
         Ok(_) => return Ok(BaseMerge::Merged { commit: run(worktree, &["rev-parse", "HEAD"])? }),
         Err(f) => f,
@@ -115,7 +125,7 @@ pub fn abort_merge(worktree: &Path) -> Result<(), GitError> {
 
 /// Moves the worktree's branch back to `commit`, dropping a merge made since (the worktree was clean before it).
 pub fn undo_merge(worktree: &Path, commit: &str) -> Result<(), GitError> {
-    run(worktree, &["reset", "-q", "--hard", commit]).map(|_| ())
+    run(worktree, &["reset", "-q", "--hard", "--end-of-options", commit]).map(|_| ())
 }
 
 /// `git diff` of the conflicted `files` (the conflict markers, against both sides).
@@ -133,7 +143,7 @@ pub fn conflict_diff(worktree: &Path, files: &[String]) -> String {
 pub fn first_parent_subjects(repo: &Path, from: &str, to: &str, limit: usize) -> Vec<String> {
     let range = format!("{from}..{to}");
     let n = format!("-{limit}");
-    match git_with_env(repo, &["log", "--first-parent", "--format=%s", &n, &range, "--"], &[]) {
+    match git_with_env(repo, &["log", "--first-parent", "--format=%s", &n, "--end-of-options", &range, "--"], &[]) {
         Ok(Ok(s)) => s.lines().map(String::from).collect(),
         _ => vec![],
     }

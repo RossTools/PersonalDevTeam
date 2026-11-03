@@ -305,12 +305,15 @@ async fn closed_unknown_and_invalid_starts_are_refused() {
         json!({"agent": "gemini"}),
         json!({"agent": "claude", "mode": "wait"}),
         json!({"agent": "claude", "tab": {"workspaceId": "nope"}}),
+        json!({"agent": "claude", "base": "--output=x"}),
     ] {
         let (st, v) = start(&env, &open, body.clone()).await;
         assert_eq!(st.as_u16() / 100, 4, "{body} {v}");
         let code = if body.get("tab").is_some() { "unknown_workspace" } else { "invalid_input" };
         assert_eq!(s(&v["code"]), code, "{body} {v}");
     }
+    let (st, v) = start(&env, &open, json!({"agent": "claude", "base": "nope"})).await;
+    assert_eq!((st, s(&v["code"])), (StatusCode::BAD_REQUEST, "unknown_ref"), "{v}");
     let (st, v) = start(&env, "nope", json!({"agent": "claude"})).await;
     assert_eq!((st, s(&v["code"])), (StatusCode::NOT_FOUND, "not_found"));
 
