@@ -18,6 +18,8 @@ import { useBackCloses } from '../shell/router';
 import { tabMenu } from './menus';
 import { itemOf } from './model';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
+import { sessionKeys } from '../sessions/queries';
+import { POLL } from '../common/poll';
 
 /** How many of a conversation's newest events are read for its card. */
 const LAST_EVENTS = 20;
@@ -50,10 +52,10 @@ function SessionSnippet({ info, inbox }: { info: ItemInfo; inbox: InboxItem[] })
   const s = info.session!;
   const conversation = s.mode === 'conversation';
   const events = useQuery({
-    queryKey: ['session-last-events', s.id],
+    queryKey: sessionKeys.lastEvents(s.id),
     queryFn: () => api.lastSessionEvents(s.id, LAST_EVENTS),
     enabled: conversation,
-    refetchInterval: 5000,
+    refetchInterval: POLL.steady,
   });
   const snippet = sessionSnippet(events.data ?? [], inbox.filter((i) => i.sessionId === s.id));
   if (!snippet) return null;

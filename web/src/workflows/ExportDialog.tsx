@@ -6,9 +6,10 @@ import { Alert, Button, Checkbox, Dialog, Skeleton, Textarea } from '@ui';
 import type { Workflow } from '../api/gen/Workflow';
 import { copyToClipboard } from '../common/clipboard';
 import { downloadText, exportFileName, exportText, fetchExport } from './transfer';
+import { workflowKeys } from './queries';
 
 function ExportText({ ids }: { ids: string[] }) {
-  const e = useQuery({ queryKey: ['workflow-export', ids], queryFn: () => fetchExport(ids), staleTime: Infinity, gcTime: 0 });
+  const e = useQuery({ queryKey: workflowKeys.export(ids), queryFn: () => fetchExport(ids), staleTime: Infinity, gcTime: 0 });
   if (e.error) return <Alert tone="error">The export could not be made: {e.error.message}</Alert>;
   if (!e.data) return <Skeleton lines={6} />;
   const text = exportText(e.data);

@@ -16,6 +16,8 @@ import { GraphView } from './GraphView';
 import type { Catalog } from './model';
 import { RUN_STATUS, duration, pathOf, runSteps } from './runs';
 import { StepList, type StepRow } from './StepList';
+import { workflowKeys } from './queries';
+import { POLL } from '../common/poll';
 
 const STEP_STATUS: Record<WorkflowStep['status'], StepRow['status']> = {
   pending: { tone: 'neutral', text: 'Pending' },
@@ -47,20 +49,20 @@ function stepSession(s: WorkflowStep): string | null {
 function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflowId: string; catalog: Catalog; viewOnly: boolean }) {
   const qc = useQueryClient();
   const run = useQuery({
-    queryKey: ['workflow-run', id],
+    queryKey: workflowKeys.run(id),
     queryFn: () => api.getWorkflowRun(id),
-    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? 2000 : false),
+    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? POLL.live : false),
   });
   const version = run.data?.version;
   const doc = useQuery({
-    queryKey: ['workflow-version', workflowId, version],
+    queryKey: workflowKeys.version(workflowId, version ?? 0),
     queryFn: () => api.workflowVersion(workflowId, version!),
     enabled: version !== undefined,
     staleTime: Infinity,
   });
   const done = (d: WorkflowRunDetail) => {
-    qc.setQueryData(['workflow-run', id], d);
-    void qc.invalidateQueries({ queryKey: ['workflow-runs'] });
+    qc.setQueryData(workflowKeys.run(id), d);
+    void qc.invalidateQueries({ queryKey: workflowKeys.allRuns });
   };
   const retry = useMutation({ meta: { errorShown: true }, mutationFn: () => api.retryWorkflowRun(id), onSuccess: done });
   const resume = useMutation({ meta: { errorShown: true }, mutationFn: () => api.resumeWorkflowRun(id), onSuccess: done });
@@ -141,7 +143,7 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
   /** Phones: the list, or the run picked (no graph, nothing to act on). */
   viewOnly?: boolean;
 }) {
-  const runs = useQuery({ queryKey: ['workflow-runs', workflowId], queryFn: () => api.listWorkflowRuns({ workflow: workflowId, limit: 100 }), refetchInterval: 2000 });
+  const runs = useQuery({ queryKey: workflowKeys.runs(workflowId), queryFn: () => api.listWorkflowRuns({ workflow: workflowId, limit: 100 }), refetchInterval: POLL.live });
   const list = runs.data ?? [];
   const current = viewOnly ? runId : runId ?? list[0]?.id ?? null;
   if (viewOnly && current) return <RunDetail key={current} id={current} workflowId={workflowId} catalog={catalog} viewOnly />;

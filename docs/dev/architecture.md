@@ -586,6 +586,16 @@ own file, and the central list takes at most one line, so tickets built side by 
 | A lazy screen or dialog | Its feature folder | One line in `web/src/shell/screens.tsx`, and the place in `AppShell.tsx` that shows it |
 | A Settings page of its own | Its feature folder | Its kind in `web/src/shell/route.ts` and `SettingsNav`, and one entry in `web/src/shell/settingsPages.tsx` |
 
+**Web queries.** Each area keeps its query keys, shared queries and invalidation in one module: `<area>/queries.ts`
+(`projectKeys`/`useProjects`, `sessionKeys`/`sessionsQuery`, `runKeys`/`runsQuery`, `workspaceKeys`, `hostKeys`/
+`useHostSettings`, `workflowKeys`, `ticketKeys`, `documentKeys`, …; worktrees in `common/worktrees.ts`). Screens use
+those hooks and keys rather than a literal key and an inline `useQuery`, so every copy of a query shares one key and
+one set of options. A write calls the area's `invalidate…` helper, which also marks stale what depends on it
+(`invalidateProjects` the workspaces, `invalidateWorktrees` the sessions and workspaces, `savedWorkflow` the list,
+the versions and the Settings sections that show a built-in). Poll intervals are the tiers in `common/poll.ts`
+(`POLL.live` 2 s for what's on screen, `steady`, `slow`, `paged`, `idle`); what the notification stream pushes polls
+with `streamPoll`, slowly while the stream is connected.
+
 A new top-level view (Inbox, Notes and the like) still means editing `AppShell.tsx`, because its state lives in the
 shell. `AppShell`'s tests are split by area (`AppShell.<area>.test.tsx`), with shared fixtures in
 `web/src/shell/fixtures.ts`.

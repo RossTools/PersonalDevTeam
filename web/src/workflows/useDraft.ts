@@ -5,6 +5,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { sameDoc } from './textFormat';
+import { workflowKeys } from './queries';
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -86,7 +87,7 @@ export function useDraft(saved: WorkflowDoc, savedKey: string): Draft {
 export function useCheck(doc: WorkflowDoc, enabled = true) {
   const text = useDebounced(JSON.stringify(doc), 250);
   return useQuery({
-    queryKey: ['workflow-check', text],
+    queryKey: workflowKeys.check(text),
     queryFn: () => api.checkWorkflow(JSON.parse(text) as WorkflowDoc),
     enabled,
     placeholderData: keepPreviousData,

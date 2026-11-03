@@ -20,6 +20,7 @@ import { repoUrl } from './forgeLinks';
 import { invalidateWorktrees, worktreesQuery } from '../common/worktrees';
 import { useOpenChanges } from '../review/open';
 import { ProjectDocuments } from '../documents/DocumentSettings';
+import { invalidateProjects, projectKeys } from './queries';
 
 /**
  * Name, key and base branch, each saved as it changes (PDT-231): text on blur or Enter, the branch at once. Folder and
@@ -28,13 +29,12 @@ import { ProjectDocuments } from '../documents/DocumentSettings';
 function General({ project, onKeyChange }: { project: Project; onKeyChange?: (key: string) => void }) {
   const personal = project.kind === 'personal';
   const qc = useQueryClient();
-  const branches = useQuery({ queryKey: ['branches', project.id], queryFn: () => api.listBranches(project.id), enabled: !personal });
+  const branches = useQuery({ queryKey: projectKeys.branches(project.id), queryFn: () => api.listBranches(project.id), enabled: !personal });
   const baseOptions = branchOptions(branches.data ?? [], project.baseBranch);
   const [baseState, trackBase] = useSaveState();
   const save = async (p: { name?: string; key?: string; baseBranch?: string }) => {
     const saved = await api.updateProject(project.id, p);
-    await qc.invalidateQueries({ queryKey: ['projects'] });
-    void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    await invalidateProjects(qc);
     // The page's path names the project by its key.
     if (saved.key !== project.key) onKeyChange?.(saved.key);
     return saved;
@@ -205,8 +205,7 @@ function RemoveProject({ project, onRemoved }: { project: Project; onRemoved: ()
     });
     if (!ok) return;
     await api.deleteProject(project.id);
-    void qc.invalidateQueries({ queryKey: ['projects'] });
-    void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    void invalidateProjects(qc);
     onRemoved();
   });
   return (

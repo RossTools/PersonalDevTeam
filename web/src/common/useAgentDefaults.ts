@@ -1,13 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
 import { FALLBACK_DEFAULTS, type AgentDefaults } from '../sessions/newSession';
+import { useHostSettings } from '../host/queries';
 
 /**
- * The host's default agent, view and permission modes (Settings → This host → Agents), from the `['host-settings']` query the
+ * The host's default agent, view and permission modes (Settings → This host → Agents), from the host settings query (`useHostSettings`) the
  * settings page updates when they are saved. Never waits: until it loads, or when it fails, a Claude conversation.
  */
 export function useAgentDefaults(): AgentDefaults {
-  const q = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings, staleTime: 60_000, retry: false });
+  const q = useHostSettings();
   const s = q.data?.settings;
   return s
     ? {

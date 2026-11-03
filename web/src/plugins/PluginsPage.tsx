@@ -10,7 +10,8 @@ import {
   CATEGORIES, CATEGORY_LABEL, NO_FILTER, categoryCounts, filterPlugins, groupPlugins, loadLayout, needsAttention, storeLayout,
   type Plugin, type PluginFilter, type PluginLayout, type PluginTab,
 } from './model';
-import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch, usePlugins } from './parts';
+import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch } from './parts';
+import { usePlugins } from './queries';
 
 interface ItemProps {
   p: Plugin;

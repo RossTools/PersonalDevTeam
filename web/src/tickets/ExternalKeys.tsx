@@ -1,13 +1,12 @@
 // The issues in other trackers a ticket is linked to (the issue it was imported from; PDT-154: the forge
 // issue a bug report came in as; PDT-481: issues linked by hand), beside its key, with the tracker's icon and the
 // issue's state. Each tracker is a plugin, named as Settings → Plugins names it.
-import { useQuery } from '@tanstack/react-query';
 import { cn } from '@ui/lib/utils';
-import { api } from '../api/client';
 import { TicketKey } from '../common/TicketKey';
 import type { ExternalLink } from '../api/gen/ExternalLink';
-import { pluginsKey, type Plugin } from '../plugins/model';
+import { type Plugin } from '../plugins/model';
 import { PluginIcon } from '../plugins/parts';
+import { usePlugins } from '../plugins/queries';
 
 /** An issue numbered within a repository (`owner/name#12`) shows as `#12`; the title names its repository. */
 export function shortKey(l: ExternalLink): string {
@@ -16,7 +15,7 @@ export function shortKey(l: ExternalLink): string {
 
 /** The plugins, for the trackers' names and icons. */
 export function usePluginList(): Plugin[] | undefined {
-  return useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations, staleTime: 60_000 }).data;
+  return usePlugins().data;
 }
 
 /** `GitHub issue o/r#12: Crash on start (closed)`. */

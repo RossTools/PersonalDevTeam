@@ -11,6 +11,7 @@ import type { DocDiff } from '../api/gen/DocDiff';
 import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
 import type { WorkflowVersion } from '../api/gen/WorkflowVersion';
 import { useProposal } from './useProposal';
+import { workflowKeys } from './queries';
 
 const AUTHOR: Record<Author, string> = { user: 'You', builtin: 'PDT', repo: 'The repo file', agent: 'An agent' };
 
@@ -39,7 +40,7 @@ export function VersionsView({ w, dirty, readOnly, onChanged, initial }: {
   onChanged: (d: WorkflowDetail) => void;
   initial?: number | null;
 }) {
-  const versions = useQuery({ queryKey: ['workflow-versions', w.id], queryFn: () => api.workflowVersions(w.id) });
+  const versions = useQuery({ queryKey: workflowKeys.versions(w.id), queryFn: () => api.workflowVersions(w.id) });
   const [picked, setPicked] = useState<number | null>(initial ?? null);
   const list = versions.data ?? [];
   const current = picked ?? w.proposed ?? list[0]?.version ?? null;
@@ -48,7 +49,7 @@ export function VersionsView({ w, dirty, readOnly, onChanged, initial }: {
   const before = list.find((x) => x.version < w.version && x.status === 'saved')?.version;
   const [from, to] = v?.version === w.version ? [before ?? w.version, w.version] : [w.version, v?.version ?? w.version];
   const diff = useQuery({
-    queryKey: ['workflow-diff', w.id, from, to],
+    queryKey: workflowKeys.diff(w.id, from, to),
     queryFn: () => api.workflowDiff(w.id, from, to),
     enabled: !!v && from !== to,
     staleTime: Infinity,

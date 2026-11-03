@@ -3,6 +3,7 @@ import { Switch } from '@ui';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { HostSettingsView } from '../api/gen/HostSettingsView';
+import { hostKeys, setHostSettings } from './queries';
 
 /** Pure: the agents switched off (none in settings saved before PDT-270 read them). */
 export const agentsOff = (v: HostSettingsView): AgentKind[] => v.settings.disabledAgents ?? [];
@@ -29,9 +30,9 @@ export function AgentSwitch({ v, agent, label }: { v: HostSettingsView; agent: A
     meta: { errorShown: true },
     mutationFn: (on: boolean) => api.saveHostSettings({ disabledAgents: switched(agentsOff(v), agent, on) }),
     onSuccess: (view) => {
-      qc.setQueryData(['host-settings'], view);
+      setHostSettings(qc, view);
       // Get started counts only the agents switched on.
-      void qc.invalidateQueries({ queryKey: ['host-setup'] });
+      void qc.invalidateQueries({ queryKey: hostKeys.setup });
     },
   });
   return (

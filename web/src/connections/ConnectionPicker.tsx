@@ -1,10 +1,9 @@
 // Picks a connection by name (a template's connection param, a node's connection field), offering only those of the
 // kind it needs, with Add… for a new one.
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Button, Select } from '@ui';
-import { api } from '../api/client';
-import { ConnectionDialog, connectionsKey } from './ConnectionDialog';
+import { ConnectionDialog } from './ConnectionDialog';
+import { useConnections } from './queries';
 import { useConnectionKinds } from './kinds';
 
 export function ConnectionPicker({ kind, value, onChange, label, disabled }: {
@@ -15,7 +14,7 @@ export function ConnectionPicker({ kind, value, onChange, label, disabled }: {
   label: string;
   disabled?: boolean;
 }) {
-  const list = useQuery({ queryKey: connectionsKey, queryFn: api.listConnections });
+  const list = useConnections();
   const { kindLabel, kindOf } = useConnectionKinds();
   const [adding, setAdding] = useState(false);
   const wanted = kind && kind !== 'any' ? kind : null;
