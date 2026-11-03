@@ -98,39 +98,24 @@ impl NodeKind for TicketProposal {
                 None => None,
             };
             let s = &t.summary;
-            let item = InboxItem {
-                id: uuid::Uuid::now_v7().to_string(),
-                kind: InboxKind::TicketProposal,
-                group: InboxGroup::TicketProposal,
-                status: InboxStatus::Open,
-                project_id: Some(s.project_id.clone()),
-                ticket_id: Some(id.clone()),
-                ticket_key: None,
-                ticket_title: None,
-                attempt_id: None,
-                session_id: nonblank(&c.session).map(String::from),
-                run_id: Some(cx.run.id.clone()),
+            let body = json!({
+                "description": t.description, "priority": s.priority, "labels": s.labels,
+                "reason": nonblank(&c.reason), "persona": nonblank(&c.persona),
+                "fromTicket": from_key, "fromTicketId": from_id, "workflow": cx.workflow.name,
+            });
+            let item = cx
+                .inbox_item(InboxKind::TicketProposal, InboxGroup::TicketProposal, &s.title, body)
+                .project(s.project_id.clone())
+                .ticket(id.clone())
+                .session(nonblank(&c.session).map(String::from))
                 // Not the step's: the item outlives the run.
-                step_id: None,
-                persona_id: None,
-                persona_name: None,
-                change_request: None,
-                title: s.title.clone(),
-                body: json!({
-                    "description": t.description, "priority": s.priority, "labels": s.labels,
-                    "reason": nonblank(&c.reason), "persona": nonblank(&c.persona),
-                    "fromTicket": from_key, "fromTicketId": from_id, "workflow": cx.workflow.name,
-                }),
-                choices: vec![
+                .step(None)
+                .choices(vec![
                     InboxChoice::new(inbox::ACCEPT_TODO, "Accept to Todo", true),
                     InboxChoice::new(inbox::ACCEPT_BACKLOG, "Accept to backlog", false),
                     InboxChoice::new(inbox::DUPLICATE, "Duplicate of…", false),
                     InboxChoice::new(inbox::REJECT, "Reject", false),
-                ],
-                resolution: Value::Null,
-                created_at: now_ms(),
-                resolved_at: None,
-            };
+                ]);
             match store
                 .add_inbox_item_once(&item, &format!("ticket-proposal:{id}"))
                 .await

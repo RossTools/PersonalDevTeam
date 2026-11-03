@@ -508,29 +508,11 @@ mod tests {
     use serde_json::json;
 
     fn item(id: &str, step: Option<&str>, at: i64) -> InboxItem {
-        InboxItem {
-            id: id.into(),
-            kind: InboxKind::Gate,
-            group: InboxGroup::Gate,
-            status: InboxStatus::Open,
-            project_id: Some("p".into()),
-            ticket_id: None,
-            ticket_key: None,
-            ticket_title: None,
-            attempt_id: None,
-            session_id: None,
-            run_id: Some("r1".into()),
-            step_id: step.map(String::from),
-            persona_id: None,
-            persona_name: None,
-            change_request: None,
-            title: "Merge?".into(),
-            body: json!({"question": "Merge?"}),
-            choices: vec![InboxChoice::new("yes", "Yes", true)],
-            resolution: Value::Null,
-            created_at: at,
-            resolved_at: None,
-        }
+        InboxItem::new(id, InboxKind::Gate, InboxGroup::Gate, "Merge?", json!({"question": "Merge?"}), at)
+            .project("p".to_string())
+            .run("r1".to_string())
+            .step(step.map(String::from))
+            .choices(vec![InboxChoice::new("yes", "Yes", true)])
     }
 
     #[tokio::test]

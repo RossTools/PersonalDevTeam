@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use pdt_core::command_trust::{self, ConfigCommand};
-use pdt_core::inbox::{InboxGroup, InboxItem, InboxKind, InboxStatus};
+use pdt_core::inbox::{InboxGroup, InboxKind, InboxStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use ts_rs::TS;
@@ -84,29 +84,10 @@ pub(crate) async fn notify(st: &AppState, project_id: &str, commands: &[ConfigCo
             pdt_core::brand::SHORT_NAME,
             command_trust::describe(std::slice::from_ref(c)),
         );
-        let item = InboxItem {
-            id: uuid::Uuid::now_v7().to_string(),
-            kind: InboxKind::Notice,
-            group: InboxGroup::Notice,
-            status: InboxStatus::Open,
-            project_id: Some(project_id.to_string()),
-            ticket_id: None,
-            ticket_key: None,
-            ticket_title: None,
-            attempt_id: None,
-            session_id: None,
-            run_id: None,
-            step_id: None,
-            persona_id: None,
-            persona_name: None,
-            change_request: None,
-            title: "A command waits on your approval".into(),
-            body: serde_json::json!({"notice": null, "key": NOTICE_KEY, "text": text, "fingerprint": c.fingerprint}),
-            choices: vec![],
-            resolution: serde_json::Value::Null,
-            created_at: now_ms(),
-            resolved_at: None,
-        };
+        let body = serde_json::json!({"notice": null, "key": NOTICE_KEY, "text": text, "fingerprint": c.fingerprint});
+        let item =
+            crate::inbox::new_item(InboxKind::Notice, InboxGroup::Notice, "A command waits on your approval", body)
+                .project(project_id.to_string());
         let dedupe = format!("{NOTICE_KEY}:{project_id}:{}", c.fingerprint);
         match st.store.add_inbox_item_once(&item, &dedupe).await {
             Ok(_) => crate::notifications::kick(st),

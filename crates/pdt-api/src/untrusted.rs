@@ -441,29 +441,15 @@ pub(crate) async fn skip_triage(
         lines.join("\n")
     );
     let key = format!("triage-cap:{repo}:{slot}");
-    let item = pdt_core::inbox::InboxItem {
-        id: uuid::Uuid::now_v7().to_string(),
-        kind: pdt_core::inbox::InboxKind::Notice,
-        group: pdt_core::inbox::InboxGroup::Notice,
-        status: pdt_core::inbox::InboxStatus::Open,
-        project_id: e.project_id.clone(),
-        ticket_id: None,
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: None,
-        session_id: None,
-        run_id: None,
-        step_id: None,
-        persona_id: None,
-        persona_name: None,
-        change_request: None,
+    let item = pdt_core::inbox::InboxItem::new(
+        uuid::Uuid::now_v7().to_string(),
+        pdt_core::inbox::InboxKind::Notice,
+        pdt_core::inbox::InboxGroup::Notice,
         title,
-        body: serde_json::json!({"notice": null, "key": key, "text": text, "workflow": wf.name}),
-        choices: vec![],
-        resolution: Value::Null,
-        created_at: now,
-        resolved_at: None,
-    };
+        serde_json::json!({"notice": null, "key": key, "text": text, "workflow": wf.name}),
+        now,
+    )
+    .project(e.project_id.clone());
     match st.store.put_inbox_summary(&item, &key).await {
         Ok(_) => crate::notifications::kick(st),
         Err(x) => tracing::warn!(error = %x, "could not sum up skipped triage in the Inbox"),

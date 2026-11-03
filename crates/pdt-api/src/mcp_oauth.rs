@@ -15,7 +15,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
-use pdt_core::inbox::{InboxGroup, InboxItem, InboxKind, InboxStatus};
+use pdt_core::inbox::{InboxGroup, InboxItem, InboxKind};
 use pdt_core::mcp_servers::{self as ms, AuthServer, OAuthTokens, TokenResponse};
 use pdt_core::workflow::api::Connection;
 use serde::{Deserialize, Serialize};
@@ -586,30 +586,15 @@ pub(crate) async fn inbox_items(st: &AppState) -> Vec<InboxItem> {
     for c in crate::agent_mcp::servers(st).await.into_iter().filter(|c| ms::oauth_of(&c.config).is_some()) {
         let Some(Some(t)) = known.get(&c.id) else { continue };
         let Some(problem) = status_of(Some(t), now).problem else { continue };
-        out.push(InboxItem {
-            id: format!("mcp-sign-in:{}", c.id),
-            kind: InboxKind::McpSignIn,
-            group: InboxGroup::Notice,
-            status: InboxStatus::Open,
-            project_id: None,
-            ticket_id: None,
-            ticket_key: None,
-            ticket_title: None,
-            attempt_id: None,
-            session_id: None,
-            run_id: None,
-            step_id: None,
-            persona_id: None,
-            persona_name: None,
-            change_request: None,
-            title: format!("Sign in to {} again", c.name),
-            body: json!({"connectionId": c.id, "server": c.name, "text": format!("PDT's sign-in to the MCP server {} \
+        out.push(InboxItem::new(
+            format!("mcp-sign-in:{}", c.id),
+            InboxKind::McpSignIn,
+            InboxGroup::Notice,
+            format!("Sign in to {} again", c.name),
+            json!({"connectionId": c.id, "server": c.name, "text": format!("PDT's sign-in to the MCP server {} \
 no longer works ({problem}), so new agent sessions start without it. Sign in again in Settings › MCP servers.", c.name)}),
-            choices: vec![],
-            resolution: Value::Null,
-            created_at: t.expires_at.unwrap_or(t.signed_in_at),
-            resolved_at: None,
-        });
+            t.expires_at.unwrap_or(t.signed_in_at),
+        ));
     }
     out
 }

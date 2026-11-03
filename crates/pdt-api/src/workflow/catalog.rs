@@ -128,6 +128,20 @@ impl StepCx<'_> {
             .map_err(crate::workflow::err)
     }
 
+    /// A new Inbox item from this step: its run's project, the run and the step.
+    pub fn inbox_item(
+        &self,
+        kind: pdt_core::inbox::InboxKind,
+        group: pdt_core::inbox::InboxGroup,
+        title: impl Into<String>,
+        body: Value,
+    ) -> pdt_core::inbox::InboxItem {
+        crate::inbox::new_item(kind, group, title, body)
+            .project(self.run.project_id.clone())
+            .run(self.run.id.clone())
+            .step(self.step.id.clone())
+    }
+
     /// The workflow and run, for records of what a workflow did (vision principle 5).
     pub fn by(&self) -> crate::finish::By {
         crate::finish::By {

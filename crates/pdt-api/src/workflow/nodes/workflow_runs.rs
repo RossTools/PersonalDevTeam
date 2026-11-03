@@ -324,29 +324,11 @@ impl NodeKind for GithubWorkflowWatch {
                 choice_list.push(InboxChoice::new(RERUN, "Re-run failed jobs", true));
             }
             choice_list.push(InboxChoice::new(DISMISS, "Dismiss", !can_rerun));
+            let body = json!({"question": title, "text": text, "url": run.run.url, "workflow": cx.workflow.name,
+                              "node": cx.node_title(), "runId": id, "attempt": attempt});
             let item = InboxItem {
-                id: uuid::Uuid::now_v7().to_string(),
-                kind: InboxKind::Gate,
-                group: InboxGroup::Gate,
-                status: InboxStatus::Open,
-                project_id: cx.run.project_id.clone(),
-                ticket_id: None,
-                ticket_key: None,
-                ticket_title: None,
-                attempt_id: None,
-                session_id: None,
-                run_id: Some(cx.run.id.clone()),
-                step_id: Some(cx.step.id.clone()),
-                persona_id: None,
-                persona_name: None,
-                change_request: None,
-                title: title.clone(),
-                body: json!({"question": title, "text": text, "url": run.run.url, "workflow": cx.workflow.name,
-                             "node": cx.node_title(), "runId": id, "attempt": attempt}),
-                choices: choice_list,
-                resolution: Value::Null,
                 created_at: now,
-                resolved_at: None,
+                ..cx.inbox_item(InboxKind::Gate, InboxGroup::Gate, &title, body).choices(choice_list)
             };
             // Once per run attempt: the trigger starts a run for each failed attempt, and the watch that reported an
             // earlier one may see this one too; whichever is first reports it.
