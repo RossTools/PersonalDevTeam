@@ -1,6 +1,6 @@
 //! Workspace and tab routes (workspaces spec §5).
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -10,10 +10,6 @@ use pdt_core::workspace::{
     NewWorkspace, OpenTab, Tab, TabItem, TabPatch, TabPlacement, Workspace, WorkspacePatch, valid_workspace_name,
 };
 use pdt_store::DeleteWorkspace;
-
-fn unknown_workspace() -> ApiError {
-    ApiError::not_found("workspace")
-}
 
 pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Workspace>>, ApiError> {
     let mut list = st.store.list_workspaces().await?;
@@ -36,7 +32,7 @@ pub(crate) async fn create(
         ticket: None,
     };
     st.store.insert_workspace(&w).await?;
-    let w = st.store.get_workspace(&w.id).await?.ok_or_else(unknown_workspace)?;
+    let w = st.store.get_workspace(&w.id).await?.or_404("workspace")?;
     Ok((StatusCode::CREATED, Json(w)))
 }
 
@@ -47,14 +43,14 @@ pub(crate) async fn update(
 ) -> Result<Json<Workspace>, ApiError> {
     let Json(patch) = payload?;
     let name = patch.name.as_deref().map(valid_workspace_name).transpose()?;
-    st.store.get_workspace(&id).await?.ok_or_else(unknown_workspace)?;
+    st.store.get_workspace(&id).await?.or_404("workspace")?;
     if let Some(name) = name {
         st.store.rename_workspace(&id, &name).await?;
     }
     if let Some(pos) = patch.position {
         st.store.move_workspace(&id, pos).await?;
     }
-    let mut w = st.store.get_workspace(&id).await?.ok_or_else(unknown_workspace)?;
+    let mut w = st.store.get_workspace(&id).await?.or_404("workspace")?;
     crate::github::apply_workspaces(&st, std::slice::from_mut(&mut w));
     Ok(Json(w))
 }
@@ -73,12 +69,10 @@ pub(crate) async fn remove(
 ) -> Result<StatusCode, ApiError> {
     match st.store.delete_workspace(&id, q.close_tabs).await? {
         DeleteWorkspace::Deleted => Ok(StatusCode::NO_CONTENT),
-        DeleteWorkspace::NotFound => Err(unknown_workspace()),
-        DeleteWorkspace::ProjectWorkspace => Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "project_workspace",
-            "a project's own workspace goes only with the project",
-        )),
+        DeleteWorkspace::NotFound => Err(ApiError::not_found("workspace")),
+        DeleteWorkspace::ProjectWorkspace => {
+            Err(ApiError::conflict(codes::PROJECT_WORKSPACE, "a project's own workspace goes only with the project"))
+        }
     }
 }
 
@@ -99,17 +93,13 @@ pub(crate) async fn open_tab(
     let Json(input) = payload?;
     let item = input.item()?;
     if !item_exists(&st, &item).await? {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            "that session, run, ticket or worktree does not exist",
-        ));
+        return Err(ApiError::invalid("that session, run, ticket or worktree does not exist"));
     }
     let tab = st
         .store
         .open_tab(&uuid::Uuid::now_v7().to_string(), &workspace_id, &item, input.position, now_ms())
         .await?
-        .ok_or_else(unknown_workspace)?;
+        .or_404("workspace")?;
     Ok(Json(tab))
 }
 
@@ -119,15 +109,15 @@ pub(crate) async fn update_tab(
     payload: Result<Json<TabPatch>, JsonRejection>,
 ) -> Result<Json<Tab>, ApiError> {
     let Json(patch) = payload?;
-    st.store.get_tab(&id).await?.ok_or_else(|| ApiError::not_found("tab"))?;
+    st.store.get_tab(&id).await?.or_404("tab")?;
     let tab = st.store.move_tab(&id, patch.workspace_id.as_deref(), patch.position).await?;
-    Ok(Json(tab.ok_or_else(unknown_workspace)?))
+    Ok(Json(tab.or_404("workspace")?))
 }
 
 /// Closes a tab. A session or run tab also stops and removes what it shows, so nothing is left without a tab (PDT-28);
 /// a ticket or changes tab only closes. If the item cannot be stopped the tab stays open.
 pub(crate) async fn close_tab(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    let tab = st.store.get_tab(&id).await?.ok_or_else(|| ApiError::not_found("tab"))?;
+    let tab = st.store.get_tab(&id).await?.or_404("tab")?;
     if let Some(sid) = &tab.session_id {
         crate::sessions::stop_and_remove(&st, sid).await?;
     } else if let Some(rid) = &tab.run_id {
@@ -145,7 +135,7 @@ pub(crate) async fn check_placement(st: &AppState, placement: Option<&TabPlaceme
     if let Some(p) = placement
         && st.store.get_workspace(&p.workspace_id).await?.is_none()
     {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "the tab's workspace does not exist"));
+        return Err(ApiError::bad_request(codes::UNKNOWN_WORKSPACE, "the tab's workspace does not exist"));
     }
     Ok(())
 }

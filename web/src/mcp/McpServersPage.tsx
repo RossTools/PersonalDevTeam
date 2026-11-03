@@ -11,6 +11,7 @@ import type { McpProbe } from '../api/gen/McpProbe';
 import type { McpServerView } from '../api/gen/McpServerView';
 import type { OAuthSettings } from '../api/gen/OAuthSettings';
 import type { ToolMode } from '../api/gen/ToolMode';
+import { isWebUrl } from '../common/webUrl';
 
 export const mcpServersKey = ['mcp-servers'] as const;
 
@@ -276,13 +277,7 @@ export function audience(a: AgentAccess): string {
 
 /** Whether the browser may go to a sign-in address: only http(s), never `javascript:` or `data:` (it would run in
  * PDT's own page). PDT checks the service's addresses too; this holds if it ever misses one. */
-export function signInUrlOk(url: string): boolean {
-  try {
-    return ['https:', 'http:'].includes(new URL(url).protocol);
-  } catch {
-    return false;
-  }
-}
+export const signInUrlOk = isWebUrl;
 
 function SignIn({ server }: { server: McpServerView }) {
   const qc = useQueryClient();

@@ -66,7 +66,7 @@ async fn sessions_open_tabs_in_their_project_workspace_or_where_asked() {
     assert_eq!(tab_sessions(&workspaces(&app).await[0]), ids);
 
     let (s, v) = shell(&app, &pid, Some(json!({"workspaceId": "nope"}))).await;
-    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")));
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("unknown_workspace")));
     let (_, list) = call(&app, "GET", &format!("/api/projects/{pid}/sessions"), None).await;
     assert_eq!(list.as_array().unwrap().len(), 3, "a bad placement creates nothing");
 

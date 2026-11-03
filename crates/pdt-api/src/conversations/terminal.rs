@@ -2,8 +2,8 @@
 //! TUI.
 
 use super::live::{append, conv, ensure_live, park, refresh_activity};
-use super::{codex_server, conflict, conversation_session, login_path_env, scrubbed};
-use crate::error::ApiError;
+use super::{codex_server, conversation_session, login_path_env, scrubbed};
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -35,7 +35,10 @@ pub(crate) async fn open_terminal(
     let size = pdt_core::session::TerminalSize { cols: size.cols, rows: size.rows }.validate()?;
     let session = conversation_session(&st, &id).await?;
     if session.agent != Some(AgentKind::Codex) {
-        return Err(conflict("terminal_unsupported", "only Codex conversations open in a live terminal so far"));
+        return Err(ApiError::conflict(
+            codes::TERMINAL_UNSUPPORTED,
+            "only Codex conversations open in a live terminal so far",
+        ));
     }
     let _guard = st.lock_session(&id).await;
     if st.ptys.is_running(&id) {
@@ -43,7 +46,7 @@ pub(crate) async fn open_terminal(
     }
     // Codex saves a thread only once it has taken a turn; the TUI cannot resume one before that.
     if st.store.session_turn_ids(&id).await?.is_empty() {
-        return Err(conflict("no_turn_yet", "send a first message, then open the terminal"));
+        return Err(ApiError::conflict(codes::NO_TURN_YET, "send a first message, then open the terminal"));
     }
     let c = conv(&st, &session).await?;
     ensure_live(&st, &c, &session).await?;
@@ -56,10 +59,12 @@ pub(crate) async fn open_terminal(
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let thread =
-        thread.ok_or_else(|| conflict("agent_not_running", "Codex has not started this conversation's thread"))?;
+    let thread = thread.ok_or_else(|| {
+        ApiError::conflict(codes::AGENT_NOT_RUNNING, "Codex has not started this conversation's thread")
+    })?;
     let server = codex_server(&st).await?;
-    let endpoint = server.endpoint().await.ok_or_else(|| conflict("agent_not_running", "Codex is not running"))?;
+    let endpoint =
+        server.endpoint().await.ok_or_else(|| ApiError::conflict(codes::AGENT_NOT_RUNNING, "Codex is not running"))?;
     let args = vec![
         "resume".to_string(),
         thread,
@@ -139,10 +144,10 @@ pub(crate) async fn switch_mode(
 ) -> Result<Json<Session>, ApiError> {
     let Json(body) = payload?;
     let _guard = st.lock_session(&id).await;
-    let session = st.store.get_session(&id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let session = st.session(&id).await?;
     if session.kind != SessionKind::AgentTui || !matches!(session.agent, Some(AgentKind::Claude | AgentKind::Devin)) {
-        return Err(conflict(
-            "switch_unsupported",
+        return Err(ApiError::conflict(
+            codes::SWITCH_UNSUPPORTED,
             "only Claude and Devin sessions switch between conversation and terminal (Codex conversations open a live \
              terminal)",
         ));
@@ -158,7 +163,7 @@ pub(crate) async fn switch_mode(
             SessionMode::Conversation => to_conversation(&st, &session).await?,
         }
     }
-    let session = st.store.get_session(&id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let session = st.session(&id).await?;
     Ok(Json(session))
 }
 
@@ -191,7 +196,10 @@ async fn to_terminal(
     };
     if busy && !interrupt {
         let agent = session.agent.unwrap_or(AgentKind::Claude).label();
-        return Err(conflict("turn_running", &format!("{agent} is working; interrupt it to open the terminal")));
+        return Err(ApiError::conflict(
+            codes::TURN_RUNNING,
+            format!("{agent} is working; interrupt it to open the terminal"),
+        ));
     }
     park(st, &c).await;
     let notice =
@@ -244,7 +252,7 @@ async fn to_conversation(st: &AppState, session: &Session) -> Result<(), ApiErro
     let after = import_anchor(st, id).await?;
     st.store.switch_session_mode(id, SessionMode::Conversation, None).await?;
     st.store.set_session_running(id).await?;
-    let session = st.store.get_session(id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let session = st.session(id).await?;
     let c = conv(st, &session).await?;
     for (item_id, turn_id, event) in terminal_turns(st, &session, after).await {
         append(st, &c, item_id.as_deref(), turn_id.as_deref(), event, None).await;
@@ -266,7 +274,7 @@ async fn devin_to_conversation(st: &AppState, id: &str) -> Result<(), ApiError> 
     };
     st.store.switch_session_mode(id, SessionMode::Conversation, anchor.as_deref()).await?;
     st.store.set_session_running(id).await?;
-    let session = st.store.get_session(id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let session = st.session(id).await?;
     let c = conv(st, &session).await?;
     if let Err(e) = ensure_live(st, &c, &session).await {
         tracing::warn!(session = %id, error = %e.message(), "could not reopen the Devin conversation after its terminal");

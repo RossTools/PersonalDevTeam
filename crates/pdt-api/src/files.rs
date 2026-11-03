@@ -4,7 +4,7 @@
 //! ([`checkout_dir`]), so a folder swapped for a symlink after the checks still can't lead out. A save names the hash of the text it started from, so a file that
 //! changed on disk since is never overwritten silently.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -93,7 +93,7 @@ pub struct TellFilesChanged {
 }
 
 fn outside() -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "path_outside", "that path is outside the checkout")
+    ApiError::bad_request(codes::PATH_OUTSIDE, "that path is outside the checkout")
 }
 
 /// `raw` as clean `/`-separated segments, refusing anything that could leave the checkout or reach `.git`.
@@ -129,7 +129,7 @@ fn is_git_name(seg: &str) -> bool {
 fn clean_write_path(raw: &str) -> Result<String, ApiError> {
     let rel = clean_path(raw)?;
     if rel.is_empty() {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "name a file"));
+        return Err(ApiError::invalid("name a file"));
     }
     if rel.split('/').any(is_git_name) {
         return Err(outside());
@@ -162,11 +162,11 @@ fn plain_files(dir: &Dir, rel: &str) -> Vec<String> {
 /// The checkout (project root or one of its worktrees), the cleaned path inside it, and whether it is a Personal
 /// project's plain folder (no git).
 async fn resolve(st: &AppState, project_id: &str, q: &FilesQuery) -> Result<(PathBuf, String, bool), ApiError> {
-    let project = st.store.get_project(project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(project_id).await?;
     let checkout = match q.worktree_id.as_deref().filter(|w| !w.is_empty()) {
         Some(wid) => {
             let wt = st.store.get_worktree(wid).await?.filter(|w| w.project_id == project.id);
-            PathBuf::from(wt.ok_or_else(|| ApiError::not_found("worktree"))?.path)
+            PathBuf::from(wt.or_404("worktree")?.path)
         }
         None => PathBuf::from(&project.repo_path),
     };
@@ -213,7 +213,7 @@ pub(crate) fn checkout_dir(checkout: &FsPath) -> Result<Dir, ApiError> {
 pub(crate) fn io_err(e: std::io::Error) -> ApiError {
     match e.kind() {
         std::io::ErrorKind::PermissionDenied => outside(),
-        _ => ApiError::internal(e),
+        _ => ApiError::from(e),
     }
 }
 
@@ -223,12 +223,12 @@ fn at(rel: &str) -> &str {
 }
 
 fn file_changed() -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, "file_changed", "the file changed on disk since it was opened")
+    ApiError::conflict(codes::FILE_CHANGED, "the file changed on disk since it was opened")
 }
 
 /// The file as the view shows it. Blocking.
 fn read_file(checkout: &FsPath, dir: &Dir, rel: String, personal: bool) -> Result<FileContent, ApiError> {
-    let meta = dir.metadata(&rel).ok().filter(|m| m.is_file()).ok_or_else(|| ApiError::not_found("file"))?;
+    let meta = dir.metadata(&rel).ok().filter(|m| m.is_file()).or_404("file")?;
     let status = if personal {
         None
     } else {
@@ -303,7 +303,7 @@ pub(crate) async fn content(
 ) -> Result<Json<FileContent>, ApiError> {
     let (checkout, rel, personal) = resolve(&st, &id, &q).await?;
     if rel.is_empty() {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "name a file"));
+        return Err(ApiError::invalid("name a file"));
     }
     let file = tokio::task::spawn_blocking(move || -> Result<FileContent, ApiError> {
         contained(&checkout, &rel)?;
@@ -326,7 +326,11 @@ pub(crate) async fn save(
     let q = FilesQuery { worktree_id: b.worktree_id, path: rel.clone() };
     let (checkout, rel, personal) = resolve(&st, &id, &q).await?;
     if b.text.len() as u64 > MAX_FILE_BYTES {
-        return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "files over 1 MB can't be edited here"));
+        return Err(ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            codes::TOO_LARGE,
+            "files over 1 MB can't be edited here",
+        ));
     }
     let file = tokio::task::spawn_blocking(move || -> Result<FileContent, ApiError> {
         writable(&checkout, &rel)?;
@@ -335,10 +339,10 @@ pub(crate) async fn save(
             Ok(_) => {
                 let meta = dir.metadata(&rel).map_err(io_err)?;
                 if meta.is_dir() {
-                    return Err(ApiError::new(StatusCode::CONFLICT, "file_exists", "a folder has that name"));
+                    return Err(ApiError::conflict(codes::FILE_EXISTS, "a folder has that name"));
                 }
                 let Some(base) = b.base_hash.as_deref() else {
-                    return Err(ApiError::new(StatusCode::CONFLICT, "file_exists", "a file with that name exists"));
+                    return Err(ApiError::conflict(codes::FILE_EXISTS, "a file with that name exists"));
                 };
                 if meta.len() > MAX_FILE_BYTES {
                     return Err(not_editable());
@@ -367,7 +371,7 @@ pub(crate) async fn save(
 }
 
 fn not_editable() -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "not_editable", "binary files and files over 1 MB can't be edited here")
+    ApiError::bad_request(codes::NOT_EDITABLE, "binary files and files over 1 MB can't be edited here")
 }
 
 /// Renames (moves) a file or folder inside the checkout; the new path must be free.
@@ -388,10 +392,10 @@ pub(crate) async fn rename(
             return Err(ApiError::not_found("file"));
         }
         if dir.symlink_metadata(&to).is_ok() {
-            return Err(ApiError::new(StatusCode::CONFLICT, "file_exists", "something already has that name"));
+            return Err(ApiError::conflict(codes::FILE_EXISTS, "something already has that name"));
         }
         if to.starts_with(&format!("{from}/")) {
-            return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "a folder can't move into itself"));
+            return Err(ApiError::invalid("a folder can't move into itself"));
         }
         if let Some((parent, _)) = to.rsplit_once('/') {
             dir.create_dir_all(parent).map_err(io_err)?;
@@ -416,7 +420,7 @@ pub(crate) async fn delete(
         let dir = checkout_dir(&checkout)?;
         let meta = dir.symlink_metadata(&rel).map_err(|_| ApiError::not_found("file"))?;
         if meta.is_dir() {
-            return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "only files can be deleted here"));
+            return Err(ApiError::invalid("only files can be deleted here"));
         }
         dir.remove_file(&rel).map_err(io_err)
     })
@@ -443,13 +447,13 @@ pub(crate) async fn tell(
     Json(b): Json<TellFilesChanged>,
 ) -> Result<StatusCode, ApiError> {
     let s = st.store.get_session(&b.session_id).await?.filter(|s| s.project_id == id);
-    let s = s.ok_or_else(|| ApiError::not_found("session"))?;
+    let s = s.or_404("session")?;
     if !crate::pm::takes_messages(&s) {
-        return Err(ApiError::new(StatusCode::CONFLICT, "session_ended", "that session has ended or is not an agent"));
+        return Err(ApiError::conflict(codes::SESSION_ENDED, "that session has ended or is not an agent"));
     }
     let paths = b.paths.iter().map(|p| clean_write_path(p)).collect::<Result<Vec<_>, _>>()?;
     if paths.is_empty() {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "name a file"));
+        return Err(ApiError::invalid("name a file"));
     }
     let m = pdt_store::SessionMessage {
         id: uuid::Uuid::now_v7().to_string(),

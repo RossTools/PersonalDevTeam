@@ -1,6 +1,7 @@
 //! `host.wait_idle`, `host.install_update` and `host.check_health` (PDT-369): what the built-in Install updates does
 //! with an update on offer, and with the version it started on afterwards. `update.rs` does the work.
 
+use crate::error::codes;
 use crate::routes::now_ms;
 use crate::update;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
@@ -275,7 +276,7 @@ impl NodeKind for InstallUpdate {
             }
             match update::install(cx.st, c.force, c.automatic).await {
                 Ok(_) => Ok(Outcome::next("installing", json!({"version": offer.version}))),
-                Err(e) if e.code() == "host_busy" => Ok(Outcome::next("busy", json!({"busy": e.message()}))),
+                Err(e) if e.code() == codes::HOST_BUSY => Ok(Outcome::next("busy", json!({"busy": e.message()}))),
                 Err(e) if matches!(e.code(), "no_update" | "updates_disabled") => skip(e.message().into()),
                 Err(e) => Err(e.message().to_string()),
             }

@@ -1,7 +1,7 @@
 //! Update checks and installs (remote-host spec §3.3–3.4). pdtd checks hourly (unless the policy is manual) and on
 //! request, downloads and verifies a release, writes `update/request.json` and shuts down; pdt-host installs it.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::State;
@@ -350,13 +350,7 @@ pub(crate) async fn read_token(st: &AppState) -> Result<Option<String>, ApiError
     tokio::task::spawn_blocking(move || secrets.get(&account))
         .await
         .map_err(ApiError::internal)?
-        .map_err(keychain_error)
-}
-
-/// A keychain failure, said plainly (its message never holds the secret).
-fn keychain_error(e: crate::secrets::SecretError) -> ApiError {
-    tracing::warn!(error = %e, "keychain call failed");
-    ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "keychain_unavailable", e.to_string())
+        .map_err(ApiError::keychain)
 }
 
 /// Stores (`Some`) or deletes (`None`) this instance's update token.
@@ -368,7 +362,7 @@ async fn write_token(st: &AppState, token: Option<String>) -> Result<(), ApiErro
     })
     .await
     .map_err(ApiError::internal)?
-    .map_err(keychain_error)
+    .map_err(ApiError::keychain)
 }
 
 /// Brings `token` in line with the keychain (as host settings' `tokenPresent` sees it): missing without a token,
@@ -815,16 +809,15 @@ fn this_host() -> HostOs {
     HostOs::current_linux(appimage)
 }
 
-fn conflict(code: &'static str, msg: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, code, msg)
-}
-
 fn host_busy(busy: &[String]) -> ApiError {
-    conflict("host_busy", format!("Busy: {}. Update anyway? Sessions resume afterwards.", busy.join("; ")))
+    ApiError::conflict(
+        codes::HOST_BUSY,
+        format!("Busy: {}. Update anyway? Sessions resume afterwards.", busy.join("; ")),
+    )
 }
 
 fn in_progress_error() -> ApiError {
-    conflict("update_in_progress", "an update is already in progress")
+    ApiError::conflict(codes::UPDATE_IN_PROGRESS, "an update is already in progress")
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -851,7 +844,7 @@ fn prune_downloads(downloads: &Path, keep: &str) {
 pub(crate) async fn install(st: &AppState, force: bool, automatic: bool) -> Result<UpdateStatus, ApiError> {
     let svc = &st.update;
     if !svc.enabled {
-        return Err(conflict("updates_disabled", svc.snapshot().disabled_reason.unwrap_or_default()));
+        return Err(ApiError::conflict(codes::UPDATES_DISABLED, svc.snapshot().disabled_reason.unwrap_or_default()));
     }
     if svc.snapshot().state == UpdateState::Installing {
         return Err(in_progress_error());
@@ -862,14 +855,14 @@ pub(crate) async fn install(st: &AppState, force: bool, automatic: bool) -> Resu
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
-        .ok_or_else(|| conflict("no_update", "no update is available; check for updates first"))?;
+        .ok_or_else(|| ApiError::conflict(codes::NO_UPDATE, "no update is available; check for updates first"))?;
     if !force {
         let busy = busy_reasons(st).await;
         if !busy.is_empty() {
             return Err(host_busy(&busy));
         }
     }
-    let tok = read_token(st).await?.ok_or_else(|| conflict("no_token", "no update token is stored"))?;
+    let tok = read_token(st).await?.ok_or_else(|| ApiError::conflict(codes::NO_TOKEN, "no update token is stored"))?;
     let started = svc.edit(|s| {
         if s.state != UpdateState::Installing {
             s.state = UpdateState::Downloading;
@@ -928,7 +921,7 @@ async fn download_and_hand_off(
     let downloads = downloads_dir(&st.data_dir);
     let asset = fetch_verified(&svc.client, &tok, &release, this_host(), &downloads.join(&version))
         .await
-        .map_err(|e| fail(StatusCode::BAD_GATEWAY, "update_failed", e.to_string()))?;
+        .map_err(|e| fail(StatusCode::BAD_GATEWAY, codes::UPDATE_FAILED, e.to_string()))?;
     // The download can take minutes: ask again, keeping the verified file for the next attempt.
     if !force {
         let busy = busy_reasons(st).await;
@@ -1074,11 +1067,11 @@ pub(crate) async fn put_token(
     let Json(b) = payload?;
     let tok = b.token.trim().to_string();
     if tok.is_empty() {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_token", "the token is empty"));
+        return Err(ApiError::bad_request(codes::INVALID_TOKEN, "the token is empty"));
     }
     let expires_at = match st.update.client.latest(&tok).await {
         Err(UpdateError::Unauthorized) => {
-            return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_token", "GitHub rejected this token"));
+            return Err(ApiError::bad_request(codes::INVALID_TOKEN, "GitHub rejected this token"));
         }
         Ok(l) => l.token_expires_at,
         Err(_) => None,

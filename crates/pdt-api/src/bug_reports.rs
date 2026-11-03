@@ -3,12 +3,11 @@
 //! on the instance PDT is developed on, as a Draft `bug` ticket, which never makes a GitHub request. pdt-mcp's
 //! `report_bug` runs the same code.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
-use axum::http::StatusCode;
 use pdt_core::bug_report::{
     self as br, BugReportRoute, BugReportSetting, Diagnostics, ISSUE_LABELS, NONCE_TTL_MS, Redactions, TICKET_LABEL,
 };
@@ -210,27 +209,22 @@ pub(crate) async fn create(
 const SETTINGS: &str = "Settings → This host";
 
 fn issue_error(e: UpdateError, repo: &str) -> ApiError {
-    let conflict = |code, msg: String| ApiError::new(StatusCode::CONFLICT, code, msg);
     match e {
-        UpdateError::Unauthorized => conflict(
-            "token_rejected",
+        UpdateError::Unauthorized => ApiError::conflict(
+            codes::TOKEN_REJECTED,
             format!("GitHub rejected the update token (expired or revoked). Replace it in {SETTINGS} → Updates."),
         ),
-        UpdateError::NotFound | UpdateError::Http(403, _) => conflict(
-            "token_no_issue_access",
+        UpdateError::NotFound | UpdateError::Http(403, _) => ApiError::conflict(
+            codes::TOKEN_NO_ISSUE_ACCESS,
             format!(
                 "The update token can't create issues on {repo}. Give it Issues: write access, or set a new one in \
                  {SETTINGS} → Updates."
             ),
         ),
-        UpdateError::Network(m) => ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            "github_unreachable",
-            format!("Could not reach GitHub ({m}). Try again."),
-        ),
-        other => {
-            ApiError::new(StatusCode::BAD_GATEWAY, "github_error", format!("GitHub did not take the report: {other}"))
+        UpdateError::Network(m) => {
+            ApiError::upstream(codes::GITHUB_UNREACHABLE, format!("Could not reach GitHub ({m}). Try again."))
         }
+        other => ApiError::upstream(codes::GITHUB_ERROR, format!("GitHub did not take the report: {other}")),
     }
 }
 
@@ -242,8 +236,7 @@ pub(crate) async fn file(
 ) -> Result<BugReportFiled, ApiError> {
     let text = |s: &Option<String>| s.clone().unwrap_or_default();
     let report = br::Report { what_happened: text(&r.description), expected: text(&r.expected), steps: text(&r.steps) };
-    let (title, report) =
-        br::validate(&r.title, &report).map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m))?;
+    let (title, report) = br::validate(&r.title, &report).map_err(ApiError::invalid)?;
     let nonce = r.nonce.as_deref().map(str::trim).filter(|n| !n.is_empty()).map(String::from);
     let mut nonces = st.bug_report_nonces.lock().await;
     let now = now_ms();
@@ -263,17 +256,15 @@ pub(crate) async fn file(
     let body = br::body(&report, diagnostics.as_deref(), pdt_core::BUILD_VERSION, os.as_deref());
     let filed = match setting.route(project.is_some()) {
         BugReportRoute::Off => {
-            return Err(ApiError::new(
-                StatusCode::CONFLICT,
-                "bug_reports_off",
+            return Err(ApiError::conflict(
+                codes::BUG_REPORTS_OFF,
                 format!("Bug reports are turned off. Turn them on in {SETTINGS} → Bug reports."),
             ));
         }
         BugReportRoute::Local => {
             let Some(p) = project else {
-                return Err(ApiError::new(
-                    StatusCode::CONFLICT,
-                    "no_bug_project",
+                return Err(ApiError::conflict(
+                    codes::NO_BUG_PROJECT,
                     format!(
                         "Bug reports are set to local tickets, but no project here has {} as its origin. Choose \
                          GitHub in {SETTINGS} → Bug reports.",
@@ -310,9 +301,8 @@ pub(crate) async fn file(
         }
         BugReportRoute::Github => {
             let Some(token) = crate::update::read_token(st).await? else {
-                return Err(ApiError::new(
-                    StatusCode::CONFLICT,
-                    "no_token",
+                return Err(ApiError::conflict(
+                    codes::NO_TOKEN,
                     format!("Reporting a bug needs the update token. Add it in {SETTINGS} → Updates."),
                 ));
             };

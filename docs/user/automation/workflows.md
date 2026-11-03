@@ -308,7 +308,8 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
   shows, until **Resume pickup** in the same workflow (or you) resumes it.
 - **Tell people**: **Notify me**, **Put it in my Inbox**, a Discord post, a comment on a GitHub issue. **Notify me**
   can set how far it reaches you (from a dot to a desktop notification, or only the chat channel), post to a chat
-  channel too, and do nothing once a given Inbox item is answered.
+  channel too, and do nothing once a given Inbox item is answered. Its link opens a ticket (by key), an Inbox item or a
+  web address (`http` or `https` only).
 - **Show levels** holds how far each kind of notification reaches you, and quiet hours. It starts no runs: PDT reads it
   from the **Notification rules** workflow as it makes each notification. Add another with **projects** set to give
   those projects their own levels.

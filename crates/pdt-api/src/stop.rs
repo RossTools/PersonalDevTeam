@@ -4,13 +4,12 @@
 //! Draft, Ready or To do does it (worktree kept), as do Abandon, `POST /api/tickets/{id}/stop` and the PM's
 //! `stop_ticket`.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
 use pdt_core::ticket::{Actor, AttemptState, By, TicketStage};
 use pdt_store::AttemptInfo;
 use serde::{Deserialize, Serialize};
@@ -82,14 +81,13 @@ pub(crate) async fn stop_ticket(
 ) -> Result<StopResult, ApiError> {
     let by = by.into();
     if let Some(stage) = req.stage.filter(|s| !s.is_before_work()) {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_stage",
+        return Err(ApiError::bad_request(
+            codes::INVALID_STAGE,
             format!("a stopped ticket goes to draft, ready or todo, not {}", stage.as_str()),
         ));
     }
     let since = now_ms();
-    let ticket = st.store.get_ticket_summary(ticket_id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    let ticket = st.store.get_ticket_summary(ticket_id).await?.or_404("ticket")?;
     let to = req.stage.or((ticket.stage == TicketStage::InProgress).then_some(TicketStage::Todo));
     if let Some(stage) = to.filter(|s| *s != ticket.stage) {
         st.store.move_ticket_by(ticket_id, stage, &by, None, now_ms()).await?;

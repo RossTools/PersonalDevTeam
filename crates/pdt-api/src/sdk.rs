@@ -2,7 +2,7 @@
 //! kinds, the app's state, and the helpers PDT's own integrations use (outbound HTTP, connections and their secrets,
 //! CI of attempts, built-in workflows and templates).
 
-pub use crate::error::ApiError;
+pub use crate::error::{ApiError, OrNotFound, codes};
 pub use crate::integrations::action::{Action, ActionCx, AnyAction, ConnectionFace, NodeFace, ToolFace, Via};
 pub use crate::integrations::{Imported, Integration, NotificationChannel, Poller, Registry, Service, Tool, tool_info};
 pub use crate::mcp::tools::Cx;

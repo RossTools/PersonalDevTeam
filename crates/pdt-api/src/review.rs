@@ -2,7 +2,7 @@
 //! file, line comments, Send feedback into the coder session, Approve, and Merge (a local merge, or auto-merge of the
 //! attempt's pull request on the project's forge).
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::forge::ProjectForge;
 use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
@@ -35,20 +35,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-fn conflict(code: &'static str, message: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, code, message)
-}
-
-fn invalid(message: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", message)
-}
-
 /// The worktree, its project and the attempt working in it; 409 `worktree_missing` when its folder is gone.
 async fn load(st: &AppState, worktree_id: &str) -> Result<(Worktree, Project, Option<AttemptInfo>), ApiError> {
-    let wt = st.store.get_worktree(worktree_id).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
-    let project = st.store.get_project(&wt.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let wt = st.store.get_worktree(worktree_id).await?.or_404("worktree")?;
+    let project = st.project(&wt.project_id).await?;
     if !PathBuf::from(&wt.path).is_dir() {
-        return Err(conflict("worktree_missing", "this worktree's folder is gone"));
+        return Err(ApiError::conflict(codes::WORKTREE_MISSING, "this worktree's folder is gone"));
     }
     let attempt = st.store.attempt_for_worktree(worktree_id).await?;
     Ok((wt, project, attempt))
@@ -158,7 +150,7 @@ pub(crate) async fn file(
         None => rel.clone(),
     };
     if rel.is_empty() || old_rel.is_empty() {
-        return Err(invalid("name a file"));
+        return Err(ApiError::invalid("name a file"));
     }
     let checkout = PathBuf::from(&wt.path);
     let sides = tokio::task::spawn_blocking(move || -> Result<FileSides, ApiError> {
@@ -188,17 +180,17 @@ pub(crate) async fn list_comments(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<ReviewComment>>, ApiError> {
-    st.store.get_worktree(&id).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
+    st.store.get_worktree(&id).await?.or_404("worktree")?;
     Ok(Json(st.store.list_review_comments(&id).await?))
 }
 
 fn check_body(body: &str) -> Result<String, ApiError> {
     let body = body.trim();
     if body.is_empty() {
-        return Err(invalid("a comment needs text"));
+        return Err(ApiError::invalid("a comment needs text"));
     }
     if body.len() > MAX_COMMENT_BYTES {
-        return Err(invalid("a comment can be at most 16 KB"));
+        return Err(ApiError::invalid("a comment can be at most 16 KB"));
     }
     Ok(body.to_string())
 }
@@ -223,7 +215,7 @@ pub(crate) async fn add_comment(
     sent: bool,
 ) -> Result<ReviewComment, ApiError> {
     let id = worktree_id.to_string();
-    st.store.get_worktree(&id).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
+    st.store.get_worktree(&id).await?.or_404("worktree")?;
     let body = check_body(&input.body)?;
     let now = now_ms();
     let mut c = ReviewComment {
@@ -246,7 +238,7 @@ pub(crate) async fn add_comment(
     match input.parent_id.as_deref().filter(|p| !p.is_empty()) {
         Some(pid) => {
             let parent = st.store.get_review_comment(pid).await?.filter(|p| p.worktree_id == id);
-            let parent = parent.ok_or_else(|| invalid("the comment to reply to does not exist"))?;
+            let parent = parent.ok_or_else(|| ApiError::invalid("the comment to reply to does not exist"))?;
             let root = match &parent.parent_id {
                 Some(rid) => st.store.get_review_comment(rid).await?.unwrap_or(parent),
                 None => parent,
@@ -261,10 +253,10 @@ pub(crate) async fn add_comment(
         None => {
             c.path = crate::files::clean_path(&input.path)?;
             if c.path.is_empty() {
-                return Err(invalid("name the file the comment is on"));
+                return Err(ApiError::invalid("name the file the comment is on"));
             }
             if c.line == 0 || c.end_line < c.line {
-                return Err(invalid("lines are numbered from 1, and the range must not run backwards"));
+                return Err(ApiError::invalid("lines are numbered from 1, and the range must not run backwards"));
             }
         }
     }
@@ -273,11 +265,11 @@ pub(crate) async fn add_comment(
 }
 
 async fn get_comment(st: &AppState, id: &str) -> Result<ReviewComment, ApiError> {
-    st.store.get_review_comment(id).await?.ok_or_else(|| ApiError::not_found("comment"))
+    st.store.get_review_comment(id).await?.or_404("comment")
 }
 
 fn sent_already() -> ApiError {
-    conflict("comment_sent", "this comment was already sent to the agent")
+    ApiError::conflict(codes::COMMENT_SENT, "this comment was already sent to the agent")
 }
 
 /// `PATCH /api/review-comments/{id}`: a draft's text, a thread's resolved state.
@@ -297,7 +289,7 @@ pub(crate) async fn update_comment(
     }
     if let Some(resolved) = patch.resolved {
         if c.parent_id.is_some() {
-            return Err(invalid("only a thread's first comment is resolved"));
+            return Err(ApiError::invalid("only a thread's first comment is resolved"));
         }
         c.resolved_at = if resolved { c.resolved_at.or(Some(now)) } else { None };
     }
@@ -331,14 +323,20 @@ async fn coder_session(st: &AppState, wt: &Worktree, attempt: Option<&AttemptInf
         })
         .collect();
     if agents.is_empty() {
-        return Err(conflict("no_agent_session", "no agent session works on this branch; start one first"));
+        return Err(ApiError::conflict(
+            codes::NO_AGENT_SESSION,
+            "no agent session works on this branch; start one first",
+        ));
     }
     agents.sort_by_key(|s| s.created_at);
-    agents
-        .into_iter()
-        .rev()
-        .find(|s| s.mode == SessionMode::Conversation || st.ptys.is_running(&s.id))
-        .ok_or_else(|| conflict("session_not_running", "the agent's terminal session isn't running; restart it first"))
+    agents.into_iter().rev().find(|s| s.mode == SessionMode::Conversation || st.ptys.is_running(&s.id)).ok_or_else(
+        || {
+            ApiError::conflict(
+                codes::SESSION_NOT_RUNNING,
+                "the agent's terminal session isn't running; restart it first",
+            )
+        },
+    )
 }
 
 /// Puts `text` into the session: a conversation's next message, or a bracketed paste into a terminal.
@@ -346,9 +344,9 @@ async fn deliver(st: &AppState, session: &Session, text: &str) -> Result<(), Api
     if session.mode == SessionMode::Conversation {
         crate::conversations::send_user_message(st, session, text).await
     } else {
-        crate::activity::type_message(st, &session.id, text)
-            .await
-            .map_err(|e| conflict("session_not_running", format!("could not type into the session: {e}")))
+        crate::activity::type_message(st, &session.id, text).await.map_err(|e| {
+            ApiError::conflict(codes::SESSION_NOT_RUNNING, format!("could not type into the session: {e}"))
+        })
     }
 }
 
@@ -357,12 +355,12 @@ pub(crate) async fn feedback(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<FeedbackResult>, ApiError> {
-    let wt = st.store.get_worktree(&id).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
+    let wt = st.store.get_worktree(&id).await?.or_404("worktree")?;
     let attempt = st.store.attempt_for_worktree(&id).await?;
     let all = st.store.list_review_comments(&id).await?;
     let drafts: Vec<&ReviewComment> = all.iter().filter(|c| c.sent_at.is_none()).collect();
     if drafts.is_empty() {
-        return Err(conflict("no_drafts", "there are no draft comments to send"));
+        return Err(ApiError::conflict(codes::NO_DRAFTS, "there are no draft comments to send"));
     }
     let session = coder_session(&st, &wt, attempt.as_ref()).await?;
     let items: Vec<FeedbackItem> = drafts
@@ -392,22 +390,17 @@ pub(crate) async fn feedback(
 }
 
 async fn load_attempt(st: &AppState, id: &str) -> Result<AttemptInfo, ApiError> {
-    st.store.get_attempt(id).await?.ok_or_else(|| ApiError::not_found("attempt"))
-}
-
-async fn load_ticket(st: &AppState, id: &str) -> Result<Ticket, ApiError> {
-    let t = st.store.get_ticket(id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
-    crate::overlap::decorate(st, t).await
+    st.store.get_attempt(id).await?.or_404("attempt")
 }
 
 /// `POST /api/attempts/{id}/approve`: records the approval at the branch's head.
 pub(crate) async fn approve(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
     let info = load_attempt(&st, &id).await?;
     if info.attempt.state != AttemptState::Active {
-        return Err(conflict("attempt_inactive", "this attempt has ended"));
+        return Err(ApiError::conflict(codes::ATTEMPT_INACTIVE, "this attempt has ended"));
     }
     record_approval(&st, &info, json!({})).await?;
-    Ok(Json(load_ticket(&st, &info.ticket_id).await?))
+    Ok(Json(crate::overlap::load_ticket(&st, &info.ticket_id).await?))
 }
 
 /// The branch's head commit, if it has one.
@@ -544,7 +537,7 @@ fn why_blocked(problem: MergeProblem) -> &'static str {
 }
 
 /// Why a merge didn't happen: the project's policy, or something in its way. `fixable`: the attempt's agent can clear
-/// it with a commit (a conflict, uncommitted changes in the worktree), so a workflow can send it back to be fixed.
+/// it with a commit (a ApiError::conflict, uncommitted changes in the worktree), so a workflow can send it back to be fixed.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Refusal {
     pub code: &'static str,
@@ -558,7 +551,7 @@ impl Refusal {
     }
 
     fn into_error(self) -> ApiError {
-        conflict(self.code, self.reason)
+        ApiError::conflict(self.code, self.reason)
     }
 }
 
@@ -572,13 +565,12 @@ pub(crate) async fn merge(
     let input: MergeRequest = if body.iter().all(u8::is_ascii_whitespace) {
         MergeRequest::default()
     } else {
-        serde_json::from_slice(&body)
-            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()))?
+        serde_json::from_slice(&body).map_err(|e| ApiError::invalid(e.to_string()))?
     };
     let merger = match input.by.as_deref() {
         Some("user") => Merger::User,
         None | Some("agent") => Merger::Automated,
-        Some(other) => return Err(invalid(format!("by is user or agent, not {other}"))),
+        Some(other) => return Err(ApiError::invalid(format!("by is user or agent, not {other}"))),
     };
     merge_attempt(&st, &id, &input, merger).await?.map(Json).map_err(Refusal::into_error)
 }
@@ -645,12 +637,12 @@ pub(crate) async fn merge_attempt(
             let draft = crate::github::watched_pr(&st, &info.attempt.id).is_none_or(|pr| pr.draft);
             if draft {
                 let reason = "the pull request is a draft; mark it ready for review first".into();
-                return Ok(Err(Refusal { code: "merge_blocked", reason, fixable: false }));
+                return Ok(Err(Refusal { code: codes::MERGE_BLOCKED, reason, fixable: false }));
             }
             let reason = "the pull request conflicts with its base; merge the base branch in, resolve the conflicts \
                           and push"
                 .into();
-            return Ok(Err(Refusal { code: "merge_blocked", reason, fixable: true }));
+            return Ok(Err(Refusal { code: codes::MERGE_BLOCKED, reason, fixable: true }));
         }
         Some(problem) => {
             let fixable = matches!(problem, MergeProblem::Conflict | MergeProblem::Dirty);
@@ -658,9 +650,9 @@ pub(crate) async fn merge_attempt(
         }
     }
     if let Some(pr) = &p.pr {
-        let forge = crate::forge::project_forge(&st, &info.project_id, &info.repo_path)
-            .await
-            .ok_or_else(|| conflict("merge_failed", "the project no longer has a forge to merge the pull request"))?;
+        let forge = crate::forge::project_forge(&st, &info.project_id, &info.repo_path).await.ok_or_else(|| {
+            ApiError::conflict(codes::MERGE_FAILED, "the project no longer has a forge to merge the pull request")
+        })?;
         // A workflow's or an agent's merge waits for green CI (PDT-151), whatever the repository's branch protection
         // asks: a forge's auto-merge (GitHub's) merges at once where nothing is required. On a forge that doesn't hold merges for
         // required checks, it always waits (PDT-176), for every CI provider (PDT-242).
@@ -676,15 +668,18 @@ pub(crate) async fn merge_attempt(
             && (forge.kind != ForgeKind::LOCAL || providers.iter().all(|p| p.id() == pdt_core::pr::LOCAL_CI));
         // Where the forge can't hold it, a person's merge waits for CI too: PDT merges it once CI passes.
         let no_ci = if (automated && (policy.require_green_ci || !holds)) || !can_hold {
-            match ci_gate(&st, &info, &forge, &providers).await.map_err(|m| conflict("ci_unreadable", m))? {
+            match ci_gate(&st, &info, &forge, &providers)
+                .await
+                .map_err(|m| ApiError::conflict(codes::CI_UNREADABLE, m))?
+            {
                 CiGate::Passed => false,
                 CiGate::NoCi => automated,
                 CiGate::Pending(_) | CiGate::Failed(_) if !automated => {
                     let why = format!("{} doesn't allow auto-merge", forge.repo);
                     return Ok(Ok(hold_merge(&st, &info, input, &name, &why).await?));
                 }
-                CiGate::Pending(reason) => return Ok(Err(Refusal { code: "ci_pending", reason, fixable: false })),
-                CiGate::Failed(reason) => return Ok(Err(Refusal { code: "ci_failed", reason, fixable: true })),
+                CiGate::Pending(reason) => return Ok(Err(Refusal { code: codes::CI_PENDING, reason, fixable: false })),
+                CiGate::Failed(reason) => return Ok(Err(Refusal { code: codes::CI_FAILED, reason, fixable: true })),
             }
         } else {
             false
@@ -702,7 +697,7 @@ pub(crate) async fn merge_attempt(
             Ok(()) => {}
             // The forge can't hold it for checks it doesn't require (PDT-297): PDT does.
             Err(ForgeError::NotReady(why)) => return Ok(Ok(hold_merge(&st, &info, input, &name, &why).await?)),
-            Err(e) => return Err(conflict("merge_failed", e.to_string())),
+            Err(e) => return Err(ApiError::conflict(codes::MERGE_FAILED, e.to_string())),
         }
         record_merge(&st, &info, input).await?;
         if no_ci {
@@ -740,7 +735,7 @@ pub(crate) async fn merge_attempt(
     let outcome = tokio::task::spawn_blocking(move || pdt_git::merge_local(&repo, &branch, &base, &message, squash))
         .await
         .map_err(ApiError::internal)?
-        .map_err(|e| conflict("merge_failed", e.to_string()))?;
+        .map_err(|e| ApiError::conflict(codes::MERGE_FAILED, e.to_string()))?;
     let commit = match outcome {
         pdt_git::MergeOutcome::Merged { commit } => commit,
         pdt_git::MergeOutcome::Conflict { .. } => return Ok(Err(Refusal::blocked(MergeProblem::Conflict, true))),
@@ -812,7 +807,7 @@ async fn merge_held_now(st: &AppState, attempt_id: &str) {
             return;
         }
         // Another provider's CI still to come: its pass tries again.
-        Ok(Err(r)) if r.code == "ci_pending" => return,
+        Ok(Err(r)) if r.code == codes::CI_PENDING => return,
         Ok(Err(r)) => (st.store.get_attempt(attempt_id).await.ok().flatten(), r.reason),
         Err(e) => (st.store.get_attempt(attempt_id).await.ok().flatten(), e.message().to_string()),
     };
@@ -849,7 +844,7 @@ async fn pr_merged(
 async fn no_local_merge(st: &AppState, info: &AttemptInfo, read: bool) -> Result<Option<Refusal>, ApiError> {
     if !read {
         let reason = format!("{SHORT_NAME} couldn't read the branch's pull request, so it won't merge it locally");
-        return Ok(Some(Refusal { code: "pr_unreadable", reason, fixable: false }));
+        return Ok(Some(Refusal { code: codes::PR_UNREADABLE, reason, fixable: false }));
     }
     if let Some(pr) = crate::github::watched_pr(st, &info.attempt.id) {
         let reason = match pr.state {
@@ -858,11 +853,11 @@ async fn no_local_merge(st: &AppState, info: &AttemptInfo, read: bool) -> Result
             }
             _ => format!("the branch has {}, so it merges through that, not with a local merge", pr.name()),
         };
-        return Ok(Some(Refusal { code: "merge_blocked", reason, fixable: false }));
+        return Ok(Some(Refusal { code: codes::MERGE_BLOCKED, reason, fixable: false }));
     }
     if st.store.project_merged_a_pr(&info.project_id).await? {
         let reason = "this project's tickets merge through pull requests, and the branch has none yet".into();
-        return Ok(Some(Refusal { code: "merge_blocked", reason, fixable: false }));
+        return Ok(Some(Refusal { code: codes::MERGE_BLOCKED, reason, fixable: false }));
     }
     Ok(None)
 }
@@ -956,10 +951,18 @@ pub(crate) async fn ask_agent(
     let text = match p.problem {
         Some(MergeProblem::Conflict) => conflict_message(&p.branch, &p.base, &p.conflicts),
         Some(MergeProblem::NoPr) => open_pr_message(&p.branch, &p.base),
-        _ => return Err(conflict("nothing_to_ask", "nothing the agent can fix stops this merge")),
+        _ => return Err(ApiError::conflict(codes::NOTHING_TO_ASK, "nothing the agent can fix stops this merge")),
     };
-    let wid = info.attempt.worktree_id.clone().ok_or_else(|| conflict("worktree_missing", "the worktree is gone"))?;
-    let wt = st.store.get_worktree(&wid).await?.ok_or_else(|| conflict("worktree_missing", "the worktree is gone"))?;
+    let wid = info
+        .attempt
+        .worktree_id
+        .clone()
+        .ok_or_else(|| ApiError::conflict(codes::WORKTREE_MISSING, "the worktree is gone"))?;
+    let wt = st
+        .store
+        .get_worktree(&wid)
+        .await?
+        .ok_or_else(|| ApiError::conflict(codes::WORKTREE_MISSING, "the worktree is gone"))?;
     let session = coder_session(&st, &wt, Some(&info)).await?;
     deliver(&st, &session, &text).await?;
     Ok(Json(FeedbackResult { session_id: session.id, sent: 0 }))

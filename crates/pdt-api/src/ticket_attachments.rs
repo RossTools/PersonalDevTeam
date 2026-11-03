@@ -2,7 +2,7 @@
 //! their metadata in the store. The user adds them from the UI (`POST /api/tickets/{id}/attachments`), the PM and
 //! agents through pdt-mcp by local path ([`attach_path`]). Removed with their ticket ([`prune`]).
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::body::Bytes;
@@ -57,7 +57,7 @@ async fn ticket_id(st: &AppState, given: &str) -> Result<String, ApiError> {
     if st.store.get_ticket_summary(given).await?.is_some() {
         return Ok(given.to_string());
     }
-    st.store.ticket_id_by_key(given).await?.ok_or_else(|| ApiError::not_found("ticket"))
+    st.store.ticket_id_by_key(given).await?.or_404("ticket")
 }
 
 /// Keeps `bytes` as an attachment of the ticket, by `by`. The bytes decide what it is ([`sniff`]).
@@ -88,7 +88,7 @@ pub(crate) async fn attach(
     })
     .await
     .map_err(|e| ApiError::internal(e.to_string()))?
-    .map_err(|e| ApiError::internal(format!("saving the attachment: {e}")))?;
+    .map_err(|e| ApiError::io("saving the attachment", e))?;
     let added = st.store.add_ticket_attachment(&a).await;
     if !matches!(added, Ok(AddAttachment::Added)) {
         let _ = std::fs::remove_file(&file);
@@ -96,9 +96,8 @@ pub(crate) async fn attach(
     match added? {
         AddAttachment::Added => Ok(a),
         AddAttachment::NoTicket => Err(ApiError::not_found("ticket")),
-        AddAttachment::Full => Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "too_many_attachments",
+        AddAttachment::Full => Err(ApiError::conflict(
+            codes::TOO_MANY_ATTACHMENTS,
             format!(
                 "a ticket holds at most {} attachments; remove one first",
                 pdt_core::ticket_attachment::MAX_PER_TICKET
@@ -274,7 +273,7 @@ pub(crate) async fn get(
     Path((id, aid)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let id = ticket_id(&st, &id).await?;
-    let a = st.store.get_ticket_attachment(&id, &aid).await?.ok_or_else(|| ApiError::not_found("attachment"))?;
+    let a = st.store.get_ticket_attachment(&id, &aid).await?.or_404("attachment")?;
     let bytes = tokio::fs::read(path_of(&st, &a)).await.map_err(|_| ApiError::not_found("attachment"))?;
     let media_type = if a.is_image() { a.media_type.clone() } else { "text/plain; charset=utf-8".into() };
     let ascii: String =
@@ -299,7 +298,7 @@ pub(crate) async fn remove(
     Path((id, aid)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
     let id = ticket_id(&st, &id).await?;
-    let a = st.store.get_ticket_attachment(&id, &aid).await?.ok_or_else(|| ApiError::not_found("attachment"))?;
+    let a = st.store.get_ticket_attachment(&id, &aid).await?.or_404("attachment")?;
     st.store.delete_ticket_attachment(&id, &aid).await?;
     let _ = tokio::fs::remove_file(path_of(&st, &a)).await;
     Ok(StatusCode::NO_CONTENT)
