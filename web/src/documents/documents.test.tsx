@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Document } from '../api/gen/Document';
@@ -11,6 +11,7 @@ import { DocumentsList, useDocumentsFilters } from './DocumentsList';
 import { anchorLabel, headingsOf } from './DocumentComments';
 import { ImportDocumentDialog, NewDocumentDialog } from './DocumentDialogs';
 import { pickerModules } from './picker';
+import { api } from '../api/client';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -310,7 +311,7 @@ describe('documents', () => {
   });
 
   it('a provider’s own picker opens for each signed-in account and imports what it picks', async () => {
-    const picker = { label: 'Pick from the drive', module: '/api/drive/picker.js', accounts: '/api/drive/accounts', help: 'Sign in to pick.' };
+    const picker = { label: 'Browse the drive', module: '/api/drive/picker.js', accounts: '/api/drive/accounts', help: 'Sign in to pick.' };
     const drive = { id: 'drive', label: 'Drive', capabilities: { ...all, embed: true }, picker };
     const pick = vi.fn().mockResolvedValue(['c1/f1']);
     const load = vi.spyOn(pickerModules, 'load').mockResolvedValue({ pick });
@@ -326,7 +327,7 @@ describe('documents', () => {
       'POST /api/documents/import': doc('d9', 'Picked'),
     });
     renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={onImported} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Pick from the drive' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Browse the drive…' }));
     await waitFor(() => expect(onImported).toHaveBeenCalled());
     expect(load).toHaveBeenCalledWith('/api/drive/picker.js');
     expect(pick.mock.calls[0][0].account).toBe('c1');
@@ -334,7 +335,7 @@ describe('documents', () => {
   });
 
   it('a provider’s picker says how to get one when no account opens it', async () => {
-    const picker = { label: 'Pick from the drive', module: '/api/drive/picker.js', accounts: '/api/drive/accounts', help: 'Sign in to pick.' };
+    const picker = { label: 'Browse the drive', module: '/api/drive/picker.js', accounts: '/api/drive/accounts', help: 'Sign in to pick.' };
     stubApi({
       'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker }], default: 'drive' },
       'GET /api/documents/providers/drive/files': [],
@@ -351,7 +352,7 @@ describe('documents', () => {
     setup: 'Give the account a picker key.',
     searchNote: 'Only files PDT opened appear here.',
   };
-  const textPicker = { label: 'Pick from the drive', module: '/api/drive/picker.js', accounts: '/api/drive/accounts', ...texts };
+  const textPicker = { label: 'Browse the drive', module: '/api/drive/picker.js', accounts: '/api/drive/accounts', ...texts };
   const account = (over: object) => ({
     connectionId: 'c1', name: 'Work', signedIn: true, email: 'me@work.com', hasClient: true, builtIn: true, agents: false, picker: false, note: null, ...over,
   });
@@ -367,7 +368,9 @@ describe('documents', () => {
     expect(screen.queryByText('Sign in to pick.')).toBeNull();
     expect(screen.queryByText('Give the account a picker key.')).toBeNull();
     // The empty search says what it can find, and offers no picker there is none of.
-    expect(await screen.findByText('No files found. Only files PDT opened appear here.')).toBeInTheDocument();
+    expect(await screen.findByText('No files PDT can open yet')).toBeInTheDocument();
+    expect(screen.getByText('Only files PDT opened appear here.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Browse the drive/ })).toBeNull();
   });
 
   it('an own-client account without the picker is asked for its key, and edits its connection from the dialog', async () => {
@@ -387,13 +390,115 @@ describe('documents', () => {
     expect(screen.getByLabelText(/Picker API key/)).toBeInTheDocument();
   });
 
-  it('with a picker, the empty search points at it for other files', async () => {
+  it('with a picker, a search that finds nothing says why and opens the picker for it', async () => {
+    const pick = vi.fn().mockResolvedValue([]);
+    vi.spyOn(pickerModules, 'load').mockResolvedValue({ pick });
     stubApi({
       'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker: textPicker }], default: 'drive' },
       'GET /api/documents/providers/drive/files': [],
       'GET /api/drive/accounts': [account({ picker: true })],
     });
     renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
-    expect(await screen.findByText('No files found. Only files PDT opened appear here. Use Pick from the drive to open others.')).toBeInTheDocument();
+    await userEvent.type(await screen.findByRole('searchbox'), 'roadmap');
+    expect(await screen.findByText('No files named “roadmap” that PDT can open')).toBeInTheDocument();
+    expect(screen.getByText('Only files PDT opened appear here.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Browse the drive for it' }));
+    await waitFor(() => expect(pick).toHaveBeenCalled());
+    expect(pick.mock.calls[0][0].account).toBe('c1');
+  });
+
+  it('the provider block names the account, and with several the browse button is a menu of them', async () => {
+    const pick = vi.fn().mockResolvedValue([]);
+    vi.spyOn(pickerModules, 'load').mockResolvedValue({ pick });
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker: textPicker }], default: 'drive' },
+      'GET /api/documents/providers/drive/files': [],
+      'GET /api/drive/accounts': [account({ picker: true }), account({ connectionId: 'c2', name: 'Home', email: 'me@home.com', picker: true })],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    const block = await screen.findByRole('group', { name: 'Provider' });
+    expect(await within(block).findByText('2 accounts')).toBeInTheDocument();
+    await userEvent.click(within(block).getByRole('button', { name: /Browse the drive…/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'me@home.com' }));
+    await waitFor(() => expect(pick).toHaveBeenCalled());
+    expect(pick.mock.calls[0][0].account).toBe('c2');
+  });
+
+  it('several providers are a segmented control', async () => {
+    const calls = stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [providers.providers[0], { id: 'more', label: 'More', capabilities: all, picker: null }] },
+      'GET /api/documents/providers/fake/files': [],
+      'GET /api/documents/providers/more/files': [],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    const group = await screen.findByRole('radiogroup', { name: 'Provider' });
+    await userEvent.click(within(group).getByRole('radio', { name: 'More' }));
+    await waitFor(() => expect(calls.some((c) => c.path.startsWith('/api/documents/providers/more/files'))).toBe(true));
+  });
+
+  it('rows show the kind, when they were edited, whether PDT has them and a link; the one importing spins', async () => {
+    const found = (reference: string, title: string, over: object = {}) => ({
+      reference, title, kind: 'doc', url: null, version: null, modified: null, documentId: null, ticketIds: [], ...over,
+    });
+    let finish: (d: Document) => void = () => {};
+    const onImported = vi.fn();
+    const calls = stubApi({
+      'GET /api/documents/providers': providers,
+      'GET /api/projects': [project],
+      'GET /api/documents/providers/fake/files': [
+        found('r1', 'Release plan', { modified: Date.now() - 2 * 3_600_000 }),
+        found('r2', 'Launch checklist', { documentId: 'd2', ticketIds: ['t9'], url: 'https://example.com/r2' }),
+        found('r3', 'Runner costs', { kind: 'sheet', documentId: 'd3', ticketIds: ['other'] }),
+      ],
+      'POST /api/documents/import': () => new Promise<Document>((resolve) => { finish = resolve; }),
+    });
+    renderWithQuery(<ImportDocumentDialog ticket={{ id: 't9', key: 'PDT-9', projectId: 'p1' }} onClose={() => {}} onImported={onImported} />);
+    const dialog = await screen.findByRole('dialog', { name: 'Import a document' });
+    await waitFor(() => expect(within(dialog).getByText(/^Into/)).toHaveTextContent('Into PDT-9 · PDT'));
+    const row = (name: string) => screen.getByRole('menuitem', { name: new RegExp(name) });
+    await screen.findByText('Release plan');
+    expect(row('Release plan')).toHaveTextContent('Doc · edited 2h ago');
+    expect(within(row('Launch checklist')).getByText('On this ticket')).toBeInTheDocument();
+    expect(within(row('Launch checklist')).getByRole('link', { name: /Open Launch checklist/ })).toHaveAttribute('href', 'https://example.com/r2');
+    expect(within(row('Runner costs')).getByText('In PDT')).toBeInTheDocument();
+    expect(row('Runner costs')).toHaveTextContent('Sheet');
+    expect(within(row('Release plan')).queryByText(/In PDT|On this ticket/)).toBeNull();
+    // Clicking a row's link opens the file; it doesn't import it.
+    await userEvent.click(within(row('Launch checklist')).getByRole('link', { name: /Open Launch checklist/ }));
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+    await userEvent.click(screen.getByText('Release plan'));
+    expect(await within(row('Release plan')).findByLabelText('Importing')).toBeInTheDocument();
+    expect(within(row('Launch checklist')).queryByLabelText('Importing')).toBeNull();
+    finish(doc('d1', 'Release plan'));
+    await waitFor(() => expect(onImported).toHaveBeenCalled());
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ provider: 'fake', reference: 'r1', ticketId: 't9', by: 'user' });
+  });
+
+  it('a file dropped anywhere on the dialog is imported, and the zone says what it becomes while it is dragged', async () => {
+    const onImported = vi.fn();
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [...providers.providers, { id: 'local', label: 'Local', capabilities: all, picker: null }] },
+      'GET /api/documents/providers/fake/files': [],
+    });
+    const upload = vi.spyOn(api, 'uploadDocument').mockResolvedValue({ document: doc('d5', 'Q4 plan', { kind: 'sheet' }), dropped: [] });
+    renderWithQuery(<ImportDocumentDialog projectId="p1" onClose={() => {}} onImported={onImported} />);
+    await screen.findByText(/becomes a doc/);
+    const file = new File(['a,b'], 'Q4 plan.csv', { type: 'text/csv' });
+    const drag = (files: File[]) => ({ dataTransfer: { types: ['Files'], items: [{ kind: 'file', type: 'text/csv' }], files, dropEffect: 'none' } });
+    const elsewhere = screen.getByText('Files PDT can open', { selector: 'h3' });
+    fireEvent.dragEnter(elsewhere, drag([]));
+    expect(await screen.findByText(/Drop to import it as a sheet/)).toBeInTheDocument();
+    expect(screen.queryByText(/becomes a doc/)).toBeNull();
+    fireEvent.drop(elsewhere, drag([file]));
+    await waitFor(() => expect(onImported).toHaveBeenCalled());
+    expect(upload).toHaveBeenCalledWith(file, { projectId: 'p1' });
+  });
+
+  it('without the local provider there is no drop zone', async () => {
+    stubApi({ 'GET /api/documents/providers': providers, 'GET /api/documents/providers/fake/files': [] });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    await screen.findByText('No files PDT can open yet');
+    expect(screen.queryByText('From your computer')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Choose file…' })).toBeNull();
   });
 });

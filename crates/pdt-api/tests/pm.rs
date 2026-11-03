@@ -233,6 +233,7 @@ async fn notes_and_the_journal_carry_into_the_next_session() {
     )
     .await;
     assert!(said.contains("\"saved\": true"), "{said}");
+    assert!(said.contains("\"title\": \"Deploys\"") && said.contains("\"project\": \"PX\""), "{said}");
     let said = ask(&env, &first, r#"mcp: search_notes {"query": "vault"}"#).await;
     assert!(said.contains("Deploys"), "{said}");
     let said = ask(&env, &first, r#"mcp: write_journal {"body": "We planned the PM's notes."}"#).await;
@@ -729,6 +730,9 @@ async fn the_users_own_notes_are_found_by_the_pm_but_never_briefed_or_written_by
     assert!(said.contains("the user's own") && !said.contains("\"deleted\""), "{said}");
     let said = ask(&env, &pm, r#"mcp: save_note {"title": "Made by the PM"}"#).await;
     assert!(said.contains("\"saved\": true"), "{said}");
+    let made = said.split("\"id\": \"").nth(1).and_then(|r| r.split('"').next()).unwrap_or_else(|| panic!("{said}"));
+    let said = ask(&env, &pm, &format!(r#"mcp: delete_note {{"id": "{made}"}}"#)).await;
+    assert!(said.contains("\"deleted\": true") && said.contains("\"title\": \"Made by the PM\""), "{said}");
     let (_, listed) = call(&env.app, "GET", "/api/pm/notes?kind=user", None).await;
     assert_eq!((listed[0]["title"].as_str(), listed.as_array().unwrap().len()), (Some("Dark mode idea"), 1));
     call(&env.app, "POST", &format!("/api/sessions/{pm}/kill"), None).await;

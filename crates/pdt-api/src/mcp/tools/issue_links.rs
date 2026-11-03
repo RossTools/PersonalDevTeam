@@ -121,7 +121,12 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let found = recognize_one(st, &project.project_id, &a.issue, a.label.as_deref()).await?;
             let by = agent_by(st, cx.session).await;
             let t = link(st, &id, &found, a.close_on_done, by).await?;
-            Ok(json!({"linked": true, "ticket": links_json(&t)}))
+            // The one just linked, for the conversation's card.
+            let issue = match &found {
+                Found::Issue(r) => json!({"key": r.issue.key, "url": r.issue.url, "title": r.issue.title}),
+                Found::Web(url, label) => json!({"key": null, "url": url, "title": label}),
+            };
+            Ok(json!({"linked": true, "issue": issue, "ticket": links_json(&t)}))
         }
         "unlink_issue" => {
             let a: UnlinkIssue = args(a)?;
@@ -135,13 +140,19 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             }
             confirmable(cx, name, &AskTarget::Ticket(id.clone())).await?;
             let by = agent_by(st, cx.session).await;
+            // The one removed, for the conversation's card.
+            let removed = match (issue, web) {
+                (Some(l), _) => json!({"key": l.key, "url": l.url, "title": l.title}),
+                (None, Some(w)) => json!({"key": null, "url": w.url, "title": w.label}),
+                (None, None) => unreachable!("checked above"),
+            };
             let t = match (issue, web) {
                 (Some(l), _) => st.store.unlink_external(&id, &l.system, &l.key, by, now_ms()).await,
                 (None, Some(w)) => st.store.remove_web_link(&id, &w.id, by, now_ms()).await,
                 (None, None) => unreachable!("checked above"),
             }
             .map_err(|e| api(e.into()))?;
-            Ok(json!({"unlinked": true, "ticket": links_json(&t)}))
+            Ok(json!({"unlinked": true, "issue": removed, "ticket": links_json(&t)}))
         }
         other => Err(format!("no tool is called {other}")),
     }

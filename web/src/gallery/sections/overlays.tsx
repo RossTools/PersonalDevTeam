@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Copy, FolderGit2, GitBranch, PanelLeft, Pencil, Plus, Terminal, X } from 'lucide-react';
+import { Copy, FileSpreadsheet, FileText, FolderGit2, GitBranch, PanelLeft, Pencil, Plus, Terminal, X } from 'lucide-react';
 import { Button } from '@ui/Button';
 import { ContextMenu, MenuButton, MenuList, useMenuAt, type MenuEntry } from '@ui/Menu';
 import { List, ListRow } from '@ui/List';
@@ -11,6 +11,7 @@ import { Badge } from '@ui/Badge';
 import { Sheet } from '@ui/Sheet';
 import { CommandList, type CommandItem } from '@ui/CommandList';
 import { SectionLabel } from '@ui/SectionLabel';
+import { Spinner } from '@ui/Spinner';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -204,6 +205,30 @@ function CommandDemo() {
   );
 }
 
+const files: CommandItem[] = [
+  { id: 'plan', label: 'v0.6.1 release plan', icon: <FileText aria-hidden />, description: 'Doc · edited 2h ago', trailing: <Spinner aria-label="Importing" /> },
+  {
+    id: 'launch', label: 'Launch checklist', icon: <FileText aria-hidden />, description: 'Doc · edited yesterday',
+    trailing: <><Badge tone="running">On this ticket</Badge><Link href="https://example.com" external>Open</Link></>,
+  },
+  {
+    id: 'costs', label: 'CI runner costs', icon: <FileSpreadsheet aria-hidden />, description: 'Sheet',
+    trailing: <><Badge tone="accent">In PDT</Badge><Link href="https://example.com" external>Open</Link></>,
+  },
+];
+
+function RichCommandDemo() {
+  const [chosen, setChosen] = useState('—');
+  return (
+    <Row label="CommandList · description and trailing (badges, a spinner, a link that doesn’t choose the row)">
+      <div className="w-[28rem] max-w-full rounded-md border border-border bg-popover p-1">
+        <CommandList label="Files" items={files} onAction={setChosen} autoFocus={false} />
+      </div>
+      <span className="text-meta text-muted-foreground">Chosen: {chosen}</span>
+    </Row>
+  );
+}
+
 export const section = {
   title: 'Menus and overlays',
   order: 30,
@@ -216,6 +241,7 @@ export const section = {
       <HoverCardDemo />
       <SheetDemo />
       <CommandDemo />
+      <RichCommandDemo />
     </>
   ),
 };

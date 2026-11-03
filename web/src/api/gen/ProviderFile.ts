@@ -12,4 +12,8 @@ reference: string, title: string, kind: DocumentKind, url: string | null,
 /**
  * Its version or etag, which changes whenever it does.
  */
-version: string | null, };
+version: string | null, 
+/**
+ * When it last changed (ms since the epoch), from providers that know it.
+ */
+modified: number | null, };

@@ -76,7 +76,7 @@ impl DocumentProvider for GoogleDocs {
     }
     fn picker(&self) -> Option<ProviderPicker> {
         Some(ProviderPicker {
-            label: "Pick from Google Drive".into(),
+            label: "Browse Drive".into(),
             module: "/api/google/picker.js".into(),
             accounts: "/api/google/accounts".into(),
             help: "To pick any file from your Drive, sign in to Google in Settings → Plugins → Google.".into(),
@@ -91,7 +91,7 @@ impl DocumentProvider for GoogleDocs {
                     .into(),
             ),
             // drive.file (oauth::SCOPES): Drive lists only the files PDT made or was given through the picker.
-            search_note: Some("Only files PDT made, or that you opened in PDT, appear here.".into()),
+            search_note: Some("PDT only sees Drive files it made or you opened through it.".into()),
         })
     }
     fn capabilities(&self) -> ProviderCapabilities {
@@ -298,7 +298,7 @@ mod tests {
         let env = env().await;
         account(&env, "c1", "A", None).await;
         account(&env, "c2", "B", None).await;
-        let doc = r#"{"files":[{"id":"d1","name":"Plan","mimeType":"application/vnd.google-apps.document"}]}"#;
+        let doc = r#"{"files":[{"id":"d1","name":"Plan","mimeType":"application/vnd.google-apps.document","modifiedTime":"2026-11-02T10:00:00.000Z"}]}"#;
         env.google
             .ok("POST", TOKEN_URL, TOKEN)
             .ok("GET", &format!("{DRIVE}/files"), doc)
@@ -307,6 +307,7 @@ mod tests {
         let found = env.docs.search("plan", None).await.unwrap();
         let refs: Vec<&str> = found.iter().map(|f| f.reference.as_str()).collect();
         assert_eq!(refs, ["c1/d1"]);
+        assert_eq!(found[0].modified, Some(1_793_613_600_000), "Drive's modifiedTime");
 
         env.google.on("GET", &format!("{DRIVE}/files"), Response::new(503, "{}")).on(
             "GET",

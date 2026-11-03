@@ -179,6 +179,7 @@ async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
     // The local provider finds its files to import, and deleting removes the file and its images.
     let (_, files) = call(&env.app, "GET", "/api/documents/providers/local/files?q=launch", None).await;
     assert_eq!(files.as_array().unwrap().len(), 2, "{files}");
+    assert!(files[0]["modified"].as_i64().is_some_and(|ms| ms > 0), "the file's last change: {files}");
     // A file dropped into the folder can be imported; one elsewhere on the machine can't.
     let dropped = path.with_file_name("Dropped in.md");
     std::fs::write(&dropped, "# Hi\n").unwrap();

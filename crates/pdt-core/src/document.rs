@@ -333,6 +333,24 @@ pub struct ProviderFile {
     /// Its version or etag, which changes whenever it does.
     #[serde(default)]
     pub version: Option<String>,
+    /// When it last changed (ms since the epoch), from providers that know it.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub modified: Option<i64>,
+}
+
+/// A provider's file as the import dialog lists it: with PDT's record of it, when PDT has one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FoundFile {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub file: ProviderFile,
+    /// PDT's document for it, when PDT has one.
+    pub document_id: Option<String>,
+    /// The tickets that document is linked to (their ids).
+    pub ticket_ids: Vec<String>,
 }
 
 /// One cell of a sheet: what it shows, and its formula if it has one.

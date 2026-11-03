@@ -507,7 +507,8 @@ impl Files {
         write_atomic(&path, &data).map_err(failed)?;
         let reference = path.to_string_lossy().into_owned();
         let version = self.wrote(&reference, &data);
-        Ok((ProviderFile { reference, title, kind, url: None, version: Some(version) }, dropped))
+        let modified = modified_ms(&path);
+        Ok((ProviderFile { reference, title, kind, url: None, version: Some(version), modified }, dropped))
     }
 
     fn save_image(&self, reference: &str, name: &str, bytes: &[u8]) -> ProviderResult<String> {
@@ -671,7 +672,15 @@ impl Files {
         write_atomic(&path, &bytes).map_err(failed)?;
         let reference = path.to_string_lossy().into_owned();
         let version = self.wrote(&reference, &bytes);
-        Ok(ProviderFile { reference, title: new.title.clone(), kind: new.kind, url: None, version: Some(version) })
+        let modified = modified_ms(&path);
+        Ok(ProviderFile {
+            reference,
+            title: new.title.clone(),
+            kind: new.kind,
+            url: None,
+            version: Some(version),
+            modified,
+        })
     }
 
     fn delete(&self, reference: &str) -> ProviderResult<()> {
@@ -703,12 +712,22 @@ impl Files {
                 }
                 let when = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
                 let reference = p.to_string_lossy().into_owned();
-                found.push((when, ProviderFile { reference, title, kind: k, url: None, version: None }));
+                let modified = ms_of(when);
+                found.push((when, ProviderFile { reference, title, kind: k, url: None, version: None, modified }));
             }
         }
         found.sort_by_key(|f| std::cmp::Reverse(f.0));
         found.into_iter().map(|(_, f)| f).collect()
     }
+}
+
+/// A file's last change, in ms since the epoch (none when the file system doesn't say).
+fn modified_ms(path: &Path) -> Option<i64> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(ms_of)
+}
+
+fn ms_of(t: SystemTime) -> Option<i64> {
+    t.duration_since(std::time::UNIX_EPOCH).ok().and_then(|d| i64::try_from(d.as_millis()).ok()).filter(|&ms| ms > 0)
 }
 
 impl LocalProvider {
@@ -896,6 +915,7 @@ impl DocumentProvider for LocalProvider {
                 kind,
                 url: None,
                 version: self.version_now(reference).await,
+                modified: modified_ms(&path),
             })
         })
     }

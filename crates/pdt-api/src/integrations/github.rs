@@ -198,7 +198,7 @@ impl Action for CreateIssue {
             description: "Opens an issue in a project's GitHub repository, as PDT's GitHub login: from a ticket \
                           (`{{trigger.ticketId}}`; its title and description unless given, and the ticket links the \
                           issue), or in `project`'s repository. Output: `repo`, `number`, `issue` (owner/name#12), \
-                          `url` and `ticketKey`.",
+                          `title`, `url` and `ticketKey`.",
             ports: &[("filed", "Filed")],
         })
     }

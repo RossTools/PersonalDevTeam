@@ -66,6 +66,8 @@ pub struct FiledIssue {
     /// `owner/name#12`: the ticket's external key.
     pub issue: String,
     pub url: String,
+    /// Its title, as filed.
+    pub title: String,
     /// The ticket that links it, when it was filed from one.
     pub ticket_key: Option<String>,
 }
@@ -162,7 +164,7 @@ pub(crate) async fn file(st: &AppState, project_id: &str, new: NewForgeIssue, by
     if let Some(t) = ticket {
         let mut link =
             StoredExternalLink::new(&t.summary.id, GITHUB, repo_id(&f.repo), &key, &issue.url, LinkOrigin::Created);
-        (link.title, link.state) = (Some(title_filed), Some(pdt_core::issue_link::IssueState::Open));
+        (link.title, link.state) = (Some(title_filed.clone()), Some(pdt_core::issue_link::IssueState::Open));
         // The issue is filed whatever happens to the link: say so rather than lose it.
         match st.store.link_external(&link, by, now_ms()).await {
             Ok(Ok(_)) => ticket_key = Some(t.summary.key),
@@ -174,7 +176,7 @@ pub(crate) async fn file(st: &AppState, project_id: &str, new: NewForgeIssue, by
             }
         }
     }
-    Ok(FiledIssue { repo: f.repo, number: issue.number, issue: key, url: issue.url, ticket_key })
+    Ok(FiledIssue { repo: f.repo, number: issue.number, issue: key, url: issue.url, title: title_filed, ticket_key })
 }
 
 /// This module's API routes; `routes::router` merges them under `/api`.

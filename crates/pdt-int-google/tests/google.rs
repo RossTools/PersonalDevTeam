@@ -431,7 +431,7 @@ async fn a_build_without_the_picker_key_says_so_instead_of_asking_for_one() {
     assert!(text("unavailable").contains("This build of PDT doesn't include Google's file picker"), "{picker}");
     assert!(!text("unavailable").contains("API key"), "{picker}");
     assert!(text("setup").contains("picker API key and project number"), "{picker}");
-    assert!(text("searchNote").contains("opened in PDT"), "{picker}");
+    assert!(text("searchNote").contains("opened through it"), "{picker}");
 }
 
 /// With PDT's own clients: Sign in with Google adds the account (back through the website's page, from a Tailscale

@@ -16,7 +16,7 @@ import type { EditResult } from './gen/EditResult';
 import type { ImportDocument } from './gen/ImportDocument';
 import type { NewDocument } from './gen/NewDocument';
 import type { ProjectDocumentSettings } from './gen/ProjectDocumentSettings';
-import type { ProviderFile } from './gen/ProviderFile';
+import type { FoundFile } from './gen/FoundFile';
 import type { SavedImage } from './gen/SavedImage';
 import type { UploadedDocument } from './gen/UploadedDocument';
 
@@ -39,7 +39,7 @@ export const documentsApi = {
     request<DocumentProvidersView>(`/api/documents/providers${queryString({ project: project ?? undefined })}`),
   /** A provider's files to import (its picker). */
   providerFiles: (provider: string, q: string, kind?: DocumentKind) =>
-    request<ProviderFile[]>(`/api/documents/providers/${enc(provider)}/files${queryString({ q, kind })}`),
+    request<FoundFile[]>(`/api/documents/providers/${enc(provider)}/files${queryString({ q, kind })}`),
   createDocument: (d: NewDocument) =>
     request<Document>('/api/documents', { method: 'POST', body: JSON.stringify({ ...d, by: 'user' } satisfies NewDocument) }),
   importDocument: (d: ImportDocument) =>
