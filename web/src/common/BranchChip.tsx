@@ -5,8 +5,7 @@ import { MenuButton, type MenuEntry } from '@ui/Menu';
 import type { ForgeLinks } from '../api/gen/ForgeLinks';
 import { branchUrl, compareUrl } from '../projects/forgeLinks';
 import { copyToClipboard } from './clipboard';
-
-const open = (url: string) => window.open(url, '_blank', 'noopener,noreferrer');
+import { openExternal as open } from './open';
 
 export interface BranchChipProps {
   branch: string;

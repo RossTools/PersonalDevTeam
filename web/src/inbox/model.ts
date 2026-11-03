@@ -140,6 +140,15 @@ export function resends(item: InboxItem): boolean {
   return item.kind === 'stalled' && item.choices.some((c) => c.id === 'resend');
 }
 
+/** What an item opens: its ticket and its session, each with the project they open in (null when it has none). */
+export function inboxTargets(item: InboxItem): { ticket: { id: string; projectId: string } | null; session: { id: string; projectId: string } | null } {
+  const projectId = item.projectId;
+  return {
+    ticket: item.ticketId && projectId ? { id: item.ticketId, projectId } : null,
+    session: item.sessionId && projectId ? { id: item.sessionId, projectId } : null,
+  };
+}
+
 /** Whether `e` dismisses it (questions and stalled steps, whose step keeps waiting; unheard notices). */
 export function dismissable(item: InboxItem): boolean {
   return item.kind === 'question' || item.kind === 'secret' || item.kind === 'stalled' || item.kind === 'notice';

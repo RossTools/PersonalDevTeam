@@ -4,7 +4,8 @@ import { api } from '../api/client';
 import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
-import { ChatChannelRow, CustomizedNotice, openWorkflow, type PutInputs } from '../common/BuiltinSettings';
+import { ChatChannelRow, CustomizedNotice, type PutInputs } from '../common/BuiltinSettings';
+import { openWorkflow } from '../common/open';
 import { invalidateWorkflow, workflowKeys } from '../workflows/queries';
 import { plural } from '../common/text';
 

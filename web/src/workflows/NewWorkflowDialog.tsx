@@ -9,14 +9,13 @@ import { api } from '../api/client';
 import { ConnectionPicker } from '../connections/ConnectionPicker';
 import { DurationInput } from './DurationInput';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
-import { navigate } from '../shell/router';
-import { routePath } from '../shell/route';
 import type { GalleryTemplate } from '../api/gen/GalleryTemplate';
 import type { Project } from '../api/gen/Project';
 import type { Scope } from '../api/gen/Scope';
 import type { TemplateParam } from '../api/gen/TemplateParam';
 import { BLANK, gallery, pluginOff, triggerLabel, type GalleryFilter } from './gallery';
 import { invalidateWorkflows, workflowKeys } from './queries';
+import { openPlugin } from '../common/open';
 
 /** The value a param starts with in the form. */
 function initial(p: TemplateParam): unknown {
@@ -107,7 +106,7 @@ function Preview({ t, projects, onClose, onCreated, onEditTemplate }: {
       onCreated(w.id);
     },
   });
-  const openPlugin = (id: string) => { onClose(); navigate(routePath({ view: 'settings', page: { kind: 'plugins', id } })); };
+  const toPlugin = (id: string) => { onClose(); openPlugin(id); };
   const steps = t.steps.slice(0, STEPS_SHOWN);
   const node = 'rounded-md border border-border bg-background px-2.5 py-1.5 text-xs';
   const arrow = <div aria-hidden className="ml-4 h-3.5 border-l border-border" />;
@@ -120,7 +119,7 @@ function Preview({ t, projects, onClose, onCreated, onEditTemplate }: {
       </div>
       {off && plugin && (
         <Alert tone="warning">
-          Needs the {plugin.label} plugin. <Link onClick={() => openPlugin(plugin.id)}>Turn on {plugin.label}</Link> in Settings → Plugins to use it.
+          Needs the {plugin.label} plugin. <Link onClick={() => toPlugin(plugin.id)}>Turn on {plugin.label}</Link> in Settings → Plugins to use it.
         </Alert>
       )}
       {t.builtinWorkflow && t.added && <Alert tone="info">Already in your workflows. This adds a second copy.</Alert>}

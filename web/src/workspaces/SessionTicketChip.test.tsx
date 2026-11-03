@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { OpenTicketContext } from '../tickets/actions';
+import { OpenTicketContext } from '../common/open';
 import { SessionTicketChip } from './SessionTicketChip';
 
 describe('SessionTicketChip', () => {

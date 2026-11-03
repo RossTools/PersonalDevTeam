@@ -15,6 +15,8 @@ import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { runAction } from '../common/useAction';
 import { invalidateWorktrees } from '../common/worktrees';
+import { watchEntry } from '../common/Watch';
+import type { WatchInfo } from '../api/gen/WatchInfo';
 import { isClosed, nextPart, STAGES } from './model';
 import { invalidateTickets, ticketKeys } from './queries';
 import { plural } from '../common/text';
@@ -37,9 +39,7 @@ export interface TicketRef {
   pickupFailed?: string | null;
 }
 
-/** Opens (or focuses) a ticket's tab in its project's workspace. AppShell provides it. */
-export const OpenTicketContext = createContext<(t: { id: string; projectId: string }) => void>(() => {});
-export const useOpenTicket = () => useContext(OpenTicketContext);
+export { OpenSessionContext, OpenTicketContext, useOpenSession, useOpenTicket } from '../common/open';
 
 /**
  * Opens the Start dialog for a ticket. `here`: started from the ticket's own tab, so its tabs open in the workspace on
@@ -47,10 +47,6 @@ export const useOpenTicket = () => useContext(OpenTicketContext);
  */
 export const StartTicketContext = createContext<(t: { id: string; projectId: string }, opts?: { here?: boolean }) => void>(() => {});
 export const useStartTicket = () => useContext(StartTicketContext);
-
-/** Shows a session's tab (opening one in its project's workspace when it has none). AppShell provides it. */
-export const OpenSessionContext = createContext<(s: { id: string; projectId: string }) => void>(() => {});
-export const useOpenSession = () => useContext(OpenSessionContext);
 
 /** Start is offered for Draft, Ready and To do tickets with no active attempt; never for a parent (it starts its parts). */
 export const canStart = (t: { stage: TicketStage; attempt: Pick<AttemptSummary, 'state'> | null; parts?: PartsProgress | null }) =>
@@ -191,39 +187,63 @@ export function priorityEntries(qc: QueryClient, t: TicketRef): MenuEntry[] {
   }));
 }
 
+/** A ticket a menu acts on: its attempt and parts add the entries that need them. */
+type MenuTicket = TicketRef & { attempt?: Pick<AttemptSummary, 'id' | 'state' | 'branch'> | null; parts?: PartsProgress | null };
+
 /**
- * A ticket's menu (backlog row right-click / long press, the peek's and the tab's ⋯): Open, Start…, Stop waiting,
- * Try auto-start again, Move to ›, Priority ›,
- * optionally Move to top / bottom (backlog), Delete….
+ * A ticket's menu, the one home of its entries (backlog row right-click / long press, board cards, the peek's ⋯, the
+ * tab's ⋯ and the phone's top bar): Watch, Open, Start…, Refine, Stop waiting, Try auto-start again, Move to ›,
+ * Priority ›, Start next part, Make into parts…, Merge…, Create GitHub issue…, Abandon attempt…, Move to top / bottom,
+ * Delete…. Each option adds its entry where the ticket allows it.
  */
 export function ticketMenu(opts: {
   qc: QueryClient;
   confirm: Confirm;
-  ticket: TicketRef;
+  ticket: MenuTicket;
+  /** Adds Watch / Stop watching, from the ticket's watches. */
+  watch?: { watches: WatchInfo[] | undefined };
   onOpen?: () => void;
   /** Adds Start… (when the ticket can be started). */
   onStart?: () => void;
-  /** Adds Move to top / bottom (the backlog sorted by rank). */
-  rank?: boolean;
+  /** Adds Start next part (an open parent), opening the Start dialog with this. */
+  startPart?: (t: { id: string; projectId: string }) => void;
   /** Adds Make into parts… (callers offer it only where `canMakeParts` allows). */
   onMakeParts?: () => void;
+  /** Adds Merge… (while an attempt is active). */
+  onMerge?: () => void;
+  /** Adds Create GitHub issue… (callers offer it where the project's forge can file one). */
+  onFileIssue?: () => void;
+  /** Adds Abandon attempt… (while an attempt is active). */
+  abandon?: boolean;
+  /** Adds Move to top / bottom (the backlog sorted by rank). */
+  rank?: boolean;
   onDeleted?: () => void;
 }): MenuEntry[] {
-  const { qc, confirm, ticket: t } = opts;
+  const { qc, confirm, ticket: t, startPart } = opts;
+  const active = t.attempt?.state === 'active' ? t.attempt : null;
   const rankTo = (to: 'top' | 'bottom') => () =>
     void runAction(async () => {
       await api.rankTicket(t.id, { to });
       invalidateTickets(qc, [t.id]);
     });
   return [
+    ...(opts.watch ? [watchEntry(qc, { ticket: t.id }, opts.watch.watches)] : []),
     ...(opts.onOpen ? [{ label: 'Open', onSelect: opts.onOpen }] : []),
     ...(opts.onStart ? [{ label: 'Start…', onSelect: opts.onStart }] : []),
     ...(canRefine(t) ? [{ label: 'Refine', onSelect: () => void runAction(() => refineTicket(qc, t)) }] : []),
     ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
     ...(t.pickupFailed ? [retryAutoStartEntry(qc, t)] : []),
-    ...(opts.onMakeParts ? [{ label: 'Make into parts…', onSelect: opts.onMakeParts }] : []),
     { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
     { submenu: 'Priority', entries: priorityEntries(qc, t) },
+    ...(startPart && t.parts && !isClosed(t.stage)
+      ? [{ label: 'Start next part', onSelect: () => void runAction(() => startNextPart(startPart, t)) }]
+      : []),
+    ...(opts.onMakeParts ? [{ label: 'Make into parts…', onSelect: opts.onMakeParts }] : []),
+    ...(active && opts.onMerge ? [{ label: 'Merge…', onSelect: opts.onMerge }] : []),
+    ...(opts.onFileIssue ? [{ label: 'Create GitHub issue…', onSelect: opts.onFileIssue }] : []),
+    ...(active && opts.abandon
+      ? [{ label: 'Abandon attempt…', onSelect: () => void runAction(() => abandonAttempt(confirm, qc, t, active)) }]
+      : []),
     ...(opts.rank
       ? [{ label: 'Move to top', onSelect: rankTo('top') }, { label: 'Move to bottom', onSelect: rankTo('bottom') }]
       : []),

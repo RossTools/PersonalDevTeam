@@ -15,6 +15,7 @@ import { cn } from '@ui/lib/utils';
 import { runPrefixKey } from '../workspaces/keys';
 import { applyPending, pressBarKey, SEND_KEYS, tapCtrl, tapPrefix, wordAt, type Pending } from './keyBar';
 import { useTerminalFontSize } from './fontSize';
+import { openExternal } from '../common/open';
 
 /** The least time between two automatic reattach attempts of one terminal. */
 const RETRY_EVERY_MS = 5000;
@@ -22,7 +23,7 @@ const RETRY_EVERY_MS = 5000;
 const isTouch = () => typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
 
 const openLink = (e: MouseEvent, uri: string) => {
-  if (shouldOpenLink(e, uri, isTouch())) window.open(uri, '_blank', 'noopener,noreferrer');
+  if (shouldOpenLink(e, uri, isTouch())) openExternal(uri);
 };
 
 /**

@@ -21,8 +21,7 @@ import { actionError, runAction } from '../common/useAction';
 import { readViewState, useViewKey, useViewState, writeViewState } from '../common/viewState';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import {
-  canStart, deleteTicket, isBeforeWork, moveToEntries, retryAutoStartEntry, startNextPart, stopWaitingEntry, ticketMenu, useOpenTicket,
-  useStartTicket,
+  canStart, isBeforeWork, startNextPart, ticketMenu, useOpenTicket, useStartTicket,
 } from './actions';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
 import { PartsStepper } from '../common/PartsStepper';
@@ -285,14 +284,11 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirt
       <MenuButton
         label="Ticket actions"
         placement="top end"
-        entries={() => [
-          ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
-          ...(t.pickupFailed ? [retryAutoStartEntry(qc, t)] : []),
-          { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
-          ...(canMakeParts(t) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
-          { separator: true },
-          { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onDeleted(); }) },
-        ]}
+        entries={() => ticketMenu({
+          qc, confirm, ticket: t,
+          ...(canMakeParts(t) ? { onMakeParts: () => setMaking(true) } : {}),
+          onDeleted,
+        })}
       />
       {canStart(t) && <Button onClick={() => start(t)}>Start</Button>}
       {t.parts && !isClosed(t.stage) && <Button onClick={() => void runAction(() => startNextPart(start, t))}>Start next part</Button>}

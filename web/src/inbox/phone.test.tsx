@@ -384,7 +384,7 @@ describe('phone triage', () => {
     expect(question.closest('.overflow-auto')).not.toContainElement(screen.getByRole('group', { name: 'Decision' }));
     expect(barLabels()).toEqual(['Close', 'Approve']);
     await userEvent.click(screen.getByRole('button', { name: 'Open merge request' }));
-    expect(open).toHaveBeenCalledWith('https://gitlab.com/g/app/-/merge_requests/9', '_blank', 'noopener');
+    expect(open).toHaveBeenCalledWith('https://gitlab.com/g/app/-/merge_requests/9', '_blank', 'noopener,noreferrer');
     open.mockRestore();
   });
 });

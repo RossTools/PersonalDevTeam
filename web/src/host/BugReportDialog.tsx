@@ -5,7 +5,7 @@ import { ApiError, api } from '../api/client';
 import type { BugReportFiled } from '../api/gen/BugReportFiled';
 import type { BugReportPreview } from '../api/gen/BugReportPreview';
 import { actionError } from '../common/useAction';
-import { OpenTicketContext } from '../tickets/actions';
+import { OpenTicketContext } from '../common/open';
 import { hostKeys } from './queries';
 
 /** Error codes whose fix is in Host settings (the token, or the bug reports setting). */

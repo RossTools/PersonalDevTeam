@@ -12,12 +12,11 @@ import type { Notification } from '../api/gen/Notification';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useTopBarActions } from '../shell/PhoneTopBar';
-import { useOpenSession, useOpenTicket } from '../tickets/actions';
+import { useOpenSession, useOpenTicket, useOpenChanges, openExternal } from '../common/open';
 import { PrDetails } from '../tickets/PullRequest';
 import { useProjectForge, useTicket } from '../tickets/queries';
-import { useOpenChanges } from '../review/open';
 import { UpdateView } from './InboxView';
-import { after, changeRequestLabel, dismissable, merges, selectedUpdate, step } from './model';
+import { after, changeRequestLabel, dismissable, inboxTargets, merges, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
 import { useItemView } from './itemView';
 import { ItemHeader, Why } from './ItemLayout';
@@ -25,7 +24,7 @@ import { capitalize, plural } from '../common/text';
 import { changesKey } from '../review/queries';
 
 /** Opens the pull request a gate is about on its forge, in a new tab. */
-const openChangeRequest = (item: InboxItem) => item.changeRequest && window.open(item.changeRequest.url, '_blank', 'noopener');
+const openChangeRequest = (item: InboxItem) => item.changeRequest && openExternal(item.changeRequest.url);
 
 /** A decision in the bottom bar. */
 interface Decision {
@@ -125,12 +124,15 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
   };
   const openTicket = useOpenTicket();
   const openSession = useOpenSession();
-  useTopBarActions(item ? () => [
-    ...(item.sessionId && item.projectId ? [{ label: 'Open session', onSelect: () => openSession({ id: item.sessionId!, projectId: item.projectId! }) }] : []),
-    ...(item.ticketId && item.projectId ? [{ label: 'Open ticket', onSelect: () => openTicket({ id: item.ticketId!, projectId: item.projectId! }) }] : []),
+  useTopBarActions(item ? () => {
+    const { ticket, session } = inboxTargets(item);
+    return [
+    ...(session ? [{ label: 'Open session', onSelect: () => openSession(session) }] : []),
+    ...(ticket ? [{ label: 'Open ticket', onSelect: () => openTicket(ticket) }] : []),
     ...(item.changeRequest ? [{ label: changeRequestLabel(item)!, onSelect: () => openChangeRequest(item) }] : []),
     ...(dismissable(item) ? [{ label: 'Dismiss', onSelect: () => void dismiss() }] : []),
-  ] : null);
+    ];
+  } : null);
 
   // Opening an item reads its notifications.
   const readId = item && !item.id.startsWith('session:') ? item.id : null;
