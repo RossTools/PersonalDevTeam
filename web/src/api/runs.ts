@@ -1,4 +1,4 @@
-import { enc, request } from './core';
+import { enc, queryString, request } from './core';
 import type { NewRun } from './gen/NewRun';
 import type { ProjectCommands } from './gen/ProjectCommands';
 import type { Run } from './gen/Run';
@@ -6,7 +6,9 @@ import type { RunConfigView } from './gen/RunConfigView';
 
 /** A project's runs (`.pdt/project.toml`) and its run configuration. */
 export const runsApi = {
-  listRuns: (projectId: string) => request<Run[]>(`/api/projects/${enc(projectId)}/runs`),
+  /** A project's runs; with `ended`, the active ones, those a tab holds and only the `ended` most recently finished. */
+  listRuns: (projectId: string, q: { ended?: number } = {}) =>
+    request<Run[]>(`/api/projects/${enc(projectId)}/runs${queryString(q)}`),
   listActiveRuns: () => request<Run[]>('/api/runs'),
   startRun: (projectId: string, r: NewRun) =>
     request<Run>(`/api/projects/${enc(projectId)}/runs`, { method: 'POST', body: JSON.stringify(r) }),

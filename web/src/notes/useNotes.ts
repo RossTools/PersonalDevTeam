@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../api/client';
 import { ALL, type Whose } from './model';
 import { POLL } from '../common/poll';
@@ -21,12 +21,16 @@ export function useNotesFilters(): NotesFilters {
   return { whose, setWhose, scope, setScope, q, setQ };
 }
 
-/** The notes of one side (full-text search on the server), polled with the rest of the UI. */
-export function useNotesList(whose: Whose, q: string) {
+/**
+ * The `limit` newest notes of one side (full-text search on the server), polled with the rest of the UI; the last
+ * answer shows while the next loads.
+ */
+export function useNotesList(whose: Whose, q: string, limit: number) {
   return useQuery({
-    queryKey: ['pm-notes', whose, q],
-    queryFn: () => api.pmNotes({ q: q.trim() || undefined, kind: whose }),
+    queryKey: ['pm-notes', whose, q, limit],
+    queryFn: () => api.pmNotes({ q: q.trim() || undefined, kind: whose, limit }),
     refetchInterval: POLL.live,
+    placeholderData: keepPreviousData,
   });
 }
 

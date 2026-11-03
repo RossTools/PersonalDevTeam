@@ -66,6 +66,22 @@ describe('documents', () => {
     expect(await screen.findByText('No document matches.')).toBeInTheDocument();
   });
 
+  it('the list loads 100 documents at a time, Show more the next', async () => {
+    const many = Array.from({ length: 150 }, (_, i) => doc(`d${i}`, `Doc ${i}`));
+    const calls = stubApi({
+      'GET /api/documents': (c) => many.slice(0, Number(new URLSearchParams(c.path.split('?')[1]).get('limit'))),
+      'GET /api/documents/providers': providers,
+      'GET /api/projects': [project],
+    });
+    renderWithQuery(<List />);
+    const list = await screen.findByRole('list', { name: 'Documents' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(100);
+    await userEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(150));
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
+    expect(calls.some((c) => c.path.includes('limit=200'))).toBe(true);
+  });
+
   it('New document makes one in the default provider, linked to the project', async () => {
     const calls = stubApi({
       'GET /api/documents/providers': providers,
@@ -326,5 +342,58 @@ describe('documents', () => {
     });
     renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
     expect(await screen.findByText('Sign in to pick.')).toBeInTheDocument();
+  });
+
+  // Google with PDT's own sign-in, in a build without the picker's key: nothing to set, so nothing asked (PDT-493).
+  const texts = {
+    help: 'Sign in to pick.',
+    unavailable: 'This build has no picker.',
+    setup: 'Give the account a picker key.',
+    searchNote: 'Only files PDT opened appear here.',
+  };
+  const textPicker = { label: 'Pick from the drive', module: '/api/drive/picker.js', accounts: '/api/drive/accounts', ...texts };
+  const account = (over: object) => ({
+    connectionId: 'c1', name: 'Work', signedIn: true, email: 'me@work.com', hasClient: true, builtIn: true, agents: false, picker: false, note: null, ...over,
+  });
+
+  it('a built-in account in a build without the picker hears so, and is never asked for a key', async () => {
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker: textPicker }], default: 'drive' },
+      'GET /api/documents/providers/drive/files': [],
+      'GET /api/drive/accounts': [account({})],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    expect(await screen.findByText('This build has no picker.')).toBeInTheDocument();
+    expect(screen.queryByText('Sign in to pick.')).toBeNull();
+    expect(screen.queryByText('Give the account a picker key.')).toBeNull();
+    // The empty search says what it can find, and offers no picker there is none of.
+    expect(await screen.findByText('No files found. Only files PDT opened appear here.')).toBeInTheDocument();
+  });
+
+  it('an own-client account without the picker is asked for its key, and edits its connection from the dialog', async () => {
+    const conn = { id: 'c1', name: 'Work', kind: 'drive', url: '', config: { clientId: 'cid' }, hasSecret: true, createdAt: 0, updatedAt: 0 };
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker: textPicker }], default: 'drive' },
+      'GET /api/documents/providers/drive/files': [],
+      'GET /api/drive/accounts': [account({ builtIn: false })],
+      'GET /api/connections': [conn],
+      'GET /api/connections/kinds': [{ id: 'drive', label: 'Drive account', plural: 'Drive accounts', setup: '', description: '', fields: [{ key: 'apiKey', label: 'Picker API key', optional: true }] }],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    expect(await screen.findByText('Give the account a picker key.')).toBeInTheDocument();
+    expect(screen.queryByText('This build has no picker.')).toBeNull();
+    await userEvent.click(await screen.findByRole('button', { name: 'Add to Work' }));
+    expect(await screen.findByRole('dialog', { name: 'Edit Work' })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Picker API key/)).toBeInTheDocument();
+  });
+
+  it('with a picker, the empty search points at it for other files', async () => {
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker: textPicker }], default: 'drive' },
+      'GET /api/documents/providers/drive/files': [],
+      'GET /api/drive/accounts': [account({ picker: true })],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    expect(await screen.findByText('No files found. Only files PDT opened appear here. Use Pick from the drive to open others.')).toBeInTheDocument();
   });
 });

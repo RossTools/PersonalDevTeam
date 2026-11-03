@@ -66,14 +66,8 @@ describe('design system rules', () => {
     expect(offenders(/(?<![\w-])z-\d+\b/, (p) => !p.startsWith('ui/primitives/'))).toEqual([]);
   });
 
-  it('keeps type to the scale: text-lg and up are headings for @ui', () => {
-    // No heading size token yet: these pages still set their own.
-    expectOnly(offenders(/(?<![\w-])text-(lg|\d?xl)(?![\w-])/, outsideUi), [
-      'src/documents/DocumentPage.tsx',
-      'src/plugins/parts.tsx',
-      'src/setup/SetupPage.tsx',
-      'src/todos/TodoView.tsx',
-    ]);
+  it('keeps to the type scale: text-heading and text-title, never text-lg or larger', () => {
+    expect(offenders(/(?<![\w-])text-(lg|[2-9]?xl)(?![\w-])/, (p) => !p.startsWith('ui/primitives/'))).toEqual([]);
   });
 
   it('shadows with shadow-popover, shadow-dialog or shadow-card, not Tailwind\'s scale', () => {

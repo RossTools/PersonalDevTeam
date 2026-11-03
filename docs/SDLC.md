@@ -371,7 +371,9 @@ Release and nightly bundles build in PDT's own Google OAuth clients (the GCP pro
 Web clients, the file picker's API key and the project's number, from the `PDT_GOOGLE_CLIENT_ID`,
 `PDT_GOOGLE_CLIENT_SECRET`, `PDT_GOOGLE_AGENT_CLIENT_ID`, `PDT_GOOGLE_AGENT_CLIENT_SECRET`, `PDT_GOOGLE_PICKER_KEY` and
 `PDT_GOOGLE_PROJECT_NUMBER` repository secrets, passed to `.github/actions/bundle` (CI's bundles only when they build a
-release). Never commit them. A build without them (a local one, a PR's bundle) offers only the user's own OAuth client;
+release). Never commit them. A release build (a release, a nightly, the release PR) warns, naming it, in the job and
+its summary when any of the six is empty (`scripts/google-build-values.sh`): the build ships without that part. A build
+without them (a local one, a PR's bundle) offers only the user's own OAuth client;
 set the same variables in the environment to build them in locally. Both clients' only redirect URI is
 `https://pdt.dev/oauth/google`, and the consent screen links `https://pdt.dev/privacy`: both are on the website.
 

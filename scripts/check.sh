@@ -52,6 +52,7 @@ check_changelog() {
   step scripts/release-tag.test.sh
   step scripts/scratch-daemon.test.sh
   step scripts/clean-targets.test.sh
+  step scripts/google-build-values.test.sh
 }
 
 check_site() {

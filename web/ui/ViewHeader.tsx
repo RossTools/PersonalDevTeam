@@ -12,6 +12,11 @@ export interface ViewHeaderProps {
   meta?: ReactNode;
   /** Right-aligned: the primary action, then the ⋯ menu trigger. */
   actions?: ReactNode;
+  /**
+   * Pad the sides with the page gutter (`px-gutter`) instead of the tight 12px, for a view whose content sits on the
+   * gutter (a ticket, an Inbox update), so header and content line up. Terminals, lists and boards keep it off.
+   */
+  gutter?: boolean;
   /** Rarely needed: the title is the header's heading. */
   'aria-label'?: string;
   className?: string;
@@ -21,12 +26,13 @@ export interface ViewHeaderProps {
  * The header of every view: [status] title · chips/meta ··· actions. One line on desktop; on a narrow screen the
  * actions wrap to a second line. A fixed minimum height keeps the content below (the terminal) from jumping.
  */
-export function ViewHeader({ title, titleTooltip, leading, meta, actions, className, ...rest }: ViewHeaderProps) {
+export function ViewHeader({ title, titleTooltip, leading, meta, actions, gutter = false, className, ...rest }: ViewHeaderProps) {
   return (
     <header
       {...rest}
       className={cn(
-        'flex min-h-10 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-3 py-1.5 text-sm',
+        'flex min-h-10 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border py-1.5 text-sm',
+        gutter ? 'px-gutter' : 'px-3',
         className,
       )}
     >

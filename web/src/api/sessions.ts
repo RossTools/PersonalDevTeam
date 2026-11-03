@@ -24,7 +24,9 @@ export interface SessionPatch {
 /** Sessions: terminals and agent conversations. */
 export const sessionsApi = {
   getSession: (id: string) => request<Session>(`/api/sessions/${enc(id)}`),
-  listSessions: (projectId: string) => request<Session[]>(`/api/projects/${enc(projectId)}/sessions`),
+  /** A project's sessions; with `ended`, the running ones, those a tab holds and only the `ended` most recently ended. */
+  listSessions: (projectId: string, q: { ended?: number } = {}) =>
+    request<Session[]>(`/api/projects/${enc(projectId)}/sessions${queryString(q)}`),
   createSession: (s: NewSession) => request<Session>('/api/sessions', { method: 'POST', body: JSON.stringify(s) }),
   viewSession: (id: string) => request<void>(`/api/sessions/${enc(id)}/view`, { method: 'POST' }),
   killSession: (id: string) => request<void>(`/api/sessions/${enc(id)}/kill`, { method: 'POST' }),

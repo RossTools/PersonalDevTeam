@@ -116,7 +116,7 @@ export function TodoView({ todo: t, now, projects, onBack, onPatch, onDelete, on
                 }
               }}
               className={cn(
-                'h-auto rounded-none border-0 bg-transparent p-0 text-lg font-semibold tracking-tight shadow-none focus-visible:ring-0 pointer-coarse:h-auto pointer-coarse:text-lg',
+                'h-auto rounded-none border-0 bg-transparent p-0 text-heading font-semibold tracking-tight shadow-none focus-visible:ring-0 pointer-coarse:h-auto pointer-coarse:text-heading',
                 t.done && 'text-muted-foreground line-through decoration-muted-foreground',
               )}
             />

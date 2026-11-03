@@ -2,6 +2,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { POLL } from '../common/poll';
+import { RECENT_ENDED } from '../sessions/queries';
 
 export const runKeys = {
   all: ['runs'] as const,
@@ -16,7 +17,7 @@ export const runKeys = {
 /** The query for a project's runs (`useQuery({ ...runsQuery(id), enabled })`). */
 export const runsQuery = (projectId: string) => ({
   queryKey: runKeys.project(projectId),
-  queryFn: () => api.listRuns(projectId),
+  queryFn: () => api.listRuns(projectId, { ended: RECENT_ENDED }),
   refetchInterval: POLL.live,
 });
 
