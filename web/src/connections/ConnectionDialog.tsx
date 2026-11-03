@@ -9,8 +9,8 @@ import { pluginsKey } from '../plugins/model';
 import {
   AUTH_MODES, fieldShown, fieldText, fieldValid, fieldsConfig, hookUrl, kindOf, linkUrl, randomSecret, useConnectionKinds, whenHolds, type ConnectionKind,
 } from './kinds';
+import { connectionsKey } from './queries';
 
-export const connectionsKey = ['connections'] as const;
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 

@@ -1,9 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { Alert, Button, Field, Input, SegmentedControl } from '@ui';
 import { api } from '../api/client';
 import { FolderField } from '../common/FolderField';
 import type { Project } from '../api/gen/Project';
+import { invalidateProjects } from './queries';
+import { useHostSettings } from '../host/queries';
 
 export type AddProjectMode = 'path' | 'clone' | 'personal';
 type Mode = AddProjectMode;
@@ -26,14 +28,13 @@ export function AddProjectForm({ onAdded, autoFocus = false, initialMode = 'path
   const [repoPath, setRepoPath] = useState('');
   const [url, setUrl] = useState('');
   const [parentDir, setParentDir] = useState('');
-  const host = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
+  const host = useHostSettings();
   const done = (p: Project) => {
     setName('');
     setKey('');
     setRepoPath('');
     setUrl('');
-    void qc.invalidateQueries({ queryKey: ['projects'] });
-    void qc.invalidateQueries({ queryKey: ['workspaces'] });
+    void invalidateProjects(qc);
     onAdded?.(p);
   };
   const add = useMutation({ meta: { errorShown: true }, mutationFn: api.createProject, onSuccess: done });

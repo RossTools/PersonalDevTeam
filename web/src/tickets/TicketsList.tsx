@@ -8,6 +8,7 @@ import { ProjectKey } from '../common/BranchChip';
 import { OPEN_STAGES } from './model';
 import { ticketKeys } from './queries';
 import type { BacklogState } from './useBacklog';
+import { POLL } from '../common/poll';
 
 /** Open tickets per project: one `limit=1` list request each (the page's `total`), refreshed every 10 s. */
 function useOpenCounts(projects: Project[]) {
@@ -15,7 +16,7 @@ function useOpenCounts(projects: Project[]) {
     queries: projects.map((p) => ({
       queryKey: ticketKeys.count(p.id),
       queryFn: () => api.listTickets({ project: p.id, stage: OPEN_STAGES.join(','), limit: 1 }).then((r) => r.total),
-      refetchInterval: 10_000,
+      refetchInterval: POLL.slow,
     })),
   });
   return new Map(projects.map((p, i) => [p.id, qs[i]?.data]));

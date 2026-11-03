@@ -1,14 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Plus, Search } from 'lucide-react';
 import { Badge, Disclosure, IconButton, Input, ListHeading } from '@ui';
 import { cn } from '@ui/lib/utils';
-import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import { ProjectKey } from '../common/BranchChip';
 import { HOST_PAGES, HOST_SECTIONS, projectSections, sectionMatches, shownSection, type SectionInfo } from '../common/settingsSections';
-import { pluginsKey } from '../plugins/model';
 import { sectionSlug, type SettingsPage } from './route';
+import { useHostSettings } from '../host/queries';
+import { usePlugins } from '../plugins/queries';
 
 const HOST = 'host';
 
@@ -32,10 +31,10 @@ export function SettingsNav({ projects, page, phone, onGo, onAddProject, heading
   const [query, setQuery] = useState('');
   const searching = query.trim() !== '';
   // Settings → Network saved but not applied yet: a "restart" badge until PDT restarts.
-  const host = useQuery({ queryKey: ['host-settings'], queryFn: api.hostSettings });
+  const host = useHostSettings();
   const restart = host.data?.network?.restartNeeded ?? false;
   // The plugins' names find the Plugins pages.
-  const plugins = useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations, enabled: searching }).data ?? [];
+  const plugins = usePlugins({ enabled: searching }).data ?? [];
   const more = (s: { label: string }) => (s.label === 'Plugins' ? plugins.map((p) => p.label) : []);
   const currentGroup = page.kind === 'project' ? page.key : page.kind === 'host' || page.kind === 'index' ? HOST : null;
   const [open, setOpen] = useState<Set<string>>(() => new Set(currentGroup ? [currentGroup] : []));

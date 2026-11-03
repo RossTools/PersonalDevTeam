@@ -9,6 +9,7 @@ import type { TicketStage } from '../api/gen/TicketStage';
 import type { WorktreeSize } from '../api/gen/WorktreeSize';
 import { useAction } from '../common/useAction';
 import { invalidateWorktrees } from '../common/worktrees';
+import { POLL } from '../common/poll';
 
 /** `bytes` for people: "512 MB", "1.5 GB" (as the server's Inbox items say it). */
 export function formatBytes(bytes: number): string {
@@ -56,7 +57,7 @@ export function DiskBadge({ level }: { level: DiskLevel }) {
 
 /** Every project's storage (or one project's), refreshed while it is on screen. */
 export function useStorage(project?: string) {
-  return useQuery({ queryKey: ['storage', project ?? null], queryFn: () => api.storage(project), refetchInterval: 5000 });
+  return useQuery({ queryKey: ['storage', project ?? null], queryFn: () => api.storage(project), refetchInterval: POLL.steady });
 }
 
 function useSettle() {
@@ -64,8 +65,6 @@ function useSettle() {
   return () => {
     void qc.invalidateQueries({ queryKey: ['storage'] });
     invalidateWorktrees(qc);
-    void qc.invalidateQueries({ queryKey: ['sessions'] });
-    void qc.invalidateQueries({ queryKey: ['workspaces'] });
   };
 }
 

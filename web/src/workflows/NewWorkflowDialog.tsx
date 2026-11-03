@@ -16,6 +16,7 @@ import type { Project } from '../api/gen/Project';
 import type { Scope } from '../api/gen/Scope';
 import type { TemplateParam } from '../api/gen/TemplateParam';
 import { BLANK, gallery, pluginOff, triggerLabel, type GalleryFilter } from './gallery';
+import { invalidateWorkflows, workflowKeys } from './queries';
 
 /** The value a param starts with in the form. */
 function initial(p: TemplateParam): unknown {
@@ -101,8 +102,8 @@ function Preview({ t, projects, onClose, onCreated, onEditTemplate }: {
       });
     },
     onSuccess: (w) => {
-      void qc.invalidateQueries({ queryKey: ['workflows'] });
-      void qc.invalidateQueries({ queryKey: ['workflow-templates'] });
+      invalidateWorkflows(qc);
+      void qc.invalidateQueries({ queryKey: workflowKeys.templates });
       onCreated(w.id);
     },
   });
@@ -165,7 +166,7 @@ export function NewWorkflowDialog({ projects, templateId, onClose, onCreated, on
   /** Opens one of the user's own templates' page (its params and document). */
   onEditTemplate?: (id: string) => void;
 }) {
-  const templates = useQuery({ queryKey: ['workflow-templates'], queryFn: () => api.listWorkflowTemplates() });
+  const templates = useQuery({ queryKey: workflowKeys.templates, queryFn: () => api.listWorkflowTemplates() });
   const phone = useMediaQuery(PHONE_QUERY);
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<GalleryFilter>('all');

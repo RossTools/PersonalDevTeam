@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Checkbox, Dialog, Field, Input, SegmentedControl, Select, Skeleton, Switch } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
@@ -22,6 +22,7 @@ import { setWaiting } from './actions';
 import { AreaChips } from './Areas';
 import { useProjectAreas, useTicket } from './queries';
 import { SharedFiles } from './TicketParts';
+import { useProjects } from '../projects/queries';
 
 
 /** The tickets that block this one and aren't Done or Won't do. */
@@ -44,7 +45,7 @@ export interface StartDialogProps {
 export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDialogProps) {
   const q = useTicket(ticketId);
   const qc = useQueryClient();
-  const projects = useQuery({ queryKey: ['projects'], queryFn: api.listProjects });
+  const projects = useProjects();
   const t = q.data;
   const areaConfig = useProjectAreas(t?.projectId ?? null);
   const config = areaConfig.data && !areaConfig.data.error ? areaConfig.data.areas : undefined;

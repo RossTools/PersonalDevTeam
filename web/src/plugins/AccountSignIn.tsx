@@ -11,7 +11,9 @@ import type { SignIn } from '../api/gen/SignIn';
 import type { SignInAccount } from '../api/gen/SignInAccount';
 import type { AccountSignInStart } from '../api/gen/AccountSignInStart';
 import { actionError } from '../common/useAction';
-import { ConnectionDialog, connectionsKey } from '../connections/ConnectionDialog';
+import { ConnectionDialog } from '../connections/ConnectionDialog';
+import { connectionsKey } from '../connections/queries';
+import { POLL } from '../common/poll';
 
 // Under the connections' key, so saving or deleting a connection anywhere reads the accounts again (PDT-464).
 export const signInAccountsKey = (url: string) => [...connectionsKey, 'sign-in', url] as const;
@@ -21,7 +23,7 @@ export function useSignInAccounts(url: string | null, waiting = false) {
   return useQuery({
     queryKey: signInAccountsKey(url ?? ''),
     queryFn: () => api.signInAccounts(url!),
-    refetchInterval: waiting ? 2000 : false,
+    refetchInterval: waiting ? POLL.live : false,
     enabled: url !== null,
   });
 }

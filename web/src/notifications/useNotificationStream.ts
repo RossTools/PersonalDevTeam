@@ -5,6 +5,8 @@ import type { Notification } from '../api/gen/Notification';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
 import { desktopNotificationsOn, holdLeadership, showDesktop } from './desktop';
 import { presentation, shownKey } from './model';
+import { inboxKey } from '../inbox/useInbox';
+import { setStreamOpen } from '../common/poll';
 
 export const STREAM_PATH = '/api/notifications/stream';
 
@@ -18,7 +20,7 @@ export interface OnScreen {
  * Follows `GET /api/notifications/stream` (Server-Sent Events, PDT-108): every row refreshes the Inbox, and a new
  * one shows as a toast or, while the page is hidden, a desktop notification, as its Show and this device allow
  * (`presentation`). A cleared row closes its desktop notification. EventSource reconnects by itself and sends
- * `Last-Event-ID`, so a dropped connection gets what it missed. `open` opens a row's target.
+ * `Last-Event-ID`, so a dropped connection gets what it missed. While it is connected the Updates poll slowly. `open` opens a row's target.
  */
 export function useNotificationStream(open: (t: NotificationTarget) => void, onScreen: OnScreen) {
   const qc = useQueryClient();
@@ -34,8 +36,18 @@ export function useNotificationStream(open: (t: NotificationTarget) => void, onS
     const desktop = new Map<string, globalThis.Notification>();
     const source = new EventSource(STREAM_PATH);
     const refresh = () => {
-      void qc.invalidateQueries({ queryKey: ['inbox'] });
+      void qc.invalidateQueries({ queryKey: inboxKey });
       void qc.invalidateQueries({ queryKey: ['notifications'] });
+    };
+    // While it is connected the stream brings every change, so the Updates poll slows down (`streamPoll`); when it
+    // connects or drops, a refetch catches up and picks the new interval.
+    const connected = (open: boolean) => {
+      setStreamOpen(open);
+      refresh();
+    };
+    source.onopen = () => connected(true);
+    source.onerror = () => {
+      if (source.readyState !== EventSource.OPEN) connected(false);
     };
     const arrived = (e: MessageEvent<string>) => {
       let n: Notification;
@@ -76,6 +88,7 @@ export function useNotificationStream(open: (t: NotificationTarget) => void, onS
     for (const type of ['created', 'updated', 'cleared']) source.addEventListener(type, arrived as EventListener);
     return () => {
       source.close();
+      setStreamOpen(false);
       letGo();
       for (const d of desktop.values()) d.close();
     };

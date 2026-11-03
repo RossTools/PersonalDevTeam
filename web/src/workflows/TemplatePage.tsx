@@ -16,6 +16,7 @@ import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { GraphView } from './GraphView';
 import type { Catalog } from './model';
 import { TextView } from './TextView';
+import { workflowKeys } from './queries';
 
 const TYPES: { value: ParamType; label: string }[] = [
   { value: 'string', label: 'Text' }, { value: 'text', label: 'Long text' }, { value: 'number', label: 'Number' },
@@ -62,7 +63,7 @@ function ParamsTable({ params, onChange, readOnly }: { params: TemplateParam[]; 
 }
 
 export function TemplatePage({ id, catalog, onUse, onDeleted }: { id: string; catalog: Catalog; onUse: (templateId: string) => void; onDeleted: () => void }) {
-  const t = useQuery({ queryKey: ['workflow-template', id], queryFn: () => api.getWorkflowTemplate(id) });
+  const t = useQuery({ queryKey: workflowKeys.template(id), queryFn: () => api.getWorkflowTemplate(id) });
   if (t.error) return <Alert tone="error" className="m-3">The template could not be loaded: {t.error.message}</Alert>;
   if (!t.data) return <Skeleton lines={8} className="p-4" />;
   return <Loaded key={`${t.data.id}:${t.data.updatedAt}`} t={t.data} catalog={catalog} onUse={onUse} onDeleted={onDeleted} />;
@@ -83,8 +84,8 @@ function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog
     meta: { errorShown: true },
     mutationFn: () => api.saveWorkflowTemplate(t.id, { name, description, params, doc }),
     onSuccess: (saved) => {
-      qc.setQueryData(['workflow-template', t.id], saved);
-      void qc.invalidateQueries({ queryKey: ['workflow-templates'] });
+      qc.setQueryData(workflowKeys.template(t.id), saved);
+      void qc.invalidateQueries({ queryKey: workflowKeys.templates });
       toast.success('Template saved');
     },
   });
@@ -102,7 +103,7 @@ function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog
                   const { ok } = await confirm({ title: `Delete the template ${t.name}?`, body: 'Workflows made from it stay.', action: 'Delete template', danger: true });
                   if (!ok) return;
                   await api.deleteWorkflowTemplate(t.id);
-                  void qc.invalidateQueries({ queryKey: ['workflow-templates'] });
+                  void qc.invalidateQueries({ queryKey: workflowKeys.templates });
                   onDeleted();
                 }),
               }]} />

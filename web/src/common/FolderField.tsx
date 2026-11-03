@@ -5,6 +5,7 @@ import { Button, Dialog, FolderPicker, Input, type FolderPickerSelection } from 
 import { api } from '../api/client';
 import type { FolderListing } from '../api/gen/FolderListing';
 import { PHONE_QUERY, useMediaQuery } from './useMediaQuery';
+import { hostKeys } from '../host/queries';
 
 export interface FolderFieldProps {
   value: string;
@@ -92,7 +93,7 @@ function FolderDialog({
   const [hidden, setHidden] = useState(false);
   const [selection, setSelection] = useState<FolderPickerSelection | null>(null);
   const q = useQuery({
-    queryKey: ['host-folders', target.path, target.nearest, hidden],
+    queryKey: [...hostKeys.folders, target.path, target.nearest, hidden],
     queryFn: () => api.listFolders({ path: target.path, hidden, nearest: target.nearest }),
     placeholderData: keepPreviousData,
     retry: false,
@@ -104,7 +105,7 @@ function FolderDialog({
   const onBrowse = useCallback((path: string) => setTarget({ path, nearest: false }), []);
   const create = async (name: string) => {
     const f = await api.createFolder({ parent: listing?.path ?? '', name });
-    void qc.invalidateQueries({ queryKey: ['host-folders'] });
+    void qc.invalidateQueries({ queryKey: hostKeys.folders });
     return f;
   };
   return (

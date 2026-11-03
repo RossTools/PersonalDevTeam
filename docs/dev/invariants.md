@@ -275,6 +275,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **The Host guard and owner-only checks cover every route** (pdt-api `host_guard.rs`, `identity_guard.rs`): only
   loopback hosts and the allowed hosts; remote requests carry the owner's Tailscale identity. Hooks
   (`/api/hooks/*`) authenticate with their own secret instead. Don't add a route outside the guards.
+- **Nothing is served on the tailnet without the owner check.** `tailscale serve` maps only pdtd's own port and
+  web runs' owner-checking proxies (pdt-api `remote_proxy.rs`); never map a port straight to a run or another process.
 - **Every response carries the security headers** (pdt-api `security_headers.rs`, the router's outer layers): no
   framing (`X-Frame-Options: DENY`, `frame-ancestors 'none'`), `nosniff`, no referrer, and for the web UI a CSP with
   script only from PDT's own bundle. Keep the UI free of inline scripts and `eval`; a new kind of resource it loads

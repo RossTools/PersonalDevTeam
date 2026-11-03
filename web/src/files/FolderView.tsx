@@ -18,8 +18,8 @@ import { Markdown } from '../common/LazyMarkdown';
 import { isMarkdownPath } from '../common/markdownPath';
 import { PlacePicker, type Place } from '../common/PlacePicker';
 import { useNavigationGuard, whenAllowed } from '../shell/router';
-import { POLL } from '../tickets/queries';
 import { CodeViewer } from './LazyCodeViewer';
+import { sessionsQuery } from '../sessions/queries';
 
 // The conflict diff is CodeMirror's merge view: loaded only when it is shown.
 const CodeDiff = lazy(() => import('../review/CodeDiff').then((m) => ({ default: m.CodeDiff })));
@@ -297,7 +297,7 @@ const editOf = (f: FileContent, n = 0): Edit | null => (f.text === null ? null :
 
 /** Agent sessions working in the checkout (they may change the file too). */
 function useAgentsAt(place: Place): Session[] {
-  const sessions = useQuery({ queryKey: ['sessions', place.projectId], queryFn: () => api.listSessions(place.projectId), refetchInterval: POLL });
+  const sessions = useQuery(sessionsQuery(place.projectId));
   return (sessions.data ?? []).filter(
     (s) => s.kind === 'agent_tui' && s.status === 'running' && s.activity === 'working' && s.worktreeId === place.worktreeId,
   );

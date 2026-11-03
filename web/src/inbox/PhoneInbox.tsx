@@ -21,6 +21,7 @@ import { after, changeRequestLabel, dismissable, merges, selectedUpdate, step } 
 import { useAnswer } from './useAnswer';
 import { useItemView } from './itemView';
 import { ItemHeader, Why } from './ItemLayout';
+import { changesKey } from '../review/queries';
 
 /** Opens the pull request a gate is about on its forge, in a new tab. */
 const openChangeRequest = (item: InboxItem) => item.changeRequest && window.open(item.changeRequest.url, '_blank', 'noopener');
@@ -260,7 +261,7 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
   const t = ticket.data;
   const attempt = t?.attempts.find((x) => x.id === item.attemptId) ?? t?.attempts.find((x) => x.state === 'active');
   const worktreeId = attempt?.worktreeId ?? null;
-  const changes = useQuery({ queryKey: ['changes', worktreeId], queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
+  const changes = useQuery({ queryKey: changesKey(worktreeId ?? ''), queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
   const files = changes.data?.files ?? [];
   const added = files.reduce((n, f) => n + f.added, 0);
   const removed = files.reduce((n, f) => n + f.removed, 0);

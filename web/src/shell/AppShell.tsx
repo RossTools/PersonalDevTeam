@@ -26,16 +26,14 @@ import { sectionLabel } from '../common/SettingsScreens';
 import { HOST_SECTION_LABELS, PROJECT_SECTION_LABELS } from '../common/settingsSections';
 import { SettingsNav } from './SettingsNav';
 import { settingsPageScreen, settingsPageTitle, type SettingsPageContext } from './settingsPages';
-import { pluginsKey } from '../plugins/model';
 import { WorkflowsList, type WorkflowTarget } from '../workflows/WorkflowsList';
 import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
-import { invalidateTickets } from '../tickets/queries';
+import { invalidateTickets, ticketByKey, ticketKeys, useProjectForge, useTicketSearch } from '../tickets/queries';
 import { OpenChangesContext, type OpenChangesOptions } from '../review/open';
 import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Workspace } from '../api/gen/Workspace';
 import { looksLikeKey } from '../tickets/model';
-import { ticketByKey, useProjectForge, useTicketSearch } from '../tickets/queries';
 import { TicketsList } from '../tickets/TicketsList';
 import { useBacklog } from '../tickets/useBacklog';
 import { UpdateBanner } from '../host/UpdateBanner';
@@ -89,6 +87,10 @@ import {
   BottomPanel, ChangesView, CreateIssueDialog, DocumentPage, InboxView, NewTicketDialog, NewWorkflowDialog, NoteScreen, PersonaPage, PhoneInboxItem,
   PmView, RunView, ScreenSuspense, SessionView, StartDialog, TicketView, TicketsView, WorkflowsView, WorkspaceMergedBanner,
 } from './screens';
+import { workspaceKeys } from '../workspaces/queries';
+import { invalidateSessions } from '../sessions/queries';
+import { hostKeys } from '../host/queries';
+import { usePlugins } from '../plugins/queries';
 
 const CHOICE: Record<Exclude<NewKind, AcpKind>, Choice> = { claude: 'Claude', claude_terminal: 'Claude (terminal)', codex: 'Codex', codex_terminal: 'Codex (terminal)', devin: 'Devin', devin_terminal: 'Devin (terminal)', shell: 'Shell' };
 
@@ -131,7 +133,7 @@ export function AppShell() {
   // Get started (PDT-230) shows in the Sessions view's place: its sidebar lists the projects as they are added.
   const setupShown = route.view === 'setup';
   // Whether the app opens on Get started (a new install, until it is set up or dismissed).
-  const setup = useQuery({ queryKey: ['host-setup'], queryFn: api.hostSetup, retry: false, staleTime: Infinity });
+  const setup = useQuery({ queryKey: hostKeys.setup, queryFn: api.hostSetup, retry: false, staleTime: Infinity });
   // While a phone's on-screen keyboard is up, the shell fits the part above it, so a composer stays in view.
   const keyboardBox = useKeyboardBox(phone);
   const view: ViewId = route.view === 'setup' ? 'sessions' : route.view ?? defaultView;
@@ -155,7 +157,7 @@ export function AppShell() {
   const settingsPage: SettingsPage = route.view === 'settings' ? route.page : { kind: 'index' };
   const openPlugin = useCallback((id: string) => go({ view: 'settings', page: { kind: 'plugins', id } }), []);
   // A plugin page's name, for a phone's top bar.
-  const shownPlugins = useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations, enabled: settingsPage.kind === 'plugins' && settingsPage.id !== null });
+  const shownPlugins = usePlugins({ enabled: settingsPage.kind === 'plugins' && settingsPage.id !== null });
   const pluginTitle = (id: string) => shownPlugins.data?.find((p) => p.id === id)?.label ?? 'Plugin';
   const settingsContext: SettingsPageContext = { phone, openPlugin, pluginTitle };
   const [bottomOpen, setBottomOpen] = useState(false);
@@ -373,9 +375,9 @@ export function AppShell() {
   }, [ws.workspace, ws.tab]);
   const onStarted = (r: StartResult) => {
     invalidateTickets(qc, [r.ticket.id]);
-    qc.setQueryData(['ticket', r.ticket.id], r.ticket);
+    qc.setQueryData(ticketKeys.one(r.ticket.id), r.ticket);
     const projectId = r.ticket.projectId;
-    void qc.invalidateQueries({ queryKey: ['sessions', projectId] });
+    void invalidateSessions(qc, projectId);
     invalidateWorktrees(qc, projectId);
     void runAction(async () => {
       await ws.refresh();
@@ -583,7 +585,7 @@ export function AppShell() {
       const tab = w ? { workspaceId: w.id, position: ws.tab ? ws.tab.position + 1 : w.tabs.length } : undefined;
       void runAction(async () => {
         const s = await api.createSession({ ...newSession(at.projectId, at.worktreeId, isAcp(kind) ? kind : CHOICE[kind]), ...(tab ? { tab } : {}) });
-        void qc.invalidateQueries({ queryKey: ['sessions', s.projectId] });
+        void invalidateSessions(qc, s.projectId);
         await ws.refresh();
         await ws.focusItem({ kind: 'session', id: s.id }, s.projectId);
       });
@@ -724,7 +726,7 @@ export function AppShell() {
     if (!projectId) return;
     void runAction(async () => {
       const s = await api.createSession(newSession(projectId, null, choiceFor(defaults.agent, 'conversation'), { permissionMode: defaults.sessionPermissionMode }));
-      void qc.invalidateQueries({ queryKey: ['sessions', s.projectId] });
+      void invalidateSessions(qc, s.projectId);
       await ws.refresh();
       await ws.focusItem({ kind: 'session', id: s.id }, s.projectId);
     });
@@ -911,7 +913,7 @@ export function AppShell() {
             onAdded={(p) => {
               // Get started stays on screen: its project step ticks off.
               if (setupShown) {
-                void qc.invalidateQueries({ queryKey: ['host-setup'] });
+                void qc.invalidateQueries({ queryKey: hostKeys.setup });
                 return;
               }
               if (view === 'settings') {
@@ -921,7 +923,7 @@ export function AppShell() {
               // Show the new project's workspace once the list includes it.
               void runAction(async () => {
                 await ws.refresh();
-                const home = qc.getQueryData<Workspace[]>(['workspaces'])?.find((w) => w.projectId === p.id);
+                const home = qc.getQueryData<Workspace[]>(workspaceKeys.all)?.find((w) => w.projectId === p.id);
                 if (home) ws.selectWorkspace(home.id);
               });
             }}

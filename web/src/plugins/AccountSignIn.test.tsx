@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SignIn } from '../api/gen/SignIn';
 import { renderWithQuery, stubApi } from '../test-utils';
-import { connectionsKey } from '../connections/ConnectionDialog';
+import { connectionsKey } from '../connections/queries';
 import { AccountSignIn, redirectUri } from './AccountSignIn';
 
 afterEach(() => {

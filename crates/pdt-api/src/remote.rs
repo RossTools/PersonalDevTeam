@@ -7,6 +7,9 @@
 //! `serve --bg` mappings outlive pdtd, so the ports this instance mapped are kept in its store (`remote.served`) and
 //! count as its own after a restart: turning the setting off removes them, and so does resuming the runs when a run
 //! moved to another port or did not come back.
+//!
+//! A web run's port is never mapped to the run itself: it is mapped to a proxy of pdtd's ([`crate::remote_proxy`])
+//! that applies the owner check first, so the run is reachable only by the owner, like pdtd.
 
 use crate::error::ApiError;
 use crate::routes::AppState;
@@ -14,7 +17,7 @@ use axum::Json;
 use axum::extract::State;
 use pdt_tailscale::TsError;
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use ts_rs::TS;
@@ -50,6 +53,8 @@ pub(crate) struct Applied {
     loaded: bool,
     /// The tailnet name this process added to the allowlist (absent when it was already allowed by configuration).
     pub(crate) added_host: Option<String>,
+    /// The owner-checking proxy in front of each mapped web run, by the run's port (the HTTPS port it is mapped on).
+    proxies: HashMap<u16, crate::remote_proxy::RunProxy>,
 }
 
 /// Runs one tailscale call on the blocking pool, bounded by `st.tailscale_timeout` so a hung CLI cannot stall
@@ -81,7 +86,7 @@ pub(crate) async fn map_run_port(st: &AppState, port: u16) {
     if !st.remote.lock().unwrap_or_else(|e| e.into_inner()).active {
         return;
     }
-    if let Err(e) = serve(st, port, port).await {
+    if let Err(e) = serve_run(st, port).await {
         tracing::warn!(port, error = %e, "could not map a run port");
     }
 }
@@ -110,7 +115,12 @@ pub(crate) async fn unmap_stale_run_ports(st: &AppState) {
 
 /// [`unmap_run_port`] for callers that hold `settings_lock` and save `served` afterwards.
 async fn unmap_locked(st: &AppState, port: u16) {
-    if port == st.remote_https_port || !applied(st).served.contains(&port) {
+    if port == st.remote_https_port {
+        return;
+    }
+    // Without its proxy the mapping leads nowhere, even when removing it fails below.
+    applied(st).proxies.remove(&port);
+    if !applied(st).served.contains(&port) {
         return;
     }
     match blocking(st, move |t| t.unserve(port)).await {
@@ -223,7 +233,7 @@ async fn enable(st: &AppState) -> RemoteStatus {
         }
     };
     for p in extra_ports(st) {
-        if let Err(e) = serve(st, p, p).await {
+        if let Err(e) = serve_run(st, p).await {
             tracing::warn!(port = p, error = %e, "could not map a run port");
         }
     }
@@ -253,10 +263,33 @@ async fn serve(st: &AppState, https_port: u16, target_port: u16) -> Result<(), T
     r
 }
 
+/// Maps a web run's `port` on the tailnet to the run's owner-checking proxy, starting the proxy first when the run
+/// has none. A proxy started here is stopped again when the mapping failed outright.
+async fn serve_run(st: &AppState, port: u16) -> Result<(), TsError> {
+    let existing = applied(st).proxies.get(&port).map(|p| p.port);
+    let (proxy_port, fresh) = match existing {
+        Some(p) => (p, false),
+        None => {
+            let proxy = crate::remote_proxy::start(st, port)
+                .await
+                .map_err(|e| TsError::Command(format!("could not start the run's proxy: {e}")))?;
+            let p = proxy.port;
+            applied(st).proxies.insert(port, proxy);
+            (p, true)
+        }
+    };
+    let r = serve(st, port, proxy_port).await;
+    if fresh && matches!(&r, Err(e) if !matches!(e, TsError::TimedOut)) {
+        applied(st).proxies.remove(&port);
+    }
+    r
+}
+
 /// Undoes what this instance did, and nothing else: no tailscale command runs when it mapped nothing.
 async fn disable(st: &AppState, previous: RemoteStatus) -> RemoteStatus {
     let (served, added_host) = {
         let mut a = applied(st);
+        a.proxies.clear();
         (std::mem::take(&mut a.served), a.added_host.take())
     };
     if let Some(host) = added_host {
