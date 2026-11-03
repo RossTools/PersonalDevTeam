@@ -3,7 +3,7 @@ import type { NotifyLevel } from "./NotifyLevel";
 
 export type NotifyConfig = { title: string, body: string, level: NotifyLevel, 
 /**
- * A ticket key (`PDT-42`, opens the ticket), `inbox:<item id>` (opens the Inbox item) or a URL.
+ * A ticket key (`PDT-42`, opens the ticket), `inbox:<item id>` (opens the Inbox item) or an `http(s)` URL.
  */
 link: string | null, 
 /**

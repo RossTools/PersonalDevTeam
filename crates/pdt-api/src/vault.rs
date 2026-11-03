@@ -4,7 +4,7 @@
 //! stores, shows or logs. Agents use them through `run_with_secrets` and `write_secret_file`, workflows through
 //! `{{secret.<name>}}` and `{"$secret": "<name>"}`, filled in at the moment of the call; every use is recorded.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -24,10 +24,6 @@ fn account(id: &str) -> String {
     format!("secret:{id}")
 }
 
-fn keychain_failed(e: impl std::fmt::Display) -> ApiError {
-    ApiError::new(StatusCode::BAD_GATEWAY, "keychain_failed", e.to_string())
-}
-
 async fn keychain_get(st: &AppState, s: &Secret) -> Result<Option<String>, String> {
     let (secrets, acct, what) = (st.secrets.clone(), account(&s.id), format!("the secret {}", s.name));
     tokio::task::spawn_blocking(move || secrets.get(&acct).map_err(|e| e.naming(&acct, &what)))
@@ -41,7 +37,7 @@ async fn keychain_set(st: &AppState, id: &str, value: &str) -> Result<(), ApiErr
     tokio::task::spawn_blocking(move || secrets.set(&acct, &value))
         .await
         .map_err(ApiError::internal)?
-        .map_err(keychain_failed)
+        .map_err(ApiError::keychain)
 }
 
 async fn keychain_delete(st: &AppState, id: &str) -> Result<(), ApiError> {
@@ -49,7 +45,7 @@ async fn keychain_delete(st: &AppState, id: &str) -> Result<(), ApiError> {
     tokio::task::spawn_blocking(move || secrets.delete(&acct))
         .await
         .map_err(ApiError::internal)?
-        .map_err(keychain_failed)
+        .map_err(ApiError::keychain)
 }
 
 /// Reads every secret's value into the redactor, so they are redacted from the start. pdtd runs it in the background
@@ -165,12 +161,8 @@ fn session_usage(s: &Session, how: &str) -> Usage {
 
 // ---- the Settings page ----
 
-fn invalid(m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m)
-}
-
 async fn load(st: &AppState, id: &str) -> Result<Secret, ApiError> {
-    st.store.get_secret(id).await?.ok_or_else(|| ApiError::not_found("secret"))
+    st.store.get_secret(id).await?.or_404("secret")
 }
 
 /// Project and persona ids, each checked to exist.
@@ -188,12 +180,12 @@ async fn access(
     let (projects, personas) = (clean(projects), clean(personas));
     for p in &projects {
         if st.store.get_project(p).await?.is_none() {
-            return Err(invalid(format!("no project has the id {p}")));
+            return Err(ApiError::invalid(format!("no project has the id {p}")));
         }
     }
     for p in &personas {
         if st.store.get_persona(p).await?.is_none() {
-            return Err(invalid(format!("no persona has the id {p}")));
+            return Err(ApiError::invalid(format!("no persona has the id {p}")));
         }
     }
     Ok((projects, personas))
@@ -220,9 +212,10 @@ pub(crate) async fn create(
 }
 
 async fn new_secret(st: &AppState, n: NewSecret) -> Result<Secret, ApiError> {
-    let name = secret::valid_name(&n.name).map_err(invalid)?;
-    secret::valid_value(&n.value).map_err(invalid)?;
-    let description = secret::valid_description(n.description.as_deref().unwrap_or_default()).map_err(invalid)?;
+    let name = secret::valid_name(&n.name).map_err(ApiError::invalid)?;
+    secret::valid_value(&n.value).map_err(ApiError::invalid)?;
+    let description =
+        secret::valid_description(n.description.as_deref().unwrap_or_default()).map_err(ApiError::invalid)?;
     let (projects, personas) = access(st, n.projects.unwrap_or_default(), n.personas.unwrap_or_default()).await?;
     if st.store.secret_by_name(&name).await?.is_some() {
         return Err(exists(&name));
@@ -258,7 +251,7 @@ async fn new_secret(st: &AppState, n: NewSecret) -> Result<Secret, ApiError> {
 }
 
 fn exists(name: &str) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, "secret_exists", format!("a secret is already called {name}"))
+    ApiError::conflict(codes::SECRET_EXISTS, format!("a secret is already called {name}"))
 }
 
 /// `PATCH /api/secrets/{id}`: its description, who may use it, or a new value.
@@ -270,7 +263,7 @@ pub(crate) async fn patch(
     let Json(p) = payload?;
     let mut s = load(&st, &id).await?;
     if let Some(d) = &p.description {
-        s.description = secret::valid_description(d).map_err(invalid)?;
+        s.description = secret::valid_description(d).map_err(ApiError::invalid)?;
     }
     if p.projects.is_some() || p.personas.is_some() {
         let projects = p.projects.unwrap_or_else(|| s.projects.clone());
@@ -278,7 +271,7 @@ pub(crate) async fn patch(
         (s.projects, s.personas) = access(&st, projects, personas).await?;
     }
     if let Some(v) = &p.value {
-        secret::valid_value(v).map_err(invalid)?;
+        secret::valid_value(v).map_err(ApiError::invalid)?;
         put_value(&st, &s, v).await?;
     }
     s.updated_at = now_ms();

@@ -3,7 +3,7 @@
 //! its branch is merged into the base (checked every 60 s and on demand), when it is abandoned, or when the ticket is
 //! closed.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use crate::sessions::{CreateSession, create_session};
 use axum::Json;
@@ -27,16 +27,6 @@ use std::time::Duration;
 pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 /// The longest Start waits for a fetch of the base branch.
 const START_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
-
-fn conflict(code: &'static str, message: String) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, code, message)
-}
-
-/// The ticket with its overlaps.
-async fn load_ticket(st: &AppState, id: &str) -> Result<Ticket, ApiError> {
-    let t = st.store.get_ticket(id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
-    crate::overlap::decorate(st, t).await
-}
 
 /// `POST /api/tickets/{id}/start`.
 pub(crate) async fn start(
@@ -75,32 +65,33 @@ pub(crate) async fn start_ticket(
     // The fetch goes before the lock (PDT-440): it may take seconds, and the lock is only for the checks and rows.
     let (project_id, fetched) = fetch_before_start(&st, &id, &v).await?;
     let guard = st.ticket_start_locks.lock(&project_id).await;
-    let mut ticket = load_ticket(&st, &id).await?;
+    let mut ticket = crate::overlap::load_ticket(&st, &id).await?;
     // A parent is never started itself (PDT-38): `next` starts its next part instead.
     let mut id = id;
     if !ticket.part_list.is_empty() {
         let key = ticket.summary.key.clone();
         if !v.next {
-            return Err(conflict(
-                "ticket_has_parts",
+            return Err(ApiError::conflict(
+                codes::TICKET_HAS_PARTS,
                 format!("{key} has parts; start one of them (or its next part) instead"),
             ));
         }
         match crate::parts::next(&st, &id).await? {
             Ok(part) => {
                 id = part;
-                ticket = load_ticket(&st, &id).await?;
+                ticket = crate::overlap::load_ticket(&st, &id).await?;
             }
-            Err(why) => return Err(conflict("no_next_part", format!("{key} has no part to start: {why}"))),
+            Err(why) => {
+                return Err(ApiError::conflict(codes::NO_NEXT_PART, format!("{key} has no part to start: {why}")));
+            }
         }
     }
     let key = ticket.summary.key.clone();
     let parent = ticket.summary.parent.clone();
     // Only the user starts an external ticket they haven't let in (PDT-201); starting it lets it in.
     if by == Starter::Auto && crate::untrusted::held_back(&ticket.summary) {
-        return Err(ApiError::new(
-            axum::http::StatusCode::FORBIDDEN,
-            "untrusted_ticket",
+        return Err(ApiError::forbidden(
+            codes::UNTRUSTED_TICKET,
             format!("{key} came from outside PDT: only you can start it, or move it to To do"),
         ));
     }
@@ -110,14 +101,16 @@ pub(crate) async fn start_ticket(
     // A ticket proposal waits for the user's decision in the Inbox (PDT-366): neither auto-start nor an agent's curl
     // starts it.
     if by != Starter::User && ticket.summary.proposed {
-        return Err(ApiError::new(
-            axum::http::StatusCode::FORBIDDEN,
-            "ticket_proposal",
+        return Err(ApiError::forbidden(
+            codes::TICKET_PROPOSAL,
             format!("{key} is a ticket proposal waiting for the user in PDT's Inbox: only they can start it"),
         ));
     }
     if ticket.summary.stage.is_closed() {
-        return Err(conflict("ticket_closed", format!("{key} is closed; move it back to Ready to start it")));
+        return Err(ApiError::conflict(
+            codes::TICKET_CLOSED,
+            format!("{key} is closed; move it back to Ready to start it"),
+        ));
     }
     if ticket.attempts.iter().any(|a| a.state == AttemptState::Active) {
         return Err(TicketError::Active(key).into());
@@ -129,7 +122,7 @@ pub(crate) async fn start_ticket(
         .map(|l| l.key.clone())
         .collect();
     // Overlap with the project's active tickets: what this one would share once started. A pickup's start checked its
-    // own overlap rule, the one choose applied (PDT-381): only a conflict refuses it.
+    // own overlap rule, the one choose applied (PDT-381): only a ApiError::conflict refuses it.
     let overlaps: Vec<_> =
         pdt_core::start::refusing_overlaps(&ticket.overlaps, v.pickup_checked).into_iter().cloned().collect();
     // The project's cap on running attempts (Phase 7c §4).
@@ -151,13 +144,12 @@ pub(crate) async fn start_ticket(
                 policy.max_running_attempts.unwrap_or_default()
             ));
         }
-        return Err(conflict("start_blocked", format!("{key} {}", why.join("; it "))));
+        return Err(ApiError::conflict(codes::START_BLOCKED, format!("{key} {}", why.join("; it "))));
     }
     if !v.new_workspace {
         crate::workspaces::check_placement(&st, v.tab.as_ref()).await?;
     }
-    let project =
-        st.store.get_project(&ticket.summary.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(&ticket.summary.project_id).await?;
     let base = v.base.clone().unwrap_or_else(|| project.base_branch.clone());
     if v.base.is_some() && !project.is_personal() {
         known_base(&project.repo_path, &base).await?;
@@ -165,12 +157,12 @@ pub(crate) async fn start_ticket(
     // A Personal project has no repository: the ticket runs in its folder, with no branch or worktree (Phase 7b §7).
     let personal = match project.is_personal() {
         true if v.from_session.is_some() => {
-            return Err(conflict(
-                "personal_project",
-                "a Personal project's tickets start on their own, not from a chat".into(),
+            return Err(ApiError::conflict(
+                codes::PERSONAL_PROJECT,
+                "a Personal project's tickets start on their own, not from a chat",
             ));
         }
-        true => Some(personal_folder(&project, &key).map_err(ApiError::internal)?),
+        true => Some(personal_folder(&project, &key)?),
         false => None,
     };
     // Start from a chat: its worktree and branch, and the chat itself instead of a new session.
@@ -233,7 +225,7 @@ pub(crate) async fn start_ticket(
             }
             return Err(match linked {
                 Err(e) => e.into(),
-                _ => conflict("chat_not_startable", "that chat already works on a ticket".into()),
+                _ => ApiError::conflict(codes::CHAT_NOT_STARTABLE, "that chat already works on a ticket"),
             });
         }
         announce(&st, &started).await;
@@ -248,8 +240,8 @@ pub(crate) async fn start_ticket(
         if let Some(p) = &parent {
             part_started(&st, p).await;
         }
-        let session = st.store.get_session(&chat.id).await?.ok_or_else(|| ApiError::not_found("session"))?;
-        let ticket = load_ticket(&st, &id).await?;
+        let session = st.session(&chat.id).await?;
+        let ticket = crate::overlap::load_ticket(&st, &id).await?;
         let attempt =
             ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
         return Ok(StartResult { ticket, attempt, session: Some(session) });
@@ -261,7 +253,7 @@ pub(crate) async fn start_ticket(
         if let Some(p) = &parent {
             part_started(&st, p).await;
         }
-        let ticket = load_ticket(&st, &id).await?;
+        let ticket = crate::overlap::load_ticket(&st, &id).await?;
         let attempt =
             ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
         return Ok(StartResult { ticket, attempt, session: None });
@@ -336,7 +328,7 @@ pub(crate) async fn start_ticket(
     if let Some(p) = &parent {
         part_started(&st, p).await;
     }
-    let ticket = load_ticket(&st, &id).await?;
+    let ticket = crate::overlap::load_ticket(&st, &id).await?;
     let attempt =
         ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
     Ok(StartResult { ticket, attempt, session: Some(session) })
@@ -364,8 +356,8 @@ async fn startable_chat(
     session_id: &str,
     project: &pdt_core::project::Project,
 ) -> Result<(pdt_core::session::Session, pdt_core::worktree::Worktree), ApiError> {
-    let no = |m: &str| conflict("chat_not_startable", m.to_string());
-    let s = st.store.get_session(session_id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let no = |m: &str| ApiError::conflict(codes::CHAT_NOT_STARTABLE, m.to_string());
+    let s = st.session(session_id).await?;
     if s.project_id != project.id {
         return Err(no("that chat belongs to another project"));
     }
@@ -379,7 +371,7 @@ async fn startable_chat(
         .worktree_id
         .clone()
         .ok_or_else(|| no("that chat runs in the main checkout; start the ticket in its own worktree instead"))?;
-    let wt = st.store.get_worktree(&wid).await?.ok_or_else(|| ApiError::not_found("worktree"))?;
+    let wt = st.store.get_worktree(&wid).await?.or_404("worktree")?;
     if wt.branch == project.base_branch {
         return Err(no("that chat's worktree is on the base branch"));
     }
@@ -547,7 +539,7 @@ async fn open_tabs(
 /// and its sessions stop), then winds it down as Won't do does (PDT-339): its pull request closes and the worktree,
 /// branch and workspace go as the project says, when nothing would be lost. Abandoning an ended attempt changes nothing.
 pub(crate) async fn abandon(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
-    let info = st.store.get_attempt(&id).await?.ok_or_else(|| ApiError::not_found("attempt"))?;
+    let info = st.store.get_attempt(&id).await?.or_404("attempt")?;
     if info.attempt.state == AttemptState::Active {
         let (st, ticket, attempt) = (st.clone(), info.ticket_id.clone(), info.attempt.id.clone());
         let task = tokio::spawn(async move {
@@ -564,15 +556,15 @@ pub(crate) async fn abandon(State(st): State<AppState>, Path(id): Path<String>) 
         });
         task.await.map_err(ApiError::internal)??;
     }
-    Ok(Json(load_ticket(&st, &info.ticket_id).await?))
+    Ok(Json(crate::overlap::load_ticket(&st, &info.ticket_id).await?))
 }
 
 /// `POST /api/attempts/{id}/clean-up`: the Clean up action on an ended attempt whose worktree was kept (PDT-339):
 /// removes the worktree (uncommitted changes and all), the branch (and PDT's copy on the remote) and the workspace.
 pub(crate) async fn clean_up(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
-    let info = st.store.get_attempt(&id).await?.ok_or_else(|| ApiError::not_found("attempt"))?;
+    let info = st.store.get_attempt(&id).await?.or_404("attempt")?;
     if info.attempt.state == AttemptState::Active {
-        return Err(conflict("attempt_active", "the attempt is still active; abandon it first".into()));
+        return Err(ApiError::conflict(codes::ATTEMPT_ACTIVE, "the attempt is still active; abandon it first"));
     }
     let ticket = info.ticket_id.clone();
     let task = tokio::spawn({
@@ -588,7 +580,7 @@ pub(crate) async fn clean_up(State(st): State<AppState>, Path(id): Path<String>)
         }
     });
     task.await.map_err(ApiError::internal)?;
-    Ok(Json(load_ticket(&st, &ticket).await?))
+    Ok(Json(crate::overlap::load_ticket(&st, &ticket).await?))
 }
 
 /// Ends the ticket's active attempt because the ticket closed ([`end_for_close`]), then winds its work down
@@ -614,7 +606,7 @@ pub(crate) async fn close_attempt(
 
 /// `POST /api/tickets/{id}/check-merge`: merge detection for the ticket's active attempt, now.
 pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
-    st.store.get_ticket_summary(&id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    st.store.get_ticket_summary(&id).await?.or_404("ticket")?;
     if let Some(info) = st.store.active_attempt(&id).await? {
         crate::github::refresh_attempt(&st, &info).await;
         if is_merged(&st, &info, true, true).await {
@@ -640,7 +632,7 @@ pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<Strin
             }
         }
     }
-    Ok(Json(load_ticket(&st, &id).await?))
+    Ok(Json(crate::overlap::load_ticket(&st, &id).await?))
 }
 
 /// Merge detection for one active attempt now, without fetching (the local forge merged it here, PDT-178): ends it
@@ -806,9 +798,9 @@ pub(crate) async fn retry_auto_start(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Ticket>, ApiError> {
-    load_ticket(&st, &id).await?;
+    crate::overlap::load_ticket(&st, &id).await?;
     crate::scheduler::forget_failed_start(&st, &id);
-    Ok(Json(load_ticket(&st, &id).await?))
+    Ok(Json(crate::overlap::load_ticket(&st, &id).await?))
 }
 
 /// This module's API routes; `routes::router` merges them under `/api`.

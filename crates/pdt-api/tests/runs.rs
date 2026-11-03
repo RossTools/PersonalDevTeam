@@ -224,7 +224,7 @@ async fn a_run_opens_a_tab_in_its_project_workspace_or_where_asked() {
     let (_, list) = call(&env.app, "GET", "/api/workspaces", None).await;
     assert_eq!(tabs(&list[0]), [second["id"].as_str().unwrap(), first["id"].as_str().unwrap()]);
     let (s, v) = start(&env, json!({"name": "ok", "kind": "test", "tab": {"workspaceId": "nope"}})).await;
-    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")));
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("unknown_workspace")));
     for r in [&first, &second] {
         wait_state(&env.app, r["id"].as_str().unwrap(), &["passed", "failed"]).await;
     }

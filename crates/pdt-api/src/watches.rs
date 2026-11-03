@@ -9,7 +9,7 @@
 //! Routes: `GET /api/watches?ticket=&run=&session=`, `POST /api/watches` (the user's), `DELETE /api/watches/{id}`.
 //! The PM's tools `watch`, `unwatch` and `list_watches` run [`watch`], [`unwatch`] and [`infos`].
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -24,10 +24,6 @@ use serde::Deserialize;
 
 /// Events a tick reads per watch at most (the rest wait for the next tick).
 const EVENTS_PER_TICK: i64 = 200;
-
-fn bad(m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m)
-}
 
 /// What to watch and what to hear about (`POST /api/watches`, the PM's `watch`).
 #[derive(Debug, Default, Deserialize, JsonSchema, ts_rs::TS)]
@@ -59,14 +55,14 @@ async fn target_of(st: &AppState, ticket: Option<&str>, run: Option<&str>) -> Re
     let run = run.map(str::trim).filter(|r| !r.is_empty());
     match (ticket, run) {
         (Some(t), None) => {
-            let id = crate::mcp::tools::resolve_ticket(st, t, None).await.map_err(bad)?;
+            let id = crate::mcp::tools::resolve_ticket(st, t, None).await.map_err(ApiError::invalid)?;
             Ok((WatchTarget::Ticket, id))
         }
         (None, Some(r)) => {
-            let run = st.store.get_workflow_run(r).await?.ok_or_else(|| ApiError::not_found("workflow run"))?;
+            let run = st.store.get_workflow_run(r).await?.or_404("workflow run")?;
             Ok((WatchTarget::Run, run.id))
         }
-        _ => Err(bad("give a ticket or a run")),
+        _ => Err(ApiError::invalid("give a ticket or a run")),
     }
 }
 
@@ -88,9 +84,8 @@ pub(crate) async fn watch(st: &AppState, input: &NewWatch, session: Option<&str>
             WatchTarget::Ticket => st.store.get_ticket(&target_id).await?.is_some_and(|t| t.summary.stage.is_closed()),
         };
         if finished {
-            return Err(ApiError::new(
-                StatusCode::CONFLICT,
-                "already_finished",
+            return Err(ApiError::conflict(
+                codes::ALREADY_FINISHED,
                 "it has already finished, so there is nothing to wait for (give `once: false` to hear if it starts again)",
             ));
         }
@@ -120,10 +115,9 @@ async fn latest_seq(st: &AppState) -> Result<i64, ApiError> {
 
 /// Ends a watch. A PM conversation (`session`) may end only its own.
 pub(crate) async fn unwatch(st: &AppState, id: &str, session: Option<&str>) -> Result<(), ApiError> {
-    let w =
-        st.store.get_watch(id).await?.filter(|w| w.ended_at.is_none()).ok_or_else(|| ApiError::not_found("watch"))?;
+    let w = st.store.get_watch(id).await?.filter(|w| w.ended_at.is_none()).or_404("watch")?;
     if session.is_some() && w.session_id.as_deref() != session {
-        return Err(ApiError::new(StatusCode::FORBIDDEN, "not_yours", "that watch is another conversation's"));
+        return Err(ApiError::forbidden(codes::NOT_YOURS, "that watch is another conversation's"));
     }
     st.store.end_watch(id, now_ms()).await?;
     Ok(())

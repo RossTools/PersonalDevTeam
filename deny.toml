@@ -1,5 +1,6 @@
 # cargo-deny (https://embarkstudios.github.io/cargo-deny/): `cargo deny check licenses` checks every dependency's
-# licence can ship in PDT, which is Apache-2.0. Only the licences check is configured.
+# licence can ship in PDT, which is Apache-2.0; `cargo deny check advisories` checks the lockfile against the RustSec
+# advisory database (.github/workflows/audit.yml runs it). Bans and sources are not configured.
 
 [graph]
 all-features = true
@@ -27,3 +28,14 @@ confidence-threshold = 0.9
 [licenses.private]
 # The workspace's own crates (publish = false).
 ignore = true
+
+[advisories]
+# Every advisory fails the check (vulnerabilities, unsound, unmaintained crates, yanked versions) unless it is ignored
+# here, each with the reason it can't be fixed yet.
+yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is unmaintained; only gtk-rs 0.18 (tauri's Linux stack) uses it, at build time, with no upgrade until tauri moves to a newer gtk" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant is unmaintained as a standalone crate; keyring's secret-service (Linux) brings it in through zbus, with no upgrade yet" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names is unmaintained as a standalone crate; keyring's secret-service (Linux) brings it in through zbus, with no upgrade yet" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is unmaintained as a standalone crate; keyring's secret-service (Linux) brings it in through zbus, with no upgrade yet" },
+]

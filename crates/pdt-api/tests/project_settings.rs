@@ -81,7 +81,7 @@ async fn integrations_this_build_lacks_are_listed_and_refused() {
     assert_eq!(known.len(), pdt_core::integration::KNOWN.len(), "{v}");
     assert!(known.iter().all(|i| i["built"] == false && i["enabled"] == false && i["status"] == "not_built"), "{v}");
     let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": ["jira"]}))).await;
-    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")), "{v}");
     assert!(v["message"].as_str().unwrap().contains("built without the Jira integration"), "{v}");
     // "Test again" runs an enabled plugin's checks; one that is off or unknown has none to run.
     let (s, v) = call(&app, "POST", "/api/integrations/webhook/check", None).await;
@@ -126,7 +126,7 @@ async fn github_turns_off_only_while_no_project_uses_it() {
     let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": []}))).await;
     assert_eq!((s, github(&v)["enabled"].clone()), (StatusCode::OK, json!(true)));
     let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": [], "off": ["mcp"]}))).await;
-    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")), "{v}");
 
     let (s, v) = call(&app, "PUT", "/api/integrations", Some(json!({"enabled": [], "off": ["github"]}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");

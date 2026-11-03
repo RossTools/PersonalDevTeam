@@ -2,7 +2,7 @@
 //! local forge's CI and a regeneration rule run only commands the user approved; the approval is the user's click in
 //! PDT (the UI token, `untrusted::from_ui`), never an agent's call. What waits on one is in the Inbox as a notice.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -59,7 +59,7 @@ pub(crate) async fn check(
         if left.len() == 1 { "it" } else { "them" },
         pdt_core::brand::SHORT_NAME,
     );
-    Err(ApiError::new(StatusCode::CONFLICT, "untrusted_commands", message)
+    Err(ApiError::conflict(codes::UNTRUSTED_COMMANDS, message)
         .with_data(serde_json::json!({ "projectId": project_id, "commands": left })))
 }
 
@@ -70,7 +70,7 @@ pub(crate) async fn check_run(
     def: &pdt_core::runconfig::RunDef,
     test: bool,
 ) -> Result<(), ApiError> {
-    let project = st.store.get_project(project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(project_id).await?;
     check(st, project_id, &project.repo_path, vec![command_trust::of_run(def, test)]).await
 }
 
@@ -152,7 +152,7 @@ pub(crate) async fn list(
     Path(id): Path<String>,
     Query(w): Query<Where>,
 ) -> Result<Json<ProjectCommands>, ApiError> {
-    let project = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(&id).await?;
     crate::projects::needs_repo(&project, "commands")?;
     let (dir, _) = crate::runconfig::checkout_dir(&st, &project, w.worktree_id.as_deref()).await?;
     let config = match crate::runconfig::load_effective(&st, &id, &dir).await {
@@ -182,11 +182,10 @@ pub(crate) async fn trust(
     headers: HeaderMap,
     Json(input): Json<TrustCommands>,
 ) -> Result<StatusCode, ApiError> {
-    st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    st.project(&id).await?;
     if !crate::untrusted::from_ui(&st, &headers)? {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "not_the_user",
+        return Err(ApiError::forbidden(
+            codes::NOT_THE_USER,
             "only the user can approve a command, in PDT; ask them to",
         ));
     }

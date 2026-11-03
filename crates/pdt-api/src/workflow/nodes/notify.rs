@@ -30,7 +30,14 @@ impl NotifyLevel {
     }
 }
 
-/// Where a `link` goes: an Inbox item (`inbox:<id>`), a ticket by its key, else a URL.
+/// Whether a link is a web address: only `http:` and `https:`, never `javascript:`, `data:` or `file:` (a link can come
+/// from a trigger's payload, PDT-416).
+fn is_web_url(l: &str) -> bool {
+    let l = l.to_ascii_lowercase();
+    l.starts_with("https://") || l.starts_with("http://")
+}
+
+/// Where a `link` goes: an Inbox item (`inbox:<id>`), a ticket by its key, a web address, else nowhere.
 fn target(link: Option<&str>) -> NotificationTarget {
     match link.map(str::trim).filter(|l| !l.is_empty()) {
         Some(l) if l.starts_with("inbox:") => match l.trim_start_matches("inbox:").trim() {
@@ -40,8 +47,8 @@ fn target(link: Option<&str>) -> NotificationTarget {
         Some(l) if pdt_core::ticket::parse_key(l).is_some_and(|k| k.key.is_some()) => {
             NotificationTarget::TicketKey { key: l.to_string() }
         }
-        Some(l) => NotificationTarget::Url { url: l.to_string() },
-        None => NotificationTarget::None,
+        Some(l) if is_web_url(l) => NotificationTarget::Url { url: l.to_string() },
+        _ => NotificationTarget::None,
     }
 }
 
@@ -55,7 +62,7 @@ pub struct NotifyConfig {
     pub body: String,
     #[serde(default)]
     pub level: NotifyLevel,
-    /// A ticket key (`PDT-42`, opens the ticket), `inbox:<item id>` (opens the Inbox item) or a URL.
+    /// A ticket key (`PDT-42`, opens the ticket), `inbox:<item id>` (opens the Inbox item) or an `http(s)` URL.
     #[serde(default)]
     pub link: Option<String>,
     /// How far it reaches you: `off` (nothing in PDT: only Discord), `dot`, `inbox`, `toast` or `desktop`. Default: the
@@ -152,10 +159,42 @@ async fn post(cx: &StepCx<'_>, connection: &str, c: &NotifyConfig) -> Result<Val
             format!("{} is a {} connection: no plugin that is on posts notifications through it", conn.name, conn.kind)
         })?;
     let kind = reg.catalog().shared(channel.node_kind).ok_or_else(|| format!("{} is off", channel.label))?;
-    let link = c.link.as_deref().map(str::trim).filter(|l| l.starts_with("http")).map(|l| format!("\n{l}"));
+    let link = c.link.as_deref().map(str::trim).filter(|l| is_web_url(l)).map(|l| format!("\n{l}"));
     let content = format!("**{}**\n{}{}", c.title.trim(), c.body.trim(), link.unwrap_or_default());
     match kind.run(cx, json!({"connection": conn.name, "content": content.trim_end()})).await? {
         Outcome::Next { output, .. } => Ok(output),
         _ => Ok(Value::Null),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn links_open_tickets_inbox_items_and_web_addresses() {
+        assert!(matches!(target(Some("PDT-42")), NotificationTarget::TicketKey { key } if key == "PDT-42"));
+        assert!(matches!(target(Some("inbox:abc")), NotificationTarget::Inbox { id } if id == "abc"));
+        assert!(
+            matches!(target(Some(" https://example.com/x ")), NotificationTarget::Url { url } if url == "https://example.com/x")
+        );
+        assert!(matches!(target(Some("HTTP://example.com")), NotificationTarget::Url { .. }));
+        assert!(matches!(target(None), NotificationTarget::None));
+        assert!(matches!(target(Some("  ")), NotificationTarget::None));
+    }
+
+    #[test]
+    fn links_in_other_schemes_go_nowhere() {
+        for l in [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            "data:text/html,x",
+            "file:///etc/passwd",
+            "httpx://a",
+            "//evil.example",
+            "evil.example",
+        ] {
+            assert!(matches!(target(Some(l)), NotificationTarget::None), "{l}");
+        }
     }
 }

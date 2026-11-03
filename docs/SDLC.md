@@ -257,8 +257,9 @@ conflict), push, and merge again.
 - **Labels**: a contributor can't set `no-changelog`, `windows` or `macos`. They write `[no-changelog]` in the PR's
   description instead (above, "Changelog"); a maintainer adds `windows` or `macos` when the change needs those
   checks.
-- **On a contributor's fork**, `pages.yml` and `cache.yml` skip (`github.event.repository.fork`); `ci.yml` checks
-  their PRs here; `release.yml` stops with a message when `PDT_RELEASE_TOKEN` is missing.
+- **On a contributor's fork**, `pages.yml`, `cache.yml` and `audit.yml`'s daily run skip
+  (`github.event.repository.fork`); `ci.yml` checks their PRs here; `release.yml` stops with a message when
+  `PDT_RELEASE_TOKEN` is missing.
 
 ## Dependabot
 
@@ -269,6 +270,19 @@ each. `rust-toolchain.toml` is bumped by hand.
 - Its PRs carry the `dependencies` and `no-changelog` labels and `deps:` commit messages.
 - They are outside PRs: PDT's external-PR workflow has an agent review each, and the user approves and merges it
   through the queue. A major update that needs code changes is fixed on its branch or in a ticket of its own.
+
+### Advisories
+
+`audit.yml` checks the dependencies against published advisories: `cargo deny check advisories` over `Cargo.lock`
+(vulnerable, unsound, unmaintained and yanked crates) and `pnpm audit --audit-level high` over `pnpm-lock.yaml`. It
+runs daily on `main`, by hand, and on a PR that changes a lockfile or `deny.toml`. It is not a required check: a new
+advisory is about the dependencies, not the PR that meets it.
+
+- Run it locally with `cargo deny check advisories` (`cargo install --locked cargo-deny`) and
+  `pnpm audit --audit-level high`.
+- A failed daily run is new work: update the crate (`cargo update -p <crate>`) or package, or, when there is no fix
+  (an unmaintained crate deep in tauri's or keyring's Linux stack), add its id to `[advisories] ignore` in
+  `deny.toml` with the reason.
 
 ## Releases
 

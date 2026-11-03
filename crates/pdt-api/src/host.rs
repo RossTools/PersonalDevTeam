@@ -1,4 +1,4 @@
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::State;
@@ -257,13 +257,13 @@ pub struct HostSettingsView {
 
 impl From<HostSettingsError> for ApiError {
     fn from(e: HostSettingsError) -> Self {
-        ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
+        ApiError::invalid(e.to_string())
     }
 }
 
 impl From<NetworkError> for ApiError {
     fn from(e: NetworkError) -> Self {
-        ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string())
+        ApiError::invalid(e.to_string())
     }
 }
 
@@ -307,9 +307,8 @@ pub(crate) async fn put_settings(
     let next = before.apply(&patch)?;
     let effective_owner = st.owner_from_env.clone().or(next.owner_login.clone());
     if next.remote_access && effective_owner.is_none() {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "owner_required",
+        return Err(ApiError::bad_request(
+            codes::OWNER_REQUIRED,
             "set the owner (a Tailscale login) before turning on remote access",
         ));
     }
@@ -354,18 +353,17 @@ pub(crate) async fn put_network(
     if let Some(p) = next.port
         && (runs.start..=runs.end).contains(&p)
     {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            format!("port {p} is in the runs' port range ({}–{}); pick one outside it", runs.start, runs.end),
-        ));
+        return Err(ApiError::invalid(format!(
+            "port {p} is in the runs' port range ({}–{}); pick one outside it",
+            runs.start, runs.end
+        )));
     }
     let path = network_path(&st.data_dir);
     let tmp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(&next).expect("network settings serialize");
     std::fs::write(&tmp, bytes)
         .and_then(|()| std::fs::rename(&tmp, &path))
-        .map_err(|e| ApiError::internal(format!("saving {}: {e}", path.display())))?;
+        .map_err(|e| ApiError::io(&format!("saving {}", path.display()), e))?;
     drop(guard);
     tracing::info!(port = ?next.port, hosts = ?next.allowed_hosts, "network settings saved; they apply after a restart");
     Ok(Json(view(&st).await?))
@@ -375,9 +373,8 @@ pub(crate) async fn put_network(
 /// under pdt-host; a pdtd started any other way would just stop.
 pub(crate) async fn post_restart(State(st): State<AppState>) -> Result<StatusCode, ApiError> {
     if !st.host_env.supervised {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "not_supervised",
+        return Err(ApiError::conflict(
+            codes::NOT_SUPERVISED,
             "this PDT wasn't started by its host supervisor, so it can't restart itself: stop it and start it again",
         ));
     }
