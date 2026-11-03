@@ -25,6 +25,7 @@ import { useInstance } from '../shell/useInstance';
 import { useAgents, useAgentsOff } from '../common/agents';
 import { AcpAgents } from './AcpAgents';
 import { agentsOff, AgentSwitch, offNote, switchBlocked } from './AgentSwitch';
+import { StartAtLogin } from './StartAtLogin';
 import { BugReportDialog } from './BugReportDialog';
 import { Storage } from './StorageSettings';
 import { InstallUpdates } from './InstallUpdates';
@@ -947,6 +948,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
     'Agents': <><Agents v={v} /><StuckAgents /><DefaultModels v={v} /><Programs v={v} /><AcpAgents v={v} /></>,
     'PM': <PmCheckpointSettings />,
     'Network': <Network v={v} />,
+    'Startup': <StartAtLogin />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,
     'Runs': <Runs v={v} />,
     'Storage': <Storage />,
