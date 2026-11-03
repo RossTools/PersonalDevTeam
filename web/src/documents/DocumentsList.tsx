@@ -11,9 +11,12 @@ import { TicketPicker } from '../tickets/TicketPicker';
 import { KindIcon } from './LinkedDocuments';
 import { providerLabel, useDocumentProviders, useDocuments } from './queries';
 import { useProjects } from '../projects/queries';
+import { usePageLimit } from '../common/usePageLimit';
 import { LoadError } from '../common/QueryStatus';
 
 const ANY = '';
+/** Documents loaded at a time; Show more loads the next ones. */
+const PAGE = 100;
 /** "Any" in a filter's Select (an empty value would read as none chosen). */
 const ALL = 'all';
 const fromSelect = <V extends string>(v: V | typeof ALL): V | typeof ANY => (v === ALL ? ANY : (v as V));
@@ -92,11 +95,13 @@ export function DocumentsList({ filters, selectedId, onOpen, onNew, onImport }: 
   onNew: () => void;
   onImport: () => void;
 }) {
-  const docs = useDocuments(filterOf(filters));
+  const filter = filterOf(filters);
+  const page = usePageLimit(PAGE, JSON.stringify(filter));
+  const docs = useDocuments({ ...filter, limit: page.limit });
   const providers = useDocumentProviders();
   const projects = useProjects();
   const list = docs.data ?? [];
-  const filtered = Object.keys(filterOf(filters)).length > 0;
+  const filtered = Object.keys(filter).length > 0;
   const none = providers.isSuccess && providers.data.providers.length === 0;
   const [pickingTicket, setPickingTicket] = useState(false);
   return (
@@ -186,6 +191,9 @@ export function DocumentsList({ filters, selectedId, onOpen, onNew, onImport }: 
             </li>
           ))}
         </ul>
+      )}
+      {page.hasMore(list.length) && (
+        <Button variant="ghost" size="sm" className="mx-2 mt-2" pending={docs.isPlaceholderData} onClick={page.more}>Show more</Button>
       )}
     </div>
   );

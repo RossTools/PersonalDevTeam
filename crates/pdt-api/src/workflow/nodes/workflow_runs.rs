@@ -5,7 +5,9 @@
 
 use super::release::{RepoOf, check_repo, repo_for_step};
 use crate::log_err::LogErr;
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, repo_missing, spec};
+use crate::workflow::catalog::{
+    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, repo_missing, spec,
+};
 use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
 use pdt_core::pr::CiState;
 use pdt_core::workflow::schedule::parse_every;
@@ -26,10 +28,6 @@ pub const DISMISS: &str = "dismiss";
 
 fn templated(s: &str) -> bool {
     s.contains("{{")
-}
-
-fn nonblank(v: &Option<String>) -> Option<&str> {
-    v.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
 /// A run id or attempt as a config gives it: a number or text. None when left out (or empty).
@@ -237,9 +235,9 @@ impl NodeKind for GithubWorkflowWatch {
             let after: u32 = text_of(&c.after).and_then(|a| a.parse().ok()).unwrap_or(0);
             let of: RepoOf = repo_for_step(cx, &c.repo).await?;
             if cx.dry_run {
-                return Ok(Outcome::next(
+                return Ok(Outcome::would(
                     "passed",
-                    json!({"would": format!("report run {id} of {} in the Inbox until it passes", of.repo)}),
+                    format!("report run {id} of {} in the Inbox until it passes", of.repo),
                 ));
             }
             let actions = of.actions("read the run from")?;
@@ -435,10 +433,7 @@ impl NodeKind for GithubWorkflowRerun {
             let of = repo_for_step(cx, &c.repo).await?;
             let which = if c.all_jobs { "every job" } else { "the failed jobs" };
             if cx.dry_run {
-                return Ok(Outcome::next(
-                    "out",
-                    json!({"would": format!("re-run {which} of run {id} in {}", of.repo)}),
-                ));
+                return Ok(Outcome::would("out", format!("re-run {which} of run {id} in {}", of.repo)));
             }
             let actions = of.actions("re-run the run with")?;
             let Some(run) = read_run(&actions, &of.repo, &id).await? else {

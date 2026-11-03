@@ -1,16 +1,20 @@
 import { useEffect, useRef } from 'react';
 import { Brain, Pin, Search, SquarePen } from 'lucide-react';
-import { EmptyState, IconButton, Input, Kbd, ListHeading, SegmentedControl, Select, Skeleton } from '@ui';
+import { Button, EmptyState, IconButton, Input, Kbd, ListHeading, SegmentedControl, Select, Skeleton } from '@ui';
 import { ALL, HOST_WIDE, inScope, sectionsOf, type Whose } from './model';
 import { NoteItem } from './NoteItem';
 import { useProjects } from '../projects/queries';
 import { useNotesList, type NotesFilters } from './useNotes';
+import { usePageLimit } from '../common/usePageLimit';
 import { LoadError } from '../common/QueryStatus';
 
 const WHOSE_OPTIONS = [
   { value: 'user' as const, label: 'Mine' },
   { value: 'note' as const, label: 'PM’s memory', icon: <Brain aria-hidden className="size-3" /> },
 ];
+
+/** Notes loaded at a time; Show more loads the next ones. */
+const PAGE = 100;
 
 /** Typing in a field, where `/` is text rather than the search key. */
 const typing = (t: EventTarget | null) =>
@@ -31,7 +35,8 @@ export function NotesList({ filters, selectedId, onOpen, onNew, onWhose }: {
   onWhose: (w: Whose) => void;
 }) {
   const { whose, scope, setScope, q, setQ } = filters;
-  const notes = useNotesList(whose, q);
+  const page = usePageLimit(PAGE, `${whose}:${q}`);
+  const notes = useNotesList(whose, q, page.limit);
   const projects = useProjects();
   const keyOf = (id: string | null) => (id ? projects.data?.find((p) => p.id === id)?.key ?? '?' : null);
   const shown = inScope(notes.data ?? [], scope);
@@ -125,6 +130,9 @@ export function NotesList({ filters, selectedId, onOpen, onNew, onWhose }: {
           </ul>
         </section>
       ))}
+      {page.hasMore(notes.data?.length ?? 0) && (
+        <Button variant="ghost" size="sm" className="mx-2 mt-2" pending={notes.isPlaceholderData} onClick={page.more}>Show more</Button>
+      )}
     </div>
   );
 }

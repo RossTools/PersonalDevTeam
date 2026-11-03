@@ -79,6 +79,9 @@ async fn shell_session_lifecycle() {
     assert!(ended["endedAt"].is_number());
     let (s, v) = call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::CONFLICT, "not_running"));
+    // Capped to no ended ones, it still lists the ended session its tab holds.
+    let (_, list) = call(&app, "GET", &format!("/api/projects/{pid}/sessions?ended=0"), None).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
 
     let (s, _) = call(&app, "DELETE", &format!("/api/sessions/{id}"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);

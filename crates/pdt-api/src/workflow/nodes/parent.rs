@@ -57,10 +57,7 @@ impl NodeKind for CloseParent {
         Box::pin(async move {
             let c: CloseParentConfig = parse(&input)?;
             if cx.dry_run && pdt_core::workflow::dry::is_stand_in(&c.ticket) {
-                return Ok(Outcome::next(
-                    "closed",
-                    json!({"would": "close the part's parent once its parts are closed"}),
-                ));
+                return Ok(Outcome::would("closed", "close the part's parent once its parts are closed"));
             }
             let store = &cx.st.store;
             let id = crate::mcp::tools::resolve_ticket(cx.st, &c.ticket, cx.run.project_id.as_deref()).await?;
@@ -89,7 +86,7 @@ impl NodeKind for CloseParent {
             };
             if cx.dry_run {
                 let would = format!("move {} to {}", parent_ref.key, to.as_str());
-                return Ok(Outcome::next(port, json!({"would": would})));
+                return Ok(Outcome::would(port, would));
             }
             let mut data = cx.by().data();
             data["via"] = json!("parts");

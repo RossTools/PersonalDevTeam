@@ -135,6 +135,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `useWorkspaces.allInfos`, which leaves out workflow step sessions for a ticket and ended ones with no ticket unless
   a tab holds them (`hiddenStepSession`), so a step's tab can still be found without old steps piling up. The favicon
   and title read `everyInfo`, every session, so a hidden step that needs the user still shows.
+- **A project's polled session and run lists stay small, yet hold every tab's item.** The web asks for
+  `?ended=RECENT_ENDED` (web `sessions/queries.ts`); the store (`list_recent_sessions`, `list_recent_runs`) always
+  adds every running session or active run and every one a workspace tab holds, so a tab never loses its item and
+  nothing that can need the user drops out. Only ended ones without a tab are capped (workflow steps leave many).
 - **A session in the background is never news.** A running agent that is idle with background tasks (`Session.background`,
   the store's `background_tasks` column, kept in step with the conversation's) shows Background (web
   `common/AgentState.tsx` `inBackground`), and its unseen flag is held back (`sessionUnseen`, read by `sessionInfo`),
@@ -146,6 +150,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **Everything runs at least once, maybe more.** Events are deduplicated by their key, runs by their run key. A new
   node kind with side effects either records its progress or sets `rerun_safe = false` (pdt-api
   `workflow/catalog.rs`), so a step cut short by a crash isn't repeated blindly.
+- **A dry run changes nothing.** The engine calls the same `NodeKind::run` with `StepCx::dry_run` set; a kind with
+  side effects checks it before doing them and returns `Outcome::would(port, what)`, and the dry run fills in the
+  fields later steps read from the kind's output schema.
 - **A node kind's config changes incompatibly only with a version bump and a migration.** Stored documents keep each
   node's `version`; the engine and validation bring an older config up to date as they read it (`NodeKind::migrate`
   in pdt-api `workflow/catalog.rs`; e.g. `github.nightly` 1 → 2 in `workflow/nodes/release.rs`), so a user's

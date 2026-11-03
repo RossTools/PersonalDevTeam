@@ -111,7 +111,7 @@ impl NodeKind for Notify {
             let chat = c.chat.as_deref().map(str::trim).filter(|d| !d.is_empty());
             if cx.dry_run {
                 let to = chat.map(|d| format!(" (and post via {d})")).unwrap_or_default();
-                return Ok(Outcome::next("out", json!({"would": format!("notify: {}{to}", c.title)})));
+                return Ok(Outcome::would("out", format!("notify: {}{to}", c.title)));
             }
             if let Some(item) = c.while_open.as_deref().map(str::trim).filter(|i| !i.is_empty())
                 && !crate::inbox::is_open(cx.st, item).await.map_err(|e| e.message().to_string())?

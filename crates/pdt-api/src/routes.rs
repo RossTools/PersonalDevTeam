@@ -26,6 +26,8 @@ pub struct AppState {
     pub codex_spawn_spacing: std::time::Duration,
     /// When the last fresh Codex launch in each folder (see `folder_key`) happened, in ms.
     pub(crate) codex_spawns: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, i64>>>,
+    /// Refused webhook requests per hook name, to slow guessing a secret.
+    pub(crate) hook_failures: std::sync::Arc<crate::hooks::HookFailures>,
     /// Set when pdtd starts shutting down, so a background auto-resume stops launching sessions.
     pub shutting_down: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Sessions the startup auto-resume has yet to finish with (restarted, skipped or failed). A terminal that
@@ -253,6 +255,7 @@ impl AppState {
             session_locks: Default::default(),
             codex_spawn_spacing: std::time::Duration::from_secs(5),
             codex_spawns: Default::default(),
+            hook_failures: Default::default(),
             shutting_down: Default::default(),
             pending_resume: Default::default(),
             resume_changed: std::sync::Arc::new(tokio::sync::watch::channel(0).0),

@@ -299,7 +299,8 @@ export function LinkDocumentDialog({ title, exclude, onPick, onClose }: {
 }) {
   const [query, setQuery] = useState('');
   const q = useDebounced(query.trim());
-  const docs = useDocuments(q ? { q } : {});
+  // The best matches only: typing narrows them.
+  const docs = useDocuments({ ...(q ? { q } : {}), limit: 50 + exclude.length });
   const [error, setError] = useState<string | null>(null);
   const list = (docs.data ?? []).filter((d) => !exclude.includes(d.id));
   const items: CommandItem[] = list.map((d) => ({ id: d.id, label: d.title, detail: KIND_LABEL[d.kind], keywords: query ? [query] : [] }));

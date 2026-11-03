@@ -198,8 +198,7 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
             dry_run: true,
             rerun: false,
         };
-        let result =
-            kind.dry_run(&cx, input).await.map_err(|e| crate::workflow::catalog::setup_split(&e).1.to_string());
+        let result = kind.run(&cx, input).await.map_err(|e| crate::workflow::catalog::setup_split(&e).1.to_string());
         let port = match result {
             Ok(Outcome::Next { port, output }) => {
                 // An action that only says what it would do still gives later steps the fields they read (PDT-189).

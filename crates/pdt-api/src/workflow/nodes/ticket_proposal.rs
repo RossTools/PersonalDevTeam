@@ -5,7 +5,7 @@
 //! the item closes by itself once the ticket leaves Draft some other way (the store does that on every move).
 
 use crate::routes::{AppState, now_ms};
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, parses, spec};
 use pdt_core::inbox::{self, InboxAnswer, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
 use pdt_core::session::{SessionKind, SessionStatus};
 use pdt_core::ticket::{Actor, By, LinkKind, TicketPatch, TicketStage};
@@ -46,10 +46,6 @@ fn skipped(reason: &str) -> Outcome {
     Outcome::next("skipped", json!({"quiet": true, "reason": reason}))
 }
 
-fn nonblank(s: &Option<String>) -> Option<&str> {
-    s.as_deref().map(str::trim).filter(|s| !s.is_empty())
-}
-
 impl NodeKind for TicketProposal {
     fn spec(&self) -> KindSpec {
         spec::<TicketProposalConfig, Value>(
@@ -70,7 +66,7 @@ impl NodeKind for TicketProposal {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<TicketProposalConfig>(config).map(|_| ())
+        parses::<TicketProposalConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
@@ -78,7 +74,7 @@ impl NodeKind for TicketProposal {
             let c: TicketProposalConfig = parse(&input)?;
             let Some(given) = nonblank(&c.ticket) else { return Ok(skipped("no ticket to propose")) };
             if cx.dry_run && pdt_core::workflow::dry::is_stand_in(given) {
-                return Ok(Outcome::next("added", json!({"would": format!("propose {given} in your Inbox")})));
+                return Ok(Outcome::would("added", format!("propose {given} in your Inbox")));
             }
             let id = crate::mcp::tools::resolve_ticket(cx.st, given, cx.run.project_id.as_deref()).await?;
             let store = &cx.st.store;
@@ -87,10 +83,7 @@ impl NodeKind for TicketProposal {
                 return Ok(skipped("the ticket has left Draft"));
             }
             if cx.dry_run {
-                return Ok(Outcome::next(
-                    "added",
-                    json!({"would": format!("propose {} in your Inbox", t.summary.key)}),
-                ));
+                return Ok(Outcome::would("added", format!("propose {} in your Inbox", t.summary.key)));
             }
             let from_id = nonblank(&c.from_ticket).map(String::from);
             let from_key = match &from_id {

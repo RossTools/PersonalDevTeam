@@ -1,6 +1,6 @@
 //! `end`: ends the run, quietly ("nothing to report") or with an output.
 
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -34,7 +34,7 @@ impl NodeKind for End {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<EndConfig>(config).map(|_| ())
+        parses::<EndConfig>(config)
     }
 
     fn run<'a>(&'a self, _cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {

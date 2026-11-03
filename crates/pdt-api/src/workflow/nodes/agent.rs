@@ -5,7 +5,7 @@ use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, St
 use pdt_core::workflow::agent::{OutcomeSpec, STOPPED, TIMEOUT, valid_outcome_id};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use ts_rs::TS;
 
 pub const KIND: &str = "agent";
@@ -187,7 +187,7 @@ impl NodeKind for Agent {
                         "ask the user to do it and pick one of: {}",
                         c.outcomes.iter().map(|o| o.id.as_str()).collect::<Vec<_>>().join(", ")
                     );
-                    return Ok(Outcome::next(&first, json!({"would": would})));
+                    return Ok(Outcome::would(&first, would));
                 }
                 if let Some(why) = crate::untrusted::outsider_refusal(cx.ctx, cx.origin) {
                     return Err(why);
@@ -207,7 +207,7 @@ impl NodeKind for Agent {
                     if t.host { ", in the host project with no ticket, as the PM runs" } else { "" },
                     c.outcomes.iter().map(|o| o.id.as_str()).collect::<Vec<_>>().join(", ")
                 );
-                return Ok(Outcome::next(&first, json!({"would": would})));
+                return Ok(Outcome::would(&first, would));
             }
             crate::workflow::agent::start_step(cx, c).await
         })
@@ -217,6 +217,7 @@ impl NodeKind for Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn outcomes_are_ports_and_are_checked() {

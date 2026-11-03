@@ -147,7 +147,7 @@ your change at once; a sheet's list of edits is all or none.
 
 | Call | Does |
 |---|---|
-| `GET /api/documents?ticket=<key>&project=<key>&kind=doc\|sheet&q=<words>` | documents, the most recently changed first, with their `projects` and `tickets` |
+| `GET /api/documents?ticket=<key>&project=<key>&kind=doc\|sheet&q=<words>&limit=<n>` | documents, the most recently changed first, with their `projects` and `tickets` |
 | `GET /api/documents/<id>/content` | `{content, embedUrl}`: `content` is `{kind: "doc", markdown}` or `{kind: "sheet", sheets: [{name, rows, charts}]}` |
 | `POST /api/documents/<id>/edits` | `{edits: [...]}` (the operations above): `{version, charts}` |
 | `GET /api/documents/<id>/version` | `{version}`: it changes whenever the document does, edits made at the provider too |

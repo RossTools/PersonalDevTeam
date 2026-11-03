@@ -3,7 +3,7 @@
 
 use crate::routes::now_ms;
 use crate::storage::{self, Finished};
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use pdt_core::storage::DiskLevel;
 use pdt_core::ticket::TicketStage;
 use schemars::JsonSchema;
@@ -103,7 +103,7 @@ impl NodeKind for StorageClean {
             let c: StorageCleanConfig = parse(&input)?;
             c.check()?;
             if cx.dry_run {
-                return Ok(Outcome::next("out", json!({"would": "clean up finished tickets' worktrees"})));
+                return Ok(Outcome::would("out", "clean up finished tickets' worktrees"));
             }
             let r = match c.which {
                 CleanWhich::Due => storage::auto_cleanup(cx.st).await,
@@ -160,7 +160,7 @@ impl NodeKind for StorageMeasure {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<StorageMeasureConfig>(config).map(|_| ())
+        parses::<StorageMeasureConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
