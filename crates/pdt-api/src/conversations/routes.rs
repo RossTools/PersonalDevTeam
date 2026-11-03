@@ -3,10 +3,10 @@
 use super::live::conv;
 use super::terminal::{close_terminal, open_terminal, switch_mode};
 use super::{
-    Conv, PAGE, Sender, acp_agent, adapter_error, adapter_for, conflict, conversation_session, login_path_env,
-    scrubbed, send_message,
+    Conv, PAGE, Sender, acp_agent, adapter_error, adapter_for, conversation_session, login_path_env, scrubbed,
+    send_message,
 };
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -234,9 +234,9 @@ pub(crate) async fn ticket_draft(
             AgentKind::Acp(_) => acp_agent(&st, agent).await.map(|d| d.label).unwrap_or_else(|_| "ACP".into()),
             _ => agent.label().to_string(),
         };
-        return Err(conflict(
-            "draft_unsupported",
-            &format!("Make ticket is not available for {name} conversations yet"),
+        return Err(ApiError::conflict(
+            codes::DRAFT_UNSUPPORTED,
+            format!("Make ticket is not available for {name} conversations yet"),
         ));
     }
     let adapter = adapter_for(&st, session.agent).await?;
@@ -254,7 +254,10 @@ pub(crate) async fn ticket_draft(
         }
     };
     if !saved {
-        return Err(conflict("nothing_to_draft", "the agent has no conversation to draft a ticket from yet"));
+        return Err(ApiError::conflict(
+            codes::NOTHING_TO_DRAFT,
+            "the agent has no conversation to draft a ticket from yet",
+        ));
     }
     let spec = OpenSpec {
         session_id: session.id.clone(),
@@ -274,14 +277,16 @@ pub(crate) async fn ticket_draft(
         mcp: None,
     };
     let answer = adapter.draft(spec, DRAFT_PROMPT, &draft_schema()).await.map_err(|e| match e {
-        AdapterError::Timeout => {
-            ApiError::new(StatusCode::GATEWAY_TIMEOUT, "draft_timeout", "the agent took too long to draft a ticket")
-        }
+        AdapterError::Timeout => ApiError::new(
+            StatusCode::GATEWAY_TIMEOUT,
+            codes::DRAFT_TIMEOUT,
+            "the agent took too long to draft a ticket",
+        ),
         e => adapter_error(e),
     })?;
-    TicketDraft::from_value(&answer).map(Json).ok_or_else(|| {
-        ApiError::new(StatusCode::BAD_GATEWAY, "agent_error", "the agent's answer was not a ticket draft")
-    })
+    TicketDraft::from_value(&answer)
+        .map(Json)
+        .ok_or_else(|| ApiError::upstream(codes::AGENT_ERROR, "the agent's answer was not a ticket draft"))
 }
 
 /// `POST /api/sessions/{id}/interrupt`: stops the running turn (nothing to do when none runs).
@@ -315,7 +320,7 @@ pub(crate) async fn capabilities(
         };
         acp_modes = Some(def.offered_modes());
     }
-    let agent = AgentKind::parse(&agent).ok_or_else(|| ApiError::not_found("agent"))?;
+    let agent = AgentKind::parse(&agent).or_404("agent")?;
     let known = st.conversations.caps.lock().unwrap_or_else(|e| e.into_inner()).get(&agent).cloned();
     let known = known.or_else(|| match agent {
         AgentKind::Codex => st.conversations.codex.get().and_then(|s| s.capabilities()),

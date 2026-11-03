@@ -5,7 +5,6 @@ use crate::routes::AppState;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
 use pdt_core::board::BoardSettings;
 
 /// `GET /api/projects/{id}/board`: the project's board settings (the defaults until it is given some).
@@ -13,7 +12,7 @@ pub(crate) async fn get_settings(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<BoardSettings>, ApiError> {
-    st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    st.project(&id).await?;
     Ok(Json(st.store.get_project_board(&id).await?))
 }
 
@@ -24,8 +23,8 @@ pub(crate) async fn put_settings(
     payload: Result<Json<BoardSettings>, JsonRejection>,
 ) -> Result<Json<BoardSettings>, ApiError> {
     let Json(s) = payload?;
-    st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
-    let s = s.validate().map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m))?;
+    st.project(&id).await?;
+    let s = s.validate().map_err(ApiError::invalid)?;
     st.store.put_project_board(&id, &s).await?;
     Ok(Json(s))
 }

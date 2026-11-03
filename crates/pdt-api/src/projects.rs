@@ -1,6 +1,6 @@
 //! Project routes: list, add (by path or by cloning), rename/re-key, remove (workspaces spec §6.1–§6.3).
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -36,12 +36,12 @@ pub(crate) async fn with_forge(st: &AppState, mut projects: Vec<Project>) -> Vec
 }
 
 async fn load(st: &AppState, id: &str) -> Result<Project, ApiError> {
-    let p = st.store.get_project(id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let p = st.project(id).await?;
     Ok(with_forge(st, vec![p]).await.remove(0))
 }
 
 fn key_taken() -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, "key_taken", "another project already uses this key")
+    ApiError::conflict(codes::KEY_TAKEN, "another project already uses this key")
 }
 
 pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<Vec<Project>>, ApiError> {
@@ -86,7 +86,7 @@ async fn add(
     st.store.insert_project(&project).await.map_err(|e| match e {
         pdt_store::StoreError::Conflict(m) if m.contains("key") => key_taken(),
         pdt_store::StoreError::Conflict(_) => {
-            ApiError::new(StatusCode::CONFLICT, "conflict", "a project for this repository already exists")
+            ApiError::conflict(codes::CONFLICT, "a project for this repository already exists")
         }
         other => other.into(),
     })?;
@@ -105,7 +105,7 @@ pub(crate) async fn create(
     // `~/…` (what the folder picker writes) is the home folder; anything else goes to git as typed.
     let path = match v.repo_path.starts_with('~') {
         true => pdt_core::project::resolve_folder(&v.repo_path, st.home_dir.as_deref())
-            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_folder", e.to_string()))?,
+            .map_err(|e| ApiError::bad_request(codes::INVALID_FOLDER, e.to_string()))?,
         false => PathBuf::from(&v.repo_path),
     };
     let p = add(&st, path, v.name, v.base_branch, v.key).await?;
@@ -121,7 +121,7 @@ async fn add_personal(st: &AppState, name: String, key: Option<String>) -> Resul
     }
     let id = uuid::Uuid::now_v7().to_string();
     let dir = st.data_dir.join("personal").join(&id);
-    std::fs::create_dir_all(&dir).map_err(|e| ApiError::internal(format!("making the project's folder: {e}")))?;
+    std::fs::create_dir_all(&dir).map_err(|e| ApiError::io("making the project's folder", e))?;
     let project = Project {
         id,
         name,
@@ -142,9 +142,8 @@ async fn add_personal(st: &AppState, name: String, key: Option<String>) -> Resul
 /// 409 `personal_project` for what needs a repository.
 pub(crate) fn needs_repo(p: &Project, what: &str) -> Result<(), ApiError> {
     if !p.has_repo() {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "personal_project",
+        return Err(ApiError::conflict(
+            codes::PERSONAL_PROJECT,
             format!("{} is a Personal project (no repository): it has no {what}", p.name),
         ));
     }
@@ -162,19 +161,17 @@ fn ensure_parent(dir: &std::path::Path) -> Result<(), ApiError> {
     if dir.is_dir() {
         return Ok(());
     }
-    let missing = || {
-        ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "folder_missing",
-            format!("{} does not exist; check the path or create the folder first", dir.display()),
-        )
-    };
-    if dir.exists() || !dir.parent().is_some_and(|p| p.is_dir()) {
-        return Err(missing());
+    if dir.exists() {
+        return Err(ApiError::bad_request(codes::NOT_A_FOLDER, format!("{} is not a folder", dir.display())));
     }
-    std::fs::create_dir(dir).map_err(|e| {
-        ApiError::new(StatusCode::BAD_REQUEST, "folder_missing", format!("could not create {}: {e}", dir.display()))
-    })
+    if !dir.parent().is_some_and(|p| p.is_dir()) {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            codes::FOLDER_MISSING,
+            format!("{} does not exist; check the path or create the folder first", dir.display()),
+        ));
+    }
+    std::fs::create_dir(dir).map_err(|e| ApiError::io(&format!("creating {}", dir.display()), e))
 }
 
 pub(crate) async fn clone(
@@ -183,7 +180,7 @@ pub(crate) async fn clone(
 ) -> Result<(StatusCode, Json<Project>), ApiError> {
     let Json(input) = payload?;
     let url = input.url.trim().to_string();
-    let bad = |m: &str| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m.to_string());
+    let bad = |m: &str| ApiError::invalid(m.to_string());
     if url.is_empty() || url.starts_with('-') {
         return Err(bad("enter the repository's URL"));
     }
@@ -192,7 +189,7 @@ pub(crate) async fn clone(
     let name = input.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(&repo).to_string();
     let parent = match input.parent_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
         Some(d) => pdt_core::project::resolve_folder(d, std::env::home_dir().as_deref())
-            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_folder", e.to_string()))?,
+            .map_err(|e| ApiError::bad_request(codes::INVALID_FOLDER, e.to_string()))?,
         None => {
             let setting = st.store.get_host_settings().await?.projects_dir;
             projects_dir(setting.as_deref()).ok_or_else(|| bad("set a Projects folder in Host settings"))?
@@ -202,18 +199,15 @@ pub(crate) async fn clone(
     tokio::task::spawn_blocking(move || ensure_parent(&check)).await.map_err(ApiError::internal)??;
     let dest = parent.join(&repo);
     if dest.exists() {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "path_exists",
+        return Err(ApiError::conflict(
+            codes::PATH_EXISTS,
             format!("{} already exists; add it by path instead", dest.display()),
         ));
     }
     let target = dest.clone();
     tokio::task::spawn_blocking(move || pdt_git::clone(&url, &target)).await.map_err(ApiError::internal)?.map_err(
         |e| match e {
-            pdt_git::GitError::Command(m) => {
-                ApiError::new(StatusCode::BAD_GATEWAY, "clone_failed", format!("git clone failed: {m}"))
-            }
+            pdt_git::GitError::Command(m) => ApiError::upstream(codes::CLONE_FAILED, format!("git clone failed: {m}")),
             other => other.into(),
         },
     )?;
@@ -256,7 +250,7 @@ pub(crate) async fn update(
 
 /// `branch` if it names a branch of the project's repository, local or on `origin` (new worktrees start from it).
 async fn checked_base(st: &AppState, id: &str, branch: String) -> Result<String, ApiError> {
-    let project = st.store.get_project(id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(id).await?;
     needs_repo(&project, "base branch")?;
     let repo = PathBuf::from(&project.repo_path);
     tokio::task::spawn_blocking(move || {
@@ -265,9 +259,8 @@ async fn checked_base(st: &AppState, id: &str, branch: String) -> Result<String,
         }
         pdt_git::check_branch_name(&repo, &branch)?;
         if !pdt_git::list_branches(&repo)?.iter().any(|b| b.name == branch) {
-            return Err(ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "unknown_branch",
+            return Err(ApiError::bad_request(
+                codes::UNKNOWN_BRANCH,
                 format!("{branch} is not a branch of this repository (locally or on origin)"),
             ));
         }
@@ -280,12 +273,11 @@ async fn checked_base(st: &AppState, id: &str, branch: String) -> Result<String,
 /// Removes a project from PDT: stops its sessions and runs and forgets everything about it (its tickets' attachments
 /// too). The project's own files are never touched.
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
-    st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    st.project(&id).await?;
     for run in st.store.list_runs(&id).await? {
         if !crate::runs::discard(&st, &run).await {
-            return Err(ApiError::new(
-                StatusCode::CONFLICT,
-                "run_stopping",
+            return Err(ApiError::conflict(
+                codes::RUN_STOPPING,
                 "a run of this project has not stopped yet; try again in a moment",
             ));
         }
@@ -315,7 +307,7 @@ pub(crate) async fn pull(
         Err(JsonRejection::MissingJsonContentType(_)) => PullBranch::default(),
         Err(e) => return Err(e.into()),
     };
-    let project = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(&id).await?;
     needs_repo(&project, "branches to pull")?;
     let branch = input.branch.filter(|b| !b.trim().is_empty()).unwrap_or_else(|| project.base_branch.clone());
     Ok(Json(pull_branch(&project, branch).await?))

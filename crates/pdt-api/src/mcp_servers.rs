@@ -2,7 +2,7 @@
 //! Servers are added, changed and removed as connections (`/api/connections`); their agent settings are the
 //! connection's `config.agents`.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound};
 use crate::mcp_client::{McpProbe, McpTools};
 use crate::mcp_oauth::OAuthStatus;
 use crate::routes::{AppState, now_ms};
@@ -67,11 +67,7 @@ pub(crate) async fn list(State(st): State<AppState>) -> Result<Json<McpServersVi
 }
 
 async fn load(st: &AppState, id: &str) -> Result<Connection, ApiError> {
-    st.store
-        .get_connection(id)
-        .await?
-        .filter(|c| c.kind == crate::mcp_client::MCP)
-        .ok_or_else(|| ApiError::not_found("MCP server"))
+    st.store.get_connection(id).await?.filter(|c| c.kind == crate::mcp_client::MCP).or_404("MCP server")
 }
 
 /// `POST /api/mcp-servers/{id}/test`: connects and lists the server's tools, resources and prompts.

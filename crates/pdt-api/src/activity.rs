@@ -1,7 +1,7 @@
 //! Agent activity (remote-host spec §5): hook reports from `pdtd hook`, terminal input and output heuristics, and
 //! the unseen flag. Only agent sessions are tracked; shells and run terminals never are.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -452,9 +452,9 @@ pub(crate) async fn post_report(
     payload: Result<Json<HookReport>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
     let Json(report) = payload?;
-    let s = st.store.get_session(&id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let s = st.session(&id).await?;
     if s.kind != SessionKind::AgentTui {
-        return Err(ApiError::new(StatusCode::CONFLICT, "not_an_agent", "only agent sessions report activity"));
+        return Err(ApiError::conflict(codes::NOT_AN_AGENT, "only agent sessions report activity"));
     }
     if let HookReport::Devin { session_id: Some(conversation), .. } = &report {
         remember_devin_conversation(&st, &s, conversation).await;

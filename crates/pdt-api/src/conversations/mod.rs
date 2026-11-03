@@ -2,9 +2,8 @@
 //! process (opened on demand, parked when idle), appends the adapter's events to the store, fans them out to
 //! WebSocket viewers and derives the session's activity from them.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
-use axum::http::StatusCode;
 use pdt_agents::adapter::acp_agent::DefinedAdapter;
 use pdt_agents::adapter::claude::ClaudeAdapter;
 use pdt_agents::adapter::codex::{CodexAdapter, CodexServer, CodexServerConfig};
@@ -221,14 +220,13 @@ async fn adapter_for(st: &AppState, agent: Option<AgentKind>) -> Result<Box<dyn 
             let def = acp_agent(st, agent).await?;
             Ok(Box::new(DefinedAdapter::new(def).ok_or_else(|| unknown_agent(agent))?))
         }
-        None => Err(conflict("not_conversation", "only agent sessions are conversations")),
+        None => Err(ApiError::conflict(codes::NOT_CONVERSATION, "only agent sessions are conversations")),
     }
 }
 
 fn unknown_agent(agent: AgentKind) -> ApiError {
-    ApiError::new(
-        StatusCode::BAD_REQUEST,
-        "unknown_agent",
+    ApiError::bad_request(
+        codes::UNKNOWN_AGENT,
         format!("this host has no ACP agent `{}`: add it in Settings → Agents", agent.as_str()),
     )
 }
@@ -242,31 +240,27 @@ pub(crate) async fn acp_agent(st: &AppState, agent: AgentKind) -> Result<AcpAgen
     Ok(crate::toolchains::launch_def(&st.data_dir, st.home_dir.as_deref(), &s, def))
 }
 
-fn conflict(code: &'static str, message: &str) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, code, message)
-}
-
 fn adapter_error(e: AdapterError) -> ApiError {
     match e {
-        AdapterError::ProgramNotFound(p) => ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "agent_not_found",
-            format!("{p} was not found; install it or set its path"),
-        ),
-        AdapterError::RequestClosed => conflict("request_closed", "this request was already answered or has expired"),
-        AdapterError::WrongAnswer => {
-            ApiError::new(StatusCode::BAD_REQUEST, "wrong_answer", "that answer does not fit this request")
+        AdapterError::ProgramNotFound(p) => {
+            ApiError::conflict(codes::AGENT_NOT_FOUND, format!("{p} was not found; install it or set its path"))
         }
-        AdapterError::NotRunning => conflict("agent_not_running", "the agent is not running"),
-        e => ApiError::new(StatusCode::BAD_GATEWAY, "agent_error", e.to_string()),
+        AdapterError::RequestClosed => {
+            ApiError::conflict(codes::REQUEST_CLOSED, "this request was already answered or has expired")
+        }
+        AdapterError::WrongAnswer => {
+            ApiError::bad_request(codes::WRONG_ANSWER, "that answer does not fit this request")
+        }
+        AdapterError::NotRunning => ApiError::conflict(codes::AGENT_NOT_RUNNING, "the agent is not running"),
+        e => ApiError::upstream(codes::AGENT_ERROR, e.to_string()),
     }
 }
 
 /// The session as a conversation, or 404 / 409.
 async fn conversation_session(st: &AppState, id: &str) -> Result<Session, ApiError> {
-    let s = st.store.get_session(id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let s = st.session(id).await?;
     if s.mode != SessionMode::Conversation {
-        return Err(conflict("not_conversation", "this session is a terminal, not a conversation"));
+        return Err(ApiError::conflict(codes::NOT_CONVERSATION, "this session is a terminal, not a conversation"));
     }
     Ok(s)
 }
@@ -307,9 +301,8 @@ async fn send_message(
         Sender::Pdt(pdt) => (true, pdt),
     };
     if !valid_message(text, image_ids.len()) {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_message",
+        return Err(ApiError::bad_request(
+            codes::INVALID_MESSAGE,
             "a message must have text or an image, and not be over 64 KB",
         ));
     }

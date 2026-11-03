@@ -1,7 +1,7 @@
 //! PDT's guides, built into pdtd so they are there on any host, with or without a copy of PDT's repository (PDT-46).
 //! The sources are the Markdown files in docs/; agents read them through `GET /api/guides/{name}`.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound};
 use axum::Json;
 use axum::extract::Path;
 use axum::http::header;
@@ -89,7 +89,7 @@ pub(crate) async fn list() -> Json<Vec<GuideInfo>> {
 }
 
 pub(crate) async fn get_one(Path(name): Path<String>) -> Result<impl IntoResponse, ApiError> {
-    let text = guide_text(&name).ok_or_else(|| ApiError::not_found("guide"))?;
+    let text = guide_text(&name).or_404("guide")?;
     Ok(([(header::CONTENT_TYPE, "text/markdown; charset=utf-8")], text))
 }
 

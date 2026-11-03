@@ -5,7 +5,7 @@
 //! done" ([`pdt_store::Store::set_close_on_done`]). The ticket view, `link_issue` / `unlink_issue` and
 //! `create_ticket`'s `external` come here.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
@@ -72,10 +72,10 @@ impl From<LinkError> for ApiError {
     fn from(e: LinkError) -> Self {
         match &e {
             LinkError::Unrecognized(given) => {
-                ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "unrecognized", e.message(given))
+                ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, codes::UNRECOGNIZED, e.message(given))
             }
-            LinkError::Tracker(m) => ApiError::new(StatusCode::BAD_GATEWAY, "tracker_error", m.clone()),
-            LinkError::Elsewhere(_) => ApiError::new(StatusCode::CONFLICT, "already_linked", e.message("")),
+            LinkError::Tracker(m) => ApiError::upstream(codes::TRACKER_ERROR, m.clone()),
+            LinkError::Elsewhere(_) => ApiError::conflict(codes::ALREADY_LINKED, e.message("")),
         }
     }
 }
@@ -113,7 +113,7 @@ pub async fn link_found(
     match st.store.link_external(&link, by, now_ms()).await? {
         Ok(t) => Ok(t),
         Err(other) if other == ticket_id => {
-            Err(ApiError::new(StatusCode::CONFLICT, "already_linked", format!("it links {} already", i.key)))
+            Err(ApiError::conflict(codes::ALREADY_LINKED, format!("it links {} already", i.key)))
         }
         Err(other) => {
             let key = st.store.get_ticket_summary(&other).await?.map_or(other, |t| t.key);
@@ -276,7 +276,7 @@ fn no_link(e: TicketError) -> ApiError {
 }
 
 async fn ticket_project(st: &AppState, id: &str) -> Result<String, ApiError> {
-    Ok(st.store.get_ticket_summary(id).await?.ok_or_else(|| ApiError::not_found("ticket"))?.project_id)
+    Ok(st.store.get_ticket_summary(id).await?.or_404("ticket")?.project_id)
 }
 
 /// `POST /api/tickets/{id}/issues`: links an issue already in a tracker, read through the project's connection.
@@ -299,7 +299,7 @@ async fn unlink(
     Path(id): Path<String>,
     q: Result<Query<IssueRef>, QueryRejection>,
 ) -> Result<Json<Ticket>, ApiError> {
-    let Query(r) = q.map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.body_text()))?;
+    let Query(r) = q.map_err(|e| ApiError::invalid(e.body_text()))?;
     let t = st.store.unlink_external(&id, &r.system, &r.key, pdt_core::ticket::Actor::User, now_ms()).await;
     reply(&st, t.map_err(no_link)?).await
 }
@@ -319,7 +319,7 @@ async fn set_close(
 /// old (the ticket view calls it when it opens); the ticket as it is then.
 async fn refresh_route(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Ticket>, ApiError> {
     refresh(&st, &id).await?;
-    let t = st.store.get_ticket(&id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    let t = st.ticket(&id).await?;
     reply(&st, t).await
 }
 
@@ -330,8 +330,8 @@ async fn add_web(
     body: Result<Json<NewWebLink>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Ticket>), ApiError> {
     let Json(b) = body?;
-    let (url, label) = pdt_core::issue_link::web_link(&b.url, b.label.as_deref().unwrap_or_default())
-        .map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m))?;
+    let (url, label) =
+        pdt_core::issue_link::web_link(&b.url, b.label.as_deref().unwrap_or_default()).map_err(ApiError::invalid)?;
     let t = st.store.add_web_link(&id, &url, &label, pdt_core::ticket::Actor::User, now_ms()).await?;
     Ok((StatusCode::CREATED, reply(&st, t).await?))
 }

@@ -14,7 +14,7 @@ use crate::core::{
 };
 use crate::core::{IssueNews, JIRA, JiraIssue, issue_key, news, parse_issue, poll_jql};
 use axum::http::StatusCode;
-use pdt_api::sdk::{ApiError, AppState, Imported, now_ms};
+use pdt_api::sdk::{ApiError, AppState, Imported, codes, now_ms};
 use pdt_core::issue_link::LinkOrigin;
 use pdt_core::ticket::NewTicket;
 use pdt_core::workflow::api::{Connection, NewLogEvent};
@@ -248,7 +248,7 @@ pub(crate) async fn import_by_key(st: &AppState, project_id: &str, key: &str) ->
     let r = import_issue(st, project_id, key, None).await.map_err(|e| {
         let (status, code) = match &e {
             ImportError::NotLinked => (StatusCode::CONFLICT, "jira_not_linked"),
-            ImportError::BadKey(_) => (StatusCode::BAD_REQUEST, "invalid_input"),
+            ImportError::BadKey(_) => (StatusCode::BAD_REQUEST, codes::INVALID_INPUT),
             ImportError::NoIssue(_) => (StatusCode::NOT_FOUND, "jira_issue_not_found"),
             ImportError::Failed(_) => (StatusCode::BAD_GATEWAY, "jira_failed"),
         };

@@ -68,7 +68,7 @@ async fn get(State(st): State<AppState>) -> Json<Option<PickupPause>> {
 
 /// `DELETE /api/pickup/pause`: the user resumes pickup, whoever paused it.
 async fn delete(State(st): State<AppState>) -> Result<axum::http::StatusCode, ApiError> {
-    resume(&st, None).await.map_err(ApiError::internal)?;
+    resume(&st, None).await.map_err(ApiError::from_text)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
