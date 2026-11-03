@@ -92,3 +92,33 @@ async fn edited_built_ins_keep_what_the_user_changed_and_follow_the_rest() {
     let (s, e) = call(&app, "GET", &format!("/api/personas/{}/template", p["id"].as_str().unwrap()), None).await;
     assert_eq!((s, e["code"].as_str()), (StatusCode::NOT_FOUND, Some("not_builtin")));
 }
+
+/// `GET /api/personas/{id}/versions/{v}`: each saved version as it was; one that was never saved is not found.
+#[tokio::test]
+async fn each_version_reads_as_it_was_saved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, _store) = run(tmp.path()).await;
+    let (s, p) =
+        call(&app, "POST", "/api/personas", Some(json!({"name": "Mine", "agent": "claude", "instructions": "First."})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{p}");
+    let id = p["id"].as_str().unwrap();
+    let edit = json!({"agent": "claude", "instructions": "Second.", "note": "reworded"});
+    let (s, v) = call(&app, "PUT", &format!("/api/personas/{id}"), Some(edit)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["version"], 2, "{v}");
+
+    let (s, v1) = call(&app, "GET", &format!("/api/personas/{id}/versions/1"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v1}");
+    assert_eq!((v1["version"].as_u64(), v1["instructions"].as_str()), (Some(1), Some("First.")), "{v1}");
+    assert_eq!((v1["personaId"].as_str(), v1["author"].as_str()), (Some(id), Some("user")));
+    let (_, v2) = call(&app, "GET", &format!("/api/personas/{id}/versions/2"), None).await;
+    assert_eq!((v2["instructions"].as_str(), v2["note"].as_str()), (Some("Second."), Some("reworded")), "{v2}");
+
+    let (s, _) = call(&app, "GET", &format!("/api/personas/{id}/versions/3"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = call(&app, "GET", "/api/personas/nope/versions/1", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = call(&app, "GET", &format!("/api/personas/{id}/versions/latest"), None).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "a version is a number");
+}

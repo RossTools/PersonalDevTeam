@@ -13,6 +13,7 @@ mod acp_antigravity;
 mod acp_grok;
 mod acp_plain;
 mod activity;
+mod agent_nodes;
 mod agent_steps;
 mod api;
 mod bug_reports;

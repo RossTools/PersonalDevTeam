@@ -584,3 +584,22 @@ async fn secret_references_that_come_in_as_data_are_neither_filled_nor_an_error(
     assert_eq!(uses.as_array().unwrap().len(), 1, "only the run whose node names it used it: {uses}");
     assert!(!in_database(&env, VALUE));
 }
+
+/// `GET /api/secrets/store` says where values are kept, as pdtd chose at startup; never a value.
+#[tokio::test]
+async fn the_store_says_where_values_are_kept() {
+    let mut env = setup().await;
+    let (s, v) = call(&env.app, "GET", "/api/secrets/store", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v, json!({"backend": "memory", "path": null, "problem": null}));
+
+    let file = env.tmp.path().join("secrets.json").to_string_lossy().into_owned();
+    env.state.secret_store = pdt_api::secrets::SecretStoreInfo {
+        backend: pdt_api::secrets::SecretBackend::File,
+        path: Some(file.clone()),
+        problem: Some("The Secret Service did not answer.".into()),
+    };
+    env.app = router(env.state.clone(), None);
+    let (_, v) = call(&env.app, "GET", "/api/secrets/store", None).await;
+    assert_eq!(v, json!({"backend": "file", "path": file, "problem": "The Secret Service did not answer."}));
+}

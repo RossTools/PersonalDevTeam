@@ -756,3 +756,352 @@ impl<P: AcpProfile> Drop for AcpLive<P> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::{EventStream, event_channel};
+    use pdt_core::conversation::acp::PlainAcp;
+    use pdt_core::conversation::{RequestKind, RequestState, TurnPhase, TurnStatus};
+
+    /// Frames from a plain ACP agent's stdout, with a stray session's update and a line that is not JSON.
+    const SESSION: &str = include_str!("../../tests/fixtures/acp/session.jsonl");
+
+    /// A plain ACP agent with no modes of its own; `edits_freely`: it edits without asking (Cursor's `agent`).
+    struct Probe {
+        edits_freely: bool,
+    }
+
+    impl AcpProfile for Probe {
+        type Extensions = PlainAcp;
+        fn agent(&self) -> AgentKind {
+            AgentKind::Devin
+        }
+        fn name(&self) -> &str {
+            "Probe"
+        }
+        fn extensions(&self) -> PlainAcp {
+            PlainAcp
+        }
+        fn args(&self, _spec: &OpenSpec) -> Vec<String> {
+            vec![]
+        }
+        fn asks_before_edits(&self) -> bool {
+            !self.edits_freely
+        }
+    }
+
+    struct Rig {
+        live: AcpLive<Probe>,
+        stream: EventStream,
+        stdin: mpsc::UnboundedReceiver<String>,
+        idle: watch::Receiver<bool>,
+    }
+
+    /// A live conversation with no process: what PDT writes to the agent arrives on `stdin`.
+    fn rig(profile: Probe) -> Rig {
+        let (sink, stream) = event_channel(256);
+        let (tx, stdin) = mpsc::unbounded_channel();
+        let (idle_tx, idle) = watch::channel(true);
+        let mapper = AcpMapper::with_extensions(profile.extensions(), "/work/repo", None, "p");
+        let shared = Arc::new(Shared {
+            profile,
+            mapper: Mutex::new(mapper),
+            pending: Mutex::new(HashMap::new()),
+            next_id: AtomicU64::new(0),
+            stdin: Mutex::new(Some(tx)),
+            alive: AtomicBool::new(true),
+            closing: AtomicBool::new(false),
+            pid: None,
+            sink,
+            session: Mutex::new("s1".into()),
+            caps: Mutex::new(AgentCapabilities::default()),
+            mode: Mutex::new(None),
+            learned_modes: Mutex::new(Vec::new()),
+            start_mode: Mutex::new(None),
+            instructions: Mutex::new(None),
+            idle: idle_tx,
+        });
+        let (_exited_tx, exited) = watch::channel(false);
+        Rig { live: AcpLive { shared, exited }, stream, stdin, idle }
+    }
+
+    fn drain(stream: &mut EventStream) -> Vec<AdapterOutput> {
+        std::iter::from_fn(|| stream.try_recv().ok()).collect()
+    }
+
+    fn written(stdin: &mut mpsc::UnboundedReceiver<String>) -> Vec<Value> {
+        std::iter::from_fn(|| stdin.try_recv().ok()).map(|l| serde_json::from_str(&l).unwrap()).collect()
+    }
+
+    fn events(outs: &[AdapterOutput]) -> Vec<&AgentEvent> {
+        outs.iter()
+            .filter_map(|o| match o {
+                AdapterOutput::Event { event, .. } => Some(event),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `session/new`'s answer for an agent that advertises an Ask and a Plan mode and starts in its own `custom`.
+    fn session_answer() -> Value {
+        json!({"sessionId": "s1", "modes": {"currentModeId": "custom", "availableModes": [
+            {"id": "default", "name": "Default"}, {"id": "architect", "name": "Architect"}, {"id": "custom", "name": "Custom"}]}})
+    }
+
+    #[test]
+    fn stdout_lines_become_outputs_for_this_session_and_refusals_for_the_agent() {
+        let mut r = rig(Probe { edits_freely: false });
+        let sh = &r.live.shared;
+        sh.settle_modes(&session_answer());
+        let lines: Vec<&str> = SESSION.lines().collect();
+        for l in &lines[..5] {
+            sh.on_line(l);
+        }
+        let outs = drain(&mut r.stream);
+        // Another session's commands never arrive; this one's are published with the capabilities.
+        let AdapterOutput::Capabilities(caps) = &outs[0] else { panic!("{outs:?}") };
+        assert_eq!(caps.commands.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["init"]);
+        assert_eq!(caps.permission_modes, PermissionMode::ALL.to_vec(), "PDT keeps the modes the agent has none for");
+        // The agent's mode, by its name for it, is PDT's mode it advertised for it.
+        let AdapterOutput::Info(info) = &outs[1] else { panic!("{outs:?}") };
+        assert_eq!(info.permission_mode, Some(PermissionMode::Plan));
+        assert_eq!(sh.mode.lock().unwrap().as_deref(), Some("architect"));
+        let AdapterOutput::Info(info) = &outs[2] else { panic!("{outs:?}") };
+        assert_eq!((info.model.as_deref(), info.permission_mode), (Some("m1"), None));
+        let AdapterOutput::Capabilities(caps) = &outs[3] else { panic!("{outs:?}") };
+        assert_eq!(caps.models[0].display_name, "Model One");
+        assert_eq!(outs.len(), 4, "the line that is not JSON is skipped");
+
+        // A turn running: the conversation is busy, and its frames arrive with the line they came from.
+        let outs = sh.mapper().begin_prompt("go");
+        sh.emit(outs, None);
+        assert!(!*r.idle.borrow());
+        for l in &lines[5..] {
+            sh.on_line(l);
+        }
+        let outs = drain(&mut r.stream);
+        assert!(outs.iter().any(|o| matches!(o, AdapterOutput::Delta { text, .. } if text == "Hello")));
+        let raw = outs.iter().find_map(|o| match o {
+            AdapterOutput::Event {
+                event: AgentEvent::Request { request_kind: RequestKind::Approval, .. },
+                raw,
+                ..
+            } => raw.clone(),
+            _ => None,
+        });
+        assert_eq!(raw.as_deref(), Some(lines[7]));
+        // The client method PDT does not offer is refused at once, with JSON-RPC's "method not found".
+        assert_eq!(
+            written(&mut r.stdin),
+            [
+                json!({"jsonrpc": "2.0", "id": 8, "error": {"code": -32601, "message": "PDT does not handle terminal/create"}})
+            ]
+        );
+    }
+
+    #[test]
+    fn replies_reach_the_call_that_asked_with_the_errors_details() {
+        let mut r = rig(Probe { edits_freely: false });
+        let sh = &r.live.shared;
+        let mut ok = sh.call("session/new", json!({"cwd": "/work/repo"})).unwrap();
+        let mut failed = sh.call("session/load", json!({"sessionId": "gone"})).unwrap();
+        let sent = written(&mut r.stdin);
+        assert_eq!(
+            sent[0],
+            json!({"jsonrpc": "2.0", "id": 0, "method": "session/new", "params": {"cwd": "/work/repo"}})
+        );
+        assert_eq!(sent[1]["id"], 1);
+        // Replies with ids PDT never used, or that are not numbers, are dropped.
+        sh.on_line(r#"{"jsonrpc":"2.0","id":99,"result":{}}"#);
+        sh.on_line(r#"{"jsonrpc":"2.0","id":"x","result":{}}"#);
+        sh.on_line(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params","data":{"details":" Session \"gone\" not found "}}}"#);
+        sh.on_line(r#"{"jsonrpc":"2.0","id":0,"result":{"sessionId":"s2"}}"#);
+        assert_eq!(ok.try_recv().unwrap().unwrap(), json!({"sessionId": "s2"}));
+        let e = failed.try_recv().unwrap().unwrap_err();
+        assert_eq!(
+            (e.code, e.message.as_str(), e.retryable),
+            (-32602, "Invalid params: Session \"gone\" not found", false)
+        );
+        assert!(sh.pending.lock().unwrap().is_empty());
+        // `data.message` explains an error too; with neither, the message stands alone.
+        let e = RpcError::of(
+            &json!({"code": -32603, "message": "Internal error", "data": {"message": "disk full"}}),
+            &PlainAcp,
+        );
+        assert_eq!(e.message, "Internal error: disk full");
+        let e = RpcError::of(&json!({"data": {"details": "  "}}), &PlainAcp);
+        assert_eq!((e.code, e.message.as_str()), (0, "error"));
+        // Once stdin is closed, a call fails and is not left waiting.
+        sh.stdin.lock().unwrap().take();
+        assert!(matches!(sh.call("session/prompt", json!({})), Err(AdapterError::NotRunning)));
+        assert!(sh.pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_prompt_carries_the_instructions_once_and_its_answer_ends_the_turn() {
+        let mut r = rig(Probe { edits_freely: false });
+        let sh = r.live.shared.clone();
+        *sh.instructions.lock().unwrap() = Some("PDT says hello".into());
+        let msg = |t: &str| Outgoing { text: t.into(), images: vec![] };
+        r.live.send(&msg("first"), Delivery::Next).await.unwrap();
+        let sent = written(&mut r.stdin);
+        assert_eq!(sent[0]["method"], "session/prompt");
+        assert_eq!(
+            sent[0]["params"],
+            json!({"sessionId": "s1", "prompt": [{"type": "text", "text": "PDT says hello"}, {"type": "text", "text": "first"}]})
+        );
+        let ev = drain(&mut r.stream);
+        assert!(matches!(
+            events(&ev)[..],
+            [AgentEvent::Turn { phase: TurnPhase::Started, .. }, AgentEvent::UserMessage { .. }]
+        ));
+        // A prompt sent mid-turn joins it, without the instructions again.
+        r.live.send(&msg("second"), Delivery::Next).await.unwrap();
+        let sent = written(&mut r.stdin);
+        assert_eq!(sent[0]["params"]["prompt"], json!([{"type": "text", "text": "second"}]));
+        sh.on_line(r#"{"jsonrpc":"2.0","id":0,"result":{"stopReason":"end_turn"}}"#);
+        sh.on_line(r#"{"jsonrpc":"2.0","id":1,"result":{"stopReason":"end_turn"}}"#);
+        let mut idle = r.idle.clone();
+        tokio::time::timeout(Duration::from_secs(5), idle.wait_for(|i| *i)).await.unwrap().unwrap();
+        let ev = drain(&mut r.stream);
+        assert!(matches!(events(&ev).last(), Some(AgentEvent::Turn { status: Some(TurnStatus::Completed), .. })));
+        // A stopped agent takes nothing.
+        sh.alive.store(false, Ordering::SeqCst);
+        assert!(matches!(r.live.send(&msg("x"), Delivery::Next).await, Err(AdapterError::NotRunning)));
+    }
+
+    #[tokio::test]
+    async fn interrupting_cancels_the_open_requests_then_the_turn() {
+        let mut r = rig(Probe { edits_freely: false });
+        let sh = r.live.shared.clone();
+        // Nothing running: nothing to cancel.
+        r.live.interrupt().await.unwrap();
+        assert!(written(&mut r.stdin).is_empty());
+        let outs = sh.mapper().begin_prompt("go");
+        sh.emit(outs, None);
+        sh.on_line(r#"{"jsonrpc":"2.0","id":3,"method":"elicitation/create","params":{"requestedSchema":{"properties":{"x":{"type":"string"}}}}}"#);
+        drain(&mut r.stream);
+        r.live.interrupt().await.unwrap();
+        assert_eq!(
+            written(&mut r.stdin),
+            [
+                json!({"jsonrpc": "2.0", "id": 3, "result": {"action": "cancel"}}),
+                json!({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": "s1"}}),
+            ]
+        );
+        let ev = drain(&mut r.stream);
+        assert!(matches!(events(&ev)[..], [AgentEvent::Request { state: RequestState::Expired, .. }]));
+        // The agent's `end_turn` after a cancel is the user's interrupt.
+        let outs = sh.mapper().end_prompt(Ok(&json!({"stopReason": "end_turn"})));
+        assert!(matches!(
+            outs.last(),
+            Some(AcpOut::Event { event: AgentEvent::Turn { status: Some(TurnStatus::Interrupted), .. }, .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn answers_go_back_on_stdin_and_a_refusals_note_follows_as_a_prompt() {
+        let mut r = rig(Probe { edits_freely: false });
+        let sh = r.live.shared.clone();
+        let outs = sh.mapper().begin_prompt("go");
+        sh.emit(outs, None);
+        let lines: Vec<&str> = SESSION.lines().collect();
+        sh.on_line(lines[6]);
+        sh.on_line(lines[7]);
+        drain(&mut r.stream);
+        assert!(matches!(
+            r.live.answer("nope", &Answer::Approve { always: false }).await,
+            Err(AdapterError::RequestClosed)
+        ));
+        assert!(matches!(
+            r.live.answer("7", &Answer::Question { answers: Default::default() }).await,
+            Err(AdapterError::WrongAnswer)
+        ));
+        r.live.answer("7", &Answer::Deny { message: Some("use ls -la".into()) }).await.unwrap();
+        let sent = written(&mut r.stdin);
+        assert_eq!(
+            sent[0],
+            json!({"jsonrpc": "2.0", "id": 7, "result": {"outcome": {"outcome": "selected", "optionId": "no"}}})
+        );
+        assert_eq!(sent[1]["method"], "session/prompt");
+        assert_eq!(sent[1]["params"]["prompt"], json!([{"type": "text", "text": "use ls -la"}]));
+        let ev = drain(&mut r.stream);
+        assert!(events(&ev).iter().any(|e| matches!(e, AgentEvent::Request { state: RequestState::Answered, .. })));
+        assert!(events(&ev).iter().any(|e| matches!(e, AgentEvent::UserMessage { text, .. } if text == "use ls -la")));
+    }
+
+    #[tokio::test]
+    async fn modes_the_agent_lacks_are_kept_by_pdt_and_ask_runs_as_accept_edits_when_it_edits_freely() {
+        let mut r = rig(Probe { edits_freely: true });
+        let sh = r.live.shared.clone();
+        sh.settle_modes(&session_answer());
+        assert_eq!(sh.mode_id(PermissionMode::Plan).as_deref(), Some("architect"));
+        assert_eq!(sh.pdt_mode("default"), Some(PermissionMode::Ask));
+        assert_eq!(sh.pdt_mode("custom"), None);
+        assert!(!sh.caps.lock().unwrap().permission_modes.contains(&PermissionMode::Ask));
+        assert_eq!(*sh.start_mode.lock().unwrap(), Some("custom".to_string()));
+        // Plan is the agent's own: PDT switches it there.
+        let apply = r.live.apply_mode(PermissionMode::Plan);
+        let reply = async {
+            loop {
+                if let Ok(l) = r.stdin.try_recv() {
+                    let v: Value = serde_json::from_str(&l).unwrap();
+                    assert_eq!(v["params"], json!({"sessionId": "s1", "modeId": "architect"}));
+                    sh.on_line(&json!({"jsonrpc": "2.0", "id": v["id"], "result": {}}).to_string());
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        };
+        let (mode, ()) = tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(apply, reply) })
+            .await
+            .expect("PDT asked to set the mode");
+        assert_eq!(mode.unwrap(), PermissionMode::Plan);
+        sh.on_line(r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"current_mode_update","currentModeId":"architect"}}}"#);
+        // Ask, for an agent that edits without asking, runs as Accept edits; PDT keeps that itself, back in the mode
+        // the agent started in.
+        let apply = r.live.apply_mode(PermissionMode::Ask);
+        let reply = async {
+            loop {
+                if let Ok(l) = r.stdin.try_recv() {
+                    let v: Value = serde_json::from_str(&l).unwrap();
+                    assert_eq!(v["params"]["modeId"], "custom");
+                    sh.on_line(
+                        &json!({"jsonrpc": "2.0", "id": v["id"], "error": {"code": 1, "message": "no"}}).to_string(),
+                    );
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        };
+        let (mode, ()) = tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(apply, reply) })
+            .await
+            .expect("PDT asked to set the mode");
+        assert!(matches!(mode, Err(AdapterError::Refused(m)) if m == "no"));
+        let outs = drain(&mut r.stream);
+        assert!(
+            outs.iter()
+                .any(|o| matches!(o, AdapterOutput::Info(i) if i.permission_mode == Some(PermissionMode::AcceptEdits)))
+        );
+        // ACP has no default model to go back to.
+        let change = SessionChange { model: Some(None), permission_mode: None };
+        assert!(
+            matches!(r.live.set(&change).await, Err(AdapterError::Refused(m)) if m == "Probe has no default model to switch back to")
+        );
+    }
+
+    #[test]
+    fn initialize_offers_no_file_system_or_terminal_and_drafts_are_refused() {
+        let p = initialize_params();
+        assert_eq!(p["protocolVersion"], 1);
+        assert_eq!(p["clientCapabilities"]["terminal"], false);
+        assert_eq!(p["clientCapabilities"]["fs"], json!({"readTextFile": false, "writeTextFile": false}));
+        assert_eq!(p["clientCapabilities"]["elicitation"], json!({"form": {}}));
+        assert_eq!(p["clientInfo"]["name"], pdt_core::brand::SLUG);
+        let e = draft(&Probe { edits_freely: false }).unwrap_err();
+        assert!(matches!(e, AdapterError::Refused(m) if m == "Make ticket is not available for Probe yet"));
+        assert_eq!(offered(&Probe { edits_freely: false }), PermissionMode::ALL.to_vec());
+        assert!(!offered(&Probe { edits_freely: true }).contains(&PermissionMode::Ask));
+    }
+}

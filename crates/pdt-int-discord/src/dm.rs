@@ -909,3 +909,115 @@ fn answered_question(key: &str, qi: usize, q: &Question, chosen: &[String]) -> V
     let said = if chosen.is_empty() { "(no answer)".to_string() } else { chosen.join(", ") };
     json!({"type": 7, "data": {"content": format!("{text}{}", chat::answered_line(&said, None)), "components": rows}})
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bot(name: &str, config: Value) -> Connection {
+        Connection {
+            id: format!("c-{name}"),
+            name: name.into(),
+            kind: DISCORD_BOT.into(),
+            url: String::new(),
+            config,
+            has_secret: true,
+            created_at: 0,
+            updated_at: 0,
+            last_error: None,
+            last_error_at: None,
+        }
+    }
+
+    /// One test, as the link's state is the process's.
+    #[test]
+    fn a_bot_connection_shows_whether_its_dms_are_connected() {
+        let home = bot("home", json!({"guildId": "1", "dmUserId": "77"}));
+        // Nothing has started a link.
+        *STATUS.lock().unwrap() = None;
+        assert_eq!(status().state, "off");
+        let s = connection_status(&home).unwrap();
+        assert_eq!((s.label.as_str(), s.state.as_str(), s.tone), ("DMs with the PM", "Off", StatusTone::Neutral));
+
+        // A bot with no user, a blank one, or another kind of connection has no DMs.
+        assert_eq!(connection_status(&bot("x", json!({"guildId": "1"}))), None);
+        assert_eq!(connection_status(&bot("x", json!({"guildId": "1", "dmUserId": "  "}))), None);
+        let mut hook = bot("hook", json!({"dmUserId": "77"}));
+        hook.kind = "discord_webhook".into();
+        assert_eq!(connection_status(&hook), None);
+
+        set_status(Some("home"), "connecting", None);
+        assert_eq!(connection_status(&home).unwrap().state, "Connecting…");
+        set_status(Some("home"), "connected", None);
+        let s = connection_status(&home).unwrap();
+        assert_eq!((s.state.as_str(), s.tone, s.error), ("Connected", StatusTone::Ok, None));
+
+        // The same state again keeps when it started; a new one restarts it.
+        let since = status().since;
+        std::thread::sleep(Duration::from_millis(5));
+        set_status(Some("home"), "connected", None);
+        assert_eq!(status().since, since);
+        set_status(Some("home"), "retrying", Some("Gateway closed".into()));
+        let s = connection_status(&home).unwrap();
+        assert_eq!(
+            (s.state.as_str(), s.tone, s.error.as_deref()),
+            ("Reconnecting", StatusTone::Neutral, Some("Gateway closed"))
+        );
+        set_status(Some("home"), "failed", Some("home has no bot token".into()));
+        let s = connection_status(&home).unwrap();
+        assert_eq!((s.state.as_str(), s.tone), ("Not connected", StatusTone::Failed));
+
+        // Another bot's row says which one holds the DMs, and none of its error.
+        let other = bot("work", json!({"guildId": "2", "dmUserId": "77"}));
+        let s = connection_status(&other).unwrap();
+        assert_eq!(s.state, "Off (another bot, home, holds them)");
+        assert_eq!((s.tone, s.error), (StatusTone::Neutral, None));
+        *STATUS.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn approve_and_decline_answer_as_the_request_asks() {
+        let call = What::Approval { title: "t".into(), tool: "Bash".into(), input: json!({}), plan: false };
+        assert_eq!(call.approve(true), Answer::Approve { always: false });
+        assert_eq!(call.approve(false), Answer::Deny { message: None });
+        let plan = What::Approval { title: "t".into(), tool: "ExitPlanMode".into(), input: json!({}), plan: true };
+        assert_eq!(plan.approve(true), Answer::Plan { approve: true, feedback: None, mode: None });
+        assert_eq!(plan.approve(false), Answer::Plan { approve: false, feedback: None, mode: None });
+        let ask = What::Questions { all: vec![], picked: vec![], answers: vec![] };
+        assert_eq!(ask.approve(false), Answer::Deny { message: None });
+    }
+
+    #[test]
+    fn what_the_dms_keep_reads_back_and_tolerates_missing_fields() {
+        let saved = Saved { current: Some("s1".into()), last_title: Some("Plans".into()) };
+        let v = serde_json::to_value(&saved).unwrap();
+        assert_eq!(v, json!({"current": "s1", "lastTitle": "Plans"}));
+        let back: Saved = serde_json::from_value(v).unwrap();
+        assert_eq!((back.current.as_deref(), back.last_title.as_deref()), (Some("s1"), Some("Plans")));
+        let empty: Saved = serde_json::from_value(json!({})).unwrap();
+        assert_eq!((empty.current, empty.last_title), (None, None));
+    }
+
+    #[test]
+    fn an_answered_question_shows_the_answer_with_its_buttons_off() {
+        let q = Question {
+            question: "Which one?".into(),
+            header: "Pick".into(),
+            options: vec!["A".into(), "B".into()],
+            multi: true,
+        };
+        let v = answered_question("k1", 0, &q, &["A".into(), "B".into()]);
+        assert_eq!(v["type"], 7, "an update of the pressed message");
+        let content = v["data"]["content"].as_str().unwrap();
+        assert!(content.starts_with("**Pick**\nWhich one?"), "{content}");
+        assert!(content.ends_with("\n**A, B**"), "{content}");
+        let rows = v["data"]["components"].as_array().unwrap();
+        let buttons: Vec<&Value> = rows.iter().flat_map(|r| r["components"].as_array().unwrap()).collect();
+        assert_eq!(buttons.len(), 3, "two options and Send");
+        assert!(buttons.iter().all(|b| b["disabled"] == true), "{v}");
+        assert!(buttons[..2].iter().all(|b| b["style"] == 3), "both picked: {v}");
+
+        let none = answered_question("k1", 0, &q, &[]);
+        assert!(none["data"]["content"].as_str().unwrap().ends_with("\n**(no answer)**"), "{none}");
+    }
+}

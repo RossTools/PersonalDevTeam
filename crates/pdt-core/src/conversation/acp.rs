@@ -1556,4 +1556,440 @@ mod tests {
         let AgentEvent::ToolCall { output, .. } = &events(&out)[0] else { panic!() };
         assert_eq!(output.as_deref(), Some("one\ntwo"));
     }
+
+    /// A second plain ACP turn: a new file, an edit outside the folder, a call that fails, requests PDT refuses and
+    /// a multi-select form.
+    const EDITS: &str = include_str!("../../tests/fixtures/acp/edits.jsonl");
+
+    #[test]
+    fn a_turn_diff_has_only_the_folders_files_and_failed_calls_stay_failed() {
+        let mut m = mapper();
+        let out = feed(&mut m, EDITS, |e| match e {
+            AgentEvent::Request { request_kind: RequestKind::Question, input, title, .. } => {
+                // A form with one field asks its message; an option whose title is its label has no description.
+                assert_eq!(title, "Which checks?");
+                let q = &input["questions"][0];
+                assert_eq!((q["header"].as_str(), q["multiSelect"].as_bool()), (Some("Checks"), Some(true)));
+                assert_eq!(q["options"][0], json!({"label": "lint", "description": "Run the linter"}));
+                assert_eq!(q["options"][1], json!({"label": "test", "description": null}));
+                let answers = BTreeMap::from([("Which checks?".to_string(), vec!["lint".into(), "test".into()])]);
+                Some(Answer::Question { answers })
+            }
+            _ => None,
+        });
+        let ev = events(&out);
+        // The message said before the first call is commentary; the turn has no answer of its own.
+        assert!(ev.iter().any(|e| matches!(e,
+            AgentEvent::AgentMessage { markdown, phase: MessagePhase::Commentary, .. } if markdown == "Writing the files.")));
+        assert!(!ev.iter().any(|e| matches!(e, AgentEvent::AgentMessage { phase: MessagePhase::Final, .. })));
+        let AgentEvent::ToolCall { diff, .. } = last_tool(&ev, "w1") else { panic!() };
+        assert_eq!(diff.as_deref(), Some("--- /dev/null\n+++ b/docs/new.txt\n@@ -0,0 +1 @@\n+fresh\n"));
+        // A file outside the folder keeps its absolute path on both sides.
+        let AgentEvent::ToolCall { diff, title, .. } = last_tool(&ev, "w2") else { panic!() };
+        assert_eq!(title, "/etc/hosts");
+        assert!(diff.as_deref().unwrap().starts_with("--- /etc/hosts\n+++ /etc/hosts\n"));
+        // A failed call stays failed when the agent later says it completed; a long title is cut to its first line.
+        let AgentEvent::ToolCall { status, output, title, .. } = last_tool(&ev, "x1") else { panic!() };
+        assert_eq!(
+            (*status, output.as_deref(), title.as_str()),
+            (ToolStatus::Failed, Some("make: *** No rule"), "Run make…")
+        );
+        // A call still running when the turn fails fails with it.
+        let AgentEvent::ToolCall { status, .. } = last_tool(&ev, "r1") else { panic!() };
+        assert_eq!(*status, ToolStatus::Failed);
+        // URL elicitations and the client methods PDT does not offer are refused at once.
+        let refused: Vec<(&Value, &str)> = out
+            .iter()
+            .filter_map(|o| match o {
+                AcpOut::RespondError { id, message } => Some((id, message.as_str())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            refused,
+            [
+                (&json!(10), "PDT does not handle elicitation/create"),
+                (&json!(11), "PDT does not handle fs/read_text_file")
+            ]
+        );
+        assert_eq!(sent(&ev)[0]["sent"], json!({"action": "accept", "content": {"checks": ["lint", "test"]}}));
+        let n = ev.len();
+        let AgentEvent::TurnDiff { diff } = &ev[n - 2] else { panic!("{:?}", ev[n - 2]) };
+        assert_eq!(diff, "--- /dev/null\n+++ b/docs/new.txt\n@@ -0,0 +1 @@\n+fresh\n");
+        assert!(matches!(&ev[n - 1], AgentEvent::Turn { status: Some(TurnStatus::Failed), reason: Some(r), .. }
+            if r == "The agent refused"));
+    }
+
+    #[test]
+    fn each_stop_reason_ends_the_turn_its_own_way() {
+        let end = |result: Result<&Value, (String, bool)>, interrupt: bool| {
+            let mut m = mapper();
+            m.begin_prompt("go");
+            if interrupt {
+                m.note_interrupt();
+            }
+            let out = events(&m.end_prompt(result));
+            assert_eq!(m.turn(), None);
+            out
+        };
+        let status = |ev: &[AgentEvent]| match ev.last().unwrap() {
+            AgentEvent::Turn { phase: TurnPhase::Ended, status, reason, .. } => (status.unwrap(), reason.clone()),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(status(&end(Ok(&json!({})), false)), (TurnStatus::Completed, None));
+        assert_eq!(status(&end(Ok(&json!({"stopReason": "end_turn"})), true)), (TurnStatus::Interrupted, None));
+        assert_eq!(status(&end(Ok(&json!({"stopReason": "cancelled"})), false)), (TurnStatus::Interrupted, None));
+        assert_eq!(
+            status(&end(Ok(&json!({"stopReason": "max_turn_requests"})), false)),
+            (TurnStatus::Failed, Some("The agent hit its limit of requests for one turn".into()))
+        );
+        assert_eq!(
+            status(&end(Ok(&json!({"stopReason": "something_new"})), false)),
+            (TurnStatus::Failed, Some("something_new".into()))
+        );
+        let failed = end(Err(("Internal error".into(), true)), false);
+        assert!(matches!(&failed[0], AgentEvent::Error { text, retryable: true } if text == "Internal error"));
+        assert_eq!(status(&failed), (TurnStatus::Failed, Some("Internal error".into())));
+        // An answer with no turn running (a prompt PDT never saw start) changes nothing.
+        assert!(mapper().end_prompt(Ok(&json!({}))).is_empty());
+    }
+
+    #[test]
+    fn a_prompt_sent_mid_turn_steers_it_and_the_turn_ends_with_the_last_answer() {
+        let mut m = mapper();
+        m.begin_prompt("first");
+        let chunk = json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "On it"}});
+        m.on_update(&chunk);
+        let ev = events(&m.begin_prompt("also this"));
+        // The message so far is closed as said on the way, and the new prompt joins the running turn.
+        assert!(
+            matches!(&ev[0], AgentEvent::AgentMessage { markdown, phase: MessagePhase::Commentary, .. } if markdown == "On it")
+        );
+        assert!(
+            matches!(&ev[1], AgentEvent::UserMessage { text, source: MessageSource::Steer, .. } if text == "also this")
+        );
+        assert!(!ev.iter().any(|e| matches!(e, AgentEvent::Turn { .. })));
+        // The first prompt's answer leaves the turn running; the second's ends it.
+        assert!(m.end_prompt(Ok(&json!({"stopReason": "end_turn"}))).is_empty());
+        assert!(m.turn().is_some());
+        let ev = events(&m.end_prompt(Ok(&json!({"stopReason": "end_turn"}))));
+        assert!(matches!(ev.last().unwrap(), AgentEvent::Turn { status: Some(TurnStatus::Completed), .. }));
+        // An error answer ends the turn even with a prompt still waiting.
+        m.begin_prompt("a");
+        m.begin_prompt("b");
+        let ev = events(&m.end_prompt(Err(("boom".into(), false))));
+        assert!(matches!(ev.last().unwrap(), AgentEvent::Turn { status: Some(TurnStatus::Failed), .. }));
+        assert_eq!(m.turn(), None);
+    }
+
+    #[test]
+    fn cancelling_answers_every_open_request_and_exiting_ends_the_turn() {
+        let mut m = mapper();
+        m.begin_prompt("go");
+        m.on_update(&json!({"sessionUpdate": "tool_call", "toolCallId": "c1", "kind": "execute", "title": "ls"}));
+        let options = json!([{"optionId": "y", "kind": "allow_once"}, {"optionId": "n", "kind": "reject_once"}]);
+        m.on_request(
+            json!(1),
+            "session/request_permission",
+            &json!({"toolCall": {"toolCallId": "c1"}, "options": options}),
+        );
+        let form = json!({"requestedSchema": {"properties": {"x": {"type": "string"}}}});
+        m.on_request(json!("q-2"), "elicitation/create", &form);
+        assert_eq!(m.open_requests(), 2);
+        let (mut replies, out) = m.cancel_requests();
+        replies.sort_by_key(|(id, _)| id.to_string());
+        assert_eq!(
+            replies,
+            [(json!("q-2"), json!({"action": "cancel"})), (json!(1), json!({"outcome": {"outcome": "cancelled"}})),]
+        );
+        let ev = events(&out);
+        assert_eq!(ev.len(), 2);
+        assert!(ev.iter().all(|e| matches!(e, AgentEvent::Request { state: RequestState::Expired, .. })));
+        assert_eq!(m.open_requests(), 0);
+        // A request answered after it expired is closed.
+        assert_eq!(m.answer("1", &Answer::Approve { always: false }).unwrap_err(), AnswerError::Closed);
+        let ev = events(&m.on_exit("Devin stopped"));
+        let AgentEvent::ToolCall { status, .. } = last_tool(&ev, "c1") else { panic!() };
+        assert_eq!(*status, ToolStatus::Failed);
+        assert!(
+            matches!(ev.last().unwrap(), AgentEvent::Turn { status: Some(TurnStatus::Interrupted), reason: Some(r), .. }
+            if r == "Devin stopped")
+        );
+        // With no turn running, exiting only expires what is open.
+        m.on_request(json!(5), "elicitation/create", &form);
+        let ev = events(&m.on_exit("gone"));
+        assert!(matches!(&ev[..], [AgentEvent::Request { state: RequestState::Expired, .. }]));
+    }
+
+    #[test]
+    fn updates_outside_a_turn_are_dropped_but_settings_and_usage_are_not() {
+        let mut m = mapper();
+        let chunk = json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "late"}});
+        assert!(m.on_update(&chunk).is_empty());
+        assert!(m.on_update(&json!({"sessionUpdate": "tool_call", "toolCallId": "t"})).is_empty());
+        let usage = m.on_update(&json!({"sessionUpdate": "usage_update", "used": 10, "size": 20}));
+        assert!(matches!(
+            &events(&usage)[..],
+            [AgentEvent::Usage { context_used: Some(10), context_window: Some(20), .. }]
+        ));
+        let commands = json!({"sessionUpdate": "available_commands_update", "availableCommands": [
+            {"name": "plan", "description": "Plan first", "input": {"hint": "[goal]"}}, {"description": "no name"}]});
+        let out = m.on_update(&commands);
+        let [AcpOut::Commands(c)] = &out[..] else { panic!("{out:?}") };
+        assert_eq!(c.len(), 1);
+        assert_eq!((c[0].name.as_str(), c[0].argument_hint.as_deref()), ("plan", Some("[goal]")));
+        // A model picker from the config options, in a live update or the session's answer.
+        let options = json!([{"id": "mode", "currentValue": "agent"},
+            {"id": "model", "currentValue": "fast", "options": [
+                {"value": "fast", "name": "Fast", "description": ""}, {"value": "deep", "description": "Thinks longer"}, {"name": "no value"}]}]);
+        let out = m.on_update(&json!({"sessionUpdate": "config_option_update", "configOptions": options}));
+        assert_eq!(out[0], AcpOut::Settings { mode: Some("agent".into()), model: Some("fast".into()) });
+        let AcpOut::Models(models) = &out[1] else { panic!() };
+        assert_eq!(models.len(), 2);
+        assert_eq!((models[0].display_name.as_str(), models[0].description.as_deref()), ("Fast", None));
+        assert_eq!(
+            (models[1].display_name.as_str(), models[1].description.as_deref()),
+            ("deep", Some("Thinks longer"))
+        );
+        assert_eq!(m.on_session(&json!({"configOptions": options})), out);
+        assert!(m.on_session(&json!({"sessionId": "s"})).is_empty());
+        // An empty thought is never shown; a message after a thought closes it.
+        m.begin_prompt("go");
+        let thought = |t: &str| json!({"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": t}});
+        m.on_update(&thought("  "));
+        assert!(events(&m.on_update(&chunk)).is_empty());
+        let ev = events(&m.on_update(&thought("hmm")));
+        assert!(
+            matches!(&ev[..], [AgentEvent::AgentMessage { markdown, phase: MessagePhase::Commentary, .. }] if markdown == "late")
+        );
+        let ev = events(&m.end_prompt(Ok(&json!({}))));
+        assert!(matches!(&ev[0], AgentEvent::Reasoning { summary } if summary == "hmm"));
+    }
+
+    #[test]
+    fn prompts_put_images_before_the_text() {
+        assert_eq!(prompt_blocks("hi", &[]), json!([{"type": "text", "text": "hi"}]));
+        assert_eq!(prompt_blocks("", &[]), json!([{"type": "text", "text": ""}]));
+        let img = vec![("image/png".to_string(), "AAAA".to_string())];
+        assert_eq!(prompt_blocks("  ", &img), json!([{"type": "image", "mimeType": "image/png", "data": "AAAA"}]));
+        assert_eq!(
+            prompt_blocks("look", &img),
+            json!([{"type": "image", "mimeType": "image/png", "data": "AAAA"}, {"type": "text", "text": "look"}])
+        );
+    }
+
+    /// An agent with the extras PDT's agents add: tool names, a session-scoped allow, plan requests, PDT's own tools,
+    /// replayed prompts with times and its own question and plan requests.
+    #[derive(Debug)]
+    struct Extended;
+    impl AcpExtensions for Extended {
+        fn name(&self) -> &str {
+            "Probe"
+        }
+        fn tool_name(&self, u: &Value) -> Option<String> {
+            meta(u, "tool").and_then(Value::as_str).map(String::from)
+        }
+        fn is_exit_plan(&self, _u: &Value, tool: &str) -> bool {
+            tool == "exit_plan"
+        }
+        fn written_plan(&self, tool: &str, input: &Value) -> Option<String> {
+            (tool == "write_plan").then(|| s(input, "plan")).flatten()
+        }
+        fn rejected(&self, u: &Value) -> bool {
+            meta(u, "rejected").is_some()
+        }
+        fn replayed_prompt(&self, u: &Value) -> (Option<String>, Option<i64>) {
+            (meta(u, "id").and_then(Value::as_str).map(String::from), meta(u, "at").and_then(Value::as_i64))
+        }
+        fn session_option(&self) -> Option<&str> {
+            Some("allow_session")
+        }
+        fn is_plan_request(&self, ids: &[&str]) -> bool {
+            ids.contains(&"plan_build")
+        }
+        fn plan_option(&self, mode: Option<PermissionMode>) -> Option<&str> {
+            Some(if mode == Some(PermissionMode::AcceptEdits) { "plan_edits" } else { "plan_build" })
+        }
+        fn pdt_tool_prefix(&self) -> Option<&str> {
+            Some("mcp__pdt__")
+        }
+        fn ext_request(&self, method: &str, p: &Value) -> Option<ExtRequest> {
+            match method {
+                "probe/ask" => Some(ExtRequest::Questions(vec![ExtQuestion {
+                    id: "q1".into(),
+                    question: s(p, "question")?,
+                    header: None,
+                    options: vec![("o1".into(), "Yes".into()), ("o2".into(), "No".into())],
+                    multi: false,
+                }])),
+                "probe/plan" => Some(ExtRequest::Plan { markdown: s(p, "plan")? }),
+                _ => None,
+            }
+        }
+        fn ext_answer(&self, method: &str, answer: &ExtAnswer) -> Value {
+            json!({"method": method, "answer": format!("{answer:?}")})
+        }
+    }
+
+    fn extended() -> AcpMapper<Extended> {
+        AcpMapper::with_extensions(Extended, "/work/repo", Some("/private/work/repo".into()), "x")
+    }
+
+    fn permission(m: &mut AcpMapper<Extended>, id: u64, call: &str, options: &[(&str, &str)]) -> Vec<AcpOut> {
+        let options: Vec<Value> = options.iter().map(|(id, kind)| json!({"optionId": id, "kind": kind})).collect();
+        m.on_request(
+            json!(id),
+            "session/request_permission",
+            &json!({"toolCall": {"toolCallId": call}, "options": options}),
+        )
+    }
+
+    #[test]
+    fn an_agents_extensions_name_tools_allow_for_the_session_and_approve_plans() {
+        let mut m = extended();
+        m.begin_prompt("go");
+        // The canonical folder counts as the session's when the agent resolves symlinks… which `Extended` does not.
+        m.on_update(&json!({"sessionUpdate": "tool_call", "toolCallId": "e", "kind": "edit",
+            "rawInput": {"file_path": "/work/repo/src/a.rs"}, "_meta": {"tool": "edit_file"}}));
+        let ev = events(&permission(
+            &mut m,
+            1,
+            "e",
+            &[("ok", "allow_once"), ("allow_session", "allow_always"), ("no", "reject_once")],
+        ));
+        let AgentEvent::Request { tool, title, can_always, id, .. } = &ev[0] else { panic!() };
+        assert_eq!((tool.as_str(), title.as_str(), *can_always), ("edit_file", "src/a.rs", true));
+        let a = m.answer(id, &Answer::Approve { always: true }).unwrap();
+        assert_eq!(a.result["outcome"]["optionId"], "allow_session");
+        // PDT's own tools run without asking.
+        m.on_update(&json!({"sessionUpdate": "tool_call", "toolCallId": "p", "kind": "other", "_meta": {"tool": "mcp__pdt__get_ticket"}}));
+        assert_eq!(
+            permission(&mut m, 2, "p", &[("ok", "allow_once"), ("no", "reject_once")]),
+            vec![AcpOut::Respond {
+                id: json!(2),
+                result: json!({"outcome": {"outcome": "selected", "optionId": "ok"}})
+            }]
+        );
+        // A plan written in plan mode is what the exit-plan request asks to approve.
+        m.on_update(&json!({"sessionUpdate": "tool_call", "toolCallId": "w", "kind": "edit",
+            "rawInput": {"plan": "1. Do it"}, "_meta": {"tool": "write_plan"}}));
+        m.on_update(
+            &json!({"sessionUpdate": "tool_call", "toolCallId": "x", "kind": "other", "_meta": {"tool": "exit_plan"}}),
+        );
+        let opts = [("plan_build", "allow_once"), ("plan_edits", "allow_always"), ("keep", "reject_once")];
+        let ev = events(&permission(&mut m, 3, "x", &opts));
+        let AgentEvent::Request { request_kind, input, id, .. } = &ev[0] else { panic!() };
+        assert_eq!((*request_kind, input["plan"].as_str()), (RequestKind::Plan, Some("1. Do it")));
+        assert_eq!(m.answer(id, &Answer::Question { answers: BTreeMap::new() }).unwrap_err(), AnswerError::WrongAnswer);
+        let approve = Answer::Plan { approve: true, feedback: None, mode: Some(PermissionMode::AcceptEdits) };
+        assert_eq!(m.answer(id, &approve).unwrap().result["outcome"]["optionId"], "plan_edits");
+        // A plan kept with feedback rejects it and tells the agent why; the call is then refused.
+        let ev = events(&permission(&mut m, 4, "x", &opts));
+        let AgentEvent::Request { id, .. } = &ev[0] else { panic!() };
+        let keep = Answer::Plan { approve: false, feedback: Some("  smaller steps ".into()), mode: None };
+        let a = m.answer(id, &keep).unwrap();
+        assert_eq!(
+            (a.result["outcome"]["optionId"].as_str(), a.follow_up.as_deref()),
+            (Some("keep"), Some("smaller steps"))
+        );
+        // A call the agent says the user rejected is declined, not failed.
+        let ev =
+            events(&m.on_update(&json!({"sessionUpdate": "tool_call_update", "toolCallId": "e", "status": "failed",
+            "_meta": {"rejected": true}})));
+        let AgentEvent::ToolCall { status, .. } = &ev[0] else { panic!() };
+        assert_eq!(*status, ToolStatus::Declined);
+        let end = events(&m.end_prompt(Ok(&json!({"stopReason": "max_tokens"}))));
+        assert!(
+            matches!(end.last().unwrap(), AgentEvent::Turn { reason: Some(r), .. } if r == "Probe hit its output limit")
+        );
+    }
+
+    #[test]
+    fn an_agents_own_requests_are_answered_in_its_terms() {
+        let mut m = extended();
+        m.begin_prompt("go");
+        let ev = events(&m.on_request(json!(1), "probe/ask", &json!({"question": "Ship it?", "toolCallId": "c"})));
+        let AgentEvent::Request { request_kind, title, input, tool_call_id, .. } = &ev[0] else { panic!() };
+        assert_eq!(
+            (*request_kind, title.as_str(), tool_call_id.as_deref()),
+            (RequestKind::Question, "Ship it?", Some("c"))
+        );
+        assert_eq!(input["questions"][0]["options"][1]["label"], "No");
+        let pick = |label: &str| Answer::Question {
+            answers: BTreeMap::from([("Ship it?".to_string(), vec![label.to_string()])]),
+        };
+        let a = m.answer("1", &pick("Yes")).unwrap();
+        assert_eq!(a.result["answer"], r#"Answered([("q1", ["o1"])])"#);
+        assert_eq!(a.rpc_id, json!(1));
+        // Words of the user's own skip the question, saying what they wrote.
+        m.on_request(json!(2), "probe/ask", &json!({"question": "Ship it?"}));
+        let a = m.answer("2", &pick("Only on Friday")).unwrap();
+        assert!(
+            a.result["answer"]
+                .as_str()
+                .unwrap()
+                .contains("The user answered in their own words. Ship it?: Only on Friday")
+        );
+        // A plan approved goes on in Ask (or the mode picked) and is then built.
+        m.on_request(json!(3), "probe/plan", &json!({"plan": "- a"}));
+        let a = m.answer("3", &Answer::Approve { always: false }).unwrap();
+        assert_eq!(
+            (a.mode, a.follow_up.as_deref()),
+            (Some(PermissionMode::Ask), Some("The plan is approved: implement it now."))
+        );
+        m.on_request(json!(4), "probe/plan", &json!({"plan": "- a"}));
+        let a =
+            m.answer("4", &Answer::Plan { approve: true, feedback: None, mode: Some(PermissionMode::Bypass) }).unwrap();
+        assert_eq!(a.mode, Some(PermissionMode::Bypass));
+        m.on_request(json!(5), "probe/plan", &json!({"plan": "- a"}));
+        let a = m.answer("5", &Answer::Deny { message: Some("no".into()) }).unwrap();
+        assert_eq!(
+            (a.result["answer"].as_str(), a.mode),
+            (Some(r#"Plan { approve: false, feedback: Some("no") }"#), None)
+        );
+        m.on_request(json!(6), "probe/plan", &json!({"plan": "- a"}));
+        assert_eq!(m.answer("6", &pick("x")).unwrap_err(), AnswerError::WrongAnswer);
+        // Cancelling answers it in the agent's terms too.
+        let (replies, _) = m.cancel_requests();
+        assert_eq!(replies, [(json!(6), json!({"method": "probe/plan", "answer": "Cancelled"}))]);
+        let out = m.on_request(json!(7), "probe/other", &json!({}));
+        assert!(matches!(&out[..], [AcpOut::RespondError { .. }]));
+    }
+
+    #[test]
+    fn loading_imports_only_turns_taken_outside_pdt() {
+        let prompt = |id: &str, at: i64, text: &str| {
+            json!({"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": text},
+                   "_meta": {"id": id, "at": at}})
+        };
+        let chunk = |t: &str| json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": t}});
+        let mut m = extended();
+        m.begin_load(Some(1000));
+        // A turn PDT has logged already is dropped, with its answer.
+        assert!(m.on_update(&prompt("p1", 500, "old")).is_empty());
+        assert!(m.on_update(&chunk("old answer")).is_empty());
+        // A newer one was typed in the agent's own terminal: it is imported.
+        let ev = events(&m.on_update(&prompt("p2", 2000, "from the terminal")));
+        assert!(
+            matches!(&ev[1], AgentEvent::UserMessage { text, source: MessageSource::Terminal, .. } if text == "from the terminal")
+        );
+        // A prompt in several chunks is one prompt.
+        assert!(m.on_update(&prompt("p2", 2000, "more")).is_empty());
+        m.on_update(&chunk("new answer"));
+        // The next replayed prompt ends the imported turn.
+        let ev = events(&m.on_update(&prompt("p3", 3000, "and again")));
+        let kinds: Vec<&str> = ev.iter().map(|e| e.kind()).collect();
+        assert_eq!(kinds, ["agent_message", "turn", "turn", "user_message"]);
+        let ev = events(&m.end_load());
+        assert!(matches!(
+            ev.last().unwrap(),
+            AgentEvent::Turn { phase: TurnPhase::Ended, status: Some(TurnStatus::Completed), .. }
+        ));
+        assert_eq!(m.turn(), None);
+        // Without `import_after`, nothing is imported.
+        let mut m = extended();
+        m.begin_load(None);
+        assert!(m.on_update(&prompt("p9", 9000, "x")).is_empty());
+        assert!(m.end_load().is_empty());
+    }
 }
