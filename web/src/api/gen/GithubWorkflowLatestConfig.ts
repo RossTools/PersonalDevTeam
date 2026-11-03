@@ -6,10 +6,23 @@ export type GithubWorkflowLatestConfig = {
  */
 repo: string | null, 
 /**
- * The workflow's name as Actions shows it (its `name:`, e.g. `release`).
+ * The workflow's name as Actions shows it (its `name:`, e.g. `release`), or its file (`release.yml`).
  */
 workflow: string, 
 /**
- * The branch its runs are on (default `main`).
+ * The branch its runs are on (default `main`): for a pull request's run, its head branch.
  */
-branch: string | null, };
+branch: string | null, 
+/**
+ * Only a run started by this event (`workflow_dispatch`, `pull_request`, `push`, `schedule`).
+ */
+event: string | null, 
+/**
+ * Only a run of this commit (for a pull request's run, its head commit).
+ */
+headSha: string | null, 
+/**
+ * Only a run started at or after this time (RFC 3339, e.g. `github.workflow.run`'s `dispatchedAt`), less
+ * [`SINCE_SLACK`] for the clocks' difference.
+ */
+since: string | null, };
