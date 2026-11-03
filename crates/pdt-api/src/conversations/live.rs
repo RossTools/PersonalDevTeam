@@ -335,6 +335,7 @@ async fn pump(
                     s.turn_running = false;
                     s.open_requests.clear();
                     s.partial.clear();
+                    super::held::end_session(&st, &c.id);
                     s.background_tasks.clear();
                     if !expected {
                         let code = code.map_or("no exit code".to_string(), |c| format!("exit code {c}"));
@@ -460,6 +461,7 @@ impl FollowUp {
         let (st, sid) = (st.clone(), session.to_string());
         match self {
             FollowUp::TurnEnded => tokio::spawn(async move {
+                super::held::end_session(&st, &sid);
                 crate::workflow::agent::turn_ended(&st, &sid).await;
                 crate::pm::turn_ended(&st, &sid).await;
             }),
@@ -499,7 +501,8 @@ fn apply_event(c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Ve
         }
         AgentEvent::Request { id, state: RequestState::Open, tool, input, .. } => {
             s.open_requests.insert(id.clone());
-            if tool.starts_with(&format!("mcp__{}__", pdt_core::mcp::SERVER_NAME)) {
+            // PDT's own requests are the user's to answer (PDT-490).
+            if tool.starts_with(&format!("mcp__{}__", pdt_core::mcp::SERVER_NAME)) && !super::held::is_held(id) {
                 then.push(FollowUp::PdtRequest { id: id.clone(), tool: tool.clone(), input: input.clone() });
             }
             true

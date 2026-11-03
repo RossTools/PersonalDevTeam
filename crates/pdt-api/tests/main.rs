@@ -37,6 +37,7 @@ mod host;
 mod host_service;
 mod host_triggers;
 mod identity;
+mod inline_asks;
 mod install_updates;
 mod integrations;
 mod issue_links;

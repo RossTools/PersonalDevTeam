@@ -82,8 +82,13 @@ leaves PDT running until you stop it or log out. See [Starting at login](updates
 
 ### Runs
 
-- **Ports**: the range runs (dev servers, tests) get their ports from.
-- **Max concurrent runs**: how many runs may run at once.
+A run is a command PDT starts from a ticket's branch, such as your app's dev server or its tests. Each project defines
+its runs in `.pdt/project.toml` or in the project's settings.
+
+- **Ports**: each run that serves something gets a port from this range, for its link (and its Tailscale link when
+  remote access is on).
+- **Max concurrent runs**: how many runs may be going at once across all projects; tests don't count. Starting one more
+  offers to stop the oldest.
 
 See [Run configuration](../automation/run-configuration.md).
 

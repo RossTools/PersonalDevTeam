@@ -88,8 +88,9 @@ condensed.
 ## When it asks first
 
 Before the PM creates, edits, stops or links a ticket, messages an agent, or runs or saves a workflow, it asks you. An
-approval card in the conversation (and under **Approvals** in the Inbox) says exactly what it's about to do: **Allow**
-or **Deny**. With Codex or Devin as the PM's agent, the card is in the Inbox only.
+approval card in the conversation (and under **Approvals** in the Inbox) says exactly what it's about to do: **Allow**,
+**Always allow in this session** or **Deny**. Answer in either place; the PM carries on in the same turn once you do,
+whichever agent it runs on.
 
 Reading never asks, and nor does writing its own notes.
 

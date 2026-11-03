@@ -435,6 +435,8 @@ pub fn now_ms() -> i64 {
 pub struct Health {
     pub status: String,
     pub name: String,
+    /// The product's website (`brand::WEBSITE`), for links to its docs.
+    pub website: String,
     pub version: String,
     pub profile: pdt_core::brand::Profile,
     pub port: u16,
@@ -565,6 +567,7 @@ async fn health(State(st): State<AppState>, index: Option<PathBuf>) -> Json<Heal
     Json(Health {
         status: "ok".into(),
         name: PRODUCT_NAME.into(),
+        website: pdt_core::brand::WEBSITE.into(),
         version: pdt_core::BUILD_VERSION.into(),
         profile: i.profile,
         port: i.port,
