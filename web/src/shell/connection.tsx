@@ -4,7 +4,7 @@ import { onlineManager } from '@tanstack/react-query';
 import { Banner } from '@ui';
 
 /** The browser's own online state, as React Query sees it (queries pause, without failing, while it is offline). */
-export function useOnline(): boolean {
+function useOnline(): boolean {
   return useSyncExternalStore(onlineManager.subscribe.bind(onlineManager), () => onlineManager.isOnline());
 }
 

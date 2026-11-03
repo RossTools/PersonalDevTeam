@@ -34,7 +34,7 @@ const KINDS: Record<InboxKind, { icon: ComponentType<LucideProps>; tone: Tone }>
 };
 
 /** An item's icon and colour: a gate under Ready to accept is green, a disk nearly full red. */
-export function kindStyle(item: InboxItem): { icon: ComponentType<LucideProps>; tone: Tone } {
+function kindStyle(item: InboxItem): { icon: ComponentType<LucideProps>; tone: Tone } {
   const k = KINDS[item.kind];
   if (item.kind === 'gate' && item.group === 'accept') return { ...k, tone: 'running' };
   if (item.kind === 'low_disk' && item.body.critical === true) return { ...k, tone: 'failed' };

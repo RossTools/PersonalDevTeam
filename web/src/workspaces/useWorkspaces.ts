@@ -86,7 +86,7 @@ export function ticketInfo(t: Ticket): ItemInfo {
 }
 
 /** A changes tab: titled `Changes · <branch>`. */
-export function changesInfo(w: Worktree): ItemInfo {
+function changesInfo(w: Worktree): ItemInfo {
   return {
     item: { kind: 'changes', id: w.id }, title: `Changes · ${w.branch}`, status: 'idle', activity: null, unseen: false,
     projectId: w.projectId, worktreeId: w.id,

@@ -5,7 +5,7 @@ import { CommandList, Popover } from '@ui';
 import type { Category } from '../api/gen/Category';
 import type { KindSpec } from '../api/gen/KindSpec';
 
-export const CATEGORY: Record<Category, { label: string; icon: LucideIcon }> = {
+const CATEGORY: Record<Category, { label: string; icon: LucideIcon }> = {
   trigger: { label: 'Triggers', icon: Zap },
   condition: { label: 'Conditions', icon: Split },
   action: { label: 'Actions', icon: Play },

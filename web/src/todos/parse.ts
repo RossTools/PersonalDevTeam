@@ -7,7 +7,7 @@ import { addDays, localDay, weekdayOf } from './model';
 
 /** What a phrase set: the due day/time ('when') or the repeat rule ('repeat'). */
 export type ParseKind = 'when' | 'repeat';
-export interface ParseMatch { kind: ParseKind; start: number; end: number; text: string } // [start,end) char range in the input
+interface ParseMatch { kind: ParseKind; start: number; end: number; text: string } // [start,end) char range in the input
 export interface Parsed {
   /** The text with matched phrases removed and whitespace tidied (collapse runs, trim, drop dangling separators like a trailing "," or " at"/" on" left behind). Falls back to the original text, trimmed, when stripping leaves it empty. */
   title: string;

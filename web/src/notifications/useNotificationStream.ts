@@ -8,7 +8,7 @@ import { presentation, shownKey } from './model';
 import { inboxKey } from '../inbox/useInbox';
 import { setStreamOpen } from '../common/poll';
 
-export const STREAM_PATH = '/api/notifications/stream';
+const STREAM_PATH = '/api/notifications/stream';
 
 /** What's on screen now (read when a row arrives). */
 export interface OnScreen {

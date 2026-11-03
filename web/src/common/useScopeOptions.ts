@@ -1,7 +1,7 @@
 import { useProjects } from '../projects/queries';
 import { usePersonas } from '../personas/model';
 
-export interface ScopeOption {
+interface ScopeOption {
   id: string;
   name: string;
 }

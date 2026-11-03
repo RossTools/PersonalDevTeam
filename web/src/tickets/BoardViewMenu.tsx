@@ -9,7 +9,7 @@ import { runAction } from '../common/useAction';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 /** The Done windows the board offers, in days (pdt-core `board::DONE_WINDOW_DAYS`). */
-export const DONE_WINDOWS = [1, 3, 7, 14, 30];
+const DONE_WINDOWS = [1, 3, 7, 14, 30];
 /** A project's Done window until it picks one, and the window of the board across all projects. */
 export const DEFAULT_DONE_DAYS = 14;
 

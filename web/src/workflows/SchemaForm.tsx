@@ -14,7 +14,7 @@ type Schema = Record<string, unknown>;
 type Value = unknown;
 
 /** `runKey` → "Run key". */
-export function humanize(key: string): string {
+function humanize(key: string): string {
   const words = key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_.]/g, ' ').toLowerCase();
   return capitalize(words);
 }
@@ -22,7 +22,7 @@ export function humanize(key: string): string {
 const isRef = (v: Value) => typeof v === 'string' && /\{\{.*\}\}/.test(v);
 
 /** What a schema is, as far as the form cares. */
-export type FieldKind =
+type FieldKind =
   | { kind: 'string'; multiline: boolean }
   /** `x-format: markdown`. */
   | { kind: 'markdown' }
@@ -125,7 +125,7 @@ export function classify(raw: Schema | boolean | undefined, root: Schema): Class
 }
 
 /** A value typed into an "any" field: JSON when it reads as a number, true/false/null, a list or an object. */
-export function parseAny(text: string): Value {
+function parseAny(text: string): Value {
   const t = text.trim();
   if (/^(-?\d+(\.\d+)?|true|false|null|\[.*\]|\{.*\})$/s.test(t)) {
     try {

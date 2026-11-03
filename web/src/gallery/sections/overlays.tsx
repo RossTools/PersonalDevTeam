@@ -5,6 +5,9 @@ import { ContextMenu, MenuButton, useMenuAt, type MenuEntry } from '@ui/Menu';
 import { List, ListRow } from '@ui/List';
 import { StatusDot } from '@ui/StatusDot';
 import { Popover } from '@ui/Popover';
+import { HoverCard } from '@ui/HoverCard';
+import { Link } from '@ui/Link';
+import { Badge } from '@ui/Badge';
 import { Sheet } from '@ui/Sheet';
 import { CommandList, type CommandItem } from '@ui/CommandList';
 import { SectionLabel } from '@ui/SectionLabel';
@@ -120,6 +123,23 @@ function PopoverDemo() {
   );
 }
 
+function HoverCardDemo() {
+  return (
+    <Row label="HoverCard (hover, or focus with Tab)">
+      <HoverCard
+        content={
+          <>
+            <span className="font-semibold">PDT-42 Add the inbox</span>
+            <span className="flex items-center gap-1.5"><Badge tone="accent">In progress</Badge> PR #57 · checks passing</span>
+          </>
+        }
+      >
+        <Link href="#PDT-42">PDT-42</Link>
+      </HoverCard>
+    </Row>
+  );
+}
+
 function SheetDemo() {
   const [open, setOpen] = useState(false);
   return (
@@ -167,6 +187,7 @@ export const section = {
       <MenusDemo />
       <MenuAtDemo />
       <PopoverDemo />
+      <HoverCardDemo />
       <SheetDemo />
       <CommandDemo />
     </>

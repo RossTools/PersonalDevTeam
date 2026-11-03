@@ -335,6 +335,7 @@ jobs:
       - uses: ./.github/actions/pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --dir web typecheck
+      - run: pnpm --dir web knip
       - run: pnpm --dir web build
 
   web-test:

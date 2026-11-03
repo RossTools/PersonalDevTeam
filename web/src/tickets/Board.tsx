@@ -14,9 +14,8 @@ import type { TicketQuery } from '../api/gen/TicketQuery';
 import type { TicketStage } from '../api/gen/TicketStage';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import type { PipelineStage } from '../api/gen/PipelineStage';
-import type { TicketAgent } from '../api/gen/TicketAgent';
 import { AgentDot, itemState, rollup, type AgentStateValue } from '../common/AgentState';
-import { PartsStepper, partsCount } from '../common/PartsStepper';
+import { PartsStepper } from '../common/PartsStepper';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { PriorityIcon } from '../common/PriorityIcon';
 import { TicketKey } from '../common/TicketKey';
@@ -36,7 +35,7 @@ export { agentLine };
 
 export type BoardStage = Extract<TicketStage, 'todo' | 'in_progress' | 'done'>;
 
-export const BOARD_COLUMNS: { stage: BoardStage; title: string }[] = [
+const BOARD_COLUMNS: { stage: BoardStage; title: string }[] = [
   { stage: 'todo', title: 'To do' },
   { stage: 'in_progress', title: 'In progress' },
   { stage: 'done', title: 'Done' },
@@ -50,7 +49,7 @@ export interface DisplayColumn {
   pipeline?: Exclude<PipelineStage, 'refine' | 'merge_blocked'>;
 }
 
-export const PIPELINE_COLUMNS: DisplayColumn[] = [
+const PIPELINE_COLUMNS: DisplayColumn[] = [
   { id: 'code', stage: 'in_progress', title: 'Code', pipeline: 'code' },
   { id: 'review', stage: 'in_progress', title: 'Review', pipeline: 'review' },
   { id: 'qa', stage: 'in_progress', title: 'QA', pipeline: 'qa' },
@@ -92,7 +91,7 @@ const BOARD_PAGE = 50;
  * A column's `GET /api/tickets` query: its cards, never parents (they head lanes). Done: closed since `closedAfter`,
  * most recently updated first.
  */
-export function columnQuery(projectId: string | null, stage: BoardStage, closedAfter: number): TicketQuery {
+function columnQuery(projectId: string | null, stage: BoardStage, closedAfter: number): TicketQuery {
   const q: TicketQuery = { stage, hasParts: false, limit: BOARD_PAGE };
   if (projectId) q.project = projectId;
   if (stage === 'done') {
@@ -103,7 +102,7 @@ export function columnQuery(projectId: string | null, stage: BoardStage, closedA
 }
 
 /** The lane headers' queries: open parents (To do, In progress) and parents closed since `closedAfter`. */
-export function laneQueries(projectId: string | null, closedAfter: number): TicketQuery[] {
+function laneQueries(projectId: string | null, closedAfter: number): TicketQuery[] {
   const scope = projectId ? { project: projectId } : {};
   return [
     { ...scope, hasParts: true, stage: 'todo,in_progress', limit: 100 },
@@ -112,7 +111,7 @@ export function laneQueries(projectId: string | null, closedAfter: number): Tick
 }
 
 /** The drag payload of a card (web/ui README: text/plain `pdt:<kind>:<id>`). */
-export const CARD_DRAG_KIND = 'ticket';
+const CARD_DRAG_KIND = 'ticket';
 
 const coarsePointer = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
@@ -129,7 +128,7 @@ export function cardActivity(t: Pick<TicketSummary, 'id' | 'attempt'>, sessions:
 }
 
 /** The sessions on a ticket, by ticket id: one pass over every session instead of one per card. */
-export function sessionsByTicket(sessions: Session[]): Map<string, Session[]> {
+function sessionsByTicket(sessions: Session[]): Map<string, Session[]> {
   const m = new Map<string, Session[]>();
   for (const s of sessions) {
     if (!s.ticket) continue;
@@ -440,7 +439,7 @@ export function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
 const laneEmpty = (lane: Lane) => (['todo', 'in_progress', 'done'] as BoardStage[]).every((s) => lane.items[s].length === 0);
 
 /** The column after `id` (by +1 or -1), or null at either end. */
-export function nextColumn(columns: DisplayColumn[], id: string, by: 1 | -1): DisplayColumn | null {
+function nextColumn(columns: DisplayColumn[], id: string, by: 1 | -1): DisplayColumn | null {
   const i = columns.findIndex((c) => c.id === id);
   return i < 0 ? null : columns[i + by] ?? null;
 }
@@ -454,7 +453,7 @@ const EDGE_PX = 24;
  * Phones: the board's columns as a row of chips with their counts, scrolling sideways when they don't fit; the chosen
  * one is kept in view.
  */
-export function ColumnChips({ ref, columns, counts, value, onChange }: {
+function ColumnChips({ ref, columns, counts, value, onChange }: {
   ref?: Ref<HTMLDivElement>;
   columns: DisplayColumn[];
   counts: Record<string, number | undefined>;

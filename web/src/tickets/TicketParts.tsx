@@ -286,7 +286,7 @@ export function TicketDetails({ ticket }: { ticket: Ticket }) {
 // Overlaps
 
 /** Shared files listed before "and N more". */
-export const OVERLAP_FILES_SHOWN = 5;
+const OVERLAP_FILES_SHOWN = 5;
 
 /** The files two tickets' attempts both changed: the first few, then "and N more" (of `total`). */
 export function SharedFiles({ files, total, className }: { files: string[]; total: number; className?: string }) {
@@ -420,7 +420,7 @@ export function TicketLinks({ ticket }: { ticket: Ticket }) {
 }
 
 /** Pick the kind (blocked by, blocks, related), then the ticket. A link that would close a cycle shows why here. */
-export function LinkTicketDialog({ ticket, onClose }: { ticket: Ticket; onClose: () => void }) {
+function LinkTicketDialog({ ticket, onClose }: { ticket: Ticket; onClose: () => void }) {
   const qc = useQueryClient();
   const [role, setRole] = useState<LinkRole>('blockedBy');
   const { run: link, error } = useFormAction(async (otherId: string) => {
@@ -564,7 +564,6 @@ function toItem(e: TicketEvent, trackerLabel: TrackerLabel): TimelineItem {
  * `recent` only the last few entries (the peek). `composer` adds a comment box under it.
  */
 export function TicketTimeline({ ticketId, recent, composer = false }: { ticketId: string; recent?: number; composer?: boolean }) {
-  const qc = useQueryClient();
   const full = useInfiniteQuery({
     queryKey: [...ticketKeys.events(ticketId), 'all'],
     queryFn: ({ pageParam }) => api.ticketEvents(ticketId, { newestFirst: true, limit: EVENT_PAGE, ...(pageParam ? { cursor: pageParam } : {}) }),

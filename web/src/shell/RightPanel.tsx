@@ -31,7 +31,7 @@ function write(key: string, value: string) {
 
 const clamp = (n: number) => Math.min(RIGHT_PANEL_WIDTH.max, Math.max(RIGHT_PANEL_WIDTH.min, n));
 
-export function readRightPanelOpen(): boolean {
+function readRightPanelOpen(): boolean {
   return read(RIGHT_PANEL_OPEN_KEY, (v) => v === 'true');
 }
 

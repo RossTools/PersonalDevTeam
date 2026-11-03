@@ -10,7 +10,7 @@ import type { FieldWhen } from '../api/gen/FieldWhen';
 
 export type { ConnectionKind, ConfigField };
 
-export const connectionKindsKey = ['connection-kinds'] as const;
+const connectionKindsKey = ['connection-kinds'] as const;
 
 /** Every kind of connection, from PDT's integrations (`GET /api/connections/kinds`); they change only with PDT. */
 export function useConnectionKinds() {
@@ -54,7 +54,7 @@ export function fieldsConfig(fields: ConfigField[], text: Record<string, string>
 
 export const kindOf = (kinds: ConnectionKind[], id: string): ConnectionKind | undefined => kinds.find((k) => k.id === id);
 
-export const kindLabel = (kinds: ConnectionKind[], id: string) => kindOf(kinds, id)?.label ?? id;
+const kindLabel = (kinds: ConnectionKind[], id: string) => kindOf(kinds, id)?.label ?? id;
 
 export const AUTH_MODES = [
   { value: 'bearer', label: 'Bearer token' },

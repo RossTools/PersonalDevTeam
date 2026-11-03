@@ -130,12 +130,12 @@ const pickedGutter = gutterLineClass.compute([pickedField], (state) => {
 });
 
 /** Lines `anchor`..`to` in order. */
-export function pickRange(anchor: number, to: number): Picked {
+function pickRange(anchor: number, to: number): Picked {
   return { anchor, line: Math.min(anchor, to), endLine: Math.max(anchor, to) };
 }
 
 /** Where the collapsed unchanged runs (`@codemirror/merge`'s widget) that hide any of `positions` start. */
-export function collapsedHolding(view: EditorView, positions: number[]): number[] {
+function collapsedHolding(view: EditorView, positions: number[]): number[] {
   const out = new Set<number>();
   if (positions.length === 0) return [];
   for (const source of view.state.facet(EditorView.decorations)) {

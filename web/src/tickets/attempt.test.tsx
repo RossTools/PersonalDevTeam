@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AttemptSummary } from '../api/gen/AttemptSummary';
 import type { Ticket } from '../api/gen/Ticket';
-import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
+import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { QueryClient } from '@tanstack/react-query';
 import { moveTicket, OpenSessionContext, StartTicketContext } from './actions';
 import { project, ticket } from './fixtures';

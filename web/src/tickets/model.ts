@@ -85,7 +85,7 @@ export const DEFAULT_FILTERS: BacklogFilters = {
 };
 
 /** Rows per page of the backlog. */
-export const PAGE_SIZE = 100;
+const PAGE_SIZE = 100;
 
 /** The `GET /api/tickets` query for a scope (one project, or every project with null) and filters. */
 export function toQuery(projectId: string | null, f: BacklogFilters, limit = PAGE_SIZE): TicketQuery {
@@ -284,7 +284,7 @@ export function eventTitle(e: TicketEvent, trackerLabel: TrackerLabel = () => un
 }
 
 /** What a `merge_update` event records (crates/pdt-api/src/workflow/nodes/conflicts.rs). */
-export interface MergeUpdateData {
+interface MergeUpdateData {
   how?: MergeUpdateHow;
   base?: string;
   files?: string[];
@@ -307,7 +307,7 @@ function mergeUpdateTitle(d: MergeUpdateData): string {
 }
 
 /** What an `outside_input` event records (crates/pdt-api/src/untrusted.rs and github.rs, PDT-202). */
-export interface OutsideInputData {
+interface OutsideInputData {
   held?: boolean;
   source?: string;
   author?: string;

@@ -37,7 +37,7 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * conversation (`refs`, PDT-382) also: `#12` a link to the forge's PR, a commit SHA inline code (shown muted), and a
  * file path in inline code a link to the file viewer (shown only if the file exists).
  */
-export function remarkRefs(keys: readonly string[], refs: MarkdownRefs | null) {
+function remarkRefs(keys: readonly string[], refs: MarkdownRefs | null) {
   const parts = [
     // Not inside a word or a branch name (`pdt-PDT-12-fix`).
     keys.length ? `(?<![\\w-])(?:${keys.map(escapeRe).join('|')})-\\d+(?![\\w-])` : null,

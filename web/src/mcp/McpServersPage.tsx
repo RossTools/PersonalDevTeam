@@ -19,7 +19,7 @@ import { useConfirmDelete } from '../common/useConfirmDelete';
 import { useScopeOptions } from '../common/useScopeOptions';
 import { connectionsKey } from '../connections/queries';
 
-export const mcpServersKey = ['mcp-servers'] as const;
+const mcpServersKey = ['mcp-servers'] as const;
 
 const MODES: { value: ToolMode; label: string }[] = [
   { value: 'allow', label: 'Allow' },
@@ -93,7 +93,7 @@ function Pairs({ label, hint, pairs, secrets, onChange }: {
 const stringOr = (v: unknown) => (typeof v === 'string' ? v : '');
 
 /** Add a server, or edit one. */
-export function McpServerDialog({ server, onClose }: { server?: McpServerView; onClose: () => void }) {
+function McpServerDialog({ server, onClose }: { server?: McpServerView; onClose: () => void }) {
   const qc = useQueryClient();
   const c = server?.connection;
   const config = c?.config ?? {};

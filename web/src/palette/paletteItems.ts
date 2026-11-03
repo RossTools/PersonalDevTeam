@@ -122,7 +122,7 @@ const key = (k: string) => `Ctrl+] ${k}`;
 const infoKey = (item: Item) => `${item.kind}:${item.id}`;
 
 /** A run's branch, or a worktree session's folder name (the branch); null for the main checkout. */
-export function branchOf(info: ItemInfo): string | null {
+function branchOf(info: ItemInfo): string | null {
   if (info.run) return info.run.branch;
   if (info.session && info.worktreeId) return info.session.cwd.split(/[\\/]/).filter(Boolean).pop() ?? null;
   return null;

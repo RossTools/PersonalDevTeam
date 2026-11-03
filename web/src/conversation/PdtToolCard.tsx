@@ -3,12 +3,11 @@
 import type { ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Eye, GitFork, Mail, MessageSquare, Pencil, Play, Plus } from 'lucide-react';
-import { Badge, Button, Spinner, type BadgeTone } from '@ui';
+import { Badge, Button, Spinner } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { Priority } from '../api/gen/Priority';
 import type { TicketStage } from '../api/gen/TicketStage';
-import type { WorkflowRunStatus } from '../api/gen/WorkflowRunStatus';
 import { Markdown } from '../common/Markdown';
 import { PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
@@ -152,7 +151,7 @@ export function ChangeRow({ c }: { c: FieldChange }) {
 }
 
 /** `edit_ticket`: from → to for each changed field. */
-export function EditTicketCard({ call }: { call: PdtCall }) {
+function EditTicketCard({ call }: { call: PdtCall }) {
   const e = ticketEdit(call.input, call.output);
   const state = callState(call);
   const verb = call.status === 'done' ? 'Changed' : call.status === 'running' ? 'Changing' : 'Not changed:';
@@ -166,7 +165,7 @@ export function EditTicketCard({ call }: { call: PdtCall }) {
 }
 
 /** `link_tickets` / `unlink_tickets`: "PDT-2 blocked by PDT-1". */
-export function LinkCard({ call }: { call: PdtCall }) {
+function LinkCard({ call }: { call: PdtCall }) {
   const l = ticketLink(call.input);
   const unlink = pdtTool(call.tool) === 'unlink_tickets';
   const state = callState(call);
@@ -184,7 +183,7 @@ export function LinkCard({ call }: { call: PdtCall }) {
 }
 
 /** `send_to_session`: the quoted message, who gets it, and that it is queued (delivered when that session is free). */
-export function MessageCard({ call }: { call: PdtCall }) {
+function MessageCard({ call }: { call: PdtCall }) {
   const m = sentMessage(call.input, call.output);
   const state = callState(call);
   const to = m.to ?? 'a session';
@@ -202,7 +201,7 @@ export function MessageCard({ call }: { call: PdtCall }) {
 }
 
 /** `add_ticket_comment`: the comment, previewed. */
-export function CommentCard({ call }: { call: PdtCall }) {
+function CommentCard({ call }: { call: PdtCall }) {
   const c = ticketComment(call.input, call.output);
   const state = callState(call);
   const verb = call.status === 'done' ? 'Commented on' : call.status === 'running' ? 'Commenting on' : 'Not commented on';
@@ -217,7 +216,7 @@ export function CommentCard({ call }: { call: PdtCall }) {
 }
 
 /** `workflow_run`: the run, with its status (followed while it runs). */
-export function WorkflowRunCard({ call }: { call: PdtCall }) {
+function WorkflowRunCard({ call }: { call: PdtCall }) {
   const w = workflowRun(call.input, call.output);
   const state = callState(call);
   const run = useQuery({
@@ -250,7 +249,7 @@ export function WorkflowRunCard({ call }: { call: PdtCall }) {
 }
 
 /** `watch`: what is watched and what it tells about, with Stop watching while it lasts. */
-export function WatchCard({ call }: { call: PdtCall }) {
+function WatchCard({ call }: { call: PdtCall }) {
   const qc = useQueryClient();
   const w = watchOf(call.input, call.output);
   const session = (resultOf(call.output)?.watching as { sessionId?: string }[] | undefined)?.[0]?.sessionId ?? null;
@@ -290,7 +289,7 @@ export function WatchCard({ call }: { call: PdtCall }) {
 }
 
 /** `unwatch`: one line. */
-export function UnwatchCard({ call }: { call: PdtCall }) {
+function UnwatchCard({ call }: { call: PdtCall }) {
   const state = callState(call);
   return <Card icon={<Eye />} label="Stopped watching" heading="Stopped watching" aside={state?.aside}>{state?.error && <Failure text={state.error} />}</Card>;
 }
