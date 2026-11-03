@@ -140,8 +140,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   node's `version`; the engine and validation bring an older config up to date as they read it (`NodeKind::migrate`
   in pdt-api `workflow/catalog.rs`; e.g. `github.nightly` 1 → 2 in `workflow/nodes/release.rs`), so a user's
   workflows run unchanged after an update. Never rewrite their documents for it.
-- **Never hold `engine_lock` across a slow node body.** Node bodies run outside it; a result is written only if the
-  step is still `running` with the same attempt.
+- **Never hold `engine_lock` across a slow node body.** Action and agent bodies run outside it; a flow, gate, wait or
+  condition kind that does slow work (git, like `attempt.has_changes`) opts out with `NodeKind::in_engine_lock`. A
+  result is written only if the step is still `running` with the same attempt.
+- **Never hold a global lock across git or the network.** Ticket Start fetches the base before it takes its
+  project's start lock (`AppState::ticket_start_locks`), which covers only the checks, the worktree and the rows.
 - **Secrets are filled in only when a node runs**, only from the node's own config, never from text that arrived as
   data. Stored step inputs, outputs and errors are redacted. Errors from outbound HTTP go through `send_error`, which
   drops the URL (it can carry a secret).
