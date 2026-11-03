@@ -1244,3 +1244,23 @@ async fn an_installed_update_is_a_workflow_event_once() {
     );
     assert_eq!(p["notesUrl"], "https://github.com/o/r/releases/tag/v0.1.7");
 }
+
+/// PDT-442: a note of the update events logged that isn't a JSON object is started over, not a panic.
+#[tokio::test]
+async fn a_malformed_update_events_note_is_started_over() {
+    use pdt_core::handoff::{UpdateOutcome, UpdateResult, result_path};
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, state, _) = setup_with(tmp.path(), true, "0.1.7").await;
+    state.store.put_host_value("sensor.update_events", &json!("not an object")).await.unwrap();
+    let result = UpdateResult {
+        outcome: UpdateOutcome::Installed,
+        from_version: "0.1.6".into(),
+        to_version: "0.1.7".into(),
+        message: String::new(),
+        log: None,
+        at: 5,
+    };
+    write_json(&result_path(&data(tmp.path())), &result);
+    pdt_api::update::log_installed(&state).await;
+    assert_eq!(update_events(&state, "update.installed").await.len(), 1);
+}

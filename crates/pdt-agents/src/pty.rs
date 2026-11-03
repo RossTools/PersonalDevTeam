@@ -64,6 +64,8 @@ pub enum PtyError {
     ShuttingDown,
     #[error("terminal I/O failed: {0}")]
     Io(String),
+    #[error("terminal session {0} is not reading its input")]
+    InputFull(String),
 }
 
 pub(crate) struct Scrollback {
@@ -119,6 +121,9 @@ const CURSOR_QUERY: &[u8] = b"\x1b[6n";
 /// Our answer to the query: row 1, column 1.
 const CURSOR_REPLY: &[u8] = b"\x1b[1;1R";
 
+/// Input waiting for a terminal that doesn't read it; past this, writes fail until it reads.
+const MAX_QUEUED_INPUT: usize = 8 * 1024 * 1024;
+
 /// ConPTY (opened by portable-pty with `PSEUDOCONSOLE_INHERIT_CURSOR`) starts every session with a cursor query
 /// and holds back all output until it is answered. A session must run with no client attached, and a query
 /// replayed from scrollback would make a later client answer it a second time, so the manager answers it itself
@@ -142,6 +147,8 @@ struct Handle {
 
 struct Proc {
     input: std_mpsc::Sender<Vec<u8>>,
+    /// Bytes sent to `input` and not written to the terminal yet (at most [`MAX_QUEUED_INPUT`]).
+    queued: std::sync::atomic::AtomicUsize,
     /// The child's side is gone (its output ended, or a write failed), though its exit may not be reported yet: input
     /// sent now would go nowhere (PDT-129).
     closed: std::sync::atomic::AtomicBool,
@@ -169,7 +176,7 @@ const HANGUP_GRACE: Duration = Duration::from_millis(1500);
 
 impl Handle {
     fn exited(&self) -> bool {
-        self.state.lock().unwrap().exited.is_some()
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).exited.is_some()
     }
 
     /// Asks the OS to end the process and everything it started; the waiter thread reports the exit.
@@ -191,7 +198,7 @@ impl Handle {
         } else if let Some(pid) = p.pid {
             kill_tree(pid);
         }
-        let result = p.killer.lock().unwrap().kill();
+        let result = p.killer.lock().unwrap_or_else(|e| e.into_inner()).kill();
         #[cfg(unix)]
         if let Some(pid) = p.pid.and_then(|p| i32::try_from(p).ok()) {
             // The child is a session leader, so its pid is also its process group id.
@@ -257,7 +264,7 @@ impl PtyManager {
 
     /// Starts the process. The receiver resolves with the exit code once it has ended.
     pub fn spawn(&self, spec: SpawnSpec) -> Result<oneshot::Receiver<i32>, PtyError> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         if self.shut_down.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(PtyError::ShuttingDown);
         }
@@ -311,6 +318,7 @@ impl PtyManager {
             events,
             proc: Some(Proc {
                 input: input_tx,
+                queued: Default::default(),
                 closed: Default::default(),
                 master: Mutex::new(Some(pair.master)),
                 killer: Mutex::new(killer),
@@ -349,7 +357,7 @@ impl PtyManager {
                         }
                         {
                             // Append and broadcast under one lock so `attach` sees each byte exactly once.
-                            let mut st = h.state.lock().unwrap();
+                            let mut st = h.state.lock().unwrap_or_else(|e| e.into_inner());
                             st.scrollback.push(chunk);
                             let _ = h.events.send(PtyEvent::Output(Arc::from(chunk)));
                         }
@@ -367,7 +375,11 @@ impl PtyManager {
         let h = handle.clone();
         std::thread::spawn(move || {
             while let Ok(bytes) = input_rx.recv() {
-                if writer.write_all(&bytes).and_then(|_| writer.flush()).is_err() {
+                let written = writer.write_all(&bytes).and_then(|_| writer.flush());
+                if let Some(p) = &h.proc {
+                    p.queued.fetch_sub(bytes.len(), std::sync::atomic::Ordering::SeqCst);
+                }
+                if written.is_err() {
                     if let Some(p) = &h.proc {
                         p.closed.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
@@ -383,13 +395,13 @@ impl PtyManager {
             let code = child.wait().map(|s| s.exit_code() as i32).unwrap_or(-1);
             std::thread::sleep(FLUSH_GRACE);
             {
-                let mut st = h.state.lock().unwrap();
+                let mut st = h.state.lock().unwrap_or_else(|e| e.into_inner());
                 st.exited = Some(code);
                 let _ = h.events.send(PtyEvent::Exit(code));
             }
             // Closing the master ends the reader (on Windows, ConPTY keeps the pipe open until then).
             if let Some(p) = &h.proc {
-                p.master.lock().unwrap().take();
+                p.master.lock().unwrap_or_else(|e| e.into_inner()).take();
             }
             tracing::debug!(session = %id, code, "terminal exited");
             let _ = exit_tx.send(code);
@@ -397,19 +409,24 @@ impl PtyManager {
 
         #[cfg(windows)]
         if let Some(job) = job {
-            self.jobs.lock().unwrap().insert(spec.id.clone(), job);
+            self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(spec.id.clone(), job);
         }
         sessions.insert(spec.id, handle);
         Ok(exit_rx)
     }
 
     fn get(&self, id: &str) -> Result<Arc<Handle>, PtyError> {
-        self.sessions.lock().unwrap().get(id).cloned().ok_or_else(|| PtyError::NotFound(id.to_string()))
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PtyError::NotFound(id.to_string()))
     }
 
     pub fn attach(&self, id: &str) -> Result<Attachment, PtyError> {
         let h = self.get(id)?;
-        let st = h.state.lock().unwrap();
+        let st = h.state.lock().unwrap_or_else(|e| e.into_inner());
         Ok(Attachment { scrollback: st.scrollback.snapshot(), exited: st.exited, events: h.events.subscribe() })
     }
 
@@ -420,14 +437,23 @@ impl PtyManager {
         else {
             return Err(PtyError::NotRunning(id.to_string()));
         };
-        p.input.send(bytes.to_vec()).map_err(|_| PtyError::NotRunning(id.to_string()))
+        // A process that doesn't read its input can't make pdtd hold any amount of it.
+        let queued = p.queued.fetch_add(bytes.len(), std::sync::atomic::Ordering::SeqCst);
+        if queued > 0 && queued + bytes.len() > MAX_QUEUED_INPUT {
+            p.queued.fetch_sub(bytes.len(), std::sync::atomic::Ordering::SeqCst);
+            return Err(PtyError::InputFull(id.to_string()));
+        }
+        p.input.send(bytes.to_vec()).map_err(|_| {
+            p.queued.fetch_sub(bytes.len(), std::sync::atomic::Ordering::SeqCst);
+            PtyError::NotRunning(id.to_string())
+        })
     }
 
     /// A followed log has no size: resizing it does nothing.
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), PtyError> {
         let h = self.get(id)?;
         let Some(p) = &h.proc else { return Ok(()) };
-        let master = p.master.lock().unwrap();
+        let master = p.master.lock().unwrap_or_else(|e| e.into_inner());
         let master = master.as_ref().ok_or_else(|| PtyError::NotRunning(id.to_string()))?;
         master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).map_err(|e| PtyError::Io(e.to_string()))
     }
@@ -453,7 +479,7 @@ impl PtyManager {
 
     /// Forgets a session, killing it first if it is still running (or stops following its log).
     pub fn remove(&self, id: &str) {
-        if let Some(h) = self.sessions.lock().unwrap().remove(id) {
+        if let Some(h) = self.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(id) {
             h.follow.stop.store(true, std::sync::atomic::Ordering::SeqCst);
             if !h.exited() {
                 let _ = h.kill();
@@ -461,14 +487,14 @@ impl PtyManager {
         }
         // Closing the job ends whatever the session's process left running.
         #[cfg(windows)]
-        self.jobs.lock().unwrap().remove(id);
+        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     }
 
     /// Shows the file at `log` as terminal `id`, read-only: its last `SCROLLBACK_BYTES` (from a line start), then
     /// whatever is appended, until [`PtyManager::end_log`]. The file may not exist yet. Bare line feeds become CR LF,
     /// as a program writing to a file (not a terminal) leaves them bare.
     pub fn follow_log(&self, id: &str, log: PathBuf) -> Result<(), PtyError> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         if self.shut_down.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(PtyError::ShuttingDown);
         }
@@ -492,7 +518,7 @@ impl PtyManager {
     /// then the exit.
     pub fn end_log(&self, id: &str, code: Option<i32>) {
         if let Ok(h) = self.get(id) {
-            *h.follow.end.lock().unwrap() = Some(code.unwrap_or(-1));
+            *h.follow.end.lock().unwrap_or_else(|e| e.into_inner()) = Some(code.unwrap_or(-1));
         }
     }
 
@@ -500,7 +526,7 @@ impl PtyManager {
     /// to start anything. Followed logs just stop: the processes behind them carry on.
     pub async fn shutdown(&self) {
         let handles: Vec<Arc<Handle>> = {
-            let sessions = self.sessions.lock().unwrap();
+            let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
             self.shut_down.store(true, std::sync::atomic::Ordering::SeqCst);
             sessions.values().cloned().collect()
         };
@@ -550,7 +576,7 @@ fn follow(h: &Handle, path: &std::path::Path) {
             return;
         }
         // Read before draining, so everything written before the end is shown.
-        let end = *h.follow.end.lock().unwrap();
+        let end = *h.follow.end.lock().unwrap_or_else(|e| e.into_inner());
         if file.is_none()
             && let Ok(mut f) = std::fs::File::open(path)
         {
@@ -581,7 +607,7 @@ fn follow(h: &Handle, path: &std::path::Path) {
                     Ok(n) => {
                         pos += n as u64;
                         let bytes = crlf(&buf[..n], &mut last_cr);
-                        let mut st = h.state.lock().unwrap();
+                        let mut st = h.state.lock().unwrap_or_else(|e| e.into_inner());
                         st.scrollback.push(&bytes);
                         let _ = h.events.send(PtyEvent::Output(Arc::from(bytes)));
                     }
@@ -589,7 +615,7 @@ fn follow(h: &Handle, path: &std::path::Path) {
             }
         }
         if let Some(code) = end {
-            let mut st = h.state.lock().unwrap();
+            let mut st = h.state.lock().unwrap_or_else(|e| e.into_inner());
             st.exited = Some(code);
             let _ = h.events.send(PtyEvent::Exit(code));
             return;

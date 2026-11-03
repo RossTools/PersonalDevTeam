@@ -617,7 +617,14 @@ const UPDATE_EVENTS_KEY: &str = "sensor.update_events";
 
 /// Logs `kind` with `key` unless the last one of its kind had that key.
 async fn log_once(st: &AppState, kind: &str, key: String, payload: impl Serialize) {
-    let mut seen = st.store.get_host_value(UPDATE_EVENTS_KEY).await.ok().flatten().unwrap_or_else(|| json!({}));
+    let mut seen = st
+        .store
+        .get_host_value(UPDATE_EVENTS_KEY)
+        .await
+        .ok()
+        .flatten()
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| json!({}));
     if seen[kind].as_str() == Some(key.as_str()) {
         return;
     }

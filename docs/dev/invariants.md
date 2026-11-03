@@ -208,6 +208,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   turn's end, the PM's hooks) runs once the event is stored. A Claude conversation's log is checked for gaps against
   Claude's transcript the first time it loads in a pdtd (`repair_gaps`, by item id; only messages, tool calls and
   reasoning, since turn markers of turns the agent starts on its own have other ids live).
+- **An agent's output is read with backpressure.** An adapter sends into an `EventSink` (pdt-agents
+  `adapter/sink.rs`) without waiting, and its reader awaits `sink.ready()` before the next frame, so a conversation
+  whose store lags pauses reading the agent's pipe (Codex: the whole app-server connection). Read lines with
+  `adapter/lines.rs` `CappedLines` (an overlong line is skipped), never `lines()`. The `unstored` queue gives up its
+  oldest events past a count and a byte bound; PTY input waiting for a terminal that doesn't read it is bounded too.
 - **A step's setup error is never retried.** An error that waiting won't fix (no project, a bad repository) is made
   with `setup_error` (pdt-api `workflow/catalog.rs`; `repo_for_step` in `nodes/release.rs`), and `fail_step` skips the
   node's retries for it. A kind that works on the run's project says so in `NodeKind::needs_project`, so a manual start

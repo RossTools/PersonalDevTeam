@@ -149,14 +149,14 @@ pub fn find_codex_conversation(
                 .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_millis() as i64);
-            if modified_ms.is_none_or(|m| m < fresh_started_at_ms - ROLLOUT_MTIME_SLACK_MS) {
+            if modified_ms.is_none_or(|m| m < fresh_started_at_ms.saturating_sub(ROLLOUT_MTIME_SLACK_MS)) {
                 continue;
             }
             let Some((id, folder, began)) = read_rollout_meta(&path) else { continue };
-            let off = began - fresh_started_at_ms;
+            let off = began.saturating_sub(fresh_started_at_ms);
             let later_peer = peers_fresh_started_at_ms
                 .iter()
-                .any(|&p| p > fresh_started_at_ms && p <= began + ROLLOUT_START_BEFORE_MS);
+                .any(|&p| p > fresh_started_at_ms && p <= began.saturating_add(ROLLOUT_START_BEFORE_MS));
             if !(-ROLLOUT_START_BEFORE_MS..=ROLLOUT_START_AFTER_MS).contains(&off)
                 || later_peer
                 || claimed.contains(&id)
