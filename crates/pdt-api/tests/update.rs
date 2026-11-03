@@ -781,7 +781,12 @@ async fn the_loop_waits_for_a_busy_host_under_auto_when_idle() {
     add_busy_session(&app, &state, tmp.path()).await;
     let (task, workflows) = (tokio::spawn(pdt_api::run_update_loop(state.clone())), engine(&state));
     wait_status(&app, state_is("available")).await;
-    while fake.hits.load(Ordering::SeqCst) < 3 {
+    // The workflow engine records the install run, and settles it, after the checks that start it.
+    let settled = async || {
+        let runs = install_runs(&app).await;
+        !runs.is_empty() && runs.iter().all(|r| r["status"] != "running")
+    };
+    while fake.hits.load(Ordering::SeqCst) < 3 || !settled().await {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     task.abort();

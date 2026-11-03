@@ -6,6 +6,7 @@ import type { FolderEntry } from './gen/FolderEntry';
 import type { FolderListing } from './gen/FolderListing';
 import type { GuideInfo } from './gen/GuideInfo';
 import type { Health } from './gen/Health';
+import type { HostBusy } from './gen/HostBusy';
 import type { HostChecks } from './gen/HostChecks';
 import type { HostSettingsPatch } from './gen/HostSettingsPatch';
 import type { HostSettingsView } from './gen/HostSettingsView';
@@ -16,6 +17,7 @@ import type { NewFolder } from './gen/NewFolder';
 import type { RemoteStatus } from './gen/RemoteStatus';
 import type { SetupPatch } from './gen/SetupPatch';
 import type { SetupView } from './gen/SetupView';
+import type { StartAtLoginView } from './gen/StartAtLoginView';
 import type { UpdateStatus } from './gen/UpdateStatus';
 import type { WhoAmI } from './gen/WhoAmI';
 
@@ -41,6 +43,12 @@ export const hostApi = {
     request<HostSettingsView>('/api/host/network', { method: 'PUT', body: JSON.stringify(n) }),
   /** Restart now: pdtd exits and its host supervisor starts it again (409 `not_supervised` without one). */
   restartHost: () => request<void>('/api/host/restart', { method: 'POST' }),
+  /** Whether PDT's background service (pdt-host) starts at login, and why it can't be changed here. */
+  startAtLogin: () => request<StartAtLoginView>('/api/host/start-at-login'),
+  setStartAtLogin: (on: boolean) =>
+    request<StartAtLoginView>('/api/host/start-at-login', { method: 'PUT', body: JSON.stringify({ on }) }),
+  /** What stopping PDT now would interrupt (working agents, background tasks, an update). */
+  hostBusy: () => request<HostBusy>('/api/host/busy'),
   refreshRemote: () => request<RemoteStatus>('/api/host/remote/refresh', { method: 'POST' }),
   whoami: () => request<WhoAmI>('/api/host/whoami'),
   updateStatus: () => request<UpdateStatus>('/api/host/update'),

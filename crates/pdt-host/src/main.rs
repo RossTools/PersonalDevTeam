@@ -15,6 +15,7 @@ fn usage() -> ! {
     let bin = pdt_core::brand::HOST_BIN;
     eprintln!("usage: {bin} run [--install-dir <dir>]");
     eprintln!("       {bin} install [--install-dir <dir>] [--replace] [--appimage <file>]");
+    eprintln!("       {bin} stop [--install-dir <dir>]");
     eprintln!("       {bin} uninstall [--install-dir <dir>]");
     std::process::exit(2);
 }
@@ -173,6 +174,13 @@ fn install(args: &[String]) -> anyhow::Result<()> {
         copy_appimage_payload(&cfg, appimage).map_err(fail)?;
     }
     pdt_host::register::install(&cfg, args.iter().any(|a| a == REPLACE)).map_err(fail)?;
+    if !pdt_host::login::wanted(&cfg.data_dir) {
+        println!(
+            "Starting PDT at login is off (Settings → This host); turn it on there to register {}.",
+            pdt_core::brand::HOST_BIN
+        );
+        return Ok(());
+    }
     if cfg!(target_os = "linux") {
         println!(
             "{} is registered as the systemd user service {}. To start it at boot without logging in, run: \
@@ -203,6 +211,13 @@ fn copy_appimage_payload(cfg: &HostConfig, appimage: &std::path::Path) -> Result
     pdt_host::linux::install_payload(bin, &cfg.install_dir, &appimage)
 }
 
+/// Stops this data folder's pdt-host and pdtd for this login session; they start again at the next login.
+fn stop(args: &[String]) -> anyhow::Result<()> {
+    let cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
+    log(&cfg, "stopping pdt-host and pdtd until the next login");
+    pdt_host::stop::stop(&cfg).map_err(anyhow::Error::msg)
+}
+
 /// Stops this data folder's pdt-host and pdtd and removes the login registration.
 fn uninstall(args: &[String]) -> anyhow::Result<()> {
     let cfg = HostConfig::from_env(install_dir(args)?).map_err(anyhow::Error::msg)?;
@@ -231,6 +246,7 @@ fn main() {
     let result = match args.first().map(String::as_str) {
         Some("run") => run(&args[1..]),
         Some("install") => install(&args[1..]),
+        Some("stop") => stop(&args[1..]),
         Some("uninstall") => uninstall(&args[1..]),
         _ => usage(),
     };

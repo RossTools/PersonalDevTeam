@@ -22,6 +22,7 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
   },
   { label: 'PM', terms: ['Daily checkpoint', 'Daily update', 'Journal', 'At a set time', 'Days'] },
   { label: 'Network', terms: ['Port', 'Allowed hosts', 'Restart', 'PDT_PORT', 'PDT_ALLOWED_HOSTS'] },
+  { label: 'Startup', terms: ['Start PDT at login', 'Login item', 'Background service', 'Stop PDT'] },
   { label: 'Remote access', terms: ['Serve on the tailnet', 'Tailscale', 'Owner', 'Status'] },
   { label: 'Runs', terms: ['Ports', 'Max concurrent runs'] },
   {

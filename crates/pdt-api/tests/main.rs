@@ -34,6 +34,7 @@ mod github_pulls;
 mod github_triage;
 mod homebrew_cask;
 mod host;
+mod host_service;
 mod host_triggers;
 mod identity;
 mod inline_asks;

@@ -26,6 +26,7 @@ pub mod guides;
 mod hooks;
 mod host;
 mod host_guard;
+pub mod host_service;
 mod identity_guard;
 mod inbox;
 pub mod install_updates;

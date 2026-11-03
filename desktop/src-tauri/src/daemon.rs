@@ -143,18 +143,23 @@ fn appimage_payload(os: pdt_host::register::Os, appimage: bool, data_dir: Option
     pdt_host::register::bundled_host_path(&dir).is_file().then_some(dir)
 }
 
-/// Starts pdt-host (which starts and supervises pdtd), detached; it keeps running if the app exits. A pdt-host that is
-/// already running (login item) makes this one exit at once.
-pub fn spawn_host(profile: Profile) -> std::io::Result<()> {
+/// The pdt-host to run and its install folder (see `host_to_run` and `appimage_payload`).
+fn host_program(profile: Profile) -> (PathBuf, Option<PathBuf>) {
     let os = pdt_host::register::Os::current();
     let data = data_dir(profile);
-    let (program, install_dir) = match appimage_payload(os, appimage().is_some(), data.as_deref()) {
+    match appimage_payload(os, appimage().is_some(), data.as_deref()) {
         Some(dir) => (bundled_host(Some(&dir)), Some(dir)),
         None => {
             let exe_dir = exe_dir();
             (host_to_run(os, data.as_deref(), exe_dir.as_deref()), exe_dir)
         }
-    };
+    }
+}
+
+/// Starts pdt-host (which starts and supervises pdtd), detached; it keeps running if the app exits. A pdt-host that is
+/// already running (login item) makes this one exit at once.
+pub fn spawn_host(profile: Profile) -> std::io::Result<()> {
+    let (program, install_dir) = host_program(profile);
     let mut cmd = host_command(&program, profile);
     cmd.arg("run");
     if let Some(dir) = install_dir {
@@ -189,6 +194,10 @@ pub fn spawn_host(profile: Profile) -> std::io::Result<()> {
 /// it did: `pdt-host install` has then started pdt-host through launchd (or one was already running), so the tray must
 /// not start another and only waits for pdtd.
 pub fn ensure_registered(profile: Profile) -> bool {
+    // Settings → This host turned starting PDT at login off: the tray starts pdt-host itself.
+    if data_dir(profile).is_some_and(|d| !pdt_host::login::wanted(&d)) {
+        return false;
+    }
     let os = pdt_host::register::Os::current();
     if os == pdt_host::register::Os::Linux {
         let (appimage, config) = (appimage(), dirs::config_dir());
@@ -354,6 +363,27 @@ fn switch_with(profile: Profile, exe_dir: &Path, runner: &mut dyn pdt_host::regi
     } else {
         Err(format!("{HOST_BIN} install failed; see {}", launch_log_hint(profile)))
     }
+}
+
+/// "Stop PDT and quit" (PDT-489): `pdt-host stop` stops pdt-host and pdtd until the next login, or until the app is
+/// opened again.
+pub fn stop_pdt(profile: Profile) -> Result<(), String> {
+    let (program, install_dir) = host_program(profile);
+    stop_with(profile, &program, install_dir.as_deref(), &mut pdt_host::register::System)
+}
+
+fn stop_with(
+    profile: Profile,
+    program: &Path,
+    install_dir: Option<&Path>,
+    runner: &mut dyn pdt_host::register::Runner,
+) -> Result<(), String> {
+    let mut cmd = host_command(program, profile);
+    cmd.arg("stop");
+    if let Some(dir) = install_dir {
+        cmd.arg("--install-dir").arg(dir);
+    }
+    if runner.status(cmd)? { Ok(()) } else { Err(format!("{HOST_BIN} stop failed; see {}", launch_log_hint(profile))) }
 }
 
 fn launch_log_hint(profile: Profile) -> String {
@@ -601,6 +631,17 @@ mod tests {
         assert_eq!(r.ran, ["install --install-dir /Applications/P.app/Contents/MacOS --replace"]);
         let mut r = Recorder { ran: vec![], ok: false };
         assert!(switch_with(Profile::Stable, exe_dir, &mut r).unwrap_err().contains("install failed"));
+    }
+
+    #[test]
+    fn stopping_runs_pdt_host_stop_for_this_install() {
+        let (program, dir) = (Path::new("/data/host/pdt-host"), Path::new("/Applications/P.app/Contents/MacOS"));
+        let mut r = Recorder { ran: vec![], ok: true };
+        stop_with(Profile::Stable, program, Some(dir), &mut r).unwrap();
+        assert_eq!(r.ran, ["stop --install-dir /Applications/P.app/Contents/MacOS"]);
+        let mut r = Recorder { ran: vec![], ok: false };
+        assert!(stop_with(Profile::Stable, program, None, &mut r).unwrap_err().contains("stop failed"));
+        assert_eq!(r.ran, ["stop"]);
     }
 
     #[test]
