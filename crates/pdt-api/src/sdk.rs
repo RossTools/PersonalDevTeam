@@ -4,7 +4,9 @@
 
 pub use crate::error::{ApiError, OrNotFound, codes};
 pub use crate::integrations::action::{Action, ActionCx, AnyAction, ConnectionFace, NodeFace, ToolFace, Via};
-pub use crate::integrations::{Imported, Integration, NotificationChannel, Poller, Registry, Service, Tool, tool_info};
+pub use crate::integrations::{
+    Imported, Integration, NotificationChannel, Poller, Registry, Service, Tool, WebSources, tool_info,
+};
 pub use crate::mcp::tools::Cx;
 pub use crate::notifications::on_event;
 pub use crate::overlap::decorate as decorate_ticket;

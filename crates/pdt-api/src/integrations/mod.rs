@@ -352,6 +352,21 @@ pub trait Integration: Send + Sync {
     fn pm_prompt(&self) -> Option<&'static str> {
         None
     }
+
+    /// What the web UI loads from outside PDT for it (a provider's own script and frames), added to the UI's
+    /// Content-Security-Policy while it is on (PDT-499). Name exact origins, never a scheme or a wildcard.
+    fn web_sources(&self) -> WebSources {
+        WebSources::default()
+    }
+}
+
+/// Origins the web UI may load from for an integration ([`Integration::web_sources`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WebSources {
+    /// Scripts (`script-src`).
+    pub script: &'static [&'static str],
+    /// Frames (`frame-src`).
+    pub frame: &'static [&'static str],
 }
 
 /// PDT's own integrations, in the catalog's order: always on, but for those that can be turned off.
