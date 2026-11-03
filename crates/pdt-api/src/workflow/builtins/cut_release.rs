@@ -45,8 +45,58 @@ pub(crate) fn cut_release_template() -> pdt_core::workflow::template::Template {
         json!({"id": id, "kind": "github.release", "version": 1, "position": {"x": x, "y": y}, "title": title,
                "retry": retry, "config": config})
     };
+    // While the release isn't out, the release workflow's run (PDT-488): a failed or cancelled one goes to the Inbox,
+    // once per attempt, and it keeps waiting (re-running the failed jobs reuses the tag). `p` prefixes the node ids,
+    // `wait` is the wait it goes back to, `what` names the release, `find` picks the run.
+    let follow = |p: &str, wait: &str, x: i32, y: i32, what: &str, find: serde_json::Value| {
+        let id = |s: &str| format!("{p}{s}");
+        let out = |field: &str| format!("{{{{steps.{p}release_run.{field}}}}}");
+        let key = |kind: &str| format!("release-run-{}-{}-{kind}", out("id"), out("attempt"));
+        let mut config = json!({"workflow": "{{params.workflow}}"});
+        config.as_object_mut().unwrap().extend(find.as_object().cloned().unwrap_or_default());
+        let keeps_waiting = "Cut a release keeps waiting, and says when the release is published.";
+        let nodes = vec![
+            json!({"id": id("release_run"), "kind": "github.workflow.latest", "version": 1,
+             "position": {"x": x, "y": y + 200}, "title": "Release run failed?", "retry": retry,
+             "maxVisits": RELEASE_POLLS, "config": config}),
+            json!({"id": id("run_failed"), "kind": "inbox.notice", "version": 1,
+             "position": {"x": x + 260, "y": y + 200}, "title": "Inbox: the release run failed",
+             "maxVisits": RELEASE_POLLS, "config": {
+                "key": key("failed"),
+                "title": format!("{what} failed to publish"),
+                "text": format!("[The release run]({}) failed, so nothing is published yet.\n\n{}\n\nRe-run the \
+                                 failed jobs on GitHub (that reuses the tag), or fix it and cut again. {keeps_waiting}",
+                                out("url"), out("failedJobs"))}}),
+            json!({"id": id("notify_run_failed"), "kind": "notify", "version": 1,
+             "position": {"x": x + 520, "y": y + 200}, "title": "Tell me it failed", "maxVisits": RELEASE_POLLS,
+             "config": {
+                "title": format!("{what} failed to publish"),
+                "body": "Re-run the failed jobs on GitHub (that reuses the tag), or fix it and cut again.",
+                "level": "warning", "link": out("url")}}),
+            json!({"id": id("run_cancelled"), "kind": "inbox.notice", "version": 1,
+             "position": {"x": x + 260, "y": y + 400}, "title": "Inbox: the release run was cancelled",
+             "maxVisits": RELEASE_POLLS, "config": {
+                "key": key("cancelled"),
+                "title": format!("{what} was cancelled"),
+                "text": format!("[The release run]({}) was cancelled before it published the release. Re-run it on \
+                                 GitHub, or cut again. {keeps_waiting}", out("url"))}}),
+        ];
+        let edges = vec![
+            json!({"from": id("release_run"), "port": "passed", "to": wait}),
+            json!({"from": id("release_run"), "port": "running", "to": wait}),
+            json!({"from": id("release_run"), "port": "none", "to": wait}),
+            json!({"from": id("release_run"), "port": "failed", "to": id("run_failed")}),
+            json!({"from": id("release_run"), "port": "cancelled", "to": id("run_cancelled")}),
+            json!({"from": id("run_failed"), "port": "added", "to": id("notify_run_failed")}),
+            json!({"from": id("run_failed"), "port": "skipped", "to": wait}),
+            json!({"from": id("notify_run_failed"), "to": wait}),
+            json!({"from": id("run_cancelled"), "port": "added", "to": wait}),
+            json!({"from": id("run_cancelled"), "port": "skipped", "to": wait}),
+        ];
+        (nodes, edges)
+    };
     // A release without a PR (a stable one without releaseBranch, or the other kind): the workflow publishes it.
-    let direct = |p: &str, y: i32, inputs: &str, tag: &str| {
+    let direct = |p: &str, y: i32, inputs: &str, tag: &str, what: &str| {
         let id = |s: &str| format!("{p}{s}");
         let mut published = release(
             &id("published"),
@@ -58,7 +108,17 @@ pub(crate) fn cut_release_template() -> pdt_core::workflow::template::Template {
         );
         published["maxVisits"] = json!(RELEASE_POLLS);
         let out = |field: &str| format!("{{{{steps.{p}published.{field}}}}}");
-        let nodes = vec![
+        // The run it started: the newest the dispatch started on its branch.
+        let (run_nodes, run_edges) = follow(
+            p,
+            &id("wait"),
+            1040,
+            y,
+            what,
+            json!({"branch": "{{params.ref}}", "event": "workflow_dispatch",
+                   "since": format!("{{{{steps.{p}dispatch.dispatchedAt}}}}")}),
+        );
+        let mut nodes = vec![
             release(&id("before"), 260, y, "Newest release before", tag, json!({})),
             run_workflow(&id("dispatch"), 520, y, inputs),
             wait(&id("wait"), 780, y, "Wait for the release", RELEASE_POLL_MS, RELEASE_POLLS),
@@ -82,15 +142,29 @@ pub(crate) fn cut_release_template() -> pdt_core::workflow::template::Template {
             json!({"from": id("dispatch"), "to": id("wait")}),
             json!({"from": id("wait"), "port": "done", "to": id("published")}),
             json!({"from": id("published"), "port": "found", "to": id("notify")}),
-            json!({"from": id("published"), "port": "none", "to": id("wait")}),
+            json!({"from": id("published"), "port": "none", "to": id("release_run")}),
             json!({"from": id("notify"), "to": id("tell")}),
             json!({"from": id("tell"), "port": "added", "to": id("released")}),
             json!({"from": id("tell"), "port": "skipped", "to": id("released")}),
         ];
+        nodes.extend(run_nodes);
+        let mut edges = edges;
+        edges.extend(run_edges);
         (nodes, edges)
     };
-    let (direct_nodes, direct_edges) = direct("direct_", -260, "{{params.stableInputs}}", "{{params.tagPattern}}");
-    let (pre_nodes, pre_edges) = direct("pre_", -520, "{{params.preInputs}}", "{{params.preTagPattern}}");
+    let (direct_nodes, direct_edges) =
+        direct("direct_", -900, "{{params.stableInputs}}", "{{params.tagPattern}}", "The stable release");
+    let (pre_nodes, pre_edges) =
+        direct("pre_", -1600, "{{params.preInputs}}", "{{params.preTagPattern}}", "The {{params.preName}} release");
+    // The release PR's merge starts the run: on its head branch, at its head commit.
+    let (run_nodes, run_edges) = follow(
+        "",
+        "wait_release",
+        2340,
+        200,
+        "{{steps.check_pr.title}}",
+        json!({"branch": "{{steps.pr_branch.value}}", "event": "pull_request", "headSha": "{{steps.check_pr.headSha}}"}),
+    );
     let mut published = release(
         "published",
         2340,
@@ -123,6 +197,7 @@ pub(crate) fn cut_release_template() -> pdt_core::workflow::template::Template {
     ];
     nodes.extend(direct_nodes);
     nodes.extend(pre_nodes);
+    nodes.extend(run_nodes);
     // A release PR: the workflow opens it, and it merges (by itself or by hand), which publishes the release. Its
     // branch comes through a step, so a project without one (these nodes never run) still validates.
     nodes.extend([
@@ -204,6 +279,7 @@ pub(crate) fn cut_release_template() -> pdt_core::workflow::template::Template {
     ];
     edges.extend(direct_edges);
     edges.extend(pre_edges);
+    edges.extend(run_edges);
     edges.extend([
         json!({"from": "before", "port": "found", "to": "open_already"}),
         json!({"from": "before", "port": "none", "to": "open_already"}),
@@ -233,7 +309,7 @@ pub(crate) fn cut_release_template() -> pdt_core::workflow::template::Template {
         json!({"from": "dropped", "to": "not_released"}),
         json!({"from": "wait_release", "port": "done", "to": "published"}),
         json!({"from": "published", "port": "found", "to": "notify"}),
-        json!({"from": "published", "port": "none", "to": "wait_release"}),
+        json!({"from": "published", "port": "none", "to": "release_run"}),
         json!({"from": "notify", "to": "tell_released"}),
         json!({"from": "tell_released", "port": "added", "to": "released"}),
         json!({"from": "tell_released", "port": "skipped", "to": "released"}),
@@ -277,7 +353,7 @@ pub(crate) fn cut_release_template() -> pdt_core::workflow::template::Template {
                             {\"type\": \"stable\", \"version\": \"2.0.0\"} or {\"type\": \"prerelease\"}.",
             "nodes": nodes,
             "edges": edges,
-            "settings": {"maxSteps": 2 * PR_POLLS + 3 * MERGE_POLLS + 2 * RELEASE_POLLS + 20,
+            "settings": {"maxSteps": 2 * PR_POLLS + 3 * MERGE_POLLS + 5 * RELEASE_POLLS + 20,
                          "maxRuntimeMs": 16_i64 * 24 * 60 * 60 * 1000},
         })),
     )

@@ -89,12 +89,12 @@
           "title": "Close a GitHub pull request"
         },
         {
-          "description": "Starts a GitHub Actions workflow by hand (`workflow_dispatch`) on a branch (default `main`) with inputs, as PDT's GitHub login. The repository is the run's project's unless `repo` names one. GitHub doesn't say which run it started: read what it makes (a pull request, a release) with the other GitHub nodes.",
+          "description": "Starts a GitHub Actions workflow by hand (`workflow_dispatch`) on a branch (default `main`) with inputs, as PDT's GitHub login. The repository is the run's project's unless `repo` names one. GitHub doesn't say which run it started: read what it makes (a pull request, a release) with the other GitHub nodes, or the run with `github.workflow.latest` and `since` set to its `dispatchedAt`.",
           "id": "github.workflow.run",
           "title": "Run a GitHub Actions workflow"
         },
         {
-          "description": "Reads the newest GitHub Actions run of a workflow (by its name, `release`) on a branch (default `main`), however it was started (a schedule, by hand), and leaves by its state: `passed`, `failed` (with `failedJobs`), `running` (queued or running), `cancelled`, or `none` when there is no run.",
+          "description": "Reads the newest GitHub Actions run of a workflow (by its name, `release`, or file, `release.yml`) on a branch (default `main`), however it was started (a schedule, by hand), and leaves by its state: `passed`, `failed` (with `failedJobs`), `running` (queued or running), `cancelled`, or `none` when there is no run. `event`, `headSha` and `since` pick one run: the one a pull request's merge started (its head branch and commit), or the one `github.workflow.run` started (`since` its `dispatchedAt`).",
           "id": "github.workflow.latest",
           "title": "Read a workflow's latest run"
         },
