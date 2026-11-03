@@ -7,11 +7,14 @@
 
 use crate::core::{API_URL, BUILDKITE, BuildkiteSettings, job_of, retryable_jobs, runs_of};
 use pdt_api::sdk::AppState;
-use pdt_api::sdk::http::{client, read_body, send_error};
+use pdt_api::sdk::http::{CallAuth, CallOpts, call_json_with};
 use pdt_core::pr::{CiJob, CiRun};
 use pdt_forge::{CiCapabilities, CiConfig, CiProvider, ForgeError};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+
+/// The most of one answer read (a job's log can be long).
+const ANSWER_CAP: usize = 8 * 1024 * 1024;
 
 /// A `buildkite` connection ready to call: the API, its organization and token.
 pub(crate) struct BuildkiteClient {
@@ -51,25 +54,15 @@ impl BuildkiteClient {
         query: &[(&str, &str)],
         body: Option<&Value>,
     ) -> Result<Value, String> {
-        let mut req = client().request(method.clone(), url).bearer_auth(&self.token).timeout(self.timeout);
-        if !query.is_empty() {
-            req = req.query(query);
-        }
-        if let Some(b) = body {
-            req = req.json(b);
-        }
-        let resp = req.send().await.map_err(|e| format!("Buildkite {method} {url}: {}", send_error(e)))?;
-        let status = resp.status().as_u16();
-        let bytes = read_body(resp, 8 * 1024 * 1024).await?;
-        let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        if !(200..300).contains(&status) {
-            let msg = v["message"]
-                .as_str()
-                .map(String::from)
-                .unwrap_or_else(|| String::from_utf8_lossy(&bytes).chars().take(300).collect());
-            return Err(format!("Buildkite answered {status} to {method} {url}: {msg}"));
-        }
-        Ok(v)
+        let opts = CallOpts {
+            timeout: Some(self.timeout),
+            cap: ANSWER_CAP,
+            auth: CallAuth::Bearer(&self.token),
+            error_msg: Some(|v| v["message"].as_str().map(String::from)),
+            ..CallOpts::new("Buildkite")
+        };
+        let query: Vec<(&str, String)> = query.iter().map(|(k, v)| (*k, v.to_string())).collect();
+        Ok(call_json_with(&opts, method, &self.base, url, &[], &query, body).await?.unwrap_or(Value::Null))
     }
 
     /// The builds of `pipeline` for `branch` (at `commit`), newest first.

@@ -93,7 +93,7 @@ pub fn under(base: &str, url: &str) -> bool {
 }
 
 /// The longest connecting to a service may take, for every call through [`client`].
-pub const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub const CONNECT_TIMEOUT: std::time::Duration = pdt_core::outbound::CONNECT_TIMEOUT;
 
 /// The HTTP client of workflows' nodes, the sensors and MCP servers. It bounds connecting only: MCP keeps streams open
 /// for as long as a server lives, so each caller bounds its own requests (nodes by the step timeout, sensors by
@@ -102,7 +102,7 @@ pub fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .user_agent(concat!("pdt-workflows/", env!("CARGO_PKG_VERSION")))
+            .user_agent(pdt_core::brand::user_agent("workflows"))
             .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .expect("an HTTP client")
@@ -215,8 +215,74 @@ pub async fn call_json_capped(
     body: Option<&Value>,
     cap: usize,
 ) -> Result<Value, String> {
+    let opts = CallOpts { cap, ..CallOpts::new(who) };
+    Ok(call_json_with(&opts, method, base, path, headers, query, body).await?.unwrap_or(Value::Null))
+}
+
+/// How a service's key goes with a call, besides plain headers.
+#[derive(Clone, Copy, Default)]
+pub enum CallAuth<'a> {
+    #[default]
+    None,
+    Bearer(&'a str),
+    Basic {
+        user: &'a str,
+        password: &'a str,
+    },
+}
+
+/// How [`call_json_with`] calls a service.
+pub struct CallOpts<'a> {
+    /// The service, as errors name it ("Jira").
+    pub who: &'a str,
+    /// The longest the call may take; [`client`] bounds only connecting.
+    pub timeout: Option<std::time::Duration>,
+    /// The most bytes of the answer read.
+    pub cap: usize,
+    pub auth: CallAuth<'a>,
+    /// The service's own message in an error's JSON answer; without one the error quotes the answer's start.
+    pub error_msg: Option<fn(&Value) -> Option<String>>,
+    /// Added to the error of a 401 (which of the connection's fields to check).
+    pub unauthorized_hint: Option<&'a str>,
+    /// A 404 is `Ok(None)` rather than an error.
+    pub not_found_ok: bool,
+}
+
+impl<'a> CallOpts<'a> {
+    pub fn new(who: &'a str) -> Self {
+        CallOpts {
+            who,
+            timeout: None,
+            cap: BODY_CAP,
+            auth: CallAuth::None,
+            error_msg: None,
+            unauthorized_hint: None,
+            not_found_ok: false,
+        }
+    }
+}
+
+/// [`call_json`] the way `opts` says: `Ok(None)` only for a 404 with `not_found_ok`.
+pub async fn call_json_with(
+    opts: &CallOpts<'_>,
+    method: reqwest::Method,
+    base: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    query: &[(&str, String)],
+    body: Option<&Value>,
+) -> Result<Option<Value>, String> {
+    let who = opts.who;
     let url = full_url(Some(base), path);
     let mut req = client().request(method.clone(), &url).header("accept", "application/json");
+    req = match opts.auth {
+        CallAuth::None => req,
+        CallAuth::Bearer(token) => req.bearer_auth(token),
+        CallAuth::Basic { user, password } => req.basic_auth(user, Some(password)),
+    };
+    if let Some(t) = opts.timeout {
+        req = req.timeout(t);
+    }
     for (k, v) in headers {
         req = req.header(*k, *v);
     }
@@ -228,16 +294,23 @@ pub async fn call_json_capped(
     }
     let resp = req.send().await.map_err(|e| format!("{who}: {method} {path}: {}", send_error(e)))?;
     let status = resp.status().as_u16();
-    let bytes = read_body(resp, cap).await?;
+    let bytes = read_body(resp, opts.cap).await?;
+    if status == 404 && opts.not_found_ok {
+        return Ok(None);
+    }
     let text = String::from_utf8_lossy(&bytes);
     if !(200..300).contains(&status) {
-        let start: String = text.chars().take(300).collect();
-        return Err(format!("{who} answered {status} to {method} {path}: {start}"));
+        let own = opts.error_msg.and_then(|f| f(&serde_json::from_str(&text).unwrap_or(Value::Null)));
+        let mut msg = own.unwrap_or_else(|| text.chars().take(300).collect());
+        if let Some(hint) = opts.unauthorized_hint.filter(|_| status == 401) {
+            msg.push_str(hint);
+        }
+        return Err(format!("{who} answered {status} to {method} {path}: {msg}"));
     }
     if text.trim().is_empty() {
-        return Ok(Value::Null);
+        return Ok(Some(Value::Null));
     }
-    serde_json::from_str(&text).map_err(|e| format!("{who}: {method} {path} did not answer JSON: {e}"))
+    serde_json::from_str(&text).map(Some).map_err(|e| format!("{who}: {method} {path} did not answer JSON: {e}"))
 }
 
 pub struct Http;

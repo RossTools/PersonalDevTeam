@@ -23,7 +23,8 @@ pub mod templates {
 /// Outbound HTTP: one client, capped bodies, errors without secrets.
 pub mod http {
     pub use crate::workflow::nodes::http::{
-        BODY_CAP, call_json, call_json_capped, client, read_body, send_error, service,
+        BODY_CAP, CallAuth, CallOpts, call_json, call_json_capped, call_json_with, client, read_body, send_error,
+        service,
     };
 }
 

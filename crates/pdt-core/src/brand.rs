@@ -42,6 +42,15 @@ pub const WEBSITE: &str = "https://pdt.dev";
 /// The optional run configuration file inside a project's repository.
 pub const PROJECT_CONFIG_FILE: &str = ".pdt/project.toml";
 
+/// The User-Agent of PDT's HTTP clients: `pdt/<build version>`, or `pdt-<component>/<build version>` for one part
+/// (`workflows`, `updater`). Every client names the build, so a service's logs say which PDT called.
+pub fn user_agent(component: &str) -> String {
+    match component {
+        "" => format!("{SLUG}/{}", crate::BUILD_VERSION),
+        c => format!("{SLUG}-{c}/{}", crate::BUILD_VERSION),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -168,6 +177,12 @@ mod tests {
         ] {
             assert!(ps1.contains(&line), "install.ps1 lacks {line}");
         }
+    }
+
+    #[test]
+    fn user_agents_name_the_build() {
+        assert_eq!(user_agent(""), format!("pdt/{}", crate::BUILD_VERSION));
+        assert_eq!(user_agent("updater"), format!("pdt-updater/{}", crate::BUILD_VERSION));
     }
 
     #[test]
