@@ -4,7 +4,7 @@
 //! finds its branch and pull request instead of making them twice.
 
 use super::release::{check_repo, repo_for_step};
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, spec};
 use pdt_core::homebrew::{bump_cask, cask_path, cask_version, mac_asset};
 use pdt_core::pr::PrState;
 use pdt_core::workflow::events::ReleaseAssetRef;
@@ -12,7 +12,7 @@ use pdt_core::workflow::tpl::Tpl;
 use pdt_forge::{FileWrite, Forge, ForgeError, NewChangeRequest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use ts_rs::TS;
@@ -68,10 +68,6 @@ pub struct HomebrewCaskOutput {
     /// The pull request, when it opened one (or found the one an earlier try opened).
     pub number: Option<u32>,
     pub url: Option<String>,
-}
-
-fn nonblank(v: &Option<String>) -> Option<&str> {
-    v.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
 /// Runs a forge call off the async threads.
@@ -150,7 +146,7 @@ impl NodeKind for HomebrewCask {
                 let how = if push { "push to" } else { "open a pull request on" };
                 let from = picked.map(|a| format!(" from {a}")).unwrap_or_default();
                 let would = format!("set {path} to {version}{from} and {how} {}", c.tap.trim());
-                return Ok(Outcome::next("updated", json!({"would": would})));
+                return Ok(Outcome::would("updated", would));
             }
             let name = picked.ok_or_else(|| {
                 format!("the release has no macOS file to take ({}): set asset to the one to take", names.join(", "))
@@ -237,6 +233,7 @@ impl NodeKind for HomebrewCask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn a_config_needs_a_tap_a_cask_and_a_version() {

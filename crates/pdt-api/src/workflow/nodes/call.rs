@@ -1,7 +1,7 @@
 //! `workflow.call`: runs another workflow (its `manual` trigger) with an input and waits for it; the child's output
 //! is this node's.
 
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -37,17 +37,14 @@ impl NodeKind for Call {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<CallConfig>(config).map(|_| ())
+        parses::<CallConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: CallConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next(
-                    "done",
-                    json!({"would": format!("run workflow {} with {}", c.workflow, c.input)}),
-                ));
+                return Ok(Outcome::would("done", format!("run workflow {} with {}", c.workflow, c.input)));
             }
             let child = crate::workflow::engine::start_child(cx, &c.workflow, c.input).await?;
             Ok(Outcome::Wait {

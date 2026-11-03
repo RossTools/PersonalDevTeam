@@ -3,7 +3,7 @@
 //! `github.issue.opened` trigger uses). A ticket links an issue as `owner/name#12` ([`pdt_core::github_issue`]); linking is the dedupe.
 
 use crate::routes::{AppState, now_ms};
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, spec};
 use pdt_core::forge::ForgeKind;
 use pdt_core::github_issue::{CloseReason, GITHUB, issue_key, parse_issue, repo_id, valid_repo};
 use pdt_core::issue_link::LinkOrigin;
@@ -35,10 +35,6 @@ async fn gh<T: Send + 'static>(
 
 fn templated(s: &str) -> bool {
     s.contains("{{")
-}
-
-fn nonblank(v: &Option<String>) -> Option<&str> {
-    v.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
 /// An issue number as a config gives it: a number, or text (`12`, `#12`, `owner/name#12`, its URL).
@@ -271,7 +267,7 @@ impl NodeKind for GithubImport {
                 return Err("project is empty: the issue's repository is no PDT project's".into());
             }
             if cx.dry_run {
-                return Ok(Outcome::next("imported", json!({"would": format!("import {repo}#{number} as a ticket")})));
+                return Ok(Outcome::would("imported", format!("import {repo}#{number} as a ticket")));
             }
             let r =
                 import_issue(cx.st, c.project.trim(), &repo, number, priority_of(&c.priority), labels_of(&c.labels))
@@ -350,7 +346,7 @@ impl NodeKind for GithubComment {
             let c: GithubCommentConfig = parse(&input)?;
             let Some((repo, number)) = c.target().resolve(cx.st).await? else { return Ok(unlinked()) };
             if cx.dry_run {
-                return Ok(Outcome::next("out", json!({"would": format!("comment on {repo}#{number}: {}", c.body)})));
+                return Ok(Outcome::would("out", format!("comment on {repo}#{number}: {}", c.body)));
             }
             let (r, body) = (repo.clone(), c.body.clone());
             let url = gh(cx.st, cx.run.project_id.as_deref(), move |g| g.comment_issue(&r, number, &body)).await?;
@@ -461,7 +457,7 @@ impl NodeKind for GithubClose {
                 if let Some(t) = &comment {
                     would.push_str(&format!(", commenting: {t}"));
                 }
-                return Ok(Outcome::next("out", json!({"would": would})));
+                return Ok(Outcome::would("out", would));
             }
             let r = repo.clone();
             let d = gh(cx.st, cx.run.project_id.as_deref(), move |g| g.issue(&r, number))

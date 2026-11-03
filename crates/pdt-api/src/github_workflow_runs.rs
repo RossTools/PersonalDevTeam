@@ -5,7 +5,9 @@
 //! catch-up misses or repeats a run; the first look only records where the runs are.
 
 use crate::routes::{AppState, now_ms};
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, ports, schema_of};
+use crate::workflow::catalog::{
+    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, ports, schema_of,
+};
 use crate::workflow::nodes::schedule::RESERVED_STATE;
 use pdt_core::workflow::api::{LogEvent, NewLogEvent, Workflow};
 use pdt_core::workflow::cond::Condition;
@@ -45,10 +47,6 @@ pub struct WorkflowFailedConfig {
 
 fn templated(s: &str) -> bool {
     s.contains("{{")
-}
-
-fn nonblank(v: &Option<String>) -> Option<&str> {
-    v.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
 impl WorkflowFailedConfig {

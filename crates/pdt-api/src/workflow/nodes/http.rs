@@ -288,7 +288,7 @@ impl NodeKind for Http {
             let url = full_url(base, &c.url);
             let method = c.method.to_uppercase();
             if cx.dry_run {
-                return Ok(Outcome::next("out", json!({"would": format!("{method} {url}")})));
+                return Ok(Outcome::would("out", format!("{method} {url}")));
             }
             let method =
                 reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| format!("{method} is not a method"))?;

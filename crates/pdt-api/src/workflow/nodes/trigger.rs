@@ -1,7 +1,7 @@
 //! Triggers: one kind per event type (its id is the type), and `manual` ("Run now").
 
 use crate::workflow::catalog::{
-    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, in_scope, parse, ports, schema_of,
+    BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, in_scope, parse, parses, ports, schema_of,
 };
 use pdt_core::workflow::api::{LogEvent, Workflow};
 use pdt_core::workflow::cond::Condition;
@@ -89,9 +89,9 @@ impl NodeKind for EventTrigger {
 
     fn check(&self, config: &Value) -> Result<(), String> {
         if self.guarded() {
-            return parse::<OwnRunTriggerConfig>(config).map(|_| ());
+            return parses::<OwnRunTriggerConfig>(config);
         }
-        parse::<TriggerConfig>(config).map(|_| ())
+        parses::<TriggerConfig>(config)
     }
 
     fn event_type(&self) -> Option<&str> {

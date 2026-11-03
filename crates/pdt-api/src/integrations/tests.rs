@@ -1,5 +1,5 @@
 use super::*;
-use crate::workflow::catalog::{Category, KindSpec, Outcome, StepCx, parse};
+use crate::workflow::catalog::{Category, KindSpec, Outcome, StepCx, parses};
 use pdt_core::workflow::events::schema_of;
 use pdt_core::workflow::validate::Kinds;
 use std::sync::Arc;
@@ -35,7 +35,7 @@ impl NodeKind for DummyNode {
         )
     }
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<Value>(config).map(|_| ())
+        parses::<Value>(config)
     }
     fn run<'a>(&'a self, _cx: &'a StepCx<'a>, _input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async { Ok(Outcome::next("out", json!({}))) })

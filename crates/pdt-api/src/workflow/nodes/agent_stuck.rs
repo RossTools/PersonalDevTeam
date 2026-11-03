@@ -5,7 +5,7 @@
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use ts_rs::TS;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -68,7 +68,7 @@ impl NodeKind for Nudge {
         Box::pin(async move {
             let c: NudgeConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("nudged", json!({"would": format!("nudge step {}", c.step)})));
+                return Ok(Outcome::would("nudged", format!("nudge step {}", c.step)));
             }
             crate::workflow::stuck::nudge(cx, &c.step, &c.message).await
         })
@@ -101,7 +101,7 @@ impl NodeKind for Restart {
         Box::pin(async move {
             let c: StuckStepConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("restarted", json!({"would": format!("restart step {}", c.step)})));
+                return Ok(Outcome::would("restarted", format!("restart step {}", c.step)));
             }
             crate::workflow::stuck::restart(cx, &c.step).await
         })
@@ -132,7 +132,7 @@ impl NodeKind for Ask {
         Box::pin(async move {
             let c: StuckStepConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("asked", json!({"would": format!("put step {} in the Inbox", c.step)})));
+                return Ok(Outcome::would("asked", format!("put step {} in the Inbox", c.step)));
             }
             crate::workflow::stuck::ask(cx, &c.step).await
         })
@@ -163,7 +163,7 @@ impl NodeKind for Stop {
         Box::pin(async move {
             let c: StuckStepConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("stopped", json!({"would": format!("stop step {}", c.step)})));
+                return Ok(Outcome::would("stopped", format!("stop step {}", c.step)));
             }
             crate::workflow::stuck::stop(cx, &c.step).await
         })

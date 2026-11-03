@@ -1,6 +1,6 @@
 //! `condition`: true or false from a list of conditions.
 
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use pdt_core::workflow::cond::{Condition, all, any};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ impl NodeKind for ConditionKind {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<ConditionConfig>(config).map(|_| ())
+        parses::<ConditionConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {

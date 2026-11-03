@@ -5,6 +5,7 @@
 //! it reviews it again. With `tickets` on (PDT-333; off by default), each one also gets an external ticket, which
 //! holds the review and follows the pull request when it is closed or merged.
 
+use super::doc_build::node;
 use super::templates::{doc as parse_doc, params as parse_params};
 use pdt_core::outside_pr::DEPENDABOT;
 use pdt_core::workflow::doc::WorkflowDoc;
@@ -70,17 +71,6 @@ const BLOCKED: &str = "**[{{trigger.repo}}#{{trigger.number}}]({{trigger.url}})*
 merge: {{trigger.title}}\n\nCI on its head: {{steps.check_ci.ci}} {{steps.check_ci.ciUrl}}\n\
 {{steps.check_ci.failedJobs}}\n\n{{steps.merge.reason}}\n\n{{steps.review.summary}}\n\nApprove & merge tries \
 again once CI passes. Request changes posts your note on it as a review. Close closes it.";
-
-fn node(id: &str, kind: &str, x: i32, y: i32, title: &str, config: Value) -> Value {
-    let mut n = json!({"id": id, "kind": kind, "version": 1, "position": {"x": x, "y": y}});
-    if !title.is_empty() {
-        n["title"] = json!(title);
-    }
-    if !config.is_null() {
-        n["config"] = config;
-    }
-    n
-}
 
 fn pr() -> Value {
     json!({"repo": "{{trigger.repo}}", "number": "{{trigger.number}}"})

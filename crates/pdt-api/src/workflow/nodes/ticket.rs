@@ -3,7 +3,7 @@
 
 use crate::finish::{FinishOutcome, FinishRequest};
 use crate::routes::now_ms;
-use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use pdt_core::ticket::{Actor, TicketSource, TicketStage, ValidNewTicket};
 use pdt_core::workflow::tpl::Tpl;
 use schemars::JsonSchema;
@@ -48,14 +48,14 @@ impl NodeKind for Finish {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<FinishConfig>(config).map(|_| ())
+        parses::<FinishConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: FinishConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next("finished", json!({"would": format!("finish ticket {}", c.ticket)})));
+                return Ok(Outcome::would("finished", format!("finish ticket {}", c.ticket)));
             }
             let req = FinishRequest {
                 stop_running: c.stop_running.or(true),
@@ -111,7 +111,7 @@ impl NodeKind for Move {
     }
 
     fn check(&self, config: &Value) -> Result<(), String> {
-        parse::<MoveConfig>(config).map(|_| ())
+        parses::<MoveConfig>(config)
     }
 
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
@@ -119,10 +119,7 @@ impl NodeKind for Move {
             let c: MoveConfig = parse(&input)?;
             let mut stage = *c.stage.value().ok_or("stage is not a stage")?;
             if cx.dry_run {
-                return Ok(Outcome::next(
-                    "out",
-                    json!({"would": format!("move ticket {} to {}", c.ticket, stage.as_str())}),
-                ));
+                return Ok(Outcome::would("out", format!("move ticket {} to {}", c.ticket, stage.as_str())));
             }
             if let Some(instead) = &c.external_stage {
                 let instead = *instead.value().ok_or("externalStage is not a stage")?;
@@ -190,10 +187,7 @@ impl NodeKind for Comment {
         Box::pin(async move {
             let c: CommentConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next(
-                    "out",
-                    json!({"would": format!("comment on ticket {}: {}", c.ticket, c.body)}),
-                ));
+                return Ok(Outcome::would("out", format!("comment on ticket {}: {}", c.ticket, c.body)));
             }
             let ticket = crate::mcp::tools::resolve_ticket(cx.st, &c.ticket, cx.run.project_id.as_deref()).await?;
             // The comment carries its step, so the step run again after a restart finds it (PDT-131).
@@ -261,10 +255,7 @@ impl NodeKind for Create {
         Box::pin(async move {
             let c: CreateConfig = parse(&input)?;
             if cx.dry_run {
-                return Ok(Outcome::next(
-                    "out",
-                    json!({"would": format!("create ticket {} in {}", c.title, c.project)}),
-                ));
+                return Ok(Outcome::would("out", format!("create ticket {} in {}", c.title, c.project)));
             }
             let input = pdt_core::ticket::NewTicket {
                 title: c.title,
