@@ -287,6 +287,28 @@ pub(crate) async fn read_capped(mut r: impl AsyncRead + Unpin, cap: usize) -> (V
     }
 }
 
+/// Reads all of `r`, keeping the last `cap` bytes.
+pub(crate) async fn read_tail(mut r: impl AsyncRead + Unpin, cap: usize) -> Vec<u8> {
+    let mut kept = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        match r.read(&mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                kept.extend_from_slice(&buf[..n]);
+                // Trimmed in batches, so it isn't moved on every read.
+                if kept.len() > cap * 2 {
+                    kept.drain(..kept.len() - cap);
+                }
+            }
+        }
+    }
+    if kept.len() > cap {
+        kept.drain(..kept.len() - cap);
+    }
+    kept
+}
+
 fn tail(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
@@ -346,4 +368,16 @@ pub(crate) async fn run_command(c: &CommandConfig, dir: &Path, r: &Redactor) -> 
     };
     let quiet = json.get("quiet").and_then(|q| q.as_bool()) == Some(true);
     Ok(CommandOutput { exit_code: code, json, stdout, stderr, quiet })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn read_tail_keeps_the_end() {
+        let input: Vec<u8> = (0..100_000u32).map(|i| (i % 251) as u8).collect();
+        assert_eq!(read_tail(&input[..], 1000).await, &input[input.len() - 1000..]);
+        assert_eq!(read_tail(&b"short"[..], 1000).await, b"short");
+    }
 }

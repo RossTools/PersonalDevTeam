@@ -6,6 +6,10 @@ pub mod acp_agent;
 pub mod claude;
 pub mod codex;
 pub mod devin;
+pub mod lines;
+pub mod sink;
+
+pub use sink::{EVENT_QUEUE, EventSink, EventStream, event_channel};
 
 use pdt_core::conversation::{AgentCapabilities, AgentEvent, Answer, Delivery, DeltaField, PermissionMode};
 use pdt_core::session::AgentKind;
@@ -56,8 +60,6 @@ pub struct Outgoing {
     pub text: String,
     pub images: Vec<ImageFile>,
 }
-
-pub type EventSink = tokio::sync::mpsc::UnboundedSender<AdapterOutput>;
 
 /// How to start (or resume) an agent conversation for a session.
 #[derive(Debug, Clone, PartialEq)]

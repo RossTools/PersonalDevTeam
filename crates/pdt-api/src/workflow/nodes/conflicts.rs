@@ -5,6 +5,7 @@
 
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
+use crate::workflow::nodes::command;
 use pdt_core::brand::PROJECT_CONFIG_FILE;
 use pdt_core::command_trust;
 use pdt_core::merge_update::{self, ConflictNote, MergeUpdateHow, MergeUpdateStatus};
@@ -25,6 +26,8 @@ pub const UPDATE_KIND: &str = "attempt.update_base";
 const REMOTE_LIMIT: Duration = Duration::from_secs(120);
 /// How long one regeneration command may run.
 const REGENERATE_LIMIT: Duration = Duration::from_secs(30 * 60);
+/// How much of the end of a regenerate command's stdout and of its stderr is kept, for its failure.
+const OUTPUT_TAIL: usize = 64 * 1024;
 /// The most merged-since subjects the agent's message lists.
 const MAX_MERGED: usize = 30;
 
@@ -415,20 +418,26 @@ async fn run_command(dir: &Path, command: &str, path: Option<&str>) -> Result<()
     if let Some(p) = path {
         cmd.env("PATH", p);
     }
-    let child = cmd.spawn().map_err(|e| format!("couldn't run it: {e}"))?;
-    let mut guard = crate::workflow::nodes::command::TreeGuard(child.id());
-    let out = match tokio::time::timeout(REGENERATE_LIMIT, child.wait_with_output()).await {
+    let mut child = cmd.spawn().map_err(|e| format!("couldn't run it: {e}"))?;
+    let mut guard = command::TreeGuard(child.id());
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let stderr = child.stderr.take().ok_or("no stderr")?;
+    // Only the end is shown: what is kept of its output is bounded, however much it writes.
+    let run = async {
+        tokio::join!(command::read_tail(stdout, OUTPUT_TAIL), command::read_tail(stderr, OUTPUT_TAIL), child.wait())
+    };
+    let (stdout, stderr, status) = match tokio::time::timeout(REGENERATE_LIMIT, run).await {
         Err(_) => return Err(format!("stopped after {} minutes", REGENERATE_LIMIT.as_secs() / 60)),
-        Ok(r) => r.map_err(|e| e.to_string())?,
+        Ok((out, err, status)) => (out, err, status.map_err(|e| e.to_string())?),
     };
     guard.0 = None;
-    if out.status.success() {
+    if status.success() {
         return Ok(());
     }
-    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let text = format!("{}{}", String::from_utf8_lossy(&stdout), String::from_utf8_lossy(&stderr));
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     let tail = lines[lines.len().saturating_sub(30)..].join("\n");
-    Err(format!("exit {}\n{tail}", out.status.code().map_or("by a signal".into(), |c| c.to_string())))
+    Err(format!("exit {}\n{tail}", status.code().map_or("by a signal".into(), |c| c.to_string())))
 }
 
 fn event_data(info: &AttemptInfo, how: MergeUpdateHow, more: Value) -> Value {

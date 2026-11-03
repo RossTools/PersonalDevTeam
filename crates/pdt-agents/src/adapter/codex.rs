@@ -417,14 +417,18 @@ impl CodexServer {
                                     }
                                 }
                             } else {
-                                for r in targets {
+                                for r in &targets {
                                     let outs = r
                                         .mapper
                                         .lock()
                                         .unwrap_or_else(|e| e.into_inner())
                                         .on_notification(method, &params);
-                                    emit(&r, outs, Some(&text), &conn);
+                                    emit(r, outs, Some(&text), &conn);
                                 }
+                            }
+                            // A conversation whose store lags pauses reading (every conversation on this server).
+                            for r in &targets {
+                                r.sink.ready().await;
                             }
                         }
                         _ => {}

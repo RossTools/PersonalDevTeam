@@ -3,6 +3,7 @@
 //! replies. What one agent does its own way (its program and arguments, its modes, how it resumes) comes from its
 //! [`AcpProfile`] (Devin's: `super::devin`).
 
+use super::lines::{CappedLines, MAX_LINE};
 use super::{AdapterError, AdapterOutput, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing, SessionChange};
 use base64::Engine as _;
 use pdt_core::conversation::acp::{AcpExtensions, AcpMapper, AcpOut, prompt_blocks};
@@ -13,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot, watch};
 
 /// How much of the agent's error output is kept to explain a crash.
@@ -440,9 +441,10 @@ impl<P: AcpProfile> AcpLive<P> {
         {
             let shared = shared.clone();
             tokio::spawn(async move {
-                let mut lines = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
+                let mut lines = CappedLines::new(BufReader::new(stdout), MAX_LINE);
+                while let Some(line) = lines.next_line().await {
                     shared.on_line(&line);
+                    shared.sink.ready().await;
                 }
                 let code = child.wait().await.ok().and_then(|s| s.code());
                 let _ = err_task.await;
