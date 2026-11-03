@@ -209,6 +209,139 @@ impl DocumentProvider for GoogleDocs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accounts::{KIND, SignIn, sign_in_key, store_sign_in};
+    use crate::api::DRIVE;
+    use crate::builtin::BuiltIn;
+    use crate::oauth::TOKEN_URL;
+    use pdt_api::sdk::documents::as_agent;
+    use pdt_core::workflow::api::Connection;
+    use pdt_forge::transport::Response;
+    use pdt_forge::transport::testing::Recorded;
+    use serde_json::json;
+
+    const TOKEN: &str = r#"{"access_token":"at","expires_in":3600}"#;
+
+    struct Env {
+        docs: GoogleDocs,
+        google: Arc<Recorded>,
+        _tmp: tempfile::TempDir,
+    }
+
+    async fn env() -> Env {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+        let st = AppState::new(store, tmp.path().join("data"));
+        let google = Arc::new(Recorded::new());
+        let built_in = BuiltIn::from_values([Some("std"), Some("s"), Some("agent"), Some("a"), None, None]);
+        let shared = Arc::new(Shared::new(google.clone(), built_in));
+        Env { docs: GoogleDocs { st, shared }, google, _tmp: tmp }
+    }
+
+    /// A signed-in Google account using PDT's own clients.
+    async fn account(env: &Env, id: &str, name: &str, email: Option<&str>) {
+        let c = Connection {
+            id: id.into(),
+            name: name.into(),
+            kind: KIND.into(),
+            url: String::new(),
+            config: json!({}),
+            has_secret: false,
+            created_at: 0,
+            updated_at: 0,
+            last_error: None,
+            last_error_at: None,
+        };
+        env.docs.st.store.insert_connection(&c).await.unwrap();
+        let s = SignIn { refresh_token: format!("r-{id}"), email: email.map(String::from) };
+        store_sign_in(&env.docs.st, sign_in_key(id), &s).await.unwrap();
+    }
+
+    fn failed(e: ProviderError) -> String {
+        match e {
+            ProviderError::Failed(m) => m,
+            other => panic!("not a failure: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn with_no_account_it_says_where_to_sign_in() {
+        let env = env().await;
+        let e = failed(env.docs.search("plan", None).await.unwrap_err());
+        assert!(e.contains("no Google account is signed in"), "{e}");
+        let new =
+            || NewFile { title: "Plan".into(), kind: DocumentKind::Doc, markdown: None, folder: std::env::temp_dir() };
+        let e = failed(env.docs.create(new()).await.unwrap_err());
+        assert!(e.contains("no Google account is signed in"), "{e}");
+        // An agent is told about the agents' permission instead, even with an account the user signed in.
+        account(&env, "c1", "Work", None).await;
+        let e = failed(as_agent(env.docs.search("plan", None)).await.unwrap_err());
+        assert!(e.contains("no Google account lets agents use it"), "{e}");
+        let e = failed(as_agent(env.docs.create(new())).await.unwrap_err());
+        assert!(e.contains("lets agents use it"), "{e}");
+        assert!(env.google.sent().is_empty(), "{:?}", env.google.urls());
+    }
+
+    #[tokio::test]
+    async fn a_reference_reaches_only_its_own_account() {
+        let env = env().await;
+        assert!(matches!(env.docs.read("c1/../x").await, Err(ProviderError::Invalid(_))));
+        let e = failed(env.docs.file("gone/f1").await.unwrap_err());
+        assert!(e.contains("is gone from PDT"), "{e}");
+        account(&env, "c1", "Work", None).await;
+        let e = failed(as_agent(env.docs.version("c1/f1")).await.unwrap_err());
+        assert!(e.contains("agents may not use the Google account Work"), "{e}");
+        assert!(env.google.sent().is_empty(), "{:?}", env.google.urls());
+    }
+
+    #[tokio::test]
+    async fn search_leaves_out_an_account_that_fails_unless_all_do() {
+        let env = env().await;
+        account(&env, "c1", "A", None).await;
+        account(&env, "c2", "B", None).await;
+        let doc = r#"{"files":[{"id":"d1","name":"Plan","mimeType":"application/vnd.google-apps.document"}]}"#;
+        env.google
+            .ok("POST", TOKEN_URL, TOKEN)
+            .ok("GET", &format!("{DRIVE}/files"), doc)
+            .ok("POST", TOKEN_URL, TOKEN)
+            .on("GET", &format!("{DRIVE}/files"), Response::new(503, "{}"));
+        let found = env.docs.search("plan", None).await.unwrap();
+        let refs: Vec<&str> = found.iter().map(|f| f.reference.as_str()).collect();
+        assert_eq!(refs, ["c1/d1"]);
+
+        env.google.on("GET", &format!("{DRIVE}/files"), Response::new(503, "{}")).on(
+            "GET",
+            &format!("{DRIVE}/files"),
+            Response::new(503, "{}"),
+        );
+        // Both fail now: the error comes back.
+        assert!(failed(env.docs.search("plan", None).await.unwrap_err()).contains("503"));
+    }
+
+    #[tokio::test]
+    async fn the_embedded_editor_opens_as_the_account_that_has_it() {
+        let env = env().await;
+        assert_eq!(env.docs.embed_url("bad", DocumentKind::Doc), None);
+        assert_eq!(
+            env.docs.embed_url("c1/d1", DocumentKind::Doc).unwrap(),
+            "https://docs.google.com/document/d/d1/edit?rm=minimal"
+        );
+        account(&env, "c1", "Work", Some("me@x.com")).await;
+        // The email is learned once the account is used.
+        accounts::account_by_id(&env.docs.st, &env.docs.shared, "c1", false).await.unwrap();
+        let url = env.docs.embed_url("c1/s1", DocumentKind::Sheet).unwrap();
+        assert!(url.starts_with("https://docs.google.com/spreadsheets/d/s1/edit?rm=minimal&authuser=me"), "{url}");
+    }
+
+    #[test]
+    fn google_offers_its_picker_and_everything_but_charts_and_live_edits() {
+        let env = tokio::runtime::Runtime::new().unwrap().block_on(env());
+        let p = env.docs.picker().unwrap();
+        assert_eq!((p.module.as_str(), p.accounts.as_str()), ("/api/google/picker.js", "/api/google/accounts"));
+        let c = env.docs.capabilities();
+        assert!(c.docs && c.sheets && c.create && c.search && c.edit && c.comments && c.embed);
+        assert!(!c.charts && !c.live);
+        assert_eq!((env.docs.id(), env.docs.label()), ("google", "Google"));
+    }
 
     #[test]
     fn a_reference_names_a_connection_and_a_drive_id() {

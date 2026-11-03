@@ -600,6 +600,54 @@ async fn connect_github_enters_a_code_then_signs_in() {
     assert!(v["pending"].is_null() && v["accounts"].as_array().unwrap().len() == 1, "{v}");
 }
 
+/// The device flow on an Enterprise Server uses that host and the OAuth App given for it; a forge PDT can't sign in to
+/// is not found, and a refused start says why. Disconnecting takes the host in any case.
+#[tokio::test]
+async fn the_device_flow_on_another_host_and_its_failures() {
+    let t = Arc::new(Recorded::new());
+    let g = Arc::new(GithubApi::new(t.clone()));
+    let env = setup(None, Some(g.clone())).await;
+    let (s, v) = call(&env.app, "POST", "/api/forges/gitlab/login/device", Some(json!({}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::NOT_FOUND, Some("unknown_forge")), "{v}");
+    let (s, _) = call(&env.app, "DELETE", "/api/forges/gitlab/login/accounts/github.com", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    t.on("POST", "https://ghe.example.com/login/device/code", Response::new(404, r#"{"message":"Not Found"}"#));
+    let ghe = json!({"apiUrl": "https://ghe.example.com/api/v3", "clientId": " Iv1.mine "});
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/device"), Some(ghe.clone())).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("device_flow_failed")), "{v}");
+    let (_, v) = call(&env.app, "GET", LOGIN, None).await;
+    assert!(v["pending"].is_null(), "nothing waits: {v}");
+
+    t.ok(
+        "POST",
+        "https://ghe.example.com/login/device/code",
+        r#"{"device_code":"dc","user_code":"GHE-0001","verification_uri":"https://ghe.example.com/login/device",
+            "expires_in":900,"interval":5}"#,
+    );
+    let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/device"), Some(ghe)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(
+        (v["pending"]["apiUrl"].as_str(), v["pending"]["userCode"].as_str()),
+        (Some("https://ghe.example.com/api/v3"), Some("GHE-0001")),
+        "{v}"
+    );
+    let sent = t.sent();
+    let start = sent.iter().rev().find(|r| r.url == "https://ghe.example.com/login/device/code").unwrap();
+    assert!(start.body.as_deref().unwrap().contains("client_id=Iv1.mine"), "the trimmed client ID: {:?}", start.body);
+    let (_, v) = call(&env.app, "DELETE", &format!("{LOGIN}/device"), None).await;
+    assert!(v["pending"].is_null(), "{v}");
+
+    // A pasted token for github.com, signed out by a host spelt in capitals.
+    t.on("GET", "https://api.github.com/user", Response::new(200, r#"{"login":"alex"}"#));
+    let (s, _) = call(&env.app, "POST", &format!("{LOGIN}/token"), Some(json!({"token": "gho_x"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, v) = call(&env.app, "DELETE", &format!("{LOGIN}/accounts/GitHub.COM"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["accounts"], json!([]));
+    assert!(g.account().is_none());
+}
+
 /// PDT-260: an OAuth App with token expiration on (the user's own, on another host or github.com): its token, expiry
 /// and refresh token are stored; a renewal's rotated refresh token reaches the keychain at once; a refused one asks
 /// to reconnect.

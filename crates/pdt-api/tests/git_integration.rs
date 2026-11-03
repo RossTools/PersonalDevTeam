@@ -427,6 +427,37 @@ async fn the_files_view_saves_files_and_refuses_stale_saves() {
     assert!(pdt_git::status(&wpath, "").unwrap().iter().any(|(p, c)| p == "README.md" && c == "M"));
 }
 
+/// Rename moves folders with what is in them, makes the folders a new path needs, refuses a folder into itself, and
+/// in a worktree moves only the worktree's copy.
+#[tokio::test]
+async fn the_files_view_renames_folders_and_in_worktrees() {
+    let env = setup().await;
+    let base = format!("/api/projects/{}/files", env.pid);
+    let rename = |wt: Option<&str>, from: &str, to: &str| json!({"worktreeId": wt, "from": from, "to": to});
+    std::fs::create_dir_all(env.repo.join("docs").join("old")).unwrap();
+    std::fs::write(env.repo.join("docs").join("old").join("a.md"), "a\n").unwrap();
+
+    let (s, _) =
+        call(&env.app, "POST", &format!("{base}/rename"), Some(rename(None, "docs/old", "archive/2026/old"))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let moved = env.repo.join("archive").join("2026").join("old").join("a.md");
+    assert_eq!(std::fs::read_to_string(moved).unwrap(), "a\n");
+    assert!(!env.repo.join("docs").join("old").exists());
+    let (s, v) =
+        call(&env.app, "POST", &format!("{base}/rename"), Some(rename(None, "archive", "archive/inside"))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert!(env.repo.join("archive").join("2026").is_dir(), "left as it was");
+
+    let w = worktree(&env, "move").await;
+    let wid = w["id"].as_str().unwrap();
+    let wpath = PathBuf::from(w["path"].as_str().unwrap());
+    let (s, _) =
+        call(&env.app, "POST", &format!("{base}/rename"), Some(rename(Some(wid), "README.md", "READ.md"))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert!(wpath.join("READ.md").is_file() && !wpath.join("README.md").exists());
+    assert!(env.repo.join("README.md").is_file(), "the main checkout keeps its copy");
+}
+
 #[tokio::test]
 async fn the_files_view_never_writes_outside_the_checkout_or_into_git() {
     let env = setup().await;

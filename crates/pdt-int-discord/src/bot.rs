@@ -663,3 +663,309 @@ impl NodeKind for EnsureChannel {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Bytes;
+    use axum::http::{HeaderMap, Uri};
+    use std::sync::Mutex;
+
+    /// A request the fake Discord saw: method, path, JSON body, Authorization.
+    type Seen = (String, String, Value, String);
+    type Answer = dyn Fn(&str, &str, &Value) -> (u16, Value) + Send + Sync;
+
+    struct Fake {
+        seen: Mutex<Vec<Seen>>,
+        answer: Box<Answer>,
+    }
+
+    /// A local Discord answering with `answer`, and the bot of server 42 on it.
+    async fn fake(answer: impl Fn(&str, &str, &Value) -> (u16, Value) + Send + Sync + 'static) -> (Bot, Arc<Fake>) {
+        let f = Arc::new(Fake { seen: Mutex::new(vec![]), answer: Box::new(answer) });
+        let state = f.clone();
+        let app = axum::Router::new().fallback(move |method: Method, uri: Uri, headers: HeaderMap, body: Bytes| {
+            let f = state.clone();
+            async move {
+                let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                let auth = headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+                let path = uri.path().to_string();
+                let (status, v) = (f.answer)(method.as_str(), &path, &body);
+                f.seen.lock().unwrap().push((method.to_string(), path, body, auth));
+                (axum::http::StatusCode::from_u16(status).unwrap(), Json(v))
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (Bot { base, token: "tok".into(), guild: "42".into() }, f)
+    }
+
+    impl Fake {
+        fn seen(&self) -> Vec<Seen> {
+            self.seen.lock().unwrap().clone()
+        }
+    }
+
+    fn ch(id: &str, name: &str, kind: ChannelKind, parent: Option<&str>) -> Channel {
+        Channel {
+            id: id.into(),
+            name: name.into(),
+            kind,
+            parent_id: parent.map(String::from),
+            position: 0,
+            topic: None,
+        }
+    }
+
+    /// Discord's answer to a new or changed channel: the body it was sent, as a channel with id `id`.
+    fn echo(id: &str, body: &Value) -> Value {
+        let mut v = body.clone();
+        v["id"] = json!(id);
+        if v.get("type").is_none() {
+            v["type"] = json!(0);
+        }
+        v
+    }
+
+    #[tokio::test]
+    async fn discords_errors_say_what_the_bot_lacks() {
+        let (bot, seen) = fake(|_, path, _| match path {
+            "/guilds/42" => (401, json!({"message": "401: Unauthorized"})),
+            "/guilds/42/channels" => (403, json!({"message": "Missing Permissions"})),
+            "/guilds/42/webhooks" => (404, json!({"message": "Unknown Guild"})),
+            _ => (500, Value::Null),
+        })
+        .await;
+        let e = bot.server_name().await.unwrap_err();
+        assert_eq!(e, "Discord answered 401: 401: Unauthorized (the bot token is wrong)");
+        let e = bot.channels().await.unwrap_err();
+        assert!(e.contains("403: Missing Permissions") && e.contains("Manage Channels and Manage Webhooks"), "{e}");
+        assert_eq!(bot.webhooks().await.unwrap_err(), "Discord answered 404: Unknown Guild");
+        // No message: the body as it came.
+        assert_eq!(bot.gateway_url().await.unwrap_err(), "Discord answered 500: null");
+        assert!(seen.seen().iter().all(|s| s.3 == "Bot tok"), "{:?}", seen.seen());
+    }
+
+    #[tokio::test]
+    async fn a_rate_limit_is_waited_out_a_few_times_only() {
+        let n = Arc::new(Mutex::new(0));
+        let count = n.clone();
+        let (bot, _) = fake(move |_, path, _| {
+            let mut n = count.lock().unwrap();
+            *n += 1;
+            match (path, *n) {
+                ("/gateway/bot", 1) => (429, json!({"retry_after": 0.01})),
+                ("/gateway/bot", _) => (200, json!({"url": "wss://gateway.discord.gg"})),
+                _ => (429, json!({"retry_after": 0.01})),
+            }
+        })
+        .await;
+        assert_eq!(bot.gateway_url().await.unwrap(), "wss://gateway.discord.gg");
+        assert_eq!(*n.lock().unwrap(), 2);
+        assert_eq!(bot.server_name().await.unwrap_err(), "Discord kept rate-limiting the request");
+        assert_eq!(*n.lock().unwrap(), 2 + crate::TRIES as usize);
+    }
+
+    #[tokio::test]
+    async fn the_server_lists_its_channels_in_order_and_its_webhooks_without_tokens() {
+        let (bot, _) = fake(|_, path, _| match path {
+            "/guilds/42/channels" => (
+                200,
+                json!([
+                    {"id": "2", "name": "b", "type": 0, "position": 2},
+                    {"id": "1", "name": "a", "type": 0, "position": 1},
+                    {"name": "no id"},
+                ]),
+            ),
+            _ => (
+                200,
+                json!([
+                    {"id": "w1", "name": "Briefs", "channel_id": "1", "token": "secret"},
+                    {"id": "w2"},
+                    {"name": "no id"},
+                ]),
+            ),
+        })
+        .await;
+        let ids: Vec<String> = bot.channels().await.unwrap().into_iter().map(|c| c.id).collect();
+        assert_eq!(ids, ["1", "2"]);
+        let hooks = bot.webhooks().await.unwrap();
+        assert_eq!(
+            hooks,
+            [
+                Webhook { id: "w1".into(), name: "Briefs".into(), channel_id: "1".into() },
+                Webhook { id: "w2".into(), name: String::new(), channel_id: String::new() },
+            ]
+        );
+        assert!(!serde_json::to_string(&hooks).unwrap().contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn a_new_webhooks_url_comes_from_discord_or_its_token() {
+        let (bot, seen) = fake(|_, path, _| match path {
+            "/channels/1/webhooks" => (200, json!({"id": "w1", "name": "PDT", "channel_id": "1", "token": "t1"})),
+            "/channels/2/webhooks" => (200, json!({"id": "w2", "url": "https://discord.com/api/webhooks/w2/t2"})),
+            _ => (200, json!({"id": "w3"})),
+        })
+        .await;
+        let (w, url) = bot.create_webhook("1", "PDT").await.unwrap();
+        assert_eq!((w.id.as_str(), url), ("w1", format!("{}/webhooks/w1/t1", bot.base)));
+        assert_eq!(bot.create_webhook("2", "PDT").await.unwrap().1, "https://discord.com/api/webhooks/w2/t2");
+        assert_eq!(bot.create_webhook("3", "PDT").await.unwrap_err(), "Discord's answer had no webhook token");
+        assert_eq!(seen.seen()[0].2, json!({"name": "PDT"}));
+    }
+
+    #[tokio::test]
+    async fn a_channel_is_made_only_when_missing_with_its_category() {
+        let (bot, seen) = fake(|_, _, body| {
+            let id = if body["type"] == 4 { "cat" } else { "new" };
+            (201, echo(id, body))
+        })
+        .await;
+        let mut channels = vec![ch("1", "ai-briefs", ChannelKind::Text, None)];
+        let (c, made) = ensure_channel(&bot, &mut channels, "#AI Briefs", Some("Bots"), None).await.unwrap();
+        assert_eq!((c.id.as_str(), made), ("1", false));
+        assert!(seen.seen().is_empty(), "nothing to make");
+
+        let (c, made) = ensure_channel(&bot, &mut channels, "News Feed", Some("Bots"), Some(" Daily ")).await.unwrap();
+        assert_eq!((c.id.as_str(), c.name.as_str(), made), ("new", "news-feed", true));
+        let all = seen.seen();
+        assert_eq!(all.len(), 2, "{all:?}");
+        assert_eq!((all[0].0.as_str(), all[0].1.as_str()), ("POST", "/guilds/42/channels"));
+        assert_eq!(all[0].2, json!({"name": "Bots", "type": 4}));
+        assert_eq!(all[1].2, json!({"name": "news-feed", "type": 0, "parent_id": "cat", "topic": "Daily"}));
+        assert_eq!(channels.len(), 3, "both are known now");
+
+        // The category is there now: only the channel is made, and a blank category is none.
+        ensure_channel(&bot, &mut channels, "more", Some("bots"), None).await.unwrap();
+        ensure_channel(&bot, &mut channels, "loose", Some("  "), Some("  ")).await.unwrap();
+        let all = seen.seen();
+        assert_eq!(all.len(), 4, "{all:?}");
+        assert_eq!(all[2].2, json!({"name": "more", "type": 0, "parent_id": "cat"}));
+        assert_eq!(all[3].2, json!({"name": "loose", "type": 0}));
+        assert!(ensure_channel(&bot, &mut channels, "  ", None, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn changes_are_refused_before_discord_is_asked() {
+        let (bot, seen) = fake(|_, _, body| (201, echo("x", body))).await;
+        let mut channels =
+            vec![ch("1", "alerts", ChannelKind::Text, None), ch("9", "Bots", ChannelKind::Category, None)];
+        let create = |name: &str, kind, category: Option<&str>| Change::Create {
+            name: name.into(),
+            kind,
+            category: category.map(String::from),
+            topic: None,
+        };
+        let e = apply(&bot, &mut channels, &create("#Alerts", ChannelKind::Text, None)).await.unwrap_err();
+        assert_eq!(e, "the server already has a text called alerts");
+        let e = apply(&bot, &mut channels, &create("bots", ChannelKind::Category, None)).await.unwrap_err();
+        assert_eq!(e, "the server already has a category called bots");
+        let e = apply(&bot, &mut channels, &create("Sub", ChannelKind::Category, Some("Bots"))).await.unwrap_err();
+        assert_eq!(e, "a category can't be in a category");
+        // A change names a category that is there; only an ensure makes one.
+        let e = apply(&bot, &mut channels, &create("x", ChannelKind::Text, Some("Nope"))).await.unwrap_err();
+        assert_eq!(e, "the server has no category called Nope");
+        let e = apply(&bot, &mut channels, &Change::Archive { channel: "#gone".into() }).await.unwrap_err();
+        assert_eq!(e, "the server has no channel called #gone");
+        assert!(seen.seen().is_empty(), "{:?}", seen.seen());
+    }
+
+    #[tokio::test]
+    async fn changes_rename_move_and_archive_channels() {
+        let (bot, seen) = fake(|method, path, body| match method {
+            "POST" => (201, echo("arch", body)),
+            _ => {
+                let id = path.trim_start_matches("/channels/");
+                let (name, kind) = if id == "9" { ("Bots", 4) } else { ("alerts", 0) };
+                let mut v = json!({"id": id, "name": body.get("name").cloned().unwrap_or(json!(name)), "type": kind});
+                if let Some(p) = body.get("parent_id") {
+                    v["parent_id"] = p.clone();
+                }
+                (200, v)
+            }
+        })
+        .await;
+        let mut channels =
+            vec![ch("1", "alerts", ChannelKind::Text, Some("9")), ch("9", "Bots", ChannelKind::Category, None)];
+        let r = apply(&bot, &mut channels, &Change::Rename { channel: "#alerts".into(), name: "Big News".into() })
+            .await
+            .unwrap();
+        assert_eq!(r["renamed"]["name"], "big-news");
+        assert_eq!(channels[0].name, "big-news", "the list keeps up");
+        // A category (found when no channel is called that) keeps its name as given.
+        let r = apply(&bot, &mut channels, &Change::Rename { channel: "Bots".into(), name: "My Bots".into() })
+            .await
+            .unwrap();
+        assert_eq!(r["renamed"]["name"], "My Bots");
+
+        let r = apply(&bot, &mut channels, &Change::Move { channel: "1".into(), category: None }).await.unwrap();
+        assert_eq!(r["moved"]["parentId"], Value::Null);
+        let r = apply(&bot, &mut channels, &Change::Move { channel: "1".into(), category: Some("9".into()) })
+            .await
+            .unwrap();
+        assert_eq!(r["moved"]["parentId"], "9");
+
+        // Archive makes the Archive category the first time, then reuses it.
+        apply(&bot, &mut channels, &Change::Archive { channel: "1".into() }).await.unwrap();
+        let r = apply(&bot, &mut channels, &Change::Archive { channel: "1".into() }).await.unwrap();
+        assert_eq!(r["archived"]["parentId"], "arch");
+        let all: Vec<(String, String, Value)> = seen.seen().into_iter().map(|s| (s.0, s.1, s.2)).collect();
+        let patch = |p: Value| ("PATCH".to_string(), "/channels/1".to_string(), p);
+        assert_eq!(
+            all,
+            [
+                patch(json!({"name": "big-news"})),
+                ("PATCH".into(), "/channels/9".into(), json!({"name": "My Bots"})),
+                patch(json!({"parent_id": null})),
+                patch(json!({"parent_id": "9"})),
+                ("POST".into(), "/guilds/42/channels".into(), json!({"name": "Archive", "type": 4})),
+                patch(json!({"parent_id": "arch"})),
+                patch(json!({"parent_id": "arch"})),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_channel_or_else_a_category_is_found() {
+        let channels = [ch("1", "news", ChannelKind::Text, None), ch("2", "News", ChannelKind::Category, None)];
+        assert_eq!(find_any(&channels, "news").unwrap().id, "1");
+        assert_eq!(find_any(&channels, "2").unwrap().id, "2");
+        assert_eq!(find_any(&channels, "nope").unwrap_err(), "the server has no channel called nope");
+    }
+
+    #[test]
+    fn the_tools_say_what_they_will_do_for_the_users_yes() {
+        assert_eq!(GetServer.approval_title(&DiscordGet { connection: None }), "look at the Discord server (the bot)");
+        let change = DiscordChange {
+            connection: Some("home".into()),
+            changes: vec![
+                Change::Create { name: "ai-briefs".into(), kind: ChannelKind::Text, category: None, topic: None },
+                Change::Archive { channel: "#old".into() },
+            ],
+        };
+        assert_eq!(
+            ChangeServer.approval_title(&change),
+            "create #ai-briefs, archive #old on the Discord server (home)"
+        );
+        let hook: DiscordWebhookArgs = serde_json::from_value(json!({"channel": "#briefs", "name": "briefs"})).unwrap();
+        assert_eq!(MakeWebhook.approval_title(&hook), "make a webhook on #briefs saved as briefs (the bot)");
+        assert!(
+            serde_json::from_value::<DiscordWebhookArgs>(json!({"channel": "x", "name": "y", "url": "z"})).is_err()
+        );
+
+        let names: Vec<String> = actions().iter().map(|a| a.decl().name.to_string()).collect();
+        assert_eq!(names, ["discord_get", "discord_change", "discord_webhook"]);
+    }
+
+    #[test]
+    fn ensure_channel_needs_a_connection_and_a_channel_name() {
+        assert!(EnsureChannel.check(&json!({"connection": "home", "name": "#AI Briefs"})).is_ok());
+        let e = EnsureChannel.check(&json!({"connection": "  ", "name": "x"})).unwrap_err();
+        assert!(e.contains("name a discord_bot connection"), "{e}");
+        assert!(EnsureChannel.check(&json!({"connection": "home", "name": " # "})).is_err());
+        assert!(EnsureChannel.check(&json!({"connection": "home"})).is_err());
+        assert!(EnsureChannel.check(&json!({"connection": "home", "name": "x", "extra": 1})).is_err());
+    }
+}

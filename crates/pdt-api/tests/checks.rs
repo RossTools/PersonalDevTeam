@@ -70,3 +70,31 @@ async fn an_unanswered_check_is_not_missing() {
     assert!(c.devin.found && c.devin.ok, "{:?}", c.devin);
     assert!(!c.agents_inconclusive());
 }
+
+/// `GET /api/host/checks` runs the checks the first time and then answers from the last run; Refresh runs them again.
+#[tokio::test]
+async fn get_answers_from_the_last_run_until_a_refresh() {
+    use axum::http::StatusCode;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+    let mut st = crate::common::app_state(store, tmp.path());
+    st.platform.claude_program = tmp.path().join("no-such-claude").to_string_lossy().into();
+    st.platform.codex_program = fake(tmp.path(), "codex", "Logged in using ChatGPT", 0);
+    st.platform.devin_program = tmp.path().join("no-such-devin").to_string_lossy().into();
+    st.tailscale = Arc::new(RecordingTailscale::new(Err(pdt_tailscale::TsError::NotInstalled)));
+    let app = pdt_api::router(st, None);
+    let (s, first) = crate::common::call(&app, "GET", "/api/host/checks", None).await;
+    assert_eq!(s, StatusCode::OK, "{first}");
+    assert_eq!((first["codex"]["ok"].as_bool(), first["claude"]["found"].as_bool()), (Some(true), Some(false)));
+    assert!(first["checkedAt"].as_i64().unwrap() > 0, "{first}");
+
+    // Codex logs out: the next GET still answers from the last run.
+    fake(tmp.path(), "codex", "Not logged in", 1);
+    let (_, again) = crate::common::call(&app, "GET", "/api/host/checks", None).await;
+    assert_eq!(again, first, "from the last run");
+    let (s, fresh) = crate::common::call(&app, "POST", "/api/host/checks/refresh", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!((fresh["codex"]["found"].as_bool(), fresh["codex"]["ok"].as_bool()), (Some(true), Some(false)));
+    let (_, after) = crate::common::call(&app, "GET", "/api/host/checks", None).await;
+    assert_eq!(after, fresh, "the refresh is the last run now");
+}

@@ -130,6 +130,13 @@ async fn a_ticket_goes_through_local_ci_to_a_local_merge() {
     assert_eq!((s, ct.as_deref()), (StatusCode::OK, Some("text/plain; charset=utf-8")));
     let body = String::from_utf8_lossy(&body).into_owned();
     assert!(body.contains("$ git ls-files --error-unmatch ok.txt") && body.contains("exited with"), "{body}");
+    // A run whose log is gone reads as empty; a run that never was is not found.
+    let id: i64 = path.trim_end_matches("/log").rsplit('/').next().unwrap().parse().unwrap();
+    std::fs::remove_file(env.state.data_dir.join("local-ci").join(format!("{id}.log"))).unwrap();
+    let (s, _, body) = common::call_raw(&env.app, "GET", &path, vec![]).await;
+    assert_eq!((s, body.len()), (StatusCode::OK, 0));
+    let (s, _, _) = common::call_raw(&env.app, "GET", &format!("/api/local-ci/runs/{}/log", id + 100), vec![]).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
     let failed = events(&env, "ci.run_failed").await;
     assert_eq!(failed.len(), 1, "{failed:#?}");
     let notice = failed[0]["payload"]["notice"]["text"].as_str().unwrap();
