@@ -1,9 +1,13 @@
 import { useState, type ReactNode } from 'react';
+import { ChevronDown, Cloud, HardDrive } from 'lucide-react';
 import { ActionBar } from '@ui/ActionBar';
 import { AgentMessage, Avatar, PassList } from '@ui/AgentMessage';
 import { Button } from '@ui/Button';
 import { Callout } from '@ui/Callout';
 import { CodeCard } from '@ui/CodeCard';
+import { DropZone } from '@ui/DropZone';
+import { MenuButton } from '@ui/Menu';
+import { SourceCard } from '@ui/SourceCard';
 import { Facts } from '@ui/Facts';
 import { Kbd } from '@ui/Kbd';
 import { NO_ANSWER, QuestionCard, type QuestionAnswer } from '@ui/QuestionCard';
@@ -43,6 +47,20 @@ function QuestionDemo() {
   );
 }
 
+function DropDemo() {
+  const [got, setGot] = useState('—');
+  return (
+    <>
+      <DropZone onFile={(f) => setGot(f.name)} describe={(d) => `Drop to import ${d.name ?? 'it'}`}>
+        Drop a <strong className="font-medium text-foreground">.md</strong> (becomes a doc),{' '}
+        <strong className="font-medium text-foreground">.xlsx</strong> or{' '}
+        <strong className="font-medium text-foreground">.csv</strong> (a sheet)
+      </DropZone>
+      <span className="text-meta text-muted-foreground">Got: {got}</span>
+    </>
+  );
+}
+
 function render() {
   return (
     <div className="flex flex-col gap-6">
@@ -52,6 +70,26 @@ function render() {
           <Callout tone="success" title="Cleaned up">Freed 2.4 GB.</Callout>
           <Callout tone="warning" title="Disk almost full">9 GB free of 994 GB.</Callout>
           <Callout tone="error" title="The build failed">cargo exited with code 101.</Callout>
+        </Demo>
+        <Demo label="SourceCard · one account, several (a menu), and with setup help">
+          <SourceCard icon={<Cloud />} name="Google" detail="ross@example.com" action={<Button size="sm">Browse Drive…</Button>} />
+          <SourceCard
+            icon={<Cloud />}
+            name="Google"
+            detail="2 accounts"
+            action={(
+              <MenuButton label="Browse Drive…" entries={() => [{ label: 'me@work.com', onSelect: () => {} }, { label: 'me@home.com', onSelect: () => {} }]}>
+                <Button size="sm">Browse Drive… <ChevronDown aria-hidden /></Button>
+              </MenuButton>
+            )}
+          />
+          <SourceCard icon={<HardDrive />} name="Local" detail="~/Documents/PDT">
+            <p className="text-meta text-muted-foreground">To pick any file from your Drive, sign in to Google in Settings → Plugins → Google.</p>
+          </SourceCard>
+        </Demo>
+        <Demo label="DropZone · drag a file over it (on phones, just the button)">
+          <DropDemo />
+          <DropZone onFile={() => {}} pending>Importing…</DropZone>
         </Demo>
         <Demo label="Facts">
           <Facts aria-label="Storage" facts={[

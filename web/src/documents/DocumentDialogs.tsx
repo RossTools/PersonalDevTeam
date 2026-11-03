@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Upload } from 'lucide-react';
-import { Alert, Button, CommandList, Dialog, DialogActions, Field, Input, SegmentedControl, Select, toast, type CommandItem } from '@ui';
+import { ChevronDown, Cloud, HardDrive } from 'lucide-react';
+import {
+  Alert, Badge, Button, CommandList, Dialog, DialogActions, DropZone, EmptyState, Field, Input, Kbd, Link, MenuButton,
+  RelativeTime, SectionLabel, SegmentedControl, Select, SourceCard, Spinner, toast, useFileDrop, type CommandItem,
+  type FileDrag,
+} from '@ui';
+import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import type { Document } from '../api/gen/Document';
@@ -14,6 +19,9 @@ import { ConnectionDialog } from '../connections/ConnectionDialog';
 import { useConnections } from '../connections/queries';
 import { useSignInAccounts } from '../plugins/AccountSignIn';
 import { pickFiles } from './picker';
+import { useMediaQuery } from '../common/useMediaQuery';
+import { useProjects } from '../projects/queries';
+import { KindIcon } from './LinkedDocuments';
 import { KIND_LABEL, invalidateDocuments, useDocumentProviders, useDocuments } from './queries';
 
 const KINDS: { value: DocumentKind; label: string }[] = [
@@ -110,9 +118,50 @@ export function NewDocumentDialog({ projects, projectId = null, ticket, onClose,
   );
 }
 
+/** What a dragged or chosen file becomes, by its extension or, while dragged (no name yet), its type. */
+function becomes(f: FileDrag): DocumentKind | null {
+  const ext = f.name?.includes('.') ? f.name.split('.').pop()!.toLowerCase() : null;
+  if (ext) return ['md', 'markdown', 'txt'].includes(ext) ? 'doc' : ['xlsx', 'csv', 'tsv'].includes(ext) ? 'sheet' : null;
+  if (f.type === 'text/markdown' || f.type === 'text/plain') return 'doc';
+  if (f.type === 'text/csv' || f.type === 'text/tab-separated-values' || f.type.includes('spreadsheetml')) return 'sheet';
+  return null;
+}
+
+function dropText(f: FileDrag) {
+  const kind = becomes(f);
+  const name = f.name ? <strong className="font-medium">{f.name}</strong> : 'it';
+  return kind ? <>Drop to import {name} as a {kind === 'doc' ? 'doc' : 'sheet'}</> : <>Drop to import {name}</>;
+}
+
+function ProviderIcon({ id }: { id: string }) {
+  return id === 'local' ? <HardDrive /> : <Cloud />;
+}
+
+/** A provider's picker: a button for one account, a menu of them for several. */
+function BrowseButton({ label, accounts, onPick, variant = 'primary', size = 'md' }: {
+  label: string;
+  accounts: SignInAccount[];
+  onPick: (connectionId: string) => void;
+  variant?: 'primary' | 'secondary';
+  size?: 'sm' | 'md';
+}) {
+  if (accounts.length === 1) {
+    return <Button variant={variant} size={size} onClick={() => onPick(accounts[0].connectionId)}>{label}</Button>;
+  }
+  return (
+    <MenuButton
+      label={label}
+      entries={() => accounts.map((a) => ({ label: a.email ?? a.name, onSelect: () => onPick(a.connectionId) }))}
+    >
+      <Button variant={variant} size={size}>{label} <ChevronDown aria-hidden /></Button>
+    </MenuButton>
+  );
+}
+
 /**
  * Import or link: pick a provider that can search, then one of its files; PDT records it (or finds the record it has)
- * and links it to the project or ticket. Or a file from the computer (`.md`, `.xlsx`, `.csv`), made a local document.
+ * and links it to the project or ticket. Or a file from the computer (`.md`, `.xlsx`, `.csv`), made a local document:
+ * dropped anywhere on the dialog, or chosen.
  */
 export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImported }: {
   projectId?: string | null;
@@ -121,10 +170,14 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   onImported: (d: Document) => void;
 }) {
   const qc = useQueryClient();
-  const providers = useDocumentProviders(ticket?.projectId ?? projectId);
+  const into = ticket?.projectId ?? projectId;
+  const providers = useDocumentProviders(into);
+  const projects = useProjects({ enabled: into !== null });
+  const projectName = projects.data?.find((p) => p.id === into)?.name;
   const searchers = (providers.data?.providers ?? []).filter((p) => p.capabilities.search);
   const [provider, setProvider] = useState<string | null>(null);
   const chosen = provider ?? searchers.find((p) => p.id === providers.data?.default)?.id ?? searchers[0]?.id ?? null;
+  const source = searchers.find((p) => p.id === chosen);
   const [query, setQuery] = useState('');
   const q = useDebounced(query.trim());
   const files = useQuery({
@@ -135,7 +188,8 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   // Uploading, importing a found file and the provider's picker share one error line.
   const act = useFormAction((work: () => Promise<void>) => work());
   const [uploading, setUploading] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
+  // The found file being imported: its row shows a spinner.
+  const [importing, setImporting] = useState<string | null>(null);
   const hasLocal = (providers.data?.providers ?? []).some((p) => p.id === 'local');
   const upload = (file: File) => act.run(async () => {
     setUploading(true);
@@ -150,23 +204,39 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
       setUploading(false);
     }
   });
+  // Dropping a file anywhere on the dialog drops it into the zone.
+  const fileDrop = useFileDrop((f) => void upload(f), !hasLocal || uploading);
   // The provider's own file picker, for each signed-in account that opens it.
-  const picker = searchers.find((p) => p.id === chosen)?.picker ?? null;
+  const picker = source?.picker ?? null;
   const accounts = useSignInAccounts(picker?.accounts ?? null);
   const pickers = (accounts.data ?? []).filter((a) => a.signedIn && a.picker);
-  // What an empty search can't find (Google's drive.file: only files PDT made or opened), and where those are.
-  const searchNote = picker?.searchNote;
-  const noFiles = searchNote
-    ? `No files found. ${searchNote}${pickers.length > 0 ? ` Use ${picker.label} to open others.` : ''}`
-    : 'No files found';
+  // What its search can't find (Google's drive.file: only files PDT made or opened), and where those are.
+  const searchNote = picker?.searchNote ?? null;
+  const browseNote = picker && pickers.length > 0 ? `${picker.label} for the rest.` : null;
   // A provider's picker covers the page: the dialog steps aside while it is open.
   const [picking, setPicking] = useState(false);
-  const items: CommandItem[] = (files.data ?? []).map((f) => ({
-    id: f.reference,
-    label: f.title,
-    detail: KIND_LABEL[f.kind],
-    keywords: query ? [query] : [],
-  }));
+  // The keyboard hints, only where there is a keyboard: not on phones or touch screens.
+  const touch = useMediaQuery('(max-width: 639.98px), (pointer: coarse)');
+  const found = files.data ?? [];
+  const items: CommandItem[] = found.map((f) => {
+    const onTicket = !!ticket && f.ticketIds.includes(ticket.id);
+    return {
+      id: f.reference,
+      label: f.title,
+      icon: <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted"><KindIcon kind={f.kind} /></span>,
+      description: f.modified !== null
+        ? <>{KIND_LABEL[f.kind]} · edited <RelativeTime time={f.modified} /></>
+        : KIND_LABEL[f.kind],
+      trailing: (
+        <>
+          {importing === f.reference && <Spinner aria-label="Importing" />}
+          {onTicket ? <Badge tone="running">On this ticket</Badge> : f.documentId !== null && <Badge tone="accent">In PDT</Badge>}
+          {f.url && <Link href={f.url} external className="text-xs" aria-label={`Open ${f.title} in ${source?.label ?? 'its provider'}`}>Open</Link>}
+        </>
+      ),
+      keywords: query ? [query] : [],
+    };
+  });
   const importOne = (provider: string, reference: string) => api.importDocument({
     provider,
     reference,
@@ -174,16 +244,22 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   });
   const pick = (reference: string) => act.run(async () => {
     if (!chosen) return;
-    const d = await importOne(chosen, reference);
-    invalidateDocuments(qc);
-    onImported(d);
+    setImporting(reference);
+    try {
+      const d = await importOne(chosen, reference);
+      invalidateDocuments(qc);
+      onImported(d);
+    } finally {
+      setImporting(null);
+    }
   });
-  const pickWith = (module: string, provider: string, connectionId: string) => act.run(async () => {
+  const pickWith = (connectionId: string) => act.run(async () => {
+    if (!picker || !chosen) return;
     setPicking(true);
     try {
-      const picked = await pickFiles(module, connectionId);
+      const picked = await pickFiles(picker.module, connectionId);
       let last: Document | null = null;
-      for (const reference of picked) last = await importOne(provider, reference);
+      for (const reference of picked) last = await importOne(chosen, reference);
       invalidateDocuments(qc);
       if (last) onImported(last);
     } finally {
@@ -191,66 +267,84 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
     }
   });
   if (picking) return null;
+  const browse = (variant: 'primary' | 'secondary', size: 'sm' | 'md', label = `${picker?.label ?? ''}…`) =>
+    picker && pickers.length > 0 && <BrowseButton label={label} accounts={pickers} onPick={(c) => void pickWith(c)} variant={variant} size={size} />;
+  const account = pickers.length === 1 ? (pickers[0].email ?? pickers[0].name) : pickers.length > 1 ? `${pickers.length} accounts` : undefined;
+  const description = ticket
+    ? <>Into <Badge className="font-mono">{ticket.key}</Badge>{projectName && ` · ${projectName}`}</>
+    : projectName && `Into ${projectName}`;
+  const empty = files.isFetching ? 'Searching…' : files.isError ? actionError(files.error) : (
+    <EmptyState size="inline" className="justify-center py-2 text-center" action={browse('secondary', 'sm', `${picker?.label ?? ''} for it`)}>
+      <span className="w-full font-medium text-foreground">{q ? `No files named “${q}” that PDT can open` : 'No files PDT can open yet'}</span>
+      {searchNote && <span className="w-full">{searchNote}</span>}
+    </EmptyState>
+  );
+  const keys = (
+    <p className="mr-auto flex items-center gap-1 text-meta text-muted-foreground">
+      <Kbd>↑</Kbd> <Kbd>↓</Kbd> move · <Kbd>Enter</Kbd> import · <Kbd>Esc</Kbd> close
+    </p>
+  );
   return (
-    <Dialog onClose={onClose} title={ticket ? `Import a document to ${ticket.key}` : 'Import a document'} size="md">
-      <div className="flex flex-col gap-2">
-        {searchers.length > 1 && (
-          <Select
+    <Dialog onClose={onClose} title="Import a document" description={description || undefined} size="md" footer={touch ? undefined : keys}>
+      <div className="flex flex-col gap-3" {...(hasLocal ? fileDrop.dropProps : {})}>
+        {searchers.length > 1 && chosen && (
+          <SegmentedControl
             aria-label="Provider"
             size="sm"
-            className="w-48 self-start"
+            className="self-start"
             options={searchers.map((p) => ({ value: p.id, label: p.label }))}
             value={chosen}
             onChange={setProvider}
           />
         )}
-        {picker && chosen && accounts.isSuccess && (pickers.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
-            {pickers.map((a) => (
-              <Button key={a.connectionId} size="sm" variant="primary" onClick={() => void pickWith(picker.module, chosen, a.connectionId)}>
-                {picker.label}{pickers.length > 1 ? ` (${a.email ?? a.name})` : ''}
-              </Button>
-            ))}
-            <span className="text-xs text-muted-foreground">Or choose one PDT already has access to:</span>
-          </div>
-        ) : (
-          <PickerHelp picker={picker} accounts={accounts.data} />
-        ))}
+        {source && (
+          <SourceCard
+            aria-label="Provider"
+            icon={<ProviderIcon id={source.id} />}
+            name={source.label}
+            detail={account ?? (source.id === 'local' ? providers.data?.folder : undefined)}
+            action={browse('primary', 'sm')}
+          >
+            {picker && accounts.isSuccess && pickers.length === 0 && <PickerHelp picker={picker} accounts={accounts.data} />}
+          </SourceCard>
+        )}
         {providers.isSuccess && searchers.length === 0 ? (
           <Alert tone="info">No document provider here can look for files to import. Turn on a documents plugin in Settings → Plugins.</Alert>
         ) : (
-          <CommandList
-            label="Files"
-            placeholder="Search by name…"
-            items={items}
-            query={query}
-            onQueryChange={setQuery}
-            autoFocus
-            emptyText={files.isFetching ? 'Searching…' : files.isError ? actionError(files.error) : noFiles}
-            onAction={(id) => void pick(String(id))}
-            className="max-h-[50dvh]"
-          />
+          <section className="flex flex-col gap-1.5">
+            <SectionLabel>Files PDT can open</SectionLabel>
+            <CommandList
+              label="Files PDT can open"
+              placeholder="Search by name…"
+              items={items}
+              query={query}
+              onQueryChange={setQuery}
+              autoFocus
+              emptyText={empty}
+              onAction={(id) => void pick(String(id))}
+              className="max-h-[45dvh] p-0"
+            />
+            {found.length > 0 && (searchNote || browseNote) && (
+              <p className="text-meta text-muted-foreground">{[searchNote, browseNote].filter(Boolean).join(' ')}</p>
+            )}
+          </section>
         )}
         {act.error && <Alert tone="error">{act.error}</Alert>}
         {hasLocal && (
-          <div className="flex items-center gap-2 border-t border-border pt-2">
-            <Button variant="secondary" size="sm" disabled={uploading} onClick={() => fileInput.current?.click()}>
-              <Upload aria-hidden /> {uploading ? 'Importing…' : 'From your computer…'}
-            </Button>
-            <span className="text-meta text-muted-foreground">A .md file becomes a doc; .xlsx or .csv a sheet.</span>
-            <input
-              ref={fileInput}
-              type="file"
+          <section className="flex flex-col gap-1.5">
+            <SectionLabel>From your computer</SectionLabel>
+            <DropZone
+              onFile={(f) => void upload(f)}
               accept=".md,.markdown,.txt,.xlsx,.csv,.tsv"
-              aria-label="File to import"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                e.target.value = '';
-                if (f) void upload(f);
-              }}
-            />
-          </div>
+              describe={dropText}
+              pending={uploading}
+              drop={fileDrop}
+            >
+              Drop a <strong className="font-medium text-foreground">.md</strong> (becomes a doc),{' '}
+              <strong className="font-medium text-foreground">.xlsx</strong> or{' '}
+              <strong className="font-medium text-foreground">.csv</strong> (a sheet)
+            </DropZone>
+          </section>
         )}
       </div>
     </Dialog>
@@ -258,9 +352,9 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
 }
 
 /**
- * Why no account opens the provider's picker, and what to do about it: sign in; nothing, for an account with PDT's own
- * sign-in in a build without a picker; or give an account with its own client what the picker needs, in its
- * connection, edited from here.
+ * Why no account opens the provider's picker, and what to do about it, in a muted line or two: sign in; nothing, for an
+ * account with PDT's own sign-in in a build without a picker; or give an account with its own client what the picker
+ * needs, in its connection, edited from here.
  */
 function PickerHelp({ picker, accounts }: { picker: ProviderPicker; accounts: SignInAccount[] }) {
   const without = accounts.filter((a) => a.signedIn && !a.picker);
@@ -268,20 +362,18 @@ function PickerHelp({ picker, accounts }: { picker: ProviderPicker; accounts: Si
   const connections = useConnections(own.length > 0);
   const [editing, setEditing] = useState<Connection | null>(null);
   const builtIn = without.some((a) => a.builtIn);
-  if (!builtIn && own.length === 0) return <Alert tone="info">{picker.help}</Alert>;
+  const line = 'text-meta text-muted-foreground';
+  if (!builtIn && own.length === 0) return <p className={line}>{picker.help}</p>;
   return (
     <>
-      {builtIn && <Alert tone="info">{picker.unavailable ?? picker.help}</Alert>}
+      {builtIn && <p className={line}>{picker.unavailable ?? picker.help}</p>}
       {own.map((a) => {
         const c = connections.data?.find((x) => x.id === a.connectionId);
         return (
-          <Alert
-            key={a.connectionId}
-            tone="info"
-            action={c && <Button size="sm" variant="secondary" onClick={() => setEditing(c)}>Add to {a.name}</Button>}
-          >
-            {own.length > 1 ? `${a.name}: ${picker.setup}` : picker.setup}
-          </Alert>
+          <p key={a.connectionId} className={cn(line, 'flex flex-wrap items-center gap-2')}>
+            <span className="min-w-0 flex-1">{own.length > 1 ? `${a.name}: ${picker.setup}` : picker.setup}</span>
+            {c && <Button size="sm" variant="secondary" onClick={() => setEditing(c)}>Add to {a.name}</Button>}
+          </p>
         );
       })}
       {editing && <ConnectionDialog connection={editing} onClose={() => setEditing(null)} />}

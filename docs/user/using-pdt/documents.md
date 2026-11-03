@@ -51,10 +51,14 @@ answer and resolve comments too.
 
 - **New document** (the pencil at the top of the list): give it a title, pick **Doc** or **Sheet**, the provider and
   the project.
-- **Import a document** (beside it): search a provider's files and pick one. PDT links the file; it doesn't copy it.
-  **Local** lists the `.md` and `.xlsx` files in the local documents folders.
-- **From your computer…** (in **Import a document**): a `.md` file becomes a doc, a `.xlsx` or `.csv` file a sheet,
-  copied into the local documents folder. A spreadsheet's charts, pictures and pivot tables aren't kept; PDT says so.
+- **Import a document** (beside it): pick the provider at the top (when there are several), then search **Files PDT
+  can open** and pick one (click it, or move with ↑ ↓ and press Enter). PDT links the file; it doesn't copy it. Each
+  file shows when it was last edited, **On this ticket** when it is linked to the ticket already, **In PDT** when PDT
+  has it elsewhere, and **Open ↗** to see it at the provider. **Local** lists the `.md` and `.xlsx` files in the local
+  documents folders.
+- **From your computer** (in **Import a document**): drop a file anywhere on the dialog, or click **Choose file…**. A
+  `.md` file becomes a doc, a `.xlsx` or `.csv` file a sheet, copied into the local documents folder. A spreadsheet's
+  charts, pictures and pivot tables aren't kept; PDT says so.
 - The **⋯** menu exports a doc as **Export as Markdown (.md)**, and a sheet as **Export as Excel (.xlsx)** (every
   sheet, with formulas and formats) or as CSV (the sheet you're on). Charts aren't in the exported file.
 
@@ -180,12 +184,13 @@ your client's details, then **Sign in**.
 
 ### Pick files from your Drive
 
-In **Import a document**, choose **Google** and click **Pick from Google Drive**: Google's own picker searches your
-whole Drive. The Docs and Sheets you pick become documents, and PDT can open them from then on. The list under the
-button shows the files PDT already has access to: only those PDT made or you opened in PDT, so a search there won't
-find the rest of your Drive.
+In **Import a document**, choose **Google** and click **Browse Drive…** (with several accounts, pick one from its
+menu): Google's own picker searches your whole Drive. The Docs and Sheets you pick become documents, and PDT can open
+them from then on. **Files PDT can open** lists the files PDT already has access to: only those PDT made or you opened
+in PDT, so a search there won't find the rest of your Drive. When it finds nothing, **Browse Drive for it** opens the
+picker.
 
-No **Pick from Google Drive** button? With your own OAuth client, the dialog says so and **Add to** opens the account,
+No **Browse Drive…** button? With your own OAuth client, the dialog says so and **Add to** opens the account,
 where you fill in the picker's API key and project number. With PDT's own sign-in there is nothing to set: that copy of
 PDT was built without Google's picker, and you can still open the files PDT already has access to.
 

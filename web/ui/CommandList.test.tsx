@@ -81,3 +81,23 @@ describe('CommandList', () => {
     expect(screen.getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['main']);
   });
 });
+
+describe('CommandList rows', () => {
+  it('shows a line under the label and trailing parts whose presses don’t choose the row', async () => {
+    const user = userEvent.setup();
+    const onAction = vi.fn();
+    const onOpen = vi.fn();
+    const rich: CommandItem[] = [{
+      id: 'plan', label: 'Plan', description: 'Doc · edited today',
+      trailing: <button type="button" onClick={onOpen}>Open</button>,
+    }];
+    render(<CommandList label="Files" items={rich} onAction={onAction} />);
+    const row = screen.getByRole('menuitem', { name: /Plan/ });
+    expect(within(row).getByText('Doc · edited today')).toBeInTheDocument();
+    await user.click(within(row).getByRole('button', { name: 'Open' }));
+    expect(onOpen).toHaveBeenCalled();
+    expect(onAction).not.toHaveBeenCalled();
+    await user.click(within(row).getByText('Plan'));
+    expect(onAction).toHaveBeenCalledWith('plan');
+  });
+});

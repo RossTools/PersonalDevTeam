@@ -105,6 +105,8 @@ async fn documents_are_created_browsed_filtered_and_linked() {
     // Browse and filter.
     assert_eq!(titles(&env, "").await, ["Budget", "Plan"]);
     assert_eq!(titles(&env, &format!("?ticket={tid}")).await, ["Budget"]);
+    let (_, found) = call(&env.app, "GET", "/api/documents/providers/fake/files?q=budget", None).await;
+    assert_eq!(found[0]["ticketIds"], json!([tid]), "{found}");
     assert_eq!(titles(&env, &format!("?ticket={key}")).await, ["Budget"]);
     assert_eq!(titles(&env, &format!("?project={}", env.project)).await, ["Budget", "Plan"]);
     assert_eq!(titles(&env, "?kind=doc").await, ["Plan"]);
@@ -151,6 +153,7 @@ async fn files_are_imported_once_and_read_edited_and_commented_on() {
 
     let (_, found) = call(&env.app, "GET", "/api/documents/providers/fake/files?q=road", None).await;
     assert_eq!(found[0]["reference"], reference.as_str(), "{found}");
+    assert_eq!((&found[0]["documentId"], &found[0]["ticketIds"]), (&json!(null), &json!([])), "PDT hasn't it yet");
     let (s, e) = call(&env.app, "GET", "/api/documents/providers/other/files", None).await;
     assert_eq!((s, &e["code"]), (StatusCode::BAD_REQUEST, &json!("unsupported")), "{e}");
 
@@ -159,6 +162,9 @@ async fn files_are_imported_once_and_read_edited_and_commented_on() {
     assert_eq!((s, &d["title"]), (StatusCode::CREATED, &json!("Roadmap")), "{d}");
     let (s, again) = call(&env.app, "POST", "/api/documents/import", Some(body)).await;
     assert_eq!((s, &again["id"]), (StatusCode::OK, &d["id"]), "imported once");
+    // The search names PDT's document for a file it has, and the tickets it is linked to.
+    let (_, found) = call(&env.app, "GET", "/api/documents/providers/fake/files?q=road", None).await;
+    assert_eq!((&found[0]["documentId"], &found[0]["ticketIds"]), (&d["id"], &json!([])), "{found}");
     let (s, _) =
         call(&env.app, "POST", "/api/documents/import", Some(json!({"provider": "fake", "reference": "nope"}))).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
