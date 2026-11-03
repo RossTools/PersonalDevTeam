@@ -1224,12 +1224,14 @@ async fn a_reset_conversation_carries_on_fresh_with_its_name_settings_and_journa
     let fresh = reset_pm(&env, &first).await;
     let id = fresh["id"].as_str().unwrap().to_string();
     assert_ne!(id, first);
-    // The same title, agent, model, permission mode and persona.
+    // The same title, agent, model, permission mode and persona, the persona at its current version (PDT-500).
     assert_eq!(fresh["title"], "Cutover");
-    for key in ["agent", "model", "permissionMode", "bypassPermissions", "persona", "cwd"] {
+    for key in ["agent", "model", "permissionMode", "bypassPermissions", "cwd"] {
         assert_eq!(fresh[key], old["session"][key], "{key}");
     }
     assert_eq!(fresh["agent"], "claude", "not the persona's agent now");
+    assert_eq!(fresh["persona"]["id"], old["session"]["persona"]["id"]);
+    assert_eq!(fresh["persona"]["version"], v["version"], "{v}");
 
     // The old one asked for its journal, ended with reason `reset` and stays readable, unread by nobody.
     assert!(agent_says(&env, &first).await.iter().any(|m| m.contains("The user is resetting this PM conversation")));
@@ -1267,6 +1269,42 @@ async fn a_reset_conversation_carries_on_fresh_with_its_name_settings_and_journa
     for id in [&other, &third] {
         call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     }
+}
+
+/// PDT-500: a reset conversation runs the PM persona's current version, so a tool saved after the old one started is
+/// in its `tools/list`.
+#[tokio::test]
+async fn a_reset_conversation_gets_the_pm_persona_s_newest_tools() {
+    let env = setup().await;
+    let (_, personas) = call(&env.app, "GET", "/api/personas", None).await;
+    let pm = personas.as_array().unwrap().iter().find(|p| p["builtin"] == "pm").unwrap().clone();
+    let url = format!("/api/personas/{}", pm["id"].as_str().unwrap());
+    let tools: Vec<Value> = pm["tools"].as_array().unwrap().clone();
+    assert!(tools.contains(&json!("watch")), "{tools:?}");
+    let save = |tools: Vec<Value>| {
+        let setup = json!({"note": "", "agent": pm["agent"], "model": pm["model"], "instructions": pm["instructions"],
+                           "permissionMode": pm["permissionMode"], "tools": tools});
+        let (app, url) = (env.app.clone(), url.clone());
+        async move {
+            let (s, v) = call(&app, "PUT", &url, Some(setup)).await;
+            assert_eq!(s, StatusCode::OK, "{v}");
+            v
+        }
+    };
+    save(tools.iter().filter(|t| *t != "watch").cloned().collect()).await;
+    let first = start_pm(&env, "hello").await;
+    wait_said(&env, &first, 1).await;
+    let has_watch = |said: &str| said.trim_start_matches("mcp tools:").split(',').any(|t| t == "watch");
+    let said = ask(&env, &first, "mcp-list").await;
+    assert!(said.starts_with("mcp tools:") && !has_watch(&said), "{said}");
+
+    let newer = save(tools).await;
+    let fresh = reset_pm(&env, &first).await;
+    assert_eq!(fresh["persona"]["version"], newer["version"], "{fresh}");
+    let id = fresh["id"].as_str().unwrap().to_string();
+    let said = ask(&env, &id, "mcp-list").await;
+    assert!(has_watch(&said), "{said}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
 
 /// PDT-308: a conversation that writes no journal in time ends with `(no journal)` before the fresh one starts; one
