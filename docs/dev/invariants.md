@@ -242,10 +242,16 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   folder (pdt-api `secrets.rs`).
 - **On Linux the secret backend sticks to its data folder** (keychain or file); it never switches.
 - **Agents never attach secrets.** A file an agent attaches by path (`files` on `add_ticket_comment`,
-  `create_ticket`, `edit_ticket`) is resolved and checked by `pdt_core::ticket_attachment::path_refusal`: no dotfiles,
-  no key or credential folders, nothing in the data folder but conversation and ticket attachments. A session that triages outside input attaches nothing (`ticket_attachments::read_files`). Attachments are
+  `create_ticket`, `edit_ticket`) is resolved and must be inside the session's folder, the temporary folder or the
+  data folder (`ticket_attachment::outside_roots`), and passes `ticket_attachment::path_refusal`: no dotfiles,
+  no key or credential folders, nothing in the data folder but conversation and ticket attachments. Both compare
+  without case on macOS and Windows. A session that triages outside input attaches nothing (`ticket_attachments::read_files`). Attachments are
   never downloaded from outside issues or PRs, and a text attachment on an external ticket reaches agents fenced
   (`get_ticket`).
+- **The Files view never leaves its checkout or touches `.git`.** Paths are cleaned (`files::clean_path`: no `..`,
+  no `.git` however spelt, `.git.` and `GIT~1` included), checked, and then read and written only through a handle
+  on the checkout (`files::checkout_dir`, cap-std), never by plain path, so a folder swapped for a symlink after
+  the check still can't lead out. The review diff reads the same way.
 - **Nothing runs `gh` or `glab`.** Forges go through their crates over HTTP (`pdt_forge::transport`); agents use
   pdt-mcp's forge tools.
 
