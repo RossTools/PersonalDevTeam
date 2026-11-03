@@ -34,8 +34,9 @@
   `pointer-coarse:h-control-touch` (44px) / `pointer-coarse:min-w-control-touch` for icon buttons. `h-control-lg`
   (48px) is the large touch button (`Button size="lg"`). Corners follow `--radius`
   (6px): `rounded-md` (0.8 × radius, about 5px: controls), `rounded-lg` (the radius: cards, toolbars).
-- Gutters: a view's header (`ViewHeader`) and its content share one side padding, `px-gutter` / `p-gutter` (16px, 24px
-  from `sm`), so the two line up. Reading content is `max-w-3xl`: left-aligned on pages, settings and the Inbox, centred
+- Gutters: page-like content (settings pages, the Inbox, a conversation, a ticket) pads its sides with `px-gutter` /
+  `p-gutter` (16px, 24px from `sm`). A view whose content sits on the gutter gives its `ViewHeader` `gutter` (and its
+  tab bar `px-gutter`) so header and content line up; terminals, lists and boards keep the header's tight 12px. Reading content is `max-w-3xl`: left-aligned on pages, settings and the Inbox, centred
   in a conversation; a ticket is `max-w-6xl`, centred.
 - Dimming: disabled controls use `opacity-50`, and nothing else is dimmed with opacity. A state such as cleared, skipped
   or not built shows as muted text, a dashed edge or a badge, so its text keeps 4.5:1 (tokens.test.ts checks the token pairs).

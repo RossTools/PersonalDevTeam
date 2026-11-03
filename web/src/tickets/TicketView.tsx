@@ -76,7 +76,7 @@ export function HubTabs({ ticket: t, value, onChange, diff, overview }: {
     ? { ...h, label: <>{h.label}<DiffStat added={diff.added} removed={diff.removed} className="ml-1.5 text-2xs" /></> }
     : h);
   return (
-    <Tabs aria-label="Ticket sections" tabs={tabs} value={value} onChange={onChange}>
+    <Tabs aria-label="Ticket sections" tabs={tabs} value={value} onChange={onChange} listClassName="px-gutter">
       {overview}
       <TabPanel id="conversation"><TicketConversation ticket={t} /></TabPanel>
       <TabPanel id="changes"><TicketChanges ticket={t} /></TabPanel>
@@ -99,6 +99,7 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
   return (
     <>
     <ViewHeader
+      gutter
       leading={
         <span className="flex items-center gap-1">
           {ticket.parent && <ParentChip parent={ticket.parent} projectId={ticket.projectId} className="hidden sm:inline-flex" />}

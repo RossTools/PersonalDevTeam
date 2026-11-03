@@ -121,6 +121,7 @@ export function UpdateView({ update, onOpenTarget, onCleared }: {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ViewHeader
+        gutter
         title={update.title}
         titleTooltip={update.title}
         meta={meta}
