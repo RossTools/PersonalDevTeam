@@ -227,6 +227,24 @@ status chips. Without it (ticket descriptions, notes) Markdown only links ticket
 the data folder) and the tools of its persona; each tool calls the API route's own function. Tools that need the
 user's say are asked in the agent's own prompt where it supports that, or through the Inbox.
 
+A running session's tools follow its persona's current version (its instructions stay those it launched with), so a
+tool PDT adds to a built-in persona, through a release or a plugin turned on, reaches sessions already running.
+pdt-mcp declares `tools.listChanged` and tells a session `notifications/tools/list_changed` when the list it would get
+differs from the one it last listed (`mcp/listen.rs`): the fingerprint of that list is `mcp-tools` in the session's
+folder, so a change made while pdtd was down (an update) counts too. It is checked when something may have changed it
+(`mcp::tools_may_have_changed`: Settings → Plugins, a persona saved by the user or updated by PDT), and when a session
+opens its stream. A session hears it on its `GET /api/mcp` stream, or, when it holds none (a client stops reconnecting
+after pdtd restarts), ahead of the answer to its next request that accepts a stream; once per change either way.
+Code that changes what `session_tools` gives must call `tools_may_have_changed`.
+
+- **Claude** acts on the notice (a headless `-p` conversation has been seen not to, on some versions). Its
+  `--allowedTools` is fixed at launch, so a tool added later asks once before its first call; an asking tool asks as
+  before, and a tool taken away is refused by pdt-mcp.
+- **Codex** may not act on the notice (it isn't documented to); one that doesn't keeps the tools it listed when its
+  thread started. New tools run without asking once it has them (`default_tools_approval_mode = "approve"`).
+- **ACP agents** (Devin and the rest) are each the agent's own client; PDT can't tell whether one refreshes. One that
+  doesn't keeps its launch list until a new session.
+
 **The user's MCP servers.** `mcp` connections (Settings → MCP servers) reach agents beside pdt-mcp. Their
 `config.agents` (pdt-core `mcp_servers::AgentAccess`) says who gets one (the PM, ticket and workflow sessions with an
 optional persona list, sessions the user starts, project limits) and each tool's mode (allow, ask, block); a

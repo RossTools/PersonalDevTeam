@@ -1160,6 +1160,7 @@ pub(crate) async fn put(
     st.store.set_enabled_integrations(&ids).await?;
     st.store.set_own_integrations_off(&off).await?;
     st.integrations.set(&ids, &off);
+    crate::mcp::tools_may_have_changed(&st);
     // Built-in workflows and personas follow what is enabled on the engine's next tick.
     st.builtins_installed.store(false, std::sync::atomic::Ordering::SeqCst);
     st.personas_installed.store(false, std::sync::atomic::Ordering::SeqCst);

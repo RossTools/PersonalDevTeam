@@ -74,10 +74,20 @@ pub fn negotiate(requested: Option<&str>) -> &'static str {
 pub fn initialize_result(requested: Option<&str>, version: &str, instructions: &str) -> Value {
     json!({
         "protocolVersion": negotiate(requested),
-        "capabilities": {"tools": {"listChanged": false}},
+        "capabilities": {"tools": {"listChanged": true}},
         "serverInfo": {"name": SERVER_NAME, "title": crate::brand::PRODUCT_NAME, "version": version},
         "instructions": instructions,
     })
+}
+
+/// The notification that a session's tools changed: the agent lists them again.
+pub fn tools_list_changed() -> Value {
+    json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+}
+
+/// One message as a Server-Sent Event of a Streamable HTTP stream.
+pub fn sse_message(v: &impl Serialize) -> String {
+    format!("event: message\ndata: {}\n\n", serde_json::to_string(v).unwrap_or_default())
 }
 
 /// One tool as `tools/list` gives it.
@@ -156,7 +166,10 @@ mod tests {
         let r = initialize_result(Some("2025-03-26"), "1.0", "hi");
         assert_eq!(r["protocolVersion"], "2025-03-26");
         assert_eq!(r["serverInfo"]["name"], "pdt");
-        assert_eq!(r["capabilities"]["tools"]["listChanged"], false);
+        assert_eq!(r["capabilities"]["tools"]["listChanged"], true);
+        assert_eq!(tools_list_changed()["method"], "notifications/tools/list_changed");
+        assert!(tools_list_changed().get("id").is_none());
+        assert_eq!(sse_message(&json!({"a": 1})), "event: message\ndata: {\"a\":1}\n\n");
     }
 
     #[test]

@@ -80,6 +80,7 @@ pub(crate) async fn save(
         return Ok(Json(current));
     }
     st.store.save_persona_version(&id, &setup, PersonaAuthor::User, s.note.trim(), now_ms()).await?;
+    crate::mcp::tools_may_have_changed(&st);
     Ok(Json(load(&st, &id).await?))
 }
 
@@ -253,6 +254,7 @@ async fn install(st: &AppState, b: &pdt_core::persona::BuiltinPersona) -> Result
             kept => format!("updated by PDT; kept your {}", kept.join(", ")),
         };
         st.store.save_persona_version(&p.id, &setup, PersonaAuthor::Builtin, &note, now).await?;
+        crate::mcp::tools_may_have_changed(st);
         tracing::info!(persona = b.id, ?kept, "updated a built-in persona");
     }
     st.store.set_persona_template(&p.id, &template).await

@@ -178,6 +178,8 @@ pub struct AppState {
     pub(crate) builtins_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// pdt-mcp's host key (`<data dir>/mcp.key`), once read.
     pub(crate) mcp_key: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    /// pdt-mcp's `notifications/tools/list_changed`: the sessions' streams' wake-up, and what each was told.
+    pub(crate) mcp_tools: std::sync::Arc<crate::mcp::ToolWatch>,
     /// The built-in personas were installed or updated in this daemon run.
     pub(crate) personas_installed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Tickets auto-start failed to start, with their `updated_at` and the error then: skipped until they change, or
@@ -348,6 +350,7 @@ impl AppState {
             toolchain_lock: Default::default(),
             builtins_installed: Default::default(),
             mcp_key: Default::default(),
+            mcp_tools: Default::default(),
             personas_installed: Default::default(),
             watch_wait_ms: (pdt_core::watch::QUIET_MS, pdt_core::watch::MAX_WAIT_MS),
             pm_reset_wait_ms: pdt_core::pm::RESET_WAIT_MS,

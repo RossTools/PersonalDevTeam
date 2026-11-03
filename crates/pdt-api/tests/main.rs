@@ -45,6 +45,7 @@ mod issue_links;
 mod liveness;
 mod local_documents;
 mod local_forge;
+mod mcp_list_changed;
 mod mcp_servers;
 mod notification_rules;
 mod notifications;
