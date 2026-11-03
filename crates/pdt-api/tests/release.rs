@@ -10,6 +10,7 @@ use axum::http::StatusCode;
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_core::pr::{CiRun, CiState, Mergeable, PrState, QueueRemoval, QueueRemovalReason};
+use pdt_forge::ci::testing::FakeCi;
 use pdt_forge::testing::FakeForge;
 use pdt_forge::{ChangeRequest, Release};
 use pdt_store::Store;
@@ -493,6 +494,232 @@ async fn a_stable_cut_without_a_release_branch_dry_runs_without_calling_github()
     assert!(nodes.contains(&"direct_dispatch") && nodes.contains(&"direct_released"), "{nodes:?}");
     assert!(!nodes.contains(&"dispatch"), "not the release PR path: {nodes:?}");
     assert!(env.gh.calls.lock().unwrap().is_empty());
+}
+
+/// A run of the release workflow ([`WORKFLOW`]) on `branch`, started by `event` at `sha`, `at` (RFC 3339).
+fn release_run(
+    id: u64,
+    attempt: u32,
+    branch: &str,
+    event: &str,
+    sha: &str,
+    state: CiState,
+    at: &str,
+) -> pdt_core::workflow_runs::WorkflowRun {
+    let path = format!(".github/workflows/{WORKFLOW}");
+    let mut r = FakeCi::default().workflow_run(&id.to_string(), attempt, &path, branch, event, state, at);
+    r.run.head_sha = sha.into();
+    r.run.url = format!("https://github.com/{REPO}/actions/runs/{id}");
+    r
+}
+
+/// The Inbox's items' texts.
+async fn inbox_texts(env: &Env) -> Vec<String> {
+    let (_, v) = call(&env.app, "GET", "/api/inbox", None).await;
+    v["items"].as_array().unwrap().iter().map(|i| i["body"]["text"].as_str().unwrap_or_default().to_string()).collect()
+}
+
+/// PDT-488: after the release PR merges, the run its merge started is read while the release isn't out: a failed
+/// one goes to the Inbox (once per attempt) and a notification, and it keeps waiting, so a re-run that passes still
+/// ends with "published". Other runs of the workflow (another PR's, an earlier release's) don't count.
+#[tokio::test]
+async fn a_failed_release_run_goes_to_the_inbox_and_a_rerun_still_publishes() {
+    let env = setup().await;
+    let id = release_pr_open(&env).await;
+    env.gh.set_pr(BRANCH, Some(pr(7, PrState::Merged)));
+    // An earlier release's run, failed, and a run another PR's close started (skipped: passed).
+    env.gh.ci.put_workflow_run(release_run(
+        40,
+        1,
+        BRANCH,
+        "pull_request",
+        "old",
+        CiState::Failed,
+        "2026-10-01T00:00:00Z",
+    ));
+    env.gh.ci.put_workflow_run(release_run(
+        41,
+        1,
+        "fix/x",
+        "pull_request",
+        "abc",
+        CiState::Passed,
+        "2026-10-28T12:00:00Z",
+    ));
+    time_passes(&env, &id).await;
+    assert_eq!(waiting_at(&env, &id).await, "wait_release");
+    time_passes(&env, &id).await;
+    assert_eq!(waiting_at(&env, &id).await, "wait_release");
+    assert!(inbox_titles(&env).await.is_empty(), "{:?}", inbox_titles(&env).await);
+
+    // The merge's run (its head commit) is running, then fails.
+    env.gh.ci.put_workflow_run(release_run(
+        42,
+        1,
+        BRANCH,
+        "pull_request",
+        "abc",
+        CiState::Running,
+        "2026-10-28T12:05:00Z",
+    ));
+    time_passes(&env, &id).await;
+    assert!(inbox_titles(&env).await.is_empty(), "{:?}", inbox_titles(&env).await);
+    env.gh.ci.put_workflow_run(release_run(
+        42,
+        1,
+        BRANCH,
+        "pull_request",
+        "abc",
+        CiState::Failed,
+        "2026-10-28T12:05:00Z",
+    ));
+    env.gh.set_jobs(42, &["bundle (macos-latest, aarch64-apple-darwin)"]);
+    time_passes(&env, &id).await;
+    assert_eq!(waiting_at(&env, &id).await, "wait_release");
+    let title = "Release v0.2.0 failed to publish".to_string();
+    assert_eq!(inbox_titles(&env).await, std::slice::from_ref(&title));
+    let text = &inbox_texts(&env).await[0];
+    assert!(text.contains("- publish: bundle (macos-latest, aarch64-apple-darwin)"), "{text}");
+    assert!(text.contains("/actions/runs/42") && text.contains("Re-run the failed jobs"), "{text}");
+    assert!(notified(&env).await.contains(&title));
+    time_passes(&env, &id).await;
+    assert_eq!(inbox_titles(&env).await.len(), 1, "told once per attempt");
+
+    // Its failed jobs re-run (attempt 2), and pass: the release is published.
+    env.gh.ci.put_workflow_run(release_run(
+        42,
+        2,
+        BRANCH,
+        "pull_request",
+        "abc",
+        CiState::Running,
+        "2026-10-28T12:05:00Z",
+    ));
+    time_passes(&env, &id).await;
+    env.gh.ci.put_workflow_run(release_run(
+        42,
+        2,
+        BRANCH,
+        "pull_request",
+        "abc",
+        CiState::Passed,
+        "2026-10-28T12:05:00Z",
+    ));
+    time_passes(&env, &id).await;
+    assert_eq!(waiting_at(&env, &id).await, "wait_release");
+    env.gh.publish(REPO, release("v0.2.0"));
+    time_passes(&env, &id).await;
+    let r = run(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(r["output"]["tag"], "v0.2.0");
+    assert_eq!(inbox_titles(&env).await.len(), 2, "{:?}", inbox_titles(&env).await);
+    assert!(inbox_titles(&env).await.contains(&"Release v0.2.0 is published".to_string()));
+}
+
+/// PDT-488: a cancelled release run says so, and it keeps waiting.
+#[tokio::test]
+async fn a_cancelled_release_run_says_so() {
+    let env = setup().await;
+    let id = release_pr_open(&env).await;
+    env.gh.set_pr(BRANCH, Some(pr(7, PrState::Merged)));
+    env.gh.ci.put_workflow_run(release_run(
+        42,
+        1,
+        BRANCH,
+        "pull_request",
+        "abc",
+        CiState::Cancelled,
+        "2026-10-28T12:05:00Z",
+    ));
+    time_passes(&env, &id).await;
+    time_passes(&env, &id).await;
+    assert_eq!(waiting_at(&env, &id).await, "wait_release");
+    assert_eq!(inbox_titles(&env).await, ["Release v0.2.0 was cancelled".to_string()]);
+    assert!(inbox_texts(&env).await[0].contains("/actions/runs/42"));
+    time_passes(&env, &id).await;
+    assert_eq!(inbox_titles(&env).await.len(), 1);
+}
+
+/// A time `secs` from now (RFC 3339).
+fn from_now(secs: i64) -> String {
+    jiff::Timestamp::now().checked_add(jiff::SignedDuration::from_secs(secs)).unwrap().to_string()
+}
+
+/// Starts the other kind of release (a nightly) of a Cut a release with its release workflow on main, through to
+/// waiting for it.
+async fn nightly_started(env: &Env) -> String {
+    let wf = cut_release_with(
+        env,
+        json!({"workflow": WORKFLOW, "releaseBranch": BRANCH, "preName": "Nightly",
+               "preInputs": "{\"channel\": \"nightly\"}", "preTagPattern": "v*-nightly.*"}),
+    )
+    .await;
+    // Yesterday's nightly run, failed, isn't this one.
+    env.gh.ci.put_workflow_run(release_run(
+        30,
+        1,
+        "main",
+        "workflow_dispatch",
+        "d1",
+        CiState::Failed,
+        &from_now(-86_400),
+    ));
+    let (_, r) = call(&env.app, "POST", &format!("/api/workflows/{}/run", wf["id"].as_str().unwrap()), None).await;
+    let id = r["runId"].as_str().unwrap().to_string();
+    pdt_api::run_workflows(&env.state).await;
+    assert_eq!(waiting_at(env, &id).await, "pre_wait");
+    time_passes(env, &id).await;
+    assert_eq!(waiting_at(env, &id).await, "pre_wait");
+    assert!(inbox_titles(env).await.is_empty(), "{:?}", inbox_titles(env).await);
+    id
+}
+
+/// PDT-488: the run a nightly's dispatch started is read too: failed (then re-run), cancelled, passed.
+#[tokio::test]
+async fn a_nightly_release_run_that_fails_goes_to_the_inbox() {
+    let env = setup().await;
+    let id = nightly_started(&env).await;
+    // Another branch's dispatch isn't it.
+    env.gh.ci.put_workflow_run(release_run(31, 1, "develop", "workflow_dispatch", "d2", CiState::Failed, &from_now(5)));
+    time_passes(&env, &id).await;
+    assert!(inbox_titles(&env).await.is_empty(), "{:?}", inbox_titles(&env).await);
+    let at = from_now(10);
+    env.gh.ci.put_workflow_run(release_run(32, 1, "main", "workflow_dispatch", "d3", CiState::Failed, &at));
+    env.gh.set_jobs(32, &["publish"]);
+    time_passes(&env, &id).await;
+    assert_eq!(waiting_at(&env, &id).await, "pre_wait");
+    let title = "The Nightly release failed to publish".to_string();
+    assert_eq!(inbox_titles(&env).await, std::slice::from_ref(&title));
+    assert!(inbox_texts(&env).await[0].contains("- publish: publish"));
+    assert!(notified(&env).await.contains(&title));
+
+    // Re-run and cancelled: said so; re-run again and it passes, then the release is out.
+    env.gh.ci.put_workflow_run(release_run(32, 2, "main", "workflow_dispatch", "d3", CiState::Cancelled, &at));
+    time_passes(&env, &id).await;
+    assert!(inbox_titles(&env).await.contains(&"The Nightly release was cancelled".to_string()));
+    env.gh.ci.put_workflow_run(release_run(32, 3, "main", "workflow_dispatch", "d3", CiState::Passed, &at));
+    time_passes(&env, &id).await;
+    assert_eq!(waiting_at(&env, &id).await, "pre_wait");
+    env.gh.publish(REPO, release("v0.2.1-nightly.20261103"));
+    time_passes(&env, &id).await;
+    let r = run(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(inbox_titles(&env).await.len(), 3, "{:?}", inbox_titles(&env).await);
+}
+
+/// PDT-488: a release run that passes first time ends as before: published, nothing else in the Inbox.
+#[tokio::test]
+async fn a_nightly_release_run_that_passes_is_published() {
+    let env = setup().await;
+    let id = nightly_started(&env).await;
+    env.gh.ci.put_workflow_run(release_run(32, 1, "main", "workflow_dispatch", "d3", CiState::Passed, &from_now(10)));
+    time_passes(&env, &id).await;
+    assert_eq!(waiting_at(&env, &id).await, "pre_wait");
+    env.gh.publish(REPO, release("v0.2.1-nightly.20261103"));
+    time_passes(&env, &id).await;
+    let r = run(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert_eq!(inbox_titles(&env).await, ["Release v0.2.1-nightly.20261103 is published".to_string()]);
 }
 
 /// PDT-301: the Cut a release built-in a host has from before is gone when it was never turned on or run, and kept as

@@ -12,8 +12,9 @@ use crate::workflow::catalog::{
 };
 use pdt_core::forge::ForgeKind;
 use pdt_core::github_issue::valid_repo;
-use pdt_core::pr::{CiState, CiStatus, PrState, PullRequestStatus, QueueRemovalReason};
+use pdt_core::pr::{CiRun, CiState, CiStatus, PrState, PullRequestStatus, QueueRemovalReason};
 use pdt_core::release::parse_version;
+use pdt_core::workflow_runs::WorkflowRun;
 use pdt_forge::{ChangeRequest, CiProvider, Forge, ForgeError, Release};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -198,7 +199,8 @@ impl NodeKind for GithubWorkflowRun {
             "Run a GitHub Actions workflow",
             "Starts a GitHub Actions workflow by hand (`workflow_dispatch`) on a branch (default `main`) with inputs, \
              as PDT's GitHub login. The repository is the run's project's unless `repo` names one. GitHub doesn't \
-             say which run it started: read what it makes (a pull request, a release) with the other GitHub nodes.",
+             say which run it started: read what it makes (a pull request, a release) with the other GitHub nodes, \
+             or the run with `github.workflow.latest` and `since` set to its `dispatchedAt`.",
             &[("out", "Then")],
             false,
         )
@@ -233,7 +235,9 @@ impl NodeKind for GithubWorkflowRun {
             }
             let git_ref = nonblank(&c.git_ref).unwrap_or("main").to_string();
             let inputs = inputs_of(&c.inputs)?;
-            let out = json!({"repo": repo, "workflow": workflow, "ref": git_ref, "inputs": inputs});
+            // When it was started: `github.workflow.latest`'s `since` finds the run it started (PDT-488).
+            let at = jiff::Timestamp::now().round(jiff::Unit::Second).unwrap_or_else(|_| jiff::Timestamp::now());
+            let out = json!({"repo": repo, "workflow": workflow, "ref": git_ref, "inputs": inputs, "dispatchedAt": at.to_string()});
             if cx.dry_run {
                 return Ok(Outcome::next(
                     "out",
@@ -680,11 +684,50 @@ pub struct GithubWorkflowLatestConfig {
     /// The repository (`owner/name`); the run's project's when left out.
     #[serde(default)]
     pub repo: Option<String>,
-    /// The workflow's name as Actions shows it (its `name:`, e.g. `release`).
+    /// The workflow's name as Actions shows it (its `name:`, e.g. `release`), or its file (`release.yml`).
     pub workflow: String,
-    /// The branch its runs are on (default `main`).
+    /// The branch its runs are on (default `main`): for a pull request's run, its head branch.
     #[serde(default)]
     pub branch: Option<String>,
+    /// Only a run started by this event (`workflow_dispatch`, `pull_request`, `push`, `schedule`).
+    #[serde(default)]
+    pub event: Option<String>,
+    /// Only a run of this commit (for a pull request's run, its head commit).
+    #[serde(default)]
+    pub head_sha: Option<String>,
+    /// Only a run started at or after this time (RFC 3339, e.g. `github.workflow.run`'s `dispatchedAt`), less
+    /// [`SINCE_SLACK`] for the clocks' difference.
+    #[serde(default)]
+    pub since: Option<String>,
+}
+
+/// How much earlier than `since` a run may start and still count: this host's clock and GitHub's differ a little.
+const SINCE_SLACK: jiff::SignedDuration = jiff::SignedDuration::from_mins(2);
+
+impl GithubWorkflowLatestConfig {
+    /// Whether it names the workflow by its file, or filters by event, commit or time: then it reads the workflow's
+    /// own runs (they say their file and event), not the branch's.
+    fn by_workflow(&self) -> bool {
+        let w = self.workflow.trim();
+        w.ends_with(".yml")
+            || w.ends_with(".yaml")
+            || [&self.event, &self.head_sha, &self.since].iter().any(|f| nonblank(f).is_some())
+    }
+
+    /// `since` as a time, less [`SINCE_SLACK`].
+    fn since(&self) -> Result<Option<jiff::Timestamp>, String> {
+        let Some(t) = nonblank(&self.since) else { return Ok(None) };
+        let t: jiff::Timestamp = t.parse().map_err(|e| format!("since is not a time (RFC 3339): {t}: {e}"))?;
+        Ok(Some(t.checked_sub(SINCE_SLACK).unwrap_or(t)))
+    }
+
+    /// Whether `run` passes its event, commit and time filters.
+    fn matches(&self, run: &WorkflowRun, since: Option<jiff::Timestamp>) -> bool {
+        let at = |s: &str| s.parse::<jiff::Timestamp>().ok();
+        nonblank(&self.event).is_none_or(|e| run.event == e)
+            && nonblank(&self.head_sha).is_none_or(|sha| run.run.head_sha == sha)
+            && since.is_none_or(|t| at(&run.run.created_at).is_some_and(|c| c >= t))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -715,9 +758,11 @@ impl NodeKind for GithubWorkflowLatest {
             1,
             Category::Action,
             "Read a workflow's latest run",
-            "Reads the newest GitHub Actions run of a workflow (by its name, `release`) on a branch (default `main`), \
-             however it was started (a schedule, by hand), and leaves by its state: `passed`, `failed` (with \
-             `failedJobs`), `running` (queued or running), `cancelled`, or `none` when there is no run.",
+            "Reads the newest GitHub Actions run of a workflow (by its name, `release`, or file, `release.yml`) on a \
+             branch (default `main`), however it was started (a schedule, by hand), and leaves by its state: \
+             `passed`, `failed` (with `failedJobs`), `running` (queued or running), `cancelled`, or `none` when there \
+             is no run. `event`, `headSha` and `since` pick one run: the one a pull request's merge started (its head \
+             branch and commit), or the one `github.workflow.run` started (`since` its `dispatchedAt`).",
             &[
                 ("passed", "Passed"),
                 ("failed", "Failed"),
@@ -733,6 +778,9 @@ impl NodeKind for GithubWorkflowLatest {
         let c: GithubWorkflowLatestConfig = parse(config)?;
         if c.workflow.trim().is_empty() {
             return Err("workflow is empty: give its name (release)".into());
+        }
+        if nonblank(&c.since).is_some_and(|t| !templated(t)) {
+            c.since()?;
         }
         check_repo(&c.repo)
     }
@@ -751,14 +799,19 @@ impl NodeKind for GithubWorkflowLatest {
             }
             let actions = ci.into_iter().find(|p| p.id() == pdt_core::pr::GITHUB_ACTIONS);
             let actions = actions.ok_or_else(|| format!("{repo} has no GitHub Actions to read {workflow} from"))?;
+            let since = c.since()?;
             let (r, w, b) = (repo.clone(), workflow.clone(), branch.clone());
             let latest = tokio::task::spawn_blocking(move || {
-                let runs = actions.runs(&r, &b, None)?;
-                let Some(mut run) = runs
-                    .into_iter()
-                    .filter(|x| x.name == w && x.branch == b)
-                    .max_by(|x, y| x.created_at.cmp(&y.created_at))
-                else {
+                let newest = |x: &CiRun, y: &CiRun| x.created_at.cmp(&y.created_at);
+                let run = if c.by_workflow() {
+                    let runs = actions.workflow_runs(&r, &w, Some(&b), false)?;
+                    let runs = runs.into_iter().filter(|x| x.run.branch == b && c.matches(x, since));
+                    runs.map(|x| x.run).max_by(newest)
+                } else {
+                    let runs = actions.runs(&r, &b, None)?;
+                    runs.into_iter().filter(|x| x.name == w && x.branch == b).max_by(newest)
+                };
+                let Some(mut run) = run else {
                     return Ok(None);
                 };
                 // Which jobs failed is only for the message: a failed lookup leaves them out.
@@ -1185,6 +1238,10 @@ mod tests {
         assert!(latest(json!({"workflow": "release", "branch": "main", "repo": "a/b"})).is_ok());
         assert!(latest(json!({"workflow": ""})).is_err());
         assert!(latest(json!({"workflow": "release", "repo": "nope"})).is_err());
+        let since = json!({"workflow": "release.yml", "since": "{{steps.dispatch.dispatchedAt}}"});
+        assert!(latest(since).is_ok());
+        assert!(latest(json!({"workflow": "r.yml", "since": "2026-11-03T08:00:00Z", "event": "push"})).is_ok());
+        assert!(latest(json!({"workflow": "r.yml", "since": "yesterday"})).unwrap_err().contains("RFC 3339"));
 
         let nightly = |v: Value| GithubNightly.check(&v);
         let w = |extra: Value| {

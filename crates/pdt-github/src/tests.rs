@@ -1086,7 +1086,7 @@ fn reads_a_workflows_completed_runs_and_one_run() {
         &format!(r#"{{"total_count":1,"workflow_runs":[{run}]}}"#),
     );
     let ci = GithubActions::new(g.clone());
-    let runs = ci.workflow_runs("o/r", "release.yml", Some("main")).unwrap();
+    let runs = ci.workflow_runs("o/r", "release.yml", Some("main"), true).unwrap();
     assert_eq!(runs.len(), 1);
     let r = &runs[0];
     assert_eq!((r.run.id.as_str(), r.run.state, r.run.branch.as_str()), ("77", CiState::Failed, "v1.2.0"));
@@ -1103,10 +1103,17 @@ fn reads_a_workflows_completed_runs_and_one_run() {
         r#"{"workflows":[{"id":5,"name":"ci"},{"id":9,"name":"Release"}]}"#,
     );
     t.ok("GET", &format!("{API}/repos/o/r/actions/workflows/9/runs?status=completed"), r#"{"workflow_runs":[]}"#);
-    assert!(ci.workflow_runs("o/r", "release", None).unwrap().is_empty());
+    assert!(ci.workflow_runs("o/r", "release", None, true).unwrap().is_empty());
     t.ok("GET", &format!("{API}/repos/o/r/actions/workflows?per_page=100"), r#"{"workflows":[{"id":5,"name":"ci"}]}"#);
-    let e = ci.workflow_runs("o/r", "nightly", None).unwrap_err();
+    let e = ci.workflow_runs("o/r", "nightly", None, true).unwrap_err();
     assert!(matches!(&e, ForgeError::Failed(m) if m.contains("no workflow named")), "{e:?}");
+    // Not only the completed ones (PDT-488): no status filter.
+    t.ok(
+        "GET",
+        &format!("{API}/repos/o/r/actions/workflows/release.yml/runs?per_page=50&branch=release"),
+        &format!(r#"{{"total_count":1,"workflow_runs":[{run}]}}"#),
+    );
+    assert_eq!(ci.workflow_runs("o/r", "release.yml", Some("release"), false).unwrap().len(), 1);
 
     t.ok("GET", &format!("{API}/repos/o/r/actions/runs/77"), run);
     assert_eq!(ci.workflow_run("o/r", "77").unwrap().unwrap().run.attempt, 1);

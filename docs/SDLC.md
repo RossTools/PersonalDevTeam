@@ -326,7 +326,10 @@ nightly now); Run now asks the same in a form. This repository's copy is filled 
 `release.yml` on `main`, stable inputs `{"bump": "{{trigger.bump}}", "version": "{{trigger.version}}"}`, release PR
 branch `release`, no stable tag pattern, other release `Nightly` with inputs `{"channel": "nightly"}` and tag pattern
 `v*-nightly.*`. It tells the user when the release PR is open, puts a failed check in the Inbox, and says when the
-release is published; while an earlier release PR is open it starts nothing and says so.
+release is published; while an earlier release PR is open it starts nothing and says so. While it waits for the
+release it follows the release run (the `pull_request` run on `release` at the PR's head, or the nightly's dispatched
+run on `main`) and puts a failed or cancelled one in the Inbox with its failed jobs; re-running the failed jobs reuses
+the tag, and it still ends with "published".
 
 ### Nightly releases
 
