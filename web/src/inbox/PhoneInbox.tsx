@@ -20,13 +20,11 @@ import { after, changeRequestLabel, dismissable, inboxTargets, merges, selectedU
 import { useAnswer } from './useAnswer';
 import { useItemView } from './itemView';
 import { ItemHeader, Why } from './ItemLayout';
+import { capitalize, plural } from '../common/text';
 import { changesKey } from '../review/queries';
 
 /** Opens the pull request a gate is about on its forge, in a new tab. */
 const openChangeRequest = (item: InboxItem) => item.changeRequest && openExternal(item.changeRequest.url);
-
-/** The bottom bar's buttons: 48px, whatever the pointer. */
-const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** A decision in the bottom bar. */
 interface Decision {
@@ -267,7 +265,7 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
   const files = changes.data?.files ?? [];
   const added = files.reduce((n, f) => n + f.added, 0);
   const removed = files.reduce((n, f) => n + f.removed, 0);
-  const title = capital(item.choices.find((c) => c.id === choice)?.title ?? choice);
+  const title = capitalize(item.choices.find((c) => c.id === choice)?.title ?? choice);
   const ci = attempt?.pr?.ci ?? attempt?.ci ?? null;
   const queueName = useProjectForge(attempt?.pr ? t?.projectId ?? null : null).data?.queueName ?? undefined;
   return (
@@ -296,7 +294,7 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
         {worktreeId && (
           <div className="flex flex-wrap items-center gap-2">
             <span aria-label="Diff size">
-              {changes.isLoading ? 'Counting the changes…' : `${files.length} ${files.length === 1 ? 'file' : 'files'}, +${added} −${removed}`}
+              {changes.isLoading ? 'Counting the changes…' : `${plural(files.length, 'file')}, +${added} −${removed}`}
             </span>
             <Button variant="ghost" size="sm" onClick={() => { onCancel(); openChanges({ id: worktreeId, projectId: item.projectId ?? '' }, { ticketId: item.ticketId ?? undefined }); }}>
               View changes

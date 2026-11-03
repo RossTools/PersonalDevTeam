@@ -4,6 +4,7 @@ import { cn } from '@ui/lib/utils';
 import { Badge, OverlapBadge } from '@ui';
 import type { AgentBy } from '../api/gen/AgentBy';
 import type { TicketSummary } from '../api/gen/TicketSummary';
+import { plural } from '../common/text';
 
 type BadgeTicket = Pick<TicketSummary, 'blockedBy' | 'overlap' | 'overlapWith' | 'waiting' | 'clearToStart'> &
   Partial<Pick<TicketSummary, 'pipelineStage' | 'autoStartAt' | 'source' | 'admitted' | 'pickupHold' | 'pickupPaused' | 'pickupFailed' | 'createdBy' | 'proposed'>>;
@@ -74,7 +75,7 @@ export function TicketBadges({ ticket: t, className }: { ticket: BadgeTicket; cl
       {t.proposed && <Badge tone="waiting" title="A ticket proposal an agent made: it waits for your decision in the Inbox, and only you can move it on">Proposal</Badge>}
       {refining && <Badge title="The pipeline is refining it">Refining</Badge>}
       {mergeBlocked && <Badge tone="failed" title="Its merge was refused; the Inbox asks you">Merge blocked</Badge>}
-      {t.blockedBy > 0 && <Badge tone="waiting" title={`${t.blockedBy} open blocker${t.blockedBy === 1 ? '' : 's'}`}>Blocked</Badge>}
+      {t.blockedBy > 0 && <Badge tone="waiting" title={plural(t.blockedBy, 'open blocker')}>Blocked</Badge>}
       <OverlapBadge level={t.overlap} keys={t.overlapWith} />
       {t.waiting && (t.clearToStart ? (
         <Badge tone="running" title="Nothing is in the way any more">

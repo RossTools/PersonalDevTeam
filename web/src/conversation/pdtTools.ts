@@ -1,8 +1,7 @@
+import { isRecord, nonBlank } from '../common/guards';
 // PDT's own tools in a conversation (PDT-382): which calls show as cards instead of folding into "Used N tools", and
 // what each card reads from the call's input and result.
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 /** A pdt-mcp tool's own name: Claude's (and ACP agents') `mcp__pdt__create_ticket`, Codex's `mcp:pdt/create_ticket`. */
@@ -63,12 +62,12 @@ export function createdTicket(input: unknown, output?: string): CreatedTicket {
   const a = isRecord(input) ? input : {};
   const r = resultOf(output) ?? {};
   return {
-    key: str(r.key),
-    title: str(a.title) ?? 'Untitled',
-    stage: str(r.stage) ?? str(a.stage) ?? 'draft',
-    priority: str(a.priority),
+    key: nonBlank(r.key),
+    title: nonBlank(a.title) ?? 'Untitled',
+    stage: nonBlank(r.stage) ?? nonBlank(a.stage) ?? 'draft',
+    priority: nonBlank(a.priority),
     labels: strings(a.labels),
-    description: str(a.description),
+    description: nonBlank(a.description),
     proposal: r.proposal === true,
   };
 }
@@ -90,7 +89,7 @@ export function ticketEdit(input: unknown, output?: string): { key: string; chan
     ? r.changes.flatMap((c): FieldChange[] => (isRecord(c) && typeof c.field === 'string' ? [{ field: c.field, from: c.from, to: c.to }] : []))
     : null;
   const asked = EDIT_FIELDS.flatMap((f): FieldChange[] => (a[f] !== undefined ? [{ field: f, to: f === 'description' ? undefined : a[f] }] : []));
-  return { key: str(r.key) ?? str(a.ticket) ?? 'a ticket', changes: done ?? asked, files: strings(a.files).length };
+  return { key: nonBlank(r.key) ?? nonBlank(a.ticket) ?? 'a ticket', changes: done ?? asked, files: strings(a.files).length };
 }
 
 export type LinkKind = 'blocks' | 'blockedBy' | 'relates';
@@ -99,7 +98,7 @@ export type LinkKind = 'blocks' | 'blockedBy' | 'relates';
 export function ticketLink(input: unknown): { ticket: string; other: string; kind: LinkKind } {
   const a = isRecord(input) ? input : {};
   const kind = a.kind === 'blocks' || a.kind === 'blockedBy' ? a.kind : 'relates';
-  return { ticket: str(a.ticket) ?? '?', other: str(a.other) ?? '?', kind };
+  return { ticket: nonBlank(a.ticket) ?? '?', other: nonBlank(a.other) ?? '?', kind };
 }
 
 export const LINK_TEXT: Record<LinkKind, string> = { blocks: 'blocks', blockedBy: 'blocked by', relates: 'relates to' };
@@ -108,14 +107,14 @@ export const LINK_TEXT: Record<LinkKind, string> = { blocks: 'blocks', blockedBy
 export function sentMessage(input: unknown, output?: string): { text: string; to: string | null; ticket: string | null; session: string | null } {
   const a = isRecord(input) ? input : {};
   const r = resultOf(output) ?? {};
-  return { text: str(a.text) ?? '', to: str(r.to), ticket: str(r.ticket), session: str(a.session) };
+  return { text: nonBlank(a.text) ?? '', to: nonBlank(r.to), ticket: nonBlank(r.ticket), session: nonBlank(a.session) };
 }
 
 /** An `add_ticket_comment` call: the comment and its ticket (the session's own when the call names none). */
 export function ticketComment(input: unknown, output?: string): { key: string | null; body: string; files: number } {
   const a = isRecord(input) ? input : {};
   const r = resultOf(output) ?? {};
-  return { key: str(r.key) ?? str(a.ticket), body: str(a.body) ?? '', files: strings(a.files).length };
+  return { key: nonBlank(r.key) ?? nonBlank(a.ticket), body: nonBlank(a.body) ?? '', files: strings(a.files).length };
 }
 
 /** A `workflow_run` call: the workflow and, once started, its run. */
@@ -123,10 +122,10 @@ export function workflowRun(input: unknown, output?: string): { workflow: string
   const a = isRecord(input) ? input : {};
   const r = resultOf(output) ?? {};
   return {
-    workflow: str(r.workflow) ?? str(a.name) ?? str(a.id) ?? 'a workflow',
-    workflowId: str(a.id),
-    runId: str(r.runId),
-    project: str(a.project),
+    workflow: nonBlank(r.workflow) ?? nonBlank(a.name) ?? nonBlank(a.id) ?? 'a workflow',
+    workflowId: nonBlank(a.id),
+    runId: nonBlank(r.runId),
+    project: nonBlank(a.project),
   };
 }
 
@@ -145,8 +144,8 @@ export function watchOf(input: unknown, output?: string): WatchView {
   const w = Array.isArray(r.watching) && isRecord(r.watching[0]) ? r.watching[0] : null;
   const target = (w?.target ?? (a.run ? 'run' : 'ticket')) === 'run' ? 'run' : 'ticket';
   return {
-    id: str(w?.id),
-    label: str(w?.targetLabel) ?? str(a.ticket) ?? str(a.run) ?? '?',
+    id: nonBlank(w?.id),
+    label: nonBlank(w?.targetLabel) ?? nonBlank(a.ticket) ?? nonBlank(a.run) ?? '?',
     target,
     events: strings(w?.events ?? a.events),
   };
@@ -175,7 +174,7 @@ export function pdtApprovalTitle(tool: string, input: unknown): string | null {
     case 'create_ticket':
       return 'Create this ticket?';
     case 'edit_ticket':
-      return `Change ${str(a.ticket) ?? 'this ticket'}?`;
+      return `Change ${nonBlank(a.ticket) ?? 'this ticket'}?`;
     case 'link_tickets':
       return 'Link these tickets?';
     case 'unlink_tickets':
@@ -185,7 +184,7 @@ export function pdtApprovalTitle(tool: string, input: unknown): string | null {
     case 'workflow_run':
       return 'Run this workflow?';
     case 'stop_ticket':
-      return `Stop the work on ${str(a.ticket) ?? 'this ticket'}?`;
+      return `Stop the work on ${nonBlank(a.ticket) ?? 'this ticket'}?`;
     default:
       return null;
   }

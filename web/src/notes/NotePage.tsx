@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, Eye, FolderGit2, Globe, Pencil, Pin, Ticket } from 'lucide-react';
-import { Alert, Button, EmptyState, IconButton, Input, MenuButton, RelativeTime, SegmentedControl, Skeleton, StatusDot, useConfirm, type MenuEntry } from '@ui';
+import { Alert, Button, EmptyState, IconButton, Input, MenuButton, RelativeTime, SegmentedControl, shortDate, Skeleton, StatusDot, useConfirm, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { PmNote } from '../api/gen/PmNote';
@@ -13,9 +13,10 @@ import { useAction } from '../common/useAction';
 import { useRefreshPm } from '../pm/usePm';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { NewTicketDialog } from '../shell/screens';
-import { ALL, HOST_WIDE, shortDate, ticketDescription, titleFor, TITLE_MAX, wordCount, type Whose } from './model';
+import { ALL, HOST_WIDE, ticketDescription, titleFor, TITLE_MAX, wordCount, type Whose } from './model';
 import { useProjects } from '../projects/queries';
 import { useNoteDraft, type SaveState } from './useNoteDraft';
+import { plural } from '../common/text';
 
 type Mode = 'write' | 'read';
 
@@ -303,7 +304,7 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
 function Meta({ created, words }: { created: number | null; words: number }) {
   return (
     <p className="mt-3 mb-7 text-xs text-muted-foreground">
-      {created !== null ? `Created ${shortDate(created)}` : 'New note'} · {words === 1 ? '1 word' : `${words} words`}
+      {created !== null ? `Created ${shortDate(created)}` : 'New note'} · {plural(words, 'word')}
     </p>
   );
 }

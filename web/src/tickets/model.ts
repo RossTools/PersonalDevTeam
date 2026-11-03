@@ -11,6 +11,7 @@ import type { TicketStage } from '../api/gen/TicketStage';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
+import { plural } from '../common/text';
 
 export const STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress', 'done', 'wont_do'];
 export const OPEN_STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress'];
@@ -258,7 +259,7 @@ export function eventTitle(e: TicketEvent, trackerLabel: TrackerLabel = () => un
       if (data.cleared) return `No longer overlaps ${data.key ?? 'a ticket'}`;
       const n = data.files?.length ?? 0;
       const what = data.level === 'conflict' ? 'Conflicts with' : 'Overlaps';
-      return `${what} ${data.key ?? 'a ticket'}${n > 0 ? `: ${n} shared file${n === 1 ? '' : 's'}` : ''}`;
+      return `${what} ${data.key ?? 'a ticket'}${n > 0 ? `: ${plural(n, 'shared file')}` : ''}`;
     }
     case 'waiting': return data.waiting === false ? 'Stopped waiting' : 'Waiting until clear';
     case 'pr': return prEventTitle(e.data as PrEventData | null);
@@ -270,7 +271,7 @@ export function eventTitle(e: TicketEvent, trackerLabel: TrackerLabel = () => un
     }
     case 'feedback': {
       const n = (e.data as { count?: number } | null)?.count ?? 0;
-      return `Sent ${n} review comment${n === 1 ? '' : 's'} to the agent`;
+      return `Sent ${plural(n, 'review comment')} to the agent`;
     }
     case 'review': return 'Approved the changes';
     case 'outcome': {
@@ -291,7 +292,6 @@ export interface MergeUpdateData {
   pr?: number | null;
 }
 
-const count = (n: number, what: string) => `${n} ${what}${n === 1 ? '' : 's'}`;
 
 /** How the branch was brought up to date with its base at merge time, or a conflict left for then. */
 function mergeUpdateTitle(d: MergeUpdateData): string {
@@ -300,7 +300,7 @@ function mergeUpdateTitle(d: MergeUpdateData): string {
     case 'deferred': return `Conflicts with the base branch${d.pr ? ` (PR #${d.pr})` : ''} · resolved at merge time`;
     case 'clean': return `Updated with${base} · merged cleanly, no agent`;
     case 'regenerated': return `Updated with${base} · regenerated ${(d.regenerated ?? []).join(', ') || 'generated files'}, no agent`;
-    case 'conflict': return `Conflicts with${base} in ${count(d.files?.length ?? 0, 'file')} · sent to the agent`;
+    case 'conflict': return `Conflicts with${base} in ${plural(d.files?.length ?? 0, 'file')} · sent to the agent`;
     case 'agent': return `Conflicts with${base} resolved by the agent`;
     default: return 'Updated with the base branch';
   }

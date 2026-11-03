@@ -19,6 +19,7 @@ import { watchEntry } from '../common/Watch';
 import type { WatchInfo } from '../api/gen/WatchInfo';
 import { isClosed, nextPart, STAGES } from './model';
 import { invalidateTickets, ticketKeys } from './queries';
+import { plural } from '../common/text';
 import { projectKeys } from '../projects/queries';
 import { invalidateWorkspaces } from '../workspaces/queries';
 
@@ -300,8 +301,6 @@ export async function cleanUpAttempt(confirm: Confirm, qc: QueryClient, t: Pick<
   qc.setQueryData(ticketKeys.one(t.id), fresh);
   invalidateTickets(qc, [t.id]);
 }
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** The base branch's pull, for the toast: a sentence to add to the success, or a problem to show on its own. */
 function pullNote(r: PullResult | null): { done?: string; problem?: string } {

@@ -44,6 +44,7 @@ import { LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverla
 import type { BacklogState } from './useBacklog';
 import { TicketAttachments } from './attachments';
 import { TicketDocuments } from './TicketDocuments';
+import { plural } from '../common/text';
 import { projectKeys } from '../projects/queries';
 import { invalidateWorkspaces } from '../workspaces/queries';
 
@@ -474,7 +475,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
       if (working.length > 0) {
         const n = working.length;
         const { ok } = await confirm({
-          title: `Stop the work on ${n} ticket${n === 1 ? '' : 's'}?`,
+          title: `Stop the work on ${plural(n, 'ticket')}?`,
           body: `${working.slice(0, 5).map((t) => t.key).join(', ')}${n > 5 ? '…' : ''} ${n === 1 ? 'has an attempt' : 'have attempts'} in progress. Moving ${n === 1 ? 'it' : 'them'} cancels ${n === 1 ? 'its workflow run' : 'their workflow runs'}, stops ${n === 1 ? 'its' : 'their'} sessions and abandons the ${n === 1 ? 'attempt' : 'attempts'}. Worktrees, branches and sessions are kept.`,
           action: 'Stop and move',
           danger: true,
@@ -489,7 +490,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
     void runAction(async () => {
       const n = selectedIds.length;
       const { ok } = await confirm({
-        title: `Delete ${n} ticket${n === 1 ? '' : 's'}?`,
+        title: `Delete ${plural(n, 'ticket')}?`,
         body: `${selected.slice(0, 5).map((t) => t.key).join(', ')}${n > 5 ? '…' : ''} and their comments and links are deleted. This can't be undone.`,
         action: n === 1 ? 'Delete ticket' : 'Delete tickets',
         danger: true,
@@ -685,7 +686,7 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
             />
             <span className="truncate max-sm:hidden">
               {scopeName}
-              {mode === 'backlog' && total !== undefined && ` · ${total} ticket${total === 1 ? '' : 's'}`}
+              {mode === 'backlog' && total !== undefined && ` · ${plural(total, 'ticket')}`}
             </span>
           </>
         }

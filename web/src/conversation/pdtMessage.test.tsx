@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentEvent } from '../api/gen/AgentEvent';
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
 import { MessageList, type MessageListProps } from './MessageList';
+import { fullText } from '../test-utils';
 
 const DAY = 24 * 3600 * 1000;
 
@@ -25,8 +26,8 @@ describe("PDT's own messages to a PM conversation (PDT-211)", () => {
     ];
     render(<MessageList {...props({ rows })} />);
     expect(screen.getByText('What is in flight?')).toBeInTheDocument();
-    const line = screen.getByText('PDT brought this conversation up to date · 1d ago');
-    expect(screen.getByText('PDT asked for a journal checkpoint · just now')).toBeInTheDocument();
+    const line = screen.getByText(fullText('PDT brought this conversation up to date · 1d ago'));
+    expect(screen.getByText(fullText('PDT asked for a journal checkpoint · just now'))).toBeInTheDocument();
     const trigger = screen.getByRole('button', { name: 'PDT brought this conversation up to date · 1d ago' });
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     // Not a user bubble labelled as news about a pull request.

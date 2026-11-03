@@ -11,6 +11,7 @@ import { TicketPicker } from '../tickets/TicketPicker';
 import { dayText, DuePicker, type DuePanel, type DueValue } from './DuePicker';
 import { addDays, localDay, repeatText } from './model';
 import { parseTodo, type ParseKind } from './parse';
+import { TicketKey } from '../common/TicketKey';
 
 const NONE: DueValue = { dueOn: null, dueTime: null, recurrence: null };
 
@@ -198,7 +199,7 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
             </MenuButton>
           )}
           {ticket ? (
-            <Tag icon={<Ticket aria-hidden />} clearLabel="No ticket" onClear={clearing(() => setTicket(null))}><span className="font-mono">{ticket.key}</span></Tag>
+            <Tag icon={<Ticket aria-hidden />} clearLabel="No ticket" onClear={clearing(() => setTicket(null))}><TicketKey ticketKey={ticket.key} /></Tag>
           ) : (
             <DashedTag icon={<Ticket aria-hidden />} onClick={() => setLinking(true)}>Ticket</DashedTag>
           )}

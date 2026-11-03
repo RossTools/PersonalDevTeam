@@ -75,13 +75,6 @@ export function sectionsOf(notes: PmNote[], now: number = Date.now()): NoteSecti
   return sections.filter((s) => s.notes.length > 0);
 }
 
-/** "12 Oct", or "12 Oct 2025" in another year. */
-export function shortDate(time: number, now: number = Date.now()): string {
-  const d = new Date(time);
-  const sameYear = d.getFullYear() === new Date(now).getFullYear();
-  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) });
-}
-
 /** A ticket's description drafted from one of the user's notes: its body, then a link back to the note. */
 export function ticketDescription(note: Pick<PmNote, 'id' | 'title' | 'body'>, origin = window.location.origin): string {
   const link = `${origin}${routePath({ view: 'notes', memory: false, note: note.id })}`;

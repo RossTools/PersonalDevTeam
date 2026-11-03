@@ -21,6 +21,7 @@ import { invalidateReview, useChanges, useReviewComments } from './queries';
 import { ReviewBar } from './ReviewBar';
 import { changesState } from './state';
 import { useViewed } from './viewed';
+import { plural } from '../common/text';
 
 const MODE_KEY = 'pdt.review.mode';
 const LIST_KEY = 'pdt.review.fileList';
@@ -265,7 +266,7 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
     setSending(true);
     try {
       const r = await api.sendFeedback(worktreeId);
-      toast.success(`Sent ${r.sent} comment${r.sent === 1 ? '' : 's'} to the agent.`);
+      toast.success(`Sent ${plural(r.sent, 'comment')} to the agent.`);
       invalidateReview(qc, worktreeId);
       if (t) invalidateTickets(qc, [t.id]);
     } catch (e) {
@@ -306,7 +307,7 @@ export function ChangesView({ worktreeId, ticket }: { worktreeId: string; ticket
         </IconButton>
       )}
       <span className="min-w-0 truncate" title={`${c.branch} against ${c.base} (from ${c.mergeBase.slice(0, 8)})`}>
-        {files.length} file{files.length === 1 ? '' : 's'} vs <span className="font-mono">{c.base}</span>
+        {plural(files.length, 'file')} vs <span className="font-mono">{c.base}</span>
       </span>
       {files.length > 0 && <span className="shrink-0">· {viewedCount} / {files.length} viewed</span>}
       <span className="ml-auto flex shrink-0 items-center gap-2">
